@@ -1,0 +1,9 @@
+{
+  "lmg": 1,
+  "alg": "aes-256-gcm",
+  "keySource": "env",
+  "salt": "FvTwZ7b9eH0R280u1IG4Cg==",
+  "iv": "YXXO3euYOqY6aiPD",
+  "tag": "MXHlwcO4zICTTXhfenzt5A==",
+  "ct": "imQPXwyjrnMQRPNdWJzlLDwrdAQDSrdZzXDXQw527LbIN0D3XXwcUS3A7RDsitl2LUDLo4JgST3rld0dRtg30Pw/2/ViBAhzgacYt5aRBmLtUGW2LGwmNYFFkQK+dlb0tPmng/qOrN8W4cSY6PA+jqP93g=="
+}

@@ -1,0 +1,134 @@
+[package]
+name = "local-mcp-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "One local process that hosts every MCP server an AI client needs, on 127.0.0.1 HTTP paths."
+license = "MIT"
+
+[[bin]]
+name = "lmg"
+path = "src/main.rs"
+
+[dependencies]
+# The rmcp `macros` feature stays off: servers implement ServerHandler by hand, mirroring the
+# Node build's setRequestHandler exactly and keeping pastey out of the build.
+rmcp = { version = "3.2", default-features = false, features = [
+    "server", "client", "transport-streamable-http-server",
+    "transport-child-process",
+] }
+axum = { version = "0.8", default-features = false, features = [
+    "http1", "json", "query", "tokio",
+] }
+tokio = { version = "1", default-features = false, features = [
+    "rt", "macros", "net", "time", "signal", "sync", "fs", "io-util", "process",
+] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+serde = { version = "1", features = ["derive"] }
+# preserve_order: rows and configs keep insertion order, exactly as JSON.stringify does in the
+# Node build (column order in a query reply is information, not cosmetics).
+# raw_value: the forwarding path.
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+async-trait = "0.1"
+anyhow = "1"
+thiserror = "2"
+# The Stream trait only — sqlx's fetch_many returns one and rmcp already puts futures-core in
+# the graph, so this adds visibility, not code.
+futures-core = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+# The direct DB adapters (Phase 2). No TLS features on purpose: connections are loopback or
+# tunnel-forwarded, so DB TLS would add a second crypto stack for nothing. chrono/bigdecimal are
+# sqlx's decode targets for temporal and NUMERIC/DECIMAL columns — the one place chrono enters
+# the graph (the gateway's own timestamps stay on `time`), and decimals map to strings exactly
+# as node-postgres/mysql2 report them.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio", "mysql", "postgres", "json", "chrono", "bigdecimal",
+] }
+# Decode targets for DB temporal/NUMERIC columns. Already in the graph via sqlx's features of the
+# same names; declaring them here only adds name visibility, not a second copy.
+chrono = { version = "0.4", default-features = false }
+bigdecimal = { version = "0.4", default-features = false }
+# One multiplexed async connection per Redis MCP (ioredis's role in the Node build).
+# connection-manager = the auto-reconnecting flavor (ioredis's retryStrategy equivalent).
+redis = { version = "0.27", default-features = false, features = [
+    "tokio-comp", "aio", "connection-manager",
+] }
+# The http/rest adapters' fetch (and the tunnels' HTTP needs). Pinned to rmcp's own major so the
+# crate holds ONE reqwest across lib, tests and rmcp's client transport. native-tls = schannel on
+# Windows (pure Rust, the OS trust store — what a machine's browser trusts, the gateway trusts);
+# rustls would pull either aws-lc-rs (CMake/NASM build pain) or ring via a second crypto stack.
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "native-tls",
+] }
+# GBK stderr of spawned MCP children (proc adapter, Windows console apps).
+encoding_rs = { version = "0.8", default-features = false }
+# The mongo driver, behind the optional `mongo` feature (ADR-004: heaviest driver, off in user
+# builds, on in the shipped release). mongodb 3 is tokio-native by default; no TLS features on
+# purpose (loopback/tunnel connections only), no dns-resolver (plain mongodb:// URIs). The driver
+# requires a TLS backend in MongoDB 3.x, so rustls-tls is enabled only when this feature is built.
+mongodb = { version = "3", optional = true, default-features = false, features = ["compat-3-0-0", "rustls-tls"] }
+
+# The sealed-envelope format (docs/05 §1) — frozen, byte-identical to the Node build.
+hkdf = "0.12"
+sha2 = "0.10"
+aes-gcm = "0.10"
+# Pinned to rmcp's own base64 major so the graph holds ONE copy (cargo tree -d stays clean).
+base64 = "0.23"
+rand = "0.8"
+
+# RFC3339 timestamps for the gateway's own logging — chrono appears only under sqlx, above.
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
+# The admin panel, embedded byte-for-byte and served from &'static [u8].
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",           # DPAPI, replacing the powershell spawn
+    "Win32_System_Registry",                 # MachineGuid, direct registry read
+    "Win32_System_Threading",                # process-tree walk + open-process
+    "Win32_System_JobObjects",               # KILL_ON_JOB_CLOSE subtree kill for proc children
+    "Win32_System_Diagnostics_ToolHelp",     # Toolhelp32 snapshot, replacing the other powershell spawn
+    "Win32_System_ProcessStatus",            # GetProcessMemoryInfo for the memory view
+] }
+
+# --- tunnel deps (agent-managed) ---
+# The tunnels agent appends russh here. Do not move or reformat this marker section.
+# The SSH client (ssh2's role in the Node build). `ring` rather than the default aws-lc-rs
+# backend: ring builds with plain MSVC tools, aws-lc-rs wants CMake/NASM. `rsa` because
+# ~/.ssh/id_rsa is still the most common key; `des` only to decrypt legacy PEM keys, which
+# Node's ssh2 reads. No flate2: servers negotiate `none` compression for tunnels.
+russh = { version = "0.63.2", default-features = false, features = [
+    "ring", "rsa", "des",
+] }
+# TCP keepalive on forwarded sockets (Node's socket.setKeepAlive(true, 30s)); tokio does not
+# expose it on TcpStream. Already in the graph via tokio and hyper-util, so this line adds
+# name visibility, not a second copy.
+socket2 = "0.6"
+
+[dev-dependencies]
+# Test-only: a real MCP client (rmcp's own) against the gateway over a real socket, plus raw-HTTP
+# probes for the 2025-era handshake. Dev-deps do not enter the shipping binary's feature set.
+# reqwest is pinned to rmcp's own major (0.13) so the test binary holds ONE reqwest instance.
+rmcp = { version = "3.2", default-features = false, features = [
+    "client", "transport-streamable-http-client-reqwest",
+] }
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "native-tls",
+] }
+
+[features]
+default = []
+# The heaviest driver, worth an estimated 3-5 MB — off by default for user builds, ON in the
+# shipped release (ADR-004). A configured mongo MCP on a featureless build fails with an error
+# naming the feature, never a panic and never a silently missing endpoint.
+mongo = ["dep:mongodb"]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

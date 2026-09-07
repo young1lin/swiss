@@ -1,0 +1,15 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Local gateway state — same set the Node build never commits. All carry real secrets.
+gateway.config.json
+managed.json
+tunnels.json
+.env
+*.log
+master.key
+
+# Stray dev binaries at the repo root
+/lmg-dev.exe
+/lmg.exe

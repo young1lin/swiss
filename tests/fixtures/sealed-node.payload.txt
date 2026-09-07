@@ -1,0 +1,6 @@
+{
+  "port": 19999,
+  "host": "127.0.0.1",
+  "tokenEnv": "MCP_GATEWAY_TOKEN",
+  "mcps": []
+}

@@ -1,0 +1,47 @@
+# local-mcp-gateway-rust
+
+A Rust port of [`local-mcp-gateway`](../local-mcp-gateway): one local process that hosts every MCP
+server an AI client needs, exposed on HTTP paths under `127.0.0.1:19999`.
+
+**Why the port exists:** memory. The Node build measures **117.5 MB RSS** on a typical workload
+(1×mysql, 1×pg, 2×redis, 2×http, 1×echo live; 2×proc asleep). Roughly 45 MB of that is the V8
+floor, which no amount of tuning in JavaScript can reach past. The target here is **12–20 MB**,
+shipped as a **single self-contained `.exe`** with no Node, no `node_modules`, no npx wrapper.
+
+## Status
+
+**Core implementation complete** — all planned adapter families are wired into the factory: echo,
+MySQL, PostgreSQL, Redis, MongoDB, proc, HTTP, REST, and SSH tunnels. The admin API, embedded panel,
+sealed-envelope compatibility, lazy proc lifecycle, and loopback security paths are implemented.
+Validation currently passes with `cargo test --features mongo` (225 tests plus integration suites),
+`cargo clippy --all-targets --features mongo -- -D warnings`, and `cargo build --release --features mongo`.
+The MongoDB driver remains an opt-in feature so the default binary stays small.
+`docs/` holds the complete migration plan; read it in order.
+
+| Doc | What it settles |
+| --- | --- |
+| [`docs/01-goals-and-memory-budget.md`](docs/01-goals-and-memory-budget.md) | What "extreme memory thrift" actually buys, measured — and where it buys nothing |
+| [`docs/02-architecture.md`](docs/02-architecture.md) | Crate layout, runtime model, module map |
+| [`docs/03-dependency-map.md`](docs/03-dependency-map.md) | Every npm dependency → its crate, with feature flags |
+| [`docs/04-porting-inventory.md`](docs/04-porting-inventory.md) | All 70 backend source files → destination, risk, phase |
+| [`docs/05-wire-compatibility.md`](docs/05-wire-compatibility.md) | The on-disk and on-HTTP formats that MUST stay byte-identical |
+| [`docs/06-roadmap.md`](docs/06-roadmap.md) | Six phases, each with an exit criterion |
+| [`docs/07-decisions.md`](docs/07-decisions.md) | The calls that need a human: what gets dropped, and why |
+| [`docs/08-testing.md`](docs/08-testing.md) | How 10,859 lines of vitest become the acceptance spec |
+
+## The one-paragraph version
+
+The admin panel (7,193 lines of dependency-free ES modules and CSS) ports **verbatim** — embedded in
+the binary, byte for byte. Every on-disk format stays identical, so the Rust binary runs against the
+same data directory as the Node build and the two can be A/B'd side by side on different ports. The
+MCP protocol work is carried by `rmcp` 3.x, which implements the same 2026-07-28 revision and the
+same stateless legacy fallback the Node gateway serves today. What remains is 15,395 lines of
+backend TypeScript, ported in six phases, cheapest and highest-confidence first.
+
+## Non-goals
+
+- **Not a redesign.** Same features, same config, same panel, same HTTP surface. The only intended
+  behavioural change is the one in [`docs/07-decisions.md`](docs/07-decisions.md) (ADR-001).
+- **Not faster.** The Node build is not CPU-bound; it is idle almost all the time. Latency is
+  dominated by the databases and child processes on the other end. Do not sell this as speed.
+- **Not a saving on `proc` MCPs.** An `npx`/`uvx` child is 50–150 MB and stays exactly that.
