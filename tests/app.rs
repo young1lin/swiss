@@ -40,7 +40,7 @@ async fn app_with_echo() -> axum::Router {
     registry.start("echo").await.expect("start");
     let tokens = Arc::new(single_token_manager(TOKEN));
     let ctx = AppContext::new(registry, tokens, store, "MCP_GATEWAY_TOKEN", 19998);
-    build_app(ctx)
+    build_app(ctx, None)
 }
 
 /// One raw request against the built app (loopback headers included, as a local client sends).
@@ -254,9 +254,11 @@ async fn mcp_endpoint_rejects_missing_bearer_in_jsonrpc_shape() {
         .unwrap();
     let (status, json, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // The pre-body refusal shape: Node's `wrapped.refuse` fast path answered
+    // {error:"Unauthorized"} — plain admin shape, not JSON-RPC (the SDK-era jsonError only
+    // fired once the handler itself ran, past this gate).
     let body = json.unwrap();
-    assert_eq!(body["jsonrpc"], "2.0");
-    assert_eq!(body["error"]["code"], -32603);
+    assert_eq!(body["error"], "Unauthorized");
 }
 
 #[tokio::test]

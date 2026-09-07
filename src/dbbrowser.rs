@@ -87,7 +87,7 @@ pub const EXPORT_CHUNK: i64 = 5_000;
 /// NaN branch — the caller's fallback takes over, exactly where the Node build's
 /// `Number.isFinite` check fell through. (A couple of JS exotics — hex strings, "Infinity" —
 /// coerce differently; none of them is a page/limit argument any caller sends.)
-fn js_number(v: &Value) -> Option<f64> {
+pub fn js_number(v: &Value) -> Option<f64> {
     match v {
         Value::Number(n) => n.as_f64(),
         Value::String(s) => {
@@ -499,25 +499,22 @@ pub fn browse_order(
 /// The bounded SELECT behind one grid page. LIMIT/OFFSET are clamped integers, so they are
 /// inlined rather than bound (both dialects accept that only for literal ints); the WHERE
 /// fragment's parameters are the statement's only bound values, so their numbering starts at 1.
+/// `select_exprs` are the final column expressions (see [`quoted_exprs`] / [`pg_typed_exprs`]).
 pub fn browse_rows_sql(
     dialect: DbDialect,
     schema: Option<&str>,
     table: &str,
-    column_names: &[String],
+    select_exprs: &[String],
     order: Option<&str>,
     offset: i64,
     limit: i64,
     where_frag: &str,
     where_params: &[Value],
 ) -> Result<BuiltStatement, String> {
-    let cols = if column_names.is_empty() {
+    let cols = if select_exprs.is_empty() {
         "*".to_string()
     } else {
-        column_names
-            .iter()
-            .map(|c| quote_ident(dialect, c))
-            .collect::<Result<Vec<_>, _>>()?
-            .join(", ")
+        select_exprs.join(", ")
     };
     let order_by = order.map(|o| format!(" ORDER BY {o}")).unwrap_or_default();
     Ok(BuiltStatement {
@@ -527,6 +524,57 @@ pub fn browse_rows_sql(
         ),
         params: where_params.to_vec(),
     })
+}
+
+/// The plain SELECT expressions for bare column names — the MySQL form (its wire protocol is
+/// all text, so every type arrives as a string the catch-all decodes).
+pub fn quoted_exprs(dialect: DbDialect, names: &[String]) -> Result<Vec<String>, String> {
+    names.iter().map(|c| quote_ident(dialect, c)).collect()
+}
+
+/// information_schema data_types whose BINARY wire form the pg row decoder models (see
+/// pg.rs `column_to_value`); anything else — uuid, inet/cidr/macaddr, money, tsvector,
+/// interval, custom types, ARRAY — would reach the decoder's String catch-all, which cannot
+/// read binary and silently drops the value.
+const PG_DECODED_TYPES: [&str; 17] = [
+    "smallint",
+    "integer",
+    "bigint",
+    "real",
+    "double precision",
+    "boolean",
+    "text",
+    "character varying",
+    "character",
+    "name",
+    "numeric",
+    "json",
+    "jsonb",
+    "bytea",
+    "date",
+    "timestamp without time zone",
+    "timestamp with time zone",
+];
+
+/// The SELECT expressions for one pg grid page: modeled types stay the bare quoted column;
+/// every other type is CAST to text in the SELECT itself. Two birds: the extended protocol
+/// answers those columns in a binary form the decoder cannot read (a uuid column would come
+/// back missing from every row), and the text it becomes is exactly the string node-pg handed
+/// the Node build's grid. "time with/without time zone" stays modeled in spirit: TIME decodes,
+/// but TIMETZ does not — it is absent from the list, so it casts (node-pg passed it through as
+/// text too).
+pub fn pg_typed_exprs(columns: &[BrowseColumn]) -> Result<Vec<String>, String> {
+    columns
+        .iter()
+        .map(|c| {
+            let quoted = quote_ident(DbDialect::Pg, &c.name)?;
+            if PG_DECODED_TYPES.contains(&c.data_type.to_ascii_lowercase().as_str()) {
+                Ok(quoted)
+            } else {
+                Ok(format!("{quoted}::text AS {quoted}"))
+            }
+        })
+        .collect()
 }
 
 pub fn browse_count_sql(
@@ -697,8 +745,11 @@ pub fn build_filter_where(
                     "lt" => "<",
                     _ => "<=",
                 };
-                let ph = bind(&mut params, numeric_bind_value(&text));
-                parts.push(format!("{col} {sql_op} {ph}"));
+                // Same typed placeholder as the edit statements: sqlx binds a String as `text`,
+                // and `"bigint" = $1::text` is a 42883 on Postgres.
+                bind(&mut params, numeric_bind_value(&text));
+                let typed = typed_ph(dialect, &params, type_of.get(f.column.as_str()).copied().flatten());
+                parts.push(format!("{col} {sql_op} {typed}"));
             }
             other => return Err(format!("unknown filter operator: {other}")),
         }
@@ -769,6 +820,33 @@ fn ph(dialect: DbDialect, params: &[Value]) -> String {
     }
 }
 
+/// information_schema data_types that are not directly usable as a CAST target: "ARRAY" needs
+/// its element type (a separate column), and "USER-DEFINED" is an enum/domain NAME that only
+/// the udt column carries. A bind on those keeps the bare placeholder — exactly as untyped as
+/// node-pg's own binds were, never worse.
+fn castable_data_type(data_type: Option<&str>) -> Option<&str> {
+    data_type.filter(|t| {
+        !t.is_empty() && !t.eq_ignore_ascii_case("ARRAY") && !t.eq_ignore_ascii_case("USER-DEFINED")
+    })
+}
+
+/// A placeholder carrying the column's type on Postgres: node-pg bound parameters UNTYPED (OID
+/// 0) and the server inferred them from the statement, but sqlx declares every string/null
+/// bind as `text` — so `bigint = text` dies with 42883 (operator does not exist), and
+/// `SET ts = $1` or a NULL against a non-text column with 42804. CASTing the PLACEHOLDER
+/// restores the inference node-pg had, and types NULL binds, which a bare placeholder never
+/// could. MySQL coerces strings against the column itself; its "?" stays bare.
+fn typed_ph(dialect: DbDialect, params: &[Value], data_type: Option<&str>) -> String {
+    let base = ph(dialect, params);
+    if dialect != DbDialect::Pg {
+        return base;
+    }
+    match castable_data_type(data_type) {
+        Some(t) => format!("CAST({base} AS {t})"),
+        None => base,
+    }
+}
+
 /// Turn a buffered edit list into executable statements: one statement per edit, in order, with
 /// every value bound and every identifier pre-vetted. Column names the table does not have are
 /// dropped from SET/INSERT (a stale page may reference a dropped column); an edit that ends up
@@ -786,6 +864,10 @@ pub fn build_edit_statements(
 ) -> Result<Vec<BuiltStatement>, String> {
     let table_ref = qualified(dialect, schema, table)?;
     let known: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    let type_of: HashMap<&str, &str> = columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
+        .collect();
     let mut out: Vec<BuiltStatement> = Vec::new();
     for edit in edits {
         let mut params: Vec<Value> = Vec::new();
@@ -798,7 +880,7 @@ pub fn build_edit_statements(
                     where_sql.push(format!(
                         "{} = {}",
                         quote_ident(dialect, c)?,
-                        ph(dialect, params)
+                        typed_ph(dialect, params, type_of.get(c.as_str()).copied())
                     ));
                 }
                 Ok(where_sql.join(" AND "))
@@ -816,7 +898,7 @@ pub fn build_edit_statements(
                 let mut value_sql: Vec<String> = Vec::new();
                 for c in &cols {
                     params.push(values[*c].clone());
-                    value_sql.push(ph(dialect, &params));
+                    value_sql.push(typed_ph(dialect, &params, type_of.get(c.as_str()).copied()));
                 }
                 let names = cols
                     .iter()
@@ -886,7 +968,7 @@ pub fn build_edit_statements(
                     set_sql.push(format!(
                         "{} = {}",
                         quote_ident(dialect, c)?,
-                        ph(dialect, &params)
+                        typed_ph(dialect, &params, type_of.get(c.as_str()).copied())
                     ));
                 }
                 let where_sql = pk_where(pk, &mut params)?;
@@ -1371,7 +1453,7 @@ mod tests {
             DbDialect::Mysql,
             Some("app"),
             "users",
-            &["id".to_string(), "name".to_string()],
+            &["`id`".to_string(), "`name`".to_string()],
             Some("`id` DESC"),
             40,
             20,
@@ -1389,7 +1471,7 @@ mod tests {
             DbDialect::Pg,
             Some("public"),
             "users",
-            &["id".to_string()],
+            &["\"id\"".to_string()],
             None,
             0,
             500,
@@ -1585,7 +1667,7 @@ mod tests {
             DbDialect::Mysql,
             None,
             "users",
-            &["id".to_string(), "name".to_string()],
+            &["`id`".to_string(), "`name`".to_string()],
             None,
             0,
             50,
@@ -1682,9 +1764,11 @@ mod tests {
 
         let out = build_edit_statements(DbDialect::Pg, Some("public"), "users", &edits, &cols, &pk)
             .unwrap();
+        // Postgres placeholders carry the column's type (see typed_ph): sqlx binds strings as
+        // `text`, and node-pg's untyped binds let the server infer — the CAST restores that.
         assert_eq!(
             out[0].sql,
-            "UPDATE \"public\".\"users\" SET \"name\" = $1 WHERE \"id\" = $2"
+            "UPDATE \"public\".\"users\" SET \"name\" = CAST($1 AS text) WHERE \"id\" = CAST($2 AS int)"
         );
         assert_eq!(out[0].params, vec![json!("alice"), json!(7)]);
     }

@@ -183,6 +183,99 @@ fn cmd_exe() -> String {
     std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
 }
 
+// --- cross-spawn's cmd.exe escaping (lib/util/escape.js + parse.js), ported verbatim -------------
+// The naive "quote every token" this route used first breaks on real arguments: an argument
+// carrying a quote or a trailing backslash corrupts the line cmd.exe re-parses, and an unescaped
+// `%`/`!`/`&` is command-line injection into the shim. cross-spawn is the battle-tested
+// reference (it is what the Node build spawned through), so its algorithm is the spec here.
+
+/// The metacharacters cmd.exe treats specially (robvanderwoude.com/escapechars.php) — note the
+/// space and the wildcards: `metaCharsRegExp` in escape.js.
+#[cfg(windows)]
+fn is_cmd_meta(c: char) -> bool {
+    matches!(
+        c,
+        '(' | ')' | ']' | '[' | '%' | '!' | '^' | '"' | '`' | '<' | '>' | '&' | '|' | ';' | ',' | ' ' | '*' | '?'
+    )
+}
+
+/// escape.js `escape.command`: ^-escape every metachar, no quoting — a `^ ` keeps one token where
+/// a quoted path would have its spaces re-interpreted when cmd re-parses the line.
+#[cfg(windows)]
+fn cmd_escape_program(program: &str) -> String {
+    let mut out = String::with_capacity(program.len());
+    for c in program.chars() {
+        if is_cmd_meta(c) {
+            out.push('^');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// escape.js `escape.argument` — the qntm.org/cmd rules, in the backtracking-free form of
+/// cross-spawn PR #160: every backslash run that precedes a `"` (including the run at the end of
+/// the string, which the closing quote below puts a quote after) doubles, every `"` gains a `\`,
+/// the whole thing is wrapped in quotes, and then every metachar — those quotes included — is
+/// ^-escaped. `double_escape` repeats that ^ pass for a node_modules/.bin cmd shim, whose inner
+/// `node` call re-parses the line a second time (parse.js `isCmdShimRegExp`).
+#[cfg(windows)]
+fn cmd_escape_arg(arg: &str, double_escape: bool) -> String {
+    let chars: Vec<char> = arg.chars().collect();
+    let mut inner = String::with_capacity(arg.len());
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => {
+                let start = i;
+                while i < chars.len() && chars[i] == '\\' {
+                    i += 1;
+                }
+                let run = i - start;
+                // A run is "before a quote" when the next char is one, or when there is no next
+                // char — the wrapper below appends its closing quote right there.
+                let before_quote = i == chars.len() || chars[i] == '"';
+                let times = if before_quote { run * 2 } else { run };
+                for _ in 0..times {
+                    inner.push('\\');
+                }
+            }
+            '"' => {
+                inner.push('\\');
+                inner.push('"');
+                i += 1;
+            }
+            c => {
+                inner.push(c);
+                i += 1;
+            }
+        }
+    }
+    let mut out = format!("\"{inner}\"");
+    for _ in 0..(1 + usize::from(double_escape)) {
+        out = out
+            .chars()
+            .map(|c| if is_cmd_meta(c) { format!("^{c}") } else { c.to_string() })
+            .collect();
+    }
+    out
+}
+
+/// parse.js `isCmdShimRegExp` (`node_modules[\\/].bin[\\/][^\\/]+\.cmd$`) — a .cmd file whose
+/// name is the ONE segment directly inside a `node_modules/.bin` directory (the npm shim
+/// generated for a package bin; hand-rolled per ADR-007).
+#[cfg(windows)]
+fn is_cmd_shim(program: &str) -> bool {
+    let lower = program.to_ascii_lowercase().replace('/', "\\");
+    const MARKER: &str = "\\node_modules\\.bin\\";
+    let Some(at) = lower.find(MARKER) else {
+        return false;
+    };
+    let rest = &lower[at + MARKER.len()..];
+    // The segment after `.bin\` must be a single separator-free name ending in `.cmd`.
+    !rest.is_empty() && !rest.contains('\\') && rest.ends_with(".cmd")
+}
+
 /// The Windows Job Object seam. The ONLY `unsafe` in this adapter lives here.
 #[cfg(windows)]
 mod win {
@@ -627,14 +720,17 @@ impl super::Adapter for ProcAdapter {
         // cross-spawn's Windows route: CreateProcess cannot execute a batch file — npm's `npx`
         // IS `npx.cmd` — so a .cmd/.bat program goes through cmd.exe instead. `/d` skips the
         // AutoRun scripts, `/s` keeps the argument quoting verbatim, and raw_arg writes the tail
-        // untouched (std's own escaping would mangle cmd's quote rules). Everything cmd goes on
-        // to spawn (cmd.exe -> npx -> the real server) inherits the job object below all the
-        // same, so the subtree still dies with one handle.
+        // untouched (std's own escaping would mangle cmd's quote rules). The line itself is
+        // built with cross-spawn's escapers above — quotes, `%`, trailing backslashes and all.
+        // Everything cmd goes on to spawn (cmd.exe -> npx -> the real server) inherits the job
+        // object below all the same, so the subtree still dies with one handle.
         #[cfg(windows)]
         let mut command = if is_batch_file(&program) {
-            let mut line = format!("\"{program}\"");
+            let shim = is_cmd_shim(&program);
+            let mut line = cmd_escape_program(&program);
             for a in &args {
-                line.push_str(&format!(" \"{a}\""));
+                line.push(' ');
+                line.push_str(&cmd_escape_arg(a, shim));
             }
             let mut c = tokio::process::Command::new(cmd_exe());
             c.raw_arg(format!("/d /s /c \"{line}\""));
@@ -847,6 +943,41 @@ mod tests {
         );
         assert_eq!(tokenize_command("  spaced   out  "), vec!["spaced", "out"]);
         assert_eq!(tokenize_command(""), Vec::<String>::new());
+    }
+
+    // --- cross-spawn escape.js, pinned to the same outputs the Node package produces ----------
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_escape_matches_cross_spawn_examples() {
+        // escape.argument, plain value: quoted; the quotes are metachars themselves.
+        assert_eq!(cmd_escape_arg("hello", false), r#"^"hello^""#);
+        // A backslash run before the closing quote doubles; before a non-quote it does not.
+        assert_eq!(cmd_escape_arg(r"a\b", false), r#"^"a\b^""#);
+        assert_eq!(cmd_escape_arg(r"a\\", false), r#"^"a\\\\^""#);
+        // An embedded quote gains a backslash AND ^-escapes as a metachar.
+        assert_eq!(cmd_escape_arg(r#"a"b"#, false), r#"^"a\^"b^""#);
+        // Every metachar — space included — is ^-escaped even inside the quotes.
+        assert_eq!(cmd_escape_arg("a b&c", false), r#"^"a^ b^&c^""#);
+        // A node_modules/.bin shim re-runs the ^ pass — which escapes the inserted carets too.
+        assert_eq!(cmd_escape_arg("a b", true), r#"^^^"a^^^ b^^^""#);
+        // escape.command ^-escapes without quoting.
+        assert_eq!(
+            cmd_escape_program(r"C:\Program Files\nodejs\npx.cmd"),
+            r"C:\Program^ Files\nodejs\npx.cmd"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_shim_detection_matches_parse_js() {
+        assert!(is_cmd_shim(
+            r"C:\repo\node_modules\.bin\my-tool.CMD"
+        ));
+        // Not a shim: the .cmd is not directly inside node_modules/.bin.
+        assert!(!is_cmd_shim(r"C:\Users\x\AppData\Roaming\npm\npx.cmd"));
+        assert!(!is_cmd_shim(r"C:\repo\node_modules\.bin\sub\tool.cmd"));
+        assert!(!is_cmd_shim(r"C:\tools\server.exe"));
     }
 
     #[test]

@@ -364,22 +364,22 @@ impl ServerHandler for ProxyServer {
         let tool = request.name.to_string();
         let args = request.arguments.clone().map(Value::Object);
         async move {
-            // A disabled tool is refused with the same words the direct adapters answer a
-            // nonexistent one with — to a client they are the same thing: not in the contract.
-            if let Ok(set) = disabled.read() {
-                if set.contains(tool.as_str()) {
-                    return Err(ErrorData::internal_error(
-                        format!("unknown tool: {tool}"),
-                        None,
-                    ));
-                }
-            }
+            let logged_tool = tool.clone();
             calls::logged(
                 mcp.as_deref(),
                 &source,
-                &tool,
+                &logged_tool,
                 args,
                 async move {
+                    // A disabled tool is refused with the same words the direct adapters answer a
+                    // nonexistent one with — to a client they are the same thing: not in the
+                    // contract. Inside calls::logged so the refusal lands in the call log like
+                    // every other failed call, not silently.
+                    if let Ok(set) = disabled.read() {
+                        if set.contains(tool.as_str()) {
+                            return Err(format!("unknown tool: {tool}"));
+                        }
+                    }
                     let result = remote.call_tool(request, timeout).await?;
                     Ok::<CallToolResult, String>(result)
                 },

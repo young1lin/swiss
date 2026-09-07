@@ -123,13 +123,25 @@ fn looks_like_path(name: &str) -> bool {
     }
 }
 
+/// Whether `name` already ends in one of the PATHEXT extensions — appending another (`.cmd.exe`)
+/// would only ever produce nonsense.
+#[cfg(windows)]
+fn has_pathext_extension(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    path_exts()
+        .iter()
+        .any(|e| lower.ends_with(&e.to_ascii_lowercase()))
+}
+
 /// Resolve a launch command to the file that should be handed to spawn — the hand-rolled
 /// equivalent of what `cross-spawn`/`which` did inside the Node SDK's stdio spawn.
 ///
-/// - a path-shaped name is honored exactly as written (its own extension, or none — a bad one
-///   fails at spawn with the OS's own error naming it);
-/// - a bare name walks `path` in order; per directory the name is tried with each PATHEXT
-///   extension appended (see `candidates_in` for why the extensionless spelling is skipped).
+/// - a path-shaped name is honored exactly as written first (an explicit path is the user's own
+///   resolution), with the PATHEXT forms after it as fallback — a path-shaped
+///   `...\bin\mytool` finds `mytool.cmd` beside it the way cmd's own lookup would;
+/// - a bare name walks `path` in order; per directory a name that already carries a dotted
+///   extension (`mytool.cmd`) is tried verbatim first, then with each PATHEXT extension appended
+///   (see `candidates_in` for why the extensionless spelling is skipped for dotless names).
 ///
 /// `None` means nothing matched; the caller still spawns the raw name so the OS error names the
 /// command (the analogue of Node's `spawn ENOENT`).
@@ -138,8 +150,18 @@ pub fn resolve_command(name: &str, path: &str) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if looks_like_path(name) {
         candidates.push(PathBuf::from(name));
+        #[cfg(windows)]
+        if !has_pathext_extension(name) {
+            for ext in path_exts() {
+                candidates.push(PathBuf::from(format!("{name}{}", ext.to_ascii_lowercase())));
+            }
+        }
     } else {
         for dir in path.split(sep).filter(|p| !p.is_empty()) {
+            #[cfg(windows)]
+            if name.contains('.') {
+                candidates.push(Path::new(dir).join(name));
+            }
             candidates_in(Path::new(dir), name, &mut candidates);
         }
     }
@@ -222,6 +244,45 @@ mod tests {
         let path = format!("{}{}elsewhere", dir.display(), delimiter());
         let resolved = resolve_command("npx", &path).expect("npx.cmd resolves through PATHEXT");
         assert_eq!(resolved, dir.join("npx.cmd"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_command_tries_dotted_bare_names_verbatim() {
+        if !cfg!(windows) {
+            return;
+        }
+        let dir = temp_dir("which-dotted");
+        std::fs::write(dir.join("mytool.cmd"), b"@echo off").unwrap();
+        let path = format!("{}{}elsewhere", dir.display(), delimiter());
+        // `mytool.cmd` typed bare must not resolve to a nonexistent `mytool.cmd.exe`.
+        let resolved =
+            resolve_command("mytool.cmd", &path).expect("dotted bare name resolves verbatim");
+        assert_eq!(resolved, dir.join("mytool.cmd"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_command_applies_pathext_to_extensionless_paths() {
+        if !cfg!(windows) {
+            return;
+        }
+        let dir = temp_dir("which-pathshaped");
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("tool.cmd"), b"@echo off").unwrap();
+        // Path-shaped and extensionless: the verbatim spelling does not exist, the .cmd beside it
+        // does — the fallback cmd's own lookup would have found.
+        let bare = bin.join("tool").to_string_lossy().to_string();
+        let resolved =
+            resolve_command(&bare, "elsewhere").expect("PATHEXT applies to path-shaped names");
+        assert_eq!(resolved, bin.join("tool.cmd"));
+        // An explicit extension is honored exactly, never re-suffixed.
+        let exact = bin.join("tool.cmd").to_string_lossy().to_string();
+        assert_eq!(
+            resolve_command(&exact, "elsewhere").as_deref(),
+            Some(bin.join("tool.cmd").as_path())
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

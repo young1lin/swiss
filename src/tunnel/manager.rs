@@ -123,8 +123,11 @@ struct RuleData {
     lost: bool,
     /// Consecutive failed reconnect attempts since the last successful connect — drives backoff.
     retries: u32,
-    /// The connection id this rule currently holds a reference on.
-    holding: Option<String>,
+    /// The connection this rule currently holds a reference on — the Arc itself, not its id:
+    /// an id lookup at release time can hit a REPLACEMENT connection built in between and
+    /// decrement a ref it never took, tearing the new session down under a live rule. Pointer
+    /// identity pairs every increment with its own decrement.
+    holding: Option<Arc<SshConnection>>,
 }
 
 impl Default for RuleData {
@@ -266,40 +269,52 @@ impl TunnelManager {
             }
             return Err(te);
         }
-        // A rule holds at most one reference, however many times it is started.
-        {
+        // A rule holds at most one reference, however many times it is started — taken on THIS
+        // exact client. A holding left over from a swap (the old client ended and the map
+        // rebuilt one under the same id) is released against the old client, never the new.
+        let stale = {
             let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
-            if data.holding.as_deref() != Some(def.id.as_str()) {
-                c.refs.fetch_add(1, Ordering::SeqCst);
-                data.holding = Some(def.id.clone());
+            match &data.holding {
+                Some(h) if Arc::ptr_eq(h, &c) => None, // already holding this very client
+                _ => {
+                    c.refs.fetch_add(1, Ordering::SeqCst);
+                    data.holding.replace(c.clone())
+                }
             }
+        };
+        if let Some(stale) = stale {
+            self.put_ref(&stale).await;
         }
         Ok(c)
     }
 
     /// Drop this rule's reference; the last one out ends the client and frees its session.
     async fn release(&self, rt: &Arc<RuleRuntime>) {
-        let Some(id) = rt
+        let held = rt
             .data
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .holding
-            .take()
-        else {
-            return;
-        };
-        let existing = self
-            .conns
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&id)
-            .cloned();
-        let Some(c) = existing else { return };
+            .take();
+        if let Some(c) = held {
+            self.put_ref(&c).await;
+        }
+    }
+
+    /// Return one reference on `c`. The last one out removes it from the connection map — only
+    /// if the map still holds this exact client (a replacement built in between must not be
+    /// swept out from under its own holders) — and ends the session.
+    async fn put_ref(&self, c: &Arc<SshConnection>) {
         if c.refs.fetch_sub(1, Ordering::SeqCst) <= 1 {
-            self.conns
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
+            let id = c.id();
+            // Scoped: the std lock is never held across the end() await below.
+            {
+                let mut conns = self.conns.lock().unwrap_or_else(|e| e.into_inner());
+                let same = conns.get(&id).is_some_and(|current| Arc::ptr_eq(current, c));
+                if same {
+                    conns.remove(&id);
+                }
+            }
             c.end().await;
         }
     }

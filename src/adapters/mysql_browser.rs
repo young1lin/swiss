@@ -76,12 +76,14 @@ impl DbBrowser for MysqlBrowser {
         self.label.clone()
     }
     async fn list_tables(&self, o: &Value) -> Result<Value, String> {
-        let page = o.get("page").and_then(Value::as_i64).unwrap_or(0).max(0);
-        let limit = o
-            .get("limit")
-            .and_then(Value::as_i64)
-            .unwrap_or(200)
-            .clamp(1, 1000);
+        // Number()-style coercion: the route forwards query params as JSON strings.
+        let page = o
+            .get("page")
+            .and_then(crate::dbbrowser::js_number)
+            .map(f64::floor)
+            .unwrap_or(0.0)
+            .max(0.0) as i64;
+        let limit = crate::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
         let grep = o.get("grep").and_then(Value::as_str);
         let ((ls, lp), (cs, cp)) = super::mysql::mysql_list_tables_sql(
             &self.database,
@@ -107,18 +109,30 @@ impl DbBrowser for MysqlBrowser {
         )?;
         let offset = browse_offset(o.get("offset"));
         let limit = browse_page_size(o.get("limit"), 50);
+        // The grid's filters feed BOTH the page and the COUNT, on the same WHERE.
+        let filters = crate::dbbrowser::browse_filters_of(o.get("filters"));
+        let where_ = crate::dbbrowser::build_filter_where(
+            DbDialect::Mysql,
+            &columns
+                .iter()
+                .map(|c| crate::dbbrowser::FilterColumn::Column(c.clone()))
+                .collect::<Vec<_>>(),
+            &filters,
+        )?;
+        let exprs = crate::dbbrowser::quoted_exprs(DbDialect::Mysql, &names)?;
         let rows_stmt = browse_rows_sql(
             DbDialect::Mysql,
             Some(&self.database),
             table,
-            &names,
+            &exprs,
             order.as_deref(),
             offset,
             limit,
-            "",
-            &[],
+            &where_.frag,
+            &where_.params,
         )?;
-        let count_stmt = browse_count_sql(DbDialect::Mysql, Some(&self.database), table, "", &[])?;
+        let count_stmt =
+            browse_count_sql(DbDialect::Mysql, Some(&self.database), table, &where_.frag, &where_.params)?;
         let (rows, count) = tokio::join!(
             self.query(&rows_stmt.sql, &rows_stmt.params),
             self.query(&count_stmt.sql, &count_stmt.params)
@@ -126,8 +140,16 @@ impl DbBrowser for MysqlBrowser {
         let rows = rows?;
         let total = super::mysql::num_or_zero(count?.first().and_then(|r| r.get("total")));
         let editable = !self.readonly && !primary.is_empty();
+        // Node's editNote: readonly first, then the pk-less explanation (mysql.ts:425-427).
+        let edit_note = if self.readonly {
+            Some("this MCP is configured readonly")
+        } else if primary.is_empty() {
+            Some("table has no primary key, so a row cannot be addressed for edits")
+        } else {
+            None
+        };
         Ok(
-            json!({"schema":self.database,"table":table,"columns":columns,"rows":rows,"total":total,"offset":offset,"limit":limit,"primaryKey":primary,"editable":editable,"editNote":if self.readonly {Some("this MCP is configured readonly")} else {None}}),
+            json!({"schema":self.database,"table":table,"columns":columns,"rows":rows,"total":total,"offset":offset,"limit":limit,"primaryKey":primary,"editable":editable,"editNote":edit_note}),
         )
     }
     async fn describe_table(&self, o: &Value) -> Result<Value, String> {
@@ -174,7 +196,16 @@ impl DbBrowser for MysqlBrowser {
         )
     }
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
-        crate::adapters::sql::assert_read_only(sql, "MySQL")?;
+        // Node's own message: the console is read-only by contract, not by the engine's readonly
+        // flag — the shape check inside assert_read_only is the verdict, the message is the
+        // panel's (pg_browser does the same for its dialect).
+        if crate::adapters::sql::assert_read_only(sql, "MySQL").is_err() {
+            return Err(
+                "the Data view console is read-only — edit rows in the grid instead (edits commit \
+                 as one transaction)"
+                    .into(),
+            );
+        }
         let sql = crate::adapters::sql::assert_single_statement(sql)?;
         let prepared = crate::adapters::sql::with_row_limit(
             &sql,
@@ -192,8 +223,23 @@ impl DbBrowser for MysqlBrowser {
             .and_then(Value::as_object)
             .map(|m| m.keys().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
+        // Driver limitation, accepted: `columns` derives from the first row, so a zero-row
+        // SELECT answers columns: [] — mysql2 exposed field metadata for the empty header.
         let row_count = rows.len();
-        Ok(json!({"columns":columns,"rows":rows,"rowCount":row_count}))
+        // The LIMIT-less SELECT note rides the reply (Node spread limitReport in): a silent
+        // truncation at 50 rows is a lie the console must not tell.
+        let mut out = Map::new();
+        out.insert("columns".into(), json!(columns));
+        out.insert("rows".into(), Value::Array(rows));
+        out.insert("rowCount".into(), json!(row_count));
+        if let Value::Object(extra) =
+            crate::adapters::sql::limit_report(&prepared, row_count as i64, limit)
+        {
+            for (k, v) in extra {
+                out.insert(k, v);
+            }
+        }
+        Ok(Value::Object(out))
     }
     async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
         if self.readonly {
@@ -243,13 +289,14 @@ impl DbBrowser for MysqlBrowser {
         let mut capped = false;
         // Offset paging in chunks: simple, and the cap keeps the O(offset) tail-walk bounded.
         let mut offset = 0i64;
+        let exprs = crate::dbbrowser::quoted_exprs(DbDialect::Mysql, &names)?;
         while offset < cap {
             let chunk = EXPORT_CHUNK.min(cap - offset);
             let stmt = browse_rows_sql(
                 DbDialect::Mysql,
                 Some(&self.database),
                 table,
-                &names,
+                &exprs,
                 None,
                 offset,
                 chunk,

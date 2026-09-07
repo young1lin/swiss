@@ -11,7 +11,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -58,10 +57,6 @@ fn unmask_conn(body: &Map<String, Value>, current: Option<&SshConnDef>) -> Map<S
         ServerDef(v.as_object().cloned().unwrap_or_default())
     });
     unmask_body(body, current_def.as_ref())
-}
-
-fn body_or_null(body: Result<Json<Value>, JsonRejection>) -> Value {
-    body.map(|Json(v)| v).unwrap_or(Value::Null)
 }
 
 /// `?force=1` or a `{force: true}` body — both spellings, so no caller has to guess.
@@ -374,8 +369,8 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
     // it now sees. Order is array order in tunnels.json — no separate rank field to keep in step.
     r = r.route(
         "/api/tunnels/order",
-        put(|State(t): State<Arc<Tunnels>>, body: Result<Json<Value>, JsonRejection>| async move {
-            let body = body_or_null(body);
+        put(|State(t): State<Arc<Tunnels>>, body: crate::app::NodeBody| async move {
+            let body = body.0;
             let result = with_store(&t, |s| {
                 // `body.connections != null` — null and absent both skip, an array (even empty)
                 // reorders.
@@ -407,11 +402,11 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
         put(
             |State(t): State<Arc<Tunnels>>,
              Path(kind): Path<String>,
-             body: Result<Json<Value>, JsonRejection>| async move {
+             body: crate::app::NodeBody| async move {
                 let Some(kind) = group_kind(&kind) else {
                     return unknown_list(&kind);
                 };
-                let body = body_or_null(body);
+                let body = body.0;
                 match with_store(&t, |s| {
                     s.set_groups(kind, body.get("groups").and_then(Value::as_array))
                 }) {
@@ -427,11 +422,11 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
         post(
             |State(t): State<Arc<Tunnels>>,
              Path(kind): Path<String>,
-             body: Result<Json<Value>, JsonRejection>| async move {
+             body: crate::app::NodeBody| async move {
                 let Some(kind) = group_kind(&kind) else {
                     return unknown_list(&kind);
                 };
-                let body = body_or_null(body);
+                let body = body.0;
                 let from = body
                     .get("from")
                     .and_then(Value::as_str)
@@ -457,11 +452,11 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
         put(
             |State(t): State<Arc<Tunnels>>,
              Path((kind, id)): Path<(String, String)>,
-             body: Result<Json<Value>, JsonRejection>| async move {
+             body: crate::app::NodeBody| async move {
                 let Some(kind) = group_kind(&kind) else {
                     return unknown_list(&kind);
                 };
-                let body = body_or_null(body);
+                let body = body.0;
                 match with_store(&t, |s| s.set_group(kind, &id, body.get("group"))) {
                     Ok(group) => admin_json(StatusCode::OK, json!({ "group": group })),
                     Err(err) => fail_str(&err),
@@ -524,8 +519,8 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
     r = r.route(
         "/api/tunnels/connections",
         post(
-            |State(t): State<Arc<Tunnels>>, body: Result<Json<Value>, JsonRejection>| async move {
-                let body = body_or_null(body);
+            |State(t): State<Arc<Tunnels>>, body: crate::app::NodeBody| async move {
+                let body = body.0;
                 let input = match body.as_object() {
                     Some(obj) => conn_input(&unmask_conn(obj, None)),
                     None => conn_input(&Map::new()),
@@ -546,7 +541,7 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
         put(
             |State(t): State<Arc<Tunnels>>,
              Path(id): Path<String>,
-             body: Result<Json<Value>, JsonRejection>| async move {
+             body: crate::app::NodeBody| async move {
                 let current = with_store(&t, |s| s.connection(&id));
                 let Some(current) = current else {
                     return admin_error(
@@ -554,7 +549,7 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
                         &format!("unknown SSH connection: {id}"),
                     );
                 };
-                let body = body_or_null(body);
+                let body = body.0;
                 let input = match body.as_object() {
                     Some(obj) => conn_input(&unmask_conn(obj, Some(&current))),
                     None => conn_input(&Map::new()),
@@ -609,8 +604,8 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
     r = r.route(
         "/api/tunnels/rules",
         post(
-            |State(t): State<Arc<Tunnels>>, body: Result<Json<Value>, JsonRejection>| async move {
-                let body = body_or_null(body);
+            |State(t): State<Arc<Tunnels>>, body: crate::app::NodeBody| async move {
+                let body = body.0;
                 let input = rule_input(&body);
                 let id = match with_store(&t, |s| s.add_rule(&input)) {
                     Ok(def) => def.id,
@@ -636,11 +631,11 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
         put(
             |State(t): State<Arc<Tunnels>>,
              Path(id): Path<String>,
-             body: Result<Json<Value>, JsonRejection>| async move {
+             body: crate::app::NodeBody| async move {
                 if with_store(&t, |s| s.rule(&id)).is_none() {
                     return admin_error(StatusCode::NOT_FOUND, &format!("unknown rule: {id}"));
                 }
-                let body = body_or_null(body);
+                let body = body.0;
                 let input = rule_input(&body);
                 if let Err(err) = t.manager.apply_rule_update(&id, &input).await {
                     return fail(&err);
@@ -734,8 +729,8 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
         post(
             |State(t): State<Arc<Tunnels>>,
              Query(q): Query<HashMap<String, String>>,
-             body: Result<Json<Value>, JsonRejection>| async move {
-                let body = body_or_null(body);
+             body: crate::app::NodeBody| async move {
+                let body = body.0;
                 match t.manager.stop_all(wants_force(&q, &body)).await {
                     Ok(results) => {
                         let rows: Vec<Value> = results.iter().map(|r| r.to_json()).collect();

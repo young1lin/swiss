@@ -62,7 +62,8 @@ fn tools() -> Vec<ToolDef> {
             description: format!(
                 "Run a SQL statement (SELECT / INSERT / UPDATE / DELETE / DDL, plus SHOW / DESCRIBE / EXPLAIN for \
                  schema and plans). Returns {{ rowCount, rows }} for a SELECT, or {{ affectedRows, insertId, \
-                 changedRows }} for DML/DDL. A SELECT written without its own LIMIT is capped at \
+                 changedRows }} for DML/DDL — affectedRows counts MATCHED rows on UPDATE, and changedRows is \
+                 always 0 in this build. A SELECT written without its own LIMIT is capped at \
                  {DEFAULT_ROW_LIMIT} rows and says so in the reply — raise `limit` or write your own \
                  LIMIT/OFFSET for more. NULL columns are omitted from each row (use DESCRIBE for the full \
                  column list), so on a wide table name the columns you need rather than SELECT *."
@@ -304,6 +305,16 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
             .ok()
             .flatten()
             .map(|t| json!(t.format("%H:%M:%S%.f").to_string()))
+            // MySQL TIME is also a DURATION: values outside a clock face (`-00:30:00`,
+            // `100:00:00`, down to `-838:59:59`) fall outside NaiveTime and decode fails —
+            // mysql2's dateStrings handed back the exact wire string for those. Fall through to
+            // the string form rather than dropping the cell.
+            .or_else(|| {
+                row.try_get::<Option<String>, _>(i)
+                    .ok()
+                    .flatten()
+                    .map(Value::String)
+            })
             .unwrap_or(Value::Null),
         "JSON" => row
             .try_get::<Option<Value>, _>(i)
@@ -330,10 +341,10 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
 pub fn mysql_row_to_value(row: &MySqlRow) -> Value {
     let mut map = Map::new();
     for (i, col) in row.columns().iter().enumerate() {
-        let value = column_to_value(row, col, i);
-        if !value.is_null() {
-            map.insert(col.name().to_string(), value);
-        }
+        // Nulls stay IN the row ("col": null): the grid, console and exports carried explicit
+        // nulls in the Node build, and only the MCP query tools prune — drop_null_columns at the
+        // tool layer removes a column that is null in EVERY row, exactly as mysql2 + Node did.
+        map.insert(col.name().to_string(), column_to_value(row, col, i));
     }
     Value::Object(map)
 }

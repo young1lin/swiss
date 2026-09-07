@@ -42,10 +42,74 @@ pub async fn run_gateway() -> Result<(), String> {
     // needs WMI for command lines, which is not ported — the ledger covers every child this
     // build spawns.)
     crate::proc_pids::set_proc_pid_file(crate::proc_pids::proc_pid_file(cfg.port));
-    crate::proc_pids::reap_proc_pids(std::process::id());
+    // Probe the port BEFORE reaping: the pid ledger is port-scoped, so a live gateway on this
+    // port shares the very file about to be swept — reaping under its feet would tree-kill ITS
+    // proc children. Something answering means this boot fails at bind anyway; the ledger stays
+    // with its live owner. (`0.0.0.0` is a bind-all, not a connectable peer.)
+    let probe_host = if cfg.host.is_empty() || cfg.host == "0.0.0.0" || cfg.host == "::" {
+        "127.0.0.1".to_string()
+    } else {
+        cfg.host.clone()
+    };
+    if tokio::net::TcpStream::connect((probe_host.as_str(), cfg.port))
+        .await
+        .is_ok()
+    {
+        log::warn(
+            "port is already in use — skipping the orphan-proc reap",
+            Some(json!({ "host": cfg.host, "port": cfg.port })),
+        );
+    } else {
+        crate::proc_pids::reap_proc_pids(std::process::id());
+    }
 
     let registry = Registry::new(15_000);
     let store = Arc::new(ManagedStore::open());
+
+    // Tunnels come up BEFORE the MCP registration loops (Node index.ts's order): an SSH
+    // handshake takes seconds and must never sit behind a slow MCP start, and an MCP whose
+    // database is only reachable through a tunnel gets its tunnel first. The store loads before
+    // requests are accepted so the panel sees persisted connections and rules.
+    let tunnel_store = Arc::new(std::sync::Mutex::new(crate::tunnel::TunnelStore::new(
+        crate::paths::data_path(&["tunnels.json"]),
+        cfg.port,
+    )));
+    // First run with no tunnels.json at all: adopt the forward-port config this gateway replaced
+    // (its rules become this store's first generation). Failure is logged, never fatal.
+    if let Ok(mut store) = tunnel_store.lock() {
+        if store.is_fresh() {
+            if let Some((rules, connections)) =
+                crate::tunnel::import::import_forward_port(&mut store, None)
+            {
+                log::log(
+                    "info",
+                    "imported forward-port tunnels on first run",
+                    Some(json!({ "rules": rules, "connections": connections })),
+                );
+            }
+        }
+    }
+    let tunnel_manager = crate::tunnel::TunnelManager::new(
+        tunnel_store.clone(),
+        Some(crate::tunnel::registry_view(registry.clone())),
+    );
+    let tunnels = Arc::new(crate::tunnel::Tunnels {
+        store: tunnel_store,
+        manager: tunnel_manager.clone(),
+        registry: Some(registry.clone()),
+    });
+    // Tunnel handshakes may take seconds or fail independently; never delay the gateway listener.
+    let tunnel_boot = tunnel_manager.clone();
+    tokio::spawn(async move {
+        for result in tunnel_boot.start_enabled().await {
+            if !result.ok {
+                log::warn(
+                    "tunnel boot failed",
+                    Some(json!({ "rule": result.name, "error": result.error })),
+                );
+            }
+        }
+    });
 
     // Register + start every config-defined MCP; one failure must not take down the rest.
     for (name, def) in cfg.servers.clone() {
@@ -114,52 +178,13 @@ pub async fn run_gateway() -> Result<(), String> {
         cfg.token_env.clone(),
         cfg.port,
     );
-
-    // Load tunnels before accepting requests so the panel sees persisted connections and rules.
-    let tunnel_store = Arc::new(std::sync::Mutex::new(crate::tunnel::TunnelStore::new(
-        crate::paths::data_path(&["tunnels.json"]),
-        cfg.port,
-    )));
-    // First run with no tunnels.json at all: adopt the forward-port config this gateway replaced
-    // (its rules become this store's first generation). Failure is logged, never fatal.
-    if let Ok(mut store) = tunnel_store.lock() {
-        if store.is_fresh() {
-            if let Some((rules, connections)) =
-                crate::tunnel::import::import_forward_port(&mut store, None)
-            {
-                log::log(
-                    "info",
-                    "imported forward-port tunnels on first run",
-                    Some(json!({ "rules": rules, "connections": connections })),
-                );
-            }
-        }
-    }
-    let tunnel_manager = crate::tunnel::TunnelManager::new(
-        tunnel_store.clone(),
-        Some(crate::tunnel::registry_view(registry.clone())),
-    );
-    let tunnels = Arc::new(crate::tunnel::Tunnels {
-        store: tunnel_store,
-        manager: tunnel_manager.clone(),
-        registry: Some(registry.clone()),
-    });
     if let Ok(mut links) = ctx.tunnel_links.write() {
         *links = Some(tunnel_manager.clone());
     }
-    // Tunnel handshakes may take seconds or fail independently; never delay the gateway listener.
-    let tunnel_boot = tunnels.manager.clone();
-    tokio::spawn(async move {
-        for result in tunnel_boot.start_enabled().await {
-            if !result.ok {
-                log::warn(
-                    "tunnel boot failed",
-                    Some(json!({ "rule": result.name, "error": result.error })),
-                );
-            }
-        }
-    });
-    let app = build_app(ctx.clone()).merge(crate::tunnel::api::mount(tunnels));
+    // Mounted INSIDE build_app's loopback guard: axum's layer() only covers routes present at
+    // the call, so merging the tunnel API after build_app would leave every /api/tunnels route
+    // outside the boundary — and the guard is the only auth that tree has.
+    let app = build_app(ctx.clone(), Some(crate::tunnel::api::mount(tunnels.clone())));
 
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port))
         .await

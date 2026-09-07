@@ -56,10 +56,16 @@ impl RedisBrowser for RedisDataBrowser {
             .and_then(Value::as_str)
             .unwrap_or("0")
             .to_string();
-        let count = match o.get("count").and_then(Value::as_i64) {
-            Some(n) => n.clamp(1, 1000),
-            None => 200,
-        };
+        // The route forwards query-string params as JSON strings; Node coerced with Number().
+        let count = o
+            .get("count")
+            .and_then(|v| match v {
+                Value::Number(n) => n.as_i64(),
+                Value::String(s) => s.trim().parse::<i64>().ok(),
+                _ => None,
+            })
+            .map(|n| n.clamp(1, 1000))
+            .unwrap_or(200);
         let pattern = o
             .get("pattern")
             .and_then(Value::as_str)

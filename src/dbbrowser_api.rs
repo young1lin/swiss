@@ -29,13 +29,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Extension;
-use axum::{Json, Router};
+use axum::Router;
 use serde_json::{json, Map, Value};
 
 use crate::app::{admin_error, admin_json};
@@ -156,17 +155,12 @@ fn coerced_str(body: &Value, k: &str) -> String {
     }
 }
 
-/// The request body the Node router handed every handler: parsed JSON when the client sent one,
-/// null when it did not.
-fn body_or_null(body: Result<Json<Value>, JsonRejection>) -> Value {
-    body.map(|Json(v)| v).unwrap_or(Value::Null)
-}
-
 /// Parse the filters query param (a JSON array of {column, op, value}). Structural validation
 /// only — unknown columns/operators are refused by build_filter_where inside the adapter, which
 /// keeps the rule next to the SQL it guards.
 fn parse_filters(raw: Option<&String>) -> Result<Option<Value>, Fail> {
-    let Some(raw) = raw else {
+    // Node's `if (!raw) return undefined`: absent AND present-but-empty both mean "not sent".
+    let Some(raw) = raw.filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
     let parsed: Value =
@@ -652,9 +646,9 @@ async fn export_route(
 async fn import_route(
     Extension(res): Extension<BrowseResolver>,
     Path(name): Path<String>,
-    body: Result<Json<Value>, JsonRejection>,
+    body: crate::app::NodeBody,
 ) -> Response {
-    reply(import(&res, &name, &body_or_null(body)).await)
+    reply(import(&res, &name, &body.0).await)
 }
 
 async fn collections_route(
@@ -684,9 +678,9 @@ async fn keys_route(
 async fn command_route(
     Extension(res): Extension<BrowseResolver>,
     Path(name): Path<String>,
-    body: Result<Json<Value>, JsonRejection>,
+    body: crate::app::NodeBody,
 ) -> Response {
-    reply(command(&res, &name, &body_or_null(body)).await)
+    reply(command(&res, &name, &body.0).await)
 }
 
 async fn key_route(
@@ -700,25 +694,25 @@ async fn key_route(
 async fn ddl_route(
     Extension(res): Extension<BrowseResolver>,
     Path(name): Path<String>,
-    body: Result<Json<Value>, JsonRejection>,
+    body: crate::app::NodeBody,
 ) -> Response {
-    reply(ddl(&res, &name, &body_or_null(body)).await)
+    reply(ddl(&res, &name, &body.0).await)
 }
 
 async fn query_route(
     Extension(res): Extension<BrowseResolver>,
     Path(name): Path<String>,
-    body: Result<Json<Value>, JsonRejection>,
+    body: crate::app::NodeBody,
 ) -> Response {
-    reply(query(&res, &name, &body_or_null(body)).await)
+    reply(query(&res, &name, &body.0).await)
 }
 
 async fn edits_route(
     Extension(res): Extension<BrowseResolver>,
     Path(name): Path<String>,
-    body: Result<Json<Value>, JsonRejection>,
+    body: crate::app::NodeBody,
 ) -> Response {
-    reply(edits(&res, &name, &body_or_null(body)).await)
+    reply(edits(&res, &name, &body.0).await)
 }
 
 /// Mount the /api/db routes — the port of Node's `mountDbBrowseApi`. Generic over the state so

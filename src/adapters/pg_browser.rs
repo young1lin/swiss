@@ -12,9 +12,9 @@ use super::pg::{
 use super::sql::{clamp_row_limit, limit_report, with_row_limit};
 use crate::dbbrowser::{
     browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    build_ddl_op_sql, build_edit_statements, build_pg_ddl, export_row_limit, map_import_rows,
-    to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn, BrowseForeignKey,
-    DbBrowser, DbDialect, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    build_ddl_op_sql, build_edit_statements, build_pg_ddl, export_row_limit, js_to_string,
+    map_import_rows, to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
+    BrowseForeignKey, DbBrowser, DbDialect, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
@@ -89,12 +89,14 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn list_tables(&self, o: &Value) -> Result<Value, String> {
-        let page = o.get("page").and_then(Value::as_i64).unwrap_or(0).max(0);
-        let limit = o
-            .get("limit")
-            .and_then(Value::as_i64)
-            .unwrap_or(200)
-            .clamp(1, 1000);
+        // Number()-style coercion: the route forwards query params as JSON strings.
+        let page = o
+            .get("page")
+            .and_then(crate::dbbrowser::js_number)
+            .map(f64::floor)
+            .unwrap_or(0.0)
+            .max(0.0) as i64;
+        let limit = crate::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
         let grep = o.get("grep").and_then(Value::as_str);
         let filters = pg_browse_table_params(grep);
         let list_params = vec![
@@ -109,9 +111,24 @@ impl DbBrowser for PgBrowser {
         );
         let list = list?;
         let total = total_of(&count?);
-        // Rows pass through with node-pg types intact: approx_rows is an exact string or null
-        // (never analyzed), size is pg_size_pretty's own text.
-        let tables: Vec<Value> = list.into_iter().map(Value::Object).collect();
+        // Node mapped the SQL rows to camelCase (pg.ts:320-326): schema/name/type stringify,
+        // approx_rows numbers or null (reltuples is -1 when never analyzed), size is
+        // pg_size_pretty's own text — the panel reads t.approxRows / t.size.
+        let tables: Vec<Value> = list
+            .into_iter()
+            .map(|r| {
+                json!({
+                    "schema": js_to_string(r.get("schema")),
+                    "name": js_to_string(r.get("name")),
+                    "type": js_to_string(r.get("type")),
+                    "approxRows": match r.get("approx_rows") {
+                        None | Some(Value::Null) => Value::Null,
+                        Some(v) => json!(crate::dbbrowser::js_number(v).map(f64::floor).unwrap_or(0.0)),
+                    },
+                    "size": js_to_string(r.get("size")),
+                })
+            })
+            .collect();
         let more = page.saturating_mul(limit) + (tables.len() as i64) < total;
         Ok(json!({"tables":tables,"total":total,"page":page,"limit":limit,"more":more}))
     }
@@ -133,18 +150,30 @@ impl DbBrowser for PgBrowser {
         )?;
         let offset = browse_offset(o.get("offset"));
         let limit = browse_page_size(o.get("limit"), 50);
+        // The grid's filters feed BOTH the page and the COUNT, on the same WHERE.
+        let filters = crate::dbbrowser::browse_filters_of(o.get("filters"));
+        let where_ = crate::dbbrowser::build_filter_where(
+            DbDialect::Pg,
+            &columns
+                .iter()
+                .map(|c| crate::dbbrowser::FilterColumn::Column(c.clone()))
+                .collect::<Vec<_>>(),
+            &filters,
+        )?;
+        let exprs = crate::dbbrowser::pg_typed_exprs(&columns)?;
         let rows_stmt = browse_rows_sql(
             DbDialect::Pg,
             Some(&schema),
             table,
-            &names,
+            &exprs,
             order.as_deref(),
             offset,
             limit,
-            "",
-            &[],
+            &where_.frag,
+            &where_.params,
         )?;
-        let count_stmt = browse_count_sql(DbDialect::Pg, Some(&schema), table, "", &[])?;
+        let count_stmt =
+            browse_count_sql(DbDialect::Pg, Some(&schema), table, &where_.frag, &where_.params)?;
         let (rows, count) = tokio::join!(
             self.query(&rows_stmt.sql, &rows_stmt.params),
             self.query(&count_stmt.sql, &count_stmt.params)
@@ -250,6 +279,8 @@ impl DbBrowser for PgBrowser {
             .and_then(Value::as_object)
             .map(|m| m.keys().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
+        // Driver limitation, accepted: `columns` derives from the first row, so a zero-row
+        // SELECT answers columns: [] — node-pg exposed RowDescription for the empty header.
         let row_count = rows.len();
         let mut out = Map::new();
         out.insert("columns".into(), json!(columns));
@@ -321,13 +352,14 @@ impl DbBrowser for PgBrowser {
         let mut capped = false;
         // Offset paging in chunks: simple, and the cap keeps the O(offset) tail-walk bounded.
         let mut offset = 0i64;
+        let exprs = crate::dbbrowser::pg_typed_exprs(&columns)?;
         while offset < cap {
             let chunk = EXPORT_CHUNK.min(cap - offset);
             let stmt = browse_rows_sql(
                 DbDialect::Pg,
                 Some(&schema),
                 table,
-                &names,
+                &exprs,
                 None,
                 offset,
                 chunk,

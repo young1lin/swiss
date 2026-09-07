@@ -216,6 +216,10 @@ impl Forward {
                         "tunnel listener error",
                         Some(json!({ "port": self.target.local_port, "err": msg })),
                     );
+                    // A persistently failing accept (fd exhaustion, a dying listener) fails
+                    // INSTANTLY, and without a beat here this loop would spin a full core; a
+                    // healthy listener never pays this sleep.
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
         }

@@ -101,7 +101,10 @@ impl AppContext {
         ctx
     }
 
-    /// Build the database-browser view from the current registry entries.
+    /// Build the database-browser view from the current registry entries — one row per REGISTERED
+    /// MCP, browsable or not: the seam's lookups distinguish "unknown MCP" from Node's
+    /// "MCP 'x' (echo) has no database to browse" by finding the row (GET /api/db skips the
+    /// browser-less ones when listing).
     pub fn browser_resolver(self: &Arc<Self>) -> crate::dbbrowser_api::BrowseResolver {
         let registry = self.registry.clone();
         Arc::new(move || {
@@ -110,7 +113,6 @@ impl AppContext {
                 .into_iter()
                 .filter_map(|entry| {
                     let data = entry.data.read().ok()?;
-                    let browser = data.adapter.browser()?;
                     Some(Arc::new(crate::dbbrowser_api::BrowsableConnection {
                         name: data.name.clone(),
                         adapter_type: data.def.type_().to_string(),
@@ -119,7 +121,10 @@ impl AppContext {
                         } else {
                             data.lifecycle.as_str().to_string()
                         },
-                        browser,
+                        browser: data
+                            .adapter
+                            .browser()
+                            .unwrap_or(crate::dbbrowser_api::BrowserFlavor::None),
                     }))
                 })
                 .collect()
@@ -189,6 +194,50 @@ pub fn admin_error(status: StatusCode, message: &str) -> Response {
 
 pub fn admin_json(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
+}
+
+/// The request body the Node router handed every handler: parsed JSON, or nothing when the client
+/// sent no bytes (`undefined` there, [`Value::Null`] here — `Value::get` reads both the same).
+/// A body that IS present but does not parse is refused before the handler runs, in Node's shape:
+/// `readJsonBody` rejected `{error: "invalid JSON body: …"}` with a 400, and a body over
+/// BODY_LIMIT rejected 413 `request body exceeds N bytes`.
+///
+/// Unlike axum's `Json` extractor this ignores Content-Type — Node parsed the bytes whatever
+/// header the client sent (or none), and the panel sometimes posts without it.
+pub struct NodeBody(pub Value);
+
+pub struct NodeBodyRejection(Response);
+
+impl IntoResponse for NodeBodyRejection {
+    fn into_response(self) -> Response {
+        self.0
+    }
+}
+
+impl<S: Send + Sync> axum::extract::FromRequest<S> for NodeBody {
+    type Rejection = NodeBodyRejection;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let bytes = axum::body::Bytes::from_request(req, state)
+            .await
+            .map_err(|_| {
+                // Bytes::from_request fails for one reason: the router's body limit.
+                NodeBodyRejection(admin_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    &format!("request body exceeds {BODY_LIMIT} bytes"),
+                ))
+            })?;
+        if bytes.is_empty() {
+            return Ok(NodeBody(Value::Null));
+        }
+        match serde_json::from_slice::<Value>(&bytes) {
+            Ok(value) => Ok(NodeBody(value)),
+            Err(err) => Err(NodeBodyRejection(admin_error(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid JSON body: {err}"),
+            ))),
+        }
+    }
 }
 
 /// The bearer gate. Runs BEFORE the request body is read: an MCP POST can carry up to BODY_LIMIT
@@ -286,7 +335,10 @@ async fn mcp_delete(
     headers: HeaderMap,
 ) -> Response {
     if verify_bearer(&ctx, &headers).is_none() {
-        return json_rpc_error(StatusCode::UNAUTHORIZED, "Unauthorized");
+        // The pre-body refusal shape — Node's `wrapped.refuse` fast path answered
+        // `{error:"Unauthorized"}`, not JSON-RPC (the SDK-era jsonError only fired once the
+        // handler itself ran, past this gate).
+        return admin_error(StatusCode::UNAUTHORIZED, "Unauthorized");
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -301,7 +353,8 @@ async fn mcp_post(
 ) -> Response {
     let t0 = Instant::now();
     let client = match verify_bearer(&ctx, req.headers()) {
-        None => return json_rpc_error(StatusCode::UNAUTHORIZED, "Unauthorized"),
+        // Pre-body refusal, in Node's `wrapped.refuse` shape — see mcp_delete.
+        None => return admin_error(StatusCode::UNAUTHORIZED, "Unauthorized"),
         Some(rec) => rec,
     };
     let Some(entry) = ctx.registry.get(&name) else {
@@ -356,13 +409,19 @@ async fn mcp_post(
 
     // Capture the bytes written as the HTTP response body (clipped) so the traffic log can
     // record what was answered, not only what was asked. Buffered whole: a stateless-mode reply
-    // is one JSON body, bounded by the adapters' own render caps.
+    // is one JSON body, bounded by the adapters' own render caps. A body that cannot be read
+    // back (over the 16 MB cap) cannot be replayed either: re-emitting the ORIGINAL headers
+    // with an empty body would hand the client a 200 with a truncated payload, so the honest
+    // answer is an error of our own.
     let (parts, body) = response.into_parts();
     let response_bytes = match axum::body::to_bytes(body, 16 * 1024 * 1024).await {
         Ok(b) => b,
-        Err(_) => axum::body::to_bytes(Body::empty(), 0)
-            .await
-            .unwrap_or_default(),
+        Err(err) => {
+            return admin_error(
+                StatusCode::BAD_GATEWAY,
+                &format!("response body could not be captured: {err}"),
+            )
+        }
     };
     let captured_prefix: Vec<u8> = response_bytes
         .iter()
@@ -404,7 +463,13 @@ async fn fallback_404(req: Request) -> Response {
 /// Build the gateway router. The caller serves it with
 /// `into_make_service_with_connect_info::<SocketAddr>()` — the loopback guard needs the peer
 /// address.
-pub fn build_app(ctx: Arc<AppContext>) -> Router {
+///
+/// `extra` carries a stateless router to mount alongside the rest (the tunnel API, its own
+/// state already applied). axum's `Router::layer` covers only routes present at the call, so
+/// the extra tree gets its OWN copy of the loopback guard and the body limit below — merging
+/// it unguarded would leave every /api/tunnels route outside the boundary, and the guard is
+/// the only auth that tree has.
+pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
     let mcp_routes = Router::new().route(
         "/{path}",
         // No GET on an MCP path: the modern protocol serves notifications through the client's
@@ -413,7 +478,8 @@ pub fn build_app(ctx: Arc<AppContext>) -> Router {
         post(mcp_post).delete(mcp_delete).get(fallback_404),
     );
 
-    Router::new()
+    let guard_ctx = ctx.clone();
+    let app = Router::new()
         .route("/", get(panel_root))
         .route("/admin/{*path}", get(panel_asset))
         .route("/health", get(health))
@@ -422,12 +488,21 @@ pub fn build_app(ctx: Arc<AppContext>) -> Router {
             ctx.browser_resolver(),
         ))
         .merge(crate::adminapi::mount(ctx.clone()))
+        // Before the MCP catch-all, which would otherwise swallow /api/tunnels.
         .merge(mcp_routes)
         .fallback(fallback_404)
         // A path that exists under another method answers 404 in the Node build (its router
         // matched method+pattern together), not axum's default 405.
         .method_not_allowed_fallback(fallback_404)
-        .layer(middleware::from_fn_with_state(ctx.clone(), loopback_guard))
+        .layer(middleware::from_fn_with_state(guard_ctx.clone(), loopback_guard))
         .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT))
-        .with_state(ctx)
+        .with_state(ctx);
+    match extra {
+        Some(extra) => app.merge(
+            extra
+                .layer(middleware::from_fn_with_state(guard_ctx, loopback_guard))
+                .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT)),
+        ),
+        None => app,
+    }
 }

@@ -384,10 +384,10 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
 pub fn pg_row_to_value(row: &PgRow) -> Value {
     let mut map = Map::new();
     for (i, col) in row.columns().iter().enumerate() {
-        let value = column_to_value(row, col, i);
-        if !value.is_null() {
-            map.insert(col.name().to_string(), value);
-        }
+        // Nulls stay IN the row ("col": null): the grid, console and exports carried explicit
+        // nulls in the Node build, and only the MCP query tools prune — drop_null_columns at the
+        // tool layer removes a column that is null in EVERY row, exactly as node-pg + Node did.
+        map.insert(col.name().to_string(), column_to_value(row, col, i));
     }
     Value::Object(map)
 }
@@ -402,21 +402,70 @@ pub struct PgGroup {
 
 /// Split a possibly multi-statement string into its statements, on MASKED semicolons only, and
 /// report each statement's leading word — node-pg's `command` was the first word of the
-/// completion tag, which matches the statement's own first word in every shape this labels.
+/// completion tag, which matches the statement's own first word in every shape this labels,
+/// except a CTE header: `WITH x AS (…) SELECT` tags SELECT (the MAIN statement's verb).
 fn split_statement_labels(sql: &str) -> Vec<String> {
     let masked = super::sql::mask_statement(sql);
     let labels = masked
         .split(';')
         .filter(|s| !s.trim().is_empty())
         .map(|s| {
-            s.trim()
+            let label: String = s
+                .trim()
                 .chars()
                 .take_while(|c| c.is_ascii_alphabetic())
                 .collect::<String>()
-                .to_ascii_uppercase()
+                .to_ascii_uppercase();
+            if label == "WITH" {
+                if let Some(verb) = cte_main_verb(s) {
+                    return verb.to_ascii_uppercase();
+                }
+            }
+            label
         })
         .collect::<Vec<_>>();
     labels
+}
+
+/// The main statement's verb in a CTE header: the first data verb at parenthesis depth 0 after
+/// the CTE list's closing parenthesis. (The "last verb in the text" heuristic mislabels
+/// `WITH … INSERT INTO u SELECT *` — INSERT is the head there; the trailing SELECT only feeds
+/// it. The statement arrives MASKED, so parens inside literals cannot confuse the depth count.)
+fn cte_main_verb(stmt: &str) -> Option<&'static str> {
+    const VERBS: [&str; 5] = ["select", "insert", "update", "delete", "merge"];
+    let bytes = stmt.as_bytes();
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut depth = 0usize;
+    let mut cte_closed = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'(' {
+            depth += 1;
+            continue;
+        }
+        if b == b')' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                cte_closed = true;
+            }
+            continue;
+        }
+        if depth != 0 || !cte_closed {
+            continue;
+        }
+        if i > 0 && is_word(bytes[i - 1]) {
+            continue; // mid-word, not a verb head
+        }
+        for verb in VERBS {
+            let end = i + verb.len();
+            if bytes.len() >= end
+                && bytes[i..end].eq_ignore_ascii_case(verb.as_bytes())
+                && (end >= bytes.len() || !is_word(bytes[end]))
+            {
+                return Some(verb);
+            }
+        }
+    }
+    None
 }
 
 /// Run one (possibly multi-statement) string over the simple protocol — the port of
@@ -840,9 +889,15 @@ mod tests {
             split_statement_labels("UPDATE t SET x=1; select 'a;b'"),
             vec!["UPDATE", "SELECT"]
         );
+        // node-pg's command was the completion tag's word — the MAIN statement's verb, so a
+        // CTE header labels as its reader, not as WITH.
         assert_eq!(
             split_statement_labels("with x as (select 1) select * from x"),
-            vec!["WITH"]
+            vec!["SELECT"]
+        );
+        assert_eq!(
+            split_statement_labels("WITH moved AS (DELETE FROM t RETURNING *) INSERT INTO u SELECT * FROM moved"),
+            vec!["INSERT"]
         );
     }
 }

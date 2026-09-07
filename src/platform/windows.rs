@@ -245,12 +245,16 @@ pub fn pid_alive(pid: u32) -> bool {
 /// `own_pid` and every descendant (any process type), via the Toolhelp parent->child walk —
 /// the direct replacement for the Node build's PowerShell CIM query. A reaper uses it to refuse
 /// to touch a stale-ledger pid the OS has since handed to one of THIS instance's own children.
-pub fn descendant_pids(own_pid: u32) -> Vec<u32> {
+///
+/// `None` = the process snapshot itself failed, so the tree is UNKNOWN. Callers fail closed on
+/// it (the reaper skips the whole sweep): a walk that under-reports would let a reaper kill a
+/// live child of this very instance, which is the one outcome worse than leaving an orphan.
+pub fn descendant_pids(own_pid: u32) -> Option<Vec<u32>> {
     // SAFETY: the snapshot handle is closed on every path; PROCESSENTRY32W is initialized with
     // its own size as the API requires.
     unsafe {
         let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
-            return vec![own_pid]; // no snapshot — degrade to "only self", safe (reaps nothing extra)
+            return None; // no snapshot — the caller must not guess at the tree
         };
         let mut parents: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         let mut entry = PROCESSENTRY32W {
@@ -280,7 +284,7 @@ pub fn descendant_pids(own_pid: u32) -> Vec<u32> {
                 }
             }
         }
-        tree.into_iter().collect()
+        Some(tree.into_iter().collect())
     }
 }
 
@@ -291,7 +295,11 @@ pub fn descendant_pids(own_pid: u32) -> Vec<u32> {
 /// the same snapshot walk — no subprocess.
 pub fn tree_kill(pid: u32) {
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
-    for victim in descendant_pids(pid) {
+    // An unknown tree still kills the root itself (it was named explicitly); only the un-walked
+    // descendants are at risk of leaking, and the proc children's kill-on-close job object is
+    // the backstop for exactly that.
+    let victims = descendant_pids(pid).unwrap_or_else(|| vec![pid]);
+    for victim in victims {
         if victim == std::process::id() {
             continue; // a corrupted snapshot edge must never turn this into suicide
         }

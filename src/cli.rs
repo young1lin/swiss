@@ -269,6 +269,23 @@ pub fn render_status(st: &StatusResult) -> String {
     lines.join("\n")
 }
 
+/// A daemon started out of the npx cache stops being restartable as soon as that cache turns
+/// over, which is exactly the failure you do not want from something you expect to be running.
+/// (Node's cli.ts printed the same three lines before startDaemon; both start and restart
+/// spawn one, so both warn.)
+fn warn_if_npx_cache(io: &dyn Io) {
+    let entry = crate::daemon::server_entry();
+    if crate::daemon::is_npx_cache_path(&entry) {
+        io.err(&format!(
+            "warning: running from npm's npx cache ({}).",
+            entry.display()
+        ));
+        io.err("         That directory is version-keyed and cleared on update, so this daemon will");
+        io.err("         not survive it. Install it properly instead: npm i -g <package>");
+        io.err("");
+    }
+}
+
 fn report_start(r: StartResult, io: &dyn Io) -> i32 {
     match r {
         StartResult::AlreadyRunning { pid, url, .. } => {
@@ -366,6 +383,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
                 ops.foreground(p.port).await;
                 return 0;
             }
+            warn_if_npx_cache(io);
             let r = ops
                 .start(StartOptions {
                     port: p.port,
@@ -411,6 +429,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             if let StopResult::Refused { .. } = &stopped {
                 return report_stop(stopped, io);
             }
+            warn_if_npx_cache(io);
             let r = ops
                 .start(StartOptions {
                     port: p.port,

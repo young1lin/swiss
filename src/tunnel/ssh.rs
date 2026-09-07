@@ -154,11 +154,19 @@ impl Handler for ClientHandler {
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         let trimmed = banner.trim();
-        let mut cut = trimmed;
-        if cut.len() > 200 {
-            cut = &cut[..200];
-        }
-        *self.banner.lock().unwrap_or_else(|e| e.into_inner()) = Some(cut.to_string());
+        // Cap at 200 bytes but never mid-character: a multi-byte banner (a Chinese MOTD is the
+        // common case) sliced at a byte boundary panics — and under `panic = "abort"` one banner
+        // would take the whole gateway down.
+        let cut: String = if trimmed.len() > 200 {
+            trimmed
+                .char_indices()
+                .take_while(|(i, _)| *i <= 200)
+                .map(|(_, c)| c)
+                .collect()
+        } else {
+            trimmed.to_string()
+        };
+        *self.banner.lock().unwrap_or_else(|e| e.into_inner()) = Some(cut);
         Ok(())
     }
 }
@@ -203,6 +211,15 @@ impl SshConnection {
 
     pub fn state(&self) -> ConnState {
         *self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The connection id from the live def — the map key this client is filed under.
+    pub fn id(&self) -> String {
+        self.def
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .id
+            .clone()
     }
 
     pub fn reason(&self) -> Option<String> {

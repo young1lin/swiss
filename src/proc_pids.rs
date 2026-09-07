@@ -143,7 +143,17 @@ fn reap_in(file: &Path, own_pid: u32) -> Vec<u32> {
     if pids.is_empty() {
         return Vec::new(); // nothing recorded -> nothing to reap, and no descendant walk
     }
-    let mine: std::collections::HashSet<u32> = descendant_pids(own_pid).into_iter().collect();
+    // Fail CLOSED on an unknown tree: without the descendant set the PID-reuse guard below is a
+    // guess, and guessing wrong kills a live child of THIS instance. The orphans stay for the
+    // next boot — the lesser evil by far.
+    let Some(descendants) = descendant_pids(own_pid) else {
+        log::error(
+            "process snapshot failed — skipping the orphan-proc reap this boot",
+            None,
+        );
+        return Vec::new();
+    };
+    let mine: std::collections::HashSet<u32> = descendants.into_iter().collect();
     let mut killed = Vec::new();
     for pid in pids {
         if mine.contains(&pid) {

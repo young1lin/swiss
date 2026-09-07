@@ -11,12 +11,11 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
+use axum::Router;
 use serde_json::{json, Map, Value};
 
 use crate::adapters::make_adapter;
@@ -334,13 +333,6 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
 
 // --- shared route plumbing ----------------------------------------------------------------------
 
-/// The request body the Node router handed every handler: parsed JSON when the client sent one,
-/// null when it did not (an invalid body is tolerated the same way the Node router's readJsonBody
-/// errors were not — those answered 400; here the handler-level validation reports the shape).
-fn body_or_null(body: Result<Json<Value>, JsonRejection>) -> Value {
-    body.map(|Json(v)| v).unwrap_or(Value::Null)
-}
-
 /// The lifecycle string after a lifecycle operation — `registry.get(name)?.lifecycle`.
 fn lifecycle_of(ctx: &AppContext, name: &str) -> Value {
     ctx.registry
@@ -411,8 +403,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             admin_json(StatusCode::OK, json!({ "tokens": tokens, "tokenEnv": ctx.token_env }))
         })
         .post(
-            |State(ctx): State<Arc<AppContext>>, body: Result<Json<Value>, JsonRejection>| async move {
-                let body = body_or_null(body);
+            |State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+                let body = body.0;
                 let label = body.get("label").and_then(Value::as_str).unwrap_or("").to_string();
                 let rec = ctx.tokens.create(&label);
                 log::log(
@@ -532,8 +524,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // from the list are appended by GET /api/mcps in name order, so a fresh MCP never vanishes.
     r = r.route(
         "/api/order",
-        put(|State(ctx): State<Arc<AppContext>>, body: Result<Json<Value>, JsonRejection>| async move {
-            let body = body_or_null(body);
+        put(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+            let body = body.0;
             let Some(order) = body.get("order").and_then(Value::as_array) else {
                 return admin_error(StatusCode::BAD_REQUEST, "order must be an array of MCP names");
             };
@@ -553,8 +545,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // the store returns its MCPs to the default group.
     r = r.route(
         "/api/groups",
-        put(|State(ctx): State<Arc<AppContext>>, body: Result<Json<Value>, JsonRejection>| async move {
-            let body = body_or_null(body);
+        put(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+            let body = body.0;
             let Some(groups) = body.get("groups").and_then(Value::as_array) else {
                 return admin_error(StatusCode::BAD_REQUEST, "groups must be an array of group names");
             };
@@ -576,8 +568,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         post(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: Result<Json<Value>, JsonRejection>| async move {
-                let body = body_or_null(body);
+             body: crate::app::NodeBody| async move {
+                let body = body.0;
                 let to = body
                     .get("name")
                     .and_then(Value::as_str)
@@ -609,11 +601,11 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         put(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: Result<Json<Value>, JsonRejection>| async move {
+             body: crate::app::NodeBody| async move {
                 if !ctx.registry.has(&name) {
                     return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
                 }
-                let body = body_or_null(body);
+                let body = body.0;
                 let raw = body.get("group");
                 match raw {
                     None | Some(Value::Null) => {}
@@ -650,7 +642,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 .iter()
                 .filter_map(|entry| {
                     let d = entry.data.read().ok()?;
-                    Some(json!({
+                    let mut row = json!({
                         "name": d.name,
                         "source": d.source.as_str(),
                         "type": d.adapter.kind(),
@@ -660,13 +652,32 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                         "description": d.def.get_str("description").unwrap_or_default(),
                         "lifecycle": d.lifecycle.as_str(),
                         "state": if d.lifecycle == Lifecycle::Started { d.status.as_str() } else { d.lifecycle.as_str() },
-                        "latencyMs": d.latency_ms,
-                        "lastCheck": d.last_check,
-                        "reason": if d.lifecycle == Lifecycle::Error { d.error.clone() } else { d.last_error.clone() },
-                        "startedAt": d.started_at,
                         // The sidebar group. Always a real name — an unassigned MCP answers "default".
                         "group": ctx.store.group_of(&d.name),
-                    }))
+                    });
+                    // Node's `latencyMs: e.latencyMs` etc. — an `undefined` field drops out of
+                    // JSON.stringify, so these keys are absent (never null) until they have a
+                    // value.
+                    if let Some(obj) = row.as_object_mut() {
+                        if let Some(v) = d.latency_ms {
+                            obj.insert("latencyMs".into(), json!(v));
+                        }
+                        if let Some(v) = d.last_check.clone() {
+                            obj.insert("lastCheck".into(), json!(v));
+                        }
+                        let reason = if d.lifecycle == Lifecycle::Error {
+                            d.error.clone()
+                        } else {
+                            d.last_error.clone()
+                        };
+                        if let Some(v) = reason {
+                            obj.insert("reason".into(), json!(v));
+                        }
+                        if let Some(v) = d.started_at.clone() {
+                            obj.insert("startedAt".into(), json!(v));
+                        }
+                    }
+                    Some(row)
                 })
                 .collect();
             // The panel-defined order first; everything the user has never positioned falls back
@@ -690,8 +701,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             });
             admin_json(StatusCode::OK, json!({ "mcps": rows, "groups": ctx.store.get_groups() }))
         })
-        .post(|State(ctx): State<Arc<AppContext>>, body: Result<Json<Value>, JsonRejection>| async move {
-            let body = body_or_null(body);
+        .post(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+            let body = body.0;
             let name = body.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
             if !name_ok(&name) {
                 return admin_error(
@@ -723,15 +734,17 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // overwritten.
     r = r.route(
         "/api/mcps/import",
-        post(|State(ctx): State<Arc<AppContext>>, body: Result<Json<Value>, JsonRejection>| async move {
-            let body = body_or_null(body);
+        post(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+            let body = body.0;
             let mut taken: std::collections::HashSet<String> = ctx.registry.names().into_iter().collect();
             for m in ctx.store.all() {
                 taken.insert(m.name.clone());
             }
             let plan = match crate::mcp_import::plan_mcp_import(&body, &taken, ctx.port) {
                 Ok(plan) => plan,
-                Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
+                // Node's handler let planMcpImport throw into the router's catch-all, which
+                // answered 500 {error} — structural surprises are server errors there, not 400s.
+                Err(err) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
             };
             let mut imported: Vec<Value> = Vec::new();
             let mut skipped: Vec<Value> = plan
@@ -766,10 +779,10 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     //   error does not.
     r = r.route(
         "/api/mcps/test",
-        post(|State(_ctx): State<Arc<AppContext>>, body: Result<Json<Value>, JsonRejection>| async move {
+        post(|State(_ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
             const TESTABLE_TYPES: [&str; 6] = ["mysql", "redis", "pg", "mongo", "http", "rest"];
             const TEST_TIMEOUT_MS: u64 = 5000;
-            let body = body_or_null(body);
+            let body = body.0;
             let type_ = body.get("type").and_then(Value::as_str).unwrap_or("").to_string();
             if !TESTABLE_TYPES.contains(&type_.as_str()) {
                 return admin_error(
@@ -968,8 +981,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         post(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: Result<Json<Value>, JsonRejection>| async move {
-                let body = body_or_null(body);
+             body: crate::app::NodeBody| async move {
+                let body = body.0;
                 let new_name = body
                     .get("name")
                     .and_then(Value::as_str)
@@ -1031,7 +1044,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             }
             admin_json(StatusCode::OK, json!({ "name": name, "deleted": true }))
         })
-        .put(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: Result<Json<Value>, JsonRejection>| async move {
+        .put(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: crate::app::NodeBody| async move {
             // Edit an MCP's config and restart it. Managed MCPs persist to managed.json;
             // config-file MCPs persist as an override (also managed.json), so the committed
             // gateway.config.json keeps its ${ENV} refs — an override stores the reference
@@ -1040,7 +1053,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
             };
             let current = entry.data.read().ok().map(|d| d.def.clone());
-            let body = body_or_null(body);
+            let body = body.0;
             let unmasked = match body.as_object() {
                 Some(obj) => unmask_body(obj, current.as_ref()),
                 None => Map::new(),
@@ -1087,20 +1100,26 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             // Tunnels this MCP's traffic depends on. When a health check fails, the answer to "is
             // it the tunnel or the database?" belongs on the same screen as the failure.
             let tunnels = tunnel_links(&ctx).map(|l| l.tunnels_for_mcp(&d.name)).unwrap_or_default();
-            admin_json(
-                StatusCode::OK,
-                json!({
-                    "name": d.name,
-                    "source": d.source.as_str(),
-                    "type": d.adapter.kind(),
-                    "lifecycle": d.lifecycle.as_str(),
-                    "state": if d.lifecycle == Lifecycle::Started { d.status.as_str() } else { d.lifecycle.as_str() },
-                    "reason": if d.lifecycle == Lifecycle::Error { d.error.clone() } else { d.last_error.clone() },
-                    "logs": d.adapter.logs().unwrap_or_default(),
-                    "config": serde_json::to_value(mask_def(&d.def)).unwrap_or(Value::Null),
-                    "tunnels": tunnels,
-                }),
-            )
+            let mut body = json!({
+                "name": d.name,
+                "source": d.source.as_str(),
+                "type": d.adapter.kind(),
+                "lifecycle": d.lifecycle.as_str(),
+                "state": if d.lifecycle == Lifecycle::Started { d.status.as_str() } else { d.lifecycle.as_str() },
+                "logs": d.adapter.logs().unwrap_or_default(),
+                "config": serde_json::to_value(mask_def(&d.def)).unwrap_or(Value::Null),
+                "tunnels": tunnels,
+            });
+            // `reason` is absent, never null, until there is one (JSON.stringify drops undefined).
+            let reason = if d.lifecycle == Lifecycle::Error {
+                d.error.clone()
+            } else {
+                d.last_error.clone()
+            };
+            if let (Some(obj), Some(reason)) = (body.as_object_mut(), reason) {
+                obj.insert("reason".into(), json!(reason));
+            }
+            admin_json(StatusCode::OK, body)
         }),
     );
 
@@ -1206,7 +1225,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // handed to the browser.
     r = r.route(
         "/api/mcps/{name}/call",
-        post(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: Result<Json<Value>, JsonRejection>| async move {
+        post(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: crate::app::NodeBody| async move {
             let Some(entry) = ctx.registry.get(&name) else {
                 return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
             };
@@ -1215,7 +1234,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 return admin_error(StatusCode::SERVICE_UNAVAILABLE, &format!("MCP '{name}' is not started"));
             };
             ctx.registry.note_activity(&name); // a panel run is traffic — it keeps a lazy proc's child alive
-            let body = body_or_null(body);
+            let body = body.0;
             let tool = body.get("tool").and_then(Value::as_str).unwrap_or("").trim().to_string();
             if tool.is_empty() {
                 return admin_error(StatusCode::BAD_REQUEST, "tool is required");
@@ -1256,7 +1275,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // primitive. Same reasoning as /call: the browser never holds the gateway token.
     r = r.route(
         "/api/mcps/{name}/resource",
-        post(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: Result<Json<Value>, JsonRejection>| async move {
+        post(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: crate::app::NodeBody| async move {
             let Some(entry) = ctx.registry.get(&name) else {
                 return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
             };
@@ -1265,7 +1284,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 return admin_error(StatusCode::SERVICE_UNAVAILABLE, &format!("MCP '{name}' is not started"));
             };
             ctx.registry.note_activity(&name); // reading a resource is traffic too
-            let body = body_or_null(body);
+            let body = body.0;
             let uri = body.get("uri").and_then(Value::as_str).unwrap_or("").trim().to_string();
             if uri.is_empty() {
                 return admin_error(StatusCode::BAD_REQUEST, "uri is required");
@@ -1293,15 +1312,19 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                         })
                         .collect::<Vec<_>>()
                         .join("\n\n");
-                    admin_json(
-                        StatusCode::OK,
-                        json!({
-                            "ok": true,
-                            "ms": t0.elapsed().as_millis() as u64,
-                            "mimeType": contents.first().and_then(|c| c.get("mimeType")).cloned().unwrap_or(Value::Null),
-                            "text": text,
-                        }),
-                    )
+                    let mut body = json!({
+                        "ok": true,
+                        "ms": t0.elapsed().as_millis() as u64,
+                        "text": text,
+                    });
+                    // mimeType rides the FIRST content block and is absent when it carries none
+                    // (Node read `contents[0]?.mimeType` — undefined drops out of the JSON).
+                    if let Some(mime) = contents.first().and_then(|c| c.get("mimeType")) {
+                        if let Some(obj) = body.as_object_mut() {
+                            obj.insert("mimeType".into(), mime.clone());
+                        }
+                    }
+                    admin_json(StatusCode::OK, body)
                 }
                 // A URI that names nothing is the interesting answer here, not a transport
                 // failure.
@@ -1321,7 +1344,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         post(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: Result<Json<Value>, JsonRejection>| async move {
+             body: crate::app::NodeBody| async move {
                 let Some(entry) = ctx.registry.get(&name) else {
                     return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
                 };
@@ -1335,16 +1358,18 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                         &format!("resource toggle is not supported for MCP type '{type_}'"),
                     );
                 };
-                let body = body_or_null(body);
+                let body = body.0;
                 let on = body.get("enabled").map(as_bool).unwrap_or(true);
                 let was = toggle.load(std::sync::atomic::Ordering::SeqCst);
                 if on == was {
                     return admin_json(StatusCode::OK, json!({ "enabled": on, "unchanged": true }));
                 }
-                toggle.store(on, std::sync::atomic::Ordering::SeqCst);
+                // Persist BEFORE mutating the live flag: a failed write must not leave the
+                // in-memory state diverged from what the next boot restores.
                 if let Err(err) = ctx.store.set_resource_enabled(&name, on) {
                     return admin_error(StatusCode::BAD_REQUEST, &err);
                 }
+                toggle.store(on, std::sync::atomic::Ordering::SeqCst);
                 if let Ok(mut d) = entry.data.write() {
                     d.res_page = None; // the cached list no longer matches
                 }
@@ -1358,7 +1383,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // one.
     r = r.route(
         "/api/mcps/{name}/tools/{tool}",
-        post(|State(ctx): State<Arc<AppContext>>, Path((name, tool)): Path<(String, String)>, body: Result<Json<Value>, JsonRejection>| async move {
+        post(|State(ctx): State<Arc<AppContext>>, Path((name, tool)): Path<(String, String)>, body: crate::app::NodeBody| async move {
             let Some(entry) = ctx.registry.get(&name) else {
                 return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
             };
@@ -1370,34 +1395,45 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     &format!("tool toggles are not supported for MCP type '{type_}'"),
                 );
             };
-            let body = body_or_null(body);
+            let body = body.0;
             let enabled = body.get("enabled").map(as_bool).unwrap_or(true); // absent or true → on
-            let was_enabled = {
-                let Ok(mut set) = toggle.write() else { return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "toggle poisoned") };
-                let was = !set.contains(&tool);
-                if enabled != was {
-                    if enabled {
-                        set.remove(&tool);
-                    } else {
-                        set.insert(tool.clone());
-                    }
-                }
-                let disabled: Vec<String> = set.iter().cloned().collect();
-                (was, disabled)
-            };
-            if enabled == was_enabled.0 {
+            let was = toggle
+                .read()
+                .ok()
+                .map(|set| !set.contains(&tool))
+                .unwrap_or(enabled);
+            if enabled == was {
+                let disabled: Vec<String> = toggle
+                    .read()
+                    .map(|set| set.iter().cloned().collect())
+                    .unwrap_or_default();
                 return admin_json(
                     StatusCode::OK,
-                    json!({ "tool": tool, "enabled": enabled, "disabledTools": was_enabled.1, "unchanged": true }),
+                    json!({ "tool": tool, "enabled": enabled, "disabledTools": disabled, "unchanged": true }),
                 );
             }
-            if let Err(err) = ctx.store.set_disabled_tools(&name, &was_enabled.1) {
+            // Build the next set WITHOUT touching the live one, persist it, then swap it in — a
+            // failed write must not leave the live set diverged from what the next boot restores.
+            let next = {
+                let mut next = toggle.read().map(|set| set.clone()).unwrap_or_default();
+                if enabled {
+                    next.remove(&tool);
+                } else {
+                    next.insert(tool.clone());
+                }
+                next
+            };
+            let disabled: Vec<String> = next.iter().cloned().collect();
+            if let Err(err) = ctx.store.set_disabled_tools(&name, &disabled) {
                 return admin_error(StatusCode::BAD_REQUEST, &err);
+            }
+            if let Ok(mut set) = toggle.write() {
+                *set = next;
             }
             if let Ok(mut d) = entry.data.write() {
                 d.tool_page = None; // the cached (filtered) list no longer matches
             }
-            admin_json(StatusCode::OK, json!({ "tool": tool, "enabled": enabled, "disabledTools": was_enabled.1 }))
+            admin_json(StatusCode::OK, json!({ "tool": tool, "enabled": enabled, "disabledTools": disabled }))
         }),
     );
 
@@ -1446,11 +1482,19 @@ async fn mcps_list_kind(
         Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
         Ok(page) => {
             // The list lands under the kind's own key ("tools" | "resources" | "prompts").
+            // nextCursor/total are absent until the page carries them — Node's `undefined`s drop
+            // out of JSON.stringify, and the panel keys off their presence.
             let mut out = json!({
-                "nextCursor": page.next_cursor,
-                "total": page.total,
                 "pageSize": PAGE_SIZE,
             });
+            if let Some(obj) = out.as_object_mut() {
+                if let Some(c) = page.next_cursor {
+                    obj.insert("nextCursor".into(), json!(c));
+                }
+                if let Some(t) = page.total {
+                    obj.insert("total".into(), json!(t));
+                }
+            }
             out[kind.as_str()] = json!(page.items);
             // The tool list is filtered (disabled tools are absent); surface their names so the
             // panel can show them as rows to re-enable. For resources, surface the master on/off

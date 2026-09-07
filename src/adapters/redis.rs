@@ -892,6 +892,9 @@ impl RedisEngine {
         let count = args
             .get("count")
             .and_then(as_i64)
+            // Node's `Number(...) || 100`: a zero (or unparseable) count is "not sent" — SCAN
+            // with COUNT 0 is a protocol error, never a useful ask.
+            .filter(|n| *n > 0)
             .unwrap_or(100)
             .clamp(1, 10_000);
         let pattern = args
@@ -1053,8 +1056,13 @@ impl Engine for RedisEngine {
             .dispose(|client| {
                 Box::pin(async move {
                     // Best-effort QUIT (the connection is closing either way), mirroring
-                    // ioredis's disconnect().
-                    let _ = RedisHandle::call(&client, "QUIT", &[]).await;
+                    // ioredis's disconnect() — which never waits long: a server that does not
+                    // answer QUIT must not hold an MCP stop (and a gateway shutdown) hostage.
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(250),
+                        RedisHandle::call(&client, "QUIT", &[]),
+                    )
+                    .await;
                 }) as BoxFut<()>
             })
             .await;

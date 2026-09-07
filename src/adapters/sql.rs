@@ -345,6 +345,11 @@ const LIMITABLE: [&str; 4] = ["select", "with", "table", "values"];
 /// the zero-rows edge (`SELECT … WHERE false` vs `UPDATE … WHERE false`, both wire-identical
 /// through the driver) is decided here on the statement's own shape. Only consulted when NO rows
 /// arrived; a statement whose rows did arrive is a result set by observation.
+///
+/// Known blind spot (accepted): a zero-row result set the shape cannot see — `CALL p()` whose
+/// first SELECT returns nothing answers the OK-packet shape, and `SELECT … INTO @var` answers
+/// the rows shape, where mysql2 answered the opposite. Telling them apart needs the wire
+/// protocol's column-count/EOS distinction, which sqlx does not surface.
 pub fn is_row_returning(sql: &str) -> bool {
     let masked = mask_literals(sql);
     let top = blank_parens(&masked);
@@ -482,9 +487,11 @@ fn has_two_words(top: &str, first: &str, seconds: &[&str]) -> bool {
     has_word(top, first) && seconds.iter().any(|s| has_word(top, s))
 }
 
-/// `INTO OUTFILE|DUMPFILE` (top level, masked).
+/// `INTO OUTFILE|DUMPFILE` (top level, masked) — the TWO-WORD phrase, Node's
+/// `/\binto\s+(outfile|dumpfile)\b/`: a column literally named `outfile` (`SELECT outfile FROM
+/// t`) must not suppress the auto-LIMIT.
 fn into_file(top: &str) -> bool {
-    has_word(top, "outfile") || has_word(top, "dumpfile")
+    phrase_index(top, &["into", "outfile"]).is_some() || phrase_index(top, &["into", "dumpfile"]).is_some()
 }
 
 /// Byte index in `top` where a trailing locking clause begins (the START of `FOR UPDATE`,
