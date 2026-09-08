@@ -130,6 +130,37 @@ struct FileState {
     swept_at: u64,
     /// Serializes every writer against this file (Node chained promises on `queue`).
     queue: Arc<tokio::sync::Mutex<()>>,
+    /// Appends `record_call` has registered, counted BEFORE it spawns the writer.
+    registered: u64,
+    /// Appends that have reached the file. A reader waits for this to catch up with `registered`
+    /// (see `flush_calls`): taking the queue is not enough on its own, because the spawned writer
+    /// has not taken it yet when the reader arrives. The Node build got this ordering for free —
+    /// it chained onto the queue promise inline, with nothing to spawn.
+    completed: tokio::sync::watch::Sender<u64>,
+}
+
+fn new_file_state(seq: u64, bytes: u64) -> FileState {
+    FileState {
+        seq,
+        bytes,
+        swept_at: 0,
+        queue: Arc::new(tokio::sync::Mutex::new(())),
+        registered: 0,
+        completed: tokio::sync::watch::Sender::new(0),
+    }
+}
+
+/// Counts one append as done however the writer ends — including an early return, so a reader
+/// waiting on it can never be left hanging.
+struct AppendDone(Arc<Mutex<FileState>>);
+
+impl Drop for AppendDone {
+    fn drop(&mut self) {
+        if let Ok(s) = self.0.lock() {
+            let next = *s.completed.borrow() + 1;
+            s.completed.send_replace(next);
+        }
+    }
 }
 
 fn files() -> &'static Mutex<HashMap<String, Arc<Mutex<FileState>>>> {
@@ -194,12 +225,7 @@ fn state(mcp: &str) -> Arc<Mutex<FileState>> {
             return s.clone();
         }
     }
-    let fresh = Mutex::new(FileState {
-        seq: 0,
-        bytes: 0,
-        swept_at: 0,
-        queue: Arc::new(tokio::sync::Mutex::new(())),
-    });
+    let fresh = Mutex::new(new_file_state(0, 0));
     // Recover the sequence and size from whatever is already on disk, once per MCP per boot.
     if let Ok(meta) = std::fs::metadata(file_for(mcp)) {
         if let Ok(mut s) = fresh.lock() {
@@ -392,7 +418,15 @@ pub fn record_call(raw_mcp: Option<&str>, source: &CallSource, rec: CallRecord) 
         body_gone: None,
     };
     let mcp_for_task = mcp.clone();
+    // Count the append BEFORE spawning. A reader that flushes in the window between here and the
+    // writer's first poll would otherwise find the queue free, take it, and serve a page missing
+    // the call that had just been made.
+    {
+        let Ok(mut s) = state.lock() else { return };
+        s.registered += 1;
+    }
     tokio::spawn(async move {
+        let _done = AppendDone(state.clone());
         let queue = {
             let Ok(s) = state.lock() else { return };
             s.queue.clone()
@@ -652,6 +686,20 @@ pub async fn flush_calls(mcp: Option<&str>) {
             .unwrap_or_default(),
     };
     for st in states {
+        // Wait for every append registered so far to reach the file...
+        let waited = st
+            .lock()
+            .ok()
+            .map(|s| (s.registered, s.completed.subscribe()));
+        if let Some((want, mut done)) = waited {
+            while *done.borrow_and_update() < want {
+                if done.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+        // ...then take the queue, so a caller that flushes in order to rewrite the file (a sweep,
+        // a trim) still cannot land mid-append.
         let queue = st.lock().ok().map(|s| s.queue.clone());
         let Some(queue) = queue else { continue };
         let _guard = queue.lock().await;
@@ -857,13 +905,9 @@ pub async fn rename_calls(from: &str, to: &str) {
     let carried = files().lock().ok().and_then(|mut m| {
         m.remove(from).and_then(|s| {
             let (seq, bytes) = s.lock().ok().map(|st| (st.seq, st.bytes))?;
-            let fresh = FileState {
-                seq,
-                bytes,
-                swept_at: 0,
-                queue: Arc::new(tokio::sync::Mutex::new(())),
-            };
-            let arc = Arc::new(Mutex::new(fresh));
+            // Fresh append accounting: the flush above already drained everything registered
+            // against the old name.
+            let arc = Arc::new(Mutex::new(new_file_state(seq, bytes)));
             m.insert(to.to_string(), arc.clone());
             Some(())
         })
@@ -936,5 +980,633 @@ where
             );
             Err(err)
         }
+    }
+}
+
+/// Drop one MCP in-memory write state without touching its files — what a gateway restart looks
+/// like for a single log. Test-only seam: the production path drops state per directory switch.
+#[cfg(test)]
+pub(crate) fn forget_file_state(mcp: &str) {
+    if let Ok(mut map) = files().lock() {
+        map.remove(mcp);
+    }
+}
+
+/// One scratch log directory for the whole test binary, installed once. Every test uses its own
+/// MCP names inside it, so nothing has to move the directory out from under a parallel test.
+#[cfg(test)]
+pub(crate) fn test_log_dir() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("lmg-calls-test-{}", crate::util::random_hex(8)));
+        set_call_log_dir(dir.clone());
+        dir
+    })
+    .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn source() -> CallSource {
+        CallSource::default()
+    }
+
+    fn rec(tool: &str, args: Option<Value>, ok: bool, output: &str) -> CallRecord {
+        CallRecord {
+            tool: tool.to_string(),
+            args,
+            ok,
+            ms: 1,
+            output: output.to_string(),
+        }
+    }
+
+    /// Every read flushes pending appends, so reading is enough to see a call just recorded.
+    async fn entries(mcp: &str) -> Vec<CallEntry> {
+        let page = read_calls(mcp, 0, CALLS_PAGE_SIZE as i64).await;
+        serde_json::from_value(page["calls"].clone()).unwrap_or_default()
+    }
+
+    fn days_ago(n: i64) -> String {
+        use time::format_description::well_known::Rfc3339;
+        (time::OffsetDateTime::now_utc() - time::Duration::days(n))
+            .format(&Rfc3339)
+            .unwrap_or_default()
+    }
+
+    /// Write an index directly, so entries can carry dates the clock cannot reach.
+    async fn seed(mcp: &str, rows: &[(u64, String, bool)]) {
+        clear_calls(mcp).await;
+        let dir = test_log_dir();
+        mkdir_private(&dir);
+        let lines: Vec<String> = rows
+            .iter()
+            .map(|(seq, at, body)| {
+                let mut v = json!({
+                    "seq": seq, "at": at, "tool": "t", "via": "mcp",
+                    "ok": true, "ms": 1, "args": "", "output": "x", "chars": 1,
+                });
+                if *body {
+                    v["preview"] = json!(true);
+                    v["body"] = json!(true);
+                }
+                v.to_string()
+            })
+            .collect();
+        std::fs::write(dir.join(format!("{mcp}.jsonl")), format!("{}\n", lines.join("\n"))).unwrap();
+        if rows.iter().any(|r| r.2) {
+            let bodies = dir.join("bodies").join(mcp);
+            std::fs::create_dir_all(&bodies).unwrap();
+            for (seq, _, body) in rows {
+                if *body {
+                    std::fs::write(bodies.join(format!("{seq}.txt")), "payload").unwrap();
+                }
+            }
+        }
+        forget_file_state(mcp); // the seeded file is now the only state
+    }
+
+    // --- the log itself ---
+
+    #[tokio::test]
+    async fn a_recorded_call_is_visible_to_the_very_next_read() {
+        test_log_dir();
+        let mcp = "visible-next-read";
+        clear_calls(mcp).await;
+        record_call(Some(mcp), &source(), rec("t", None, true, "one"));
+        // The append runs in its own task; a reader must wait for it rather than merely finding
+        // the write queue unlocked, which it is right up until that task first runs.
+        assert_eq!(entries(mcp).await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn records_the_arguments_and_the_reply_newest_first() {
+        test_log_dir();
+        let mcp = "records-newest-first";
+        clear_calls(mcp).await;
+        record_call(Some(mcp), &source(), rec("a", Some(json!({"sql":"SELECT 1"})), true, "one"));
+        record_call(Some(mcp), &source(), rec("b", None, false, "boom"));
+
+        let list = entries(mcp).await;
+        assert_eq!(list.iter().map(|e| e.tool.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+        assert_eq!(list[1].args, r#"{"sql":"SELECT 1"}"#);
+        assert_eq!(list[1].output, "one");
+        assert!(!list[0].ok);
+        assert_eq!(list[0].args, ""); // no arguments is not the string "null"
+        assert_eq!(list[0].seq, 2);
+    }
+
+    #[tokio::test]
+    async fn redacts_secret_looking_argument_values() {
+        test_log_dir();
+        let mcp = "redacts-secrets";
+        clear_calls(mcp).await;
+        record_call(
+            Some(mcp),
+            &source(),
+            rec(
+                "t",
+                Some(json!({"user":"deploy","password":"hunter2","nested":{"apiToken":"abc"}})),
+                true,
+                "",
+            ),
+        );
+        let args = &entries(mcp).await[0].args;
+        assert!(args.contains("deploy"));
+        assert!(!args.contains("hunter2"));
+        assert!(!args.contains("abc"));
+    }
+
+    // This copy once lacked authorization|api[_-]?key: the same request was redacted in the
+    // traffic view yet written PLAINTEXT here — and this file is the one that persists to disk.
+    #[tokio::test]
+    async fn redacts_api_key_and_authorization_args() {
+        test_log_dir();
+        let mcp = "redacts-wordlist";
+        clear_calls(mcp).await;
+        record_call(
+            Some(mcp),
+            &source(),
+            rec(
+                "t",
+                Some(json!({
+                    "apiKey":"sk-live-1","Authorization":"Bearer jt",
+                    "passphrase":"pp","note":"keep"
+                })),
+                true,
+                "",
+            ),
+        );
+        let args = &entries(mcp).await[0].args;
+        assert!(!args.contains("sk-live-1"));
+        assert!(!args.contains("Bearer jt"));
+        assert!(!args.contains("pp"));
+        assert!(args.contains("keep"));
+    }
+
+    #[tokio::test]
+    async fn survives_a_restart_and_keeps_counting() {
+        test_log_dir();
+        let mcp = "survives-restart";
+        clear_calls(mcp).await;
+        record_call(Some(mcp), &source(), rec("before", None, true, "kept"));
+        flush_calls(Some(mcp)).await;
+
+        forget_file_state(mcp); // same on-disk log, all in-memory state dropped
+        let first = &entries(mcp).await[0];
+        assert_eq!((first.tool.as_str(), first.output.as_str(), first.seq), ("before", "kept", 1));
+
+        record_call(Some(mcp), &source(), rec("after", None, true, ""));
+        assert_eq!(entries(mcp).await[0].seq, 2); // sequence continued, not restarted
+    }
+
+    #[tokio::test]
+    async fn pages_newest_first_and_reports_whether_older_entries_exist() {
+        test_log_dir();
+        let mcp = "pages";
+        clear_calls(mcp).await;
+        for i in 1..=CALLS_PAGE_SIZE + 5 {
+            record_call(Some(mcp), &source(), rec(&format!("t{i}"), None, true, "x"));
+        }
+
+        let first = read_calls(mcp, 0, CALLS_PAGE_SIZE as i64).await;
+        assert_eq!(first["calls"].as_array().unwrap().len(), CALLS_PAGE_SIZE);
+        assert_eq!(first["calls"][0]["tool"], format!("t{}", CALLS_PAGE_SIZE + 5));
+        assert_eq!(first["more"], true);
+
+        let second = read_calls(mcp, 1, CALLS_PAGE_SIZE as i64).await;
+        assert_eq!(second["calls"].as_array().unwrap().len(), 5);
+        assert_eq!(second["calls"][0]["tool"], "t5");
+        assert_eq!(second["more"], false);
+    }
+
+    #[tokio::test]
+    async fn previews_a_long_reply_in_a_page_and_serves_it_whole_by_seq() {
+        test_log_dir();
+        let mcp = "long-reply";
+        clear_calls(mcp).await;
+        // Bigger than any DB result the gateway will render (render_result caps those at 256 KB).
+        let rows: Vec<Value> = (0..4000).map(|i| json!({"i": i, "pad": "y".repeat(60)})).collect();
+        let big = serde_json::to_string(&json!({ "rows": rows })).unwrap();
+        assert!(big.len() > 262_000);
+        record_call(Some(mcp), &source(), rec("wide", None, true, &big));
+
+        let entry = entries(mcp).await.remove(0);
+        assert_eq!(entry.preview, Some(true));
+        assert_eq!(entry.body, Some(true));
+        // The index line stays small, so paging stays cheap...
+        assert_eq!(entry.output.chars().count(), 2048);
+        // ...while the reported size is the real one.
+        assert_eq!(entry.chars, big.chars().count());
+
+        let full = read_call(mcp, entry.seq).await.unwrap();
+        assert_eq!(full.output, big); // whole, and therefore still valid JSON
+        assert_eq!(full.preview, None);
+        let parsed: Value = serde_json::from_str(&full.output).unwrap();
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), 4000);
+    }
+
+    #[tokio::test]
+    async fn keeps_a_short_reply_inline_with_no_payload_file() {
+        test_log_dir();
+        let mcp = "short-reply";
+        clear_calls(mcp).await;
+        record_call(Some(mcp), &source(), rec("small", None, true, "PONG"));
+        let entry = entries(mcp).await.remove(0);
+        assert_eq!(entry.preview, None);
+        assert_eq!(entry.body, None);
+        assert_eq!(read_call(mcp, entry.seq).await.unwrap().output, "PONG");
+    }
+
+    #[tokio::test]
+    async fn reports_a_pruned_payload_instead_of_returning_a_short_result_as_whole() {
+        test_log_dir();
+        let mcp = "pruned-payload";
+        clear_calls(mcp).await;
+        let big = "z".repeat(5000);
+        record_call(Some(mcp), &source(), rec("wide", None, true, &big));
+        flush_calls(Some(mcp)).await;
+        let entry = entries(mcp).await.remove(0);
+        std::fs::remove_file(test_log_dir().join("bodies").join(mcp).join(format!("{}.txt", entry.seq)))
+            .unwrap(); // what pruning eventually does
+
+        let full = read_call(mcp, entry.seq).await.unwrap();
+        assert_eq!(full.body_gone, Some(true));
+        assert_eq!(full.chars, 5000);
+    }
+
+    #[tokio::test]
+    async fn tags_the_source_of_a_call_and_defaults_to_mcp() {
+        test_log_dir();
+        let mcp = "call-source";
+        clear_calls(mcp).await;
+        assert_eq!(current_source().via, "mcp");
+        with_call_source_panel(async {
+            let src = current_source();
+            assert_eq!(src.via, "panel");
+            record_call(Some(mcp), &src, rec("t", None, true, ""));
+        })
+        .await;
+        assert_eq!(entries(mcp).await[0].via, "panel");
+        record_call(Some(mcp), &source(), rec("t2", None, true, ""));
+        assert_eq!(entries(mcp).await[0].via, "mcp");
+    }
+
+    #[tokio::test]
+    async fn carries_the_authenticating_token_label_onto_a_client_call() {
+        test_log_dir();
+        let mcp = "call-client";
+        clear_calls(mcp).await;
+        with_call_client_mcp("laptop".to_string(), async {
+            let src = current_source();
+            assert_eq!(src.client.as_deref(), Some("laptop"));
+            record_call(Some(mcp), &src, rec("t", None, true, ""));
+        })
+        .await;
+        assert_eq!(entries(mcp).await[0].client.as_deref(), Some("laptop"));
+    }
+
+    #[tokio::test]
+    async fn logs_a_failed_handler_as_a_failed_call_and_returns_the_error() {
+        test_log_dir();
+        let mcp = "logged-failure";
+        clear_calls(mcp).await;
+        let out: Result<Value, String> = logged(
+            Some(mcp),
+            &source(),
+            "explode",
+            Some(json!({"a":1})),
+            async { Err("no such table: nope".to_string()) },
+            |_: &Value| (true, String::new()),
+        )
+        .await;
+        assert_eq!(out.unwrap_err(), "no such table: nope");
+        let entry = entries(mcp).await.remove(0);
+        assert!(!entry.ok);
+        assert_eq!(entry.output, "no such table: nope");
+    }
+
+    // A tool that reports failure in-band never throws; logging that as a success would make the
+    // log lie.
+    #[tokio::test]
+    async fn logs_an_in_band_is_error_result_as_a_failure() {
+        test_log_dir();
+        let mcp = "logged-in-band";
+        clear_calls(mcp).await;
+        let result = json!({"isError": true, "content":[{"type":"text","text":"refused"}]});
+        let out: Result<Value, String> = logged(
+            Some(mcp),
+            &source(),
+            "t",
+            None,
+            async { Ok(result.clone()) },
+            |r: &Value| (r["isError"] != json!(true), content_text(r)),
+        )
+        .await;
+        assert!(out.is_ok());
+        let entry = entries(mcp).await.remove(0);
+        assert!(!entry.ok);
+        assert_eq!(entry.output, "refused");
+    }
+
+    #[tokio::test]
+    async fn follows_a_rename_and_drops_the_log_on_clear() {
+        test_log_dir();
+        let (from, to) = ("rename-src", "rename-dst");
+        clear_calls(from).await;
+        clear_calls(to).await;
+        record_call(Some(from), &source(), rec("t", None, true, ""));
+        rename_calls(from, to).await;
+        assert!(entries(from).await.is_empty());
+        assert_eq!(entries(to).await.len(), 1);
+        clear_calls(to).await;
+        assert!(entries(to).await.is_empty());
+        // The alias is the point of rename_calls, but it is process-global: left in place, every
+        // later record_call(from) would silently file under `to`.
+        forget_call_alias(from);
+    }
+
+    #[tokio::test]
+    async fn ignores_a_call_with_no_mcp_name() {
+        test_log_dir();
+        record_call(None, &source(), rec("t", None, true, ""));
+        assert!(entries("").await.is_empty());
+    }
+
+    #[test]
+    fn flattens_non_text_content_blocks() {
+        let mixed = json!({"content":[{"type":"text","text":"a"},{"type":"image"}]});
+        assert_eq!(content_text(&mixed), "a\n[image content]");
+        assert_eq!(content_text(&json!({})), "");
+    }
+
+    #[tokio::test]
+    async fn files_a_call_issued_under_the_old_name_into_the_renamed_log() {
+        test_log_dir();
+        let (a, b) = ("inflight-a", "inflight-b");
+        clear_calls(a).await;
+        clear_calls(b).await;
+        record_call(Some(a), &source(), rec("t", Some(json!({})), true, "first"));
+        rename_calls(a, b).await;
+        // logged() captured the old name before the rename began; the append lands after it.
+        record_call(Some(a), &source(), rec("t", Some(json!({})), true, "second"));
+        let outputs: Vec<String> = entries(b).await.into_iter().map(|e| e.output).collect();
+        assert_eq!(outputs, ["second", "first"]);
+        assert!(entries(a).await.is_empty());
+        clear_calls(b).await;
+        forget_call_alias(a);
+    }
+
+    #[tokio::test]
+    async fn stops_redirecting_once_the_old_name_is_in_use_again() {
+        test_log_dir();
+        let (c, d) = ("redirect-c", "redirect-d");
+        clear_calls(c).await;
+        clear_calls(d).await;
+        rename_calls(c, d).await;
+        forget_call_alias(c); // a brand-new MCP registered under the freed name
+        record_call(Some(c), &source(), rec("t", Some(json!({})), true, "fresh"));
+        assert!(entries(d).await.is_empty());
+        let outputs: Vec<String> = entries(c).await.into_iter().map(|e| e.output).collect();
+        assert_eq!(outputs, ["fresh"]);
+        clear_calls(c).await;
+        clear_calls(d).await;
+    }
+
+    #[tokio::test]
+    async fn skips_a_torn_line_instead_of_failing_the_page() {
+        test_log_dir();
+        let mcp = "torn-line";
+        clear_calls(mcp).await;
+        let dir = test_log_dir();
+        mkdir_private(&dir);
+        let good = json!({
+            "seq":1,"at":days_ago(0),"tool":"t","via":"mcp","ok":true,"ms":1,
+            "args":"","output":"whole","chars":5,
+        });
+        // A process killed mid-append leaves the last line half written.
+        std::fs::write(
+            dir.join(format!("{mcp}.jsonl")),
+            format!("{good}\n{{\"seq\":2,\"at\":\"20"),
+        )
+        .unwrap();
+        forget_file_state(mcp);
+        let list = entries(mcp).await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].output, "whole");
+    }
+
+    // --- retention ---
+
+    #[tokio::test]
+    async fn drops_entries_past_the_half_year_cutoff_and_keeps_everything_inside_it() {
+        test_log_dir();
+        let mcp = "aged-cutoff";
+        seed(
+            mcp,
+            &[
+                (1, days_ago(400), false),
+                (2, days_ago(200), false),
+                (3, days_ago(179), false), // just inside
+                (4, days_ago(1), false),
+            ],
+        )
+        .await;
+        sweep_call_logs().await;
+        flush_calls(Some(mcp)).await;
+        let seqs: Vec<u64> = entries(mcp).await.into_iter().map(|e| e.seq).collect();
+        assert_eq!(seqs, [4, 3]);
+    }
+
+    #[tokio::test]
+    async fn deletes_the_payload_files_of_entries_that_aged_out_and_keeps_the_rest() {
+        test_log_dir();
+        let mcp = "aged-bodies";
+        seed(mcp, &[(1, days_ago(400), true), (2, days_ago(10), true)]).await;
+        sweep_call_logs().await;
+        flush_calls(Some(mcp)).await;
+        let bodies = test_log_dir().join("bodies").join(mcp);
+        assert!(!bodies.join("1.txt").exists());
+        assert!(bodies.join("2.txt").exists());
+    }
+
+    // The point of the boot sweep: the per-append check only ever fires for a live MCP, so a log
+    // nobody appends to is exactly the one that would keep year-old arguments forever.
+    #[tokio::test]
+    async fn sweeps_a_log_whose_mcp_is_never_called_again() {
+        test_log_dir();
+        let mcp = "retired-mcp";
+        seed(mcp, &[(1, days_ago(365), false), (2, days_ago(300), false)]).await;
+        sweep_call_logs().await;
+        flush_calls(Some(mcp)).await;
+        assert!(entries(mcp).await.is_empty());
+        clear_calls(mcp).await;
+    }
+
+    #[tokio::test]
+    async fn leaves_a_log_alone_when_nothing_in_it_has_expired() {
+        test_log_dir();
+        let mcp = "aged-untouched";
+        seed(mcp, &[(1, days_ago(5), false), (2, days_ago(2), false)]).await;
+        let path = test_log_dir().join(format!("{mcp}.jsonl"));
+        let before = std::fs::read_to_string(&path).unwrap();
+        sweep_call_logs().await;
+        flush_calls(Some(mcp)).await;
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before); // not rewritten
+    }
+
+    #[tokio::test]
+    async fn keeps_appending_correctly_after_a_sweep() {
+        test_log_dir();
+        let mcp = "aged-then-append";
+        seed(mcp, &[(1, days_ago(400), false), (7, days_ago(3), false)]).await;
+        sweep_call_logs().await;
+        flush_calls(Some(mcp)).await;
+        record_call(Some(mcp), &source(), rec("after", Some(json!({})), true, "ok"));
+        let list = entries(mcp).await;
+        // The sequence continues from the surviving tail rather than restarting.
+        assert_eq!(list.iter().map(|e| e.seq).collect::<Vec<_>>(), [8, 7]);
+        assert_eq!(list[0].tool, "after");
+    }
+
+    // --- read_tool_history: the Run tab refill dropdown ---
+
+    #[tokio::test]
+    async fn lists_one_tools_newest_runs_first_skipping_other_tools() {
+        test_log_dir();
+        let mcp = "history-basic";
+        clear_calls(mcp).await;
+        record_call(Some(mcp), &source(), rec("pg_query", Some(json!({"sql":"SELECT 1"})), true, "a"));
+        record_call(Some(mcp), &source(), rec("pg_tables", Some(json!({})), true, "b"));
+        record_call(Some(mcp), &source(), rec("pg_query", Some(json!({"sql":"SELECT 2"})), true, "c"));
+        flush_calls(Some(mcp)).await;
+
+        let rows = read_tool_history(mcp, "pg_query", 10, None).await;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["args"], r#"{"sql":"SELECT 2"}"#);
+        assert_eq!(rows[1]["args"], r#"{"sql":"SELECT 1"}"#);
+    }
+
+    #[tokio::test]
+    async fn cuts_a_long_args_preview_off() {
+        test_log_dir();
+        let mcp = "history-clip";
+        clear_calls(mcp).await;
+        record_call(
+            Some(mcp),
+            &source(),
+            rec("t", Some(json!({"sql": "S".repeat(400)})), true, ""),
+        );
+        flush_calls(Some(mcp)).await;
+        let rows = read_tool_history(mcp, "t", 10, None).await;
+        let args = rows[0]["args"].as_str().unwrap();
+        // One huge argument set must not bloat the dropdown.
+        assert_eq!(args.chars().count(), 97);
+        assert!(args.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn collapses_repeated_runs_of_the_same_arguments_keeping_the_newest() {
+        test_log_dir();
+        let mcp = "history-collapse";
+        clear_calls(mcp).await;
+        for _ in 0..3 {
+            record_call(Some(mcp), &source(), rec("t", Some(json!({"sql":"SELECT 1"})), true, ""));
+        }
+        record_call(Some(mcp), &source(), rec("t", Some(json!({"sql":"SELECT 2"})), true, ""));
+        flush_calls(Some(mcp)).await;
+        let rows = read_tool_history(mcp, "t", 10, None).await;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["args"], r#"{"sql":"SELECT 2"}"#);
+        assert_eq!(rows[1]["seq"], 3); // the newest occurrence of the repeated run
+    }
+
+    #[tokio::test]
+    async fn keeps_two_long_argument_sets_apart_that_share_a_clipped_preview_prefix() {
+        test_log_dir();
+        let mcp = "history-prefix";
+        clear_calls(mcp).await;
+        let shared = "S".repeat(200);
+        record_call(Some(mcp), &source(), rec("t", Some(json!({"sql": format!("{shared}A")})), true, ""));
+        record_call(Some(mcp), &source(), rec("t", Some(json!({"sql": format!("{shared}B")})), true, ""));
+        flush_calls(Some(mcp)).await;
+        // Distinctness is decided on the FULL stored arguments, never on the clipped preview.
+        assert_eq!(read_tool_history(mcp, "t", 10, None).await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn filters_by_a_case_insensitive_substring_of_the_full_arguments() {
+        test_log_dir();
+        let mcp = "history-filter";
+        clear_calls(mcp).await;
+        let pad = "S".repeat(200);
+        record_call(Some(mcp), &source(), rec("t", Some(json!({"sql": format!("{pad}NEEDLE")})), true, ""));
+        record_call(Some(mcp), &source(), rec("t", Some(json!({"sql": format!("{pad}OTHER")})), true, ""));
+        flush_calls(Some(mcp)).await;
+        // The match reaches past the preview clip, and ignores case.
+        let rows = read_tool_history(mcp, "t", 10, Some("needle")).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["seq"], 1);
+        assert!(read_tool_history(mcp, "t", 10, Some("  ")).await.len() == 2); // blank filters nothing
+    }
+
+    #[tokio::test]
+    async fn honours_a_smaller_limit_and_never_exceeds_the_history_max() {
+        test_log_dir();
+        let mcp = "history-limit";
+        clear_calls(mcp).await;
+        for i in 0..4 {
+            record_call(Some(mcp), &source(), rec("t", Some(json!({"i": i})), true, ""));
+        }
+        flush_calls(Some(mcp)).await;
+        assert_eq!(read_tool_history(mcp, "t", 2, None).await.len(), 2);
+        assert_eq!(read_tool_history(mcp, "t", 0, None).await.len(), 1); // clamped up to 1
+        let all = read_tool_history(mcp, "t", usize::MAX, None).await;
+        assert_eq!(all.len(), 4);
+        assert!(all.len() <= TOOL_HISTORY_MAX);
+    }
+
+    #[tokio::test]
+    async fn answers_an_empty_list_for_a_tool_that_was_never_called() {
+        test_log_dir();
+        let mcp = "history-empty";
+        clear_calls(mcp).await;
+        record_call(Some(mcp), &source(), rec("t", None, true, ""));
+        flush_calls(Some(mcp)).await;
+        assert!(read_tool_history(mcp, "never", 10, None).await.is_empty());
+    }
+
+    // --- stored body pruning ---
+
+    // 55 oversized replies → body files at seqs 1..55. Real logs are sparser (only a reply over
+    // the preview is stored at all); arithmetic on `seq - BODY_KEEP` missed the gaps and left
+    // genuinely old payloads on disk forever.
+    #[tokio::test]
+    async fn prunes_stored_body_files_by_directory_listing_not_sequence_arithmetic() {
+        test_log_dir();
+        let mcp = "body-pruning";
+        clear_calls(mcp).await;
+        let big = "x".repeat(3 * 1024);
+        for _ in 0..55 {
+            record_call(Some(mcp), &source(), rec("t", None, true, &big));
+            flush_calls(Some(mcp)).await;
+        }
+        assert_eq!(read_call(mcp, 1).await.unwrap().body_gone, Some(true)); // past the keep window
+        assert_eq!(read_call(mcp, 5).await.unwrap().body_gone, Some(true));
+        assert_eq!(read_call(mcp, 6).await.unwrap().body_gone, None); // the 50 newest stay whole
+        assert_eq!(read_call(mcp, 55).await.unwrap().output.chars().count(), 3 * 1024);
+    }
+
+    #[tokio::test]
+    async fn read_call_answers_none_for_a_sequence_that_was_never_written() {
+        test_log_dir();
+        let mcp = "read-call-missing";
+        clear_calls(mcp).await;
+        record_call(Some(mcp), &source(), rec("t", None, true, "x"));
+        flush_calls(Some(mcp)).await;
+        assert!(read_call(mcp, 99).await.is_none());
     }
 }

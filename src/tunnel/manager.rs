@@ -15,18 +15,20 @@
 //! await, write back.
 
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
-use super::forward::{ChannelOpener, Forward, ForwardTarget};
+use super::forward::{ByteStream, ChannelOpener, Forward, ForwardTarget};
 use super::port;
 use super::ssh::{SshConnection, SshHooks};
 use super::store::{ConnInput, RuleInput, TunnelStore};
 use super::types::{
-    is_retryable, FailureKind, PortOwner, RuleDef, RuleState, SshConnDef, TunnelError,
+    is_retryable, ConnState, FailureKind, PortOwner, RuleDef, RuleState, SshConnDef, TunnelError,
 };
 use crate::log;
 
@@ -36,6 +38,72 @@ use crate::log;
 const RECONNECT_CAP_MS: f64 = 5.0 * 60.0 * 1000.0;
 /// Clamp the exponent before the cap does, so 2 ** retries can't overflow on a long outage.
 const RECONNECT_MAX_EXP: u32 = 8;
+
+/// One connection operation's future. The crate carries no `async-trait`, and boxing a future
+/// per dial or channel open costs nothing beside the network round trip inside it.
+type ConnFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// The slice of an SSH client this manager drives. `SshConnection` is the only implementor that
+/// ships — the indirection exists so the tests can plug in a client whose channels are plain TCP
+/// sockets, and run the whole rule lifecycle (sharing, transport loss, backoff) with no sshd
+/// anywhere. It is the Node build's `SshLike` interface, which the manager took the same way.
+pub trait SshLike: Send + Sync {
+    fn id(&self) -> String;
+    fn state(&self) -> ConnState;
+    fn reason(&self) -> Option<String>;
+    /// Adopt an edited definition without dropping the live session.
+    fn set_def(&self, def: SshConnDef);
+    /// How many rules hold this client. A plain field on `SshConnection`; a method here because
+    /// a trait cannot have one.
+    fn refs(&self) -> &AtomicI64;
+    /// Dial, or return at once when already connected. Takes `Arc<Self>` because a real connect
+    /// hands the client to a watcher task that outlives the call.
+    fn connect(self: Arc<Self>) -> ConnFuture<'static, Result<(), TunnelError>>;
+    fn open_channel(&self, host: String, port: u16)
+        -> ConnFuture<'_, Result<ByteStream, TunnelError>>;
+    fn end(&self) -> ConnFuture<'_, ()>;
+}
+
+impl SshLike for SshConnection {
+    fn id(&self) -> String {
+        SshConnection::id(self)
+    }
+    fn state(&self) -> ConnState {
+        SshConnection::state(self)
+    }
+    fn reason(&self) -> Option<String> {
+        SshConnection::reason(self)
+    }
+    fn set_def(&self, def: SshConnDef) {
+        SshConnection::set_def(self, def);
+    }
+    fn refs(&self) -> &AtomicI64 {
+        &self.refs
+    }
+    fn connect(self: Arc<Self>) -> ConnFuture<'static, Result<(), TunnelError>> {
+        Box::pin(async move { SshConnection::connect(&self).await })
+    }
+    fn open_channel(
+        &self,
+        host: String,
+        port: u16,
+    ) -> ConnFuture<'_, Result<ByteStream, TunnelError>> {
+        Box::pin(async move { SshConnection::open_channel(self, &host, port).await })
+    }
+    fn end(&self) -> ConnFuture<'_, ()> {
+        Box::pin(SshConnection::end(self))
+    }
+}
+
+/// Builds the client for one connection definition, with the manager's hooks already attached.
+type ConnFactory = Arc<dyn Fn(&SshConnDef, SshHooks) -> Arc<dyn SshLike> + Send + Sync>;
+
+/// The factory every non-test caller gets: a real russh client.
+fn real_connections() -> ConnFactory {
+    Arc::new(|def: &SshConnDef, hooks: SshHooks| {
+        SshConnection::new(def.clone(), hooks) as Arc<dyn SshLike>
+    })
+}
 
 /// The slice of the MCP registry the tunnel subsystem reads. Display and guard rail only —
 /// nothing here can start or stop an MCP.
@@ -127,7 +195,7 @@ struct RuleData {
     /// an id lookup at release time can hit a REPLACEMENT connection built in between and
     /// decrement a ref it never took, tearing the new session down under a live rule. Pointer
     /// identity pairs every increment with its own decrement.
-    holding: Option<Arc<SshConnection>>,
+    holding: Option<Arc<dyn SshLike>>,
 }
 
 impl Default for RuleData {
@@ -156,20 +224,31 @@ struct RuleRuntime {
 pub struct TunnelManager {
     store: Arc<Mutex<TunnelStore>>,
     runtimes: Mutex<HashMap<String, Arc<RuleRuntime>>>,
-    conns: Mutex<HashMap<String, Arc<SshConnection>>>,
+    conns: Mutex<HashMap<String, Arc<dyn SshLike>>>,
     /// A fingerprint a connection presented when it failed verification, so it can be trusted later.
     mismatches: Mutex<HashMap<String, String>>,
     mcps: Option<Box<dyn McpView>>,
+    make_connection: ConnFactory,
 }
 
 impl TunnelManager {
     pub fn new(store: Arc<Mutex<TunnelStore>>, mcps: Option<Box<dyn McpView>>) -> Arc<Self> {
+        Self::with_connections(store, mcps, real_connections())
+    }
+
+    /// The same manager over a different client factory — the tests' way in.
+    fn with_connections(
+        store: Arc<Mutex<TunnelStore>>,
+        mcps: Option<Box<dyn McpView>>,
+        make_connection: ConnFactory,
+    ) -> Arc<Self> {
         Arc::new(TunnelManager {
             store,
             runtimes: Mutex::new(HashMap::new()),
             conns: Mutex::new(HashMap::new()),
             mismatches: Mutex::new(HashMap::new()),
             mcps,
+            make_connection,
         })
     }
 
@@ -204,7 +283,7 @@ impl TunnelManager {
 
     // --- connections ------------------------------------------------------------------------------
 
-    fn make_conn(self: &Arc<Self>, def: &SshConnDef) -> Arc<SshConnection> {
+    fn make_conn(self: &Arc<Self>, def: &SshConnDef) -> Arc<dyn SshLike> {
         let store = self.store.clone();
         let conn_id = def.id.clone();
         let conn_name = def.name.clone();
@@ -225,8 +304,8 @@ impl TunnelManager {
                 mgr.on_connection_lost(&lost_id, &err);
             }
         });
-        SshConnection::new(
-            def.clone(),
+        (self.make_connection)(
+            def,
             SshHooks {
                 on_host_key: Some(on_host_key),
                 on_lost: Some(on_lost),
@@ -234,7 +313,7 @@ impl TunnelManager {
         )
     }
 
-    fn conn(self: &Arc<Self>, def: &SshConnDef) -> Arc<SshConnection> {
+    fn conn(self: &Arc<Self>, def: &SshConnDef) -> Arc<dyn SshLike> {
         let mut conns = self.conns.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(existing) = conns.get(&def.id) {
             existing.set_def(def.clone());
@@ -251,9 +330,9 @@ impl TunnelManager {
         self: &Arc<Self>,
         def: &SshConnDef,
         rt: &Arc<RuleRuntime>,
-    ) -> Result<Arc<SshConnection>, TunnelError> {
+    ) -> Result<Arc<dyn SshLike>, TunnelError> {
         let c = self.conn(def);
-        if let Err(te) = c.connect().await {
+        if let Err(te) = c.clone().connect().await {
             if te.kind == FailureKind::HostKey {
                 if let Some(actual) = te
                     .detail
@@ -277,7 +356,7 @@ impl TunnelManager {
             match &data.holding {
                 Some(h) if Arc::ptr_eq(h, &c) => None, // already holding this very client
                 _ => {
-                    c.refs.fetch_add(1, Ordering::SeqCst);
+                    c.refs().fetch_add(1, Ordering::SeqCst);
                     data.holding.replace(c.clone())
                 }
             }
@@ -304,8 +383,8 @@ impl TunnelManager {
     /// Return one reference on `c`. The last one out removes it from the connection map — only
     /// if the map still holds this exact client (a replacement built in between must not be
     /// swept out from under its own holders) — and ends the session.
-    async fn put_ref(&self, c: &Arc<SshConnection>) {
-        if c.refs.fetch_sub(1, Ordering::SeqCst) <= 1 {
+    async fn put_ref(&self, c: &Arc<dyn SshLike>) {
+        if c.refs().fetch_sub(1, Ordering::SeqCst) <= 1 {
             let id = c.id();
             // Scoped: the std lock is never held across the end() await below.
             {
@@ -483,7 +562,7 @@ impl TunnelManager {
             let opener: ChannelOpener = Arc::new(move |host: &str, port: u16| {
                 let ssh = ssh_for_open.clone();
                 let host = host.to_string();
-                Box::pin(async move { ssh.open_channel(&host, port).await })
+                Box::pin(async move { ssh.open_channel(host, port).await })
             });
             let fwd = Forward::new(
                 ForwardTarget {
@@ -1178,7 +1257,7 @@ impl TunnelManager {
         for handle in handles {
             let _ = handle.await;
         }
-        let live: Vec<Arc<SshConnection>> = self
+        let live: Vec<Arc<dyn SshLike>> = self
             .conns
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -1208,5 +1287,1050 @@ impl crate::adminapi::TunnelLinks for TunnelManager {
 
     fn forget_mcp(&self, name: &str) {
         let _ = TunnelManager::forget_mcp(self, name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Ported from the Node build's `test/tunnel-manager.test.ts`, one case per `it(...)`.
+    //!
+    //! The whole rule lifecycle runs here with no sshd anywhere: the manager builds `FakeConn`
+    //! instead of `SshConnection` (see `SshLike`), and a fake channel is a plain TCP socket to a
+    //! local echo server. So "the tunnel carries traffic" is asserted by sending bytes through
+    //! the bound local port and reading them back, exactly as a user would.
+    use super::*;
+    use crate::tunnel::types::AuthType;
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicU32;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    // --- the fake SSH client ----------------------------------------------------------------
+
+    /// Every client one manager built, newest last — the Node suite's `built` array, but scoped
+    /// to a single manager so tests never see each other's connections.
+    type Built = Arc<Mutex<Vec<Arc<FakeConn>>>>;
+
+    /// A stand-in for `SshConnection`: `open_channel` dials the echo server over loopback.
+    struct FakeConn {
+        def: Mutex<SshConnDef>,
+        hooks: SshHooks,
+        refs: AtomicI64,
+        state: Mutex<ConnState>,
+        reason: Mutex<Option<String>>,
+        /// Dials that actually reached the "server" — a connect on a live client is not one.
+        dials: AtomicU32,
+        ended: AtomicU32,
+        /// Set to make every connect fail with this error.
+        fail_with: Mutex<Option<TunnelError>>,
+    }
+
+    impl FakeConn {
+        fn new(def: &SshConnDef, hooks: SshHooks) -> Arc<FakeConn> {
+            Arc::new(FakeConn {
+                def: Mutex::new(def.clone()),
+                hooks,
+                refs: AtomicI64::new(0),
+                state: Mutex::new(ConnState::Idle),
+                reason: Mutex::new(None),
+                dials: AtomicU32::new(0),
+                ended: AtomicU32::new(0),
+                fail_with: Mutex::new(None),
+            })
+        }
+
+        fn dials(&self) -> u32 {
+            self.dials.load(Ordering::SeqCst)
+        }
+
+        fn ended(&self) -> u32 {
+            self.ended.load(Ordering::SeqCst)
+        }
+
+        fn ref_count(&self) -> i64 {
+            self.refs.load(Ordering::SeqCst)
+        }
+
+        fn username(&self) -> String {
+            self.def.lock().unwrap().username.clone()
+        }
+
+        fn is_connected(&self) -> bool {
+            *self.state.lock().unwrap() == ConnState::Connected
+        }
+
+        /// The transport dies under whatever rules are riding it.
+        fn die(&self, kind: FailureKind) {
+            *self.state.lock().unwrap() = ConnState::Error;
+            if let Some(on_lost) = &self.hooks.on_lost {
+                on_lost(TunnelError::new(
+                    format!("ssh connection lost: {} failure", kind.as_str()),
+                    kind,
+                ));
+            }
+        }
+    }
+
+    impl SshLike for FakeConn {
+        fn id(&self) -> String {
+            self.def.lock().unwrap().id.clone()
+        }
+        fn state(&self) -> ConnState {
+            *self.state.lock().unwrap()
+        }
+        fn reason(&self) -> Option<String> {
+            self.reason.lock().unwrap().clone()
+        }
+        fn set_def(&self, def: SshConnDef) {
+            *self.def.lock().unwrap() = def;
+        }
+        fn refs(&self) -> &AtomicI64 {
+            &self.refs
+        }
+        fn connect(self: Arc<Self>) -> ConnFuture<'static, Result<(), TunnelError>> {
+            Box::pin(async move {
+                if self.is_connected() {
+                    return Ok(());
+                }
+                self.dials.fetch_add(1, Ordering::SeqCst);
+                let failure = self.fail_with.lock().unwrap().clone();
+                if let Some(err) = failure {
+                    *self.state.lock().unwrap() = ConnState::Error;
+                    *self.reason.lock().unwrap() = Some(err.message.clone());
+                    return Err(err);
+                }
+                *self.state.lock().unwrap() = ConnState::Connected;
+                *self.reason.lock().unwrap() = None;
+                Ok(())
+            })
+        }
+        fn open_channel(
+            &self,
+            host: String,
+            port: u16,
+        ) -> ConnFuture<'_, Result<ByteStream, TunnelError>> {
+            Box::pin(async move {
+                if !self.is_connected() {
+                    return Err(TunnelError::new("not established", FailureKind::Network));
+                }
+                let stream = TcpStream::connect((host.as_str(), port))
+                    .await
+                    .map_err(|err| TunnelError::new(err.to_string(), FailureKind::Network))?;
+                Ok(Box::pin(stream) as ByteStream)
+            })
+        }
+        fn end(&self) -> ConnFuture<'_, ()> {
+            Box::pin(async move {
+                self.ended.fetch_add(1, Ordering::SeqCst);
+                *self.state.lock().unwrap() = ConnState::Idle;
+            })
+        }
+    }
+
+    // --- harness ----------------------------------------------------------------------------
+
+    /// A store on a fresh temp file. The tunnels file is sealed like every other state file, so
+    /// the whole test binary is pinned to one deterministic master key rather than reaching for
+    /// DPAPI or the machine id.
+    fn scratch() -> (PathBuf, Arc<Mutex<TunnelStore>>) {
+        crate::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!("lmg-tmgr-{}", crate::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("create the scratch dir");
+        let store = TunnelStore::new(dir.join("tunnels.json"), 19999);
+        (dir, Arc::new(Mutex::new(store)))
+    }
+
+    fn manager(store: &Arc<Mutex<TunnelStore>>) -> (Arc<TunnelManager>, Built) {
+        manager_with(store, None, None)
+    }
+
+    /// `seed` makes every client this manager builds fail its dials — a host that is simply down.
+    fn manager_with(
+        store: &Arc<Mutex<TunnelStore>>,
+        mcps: Option<Box<dyn McpView>>,
+        seed: Option<TunnelError>,
+    ) -> (Arc<TunnelManager>, Built) {
+        let built: Built = Arc::new(Mutex::new(Vec::new()));
+        let sink = built.clone();
+        let factory: ConnFactory = Arc::new(move |def: &SshConnDef, hooks: SshHooks| {
+            let conn = FakeConn::new(def, hooks);
+            if let Some(err) = &seed {
+                *conn.fail_with.lock().unwrap() = Some(err.clone());
+            }
+            sink.lock().unwrap().push(conn.clone());
+            conn as Arc<dyn SshLike>
+        });
+        (
+            TunnelManager::with_connections(store.clone(), mcps, factory),
+            built,
+        )
+    }
+
+    fn built_len(built: &Built) -> usize {
+        built.lock().unwrap().len()
+    }
+
+    fn nth(built: &Built, i: usize) -> Arc<FakeConn> {
+        built.lock().unwrap()[i].clone()
+    }
+
+    /// Every dial this manager made, across however many clients it built.
+    fn total_dials(built: &Built) -> u32 {
+        built.lock().unwrap().iter().map(|c| c.dials()).sum()
+    }
+
+    fn conn_input() -> ConnInput {
+        ConnInput {
+            name: "srv".into(),
+            host: "10.0.0.1".into(),
+            port: 22.0,
+            username: "deploy".into(),
+            auth_type: AuthType::Key,
+            key_path: Some("C:/keys/id_rsa".into()),
+            ..Default::default()
+        }
+    }
+
+    fn rule_input(name: &str, conn_id: &str, local: u16, target: u16) -> RuleInput {
+        RuleInput {
+            name: name.into(),
+            connection_id: conn_id.into(),
+            local_port: local as f64,
+            target_host: "127.0.0.1".into(),
+            target_port: target as f64,
+            ..Default::default()
+        }
+    }
+
+    fn add_conn(store: &Arc<Mutex<TunnelStore>>) -> SshConnDef {
+        store
+            .lock()
+            .unwrap()
+            .add_connection(&conn_input())
+            .expect("add the connection")
+    }
+
+    fn add_rule(store: &Arc<Mutex<TunnelStore>>, input: RuleInput) -> RuleDef {
+        store
+            .lock()
+            .unwrap()
+            .add_rule(&input)
+            .expect("add the rule")
+    }
+
+    fn stored_rule(store: &Arc<Mutex<TunnelStore>>, id: &str) -> RuleDef {
+        store.lock().unwrap().rule(id).expect("the stored rule")
+    }
+
+    fn row_of(m: &Arc<TunnelManager>, id: &str) -> Value {
+        m.rule_row(id).expect("a row for the rule")
+    }
+
+    fn state_of(m: &Arc<TunnelManager>, id: &str) -> String {
+        row_of(m, id)
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn field(row: &Value, key: &str) -> Value {
+        row.get(key).cloned().unwrap_or(Value::Null)
+    }
+
+    /// A local TCP server that echoes what it receives, upper-cased — the "remote service" the
+    /// tunnel carries traffic to. It lives until the test binary exits, which is what a service
+    /// on the far side of a tunnel does anyway.
+    async fn echo_server() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind echo");
+        let port = listener.local_addr().expect("echo addr").port();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    loop {
+                        match sock.read(&mut buf).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => {
+                                let up = buf[..n].to_ascii_uppercase();
+                                if sock.write_all(&up).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    /// A port nothing holds right now — bound and released, the way the Node suite picked one.
+    async fn free_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind probe");
+        listener.local_addr().expect("probe addr").port()
+    }
+
+    /// Hold a port the way a foreign process would, so a start has to fail on it.
+    async fn squat() -> (TcpListener, u16) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind squatter");
+        let port = listener.local_addr().expect("squatter addr").port();
+        (listener, port)
+    }
+
+    async fn round_trip(port: u16, text: &str) -> String {
+        let mut c = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to the tunnel");
+        c.write_all(text.as_bytes()).await.expect("write");
+        let mut buf = vec![0u8; text.len()];
+        c.read_exact(&mut buf).await.expect("read the echo back");
+        String::from_utf8(buf).expect("utf-8 echo")
+    }
+
+    async fn port_is_free(port: u16) -> bool {
+        crate::tunnel::port::probe_port(port, "127.0.0.1").await
+    }
+
+    /// Poll until `cond` holds. Recovery runs on spawned tasks, so a state change lands a few
+    /// scheduler turns — and, for a reconnect, one backoff delay — after the event behind it.
+    async fn wait_until(budget: Duration, mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + budget;
+        loop {
+            if cond() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// The MCP registry view the linkage tests run against.
+    struct View {
+        started: Vec<String>,
+    }
+
+    impl View {
+        fn boxed(started: &[&str]) -> Option<Box<dyn McpView>> {
+            Some(Box::new(View {
+                started: started.iter().map(|s| s.to_string()).collect(),
+            }))
+        }
+    }
+
+    impl McpView for View {
+        fn has(&self, name: &str) -> bool {
+            matches!(name, "pg-analytics" | "redis-b-6380")
+        }
+        fn state_of(&self, name: &str) -> Option<String> {
+            Some(if self.is_started(name) {
+                "up".into()
+            } else {
+                "stopped".into()
+            })
+        }
+        fn is_started(&self, name: &str) -> bool {
+            self.started.iter().any(|s| s == name)
+        }
+        fn started_at(&self, name: &str) -> Option<String> {
+            self.is_started(name)
+                .then(|| "2026-08-13T10:00:00.000Z".to_string())
+        }
+    }
+
+    // --- start and stop ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn binds_the_port_carries_traffic_and_frees_the_port_on_stop() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        m.start_rule(&r.id).await.expect("start");
+        assert_eq!(state_of(&m, &r.id), "up");
+        assert_eq!(round_trip(port, "ping").await, "PING");
+        assert!(stored_rule(&store, &r.id).enabled);
+
+        m.stop_rule(&r.id, true, false).await.expect("stop");
+        assert_eq!(state_of(&m, &r.id), "stopped");
+        assert!(port_is_free(port).await);
+        assert!(!stored_rule(&store, &r.id).enabled);
+    }
+
+    #[tokio::test]
+    async fn reports_the_holder_when_the_local_port_is_taken_by_someone_else() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let (squatter, port) = squat().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        let err = m.start_rule(&r.id).await.expect_err("the port is taken");
+        assert!(err.message().contains("local port"), "{}", err.message());
+        let row = row_of(&m, &r.id);
+        assert_eq!(field(&row, "state"), json!("error"));
+        let reason = field(&row, "reason").as_str().unwrap_or_default().to_string();
+        assert!(reason.contains(&port.to_string()), "{reason}");
+        // Only Windows can name the holder (port.rs has no POSIX lookup), and there the holder
+        // is this very test process — so the manager first reclaims what it thinks is its own
+        // stale listener, fails again, and reports the pid rather than a bare EADDRINUSE.
+        #[cfg(windows)]
+        {
+            assert!(reason.contains("held by pid"), "{reason}");
+            assert_eq!(
+                field(&row, "portOwner").get("pid").cloned(),
+                Some(json!(std::process::id()))
+            );
+        }
+        drop(squatter);
+    }
+
+    #[tokio::test]
+    async fn fails_a_rule_whose_connection_is_unknown_without_touching_the_port() {
+        let (dir, seed) = scratch();
+        let echo = echo_server().await;
+        let c = add_conn(&seed);
+        let port = free_port().await;
+        let mut r = add_rule(&seed, rule_input("orphan", &c.id, port, echo));
+        // Break the link the way a hand-edited tunnels.json does — `remove_connection` refuses
+        // while a rule still points at one, so the file is written directly and read back. A
+        // rule whose connection is unknown is KEPT on load: one bad hand-edit must not silently
+        // discard the other 17 rules, so the manager has to report it rather than crash.
+        r.connection_id = "gone".into();
+        seed.lock()
+            .unwrap()
+            .replace_all(Vec::new(), vec![r.clone()])
+            .expect("hand-edit the file");
+        let store = Arc::new(Mutex::new(TunnelStore::new(dir.join("tunnels.json"), 19999)));
+        assert_eq!(store.lock().unwrap().rules().len(), 1, "the rule survived load");
+        let (m, built) = manager(&store);
+
+        let err = m.start_rule(&r.id).await.expect_err("no connection");
+        assert!(
+            err.message().contains("unknown SSH connection"),
+            "{}",
+            err.message()
+        );
+        assert_eq!(state_of(&m, &r.id), "error");
+        assert!(port_is_free(port).await);
+        assert_eq!(built_len(&built), 0, "it must not dial anything");
+    }
+
+    #[tokio::test]
+    async fn is_idempotent_a_second_start_is_a_no_op_and_so_is_a_second_stop() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        m.start_rule(&r.id).await.expect("first start");
+        m.start_rule(&r.id).await.expect("second start");
+        assert_eq!(nth(&built, 0).dials(), 1);
+
+        m.stop_rule(&r.id, true, false).await.expect("first stop");
+        m.stop_rule(&r.id, true, false).await.expect("second stop");
+        assert_eq!(state_of(&m, &r.id), "stopped");
+    }
+
+    #[tokio::test]
+    async fn serializes_a_start_and_a_stop_that_arrive_together() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        let (a, b, d) = tokio::join!(
+            m.start_rule(&r.id),
+            m.stop_rule(&r.id, true, false),
+            m.start_rule(&r.id)
+        );
+        let _ = (a, b, d);
+        // Whatever order they landed in, the reported state and the actual port agree.
+        let up = state_of(&m, &r.id) == "up";
+        assert_eq!(up, !port_is_free(port).await);
+        m.close_all().await;
+    }
+
+    // --- connection sharing -----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn dials_once_for_many_rules_and_ends_the_client_when_the_last_one_stops() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let mut rules = Vec::new();
+        for i in 0..3 {
+            let port = free_port().await;
+            rules.push(add_rule(
+                &store,
+                rule_input(&format!("r{i}"), &c.id, port, echo),
+            ));
+        }
+
+        let results = m.start_all().await;
+        assert!(results.iter().all(|x| x.ok), "{results:?}");
+        assert_eq!(built_len(&built), 1);
+        assert_eq!(nth(&built, 0).dials(), 1);
+        assert_eq!(nth(&built, 0).ref_count(), 3);
+        // The panel's connection row reads the live client through the same seam.
+        let rows = m.rows();
+        let conn_row = &rows["connections"][0];
+        assert_eq!(conn_row["state"], json!("connected"));
+        assert_eq!(conn_row["ruleCount"], json!(3));
+        assert_eq!(conn_row["activeRules"], json!(3));
+
+        m.stop_rule(&rules[0].id, true, false).await.expect("stop 0");
+        assert_eq!(nth(&built, 0).ended(), 0, "two rules still use it");
+        m.stop_rule(&rules[1].id, true, false).await.expect("stop 1");
+        m.stop_rule(&rules[2].id, true, false).await.expect("stop 2");
+        assert_eq!(nth(&built, 0).ref_count(), 0);
+        assert_eq!(nth(&built, 0).ended(), 1);
+    }
+
+    #[tokio::test]
+    async fn does_not_double_count_a_reference_when_a_rule_is_started_twice() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        m.start_rule(&r.id).await.expect("first start");
+        m.start_rule(&r.id).await.expect("second start");
+        assert_eq!(nth(&built, 0).ref_count(), 1);
+
+        m.stop_rule(&r.id, true, false).await.expect("stop");
+        assert_eq!(nth(&built, 0).ended(), 1);
+    }
+
+    // --- transport loss ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn releases_the_port_and_schedules_a_reconnect_when_auto_reconnect_is_on() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                auto_reconnect: true,
+                reconnect_interval: 1.0,
+                ..rule_input("pg", &c.id, port, echo)
+            },
+        );
+
+        m.start_rule(&r.id).await.expect("start");
+        nth(&built, 0).die(FailureKind::Network);
+        assert!(
+            wait_until(Duration::from_secs(5), || state_of(&m, &r.id) == "reconnecting").await,
+            "state stayed {}",
+            state_of(&m, &r.id)
+        );
+        // The port must be free while the tunnel is down — this is the whole point.
+        assert!(port_is_free(port).await);
+
+        assert!(
+            wait_until(Duration::from_secs(10), || state_of(&m, &r.id) == "up").await,
+            "the retry never brought it back up"
+        );
+        assert!(!port_is_free(port).await);
+        assert!(field(&row_of(&m, &r.id), "reconnectedAt").is_string());
+        assert_eq!(round_trip(port, "back").await, "BACK");
+        // The dead client was ended and released; the retry dialed a fresh one.
+        assert_eq!(nth(&built, 0).ended(), 1);
+        assert_eq!(built_len(&built), 2);
+        m.close_all().await;
+    }
+
+    #[tokio::test]
+    async fn does_not_schedule_a_reconnect_for_an_auth_failure() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                auto_reconnect: true,
+                reconnect_interval: 1.0,
+                ..rule_input("pg", &c.id, port, echo)
+            },
+        );
+
+        m.start_rule(&r.id).await.expect("start");
+        nth(&built, 0).die(FailureKind::Auth);
+        assert!(
+            wait_until(Duration::from_secs(5), || state_of(&m, &r.id) == "error").await,
+            "state stayed {}",
+            state_of(&m, &r.id)
+        );
+        assert!(port_is_free(port).await);
+        // Past the interval: hammering an auth failure every 10s earns a fail2ban ban, so
+        // nothing may retry — not even once.
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        assert_eq!(state_of(&m, &r.id), "error");
+        assert_eq!(built_len(&built), 1, "a retry would have built a client");
+        assert_eq!(nth(&built, 0).dials(), 1);
+    }
+
+    #[tokio::test]
+    async fn leaves_a_rule_in_error_port_released_when_auto_reconnect_is_off() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        m.start_rule(&r.id).await.expect("start");
+        nth(&built, 0).die(FailureKind::Network);
+        assert!(
+            wait_until(Duration::from_secs(5), || state_of(&m, &r.id) == "error").await,
+            "state stayed {}",
+            state_of(&m, &r.id)
+        );
+        assert!(port_is_free(port).await);
+        let reason = field(&row_of(&m, &r.id), "reason")
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        assert!(reason.contains("lost"), "{reason}");
+    }
+
+    #[tokio::test]
+    async fn brings_every_rule_on_a_shared_connection_down_together() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let mut ports = Vec::new();
+        let mut ids = Vec::new();
+        for i in 0..2 {
+            let port = free_port().await;
+            ids.push(add_rule(&store, rule_input(&format!("r{i}"), &c.id, port, echo)).id);
+            ports.push(port);
+        }
+        m.start_all().await;
+
+        nth(&built, 0).die(FailureKind::Network);
+        assert!(
+            wait_until(Duration::from_secs(5), || ids
+                .iter()
+                .all(|id| state_of(&m, id) == "error"))
+            .await,
+            "one rule stayed up under a dead transport"
+        );
+        for port in ports {
+            assert!(port_is_free(port).await);
+        }
+    }
+
+    // --- reconnect policy -------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn does_not_retry_a_port_failure() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let (squatter, port) = squat().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                auto_reconnect: true,
+                reconnect_interval: 1.0,
+                ..rule_input("pg", &c.id, port, echo)
+            },
+        );
+
+        m.start_rule(&r.id).await.expect_err("the port is taken");
+        assert_eq!(state_of(&m, &r.id), "error", "not 'reconnecting'");
+        // Whatever the start itself spent (on Windows it reclaims what looks like its own stale
+        // listener and tries once more), nothing may happen after the failure is reported: a
+        // port held by someone else will not free itself, so retrying only thrashes — and runs
+        // netstat + tasklist each attempt. Wait well past the interval.
+        let (clients, dials) = (built_len(&built), total_dials(&built));
+        tokio::time::sleep(Duration::from_millis(1400)).await;
+        assert_eq!(state_of(&m, &r.id), "error");
+        assert_eq!(built_len(&built), clients, "a retry would have built a client");
+        assert_eq!(total_dials(&built), dials, "the failed start, nothing more");
+        drop(squatter);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn spaces_network_reconnects_out_with_backoff_and_never_gives_up() {
+        // On a paused clock: the retries below are scheduled against tokio's timer, so the
+        // suite pays microseconds for what is a quarter of an hour of simulated outage.
+        let (_dir, store) = scratch();
+        let (m, built) = manager_with(
+            &store,
+            None,
+            Some(TunnelError::new("host unreachable", FailureKind::Network)),
+        );
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                auto_reconnect: true,
+                reconnect_interval: 1.0,
+                ..rule_input("pg", &c.id, port, 9)
+            },
+        );
+        let _ = port;
+
+        let t0 = tokio::time::Instant::now();
+        m.start_rule(&r.id).await.expect_err("every dial fails");
+        assert_eq!(state_of(&m, &r.id), "reconnecting");
+        // A failed dial leaves the client in the map with no references, so every retry lands on
+        // the same one: its dial count IS the number of attempts.
+        assert!(
+            wait_until(Duration::from_secs(20), || nth(&built, 0).dials() >= 5).await,
+            "only {} attempts",
+            nth(&built, 0).dials()
+        );
+        let elapsed = t0.elapsed();
+        // 1s, 2s, 4s, 8s (±20% jitter) — at least 12s of simulated time for four retries. A flat
+        // `reconnectInterval` loop would have spent 4s and dialed a host that is down 15 times.
+        assert!(
+            elapsed >= Duration::from_secs(11),
+            "four retries took only {elapsed:?} — that is a storm, not backoff"
+        );
+        assert!(elapsed <= Duration::from_secs(25), "{elapsed:?}");
+        assert_eq!(
+            state_of(&m, &r.id),
+            "reconnecting",
+            "a network outage is retried forever"
+        );
+        m.close_all().await;
+    }
+
+    // --- edits ------------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn restarts_a_running_rule_on_the_new_port_and_frees_the_old_one() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let old_port = free_port().await;
+        let new_port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, old_port, echo));
+        m.start_rule(&r.id).await.expect("start");
+
+        m.apply_rule_update(&r.id, &rule_input("pg", &c.id, new_port, echo))
+            .await
+            .expect("edit");
+        assert_eq!(state_of(&m, &r.id), "up");
+        assert!(port_is_free(old_port).await);
+        assert_eq!(round_trip(new_port, "hi").await, "HI");
+        m.close_all().await;
+    }
+
+    #[tokio::test]
+    async fn leaves_a_stopped_rule_stopped_after_an_edit() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        m.apply_rule_update(&r.id, &rule_input("pg2", &c.id, port, echo))
+            .await
+            .expect("edit");
+        assert_eq!(state_of(&m, &r.id), "stopped");
+        assert!(port_is_free(port).await);
+        assert_eq!(built_len(&built), 0, "an edit must not dial");
+    }
+
+    #[tokio::test]
+    async fn restarts_only_the_rules_that_were_running_when_a_connection_is_edited() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let p1 = free_port().await;
+        let p2 = free_port().await;
+        let running = add_rule(&store, rule_input("on", &c.id, p1, echo));
+        let stopped = add_rule(&store, rule_input("off", &c.id, p2, echo));
+        m.start_rule(&running.id).await.expect("start");
+
+        m.apply_connection_update(
+            &c.id,
+            &ConnInput {
+                username: "someone-else".into(),
+                ..conn_input()
+            },
+        )
+        .await
+        .expect("edit the connection");
+
+        assert_eq!(state_of(&m, &running.id), "up");
+        assert_eq!(
+            state_of(&m, &stopped.id),
+            "stopped",
+            "a rule the user stopped must not come up because a neighbour was edited"
+        );
+        // The old client was ended and a new one dialed with the new definition.
+        assert_eq!(built_len(&built), 2);
+        assert_eq!(nth(&built, 0).ended(), 1);
+        assert_eq!(nth(&built, 1).username(), "someone-else");
+        m.close_all().await;
+    }
+
+    #[tokio::test]
+    async fn refuses_to_delete_a_connection_with_rules_and_succeeds_once_they_are_gone() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+
+        // Structured, like rule deletion — the API answers 409 + a confirm, not a flat string.
+        match m.delete_connection(&c.id).await {
+            Err(OpError::Dependents(names)) => assert_eq!(names, vec!["pg".to_string()]),
+            other => panic!("expected a Dependents refusal, got {other:?}"),
+        }
+        m.delete_rule(&r.id, false).await.expect("delete the rule");
+        m.delete_connection(&c.id)
+            .await
+            .expect("delete the connection");
+        assert!(store.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn frees_the_port_when_a_running_rule_is_deleted() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+        m.start_rule(&r.id).await.expect("start");
+
+        m.delete_rule(&r.id, false).await.expect("delete");
+        assert!(port_is_free(port).await);
+        assert!(store.lock().unwrap().rules().is_empty());
+    }
+
+    // --- MCP linkage ------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn blocks_a_stop_while_a_linked_mcp_is_started_and_obeys_force() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager_with(&store, View::boxed(&["pg-analytics"]), None);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                mcps: Some(vec!["pg-analytics".into()]),
+                ..rule_input("pg", &c.id, port, echo)
+            },
+        );
+        m.start_rule(&r.id).await.expect("start");
+
+        match m.stop_rule(&r.id, true, false).await {
+            Err(OpError::Dependents(names)) => {
+                assert_eq!(names, vec!["pg-analytics".to_string()])
+            }
+            other => panic!("expected a Dependents refusal, got {other:?}"),
+        }
+        assert_eq!(
+            state_of(&m, &r.id),
+            "up",
+            "not stopped behind the user's back"
+        );
+        m.stop_rule(&r.id, true, true).await.expect("forced stop");
+        assert_eq!(state_of(&m, &r.id), "stopped");
+    }
+
+    #[tokio::test]
+    async fn does_not_block_when_the_linked_mcp_is_not_running() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager_with(&store, View::boxed(&[]), None);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                mcps: Some(vec!["pg-analytics".into()]),
+                ..rule_input("pg", &c.id, port, echo)
+            },
+        );
+        m.start_rule(&r.id).await.expect("start");
+        m.stop_rule(&r.id, true, false).await.expect("stop");
+    }
+
+    #[tokio::test]
+    async fn collects_every_dependent_into_one_error_for_stop_all() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager_with(&store, View::boxed(&["pg-analytics", "redis-b-6380"]), None);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let pa = free_port().await;
+        let pb = free_port().await;
+        add_rule(
+            &store,
+            RuleInput {
+                mcps: Some(vec!["pg-analytics".into()]),
+                ..rule_input("a", &c.id, pa, echo)
+            },
+        );
+        add_rule(
+            &store,
+            RuleInput {
+                mcps: Some(vec!["redis-b-6380".into()]),
+                ..rule_input("b", &c.id, pb, echo)
+            },
+        );
+        m.start_all().await;
+
+        let mut blocked = m.stop_all(false).await.expect_err("both are in use");
+        blocked.sort();
+        assert_eq!(blocked, vec!["pg-analytics", "redis-b-6380"]);
+
+        let results = m.stop_all(true).await.expect("forced stop-all");
+        assert!(results.iter().all(|x| x.ok), "{results:?}");
+    }
+
+    #[tokio::test]
+    async fn reports_link_state_and_an_unknown_mcp_name_honestly() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager_with(&store, View::boxed(&["pg-analytics"]), None);
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                mcps: Some(vec!["pg-analytics".into(), "ghost".into()]),
+                ..rule_input("pg", &c.id, port, 5432)
+            },
+        );
+
+        assert_eq!(
+            field(&row_of(&m, &r.id), "mcpRows"),
+            json!([
+                { "name": "pg-analytics", "state": "up", "known": true },
+                { "name": "ghost", "state": "stopped", "known": false },
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn flags_a_stale_pool_only_when_the_reconnect_came_after_the_mcp_started() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager_with(&store, View::boxed(&["pg-analytics"]), None);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(
+            &store,
+            RuleInput {
+                auto_reconnect: true,
+                reconnect_interval: 1.0,
+                mcps: Some(vec!["pg-analytics".into()]),
+                ..rule_input("pg", &c.id, port, echo)
+            },
+        );
+        m.start_rule(&r.id).await.expect("start");
+        assert_eq!(
+            m.tunnels_for_mcp("pg-analytics")[0]["stalePool"],
+            json!(false)
+        );
+
+        nth(&built, 0).die(FailureKind::Network);
+        // Down first, then up again — without the first wait this races the spawned recovery
+        // and reads the state the rule still had before the transport died.
+        assert!(
+            wait_until(Duration::from_secs(5), || state_of(&m, &r.id) == "reconnecting").await,
+            "state stayed {}",
+            state_of(&m, &r.id)
+        );
+        assert!(
+            wait_until(Duration::from_secs(10), || state_of(&m, &r.id) == "up").await,
+            "the retry never brought it back up"
+        );
+        // The MCP started at 10:00 on 2026-08-13; this reconnect is now, so its pool may still
+        // hold sockets of the dead session.
+        assert_eq!(
+            m.tunnels_for_mcp("pg-analytics")[0]["stalePool"],
+            json!(true)
+        );
+        m.close_all().await;
+    }
+
+    // --- boot and shutdown ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn starts_only_enabled_rules_and_never_throws_when_one_fails() {
+        let (_dir, store) = scratch();
+        let (m, _built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let good = add_rule(&store, rule_input("good", &c.id, free_port().await, echo));
+        let off = add_rule(&store, rule_input("off", &c.id, free_port().await, echo));
+        let (squatter, taken) = squat().await;
+        let bad = add_rule(&store, rule_input("bad", &c.id, taken, echo));
+        {
+            let mut s = store.lock().unwrap();
+            s.set_enabled(&good.id, true).expect("enable good");
+            s.set_enabled(&bad.id, true).expect("enable bad");
+        }
+
+        let results = m.start_enabled().await;
+        let mut names: Vec<&str> = results.iter().map(|x| x.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["bad", "good"]);
+        assert!(results.iter().any(|x| x.name == "good" && x.ok));
+        assert!(results.iter().any(|x| x.name == "bad" && !x.ok));
+        assert_eq!(state_of(&m, &off.id), "stopped");
+        drop(squatter);
+        m.close_all().await;
+    }
+
+    #[tokio::test]
+    async fn close_all_frees_every_port_but_leaves_enabled_alone() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let mut ports = Vec::new();
+        let mut ids = Vec::new();
+        for i in 0..2 {
+            let port = free_port().await;
+            ids.push(add_rule(&store, rule_input(&format!("r{i}"), &c.id, port, echo)).id);
+            ports.push(port);
+        }
+        m.start_all().await;
+
+        m.close_all().await;
+        for port in ports {
+            assert!(port_is_free(port).await);
+        }
+        // Enabled is untouched, so the next boot restores exactly this set.
+        for id in &ids {
+            assert!(stored_rule(&store, id).enabled);
+        }
+        assert_eq!(nth(&built, 0).ended(), 1);
     }
 }

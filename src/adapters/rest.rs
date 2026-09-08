@@ -393,10 +393,12 @@ fn build_url(target: &str, path: &str, query: Option<&Value>) -> String {
         .collect();
     if let Some(Value::Object(query)) = query {
         for (key, value) in query {
-            // Keys are normalized through the same decode/encode round trip the values take.
+            // Both halves go in DECODED, like the pairs parsed out of the URL above — the single
+            // encode happens on serialization below. Encoding here as well sent the API `a%2Bb`
+            // where the tool was told `a b`.
             let decoded_key = form_decode(key);
             pairs.retain(|(existing_key, _)| *existing_key != decoded_key);
-            pairs.push((decoded_key, form_encode(&js_string(value))));
+            pairs.push((decoded_key, js_string(value)));
         }
     }
     if pairs.is_empty() && !had_query {
@@ -715,5 +717,738 @@ impl Engine for RestEngine {
         if let Ok(mut current) = self.name.write() {
             *current = name.to_string();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Ported from the Node build's `test/rest-template.test.ts` (the declaration language) and
+    //! `test/rest-adapter.test.ts` (the engine, driven against a real local HTTP server exactly
+    //! as the Node suite drives it).
+    use super::*;
+
+    fn def(v: Value) -> ServerDef {
+        match v {
+            Value::Object(o) => ServerDef(o),
+            other => panic!("a server def is an object, got {other}"),
+        }
+    }
+
+    fn args(v: Value) -> Map<String, Value> {
+        match v {
+            Value::Object(o) => o,
+            other => panic!("arguments are an object, got {other}"),
+        }
+    }
+
+    // ---- compile_input ----------------------------------------------------------------
+
+    #[test]
+    fn compiles_a_compact_declaration_into_an_object_json_schema() {
+        let schema = compile_input(Some(&json!({
+            "query": { "type": "string", "required": true, "description": "What to search for" },
+            "count": { "type": "number", "default": 10 },
+            "recency": { "type": "string", "enum": ["oneDay", "noLimit"] },
+        })));
+        assert_eq!(
+            schema,
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "What to search for" },
+                    // The default is stated in prose because the model reads descriptions, not
+                    // JSON Schema defaults.
+                    "count": { "type": "number", "description": "Defaults to 10." },
+                    "recency": { "type": "string", "enum": ["oneDay", "noLimit"] },
+                },
+                "required": ["query"],
+            })
+        );
+    }
+
+    #[test]
+    fn a_declared_default_is_appended_to_an_existing_description() {
+        let schema = compile_input(Some(&json!({
+            "count": { "type": "number", "default": 10, "description": "How many." },
+        })));
+        assert_eq!(
+            schema["properties"]["count"]["description"],
+            json!("How many. Defaults to 10.")
+        );
+    }
+
+    #[test]
+    fn omits_required_entirely_when_nothing_is_required() {
+        assert_eq!(
+            compile_input(Some(&json!({ "q": { "type": "string" } }))),
+            json!({ "type": "object", "properties": { "q": { "type": "string" } } })
+        );
+    }
+
+    #[test]
+    fn compiles_an_absent_declaration_into_a_no_argument_schema() {
+        assert_eq!(
+            compile_input(None),
+            json!({ "type": "object", "properties": {} })
+        );
+        // A declaration that is not an object is the same as none — a schema is what a client
+        // validates against, so a broken one must not reach it.
+        assert_eq!(
+            compile_input(Some(&json!("nope"))),
+            json!({ "type": "object", "properties": {} })
+        );
+    }
+
+    // ---- apply_defaults ---------------------------------------------------------------
+
+    #[test]
+    fn fills_in_a_declared_default_the_caller_omitted() {
+        let out = apply_defaults(
+            Some(&json!({ "count": { "type": "number", "default": 10 } })),
+            &Map::new(),
+        )
+        .expect("no required argument");
+        assert_eq!(out["count"], json!(10));
+    }
+
+    #[test]
+    fn never_overrides_a_value_the_caller_passed_including_a_falsy_one() {
+        let decl = json!({
+            "count": { "type": "number", "default": 10 },
+            "deep": { "type": "boolean", "default": true },
+        });
+        let out = apply_defaults(Some(&decl), &args(json!({ "count": 0, "deep": false })))
+            .expect("nothing required");
+        assert_eq!(out["count"], json!(0));
+        assert_eq!(out["deep"], json!(false));
+    }
+
+    #[test]
+    fn refuses_a_call_missing_a_required_argument_and_names_it() {
+        let err = apply_defaults(
+            Some(&json!({ "query": { "type": "string", "required": true } })),
+            &Map::new(),
+        )
+        .unwrap_err();
+        assert!(err.contains("query"), "{err}");
+
+        // Several missing arguments are reported together, so a caller fixes them in one turn.
+        let err = apply_defaults(
+            Some(&json!({
+                "a": { "type": "string", "required": true },
+                "b": { "type": "string", "required": true },
+            })),
+            &Map::new(),
+        )
+        .unwrap_err();
+        assert!(err.contains("arguments"), "{err}");
+        assert!(err.contains("a, b"), "{err}");
+    }
+
+    #[test]
+    fn an_explicit_null_is_a_value_not_a_missing_argument() {
+        // Only an ABSENT key is missing, exactly as `=== undefined` reads in the Node build.
+        let out = apply_defaults(
+            Some(&json!({ "q": { "type": "string", "required": true, "default": "x" } })),
+            &args(json!({ "q": null })),
+        )
+        .expect("null is a value");
+        assert_eq!(out["q"], json!(null));
+    }
+
+    // ---- render_template --------------------------------------------------------------
+
+    #[test]
+    fn substitutes_a_whole_string_reference_with_the_arguments_own_type() {
+        let out = render_template(
+            &json!({ "count": "{{count}}", "flag": "{{flag}}" }),
+            &args(json!({ "count": 20, "flag": false })),
+        );
+        // 20, not "20": the API is being sent the vendor's own JSON shape.
+        assert_eq!(out, Some(json!({ "count": 20, "flag": false })));
+    }
+
+    #[test]
+    fn interpolates_a_reference_embedded_in_surrounding_text() {
+        assert_eq!(
+            render_template(
+                &json!({ "q": "site:{{domain}} {{term}}" }),
+                &args(json!({ "domain": "a.test", "term": "x" })),
+            ),
+            Some(json!({ "q": "site:a.test x" }))
+        );
+    }
+
+    #[test]
+    fn keeps_literals_exactly_as_written() {
+        let literals = json!({ "engine": "default", "intent": false, "n": 3, "nothing": null });
+        assert_eq!(render_template(&literals, &Map::new()), Some(literals));
+    }
+
+    #[test]
+    fn drops_a_key_whose_reference_has_no_argument_behind_it() {
+        // Sending `null` for an omitted optional is how you get a validation error out of an API
+        // that would have been perfectly happy with the field absent.
+        let out = render_template(
+            &json!({ "q": "{{term}}", "recency": "{{recency}}" }),
+            &args(json!({ "term": "x" })),
+        );
+        assert_eq!(out, Some(json!({ "q": "x" })));
+    }
+
+    #[test]
+    fn drops_a_key_when_any_reference_inside_a_longer_string_is_missing() {
+        assert_eq!(
+            render_template(&json!({ "q": "{{a}} and {{b}}" }), &args(json!({ "a": "x" }))),
+            Some(json!({}))
+        );
+    }
+
+    #[test]
+    fn renders_nested_objects_and_arrays_dropping_what_has_nothing_behind_it() {
+        let out = render_template(
+            &json!({
+                "filter": { "domain": "{{domain}}", "size": "high" },
+                "tags": ["fixed", "{{tag}}", "{{missing}}"],
+            }),
+            &args(json!({ "domain": "a.test", "tag": "t" })),
+        );
+        assert_eq!(
+            out,
+            Some(json!({
+                "filter": { "domain": "a.test", "size": "high" },
+                "tags": ["fixed", "t"],
+            }))
+        );
+    }
+
+    #[test]
+    fn a_template_that_is_nothing_but_a_missing_reference_renders_to_nothing() {
+        assert_eq!(render_template(&json!("{{gone}}"), &Map::new()), None);
+    }
+
+    // ---- render_path ------------------------------------------------------------------
+
+    #[test]
+    fn interpolates_path_segments_and_percent_encodes_them() {
+        // A `/` in an argument stays inside its own segment instead of inventing a new one.
+        assert_eq!(
+            render_path(
+                "/repos/{{owner}}/{{repo}}",
+                &args(json!({ "owner": "a b", "repo": "c/d" }))
+            ),
+            Ok("/repos/a%20b/c%2Fd".to_string())
+        );
+    }
+
+    #[test]
+    fn refuses_a_path_with_an_unfilled_segment_rather_than_sending_it() {
+        // `/repos//x` is a different endpoint, so a path reference cannot be dropped the way a
+        // body key can.
+        let err = render_path("/repos/{{owner}}", &Map::new()).unwrap_err();
+        assert!(err.contains("owner"), "{err}");
+    }
+
+    #[test]
+    fn leaves_a_path_with_no_references_alone() {
+        assert_eq!(
+            render_path("/web_search", &args(json!({ "a": 1 }))),
+            Ok("/web_search".to_string())
+        );
+    }
+
+    // ---- the hand-rolled scanners (ADR-007: no regex) ----------------------------------
+
+    #[test]
+    fn the_reference_scanner_matches_what_the_node_regex_matched() {
+        let names = |t: &str| {
+            scan_refs(t)
+                .into_iter()
+                .map(|(_, _, name)| name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names("{{a}}"), vec!["a"]);
+        assert_eq!(names("{{  spaced  }}"), vec!["spaced"]);
+        assert_eq!(names("{{_under1}}"), vec!["_under1"]);
+        // On a failed match the scan advances one byte, so the inner reference is still found.
+        assert_eq!(names("{{{a}}}"), vec!["a"]);
+        // Braces that do not complete the pattern stay literal text.
+        assert_eq!(names("{{1bad}}"), Vec::<String>::new());
+        assert_eq!(names("{{unclosed"), Vec::<String>::new());
+        assert_eq!(names("{ {a} }"), Vec::<String>::new());
+        assert_eq!(names("{{a}} and {{b}}"), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn only_a_reference_filling_the_whole_string_substitutes_a_typed_value() {
+        assert_eq!(whole_ref("{{a}}").as_deref(), Some("a"));
+        assert_eq!(whole_ref("{{ a }}").as_deref(), Some("a"));
+        assert_eq!(whole_ref(" {{a}}"), None);
+        assert_eq!(whole_ref("{{a}}x"), None);
+        assert_eq!(whole_ref("{{a}}{{b}}"), None);
+    }
+
+    #[test]
+    fn values_coerce_to_text_the_way_javascript_does() {
+        assert_eq!(js_string(&json!(null)), "null");
+        assert_eq!(js_string(&json!(true)), "true");
+        assert_eq!(js_string(&json!(3)), "3");
+        assert_eq!(js_string(&json!("x")), "x");
+        // Array.prototype.join renders null and undefined elements as empty strings.
+        assert_eq!(js_string(&json!(["a", null, 2])), "a,,2");
+        assert_eq!(js_string(&json!({ "a": 1 })), "[object Object]");
+    }
+
+    #[test]
+    fn percent_encoding_leaves_exactly_the_unreserved_set_alone() {
+        assert_eq!(encode_uri_component("aZ09-_.!~*'()"), "aZ09-_.!~*'()");
+        assert_eq!(encode_uri_component("a b/c?d&e=f"), "a%20b%2Fc%3Fd%26e%3Df");
+        // UTF-8, uppercase hex, one escape per byte.
+        assert_eq!(encode_uri_component("é"), "%C3%A9");
+    }
+
+    // ---- build_url --------------------------------------------------------------------
+
+    #[test]
+    fn builds_a_url_with_the_rendered_query_appended() {
+        assert_eq!(
+            build_url("http://api.test", "/v1/search", Some(&json!({ "q": "x", "n": 2 }))),
+            "http://api.test/v1/search?q=x&n=2"
+        );
+        assert_eq!(build_url("http://api.test", "/ping", None), "http://api.test/ping");
+    }
+
+    #[test]
+    fn a_query_value_is_form_encoded_exactly_once() {
+        // searchParams.set stores the raw value and encodes on serialize; encoding it twice sends
+        // the API `a%2Bb` where it was told `a b`.
+        assert_eq!(
+            build_url("http://api.test", "/s", Some(&json!({ "q": "a b" }))),
+            "http://api.test/s?q=a+b"
+        );
+        assert_eq!(
+            build_url("http://api.test", "/s", Some(&json!({ "q": "a/b&c" }))),
+            "http://api.test/s?q=a%2Fb%26c"
+        );
+    }
+
+    #[test]
+    fn a_declared_query_replaces_a_pair_of_the_same_name_rather_than_duplicating_it() {
+        assert_eq!(
+            build_url("http://api.test", "/s?fixed=1&q=old", Some(&json!({ "q": "new" }))),
+            "http://api.test/s?fixed=1&q=new"
+        );
+    }
+
+    #[test]
+    fn a_query_parameter_with_nothing_behind_it_never_reaches_the_url() {
+        // render_template dropped it; build_url must not resurrect it as an empty pair.
+        let rendered = render_template(
+            &json!({ "ref": "{{ref}}", "raw": "1" }),
+            &args(json!({})),
+        );
+        assert_eq!(
+            build_url("http://api.test", "/f", rendered.as_ref()),
+            "http://api.test/f?raw=1"
+        );
+    }
+
+    // ---- the engine, against a real local API ------------------------------------------
+
+    /// One request the stand-in API received.
+    #[derive(Clone)]
+    struct Seen {
+        method: String,
+        target: String,
+        headers: Vec<(String, String)>,
+        body: String,
+    }
+
+    impl Seen {
+        fn header(&self, name: &str) -> Option<&str> {
+            self.headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.as_str())
+        }
+    }
+
+    /// A stand-in for the third-party API: records what arrived and answers what the test told
+    /// it to. The Node suite runs the same shape through node:http.
+    struct Api {
+        base_url: String,
+        seen: Arc<std::sync::Mutex<Vec<Seen>>>,
+        answer: Arc<std::sync::Mutex<(u16, String)>>,
+        server: tokio::task::JoinHandle<()>,
+    }
+
+    impl Api {
+        fn answer(&self, status: u16, body: Value) {
+            *self.answer.lock().unwrap() = (status, body.to_string());
+        }
+        fn answer_text(&self, status: u16, body: &str) {
+            *self.answer.lock().unwrap() = (status, body.to_string());
+        }
+        fn seen(&self) -> Vec<Seen> {
+            self.seen.lock().unwrap().clone()
+        }
+        fn stop(self) {
+            self.server.abort();
+        }
+    }
+
+    async fn api() -> Api {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<Seen>::new()));
+        let answer = Arc::new(std::sync::Mutex::new((200u16, json!({ "ok": true }).to_string())));
+        let state = (seen.clone(), answer.clone());
+        let app = axum::Router::new().fallback(axum::routing::any(
+            move |req: axum::extract::Request| {
+                let (seen, answer) = state.clone();
+                async move {
+                    let method = req.method().to_string();
+                    let target = req
+                        .uri()
+                        .path_and_query()
+                        .map(ToString::to_string)
+                        .unwrap_or_default();
+                    let headers = req
+                        .headers()
+                        .iter()
+                        .map(|(k, v)| {
+                            (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        })
+                        .collect();
+                    let body = axum::body::to_bytes(req.into_body(), 1024 * 1024)
+                        .await
+                        .map(|b| String::from_utf8_lossy(&b).into_owned())
+                        .unwrap_or_default();
+                    seen.lock().unwrap().push(Seen {
+                        method,
+                        target,
+                        headers,
+                        body,
+                    });
+                    let (status, payload) = answer.lock().unwrap().clone();
+                    axum::response::Response::builder()
+                        .status(status)
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(payload))
+                        .expect("a literal response")
+                }
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a loopback port");
+        let port = listener.local_addr().expect("addr").port();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Api {
+            base_url: format!("http://127.0.0.1:{port}"),
+            seen,
+            answer,
+            server,
+        }
+    }
+
+    /// The declared REST API this feature exists for — the vendor's own request, with the values
+    /// the model controls swapped for `{{arg}}`.
+    fn search_def(base_url: &str) -> Value {
+        json!({
+            "type": "rest",
+            "description": "Example search API (REST).",
+            "baseUrl": base_url,
+            "headers": { "Authorization": "Bearer sk-test" },
+            "tools": [{
+                "name": "search",
+                "description": "Search the index.",
+                "input": {
+                    "query": { "type": "string", "required": true, "description": "What to search for" },
+                    "count": { "type": "number", "default": 10 },
+                    "recency": { "type": "string", "enum": ["oneDay", "noLimit"] },
+                },
+                "request": {
+                    "method": "POST",
+                    "path": "/v1/search",
+                    "body": {
+                        "q": "{{query}}",
+                        "engine": "default",
+                        "safe": false,
+                        "count": "{{count}}",
+                        "recency": "{{recency}}",
+                        "detail": "high",
+                    },
+                },
+                "pick": ["results"],
+            }],
+        })
+    }
+
+    fn engine(d: Value) -> RestEngine {
+        RestEngine::new(&def(d), "example").expect("a valid rest declaration")
+    }
+
+    #[tokio::test]
+    async fn exposes_each_declared_tool_with_its_compiled_schema() {
+        let remote = api().await;
+        let e = engine(search_def(&remote.base_url));
+        let tools = e.tools();
+        assert_eq!(
+            tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
+            vec!["search"]
+        );
+        assert_eq!(tools[0].description, "Search the index.");
+        assert_eq!(tools[0].input_schema["required"], json!(["query"]));
+        assert_eq!(
+            tools[0].input_schema["properties"]["recency"]["enum"],
+            json!(["oneDay", "noLimit"])
+        );
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn sends_the_rendered_request_with_the_declared_headers_and_the_default_filled_in() {
+        let remote = api().await;
+        let e = engine(search_def(&remote.base_url));
+        e.call("search", &json!({ "query": "mcp gateway" }))
+            .await
+            .expect("the call succeeds");
+
+        let seen = remote.seen();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].method, "POST");
+        assert_eq!(seen[0].target, "/v1/search");
+        assert_eq!(seen[0].header("authorization"), Some("Bearer sk-test"));
+        assert_eq!(seen[0].header("accept"), Some("application/json"));
+        assert!(seen[0]
+            .header("content-type")
+            .unwrap_or("")
+            .contains("application/json"));
+        assert_eq!(
+            serde_json::from_str::<Value>(&seen[0].body).expect("a JSON body"),
+            json!({
+                "q": "mcp gateway",
+                "engine": "default",
+                "safe": false,
+                // the declared default, and a number rather than "10"
+                "count": 10,
+                "detail": "high",
+                // recency is absent, not null — the caller passed no recency
+            })
+        );
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn narrows_the_answer_to_the_picked_keys() {
+        let remote = api().await;
+        remote.answer(
+            200,
+            json!({ "id": "x", "created": 1, "request_id": "y", "results": [{ "title": "t" }] }),
+        );
+        let e = engine(search_def(&remote.base_url));
+        assert_eq!(
+            e.call("search", &json!({ "query": "q" })).await.unwrap(),
+            json!({ "results": [{ "title": "t" }] })
+        );
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn a_picked_key_the_api_did_not_send_stays_absent() {
+        let remote = api().await;
+        remote.answer(200, json!({ "id": "x" }));
+        let e = engine(search_def(&remote.base_url));
+        assert_eq!(
+            e.call("search", &json!({ "query": "q" })).await.unwrap(),
+            json!({})
+        );
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn reports_the_apis_own_status_and_body_when_a_call_fails() {
+        // The vendor's error code is the useful part: a 429 with a rate-limit body means "slow
+        // down", which a generic message would throw away.
+        let remote = api().await;
+        remote.answer(
+            429,
+            json!({ "error": { "code": "rate_limited", "message": "concurrency limit" } }),
+        );
+        let e = engine(search_def(&remote.base_url));
+        let err = e.call("search", &json!({ "query": "q" })).await.unwrap_err();
+        assert!(err.contains("429"), "{err}");
+        assert!(err.contains("rate_limited"), "{err}");
+        assert!(err.contains("/v1/search"), "{err}");
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn refuses_a_call_with_no_required_argument_before_any_request_is_made() {
+        // A call that cannot be rendered must not become a request, least of all a billed one.
+        let remote = api().await;
+        let e = engine(search_def(&remote.base_url));
+        let err = e.call("search", &json!({})).await.unwrap_err();
+        assert!(err.contains("query"), "{err}");
+        assert!(remote.seen().is_empty(), "a request was sent anyway");
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn rejects_a_tool_it_does_not_declare() {
+        let remote = api().await;
+        let e = engine(search_def(&remote.base_url));
+        let err = e.call("nope", &json!({})).await.unwrap_err();
+        assert!(err.contains("unknown tool: nope"), "{err}");
+        assert!(remote.seen().is_empty());
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn renders_query_parameters_and_path_segments() {
+        let remote = api().await;
+        let e = engine(json!({
+            "type": "rest",
+            "baseUrl": remote.base_url,
+            "tools": [{
+                "name": "read_file",
+                "description": "Read a file from a repo.",
+                "input": {
+                    "owner": { "type": "string", "required": true },
+                    "repo": { "type": "string", "required": true },
+                    "ref": { "type": "string" },
+                },
+                "request": {
+                    "method": "GET",
+                    "path": "/repos/{{owner}}/{{repo}}/file",
+                    "query": { "ref": "{{ref}}", "raw": "1" },
+                },
+            }],
+        }));
+
+        e.call(
+            "read_file",
+            &json!({ "owner": "an org", "repo": "a/b", "ref": "main" }),
+        )
+        .await
+        .expect("call");
+        assert_eq!(
+            remote.seen()[0].target,
+            "/repos/an%20org/a%2Fb/file?ref=main&raw=1"
+        );
+
+        // No ref passed, so no empty ref sent.
+        e.call("read_file", &json!({ "owner": "o", "repo": "r" }))
+            .await
+            .expect("call");
+        assert_eq!(remote.seen()[1].target, "/repos/o/r/file?raw=1");
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn sends_no_body_on_a_get() {
+        let remote = api().await;
+        let e = engine(json!({
+            "type": "rest",
+            "baseUrl": remote.base_url,
+            "tools": [{ "name": "ping_it", "description": "p", "request": { "method": "GET", "path": "/ping" } }],
+        }));
+        e.call("ping_it", &json!({})).await.expect("call");
+        let seen = remote.seen();
+        assert_eq!(seen[0].method, "GET");
+        assert_eq!(seen[0].body, "");
+        // ...and no content-type either: there is no content.
+        assert_eq!(seen[0].header("content-type"), None);
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn a_response_that_is_not_json_is_handed_over_as_it_came() {
+        let remote = api().await;
+        remote.answer_text(200, "plain words, no braces");
+        let e = engine(json!({
+            "type": "rest",
+            "baseUrl": remote.base_url,
+            "tools": [{ "name": "t", "description": "d", "request": { "method": "GET", "path": "/x" } }],
+        }));
+        assert_eq!(
+            e.call("t", &json!({})).await.unwrap(),
+            json!("plain words, no braces")
+        );
+        remote.stop();
+    }
+
+    #[tokio::test]
+    async fn a_def_header_overrides_the_default_of_the_same_name() {
+        let remote = api().await;
+        let e = engine(json!({
+            "type": "rest",
+            "baseUrl": remote.base_url,
+            // Numbers and booleans render the way JSON does; Accept replaces the built-in default.
+            "headers": { "Accept": "text/plain", "X-Count": 5 },
+            "tools": [{ "name": "t", "description": "d", "request": { "method": "GET", "path": "/x" } }],
+        }));
+        e.call("t", &json!({})).await.expect("call");
+        let seen = remote.seen();
+        assert_eq!(seen[0].header("accept"), Some("text/plain"));
+        assert_eq!(seen[0].header("x-count"), Some("5"));
+        remote.stop();
+    }
+
+    /// The construction error for a declaration that cannot be configured. `RestEngine` is not
+    /// `Debug` (it holds a live client), so the Ok arm is named rather than unwrapped.
+    fn engine_err(d: Value) -> String {
+        match RestEngine::new(&def(d), "x") {
+            Err(err) => err,
+            Ok(_) => panic!("this declaration must not build an engine"),
+        }
+    }
+
+    #[test]
+    fn a_declaration_that_cannot_be_configured_is_a_start_error() {
+        assert!(engine_err(json!({ "type": "rest" })).contains("`tools` array"));
+        assert!(engine_err(json!({ "type": "rest", "tools": {} })).contains("`tools` array"));
+        assert!(engine_err(json!({ "type": "rest", "tools": [{ "request": {} }] })).contains("no name"));
+        assert!(engine_err(json!({ "type": "rest", "tools": [{ "name": "t" }] })).contains("has no request"));
+        // A header name or value the HTTP layer cannot carry fails here, not at the first call.
+        assert!(
+            engine_err(json!({ "type": "rest", "tools": [], "headers": { "bad header": "v" } }))
+                .contains("invalid header name")
+        );
+    }
+
+    #[test]
+    fn the_meta_reports_the_live_name_and_skips_an_empty_target() {
+        let e = engine(json!({
+            "type": "rest",
+            "description": "A described API.",
+            "tools": [],
+        }));
+        let meta = e.meta();
+        assert_eq!(meta.name.as_deref(), Some("example"));
+        assert_eq!(meta.description.as_deref(), Some("A described API."));
+        // An empty baseUrl stays out of the instructions rather than saying "Connected to ;".
+        assert_eq!(meta.target, None);
+
+        e.rename("renamed");
+        assert_eq!(e.meta().name.as_deref(), Some("renamed"));
+    }
+
+    #[test]
+    fn a_rest_engine_has_no_health_probe_at_all() {
+        // A declared REST API is as metered as a remote MCP: the registry's 15 s probe would
+        // spend real money to colour a dot, so the absent ping makes it report "unknown".
+        let e = engine(json!({ "type": "rest", "tools": [] }));
+        assert!(futures_ping(&e).is_none());
+    }
+
+    /// `Engine::ping` is async; this test only cares that the default (no probe) is in force, so
+    /// it drives the future to completion on a fresh runtime rather than making the test async.
+    fn futures_ping(e: &RestEngine) -> Option<Result<(), String>> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a test runtime")
+            .block_on(e.ping())
     }
 }

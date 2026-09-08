@@ -813,3 +813,633 @@ impl Registry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::{ResourceToggle, ToolToggle};
+    use async_trait::async_trait;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    fn def(v: Value) -> ServerDef {
+        ServerDef(v.as_object().cloned().unwrap_or_default())
+    }
+
+    /// Point the call log at the test binary scratch directory: delete/rename touch it, and a
+    /// unit test must never write into the real `~/.mcp-gateway`.
+    fn use_temp_call_log() {
+        crate::calls::test_log_dir();
+    }
+
+    /// The Rust shape of the Node suite fakeAdapter / countingAdapter: builds a real echo
+    /// endpoint, counts builds and closes so a double build is observable, and can be given a
+    /// ping outcome, a slow build, or a close that parks until released.
+    #[derive(Default)]
+    struct Fake {
+        builds: AtomicUsize,
+        closes: AtomicUsize,
+        build_delay_ms: u64,
+        ping: Option<Result<(), String>>,
+        ping_delay_ms: u64,
+        close_gate: Option<Arc<tokio::sync::Notify>>,
+        tools: Option<ToolToggle>,
+        resources: Option<ResourceToggle>,
+    }
+
+    impl Fake {
+        fn arc(self) -> Arc<Fake> {
+            Arc::new(self)
+        }
+        fn builds(&self) -> usize {
+            self.builds.load(Ordering::SeqCst)
+        }
+        fn closes(&self) -> usize {
+            self.closes.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl Adapter for Fake {
+        fn kind(&self) -> &str {
+            "fake"
+        }
+        async fn build(&self) -> Result<McpEndpoint, String> {
+            self.builds.fetch_add(1, Ordering::SeqCst);
+            if self.build_delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.build_delay_ms)).await;
+            }
+            crate::adapters::echo::EchoAdapter::new("fake").build().await
+        }
+        async fn ping(&self) -> Option<Result<(), String>> {
+            if self.ping_delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.ping_delay_ms)).await;
+            }
+            self.ping.clone()
+        }
+        async fn close(&self) {
+            if let Some(gate) = self.close_gate.clone() {
+                gate.notified().await;
+            }
+            self.closes.fetch_add(1, Ordering::SeqCst);
+        }
+        fn tool_toggle(&self) -> Option<ToolToggle> {
+            self.tools.clone()
+        }
+        fn resource_toggle(&self) -> Option<ResourceToggle> {
+            self.resources.clone()
+        }
+    }
+
+    fn reg() -> Arc<Registry> {
+        Registry::new(60_000)
+    }
+
+    fn server_of(r: &Registry, name: &str) -> Option<McpEndpoint> {
+        r.get(name)?.data.read().ok()?.server.clone()
+    }
+
+    fn is_running(r: &Registry, name: &str) -> bool {
+        server_of(r, name).is_some()
+    }
+
+    fn row(r: &Registry, name: &str) -> Value {
+        r.status()
+            .into_iter()
+            .find(|s| s["name"] == name)
+            .unwrap_or(Value::Null)
+    }
+
+    fn deadline(r: &Registry, name: &str) -> Option<u64> {
+        r.get(name)?.data.read().ok()?.idle_deadline
+    }
+
+    fn lifecycle(r: &Registry, name: &str) -> Lifecycle {
+        r.get(name).unwrap().data.read().unwrap().lifecycle
+    }
+
+    // --- lifecycle ---
+
+    #[tokio::test]
+    async fn starts_and_exposes_a_server_then_stops_and_clears_it() {
+        let r = reg();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        assert!(!is_running(&r, "a"));
+        r.start("a").await.unwrap();
+        assert!(is_running(&r, "a"));
+        r.stop("a").await.unwrap();
+        assert!(!is_running(&r, "a"));
+    }
+
+    #[tokio::test]
+    async fn start_is_idempotent_and_does_not_rebuild() {
+        let r = reg();
+        let fake = Fake::default().arc();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), fake.clone())
+            .unwrap();
+        r.start("a").await.unwrap();
+        let first = server_of(&r, "a").unwrap();
+        r.start("a").await.unwrap();
+        let second = server_of(&r, "a").unwrap();
+        assert!(Arc::ptr_eq(&first.http, &second.http));
+        assert_eq!(fake.builds(), 1);
+    }
+
+    #[tokio::test]
+    async fn stop_is_idempotent() {
+        let r = reg();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.start("a").await.unwrap();
+        r.stop("a").await.unwrap();
+        assert!(r.stop("a").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn restart_rebuilds_the_server() {
+        let r = reg();
+        let fake = Fake::default().arc();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), fake.clone())
+            .unwrap();
+        r.start("a").await.unwrap();
+        let before = server_of(&r, "a").unwrap();
+        r.restart("a").await.unwrap();
+        let after = server_of(&r, "a").unwrap();
+        assert!(!Arc::ptr_eq(&before.http, &after.http));
+        assert_eq!((fake.builds(), fake.closes()), (2, 1));
+    }
+
+    #[tokio::test]
+    async fn rename_moves_the_entry_under_a_new_key() {
+        use_temp_call_log();
+        let r = reg();
+        r.register("old", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.start("old").await.unwrap();
+        r.rename("old", "new").await.unwrap();
+        assert!(!r.has("old"));
+        assert!(r.has("new"));
+        assert!(is_running(&r, "new"));
+    }
+
+    #[tokio::test]
+    async fn rejects_a_rename_onto_an_existing_name() {
+        let r = reg();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.register("b", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        let err = r.rename("a", "b").await.unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert!(r.has("a") && r.has("b"));
+    }
+
+    #[tokio::test]
+    async fn renaming_to_the_same_name_is_a_no_op() {
+        let r = reg();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.rename("a", "a").await.unwrap();
+        assert!(r.has("a"));
+    }
+
+    #[tokio::test]
+    async fn deletes_a_managed_mcp() {
+        use_temp_call_log();
+        let r = reg();
+        let fake = Fake::default().arc();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), fake.clone())
+            .unwrap();
+        r.start("a").await.unwrap();
+        r.delete("a").await.unwrap();
+        assert!(!r.has("a"));
+        assert_eq!(fake.closes(), 1, "delete stops before it drops the entry");
+    }
+
+    // The old refusal existed because deleting a config MCP left its gateway.config.json entry
+    // behind, so it resurrected on restart. The admin API removes the file entry too — the
+    // registry half deletes any source.
+    #[tokio::test]
+    async fn deletes_a_config_mcp_as_well() {
+        use_temp_call_log();
+        let r = reg();
+        r.register("a", Source::Config, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.start("a").await.unwrap();
+        r.delete("a").await.unwrap();
+        assert!(!r.has("a"));
+    }
+
+    #[tokio::test]
+    async fn refuses_a_duplicate_registration() {
+        let r = reg();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        // `register` hands back the entry on success, which has no Debug — match, do not unwrap.
+        let err = match r.register("a", Source::Config, def(json!({"type":"fake"})), Fake::default().arc()) {
+            Err(err) => err,
+            Ok(_) => panic!("a duplicate registration must be refused, not shadowed"),
+        };
+        assert!(err.contains("already registered"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn the_evictor_fires_for_every_abandoned_name() {
+        use_temp_call_log();
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let r = reg();
+        r.set_evictor(Box::new(move |name| {
+            if let Ok(mut v) = sink.lock() {
+                v.push(name.to_string());
+            }
+        }));
+        r.register("old", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.rename("old", "new").await.unwrap();
+        r.delete("new").await.unwrap();
+        // A handler cached under a name that no longer resolves is never evicted by the POST
+        // path, so both the rename old name and the deleted name must come through here.
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen, vec!["old".to_string(), "new".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn update_def_carries_the_live_toggles_onto_the_new_adapter() {
+        let r = reg();
+        let old = Fake {
+            tools: Some(Arc::new(std::sync::RwLock::new(
+                ["hidden".to_string()].into_iter().collect(),
+            ))),
+            resources: Some(Arc::new(AtomicBool::new(false))),
+            ..Default::default()
+        }
+        .arc();
+        let new = Fake {
+            tools: Some(Arc::new(std::sync::RwLock::new(Default::default()))),
+            resources: Some(Arc::new(AtomicBool::new(true))),
+            ..Default::default()
+        }
+        .arc();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), old).unwrap();
+        r.start("a").await.unwrap();
+        r.update_def("a", def(json!({"type":"fake","host":"x"})), new.clone(), true)
+            .await
+            .unwrap();
+        // A connection edit must not silently re-enable every tool and resource the user turned off.
+        assert!(new.tools.as_ref().unwrap().read().unwrap().contains("hidden"));
+        assert!(!new.resources.as_ref().unwrap().load(Ordering::SeqCst));
+        assert!(is_running(&r, "a"));
+    }
+
+    #[tokio::test]
+    async fn update_def_with_start_false_swaps_the_definition_and_leaves_it_stopped() {
+        let r = reg();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.start("a").await.unwrap();
+        let next = Fake::default().arc();
+        r.update_def("a", def(json!({"type":"fake","port":1})), next.clone(), false)
+            .await
+            .unwrap();
+        assert!(!is_running(&r, "a"));
+        assert_eq!(next.builds(), 0);
+        let port = r.get("a").unwrap().data.read().unwrap().def.get_number("port");
+        assert_eq!(port, Some(1.0));
+    }
+
+    // --- health ---
+
+    #[tokio::test]
+    async fn marks_a_passing_ping_as_up_with_latency() {
+        let r = reg();
+        r.register(
+            "ok",
+            Source::Config,
+            def(json!({"type":"fake"})),
+            Fake { ping: Some(Ok(())), ping_delay_ms: 5, ..Default::default() }.arc(),
+        )
+        .unwrap();
+        r.start("ok").await.unwrap();
+        r.check_all().await;
+        let row = row(&r, "ok");
+        assert_eq!(row["state"], "up");
+        assert!(row["latencyMs"].is_number());
+        assert!(row["reason"].is_null());
+    }
+
+    #[tokio::test]
+    async fn captures_the_raw_failure_reason_when_ping_fails() {
+        let r = reg();
+        r.register(
+            "bad",
+            Source::Config,
+            def(json!({"type":"fake"})),
+            Fake {
+                ping: Some(Err("connect ECONNREFUSED 127.0.0.1:6379".into())),
+                ..Default::default()
+            }
+            .arc(),
+        )
+        .unwrap();
+        r.start("bad").await.unwrap();
+        r.check_all().await;
+        let row = row(&r, "bad");
+        assert_eq!(row["state"], "down");
+        assert!(row["reason"].as_str().unwrap().contains("ECONNREFUSED"));
+    }
+
+    // http/rest are metered third-party endpoints with no ping on purpose: unknown, not down.
+    #[tokio::test]
+    async fn reports_unknown_when_an_adapter_has_no_ping() {
+        let r = reg();
+        r.register("none", Source::Config, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.start("none").await.unwrap();
+        r.check_all().await;
+        assert_eq!(row(&r, "none")["state"], "unknown");
+    }
+
+    #[tokio::test]
+    async fn does_not_probe_a_stopped_entry_and_reports_state_stopped() {
+        let r = reg();
+        r.register(
+            "off",
+            Source::Config,
+            def(json!({"type":"fake"})),
+            Fake { ping: Some(Err("should not be called".into())), ..Default::default() }.arc(),
+        )
+        .unwrap();
+        r.check_all().await; // never started
+        assert_eq!(row(&r, "off")["state"], "stopped");
+        assert!(row(&r, "off")["reason"].is_null());
+    }
+
+    #[tokio::test]
+    async fn discards_a_probe_result_that_lands_after_the_mcp_was_stopped() {
+        let r = reg();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake {
+                ping: Some(Err("connect ECONNREFUSED 127.0.0.1:6379".into())),
+                ping_delay_ms: 60,
+                ..Default::default()
+            }
+            .arc(),
+        )
+        .unwrap();
+        r.start("a").await.unwrap();
+
+        let probing = {
+            let r = r.clone();
+            tokio::spawn(async move { r.check_all().await })
+        };
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        r.stop("a").await.unwrap(); // the user stops it before the ping settles
+        probing.await.unwrap(); // the stale failure arrives here
+
+        // Stopping cleared the reason; nothing resets last_error for a stopped entry, so a stale
+        // write would have stuck until a restart.
+        let entry = r.get("a").unwrap();
+        let d = entry.data.read().unwrap();
+        assert_eq!(d.last_error, None);
+        assert_eq!(d.status, Health::Unknown);
+    }
+
+    // --- concurrent lifecycle ---
+
+    #[tokio::test]
+    async fn builds_once_when_two_starts_arrive_together() {
+        let r = reg();
+        let fake = Fake { build_delay_ms: 30, ..Default::default() }.arc();
+        r.register("a", Source::Managed, def(json!({"type":"counting"})), fake.clone())
+            .unwrap();
+        let (x, y) = tokio::join!(r.start("a"), r.start("a"));
+        x.unwrap();
+        y.unwrap();
+        // A second build would be orphaned: never assigned to the entry, never closed. For a proc
+        // adapter that is a stray child process.
+        assert_eq!(fake.builds(), 1);
+        assert!(is_running(&r, "a"));
+    }
+
+    #[tokio::test]
+    async fn does_not_leave_a_server_behind_when_stop_races_start() {
+        let r = reg();
+        let fake = Fake { build_delay_ms: 30, ..Default::default() }.arc();
+        r.register("a", Source::Managed, def(json!({"type":"counting"})), fake.clone())
+            .unwrap();
+        let (x, y) = tokio::join!(r.start("a"), r.stop("a"));
+        x.unwrap();
+        y.unwrap();
+        // Whichever order they run in, the entry is either cleanly started or cleanly stopped —
+        // never built-but-lost.
+        if is_running(&r, "a") {
+            assert_eq!(fake.builds() - fake.closes(), 1);
+        } else {
+            assert_eq!(fake.builds(), fake.closes());
+        }
+    }
+
+    #[tokio::test]
+    async fn serializes_restart_against_a_concurrent_start() {
+        let r = reg();
+        let fake = Fake { build_delay_ms: 30, ..Default::default() }.arc();
+        r.register("a", Source::Managed, def(json!({"type":"counting"})), fake.clone())
+            .unwrap();
+        r.start("a").await.unwrap();
+        let (x, y) = tokio::join!(r.restart("a"), r.start("a"));
+        x.unwrap();
+        y.unwrap();
+        assert!(is_running(&r, "a"));
+        // Every build that happened was either closed or is the live one.
+        assert_eq!(fake.builds() - fake.closes(), 1);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_start_that_slips_into_the_delete_window() {
+        use_temp_call_log();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let fake = Fake { close_gate: Some(gate.clone()), ..Default::default() }.arc();
+        let r = reg();
+        r.register("x", Source::Managed, def(json!({"type":"fake"})), fake.clone())
+            .unwrap();
+        r.start("x").await.unwrap();
+        assert_eq!(fake.builds(), 1);
+
+        // delete() parks inside adapter.close(); a start arriving in that window queues behind the
+        // stop and runs AFTER the map removal — on the detached entry, where do_start must refuse.
+        let del = {
+            let r = r.clone();
+            tokio::spawn(async move { r.delete("x").await })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let late = {
+            let r = r.clone();
+            tokio::spawn(async move { r.start("x").await })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        gate.notify_one();
+
+        del.await.unwrap().unwrap();
+        let err = late.await.unwrap().unwrap_err();
+        assert!(err.contains("unknown MCP: x"), "{err}");
+        assert_eq!(fake.builds(), 1); // nothing was built that no entry would ever close
+        assert!(!r.has("x"));
+    }
+
+    // --- lazy entries and the idle reaper ---
+
+    #[test]
+    fn a_proc_mcp_is_lazy_by_default_and_every_other_type_is_not() {
+        assert!(is_lazy(&def(json!({"type":"proc"}))));
+        assert!(!is_lazy(&def(json!({"type":"mysql"}))));
+        // `lazy` opts ANY type in, and opts proc out — it is the panel Start-automatically box.
+        assert!(is_lazy(&def(json!({"type":"mysql","lazy":true}))));
+        assert!(!is_lazy(&def(json!({"type":"proc","lazy":false}))));
+    }
+
+    #[tokio::test]
+    async fn a_lazy_entry_rests_at_idle_and_returns_to_idle_when_stopped() {
+        let r = reg();
+        r.register("p", Source::Managed, def(json!({"type":"proc"})), Fake::default().arc())
+            .unwrap();
+        assert_eq!(lifecycle(&r, "p"), Lifecycle::Idle);
+        r.start("p").await.unwrap();
+        r.stop("p").await.unwrap();
+        // For a lazy entry there is no meaningful off short of disabling or deleting it.
+        assert_eq!(lifecycle(&r, "p"), Lifecycle::Idle);
+        assert_eq!(row(&r, "p")["state"], "idle");
+    }
+
+    #[tokio::test]
+    async fn ensure_started_wakes_an_idle_entry_and_passes_a_running_one_through() {
+        let r = reg();
+        let fake = Fake::default().arc();
+        r.register("p", Source::Managed, def(json!({"type":"proc"})), fake.clone())
+            .unwrap();
+        r.ensure_started("p").await.unwrap();
+        assert!(is_running(&r, "p"));
+        r.ensure_started("p").await.unwrap();
+        assert_eq!(fake.builds(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_idle_reaper_only_arms_for_lazy_entries() {
+        let r = reg();
+        r.register("eager", Source::Managed, def(json!({"type":"mysql"})), Fake::default().arc())
+            .unwrap();
+        r.start("eager").await.unwrap();
+        r.note_activity("eager");
+        // This timer once armed for every started entry, silently stopping http MCPs and DB pools
+        // ten minutes after boot.
+        assert_eq!(deadline(&r, "eager"), None);
+
+        r.register("lazy", Source::Managed, def(json!({"type":"proc"})), Fake::default().arc())
+            .unwrap();
+        r.start("lazy").await.unwrap();
+        assert!(deadline(&r, "lazy").is_some());
+    }
+
+    #[tokio::test]
+    async fn idle_ms_zero_opts_out_of_reaping_entirely() {
+        let r = reg();
+        let d = def(json!({"type":"proc","idleMs":0}));
+        r.register("p", Source::Managed, d, Fake::default().arc()).unwrap();
+        r.start("p").await.unwrap();
+        assert_eq!(deadline(&r, "p"), None);
+        r.reap_idle().await;
+        assert!(is_running(&r, "p"));
+    }
+
+    #[tokio::test]
+    async fn the_sweeper_reaps_a_lazy_child_whose_deadline_passed() {
+        let r = reg();
+        let fake = Fake::default().arc();
+        let d = def(json!({"type":"proc","idleMs":1}));
+        r.register("p", Source::Managed, d, fake.clone()).unwrap();
+        r.start("p").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        r.reap_idle().await;
+        assert!(!is_running(&r, "p"));
+        assert_eq!(fake.closes(), 1);
+        // Reaped, not stopped: the next request is welcome to wake it again.
+        assert_eq!(lifecycle(&r, "p"), Lifecycle::Idle);
+    }
+
+    #[tokio::test]
+    async fn activity_pushes_the_reap_deadline_back() {
+        let r = reg();
+        let d = def(json!({"type":"proc","idleMs":50}));
+        r.register("p", Source::Managed, d, Fake::default().arc()).unwrap();
+        r.start("p").await.unwrap();
+        let first = deadline(&r, "p").unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        r.note_activity("p");
+        assert!(deadline(&r, "p").unwrap() > first);
+    }
+
+    #[tokio::test]
+    async fn child_pids_is_empty_when_nothing_was_spawned() {
+        let r = reg();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
+            .unwrap();
+        r.start("a").await.unwrap();
+        // Empty is the signal that a memory measurement needs no process-tree walk at all.
+        assert!(r.child_pids().is_empty());
+    }
+
+    #[tokio::test]
+    async fn close_all_stops_every_entry() {
+        let r = reg();
+        let a = Fake::default().arc();
+        let b = Fake::default().arc();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), a.clone()).unwrap();
+        r.register("b", Source::Managed, def(json!({"type":"fake"})), b.clone()).unwrap();
+        r.start("a").await.unwrap();
+        r.start("b").await.unwrap();
+        r.close_all().await;
+        assert_eq!((a.closes(), b.closes()), (1, 1));
+        assert!(!is_running(&r, "a") && !is_running(&r, "b"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_start_lands_in_error_with_the_reason_the_adapter_gave() {
+        struct Broken;
+        #[async_trait]
+        impl Adapter for Broken {
+            fn kind(&self) -> &str {
+                "broken"
+            }
+            async fn build(&self) -> Result<McpEndpoint, String> {
+                Err("ER_ACCESS_DENIED_ERROR: bad password".into())
+            }
+        }
+        let r = reg();
+        r.register("x", Source::Config, def(json!({"type":"broken"})), Arc::new(Broken))
+            .unwrap();
+        let err = r.start("x").await.unwrap_err();
+        assert!(err.contains("ER_ACCESS_DENIED_ERROR"));
+        let row = row(&r, "x");
+        assert_eq!(row["state"], "error");
+        // `reason` shows the lifecycle error while in error, not the (absent) health failure.
+        assert!(row["reason"].as_str().unwrap().contains("bad password"));
+    }
+
+    #[tokio::test]
+    async fn unknown_names_are_refused_by_every_lifecycle_operation() {
+        let r = reg();
+        for err in [
+            r.start("nope").await.unwrap_err(),
+            r.stop("nope").await.unwrap_err(),
+            r.restart("nope").await.unwrap_err(),
+            r.delete("nope").await.unwrap_err(),
+            r.rename("nope", "other").await.unwrap_err(),
+        ] {
+            assert!(err.contains("unknown MCP: nope"), "{err}");
+        }
+    }
+}

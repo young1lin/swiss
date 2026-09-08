@@ -526,3 +526,334 @@ impl Adapter for HttpAdapter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Ported from the Node build's `test/http-adapter.test.ts`, plus the hand-rolled SSE and
+    //! header parsing this port owns.
+    //!
+    //! Like the Node suite, the remote MCP under proxy is the gateway itself serving `echo` on an
+    //! ephemeral loopback port. Two reasons: it needs no network, and its endpoint is
+    //! bearer-gated — so a proxy that fails to send the configured headers cannot connect at all,
+    //! which is what makes the "headers reach the remote" assertion honest rather than incidental.
+    use super::*;
+
+    const TOKEN: &str = "remote-token-0123456789abcdef";
+
+    fn def(v: Value) -> ServerDef {
+        match v {
+            Value::Object(o) => ServerDef(o),
+            other => panic!("a server def is an object, got {other}"),
+        }
+    }
+
+    // ---- header and body helpers -------------------------------------------------------
+
+    #[test]
+    fn a_def_header_value_renders_the_way_json_does() {
+        assert_eq!(value_as_string(&json!("Bearer x")), "Bearer x");
+        assert_eq!(value_as_string(&json!(5)), "5");
+        assert_eq!(value_as_string(&json!(true)), "true");
+        assert_eq!(value_as_string(&json!(null)), "");
+    }
+
+    #[test]
+    fn remote_headers_are_validated_once_at_construction() {
+        let headers = RemoteHeaders::from_def(&def(
+            json!({ "headers": { "Authorization": "Bearer x", "X-Count": 5 } }),
+        ))
+        .expect("valid headers");
+        let pairs: Vec<(String, String)> = headers
+            .0
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+        assert!(pairs.contains(&("authorization".into(), "Bearer x".into())));
+        assert!(pairs.contains(&("x-count".into(), "5".into())));
+
+        // A malformed one is a start error, not a first-call mystery. `RemoteHeaders` is not
+        // `Debug`, so the Ok arm is named rather than unwrapped.
+        let refused = |d: Value| match RemoteHeaders::from_def(&def(d)) {
+            Err(err) => err,
+            Ok(_) => panic!("this header set must not be accepted"),
+        };
+        assert!(refused(json!({ "headers": { "bad name": "v" } })).contains("invalid header name"));
+        assert!(refused(json!({ "headers": { "X-Bad": "line\nbreak" } }))
+            .contains("invalid header value"));
+        // No headers at all is not an error.
+        assert!(RemoteHeaders::from_def(&def(json!({})))
+            .expect("no headers")
+            .0
+            .is_empty());
+    }
+
+    #[test]
+    fn an_error_preview_counts_characters_not_bytes() {
+        assert_eq!(preview("abcdef", 3), "abc");
+        assert_eq!(preview("ab", 10), "ab");
+        // Truncating by byte would cut a multi-byte character in half.
+        assert_eq!(preview("héllo", 3), "hél");
+    }
+
+    // ---- the hand-rolled SSE reader ----------------------------------------------------
+
+    #[test]
+    fn reads_the_response_carrying_our_id_out_of_an_sse_stream() {
+        let stream = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":true}}\n\n";
+        assert_eq!(
+            sse_message(stream, 7).unwrap(),
+            json!({ "jsonrpc": "2.0", "id": 7, "result": { "ok": true } })
+        );
+    }
+
+    #[test]
+    fn skips_notifications_and_other_ids_in_the_same_stream() {
+        // Everything else in the stream is not ours to read: a proxied call multiplexes ids over
+        // one connection, and a notification has no id at all.
+        let stream = concat!(
+            ": a comment\n",
+            "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n",
+            "\n",
+            "id: 42\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"not ours\"}\r\n",
+            "\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"ours\"}\n",
+            "\n",
+        );
+        assert_eq!(sse_message(stream, 2).unwrap()["result"], json!("ours"));
+        assert_eq!(sse_message(stream, 1).unwrap()["result"], json!("not ours"));
+    }
+
+    #[test]
+    fn joins_a_payload_split_across_several_data_lines() {
+        // Per SSE, multiple data: lines join with a newline before parsing.
+        let stream = "data: {\"jsonrpc\":\"2.0\",\n data: \"id\":3,\n data: \"result\":1}\n\n";
+        // The leading space after `data:` is the optional one SSE strips; anything past it is
+        // payload, so this stream's continuation lines carry their own `data: ` prefix as text
+        // and must NOT parse. The honest shape is the one below.
+        assert!(sse_message(stream, 3).is_err());
+
+        let proper = "data: {\"jsonrpc\":\"2.0\",\ndata:\"id\":3,\ndata:\"result\":1}\n\n";
+        assert_eq!(sse_message(proper, 3).unwrap()["result"], json!(1));
+    }
+
+    #[test]
+    fn a_stream_with_no_answer_for_our_request_is_an_error_not_an_empty_result() {
+        let err = sse_message("data: {\"jsonrpc\":\"2.0\",\"id\":9,\"result\":1}\n\n", 4)
+            .unwrap_err();
+        assert!(err.contains("no response for request 4"), "{err}");
+        assert!(sse_message("", 1).is_err());
+        // Unparseable payloads are skipped rather than failing the whole read.
+        assert!(sse_message("data: not json\n\n", 1).is_err());
+    }
+
+    #[test]
+    fn a_final_event_without_a_trailing_blank_line_is_still_read() {
+        let stream = "data: {\"jsonrpc\":\"2.0\",\"id\":5,\"result\":\"last\"}";
+        assert_eq!(sse_message(stream, 5).unwrap()["result"], json!("last"));
+    }
+
+    // ---- construction ------------------------------------------------------------------
+
+    fn adapter_err(d: Value) -> String {
+        match HttpAdapter::new(&def(d), "r") {
+            Err(err) => err,
+            Ok(_) => panic!("this def must not build an http adapter"),
+        }
+    }
+
+    #[test]
+    fn an_http_mcp_needs_a_url_and_a_usable_proxy() {
+        assert!(adapter_err(json!({ "type": "http" })).contains("needs a url"));
+        assert!(adapter_err(json!({ "type": "http", "url": "" })).contains("needs a url"));
+        assert!(!adapter_err(json!({
+            "type": "http",
+            "url": "https://x.test/mcp",
+            "proxy": "not a url",
+        }))
+        .is_empty());
+        // An empty proxy is "no proxy", exactly as Node's truthiness check read it.
+        assert!(HttpAdapter::new(
+            &def(json!({ "type": "http", "url": "https://x.test/mcp", "proxy": "" })),
+            "r"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn seeds_its_tool_toggle_from_the_def_so_a_toggle_survives_a_restart() {
+        let a = HttpAdapter::new(
+            &def(json!({
+                "type": "http",
+                "url": "https://x.test/mcp",
+                "disabledTools": ["hidden", 5],
+            })),
+            "r",
+        )
+        .expect("adapter");
+        assert_eq!(a.kind(), "http");
+        let disabled = a.tool_toggle().expect("http adapters carry a tool toggle");
+        let names: Vec<String> = disabled.read().unwrap().iter().cloned().collect();
+        assert_eq!(names, vec!["hidden"], "non-string entries are dropped");
+    }
+
+    #[test]
+    fn a_rename_reaches_the_name_the_call_log_is_filed_under() {
+        let a = HttpAdapter::new(
+            &def(json!({ "type": "http", "url": "https://x.test/mcp" })),
+            "r",
+        )
+        .expect("adapter");
+        a.rename("renamed");
+        assert_eq!(a.name.read().unwrap().as_str(), "renamed");
+    }
+
+    // ---- the proxy, against a real gateway ---------------------------------------------
+
+    /// The gateway itself, serving one echo MCP over HTTP on an ephemeral loopback port.
+    struct Remote {
+        url: String,
+        registry: Arc<crate::registry::Registry>,
+        server: tokio::task::JoinHandle<()>,
+    }
+
+    impl Remote {
+        async fn stop(self) {
+            self.server.abort();
+            self.registry.close_all().await;
+        }
+    }
+
+    async fn remote_echo() -> Remote {
+        use crate::registry::{Registry, Source};
+        let echo = def(json!({ "type": "echo" }));
+        let registry = Registry::new(3_600_000);
+        let adapter = crate::adapters::make_adapter(&echo, "echo").expect("echo adapter");
+        registry
+            .register("echo", Source::Config, echo, adapter)
+            .expect("register");
+        registry.start("echo").await.expect("start");
+        let store = Arc::new(crate::managed::ManagedStore::open_at(
+            std::env::temp_dir()
+                .join(format!("lmg-http-{}", crate::util::random_hex(8)))
+                .join("managed.json"),
+        ));
+        let tokens = Arc::new(crate::token::single_token_manager(TOKEN));
+        let ctx = crate::app::AppContext::new(
+            registry.clone(),
+            tokens,
+            store,
+            "MCP_GATEWAY_TOKEN",
+            19998,
+        );
+        let app = crate::app::build_app(ctx, None);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a loopback port");
+        let port = listener.local_addr().expect("addr").port();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Remote {
+            url: format!("http://127.0.0.1:{port}/echo"),
+            registry,
+            server,
+        }
+    }
+
+    fn proxy_of(url: &str, token: &str) -> HttpAdapter {
+        HttpAdapter::new(
+            &def(json!({
+                "type": "http",
+                "url": url,
+                "headers": { "Authorization": format!("Bearer {token}") },
+            })),
+            "r",
+        )
+        .expect("adapter")
+    }
+
+    #[tokio::test]
+    async fn lists_the_remotes_tools_through_the_proxy() {
+        let remote = remote_echo().await;
+        let proxy = proxy_of(&remote.url, TOKEN);
+        let endpoint = proxy.build().await.expect("the handshake succeeds");
+        let (tools, _) = endpoint.probe.list("tools", None).await.expect("tools/list");
+        let names: Vec<String> = tools
+            .iter()
+            .filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        assert_eq!(names, vec!["echo"]);
+        proxy.close().await;
+        remote.stop().await;
+    }
+
+    #[tokio::test]
+    async fn fails_to_connect_when_the_configured_headers_do_not_authenticate() {
+        // build() runs the initialize handshake, so a wrong bearer is a start error rather than
+        // a green MCP whose every call fails.
+        let remote = remote_echo().await;
+        let proxy = proxy_of(&remote.url, "wrong-token");
+        assert!(proxy.build().await.is_err());
+        proxy.close().await;
+        remote.stop().await;
+    }
+
+    #[tokio::test]
+    async fn round_trips_a_tool_call_to_the_remote() {
+        let remote = remote_echo().await;
+        let proxy = proxy_of(&remote.url, TOKEN);
+        let endpoint = proxy.build().await.expect("handshake");
+        let result = endpoint
+            .probe
+            .call_tool("echo", json!({ "msg": "hi" }))
+            .await
+            .expect("the remote answers");
+        assert!(
+            result.to_string().contains("hi"),
+            "the remote's own text must come back: {result}"
+        );
+        proxy.close().await;
+        remote.stop().await;
+    }
+
+    #[tokio::test]
+    async fn announces_only_the_capabilities_the_remote_has() {
+        // echo serves only tools; announcing resources or prompts would make every client ask for
+        // lists that cannot exist — round trips billed by a metered remote for a known-empty
+        // answer.
+        let remote = remote_echo().await;
+        let proxy = proxy_of(&remote.url, TOKEN);
+        proxy.build().await.expect("handshake");
+        let session = proxy.conn.get().await.expect("the connection is open");
+        assert!(session.caps.get("tools").is_some(), "{}", session.caps);
+        assert!(session.caps.get("resources").is_none(), "{}", session.caps);
+        assert!(session.caps.get("prompts").is_none(), "{}", session.caps);
+        proxy.close().await;
+        remote.stop().await;
+    }
+
+    #[tokio::test]
+    async fn declares_no_ping_so_a_metered_remote_is_never_probed() {
+        // The registry probes every started MCP every 15 s; against a third-party endpoint that
+        // is thousands of unrequested requests a day. `None` makes the registry report "unknown",
+        // which is the truth. Reachability was proven once, by the handshake in build().
+        let remote = remote_echo().await;
+        let proxy = proxy_of(&remote.url, TOKEN);
+        proxy.build().await.expect("handshake");
+        assert!(proxy.ping().await.is_none());
+        proxy.close().await;
+        remote.stop().await;
+    }
+
+    #[tokio::test]
+    async fn close_drops_the_connection_so_the_next_build_reconnects() {
+        let remote = remote_echo().await;
+        let proxy = proxy_of(&remote.url, TOKEN);
+        proxy.build().await.expect("handshake");
+        proxy.close().await;
+        // The remote is gone: a re-connect must fail rather than serve a stale session.
+        remote.stop().await;
+        assert!(proxy.build().await.is_err());
+    }
+}

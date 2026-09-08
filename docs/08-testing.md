@@ -27,7 +27,7 @@ porting the module they cover:
 | `vi.useFakeTimers()` | `tokio::time::pause()` + `advance()` |
 | `vi.mock()` of a module | Inject a trait object. Where the Node build mocks a module, the Rust port takes a `&dyn` parameter — this is where the port improves on the original |
 | `test/fixtures/` | `tests/fixtures/`, copied verbatim |
-| `beforeEach` tmp data dir | `tempfile::TempDir` + `MCP_GATEWAY_HOME` |
+| `beforeEach` tmp data dir | `std::env::temp_dir().join(format!("lmg-<tag>-{}", random_hex(8)))` + `MCP_GATEWAY_HOME` — no `tempfile` crate, in the spirit of ADR-007 |
 
 Two environment rules carry over exactly:
 
@@ -130,6 +130,33 @@ much of this subsystem is edge cases, and a good reason to port the tests first.
 | `pidfile.test.ts` | 119 |
 | `skill-install.test.ts` | 107 |
 
+## Where the port actually stands
+
+The phase tables above are the plan the port was written against. This is the result, so the
+remaining gap is visible without re-deriving it:
+
+```
+cargo test                     556 lib + 65 adminapi + 12 app + 4 envelope_compat
+cargo test --features mongo    574 lib  (the extra 18 are the mongo adapter's)
+```
+
+Every module in `src/` carries an inline `#[cfg(test)] mod tests` **except** these:
+
+| Module | Lines | Why not, and what it would take |
+| --- | --- | --- |
+| `adapters/pg_browser.rs`, `mysql_browser.rs`, `redis_browser.rs` | 1,056 | Every path needs a live server. They belong with the self-skipping DB tests, not with the unit suite. |
+| `platform/windows.rs`, `platform/unix.rs` | 481 | The OS-specific halves: a test only runs on one of them, so each needs its own `#[cfg]` pair. `process_tree_working_set` is the one worth doing — see the `process-tree.test.ts` note above. |
+| `server.rs`, `admin.rs` | 448 | Wiring and asset serving. Reachable through `tests/app.rs`; no direct tests. |
+| `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (65) and `tests/app.rs` (12), which is where a route contract belongs. |
+| `lib.rs`, `main.rs`, `secure/mod.rs`, `tunnel/mod.rs`, `platform/mod.rs` | 167 | Re-export shells with no behaviour of their own. |
+
+One branch is deliberately uncovered: `daemon::StopResult::Forced`. Reaching it means handing
+`tree_kill` a live pid, and the only live pid a test could produce is the test runner's own. The
+module header says so at the top of its `mod tests`.
+
+Still open from the wish list below: the RSS regression test and the golden `/api/*` capture. The
+envelope round-trip against Node-sealed fixtures is done — `tests/envelope_compat.rs`.
+
 ## Tests worth adding that the Node build could not have
 
 - **RSS regression test.** Boot with a fixed config, serve a scripted workload, assert RSS stays
@@ -147,10 +174,11 @@ much of this subsystem is edge cases, and a good reason to port the tests first.
 
 ```bash
 cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --features mongo -- -D warnings
 cargo test
 cargo test --features mongo
 cargo tree -d
-cargo build --release          # and record the binary size
+cargo build --release --features mongo   # the shipping binary (ADR-004); record its size
 ```
 
 Mirror the Node build's rule: **`cargo clippy` and `cargo test` must both be green before a change

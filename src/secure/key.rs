@@ -156,6 +156,18 @@ pub fn master_key_candidates() -> Result<Vec<KeyMaterial>, String> {
     Ok(cached().clone())
 }
 
+/// Pin the whole test binary to one deterministic master key. `master_key_candidates` reads this
+/// variable fresh on every call, so installing it once here makes every later seal and unseal in
+/// the process use it — no DPAPI, no Keychain, no machine id, and nothing cached to invalidate.
+///
+/// `set_var` is unsafe in edition 2024 because it races other threads; this one runs once under a
+/// `OnceLock`, and the variable it sets is read by nothing but the key source above.
+#[cfg(test)]
+pub(crate) fn use_test_master_key() {
+    static ONCE: OnceLock<()> = OnceLock::new();
+    ONCE.get_or_init(|| unsafe { std::env::set_var(MASTER_KEY_ENV, "ab".repeat(32)) });
+}
+
 /// True when no key source worked at all (the plaintext read-only fallback engages).
 pub fn no_key_available() -> bool {
     std::env::var(MASTER_KEY_ENV).is_err() && cached().is_empty()

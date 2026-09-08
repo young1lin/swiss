@@ -1,15 +1,18 @@
 # 07 — Decisions
 
-Architecture decisions for the port. Two of these need a human call before Phase 1 starts; they are
-marked **NEEDS DECISION** and named at the top so they do not get lost.
+Architecture decisions for the port. Nothing here is still waiting on a human call: the two that
+were marked **NEEDS DECISION** before Phase 1 were both settled by what shipped, and each entry now
+records the choice and what it cost.
 
-> **Open, blocking Phase 1:** ADR-001 (third-party adapters), ADR-006 (how it ships).
+> **Settled during the port:** ADR-001 took option A (no third-party module door). ADR-006 shipped
+> option B (GitHub Releases) and left the npm path unbuilt. ADR-005 shipped half of itself — the
+> durability half; see its entry.
 
 ---
 
 ## ADR-001 — Drop the third-party adapter module door
 
-**Status: NEEDS DECISION.** Recommended: accept option A.
+**Status: Accepted — option A.** Shipped.
 
 **Context.** `factory.ts` lets a config entry name a module to load at runtime:
 `"type": "mine", "adapter": "my-lmg-adapter"` or `"./my-adapter.mjs"` resolved against the data dir.
@@ -33,8 +36,13 @@ MCP the gateway hosts, it just runs out-of-process, which is where untrusted thi
 arguably belonged. What is genuinely lost is the in-process `dbBrowser` / `redisBrowser` /
 `mongoBrowser` hooks: a third-party adapter can no longer appear in the Data view.
 
-**This is a breaking change to a documented contract and needs your explicit sign-off.** If any real
-adapter is using this door today, say so — the answer changes.
+**What shipped.** `make_adapter` in `src/adapters/mod.rs` matches the built-in type names and
+nothing else; an unrecognised `type` fails at adapter-build time with an error that lists them
+(`Unknown adapter type: … (built-in: echo | mysql | pg | redis | mongo | proc | http | rest)`).
+There is no `adapter` field, no module resolution against the data dir, and no runtime loading of
+any kind. This is a breaking change to a contract the Node `AGENTS.md` published; no adapter on the
+reference machine used the door, so nothing had to migrate, and the loss that remains is the one
+named above — a third-party adapter can no longer appear in the Data view.
 
 ---
 
@@ -79,6 +87,10 @@ budget. No MCP on the reference machine uses it (live types on 2026-09-07: 2×re
 binary must serve every adapter type the config schema documents — but a user building for their own
 machine gets a smaller binary for free, and CI gains a cheap check that the feature boundary is real.
 
+Concretely, the shipping command is `cargo build --release --features mongo`, and
+`.github/workflows/build.yml` builds every target that way. A plain `cargo build --release` is the
+*small* build, not the release artefact: it produces a binary that rejects a `mongo` MCP at startup.
+
 If a `mongo` MCP is configured and the binary was built without the feature, the failure must be a
 clear startup error naming the feature, not a panic and not a silently-missing endpoint.
 
@@ -86,7 +98,7 @@ clear startup error naming the feature, not a panic and not a silently-missing e
 
 ## ADR-005 — The traffic ring becomes disk-backed
 
-**Status: Proposed.** Low risk; decide during Phase 2.
+**Status: Accepted in part.** The durability half shipped; the memory half did not.
 
 `calls.ts` already reached this conclusion for the call log and wrote the reason down:
 
@@ -103,11 +115,17 @@ the difference, which is what makes this safe to do while porting rather than as
 Worth a measurement before committing: at 500 entries with clipped bodies this is roughly 1 MB. Real
 but not decisive. If it complicates the port, defer it — it is an optimisation, not a requirement.
 
+**What shipped.** `traffic.rs` writes a JSONL tail beside the call log and restores from it at boot,
+so a restart no longer blanks the view — but reads are still served from the in-memory ring of
+`KEEP = 500` entries rather than paged off the end of the file. The durability win is in; the ~1 MB
+is still resident. Finishing it means pointing the read path at the file, which the file format
+already permits — it stays deferred as the optimisation this ADR always said it was.
+
 ---
 
 ## ADR-006 — How it ships
 
-**Status: NEEDS DECISION.** Recommended: both.
+**Status: Accepted — option B shipped. Option A is not built.**
 
 The Node build is an npm package with a `lmg` bin. A Rust binary can ship either way:
 
@@ -124,9 +142,25 @@ Build the Windows binary with `-C target-feature=+crt-static` so the exe is genu
 self-contained — no MSVC redistributable to chase on a user's machine. Verify with `dumpbin
 /dependents` that only system DLLs remain.
 
-Open sub-question: **does the npm package keep the same name?** Publishing a Rust binary under
-`local-mcp-gateway` replaces the Node build for existing users on upgrade. Given the shared data
-directory and identical CLI that is probably right, but it deserves a deliberate yes.
+**What shipped.** `.github/workflows/build.yml` builds five targets and attaches the bare binaries
+to a GitHub Release on a `v*` tag. There is no `package.json` in this repository and no npm publish
+step, so `npm i -g local-mcp-gateway` and `npx local-mcp-gateway` still resolve to the **Node**
+build. That is the safe order while the two builds run side by side (Phase 6) — the npm name keeps
+pointing at the thing it has always pointed at, and nobody is upgraded onto the port by surprise.
+Option C stays available: adding the per-platform `optionalDependencies` package is release
+plumbing on top of artefacts CI already produces, and the open sub-question below is what it turns
+on when someone does it.
+
+Two things this leaves open, recorded rather than resolved:
+
+- **`-C target-feature=+crt-static` is not applied.** There is no `.cargo/config.toml` and no
+  `RUSTFLAGS` in CI, so the Windows binary links the CRT dynamically. Turn it on and verify with
+  `dumpbin /dependents` before the first release that is handed to a machine this repository has
+  never built on.
+- **Does the npm package keep the same name?** Publishing a Rust binary under `local-mcp-gateway`
+  replaces the Node build for existing users on upgrade. Given the shared data directory and
+  identical CLI that is probably right, but it deserves a deliberate yes — and it is only a
+  question once option A is actually built.
 
 ---
 

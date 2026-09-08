@@ -635,3 +635,756 @@ impl crate::token::TokenPersistence for ManagedStore {
         ManagedStore::save_tokens(self, tokens.to_vec())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Ported from the Node build's `test/managed.test.ts`, plus the invariants that are only
+    //! visible from this side of the port: the sealed round trip, a torn file, and the loaders
+    //! that Node exported separately and Rust keeps private to this module.
+    use super::*;
+
+    /// A fresh managed.json in its own temp directory, sealed under the deterministic test key so
+    /// no OS credential store is touched and no test can collide with another's file.
+    fn scratch() -> PathBuf {
+        crate::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!("lmg-managed-{}", crate::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        dir.join("managed.json")
+    }
+
+    fn def(v: Value) -> ServerDef {
+        match v {
+            Value::Object(o) => ServerDef(o),
+            other => panic!("a server def is an object, got {other}"),
+        }
+    }
+
+    fn entry(name: &str, d: Value, enabled: bool) -> ManagedEntry {
+        ManagedEntry {
+            name: name.into(),
+            def: def(d),
+            enabled,
+            override_: false,
+        }
+    }
+
+    fn names(list: &[ManagedEntry]) -> Vec<String> {
+        list.iter().map(|e| e.name.clone()).collect()
+    }
+
+    /// Hand-authored plaintext JSON — a pre-encryption install, or a file a user dropped in.
+    /// `read_secure_json` accepts it (and re-seals it on the first read), which is what lets
+    /// these tests plant a malformed section without reaching for the envelope format.
+    fn write_plain(path: &Path, v: Value) {
+        std::fs::write(path, v.to_string()).expect("plant a plaintext managed.json");
+    }
+
+    fn raw_of(path: &Path) -> Map<String, Value> {
+        match read_secure_json(path) {
+            Ok(Some(Value::Object(o))) => o,
+            other => panic!("expected an object on disk, got {other:?}"),
+        }
+    }
+
+    fn sorted(mut v: Vec<String>) -> Vec<String> {
+        v.sort();
+        v
+    }
+
+    // ---- persistence ------------------------------------------------------------------
+
+    #[test]
+    fn leaves_no_temp_file_behind_after_a_successful_save() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+
+        let dir = path.parent().expect("scratch parent");
+        let leftovers: Vec<String> = std::fs::read_dir(dir)
+            .expect("read scratch dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        assert_eq!(raw_of(&path)["mcps"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn reports_a_failed_save_instead_of_pretending_it_worked() {
+        // A path under a directory that does not exist: the write cannot succeed, and a store
+        // that only logged let the admin API answer 201 Created for a def that never landed.
+        let path = scratch();
+        let doomed = path.parent().unwrap().join("missing").join("managed.json");
+        let store = ManagedStore::open_at(doomed);
+        let err = store
+            .add(entry("a", json!({ "type": "echo" }), true))
+            .unwrap_err();
+        assert!(err.to_lowercase().contains("could not save"), "{err}");
+    }
+
+    #[test]
+    fn replaces_the_file_only_with_complete_content() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        store.add(entry("b", json!({ "type": "echo" }), false)).unwrap();
+        // Whatever is on disk at any moment must parse and hold whole entries.
+        assert_eq!(names(&load_managed(&path)), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn keeps_every_mutation_durable() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        store.rename("a", "b").unwrap();
+        store.set_enabled("b", false).unwrap();
+        store
+            .update_def("b", def(json!({ "type": "proc", "command": "node x.js" })))
+            .unwrap();
+
+        let reloaded = load_managed(&path);
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].name, "b");
+        assert!(!reloaded[0].enabled);
+        assert!(!reloaded[0].override_);
+        assert_eq!(reloaded[0].def.type_(), "proc");
+        assert_eq!(reloaded[0].def.get_str("command"), Some("node x.js"));
+    }
+
+    #[test]
+    fn refuses_a_duplicate_name_rather_than_shadowing_the_first() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        let err = store
+            .add(entry("a", json!({ "type": "proc", "command": "x" }), true))
+            .unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(store.all().len(), 1);
+        assert_eq!(store.all()[0].def.type_(), "echo");
+        assert!(store.has("a"));
+        assert!(!store.has("nope"));
+    }
+
+    #[test]
+    fn a_missing_file_reads_as_an_empty_store_rather_than_an_error() {
+        let path = scratch();
+        assert!(!path.exists());
+        let store = ManagedStore::open_at(path.clone());
+        assert!(store.all().is_empty());
+        assert!(store.get_groups().is_empty());
+        assert!(store.get_order().is_empty());
+        assert!(store.get_tokens().is_empty());
+        assert!(load_managed(&path).is_empty());
+        assert_eq!(load_managed_token(&path), None);
+    }
+
+    #[test]
+    fn a_torn_file_reads_as_empty_and_the_next_save_repairs_it() {
+        // The documented failure mode: an unparseable managed.json makes every loader answer
+        // empty rather than throwing the boot. The first successful persist writes it whole.
+        let path = scratch();
+        std::fs::write(&path, "{not json at all").unwrap();
+        let store = ManagedStore::open_at(path.clone());
+        assert!(store.all().is_empty());
+        assert!(store.get_tokens().is_empty());
+
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        assert_eq!(names(&load_managed(&path)), vec!["a"]);
+    }
+
+    #[test]
+    fn drops_entries_that_are_not_a_named_typed_def() {
+        let path = scratch();
+        write_plain(
+            &path,
+            json!({ "mcps": [
+                { "name": "a", "def": { "type": "echo" } },
+                { "name": "b" },                                 // no def
+                { "def": { "type": "echo" } },                   // no name
+                { "name": "c", "def": {} },                      // def has no type
+                { "name": "d", "def": { "type": 5 } },           // type is not a string
+                "nope",                                          // not an object at all
+            ] }),
+        );
+        let list = load_managed(&path);
+        assert_eq!(names(&list), vec!["a"]);
+        // `enabled` is absent above, and absent means on — only an explicit false stops an MCP.
+        assert!(list[0].enabled);
+        assert!(!list[0].override_);
+    }
+
+    #[test]
+    fn an_override_round_trips_through_the_file() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        store
+            .upsert_override("a", def(json!({ "type": "proc", "command": "x" })))
+            .unwrap();
+
+        let reloaded = load_managed(&path);
+        assert_eq!(reloaded.len(), 1, "an override replaces the entry, it does not add one");
+        assert!(reloaded[0].override_);
+        assert_eq!(reloaded[0].def.type_(), "proc");
+    }
+
+    // ---- tool toggles -----------------------------------------------------------------
+
+    #[test]
+    fn persists_and_reloads_disabled_tools_for_any_mcp_name() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_disabled_tools("mysql", &["mysql_query".into()]).unwrap();
+        store
+            .set_disabled_tools("redis-a-6379", &["redis_scan".into(), "redis_read".into()])
+            .unwrap();
+
+        let reloaded = ManagedStore::open_at(path.clone());
+        assert_eq!(reloaded.disabled_tools("mysql"), vec!["mysql_query"]);
+        assert_eq!(
+            reloaded.disabled_tools("redis-a-6379"),
+            vec!["redis_scan", "redis_read"]
+        );
+
+        let on_disk = load_string_map(&path, "disabledTools");
+        assert_eq!(on_disk.len(), 2);
+        assert_eq!(on_disk["mysql"], vec!["mysql_query"]);
+    }
+
+    #[test]
+    fn answers_empty_for_an_unknown_mcp_and_drops_the_key_when_the_list_empties() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        assert!(store.disabled_tools("nope").is_empty());
+        store.set_disabled_tools("mysql", &["mysql_query".into()]).unwrap();
+        store.set_disabled_tools("mysql", &[]).unwrap();
+        assert!(store.disabled_tools("mysql").is_empty());
+        // An empty list is not persisted as a key — it is "nothing is turned off".
+        assert!(load_string_map(&path, "disabledTools").is_empty());
+    }
+
+    #[test]
+    fn ignores_a_malformed_disabled_tools_section_rather_than_failing_to_load() {
+        let path = scratch();
+        write_plain(
+            &path,
+            json!({ "mcps": [], "disabledTools": { "mysql": "not-an-array", "ok": [1, 2] } }),
+        );
+        let reloaded = ManagedStore::open_at(path);
+        assert!(reloaded.disabled_tools("mysql").is_empty()); // non-array dropped
+        assert!(reloaded.disabled_tools("ok").is_empty()); // non-string entries dropped
+    }
+
+    #[test]
+    fn keeps_toggles_when_an_mcp_is_added_or_removed() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_disabled_tools("mysql", &["mysql_query".into()]).unwrap();
+        store.add(entry("redis", json!({ "type": "redis" }), true)).unwrap();
+        store.remove("redis").unwrap();
+        assert_eq!(
+            ManagedStore::open_at(path).disabled_tools("mysql"),
+            vec!["mysql_query"]
+        );
+    }
+
+    // ---- resource toggles -------------------------------------------------------------
+
+    #[test]
+    fn persists_and_reloads_an_explicit_resource_on_and_off() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_resource_enabled("mysql", false).unwrap();
+        store.set_resource_enabled("redis", true).unwrap();
+
+        let reloaded = ManagedStore::open_at(path.clone());
+        assert_eq!(reloaded.resource_enabled("mysql"), Some(false));
+        assert_eq!(reloaded.resource_enabled("redis"), Some(true));
+        // Never toggled is None, not false: the caller applies the per-type default.
+        assert_eq!(reloaded.resource_enabled("never-toggled"), None);
+
+        let on_disk = load_bool_map(&path, "resourceToggles");
+        assert_eq!(on_disk.get("mysql"), Some(&false));
+        assert_eq!(on_disk.get("redis"), Some(&true));
+    }
+
+    #[test]
+    fn resource_toggles_survive_alongside_tool_toggles_in_the_same_file() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_disabled_tools("mysql", &["mysql_query".into()]).unwrap();
+        store.set_resource_enabled("mysql", false).unwrap();
+
+        let reloaded = ManagedStore::open_at(path);
+        assert_eq!(reloaded.disabled_tools("mysql"), vec!["mysql_query"]);
+        assert_eq!(reloaded.resource_enabled("mysql"), Some(false));
+    }
+
+    // ---- groups -----------------------------------------------------------------------
+
+    #[test]
+    fn puts_every_mcp_in_the_default_group_until_one_is_assigned_storing_nothing() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        assert!(store.get_groups().is_empty());
+        assert_eq!(store.group_of("anything"), DEFAULT_GROUP);
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+
+        // A file with no groups at all is exactly "everything is in default" — no migration.
+        let raw = raw_of(&path);
+        assert!(raw.get("groups").is_none());
+        assert!(raw.get("mcpGroups").is_none());
+    }
+
+    #[test]
+    fn persists_custom_groups_in_order_and_reloads_them() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Search".into(), "Docs".into()]).unwrap();
+        assert_eq!(
+            ManagedStore::open_at(path.clone()).get_groups(),
+            vec!["Search", "Docs"]
+        );
+        assert_eq!(load_groups(&path), vec!["Search", "Docs"]);
+    }
+
+    #[test]
+    fn assigns_an_mcp_to_a_group_and_back_to_default_keeping_the_map_sparse() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.set_mcp_group("context7", Some("Docs")).unwrap();
+        assert_eq!(store.group_of("context7"), "Docs");
+        assert_eq!(load_mcp_groups(&path).get("context7").map(String::as_str), Some("Docs"));
+
+        store.set_mcp_group("context7", None).unwrap();
+        assert_eq!(store.group_of("context7"), DEFAULT_GROUP);
+        // Back in default means "no entry", not an entry saying "default".
+        assert!(load_mcp_groups(&path).is_empty());
+    }
+
+    #[test]
+    fn naming_the_default_group_explicitly_is_the_same_as_clearing_it() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.set_mcp_group("a", Some("Docs")).unwrap();
+        store.set_mcp_group("a", Some("DeFaUlT")).unwrap();
+        assert_eq!(store.group_of("a"), DEFAULT_GROUP);
+        assert!(load_mcp_groups(&path).is_empty());
+    }
+
+    #[test]
+    fn stores_the_canonical_casing_of_a_group_not_what_the_caller_typed() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.set_mcp_group("a", Some("DOCS")).unwrap();
+        assert_eq!(store.group_of("a"), "Docs");
+        assert_eq!(load_mcp_groups(&path).get("a").map(String::as_str), Some("Docs"));
+    }
+
+    #[test]
+    fn groups_a_config_sourced_mcp_that_has_no_managed_entry_at_all() {
+        // The whole reason membership is a name-keyed map and not a field on ServerDef: config
+        // MCPs never get a ManagedEntry, and they are the ones this user actually has.
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.set_mcp_group("context7", Some("Docs")).unwrap();
+        assert!(store.all().is_empty(), "no managed entry may be created");
+        assert_eq!(ManagedStore::open_at(path).group_of("context7"), "Docs");
+    }
+
+    #[test]
+    fn refuses_an_unknown_group_so_a_typo_cannot_strand_an_mcp() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        let err = store.set_mcp_group("a", Some("Nope")).unwrap_err();
+        assert!(err.to_lowercase().contains("unknown group"), "{err}");
+    }
+
+    #[test]
+    fn reserves_the_default_name_and_rejects_duplicates_case_insensitively() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        assert!(store.set_groups(vec!["default".into()]).unwrap_err().contains("reserved"));
+        assert!(store.set_groups(vec!["DEFAULT".into()]).unwrap_err().contains("reserved"));
+        assert!(store
+            .set_groups(vec!["Docs".into(), "docs".into()])
+            .unwrap_err()
+            .contains("duplicate"));
+        assert!(store.set_groups(vec![" ".into()]).unwrap_err().contains("empty"));
+        // A refused call leaves the previous list alone.
+        assert!(store.get_groups().is_empty());
+    }
+
+    #[test]
+    fn trims_group_names_before_storing_them() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store.set_groups(vec!["  Docs  ".into()]).unwrap();
+        assert_eq!(store.get_groups(), vec!["Docs"]);
+    }
+
+    #[test]
+    fn renames_a_group_and_carries_its_members_across() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Docs".into(), "Search".into()]).unwrap();
+        store.set_mcp_group("context7", Some("Docs")).unwrap();
+        store.set_mcp_group("deepwiki", Some("Docs")).unwrap();
+        store.rename_group("Docs", "Reference").unwrap();
+
+        let reloaded = ManagedStore::open_at(path);
+        assert_eq!(reloaded.get_groups(), vec!["Reference", "Search"], "the slot is kept");
+        assert_eq!(reloaded.group_of("context7"), "Reference");
+        assert_eq!(reloaded.group_of("deepwiki"), "Reference");
+    }
+
+    #[test]
+    fn refuses_to_rename_onto_the_reserved_name_or_an_existing_group() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store.set_groups(vec!["Docs".into(), "Search".into()]).unwrap();
+        assert!(store.rename_group("Docs", "default").unwrap_err().contains("reserved"));
+        assert!(store.rename_group("Docs", "Search").unwrap_err().contains("duplicate"));
+        assert!(store
+            .rename_group("Missing", "X")
+            .unwrap_err()
+            .to_lowercase()
+            .contains("unknown group"));
+        assert!(store.rename_group("Docs", "  ").unwrap_err().contains("empty"));
+        assert_eq!(store.get_groups(), vec!["Docs", "Search"]);
+    }
+
+    #[test]
+    fn renaming_a_group_to_its_own_other_casing_is_allowed() {
+        // The duplicate check must skip the row being renamed, or fixing a group's capitalisation
+        // would report a collision with itself.
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store.set_groups(vec!["docs".into()]).unwrap();
+        store.set_mcp_group("a", Some("docs")).unwrap();
+        store.rename_group("docs", "Docs").unwrap();
+        assert_eq!(store.get_groups(), vec!["Docs"]);
+        assert_eq!(store.group_of("a"), "Docs");
+    }
+
+    #[test]
+    fn drops_a_group_without_deleting_its_mcps() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.set_mcp_group("context7", Some("Docs")).unwrap();
+        store.remove_group("Docs").unwrap();
+
+        let reloaded = ManagedStore::open_at(path.clone());
+        assert!(reloaded.get_groups().is_empty());
+        assert_eq!(reloaded.group_of("context7"), DEFAULT_GROUP);
+        assert!(load_mcp_groups(&path).is_empty());
+    }
+
+    #[test]
+    fn removing_an_unknown_group_is_a_no_op_not_an_error() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.remove_group("Nope").unwrap();
+        assert_eq!(store.get_groups(), vec!["Docs"]);
+    }
+
+    #[test]
+    fn prunes_members_of_groups_dropped_by_a_whole_list_set_groups() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Docs".into(), "Search".into()]).unwrap();
+        store.set_mcp_group("context7", Some("Docs")).unwrap();
+        store.set_mcp_group("github", Some("Search")).unwrap();
+        store.set_groups(vec!["Search".into()]).unwrap(); // Docs deleted by omission
+
+        assert_eq!(store.group_of("context7"), DEFAULT_GROUP);
+        assert_eq!(store.group_of("github"), "Search");
+        let on_disk = load_mcp_groups(&path);
+        assert_eq!(on_disk.len(), 1);
+        assert_eq!(on_disk.get("github").map(String::as_str), Some("Search"));
+    }
+
+    #[test]
+    fn follows_an_mcp_through_rename_and_forgets_it_on_delete_like_order_does() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        store.set_mcp_group("a", Some("Docs")).unwrap();
+        store.set_order(vec!["a".into()]).unwrap();
+
+        store.rename("a", "b").unwrap();
+        assert_eq!(store.group_of("b"), "Docs");
+        assert_eq!(store.group_of("a"), DEFAULT_GROUP);
+        assert_eq!(store.get_order(), vec!["b"], "a rename must not shuffle the sidebar");
+
+        store.remove("b").unwrap();
+        assert!(load_mcp_groups(&path).is_empty());
+        assert!(load_order(&path).is_empty());
+    }
+
+    #[test]
+    fn treats_a_member_of_a_group_that_vanished_from_the_file_as_default() {
+        let path = scratch();
+        write_plain(
+            &path,
+            json!({ "mcps": [], "groups": ["Docs"], "mcpGroups": { "a": "Docs", "b": "Ghost" } }),
+        );
+        let store = ManagedStore::open_at(path);
+        assert_eq!(store.group_of("a"), "Docs");
+        assert_eq!(store.group_of("b"), DEFAULT_GROUP);
+    }
+
+    #[test]
+    fn ignores_a_malformed_groups_section_rather_than_failing_to_load() {
+        let path = scratch();
+        write_plain(
+            &path,
+            json!({ "mcps": [], "groups": "nope", "mcpGroups": { "a": 5, "b": "Docs" } }),
+        );
+        let store = ManagedStore::open_at(path);
+        assert!(store.get_groups().is_empty());
+        assert_eq!(store.group_of("a"), DEFAULT_GROUP); // non-string value dropped
+        assert_eq!(store.group_of("b"), DEFAULT_GROUP); // the group list is empty, so Docs is dead
+    }
+
+    #[test]
+    fn groups_survive_alongside_order_toggles_and_tokens_in_one_file() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_order(vec!["b".into(), "a".into()]).unwrap();
+        store.set_disabled_tools("a", &["t".into()]).unwrap();
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.set_mcp_group("a", Some("Docs")).unwrap();
+        store.save_tokens(vec![TokenRec {
+            id: "t1".into(),
+            label: "default".into(),
+            secret: "s".into(),
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+        }]);
+
+        let reloaded = ManagedStore::open_at(path);
+        assert_eq!(reloaded.get_order(), vec!["b", "a"]);
+        assert_eq!(reloaded.disabled_tools("a"), vec!["t"]);
+        assert_eq!(reloaded.get_groups(), vec!["Docs"]);
+        assert_eq!(reloaded.group_of("a"), "Docs");
+        assert_eq!(reloaded.get_tokens().len(), 1);
+    }
+
+    // ---- order ------------------------------------------------------------------------
+
+    #[test]
+    fn the_sidebar_order_collapses_duplicates_and_drops_blanks() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store
+            .set_order(vec!["b".into(), "a".into(), "b".into(), String::new()])
+            .unwrap();
+        assert_eq!(store.get_order(), vec!["b", "a"]);
+        assert_eq!(load_order(&path), vec!["b", "a"]);
+    }
+
+    #[test]
+    fn an_empty_order_gives_up_the_arrangement_and_stores_no_key() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_order(vec!["b".into(), "a".into()]).unwrap();
+        store.set_order(Vec::new()).unwrap();
+        assert!(store.get_order().is_empty());
+        assert!(raw_of(&path).get("order").is_none());
+        assert!(load_order(&path).is_empty());
+    }
+
+    // ---- tokens -----------------------------------------------------------------------
+
+    #[test]
+    fn the_token_set_round_trips_through_the_file() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        let rec = TokenRec {
+            id: "id-1".into(),
+            label: "claude-code".into(),
+            secret: "sec-1".into(),
+            created_at: "2026-02-03T04:05:06.000Z".into(),
+        };
+        store.save_tokens(vec![rec.clone()]);
+        assert_eq!(load_tokens(&path), vec![rec.clone()]);
+        assert_eq!(ManagedStore::open_at(path.clone()).get_tokens(), vec![rec]);
+
+        // Revoking the last token persists the empty set, it does not leave the old one behind.
+        store.save_tokens(Vec::new());
+        assert!(ManagedStore::open_at(path).get_tokens().is_empty());
+    }
+
+    #[test]
+    fn a_token_row_missing_a_required_field_is_dropped_not_defaulted() {
+        let path = scratch();
+        write_plain(
+            &path,
+            json!({ "tokens": [
+                { "id": "a", "label": "l", "secret": "s", "createdAt": "t" },
+                { "id": "b", "label": "l" },              // no secret
+                { "label": "l", "secret": "s" },          // no id
+                { "id": "d", "label": "l", "secret": "s" }, // no createdAt: allowed, empty
+            ] }),
+        );
+        let list = load_tokens(&path);
+        assert_eq!(
+            list.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+            vec!["a", "d"]
+        );
+        assert_eq!(list[1].created_at, "");
+    }
+
+    #[test]
+    fn a_rotated_bearer_token_is_read_back_and_an_empty_one_is_not() {
+        let path = scratch();
+        write_plain(&path, json!({ "token": "rotated-secret" }));
+        assert_eq!(load_managed_token(&path).as_deref(), Some("rotated-secret"));
+
+        let blank = scratch();
+        write_plain(&blank, json!({ "token": "" }));
+        assert_eq!(load_managed_token(&blank), None);
+    }
+
+    // ---- mcpEnabled: run/stop state for config-sourced MCPs ----------------------------
+
+    #[test]
+    fn persists_a_stop_on_a_name_with_no_managed_entry() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_enabled("from-config", false).unwrap();
+        assert_eq!(store.enabled_for("from-config"), Some(false));
+
+        let reloaded = ManagedStore::open_at(path.clone());
+        assert_eq!(reloaded.enabled_for("from-config"), Some(false));
+        reloaded.set_enabled("from-config", true).unwrap();
+        assert_eq!(
+            ManagedStore::open_at(path).enabled_for("from-config"),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn run_stop_state_defaults_to_none_when_nothing_was_recorded() {
+        let path = scratch();
+        // None, not Some(true): the caller decides what an unrecorded MCP does.
+        assert_eq!(
+            ManagedStore::open_at(path).enabled_for("never-touched"),
+            None
+        );
+    }
+
+    #[test]
+    fn moves_the_run_stop_flag_on_rename_and_clears_it_on_remove() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store.set_enabled("cfg-a", false).unwrap();
+        store.rename("cfg-a", "cfg-b").unwrap();
+        assert_eq!(store.enabled_for("cfg-a"), None);
+        assert_eq!(store.enabled_for("cfg-b"), Some(false));
+        store.remove("cfg-b").unwrap();
+        assert_eq!(store.enabled_for("cfg-b"), None);
+    }
+
+    #[test]
+    fn consumes_the_run_stop_flag_when_the_mcp_becomes_a_managed_override() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_enabled("cfg-a", false).unwrap();
+        store
+            .upsert_override("cfg-a", def(json!({ "type": "echo" })))
+            .unwrap();
+        // The entry inherits the Stop instead of resetting it: an edit that flipped a stopped
+        // MCP back on read as the panel ignoring the Stop.
+        assert_eq!(store.enabled_for("cfg-a"), Some(false));
+        assert!(!store.all()[0].enabled);
+        // ...and the side-map entry is consumed, not left to shadow the entry later.
+        assert!(raw_of(&path).get("mcpEnabled").is_none());
+    }
+
+    #[test]
+    fn a_managed_entrys_own_flag_wins_over_the_config_side_map() {
+        let path = scratch();
+        write_plain(
+            &path,
+            json!({
+                "mcps": [{ "name": "a", "def": { "type": "echo" }, "enabled": true }],
+                "mcpEnabled": { "a": false },
+            }),
+        );
+        let store = ManagedStore::open_at(path);
+        assert_eq!(store.enabled_for("a"), Some(true));
+    }
+
+    #[test]
+    fn set_enabled_on_a_managed_entry_does_not_grow_the_config_side_map() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        store.set_enabled("a", false).unwrap();
+        assert_eq!(store.enabled_for("a"), Some(false));
+        assert!(raw_of(&path).get("mcpEnabled").is_none());
+    }
+
+    #[test]
+    fn update_def_on_an_unknown_name_is_a_no_op_not_an_insert() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.update_def("ghost", def(json!({ "type": "echo" }))).unwrap();
+        assert!(store.all().is_empty());
+        assert!(!path.exists(), "a no-op must not write the file at all");
+    }
+
+    #[test]
+    fn every_section_survives_one_reload_together() {
+        // The regression this catches: a persist that writes one section from stale state.
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        store.set_disabled_tools("a", &["t1".into()]).unwrap();
+        store.set_resource_enabled("a", false).unwrap();
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        store.set_mcp_group("a", Some("Docs")).unwrap();
+        store.set_order(vec!["a".into()]).unwrap();
+        store.set_enabled("cfg-only", false).unwrap();
+        store.save_tokens(vec![TokenRec {
+            id: "t".into(),
+            label: "default".into(),
+            secret: "s".into(),
+            created_at: "now".into(),
+        }]);
+
+        let r = ManagedStore::open_at(path);
+        assert_eq!(names(&r.all()), vec!["a"]);
+        assert_eq!(r.disabled_tools("a"), vec!["t1"]);
+        assert_eq!(r.resource_enabled("a"), Some(false));
+        assert_eq!(r.get_groups(), vec!["Docs"]);
+        assert_eq!(sorted(r.get_mcp_groups().keys().cloned().collect()), vec!["a"]);
+        assert_eq!(r.get_order(), vec!["a"]);
+        assert_eq!(r.enabled_for("cfg-only"), Some(false));
+        assert_eq!(r.get_tokens().len(), 1);
+    }
+
+    #[test]
+    fn the_file_on_disk_is_sealed_not_plaintext() {
+        // managed.json holds ${ENV} refs, tokens and the bearer secret; the envelope is the only
+        // shape it may ever reach the disk in.
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("a", json!({ "type": "echo" }), true)).unwrap();
+        let text = std::fs::read_to_string(&path).expect("read the sealed file");
+        assert!(!text.contains("\"echo\""), "the def leaked in plaintext: {text}");
+        let raw: Value = serde_json::from_str(&text).expect("an envelope is still JSON");
+        assert!(crate::secure::envelope::is_sealed(&raw), "{text}");
+    }
+}

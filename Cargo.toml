@@ -127,6 +127,10 @@ reqwest = { version = "0.13", default-features = false, features = [
 rmcp = { version = "3.2", default-features = false, features = [
     "client", "transport-streamable-http-client-reqwest",
 ] }
+# `test-util` only: a pausable clock, so the tunnel manager's reconnect backoff can be asserted
+# over a quarter hour of simulated outage in microseconds. Resolver v2 keeps a dev-dependency
+# feature out of `cargo build`, so the shipping binary carries none of it.
+tokio = { version = "1", features = ["test-util"] }
 
 [target.'cfg(windows)'.dev-dependencies]
 reqwest = { version = "0.13", default-features = false, features = [

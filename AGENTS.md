@@ -63,10 +63,12 @@ correctness boundary.
 ## Commands
 
 ```bash
-cargo build --release          # the shipping exe (target/release/lmg.exe)
-cargo test                     # unit + integration (tests/spike.rs drives a real MCP client)
+cargo build --release --features mongo   # the shipping exe (target/release/lmg.exe) - ADR-004
+cargo test --features mongo    # unit + integration (tests/spike.rs drives a real MCP client)
+cargo test                     # and again with default features: the boundary must hold
 cargo test --lib -- --ignored  # the live DPAPI hand-check; needs this machine's ~/.mcp-gateway
-cargo clippy --all-targets -- -D warnings    # must be clean
+cargo clippy --all-targets -- -D warnings                   # must be clean
+cargo clippy --all-targets --features mongo -- -D warnings  # both combinations
 cargo tree -d                  # a duplicated TLS stack or runtime must fail review
 cargo run                      # Phase 0 spike: echo MCP on 127.0.0.1:19998
 ```

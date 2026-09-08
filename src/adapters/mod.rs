@@ -310,3 +310,159 @@ pub fn make_adapter(raw_def: &ServerDef, name: &str) -> Result<Arc<dyn Adapter>,
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Ported from the "makeAdapter routes by type" block of the Node build's
+    //! `test/direct-adapters.test.ts`. Rust has no `instanceof`, so the routing is pinned through
+    //! `kind()` — which is what the panel and the call log read anyway.
+    use super::*;
+    use serde_json::json;
+
+    fn def(v: Value) -> crate::config::ServerDef {
+        match v {
+            Value::Object(o) => crate::config::ServerDef(o),
+            other => panic!("a server def is an object, got {other}"),
+        }
+    }
+
+    fn kind_of(v: Value) -> Result<String, String> {
+        make_adapter(&def(v), "an-mcp").map(|a| a.kind().to_string())
+    }
+
+    fn rest_def() -> Value {
+        json!({
+            "type": "rest",
+            "tools": [{ "name": "t", "request": { "method": "GET", "path": "/" } }],
+        })
+    }
+
+    #[test]
+    fn routes_every_built_in_type_to_its_adapter() {
+        assert_eq!(kind_of(json!({ "type": "echo" })), Ok("echo".into()));
+        assert_eq!(
+            kind_of(json!({ "type": "mysql", "host": "x" })),
+            Ok("mysql".into())
+        );
+        assert_eq!(kind_of(json!({ "type": "pg", "url": "x" })), Ok("pg".into()));
+        assert_eq!(
+            kind_of(json!({ "type": "redis", "host": "x" })),
+            Ok("redis".into())
+        );
+        assert_eq!(
+            kind_of(json!({ "type": "proc", "command": "npx -y x" })),
+            Ok("proc".into())
+        );
+        assert_eq!(
+            kind_of(json!({ "type": "http", "url": "https://example.test/mcp" })),
+            Ok("http".into())
+        );
+        assert_eq!(kind_of(rest_def()), Ok("rest".into()));
+    }
+
+    #[test]
+    fn refuses_an_unknown_type_and_names_the_built_ins() {
+        let err = kind_of(json!({ "type": "nope" })).unwrap_err();
+        assert!(err.contains("Unknown adapter type: nope"), "{err}");
+        // The message is the whole help a user gets in the panel, so it lists what IS available.
+        for built_in in ["echo", "mysql", "pg", "redis", "mongo", "proc", "http", "rest"] {
+            assert!(err.contains(built_in), "{built_in} missing from: {err}");
+        }
+        // A def with no type at all lands in the same arm rather than panicking.
+        assert!(kind_of(json!({ "host": "x" }))
+            .unwrap_err()
+            .contains("Unknown adapter type"));
+    }
+
+    #[cfg(feature = "mongo")]
+    #[test]
+    fn the_mongo_type_is_available_in_a_mongo_build() {
+        // ADR-004: the SHIPPED release is built with --features mongo, so this is the arm users
+        // get. `cargo test` without the feature runs the other one below.
+        assert_eq!(
+            kind_of(json!({ "type": "mongo", "url": "mongodb://localhost:27017/shop" })),
+            Ok("mongo".into())
+        );
+    }
+
+    #[cfg(not(feature = "mongo"))]
+    #[test]
+    fn a_build_without_mongo_says_so_instead_of_calling_it_an_unknown_type() {
+        // The distinction matters to whoever reads the panel: "unknown type" sends them looking
+        // for a typo, when the answer is which binary they are running.
+        let err = kind_of(json!({ "type": "mongo", "url": "mongodb://localhost:27017/shop" }))
+            .unwrap_err();
+        assert!(err.contains("unavailable in this build"), "{err}");
+        assert!(err.contains("--features mongo"), "{err}");
+    }
+
+    #[test]
+    fn a_def_that_cannot_be_configured_fails_at_make_time_not_at_the_first_request() {
+        // The registry reports a start error the operator can see; a lazy failure would surface
+        // as one broken tool call much later.
+        assert!(kind_of(json!({ "type": "http" }))
+            .unwrap_err()
+            .contains("needs a url"));
+        assert!(kind_of(json!({ "type": "rest" }))
+            .unwrap_err()
+            .contains("`tools` array"));
+        assert!(kind_of(json!({ "type": "rest", "tools": [{ "name": "t" }] }))
+            .unwrap_err()
+            .contains("has no request"));
+    }
+
+    #[tokio::test]
+    async fn http_and_rest_have_no_health_ping_on_purpose() {
+        // They are metered third-party endpoints: polling them every 15 s would bill the user for
+        // health checks. `None` means "this kind has no probe", not "the probe failed".
+        let http = make_adapter(
+            &def(json!({ "type": "http", "url": "https://example.test/mcp" })),
+            "an-mcp",
+        )
+        .expect("http adapter");
+        assert!(http.ping().await.is_none());
+
+        let rest = make_adapter(&def(rest_def()), "an-mcp").expect("rest adapter");
+        assert!(rest.ping().await.is_none());
+    }
+
+    #[test]
+    fn only_the_db_adapters_carry_toggles_and_a_browser() {
+        // The toggles are the DirectAdapter shell's; echo has neither, which is what makes the
+        // panel hide those controls for it.
+        let echo = make_adapter(&def(json!({ "type": "echo" })), "an-mcp").expect("echo");
+        assert!(echo.tool_toggle().is_none());
+        assert!(echo.browser().is_none());
+
+        let mysql = make_adapter(
+            &def(json!({ "type": "mysql", "host": "x", "database": "shop" })),
+            "an-mcp",
+        )
+        .expect("mysql");
+        assert!(mysql.tool_toggle().is_some());
+        assert!(mysql.resource_toggle().is_some());
+        assert!(mysql.browser().is_some());
+
+        // ...and the browser needs a database to scope itself to, so a server-wide mysql def has
+        // the toggles but no browser tab.
+        let unscoped =
+            make_adapter(&def(json!({ "type": "mysql", "host": "x" })), "an-mcp").expect("mysql");
+        assert!(unscoped.tool_toggle().is_some());
+        assert!(unscoped.browser().is_none());
+    }
+
+    #[test]
+    fn env_refs_are_expanded_at_make_time_so_the_persisted_def_keeps_the_reference() {
+        // The def the registry holds keeps `${...}`; only the adapter's copy sees the value. A
+        // literal that survived here would mean the secret had been written into managed.json.
+        let raw = def(json!({ "type": "http", "url": "${LMG_TEST_MISSING_URL}" }));
+        // An unset ref resolves to nothing, which is exactly the "needs a url" error — proof the
+        // expansion ran, since the unexpanded string is a perfectly good non-empty url.
+        let err = match make_adapter(&raw, "an-mcp") {
+            Err(err) => err,
+            Ok(_) => panic!("an unset url ref must not build an http adapter"),
+        };
+        assert!(err.contains("needs a url"), "{err}");
+        assert_eq!(raw.get_str("url"), Some("${LMG_TEST_MISSING_URL}"));
+    }
+}

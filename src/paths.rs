@@ -17,6 +17,31 @@ pub fn data_dir() -> PathBuf {
         .unwrap_or_else(|| home_dir().join(".mcp-gateway"))
 }
 
+/// A scratch data directory for the whole test binary, installed once into `MCP_GATEWAY_HOME`
+/// so that no unit test can read or write the real `~/.mcp-gateway`.
+///
+/// `set_var` is unsafe in edition 2024 because it races other threads; this one runs once, under
+/// a `OnceLock`, and sets a variable no test reads before calling this.
+#[cfg(test)]
+pub(crate) fn test_home() -> PathBuf {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let dir =
+            std::env::temp_dir().join(format!("lmg-test-home-{}", crate::util::random_hex(8)));
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe { std::env::set_var("MCP_GATEWAY_HOME", &dir) };
+        dir
+    })
+    .clone()
+}
+
+/// Serializes the tests that write into the scratch data dir. One home serves the whole lib test
+/// binary, so a test that plants a pid file or a sealed state file must not run beside one that
+/// reads the directory whole. A tokio mutex because the daemon tests hold it across awaits; the
+/// synchronous callers take it with `blocking_lock`, which is what a plain `#[test]` needs.
+#[cfg(test)]
+pub(crate) static DATA_DIR_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// A path inside the data dir.
 pub fn data_path(segments: &[&str]) -> PathBuf {
     let mut p = data_dir();

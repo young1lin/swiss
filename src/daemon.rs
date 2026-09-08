@@ -554,3 +554,559 @@ pub async fn daemon_status(port: u16) -> StatusResult {
     result.memory = memory;
     result
 }
+
+#[cfg(test)]
+mod tests {
+    // Ported from test/daemon.test.ts.
+    //
+    // SAFETY: no test here may reach `tree_kill` with a live pid — it would kill the test runner.
+    // Two rules keep that true: the pid planted in a record is either dead, or belongs to a path
+    // that provably never signals (a refusal, an already-running report, a status read). The
+    // `Forced` branch is therefore not exercised; nothing but a real daemon is safe to force-kill.
+    use super::*;
+
+    /// The state files and the pid files all live in the one scratch data dir the whole test
+    /// binary shares, and `MCP_GATEWAY_PORT` is process-wide, so every test that writes one takes
+    /// this first and starts from a machine that has never run the gateway.
+    async fn daemon_state() -> tokio::sync::MutexGuard<'static, ()> {
+        let guard = crate::paths::DATA_DIR_LOCK.lock().await;
+        crate::paths::test_home();
+        // Pin the key before anything seals, so no test here depends on DPAPI or on which other
+        // test happened to install the deterministic key first.
+        crate::secure::key::use_test_master_key();
+        clear_state();
+        guard
+    }
+
+    /// Remove every file and variable this module reads.
+    fn clear_state() {
+        for file in ["gateway.config.json", "managed.json", "tunnels.json"] {
+            let _ = std::fs::remove_file(data_path(&[file]));
+        }
+        let _ = std::fs::remove_file(crate::secure::envstore::env_store_path());
+        for key in ["MCP_GATEWAY_PORT", "MCP_GATEWAY_TOKEN", "LMG_TEST_TOKEN"] {
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+
+    /// A port nothing is listening on: bound, read back, released.
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("the loopback has a free port")
+            .local_addr()
+            .expect("a bound listener has an address")
+            .port()
+    }
+
+    fn seal(file: &str, value: Value) {
+        write_secure_json(&data_path(&[file]), &value).expect("seal a state file");
+    }
+
+    fn seal_env(pairs: &[(&str, &str)]) {
+        let store = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect();
+        write_env_store(&store, &crate::secure::envstore::env_store_path()).expect("seal the env");
+    }
+
+    fn plant(port: u16, pid: u32) -> u32 {
+        write_pid_file(&PidRecord {
+            pid,
+            port,
+            entry: server_entry().to_string_lossy().into_owned(),
+            node: server_entry().to_string_lossy().into_owned(),
+            started_at: crate::log::iso_now(),
+        });
+        pid
+    }
+
+    /// A pid file whose pid cannot be alive: every stop path that signals checks liveness first,
+    /// so a dead pid keeps a test off the kill branch entirely.
+    fn plant_dead_pid(port: u16) -> u32 {
+        plant(port, 2_147_483_647)
+    }
+
+    /// A pid file naming THIS process, for the paths that must report a live daemon without ever
+    /// signalling it.
+    fn plant_own_pid(port: u16) -> u32 {
+        plant(port, std::process::id())
+    }
+
+    /// A loopback server standing in for a running gateway: the endpoints the CLI talks to, with
+    /// a /api/shutdown that really does stop the listener, so the graceful stop is exercised end
+    /// to end rather than mocked.
+    struct FakeGateway {
+        port: u16,
+        serving: tokio::task::JoinHandle<()>,
+    }
+
+    impl FakeGateway {
+        async fn start() -> Self {
+            use axum::routing::{get, post};
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            let signal = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+            let app = axum::Router::new()
+                .route("/health", get(|| async { axum::Json(json!({ "ok": true })) }))
+                .route(
+                    "/api/mcps",
+                    get(|| async { axum::Json(json!({ "mcps": [{ "name": "echo" }] })) }),
+                )
+                .route(
+                    "/api/memory",
+                    get(|| async { axum::Json(json!({ "gatewayMb": 12.5 })) }),
+                )
+                .route(
+                    "/api/shutdown",
+                    post(move || {
+                        let signal = signal.clone();
+                        async move {
+                            if let Some(tx) = signal.lock().ok().and_then(|mut g| g.take()) {
+                                let _ = tx.send(());
+                            }
+                            axum::Json(json!({ "ok": true }))
+                        }
+                    }),
+                );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind loopback");
+            let port = listener.local_addr().expect("a bound address").port();
+            let serving = tokio::spawn(async move {
+                let _ = axum::serve(listener, app)
+                    .with_graceful_shutdown(async {
+                        let _ = rx.await;
+                    })
+                    .await;
+            });
+            Self { port, serving }
+        }
+
+        fn stop(self) {
+            self.serving.abort();
+        }
+    }
+
+    // --- ports and paths ---------------------------------------------------------------------
+
+    #[test]
+    fn the_url_is_the_loopback_root() {
+        assert_eq!(url_for(19999), "http://127.0.0.1:19999/");
+    }
+
+    #[test]
+    fn spots_a_path_inside_the_npx_cache() {
+        // A daemon started from there stops being restartable the moment the cache turns over.
+        assert!(is_npx_cache_path(Path::new(
+            "C:\\Users\\x\\AppData\\Local\\npm-cache\\_npx\\a1b2\\lmg.exe"
+        )));
+        assert!(is_npx_cache_path(Path::new("/home/x/.npm/_npx/a1b2/lmg")));
+        assert!(!is_npx_cache_path(Path::new("C:\\tools\\lmg.exe")));
+        assert!(!is_npx_cache_path(Path::new("/usr/local/bin/lmg")));
+        // "_npx" inside a longer name is not the cache.
+        assert!(!is_npx_cache_path(Path::new("/home/x/my_npx_tools/lmg")));
+    }
+
+    #[test]
+    fn the_server_entry_is_this_very_binary() {
+        // The Node build had a .js entry beside the CLI; a single-binary release points at itself.
+        assert_eq!(
+            server_entry(),
+            std::env::current_exe().expect("a running test has an exe")
+        );
+    }
+
+    #[tokio::test]
+    async fn resolves_the_port_from_the_env_then_the_config_then_the_default() {
+        let _lock = daemon_state().await;
+        assert_eq!(resolve_port(), DEFAULT_PORT); // nothing names one anywhere
+
+        seal(
+            "gateway.config.json",
+            json!({ "port": 18080, "tokenEnv": "MCP_GATEWAY_TOKEN" }),
+        );
+        assert_eq!(resolve_port(), 18080);
+
+        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "18081") };
+        assert_eq!(resolve_port(), 18081); // the env wins over the file
+        unsafe { std::env::set_var("MCP_GATEWAY_PORT", "not-a-port") };
+        assert_eq!(resolve_port(), 18080); // an unusable env value is not an override
+        clear_state();
+    }
+
+    #[tokio::test]
+    async fn persists_a_listen_port_by_rewriting_only_that_field() {
+        let _lock = daemon_state().await;
+        let path = data_path(&["gateway.config.json"]);
+        seal(
+            "gateway.config.json",
+            json!({
+                "port": 19999,
+                "tokenEnv": "MCP_GATEWAY_TOKEN",
+                "servers": { "keeper": { "type": "echo", "password": "${KEEPER_PASS}" } },
+            }),
+        );
+
+        persist_listen_port(18082);
+        let after = read_secure_json(&path)
+            .expect("the config is readable")
+            .expect("the config is there");
+        assert_eq!(after["port"], json!(18082));
+        // Everything else survives verbatim — the ${ENV} reference above all, which is why this
+        // rewrite is surgical rather than a re-serialize of the loaded config.
+        assert_eq!(after["tokenEnv"], json!("MCP_GATEWAY_TOKEN"));
+        assert_eq!(
+            after["servers"]["keeper"],
+            json!({ "type": "echo", "password": "${KEEPER_PASS}" })
+        );
+        clear_state();
+    }
+
+    #[tokio::test]
+    async fn persisting_a_port_is_a_no_op_before_there_is_a_config() {
+        // First run reads MCP_GATEWAY_PORT; seeding a half-built config here would hand the
+        // bootstrap a file to adopt that the user never wrote.
+        let _lock = daemon_state().await;
+        persist_listen_port(18083);
+        assert!(!data_path(&["gateway.config.json"]).exists());
+    }
+
+    // --- credentials -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn reads_the_token_from_managed_json_before_the_env_store() {
+        // Precedence mirrors the server boot: a rotation persisted in managed.json wins over the
+        // seed the env store holds, or `lmg creds` would print a token that no longer works.
+        let _lock = daemon_state().await;
+        seal_env(&[("MCP_GATEWAY_TOKEN", "from-env-store")]);
+        assert_eq!(read_gateway_token().as_deref(), Some("from-env-store"));
+
+        seal("managed.json", json!({ "token": "rotated" }));
+        assert_eq!(read_gateway_token().as_deref(), Some("rotated"));
+
+        // An empty token is not a token: fall through rather than authenticate with "".
+        seal("managed.json", json!({ "token": "" }));
+        assert_eq!(read_gateway_token().as_deref(), Some("from-env-store"));
+
+        // The config names which variable holds the seed, and that name is honoured.
+        let _ = std::fs::remove_file(data_path(&["managed.json"]));
+        seal("gateway.config.json", json!({ "tokenEnv": "LMG_TEST_TOKEN" }));
+        seal_env(&[("LMG_TEST_TOKEN", "named-var")]);
+        assert_eq!(read_gateway_token().as_deref(), Some("named-var"));
+        clear_state();
+    }
+
+    #[tokio::test]
+    async fn creds_report_the_panel_url_and_the_token_and_nothing_else() {
+        // The rest of the env store is DB passwords; `lmg creds` prints what a client needs to
+        // connect and stops there. The panel has no login, so there is no password to print.
+        let _lock = daemon_state().await;
+        seal_env(&[("MCP_GATEWAY_TOKEN", "tok"), ("DB_PASSWORD", "hunter2")]);
+
+        let (url, token) = read_creds();
+        assert_eq!(url, url_for(DEFAULT_PORT));
+        assert_eq!(token.as_deref(), Some("tok"));
+        clear_state();
+    }
+
+    // --- export / import ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn exports_every_state_file_and_imports_it_back_sealed() {
+        let _lock = daemon_state().await;
+        seal("gateway.config.json", json!({ "port": 18084 }));
+        seal("managed.json", json!({ "mcps": [] }));
+        seal("tunnels.json", json!({ "connections": [] }));
+        seal_env(&[("MCP_GATEWAY_TOKEN", "tok")]);
+
+        let bundle = export_state();
+        assert_eq!(bundle["version"], json!(1));
+        assert_eq!(bundle["config"]["port"], json!(18084));
+        assert_eq!(bundle["managed"], json!({ "mcps": [] }));
+        assert_eq!(bundle["tunnels"], json!({ "connections": [] }));
+        assert_eq!(bundle["env"]["MCP_GATEWAY_TOKEN"], json!("tok"));
+
+        // A machine with nothing on it takes the bundle and ends up with the same state — the
+        // point of the export being the one plaintext path out of the sealed files.
+        clear_state();
+        let restored = import_state(&bundle).expect("the bundle imports");
+        assert_eq!(
+            restored,
+            vec![
+                "gateway.config.json",
+                "managed.json",
+                "tunnels.json",
+                "env.json"
+            ]
+        );
+        assert_eq!(export_state()["config"]["port"], json!(18084));
+        assert_eq!(read_gateway_token().as_deref(), Some("tok"));
+        clear_state();
+    }
+
+    #[tokio::test]
+    async fn an_import_leaves_the_env_entries_the_bundle_says_nothing_about() {
+        // The env store is shared with the DB adapters, so a bundle carrying only the gateway
+        // token must not take a machine's database passwords with it.
+        let _lock = daemon_state().await;
+        seal_env(&[("DB_PASSWORD", "hunter2"), ("MCP_GATEWAY_TOKEN", "old")]);
+        import_state(&json!({ "version": 1, "env": { "MCP_GATEWAY_TOKEN": "new" } }))
+            .expect("the bundle imports");
+
+        let env = export_state()["env"].clone();
+        assert_eq!(env["MCP_GATEWAY_TOKEN"], json!("new")); // imported values win
+        assert_eq!(env["DB_PASSWORD"], json!("hunter2")); // untouched
+        clear_state();
+    }
+
+    #[test]
+    fn refuses_anything_that_is_not_a_state_bundle() {
+        // It re-seals four files under this machine's key; the version gate is what stops a
+        // future format from being written back as if it were this one.
+        for bad in [json!("nope"), json!([]), json!({}), json!({ "version": 2 })] {
+            assert!(import_state(&bad).is_err(), "{bad}");
+        }
+        // An empty bundle is well-formed and restores nothing.
+        assert_eq!(import_state(&json!({ "version": 1 })), Ok(Vec::new()));
+    }
+
+    // --- waiting for health ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn waits_only_until_health_answers() {
+        let gw = FakeGateway::start().await;
+        let client = reqwest::Client::new();
+        assert!(wait_for_health(&client, gw.port, 5_000, || false).await);
+        gw.stop();
+    }
+
+    #[tokio::test]
+    async fn gives_up_on_health_after_the_timeout_instead_of_polling_forever() {
+        let client = reqwest::Client::new();
+        let started = std::time::Instant::now();
+        assert!(!wait_for_health(&client, free_port(), 300, || false).await);
+        assert!(started.elapsed() < Duration::from_secs(15), "it returned");
+    }
+
+    #[tokio::test]
+    async fn abandons_the_health_wait_early_when_the_child_is_already_gone() {
+        // A daemon that has already exited is never going to answer, and waiting out the full
+        // timeout for it wastes the operator's time when what they need is the log.
+        let client = reqwest::Client::new();
+        let started = std::time::Instant::now();
+        assert!(!wait_for_health(&client, free_port(), 600_000, || true).await);
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "it did not wait out the ten minutes"
+        );
+    }
+
+    // --- starting ----------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn reports_an_already_running_daemon_without_spawning_a_second_one() {
+        let _lock = daemon_state().await;
+        let gw = FakeGateway::start().await;
+        // A live pid plus a port that answers: the daemon is up.
+        let pid = plant_own_pid(gw.port);
+        let result = start_daemon(StartOptions {
+            port: Some(gw.port),
+            // Unspawnable, so any attempt to start would surface as a failure rather than pass.
+            entry: Some(std::path::PathBuf::from("lmg-no-such-binary")),
+            ..Default::default()
+        })
+        .await;
+        match result {
+            StartResult::AlreadyRunning { pid: p, port, url } => {
+                assert_eq!(p, pid);
+                assert_eq!(port, gw.port);
+                assert_eq!(url, url_for(gw.port));
+            }
+            _ => panic!("a live daemon must be reported, not restarted"),
+        }
+        assert!(read_pid_file(gw.port).is_some()); // the record it is still using stays
+        remove_pid_file(gw.port);
+        gw.stop();
+    }
+
+    #[tokio::test]
+    async fn reports_the_log_tail_when_the_entry_cannot_be_spawned() {
+        let _lock = daemon_state().await;
+        let port = free_port();
+        let result = start_daemon(StartOptions {
+            port: Some(port),
+            entry: Some(std::path::PathBuf::from("lmg-no-such-binary")),
+            timeout_ms: Some(200),
+            ..Default::default()
+        })
+        .await;
+        match result {
+            StartResult::Failed { port: p, log_tail } => {
+                assert_eq!(p, port);
+                // The operator gets the reason, not just "it did not start".
+                assert!(log_tail.contains("spawn failed"), "{log_tail}");
+            }
+            _ => panic!("a start that never spawned is a failure"),
+        }
+        // Never leave a pid file for something that never came up: the next start would report
+        // already-running and the operator would have nothing to act on.
+        assert_eq!(read_pid_file(port), None);
+        let _ = std::fs::remove_file(log_file_path(port));
+    }
+
+    #[tokio::test]
+    async fn starts_over_a_stale_pid_file_instead_of_believing_it() {
+        // The leftover of an unclean kill: a pid nothing owns, on a port nothing answers.
+        // Believing it would refuse every future start.
+        let _lock = daemon_state().await;
+        let port = free_port();
+        plant_dead_pid(port);
+        let result = start_daemon(StartOptions {
+            port: Some(port),
+            entry: Some(std::path::PathBuf::from("lmg-no-such-binary")),
+            timeout_ms: Some(200),
+            ..Default::default()
+        })
+        .await;
+        assert!(matches!(result, StartResult::Failed { .. }));
+        assert_eq!(read_pid_file(port), None);
+        let _ = std::fs::remove_file(log_file_path(port));
+    }
+
+    // --- stopping ----------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn says_so_when_nothing_is_running() {
+        let _lock = daemon_state().await;
+        assert!(matches!(
+            stop_daemon(StopOptions {
+                port: Some(free_port()),
+                ..Default::default()
+            })
+            .await,
+            StopResult::NotRunning { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn clears_a_stale_pid_file_rather_than_killing_whatever_owns_that_pid_now() {
+        let _lock = daemon_state().await;
+        let port = free_port();
+        plant_dead_pid(port);
+        assert!(matches!(
+            stop_daemon(StopOptions {
+                port: Some(port),
+                ..Default::default()
+            })
+            .await,
+            StopResult::NotRunning { .. }
+        ));
+        assert_eq!(read_pid_file(port), None);
+    }
+
+    #[tokio::test]
+    async fn refuses_to_kill_a_live_pid_it_cannot_confirm_is_this_gateway() {
+        // The pid is alive but nothing serves its port, so it cannot be told apart from a number
+        // the OS recycled into unrelated work. Killing on a guess is how a tool takes down
+        // someone else's process; make the operator say --force.
+        let _lock = daemon_state().await;
+        let port = free_port();
+        let pid = plant_own_pid(port);
+        match stop_daemon(StopOptions {
+            port: Some(port),
+            ..Default::default()
+        })
+        .await
+        {
+            StopResult::Refused { pid: p, reason, .. } => {
+                assert_eq!(p, pid);
+                assert!(reason.contains("--force"), "{reason}");
+            }
+            _ => panic!("an unconfirmable live pid must not be killed"),
+        }
+        // The record stays: the operator has to decide, and needs it to still be there.
+        assert!(read_pid_file(port).is_some());
+        remove_pid_file(port);
+    }
+
+    #[tokio::test]
+    async fn asks_the_gateway_to_shut_itself_down_and_clears_the_record() {
+        // Windows has no deliverable SIGTERM, so this HTTP round trip is the only way the gateway
+        // gets to close its adapters and tree-kill its own proc-MCP children.
+        let _lock = daemon_state().await;
+        let gw = FakeGateway::start().await;
+        let port = gw.port;
+        let pid = plant_dead_pid(port);
+        match stop_daemon(StopOptions {
+            port: Some(port),
+            grace_period_ms: Some(10_000),
+            ..Default::default()
+        })
+        .await
+        {
+            StopResult::Stopped { pid: p, port: q } => {
+                assert_eq!(p, pid);
+                assert_eq!(q, port);
+            }
+            _ => panic!("a gateway that honours /api/shutdown stops gracefully"),
+        }
+        assert_eq!(read_pid_file(port), None);
+        gw.stop();
+    }
+
+    // --- status ------------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn reports_not_running_when_there_is_no_daemon() {
+        let _lock = daemon_state().await;
+        let port = free_port();
+        let status = daemon_status(port).await;
+        assert!(!status.running);
+        assert_eq!(status.pid, None);
+        assert_eq!(status.url, None);
+        assert_eq!(status.health, None);
+        // The log path is reported either way — it is what the operator reads next.
+        assert!(status.log_file.ends_with(&format!("gateway-{port}.log")));
+    }
+
+    #[tokio::test]
+    async fn a_pid_file_alone_is_not_running() {
+        // "Running" means it answered. A pid file is a claim about the past, and after an unclean
+        // kill it is a false one.
+        let _lock = daemon_state().await;
+        let port = free_port();
+        let pid = plant_dead_pid(port);
+        let status = daemon_status(port).await;
+        assert!(!status.running);
+        assert_eq!(status.pid, Some(pid)); // still reported, so `lmg stop` has something to act on
+        assert_eq!(status.url, None);
+        remove_pid_file(port);
+    }
+
+    #[tokio::test]
+    async fn reports_the_running_daemon_with_its_mcps_and_its_memory() {
+        let _lock = daemon_state().await;
+        let gw = FakeGateway::start().await;
+        let pid = plant_own_pid(gw.port);
+
+        let status = daemon_status(gw.port).await;
+        assert!(status.running);
+        assert_eq!(status.pid, Some(pid));
+        assert_eq!(status.url.as_deref(), Some(url_for(gw.port).as_str()));
+        assert_eq!(
+            status.entry.as_deref(),
+            Some(server_entry().to_string_lossy().as_ref())
+        );
+        let health = status.health.expect("a running daemon reports health");
+        assert_eq!(health["ok"], json!(true));
+        assert_eq!(health["health"], json!([{ "name": "echo" }]));
+        assert_eq!(
+            status.memory.as_ref().map(|m| m["gatewayMb"].clone()),
+            Some(json!(12.5))
+        );
+        // startedAt is an ISO stamp, so the uptime is a duration rather than a guess.
+        assert!(status.uptime_ms.is_some());
+        remove_pid_file(gw.port);
+        gw.stop();
+    }
+}
