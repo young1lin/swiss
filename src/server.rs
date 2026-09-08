@@ -46,11 +46,7 @@ pub async fn run_gateway() -> Result<(), String> {
     // port shares the very file about to be swept — reaping under its feet would tree-kill ITS
     // proc children. Something answering means this boot fails at bind anyway; the ledger stays
     // with its live owner. (`0.0.0.0` is a bind-all, not a connectable peer.)
-    let probe_host = if cfg.host.is_empty() || cfg.host == "0.0.0.0" || cfg.host == "::" {
-        "127.0.0.1".to_string()
-    } else {
-        cfg.host.clone()
-    };
+    let probe_host = probe_host(&cfg.host);
     if tokio::net::TcpStream::connect((probe_host.as_str(), cfg.port))
         .await
         .is_ok()
@@ -284,13 +280,18 @@ async fn register_one(
             }
         }
         registry.register(name, source, def.clone(), adapter)?;
-        // Honour a Stop the user made in the panel (config MCPs have no `enabled` of their own —
-        // the state lives in managed.json mcpEnabled).
+        // Honour a Stop the user made in the panel. Config MCPs have no `enabled` of their own in
+        // gateway.config.json — the panel does not rewrite the user's committed file — so their
+        // state lives in managed.json's mcpEnabled side-map; a managed MCP carries the flag on its
+        // own entry. `enabled_for` reads whichever applies, so this gate covers BOTH sources:
+        // Node's managed loop starts on `m.enabled && !isLazy(m.def)`, and qualifying this with
+        // `source == Source::Config` made a panel Stop on a managed MCP last only until the next
+        // boot — the very bug the config side of this already documents.
         let enabled = store.enabled_for(name) != Some(false);
-        if source == Source::Config && !enabled {
+        if !enabled {
             log::log(
                 "info",
-                "config mcp stays stopped (panel Stop)",
+                &format!("{} stays stopped (panel Stop)", source_label(source)),
                 Some(json!({ "name": name, "type": def.type_() })),
             );
         } else if is_lazy(&def) {
@@ -324,5 +325,216 @@ fn source_label(source: Source) -> &'static str {
     match source {
         Source::Config => "config mcp",
         Source::Managed => "managed mcp",
+    }
+}
+
+/// The address to probe for an existing gateway before reaping the port-scoped pid ledger.
+///
+/// A bind-all host is not a connectable peer, so it is asked about on loopback instead. Getting
+/// this wrong is not cosmetic: the probe failing means "no gateway here", and the reap that
+/// follows would tree-kill a LIVE gateway's proc children.
+fn probe_host(host: &str) -> String {
+    if host.is_empty() || host == "0.0.0.0" || host == "::" {
+        "127.0.0.1".to_string()
+    } else {
+        host.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // The boot sequence itself binds a port and never returns; what is testable here — and what
+    // the Node build's index.ts pins — is the per-MCP registration decision, which is where a
+    // panel Stop, a tool toggle and the lazy rule all have to survive a restart.
+    use super::*;
+    use crate::registry::Lifecycle;
+    use serde_json::Value;
+
+    /// A store of this test's own. The directory has to exist before anything writes: `open_at`
+    /// does not create it, and a failed persist would silently drop the very Stop these tests set
+    /// up, leaving them green for the wrong reason.
+    fn scratch_store() -> Arc<ManagedStore> {
+        let dir = std::env::temp_dir().join(format!("lmg-server-{}", crate::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("create the scratch directory");
+        Arc::new(ManagedStore::open_at(dir.join("managed.json")))
+    }
+
+    fn def_of(value: Value) -> crate::config::ServerDef {
+        crate::config::ServerDef(value.as_object().cloned().expect("an object"))
+    }
+
+    /// An echo MCP: no child process, no port, no driver — so what is measured is the decision,
+    /// not an adapter's startup.
+    fn echo() -> crate::config::ServerDef {
+        def_of(json!({ "type": "echo" }))
+    }
+
+    /// Lazy without being a proc: `is_lazy` defaults to true for `proc` and follows an explicit
+    /// `lazy` otherwise, so this exercises the boot rule with nothing to spawn.
+    fn lazy_echo() -> crate::config::ServerDef {
+        def_of(json!({ "type": "echo", "lazy": true }))
+    }
+
+    fn lifecycle(registry: &Arc<Registry>, name: &str) -> Lifecycle {
+        registry
+            .get(name)
+            .expect("the entry was registered")
+            .data
+            .read()
+            .expect("readable")
+            .lifecycle
+    }
+
+    fn def_in_registry(registry: &Arc<Registry>, name: &str) -> crate::config::ServerDef {
+        registry
+            .get(name)
+            .expect("the entry was registered")
+            .data
+            .read()
+            .expect("readable")
+            .def
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn a_plain_config_mcp_boots_started() {
+        let registry = Registry::new(3_600_000);
+        let store = scratch_store();
+        register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        assert_eq!(lifecycle(&registry, "echo"), Lifecycle::Started);
+    }
+
+    #[tokio::test]
+    async fn a_lazy_mcp_is_registered_but_left_idle() {
+        // The memory the gateway exists to save: an idle npx/uvx child is 50-150 MB of nothing,
+        // so a lazy MCP waits for the first request instead of starting at boot.
+        let registry = Registry::new(3_600_000);
+        let store = scratch_store();
+        register_one(&registry, &store, "lazy", lazy_echo(), Source::Config).await;
+        assert!(registry.has("lazy"), "registered, so the route exists");
+        assert_ne!(
+            lifecycle(&registry, "lazy"),
+            Lifecycle::Started,
+            "a lazy MCP must not start at boot"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_config_mcp_the_panel_stopped_stays_stopped_across_a_boot() {
+        // gateway.config.json is the user's committed file and the panel does not rewrite it, so
+        // a config MCP's run state lives in managed.json. Starting unconditionally made Stop last
+        // only until the next boot.
+        let registry = Registry::new(3_600_000);
+        let store = scratch_store();
+        store.set_enabled("echo", false).expect("record the Stop");
+
+        register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        assert!(registry.has("echo"), "still registered, just not started");
+        assert_ne!(lifecycle(&registry, "echo"), Lifecycle::Started);
+    }
+
+    #[tokio::test]
+    async fn a_managed_mcp_the_panel_stopped_stays_stopped_too() {
+        // The same rule for a panel-added MCP, whose flag lives on its own managed entry rather
+        // than in the side-map. Node gates its managed restore on `m.enabled && !isLazy(m.def)`;
+        // qualifying the Rust gate with `source == Source::Config` let a Stop here last only
+        // until the next boot.
+        let registry = Registry::new(3_600_000);
+        let store = scratch_store();
+        store
+            .add(crate::managed::ManagedEntry {
+                name: "added".into(),
+                def: echo(),
+                enabled: false,
+                override_: false,
+            })
+            .expect("add a stopped managed entry");
+
+        register_one(&registry, &store, "added", echo(), Source::Managed).await;
+        assert!(registry.has("added"));
+        assert_ne!(
+            lifecycle(&registry, "added"),
+            Lifecycle::Started,
+            "a managed MCP the user stopped must not come back started"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_enabled_managed_mcp_does_boot_started() {
+        // The other half of the gate: it must not have turned into "never start a managed MCP".
+        let registry = Registry::new(3_600_000);
+        let store = scratch_store();
+        store
+            .add(crate::managed::ManagedEntry {
+                name: "added".into(),
+                def: echo(),
+                enabled: true,
+                override_: false,
+            })
+            .expect("add an enabled managed entry");
+
+        register_one(&registry, &store, "added", echo(), Source::Managed).await;
+        assert_eq!(lifecycle(&registry, "added"), Lifecycle::Started);
+    }
+
+    #[tokio::test]
+    async fn tool_toggles_reach_the_def_before_the_adapter_captures_it() {
+        // The adapter reads disabledTools when it is built, so the toggle has to be written into
+        // the def first or it silently does not survive a restart.
+        let registry = Registry::new(3_600_000);
+        let store = scratch_store();
+        store
+            .set_disabled_tools("echo", &["echo".to_string()])
+            .expect("record the toggle");
+
+        register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        let def = def_in_registry(&registry, "echo");
+        assert_eq!(
+            def.get("disabledTools"),
+            Some(&json!(["echo"])),
+            "the persisted toggle rode into the def"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_mcp_that_cannot_be_built_is_logged_and_the_boot_carries_on() {
+        // One bad entry in a config file must not take down every other MCP with it — the boot
+        // loop calls this once per MCP and never sees an error back.
+        let registry = Registry::new(3_600_000);
+        let store = scratch_store();
+        register_one(
+            &registry,
+            &store,
+            "broken",
+            def_of(json!({ "type": "no-such-adapter-kind" })),
+            Source::Config,
+        )
+        .await;
+        assert!(!registry.has("broken"), "nothing half-registered was left");
+
+        // And the next MCP still boots normally.
+        register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        assert_eq!(lifecycle(&registry, "echo"), Lifecycle::Started);
+    }
+
+    #[test]
+    fn the_source_label_names_the_file_the_mcp_came_from() {
+        // It is the log prefix an operator greps for, and it feeds the failure message too.
+        assert_eq!(source_label(Source::Config), "config mcp");
+        assert_eq!(source_label(Source::Managed), "managed mcp");
+    }
+
+    #[test]
+    fn a_bind_all_host_is_probed_on_loopback() {
+        // A failed probe means "no gateway here", and the reap that follows tree-kills proc
+        // children. Probing 0.0.0.0 — which is not a connectable peer — would fail every time and
+        // let a booting instance reap a LIVE gateway's children.
+        assert_eq!(probe_host("0.0.0.0"), "127.0.0.1");
+        assert_eq!(probe_host("::"), "127.0.0.1");
+        assert_eq!(probe_host(""), "127.0.0.1");
+        // A real host is asked about as itself.
+        assert_eq!(probe_host("127.0.0.1"), "127.0.0.1");
+        assert_eq!(probe_host("192.168.1.10"), "192.168.1.10");
+        assert_eq!(probe_host("::1"), "::1");
     }
 }

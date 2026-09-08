@@ -136,8 +136,8 @@ The phase tables above are the plan the port was written against. This is the re
 remaining gap is visible without re-deriving it:
 
 ```
-cargo test                     564 lib + 65 adminapi + 12 app + 4 envelope_compat + 1 memory
-cargo test --features mongo    582 lib  (the extra 18 are the mongo adapter's)
+cargo test                     581 lib + 65 adminapi + 12 app + 4 envelope_compat + 1 memory
+cargo test --features mongo    599 lib  (the extra 18 are the mongo adapter's)
 ```
 
 On a unix host add 6 more: `platform/unix.rs` compiles only there.
@@ -148,9 +148,14 @@ Every module in `src/` carries an inline `#[cfg(test)] mod tests` **except** the
 | --- | --- | --- |
 | `adapters/pg_browser.rs`, `mysql_browser.rs`, `redis_browser.rs` | 1,056 | Every path needs a live server. They belong with the self-skipping DB tests, not with the unit suite. |
 | `platform/windows.rs` | 378 | Win32 FFI: DPAPI, Toolhelp, registry. Its process walk is covered — the BFS both platforms share now lives un-`cfg`'d in `platform/mod.rs` and is tested on whatever host runs the suite. What is left is the FFI itself, which needs the OS to answer. |
-| `server.rs`, `admin.rs` | 448 | Wiring and asset serving. Reachable through `tests/app.rs`; no direct tests. |
 | `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (65) and `tests/app.rs` (12), which is where a route contract belongs. |
 | `lib.rs`, `main.rs`, `secure/mod.rs`, `tunnel/mod.rs` | 109 | Re-export shells with no behaviour of their own. |
+
+`server.rs` is tested at `register_one`, not at `run_gateway` — the boot itself binds a port and
+never returns, and the daemon tests already drive it from outside. `register_one` is where the
+decisions live: a panel Stop, a persisted tool toggle and the lazy rule all have to survive a
+restart. `admin.rs` is tested at its hand-rolled SHA-1, which nothing else in the tree checks,
+against the published vectors and every block-padding boundary.
 
 The two platform halves must export the same names with the same signatures: `mod.rs` re-exports
 both from one list, so a divergence is a build error. They did diverge once — `descendant_pids`
