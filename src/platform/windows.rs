@@ -271,19 +271,9 @@ pub fn descendant_pids(own_pid: u32) -> Option<Vec<u32>> {
         }
         let _ = windows::Win32::Foundation::CloseHandle(snapshot);
 
-        let mut queue: std::collections::VecDeque<u32> =
-            std::collections::VecDeque::from([own_pid]);
-        let mut tree: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        while let Some(pid) = queue.pop_front() {
-            if !tree.insert(pid) {
-                continue;
-            }
-            for (child, parent) in parents.iter() {
-                if *parent == pid {
-                    queue.push_back(*child);
-                }
-            }
-        }
+        // No exclusion: the root IS this process, and the caller's whole question is which pids
+        // belong to this instance.
+        let tree = crate::platform::walk_descendants(&parents, &[own_pid], None);
         Some(tree.into_iter().collect())
     }
 }
@@ -345,19 +335,9 @@ pub fn process_tree_working_set(roots: &[u32]) -> Option<(u64, usize)> {
             return None;
         }
 
-        let self_pid = std::process::id();
-        let mut queue: std::collections::VecDeque<u32> = roots.iter().copied().collect();
-        let mut tree: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        while let Some(pid) = queue.pop_front() {
-            if pid == self_pid || !tree.insert(pid) {
-                continue;
-            }
-            for (child, parent) in parents.iter() {
-                if *parent == pid {
-                    queue.push_back(*child);
-                }
-            }
-        }
+        // The gateway is excluded: the panel reports its own footprint separately, so counting it
+        // in the subtree total would show it twice.
+        let tree = crate::platform::walk_descendants(&parents, roots, Some(std::process::id()));
 
         // Roots sampled but ALL gone by walk time (children exiting) would sum to a confident 0
         // MB — the walker reports "no measurement" instead, matching the Node build's contract

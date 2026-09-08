@@ -118,6 +118,10 @@ reqwest = { version = "0.13", default-features = false, features = [
     "json",
     "rustls",
 ] }
+# Already in the unix tree via hyper-util, so it costs nothing new to compile, and it buys the
+# syscalls the platform seam would otherwise shell out for: kill(2) instead of spawning
+# `/bin/kill`, and a liveness probe that works on macOS, where there is no /proc to stat.
+libc = "0.2"
 
 [dev-dependencies]
 # Test-only: a real MCP client (rmcp's own) against the gateway over a real socket, plus raw-HTTP
