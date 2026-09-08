@@ -136,7 +136,7 @@ The phase tables above are the plan the port was written against. This is the re
 remaining gap is visible without re-deriving it:
 
 ```
-cargo test                     564 lib + 65 adminapi + 12 app + 4 envelope_compat
+cargo test                     564 lib + 65 adminapi + 12 app + 4 envelope_compat + 1 memory
 cargo test --features mongo    582 lib  (the extra 18 are the mongo adapter's)
 ```
 
@@ -161,16 +161,25 @@ One branch is deliberately uncovered: `daemon::StopResult::Forced`. Reaching it 
 `tree_kill` a live pid, and the only live pid a test could produce is the test runner's own. The
 module header says so at the top of its `mod tests`.
 
-Still open from the wish list below: the RSS regression test and the golden `/api/*` capture. The
-envelope round-trip against Node-sealed fixtures is done — `tests/envelope_compat.rs`.
+Still open from the wish list below: the golden `/api/*` capture. The envelope round-trip against
+Node-sealed fixtures is `tests/envelope_compat.rs`, and the RSS guard is `tests/memory.rs`.
 
 ## Tests worth adding that the Node build could not have
 
-- **RSS regression test.** Boot with a fixed config, serve a scripted workload, assert RSS stays
-  under a ceiling. Cheap in Rust, impossible to make stable in Node. This is the one number the
-  project exists for — guard it.
-- **`cargo tree -d` in CI.** Fail the build on a duplicated TLS stack or async runtime. This is how
-  a 15 MB target quietly becomes 30 MB.
+- **RSS regression test.** ✅ `tests/memory.rs`. It asserts a DELTA, not a ceiling: the number
+  readable from inside `cargo test` is the test binary's working set, which carries the harness,
+  an rmcp client and every dev-dependency, so an absolute figure there would be measuring the
+  wrong process. Growth under load needs no baseline, and growth is the actual regression shape —
+  a leak, an unbounded buffer, a payload-proportional allocation on a forwarding path. It has its
+  own file so cargo gives it its own process, and one test so the phases cannot measure each
+  other. Current margins: 1,500 trivial requests +0.0 MB, 1,500 tool calls +0.2 MB, and 120 MB
+  pushed through the adapter +0.4 MB — the last of which is what pins AGENTS.md's "no
+  `serde_json::Value` on a forwarding path".
+- **`cargo tree -d` in CI.** ✅ In `build.yml`, but not as written here: `cargo tree -d` exits 0
+  whatever it finds, so it gates nothing on its own, and the tree already carries a spread of
+  RustCrypto versions because russh is a generation ahead of our aes-gcm. The step prints the full
+  picture and fails only on a second tokio, TLS stack or hyper — which is what the megabytes
+  actually ride on.
 - **Envelope round-trip against Node-sealed fixtures.** Check in a fixture sealed by the Node build
   and assert Rust opens it. This catches HKDF argument-order and base64 mistakes at the exact moment
   they are introduced rather than on a user's machine.
