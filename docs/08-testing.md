@@ -136,8 +136,8 @@ The phase tables above are the plan the port was written against. This is the re
 remaining gap is visible without re-deriving it:
 
 ```
-cargo test                     581 lib + 65 adminapi + 12 app + 4 envelope_compat + 1 memory
-cargo test --features mongo    599 lib  (the extra 18 are the mongo adapter's)
+cargo test                     592 lib + 65 adminapi + 12 app + 4 envelope_compat + 1 memory
+cargo test --features mongo    610 lib  (the extra 18 are the mongo adapter's)
 ```
 
 On a unix host add 6 more: `platform/unix.rs` compiles only there.
@@ -146,10 +146,19 @@ Every module in `src/` carries an inline `#[cfg(test)] mod tests` **except** the
 
 | Module | Lines | Why not, and what it would take |
 | --- | --- | --- |
-| `adapters/pg_browser.rs`, `mysql_browser.rs`, `redis_browser.rs` | 1,056 | Every path needs a live server. They belong with the self-skipping DB tests, not with the unit suite. |
+| `adapters/mysql_browser.rs` | 401 | Orchestration only — every path is `async fn` over a live connection, and the SQL it builds is quoted by `dbbrowser::quote_ident`, which is tested there. It belongs with the self-skipping DB tests. |
 | `platform/windows.rs` | 378 | Win32 FFI: DPAPI, Toolhelp, registry. Its process walk is covered — the BFS both platforms share now lives un-`cfg`'d in `platform/mod.rs` and is tested on whatever host runs the suite. What is left is the FFI itself, which needs the OS to answer. |
 | `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (65) and `tests/app.rs` (12), which is where a route contract belongs. |
 | `lib.rs`, `main.rs`, `secure/mod.rs`, `tunnel/mod.rs` | 109 | Re-export shells with no behaviour of their own. |
+
+The DB browsers are mostly I/O, but not entirely, and the difference is worth naming: their
+injection surface is `dbbrowser::quote_ident`, which is tested in `dbbrowser.rs` — the browsers
+only call it. What was left untested was the pure logic buried between the awaits, so it was
+lifted out: `redis_browser::scan_args` (the panel sends every param as a JSON string, and an
+unclamped COUNT asks redis for the whole keyspace in one round trip) and `pg_browser::total_of`
+(node-pg answers int4 as a number, the exact-string path as a string, and the row count drives
+paging). Building the SCAN args before the connection also means a bad `type` is reported as a
+bad `type`, not as whatever the socket said.
 
 `server.rs` is tested at `register_one`, not at `run_gateway` — the boot itself binds a port and
 never returns, and the daemon tests already drive it from outside. `register_one` is where the

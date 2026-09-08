@@ -471,3 +471,46 @@ impl DbBrowser for PgBrowser {
         Ok(json!({ "ran": sql }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(pairs: &[(&str, Value)]) -> Map<String, Value> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()
+    }
+
+    #[test]
+    fn a_count_reads_the_same_whichever_spelling_the_driver_used() {
+        // node-pg answers int4 as a number, but the exact-string path — which is config-driven,
+        // so it is a per-install difference, not a per-query one — makes it a string. The row
+        // count drives the panel's paging, so reading one spelling and not the other silently
+        // reports every table as empty on half the installs.
+        assert_eq!(total_of(&[row(&[("total", json!(42))])]), 42);
+        assert_eq!(total_of(&[row(&[("total", json!("42"))])]), 42);
+        assert_eq!(total_of(&[row(&[("total", json!(" 42 "))])]), 42);
+        // Past 2^31: a table with more rows than an i32 holds is exactly when this matters.
+        assert_eq!(total_of(&[row(&[("total", json!("4294967296"))])]), 4_294_967_296);
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_count_is_zero_rather_than_a_panic() {
+        // COUNT always returns a row, so these are the shapes of a query that went wrong — and a
+        // browser that panics on a malformed reply takes the whole gateway task with it.
+        assert_eq!(total_of(&[]), 0);
+        assert_eq!(total_of(&[row(&[])]), 0);
+        assert_eq!(total_of(&[row(&[("count", json!(7))])]), 0, "the column is named total");
+        assert_eq!(total_of(&[row(&[("total", json!(null))])]), 0);
+        assert_eq!(total_of(&[row(&[("total", json!("not a number"))])]), 0);
+        assert_eq!(total_of(&[row(&[("total", json!(true))])]), 0);
+    }
+
+    #[test]
+    fn only_the_first_row_counts() {
+        // COUNT(*) answers exactly one row; a second one would mean the query was not the count.
+        assert_eq!(
+            total_of(&[row(&[("total", json!(1))]), row(&[("total", json!(999))])]),
+            1
+        );
+    }
+}
