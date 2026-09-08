@@ -1,0 +1,112 @@
+# Build lmg for every platform and publish binaries on version tags.
+#
+# - push to a branch / PR: build + test every target, upload the binaries as workflow artifacts
+# - push of a v* tag (e.g. v0.1.0): same builds, plus a GitHub Release with one binary per target
+#
+# TLS note (Cargo.toml): Windows builds link schannel, unix builds link rustls — so the unix
+# binaries carry no system-OpenSSL dependency. aws-lc-rs (rustls's provider) needs cmake + a C
+# compiler on Linux; both are installed below. macOS runners ship Xcode toolchains.
+#
+# The linux-arm64 entry runs on the free arm runner fleet — free for PUBLIC repos. On a private
+# repo that runner is billed by the minute: delete the entry if that is a concern, or build it
+# with https://github.com/cross-rs/cross instead.
+
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write # the release job attaches binaries to a GitHub Release
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            exe: lmg.exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            exe: lmg
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            exe: lmg
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            exe: lmg
+          # Intel macs build as a cross target from the arm runner — Apple clang links both
+          # architectures out of the box, no extra toolchain needed.
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            exe: lmg
+            cross: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake clang
+
+      # Tests run on the native target only — a cross-compiled binary cannot execute.
+      - name: Test
+        if: matrix.cross != true
+        run: cargo test --features mongo --locked
+
+      # The shipped release carries the mongo driver (ADR-004): default builds leave it out,
+      # the downloadable binary turns everything on.
+      - name: Build
+        run: cargo build --release --features mongo --locked --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          case "$GITHUB_REF" in
+            refs/tags/*) ;;
+            *) VERSION="$VERSION-$(echo "$GITHUB_SHA" | cut -c1-8)" ;;
+          esac
+          ASSET="lmg-${VERSION}-${{ matrix.target }}"
+          if [ "${{ runner.os }}" = "Windows" ]; then ASSET="${ASSET}.exe"; fi
+          mkdir -p dist-bin
+          cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" "dist-bin/${ASSET}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist-bin/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-bin
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist-bin/*
+          generate_release_notes: true
