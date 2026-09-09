@@ -30,6 +30,7 @@
 //! - migrate.rs: the one-time v1 jobs.json → config row migration (docs/11 §5, S4).
 
 pub mod api;
+pub mod clock;
 pub mod def;
 pub mod migrate;
 pub mod runlog;
@@ -276,9 +277,22 @@ pub struct JobSystem {
     /// run itself (bounds, cancellation, the terminal state) and the supervisor owns the
     /// child process. This subsystem spawns nothing of its own any more.
     services: Arc<RuntimeServices>,
-    /// Per-job "a run is in flight" flag; absent means false. The claim gate. This is the
-    /// per-job overlap policy (skip); the pool's global bound is the coordinator's.
-    runtime: Mutex<HashMap<String, bool>>,
+    /// The clock the scheduler reads (docs/11 §6.6): the real one is chrono::Local; the
+    /// DST tests inject a fake with a synthetic rule so the same assertions pass on any
+    /// machine. Swappable before start through [JobSystem::set_clock] - the test seam.
+    clock: Mutex<Arc<dyn clock::Clock>>,
+    /// The next-due table (docs/11 §6.5): one unix-ms instant per job id. Rebuilt on
+    /// every apply, recomputed for ONE job when its occurrence is claimed - so the
+    /// per-second tick is a map scan, never a calendar walk.
+    next_due: Mutex<HashMap<String, i64>>,
+    /// Serializes (overlap check -> submit) pairs across the tick and the manual API, so
+    /// two of them cannot both see \"not running\" and double-submit one job. No await is
+    /// ever held through this lock.
+    submit_gate: Mutex<()>,
+    /// Cancellation for occurrence tasks (docs/11 §6.4): a retry sitting out its delayMs
+    /// must abort the moment the plugin stops, not after the delay. A fresh channel per
+    /// start() so a stopped-and-re-enabled scheduler works again.
+    cancel: Mutex<tokio::sync::watch::Sender<bool>>,
     /// Gateway boot time: the interval anchor for a job that has never run, so a fresh job
     /// fires one interval after boot instead of instantly.
     anchor_ms: i64,
@@ -312,7 +326,10 @@ impl JobSystem {
             state: state::JobsState::open(dir.join("jobs-state.json")),
             runlog: runlog::RunLog::at(dir.join("logs").join("jobs")),
             services,
-            runtime: Mutex::new(HashMap::new()),
+            clock: Mutex::new(Arc::new(clock::LocalClock)),
+            next_due: Mutex::new(HashMap::new()),
+            submit_gate: Mutex::new(()),
+            cancel: Mutex::new(tokio::sync::watch::channel(false).0),
             anchor_ms: now_ms() as i64,
             timer: Mutex::new(None),
         })
@@ -357,6 +374,9 @@ impl JobSystem {
             });
         self.runlog
             .set_limits(runlog::limits_of_retention(&retention));
+        // The applied table changed, so every next-due entry is recomputed once here
+        // (docs/11 §6.5) - the per-second tick never walks the calendar.
+        self.rebuild_next_due();
         Ok(())
     }
 
@@ -377,19 +397,81 @@ impl JobSystem {
         self.config_store.plugin_config("jobs")
     }
 
-    /// Start the one-second tick task. stop() aborts it.
+    /// The test seam of docs/11 §6.6: swap the clock (before start) and rebuild the
+    /// next-due table against it. Production never calls this - the system opens on
+    /// [clock::LocalClock].
+    pub fn set_clock(&self, clock: Arc<dyn clock::Clock>) {
+        *self.clock.lock().unwrap_or_else(|e| e.into_inner()) = clock;
+        self.rebuild_next_due();
+    }
+
+    fn clock_now_ms(&self) -> i64 {
+        self.clock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .now_ms()
+    }
+
+    /// Recompute the next-due table for the whole applied table (docs/11 §6.5): the one
+    /// place every definition is walked. Called on apply and on clock swap - a per-job
+    /// recompute happens when an occurrence is claimed, never in the tick.
+    fn rebuild_next_due(&self) {
+        let clock = self.clock.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let now = clock.now_ms();
+        let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
+        let mut table: HashMap<String, i64> = HashMap::new();
+        for d in &cfg.definitions {
+            if d.disabled {
+                continue;
+            }
+            let last = self.state.get(&d.id).last_run_at;
+            if let Some(ms) = def::next_due_ms(d, last, now, self.anchor_ms, clock.as_ref()) {
+                table.insert(d.id.clone(), ms);
+            }
+        }
+        *self.next_due.lock().unwrap_or_else(|e| e.into_inner()) = table;
+    }
+
+    /// Recompute ONE job's next-due entry from its claim state. The post-claim path: the
+    /// calendar walk happens exactly once per occurrence, for exactly that job.
+    fn refresh_next_due(&self, id: &str) {
+        let clock = self.clock.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let now = clock.now_ms();
+        let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
+        let mut table = self.next_due.lock().unwrap_or_else(|e| e.into_inner());
+        match cfg.definitions.iter().find(|d| d.id == id) {
+            Some(d) if !d.disabled => {
+                let last = self.state.get(id).last_run_at;
+                match def::next_due_ms(d, last, now, self.anchor_ms, clock.as_ref()) {
+                    Some(ms) => {
+                        table.insert(id.to_string(), ms);
+                    }
+                    None => {
+                        table.remove(id);
+                    }
+                }
+            }
+            _ => {
+                table.remove(id);
+            }
+        }
+    }
+
+    /// Start the one-second tick task (docs/11 §6.5): each tick is one map scan - the
+    /// entries at or before \"now\" - and one spawned occurrence task per due job. No
+    /// calendar math ever runs here. A fresh cancel channel per start, so a
+    /// stopped-and-re-enabled scheduler works again.
     pub fn start(self: &Arc<Self>) {
+        self.rebuild_next_due();
+        *self.cancel.lock().unwrap_or_else(|e| e.into_inner()) =
+            tokio::sync::watch::channel(false).0;
         let sys = self.clone();
         let handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 for name in sys.due_jobs_now() {
                     let sys = sys.clone();
-                    tokio::spawn(async move {
-                        // A Busy result here is the normal overlap skip; Unknown is a delete
-                        // that won the race. Neither is worth a log line.
-                        let _ = sys.execute(&name, "timer").await;
-                    });
+                    tokio::spawn(async move { sys.run_occurrence(&name).await });
                 }
             }
         });
@@ -398,14 +480,18 @@ impl JobSystem {
         }
     }
 
-    /// Stop SCHEDULING: the tick task is aborted, so nothing new fires. Runs already in
-    /// flight are the coordinator's, not the timer's - see [JobSystem::shutdown] for the
-    /// teardown that actually takes them back.
+    /// Stop SCHEDULING: the tick task is aborted and every occurrence task sitting out a
+    /// retry delay hears the cancel signal, so nothing new fires and no delayed retry
+    /// comes back to life later. Runs already executing are the coordinator's - see
+    /// [JobSystem::shutdown] for the teardown that takes them back.
     pub fn stop(&self) {
         if let Ok(mut slot) = self.timer.lock() {
             if let Some(handle) = slot.take() {
                 handle.abort();
             }
+        }
+        if let Ok(tx) = self.cancel.lock() {
+            let _ = tx.send(true);
         }
     }
 
@@ -417,136 +503,245 @@ impl JobSystem {
     /// started by hand survives the jobs plugin being disabled.
     pub async fn shutdown(self: &Arc<Self>) -> usize {
         self.stop();
-        let canceled = self.services.runs.cancel_owner(JOBS_OWNER).await;
-        // Every run the coordinator held is terminal now, so the claim flags left behind
-        // belong to execute() continuations that can no longer start anything. Clearing them
-        // means a later enable finds no job wedged as "already running".
-        self.runtime
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clear();
-        canceled
+        self.services.runs.cancel_owner(JOBS_OWNER).await
     }
 
-    /// The jobs whose schedule says RUN right now. Snapshot under both locks; no awaits inside.
+    /// The jobs whose next-due entry sits at or before now. The tick's whole read side:
+    /// a clock read and a map scan (docs/11 §6.5).
     pub fn due_jobs_now(&self) -> Vec<String> {
-        let now = now_ms() as i64;
-        let local = chrono::Local::now().naive_local();
-        self.due_jobs(now, &local)
+        let now = self.clock_now_ms();
+        self.due_jobs(now)
     }
 
-    /// The pure half of the tick: given a clock, which jobs fire? Split from due_jobs_now so
-    /// the decision is testable against synthetic times. Reads the APPLIED config table
-    /// (docs/11 §9 S3) - jobs.json no longer feeds the scheduler.
-    pub fn due_jobs(&self, now: i64, now_local: &chrono::NaiveDateTime) -> Vec<String> {
-        let running = self
-            .runtime
+    /// The testable half of the tick: the jobs whose next-due entry is at or before
+    /// `now`. The table is maintained by apply/claim (docs/11 §6.5), so this reads the
+    /// map, not the calendar.
+    pub fn due_jobs(&self, now: i64) -> Vec<String> {
+        self.next_due
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
-        cfg.definitions
             .iter()
-            .filter(|d| !d.disabled && !running.get(d.id.as_str()).copied().unwrap_or(false))
-            .filter(|d| {
-                def::definition_due(
-                    d,
-                    now,
-                    now_local,
-                    self.anchor_ms,
-                    self.state.get(&d.id).last_run_at,
-                )
-            })
-            .map(|d| d.id.clone())
+            .filter(|(_, due)| **due <= now)
+            .map(|(id, _)| id.clone())
             .collect()
     }
 
-    /// Atomically claim one job for a run: marks it running and stamps the anchor (the
-    /// interval anchor moves to the run's START, so a long run does not queue an immediate
-    /// re-run when it finishes). The anchor moves for the OCCURRENCE, not for a success: a
-    /// refused occurrence still counts, or a job would retry every tick while the pool is
-    /// full. The second claimant of a busy job gets Busy, not a queue.
-    ///
-    /// The definition is CLONED here on purpose: an apply_config that rewrites the table
-    /// mid-flight cannot reach into a run that already claimed its snapshot (docs/11 §8,
-    /// "修改中任务") - the run finishes under the definition it started with.
-    fn claim(&self, name: &str, now: i64) -> Result<JobDefinition, RunError> {
-        let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+    /// The definition snapshot for `name`, or Unknown. The clone IS the snapshot
+    /// (docs/11 §8, 修改中任务): an apply_config that rewrites the table mid-flight
+    /// cannot reach into a run that already claimed its definition - the run finishes
+    /// under the one it started with.
+    fn definition_of(&self, name: &str) -> Result<JobDefinition, RunError> {
         let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(def) = cfg.definitions.iter().find(|d| d.id == name).cloned() else {
-            return Err(RunError::Unknown(format!("unknown job: {name}")));
-        };
-        if rt.get(name).copied().unwrap_or(false) {
-            return Err(RunError::Busy(format!("job {name} is already running")));
-        }
-        rt.insert(name.to_string(), true);
-        // Best-effort on purpose: the run is about to happen either way, and refusing to run
-        // because the ANCHOR could not be written would turn a disk problem into a missed job.
-        // The cost of a failed write is one possible re-fire after a restart, which the cron
-        // same-minute rule already guards for cron jobs - see state.rs for the full trade.
-        self.state.claim(name, now, None);
-        Ok(def)
+        cfg.definitions
+            .iter()
+            .find(|d| d.id == name)
+            .cloned()
+            .ok_or_else(|| RunError::Unknown(format!("unknown job: {name}")))
     }
 
-    /// Run one job to completion (timer or manual): claim it, submit it to the shared
-    /// coordinator with the job's own deadline, append the run record, persist lastOk, and
-    /// leave one line in the gateway log. Every step that can fail degrades to a recorded
-    /// field - a job's failure is data, never a panic or an abort of the scheduler. Returns
-    /// the run log's sequence number with the outcome.
-    ///
-    /// A REFUSAL (no capability, full pool) is recorded as an occurrence too and then
-    /// returned as an error: the history shows that the job was due and did not run, and the
-    /// caller is never told a run happened that did not.
+    /// Await a submitted run to its terminal view.
+    async fn await_outcome(submitted: crate::services::runs::SubmittedRun) -> runner::RunOutcome {
+        match submitted.done.await {
+            Ok(view) => runner::RunOutcome::from_run_view(&view),
+            // The coordinator dropped the sender: the run task was aborted under us
+            // (process teardown). Record what is actually known - that it never reported.
+            Err(_) => runner::RunOutcome::refused(
+                "the run ended without reporting (gateway shutting down)".into(),
+            ),
+        }
+    }
+
+    /// The manual-run door (POST /run and tests): ONE attempt, no occurrence key, no
+    /// retry - a manual run is a human's explicit act, not an occurrence the scheduler
+    /// owns (docs/11 §6.1), so it never moves a scheduling anchor either. Busy when
+    /// this job already has a run in flight, whatever started it (the label gate).
     pub async fn execute(
         self: Arc<Self>,
         name: &str,
         trigger: &str,
     ) -> Result<(u64, runner::RunOutcome), RunError> {
-        let def = self.claim(name, now_ms() as i64)?;
-        let submitted = self.services.runs.submit(SubmitRequest {
-            owner: JOBS_OWNER.to_string(),
-            label: def.id.clone(),
-            // The definition's OWN action ref (docs/11 §3.4): any registered capability,
-            // input verbatim - env refs stay refs and resolve inside the action.
-            action_type: def.action.type_.clone(),
-            input: def.action.input.clone(),
-            timeout_ms: def.timeout_ms,
-            // overlap=skip, this build's only policy: the per-job claim above already refused
-            // a second run of THIS job, so a full pool is a refusal as well, not a queue.
-            queue_if_busy: false,
-        });
-        let submitted = match submitted {
-            Ok(submitted) => submitted,
+        let def = self.definition_of(name)?;
+        let label = format!("job:{}", def.id);
+        let submitted = {
+            let _gate = self.submit_gate.lock().unwrap_or_else(|e| e.into_inner());
+            if self.services.runs.count_for_label(&label) > 0 {
+                return Err(RunError::Busy(format!("job {} is already running", def.id)));
+            }
+            self.services.runs.submit(SubmitRequest {
+                owner: JOBS_OWNER.to_string(),
+                label,
+                // The definition's OWN action ref (docs/11 §3.4): any registered capability,
+                // input verbatim - env refs stay refs and resolve inside the action.
+                action_type: def.action.type_.clone(),
+                input: def.action.input.clone(),
+                timeout_ms: def.timeout_ms,
+                queue_if_busy: false,
+            })
+        };
+        let (run_id, out) = match submitted {
+            Ok(s) => {
+                let id = s.run_id;
+                (Some(id), Self::await_outcome(s).await)
+            }
             Err(err) => {
                 let refusal = runner::RunOutcome::refused(err.to_string());
-                let _ = self.record_run(name, trigger, &refusal);
-                self.release(name);
+                self.record_ran(name, trigger, None, (1, 1), None, &refusal);
                 return Err(match err {
                     SubmitError::Capacity(m) => RunError::Capacity(m),
                     SubmitError::Action(m) => RunError::Unavailable(m),
                 });
             }
         };
-        let out = match submitted.done.await {
-            Ok(view) => runner::RunOutcome::from_run_view(&view),
-            // The coordinator dropped the sender: the run task was aborted under us (process
-            // teardown). Record what is actually known - that it never reported.
-            Err(_) => runner::RunOutcome::refused(
-                "the run ended without reporting (gateway shutting down)".into(),
-            ),
-        };
 
-        let seq = self.record_run(name, trigger, &out);
-        self.persist_last_ok(name, out.ok);
-        self.release(name);
+        let seq = self.record_ran(name, trigger, None, (1, 1), run_id, &out);
+        self.persist_last_ok(name, out.ok, run_id);
         Ok((seq, out))
     }
 
-    /// Append one run to the job's log and summarise it into the gateway log. Returns the
-    /// sequence number, or 0 when the record could not be written (a warning, not a failure:
-    /// the run itself already happened).
-    fn record_run(&self, name: &str, trigger: &str, out: &runner::RunOutcome) -> u64 {
-        let seq = match self.runlog.append_run(name, run_record(trigger, out)) {
+    /// One scheduled occurrence, start to finish (docs/11 §6): claim + occurrence
+    /// identity, misfire accounting, the overlap gate, the retry loop with cancellable
+    /// delays, and a record for everything that happened on the way.
+    async fn run_occurrence(self: &Arc<Self>, name: &str) {
+        let clock = self.clock.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let now = clock.now_ms();
+        let Ok(def) = self.definition_of(name) else {
+            self.refresh_next_due(name);
+            return;
+        };
+        if def.disabled {
+            self.refresh_next_due(name);
+            return;
+        }
+        let st = self.state.get(name);
+        let Some((count, latest_due)) =
+            def::missed_occurrences(&def, now, self.anchor_ms, st.last_run_at, clock.as_ref())
+        else {
+            // Nothing is actually due - the clock moved, or a concurrent occurrence
+            // claimed first. Re-arm and go.
+            self.refresh_next_due(name);
+            return;
+        };
+        let key = def::occurrence_key_of(&def.trigger, latest_due, clock.as_ref());
+        // Occurrence identity (docs/11 §6.1): a restart inside the same cron minute - or
+        // the fall-back's repeated local minute - already ran this occurrence.
+        if st.last_occurrence_key.as_deref() == Some(key.as_str()) {
+            self.refresh_next_due(name);
+            return;
+        }
+        // CLAIM first, at the OCCURRENCE's instant: the anchor moves whatever happens
+        // next - skip, refusal, run - or a full pool would make the job re-fire every
+        // tick (the §6.2 invariant, kept from the v1 scheduler).
+        self.state.claim(name, latest_due, Some(&key));
+        self.refresh_next_due(name);
+
+        // Misfire accounting (docs/11 §6.3): everything older than the newest
+        // occurrence is one summary line, never a catch-up storm.
+        if count > 1 {
+            self.record_missed(name, &key, count - 1);
+            if matches!(def.misfire, def::Misfire::Skip) {
+                // skip: not even the newest runs - the anchor already sits at it, the
+                // next firing is one period away, and the summary is the whole story.
+                return;
+            }
+        }
+
+        // The retry loop (docs/11 §6.4). Attempt 1..=max_attempts; each attempt is its
+        // own submit (so the global bounds apply every time); the wait between attempts
+        // is cancellable - a plugin stop aborts the occurrence mid-delay.
+        let label = format!("job:{}", def.id);
+        let queue = matches!(def.overlap, def::Overlap::QueueOne);
+        let mut cancel_rx = self
+            .cancel
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .subscribe();
+        let mut attempt = 1u32;
+        let attempts = def.retry.max_attempts;
+        loop {
+            let submitted = {
+                let _gate = self.submit_gate.lock().unwrap_or_else(|e| e.into_inner());
+                if !queue && self.services.runs.count_for_label(&label) > 0 {
+                    // overlap=skip: the occurrence is skipped, visibly, anchor already
+                    // moved - this is the steady-state rule, not an error.
+                    self.record_skipped(name, &key, "overlap");
+                    return;
+                }
+                self.services.runs.submit(SubmitRequest {
+                    owner: JOBS_OWNER.to_string(),
+                    label: label.clone(),
+                    action_type: def.action.type_.clone(),
+                    input: def.action.input.clone(),
+                    timeout_ms: def.timeout_ms,
+                    // queue-one: a busy pool queues this occurrence (docs/11 §6.2);
+                    // the queue's own bound turns into a visible capacity skip below.
+                    queue_if_busy: queue,
+                })
+            };
+            let (run_id, out) = match submitted {
+                Ok(s) => {
+                    let id = s.run_id;
+                    (Some(id), Self::await_outcome(s).await)
+                }
+                Err(SubmitError::Capacity(reason)) => {
+                    // A full pool (skip) or a full queue (queue-one): recorded, anchor
+                    // already moved, reported - never silently dropped.
+                    self.record_skipped(name, &key, "capacity");
+                    log::warn(
+                        "job occurrence refused by a full pool",
+                        Some(json!({ "name": name, "reason": reason })),
+                    );
+                    return;
+                }
+                Err(SubmitError::Action(reason)) => {
+                    // A missing capability is a REFUSAL, not a failed run: lastOk must
+                    // not claim an exit that never happened. Retrying it would only
+                    // keep hitting the same missing wall (docs/11 §6.4).
+                    let refusal = runner::RunOutcome::refused(reason.clone());
+                    self.record_ran(name, "timer", Some(&key), (attempt, attempts), None, &refusal);
+                    log::warn(
+                        "job occurrence refused: the action is not registered",
+                        Some(json!({ "name": name, "reason": reason })),
+                    );
+                    return;
+                }
+            };
+
+            self.record_ran(name, "timer", Some(&key), (attempt, attempts), run_id, &out);
+
+            // Retry only the outcomes the policy names (docs/11 §6.4): failure = a
+            // non-zero exit or a spawn error; timeout = the deadline. canceled never
+            // retries - someone asked for it to stop - and neither do refusals.
+            let retryable = !out.ok
+                && !out.canceled
+                && ((out.timed_out && def.retry.retry_on.contains(&def::RetryOn::Timeout))
+                    || (!out.timed_out && def.retry.retry_on.contains(&def::RetryOn::Failure)));
+            if out.ok || out.canceled || !retryable || attempt >= attempts {
+                self.persist_last_ok(name, out.ok, run_id);
+                return;
+            }
+
+            // The cancellable delay before the next attempt.
+            let delay = def::retry_delay_ms(&def.retry, attempt + 1);
+            if delay > 0 {
+                let waited = tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(delay)) => true,
+                    _ = cancel_rx.changed() => !*cancel_rx.borrow(),
+                };
+                if !waited {
+                    // The plugin stopped mid-delay: the occurrence is over. The last
+                    // attempt's record already says what happened; no further attempts.
+                    return;
+                }
+            }
+            attempt += 1;
+        }
+    }
+
+    /// Append one entry to the job's run log; returns the sequence number (0 when the
+    /// record could not be written - a warning, never a failure: the run already
+    /// happened). `entry` is fully shaped by the caller; this adds the gateway-log line.
+    fn record_entry(&self, name: &str, entry: Map<String, Value>, level: &str, msg: &str) -> u64 {
+        let seq = match self.runlog.append_run(name, entry) {
             Ok(seq) => seq,
             Err(err) => {
                 log::warn(
@@ -556,27 +751,83 @@ impl JobSystem {
                 0
             }
         };
-        let level = if out.ok { "info" } else { "warn" };
-        let mut extra = json!({ "name": name, "trigger": trigger, "ok": out.ok, "ms": out.ms });
-        if let Some(code) = out.exit_code {
-            extra["exitCode"] = json!(code);
-        }
-        if out.timed_out {
-            extra["timedOut"] = json!(true);
-        }
-        if out.canceled {
-            extra["canceled"] = json!(true);
-        }
-        if let Some(err) = &out.error {
-            extra["error"] = json!(err);
-        }
-        log::log(level, "job ran", Some(extra));
+        log::log(level, msg, Some(json!({ "name": name, "seq": seq })));
         seq
     }
 
-    /// Persist the outcome of the last actual run. Skipped for a refusal: a job that could
-    /// not start did not exit, and lastOk must not claim otherwise.
-    fn persist_last_ok(&self, name: &str, ok: bool) {
+    /// One ATTEMPT's record (docs/11 §7.3): outcome "ran" (or "refused" for a
+    /// submission that never started), with the occurrence key, the attempt numbers and
+    /// the coordinator's run id riding along.
+    fn record_ran(
+        &self,
+        name: &str,
+        trigger: &str,
+        occurrence: Option<&str>,
+        try_no: (u32, u32),
+        run_id: Option<u64>,
+        out: &runner::RunOutcome,
+    ) -> u64 {
+        let (attempt, attempts) = try_no;
+        let mut entry = ran_record(trigger, occurrence, attempt, attempts, run_id, out);
+        // output.capture "none" (docs/11 §3.2): the record keeps NO output - the run
+        // itself still captured; only the history is cut.
+        let none_capture = self
+            .config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .definitions
+            .iter()
+            .find(|d| d.id == name)
+            .is_some_and(|d| matches!(d.output.capture, def::OutputCapture::None));
+        if none_capture {
+            entry.remove("output");
+            entry.remove("chars");
+            entry.remove("preview");
+        }
+        let level = if out.ok { "info" } else { "warn" };
+        self.record_entry(name, entry, level, "job ran")
+    }
+
+    /// A skipped occurrence (docs/11 §6.2/§7.3): no exit code, no output, the reason
+    /// and the occurrence key are the story.
+    fn record_skipped(&self, name: &str, occurrence: &str, reason: &str) -> u64 {
+        let entry = json!({
+            "at": log::iso_now(),
+            "trigger": "timer",
+            "ok": false,
+            "ms": 0,
+            "outcome": "skipped",
+            "reason": reason,
+            "occurrenceKey": occurrence,
+        });
+        let Value::Object(map) = entry else {
+            unreachable!("an object literal")
+        };
+        self.record_entry(name, map, "warn", "job occurrence skipped")
+    }
+
+    /// The misfire summary (docs/11 §6.3): ONE line for every occurrence that will
+    /// never be caught up, with the newest occurrence's key for context.
+    fn record_missed(&self, name: &str, occurrence: &str, missed: usize) -> u64 {
+        let entry = json!({
+            "at": log::iso_now(),
+            "trigger": "timer",
+            "ok": false,
+            "ms": 0,
+            "outcome": "missed",
+            "missedCount": missed,
+            "occurrenceKey": occurrence,
+        });
+        let Value::Object(map) = entry else {
+            unreachable!("an object literal")
+        };
+        self.record_entry(name, map, "warn", "job occurrences missed while down")
+    }
+
+    /// Persist the outcome of the last actual attempt. Skipped for a refusal that never
+    /// started: lastOk must not claim an exit that did not happen. The run id rides
+    /// along now that execute carries it back (the S5 promise in state.rs).
+    fn persist_last_ok(&self, name: &str, ok: bool, run_id: Option<u64>) {
         let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
         // The job may have been deleted mid-run; the run record is already on disk, and a
         // deleted definition owns no state line (delete forgets it) - settle would only
@@ -584,18 +835,8 @@ impl JobSystem {
         if !cfg.definitions.iter().any(|d| d.id == name) {
             return;
         }
-        // Best-effort: the run already happened and its record is already in the run log. A
-        // failed write here loses one lastOk flag, not the history. The coordinator's run id
-        // rides along from S5, when execute() can carry it back.
-        self.state.settle(name, ok, None);
-    }
-
-    /// Drop the per-job claim, whatever the run's outcome was.
-    fn release(&self, name: &str) {
-        self.runtime
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(name.to_string(), false);
+        // Best-effort: the run already happened and its record is already in the run log.
+        self.state.settle(name, ok, run_id);
     }
 
     /// The v1 edit path (docs/11 §7.1): fold a v1-shaped body into the definitions row,
@@ -669,13 +910,14 @@ impl JobSystem {
     /// shape they had when definitions lived in jobs.json, plus the v2 fields. Built for
     /// GET /api/jobs and the PUT reply, so both show the same shape.
     pub fn job_view(&self, def: &JobDefinition) -> Value {
+        // "Running" is the coordinator's truth now (docs/11 §6.2): the label count is
+        // owner-blind, so a manual submission of the same job shows as running too -
+        // which is exactly what the reader wants to know.
         let running = self
-            .runtime
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(def.id.as_str())
-            .copied()
-            .unwrap_or(false);
+            .services
+            .runs
+            .count_for_label(&format!("job:{}", def.id))
+            > 0;
         let st = self.state.get(&def.id);
         let mut v = def.to_v1_view();
         for (key, value) in def.v2_view_fields() {
@@ -695,10 +937,15 @@ impl JobSystem {
         }
         v["running"] = json!(running);
         if !def.disabled {
-            if let Some(next) =
-                def::next_due_of(def, st.last_run_at, now_ms() as i64, self.anchor_ms)
+            // The maintained table, not a calendar walk per view (docs/11 §6.5).
+            if let Some(next) = self
+                .next_due
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&def.id)
+                .copied()
             {
-                v["nextDueAt"] = json!(next);
+                v["nextDueAt"] = json!(state::iso_of_ms(next));
             }
         }
         v
@@ -809,20 +1056,51 @@ fn definition_to_config(def: &JobDefinition) -> Value {
     def.to_config_json()
 }
 
-/// One run's JSONL record and API-reply shape - built in ONE place so the file line and the
-/// POST /run response cannot drift apart. The seq is assigned (and inserted first) by
-/// runlog::append_run; the API reply inserts it the same way.
-pub fn run_record(trigger: &str, out: &runner::RunOutcome) -> Map<String, Value> {
+/// One ATTEMPT's JSONL record and API-reply shape (docs/11 §7.3) - built in ONE place
+/// so the file line and the POST /run response cannot drift apart. The seq is assigned
+/// (and inserted first) by runlog::append_run; the API reply inserts it the same way.
+/// A submission that never started (outcome "refused") keeps the classic fields it can
+/// honestly carry and drops the rest, exactly like the skipped and missed shapes.
+pub fn ran_record(
+    trigger: &str,
+    occurrence: Option<&str>,
+    attempt: u32,
+    attempts: u32,
+    run_id: Option<u64>,
+    out: &runner::RunOutcome,
+) -> Map<String, Value> {
+    let refused = out.error.is_some() && out.exit_code.is_none() && out.ms == 0 && !out.timed_out;
     let mut rec = Map::new();
     rec.insert("at".into(), json!(log::iso_now()));
     rec.insert("trigger".into(), json!(trigger));
     rec.insert("ok".into(), json!(out.ok));
     rec.insert("ms".into(), json!(out.ms));
+    rec.insert(
+        "outcome".into(),
+        json!(if refused { "refused" } else { "ran" }),
+    );
+    if let Some(key) = occurrence {
+        rec.insert("occurrenceKey".into(), json!(key));
+    }
+    rec.insert("attempt".into(), json!(attempt));
+    rec.insert("attempts".into(), json!(attempts));
+    if let Some(id) = run_id {
+        rec.insert("runId".into(), json!(id));
+    }
     if let Some(pid) = out.pid {
         rec.insert("pid".into(), json!(pid));
     }
-    if let Some(code) = out.exit_code {
-        rec.insert("exitCode".into(), json!(code));
+    if !refused {
+        // outcome != "ran" carries no exit code or output (docs/11 §7.3); a refused
+        // submission never had either.
+        if let Some(code) = out.exit_code {
+            rec.insert("exitCode".into(), json!(code));
+        }
+        if out.output_truncated {
+            rec.insert("preview".into(), json!(true));
+        }
+        rec.insert("output".into(), json!(out.output));
+        rec.insert("chars".into(), json!(out.chars));
     }
     if out.timed_out {
         rec.insert("timedOut".into(), json!(true));
@@ -833,21 +1111,7 @@ pub fn run_record(trigger: &str, out: &runner::RunOutcome) -> Map<String, Value>
     if let Some(err) = &out.error {
         rec.insert("error".into(), json!(err));
     }
-    if out.output_truncated {
-        rec.insert("preview".into(), json!(true));
-    }
-    rec.insert("output".into(), json!(out.output));
-    rec.insert("chars".into(), json!(out.chars));
     rec
-}
-
-/// A unix-ms stamp as a local naive datetime (None when out of range).
-fn local_minute_of_ms(ms: i64) -> Option<chrono::NaiveDateTime> {
-    use chrono::TimeZone;
-    chrono::Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map(|dt| dt.naive_local())
 }
 
 /// Test-only wiring: the shared services with the legacy command capability registered —
@@ -866,7 +1130,7 @@ pub(crate) fn test_services() -> Arc<RuntimeServices> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use clock::Clock as _;
 
     fn scratch_path(name: &str) -> PathBuf {
         crate::secure::key::use_test_master_key();
@@ -998,84 +1262,119 @@ mod tests {
     }
 
     #[test]
-    fn interval_due_anchors_on_last_run_or_boot() {
+    fn interval_occurrences_anchor_on_last_run_or_boot() {
+        let clock = clock::testing::FakeClock::at(0);
         let now = 1_000_000_000_i64 * 1000;
-        let local = chrono::Local
-            .timestamp_millis_opt(now)
-            .unwrap()
-            .naive_local();
         let anchor = now - 5000;
         let d = def::JobDefinition::from_v1(&interval_job("j", 10));
-        assert!(!def::definition_due(
-            &d,
-            anchor + 9000,
-            &local,
-            anchor,
+        // Nothing due before the first full period past the anchor...
+        assert_eq!(
+            def::missed_occurrences(&d, anchor + 9000, anchor, None, clock.as_ref()),
             None
-        ));
-        assert!(def::definition_due(
-            &d,
-            anchor + 10_000,
-            &local,
-            anchor,
-            None
-        ));
-        assert!(!def::definition_due(
-            &d,
-            now,
-            &local,
-            anchor,
-            Some(now - 4000)
-        ));
-        assert!(def::definition_due(
-            &d,
-            now,
-            &local,
-            anchor,
-            Some(now - 11_000)
-        ));
+        );
+        // ...due exactly at it (the newest occurrence is the anchor + every).
+        assert_eq!(
+            def::missed_occurrences(&d, anchor + 10_000, anchor, None, clock.as_ref()),
+            Some((1, anchor + 10_000))
+        );
+        // A last run inside the period pushes the next occurrence a full period out.
+        assert_eq!(
+            def::missed_occurrences(&d, now, anchor, Some(now - 4000), clock.as_ref()),
+            None,
+            "4000ms into a 10s period: not due"
+        );
+        assert_eq!(
+            def::missed_occurrences(&d, now, anchor, Some(now - 11_000), clock.as_ref()),
+            Some((1, now - 1_000)),
+            "11s since the last run: one occurrence, at the 10s mark past the anchor"
+        );
+        // Three shut-down periods are THREE due occurrences, newest last - the misfire
+        // half of the story (docs/11 §6.3) starts from this count.
+        assert_eq!(
+            def::missed_occurrences(&d, now, anchor, Some(now - 31_000), clock.as_ref()),
+            Some((3, now - 1_000))
+        );
+        // firstRun: "immediate" on a never-run job anchors at 0: due the first tick.
+        let mut fast = def::JobDefinition::from_v1(&interval_job("fast", 3_600));
+        if let def::Trigger::Interval { first_run, .. } = &mut fast.trigger {
+            *first_run = def::FirstRun::Immediate;
+        }
+        assert_eq!(
+            def::missed_occurrences(&fast, now, anchor, None, clock.as_ref()),
+            Some((1, now)),
+            "immediate: due NOW, one occurrence, next firing a full period out"
+        );
     }
 
     #[test]
-    fn cron_due_requires_a_matching_minute_and_not_the_same_one_twice() {
-        let now_local: chrono::NaiveDateTime = chrono::NaiveDate::from_ymd_opt(2026, 9, 8)
+    fn cron_occurrences_count_matching_minutes_and_never_the_same_one_twice() {
+        let clock = clock::testing::FakeClock::at(0);
+        // 03:30 local on 2026-09-08; the fake zone is UTC+60, so real = 02:30Z.
+        let now_local = chrono::NaiveDate::from_ymd_opt(2026, 9, 8)
             .unwrap()
             .and_hms_opt(3, 30, 5)
             .unwrap();
+        let now = clock.ms_from_local(&now_local).expect("a real minute");
         let d = def::JobDefinition::from_v1(&cron_job("j", "30 3 * * *"));
-        assert!(
-            def::definition_due(&d, 0, &now_local, 0, None),
-            "matching minute, never ran"
+        // A run claimed this very minute: one occurrence due, and the occurrence KEY
+        // is the local wall minute - the restart-in-the-same-minute guard (§6.1).
+        let boot = now - 5_000;
+        let (count, latest) = def::missed_occurrences(&d, now, boot, None, clock.as_ref())
+            .expect("due at its minute");
+        assert_eq!((count, latest), (1, now - (now % 60_000)));
+        assert_eq!(
+            def::occurrence_key_of(&d.trigger, latest, clock.as_ref()),
+            format!("cron:{}", now_local.format("%Y-%m-%dT%H:%M"))
         );
-        let same_minute_ms = chrono::Local
-            .from_local_datetime(&now_local)
-            .unwrap()
-            .timestamp_millis();
-        assert!(!def::definition_due(
-            &d,
-            0,
-            &now_local,
-            0,
-            Some(same_minute_ms)
-        ));
-        let yesterday = same_minute_ms - 24 * 60 * 60 * 1000;
-        assert!(def::definition_due(&d, 0, &now_local, 0, Some(yesterday)));
+        // Same local minute, one day back: exactly one occurrence since.
+        let yesterday = now - 24 * 60 * 60 * 1000;
+        assert_eq!(
+            def::missed_occurrences(&d, now, 0, Some(yesterday), clock.as_ref()),
+            Some((1, now - (now % 60_000)))
+        );
+        // One minute PAST the firing, still unclaimed since yesterday: the occurrence
+        // is due (an unclaimed firing is due - whether to catch up is the misfire
+        // policy's call, not the calendar's).
         let off = chrono::NaiveDate::from_ymd_opt(2026, 9, 8)
             .unwrap()
             .and_hms_opt(3, 31, 0)
             .unwrap();
-        assert!(!def::definition_due(&d, 0, &off, 0, Some(yesterday)));
+        let off_ms = clock.ms_from_local(&off).expect("a real minute");
+        assert_eq!(
+            def::missed_occurrences(&d, off_ms, 0, Some(yesterday), clock.as_ref()),
+            Some((1, now - (now % 60_000))),
+            "the just-missed 03:30 occurrence is due once"
+        );
+        // The same minute CLAIMED: nothing due until tomorrow.
+        assert_eq!(
+            def::missed_occurrences(&d, off_ms, 0, Some(now), clock.as_ref()),
+            None,
+            "this minute's firing already ran"
+        );
+        let next = def::next_due_ms(&d, Some(yesterday), off_ms, 0, clock.as_ref())
+            .expect("tomorrow exists");
+        assert_eq!(
+            clock
+                .local_from_ms(next)
+                .format("%Y-%m-%dT%H:%M")
+                .to_string(),
+            "2026-09-09T03:30",
+            "the next firing is the next matching LOCAL minute"
+        );
     }
 
     #[test]
     fn a_manual_definition_never_auto_fires_and_has_no_next_due() {
+        let clock = clock::testing::FakeClock::at(0);
         let d = def::JobDefinition {
             trigger: def::Trigger::Manual,
             ..def::JobDefinition::from_v1(&interval_job("by-hand", 60))
         };
-        let now_local = chrono::Local::now().naive_local();
-        assert!(!def::definition_due(&d, i64::MAX, &now_local, 0, None));
-        assert!(def::next_due_of(&d, None, 0, 0).is_none());
+        assert_eq!(
+            def::missed_occurrences(&d, i64::MAX, 0, None, clock.as_ref()),
+            None
+        );
+        assert_eq!(def::next_due_ms(&d, None, 0, 0, clock.as_ref()), None);
         // The v1 shape cannot spell a schedule-less job: its validator still refuses one.
         assert!(JobDef {
             every_sec: None,
@@ -1104,12 +1403,15 @@ mod tests {
         row["definitions"]["by-hand"] = manual.to_config_json();
         install(&sys, &store, row);
 
-        let now = sys.anchor_ms + 1500;
-        let local = local_minute_of_ms(now).expect("a local time");
+        // Inject the clock (§6.6) and walk time: 1.5s past boot, the 1s interval is
+        // due, the 1h one is not, and neither the disabled nor the manual row ever fires.
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 1500);
         assert_eq!(
-            sys.due_jobs(now, &local),
+            sys.due_jobs(fake.now_ms()),
             vec!["due-now".to_string()],
-            "only the elapsed interval fires"
+            "only the elapsed interval sits in the table's past"
         );
         // jobs.json no longer schedules anything, even with a v1 row sitting on disk
         // next to the config store - which is exactly what an S3 boot of an old tree
@@ -1120,7 +1422,7 @@ mod tests {
             legacy.save().expect("the scratch file is writable");
         }
         assert_eq!(
-            sys.due_jobs(now, &local).len(),
+            sys.due_jobs(fake.now_ms()).len(),
             1,
             "jobs.json is not consulted"
         );
@@ -1184,6 +1486,12 @@ mod tests {
         let (page, _) = sys.read_runs("echo-job", None, 10);
         assert_eq!(page.len(), 2);
         assert_eq!(page[0]["trigger"], json!("manual"));
+        assert_eq!(page[0]["attempt"], json!(1), "manual is one attempt");
+        assert_eq!(page[0]["attempts"], json!(1));
+        assert!(
+            page[0].get("occurrenceKey").is_none(),
+            "no occurrence key on a manual run"
+        );
 
         // A fresh boot over the same tree reads the same facts: the config row is
         // re-applied the way plugin create does, and the state file carries the run
@@ -1194,7 +1502,15 @@ mod tests {
             .expect("the persisted row re-applies");
         let st = reopened.run_state("echo-job");
         assert_eq!(st.last_ok, Some(true));
-        assert!(st.last_run_at.is_some(), "the claim stamped lastRunAt");
+        assert_eq!(
+            st.last_run_at, None,
+            "a manual run never moves the scheduling anchor (docs/11 §6.1) - only an
+            occurrence does, so Run now cannot delay the next timer firing"
+        );
+        assert_eq!(
+            st.last_occurrence_key, None,
+            "and it never writes an occurrence key"
+        );
         assert_eq!(
             reopened.all_views().len(),
             1,
@@ -1210,14 +1526,27 @@ mod tests {
             other => panic!("expected Unknown, got {other:?}"),
         }
         install(&sys, &store, row_of(&[interval_job("busy-job", 3_600)]));
-        let _def = sys
-            .claim("busy-job", now_ms() as i64)
-            .expect("first claim wins");
+        // "Busy" is the coordinator's label count now (docs/11 §6.2): occupy the
+        // job:<id> label with a manual submission of our own, the way any producer
+        // would, and the manual door refuses with Busy instead of double-running.
+        let hog = sys
+            .services
+            .runs
+            .submit(SubmitRequest {
+                owner: "manual".into(),
+                label: "job:busy-job".into(),
+                action_type: JOBS_ACTION.into(),
+                input: json!({ "command": long_command() }),
+                timeout_ms: 30_000,
+                queue_if_busy: false,
+            })
+            .expect("the label is free");
         match sys.clone().execute("busy-job", "manual").await {
             Err(RunError::Busy(msg)) => assert!(msg.contains("already running"), "{msg}"),
             other => panic!("expected Busy, got {other:?}"),
         }
-        assert!(!sys.due_jobs_now().contains(&"busy-job".to_string()));
+        assert_eq!(sys.services.runs.shutdown_all().await, 1);
+        assert!(hog.done.await.is_ok());
     }
 
     /// The process plugin is disabled: the capability is simply not registered. A job that
@@ -1227,15 +1556,23 @@ mod tests {
     async fn a_missing_capability_is_reported_recorded_and_listed() {
         let (sys, store) = system("nocap", RuntimeServices::new());
         install(&sys, &store, row_of(&[interval_job("orphan", 3_600)]));
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 3_600_000 + 100); // the interval has elapsed
 
-        match sys.clone().execute("orphan", "timer").await {
-            Err(RunError::Unavailable(msg)) => assert!(msg.contains(JOBS_ACTION), "{msg}"),
-            other => panic!("expected Unavailable, got {other:?}"),
-        }
+        // The timer path is an OCCURRENCE now (docs/11 §6): it claims (stamping the
+        // anchor and the occurrence key) and then hits the missing capability - the
+        // refusal is a record, not a silent skip, and the anchor moved so it will not
+        // re-fire every tick against the same wall.
+        sys.clone().run_occurrence("orphan").await;
 
         let (page, _) = sys.read_runs("orphan", None, 10);
         assert_eq!(page.len(), 1, "{page:?}");
         assert_eq!(page[0]["ok"], json!(false));
+        assert_eq!(page[0]["outcome"], json!("refused"), "{page:?}");
+        assert!(page[0]["occurrenceKey"]
+            .as_str()
+            .is_some_and(|k| k.starts_with("interval:")));
         assert!(page[0]["error"]
             .as_str()
             .unwrap_or_default()
@@ -1537,5 +1874,512 @@ mod tests {
         }
         // The refused edit changed nothing.
         assert_eq!(sys.all_views().remove(0)["title"], json!("A titled job"));
+    }
+
+    // ---- S5: scheduling semantics (docs/11 §6, all injected-clock) ----
+
+    /// docs/11 §6.6: a cron minute inside the spring-forward gap never happens on the
+    /// wall clock. The next-due scan skips it to the next REAL matching minute, and the
+    /// missed walk does not count it.
+    #[test]
+    fn a_spring_forward_gap_minute_is_skipped_not_waited_for() {
+        let naive = chrono::NaiveDate::from_ymd_opt(2026, 3, 8)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap();
+        let r = naive.and_utc().timestamp_millis();
+        // Shift the zone so the [spring+1h, spring+2h) gap covers exactly that minute.
+        let spring = r - 90 * 60 * 1000;
+        let clock = Arc::new(clock::testing::FakeClock::with_rule(
+            0,
+            spring,
+            spring + 30 * 86_400_000,
+        ));
+        let d = def::JobDefinition::from_v1(&cron_job("early", "30 2 * * *"));
+
+        assert_eq!(
+            clock.ms_from_local(&naive),
+            None,
+            "02:30 does not exist that day"
+        );
+
+        // next_due from the day before lands on the NEXT day's 02:30, not the gap.
+        let day_before = naive - chrono::TimeDelta::try_days(1).unwrap();
+        let now = clock.ms_from_local(&day_before).unwrap();
+        let next = def::next_due_ms(&d, None, now, now, clock.as_ref()).expect("a next firing");
+        assert_eq!(
+            clock
+                .local_from_ms(next)
+                .format("%Y-%m-%dT%H:%M")
+                .to_string(),
+            "2026-03-09T02:30",
+            "the nonexistent minute is skipped"
+        );
+
+        // The missed walk at 03:00 the gap day finds NOTHING due: yesterday's ran, and
+        // today's minute never existed.
+        let after = chrono::NaiveDate::from_ymd_opt(2026, 3, 8)
+            .unwrap()
+            .and_hms_opt(3, 0, 0)
+            .unwrap();
+        let now = clock.ms_from_local(&after).unwrap();
+        let prev_firing = clock
+            .ms_from_local(&(naive - chrono::TimeDelta::try_days(1).unwrap()))
+            .expect("yesterday's 02:30 exists");
+        assert_eq!(
+            def::missed_occurrences(&d, now, now, Some(prev_firing), clock.as_ref()),
+            None,
+            "the gap minute is not a missed occurrence: yesterday's ran, today's never existed"
+        );
+    }
+
+    /// docs/11 §6.1/§6.6: the fall-back's repeated local minute has ONE occurrence key,
+    /// so the second wall-clock pass of that minute is the same occurrence - already
+    /// claimed, never run twice.
+    #[test]
+    fn a_fall_back_repeated_minute_runs_once_by_occurrence_key() {
+        let naive = chrono::NaiveDate::from_ymd_opt(2026, 11, 1)
+            .unwrap()
+            .and_hms_opt(1, 30, 0)
+            .unwrap();
+        let n = naive.and_utc().timestamp_millis();
+        // The repeated locals are [fall+1h, fall+2h); put 01:30 inside: fall = n-90m.
+        let fall = n - 90 * 60 * 1000;
+        let clock = Arc::new(clock::testing::FakeClock::with_rule(
+            0,
+            fall - 86_400_000,
+            fall,
+        ));
+        let d = def::JobDefinition::from_v1(&cron_job("late", "30 1 * * *"));
+
+        // The same wall minute happens at two real instants: once in the +120 segment
+        // (real = local - 2h) and once after the fall (real = local - 1h).
+        let first_pass = n - 2 * 60 * 60 * 1000;
+        let second_pass = n - 60 * 60 * 1000;
+        assert_eq!(
+            clock::minute_floor(clock.local_from_ms(first_pass)),
+            clock::minute_floor(clock.local_from_ms(second_pass)),
+            "one wall minute, two real instants"
+        );
+        // ...and therefore has ONE occurrence key: claiming the first pass wins, and
+        // the second pass has nothing due - the next firing is a day away.
+        assert_eq!(
+            def::occurrence_key_of(&d.trigger, first_pass, clock.as_ref()),
+            def::occurrence_key_of(&d.trigger, second_pass, clock.as_ref())
+        );
+        assert_eq!(
+            def::missed_occurrences(&d, second_pass, 0, Some(first_pass), clock.as_ref()),
+            None,
+            "already claimed this occurrence: no refire on the second pass"
+        );
+    }
+
+    /// The shared shape of the misfire tests: a job that ran once at the anchor, then the
+    /// gateway was down for three days.
+    async fn misfire_system(
+        name: &str,
+        misfire: &str,
+    ) -> (Arc<JobSystem>, Arc<clock::testing::FakeClock>) {
+        let (sys, store) = system(name, test_services());
+        install(
+            &sys,
+            &store,
+            json!({ "definitions": {
+                "hourly": {
+                    "trigger": { "kind": "interval", "everyMs": 3600000 },
+                    "action": { "type": "process.legacy-command", "input": { "command": "cmd /c echo hi" } },
+                    "timeoutMs": 30000,
+                    "misfire": misfire
+                }
+            } }),
+        );
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        // It ran once, at boot, before the downtime.
+        sys.state
+            .claim("hourly", sys.anchor_ms, Some("interval:boot"));
+        // Three days of downtime, plus a partial period.
+        fake.set(sys.anchor_ms + 72 * 3_600_000 + 1_800_000);
+        (sys, fake)
+    }
+
+    /// docs/11 §6.3: skip - ONE summary line, NO catch-up run, and the anchor pushed to
+    /// the newest occurrence so the next firing is a full period out.
+    #[tokio::test]
+    async fn misfire_skip_summarizes_and_never_catches_up() {
+        let (sys, fake) = misfire_system("misfire-skip", "skip").await;
+        sys.clone().run_occurrence("hourly").await;
+
+        let (page, _) = sys.read_runs("hourly", None, 10);
+        assert_eq!(page.len(), 1, "exactly the summary line: {page:?}");
+        assert_eq!(page[0]["outcome"], json!("missed"));
+        assert_eq!(
+            page[0]["missedCount"],
+            json!(71),
+            "72 due, 1 summarized as the newest"
+        );
+        assert!(page[0].get("exitCode").is_none() && page[0].get("output").is_none());
+
+        let st = sys.run_state("hourly");
+        assert_eq!(st.last_run_at, Some(sys.anchor_ms + 72 * 3_600_000));
+        // The next firing is one full period past the NEWEST occurrence, and the tick's
+        // map already reflects it: nothing re-fires while the fake clock stands still.
+        assert!(sys.due_jobs(fake.now_ms()).is_empty());
+    }
+
+    /// docs/11 §6.3: run-once - the SAME one summary line, plus exactly one catch-up run
+    /// carrying the newest occurrence's key.
+    #[tokio::test]
+    async fn misfire_run_once_catches_up_exactly_one() {
+        let (sys, _fake) = misfire_system("misfire-runonce", "run-once").await;
+        sys.clone().run_occurrence("hourly").await;
+
+        let (page, _) = sys.read_runs("hourly", None, 10);
+        assert_eq!(page.len(), 2, "summary + one run: {page:?}");
+        let missed = &page[1];
+        assert_eq!(missed["outcome"], json!("missed"));
+        assert_eq!(missed["missedCount"], json!(71));
+        let ran = &page[0];
+        assert_eq!(ran["outcome"], json!("ran"));
+        assert_eq!(ran["ok"], json!(true));
+        assert_eq!(ran["attempt"], json!(1), "a catch-up run is not a retry");
+        assert!(
+            ran["occurrenceKey"]
+                .as_str()
+                .is_some_and(|k| k == missed["occurrenceKey"].as_str().unwrap()),
+            "the run carries the summarized occurrence's own key"
+        );
+    }
+
+    /// docs/11 §6.2: overlap=skip records a skipped occurrence and still moves the anchor
+    /// - the invariant that keeps a busy job from re-firing every tick.
+    #[tokio::test]
+    async fn overlap_skip_records_and_moves_the_anchor() {
+        let (sys, store) = system("overlap-skip", test_services());
+        install(&sys, &store, row_of(&[interval_job("solo", 3_600)]));
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 3_600_000 + 100);
+
+        // Occupy the job:<id> label the way any producer would.
+        let hog = sys
+            .services
+            .runs
+            .submit(SubmitRequest {
+                owner: "manual".into(),
+                label: "job:solo".into(),
+                action_type: JOBS_ACTION.into(),
+                input: json!({ "command": long_command() }),
+                timeout_ms: 30_000,
+                queue_if_busy: false,
+            })
+            .expect("the label is free");
+
+        sys.clone().run_occurrence("solo").await;
+        let (page, _) = sys.read_runs("solo", None, 10);
+        assert_eq!(page.len(), 1, "one skipped line, no run: {page:?}");
+        assert_eq!(page[0]["outcome"], json!("skipped"));
+        assert_eq!(page[0]["reason"], json!("overlap"));
+        // The anchor moved: the occurrence counted even though it did not run.
+        assert!(
+            sys.due_jobs(fake.now_ms()).is_empty(),
+            "a skipped occurrence is still consumed - no per-tick refire"
+        );
+        assert_eq!(sys.services.runs.shutdown_all().await, 1);
+        assert!(hog.done.await.is_ok());
+    }
+
+    /// docs/11 §6.2: overlap=queue-one queues the successor behind the busy pool, and a
+    /// FULL queue is a visible capacity skip, never a silent drop.
+    #[tokio::test]
+    async fn overlap_queue_one_queues_and_a_full_queue_skips_visibly() {
+        let (sys, store) = system("queue-one", test_services());
+        install(
+            &sys,
+            &store,
+            json!({
+                "maxConcurrentRuns": 1,
+                "maxQueuedRuns": 1,
+                "definitions": {
+                    "queued": {
+                        "trigger": { "kind": "interval", "everyMs": 3600000 },
+                        "action": { "type": "process.legacy-command", "input": { "command": "cmd /c echo hi" } },
+                        "timeoutMs": 30000,
+                        "overlap": "queue-one"
+                    }
+                }
+            }),
+        );
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 3_600_000 + 100);
+
+        // Fill the single slot AND the single queue slot with another producer.
+        let busy = sys.services.clone();
+        let hog = busy
+            .runs
+            .submit(SubmitRequest {
+                owner: "manual".into(),
+                label: "hog".into(),
+                action_type: JOBS_ACTION.into(),
+                input: json!({ "command": long_command() }),
+                timeout_ms: 30_000,
+                queue_if_busy: true,
+            })
+            .expect("the slot");
+        let second = busy
+            .runs
+            .submit(SubmitRequest {
+                owner: "manual".into(),
+                label: "hog2".into(),
+                action_type: JOBS_ACTION.into(),
+                input: json!({ "command": long_command() }),
+                timeout_ms: 30_000,
+                queue_if_busy: true,
+            })
+            .expect("the queue slot");
+
+        sys.clone().run_occurrence("queued").await;
+        let (page, _) = sys.read_runs("queued", None, 10);
+        assert_eq!(
+            page.len(),
+            1,
+            "the full queue is one visible skip: {page:?}"
+        );
+        assert_eq!(page[0]["outcome"], json!("skipped"));
+        assert_eq!(page[0]["reason"], json!("capacity"));
+
+        // Free everything, then a fresh occurrence queues BEHIND a short-lived hog:
+        // the successor must RUN when the slot frees, not merely be parked. (Only the
+        // ACTIVE run is cancellable; the queued manual hog is dropped from the queue
+        // instead, so that cleanup reports one cancellation.)
+        assert_eq!(sys.services.runs.shutdown_all().await, 1);
+        let _ = hog.done.await;
+        let _ = second.done.await;
+        let short_hog = busy
+            .runs
+            .submit(SubmitRequest {
+                owner: "manual".into(),
+                label: "hog3".into(),
+                action_type: JOBS_ACTION.into(),
+                input: json!({ "command": "cmd /c echo hog" }),
+                timeout_ms: 30_000,
+                queue_if_busy: false,
+            })
+            .expect("the slot again");
+        fake.set(sys.anchor_ms + 2 * 3_600_000 + 100);
+        let runner = {
+            let sys = sys.clone();
+            tokio::spawn(async move { sys.run_occurrence("queued").await })
+        };
+        // The successor runs as soon as the short hog exits; wait for its record.
+        let mut ran = None;
+        for _ in 0..300 {
+            let (page, _) = sys.read_runs("queued", None, 10);
+            if let Some(rec) = page.iter().find(|r| r["outcome"] == json!("ran")) {
+                ran = Some(rec.clone());
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let _ = short_hog.done.await;
+        let _ = runner.await;
+        let ran = ran.expect("the queued successor ran when the slot freed");
+        assert_eq!(ran["ok"], json!(true), "{ran}");
+        assert_eq!(ran["attempt"], json!(1));
+    }
+
+    /// docs/11 §6.4: retry to maxAttempts inside one occurrence - each attempt its own
+    /// record - and lastOk settles ONCE, on the final attempt.
+    #[tokio::test]
+    async fn retry_runs_to_max_attempts_inside_one_occurrence() {
+        let (sys, store) = system("retry", test_services());
+        install(
+            &sys,
+            &store,
+            json!({ "definitions": {
+                "flaky": {
+                    "trigger": { "kind": "interval", "everyMs": 3600000 },
+                    "action": { "type": "process.legacy-command", "input": { "command": "cmd /c exit 3" } },
+                    "timeoutMs": 30000,
+                    "retry": { "maxAttempts": 3, "delayMs": 20 }
+                }
+            } }),
+        );
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 3_600_000 + 100);
+
+        sys.clone().run_occurrence("flaky").await;
+        let (page, _) = sys.read_runs("flaky", None, 10);
+        assert_eq!(page.len(), 3, "three attempts, three records: {page:?}");
+        for (i, rec) in page.iter().enumerate() {
+            let expect_attempt = (3 - i) as u32; // newest first
+            assert_eq!(rec["attempt"], json!(expect_attempt), "{rec:?}");
+            assert_eq!(rec["attempts"], json!(3));
+            assert_eq!(rec["ok"], json!(false));
+            assert_eq!(rec["exitCode"], json!(3));
+            assert_eq!(
+                rec["occurrenceKey"], page[0]["occurrenceKey"],
+                "every attempt belongs to the same occurrence"
+            );
+        }
+        let st = sys.run_state("flaky");
+        assert_eq!(st.last_ok, Some(false));
+        assert_eq!(
+            st.consecutive_failures, 1,
+            "one occurrence failed, not three runs"
+        );
+    }
+
+    /// docs/11 §6.4: a timeout the policy does not name is final on attempt 1.
+    #[tokio::test]
+    async fn a_timeout_the_policy_does_not_name_is_final() {
+        let (sys, store) = system("retry-timeout", test_services());
+        let command = long_command();
+        install(
+            &sys,
+            &store,
+            json!({ "definitions": {
+                "wedged": {
+                    "trigger": { "kind": "interval", "everyMs": 3600000 },
+                    "action": { "type": "process.legacy-command", "input": { "command": command } },
+                    "timeoutMs": 1500,
+                    "retry": { "maxAttempts": 3, "delayMs": 20, "retryOn": ["failure"] }
+                }
+            } }),
+        );
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 3_600_000 + 100);
+
+        sys.clone().run_occurrence("wedged").await;
+        let (page, _) = sys.read_runs("wedged", None, 10);
+        assert_eq!(
+            page.len(),
+            1,
+            "timedOut is not on the retryOn list: {page:?}"
+        );
+        assert_eq!(page[0]["timedOut"], json!(true));
+    }
+
+    /// docs/11 §6.4: canceled never retries - someone asked for it to stop.
+    #[tokio::test]
+    async fn a_canceled_attempt_never_retries() {
+        let (sys, store) = system("retry-cancel", test_services());
+        let command = long_command();
+        install(
+            &sys,
+            &store,
+            json!({ "definitions": {
+                "stopping": {
+                    "trigger": { "kind": "interval", "everyMs": 3600000 },
+                    "action": { "type": "process.legacy-command", "input": { "command": command } },
+                    "timeoutMs": 30000,
+                    "retry": { "maxAttempts": 3, "delayMs": 20 }
+                }
+            } }),
+        );
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 3_600_000 + 100);
+
+        let running = {
+            let sys = sys.clone();
+            tokio::spawn(async move { sys.run_occurrence("stopping").await })
+        };
+        assert!(
+            wait_running(&sys, "stopping").await,
+            "the attempt reached the pool"
+        );
+        assert_eq!(sys.shutdown().await, 1, "the attempt was cancelled");
+        running.await.expect("the occurrence task");
+        let (page, _) = sys.read_runs("stopping", None, 10);
+        assert_eq!(page.len(), 1, "canceled ends the occurrence: {page:?}");
+        assert_eq!(page[0]["canceled"], json!(true));
+    }
+
+    /// docs/11 §6.4: the delay between attempts is cancellable - stopping the scheduler
+    /// mid-delay ends the occurrence instead of coming back to life later.
+    #[tokio::test]
+    async fn stopping_mid_delay_aborts_the_occurrence() {
+        let (sys, store) = system("retry-delay", test_services());
+        install(
+            &sys,
+            &store,
+            json!({ "definitions": {
+                "flaky": {
+                    "trigger": { "kind": "interval", "everyMs": 3600000 },
+                    "action": { "type": "process.legacy-command", "input": { "command": "cmd /c exit 3" } },
+                    "timeoutMs": 30000,
+                    "retry": { "maxAttempts": 2, "delayMs": 120_000 }
+                }
+            } }),
+        );
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 3_600_000 + 100);
+
+        let started = std::time::Instant::now();
+        let running = {
+            let sys = sys.clone();
+            tokio::spawn(async move { sys.run_occurrence("flaky").await })
+        };
+        // Wait for attempt 1's record, then stop while the occurrence sits in its delay.
+        for _ in 0..300 {
+            let (page, _) = sys.read_runs("flaky", None, 10);
+            if page.len() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        sys.stop(); // the cancel signal, without cancelling any run
+        running
+            .await
+            .expect("the occurrence task ends with the delay");
+        assert!(
+            started.elapsed().as_secs() < 30,
+            "it did not wait the 120s delay out"
+        );
+        let (page, _) = sys.read_runs("flaky", None, 10);
+        assert_eq!(page.len(), 1, "attempt 2 never happened: {page:?}");
+    }
+
+    /// docs/11 §6.5: the per-second tick is a map scan. A table of a thousand jobs,
+    /// every one of them overdue, costs ZERO calendar calls to enumerate; only a claim
+    /// walks the calendar again, for exactly that job.
+    #[test]
+    fn the_tick_is_a_map_scan_not_a_calendar_walk() {
+        let (sys, store) = system("budget", test_services());
+        let mut defs = Map::new();
+        for i in 0..500 {
+            let d = def::JobDefinition::from_v1(&interval_job(&format!("job-{i}"), 3_600));
+            defs.insert(format!("job-{i}"), d.to_config_json());
+        }
+        install(&sys, &store, json!({ "definitions": defs }));
+
+        let fake = clock::testing::FakeClock::at(sys.anchor_ms);
+        sys.set_clock(fake.clone());
+        fake.set(sys.anchor_ms + 7_200_000 + 100); // every job overdue
+
+        let before = fake.local_calls.load(std::sync::atomic::Ordering::SeqCst);
+        let due = sys.due_jobs(fake.now_ms());
+        let during = fake.local_calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(due.len(), 500, "the whole overdue table is due");
+        assert_eq!(before, during, "enumerating it cost zero calendar calls");
+
+        // One occurrence task touches the calendar a bounded number of times for ITS
+        // job only - never for the other 999.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            sys.clone().run_occurrence("job-0").await;
+        });
+        let after = fake.local_calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            during <= after && after - during <= 16,
+            "one claim is a handful of calls, not a walk: {after} - {during}"
+        );
     }
 }

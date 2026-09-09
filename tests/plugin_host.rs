@@ -916,12 +916,12 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
-/// docs/11 §9 S1: the jobs config row is validated against the v2 definition model, and
-/// the refusal is honest about what is wrong. A definition carrying a semantic this build
-/// does not execute (here misfire "run-once", whose implementation is a later stage) is a
-/// 400 naming the dotted field path, and nothing persists. Before this stage the
-/// validator only checked that each definitions entry was an object, so this exact body
-/// saved fine and silently did nothing.
+/// docs/11 §9 S1+S5: the jobs config row is validated against the v2 definition model,
+/// and the refusal is honest about what is wrong. The S1 stage-gate refusals (misfire
+/// "run-once" and friends) OPENED at S5: what was a 400 naming the stage now saves and
+/// persists, while structural refusals still carry their dotted field paths and persist
+/// nothing. Before S1 the validator only checked that each definitions entry was an
+/// object, so invalid bodies saved fine and silently did nothing.
 #[tokio::test]
 async fn jobs_config_put_is_validated_against_the_v2_model() {
     let (app, _host, _registry) = full_app("v2model", json!({})).await;
@@ -929,7 +929,7 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
     let before = body.unwrap()["revision"].as_u64().unwrap();
 
-    // Not-implemented semantics are refused, not swallowed (docs/11 §2 rule 5).
+    // The S5 semantics now execute, so they now SAVE (docs/11 §2 rule 5 discharged).
     let (status, body, _) = send(
         &app,
         json_body(
@@ -939,17 +939,27 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
                 "trigger": { "kind": "manual" },
                 "action": { "type": "process.legacy-command", "input": { "command": "echo hi" } },
                 "misfire": "run-once",
+                "retry": { "maxAttempts": 2, "delayMs": 500 },
+                "overlap": "queue-one",
+                "output": { "capture": "none" },
             } } } }),
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let msg = body.unwrap()["error"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-    assert!(msg.contains("definitions.nightly.misfire"), "{msg}");
-    assert!(msg.contains("not implemented until S5"), "{msg}");
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
+    let after = body.clone().unwrap();
+    // The store's revision is a content hash: unordered, but it changes whenever the
+    // content does - and the content round-trip below is the persistence proof.
+    assert_ne!(
+        after["revision"].as_u64().unwrap(),
+        before,
+        "a changed row carries a changed revision: {after:?}"
+    );
+    assert_eq!(
+        after["config"]["definitions"]["nightly"]["misfire"],
+        json!("run-once")
+    );
 
     // Structural refusals carry their field paths: a required trigger field...
     let (status, body, _) = send(
@@ -993,11 +1003,12 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     assert!(msg.contains("definitions.nightly.command"), "{msg}");
     assert!(msg.contains("trigger"), "{msg}");
 
-    // The failed PUTs persisted nothing; a definition the model accepts does.
+    // The failed PUTs persisted nothing more; the revision still stands at the one
+    // bump the successful S5-semantics PUT made.
     let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
     assert_eq!(
         body.unwrap()["revision"],
-        json!(before),
+        after["revision"],
         "nothing persisted"
     );
     let (status, body, _) = send(

@@ -16,3 +16,4 @@ async fn main() {
     let code = local_mcp_gateway::cli::main(args).await;
     std::process::exit(code);
 }
+

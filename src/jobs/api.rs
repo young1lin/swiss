@@ -28,7 +28,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 use serde_json::{json, Map, Value};
 
-use super::{run_record, JobDef, JobSystem, RunError, WriteError};
+use super::{ran_record, JobDef, JobSystem, RunError, WriteError};
 use crate::app::{admin_error, admin_json};
 
 /// A number from JSON that tolerates the 60.0 spelling of 60 (JS clients) but refuses
@@ -167,7 +167,7 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
                 // AI agent testing a job, or a human - wants the record, not a 202 to poll.
                 match jobs.clone().execute(&name, "manual").await {
                     Ok((seq, out)) => {
-                        let mut rec = run_record("manual", &out);
+                        let mut rec = ran_record("manual", None, 1, 1, None, &out);
                         if seq > 0 {
                             rec.insert("seq".into(), json!(seq));
                         }

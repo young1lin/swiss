@@ -668,33 +668,9 @@ fn parse_definition(id: &str, body: &Value, parent: &str) -> Result<JobDefinitio
             ),
         ));
     }
-    // docs/11 §2 rule 5, applied to this stage's scope: the four semantics below are not
-    // implemented yet, so their non-default spellings are refused rather than accepted
-    // and ignored. Each message says so out loud (S5 lifts these branches).
-    if overlap == Overlap::QueueOne {
-        return Err(ConfigError::new(
-            field_path(parent, "overlap"),
-            "overlap \"queue-one\" is not implemented until S5; use \"skip\"",
-        ));
-    }
-    if misfire == Misfire::RunOnce {
-        return Err(ConfigError::new(
-            field_path(parent, "misfire"),
-            "misfire \"run-once\" is not implemented until S5; use \"skip\"",
-        ));
-    }
-    if retry != RetryPolicy::default() {
-        return Err(ConfigError::new(
-            field_path(parent, "retry"),
-            "retry is not implemented until S5; only the default policy (maxAttempts 1, delayMs 0, backoff \"fixed\", retryOn [\"failure\"]) is accepted",
-        ));
-    }
-    if output.capture == OutputCapture::None {
-        return Err(ConfigError::new(
-            field_path(parent, "output.capture"),
-            "output.capture \"none\" is not implemented until S5; use \"tail\"",
-        ));
-    }
+    // The four semantics this file used to refuse as "not implemented until S5" -
+    // overlap queue-one, misfire run-once, a non-default retry, output.capture none -
+    // are all implemented since S5; nothing is refused here any more.
     Ok(JobDefinition {
         id: id.to_string(),
         title,
@@ -1248,71 +1224,164 @@ impl OutputCapture {
     }
 }
 
-/// Whether a definition fires at "now" - the pure half of the S3 tick (docs/11 §6).
-/// Manual never auto-fires (Run now is its only door); interval anchors on the last run
-/// or the given boot anchor; cron matches this LOCAL minute and skips when the last run
-/// already sits inside it - the same rules the v1 scheduler ran, now against the v2
-/// trigger with the PRE-COMPILED expression.
-pub fn definition_due(
+/// The occurrence identity of one due instant (docs/11 §6.1). Cron keys carry the
+/// LOCAL wall minute without a zone offset - which is exactly how the fall-back's
+/// repeated local minute collapses into one run. Interval keys carry the due instant.
+/// Manual runs never ask for a key and never move a scheduling anchor.
+pub fn occurrence_key_of(
+    trigger: &Trigger,
+    due_ms: i64,
+    clock: &dyn crate::jobs::clock::Clock,
+) -> String {
+    match trigger {
+        Trigger::Cron { .. } => format!(
+            "cron:{}",
+            clock.local_from_ms(due_ms).format("%Y-%m-%dT%H:%M")
+        ),
+        Trigger::Interval { .. } | Trigger::Manual => format!("interval:{due_ms}"),
+    }
+}
+
+/// The base an interval anchors on: the last run when there is one, the boot anchor
+/// otherwise - except a never-run `firstRun: "immediate"` job, whose first anchor is 0
+/// so the very first tick after boot finds it due (docs/11 §6.1).
+fn interval_base(def: &JobDefinition, last_run_ms: Option<i64>, anchor_ms: i64) -> i64 {
+    match last_run_ms {
+        Some(ms) => ms,
+        None => match def.trigger {
+            Trigger::Interval {
+                first_run: FirstRun::Immediate,
+                ..
+            } => 0,
+            _ => anchor_ms,
+        },
+    }
+}
+
+/// The next instant this definition is due, as unix milliseconds - the value the
+/// next-due table holds (docs/11 §6.5). An OVERDUE job (its computed next sits in the
+/// past) reports `now`: the tick treats it as due immediately and the occurrence math
+/// in [missed_occurrences] recovers the real count from the claim state. Manual has no
+/// next due.
+pub fn next_due_ms(
     def: &JobDefinition,
-    now: i64,
-    now_local: &chrono::NaiveDateTime,
-    anchor_ms: i64,
     last_run_ms: Option<i64>,
-) -> bool {
-    use chrono::{Datelike, Timelike};
+    now: i64,
+    anchor_ms: i64,
+    clock: &dyn crate::jobs::clock::Clock,
+) -> Option<i64> {
     match &def.trigger {
-        Trigger::Manual => false,
+        Trigger::Manual => None,
         Trigger::Interval { every_ms, .. } => {
-            let base = last_run_ms.unwrap_or(anchor_ms);
-            now.saturating_sub(base) >= *every_ms as i64
+            let base = interval_base(def, last_run_ms, anchor_ms);
+            Some((base + *every_ms as i64).max(now))
         }
         Trigger::Cron { compiled, .. } => {
-            if !compiled.matches(&super::schedule::fields_of(now_local)) {
-                return false;
-            }
-            match last_run_ms
-                .and_then(super::local_minute_of_ms)
-                .map(|t| (t.year(), t.ordinal(), t.hour(), t.minute()))
-            {
-                Some(last) => {
-                    let cur = (
-                        now_local.year(),
-                        now_local.ordinal(),
-                        now_local.hour(),
-                        now_local.minute(),
-                    );
-                    last != cur
+            let mut cur = crate::jobs::clock::minute_floor(clock.local_from_ms(now));
+            // A matching minute that does not exist this year-day (the spring-forward
+            // gap) is skipped, not waited for: keep scanning (docs/11 §6.6).
+            for _ in 0..3 {
+                let next = compiled.next_after(&cur)?;
+                match clock.ms_from_local(&next) {
+                    Some(ms) => return Some(ms),
+                    None => cur = next, // the gap minute: look strictly after it
                 }
-                None => true,
+            }
+            None
+        }
+    }
+}
+
+/// How this definition's schedule stands at `now`, given its claim state: the number of
+/// occurrences due since the last claim (counting the newest) and the newest due
+/// instant, or None when nothing is due. This is the misfire bookkeeping half of
+/// docs/11 §6.3 - the caller decides skip vs run-once.
+///
+/// Interval math is arithmetic; cron walks [CronExpr::next_after] from the last claim's
+/// local minute. A walked minute that does not exist (spring-forward gap) is skipped by
+/// the same rule as [next_due_ms]. The walk is bounded: a cron that matches nothing for
+/// a year stops (the next_after contract), and a pathological "down for years" table
+/// stops at a sane cap rather than looping to the heat death.
+pub fn missed_occurrences(
+    def: &JobDefinition,
+    now: i64,
+    anchor_ms: i64,
+    last_run_ms: Option<i64>,
+    clock: &dyn crate::jobs::clock::Clock,
+) -> Option<(usize, i64)> {
+    const WALK_CAP: usize = 100_000;
+    match &def.trigger {
+        Trigger::Manual => None,
+        Trigger::Interval { every_ms, .. } => match last_run_ms {
+            // A never-run job owes exactly ONE occurrence - its first. The anchor-0
+            // trick for firstRun "immediate" makes it due NOW; a fresh occurrence at
+            // `now` also keeps the next firing a full period out (anchoring at a
+            // computed past instant would make the next tick overdue again).
+            None => {
+                let base = interval_base(def, None, anchor_ms);
+                (base == 0 || base + *every_ms as i64 <= now).then_some((1, now))
+            }
+            Some(last) => {
+                let n = ((now - last) / (*every_ms as i64).max(1)) as usize;
+                if n < 1 {
+                    return None;
+                }
+                Some((n, last + n as i64 * *every_ms as i64))
+            }
+        },
+        Trigger::Cron { compiled, .. } => {
+            let now_local = clock.local_from_ms(now);
+            match last_run_ms {
+                // Same first-occurrence rule as intervals: a never-run cron owes its
+                // first matching minute, and only if that minute is NOW (nothing can
+                // be missed before the job existed).
+                None => {
+                    let minute = crate::jobs::clock::minute_floor(now_local);
+                    if compiled.matches(&super::schedule::fields_of(&minute)) {
+                        clock.ms_from_local(&minute).map(|ms| (1, ms))
+                    } else {
+                        None
+                    }
+                }
+                Some(last) => {
+                    let mut cur = crate::jobs::clock::minute_floor(clock.local_from_ms(last));
+                    let mut count = 0usize;
+                    let mut latest = None;
+                    while count < WALK_CAP {
+                        let Some(next) = compiled.next_after(&cur) else {
+                            break;
+                        };
+                        if next > now_local {
+                            break;
+                        }
+                        // A matching minute in the spring-forward gap never happens on
+                        // the wall clock; it is skipped, not counted.
+                        if let Some(ms) = clock.ms_from_local(&next) {
+                            count += 1;
+                            latest = Some(ms);
+                        }
+                        cur = next;
+                    }
+                    latest.map(|ms| (count.max(1), ms))
+                }
             }
         }
     }
 }
 
-/// The ISO stamp of a definition's next firing (docs/11 §7.1's nextDueAt): intervals
-/// anchor on the last run (or boot), cron scans forward from now with the compiled
-/// expression, manual has none.
-pub fn next_due_of(
-    def: &JobDefinition,
-    last_run_ms: Option<i64>,
-    now: i64,
-    anchor_ms: i64,
-) -> Option<String> {
-    use chrono::TimeZone;
-    match &def.trigger {
-        Trigger::Manual => None,
-        Trigger::Interval { every_ms, .. } => {
-            let base = last_run_ms.unwrap_or(anchor_ms);
-            Some(super::state::iso_of_ms(base + *every_ms as i64))
-        }
-        Trigger::Cron { compiled, .. } => {
-            let now_local = super::local_minute_of_ms(now)?;
-            let next = compiled.next_after(&now_local)?;
-            chrono::Local
-                .from_local_datetime(&next)
-                .single()
-                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, false))
+/// The wait before attempt `next_attempt` (2-based: the wait only exists before a
+/// RETRY). Fixed is flat; exponential doubles from the previous wait (docs/11 §6.4):
+/// waits go delayMs, 2*delayMs, 4*delayMs ... The shift saturates rather than
+/// overflowing; the config ceiling already bounds the total.
+pub fn retry_delay_ms(retry: &RetryPolicy, next_attempt: u32) -> u64 {
+    if next_attempt < 2 {
+        return 0;
+    }
+    match retry.backoff {
+        Backoff::Fixed => retry.delay_ms,
+        Backoff::Exponential => {
+            let shift = (next_attempt - 2).min(32);
+            retry.delay_ms.saturating_mul(1u64 << shift)
         }
     }
 }
@@ -1884,50 +1953,65 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_semantics_are_refused_not_swallowed() {
-        // docs/11 §2 rule 5, at S1 scope: a non-default spelling of a semantic this build
-        // does not execute is refused naming the stage that will implement it. Accepting
-        // it would be promising behaviour that does not exist.
-        for (key, value, path) in [
-            ("overlap", json!("queue-one"), "definitions.nightly.overlap"),
-            ("misfire", json!("run-once"), "definitions.nightly.misfire"),
-            (
-                "retry",
-                json!({ "maxAttempts": 2 }),
-                "definitions.nightly.retry",
-            ),
-            (
-                "retry",
-                json!({ "delayMs": 1000 }),
-                "definitions.nightly.retry",
-            ),
-            (
-                "retry",
-                json!({ "backoff": "exponential" }),
-                "definitions.nightly.retry",
-            ),
-            (
-                "retry",
-                json!({ "retryOn": [] }),
-                "definitions.nightly.retry",
-            ),
-            (
-                "retry",
-                json!({ "retryOn": ["timeout"] }),
-                "definitions.nightly.retry",
-            ),
-            (
-                "output",
-                json!({ "capture": "none" }),
-                "definitions.nightly.output.capture",
-            ),
-        ] {
-            let mut body = def_body();
-            set(&mut body, key, value);
-            let err = refused_def(body);
-            assert_eq!(err.path, path, "{err}");
-            assert!(err.message.contains("not implemented until S5"), "{err}");
-        }
+    fn s5_semantics_parse_and_round_trip() {
+        // The S1 refusals opened at S5 (docs/11 §9 S5): every spelling this file used
+        // to reject as "not implemented until S5" now parses into the definition it
+        // always meant, and serializes back through the config grammar unchanged.
+        let mut body = def_body();
+        set(&mut body, "overlap", json!("queue-one"));
+        set(&mut body, "misfire", json!("run-once"));
+        set(
+            &mut body,
+            "retry",
+            json!({ "maxAttempts": 3, "delayMs": 1000, "backoff": "exponential", "retryOn": ["failure", "timeout"] }),
+        );
+        set(&mut body, "output", json!({ "capture": "none" }));
+        let def = parse_one(body);
+        assert_eq!(def.overlap, Overlap::QueueOne);
+        assert_eq!(def.misfire, Misfire::RunOnce);
+        assert_eq!(def.retry.max_attempts, 3);
+        assert_eq!(def.retry.delay_ms, 1000);
+        assert_eq!(def.retry.backoff, Backoff::Exponential);
+        assert_eq!(
+            def.retry.retry_on,
+            vec![RetryOn::Failure, RetryOn::Timeout],
+            "retryOn keeps its written order"
+        );
+        assert_eq!(def.output.capture, OutputCapture::None);
+        // And the config spelling round-trips: the editor's JSON view loses nothing.
+        let back = def.to_config_json();
+        assert_eq!(back["overlap"], json!("queue-one"));
+        assert_eq!(back["misfire"], json!("run-once"));
+        assert_eq!(
+            back["retry"],
+            json!({ "maxAttempts": 3, "delayMs": 1000, "backoff": "exponential", "retryOn": ["failure", "timeout"] })
+        );
+        assert_eq!(
+            back["output"],
+            json!({ "capture": "none", "maxBytes": 16384 })
+        );
+        // The exponential spacing sequence (docs/11 §6.4): delayMs, 2x, 4x ...
+        assert_eq!(
+            retry_delay_ms(&def.retry, 1),
+            0,
+            "no wait before the first attempt"
+        );
+        assert_eq!(retry_delay_ms(&def.retry, 2), 1000);
+        assert_eq!(retry_delay_ms(&def.retry, 3), 2000);
+        assert_eq!(
+            retry_delay_ms(&def.retry, 4),
+            4000,
+            "past maxAttempts, still well-defined"
+        );
+        let mut fixed = def_body();
+        set(
+            &mut fixed,
+            "retry",
+            json!({ "maxAttempts": 5, "delayMs": 700 }),
+        );
+        let fixed = parse_one(fixed);
+        assert_eq!(retry_delay_ms(&fixed.retry, 2), 700);
+        assert_eq!(retry_delay_ms(&fixed.retry, 5), 700, "fixed never grows");
         // The default spellings all parse - writing a default out explicitly is not a
         // non-default.
         let mut body = def_body();
@@ -1947,7 +2031,7 @@ mod tests {
         assert_eq!(def.overlap, Overlap::Skip);
         assert_eq!(def.misfire, Misfire::Skip);
         assert_eq!(def.retry, RetryPolicy::default());
-        // output.maxBytes is not on the rule-5 list: a legal non-default parses fine.
+        // output.maxBytes is not stage-gated: a legal non-default parses fine.
         let mut body = def_body();
         set(&mut body, "output", json!({ "maxBytes": 1_048_576 }));
         assert_eq!(parse_one(body).output.max_bytes, 1_048_576);
