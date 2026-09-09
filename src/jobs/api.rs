@@ -49,6 +49,12 @@ fn fail(err: &RunError) -> Response {
     match err {
         RunError::Unknown(m) => admin_error(StatusCode::NOT_FOUND, m),
         RunError::Busy(m) => admin_error(StatusCode::CONFLICT, m),
+        // The shared pool is full: the same visible capacity refusal /api/runs gives, so a
+        // caller cannot mistake "not started" for "started and still going".
+        RunError::Capacity(m) => admin_error(StatusCode::TOO_MANY_REQUESTS, m),
+        // The process capability is not registered (its plugin is disabled) — a missing
+        // dependency, reported as one rather than skipped in silence.
+        RunError::Unavailable(m) => admin_error(StatusCode::SERVICE_UNAVAILABLE, m),
     }
 }
 
@@ -123,7 +129,15 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 };
                 if let Err(err) = jobs.upsert(def) {
-                    return admin_error(StatusCode::BAD_REQUEST, &err);
+                    // A rejected DEFINITION is the caller's fault (400); a failed WRITE is
+                    // this gateway's (500). Reporting both as 400 would tell a user to fix a
+                    // job that is already correct.
+                    let status = if err.starts_with("could not persist") {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    } else {
+                        StatusCode::BAD_REQUEST
+                    };
+                    return admin_error(status, &err);
                 }
                 // Echo the saved row (with its live facts) in the panel's reply style.
                 let view = jobs
@@ -136,10 +150,14 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
         )
         .delete(
             |State(jobs): State<Arc<JobSystem>>, Path(name): Path<String>| async move {
-                if jobs.delete(&name) {
-                    admin_json(StatusCode::OK, json!({ "deleted": name }))
-                } else {
-                    admin_error(StatusCode::NOT_FOUND, &format!("unknown job: {name}"))
+                match jobs.delete(&name) {
+                    Ok(true) => admin_json(StatusCode::OK, json!({ "deleted": name })),
+                    Ok(false) => {
+                        admin_error(StatusCode::NOT_FOUND, &format!("unknown job: {name}"))
+                    }
+                    // Removed from the table but not from disk: the next boot brings it back,
+                    // so this is not a deletion and must not report one.
+                    Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
                 }
             },
         ),
@@ -201,14 +219,41 @@ mod tests {
     use axum::http::Request;
     use tower::util::ServiceExt;
 
-    fn scratch_system(name: &str) -> Arc<JobSystem> {
+    /// A job system on private files, plus the run-log lock. The lock comes back with it
+    /// because set_run_log_dir writes PROCESS-WIDE state: every test here must hold it for as
+    /// long as it uses the system, or two tests share one log directory.
+    async fn scratch_system(name: &str) -> (tokio::sync::MutexGuard<'static, ()>, Arc<JobSystem>) {
+        let guard = super::super::runlog::RUNLOG_TEST_LOCK.lock().await;
         crate::secure::key::use_test_master_key();
         let dir = std::env::temp_dir().join(format!("lmg-jobs-api-{}-{}", name, crate::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let log_dir = dir.join("logs");
         std::fs::create_dir_all(&log_dir).expect("log dir");
         super::super::runlog::set_run_log_dir(log_dir);
-        JobSystem::open(dir.join("jobs.json"))
+        (
+            guard,
+            JobSystem::open(dir.join("jobs.json"), super::super::test_services()),
+        )
+    }
+
+    /// The same thing, but pointed at a path under a directory that does not exist, so every
+    /// persist fails while everything else about the system stays real.
+    async fn unwritable_system(
+        name: &str,
+    ) -> (tokio::sync::MutexGuard<'static, ()>, Arc<JobSystem>) {
+        let guard = super::super::runlog::RUNLOG_TEST_LOCK.lock().await;
+        crate::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!("lmg-jobs-api-{}-{}", name, crate::util::random_hex(8)));
+        let log_dir = dir.join("logs");
+        std::fs::create_dir_all(&log_dir).expect("log dir");
+        super::super::runlog::set_run_log_dir(log_dir);
+        (
+            guard,
+            JobSystem::open(
+                dir.join("gone").join("jobs.json"),
+                super::super::test_services(),
+            ),
+        )
     }
 
     async fn call(router: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -247,7 +292,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_list_delete_round_trip() {
-        let sys = scratch_system("crud");
+        let (_log, sys) = scratch_system("crud").await;
         let router = mount(sys.clone());
 
         // Create: minimal body, defaults applied.
@@ -288,7 +333,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_definitions_are_400_with_a_reason() {
-        let sys = scratch_system("validate");
+        let (_log, sys) = scratch_system("validate").await;
         let router = mount(sys.clone());
         for body in [
             json!({ "cron": "30 3 * * *" }),                        // no command
@@ -313,10 +358,42 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
+    /// A rejected DEFINITION is the caller's fault (400); a failed WRITE is this gateway's
+    /// (500). One status for both would tell a user to fix a job that is already correct, and
+    /// a 200 for the second would lose their edit without saying so.
+    #[tokio::test]
+    async fn a_save_that_never_reached_disk_is_a_500_not_a_success() {
+        let (_log, sys) = unwritable_system("persist").await;
+        let router = mount(sys.clone());
+
+        let (status, body) = call(
+            &router,
+            "PUT",
+            "/api/jobs/doomed",
+            Some(json!({ "command": "cmd /c echo x", "everySec": 60 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        assert!(
+            body["error"].as_str().unwrap_or_default().contains("persist"),
+            "{body}"
+        );
+
+        // An invalid definition is still a 400 on that very same route.
+        let (status, _) = call(&router, "PUT", "/api/jobs/bad", Some(json!({ "command": "x" }))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // The row is live in memory, so DELETE finds it - and cannot persist its removal.
+        let (status, body) = call(&router, "DELETE", "/api/jobs/doomed", None).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+        // A job that was never there is still a 404, not a write failure.
+        let (status, _) = call(&router, "DELETE", "/api/jobs/never-existed", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
     #[tokio::test]
     async fn a_manual_run_returns_the_record_and_history_shows_it() {
-        let _log = super::super::runlog::RUNLOG_TEST_LOCK.lock().await;
-        let sys = scratch_system("run");
+        let (_log, sys) = scratch_system("run").await;
         let router = mount(sys.clone());
         call(
             &router,

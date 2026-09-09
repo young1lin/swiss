@@ -11,7 +11,7 @@ use crate::bootstrap::ensure_first_run;
 use crate::config::{config_path, load_config};
 use crate::log;
 use crate::managed::ManagedStore;
-use crate::registry::{is_lazy, Registry, Source};
+use crate::registry::{Registry, Source};
 use crate::secure::envstore::{env_store_path, inject_env_store};
 use crate::token::TokenManager;
 use serde_json::json;
@@ -31,6 +31,12 @@ pub async fn run_gateway() -> Result<(), String> {
     // the config through it.
     inject_env_store(&env_store_path());
     let cfg = load_config(&config_path())?;
+    // One source of truth for plugin rows from here on: the store wraps the raw config as
+    // loaded (legacy root rows work as-is; versioned plugins.<id> rows take precedence) and
+    // every plugin enable/disable/config write goes through its revision-checked CAS. No
+    // migration happens at boot — the file is only written when an operator changes something.
+    let config_store =
+        crate::config_store::ConfigStore::from_loaded(config_path(), cfg.raw.clone());
 
     // Reap proc-MCP children a PREVIOUS instance orphaned when it was hard-killed (task /End,
     // crash) before close() could tree-kill them. Read from a persisted ledger of spawned PIDs,
@@ -62,64 +68,31 @@ pub async fn run_gateway() -> Result<(), String> {
     let registry = Registry::new(15_000);
     let store = Arc::new(ManagedStore::open());
 
-    // --- the composition point (subsystems.rs carries the design) ------------------------------
-    // Each optional subsystem boots here in declaration order and contributes one router that
-    // build_app folds behind the single loopback boundary. A config row
-    // {"<name>": {"disabled": true}} swaps the whole subsystem for an explicit-absence stub —
-    // its state file is never touched, so removing the row restores it exactly.
+    // --- the composition point (host/builtin.rs carries the design) ----------------------------
+    // Every subsystem below is a plugin wrapped in host/builtin.rs; whether it STARTS is the
+    // plugin's lifecycle decision, read from its config row (default-on) and reconciled by the
+    // host. The downstream objects are constructed unconditionally — they hold no sockets and
+    // cost no I/O until their plugin starts — so a plugin enabled at runtime has something
+    // real to start, and a disabled one stays a cheap wrapper around state files it never
+    // touches. (The first-run tunnel import and the boot starts moved INTO the plugins.)
 
     // Tunnels come up BEFORE the MCP registration loops (Node index.ts's order): an SSH
     // handshake takes seconds and must never sit behind a slow MCP start, and an MCP whose
     // database is only reachable through a tunnel gets its tunnel first. The store loads before
     // requests are accepted so the panel sees persisted connections and rules.
-    let mut tunnels: Option<Arc<crate::tunnel::Tunnels>> = None;
-    let mut tunnel_manager: Option<Arc<crate::tunnel::TunnelManager>> = None;
-    if crate::subsystems::disabled(&cfg.raw, "tunnels") {
-        crate::subsystems::log_disabled("tunnels");
-    } else {
-        let tunnel_store = Arc::new(std::sync::Mutex::new(crate::tunnel::TunnelStore::new(
-            crate::paths::data_path(&["tunnels.json"]),
-            cfg.port,
-        )));
-        // First run with no tunnels.json at all: adopt the forward-port config this gateway
-        // replaced (its rules become this store's first generation). Failure is logged, never
-        // fatal.
-        if let Ok(mut store) = tunnel_store.lock() {
-            if store.is_fresh() {
-                if let Some((rules, connections)) =
-                    crate::tunnel::import::import_forward_port(&mut store, None)
-                {
-                    log::log(
-                        "info",
-                        "imported forward-port tunnels on first run",
-                        Some(json!({ "rules": rules, "connections": connections })),
-                    );
-                }
-            }
-        }
-        let manager = crate::tunnel::TunnelManager::new(
-            tunnel_store.clone(),
-            Some(crate::tunnel::registry_view(registry.clone())),
-        );
-        tunnels = Some(Arc::new(crate::tunnel::Tunnels {
-            store: tunnel_store,
-            manager: manager.clone(),
-            registry: Some(registry.clone()),
-        }));
-        // Tunnel handshakes may take seconds or fail independently; never delay the listener.
-        let tunnel_boot = manager.clone();
-        tokio::spawn(async move {
-            for result in tunnel_boot.start_enabled().await {
-                if !result.ok {
-                    log::warn(
-                        "tunnel boot failed",
-                        Some(json!({ "rule": result.name, "error": result.error })),
-                    );
-                }
-            }
-        });
-        tunnel_manager = Some(manager);
-    }
+    let tunnel_store = Arc::new(std::sync::Mutex::new(crate::tunnel::TunnelStore::new(
+        crate::paths::data_path(&["tunnels.json"]),
+        cfg.port,
+    )));
+    let tunnel_manager = crate::tunnel::TunnelManager::new(
+        tunnel_store.clone(),
+        Some(crate::tunnel::registry_view(registry.clone())),
+    );
+    let tunnels = Arc::new(crate::tunnel::Tunnels {
+        store: tunnel_store,
+        manager: tunnel_manager.clone(),
+        registry: Some(registry.clone()),
+    });
 
     // Register + start every config-defined MCP; one failure must not take down the rest.
     for (name, def) in cfg.servers.clone() {
@@ -165,20 +138,23 @@ pub async fn run_gateway() -> Result<(), String> {
         register_one(&registry, &store, &m.name, m.def.clone(), Source::Managed).await;
     }
 
-    registry.start_timer();
+    // The shared runtime services (docs/09 §3, docs/10 §2): the action registry every
+    // capability provider registers into, the bounded run pool both the scheduler and the
+    // panel submit to, and the one child-process supervisor. Constructed here, owned by no
+    // plugin — the /api/actions and /api/runs surface reads them even while every provider
+    // is disabled.
+    let services = crate::services::RuntimeServices::new();
 
     // Scheduled command jobs (a Rust-side subsystem; see src/jobs/mod.rs). One task ticking
     // once a second, no per-job tasks, and an empty jobs.json is a no-op - the feature costs
-    // nothing until a job exists.
-    let jobs: Option<Arc<crate::jobs::JobSystem>> =
-        if crate::subsystems::disabled(&cfg.raw, "jobs") {
-            crate::subsystems::log_disabled("jobs");
-            None
-        } else {
-            let jobs = crate::jobs::JobSystem::open(crate::paths::data_path(&["jobs.json"]));
-            jobs.start();
-            Some(jobs)
-        };
+    // nothing until a job exists. Opened unconditionally; whether its scheduler tick runs is
+    // the jobs plugin's lifecycle decision (host/builtin.rs), not a boot-time branch here.
+    // Its runs go through the shared coordinator above: the scheduler decides WHEN, the
+    // coordinator owns the run and the supervisor owns the child process.
+    let jobs = crate::jobs::JobSystem::open(
+        crate::paths::data_path(&["jobs.json"]),
+        services.clone(),
+    );
 
     // Named per-client tokens, seeded from the existing secret so clients already configured
     // keep authenticating (as the "default" token). A pre-multi-token rotation in managed.json
@@ -201,28 +177,41 @@ pub async fn run_gateway() -> Result<(), String> {
         cfg.token_env.clone(),
         cfg.port,
     );
-    if let Some(manager) = &tunnel_manager {
-        if let Ok(mut links) = ctx.tunnel_links.write() {
-            *links = Some(manager.clone());
-        }
+    if let Ok(mut links) = ctx.tunnel_links.write() {
+        *links = Some(tunnel_manager.clone());
     }
-    // The subsystem routers, folded in declaration order. Mounted INSIDE build_app's loopback
-    // guard: axum's layer() only covers routes present at the call, so merging an extra tree
-    // after build_app would leave every one of its routes outside the boundary — and the guard
-    // is the only auth those trees have. A disabled subsystem contributes its explicit-absence
-    // stub (subsystems::absent_router) in the same position, so the routes exist either way.
-    let extra = match (&tunnels, &jobs) {
-        (Some(t), Some(j)) => crate::tunnel::api::mount(t.clone())
-            .merge(crate::jobs::api::mount(j.clone())),
-        (Some(t), None) => crate::tunnel::api::mount(t.clone()).merge(
-            crate::subsystems::absent_router("jobs", "/api/jobs"),
-        ),
-        (None, Some(j)) => crate::subsystems::absent_router("tunnels", "/api/tunnels")
-            .merge(crate::jobs::api::mount(j.clone())),
-        (None, None) => crate::subsystems::absent_router("tunnels", "/api/tunnels").merge(
-            crate::subsystems::absent_router("jobs", "/api/jobs"),
-        ),
+
+    // The plugin host (docs/09 §10, P1). The four built-ins register in inventory/page order
+    // (MCP+Traffic, Tunnels, Data, Jobs) and boot in the REVERSE, so tunnels come up before
+    // the MCPs that may ride them — the old boot order, now expressed as data. A plugin whose
+    // start fails is recorded on its inventory row and the boot continues: one plugin's
+    // failure is a row, never a failed gateway.
+    let mut host = crate::host::PluginHost::new(config_store.clone());
+    let deps = crate::host::builtin::BuiltinDeps {
+        registry: registry.clone(),
+        managed: store.clone(),
+        jobs: jobs.clone(),
+        tunnels: tunnels.clone(),
+        tunnel_manager: tunnel_manager.clone(),
+        browse: ctx.browser_resolver(),
+        services: services.clone(),
     };
+    crate::host::builtin::register_all(&mut host, &deps)
+        .expect("the built-in plugins register without id or route conflicts");
+    let host = Arc::new(host);
+    host.start_enabled().await;
+    let _ = ctx.plugin_host.set(host.clone());
+
+    // The subsystem routers, folded in one piece. Mounted INSIDE build_app's loopback guard:
+    // axum's layer() only covers routes present at the call, so merging an extra tree after
+    // build_app would leave every one of its routes outside the boundary — and the guard is
+    // the only auth those trees have. build_app also folds them under the host's plugin
+    // boundary, which answers a structured 503 on every path of a plugin that is not serving
+    // (replacing the boot-time absent_router stubs: absence is now a live state, not a
+    // different router).
+    let extra = crate::tunnel::api::mount(tunnels.clone())
+        .merge(crate::jobs::api::mount(jobs.clone()))
+        .merge(crate::services::api::mount(services.clone()));
     let app = build_app(ctx.clone(), Some(extra));
 
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port))
@@ -292,14 +281,23 @@ pub async fn run_gateway() -> Result<(), String> {
     }
 
     log::info("shutting down");
-    registry.stop_timer();
-    if let Some(jobs) = &jobs {
-        jobs.stop();
-    }
-    // Tunnels first: this releases every local port, and it leaves each rule's `enabled` flag
-    // alone so the next boot brings back exactly the set that was running.
-    if let Some(manager) = &tunnel_manager {
-        manager.close_all().await;
+    // Plugin teardown in reverse registration order — the jobs scheduler first, then data (a
+    // no-op), then the tunnels (releases every local port, leaves each rule's `enabled` flag
+    // alone so the next boot brings back exactly the set that was running), then every hosted
+    // MCP. Tunnels close before the registry: forwarded local ports are released while MCP
+    // connections still drain. A plugin that was never started contributes nothing; the
+    // registry sweep below is idempotent for anything the mcp plugin did not own (e.g. when
+    // its row was disabled at boot).
+    host.shutdown_all().await;
+    // Then the runs no plugin owned: a manual run outlives the provider's stop only until the
+    // process itself goes down, and it goes down reaped, not orphaned.
+    let stranded = services.shutdown().await;
+    if stranded > 0 {
+        log::log(
+            "info",
+            "canceled runs still in flight at shutdown",
+            Some(json!({ "runs": stranded })),
+        );
     }
     registry.close_all().await;
     crate::calls::flush_calls(None).await; // the last calls before a restart are the ones worth having on disk
@@ -307,8 +305,11 @@ pub async fn run_gateway() -> Result<(), String> {
     Ok(())
 }
 
-/// Register one MCP and start it per the panel's enabled state and its own laziness — the shared
-/// body of the config boot loop and the managed-store restore.
+/// Register one MCP — the shared body of the config boot loop and the managed-store restore.
+/// REGISTRATION ONLY: the tool/resource toggles are applied here (they must be in place before
+/// anything reads the adapter), but the START decision — honour a panel Stop, leave a lazy MCP
+/// idle at boot — belongs to the MCP plugin's start (`host::builtin::start_hosted_mcps`), so a
+/// boot with the mcp plugin's row disabled leaves every registered MCP idle.
 async fn register_one(
     registry: &Arc<Registry>,
     store: &Arc<ManagedStore>,
@@ -331,36 +332,6 @@ async fn register_one(
             }
         }
         registry.register(name, source, def.clone(), adapter)?;
-        // Honour a Stop the user made in the panel. Config MCPs have no `enabled` of their own in
-        // gateway.config.json — the panel does not rewrite the user's committed file — so their
-        // state lives in managed.json's mcpEnabled side-map; a managed MCP carries the flag on its
-        // own entry. `enabled_for` reads whichever applies, so this gate covers BOTH sources:
-        // Node's managed loop starts on `m.enabled && !isLazy(m.def)`, and qualifying this with
-        // `source == Source::Config` made a panel Stop on a managed MCP last only until the next
-        // boot — the very bug the config side of this already documents.
-        let enabled = store.enabled_for(name) != Some(false);
-        if !enabled {
-            log::log(
-                "info",
-                &format!("{} stays stopped (panel Stop)", source_label(source)),
-                Some(json!({ "name": name, "type": def.type_() })),
-            );
-        } else if is_lazy(&def) {
-            // A lazy MCP (a proc by default, anything with lazy:true) stays idle at boot — the
-            // first client request wakes it, which is the memory the gateway exists to save.
-            log::log(
-                "info",
-                source_label(source),
-                Some(json!({ "name": name, "type": def.type_(), "state": "idle" })),
-            );
-        } else {
-            registry.start(name).await?;
-            log::log(
-                "info",
-                source_label(source),
-                Some(json!({ "name": name, "type": def.type_(), "state": "ready" })),
-            );
-        }
         Ok::<(), String>(())
     }
     .await;
@@ -447,11 +418,19 @@ mod tests {
             .clone()
     }
 
+    /// The boot-start half of the old register_one, which now lives in the MCP plugin:
+    /// registration stops at `register_one`, then the plugin's start decides who actually
+    /// comes up. Every lifecycle test below drives the same pair the boot sequence runs.
+    async fn boot_mcps(registry: &Arc<Registry>, store: &Arc<ManagedStore>) {
+        crate::host::builtin::start_hosted_mcps(registry, store).await;
+    }
+
     #[tokio::test]
     async fn a_plain_config_mcp_boots_started() {
         let registry = Registry::new(3_600_000);
         let store = scratch_store();
         register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        boot_mcps(&registry, &store).await;
         assert_eq!(lifecycle(&registry, "echo"), Lifecycle::Started);
     }
 
@@ -462,6 +441,7 @@ mod tests {
         let registry = Registry::new(3_600_000);
         let store = scratch_store();
         register_one(&registry, &store, "lazy", lazy_echo(), Source::Config).await;
+        boot_mcps(&registry, &store).await;
         assert!(registry.has("lazy"), "registered, so the route exists");
         assert_ne!(
             lifecycle(&registry, "lazy"),
@@ -480,6 +460,7 @@ mod tests {
         store.set_enabled("echo", false).expect("record the Stop");
 
         register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        boot_mcps(&registry, &store).await;
         assert!(registry.has("echo"), "still registered, just not started");
         assert_ne!(lifecycle(&registry, "echo"), Lifecycle::Started);
     }
@@ -502,6 +483,7 @@ mod tests {
             .expect("add a stopped managed entry");
 
         register_one(&registry, &store, "added", echo(), Source::Managed).await;
+        boot_mcps(&registry, &store).await;
         assert!(registry.has("added"));
         assert_ne!(
             lifecycle(&registry, "added"),
@@ -525,6 +507,7 @@ mod tests {
             .expect("add an enabled managed entry");
 
         register_one(&registry, &store, "added", echo(), Source::Managed).await;
+        boot_mcps(&registry, &store).await;
         assert_eq!(lifecycle(&registry, "added"), Lifecycle::Started);
     }
 
@@ -565,6 +548,7 @@ mod tests {
 
         // And the next MCP still boots normally.
         register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        boot_mcps(&registry, &store).await;
         assert_eq!(lifecycle(&registry, "echo"), Lifecycle::Started);
     }
 

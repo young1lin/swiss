@@ -11,15 +11,21 @@
 //! - Explicit absence: a disabled subsystem's API answers a structured 503 naming the row that
 //!   turned it off (see absent_router) — never a silent empty 200, never an anonymous 404.
 //!   Consumers (the panel, an AI client) can tell "not built" from "switched off".
-//! - One composition point: server.rs folds subsystem routers in declaration order behind the
-//!   one loopback boundary; adding a subsystem is one module + one compose line + one state
-//!   file + one test — the checklist RH enforces with verify scripts.
+//! - One composition point: adding a subsystem is one module + one compose line + one state
+//!   file + one test — the checklist RH enforces with verify scripts. Since the plugin host
+//!   (host/) landed, server.rs composes subsystems as PLUGINS: their start/stop is the host's
+//!   lifecycle, their rows are read through the ConfigStore (v2 plugins.<id> rows take
+//!   precedence over these root rows), and a not-serving plugin's 503 comes from the host's
+//!   live route boundary (host::api::plugin_boundary) rather than a swapped-in stub router.
+//!
+//! These helpers remain the row-reading and explicit-absence vocabulary of that design; the
+//! tests below pin the row semantics the host now inherits.
 //!
 //! What is deliberately NOT ported: dynamic loading (no dylib; a Rust "plugin" is a module
 //! behind a feature flag when it must be optional at link time — see the mongo feature),
-//! runtime reload/unload (a restart is honest and instant here), and realms (single-tenant
-//! local process). The MCP hosting core is the product itself, so it stays unconditioned;
-//! per-MCP disable already exists as the panel's per-entry toggle in managed.json.
+//! and realms (single-tenant local process). Runtime start/stop DID arrive — with the host —
+//! and the MCP hosting core is a plugin now too (row "mcp"), while per-MCP disable remains
+//! the panel's per-entry toggle in managed.json.
 
 use axum::http::StatusCode;
 use axum::response::Response;

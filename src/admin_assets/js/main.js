@@ -11,19 +11,18 @@
    lives in its own module next to this one; /admin/js/* is served with no-store, so editing any of
    them reaches the browser on the next reload — no build, no gateway restart.
    ================================================================================================ */
-import { $, KINDS, THEME_KEY, api, loadCollapsed, loadTunCollapsed, state, toast } from "./util.js";
+import { $, THEME_KEY, api, loadCollapsed, loadTunCollapsed, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { initSelects } from "./dropdown.js";
-import { dbPending, loadDbView } from "./data-view.js";
-import { probeJobs } from "./jobs.js";
-import { loadCalls, loadMeta, loadPage, openDetail, pageState } from "./detail.js";
+import { initPages, pageHasPendingChanges, pageUsesSidebar, pollPage, refreshPage } from "./page-registry.js";
+import { openDetail } from "./detail.js";
 import { patchSidebar } from "./menu.js";
 import { closeMenu } from "./pane.js";
-import { loadJobs, loadList, loadMemory, loadTunnels, setView } from "./polling.js";
+import { loadMemory } from "./polling.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
 import { openTokensView } from "./tokens.js";
-import { loadTraffic } from "./traffic.js";
+
 
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
  *  when the reload cannot destroy work: no buffered data-view edits, no open sheet, nothing
@@ -31,7 +30,7 @@ import { loadTraffic } from "./traffic.js";
 function maybeReloadPanel(newVersion) {
   var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
   var busy = !$("sheet").hidden || state.menuOpen;
-  var edits = state.view === "data" && typeof dbPending === "function" && dbPending() > 0;
+  var edits = pageHasPendingChanges();
   if (typing || busy || edits) {
     if (!maybeReloadPanel._warned) {
       maybeReloadPanel._warned = true;
@@ -47,12 +46,8 @@ function maybeReloadPanel(newVersion) {
 /** The panel has no login: the gateway only ever accepts loopback requests, so reaching this page
  *  at all already means you are on the machine it serves. Nothing to sign in to — just start. */
 function showApp() {
-  loadList();
+  void initPages();
   loadInfo();
-  // Feature probe for the Jobs tab: hide it before anyone clicks when the gateway neither serves
-  // nor enables the subsystem. Not awaited — the tab is visible until the answer lands, and a
-  // wrong early click only toasts once.
-  void probeJobs();
 }
 
 /** Gateway facts the panel needs once: the token's env var name, and the named-token list (no
@@ -124,23 +119,7 @@ if (window.matchMedia) {
 }
 
 
-Array.prototype.forEach.call($("viewSeg").querySelectorAll("button"), function (b) {
-  b.onclick = function () { setView(b.dataset.view); };
-});
-/* #tunnels / #data / #traffic in the URL opens that view directly — a deep link is the only way a
-   screenshot, a bookmark or a refresh lands where the reader meant to be. Unknown hashes stay on
-   the MCP list. */
-(function () {
-  var v = (location.hash || "").replace(/^#/, "");
-  if (v === "jobs") {
-    // The probe is async, so the deep link waits for it rather than guessing: entering the view on
-    // a gateway without jobs would paint an empty pane that never fills. Still on #jobs when the
-    // answer lands means the reader meant it.
-    void probeJobs().then(function (ok) {
-      if (ok && (location.hash || "").replace(/^#/, "") === "jobs") setView("jobs");
-    });
-  } else if (v === "tunnels" || v === "traffic" || v === "data") setView(v);
-})();
+/* Navigation and deep links are owned by the page registry. */
 
 /* Polling is cheap: /api/mcps is status-only, and /api/memory reads process.memoryUsage() in-process.
    The child-subtree walk asked for below is the one costly part, and the server bounds it — cached for
@@ -150,44 +129,26 @@ Array.prototype.forEach.call($("viewSeg").querySelectorAll("button"), function (
 function poll() {
   if (document.visibilityState !== "visible") return;
   loadMemory(true);
-  loadInfo(); // carries the panel stamp — a new build reloads the page by itself
-  if (state.view === "tunnels") {
-    // The tunnel rows are the live thing here; the MCP list is still refreshed because the rows show
-    // each linked MCP's own health dot.
-    loadList();
-    loadTunnels(true);
-    return;
-  }
-  loadList();
-  if (state.view === "jobs") { loadJobs(true); return; }
-  if (state.view === "traffic") { loadTraffic(); return; }
-  // The call log is live only while you are looking at it.
-  if (state.detail && state.detail.tab === "logs") loadCalls(state.detail.name);
+  loadInfo();
+  void pollPage();
 }
+
 setInterval(poll, 6000);
 document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") poll(); });
 // Closing the page with buffered (uncommitted) edits would lose them silently; the native
 // dialog is the only hook available for beforeunload, so it is plain by necessity.
 window.addEventListener("beforeunload", function (e) {
-  if (state.view === "data" && typeof dbPending === "function" && dbPending()) {
+  if (pageHasPendingChanges()) {
     e.preventDefault(); // Chrome needs this; the returnValue fallback covers the rest
     e.returnValue = "";
   }
 });
 
 $("refreshBtn").onclick = function () {
-  if (state.view === "data") { loadDbView(); return; }
-  if (state.view === "tunnels") { loadTunnels(); loadMemory(true); return; }
-  if (state.view === "jobs") { loadJobs(); loadMemory(true); return; }
-  if (state.view === "traffic") { state.trafficSig = null; loadTraffic(); loadMemory(true); return; }
-  poll();
-  var d = state.detail;
-  if (d) {
-    loadMeta(d.name);
-    if (d.tab === "logs") loadCalls(d.name);
-    if (KINDS.indexOf(d.tab) >= 0) { d[d.tab] = pageState(); loadPage(d.name, d.tab); }
-  }
+  loadMemory(true);
+  void refreshPage();
 };
+
 $("filter").oninput = function () { state.filter = this.value; patchSidebar(); };
 
 /* Keyboard: arrows move through the sidebar, / focuses search, Escape closes the sheet/menu. */
@@ -201,7 +162,7 @@ document.addEventListener("keydown", function (e) {
   var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
   if (typing) return;
   if (e.key === "r") { $("refreshBtn").click(); return; }
-  if (state.view === "tunnels" || state.view === "data" || state.view === "jobs") return; // no sidebar in these views
+  if (!pageUsesSidebar()) return;
   if (e.key === "/") { e.preventDefault(); $("filter").focus(); return; }
   // Alt+arrows move the selected MCP through the list (the drag-free path to the same reorder).
   if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {

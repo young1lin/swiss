@@ -12,10 +12,14 @@
 //! - [JobSystem]: the scheduler. ONE tokio task ticking once a second - the current_thread
 //!   runtime must not grow a task per job for a feature that usually has two jobs. A run is
 //!   claimed atomically (one run of a job at a time; an overlapping tick is skipped, not
-//!   queued), executed with a deadline, appended to the job's run log, and summarised into
-//!   the gateway log so 'lmg logs' shows it.
+//!   queued), SUBMITTED to the shared run coordinator with its deadline, appended to the job's
+//!   run log, and summarised into the gateway log so 'lmg logs' shows it.
 //! - schedule.rs: when a job is due (interval or 5-field cron, local time).
-//! - runner.rs: how one command runs (the "try": every failure is a recorded field).
+//! - runner.rs: what a run PRODUCED (the record type). How it runs is no longer here: the
+//!   scheduler is one producer of the shared run coordinator (docs/10 §2), which executes the
+//!   `process.legacy-command` capability over the shared process supervisor. That is what
+//!   gives a job bounded output capture, a real cancel, and one global concurrency bound
+//!   shared with manual runs - instead of a second execution path of its own.
 //! - runlog.rs: what is remembered (logs/jobs/<name>.jsonl, byte- and age-capped).
 //! - api.rs: the /api/jobs management surface (the panel does not know it exists).
 
@@ -34,7 +38,16 @@ use chrono::{Datelike, Timelike};
 
 use crate::log;
 use crate::secure::statefile::{read_secure_json, write_secure_json};
+use crate::services::runs::{SubmitError, SubmitRequest};
+use crate::services::RuntimeServices;
 use crate::util::now_ms;
+
+/// The owner every scheduled run is registered under. Cancellation is scoped by this exact
+/// string: stopping Jobs takes back the runs Jobs started and nothing else.
+pub const JOBS_OWNER: &str = "jobs";
+/// The capability a v1 job's `command` string executes as - the compatibility action that
+/// keeps the old tokenizer and the old lenient `${VAR}` expansion (docs/10 §9 step 2).
+pub const JOBS_ACTION: &str = "process.legacy-command";
 
 /// One scheduled command, exactly as it is persisted (camelCase on the wire, like every state
 /// file). Exactly one of every_sec / cron is set - enforced by [JobDef::validate].
@@ -195,32 +208,45 @@ impl JobStore {
         JobStore { jobs, path }
     }
 
-    /// Seal the table back to disk. A failed persist is logged, never fatal: a running gateway
-    /// that cannot write its job table still serves reads and still runs its jobs.
-    fn save(&self) {
-        if let Err(err) = write_secure_json(
+    /// Seal the table to disk. The error is RETURNED, not just logged: a config write that
+    /// could not persist must not answer the caller with a success (docs/10 §5). Callers on a
+    /// RUN path deliberately degrade it to a warning instead — see their own comments.
+    fn save(&self) -> Result<(), String> {
+        write_secure_json(
             &self.path,
             &json!({ "jobs": self.jobs.iter().map(JobDef::to_json).collect::<Vec<_>>() }),
-        ) {
+        )
+        .map_err(|err| {
             log::warn(
                 "jobs.json persist failed",
                 Some(json!({ "err": err, "path": self.path.display().to_string() })),
             );
-        }
+            format!("could not persist jobs.json: {err}")
+        })
     }
 }
 
-/// Why a run could not start.
+/// Why a run could not start. Every variant is a REFUSAL the caller is told about: a manual
+/// request never gets a success reply for work that did not happen (docs/10 §4, "队列满").
 #[derive(Debug)]
 pub enum RunError {
     Unknown(String),
+    /// This job already has a run in flight - the overlap=skip gate.
     Busy(String),
+    /// The shared pool is full. The bound is global: manual runs and other producers count.
+    Capacity(String),
+    /// The capability is not registered - the process plugin is disabled. A dependency that
+    /// is not there is reported as missing, not silently skipped (docs/09 §9).
+    Unavailable(String),
 }
 
 impl std::fmt::Display for RunError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RunError::Unknown(m) | RunError::Busy(m) => write!(f, "{m}"),
+            RunError::Unknown(m)
+            | RunError::Busy(m)
+            | RunError::Capacity(m)
+            | RunError::Unavailable(m) => write!(f, "{m}"),
         }
     }
 }
@@ -229,7 +255,12 @@ impl std::fmt::Display for RunError {
 /// task and the /api/jobs handlers - the same shape as Tunnels.
 pub struct JobSystem {
     store: Mutex<JobStore>,
-    /// Per-job "a run is in flight" flag; absent means false. The claim gate.
+    /// The shared run services. The scheduler owns WHEN a job runs; the coordinator owns the
+    /// run itself (bounds, cancellation, the terminal state) and the supervisor owns the
+    /// child process. This subsystem spawns nothing of its own any more.
+    services: Arc<RuntimeServices>,
+    /// Per-job "a run is in flight" flag; absent means false. The claim gate. This is the
+    /// per-job overlap policy (skip); the pool's global bound is the coordinator's.
     runtime: Mutex<HashMap<String, bool>>,
     /// Gateway boot time: the interval anchor for a job that has never run, so a fresh job
     /// fires one interval after boot instead of instantly.
@@ -238,9 +269,10 @@ pub struct JobSystem {
 }
 
 impl JobSystem {
-    pub fn open(path: PathBuf) -> Arc<Self> {
+    pub fn open(path: PathBuf, services: Arc<RuntimeServices>) -> Arc<Self> {
         Arc::new(JobSystem {
             store: Mutex::new(JobStore::open(path)),
+            services,
             runtime: Mutex::new(HashMap::new()),
             anchor_ms: now_ms() as i64,
             timer: Mutex::new(None),
@@ -268,12 +300,34 @@ impl JobSystem {
         }
     }
 
+    /// Stop SCHEDULING: the tick task is aborted, so nothing new fires. Runs already in
+    /// flight are the coordinator's, not the timer's - see [JobSystem::shutdown] for the
+    /// teardown that actually takes them back.
     pub fn stop(&self) {
         if let Ok(mut slot) = self.timer.lock() {
             if let Some(handle) = slot.take() {
                 handle.abort();
             }
         }
+    }
+
+    /// Stop scheduling AND take back what is running: every run this scheduler owns is
+    /// cancelled and AWAITED through the shared coordinator, so when this returns no job
+    /// command - and no child of one - is still alive. Returns how many were in flight.
+    ///
+    /// Runs of OTHER producers are untouched: the bound is by owner, so a manual run someone
+    /// started by hand survives the jobs plugin being disabled.
+    pub async fn shutdown(self: &Arc<Self>) -> usize {
+        self.stop();
+        let canceled = self.services.runs.cancel_owner(JOBS_OWNER).await;
+        // Every run the coordinator held is terminal now, so the claim flags left behind
+        // belong to execute() continuations that can no longer start anything. Clearing them
+        // means a later enable finds no job wedged as "already running".
+        self.runtime
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        canceled
     }
 
     /// The jobs whose schedule says RUN right now. Snapshot under both locks; no awaits inside.
@@ -303,7 +357,9 @@ impl JobSystem {
 
     /// Atomically claim one job for a run: marks it running and stamps last_run_ms (the
     /// interval anchor moves to the run's START, so a long run does not queue an immediate
-    /// re-run when it finishes). The second claimant of a busy job gets Busy, not a queue.
+    /// re-run when it finishes). The anchor moves for the OCCURRENCE, not for a success: a
+    /// refused occurrence still counts, or a job would retry every tick while the pool is
+    /// full. The second claimant of a busy job gets Busy, not a queue.
     fn claim(&self, name: &str, now: i64) -> Result<JobDef, RunError> {
         let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
@@ -317,24 +373,71 @@ impl JobSystem {
         if let Some(j) = store.jobs.iter_mut().find(|j| j.name == name) {
             j.last_run_ms = Some(now);
         }
-        store.save();
+        // Best-effort on purpose: the run is about to happen either way, and refusing to run
+        // because the ANCHOR could not be written would turn a disk problem into a missed job.
+        // The warning is in save(); the cost of the failure is one possible re-fire after a
+        // restart, which the cron same-minute rule already guards for cron jobs.
+        let _ = store.save();
         Ok(def)
     }
 
-    /// Run one job to completion (timer or manual): claim, execute with a deadline, append the
-    /// run record, persist lastOk, and leave one line in the gateway log. Every step that can
-    /// fail degrades to a warning - a job's failure is recorded, never propagated as a panic
-    /// or an abort of the scheduler. Returns the run's sequence number with its outcome.
+    /// Run one job to completion (timer or manual): claim it, submit it to the shared
+    /// coordinator with the job's own deadline, append the run record, persist lastOk, and
+    /// leave one line in the gateway log. Every step that can fail degrades to a recorded
+    /// field - a job's failure is data, never a panic or an abort of the scheduler. Returns
+    /// the run log's sequence number with the outcome.
+    ///
+    /// A REFUSAL (no capability, full pool) is recorded as an occurrence too and then
+    /// returned as an error: the history shows that the job was due and did not run, and the
+    /// caller is never told a run happened that did not.
     pub async fn execute(
         self: Arc<Self>,
         name: &str,
         trigger: &str,
     ) -> Result<(u64, runner::RunOutcome), RunError> {
         let def = self.claim(name, now_ms() as i64)?;
-        let out = runner::run_command(&def.command, def.cwd.as_deref(), def.timeout_ms).await;
+        let submitted = self.services.runs.submit(SubmitRequest {
+            owner: JOBS_OWNER.to_string(),
+            label: def.name.clone(),
+            action_type: JOBS_ACTION.to_string(),
+            input: legacy_input(&def),
+            timeout_ms: def.timeout_ms,
+            // overlap=skip, this build's only policy: the per-job claim above already refused
+            // a second run of THIS job, so a full pool is a refusal as well, not a queue.
+            queue_if_busy: false,
+        });
+        let submitted = match submitted {
+            Ok(submitted) => submitted,
+            Err(err) => {
+                let refusal = runner::RunOutcome::refused(err.to_string());
+                let _ = self.record_run(name, trigger, &refusal);
+                self.release(name);
+                return Err(match err {
+                    SubmitError::Capacity(m) => RunError::Capacity(m),
+                    SubmitError::Action(m) => RunError::Unavailable(m),
+                });
+            }
+        };
+        let out = match submitted.done.await {
+            Ok(view) => runner::RunOutcome::from_run_view(&view),
+            // The coordinator dropped the sender: the run task was aborted under us (process
+            // teardown). Record what is actually known - that it never reported.
+            Err(_) => runner::RunOutcome::refused(
+                "the run ended without reporting (gateway shutting down)".into(),
+            ),
+        };
 
-        let rec = run_record(trigger, &out);
-        let seq = match runlog::append_run(name, rec) {
+        let seq = self.record_run(name, trigger, &out);
+        self.persist_last_ok(name, out.ok);
+        self.release(name);
+        Ok((seq, out))
+    }
+
+    /// Append one run to the job's log and summarise it into the gateway log. Returns the
+    /// sequence number, or 0 when the record could not be written (a warning, not a failure:
+    /// the run itself already happened).
+    fn record_run(&self, name: &str, trigger: &str, out: &runner::RunOutcome) -> u64 {
+        let seq = match runlog::append_run(name, run_record(trigger, out)) {
             Ok(seq) => seq,
             Err(err) => {
                 log::warn(
@@ -344,17 +447,6 @@ impl JobSystem {
                 0
             }
         };
-
-        {
-            let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-            // The job may have been deleted mid-run; the run record is already on disk, so
-            // there is nothing to persist back for it.
-            if let Some(j) = store.jobs.iter_mut().find(|j| j.name == name) {
-                j.last_ok = Some(out.ok);
-            }
-            store.save();
-        }
-
         let level = if out.ok { "info" } else { "warn" };
         let mut extra = json!({ "name": name, "trigger": trigger, "ok": out.ok, "ms": out.ms });
         if let Some(code) = out.exit_code {
@@ -363,18 +455,44 @@ impl JobSystem {
         if out.timed_out {
             extra["timedOut"] = json!(true);
         }
+        if out.canceled {
+            extra["canceled"] = json!(true);
+        }
         if let Some(err) = &out.error {
             extra["error"] = json!(err);
         }
         log::log(level, "job ran", Some(extra));
+        seq
+    }
 
-        let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
-        rt.insert(name.to_string(), false);
-        Ok((seq, out))
+    /// Persist the outcome of the last actual run. Skipped for a refusal: a job that could
+    /// not start did not exit, and lastOk must not claim otherwise.
+    fn persist_last_ok(&self, name: &str, ok: bool) {
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        // The job may have been deleted mid-run; the run record is already on disk, so there
+        // is nothing to persist back for it.
+        if let Some(j) = store.jobs.iter_mut().find(|j| j.name == name) {
+            j.last_ok = Some(ok);
+        }
+        // Best-effort: the run already happened and its record is already in the run log. A
+        // failed write here loses one lastOk flag, not the history.
+        let _ = store.save();
+    }
+
+    /// Drop the per-job claim, whatever the run's outcome was.
+    fn release(&self, name: &str) {
+        self.runtime
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(name.to_string(), false);
     }
 
     /// Insert or update a job (validated first). An update keeps the accumulated lastRunAt /
     /// lastOk - editing a schedule must not fabricate a "never ran" history.
+    ///
+    /// A persist failure is RETURNED. The in-memory table keeps the edit (the scheduler is
+    /// already running it, and silently reverting would be its own lie), but the caller is
+    /// told the save did not reach disk instead of being shown a success.
     pub fn upsert(&self, def: JobDef) -> Result<(), String> {
         def.validate()?;
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
@@ -388,21 +506,24 @@ impl JobSystem {
             }
             None => store.jobs.push(def),
         }
-        store.save();
-        Ok(())
+        store.save()
     }
 
     /// Delete a job. Its run history stays on disk (the log outlives the job that wrote it,
     /// exactly like an MCP's call log).
-    pub fn delete(&self, name: &str) -> bool {
+    ///
+    /// `Ok(false)` means there was no such job; `Err` means it was removed from the table but
+    /// the new table did not reach disk, so the deletion will not survive a restart. Those are
+    /// different answers and the API gives different ones.
+    pub fn delete(&self, name: &str) -> Result<bool, String> {
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let before = store.jobs.len();
         store.jobs.retain(|j| j.name != name);
         let removed = store.jobs.len() != before;
         if removed {
-            store.save();
+            store.save()?;
         }
-        removed
+        Ok(removed)
     }
 
     /// One job's API view: the definition plus the live facts (running, next due). Built for
@@ -432,6 +553,31 @@ impl JobSystem {
     }
 }
 
+/// Test-only wiring: the shared services with the legacy command capability registered —
+/// exactly what the process plugin's start does in a real boot, without a plugin host.
+#[cfg(test)]
+pub(crate) fn test_services() -> Arc<RuntimeServices> {
+    let services = RuntimeServices::new();
+    services
+        .actions
+        .register(Arc::new(crate::services::actions::LegacyCommandAction::new(
+            services.supervisor.clone(),
+        )))
+        .expect("the legacy command capability registers once");
+    services
+}
+
+/// A v1 job's action input: the command string exactly as saved (refs stay refs - they
+/// resolve inside the capability, at run time) plus the optional working directory.
+fn legacy_input(def: &JobDef) -> Value {
+    let mut input = Map::new();
+    input.insert("command".into(), json!(def.command));
+    if let Some(cwd) = &def.cwd {
+        input.insert("cwd".into(), json!(cwd));
+    }
+    Value::Object(input)
+}
+
 /// One run's JSONL record and API-reply shape - built in ONE place so the file line and the
 /// POST /run response cannot drift apart. The seq is assigned (and inserted first) by
 /// runlog::append_run; the API reply inserts it the same way.
@@ -450,10 +596,13 @@ pub fn run_record(trigger: &str, out: &runner::RunOutcome) -> Map<String, Value>
     if out.timed_out {
         rec.insert("timedOut".into(), json!(true));
     }
+    if out.canceled {
+        rec.insert("canceled".into(), json!(true));
+    }
     if let Some(err) = &out.error {
         rec.insert("error".into(), json!(err));
     }
-    if out.chars > out.output.chars().count() {
+    if out.output_truncated {
         rec.insert("preview".into(), json!(true));
     }
     rec.insert("output".into(), json!(out.output));
@@ -536,10 +685,16 @@ mod tests {
         dir.join("jobs.json")
     }
 
-    fn runlog_scratch() {
+    /// Point the PROCESS-WIDE run log at a private directory, and hand back the lock that
+    /// makes that safe. The guard is returned rather than dropped here on purpose: the log
+    /// directory is global state, so a test that forgets to hold it would race every other
+    /// test that writes a run (docs/10 §8 calls this debt out by name).
+    async fn runlog_scratch() -> tokio::sync::MutexGuard<'static, ()> {
+        let guard = runlog::RUNLOG_TEST_LOCK.lock().await;
         let dir = std::env::temp_dir().join(format!("lmg-jobs-log-{}", crate::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("runlog dir");
         runlog::set_run_log_dir(dir);
+        guard
     }
 
     fn interval_job(name: &str, every_sec: u64) -> JobDef {
@@ -606,7 +761,7 @@ mod tests {
                 bad.cron = Some("* * * * *".into()); // and doubly-scheduled
                 bad
             });
-            store.save();
+            store.save().expect("the scratch file is writable");
         }
         let reloaded = JobStore::open(path);
         assert_eq!(reloaded.jobs.len(), 1, "only the valid entry survives");
@@ -668,10 +823,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_manual_run_claims_executes_records_and_persists() {
-        let _log = runlog::RUNLOG_TEST_LOCK.lock().await;
+        let _log = runlog_scratch().await;
         let path = scratch_path("manual");
-        runlog_scratch();
-        let sys = JobSystem::open(path.clone());
+        let sys = JobSystem::open(path.clone(), test_services());
         sys.upsert(interval_job("echo-job", 3600)).expect("valid");
 
         let (_seq, out) = sys.clone().execute("echo-job", "manual").await.expect("runs");
@@ -692,9 +846,9 @@ mod tests {
 
     #[tokio::test]
     async fn an_unknown_job_is_unknown_and_a_claimed_job_is_busy() {
+        let _log = runlog_scratch().await;
         let path = scratch_path("claims");
-        runlog_scratch();
-        let sys = JobSystem::open(path);
+        let sys = JobSystem::open(path, test_services());
         match sys.clone().execute("ghost", "manual").await {
             Err(RunError::Unknown(msg)) => assert!(msg.contains("ghost"), "{msg}"),
             other => panic!("expected Unknown, got {other:?}"),
@@ -710,10 +864,184 @@ mod tests {
         assert!(!sys.due_jobs_now().contains(&"busy-job".to_string()));
     }
 
+    /// A command that outlives any test, spelled per platform.
+    fn long_command() -> String {
+        if cfg!(windows) {
+            "ping -n 60 127.0.0.1".into()
+        } else {
+            "sleep 60".into()
+        }
+    }
+
+    /// Poll until the scheduler reports the job as running, so a test races the child rather
+    /// than the submit. Returns false if it never got there.
+    async fn wait_running(sys: &Arc<JobSystem>, name: &str) -> bool {
+        for _ in 0..300 {
+            let running = sys
+                .all_views()
+                .into_iter()
+                .any(|v| v["name"] == json!(name) && v["running"] == json!(true));
+            if running {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    /// The process plugin is disabled: the capability is simply not registered. A job that
+    /// comes due must SAY so — a missing dependency is reported, never silently skipped.
+    #[tokio::test]
+    async fn a_missing_capability_is_reported_and_recorded() {
+        let _log = runlog_scratch().await;
+        let path = scratch_path("nocap");
+        let sys = JobSystem::open(path.clone(), RuntimeServices::new());
+        sys.upsert(interval_job("orphan", 3600)).expect("valid");
+
+        match sys.clone().execute("orphan", "timer").await {
+            Err(RunError::Unavailable(msg)) => assert!(msg.contains(JOBS_ACTION), "{msg}"),
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+
+        // The occurrence is in the history: the job was due and did not run.
+        let (page, _) = runlog::read_page("orphan", None, 10);
+        assert_eq!(page.len(), 1, "{page:?}");
+        assert_eq!(page[0]["ok"], json!(false));
+        assert!(page[0]["error"].as_str().unwrap_or_default().contains(JOBS_ACTION));
+
+        // The claim was released, and lastOk was NOT written: nothing exited.
+        let view = sys.all_views().remove(0);
+        assert_eq!(view["running"], json!(false));
+        let reloaded = JobStore::open(path);
+        assert_eq!(reloaded.jobs[0].last_ok, None, "a refusal is not an outcome");
+        assert!(
+            reloaded.jobs[0].last_run_ms.is_some(),
+            "the occurrence anchor still moved, so a full pool cannot make a job retry every tick"
+        );
+    }
+
+    /// The pool's bound is GLOBAL: a manual run of another producer can fill it, and the
+    /// scheduled occurrence is refused visibly rather than queued out of sight.
+    #[tokio::test]
+    async fn a_full_pool_refuses_the_occurrence_visibly() {
+        let _log = runlog_scratch().await;
+        let path = scratch_path("capacity");
+        let services = test_services();
+        services.runs.set_capacity(crate::services::runs::RunCapacity {
+            max_concurrent: 1,
+            max_queued: 0,
+        });
+        let sys = JobSystem::open(path, services.clone());
+        sys.upsert(interval_job("waiting", 3600)).expect("valid");
+
+        let hog = services
+            .runs
+            .submit(SubmitRequest {
+                owner: "manual".into(),
+                label: "hog".into(),
+                action_type: JOBS_ACTION.into(),
+                input: json!({ "command": long_command() }),
+                timeout_ms: 30_000,
+                queue_if_busy: false,
+            })
+            .expect("the only slot");
+
+        match sys.clone().execute("waiting", "timer").await {
+            Err(RunError::Capacity(msg)) => assert!(msg.contains("maxConcurrentRuns"), "{msg}"),
+            other => panic!("expected Capacity, got {other:?}"),
+        }
+        let (page, _) = runlog::read_page("waiting", None, 10);
+        assert_eq!(page.len(), 1, "the refused occurrence is recorded: {page:?}");
+
+        // The other producer's run is untouched by the refusal, and reaped here.
+        assert_eq!(services.runs.shutdown_all().await, 1);
+        assert!(hog.done.await.is_ok(), "the hog reported its own terminal view");
+    }
+
+    /// The job's own timeoutMs is the deadline, enforced by cancellation: the child is killed
+    /// and the record says WHICH kind of not-ok it was.
+    #[tokio::test]
+    async fn a_wedged_command_is_killed_at_the_job_deadline() {
+        let _log = runlog_scratch().await;
+        let path = scratch_path("deadline");
+        let sys = JobSystem::open(path, test_services());
+        let mut def = interval_job("wedged", 3600);
+        def.command = long_command();
+        def.timeout_ms = 400;
+        sys.upsert(def).expect("valid");
+
+        let started = std::time::Instant::now();
+        let (_seq, out) = sys.clone().execute("wedged", "timer").await.expect("reports");
+        assert!(out.timed_out, "{out:?}");
+        assert!(!out.ok);
+        assert!(!out.canceled, "the deadline owns this outcome, not a cancel");
+        assert!(started.elapsed().as_secs() < 20, "it did not wait out the command");
+
+        let (page, _) = runlog::read_page("wedged", None, 5);
+        assert_eq!(page[0]["timedOut"], json!(true), "{page:?}");
+        assert_eq!(page[0]["ok"], json!(false));
+    }
+
+    /// Disabling the jobs plugin means what it says: the runs this scheduler owns are
+    /// cancelled AND awaited, and the per-job claims they held are gone.
+    #[tokio::test]
+    async fn shutdown_cancels_the_runs_this_scheduler_owns() {
+        let _log = runlog_scratch().await;
+        let path = scratch_path("shutdown");
+        let services = test_services();
+        let sys = JobSystem::open(path, services.clone());
+        let mut def = interval_job("slow", 3600);
+        def.command = long_command();
+        sys.upsert(def).expect("valid");
+
+        let running = {
+            let sys = sys.clone();
+            tokio::spawn(async move { sys.execute("slow", "timer").await })
+        };
+        assert!(wait_running(&sys, "slow").await, "the run reached the pool");
+
+        assert_eq!(sys.shutdown().await, 1, "one in-flight run was taken back");
+        let (_seq, out) = running.await.expect("the run task").expect("reports");
+        assert!(out.canceled, "{out:?}");
+        assert!(!out.ok);
+        assert!(!out.timed_out, "nobody waited too long; it was cancelled");
+
+        // No claim survives a shutdown, so enabling again does not find a wedged job.
+        assert_eq!(sys.all_views().remove(0)["running"], json!(false));
+    }
+
+    /// docs/10 §5 asks for this by name: a persist that failed must not be reported as a
+    /// save. The store keeps the edit in memory (the scheduler is already running it, and
+    /// silently reverting would be a second lie), but the caller hears the truth.
+    #[test]
+    fn a_config_write_that_cannot_persist_is_an_error_not_a_warning() {
+        crate::secure::key::use_test_master_key();
+        // A path under a directory that does not exist: every write to it fails, on every
+        // platform, without needing permissions a test cannot portably set.
+        let path = std::env::temp_dir()
+            .join(format!("lmg-jobs-gone-{}", crate::util::random_hex(8)))
+            .join("nested")
+            .join("jobs.json");
+        let sys = JobSystem::open(path, test_services());
+
+        let err = sys
+            .upsert(interval_job("doomed", 60))
+            .expect_err("the write cannot succeed");
+        assert!(err.contains("could not persist"), "{err}");
+        assert_eq!(sys.all_views().len(), 1, "the edit is live even though the save failed");
+
+        let err = sys
+            .delete("doomed")
+            .expect_err("the removal cannot reach disk either");
+        assert!(err.contains("could not persist"), "{err}");
+        // Deleting something that was never there is not a failed write; it is a miss.
+        assert_eq!(sys.delete("never-existed"), Ok(false));
+    }
+
     #[test]
     fn upsert_preserves_history_and_delete_removes_only_the_job() {
         let path = scratch_path("upsert");
-        let sys = JobSystem::open(path);
+        let sys = JobSystem::open(path, test_services());
         sys.upsert(interval_job("edit-me", 60)).expect("valid");
         {
             let mut store = sys.store.lock().unwrap();
@@ -727,15 +1055,15 @@ mod tests {
             assert_eq!(store.jobs[0].last_ok, Some(false), "history is kept");
             assert_eq!(store.jobs[0].last_run_ms, Some(123));
         }
-        assert!(sys.delete("edit-me"));
-        assert!(!sys.delete("edit-me"), "already gone");
+        assert_eq!(sys.delete("edit-me"), Ok(true));
+        assert_eq!(sys.delete("edit-me"), Ok(false), "already gone");
         assert!(sys.all_views().is_empty());
     }
 
     #[test]
     fn a_job_view_reports_running_and_a_next_due() {
         let path = scratch_path("view");
-        let sys = JobSystem::open(path);
+        let sys = JobSystem::open(path, test_services());
         sys.upsert(interval_job("viewed", 60)).expect("valid");
         sys.upsert(cron_job("nightly", "30 3 * * *")).expect("valid");
         let views: Vec<Value> = sys.all_views();

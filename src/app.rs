@@ -64,6 +64,11 @@ pub struct AppContext {
     /// graceful sequence (the Node build emitted SIGTERM at itself — there is no signal on
     /// Windows, so this channel IS the signal).
     pub shutdown: tokio::sync::watch::Sender<bool>,
+    /// The plugin host, set once by the boot sequence before the listener accepts requests.
+    /// `None` in compositions that predate the host (tests, the http adapter's import probe):
+    /// every host-dependent guard treats absence as "no plugin gating", which is exactly the
+    /// pre-host behavior.
+    pub plugin_host: std::sync::OnceLock<Arc<crate::host::PluginHost>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -84,17 +89,26 @@ impl AppContext {
             port,
             tunnel_links: std::sync::RwLock::new(None),
             shutdown,
+            plugin_host: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),
         });
         // Rename/delete abandon an entry's name; the endpoint cached under it would then leak,
         // because the POST path that normally evicts a stale handler (generation mismatch, or a
         // stopped entry) never runs for a name that no longer resolves. The registry calls this
         // back so the endpoint is cancelled and dropped.
-        let evict_ctx = ctx.clone();
+        //
+        // The back-reference is a Weak on purpose: a strong one closed the cycle
+        // AppContext -> Registry -> evictor -> AppContext, which kept the whole context (and
+        // with it every Arc it holds) alive for as long as the registry existed — i.e. forever
+        // for a process-wide singleton. The upgrade inside only pins the context for the
+        // duration of one eviction.
+        let evict_ctx = Arc::downgrade(&ctx);
         ctx.registry.set_evictor(Box::new(move |name| {
-            if let Ok(mut handlers) = evict_ctx.handlers.lock() {
-                if let Some(cached) = handlers.remove(name) {
-                    cached.http.cancel();
+            if let Some(ctx) = evict_ctx.upgrade() {
+                if let Ok(mut handlers) = ctx.handlers.lock() {
+                    if let Some(cached) = handlers.remove(name) {
+                        cached.http.cancel();
+                    }
                 }
             }
         }));
@@ -240,6 +254,14 @@ impl<S: Send + Sync> axum::extract::FromRequest<S> for NodeBody {
     }
 }
 
+/// The MCP client catch-all cannot be matched by the boundary's static prefixes (one segment
+/// naming a hosted MCP), so the handlers consult the host directly. Absent host — the
+/// pre-host compositions (tests, the import probe) — means no gating, exactly as before.
+fn plugin_client_guard(ctx: &AppContext) -> Option<Response> {
+    let host = ctx.plugin_host.get()?;
+    crate::host::api::client_path_guard(host)
+}
+
 /// The bearer gate. Runs BEFORE the request body is read: an MCP POST can carry up to BODY_LIMIT
 /// and none of it needs to be read to know the caller cannot be served. The matched token is
 /// returned so the call log and the traffic log can attribute the request to the client.
@@ -334,6 +356,9 @@ async fn mcp_delete(
     Path(_name): Path<String>,
     headers: HeaderMap,
 ) -> Response {
+    if let Some(answer) = plugin_client_guard(&ctx) {
+        return answer;
+    }
     if verify_bearer(&ctx, &headers).is_none() {
         // The pre-body refusal shape — Node's `wrapped.refuse` fast path answered
         // `{error:"Unauthorized"}`, not JSON-RPC (the SDK-era jsonError only fired once the
@@ -357,6 +382,14 @@ async fn mcp_post(
         None => return admin_error(StatusCode::UNAUTHORIZED, "Unauthorized"),
         Some(rec) => rec,
     };
+    // The MCP plugin owns the client paths: when it is not serving (disabled at boot, or
+    // disabled at runtime), every endpoint answers the host's structured 503 — and in
+    // particular a lazy proc is NOT spawned behind a disabled plugin. The guard sits between
+    // auth and the ensure_started await, so the answer to a stranger stays the plain 401 it
+    // always was.
+    if let Some(answer) = plugin_client_guard(&ctx) {
+        return answer;
+    }
     let Some(entry) = ctx.registry.get(&name) else {
         return json_rpc_error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -451,7 +484,7 @@ async fn mcp_post(
 }
 
 /// Nothing handled this: the router's terminal 404, same shape as the Node build.
-async fn fallback_404(req: Request) -> Response {
+pub(crate) async fn fallback_404(req: Request) -> Response {
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
     admin_error(
@@ -460,15 +493,26 @@ async fn fallback_404(req: Request) -> Response {
     )
 }
 
+/// The `/api/plugins` tree with this build's 404-for-a-wrong-method rule applied, so the
+/// management routes answer like every other admin route rather than axum's default 405.
+fn host_api_tree(host: Arc<crate::host::PluginHost>) -> Router<()> {
+    crate::host::api::mount(host).method_not_allowed_fallback(fallback_404)
+}
+
 /// Build the gateway router. The caller serves it with
 /// `into_make_service_with_connect_info::<SocketAddr>()` — the loopback guard needs the peer
 /// address.
 ///
-/// `extra` carries a stateless router to mount alongside the rest (the tunnel API, its own
-/// state already applied). axum's `Router::layer` covers only routes present at the call, so
-/// the extra tree gets its OWN copy of the loopback guard and the body limit below — merging
-/// it unguarded would leave every /api/tunnels route outside the boundary, and the guard is
-/// the only auth that tree has.
+/// `extra` carries a stateless router to mount alongside the rest (the tunnel and jobs APIs,
+/// their own state already applied). axum's `Router::layer` covers only routes present at the
+/// call, so the extra tree gets its OWN copy of the loopback guard and the body limit below —
+/// merging it unguarded would leave every /api/tunnels route outside the boundary, and the
+/// guard is the only auth that tree has.
+///
+/// When the boot sequence installed a plugin host, both trees ALSO get the plugin boundary:
+/// each request asks the host whether a plugin owns the path and, if so, whether that plugin
+/// is serving. The boundary sits INSIDE the loopback guard (security answers before plugin
+/// state does) and over every plugin-owned path — stable routes, live dispatch.
 pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
     let mcp_routes = Router::new().route(
         "/{path}",
@@ -479,6 +523,19 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
     );
 
     let guard_ctx = ctx.clone();
+    let plugin_host = ctx.plugin_host.get().cloned();
+    let boundary = plugin_host.as_ref().map(|host| {
+        middleware::from_fn_with_state(host.clone(), crate::host::api::plugin_boundary)
+    });
+    // The host's own management surface travels with the extra tree: same loopback guard,
+    // same body limit. It stays reachable while every plugin is down — no plugin may claim a
+    // prefix under /api/plugins (host::PluginHost::register refuses it), so the boundary over
+    // this tree can never answer 503 for the routes that enable a plugin again.
+    let extra = match (extra, plugin_host) {
+        (Some(extra), Some(host)) => Some(extra.merge(host_api_tree(host))),
+        (None, Some(host)) => Some(host_api_tree(host)),
+        (extra, None) => extra,
+    };
     let app = Router::new()
         .route("/", get(panel_root))
         .route("/admin/{*path}", get(panel_asset))
@@ -493,16 +550,27 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         .fallback(fallback_404)
         // A path that exists under another method answers 404 in the Node build (its router
         // matched method+pattern together), not axum's default 405.
-        .method_not_allowed_fallback(fallback_404)
+        .method_not_allowed_fallback(fallback_404);
+    let app = match boundary.clone() {
+        Some(layer) => app.layer(layer),
+        None => app,
+    };
+    let app = app
         .layer(middleware::from_fn_with_state(guard_ctx.clone(), loopback_guard))
         .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(ctx);
-    match extra {
-        Some(extra) => app.merge(
+    match (extra, boundary) {
+        (Some(extra), Some(layer)) => app.merge(
+            extra
+                .layer(layer)
+                .layer(middleware::from_fn_with_state(guard_ctx, loopback_guard))
+                .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT)),
+        ),
+        (Some(extra), None) => app.merge(
             extra
                 .layer(middleware::from_fn_with_state(guard_ctx, loopback_guard))
                 .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT)),
         ),
-        None => app,
+        (None, _) => app,
     }
 }

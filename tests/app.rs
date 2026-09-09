@@ -130,6 +130,30 @@ async fn health_and_panel_serve() {
     assert_eq!(status, StatusCode::OK);
     assert!(!css.is_empty());
 
+    // The page registry and its lazily imported view modules are served like every other panel
+    // module: no-store is already the default, and the content type must be exact so browsers
+    // accept them as module scripts in subdirectories too.
+    for path in ["/admin/js/page-registry.js", "/admin/js/page-core.js", "/admin/js/views/jobs.js"] {
+        let (status, _, body) = send(
+            &app,
+            local(Request::get(path).body(Body::empty()).unwrap()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{path} must serve");
+        assert!(body.contains("export "), "{path} must be a module");
+    }
+    // A page module outside the panel tree never resolves, even with a valid extension.
+    let (status, _, _) = send(
+        &app,
+        local(
+            Request::get("/admin/js/views/../../../Cargo.toml")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
     // Traversal and unknown extensions are refused, not guessed.
     let (status, _, _) = send(
         &app,

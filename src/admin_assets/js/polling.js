@@ -1,11 +1,9 @@
-import { $, DEFAULT_GROUP, api, apiJson, esc, state, toast } from "./util.js";
-import { dbOkToDrop, dbPending, loadDbView } from "./data-view.js";
+import { $, DEFAULT_GROUP, api, apiJson, esc, state, toast, whenLabel } from "./util.js";
+import { currentPageCount, navigatePage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { rowOf } from "./sidebar.js";
-import { trafficReload } from "./traffic.js";
-import { patchTunnels, renderTunnels } from "./tunnels.js";
-import { patchJobs, renderJobs } from "./jobs.js";
+
 
 /* --- polling ---------------------------------------------------------------------------------- */
 async function loadList() {
@@ -79,27 +77,7 @@ function tunGrouped() {
   return out;
 }
 
-function setView(v) {
-  if (state.view === v) return;
-  // The Data view's edit buffer lives only in its DOM and state; switching away throws both out.
-  // A pending edit set must be an explicit decision, never a side effect of clicking another tab.
-  if (state.view === "data" && typeof dbPending === "function" && dbPending() && !dbOkToDrop()) return;
-  state.view = v;
-  var seg = $("viewSeg");
-  Array.prototype.forEach.call(seg.querySelectorAll("button"), function (b) {
-    b.setAttribute("aria-selected", String(b.dataset.view === v));
-  });
-  // The sidebar is the MCP list; the full-width views own the whole pane.
-  document.querySelector(".sidebar").hidden = v === "tunnels" || v === "traffic" || v === "data" || v === "jobs";
-  if (v === "tunnels") { loadTunnels(); }
-  // Back to page one on entry: the ring keeps rolling while the view is closed, so the page you left
-  // on may no longer exist — and a pager stranded past the end has no button back.
-  else if (v === "traffic") { trafficReload(true); }
-  else if (v === "data") { loadDbView(); }
-  else if (v === "jobs") { loadJobs(); }
-  else { renderPane(); patchSidebar(); }
-  updateCountChip();
-}
+function setView(v) { return navigatePage(v); }
 
 /** The MCP chip text — ONE builder (menu.js's patchSidebar reuses it). The two copies had
  *  drifted: patchSidebar counted "· N down" and this one did not, so the chip lost and regained
@@ -113,20 +91,7 @@ function mcpChipText() {
   return state.mcps.length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
 }
 
-function updateCountChip() {
-  var chip = $("countChip");
-  if (state.view === "jobs") {
-    chip.textContent = jobsChipText();
-    return;
-  }
-  if (state.view === "tunnels") {
-    var d = tunData();
-    var active = d.rules.filter(function (r) { return r.state === "up"; }).length;
-    chip.textContent = d.rules.length + " rules · " + active + " active";
-    return;
-  }
-  chip.textContent = mcpChipText();
-}
+function updateCountChip() { $("countChip").textContent = currentPageCount(); }
 
 /** `patchOnly` is what the poll passes: refresh the data, then patch rather than rebuild. */
 async function loadTunnels(patchOnly) {
@@ -134,6 +99,7 @@ async function loadTunnels(patchOnly) {
   if (!j) return;
   state.tun.data = j;
   if (state.view === "tunnels") {
+    var { patchTunnels, renderTunnels } = await import("./tunnels.js");
     if (state.tun.dragging) return; // a rebuild under the pointer would cancel the drag; patch later
     if (patchOnly && $("pane").querySelector(".tun-foot")) patchTunnels();
     else renderTunnels();
@@ -141,9 +107,10 @@ async function loadTunnels(patchOnly) {
   updateCountChip();
 }
 
-function tunTab(t) {
+async function tunTab(t) {
   state.tun.tab = t;
-  renderTunnels();
+  var { renderTunnels } = await import("./tunnels.js");
+  if (state.view === "tunnels") renderTunnels();
 }
 
 /* ================================================================================================
@@ -207,6 +174,7 @@ async function loadJobs(patchOnly) {
   if (!j) return;
   state.jobs.data = j.jobs || [];
   if (state.view === "jobs") {
+    var { patchJobs, renderJobs } = await import("./jobs.js");
     if (patchOnly && $("pane").querySelector("[data-foot]")) patchJobs();
     else renderJobs();
   }
@@ -271,4 +239,4 @@ function connRowHtml(c) {
     "</div>";
 }
 
-export { connRowHtml, jobDotClass, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab, updateCountChip };
+export { connRowHtml, jobDotClass, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab, updateCountChip };

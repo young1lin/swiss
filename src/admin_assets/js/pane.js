@@ -42,9 +42,8 @@ function headSubtitle(m) {
 }
 
 function renderPane() {
-  // The tunnel view owns the pane while it is on screen. Without this, the 6s poll's loadList()
-  // would reach its "nothing selected" branch and replace the tunnel list with the MCP empty state.
-  if (state.view === "tunnels" || state.view === "traffic" || state.view === "data") return;
+  // Every non-MCP page owns its pane, including pages contributed by future plugins.
+  if (state.view !== "mcps") return;
   var pane = $("pane");
   var d = state.detail;
   if (!d) {
