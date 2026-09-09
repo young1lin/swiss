@@ -23,13 +23,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
-use crate::host::descriptor::{PageDescriptor, PluginDescriptor};
-use crate::host::factory::{PluginFactory, PluginInstance};
-use crate::host::scope::PluginScope;
-use crate::services::action::{Action, ActionError, ActionOutcome, CancelHandle};
-use crate::services::actions::resolve_with_secrets;
-use crate::services::process::mask_secrets;
-use crate::services::RuntimeServices;
+use lmg_host::host::descriptor::{PageDescriptor, PluginDescriptor};
+use lmg_host::host::factory::{PluginFactory, PluginInstance};
+use lmg_host::host::scope::PluginScope;
+use lmg_host::services::action::{Action, ActionError, ActionOutcome, CancelHandle};
+use lmg_host::services::actions::resolve_with_secrets;
+use lmg_host::services::process::mask_secrets;
+use lmg_host::services::RuntimeServices;
 
 /// The capability id (stable, data in job definitions and run submissions).
 pub const ACTION_ID: &str = "http.request";
@@ -487,13 +487,13 @@ mod tests {
 
     #[test]
     fn the_host_never_learns_this_plugins_id() {
-        // docs/12 W4's contract-integrity check, rough on purpose: no file under
-        // src/host/ may mention the plugin's id or its action id. If this fails, a
-        // "small fix" in the host just special-cased a plugin — the exact drift the
-        // touchstone exists to catch.
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/host");
+        // docs/12 W4's contract-integrity check, rough on purpose: no file under the
+        // host crate's source may mention the plugin's id or its action id. If this fails,
+        // a "small fix" in the host just special-cased a plugin — the exact drift the
+        // touchstone exists to catch. (Path follows the host since the workspace split.)
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/lmg-host/src/host");
         let mut checked = 0;
-        let entries = std::fs::read_dir(&dir).expect("src/host exists in this checkout");
+        let entries = std::fs::read_dir(&dir).expect("the host crate's sources exist here");
         for entry in entries {
             let path = entry.expect("entry").path();
             if path.extension().and_then(|e| e.to_str()) != Some("rs") {

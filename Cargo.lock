@@ -1896,7 +1896,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
-name = "local-mcp-gateway"
+name = "lmg"
 version = "0.1.0"
 dependencies = [
  "aes-gcm 0.10.3",
@@ -1911,9 +1911,14 @@ dependencies = [
  "futures-util",
  "hkdf 0.12.4",
  "libc",
- "mongodb",
+ "lmg-core",
+ "lmg-data",
+ "lmg-host",
+ "lmg-jobs",
+ "lmg-mcp",
+ "lmg-panel",
+ "lmg-tunnels",
  "rand 0.8.8",
- "redis",
  "reqwest",
  "rmcp",
  "russh",
@@ -1922,12 +1927,153 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "socket2",
- "sqlx",
  "thiserror",
  "time",
  "tokio",
  "tower",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "lmg-core"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm 0.10.3",
+ "base64 0.23.1",
+ "hkdf 0.12.4",
+ "libc",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "time",
+ "tokio",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "lmg-data"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures-core",
+ "lmg-core",
+ "lmg-host",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "lmg-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "encoding_rs",
+ "futures-core",
+ "futures-util",
+ "libc",
+ "lmg-core",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "lmg-jobs"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "futures-core",
+ "futures-util",
+ "lmg-core",
+ "lmg-host",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "lmg-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "bigdecimal",
+ "chrono",
+ "encoding_rs",
+ "futures-core",
+ "futures-util",
+ "libc",
+ "lmg-core",
+ "lmg-host",
+ "mongodb",
+ "rand 0.8.8",
+ "redis",
+ "reqwest",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "lmg-panel"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "lmg-core",
+ "lmg-host",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "lmg-tunnels"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "chrono",
+ "futures-core",
+ "futures-util",
+ "lmg-core",
+ "lmg-host",
+ "rand 0.8.8",
+ "russh",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "socket2",
+ "thiserror",
+ "time",
+ "tokio",
 ]
 
 [[package]]

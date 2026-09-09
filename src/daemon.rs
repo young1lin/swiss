@@ -10,14 +10,14 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::paths::{data_dir, data_path};
 use crate::pidfile::{
     is_pid_alive, log_file_path, read_pid_file, remove_pid_file, write_pid_file, PidRecord,
 };
-use crate::platform::tree_kill;
 use crate::port::{as_listen_port_value, env_listen_port, DEFAULT_PORT};
-use crate::secure::envstore::{read_env_store, write_env_store};
-use crate::secure::statefile::{read_secure_json, write_secure_json};
+use lmg_core::paths::{data_dir, data_path};
+use lmg_core::platform::tree_kill;
+use lmg_core::secure::envstore::{read_env_store, write_env_store};
+use lmg_core::secure::statefile::{read_secure_json, write_secure_json};
 
 const POLL_MS: u64 = 150;
 const LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
@@ -125,7 +125,7 @@ pub fn is_npx_cache_path(path: &Path) -> bool {
 
 /// The env store path handed to read_env_store/write_env_store (the sealed .env replacement).
 fn env_store() -> std::collections::HashMap<String, String> {
-    read_env_store(&crate::secure::envstore::env_store_path())
+    read_env_store(&lmg_core::secure::envstore::env_store_path())
 }
 
 /// The token a client needs for the authenticated endpoints. Precedence mirrors the server boot:
@@ -171,7 +171,7 @@ pub fn read_creds() -> (String, Option<String>) {
 pub fn export_state() -> Value {
     json!({
         "version": 1,
-        "exportedAt": crate::log::iso_now(),
+        "exportedAt": lmg_core::log::iso_now(),
         "config": read_secure_json(&data_path(&["gateway.config.json"])).ok().flatten(),
         "managed": read_secure_json(&data_path(&["managed.json"])).ok().flatten(),
         "tunnels": read_secure_json(&data_path(&["tunnels.json"])).ok().flatten(),
@@ -218,7 +218,7 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
                 merged.insert(k.clone(), s.to_string());
             }
         }
-        write_env_store(&merged, &crate::secure::envstore::env_store_path())?;
+        write_env_store(&merged, &lmg_core::secure::envstore::env_store_path())?;
         restored.push("env.json".into());
     }
     Ok(restored)
@@ -396,7 +396,7 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
         port,
         entry: entry.to_string_lossy().into_owned(),
         node: entry.to_string_lossy().into_owned(),
-        started_at: crate::log::iso_now(),
+        started_at: lmg_core::log::iso_now(),
     });
 
     if wait_for_health(&client, port, timeout_ms, || !is_pid_alive(pid)).await {
@@ -525,8 +525,8 @@ pub async fn daemon_status(port: u16) -> StatusResult {
         health: None,
     };
     if let Some(rec) = &rec {
-        if let Some(started) = crate::util::parse_iso_ms(&rec.started_at) {
-            let now = crate::util::now_ms() as i64;
+        if let Some(started) = lmg_core::util::parse_iso_ms(&rec.started_at) {
+            let now = lmg_core::util::now_ms() as i64;
             result.uptime_ms = Some((now - started).max(0) as u64);
         }
     }
@@ -569,11 +569,11 @@ mod tests {
     /// binary shares, and `MCP_GATEWAY_PORT` is process-wide, so every test that writes one takes
     /// this first and starts from a machine that has never run the gateway.
     async fn daemon_state() -> tokio::sync::MutexGuard<'static, ()> {
-        let guard = crate::paths::DATA_DIR_LOCK.lock().await;
-        crate::paths::test_home();
+        let guard = lmg_core::paths::DATA_DIR_LOCK.lock().await;
+        lmg_core::paths::test_home();
         // Pin the key before anything seals, so no test here depends on DPAPI or on which other
         // test happened to install the deterministic key first.
-        crate::secure::key::use_test_master_key();
+        lmg_core::secure::key::use_test_master_key();
         clear_state();
         guard
     }
@@ -583,7 +583,7 @@ mod tests {
         for file in ["gateway.config.json", "managed.json", "tunnels.json"] {
             let _ = std::fs::remove_file(data_path(&[file]));
         }
-        let _ = std::fs::remove_file(crate::secure::envstore::env_store_path());
+        let _ = std::fs::remove_file(lmg_core::secure::envstore::env_store_path());
         for key in ["MCP_GATEWAY_PORT", "MCP_GATEWAY_TOKEN", "LMG_TEST_TOKEN"] {
             unsafe { std::env::remove_var(key) };
         }
@@ -607,7 +607,8 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect();
-        write_env_store(&store, &crate::secure::envstore::env_store_path()).expect("seal the env");
+        write_env_store(&store, &lmg_core::secure::envstore::env_store_path())
+            .expect("seal the env");
     }
 
     fn plant(port: u16, pid: u32) -> u32 {
@@ -616,7 +617,7 @@ mod tests {
             port,
             entry: server_entry().to_string_lossy().into_owned(),
             node: server_entry().to_string_lossy().into_owned(),
-            started_at: crate::log::iso_now(),
+            started_at: lmg_core::log::iso_now(),
         });
         pid
     }
@@ -647,7 +648,10 @@ mod tests {
             let (tx, rx) = tokio::sync::oneshot::channel::<()>();
             let signal = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
             let app = axum::Router::new()
-                .route("/health", get(|| async { axum::Json(json!({ "ok": true })) }))
+                .route(
+                    "/health",
+                    get(|| async { axum::Json(json!({ "ok": true })) }),
+                )
                 .route(
                     "/api/mcps",
                     get(|| async { axum::Json(json!({ "mcps": [{ "name": "echo" }] })) }),
@@ -790,7 +794,10 @@ mod tests {
 
         // The config names which variable holds the seed, and that name is honoured.
         let _ = std::fs::remove_file(data_path(&["managed.json"]));
-        seal("gateway.config.json", json!({ "tokenEnv": "LMG_TEST_TOKEN" }));
+        seal(
+            "gateway.config.json",
+            json!({ "tokenEnv": "LMG_TEST_TOKEN" }),
+        );
         seal_env(&[("LMG_TEST_TOKEN", "named-var")]);
         assert_eq!(read_gateway_token().as_deref(), Some("named-var"));
         clear_state();

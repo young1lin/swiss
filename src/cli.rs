@@ -280,7 +280,9 @@ fn warn_if_npx_cache(io: &dyn Io) {
             "warning: running from npm's npx cache ({}).",
             entry.display()
         ));
-        io.err("         That directory is version-keyed and cleared on update, so this daemon will");
+        io.err(
+            "         That directory is version-keyed and cleared on update, so this daemon will",
+        );
         io.err("         not survive it. Install it properly instead: npm i -g <package>");
         io.err("");
     }
@@ -724,7 +726,7 @@ impl Ops for RealOps {
             unsafe { std::env::set_var("MCP_GATEWAY_PORT", port.to_string()) };
         }
         if let Err(err) = crate::server::run_gateway().await {
-            crate::log::error("fatal", Some(serde_json::json!({ "err": err })));
+            lmg_core::log::error("fatal", Some(serde_json::json!({ "err": err })));
             std::process::exit(1);
         }
     }

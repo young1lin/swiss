@@ -14,7 +14,7 @@
 //! `HKDF_INFO` — every one of which compiles, passes a Rust-only round trip, and then fails to open
 //! a single real file on a user's machine. See docs/05-wire-compatibility.md.
 
-use local_mcp_gateway::secure::envelope::{is_sealed, seal, unseal, Sealed};
+use lmg_core::secure::envelope::{is_sealed, seal, unseal, Sealed};
 
 /// The key the fixture was sealed under: `Buffer.alloc(32, 7)`.
 const FIXTURE_KEY: [u8; 32] = [7u8; 32];

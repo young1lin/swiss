@@ -33,7 +33,7 @@ use axum::routing::any;
 use axum::Router;
 use serde_json::Value;
 
-use crate::app::admin_error;
+use crate::reply::admin_error;
 
 /// Whether a subsystem's config row disables it. Strict boolean: anything but literal
 /// `true` (absent row, absent flag, false, "yes", 1) reads as ENABLED — the fail-direction
@@ -70,7 +70,7 @@ pub fn absent_router(subsystem: &'static str, prefix: &str) -> Router {
 /// The composition-point bookkeeping: what a disabled subsystem's boot logs, in one shape so
 /// an operator grepping "subsystem" finds every toggle in the boot log.
 pub fn log_disabled(subsystem: &str) {
-    crate::log::log(
+    lmg_core::log::log(
         "info",
         "subsystem disabled",
         Some(serde_json::json!({
@@ -102,7 +102,10 @@ mod tests {
         });
         assert!(disabled(&cfg, "jobs"));
         assert!(!disabled(&cfg, "tunnels"), "explicit false is enabled");
-        assert!(!disabled(&cfg, "traffic"), "row without the flag is enabled");
+        assert!(
+            !disabled(&cfg, "traffic"),
+            "row without the flag is enabled"
+        );
         assert!(!disabled(&cfg, "weird"), "a string is not a boolean");
         assert!(!disabled(&cfg, "num"), "a number is not a boolean");
         assert!(!disabled(&cfg, "absent"), "no row at all is enabled");
@@ -126,7 +129,11 @@ mod tests {
                 .body(Body::empty())
                 .expect("a request");
             let resp = router.clone().oneshot(req).await.expect("a response");
-            assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE, "{method} {uri}");
+            assert_eq!(
+                resp.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{method} {uri}"
+            );
             let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
                 .await
                 .expect("a body");
@@ -161,8 +168,8 @@ mod tests {
         // The toggle reads GatewayConfig::raw, so the load must retain unknown rows verbatim —
         // a parser that dropped what it did not understand would silently re-enable every
         // subsystem on the next boot.
-        crate::secure::key::use_test_master_key();
-        let dir = std::env::temp_dir().join(format!("lmg-subs-{}", crate::util::random_hex(8)));
+        lmg_core::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!("lmg-subs-{}", lmg_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         unsafe { std::env::set_var("LMG_SUBS_TOKEN", "tok") };
         let path = dir.join("gateway.config.json");
@@ -171,7 +178,7 @@ mod tests {
             r##"{"tokenEnv":"LMG_SUBS_TOKEN","servers":{},"jobs":{"disabled":true},"tunnels":{}}"##,
         )
         .expect("write a legacy-plaintext config (accepted, then re-sealed)");
-        let cfg = crate::config::load_config(&path).expect("loads");
+        let cfg = lmg_host::config::load_config(&path).expect("loads");
         assert!(disabled(&cfg.raw, "jobs"), "the row survived the load");
         assert!(!disabled(&cfg.raw, "tunnels"));
     }

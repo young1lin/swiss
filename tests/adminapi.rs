@@ -13,17 +13,17 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use async_trait::async_trait;
-use local_mcp_gateway::adapters::direct::DirectAdapter;
-use local_mcp_gateway::adapters::resources::{
+use lmg_mcp::adapters::direct::DirectAdapter;
+use lmg_mcp::adapters::resources::{
     ResourceBody, ResourceEntry, ResourceFault, ResourcePage, ResourceProvider, ResourceTemplate,
 };
-use local_mcp_gateway::adapters::tool_server::{Engine, ServerMeta, ToolDef};
-use local_mcp_gateway::adapters::{make_adapter, Adapter};
-use local_mcp_gateway::app::{build_app, AppContext};
-use local_mcp_gateway::config::ServerDef;
-use local_mcp_gateway::managed::ManagedStore;
-use local_mcp_gateway::registry::{Registry, Source};
-use local_mcp_gateway::token::TokenManager;
+use lmg_mcp::adapters::tool_server::{Engine, ServerMeta, ToolDef};
+use lmg_mcp::adapters::{make_adapter, Adapter};
+use lmg::app::{build_app, AppContext};
+use lmg_host::config::ServerDef;
+use lmg_host::managed::ManagedStore;
+use lmg_mcp::registry::{Registry, Source};
+use lmg_host::token::TokenManager;
 
 const TOKEN: &str = "admin-tok-0123456789abcdef";
 
@@ -36,7 +36,7 @@ fn sandbox() {
     ONCE.get_or_init(|| {
         let home = std::env::temp_dir().join(format!(
             "lmg-adminapi-home-{}",
-            local_mcp_gateway::util::random_hex(8)
+            lmg_core::util::random_hex(8)
         ));
         std::fs::create_dir_all(&home).expect("create the scratch home");
         // Safety: this runs once, before any test has touched the paths or key modules, and both
@@ -53,7 +53,7 @@ struct Harness {
     app: axum::Router,
     registry: Arc<Registry>,
     store: Arc<ManagedStore>,
-    calls: Arc<local_mcp_gateway::calls::CallLog>,
+    calls: Arc<lmg_mcp::calls::CallLog>,
     path: std::path::PathBuf,
 }
 
@@ -62,12 +62,12 @@ fn setup() -> Harness {
     let path = std::env::temp_dir()
         .join(format!(
             "lmg-adminapi-{}",
-            local_mcp_gateway::util::random_hex(8)
+            lmg_core::util::random_hex(8)
         ))
         .join("managed.json");
     std::fs::create_dir_all(path.parent().expect("the scratch file has a parent"))
         .expect("create the scratch directory");
-    let calls = Arc::new(local_mcp_gateway::calls::CallLog::at(
+    let calls = Arc::new(lmg_mcp::calls::CallLog::at(
         path.parent()
             .expect("the scratch file has a parent")
             .join("calls"),
@@ -805,7 +805,7 @@ async fn returns_the_new_secret_after_a_rotate_not_the_old_one() {
 async fn traffic_lock() -> tokio::sync::MutexGuard<'static, ()> {
     static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let guard = LOCK.lock().await;
-    local_mcp_gateway::traffic::clear_traffic(None);
+    lmg_mcp::traffic::clear_traffic(None);
     guard
 }
 
@@ -944,7 +944,7 @@ async fn pages_the_activity_log_newest_first_and_filters_to_actions_server_side(
     // 7 protocol frames + 3 actions, interleaved so a naive slice cannot pass by accident.
     for i in 0..10 {
         let action = i % 3 == 2;
-        local_mcp_gateway::traffic::record_traffic(
+        lmg_mcp::traffic::record_traffic(
             "m",
             Some(&json!({
                 "jsonrpc": "2.0", "id": i,
@@ -1007,7 +1007,7 @@ async fn folds_clients_over_the_whole_ring_not_over_the_returned_page() {
     let _lock = traffic_lock().await;
     let h = setup();
     let record = |mcp: &str, body: Value, token: &str| {
-        local_mcp_gateway::traffic::record_traffic(mcp, Some(&body), Some(token), true, 1, None);
+        lmg_mcp::traffic::record_traffic(mcp, Some(&body), Some(token), true, 1, None);
     };
     record(
         "m1",
@@ -1066,7 +1066,7 @@ async fn clears_one_clients_traffic_leaving_the_others_intact() {
     let _lock = traffic_lock().await;
     let h = setup();
     for token in ["clrA", "clrB"] {
-        local_mcp_gateway::traffic::record_traffic(
+        lmg_mcp::traffic::record_traffic(
             "m",
             Some(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })),
             Some(token),
@@ -1965,8 +1965,8 @@ async fn removes_the_entry_from_gateway_config_json_and_the_runtime_registry() {
     // Unlike the Node suite, the data dir is not swapped per test — one sandbox home serves the
     // whole binary — so this is the only test that touches gateway.config.json.
     let h = setup();
-    let config = local_mcp_gateway::config::config_path();
-    local_mcp_gateway::secure::statefile::write_secure_json(
+    let config = lmg_host::config::config_path();
+    lmg_core::secure::statefile::write_secure_json(
         &config,
         &json!({
             "port": 19999,
@@ -1987,7 +1987,7 @@ async fn removes_the_entry_from_gateway_config_json_and_the_runtime_registry() {
     assert_eq!(body["deleted"], json!(true));
     assert!(!h.registry.has("doomed"));
 
-    let after = local_mcp_gateway::secure::statefile::read_secure_json(&config)
+    let after = lmg_core::secure::statefile::read_secure_json(&config)
         .expect("the config is readable")
         .expect("the config is there");
     assert!(after["servers"].get("doomed").is_none(), "{after}");

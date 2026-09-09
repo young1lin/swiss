@@ -18,30 +18,23 @@ use axum::routing::{delete, get, post, put};
 use axum::Router;
 use serde_json::{json, Map, Value};
 
-use crate::adapters::make_adapter;
 use crate::app::{admin_error, admin_json, AppContext};
-use crate::calls::{with_call_source_panel, CALLS_PAGE_SIZE};
-use crate::config::ServerDef;
-use crate::log;
-use crate::managed::ManagedEntry;
-use crate::mask::{mask_def, unmask_body};
-use crate::mem::get_memory_info;
-use crate::paging::{list_page, PageCache, PAGE_SIZE};
-use crate::registry::Lifecycle;
+use lmg_core::log;
+use lmg_host::config::ServerDef;
+use lmg_host::managed::ManagedEntry;
+use lmg_host::mask::{mask_def, unmask_body};
+use lmg_host::mem::get_memory_info;
+use lmg_mcp::adapters::make_adapter;
+use lmg_mcp::calls::{with_call_source_panel, CALLS_PAGE_SIZE};
+use lmg_mcp::paging::{list_page, PageCache, PAGE_SIZE};
+use lmg_mcp::registry::Lifecycle;
+use lmg_tunnels::tunnel::manager::TunnelLinks;
 
 // --- tunnel seam ---------------------------------------------------------------------------------
 
-/// What the MCP admin API is allowed to do with tunnels: read the links, and keep them pointing
-/// at the right MCP name. Deliberately this narrow — an MCP operation must never start or stop a
-/// tunnel (the port of Node's `TunnelLinks`, implemented by the tunnel manager).
-pub trait TunnelLinks: Send + Sync {
-    /// Tunnel rows this MCP's traffic depends on, for the detail page's "tunnels" list.
-    fn tunnels_for_mcp(&self, name: &str) -> Vec<Value>;
-    /// A tunnel that declares it serves this MCP must follow a rename, or the link silently dies.
-    fn rename_mcp(&self, from: &str, to: &str);
-    /// No MCP by that name any more, so no rule may claim to serve it.
-    fn forget_mcp(&self, name: &str);
-}
+// `TunnelLinks` — what this API is allowed to do with tunnels — is defined by the tunnel
+// side (lmg_tunnels::TunnelLinks); the tunnel manager implements it. Deliberately that
+// narrow: an MCP operation must never start or stop a tunnel.
 
 /// Consult the tunnel seam, if the boot sequence installed one (None until the tunnel subsystem
 /// lands; every consult site treats that as "no tunnels to report").
@@ -356,7 +349,7 @@ async fn add_managed(
     })?;
     if let Err(err) = ctx
         .registry
-        .register(name, crate::registry::Source::Managed, def, adapter)
+        .register(name, lmg_mcp::registry::Source::Managed, def, adapter)
     {
         let _ = ctx.store.remove(name);
         return Err(err);
@@ -384,7 +377,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     r = r.route("/api/info", get(|State(ctx): State<Arc<AppContext>>| async move {
         admin_json(
             StatusCode::OK,
-            json!({ "tokenEnv": ctx.token_env, "panelVersion": crate::admin::panel_version_stamp() }),
+            json!({ "tokenEnv": ctx.token_env, "panelVersion": lmg_panel::admin::panel_version_stamp() }),
         )
     }));
 
@@ -401,7 +394,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             admin_json(StatusCode::OK, json!({ "tokens": tokens, "tokenEnv": ctx.token_env }))
         })
         .post(
-            |State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+            |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
                 let body = body.0;
                 let label = body.get("label").and_then(Value::as_str).unwrap_or("").to_string();
                 let rec = ctx.tokens.create(&label);
@@ -480,7 +473,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .and_then(|p| p.parse::<usize>().ok())
                     .unwrap_or(0);
                 let page_size = q.get("pageSize").and_then(|p| p.parse::<usize>().ok());
-                let query = crate::traffic::TrafficQuery {
+                let query = lmg_mcp::traffic::TrafficQuery {
                     mcp: q.get("mcp").map(String::as_str),
                     client: q.get("client").map(String::as_str),
                     method: q.get("method").map(String::as_str),
@@ -488,8 +481,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     page,
                     page_size,
                 };
-                let mut out = crate::traffic::read_traffic(&query);
-                out["clients"] = json!(crate::traffic::traffic_clients());
+                let mut out = lmg_mcp::traffic::read_traffic(&query);
+                out["clients"] = json!(lmg_mcp::traffic::traffic_clients());
                 admin_json(StatusCode::OK, out)
             },
         )
@@ -497,7 +490,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             |Query(q): Query<std::collections::HashMap<String, String>>| async move {
                 // ?client=<prefixed key> clears only that client's rows; without it, all traffic.
                 let client = q.get("client").cloned();
-                crate::traffic::clear_traffic(client.as_deref());
+                lmg_mcp::traffic::clear_traffic(client.as_deref());
                 admin_json(StatusCode::OK, json!({ "ok": true, "client": client }))
             },
         ),
@@ -508,7 +501,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             let Ok(seq) = seq.parse::<u64>() else {
                 return admin_error(StatusCode::BAD_REQUEST, "seq must be a number");
             };
-            match crate::traffic::read_traffic_entry(seq) {
+            match lmg_mcp::traffic::read_traffic_entry(seq) {
                 None => admin_error(
                     StatusCode::NOT_FOUND,
                     "No such interaction (the ring may have rolled over)",
@@ -523,7 +516,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     r = r.route(
         "/api/order",
         put(
-            |State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+            |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
                 let body = body.0;
                 let Some(order) = body.get("order").and_then(Value::as_array) else {
                     return admin_error(
@@ -556,7 +549,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     r = r.route(
         "/api/groups",
         put(
-            |State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+            |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
                 let body = body.0;
                 let Some(groups) = body.get("groups").and_then(Value::as_array) else {
                     return admin_error(
@@ -592,7 +585,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         post(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: crate::app::NodeBody| async move {
+             body: crate::reply::NodeBody| async move {
                 let body = body.0;
                 let to = body
                     .get("name")
@@ -625,7 +618,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         put(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: crate::app::NodeBody| async move {
+             body: crate::reply::NodeBody| async move {
                 if !ctx.registry.has(&name) {
                     return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
                 }
@@ -725,7 +718,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             });
             admin_json(StatusCode::OK, json!({ "mcps": rows, "groups": ctx.store.get_groups() }))
         })
-        .post(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+        .post(|State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
             let body = body.0;
             let name = body.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string();
             if !name_ok(&name) {
@@ -759,14 +752,14 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     r = r.route(
         "/api/mcps/import",
         post(
-            |State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+            |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
                 let body = body.0;
                 let mut taken: std::collections::HashSet<String> =
                     ctx.registry.names().into_iter().collect();
                 for m in ctx.store.all() {
                     taken.insert(m.name.clone());
                 }
-                let plan = match crate::mcp_import::plan_mcp_import(&body, &taken, ctx.port) {
+                let plan = match lmg_mcp::mcp_import::plan_mcp_import(&body, &taken, ctx.port) {
                     Ok(plan) => plan,
                     // Node's handler let planMcpImport throw into the router's catch-all, which
                     // answered 500 {error} — structural surprises are server errors there, not 400s.
@@ -809,7 +802,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     //   error does not.
     r = r.route(
         "/api/mcps/test",
-        post(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+        post(|State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
             const TESTABLE_TYPES: [&str; 6] = ["mysql", "redis", "pg", "mongo", "http", "rest"];
             const TEST_TIMEOUT_MS: u64 = 5000;
             let body = body.0;
@@ -882,7 +875,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             }
 
             let adapter = match build_def(&body) {
-                Ok(def) => match crate::adapters::make_adapter(&def, "test", &ctx.calls) {
+                Ok(def) => match lmg_mcp::adapters::make_adapter(&def, "test", &ctx.calls) {
                     Ok(adapter) => adapter,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 },
@@ -1011,7 +1004,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         post(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: crate::app::NodeBody| async move {
+             body: crate::reply::NodeBody| async move {
                 let body = body.0;
                 let new_name = body
                     .get("name")
@@ -1054,8 +1047,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             // resurrects it. The write is atomic and touches only this key — ${ENV} refs
             // elsewhere survive verbatim.
             let source = ctx.registry.get(&name).and_then(|e| e.data.read().ok().map(|d| d.source));
-            if source == Some(crate::registry::Source::Config)
-                && !crate::config::remove_config_server(&name, &crate::config::config_path()) {
+            if source == Some(lmg_mcp::registry::Source::Config)
+                && !lmg_host::config::remove_config_server(&name, &lmg_host::config::config_path()) {
                     log::log(
                         "warn",
                         "config entry was already gone on delete",
@@ -1074,7 +1067,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             }
             admin_json(StatusCode::OK, json!({ "name": name, "deleted": true }))
         })
-        .put(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: crate::app::NodeBody| async move {
+        .put(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: crate::reply::NodeBody| async move {
             // Edit an MCP's config and restart it. Managed MCPs persist to managed.json;
             // config-file MCPs persist as an override (also managed.json), so the committed
             // gateway.config.json keeps its ${ENV} refs — an override stores the reference
@@ -1097,7 +1090,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
             };
             let source = entry.data.read().ok().map(|d| d.source);
-            let persist = if source == Some(crate::registry::Source::Config) {
+            let persist = if source == Some(lmg_mcp::registry::Source::Config) {
                 ctx.store.upsert_override(&name, def.clone())
             } else {
                 ctx.store.update_def(&name, def.clone())
@@ -1242,7 +1235,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .read_tool_history(
                         &name,
                         &tool,
-                        limit.unwrap_or(crate::calls::TOOL_HISTORY_MAX),
+                        limit.unwrap_or(lmg_mcp::calls::TOOL_HISTORY_MAX),
                         q.get("q").map(String::as_str),
                     )
                     .await;
@@ -1257,7 +1250,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // handed to the browser.
     r = r.route(
         "/api/mcps/{name}/call",
-        post(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: crate::app::NodeBody| async move {
+        post(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: crate::reply::NodeBody| async move {
             let Some(entry) = ctx.registry.get(&name) else {
                 return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
             };
@@ -1289,7 +1282,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                             "ok": !is_error,
                             "isError": is_error,
                             "ms": t0.elapsed().as_millis() as u64,
-                            "text": crate::calls::content_text(&out),
+                            "text": lmg_mcp::calls::content_text(&out),
                         }),
                     )
                 }
@@ -1310,7 +1303,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         post(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: crate::app::NodeBody| async move {
+             body: crate::reply::NodeBody| async move {
                 let Some(entry) = ctx.registry.get(&name) else {
                     return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
                 };
@@ -1353,7 +1346,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                                             .and_then(Value::as_str)
                                             .map(|b| {
                                                 let bytes =
-                                                    crate::util::to_hex(b.as_bytes()).len() / 2;
+                                                    lmg_core::util::to_hex(b.as_bytes()).len() / 2;
                                                 format!("[{bytes} bytes of binary]")
                                             })
                                             .unwrap_or_default()
@@ -1394,7 +1387,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         post(
             |State(ctx): State<Arc<AppContext>>,
              Path(name): Path<String>,
-             body: crate::app::NodeBody| async move {
+             body: crate::reply::NodeBody| async move {
                 let Some(entry) = ctx.registry.get(&name) else {
                     return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
                 };
@@ -1433,7 +1426,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // one.
     r = r.route(
         "/api/mcps/{name}/tools/{tool}",
-        post(|State(ctx): State<Arc<AppContext>>, Path((name, tool)): Path<(String, String)>, body: crate::app::NodeBody| async move {
+        post(|State(ctx): State<Arc<AppContext>>, Path((name, tool)): Path<(String, String)>, body: crate::reply::NodeBody| async move {
             let Some(entry) = ctx.registry.get(&name) else {
                 return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
             };

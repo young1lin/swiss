@@ -1,0 +1,36 @@
+[package]
+name = "lmg-host"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+lmg-core = { path = "../lmg-core" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "signal", "sync", "fs", "io-util", "process"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+async-trait = "0.1"
+thiserror = "2"
+anyhow = "1"
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
+futures-core = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+sha2 = "0.10"
+encoding_rs = { version = "0.8", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",               # KILL_ON_JOB_CLOSE subtree kill for spawned children
+] }
+
+[target.'cfg(not(windows))'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# test-utils pins the deterministic master key for this crate's own test binaries.
+lmg-core = { path = "../lmg-core", features = ["test-utils"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }

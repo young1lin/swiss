@@ -21,18 +21,16 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 
-use crate::adapters::HttpMcp;
-use crate::admin;
-use crate::auth;
-use crate::local_only::remote_request_reason;
-use crate::managed::ManagedStore;
-use crate::registry::{EntryInner, Lifecycle, Registry};
-use crate::token::TokenManager;
-use crate::traffic::record_traffic;
+use lmg_host::auth;
+use lmg_host::local_only::remote_request_reason;
+use lmg_host::managed::ManagedStore;
+use lmg_host::token::TokenManager;
+use lmg_mcp::adapters::HttpMcp;
+use lmg_mcp::registry::{EntryInner, Lifecycle, Registry};
+use lmg_mcp::traffic::record_traffic;
+use lmg_panel::admin;
 
-/// Max JSON request body accepted — `BODY_LIMIT` in the Node router. Enforced once, on the
-/// router, for every route (axum's DefaultBodyLimit).
-pub const BODY_LIMIT: usize = 2 * 1024 * 1024;
+// BODY_LIMIT comes in through the pub use below; a second private use would collide.
 
 /// Enough of the HTTP response body to parse a typical JSON-RPC reply whole; larger replies are
 /// previewed in the traffic log (the Node build's capture cap).
@@ -54,7 +52,7 @@ pub struct AppContext {
     /// The call log this app's adapters write and its admin API reads - one instance per
     /// app, threaded everywhere it is needed (the S2 instantiation: no process-global
     /// log directory, so two apps in one process never see each other's calls).
-    pub calls: Arc<crate::calls::CallLog>,
+    pub calls: Arc<lmg_mcp::calls::CallLog>,
     /// Name of the env var the token was seeded from. Safe to show in client configs.
     pub token_env: String,
     /// The port this instance listens on — import detection reads it to recognize entries that
@@ -63,7 +61,7 @@ pub struct AppContext {
     /// The read-only tunnel view the MCP admin API consults (details/rename/delete). Set once by
     /// the boot sequence after the tunnel manager comes up, before the listener accepts requests;
     /// None on a gateway with no tunnel subsystem mounted.
-    pub tunnel_links: std::sync::RwLock<Option<Arc<dyn crate::adminapi::TunnelLinks>>>,
+    pub tunnel_links: std::sync::RwLock<Option<Arc<dyn lmg_tunnels::TunnelLinks>>>,
     /// Signalled by POST /api/shutdown; the server's main loop selects on it and runs the
     /// graceful sequence (the Node build emitted SIGTERM at itself — there is no signal on
     /// Windows, so this channel IS the signal).
@@ -72,12 +70,12 @@ pub struct AppContext {
     /// `None` in compositions that predate the host (tests, the http adapter's import probe):
     /// every host-dependent guard treats absence as "no plugin gating", which is exactly the
     /// pre-host behavior.
-    pub plugin_host: std::sync::OnceLock<Arc<crate::host::PluginHost>>,
+    pub plugin_host: std::sync::OnceLock<Arc<lmg_host::host::PluginHost>>,
     /// The connection catalog the /api/db routes lease through (docs/12 W3). Set once by
     /// the boot sequence from RuntimeServices — the SAME instance the MCP plugin
     /// registers into — before the listener accepts requests. Absent in compositions that
     /// mount no Data plugin: /api/db then answers an honest 503 rather than pretending.
-    pub catalog: std::sync::OnceLock<Arc<crate::services::catalog::CatalogRegistry>>,
+    pub catalog: std::sync::OnceLock<Arc<lmg_host::services::catalog::CatalogRegistry>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -86,7 +84,7 @@ impl AppContext {
         registry: Arc<Registry>,
         tokens: Arc<TokenManager>,
         store: Arc<ManagedStore>,
-        calls: Arc<crate::calls::CallLog>,
+        calls: Arc<lmg_mcp::calls::CallLog>,
         token_env: impl Into<String>,
         port: u16,
     ) -> Arc<Self> {
@@ -183,71 +181,21 @@ pub fn json_rpc_error(status: StatusCode, message: &str) -> Response {
     (status, Json(body)).into_response()
 }
 
-/// An admin-route error: `{error}`.
-pub fn admin_error(status: StatusCode, message: &str) -> Response {
-    (status, Json(json!({ "error": message }))).into_response()
-}
-
-pub fn admin_json(status: StatusCode, body: Value) -> Response {
-    (status, Json(body)).into_response()
-}
-
-/// The request body the Node router handed every handler: parsed JSON, or nothing when the client
-/// sent no bytes (`undefined` there, [`Value::Null`] here — `Value::get` reads both the same).
-/// A body that IS present but does not parse is refused before the handler runs, in Node's shape:
-/// `readJsonBody` rejected `{error: "invalid JSON body: …"}` with a 400, and a body over
-/// BODY_LIMIT rejected 413 `request body exceeds N bytes`.
-///
-/// Unlike axum's `Json` extractor this ignores Content-Type — Node parsed the bytes whatever
-/// header the client sent (or none), and the panel sometimes posts without it.
-pub struct NodeBody(pub Value);
-
-pub struct NodeBodyRejection(Response);
-
-impl IntoResponse for NodeBodyRejection {
-    fn into_response(self) -> Response {
-        self.0
-    }
-}
-
-impl<S: Send + Sync> axum::extract::FromRequest<S> for NodeBody {
-    type Rejection = NodeBodyRejection;
-
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let bytes = axum::body::Bytes::from_request(req, state)
-            .await
-            .map_err(|_| {
-                // Bytes::from_request fails for one reason: the router's body limit.
-                NodeBodyRejection(admin_error(
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    &format!("request body exceeds {BODY_LIMIT} bytes"),
-                ))
-            })?;
-        if bytes.is_empty() {
-            return Ok(NodeBody(Value::Null));
-        }
-        match serde_json::from_slice::<Value>(&bytes) {
-            Ok(value) => Ok(NodeBody(value)),
-            Err(err) => Err(NodeBodyRejection(admin_error(
-                StatusCode::BAD_REQUEST,
-                &format!("invalid JSON body: {err}"),
-            ))),
-        }
-    }
-}
+pub use crate::reply::BODY_LIMIT;
+pub use crate::reply::{admin_error, admin_json, NodeBody, NodeBodyRejection};
 
 /// The MCP client catch-all cannot be matched by the boundary's static prefixes (one segment
 /// naming a hosted MCP), so the handlers consult the host directly. Absent host — the
 /// pre-host compositions (tests, the import probe) — means no gating, exactly as before.
 fn plugin_client_guard(ctx: &AppContext) -> Option<Response> {
     let host = ctx.plugin_host.get()?;
-    crate::host::api::client_path_guard(host)
+    lmg_host::host::api::client_path_guard(host)
 }
 
 /// The bearer gate. Runs BEFORE the request body is read: an MCP POST can carry up to BODY_LIMIT
 /// and none of it needs to be read to know the caller cannot be served. The matched token is
 /// returned so the call log and the traffic log can attribute the request to the client.
-fn verify_bearer(ctx: &AppContext, headers: &HeaderMap) -> Option<crate::token::TokenRec> {
+fn verify_bearer(ctx: &AppContext, headers: &HeaderMap) -> Option<lmg_host::token::TokenRec> {
     let presented = auth::bearer_secret(
         headers
             .get(header::AUTHORIZATION)
@@ -283,7 +231,7 @@ async fn loopback_guard(State(ctx): State<Arc<AppContext>>, req: Request, next: 
     match remote_request_reason(Some(peer.as_str()), host.as_deref(), origin.as_deref()) {
         None => next.run(req).await,
         Some(reason) => {
-            crate::log::warn(
+            lmg_core::log::warn(
                 "refused a non-local request",
                 Some(
                     json!({ "reason": reason, "method": req.method().as_str(), "url": req.uri().path() }),
@@ -417,7 +365,7 @@ async fn mcp_post(
     // Every request this gateway answers runs attributed to the client that made it, so the call
     // log and the traffic log can tell clients apart (with_call_client scopes the task-local the
     // tool handlers read).
-    let response = crate::calls::with_call_client_mcp(client.label.clone(), async {
+    let response = lmg_mcp::calls::with_call_client_mcp(client.label.clone(), async {
         handler.handle(forwarded).await
     })
     .await;
@@ -455,7 +403,7 @@ async fn mcp_post(
         t0.elapsed().as_millis() as u64,
         Some(&String::from_utf8_lossy(&captured_prefix)),
     );
-    crate::log::log(
+    lmg_core::log::log(
         "info",
         "request",
         Some(
@@ -477,8 +425,8 @@ pub(crate) async fn fallback_404(req: Request) -> Response {
 
 /// The `/api/plugins` tree with this build's 404-for-a-wrong-method rule applied, so the
 /// management routes answer like every other admin route rather than axum's default 405.
-fn host_api_tree(host: Arc<crate::host::PluginHost>) -> Router<()> {
-    crate::host::api::mount(host).method_not_allowed_fallback(fallback_404)
+fn host_api_tree(host: Arc<lmg_host::host::PluginHost>) -> Router<()> {
+    lmg_host::host::api::mount(host).method_not_allowed_fallback(fallback_404)
 }
 
 /// Build the gateway router. The caller serves it with
@@ -507,7 +455,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
     let guard_ctx = ctx.clone();
     let plugin_host = ctx.plugin_host.get().cloned();
     let boundary = plugin_host.as_ref().map(|host| {
-        middleware::from_fn_with_state(host.clone(), crate::host::api::plugin_boundary)
+        middleware::from_fn_with_state(host.clone(), lmg_host::host::api::plugin_boundary)
     });
     // The host's own management surface travels with the extra tree: same loopback guard,
     // same body limit. It stays reachable while every plugin is down — no plugin may claim a
@@ -523,15 +471,16 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         .route("/admin/{*path}", get(panel_asset))
         .route("/health", get(health))
         .route("/health/check", get(health_check))
-        .merge(crate::dbbrowser_api::dbbrowser_router::<Arc<AppContext>>(
-            // The W3 seam (docs/12): /api/db leases through the connection catalog the MCP
-            // plugin provides. Compositions that never set one (no Data plugin mounted)
-            // get an empty registry — every route then answers the honest 503.
-            ctx.catalog
-                .get()
-                .cloned()
-                .unwrap_or_else(|| Arc::new(crate::services::catalog::CatalogRegistry::new())),
-        ))
+        .merge(
+            lmg_data::dbbrowser_api::dbbrowser_router::<Arc<AppContext>>(
+                // The W3 seam (docs/12): /api/db leases through the connection catalog the MCP
+                // plugin provides. Compositions that never set one (no Data plugin mounted)
+                // get an empty registry — every route then answers the honest 503.
+                ctx.catalog.get().cloned().unwrap_or_else(|| {
+                    Arc::new(lmg_host::services::catalog::CatalogRegistry::new())
+                }),
+            ),
+        )
         .merge(crate::adminapi::mount(ctx.clone()))
         // Before the MCP catch-all, which would otherwise swallow /api/tunnels.
         .merge(mcp_routes)

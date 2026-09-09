@@ -1,45 +1,21 @@
-//! The Rust port of `local-mcp-gateway` (the Node original at `../local-mcp-gateway` is the
-//! reference implementation). The module layout mirrors docs/02.
+//! The composition crate: the app skeleton, the MCP admin API, the server bootstrap, the CLI
+//! and daemon, and the built-in plugin instances that glue the subsystem crates together. This
+//! is the ONLY crate allowed to see every crate — which is what "plugin crates never depend on
+//! each other" (docs/09) buys: composition is a file, not a graph.
 
-pub mod adapters;
-pub mod admin;
 pub mod adminapi;
 pub mod app;
-pub mod atomic_json;
-pub mod auth;
 pub mod bootstrap;
-pub mod calls;
+pub mod builtin;
 pub mod cli;
-pub mod config;
-pub mod config_store;
 pub mod daemon;
-pub mod dbbrowser;
-pub mod dbbrowser_api;
-pub mod host;
-pub mod introspect;
-pub mod jobs;
-pub mod local_only;
-pub mod log;
-pub mod managed;
-pub mod mask;
-pub mod mcp_import;
 pub mod mcp_link;
-pub mod mem;
-pub mod paging;
-pub mod pathenv;
-pub mod paths;
 pub mod pidfile;
-pub mod platform;
 pub mod plugins;
 pub mod port;
-pub mod proc_pids;
-pub mod registry;
-pub mod secure;
 pub mod server;
-pub mod services;
 pub mod skill_install;
 pub mod subsystems;
-pub mod token;
-pub mod traffic;
-pub mod tunnel;
-pub mod util;
+
+#[doc(inline)]
+pub use lmg_host::reply;

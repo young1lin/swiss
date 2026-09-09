@@ -9,9 +9,9 @@
 
 use serde_json::Value;
 
-use crate::atomic_json::write_json_atomic;
-use crate::paths::{data_dir, data_path};
-use crate::platform::pid_alive;
+use lmg_core::atomic_json::write_json_atomic;
+use lmg_core::paths::{data_dir, data_path};
+use lmg_core::platform::pid_alive;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PidRecord {
@@ -129,8 +129,8 @@ mod tests {
     /// so the tests that write one take this first and leave the dir as they found it. The lock is
     /// the data dir's, not this module's: the daemon tests plant pid files in the same directory.
     fn pid_dir() -> tokio::sync::MutexGuard<'static, ()> {
-        let guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
-        crate::paths::test_home();
+        let guard = lmg_core::paths::DATA_DIR_LOCK.blocking_lock();
+        lmg_core::paths::test_home();
         sweep();
         guard
     }
@@ -164,7 +164,7 @@ mod tests {
     fn lives_in_the_data_dir_named_by_port() {
         // Named by port, and kept in the data dir rather than beside the config: `lmg status` has
         // to find a running daemon from any cwd, and the port is what tells two instances apart.
-        let home = crate::paths::test_home();
+        let home = lmg_core::paths::test_home();
         assert_eq!(pid_file_path(19999), home.join("gateway-19999.pid"));
         assert_eq!(log_file_path(19999), home.join("gateway-19999.log"));
     }
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn lists_the_ports_with_a_pid_file_sorted_ignoring_everything_else_in_the_dir() {
         let _lock = pid_dir();
-        let home = crate::paths::test_home();
+        let home = lmg_core::paths::test_home();
         write_pid_file(&rec(19995));
         write_pid_file(&rec(8080));
         std::fs::write(home.join("managed.json"), "{}").expect("write");

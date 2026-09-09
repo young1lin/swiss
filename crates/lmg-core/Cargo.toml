@@ -1,0 +1,44 @@
+[features]
+# Cross-crate test support only (see secure::key::use_test_master_key); dev-dependencies
+# activate it, a normal build never does.
+test-utils = []
+
+[package]
+name = "lmg-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+# Only for DATA_DIR_LOCK under the test-utils feature (dev-dependencies activate it); sync
+# alone, and tokio is already in the graph through every consumer.
+tokio = { version = "1", default-features = false, features = ["sync"] }
+thiserror = "2"
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+# RFC3339 timestamps for the gateway's own logging — chrono appears only under sqlx, in lmg-mcp.
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
+rand = "0.8"
+# The sealed-envelope format (docs/05 §1) — frozen, byte-identical to the Node build.
+hkdf = "0.12"
+sha2 = "0.10"
+aes-gcm = "0.10"
+# Pinned to rmcp's own base64 major so the graph holds ONE copy (cargo tree -d stays clean).
+base64 = "0.23"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",           # DPAPI, replacing the powershell spawn
+    "Win32_System_Registry",                 # MachineGuid, direct registry read
+    "Win32_System_Threading",                # process-tree walk + open-process
+    "Win32_System_JobObjects",               # KILL_ON_JOB_CLOSE subtree kill for proc children
+    "Win32_System_Diagnostics_ToolHelp",     # Toolhelp32 snapshot, replacing the other powershell spawn
+    "Win32_System_ProcessStatus",            # GetProcessMemoryInfo for the memory view
+] }
+
+[target.'cfg(not(windows))'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }

@@ -9,12 +9,12 @@ use axum::http::{header, Request, StatusCode};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use local_mcp_gateway::adapters::make_adapter;
-use local_mcp_gateway::app::{build_app, AppContext, BODY_LIMIT};
-use local_mcp_gateway::config::ServerDef;
-use local_mcp_gateway::managed::ManagedStore;
-use local_mcp_gateway::registry::{Registry, Source};
-use local_mcp_gateway::token::single_token_manager;
+use lmg_mcp::adapters::make_adapter;
+use lmg::app::{build_app, AppContext, BODY_LIMIT};
+use lmg_host::config::ServerDef;
+use lmg_host::managed::ManagedStore;
+use lmg_mcp::registry::{Registry, Source};
+use lmg_host::token::single_token_manager;
 
 const TOKEN: &str = "test-token-0123456789abcdef";
 
@@ -28,9 +28,9 @@ fn echo_def() -> ServerDef {
 async fn app_with_echo() -> axum::Router {
     let scratch = std::env::temp_dir().join(format!(
         "lmg-app-{}",
-        local_mcp_gateway::util::random_hex(8)
+        lmg_core::util::random_hex(8)
     ));
-    let calls = Arc::new(local_mcp_gateway::calls::CallLog::at(scratch.join("calls")));
+    let calls = Arc::new(lmg_mcp::calls::CallLog::at(scratch.join("calls")));
     let registry = Registry::new(3_600_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));
     let adapter = make_adapter(&echo_def(), "echo", &calls).expect("echo adapter");
@@ -342,7 +342,7 @@ async fn mcp_endpoint_serves_a_real_client() {
     .auth_header(TOKEN);
     let transport = StreamableHttpClientTransport::with_client(reqwest::Client::new(), config);
     let client = rmcp::service::serve_client(
-        local_mcp_gateway::introspect::GatewayIntrospectClient,
+        lmg_mcp::introspect::GatewayIntrospectClient,
         transport,
     )
     .await

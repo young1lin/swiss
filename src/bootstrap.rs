@@ -9,14 +9,14 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
-use crate::log;
-use crate::paths::{data_path, env_listen_port, DEFAULT_PORT};
-use crate::platform::{chmod_private, mkdir_private, private_file_mode, PRIVATE_DIR_MODE};
-use crate::secure::envstore::{
+use lmg_core::log;
+use lmg_core::paths::{data_path, env_listen_port, DEFAULT_PORT};
+use lmg_core::platform::{chmod_private, mkdir_private, private_file_mode, PRIVATE_DIR_MODE};
+use lmg_core::secure::envstore::{
     env_store_path, parse_env_text, read_env_store, set_env_default, write_env_store,
 };
-use crate::secure::statefile::{read_secure_json, write_secure_json};
-use crate::util::random_hex;
+use lmg_core::secure::statefile::{read_secure_json, write_secure_json};
+use lmg_core::util::random_hex;
 
 fn seed_config() -> Value {
     json!({
@@ -109,7 +109,7 @@ pub fn ensure_first_run() -> FirstRunReport {
 /// always passes the process's working directory; the tests pass a scratch dir, so no run of the
 /// suite can ever reach a real project's .env.
 fn ensure_first_run_from(repo: &Path) -> FirstRunReport {
-    let dir = crate::paths::data_dir();
+    let dir = lmg_core::paths::data_dir();
     let created = !dir.exists();
     mkdir_private(&dir);
 
@@ -218,12 +218,12 @@ mod tests {
 
     impl Sandbox {
         fn new() -> Self {
-            let lock = crate::paths::DATA_DIR_LOCK.blocking_lock();
+            let lock = lmg_core::paths::DATA_DIR_LOCK.blocking_lock();
             // Pin the key before anything seals, so no test here depends on DPAPI or on which
             // other test happened to install it first.
-            crate::secure::key::use_test_master_key();
+            lmg_core::secure::key::use_test_master_key();
             // Initialise the shared home now, so the restore in Drop has somewhere to go back to.
-            crate::paths::test_home();
+            lmg_core::paths::test_home();
             let base = std::env::temp_dir().join(format!("lmg-bootstrap-{}", random_hex(8)));
             let repo = base.join("repo");
             std::fs::create_dir_all(&repo).expect("create the scratch repo");
@@ -260,7 +260,7 @@ mod tests {
 
     impl Drop for Sandbox {
         fn drop(&mut self) {
-            unsafe { std::env::set_var("MCP_GATEWAY_HOME", crate::paths::test_home()) };
+            unsafe { std::env::set_var("MCP_GATEWAY_HOME", lmg_core::paths::test_home()) };
             unsafe { std::env::remove_var("MCP_GATEWAY_PORT") };
             let _ = std::fs::remove_dir_all(&self.base);
         }
@@ -332,9 +332,13 @@ mod tests {
         // Without this gate, ANY directory's .env — a random project full of database passwords —
         // would be pulled into the gateway's store.
         assert!(looks_like_gateway_env("MCP_GATEWAY_TOKEN=abc\n"));
-        assert!(looks_like_gateway_env("# header\n  MCP_GATEWAY_TOKEN=abc\n"));
+        assert!(looks_like_gateway_env(
+            "# header\n  MCP_GATEWAY_TOKEN=abc\n"
+        ));
         assert!(looks_like_gateway_env("DB_URL=x\nMCP_GATEWAY_TOKEN=abc"));
-        assert!(!looks_like_gateway_env("DB_PASSWORD=hunter2\nAWS_SECRET=x\n"));
+        assert!(!looks_like_gateway_env(
+            "DB_PASSWORD=hunter2\nAWS_SECRET=x\n"
+        ));
         assert!(!looks_like_gateway_env("# MCP_GATEWAY_TOKEN=abc\n"));
         assert!(!looks_like_gateway_env("XMCP_GATEWAY_TOKEN=abc\n"));
         assert!(!looks_like_gateway_env("MCP_GATEWAY_TOKENS=abc\n"));
@@ -347,7 +351,9 @@ mod tests {
             &json!({ "tokenEnv": "T", "servers": {} })
         ));
         assert!(!looks_like_gateway_config_shape(&json!({ "servers": {} })));
-        assert!(!looks_like_gateway_config_shape(&json!({ "tokenEnv": "T" })));
+        assert!(!looks_like_gateway_config_shape(
+            &json!({ "tokenEnv": "T" })
+        ));
         assert!(!looks_like_gateway_config_shape(&json!({})));
         assert!(!looks_like_gateway_config_shape(&json!("not an object")));
     }
@@ -362,7 +368,10 @@ mod tests {
 
         assert!(report.migrated);
         let env = sb.env();
-        assert_eq!(env.get("MCP_GATEWAY_TOKEN").map(String::as_str), Some("abc123"));
+        assert_eq!(
+            env.get("MCP_GATEWAY_TOKEN").map(String::as_str),
+            Some("abc123")
+        );
         assert_eq!(env.get("DB_PASSWORD").map(String::as_str), Some("hunter2"));
         // The adopted token is not "new" — this run did not generate it.
         assert_eq!(report.new_token, None);
@@ -404,7 +413,10 @@ mod tests {
 
         let report = sb.boot();
         assert!(report.migrated);
-        assert_eq!(sb.env().get("MCP_GATEWAY_TOKEN").map(String::as_str), Some("abc123"));
+        assert_eq!(
+            sb.env().get("MCP_GATEWAY_TOKEN").map(String::as_str),
+            Some("abc123")
+        );
         assert_eq!(sb.config()["servers"]["mine"]["type"], json!("echo"));
     }
 
