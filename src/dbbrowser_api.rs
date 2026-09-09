@@ -7,24 +7,22 @@
 //! because for someone staring at a grid the driver's "Data too long for column 'x'" IS the
 //! useful answer.
 //!
-//! # The resolver seam
+//! # The catalog seam (docs/12 W3)
 //!
-//! Node's `mountDbBrowseApi(r, registry)` reached each adapter through the registry:
-//! `registry.get(name).adapter.dbBrowser?.()`, with `redisBrowser?.()` and `mongoBrowser?.()` as
-//! the next choices. The Rust `Adapter` trait does not (yet) carry those accessors, so this
-//! router takes a [`BrowseResolver`] closure instead — the app must supply one that maps the
-//! live registry onto [`BrowsableConnection`] rows:
+//! Node's `mountDbBrowseApi(r, registry)` reached each adapter through the registry; the Rust
+//! port first replaced that with a resolver closure over the live registry. W3 removes the
+//! last coupling: this router leases through the [`CatalogRegistry`] the MCP plugin
+//! registers into — Data no longer knows who holds the connections, only that a provider
+//! must exist:
 //!
-//! - one row per REGISTERED MCP (browsable or not), so the 404s can name the adapter type the
-//!   way Node's did ("MCP 'x' (echo) has no database to browse");
-//! - `browser` picks the FIRST flavor the adapter offers in Node's priority order —
-//!   db, then redis, then mongo — or [`BrowserFlavor::None`] when it offers none;
-//! - `state` is Node's `stateOf(entry)`: the lifecycle string, or the health status once the
-//!   entry has started (see adminapi's sidebar rows for the same rule).
-//!
-//! Once the adapters implement [`crate::dbbrowser::DbBrowser`] /
-//! [`crate::dbbrowser::RedisBrowser`] / [`crate::dbbrowser::MongoBrowser`] and the registry
-//! exposes them, the closure becomes a trivial mapping in app.rs.
+//! - every handler takes a REQUEST-SCOPED [`ConnectionLease`] and holds it until the browser
+//!   call completes; that scope is exactly what a draining provider waits on before closing
+//!   pools, so "disable MCP" can never yank a page out from under an open request;
+//! - no provider (MCP disabled) answers a 503 that NAMES who is missing — "the mcp plugin
+//!   provides database connections and is currently disabled" — instead of an empty list
+//!   that would read as "you have none";
+//! - the old 404 contracts survive verbatim: "unknown MCP: {name}" and "MCP 'x' (echo)
+//!   has no database to browse" now come from the provider side of the catalog.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -40,6 +38,7 @@ use serde_json::{json, Map, Value};
 use crate::app::{admin_error, admin_json};
 use crate::dbbrowser::{js_to_string, DbBrowser, MongoBrowser, RedisBrowser};
 use crate::log;
+use crate::services::catalog::{CatalogError, CatalogPresence, CatalogRegistry, ConnectionLease};
 
 /// The browser flavor one registered MCP exposes.
 pub enum BrowserFlavor {
@@ -51,47 +50,29 @@ pub enum BrowserFlavor {
     None,
 }
 
-/// One registered MCP as the resolver seam hands it over (see the module doc).
-pub struct BrowsableConnection {
-    pub name: String,
-    /// The adapter's type string — Node's `entry.adapter.type`, used in 404 messages.
-    pub adapter_type: String,
-    /// `stateOf(entry)` — the lifecycle string, or the health status once started.
-    pub state: String,
-    pub browser: BrowserFlavor,
-}
-
-/// How the /api/db routes reach the registry: one call, every registered entry, browsable or
-/// not. Cheap to call per request (the Node build walked `registry.all()` per request too).
-pub type BrowseResolver = Arc<dyn Fn() -> Vec<Arc<BrowsableConnection>> + Send + Sync>;
-
 /// One browsable-connection row: everything the panel's picker needs, nothing secret. The
-/// redis flavour rides the same list with dialect "redis" and editable false (the key browser
-/// is read-only by design; writes go through the MCP's redis_command tool).
-pub fn browsable_connections(resolver: &BrowseResolver) -> Vec<Value> {
-    let mut rows: Vec<(String, Value)> = resolver()
-        .iter()
+/// redis and mongo flavours ride the same list with editable false (the key and document
+/// browsers are read-only by design; writes go through the MCP's own tools).
+pub fn browsable_connections(catalog: &CatalogRegistry) -> Vec<Value> {
+    let mut rows: Vec<(String, Value)> = catalog
+        .list()
+        .into_iter()
         .filter_map(|c| {
-            let (dialect, label, readonly, editable) = match &c.browser {
-                BrowserFlavor::Db(db) => (
-                    db.dialect().as_str().to_string(),
-                    db.label(),
-                    db.readonly(),
-                    true,
-                ),
-                BrowserFlavor::Redis(rb) => ("redis".to_string(), rb.label(), rb.readonly(), false),
-                BrowserFlavor::Mongo(mb) => ("mongo".to_string(), mb.label(), mb.readonly(), false),
-                BrowserFlavor::None => return None,
-            };
+            // "none" = registered but nothing to browse (echo / proc / http / rest): GET
+            // /api/db skips these rows; the lookups still see them so 404s can name the type.
+            if c.dialect == "none" {
+                return None;
+            }
+            let editable = !matches!(c.dialect.as_str(), "redis" | "mongo");
             let row = json!({
-                "name": c.name,
-                "dialect": dialect,
-                "label": label,
-                "readonly": readonly,
+                "name": c.id,
+                "dialect": c.dialect,
+                "label": c.label,
+                "readonly": c.readonly,
                 "state": c.state,
                 "editable": editable,
             });
-            Some((c.name.clone(), row))
+            Some((c.id, row))
         })
         .collect();
     // Node's `(a.name < b.name ? -1 : a.name > b.name ? 1 : 0)` sort — plain name order.
@@ -173,59 +154,118 @@ fn parse_filters(raw: Option<&String>) -> Result<Option<Value>, Fail> {
     Ok(Some(parsed))
 }
 
-// --- resolver lookups ---------------------------------------------------------------------------
+// --- catalog lookups -----------------------------------------------------------------------------
 
-fn find(resolver: &BrowseResolver, name: &str) -> Result<Arc<BrowsableConnection>, Fail> {
-    resolver()
-        .iter()
-        .find(|c| c.name == name)
-        .cloned()
-        .ok_or_else(|| Fail {
+/// Map a catalog refusal onto the HTTP contract: unknown and not-browsable keep Node's 404
+/// messages (now produced provider-side), a withdrawing provider is a 503.
+fn lease_fail(err: CatalogError) -> Fail {
+    match err {
+        CatalogError::Unknown(m) | CatalogError::NotBrowsable(m) => Fail {
             status: StatusCode::NOT_FOUND,
-            message: format!("unknown MCP: {name}"),
-        })
+            message: m,
+        },
+        CatalogError::Withdrawing(m) => Fail {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: m,
+        },
+    }
 }
 
-fn browser_of(resolver: &BrowseResolver, name: &str) -> Result<Arc<dyn DbBrowser>, Fail> {
-    let entry = find(resolver, name)?;
-    match &entry.browser {
-        BrowserFlavor::Db(db) => Ok(db.clone()),
-        _ => Err(Fail {
-            status: StatusCode::NOT_FOUND,
+/// The catalog-wide 503 (docs/12 W3): no provider is NOT "zero connections". The message
+/// names who is missing — "the mcp plugin provides database connections and is currently
+/// disabled" — so disabling MCP reads as a consequence, not as an empty toolbox.
+fn catalog_guard(catalog: &CatalogRegistry) -> Result<(), Fail> {
+    match catalog.presence() {
+        CatalogPresence::Serving(_) => Ok(()),
+        CatalogPresence::Stopping(id) => Err(Fail {
+            status: StatusCode::SERVICE_UNAVAILABLE,
             message: format!(
-                "MCP '{}' ({}) has no database to browse",
-                name, entry.adapter_type
+                "the {id} plugin is stopping; database browsing is momentarily unavailable"
             ),
+        }),
+        CatalogPresence::Absent(Some(id)) => Err(Fail {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: format!(
+                "the {id} plugin provides database connections and is currently disabled"
+            ),
+        }),
+        CatalogPresence::Absent(None) => Err(Fail {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "no plugin provides the connection catalog; database browsing is unavailable"
+                .to_string(),
         }),
     }
 }
 
-fn mongo_of(resolver: &BrowseResolver, name: &str) -> Result<Arc<dyn MongoBrowser>, Fail> {
-    let entry = find(resolver, name)?;
-    match &entry.browser {
-        BrowserFlavor::Mongo(mb) => Ok(mb.clone()),
-        _ => Err(Fail {
-            status: StatusCode::NOT_FOUND,
-            message: format!(
-                "MCP '{}' ({}) is not a mongo connection",
-                name, entry.adapter_type
-            ),
-        }),
-    }
+/// Lease one connection as "data" for the life of the request and pull its SQL browser. The
+/// returned LEASE is the point (docs/12 W3): callers keep it in scope until the browser call
+/// completes — that scope is exactly what a draining provider waits on, so no pool closes
+/// under a live page. The dialect string in the mismatch message is Node's adapter type for
+/// every real dialect (mysql/pg/redis/mongo), so the 404 text survives the seam change.
+fn lease_db(
+    catalog: &CatalogRegistry,
+    name: &str,
+) -> Result<(ConnectionLease, Arc<dyn DbBrowser>), Fail> {
+    catalog_guard(catalog)?;
+    let lease = catalog.lease(name, "data").map_err(lease_fail)?;
+    let browser = match lease.flavor() {
+        BrowserFlavor::Db(db) => db.clone(),
+        _ => {
+            return Err(Fail {
+                status: StatusCode::NOT_FOUND,
+                message: format!(
+                    "MCP '{}' ({}) has no database to browse",
+                    name,
+                    lease.dialect()
+                ),
+            })
+        }
+    };
+    Ok((lease, browser))
 }
 
-fn redis_of(resolver: &BrowseResolver, name: &str) -> Result<Arc<dyn RedisBrowser>, Fail> {
-    let entry = find(resolver, name)?;
-    match &entry.browser {
-        BrowserFlavor::Redis(rb) => Ok(rb.clone()),
-        _ => Err(Fail {
-            status: StatusCode::NOT_FOUND,
-            message: format!(
-                "MCP '{}' ({}) is not a redis connection",
-                name, entry.adapter_type
-            ),
-        }),
-    }
+fn lease_mongo(
+    catalog: &CatalogRegistry,
+    name: &str,
+) -> Result<(ConnectionLease, Arc<dyn MongoBrowser>), Fail> {
+    catalog_guard(catalog)?;
+    let lease = catalog.lease(name, "data").map_err(lease_fail)?;
+    let browser = match lease.flavor() {
+        BrowserFlavor::Mongo(mb) => mb.clone(),
+        _ => {
+            return Err(Fail {
+                status: StatusCode::NOT_FOUND,
+                message: format!(
+                    "MCP '{}' ({}) is not a mongo connection",
+                    name,
+                    lease.dialect()
+                ),
+            })
+        }
+    };
+    Ok((lease, browser))
+}
+
+fn lease_redis(
+    catalog: &CatalogRegistry,
+    name: &str,
+) -> Result<(ConnectionLease, Arc<dyn RedisBrowser>), Fail> {
+    catalog_guard(catalog)?;
+    let lease = catalog.lease(name, "data").map_err(lease_fail)?;
+    let browser = match lease.flavor() {
+        BrowserFlavor::Redis(rb) => rb.clone(),
+        _ => {
+            return Err(Fail {
+                status: StatusCode::NOT_FOUND,
+                message: format!(
+                    "MCP '{}' ({}) is not a redis connection",
+                    name,
+                    lease.dialect()
+                ),
+            })
+        }
+    };
+    Ok((lease, browser))
 }
 
 fn reply(out: Result<Value, Fail>) -> Response {
@@ -238,11 +278,11 @@ fn reply(out: Result<Value, Fail>) -> Response {
 // --- handler bodies ------------------------------------------------------------------------------
 
 async fn tables(
-    resolver: &BrowseResolver,
+    catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Value, Fail> {
-    let b = browser_of(resolver, name)?;
+    let (_lease, b) = lease_db(catalog, name)?;
     let mut o = Map::new();
     if let Some(grep) = q_non_empty(q, "grep") {
         o.insert("grep".into(), grep);
@@ -257,11 +297,11 @@ async fn tables(
 }
 
 async fn data(
-    resolver: &BrowseResolver,
+    catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Value, Fail> {
-    let b = browser_of(resolver, name)?;
+    let (_lease, b) = lease_db(catalog, name)?;
     let mut o = Map::new();
     o.insert("table".into(), json!(q_or_empty(q, "table")));
     if let Some(schema) = q_non_empty(q, "schema") {
@@ -288,11 +328,11 @@ async fn data(
 }
 
 async fn schema(
-    resolver: &BrowseResolver,
+    catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Value, Fail> {
-    let b = browser_of(resolver, name)?;
+    let (_lease, b) = lease_db(catalog, name)?;
     let mut o = Map::new();
     o.insert("table".into(), json!(q_or_empty(q, "table")));
     if let Some(schema) = q_non_empty(q, "schema") {
@@ -304,11 +344,11 @@ async fn schema(
 /// Whole-table export as a download (CSV or newline-JSON), capped at EXPORT_ROW_CAP rows. The
 /// capped flag rides along as a header so the panel can warn without parsing the body.
 async fn export(
-    resolver: &BrowseResolver,
+    catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Response, Fail> {
-    let b = browser_of(resolver, name)?;
+    let (_lease, b) = lease_db(catalog, name)?;
     let format = if q.get("format").map(String::as_str) == Some("json") {
         "json"
     } else {
@@ -379,8 +419,8 @@ fn str_array(v: Option<&Value>) -> Option<&Vec<Value>> {
         .filter(|a| !a.is_empty() && a.iter().all(|x| x.is_string()))
 }
 
-async fn import(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<Value, Fail> {
-    let b = browser_of(resolver, name)?;
+async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
     let header = str_array(body.get("header"));
     let lines = str_array(body.get("lines"));
     if header.is_none() {
@@ -433,8 +473,8 @@ async fn import(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<V
 /// Structure operations: rename / truncate / drop. Destructive by nature — the readonly
 /// refusal happens inside the adapter, and the panel additionally demands a typed
 /// confirmation before it ever posts here.
-async fn ddl(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<Value, Fail> {
-    let b = browser_of(resolver, name)?;
+async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
     let op = body.get("op").and_then(Value::as_str);
     let op_ok = op.is_some_and(|op| op == "rename" || op == "truncate" || op == "drop");
     if !op_ok {
@@ -465,8 +505,8 @@ async fn ddl(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<Valu
 
 /// The read-only SQL console. The browser itself enforces read-only-ness; the route just
 /// forwards, so the rule cannot drift between transport and model.
-async fn query(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<Value, Fail> {
-    let b = browser_of(resolver, name)?;
+async fn query(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
     let sql = coerced_str(body, "sql");
     if sql.trim().is_empty() {
         return Err(Fail::bad("sql is required"));
@@ -478,8 +518,8 @@ async fn query(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<Va
 
 /// Commit a buffered edit list. ALL statements run in one transaction on one connection —
 /// the first failure rolls the whole batch back, so the grid never half-applies.
-async fn edits(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<Value, Fail> {
-    let b = browser_of(resolver, name)?;
+async fn edits(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
     let Some(edit_list) = body
         .get("edits")
         .and_then(Value::as_array)
@@ -511,11 +551,11 @@ async fn edits(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<Va
 // --- the mongo collection browser (same /api/db namespace; dialect "mongo") ------------------------
 
 async fn collections(
-    resolver: &BrowseResolver,
+    catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Value, Fail> {
-    let mb = mongo_of(resolver, name)?;
+    let (_lease, mb) = lease_mongo(catalog, name)?;
     let mut o = Map::new();
     if let Some(grep) = q_non_empty(q, "grep") {
         o.insert("grep".into(), grep);
@@ -528,11 +568,11 @@ async fn collections(
 }
 
 async fn docs(
-    resolver: &BrowseResolver,
+    catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Value, Fail> {
-    let mb = mongo_of(resolver, name)?;
+    let (_lease, mb) = lease_mongo(catalog, name)?;
     let mut o = Map::new();
     o.insert("collection".into(), json!(q_or_empty(q, "collection")));
     if let Some(filter) = q_non_empty(q, "filter") {
@@ -552,11 +592,11 @@ async fn docs(
 // --- the redis key browser (same /api/db namespace; dialect "redis") ------------------------------
 
 async fn keys(
-    resolver: &BrowseResolver,
+    catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Value, Fail> {
-    let rb = redis_of(resolver, name)?;
+    let (_lease, rb) = lease_redis(catalog, name)?;
     let mut o = Map::new();
     if let Some(pattern) = q_non_empty(q, "pattern") {
         o.insert("pattern".into(), pattern);
@@ -575,8 +615,8 @@ async fn keys(
 
 /// The redis command console: ONE command per call, validated by the adapter guard
 /// (readonly, no KEYS, no connection/server-breaking commands) before the socket is touched.
-async fn command(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<Value, Fail> {
-    let rb = redis_of(resolver, name)?;
+async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, rb) = lease_redis(catalog, name)?;
     let line = coerced_str(body, "command");
     if line.trim().is_empty() {
         return Err(Fail::bad("command is required"));
@@ -587,11 +627,11 @@ async fn command(resolver: &BrowseResolver, name: &str, body: &Value) -> Result<
 
 /// One key, read type-aware (the shape redis_read returns).
 async fn key(
-    resolver: &BrowseResolver,
+    catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Value, Fail> {
-    let rb = redis_of(resolver, name)?;
+    let (_lease, rb) = lease_redis(catalog, name)?;
     let key = q_or_empty(q, "key");
     if key.is_empty() {
         return Err(Fail::bad("key is required"));
@@ -601,124 +641,129 @@ async fn key(
 
 // --- the axum handlers ----------------------------------------------------------------------------
 
-async fn connections(Extension(res): Extension<BrowseResolver>) -> Response {
+async fn connections(Extension(catalog): Extension<Arc<CatalogRegistry>>) -> Response {
+    // The honest 503 first (docs/12 W3): with no provider, an empty list would read as
+    // "you have no connections" — the message names who is missing instead.
+    if let Err(f) = catalog_guard(&catalog) {
+        return admin_error(f.status, &f.message);
+    }
     admin_json(
         StatusCode::OK,
-        json!({ "connections": browsable_connections(&res) }),
+        json!({ "connections": browsable_connections(&catalog) }),
     )
 }
 
 async fn tables_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    reply(tables(&res, &name, &q).await)
+    reply(tables(&catalog, &name, &q).await)
 }
 
 async fn data_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    reply(data(&res, &name, &q).await)
+    reply(data(&catalog, &name, &q).await)
 }
 
 async fn schema_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    reply(schema(&res, &name, &q).await)
+    reply(schema(&catalog, &name, &q).await)
 }
 
 async fn export_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    match export(&res, &name, &q).await {
+    match export(&catalog, &name, &q).await {
         Ok(response) => response,
         Err(f) => admin_error(f.status, &f.message),
     }
 }
 
 async fn import_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     body: crate::app::NodeBody,
 ) -> Response {
-    reply(import(&res, &name, &body.0).await)
+    reply(import(&catalog, &name, &body.0).await)
 }
 
 async fn collections_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    reply(collections(&res, &name, &q).await)
+    reply(collections(&catalog, &name, &q).await)
 }
 
 async fn docs_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    reply(docs(&res, &name, &q).await)
+    reply(docs(&catalog, &name, &q).await)
 }
 
 async fn keys_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    reply(keys(&res, &name, &q).await)
+    reply(keys(&catalog, &name, &q).await)
 }
 
 async fn command_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     body: crate::app::NodeBody,
 ) -> Response {
-    reply(command(&res, &name, &body.0).await)
+    reply(command(&catalog, &name, &body.0).await)
 }
 
 async fn key_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> Response {
-    reply(key(&res, &name, &q).await)
+    reply(key(&catalog, &name, &q).await)
 }
 
 async fn ddl_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     body: crate::app::NodeBody,
 ) -> Response {
-    reply(ddl(&res, &name, &body.0).await)
+    reply(ddl(&catalog, &name, &body.0).await)
 }
 
 async fn query_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     body: crate::app::NodeBody,
 ) -> Response {
-    reply(query(&res, &name, &body.0).await)
+    reply(query(&catalog, &name, &body.0).await)
 }
 
 async fn edits_route(
-    Extension(res): Extension<BrowseResolver>,
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
     body: crate::app::NodeBody,
 ) -> Response {
-    reply(edits(&res, &name, &body.0).await)
+    reply(edits(&catalog, &name, &body.0).await)
 }
 
 /// Mount the /api/db routes — the port of Node's `mountDbBrowseApi`. Generic over the state so
 /// app.rs can merge it into the gateway router unchanged (no handler here reads the state; the
-/// resolver arrives as an [`Extension`] layer).
-pub fn dbbrowser_router<S>(resolver: BrowseResolver) -> Router<S>
+/// connection catalog arrives as an [`Extension`] layer).
+pub fn dbbrowser_router<S>(catalog: Arc<CatalogRegistry>) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
@@ -743,7 +788,7 @@ where
         .route("/api/db/{name}/ddl", post(ddl_route))
         .route("/api/db/{name}/query", post(query_route))
         .route("/api/db/{name}/edits", post(edits_route))
-        .layer(Extension(resolver))
+        .layer(Extension(catalog))
 }
 
 #[cfg(test)]
@@ -753,6 +798,9 @@ mod tests {
     // MySQL/Postgres/Redis/Mongo.
     use super::*;
     use crate::dbbrowser::{browse_offset, browse_page_size, map_import_rows, BROWSE_DEFAULT_PAGE};
+    use crate::services::catalog::{
+        ConnectionCatalog, ConnectionInfo, ConnectionLease, LeaseTracker,
+    };
     use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::{HeaderMap, Request};
@@ -981,13 +1029,118 @@ mod tests {
         }
     }
 
-    /// Build a router over the given connections (the Node suite's setup() + registry.register).
-    fn router_of(rows: Vec<Arc<BrowsableConnection>>) -> Router<()> {
-        dbbrowser_router(Arc::new(move || rows.clone()))
+    /// One row as the stub provider serves it — the old seam's shape, moved provider-side.
+    struct StubRow {
+        name: String,
+        adapter_type: String,
+        state: String,
+        browser: BrowserFlavor,
     }
 
-    fn db_entry(name: &str, browser: Arc<dyn DbBrowser>) -> Arc<BrowsableConnection> {
-        Arc::new(BrowsableConnection {
+    fn flavor_clone(f: &BrowserFlavor) -> BrowserFlavor {
+        match f {
+            BrowserFlavor::Db(db) => BrowserFlavor::Db(db.clone()),
+            BrowserFlavor::Redis(rb) => BrowserFlavor::Redis(rb.clone()),
+            BrowserFlavor::Mongo(mb) => BrowserFlavor::Mongo(mb.clone()),
+            BrowserFlavor::None => BrowserFlavor::None,
+        }
+    }
+
+    fn row_facts(row: &StubRow) -> (String, String, bool) {
+        match &row.browser {
+            BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label(), db.readonly()),
+            BrowserFlavor::Redis(rb) => ("redis".into(), rb.label(), rb.readonly()),
+            BrowserFlavor::Mongo(mb) => ("mongo".into(), mb.label(), mb.readonly()),
+            BrowserFlavor::None => ("none".into(), row.name.clone(), true),
+        }
+    }
+
+    /// The provider the tests browse through: rows list and lease exactly the way the real
+    /// RegistryCatalog does (same messages, same dialect mapping), over the Node suite's
+    /// stub browsers. Leases are backed by one tracker per router.
+    struct StubProvider {
+        rows: Vec<Arc<StubRow>>,
+        tracker: Arc<LeaseTracker>,
+    }
+
+    impl ConnectionCatalog for StubProvider {
+        fn list(&self) -> Vec<ConnectionInfo> {
+            self.rows
+                .iter()
+                .map(|row| {
+                    let (dialect, label, readonly) = row_facts(row);
+                    ConnectionInfo {
+                        id: row.name.clone(),
+                        label,
+                        dialect,
+                        readonly,
+                        state: row.state.clone(),
+                    }
+                })
+                .collect()
+        }
+
+        fn lease(
+            &self,
+            id: &str,
+            holder: &str,
+        ) -> Result<ConnectionLease, crate::services::catalog::CatalogError> {
+            use crate::services::catalog::CatalogError;
+            let Some(row) = self.rows.iter().find(|r| r.name == id) else {
+                return Err(CatalogError::Unknown(format!("unknown MCP: {id}")));
+            };
+            if matches!(row.browser, BrowserFlavor::None) {
+                return Err(CatalogError::NotBrowsable(format!(
+                    "MCP '{}' ({}) has no database to browse",
+                    id, row.adapter_type
+                )));
+            }
+            let (dialect, _, _) = row_facts(row);
+            Ok(self
+                .tracker
+                .grant(id, holder, &dialect, flavor_clone(&row.browser)))
+        }
+    }
+
+    /// Build a router over the given connections (the Node suite's setup() + registry.register),
+    /// served by a stub catalog provider registered as "mcp".
+    fn router_of(rows: Vec<Arc<StubRow>>) -> Router<()> {
+        catalog_router_of(|tracker| StubProvider { rows, tracker })
+    }
+
+    /// Register a provider as "mcp" and mount the router over it — the composition the
+    /// real app performs (MCP plugin provides, build_app mounts).
+    fn catalog_router_of(
+        provider: impl FnOnce(Arc<LeaseTracker>) -> StubProvider + 'static,
+    ) -> Router<()> {
+        let catalog = Arc::new(CatalogRegistry::new());
+        catalog
+            .register(Arc::new(provider(LeaseTracker::new())), "mcp")
+            .expect("test provider registers");
+        dbbrowser_router(catalog)
+    }
+
+    /// The catalog WITHOUT a provider — the MCP-disabled composition.
+    fn empty_router_after_mcp() -> (Router<()>, Arc<CatalogRegistry>) {
+        let catalog = Arc::new(CatalogRegistry::new());
+        catalog
+            .register(
+                Arc::new(StubProvider {
+                    rows: vec![],
+                    tracker: LeaseTracker::new(),
+                }),
+                "mcp",
+            )
+            .expect("test provider registers");
+        // The provider's stop choreography: withdraw, drain (nothing out), clear.
+        catalog.begin_withdraw();
+        catalog.clear();
+        let router = dbbrowser_router(catalog.clone());
+        (router, catalog)
+    }
+
+    fn db_entry(name: &str, browser: Arc<dyn DbBrowser>) -> Arc<StubRow> {
+        Arc::new(StubRow {
             name: name.into(),
             adapter_type: "mysql".into(),
             state: "stopped".into(),
@@ -995,8 +1148,8 @@ mod tests {
         })
     }
 
-    fn plain_entry(name: &str) -> Arc<BrowsableConnection> {
-        Arc::new(BrowsableConnection {
+    fn plain_entry(name: &str) -> Arc<StubRow> {
+        Arc::new(StubRow {
             name: name.into(),
             adapter_type: "echo".into(),
             state: "stopped".into(),
@@ -1421,8 +1574,8 @@ mod tests {
         assert_eq!(body.expect("json")["error"], "sql is required");
     }
 
-    fn redis_entry(name: &str) -> Arc<BrowsableConnection> {
-        Arc::new(BrowsableConnection {
+    fn redis_entry(name: &str) -> Arc<StubRow> {
+        Arc::new(StubRow {
             name: name.into(),
             adapter_type: "redis".into(),
             state: "stopped".into(),
@@ -1430,8 +1583,8 @@ mod tests {
         })
     }
 
-    fn mongo_entry(name: &str) -> Arc<BrowsableConnection> {
-        Arc::new(BrowsableConnection {
+    fn mongo_entry(name: &str) -> Arc<StubRow> {
+        Arc::new(StubRow {
             name: name.into(),
             adapter_type: "mongo".into(),
             state: "stopped".into(),
@@ -1591,5 +1744,116 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+    #[tokio::test]
+    async fn no_provider_is_a_503_that_names_the_missing_plugin() {
+        // docs/12 W3's MCP-disabled case: the message names the provider that IS the
+        // connection source, so the panel can say WHO to enable instead of "no rows".
+        let (app, _catalog) = empty_router_after_mcp();
+        let (status, _, body, _) = call(app, "GET", "/api/db", None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body.expect("json")["error"],
+            "the mcp plugin provides database connections and is currently disabled"
+        );
+
+        // Every sub-route answers the same honest 503, not a per-route 404 masquerade.
+        let (app, _catalog) = empty_router_after_mcp();
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/tables", None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body.expect("json")["error"],
+            "the mcp plugin provides database connections and is currently disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_provider_that_never_registered_is_a_generic_503() {
+        let catalog = Arc::new(CatalogRegistry::new());
+        let app = dbbrowser_router(catalog);
+        let (status, _, body, _) = call(app, "GET", "/api/db", None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body.expect("json")["error"],
+            "no plugin provides the connection catalog; database browsing is unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draining_provider_refuses_with_a_stopping_503() {
+        // The withdraw half of a provider stop: existing leases drain, new requests get
+        // a 503 that says the plugin is stopping (docs/12 W3).
+        let catalog = Arc::new(CatalogRegistry::new());
+        catalog
+            .register(
+                Arc::new(StubProvider {
+                    rows: vec![db_entry(
+                        "db",
+                        Arc::new(StubDb {
+                            seen: Arc::new(Mutex::new(Seen::default())),
+                        }),
+                    )],
+                    tracker: LeaseTracker::new(),
+                }),
+                "mcp",
+            )
+            .expect("registers");
+        catalog.begin_withdraw();
+        let app = dbbrowser_router(catalog);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/tables", None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body.expect("json")["error"],
+            "the mcp plugin is stopping; database browsing is momentarily unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn requests_release_their_leases_when_they_finish() {
+        // The request-scope rule: after N requests over M connections, the provider's
+        // ledger must read exactly zero — /api/db must never leak a lease, because a
+        // leaked lease is a connection a provider stop would have to close over.
+        let tracker = LeaseTracker::new();
+        let catalog = Arc::new(CatalogRegistry::new());
+        catalog
+            .register(
+                Arc::new(StubProvider {
+                    rows: vec![
+                        db_entry(
+                            "db",
+                            Arc::new(StubDb {
+                                seen: Arc::new(Mutex::new(Seen::default())),
+                            }),
+                        ),
+                        redis_entry("cache"),
+                        mongo_entry("mgo"),
+                    ],
+                    tracker: tracker.clone(),
+                }),
+                "mcp",
+            )
+            .expect("registers");
+        let app = dbbrowser_router(catalog.clone());
+        for uri in [
+            "/api/db",
+            "/api/db/db/tables",
+            "/api/db/db/data?table=users",
+            "/api/db/db/schema?table=users",
+            "/api/db/cache/keys",
+            "/api/db/mgo/collections",
+        ] {
+            let (status, _, _, _) = call(app.clone(), "GET", uri, None).await;
+            assert_eq!(status, StatusCode::OK, "{uri}");
+        }
+        assert_eq!(
+            tracker.outstanding(),
+            0,
+            "every request gave its lease back"
+        );
+        // And the catalog still serves the next request cleanly.
+        let lease = catalog.lease("db", "probe").expect("still leasable");
+        assert_eq!(tracker.outstanding(), 1);
+        drop(lease);
+        assert_eq!(tracker.outstanding(), 0);
     }
 }

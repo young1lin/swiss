@@ -54,11 +54,9 @@ pub struct BuiltinDeps {
     pub jobs: Arc<JobSystem>,
     pub tunnels: Arc<crate::tunnel::api::Tunnels>,
     pub tunnel_manager: Arc<TunnelManager>,
-    /// The dbbrowser resolver seam — a closure over the live registry (AppContext's
-    /// browser_resolver), handed to the Data plugin so /api/db can keep resolving rows.
-    pub browse: crate::dbbrowser_api::BrowseResolver,
-    /// The shared action registry, run pool and process supervisor. Capability plugins
-    /// register INTO these; the host's /api/actions and /api/runs read them.
+    /// The shared action registry, run pool, process supervisor and connection catalog.
+    /// Capability plugins register INTO these; the host's /api/actions, /api/runs and
+    /// the Data plugin's leases read them.
     pub services: Arc<RuntimeServices>,
 }
 
@@ -69,14 +67,13 @@ pub fn register_all(host: &mut PluginHost, deps: &BuiltinDeps) -> Result<(), Str
     host.register(Arc::new(McpPlugin {
         registry: deps.registry.clone(),
         managed: deps.managed.clone(),
+        services: deps.services.clone(),
     }))?;
     host.register(Arc::new(TunnelsPlugin {
         tunnels: deps.tunnels.clone(),
         manager: deps.tunnel_manager.clone(),
     }))?;
-    host.register(Arc::new(DataPlugin {
-        browse: deps.browse.clone(),
-    }))?;
+    host.register(Arc::new(DataPlugin))?;
     host.register(Arc::new(JobsPlugin {
         jobs: deps.jobs.clone(),
     }))?;
@@ -92,6 +89,9 @@ pub fn register_all(host: &mut PluginHost, deps: &BuiltinDeps) -> Result<(), Str
 struct McpPlugin {
     registry: Arc<Registry>,
     managed: Arc<ManagedStore>,
+    /// The connection catalog lives here (docs/12 W3): MCP is the one provider, Data the
+    /// one consumer, and neither reaches into the other's objects anymore.
+    services: Arc<RuntimeServices>,
 }
 
 #[async_trait]
@@ -112,6 +112,7 @@ impl PluginFactory for McpPlugin {
             // The plugin reads nothing from a config row today; restarting every hosted MCP
             // because a row moved would be destruction disguised as "applying config".
             restart_on_config_change: false,
+            requires: Vec::new(),
         }
     }
 
@@ -119,6 +120,8 @@ impl PluginFactory for McpPlugin {
         Ok(Arc::new(McpInstance {
             registry: self.registry.clone(),
             managed: self.managed.clone(),
+            services: self.services.clone(),
+            tracker: crate::services::catalog::LeaseTracker::new(),
         }))
     }
 }
@@ -138,6 +141,10 @@ impl PluginFactory for McpPlugin {
 struct McpInstance {
     registry: Arc<Registry>,
     managed: Arc<ManagedStore>,
+    services: Arc<RuntimeServices>,
+    /// The lease ledger backing the catalog this instance registers. One per instance:
+    /// a stopped instance drains ITS leases, never the next one's.
+    tracker: Arc<crate::services::catalog::LeaseTracker>,
 }
 
 #[async_trait]
@@ -145,12 +152,34 @@ impl PluginInstance for McpInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
         self.registry.start_timer();
         start_hosted_mcps(&self.registry, &self.managed).await;
+        // Register the connection catalog LAST, so a failed start never leaves a catalog
+        // behind that a stopped registry is supposedly serving (docs/12 W3).
+        self.services
+            .catalog
+            .register(
+                Arc::new(crate::registry::RegistryCatalog::new(
+                    self.registry.clone(),
+                    self.tracker.clone(),
+                )),
+                MCP_ID,
+            )
+            .map_err(|err| format!("connection catalog registration: {err}"))?;
         Ok(())
     }
 
     async fn stop(&self) {
+        // The W3 order (docs/12): withdraw first (no NEW leases reach a pool that is about
+        // to close), drain what is in flight with an honest warning when the wait was not
+        // clean, close the pools, and only then free the catalog seat for the next start.
+        self.services.catalog.begin_withdraw();
+        crate::services::catalog::drain_leases(
+            &self.tracker,
+            std::time::Duration::from_millis(crate::services::catalog::DRAIN_TIMEOUT_MS),
+            MCP_ID,
+        );
         // close_all stops the health/idle timer together with every entry (registry.rs).
         self.registry.close_all().await;
+        self.services.catalog.clear();
     }
 }
 
@@ -233,6 +262,7 @@ impl PluginFactory for TunnelsPlugin {
             pages: vec![page("tunnels", TUNNELS_ID, "Tunnels", 30, false)],
             routes: vec!["/api/tunnels".into()],
             restart_on_config_change: true,
+            requires: Vec::new(),
         }
     }
 
@@ -294,12 +324,10 @@ impl PluginInstance for TunnelsInstance {
 
 // --- Data ---
 
-struct DataPlugin {
-    /// Kept on the factory so the resolver's lifetime is visibly bound to this plugin; the
-    /// /api/db router itself is mounted by build_app and gated by the host boundary.
-    #[allow(dead_code)]
-    browse: crate::dbbrowser_api::BrowseResolver,
-}
+/// No fields anymore: the resolver seam is gone, replaced by the connection catalog in
+/// RuntimeServices (docs/12 W3). Data LEASES what it browses; it no longer holds a
+/// closure into the MCP registry.
+struct DataPlugin;
 
 #[async_trait]
 impl PluginFactory for DataPlugin {
@@ -314,13 +342,15 @@ impl PluginFactory for DataPlugin {
             pages: vec![page("data", DATA_ID, "Data", 40, false)],
             routes: vec!["/api/db".into()],
             restart_on_config_change: false,
+            // The honest dependency, stated as data (docs/12 W3): Data browses through the
+            // connection catalog the MCP plugin provides. The inventory carries this with
+            // a met/unmet verdict, so "disable MCP" no longer silently paralyses Data.
+            requires: vec!["connection-catalog".into()],
         }
     }
 
     async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
-        Ok(Arc::new(DataInstance {
-            browse: self.browse.clone(),
-        }))
+        Ok(Arc::new(DataInstance))
     }
 }
 
@@ -331,21 +361,22 @@ impl PluginFactory for DataPlugin {
 /// exactly what docs/09 §3's ConnectionCatalog work (P4) will turn into explicit leases;
 /// until then this wrapper does NOT claim independent Data resources, and disabling MCP
 /// takes the shared connectivity away from Data with it.
-struct DataInstance {
-    #[allow(dead_code)]
-    browse: crate::dbbrowser_api::BrowseResolver,
-}
+struct DataInstance;
 
 #[async_trait]
 impl PluginInstance for DataInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
-        // Nothing eager to start: the routes are mounted, the resolver reads the live
-        // registry per request. Honest no-op — see the type's comment.
+        // Nothing eager to start: /api/db takes a REQUEST-SCOPED lease per call and drops
+        // it with the request. Starting without a catalog provider is legal — the routes
+        // answer an honest 503 naming who is missing, and the inventory row says the
+        // requirement is unmet (docs/12 W3).
         Ok(())
     }
 
     async fn stop(&self) {
-        // Nothing retained to release — the boundary dropping /api/db IS the release.
+        // Nothing retained to release: request leases die with their requests, and the
+        // boundary dropping /api/db IS the release. Leases still held elsewhere are the
+        // provider's drain's business — never a cross-plugin teardown.
     }
 }
 
@@ -482,6 +513,7 @@ impl PluginFactory for JobsPlugin {
             // every edit of any job; the in-place apply is the whole point of the
             // third semantics.
             restart_on_config_change: false,
+            requires: Vec::new(),
         }
     }
 
@@ -611,6 +643,7 @@ impl PluginFactory for ProcessPlugin {
             pages: vec![],
             routes: vec![],
             restart_on_config_change: false,
+            requires: Vec::new(),
         }
     }
 

@@ -19,12 +19,14 @@
 pub mod action;
 pub mod actions;
 pub mod api;
+pub mod catalog;
 pub mod process;
 pub mod runs;
 
 use std::sync::Arc;
 
 use crate::services::action::ActionRegistry;
+use crate::services::catalog::CatalogRegistry;
 use crate::services::process::Supervisor;
 use crate::services::runs::RunCoordinator;
 
@@ -39,6 +41,10 @@ pub struct RuntimeServices {
     pub runs: Arc<RunCoordinator>,
     /// The one owner of child-process spawning, capture and subtree teardown.
     pub supervisor: Arc<Supervisor>,
+    /// The typed connection catalog (docs/12 W3): the provider (MCP) registers on start;
+    /// consumers (Data) take request-scoped leases. Constructed here so it OUTLIVES every
+    /// plugin instance — a provider stopping and starting again finds the same seat.
+    pub catalog: Arc<CatalogRegistry>,
 }
 
 impl RuntimeServices {
@@ -48,6 +54,7 @@ impl RuntimeServices {
             runs: RunCoordinator::new(actions.clone()),
             actions,
             supervisor: Supervisor::new(),
+            catalog: Arc::new(CatalogRegistry::new()),
         })
     }
 

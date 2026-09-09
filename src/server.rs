@@ -196,6 +196,9 @@ pub async fn run_gateway() -> Result<(), String> {
     if let Ok(mut links) = ctx.tunnel_links.write() {
         *links = Some(tunnel_manager.clone());
     }
+    // The /api/db routes lease through the SAME catalog instance the MCP plugin will
+    // register into — set before build_app mounts the router (docs/12 W3).
+    let _ = ctx.catalog.set(services.catalog.clone());
 
     // The plugin host (docs/09 §10, P1). The four built-ins register in inventory/page order
     // (MCP+Traffic, Tunnels, Data, Jobs) and boot in the REVERSE, so tunnels come up before
@@ -209,11 +212,17 @@ pub async fn run_gateway() -> Result<(), String> {
         jobs: jobs.clone(),
         tunnels: tunnels.clone(),
         tunnel_manager: tunnel_manager.clone(),
-        browse: ctx.browser_resolver(),
         services: services.clone(),
     };
     crate::host::builtin::register_all(&mut host, &deps)
         .expect("the built-in plugins register without id or route conflicts");
+    // The capability probe the inventory's requiresMet answers through (docs/12 W3): one
+    // closure over the shared services, so "connection-catalog" tracks the catalog's real
+    // presence as MCP starts and stops.
+    host.set_capability_probe({
+        let catalog = services.catalog.clone();
+        Arc::new(move |cap: &str| cap == "connection-catalog" && catalog.has_provider())
+    });
     let host = Arc::new(host);
     host.start_enabled().await;
     let _ = ctx.plugin_host.set(host.clone());

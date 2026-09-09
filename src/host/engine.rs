@@ -112,9 +112,15 @@ impl PluginEntry {
     }
 }
 
+/// How the inventory answers "is capability X provided right now?" — one closure over
+/// the shared services (the connection catalog today).
+pub type CapabilityProbe = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 pub struct PluginHost {
     store: Arc<ConfigStore>,
     plugins: RwLock<Vec<Arc<PluginEntry>>>,
+    /// Set once by the composition root; absent means no capability is provided.
+    capability_probe: RwLock<Option<CapabilityProbe>>,
 }
 
 impl PluginHost {
@@ -122,7 +128,26 @@ impl PluginHost {
         Self {
             store,
             plugins: RwLock::new(Vec::new()),
+            capability_probe: RwLock::new(None),
         }
+    }
+
+    /// Install the capability probe the inventory's `requiresMet` answers through
+    /// (docs/12 W3). Call once, at composition, before the first inventory read.
+    pub fn set_capability_probe(&self, probe: CapabilityProbe) {
+        *self
+            .capability_probe
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(probe);
+    }
+
+    fn capability_met(&self, name: &str) -> bool {
+        self.capability_probe
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|probe| probe(name))
+            .unwrap_or(false)
     }
 
     /// Register one factory, in composition order. Registration order IS the inventory and
@@ -449,6 +474,16 @@ impl PluginHost {
         });
         if let (Some(obj), Some(err)) = (row.as_object_mut(), entry.last_error()) {
             obj.insert("lastError".into(), json!(err));
+        }
+        // Capabilities this plugin needs (docs/12 W3): stated with a met/unmet verdict,
+        // absent-not-null when the plugin needs nothing — most do not.
+        if !descriptor.requires.is_empty() {
+            let requires = descriptor.requires.clone();
+            let met = requires.iter().all(|cap| self.capability_met(cap));
+            if let Some(obj) = row.as_object_mut() {
+                obj.insert("requires".into(), json!(requires));
+                obj.insert("requiresMet".into(), json!(met));
+            }
         }
         row
     }

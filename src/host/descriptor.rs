@@ -68,6 +68,11 @@ pub struct PluginDescriptor {
     /// moves) but the instance is not bounced — honest for plugins whose runtime reads
     /// nothing from the row today.
     pub restart_on_config_change: bool,
+    /// CAPABILITY names (not plugin ids) this plugin needs at run time to be fully
+    /// functional (docs/12 W3). The inventory surfaces them with a met/unmet verdict so
+    /// the panel can say "Data depends on connection-catalog, currently no provider" —
+    /// a dependency stated as data, not discovered by reading another plugin's source.
+    pub requires: Vec<String>,
 }
 
 /// The lifecycle of one plugin (docs/09 §4). `Idle` is reserved for plugins that are enabled

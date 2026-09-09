@@ -816,6 +816,121 @@ impl Registry {
         }
     }
 }
+// --- the connection catalog provider (docs/12 W3) -------------------------------------------------
+
+/// The registry AS a [crate::services::catalog::ConnectionCatalog]: the browsable half of
+/// every registered MCP, offered for lease. This is the logic app.rs's browser_resolver
+/// closure used to own, promoted from an anonymous callback to a typed capability the
+/// host can see — registered by the MCP plugin on start, withdrawn (drained, then
+/// cleared) on stop, so Data's dependency is a contract instead of an accident.
+pub struct RegistryCatalog {
+    registry: Arc<Registry>,
+    tracker: Arc<crate::services::catalog::LeaseTracker>,
+}
+
+impl RegistryCatalog {
+    /// The tracker is shared with the plugin instance that registered this catalog, so its
+    /// stop can drain the same leases this grants.
+    pub fn new(
+        registry: Arc<Registry>,
+        tracker: Arc<crate::services::catalog::LeaseTracker>,
+    ) -> Self {
+        RegistryCatalog { registry, tracker }
+    }
+
+    pub fn tracker(&self) -> Arc<crate::services::catalog::LeaseTracker> {
+        self.tracker.clone()
+    }
+
+    /// One entry's browser + the row facts, or None when the entry is gone/locked. The
+    /// mapping is app.rs's old browser_resolver body: one row per REGISTERED entry,
+    /// browsable or not, with the lifecycle-or-health state string.
+    fn row_of(
+        &self,
+        entry: &Arc<EntryInner>,
+    ) -> Option<(crate::dbbrowser_api::BrowserFlavor, String, String, String)> {
+        let data = entry.data.read().ok()?;
+        let flavor = data
+            .adapter
+            .browser()
+            .unwrap_or(crate::dbbrowser_api::BrowserFlavor::None);
+        let state = if data.lifecycle == Lifecycle::Started {
+            data.status.as_str().to_string()
+        } else {
+            data.lifecycle.as_str().to_string()
+        };
+        Some((
+            flavor,
+            data.name.clone(),
+            data.def.type_().to_string(),
+            state,
+        ))
+    }
+
+    /// The browser-level facts of one flavor: dialect, label, readonly — the tuple
+    /// browsable_connections' rows and every lease's mismatch message are built from.
+    fn facts_of(flavor: &crate::dbbrowser_api::BrowserFlavor) -> (String, String, bool) {
+        use crate::dbbrowser_api::BrowserFlavor;
+        match flavor {
+            BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label(), db.readonly()),
+            BrowserFlavor::Redis(rb) => ("redis".to_string(), rb.label(), rb.readonly()),
+            BrowserFlavor::Mongo(mb) => ("mongo".to_string(), mb.label(), mb.readonly()),
+            // Nothing to browse: dialect "none", no label (the caller falls back to the
+            // entry's name), readonly — kept in the list so lease() can NAME the adapter
+            // type in its refusal, exactly as the old resolver's 404s did.
+            BrowserFlavor::None => ("none".to_string(), String::new(), true),
+        }
+    }
+}
+
+impl crate::services::catalog::ConnectionCatalog for RegistryCatalog {
+    fn list(&self) -> Vec<crate::services::catalog::ConnectionInfo> {
+        self.registry
+            .all()
+            .into_iter()
+            .filter_map(|entry| {
+                let (flavor, name, _adapter_type, state) = self.row_of(&entry)?;
+                let (dialect, label, readonly) = Self::facts_of(&flavor);
+                // A browser-less entry has no browser to ask for a label: its name is it.
+                let label = if label.is_empty() {
+                    name.clone()
+                } else {
+                    label
+                };
+                Some(crate::services::catalog::ConnectionInfo {
+                    id: name,
+                    label,
+                    dialect,
+                    readonly,
+                    state,
+                })
+            })
+            .collect()
+    }
+
+    fn lease(
+        &self,
+        id: &str,
+        holder: &str,
+    ) -> Result<crate::services::catalog::ConnectionLease, crate::services::catalog::CatalogError>
+    {
+        use crate::services::catalog::CatalogError;
+        let Some(entry) = self.registry.get(id) else {
+            return Err(CatalogError::Unknown(format!("unknown MCP: {id}")));
+        };
+        let Some((flavor, name, adapter_type, _state)) = self.row_of(&entry) else {
+            return Err(CatalogError::Unknown(format!("unknown MCP: {id}")));
+        };
+        if matches!(flavor, crate::dbbrowser_api::BrowserFlavor::None) {
+            return Err(CatalogError::NotBrowsable(format!(
+                "MCP '{}' ({}) has no database to browse",
+                name, adapter_type
+            )));
+        }
+        let (dialect, _label, _readonly) = Self::facts_of(&flavor);
+        Ok(self.tracker.grant(id, holder, &dialect, flavor))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1624,6 +1739,54 @@ mod tests {
             r.rename("nope", "other").await.unwrap_err(),
         ] {
             assert!(err.contains("unknown MCP: nope"), "{err}");
+        }
+    }
+
+    // --- the connection catalog provider (docs/12 W3) ---
+
+    #[test]
+    fn the_catalog_lists_one_row_per_entry_and_keys_them_by_definition() {
+        // docs/09 §3's identity rule, at the provider: two definitions that share every
+        // endpoint field (host, port) but differ in NAME — which is where credentials and
+        // the whole definition live — are TWO connections. Never merged, never shadowed.
+        let r = reg();
+        let same_endpoint = json!({"type":"fake","host":"db.local","port":3306});
+        r.register(
+            "prod-ro",
+            Source::Managed,
+            def(same_endpoint.clone()),
+            Fake::default().arc(),
+        )
+        .unwrap();
+        r.register(
+            "prod-rw",
+            Source::Managed,
+            def(same_endpoint),
+            Fake::default().arc(),
+        )
+        .unwrap();
+        let catalog =
+            RegistryCatalog::new(r.clone(), crate::services::catalog::LeaseTracker::new());
+        let rows = crate::services::catalog::ConnectionCatalog::list(&catalog);
+        let ids: Vec<&str> = rows.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.len(), 2, "{ids:?}");
+        assert!(ids.contains(&"prod-ro") && ids.contains(&"prod-rw"));
+        // The Fake adapter has no browser: dialect "none", and a lease attempt names the
+        // adapter type exactly like the old resolver's 404 did.
+        assert!(rows.iter().all(|c| c.dialect == "none"));
+        match crate::services::catalog::ConnectionCatalog::lease(&catalog, "prod-ro", "data") {
+            Err(crate::services::catalog::CatalogError::NotBrowsable(m)) => {
+                assert_eq!(m, "MCP 'prod-ro' (fake) has no database to browse");
+            }
+            Ok(_) => panic!("not browsable, got a lease"),
+            Err(other) => panic!("not browsable, wrong error: {other}"),
+        }
+        match crate::services::catalog::ConnectionCatalog::lease(&catalog, "ghost", "data") {
+            Err(crate::services::catalog::CatalogError::Unknown(m)) => {
+                assert!(m.contains("unknown MCP: ghost"), "{m}");
+            }
+            Ok(_) => panic!("unknown, got a lease"),
+            Err(other) => panic!("unknown, wrong error: {other}"),
         }
     }
 }

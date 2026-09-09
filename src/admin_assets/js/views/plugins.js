@@ -34,6 +34,17 @@ function stateLabel(p) {
   return p.enabled ? p.state : "disabled";
 }
 
+/** The dependency badge (docs/12 W3): a plugin whose required capability has no provider
+ *  says SO on its row — "needs connection-catalog (no provider)" — instead of failing
+ *  mysteriously when its floor is switched off. Met requirements render nothing, but the
+ *  row always carries the (empty) span so poll-patch has its anchor either way.
+ *  Exported pure for the suite: no DOM, just the row JSON in and badge HTML out. */
+export function requiresBadge(p) {
+  var missing = (p.requires || []).filter(function () { return p.requiresMet === false; });
+  if (!missing.length) return "";
+  return '· needs ' + esc(missing.join(", ")) + ' <span class="warn">(no provider)</span>';
+}
+
 function rowHtml(p) {
   var pages = (p.pages || []).join(", ");
   return '<div class="tun-row" data-plugin="' + esc(p.id) + '">' +
@@ -45,6 +56,7 @@ function rowHtml(p) {
           ' <span class="via">· ' + esc(p.kind || "") + (p.version ? " v" + esc(p.version) : "") + "</span>" +
           ' <span class="via" data-state>· ' + esc(stateLabel(p)) + "</span>" +
           (pages ? ' <span class="via">· pages: ' + esc(pages) + "</span>" : ' <span class="via">· no page</span>') +
+          '<span class="via" data-reqs>' + requiresBadge(p) + "</span>" +
           '<span data-err>' + (p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "") + "</span>" +
         "</div>" +
       "</div>" +
@@ -95,6 +107,8 @@ function patch() {
     if (st) st.textContent = "· " + stateLabel(p);
     var err = row.querySelector("[data-err]");
     if (err) err.innerHTML = p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "";
+    var reqs = row.querySelector("[data-reqs]");
+    if (reqs) reqs.innerHTML = requiresBadge(p);
     var button = row.querySelector("[data-toggle]");
     if (button) {
       button.disabled = !!busy[p.id];

@@ -62,6 +62,7 @@ impl FakeFactory {
                 pages: vec![],
                 routes: vec![format!("/api/{id}")],
                 restart_on_config_change: true,
+                requires: Vec::new(),
             },
             counters,
             fail_start: AtomicBool::new(false),
@@ -146,6 +147,7 @@ fn fake_descriptor(id: &str) -> PluginDescriptor {
         pages: vec![],
         routes: vec![format!("/api/{id}")],
         restart_on_config_change: true,
+        requires: Vec::new(),
     }
 }
 
@@ -517,6 +519,9 @@ async fn full_app_with_store(
         "MCP_GATEWAY_TOKEN",
         19998,
     );
+    // The /api/db routes and the inventory's requiresMet read the SAME catalog instance
+    // the mcp plugin registers into (docs/12 W3) — set both before the router is built.
+    let _ = ctx.catalog.set(services.catalog.clone());
     let mut host = PluginHost::new(config_store);
     let deps = builtin::BuiltinDeps {
         registry: registry.clone(),
@@ -524,10 +529,13 @@ async fn full_app_with_store(
         jobs: jobs.clone(),
         tunnels: tunnels.clone(),
         tunnel_manager: tunnel_manager.clone(),
-        browse: ctx.browser_resolver(),
         services: services.clone(),
     };
     builtin::register_all(&mut host, &deps).expect("the built-ins register without conflicts");
+    host.set_capability_probe({
+        let catalog = services.catalog.clone();
+        Arc::new(move |cap: &str| cap == "connection-catalog" && catalog.has_provider())
+    });
     let host = Arc::new(host);
     host.start_enabled().await;
     assert!(ctx.plugin_host.set(host.clone()).is_ok(), "host set once");
@@ -1483,7 +1491,6 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
                 ))),
                 None,
             ),
-            browse: Arc::new(Vec::new),
             services: local_mcp_gateway::services::RuntimeServices::new(),
         },
     )
@@ -1836,4 +1843,104 @@ async fn every_contributed_page_entry_is_actually_served() {
         assert!(plugin["version"].as_str().is_some(), "{plugin}");
         assert!(plugin["kind"].as_str().is_some(), "{plugin}");
     }
+}
+// --- W3: the connection catalog contract (docs/12) -----------------------------------------------
+
+/// The plugin_row helper for the W3 assertions: find one plugin's inventory row.
+async fn plugin_row(app: &axum::Router, id: &str) -> Value {
+    let (status, body, text) = send(app, local("GET", "/api/plugins")).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let body = body.expect("JSON");
+    body["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == id)
+        .unwrap_or_else(|| panic!("no {id} row: {body}"))
+        .clone()
+}
+
+#[tokio::test]
+async fn disabling_mcp_503s_api_db_and_marks_datas_requirement_unmet() {
+    let (app, _host, _registry) = full_app("w3-off", json!({})).await;
+
+    // Baseline: MCP serves the catalog (the echo MCP is registered but not browsable, so
+    // the row list is EMPTY — an honest answer, and a 200).
+    let (status, body, _) = send(&app, local("GET", "/api/db")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.expect("JSON")["connections"], json!([]));
+
+    // The requirement is stated on the row with a met verdict; plugins that need nothing
+    // carry no requires keys at all (absent-not-null).
+    let data = plugin_row(&app, "data").await;
+    assert_eq!(data["requires"], json!(["connection-catalog"]));
+    assert_eq!(data["requiresMet"], json!(true));
+    let mcp = plugin_row(&app, "mcp").await;
+    assert!(mcp.get("requires").is_none(), "{mcp}");
+    assert!(mcp.get("requiresMet").is_none(), "{mcp}");
+
+    // Disable the provider: /api/db names WHO is missing (docs/12 W3's acceptance), and
+    // the inventory's data row flips to unmet.
+    let (status, _, text) = send(&app, local("POST", "/api/plugins/mcp/disable")).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let (status, body, _) = send(&app, local("GET", "/api/db")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        body.expect("JSON")["error"],
+        "the mcp plugin provides database connections and is currently disabled"
+    );
+    let data = plugin_row(&app, "data").await;
+    assert_eq!(data["requiresMet"], json!(false), "{data}");
+    assert_eq!(data["requires"], json!(["connection-catalog"]));
+
+    // Data itself stays active — only its floor is gone. Disabling DATA answers through
+    // the host boundary instead (its own 503), which is a different, plugin-scoped thing.
+    let data = plugin_row(&app, "data").await;
+    assert_eq!(data["state"], json!("active"), "{data}");
+    let (status, _, text) = send(&app, local("POST", "/api/plugins/data/disable")).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let (status, _body, _) = send(&app, local("GET", "/api/db")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+
+    // Data's leases die with its requests, so its stop touches nothing on the provider
+    // side: bringing MCP back while Data is STILL disabled leaves it active and serving
+    // its catalog — the provider never noticed the consumer left.
+    let (status, _, text) = send(&app, local("POST", "/api/plugins/mcp/enable")).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let mcp = plugin_row(&app, "mcp").await;
+    assert_eq!(mcp["state"], json!("active"), "{mcp}");
+    let data = plugin_row(&app, "data").await;
+    assert_eq!(data["state"], json!("disabled"), "{data}");
+    assert_eq!(data["requiresMet"], json!(true), "provider is back: {data}");
+
+    // And with both back, /api/db serves again — the seat re-registered cleanly.
+    let (status, _, text) = send(&app, local("POST", "/api/plugins/data/enable")).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let (status, body, _) = send(&app, local("GET", "/api/db")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.expect("JSON")["connections"], json!([]));
+    let data = plugin_row(&app, "data").await;
+    assert_eq!(data["requiresMet"], json!(true), "{data}");
+}
+
+#[tokio::test]
+async fn the_catalog_seat_survives_a_hundred_mcp_restarts() {
+    // docs/10 §9's restart-churn acceptance, at the W3 seam: every disable drains and
+    // frees the catalog seat; every enable re-registers it. If a stop ever failed to
+    // clear, the 2nd enable would fail loudly (duplicate provider) and the mcp row would
+    // read "failed" — the loop is the leak detector.
+    let (app, _host, _registry) = full_app("w3-churn", json!({})).await;
+    for i in 0..100 {
+        let (status, _, text) = send(&app, local("POST", "/api/plugins/mcp/disable")).await;
+        assert_eq!(status, StatusCode::OK, "round {i}: {text}");
+        let (status, _, text) = send(&app, local("POST", "/api/plugins/mcp/enable")).await;
+        assert_eq!(status, StatusCode::OK, "round {i}: {text}");
+    }
+    let mcp = plugin_row(&app, "mcp").await;
+    assert_eq!(mcp["state"], json!("active"), "no leaked seat: {mcp}");
+    let data = plugin_row(&app, "data").await;
+    assert_eq!(data["requiresMet"], json!(true), "{data}");
+    let (status, body, _) = send(&app, local("GET", "/api/db")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.expect("JSON")["connections"], json!([]));
 }

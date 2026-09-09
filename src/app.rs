@@ -73,6 +73,11 @@ pub struct AppContext {
     /// every host-dependent guard treats absence as "no plugin gating", which is exactly the
     /// pre-host behavior.
     pub plugin_host: std::sync::OnceLock<Arc<crate::host::PluginHost>>,
+    /// The connection catalog the /api/db routes lease through (docs/12 W3). Set once by
+    /// the boot sequence from RuntimeServices — the SAME instance the MCP plugin
+    /// registers into — before the listener accepts requests. Absent in compositions that
+    /// mount no Data plugin: /api/db then answers an honest 503 rather than pretending.
+    pub catalog: std::sync::OnceLock<Arc<crate::services::catalog::CatalogRegistry>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -96,6 +101,7 @@ impl AppContext {
             tunnel_links: std::sync::RwLock::new(None),
             shutdown,
             plugin_host: std::sync::OnceLock::new(),
+            catalog: std::sync::OnceLock::new(),
             handlers: Mutex::new(HashMap::new()),
         });
         // Rename/delete abandon an entry's name; the endpoint cached under it would then leak,
@@ -119,36 +125,6 @@ impl AppContext {
             }
         }));
         ctx
-    }
-
-    /// Build the database-browser view from the current registry entries — one row per REGISTERED
-    /// MCP, browsable or not: the seam's lookups distinguish "unknown MCP" from Node's
-    /// "MCP 'x' (echo) has no database to browse" by finding the row (GET /api/db skips the
-    /// browser-less ones when listing).
-    pub fn browser_resolver(self: &Arc<Self>) -> crate::dbbrowser_api::BrowseResolver {
-        let registry = self.registry.clone();
-        Arc::new(move || {
-            registry
-                .all()
-                .into_iter()
-                .filter_map(|entry| {
-                    let data = entry.data.read().ok()?;
-                    Some(Arc::new(crate::dbbrowser_api::BrowsableConnection {
-                        name: data.name.clone(),
-                        adapter_type: data.def.type_().to_string(),
-                        state: if data.lifecycle == Lifecycle::Started {
-                            data.status.as_str().to_string()
-                        } else {
-                            data.lifecycle.as_str().to_string()
-                        },
-                        browser: data
-                            .adapter
-                            .browser()
-                            .unwrap_or(crate::dbbrowser_api::BrowserFlavor::None),
-                    }))
-                })
-                .collect()
-        })
     }
 
     /// The cached HTTP half for a started entry, or None when the entry is not serving.
@@ -548,7 +524,13 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         .route("/health", get(health))
         .route("/health/check", get(health_check))
         .merge(crate::dbbrowser_api::dbbrowser_router::<Arc<AppContext>>(
-            ctx.browser_resolver(),
+            // The W3 seam (docs/12): /api/db leases through the connection catalog the MCP
+            // plugin provides. Compositions that never set one (no Data plugin mounted)
+            // get an empty registry — every route then answers the honest 503.
+            ctx.catalog
+                .get()
+                .cloned()
+                .unwrap_or_else(|| Arc::new(crate::services::catalog::CatalogRegistry::new())),
         ))
         .merge(crate::adminapi::mount(ctx.clone()))
         // Before the MCP catch-all, which would otherwise swallow /api/tunnels.
