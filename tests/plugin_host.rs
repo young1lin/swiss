@@ -748,12 +748,13 @@ async fn unknown_plugins_and_stale_revisions_are_refused() {
     .await;
     let fresh = body.unwrap()["revision"].as_u64().unwrap();
     assert_ne!(fresh, stale);
+    // The body must be a config the v2 model accepts; the CAS is what this tests.
     let (status, body, _) = send(
         &app,
         json_body(
             "PUT",
             "/api/plugins/jobs/config",
-            json!({ "revision": stale, "config": { "late": true } }),
+            json!({ "revision": stale, "config": { "maxConcurrentRuns": 3 } }),
         ),
     )
     .await;
@@ -802,13 +803,18 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
     let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
     assert_eq!(body.unwrap()["revision"], json!(before), "nothing persisted");
 
-    // A valid PUT persists, bumps the revision, and echoes the round-trip.
+    // A valid PUT persists, bumps the revision, and echoes the round-trip. The
+    // definition is a v2 one (docs/11 §3): the row's validator is the v2 model now, and
+    // a v1-shaped body would be refused as an unknown field.
     let (status, body, _) = send(
         &app,
         json_body(
             "PUT",
             "/api/plugins/jobs/config",
-            json!({ "config": { "definitions": { "nightly": { "command": "x" } } } }),
+            json!({ "config": { "definitions": { "nightly": {
+                "trigger": { "kind": "cron", "expression": "30 3 * * *" },
+                "action": { "type": "process.legacy-command", "input": { "command": "x" } },
+            } } } }),
         ),
     )
     .await;
@@ -816,7 +822,7 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
     let body = body.expect("JSON");
     assert_ne!(body["revision"], json!(before));
     assert_eq!(
-        body["config"]["definitions"]["nightly"]["command"],
+        body["config"]["definitions"]["nightly"]["action"]["input"]["command"],
         json!("x"),
     );
     assert_eq!(body["schema"]["type"], json!("object"));
@@ -828,6 +834,99 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// docs/11 §9 S1: the jobs config row is validated against the v2 definition model, and
+/// the refusal is honest about what is wrong. A definition carrying a semantic this build
+/// does not execute (here misfire "run-once", whose implementation is a later stage) is a
+/// 400 naming the dotted field path, and nothing persists. Before this stage the
+/// validator only checked that each definitions entry was an object, so this exact body
+/// saved fine and silently did nothing.
+#[tokio::test]
+async fn jobs_config_put_is_validated_against_the_v2_model() {
+    let (app, _host, _registry) = full_app("v2model", json!({})).await;
+
+    let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
+    let before = body.unwrap()["revision"].as_u64().unwrap();
+
+    // Not-implemented semantics are refused, not swallowed (docs/11 §2 rule 5).
+    let (status, body, _) = send(
+        &app,
+        json_body(
+            "PUT",
+            "/api/plugins/jobs/config",
+            json!({ "config": { "definitions": { "nightly": {
+                "trigger": { "kind": "manual" },
+                "action": { "type": "process.legacy-command", "input": { "command": "echo hi" } },
+                "misfire": "run-once",
+            } } } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let msg = body.unwrap()["error"].as_str().unwrap_or_default().to_string();
+    assert!(msg.contains("definitions.nightly.misfire"), "{msg}");
+    assert!(msg.contains("not implemented until S5"), "{msg}");
+
+    // Structural refusals carry their field paths: a required trigger field...
+    let (status, body, _) = send(
+        &app,
+        json_body(
+            "PUT",
+            "/api/plugins/jobs/config",
+            json!({ "config": { "definitions": { "nightly": {
+                "trigger": { "kind": "interval" },
+                "action": { "type": "process.legacy-command", "input": { "command": "echo hi" } },
+            } } } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let msg = body.unwrap()["error"].as_str().unwrap_or_default().to_string();
+    assert!(msg.contains("definitions.nightly.trigger.everyMs"), "{msg}");
+
+    // ...and an unknown field, listing the layer's legal ones.
+    let (status, body, _) = send(
+        &app,
+        json_body(
+            "PUT",
+            "/api/plugins/jobs/config",
+            json!({ "config": { "definitions": { "nightly": {
+                "trigger": { "kind": "manual" },
+                "action": { "type": "process.legacy-command", "input": { "command": "echo hi" } },
+                "command": "v1-style",
+            } } } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let msg = body.unwrap()["error"].as_str().unwrap_or_default().to_string();
+    assert!(msg.contains("definitions.nightly.command"), "{msg}");
+    assert!(msg.contains("trigger"), "{msg}");
+
+    // The failed PUTs persisted nothing; a definition the model accepts does.
+    let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
+    assert_eq!(body.unwrap()["revision"], json!(before), "nothing persisted");
+    let (status, body, _) = send(
+        &app,
+        json_body(
+            "PUT",
+            "/api/plugins/jobs/config",
+            json!({ "config": { "definitions": { "nightly": {
+                "trigger": { "kind": "cron", "expression": "30 3 * * *" },
+                "action": { "type": "process.legacy-command", "input": { "command": "echo hi" } },
+            } } } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body.unwrap());
+    let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
+    let body = body.unwrap();
+    assert_ne!(body["revision"], json!(before));
+    assert_eq!(
+        body["config"]["definitions"]["nightly"]["trigger"]["expression"],
+        json!("30 3 * * *"),
+    );
 }
 
 #[tokio::test]

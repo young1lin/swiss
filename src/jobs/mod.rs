@@ -22,8 +22,11 @@
 //!   shared with manual runs - instead of a second execution path of its own.
 //! - runlog.rs: what is remembered (logs/jobs/<name>.jsonl, byte- and age-capped).
 //! - api.rs: the /api/jobs management surface (the panel does not know it exists).
+//! - def.rs: the v2 definition model (docs/11) - parsed, validated and projected, but
+//!   not yet the scheduler's source of definitions.
 
 pub mod api;
+pub mod def;
 pub mod runlog;
 pub mod runner;
 pub mod schedule;

@@ -355,20 +355,16 @@ struct JobsPlugin {
     jobs: Arc<JobSystem>,
 }
 
-/// Config-side definitions, as far as this build takes them: an optional object of job
-/// definitions under `definitions`, each an object. (The scheduler itself reads jobs.json;
-/// consuming config-side definitions is the config-driven jobs work's seam — see the
-/// JobsInstance comment.)
+/// The jobs config row is validated through the v2 definition model (docs/11 §9 S1):
+/// this is the server-side authority for every PUT /api/plugins/jobs/config and every
+/// plugin start. Errors carry the dotted field path so the panel can point its form at
+/// the offender. Definitions still do not drive the scheduler - that wiring is a later
+/// stage - but anything this build would silently not execute is refused here rather
+/// than accepted.
 fn validate_jobs_config(config: &Value) -> Result<(), String> {
-    let Some(map) = config.get("definitions").and_then(Value::as_object) else {
-        return Ok(());
-    };
-    for (name, def) in map {
-        if !def.is_object() {
-            return Err(format!("definitions.{name} must be an object"));
-        }
-    }
-    Ok(())
+    crate::jobs::def::JobsConfig::parse(config)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 #[async_trait]
@@ -380,14 +376,98 @@ impl PluginFactory for JobsPlugin {
             label: "Jobs".into(),
             version: "0.1".into(),
             config_schema_version: 1,
+            // Schema-lite metadata (the real authority is validate_config -> the v2
+            // model). The definitions note is the honesty rule: this build validates and
+            // stores definitions but does not schedule from them yet, and the four
+            // not-yet-implemented semantics say so in place (docs/11 §9 S1).
             config_schema: json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
+                    "schemaVersion": {
+                        "type": "integer",
+                        "enum": [2],
+                        "description": "The jobs config row's schema; absent means 2, and no other value is parsed."
+                    },
+                    "maxConcurrentRuns": {
+                        "type": "integer", "minimum": 1, "maximum": 64, "default": 2,
+                    },
+                    "maxQueuedRuns": {
+                        "type": "integer", "minimum": 0, "maximum": 1024, "default": 32,
+                    },
+                    "retention": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "days": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 180 },
+                            "maxBytesPerJob": { "type": "integer", "minimum": 65536, "maximum": 67108864, "default": 2097152 },
+                            "maxHistoryBytes": { "type": "integer", "minimum": 1048576, "maximum": 1073741824, "default": 67108864 }
+                        }
+                    },
                     "definitions": {
                         "type": "object",
-                        "description": "Optional config-side job definitions (config-driven jobs work); the scheduler reads jobs.json today.",
-                    },
+                        "maxProperties": 512,
+                        "description": "v2 job definitions keyed by stable id (docs/11 §3). The scheduler still reads jobs.json today: definitions are validated and stored here, and do not drive scheduling until the config-driven stage lands.",
+                        "additionalProperties": { "$ref": "#/definitions/jobDefinition" }
+                    }
                 },
+                "definitions": {
+                    "jobDefinition": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["trigger", "action"],
+                        "properties": {
+                            "title": { "type": "string", "maxLength": 200, "description": "Display name; defaults to the id." },
+                            "labels": { "type": "array", "maxItems": 16, "items": { "type": "string", "maxLength": 64 } },
+                            "disabled": { "type": "boolean", "default": false, "description": "Disabled jobs keep their history and still support Run now." },
+                            "trigger": {
+                                "oneOf": [
+                                    { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "const": "manual" } } },
+                                    { "type": "object", "additionalProperties": false, "required": ["kind", "everyMs"], "properties": {
+                                        "kind": { "const": "interval" },
+                                        "everyMs": { "type": "integer", "minimum": 1000, "maximum": 31536000000u64 },
+                                        "firstRun": { "enum": ["after-interval", "immediate"], "default": "after-interval" } } },
+                                    { "type": "object", "additionalProperties": false, "required": ["kind", "expression"], "properties": {
+                                        "kind": { "const": "cron" },
+                                        "expression": { "type": "string", "description": "5-field cron expression, local wall-clock time." },
+                                        "timezone": { "const": "local", "default": "local", "description": "Only local is supported." } } }
+                                ]
+                            },
+                            "action": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": ["type"],
+                                "properties": {
+                                    "type": { "type": "string", "description": "Capability id; it need not be registered to save (the provider may be disabled)." },
+                                    "input": { "type": "object", "description": "Validated by the capability itself; env-var references resolve at run time and never enter the config." },
+                                    "schemaVersion": { "type": "integer", "enum": [1], "default": 1 }
+                                }
+                            },
+                            "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 86400000, "default": 600000, "description": "Deadline per attempt; maxAttempts * (timeoutMs + delayMs) must stay within 24 h." },
+                            "overlap": { "enum": ["skip"], "description": "queue-one is not implemented until S5 (docs/11 §2 rule 5)." },
+                            "misfire": { "enum": ["skip"], "description": "run-once is not implemented until S5 (docs/11 §2 rule 5)." },
+                            "retry": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "description": "Retry is not implemented until S5; only the default (no automatic retry) is accepted.",
+                                "properties": {
+                                    "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 10, "default": 1 },
+                                    "delayMs": { "type": "integer", "minimum": 0, "maximum": 3600000, "default": 0 },
+                                    "backoff": { "enum": ["fixed", "exponential"], "default": "fixed" },
+                                    "retryOn": { "type": "array", "items": { "enum": ["failure", "timeout"] }, "default": ["failure"] }
+                                }
+                            },
+                            "output": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                    "capture": { "enum": ["tail"], "default": "tail", "description": "none is not implemented until S5 (docs/11 §2 rule 5)." },
+                                    "maxBytes": { "type": "integer", "minimum": 1024, "maximum": 1048576, "default": 16384 }
+                                }
+                            }
+                        }
+                    }
+                }
             }),
             pages: vec![page("jobs", JOBS_ID, "Jobs", 50, false)],
             routes: vec!["/api/jobs".into()],
