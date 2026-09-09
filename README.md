@@ -13,10 +13,12 @@ shipped as a **single self-contained `.exe`** with no Node, no `node_modules`, n
 **Core implementation complete** — all planned adapter families are wired into the factory: echo,
 MySQL, PostgreSQL, Redis, MongoDB, proc, HTTP, REST, and SSH tunnels. The admin API, embedded panel,
 sealed-envelope compatibility, lazy proc lifecycle, and loopback security paths are implemented.
-Validation currently passes with `cargo test --features mongo` (225 tests plus integration suites),
-`cargo clippy --all-targets --features mongo -- -D warnings`, and `cargo build --release --features mongo`.
+Scheduled command jobs, their panel page, and startup-time subsystem switches are included in
+baseline `81882cc`. Validation passes with default features and `mongo` (647 library tests and
+82 integration tests with `mongo`), plus Clippy with `-D warnings` in both combinations. On
+memory-constrained Windows machines, use `-j 1` to reduce compiler memory pressure.
 The MongoDB driver remains an opt-in feature so the default binary stays small.
-`docs/` holds the complete migration plan; read it in order.
+`docs/01`–`08` describe the original compatibility port; `09`–`10` propose its next architecture.
 
 | Doc | What it settles |
 | --- | --- |
@@ -28,6 +30,11 @@ The MongoDB driver remains an opt-in feature so the default binary stays small.
 | [`docs/06-roadmap.md`](docs/06-roadmap.md) | Six phases, each with an exit criterion |
 | [`docs/07-decisions.md`](docs/07-decisions.md) | The calls that need a human: what gets dropped, and why |
 | [`docs/08-testing.md`](docs/08-testing.md) | How 10,859 lines of vitest become the acceptance spec |
+| [`docs/09-toolbox-plugin-architecture.md`](docs/09-toolbox-plugin-architecture.md) | **Proposal:** RH-inspired developer toolbox, plugin/page contracts, module boundaries, staged migration |
+| [`docs/10-config-driven-jobs.md`](docs/10-config-driven-jobs.md) | **Proposal:** configuration-driven Jobs, shared Actions/runs, policy defaults, compatibility and recovery |
+
+The toolbox proposals are not implemented configuration or API documentation. They do not change
+the existing Node-panel source-of-truth, sealed formats, or the v1 port boundaries below.
 
 ## The one-paragraph version
 
