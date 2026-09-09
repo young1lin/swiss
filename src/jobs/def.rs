@@ -340,53 +340,88 @@ fn enum_str<'a>(
 
 impl JobsConfig {
     /// Parse and fully validate a `plugins.jobs.config` object (docs/11 §3). This is the
-    /// server-side authority for every save of the row; the scheduler does not read it
-    /// yet (that wiring is a later stage), which the descriptor states honestly.
+    /// server-side authority for every SAVE of the row: a body that fails here is a 400,
+    /// because accepting config this build cannot execute would be the
+    /// accepted-but-unexecuted lie (docs/11 §2 rule 5). The scheduler does not read the
+    /// row yet (that wiring is a later stage), which the descriptor states honestly.
     pub fn parse(config: &Value) -> Result<JobsConfig, ConfigError> {
-        let obj = config
-            .as_object()
-            .ok_or_else(|| type_err("config", "an object"))?;
-        check_known(
-            obj,
-            "",
-            &[
-                "schemaVersion",
-                "maxConcurrentRuns",
-                "maxQueuedRuns",
-                "retention",
-                "definitions",
-            ],
-        )?;
-        // Absent means 2; any other value refuses the WHOLE row. A config written for
-        // another schema is never parsed "down" into something it does not say
-        // (docs/11 §3.2).
-        if let Some(v) = obj.get("schemaVersion") {
-            if v != &Value::Null {
-                let n = whole_u64(v)
-                    .ok_or_else(|| type_err("schemaVersion", "a whole number"))?;
-                if n != 2 {
-                    return Err(ConfigError::new(
-                        "schemaVersion",
-                        format!("only 2 is accepted, got {n}"),
-                    ));
-                }
+        parse_at(config, false).map(|parsed| parsed.config)
+    }
+
+    /// The boot-time compatibility path, and why it differs from [JobsConfig::parse]:
+    /// a config row written BEFORE this validator existed passed through a checker whose
+    /// only rule was "every definitions entry is an object", so an upgraded gateway can
+    /// legitimately find placeholder entries (`{"x": {}}`) on disk. Failing the whole
+    /// row at plugin start would trade a one-definition leftover for an all-jobs outage:
+    /// the plugin goes Failed and the scheduler never runs (engine.rs validates before
+    /// start). So at BOOT an entry that is an object but fails v2 parse is DROPPED and
+    /// reported back for a warn, exactly the way JobStore::open drops a hand-mangled
+    /// jobs.json entry. A PUT must stay strict: a human saving that same body NOW is
+    /// told it is wrong, otherwise the leniency becomes a new way to save dead config.
+    /// Non-object entries and config-level errors stay fatal on both paths, because the
+    /// old validator never accepted those and they cannot be pre-upgrade leftovers.
+    pub fn parse_boot(config: &Value) -> Result<BootParsed, ConfigError> {
+        parse_at(config, true)
+    }
+}
+
+/// What [JobsConfig::parse_boot] produced: the parsed row plus the definitions the
+/// placeholder leniency dropped (id and rendered reason), which the caller turns into
+/// warn log lines.
+pub struct BootParsed {
+    pub config: JobsConfig,
+    pub dropped: Vec<(String, String)>,
+}
+
+/// One parser, two policies. `boot` selects the placeholder leniency described on
+/// [JobsConfig::parse_boot]; the dropped list reports what the leniency removed.
+fn parse_at(config: &Value, boot: bool) -> Result<BootParsed, ConfigError> {
+    let obj = config
+        .as_object()
+        .ok_or_else(|| type_err("config", "an object"))?;
+    check_known(
+        obj,
+        "",
+        &[
+            "schemaVersion",
+            "maxConcurrentRuns",
+            "maxQueuedRuns",
+            "retention",
+            "definitions",
+        ],
+    )?;
+    // Absent means 2; any other value refuses the WHOLE row. A config written for
+    // another schema is never parsed "down" into something it does not say
+    // (docs/11 §3.2).
+    if let Some(v) = obj.get("schemaVersion") {
+        if v != &Value::Null {
+            let n = whole_u64(v)
+                .ok_or_else(|| type_err("schemaVersion", "a whole number"))?;
+            if n != 2 {
+                return Err(ConfigError::new(
+                    "schemaVersion",
+                    format!("only 2 is accepted, got {n}"),
+                ));
             }
         }
-        let max_concurrent_runs =
-            opt_bounded(obj, "maxConcurrentRuns", "", DEFAULT_MAX_CONCURRENT_RUNS as u64, 1, 64)?
-                as usize;
-        let max_queued_runs =
-            opt_bounded(obj, "maxQueuedRuns", "", DEFAULT_MAX_QUEUED_RUNS as u64, 0, 1024)?
-                as usize;
-        let retention = parse_retention(obj.get("retention"))?;
-        let definitions = parse_definitions(obj.get("definitions"))?;
-        Ok(JobsConfig {
+    }
+    let max_concurrent_runs =
+        opt_bounded(obj, "maxConcurrentRuns", "", DEFAULT_MAX_CONCURRENT_RUNS as u64, 1, 64)?
+            as usize;
+    let max_queued_runs =
+        opt_bounded(obj, "maxQueuedRuns", "", DEFAULT_MAX_QUEUED_RUNS as u64, 0, 1024)?
+            as usize;
+    let retention = parse_retention(obj.get("retention"))?;
+    let (definitions, dropped) = parse_definitions(obj.get("definitions"), boot)?;
+    Ok(BootParsed {
+        config: JobsConfig {
             max_concurrent_runs,
             max_queued_runs,
             retention,
             definitions,
-        })
-    }
+        },
+        dropped,
+    })
 }
 
 fn parse_retention(v: Option<&Value>) -> Result<Retention, ConfigError> {
@@ -423,9 +458,19 @@ fn parse_retention(v: Option<&Value>) -> Result<Retention, ConfigError> {
     })
 }
 
-fn parse_definitions(v: Option<&Value>) -> Result<Vec<JobDefinition>, ConfigError> {
+/// One dropped definitions entry: the id and the rendered parse error.
+pub type Dropped = (String, String);
+
+/// Parse the definitions map. In `boot` mode an entry shaped like an old placeholder
+/// (an object - the one shape the pre-v2 validator ever accepted) that fails v2 parse is
+/// dropped and reported instead of refused; see [JobsConfig::parse_boot] for why boot and
+/// PUT deliberately disagree. Returns the definitions plus the (id, reason) pairs dropped.
+fn parse_definitions(
+    v: Option<&Value>,
+    boot: bool,
+) -> Result<(Vec<JobDefinition>, Vec<Dropped>), ConfigError> {
     let map = match v {
-        None | Some(Value::Null) => return Ok(Vec::new()),
+        None | Some(Value::Null) => return Ok((Vec::new(), Vec::new())),
         Some(v) => v
             .as_object()
             .ok_or_else(|| type_err("definitions", "an object mapping job ids to definitions"))?,
@@ -440,16 +485,37 @@ fn parse_definitions(v: Option<&Value>) -> Result<Vec<JobDefinition>, ConfigErro
         ));
     }
     let mut definitions = Vec::with_capacity(map.len());
+    let mut dropped = Vec::new();
     for (id, body) in map {
+        // The leniency predicate is "body is an object": that is exactly the set of rows
+        // the old validator could have persisted. Anything else was never writable
+        // before the upgrade and stays a hard error even at boot.
+        let placeholder = boot && body.is_object();
         if !valid_name(id) {
+            if placeholder {
+                dropped.push((
+                    id.clone(),
+                    "job id must be 1-64 chars of letters, digits, . _ -".to_string(),
+                ));
+                continue;
+            }
             return Err(ConfigError::new(
                 format!("definitions.{id}"),
                 "job id must be 1-64 chars of letters, digits, . _ - (it is also the run-log file name)",
             ));
         }
-        definitions.push(parse_definition(id, body, &format!("definitions.{id}"))?);
+        match parse_definition(id, body, &format!("definitions.{id}")) {
+            Ok(def) => definitions.push(def),
+            Err(err) => {
+                if placeholder {
+                    dropped.push((id.clone(), err.to_string()));
+                    continue;
+                }
+                return Err(err);
+            }
+        }
     }
-    Ok(definitions)
+    Ok((definitions, dropped))
 }
 
 fn parse_definition(id: &str, body: &Value, parent: &str) -> Result<JobDefinition, ConfigError> {
@@ -717,6 +783,11 @@ fn parse_action(v: Option<&Value>, parent: &str) -> Result<ActionRef, ConfigErro
     // at run time. Registration is deliberately NOT required: a provider may be disabled
     // right now, and a definition that cannot run yet must still be savable (its runs
     // will be refused until the plugin is back, which the run log reports).
+    // TODO(S3): this module cannot reach the ActionRegistry, so the two remaining §3.4
+    // promises are deferred, not dropped - once the plugin can hand a registry in,
+    // validate input against the resolved capability's own schema here, and surface
+    // "action <type> is not registered" as a PUT warning plus actionAvailable: false in
+    // the listing. Both are pinned as S3 test items in docs/11 §9 S3.
     let input = match obj.get("input") {
         None | Some(Value::Null) => Value::Object(Map::new()),
         Some(v) if v.is_object() => v.clone(),
@@ -1537,6 +1608,52 @@ mod tests {
         assert!(!parse_one(body).editable_in_v1());
     }
 
+    #[test]
+    fn boot_parse_drops_old_placeholders_but_a_save_stays_strict() {
+        // The exact leftover an upgraded gateway can find on disk: the old validator
+        // accepted any object under definitions, so {} placeholders passed its PUT.
+        let leftover = json!({ "definitions": { "x": {} } });
+        let err = refused(&leftover);
+        assert_eq!(err.path, "definitions.x.trigger", "{err}");
+        let boot = JobsConfig::parse_boot(&leftover).expect("boot tolerates it");
+        assert!(boot.config.definitions.is_empty(), "the placeholder does not run");
+        assert_eq!(boot.dropped.len(), 1);
+        assert_eq!(boot.dropped[0].0, "x", "the drop report feeds the boot warn");
+        assert!(boot.dropped[0].1.contains("trigger"), "{}", boot.dropped[0].1);
+
+        // A valid neighbour survives; only the stale entry goes.
+        let mixed = json!({ "definitions": { "x": {}, "good": def_body() } });
+        let boot = JobsConfig::parse_boot(&mixed).expect("boot tolerates it");
+        assert_eq!(boot.config.definitions.len(), 1);
+        assert_eq!(boot.config.definitions[0].id, "good");
+        assert_eq!(boot.dropped.len(), 1);
+
+        // A bad ID on an object body is the same kind of leftover.
+        let mut definitions = Map::new();
+        definitions.insert("not ok".into(), json!({}));
+        let boot =
+            JobsConfig::parse_boot(&json!({ "definitions": Value::Object(definitions.clone()) }))
+                .expect("boot tolerates it");
+        assert!(boot.config.definitions.is_empty());
+        assert_eq!(boot.dropped[0].0, "not ok");
+
+        // What the old validator NEVER accepted stays fatal at boot too: a non-object
+        // entry cannot be a pre-upgrade leftover, so it is a real corruption.
+        let err = refused(&json!({ "definitions": { "x": "not an object" } }));
+        assert_eq!(err.path, "definitions.x", "{err}");
+        let err = match JobsConfig::parse_boot(&json!({ "definitions": { "x": 7 } })) {
+            Err(err) => err,
+            Ok(_) => panic!("boot must refuse a non-object entry"),
+        };
+        assert_eq!(err.path, "definitions.x", "{err}");
+
+        // Config-level errors are not placeholders either; boot stays strict there.
+        let err = match JobsConfig::parse_boot(&json!({ "late": true })) {
+            Err(err) => err,
+            Ok(_) => panic!("boot must refuse config-level garbage"),
+        };
+        assert_eq!(err.path, "late", "{err}");
+    }
     #[test]
     fn action_input_is_kept_verbatim_with_env_refs() {
         // An unregistered capability type is savable on purpose (docs/11 §3.4): its

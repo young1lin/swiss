@@ -265,8 +265,9 @@ impl PluginHost {
         let revision = self.store.snapshot().revision;
         let config = self.store.plugin_config(&id);
         // Validate BEFORE create: a bad row (hand-edited while disabled, say) must fail the
-        // plugin, not half-construct an instance.
-        if let Err(err) = entry.factory.validate_config(&config) {
+        // plugin, not half-construct an instance. The start-path hook, not the PUT one:
+        // a plugin may need to drop-and-warn entries an older validator left behind.
+        if let Err(err) = entry.factory.validate_config_for_start(&config) {
             let err = format!("invalid config: {err}");
             entry.record_failure(err.clone());
             return Err(err);

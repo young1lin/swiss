@@ -51,6 +51,16 @@ pub trait PluginFactory: Send + Sync {
         Ok(())
     }
 
+    /// Validate a config the START path is about to boot from. Defaults to
+    /// [PluginFactory::validate_config], so a plugin that says nothing keeps one strict
+    /// validator on both paths. Override it only to tolerate rows an OLDER, laxer
+    /// validator of the same plugin may already have persisted (drop-and-warn), never to
+    /// weaken what a save accepts: a config refused on PUT but booted anyway must be a
+    /// leftover, not a second way for dead config to get in.
+    fn validate_config_for_start(&self, config: &Value) -> Result<(), String> {
+        self.validate_config(config)
+    }
+
     /// Build (not start) an instance from validated config. Cheap by contract — everything
     /// eager belongs in `start`, so a failed start cannot leak half a construction.
     async fn create(&self, config: &Value) -> Result<Arc<dyn PluginInstance>, String>;

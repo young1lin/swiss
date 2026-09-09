@@ -929,6 +929,48 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     );
 }
 
+/// The S1 follow-up pair, end to end: a config row holding an old placeholder
+/// definition (`{"x": {}}` - exactly what the pre-v2 validator accepted) must NOT
+/// fail the jobs plugin at boot (one stale entry must not take the scheduler down for
+/// every job), while PUTting that same row back must stay a 400 - a human saving it
+/// now is writing new config, and accepting it would be the accepted-but-unexecuted
+/// lie. The boot warn itself is asserted at the def.rs unit level (parse_boot reports
+/// the drops that feed it); log output is println and not capturable from here.
+#[tokio::test]
+async fn a_placeholder_definition_boots_lenient_but_a_manual_save_is_strict() {
+    let (app, _host, _registry) = full_app(
+        "bootlenient",
+        json!({ "plugins": { "jobs": { "config": { "definitions": { "x": {} } } } } }),
+    )
+    .await;
+
+    // The plugin booted Active despite the placeholder: the scheduler runs.
+    let (status, body, _) = send(&app, local("GET", "/api/plugins")).await;
+    assert_eq!(status, StatusCode::OK);
+    let row = body.unwrap()["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == json!("jobs"))
+        .cloned()
+        .expect("the jobs row");
+    assert_eq!(row["state"], json!("active"), "{row}");
+    assert!(row.get("lastError").is_none(), "{row}");
+
+    // Saving the same definitions by hand is still refused.
+    let (status, body, _) = send(
+        &app,
+        json_body(
+            "PUT",
+            "/api/plugins/jobs/config",
+            json!({ "config": { "definitions": { "x": {} } } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let msg = body.unwrap()["error"].as_str().unwrap_or_default().to_string();
+    assert!(msg.contains("definitions.x"), "{msg}");
+}
 #[tokio::test]
 async fn enabled_plugins_keep_every_api_shape_they_had() {
     let (app, _host, _registry) = full_app("compat", json!({})).await;

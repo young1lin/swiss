@@ -479,6 +479,29 @@ impl PluginFactory for JobsPlugin {
         validate_jobs_config(config)
     }
 
+    /// Boot path: same row, older possible author. A pre-v2 gateway accepted ANY object
+    /// under definitions, so its leftovers (`{"x": {}}` placeholders and the like) are
+    /// dropped with a warn here instead of failing the plugin - one stale entry must not
+    /// take the scheduler down for every job. A PUT of the same body stays a 400 via
+    /// [validate_jobs_config]: a human saving it NOW is doing something new, and
+    /// accepting it would be the accepted-but-unexecuted lie (docs/11 §2 rule 5). The
+    /// warn itself is asserted at the def.rs unit level (parse_boot reports the drops
+    /// that feed it); log output is println and not capturable from integration tests.
+    fn validate_config_for_start(&self, config: &Value) -> Result<(), String> {
+        match crate::jobs::def::JobsConfig::parse_boot(config) {
+            Ok(boot) => {
+                for (id, reason) in boot.dropped {
+                    log::warn(
+                        "ignoring a config job definition saved by an older validator",
+                        Some(json!({ "id": id, "reason": reason })),
+                    );
+                }
+                Ok(())
+            }
+            Err(err) => Err(err.to_string()),
+        }
+    }
+
     async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
         Ok(Arc::new(JobsInstance {
             jobs: self.jobs.clone(),
