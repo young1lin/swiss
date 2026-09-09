@@ -28,7 +28,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 use serde_json::{json, Map, Value};
 
-use super::{run_record, JobDef, JobSystem, RunError};
+use super::{run_record, JobDef, JobSystem, RunError, WriteError};
 use crate::app::{admin_error, admin_json};
 
 /// A number from JSON that tolerates the 60.0 spelling of 60 (JS clients) but refuses
@@ -42,6 +42,17 @@ fn whole_number(v: &Value) -> Option<u64> {
         Some(f as u64)
     } else {
         None
+    }
+}
+
+/// The status of a definition write (docs/11 §7.1): a bad definition is the caller's
+/// (400), a job the v1 shape cannot spell points at the config editor (409), and a
+/// failed persist is this gateway's (500).
+fn write_status(err: &WriteError) -> StatusCode {
+    match err {
+        WriteError::Invalid(_) => StatusCode::BAD_REQUEST,
+        WriteError::NotEditableV1(_) => StatusCode::CONFLICT,
+        WriteError::Persist(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
@@ -121,16 +132,8 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
                     Ok(def) => def,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 };
-                if let Err(err) = jobs.upsert(def) {
-                    // A rejected DEFINITION is the caller's fault (400); a failed WRITE is
-                    // this gateway's (500). Reporting both as 400 would tell a user to fix a
-                    // job that is already correct.
-                    let status = if err.starts_with("could not persist") {
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    } else {
-                        StatusCode::BAD_REQUEST
-                    };
-                    return admin_error(status, &err);
+                if let Err(err) = jobs.upsert_v1(def) {
+                    return admin_error(write_status(&err), &err.to_string());
                 }
                 // Echo the saved row (with its live facts) in the panel's reply style.
                 let view = jobs
@@ -148,9 +151,9 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
                     Ok(false) => {
                         admin_error(StatusCode::NOT_FOUND, &format!("unknown job: {name}"))
                     }
-                    // Removed from the table but not from disk: the next boot brings it back,
-                    // so this is not a deletion and must not report one.
-                    Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
+                    // Removed from the table but not from the config row: the next boot
+                    // brings it back, so this is not a deletion and must not report one.
+                    Err(err) => admin_error(write_status(&err), &err.to_string()),
                 }
             },
         ),
@@ -213,10 +216,10 @@ mod tests {
     use axum::http::Request;
     use tower::util::ServiceExt;
 
-    /// A job system on its own private tree: jobs.json, jobs-state.json and logs/jobs all
-    /// derive from one scratch directory, so no two tests share anything (the S2
-    /// instantiation - what used to need a process-wide lock is now per-instance).
-    async fn scratch_system(name: &str) -> Arc<JobSystem> {
+    /// A job system plus its config store on one private tree (the S3 shape): jobs.json,
+    /// jobs-state.json, logs/jobs and gateway.config.json all derive from one scratch
+    /// directory, so no two tests share anything.
+    async fn scratch_system(name: &str) -> (Arc<JobSystem>, Arc<crate::config_store::ConfigStore>) {
         crate::secure::key::use_test_master_key();
         let dir = std::env::temp_dir().join(format!(
             "lmg-jobs-api-{}-{}",
@@ -224,11 +227,22 @@ mod tests {
             crate::util::random_hex(8)
         ));
         std::fs::create_dir_all(&dir).expect("scratch dir");
-        JobSystem::open(dir.join("jobs.json"), super::super::test_services())
+        let store = crate::config_store::ConfigStore::from_loaded(
+            dir.join("gateway.config.json"),
+            json!({}),
+        );
+        (
+            JobSystem::open(
+                dir.join("jobs.json"),
+                super::super::test_services(),
+                store.clone(),
+            ),
+            store,
+        )
     }
 
-    /// The same thing, but pointed at a path under a directory that does not exist, so every
-    /// persist fails while everything else about the system stays real.
+    /// The same tree, but the CONFIG file sits under a directory that does not exist, so
+    /// every definition persist fails while everything else stays real.
     async fn unwritable_system(name: &str) -> Arc<JobSystem> {
         crate::secure::key::use_test_master_key();
         let dir = std::env::temp_dir().join(format!(
@@ -236,10 +250,12 @@ mod tests {
             name,
             crate::util::random_hex(8)
         ));
-        JobSystem::open(
-            dir.join("gone").join("jobs.json"),
-            super::super::test_services(),
-        )
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let store = crate::config_store::ConfigStore::from_loaded(
+            dir.join("gone").join("gateway.config.json"),
+            json!({}),
+        );
+        JobSystem::open(dir.join("jobs.json"), super::super::test_services(), store)
     }
 
     async fn call(
@@ -283,7 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_list_delete_round_trip() {
-        let sys = scratch_system("crud").await;
+        let (sys, _store) = scratch_system("crud").await;
         let router = mount(sys.clone());
 
         // Create: minimal body, defaults applied.
@@ -325,9 +341,107 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     }
 
+    /// docs/11 §7.1, the frozen half: every v1 field the panel reads is present with the
+    /// type it always had, and the v2 fields ride along. One test per field so a silent
+    /// shape change fails with the offender named.
+    #[tokio::test]
+    async fn the_listing_carries_the_frozen_v1_shape_and_the_v2_fields() {
+        let (sys, store) = scratch_system("shape").await;
+        let router = mount(sys.clone());
+        call(
+            &router,
+            "PUT",
+            "/api/jobs/shaped",
+            Some(json!({ "command": "echo ok", "cron": "30 3 * * *", "cwd": "C:\\tmp", "timeoutMs": 12000 })),
+        )
+        .await;
+        let (status, body) = call(&router, "GET", "/api/jobs", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let job = &body["jobs"][0];
+        assert_eq!(job["name"], json!("shaped"));
+        assert_eq!(job["command"], json!("echo ok"));
+        assert_eq!(job["cron"], json!("30 3 * * *"));
+        assert!(job.get("everySec").is_none(), "absent-not-null, v1 rule");
+        assert_eq!(job["enabled"], json!(true));
+        assert_eq!(job["timeoutMs"], json!(12000));
+        assert_eq!(job["cwd"], json!("C:\\tmp"));
+        assert_eq!(job["running"], json!(false));
+        assert!(
+            job.get("lastRunAt").is_none(),
+            "absent-not-null for a never-run job"
+        );
+        assert!(job.get("lastOk").is_none(), "absent-not-null");
+        assert!(job["nextDueAt"].as_str().is_some(), "{job}");
+        // The v2 additions (docs/11 §7.1).
+        assert_eq!(job["id"], json!("shaped"));
+        assert_eq!(job["title"], json!("shaped"));
+        assert_eq!(job["labels"], json!([]));
+        assert_eq!(job["trigger"]["kind"], json!("cron"));
+        assert_eq!(job["action"]["type"], json!("process.legacy-command"));
+        assert_eq!(job["overlap"], json!("skip"));
+        assert_eq!(job["misfire"], json!("skip"));
+        assert_eq!(job["source"], json!("config"));
+        assert_eq!(job["actionAvailable"], json!(true));
+        assert_eq!(job["editableInV1"], json!(true));
+        assert!(job["configRevision"].as_u64().is_some(), "{job}");
+        // The row the listing projects is the one in the store - one source of truth.
+        assert_eq!(
+            store.plugin_config("jobs")["definitions"]["shaped"]["trigger"]["expression"],
+            json!("30 3 * * *"),
+            "the v1 write landed in the config row"
+        );
+    }
+
+    /// docs/11 §7.1: PUT on a job the v1 shape cannot spell is a 409 that names the
+    /// config editor, and the definition is left exactly as it was.
+    #[tokio::test]
+    async fn v1_put_on_a_v2_only_job_is_a_409_pointing_at_the_config_editor() {
+        let (sys, store) = scratch_system("v2only").await;
+        let row = json!({
+            "definitions": {
+                "proud": {
+                    "title": "A titled job",
+                    "trigger": { "kind": "interval", "everyMs": 60000 },
+                    "action": { "type": "process.legacy-command", "input": { "command": "echo hi" } }
+                }
+            }
+        });
+        let rev = store.snapshot().revision;
+        store
+            .update_plugin("jobs", rev, row.clone())
+            .expect("the row installs");
+        sys.apply_config(&row).expect("the row applies");
+        let router = mount(sys.clone());
+
+        let (status, body) = call(
+            &router,
+            "PUT",
+            "/api/jobs/proud",
+            Some(json!({ "command": "echo x", "everySec": 60 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("/api/plugins/jobs/config"),
+            "{body}"
+        );
+        // Refused, not applied: the row is untouched.
+        assert_eq!(
+            store.plugin_config("jobs")["definitions"]["proud"]["title"],
+            json!("A titled job")
+        );
+        // And a definition whose provider is missing still lists, flagged.
+        let (status, body) = call(&router, "GET", "/api/jobs", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["jobs"][0]["editableInV1"], json!(false));
+    }
+
     #[tokio::test]
     async fn invalid_definitions_are_400_with_a_reason() {
-        let sys = scratch_system("validate").await;
+        let (sys, _store) = scratch_system("validate").await;
         let router = mount(sys.clone());
         for body in [
             json!({ "cron": "30 3 * * *" }),                   // no command
@@ -386,17 +500,22 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
-        // The row is live in memory, so DELETE finds it - and cannot persist its removal.
+        // The definitions row never landed, so there is nothing to delete: a 404,
+        // not a write failure. The v1 edit path goes through the config store, and a
+        // store whose file cannot be written refuses without half-applying anywhere.
         let (status, body) = call(&router, "DELETE", "/api/jobs/doomed", None).await;
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
-        // A job that was never there is still a 404, not a write failure.
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         let (status, _) = call(&router, "DELETE", "/api/jobs/never-existed", None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        // And the listing stayed empty: no half-applied definition anywhere.
+        let (status, body) = call(&router, "GET", "/api/jobs", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["jobs"].as_array().map(Vec::len), Some(0));
     }
 
     #[tokio::test]
     async fn a_manual_run_returns_the_record_and_history_shows_it() {
-        let sys = scratch_system("run").await;
+        let (sys, _store) = scratch_system("run").await;
         let router = mount(sys.clone());
         call(
             &router,

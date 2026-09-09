@@ -34,6 +34,28 @@ pub trait PluginInstance: Send + Sync {
         // Nothing beyond the scope to release — the default for plugins whose whole runtime
         // footprint is tasks spawned through the scope.
     }
+
+    /// Apply a new config row IN PLACE, without a restart (docs/11 §8). Default:
+    /// [ApplyOutcome::NotApplicable], so a plugin that says nothing keeps today's
+    /// restart-or-note behaviour exactly. A plugin whose config is a live table - Jobs -
+    /// overrides this so editing one entry never bounces the instance (and with it every
+    /// run it owns).
+    async fn apply_config(&self, _config: &Value) -> ApplyOutcome {
+        ApplyOutcome::NotApplicable
+    }
+}
+
+/// What [PluginInstance::apply_config] did with the row.
+pub enum ApplyOutcome {
+    /// The row is live in the running instance; the host notes the new revision.
+    Applied,
+    /// This plugin has no in-place semantics; restart-or-note decides, as before.
+    NotApplicable,
+    /// The row is PERSISTED but the running instance could not take it: the instance
+    /// stays Active, `lastError` carries the reason, and the config revision does NOT
+    /// move - desired and actual stay visibly apart until a later reconcile succeeds
+    /// (docs/10 §5). The PUT still answered 200; its body says `applied: false`.
+    Failed(String),
 }
 
 /// Builds instances of one plugin. One factory per registered plugin; the descriptor is fixed
@@ -64,4 +86,11 @@ pub trait PluginFactory: Send + Sync {
     /// Build (not start) an instance from validated config. Cheap by contract — everything
     /// eager belongs in `start`, so a failed start cannot leak half a construction.
     async fn create(&self, config: &Value) -> Result<Arc<dyn PluginInstance>, String>;
+
+    /// Advisory notes about a config the validator ACCEPTED (docs/11 §3.4): savable rows
+    /// the running gateway cannot fully execute yet - an action whose provider is
+    /// disabled, say. Carried on the PUT response as `warnings`; empty by default.
+    fn config_warnings(&self, _config: &Value) -> Vec<String> {
+        Vec::new()
+    }
 }

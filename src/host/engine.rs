@@ -15,7 +15,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::descriptor::{PluginDescriptor, PluginState};
-use super::factory::{PluginFactory, PluginInstance};
+use super::factory::{ApplyOutcome, PluginFactory, PluginInstance};
 use super::scope::PluginScope;
 use crate::config_store::ConfigStore;
 
@@ -39,6 +39,11 @@ pub struct PluginEntry {
     /// Serializes this plugin's lifecycle operations (the registry's per-entry `op` queue,
     /// one per plugin).
     op: tokio::sync::Mutex<()>,
+    /// The last IN-PLACE config apply's failure, if it failed (docs/11 §8): Some(err) means
+    /// a row is persisted that the running instance has not taken - the visible
+    /// desired-vs-actual gap. Cleared by the apply that succeeds (or the restart that
+    /// supersedes it).
+    apply_error: Mutex<Option<String>>,
     /// The live instance. `None` is the disabled/stopped state — the boundary and the client
     /// guards read presence here, so a stopped plugin is not parked behind a flag: the
     /// instance is GONE.
@@ -70,6 +75,19 @@ impl PluginEntry {
     /// The factory, for config validation ahead of a PUT.
     pub fn factory(&self) -> Arc<dyn PluginFactory> {
         self.factory.clone()
+    }
+
+    /// The failure of the last in-place config apply, if any (docs/11 §8): what the PUT
+    /// response reports as `applied: false` and the inventory keeps as the gap between
+    /// the persisted row and the running instance.
+    pub fn apply_error(&self) -> Option<String> {
+        self.apply_error.lock().ok().and_then(|e| e.clone())
+    }
+
+    fn set_apply_error(&self, err: Option<String>) {
+        if let Ok(mut slot) = self.apply_error.lock() {
+            *slot = err;
+        }
     }
 
     fn set_state(&self, state: PluginState) {
@@ -120,18 +138,16 @@ impl PluginHost {
                 .plugins
                 .read()
                 .map_err(|_| "plugin registry poisoned".to_string())?;
-            if let Some(first) = plugins
-                .iter()
-                .find(|p| p.descriptor().id == descriptor.id)
-            {
+            if let Some(first) = plugins.iter().find(|p| p.descriptor().id == descriptor.id) {
                 return Err(format!(
                     "plugin id already registered: {} (kind {})",
-                    descriptor.id, first.descriptor().kind
+                    descriptor.id,
+                    first.descriptor().kind
                 ));
             }
             for owned in &descriptor.routes {
-                if let Some(reserved) =
-                    super::api::reserved_routes().find(|host_route| routes_overlap(host_route, owned))
+                if let Some(reserved) = super::api::reserved_routes()
+                    .find(|host_route| routes_overlap(host_route, owned))
                 {
                     return Err(format!(
                         "route prefix {owned} of plugin {} is reserved by the host ({reserved})",
@@ -159,6 +175,7 @@ impl PluginHost {
             last_error: Mutex::new(None),
             config_revision: AtomicU64::new(0),
             op: tokio::sync::Mutex::new(()),
+            apply_error: Mutex::new(None),
             slot: RwLock::new(None),
             scope: Mutex::new(None),
         });
@@ -222,7 +239,9 @@ impl PluginHost {
     /// two simultaneous starts of a stopped plugin run `create` ONCE (single-flight), and a
     /// disable racing an enable lands in whichever order the queue admits, then re-checks.
     pub async fn reconcile(self: &Arc<Self>, id: &str) -> Result<(), String> {
-        let entry = self.plugin(id).ok_or_else(|| format!("unknown plugin: {id}"))?;
+        let entry = self
+            .plugin(id)
+            .ok_or_else(|| format!("unknown plugin: {id}"))?;
         let _guard = entry.op.lock().await;
         self.reconcile_locked(&entry).await
     }
@@ -230,11 +249,7 @@ impl PluginHost {
     async fn reconcile_locked(self: &Arc<Self>, entry: &Arc<PluginEntry>) -> Result<(), String> {
         let id = entry.descriptor().id.clone();
         let desired_enabled = !self.store.plugin_disabled(&id);
-        let running = entry
-            .slot
-            .read()
-            .map(|s| s.is_some())
-            .unwrap_or(false);
+        let running = entry.slot.read().map(|s| s.is_some()).unwrap_or(false);
         match (desired_enabled, running) {
             (false, false) => {
                 entry.set_state(PluginState::Disabled);
@@ -244,16 +259,51 @@ impl PluginHost {
             (true, false) => self.start_instance(entry).await,
             (true, true) => {
                 let current = self.store.snapshot().revision;
-                if entry.config_revision() != current && entry.descriptor().restart_on_config_change {
-                    // Config moved under a running instance that declares it restartable:
-                    // stop, then start again on the new config (docs/09 §4 — apply vs restart
-                    // is an explicit per-plugin decision, never a universal hot reload).
-                    self.stop_instance(entry).await?;
-                    self.start_instance(entry).await
+                if entry.config_revision() != current {
+                    // The running instance gets FIRST claim on the new row (docs/11 §8):
+                    // an in-place apply never bounces the plugin - which for Jobs would
+                    // mean cancelling every run it owns mid-flight.
+                    let instance = entry.slot.read().ok().and_then(|s| s.clone());
+                    if let Some(instance) = instance {
+                        let config = self.store.plugin_config(&id);
+                        match instance.apply_config(&config).await {
+                            ApplyOutcome::Applied => {
+                                entry.set_apply_error(None);
+                                entry.config_revision.store(current, Ordering::SeqCst);
+                                return Ok(());
+                            }
+                            ApplyOutcome::Failed(err) => {
+                                // The instance stays Active and the revision does NOT move:
+                                // desired and actual stay visibly apart until a later
+                                // reconcile succeeds (docs/10 §5). reconcile itself is not
+                                // an error - the row IS persisted; the PUT body says
+                                // `applied: false` and the inventory carries the reason.
+                                entry.set_apply_error(Some(err));
+                                entry.set_error(Some(
+                                    "config apply failed; the previous config is still running"
+                                        .to_string(),
+                                ));
+                                return Ok(());
+                            }
+                            ApplyOutcome::NotApplicable => {}
+                        }
+                    }
+                    if entry.descriptor().restart_on_config_change {
+                        // Config moved under a running instance that declares it restartable:
+                        // stop, then start again on the new config (docs/09 §4 — apply vs
+                        // restart is an explicit per-plugin decision, never a universal hot
+                        // reload).
+                        self.stop_instance(entry).await?;
+                        self.start_instance(entry).await
+                    } else {
+                        // Nothing to bounce: note that the instance now corresponds to the
+                        // current config (whatever the plugin does with it on its next start).
+                        entry.set_apply_error(None);
+                        entry.config_revision.store(current, Ordering::SeqCst);
+                        Ok(())
+                    }
                 } else {
-                    // Nothing to bounce: note that the instance now corresponds to the
-                    // current config (whatever the plugin does with it on its next start).
-                    entry.config_revision.store(current, Ordering::SeqCst);
+                    // Already at the current revision - nothing to apply or note.
                     Ok(())
                 }
             }
@@ -320,7 +370,10 @@ impl PluginHost {
         entry.set_state(PluginState::Stopping);
         let instance = entry.slot.write().ok().and_then(|mut s| s.take());
         if let Some(instance) = instance {
-            if tokio::time::timeout(STOP_TIMEOUT, instance.stop()).await.is_err() {
+            if tokio::time::timeout(STOP_TIMEOUT, instance.stop())
+                .await
+                .is_err()
+            {
                 entry.set_error(Some(format!(
                     "{id} stop timed out after {} ms; its scope was torn down anyway",
                     STOP_TIMEOUT.as_millis()
@@ -348,11 +401,7 @@ impl PluginHost {
     pub async fn shutdown_all(self: &Arc<Self>) {
         for entry in self.plugins().into_iter().rev() {
             let _guard = entry.op.lock().await;
-            let running = entry
-                .slot
-                .read()
-                .map(|s| s.is_some())
-                .unwrap_or(false);
+            let running = entry.slot.read().map(|s| s.is_some()).unwrap_or(false);
             if running {
                 let _ = self.stop_instance(&entry).await;
             } else {
@@ -411,7 +460,9 @@ impl PluginHost {
         let mut best: Option<(usize, String)> = None;
         for entry in self.plugins() {
             for prefix in &entry.descriptor().routes {
-                if path_matches(path, prefix) && best.as_ref().is_none_or(|(len, _)| prefix.len() > *len) {
+                if path_matches(path, prefix)
+                    && best.as_ref().is_none_or(|(len, _)| prefix.len() > *len)
+                {
                     best = Some((prefix.len(), entry.descriptor().id.clone()));
                 }
             }

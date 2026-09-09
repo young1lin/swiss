@@ -56,6 +56,19 @@ impl Default for Limits {
 /// call log's SWEEP_EVERY_MS).
 const SWEEP_EVERY_MS: u64 = 60 * 60 * 1000;
 
+/// The retention config row's budgets as [Limits] (docs/11 §3.2 -> §8). days drives the
+/// age cap; maxBytesPerJob drives both the trim trigger and (at half) the size it trims
+/// down to, preserving the default 2:1 ratio. maxHistoryBytes has no per-file home - it
+/// is the TOTAL ceiling this build accepts and stores but does not yet enforce across
+/// files; that cross-file sweep arrives with the S5 semantics that need it.
+pub fn limits_of_retention(retention: &super::def::Retention) -> Limits {
+    Limits {
+        max_bytes: retention.max_bytes_per_job,
+        keep_bytes: retention.max_bytes_per_job / 2,
+        max_age_ms: i64::from(retention.days) * 24 * 60 * 60 * 1000,
+    }
+}
+
 /// Per-job write state: the next sequence number, the file size, and when the age sweep
 /// last ran. Recovered from the file on first touch, so sequence numbers survive a restart.
 struct FileState {
@@ -69,7 +82,9 @@ struct FileState {
 pub struct RunLog {
     dir: PathBuf,
     states: Mutex<HashMap<String, FileState>>,
-    limits: Limits,
+    /// Behind a mutex only so a config apply can swap the budgets while running -
+    /// contention is a non-issue at one append per job run.
+    limits: Mutex<Limits>,
     /// Bytes read from disk by read_page since construction. Test-observable on purpose:
     /// the bounded-read promise of cursor pagination is exactly what it measures.
     bytes_read: AtomicU64,
@@ -81,9 +96,15 @@ impl RunLog {
         RunLog {
             dir,
             states: Mutex::new(HashMap::new()),
-            limits: Limits::default(),
+            limits: Mutex::new(Limits::default()),
             bytes_read: AtomicU64::new(0),
         }
+    }
+
+    /// Swap the budgets - what a config apply does when retention changes (docs/11 §8:)
+    /// the new caps bind from the NEXT write; existing files age out under them.
+    pub fn set_limits(&self, limits: Limits) {
+        *self.limits.lock().unwrap_or_else(|e| e.into_inner()) = limits;
     }
 
     /// Total bytes read_page has pulled off disk. A page of `limit` records must cost
@@ -137,7 +158,13 @@ impl RunLog {
             st.bytes += bytes_added;
             (st.bytes, st.swept_at)
         };
-        if total > self.limits.max_bytes {
+        if total
+            > self
+                .limits
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .max_bytes
+        {
             self.trim(job, &path)?;
         }
         if now_ms().saturating_sub(swept_at) > SWEEP_EVERY_MS {
@@ -239,13 +266,14 @@ impl RunLog {
     /// keep_bytes. The read handle is dropped BEFORE the tmp-rename swap: Windows refuses
     /// to replace a file that is still open. Ported from calls.rs's trim.
     fn trim(&self, job: &str, path: &std::path::Path) -> Result<(), String> {
+        let limits = *self.limits.lock().unwrap_or_else(|e| e.into_inner());
         let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
-        if size <= self.limits.keep_bytes {
+        if size <= limits.keep_bytes {
             return Ok(());
         }
-        let start = size - self.limits.keep_bytes;
+        let start = size - limits.keep_bytes;
         let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        let mut buf = vec![0u8; self.limits.keep_bytes as usize];
+        let mut buf = vec![0u8; limits.keep_bytes as usize];
         file.seek(SeekFrom::Start(start))
             .map_err(|e| e.to_string())?;
         file.read_exact(&mut buf).map_err(|e| e.to_string())?;
@@ -277,7 +305,8 @@ impl RunLog {
             Ok(t) => t,
             Err(_) => return Ok(()),
         };
-        let cutoff = now_ms() as i64 - self.limits.max_age_ms;
+        let limits = *self.limits.lock().unwrap_or_else(|e| e.into_inner());
+        let cutoff = now_ms() as i64 - limits.max_age_ms;
         let lines: Vec<&str> = text.split('\n').filter(|l| !l.is_empty()).collect();
         let mut keep_from = lines.len();
         for (i, line) in lines.iter().enumerate() {
@@ -468,7 +497,12 @@ mod tests {
         }
         let len = std::fs::metadata(log.file_for("job")).expect("stat").len();
         assert!(
-            len <= log.limits.max_bytes + 128 * 1024,
+            len <= log
+                .limits
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .max_bytes
+                + 128 * 1024,
             "trimmed to about keep_bytes: {len}"
         );
         let (page, _) = log.read_page("job", None, 100);

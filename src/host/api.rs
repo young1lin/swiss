@@ -44,10 +44,7 @@ pub fn mount(host: Arc<PluginHost>) -> Router {
         .route("/api/plugins", get(list))
         .route("/api/plugins/{id}/enable", post(enable))
         .route("/api/plugins/{id}/disable", post(disable))
-        .route(
-            "/api/plugins/{id}/config",
-            get(get_config).put(put_config),
-        )
+        .route("/api/plugins/{id}/config", get(get_config).put(put_config))
         .with_state(host)
 }
 
@@ -148,10 +145,7 @@ async fn toggle(host: &Arc<PluginHost>, id: &str, body: Value, enabling: bool) -
         ),
         Ok(snapshot) => {
             let _ = host.reconcile(id).await;
-            let row = host
-                .plugin(id)
-                .map(|e| host.row(&e))
-                .unwrap_or(Value::Null);
+            let row = host.plugin(id).map(|e| host.row(&e)).unwrap_or(Value::Null);
             admin_json(
                 StatusCode::OK,
                 json!({ "revision": snapshot.revision, "plugin": row }),
@@ -206,17 +200,26 @@ async fn put_config(
             &format!("persist failed: {message}"),
         ),
         Ok(snapshot) => {
-            // Reconcile applies what the plugin declares applicable — a restart for the
-            // plugins whose config is read at start, a noted revision for the rest.
+            // Reconcile applies what the plugin declares applicable — an in-place apply,
+            // a restart, or a noted revision.
             let _ = host.reconcile(&id).await;
-            admin_json(
-                StatusCode::OK,
-                json!({
-                    "revision": snapshot.revision,
-                    "config": host.store().plugin_config(&id),
-                    "schema": entry.descriptor().config_schema,
-                }),
-            )
+            // The response tells the whole truth about the row that just landed (docs/11
+            // §3.4/§8): warnings name what is savable but not currently runnable, and
+            // applied:false means the running instance has not taken the row yet.
+            let config = host.store().plugin_config(&id);
+            let warnings = entry.factory().config_warnings(&config);
+            let apply_error = entry.apply_error();
+            let mut body = json!({
+                "revision": snapshot.revision,
+                "config": config,
+                "schema": entry.descriptor().config_schema,
+                "warnings": warnings,
+                "applied": apply_error.is_none(),
+            });
+            if let Some(err) = apply_error {
+                body["error"] = json!(err);
+            }
+            admin_json(StatusCode::OK, body)
         }
     }
 }

@@ -22,7 +22,7 @@ use serde_json::{json, Map, Value};
 
 use crate::services::action::{Action, ActionError, ActionOutcome, CancelHandle};
 use crate::services::process::{
-    resolve_refs_strict, mask_secrets, ProcLimits, ProcSpec, Supervisor, DEFAULT_OUTPUT_MAX_BYTES,
+    mask_secrets, resolve_refs_strict, ProcLimits, ProcSpec, Supervisor, DEFAULT_OUTPUT_MAX_BYTES,
 };
 
 /// The supervisor deadline for action-driven runs: the run coordinator owns deadline
@@ -79,10 +79,14 @@ fn resolve_with_secrets(
 /// Returns the resolved spec plus the values to mask from captured output.
 fn parse_exec_input(input: &Value) -> Result<ProcSpec, ActionError> {
     let invalid = |m: String| ActionError::InvalidInput(m);
-    let obj = input.as_object().ok_or_else(|| invalid("input must be an object".into()))?;
+    let obj = input
+        .as_object()
+        .ok_or_else(|| invalid("input must be an object".into()))?;
     for key in obj.keys() {
         if !matches!(key.as_str(), "program" | "args" | "cwd" | "env") {
-            return Err(invalid(format!("input: unknown field {key:?} (known: program, args, cwd, env)")));
+            return Err(invalid(format!(
+                "input: unknown field {key:?} (known: program, args, cwd, env)"
+            )));
         }
     }
     let program_raw = obj
@@ -101,7 +105,11 @@ fn parse_exec_input(input: &Value) -> Result<ProcSpec, ActionError> {
                     .as_str()
                     .ok_or_else(|| invalid(format!("input.args[{i}]: must be a string")))?;
                 // One arg stays one arg: substitution never re-tokenizes (docs/10 §6).
-                args.push(resolve_with_secrets(raw, &format!("input.args[{i}]"), &mut secrets)?);
+                args.push(resolve_with_secrets(
+                    raw,
+                    &format!("input.args[{i}]"),
+                    &mut secrets,
+                )?);
             }
         }
         Some(_) => return Err(invalid("input.args: must be an array of strings".into())),
@@ -121,7 +129,10 @@ fn parse_exec_input(input: &Value) -> Result<ProcSpec, ActionError> {
                 let raw = v
                     .as_str()
                     .ok_or_else(|| invalid(format!("input.env.{k}: must be a string")))?;
-                env.push((k.clone(), resolve_with_secrets(raw, &format!("input.env.{k}"), &mut secrets)?));
+                env.push((
+                    k.clone(),
+                    resolve_with_secrets(raw, &format!("input.env.{k}"), &mut secrets)?,
+                ));
             }
         }
         Some(_) => return Err(invalid("input.env: must be an object of strings".into())),
@@ -181,7 +192,17 @@ impl Action for ProcessExecAction {
         })
     }
 
-    async fn execute(&self, input: &Value, cancel: CancelHandle) -> Result<ActionOutcome, ActionError> {
+    fn validate_input(&self, input: &Value) -> Result<(), String> {
+        parse_exec_input(input)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    async fn execute(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+    ) -> Result<ActionOutcome, ActionError> {
         let spec = parse_exec_input(input)?;
         let limits = ProcLimits {
             timeout_ms: COORDINATED_TIMEOUT_MS,
@@ -246,54 +267,18 @@ impl Action for LegacyCommandAction {
         })
     }
 
-    async fn execute(&self, input: &Value, cancel: CancelHandle) -> Result<ActionOutcome, ActionError> {
-        let invalid = |m: String| ActionError::InvalidInput(m);
-        let obj = input
-            .as_object()
-            .ok_or_else(|| invalid("input must be an object".to_string()))?;
-        for key in obj.keys() {
-            if !matches!(key.as_str(), "command" | "cwd") {
-                return Err(invalid(format!("input: unknown field {key:?} (known: command, cwd)")));
-            }
-        }
-        let command = obj
-            .get("command")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| invalid("input.command: required non-empty string".into()))?;
-        // Lenient resolution (unset -> empty) and post-resolution tokenization are BOTH the
-        // documented legacy behaviour; changing either would silently rewrite old jobs.
-        let expanded = crate::config::resolve_env_refs(command);
-        // Mask what the refs resolved to (a credential referenced in a command must not
-        // survive into captured output just because the legacy path is lenient).
-        let mut secrets: Vec<String> = Vec::new();
-        for name in ref_names(command) {
-            if let Ok(v) = std::env::var(&name) {
-                if v.len() >= 8 && !secrets.contains(&v) {
-                    secrets.push(v);
-                }
-            }
-        }
-        let argv = crate::adapters::proc::tokenize_command(&expanded);
-        let Some((program, args)) = argv.split_first() else {
-            return Err(invalid("input.command: expands to an empty command line".into()));
-        };
-        let path = std::env::var("PATH").unwrap_or_default();
-        let resolved = crate::pathenv::resolve_command(program, &path)
-            .map(|p| p.into_os_string())
-            .unwrap_or_else(|| program.as_str().into());
-        let cwd = match obj.get("cwd") {
-            None | Some(Value::Null) => None,
-            Some(Value::String(s)) if !s.is_empty() => Some(crate::config::resolve_env_refs(s)),
-            Some(_) => return Err(invalid("input.cwd: must be a string".into())),
-        };
-        let spec = ProcSpec {
-            program: resolved.to_string_lossy().into_owned(),
-            args: args.to_vec(),
-            cwd,
-            env: Vec::new(),
-            secrets,
-        };
+    fn validate_input(&self, input: &Value) -> Result<(), String> {
+        parse_legacy_input(input)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    async fn execute(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+    ) -> Result<ActionOutcome, ActionError> {
+        let spec = parse_legacy_input(input)?;
         let limits = ProcLimits {
             timeout_ms: COORDINATED_TIMEOUT_MS,
             output_max_bytes: DEFAULT_OUTPUT_MAX_BYTES,
@@ -316,6 +301,64 @@ impl Action for LegacyCommandAction {
         }
         Ok(out)
     }
+}
+
+/// The input half of [LegacyCommandAction::execute], shared with config validation so a
+/// saved job can never hold an input its first run would reject (docs/11 §3.4). No IO
+/// beyond reading the environment the refs resolve against - the same read execute()
+/// does, one run earlier.
+fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
+    let invalid = |m: String| ActionError::InvalidInput(m);
+    let obj = input
+        .as_object()
+        .ok_or_else(|| invalid("input must be an object".to_string()))?;
+    for key in obj.keys() {
+        if !matches!(key.as_str(), "command" | "cwd") {
+            return Err(invalid(format!(
+                "input: unknown field {key:?} (known: command, cwd)"
+            )));
+        }
+    }
+    let command = obj
+        .get("command")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| invalid("input.command: required non-empty string".into()))?;
+    // Lenient resolution (unset -> empty) and post-resolution tokenization are BOTH the
+    // documented legacy behaviour; changing either would silently rewrite old jobs.
+    let expanded = crate::config::resolve_env_refs(command);
+    // Mask what the refs resolved to (a credential referenced in a command must not
+    // survive into captured output just because the legacy path is lenient).
+    let mut secrets: Vec<String> = Vec::new();
+    for name in ref_names(command) {
+        if let Ok(v) = std::env::var(&name) {
+            if v.len() >= 8 && !secrets.contains(&v) {
+                secrets.push(v);
+            }
+        }
+    }
+    let argv = crate::adapters::proc::tokenize_command(&expanded);
+    let Some((program, args)) = argv.split_first() else {
+        return Err(invalid(
+            "input.command: expands to an empty command line".into(),
+        ));
+    };
+    let path = std::env::var("PATH").unwrap_or_default();
+    let resolved = crate::pathenv::resolve_command(program, &path)
+        .map(|p| p.into_os_string())
+        .unwrap_or_else(|| program.as_str().into());
+    let cwd = match obj.get("cwd") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if !s.is_empty() => Some(crate::config::resolve_env_refs(s)),
+        Some(_) => return Err(invalid("input.cwd: must be a string".into())),
+    };
+    Ok(ProcSpec {
+        program: resolved.to_string_lossy().into_owned(),
+        args: args.to_vec(),
+        cwd,
+        env: Vec::new(),
+        secrets,
+    })
 }
 
 /// Register resolved ref values for masking — shared by the run coordinator when it wraps
@@ -341,7 +384,10 @@ mod tests {
     #[tokio::test]
     async fn typed_exec_runs_and_captures_output() {
         let action = ProcessExecAction::new(Supervisor::new());
-        let out = action.execute(&echo_cmd(), CancelHandle::never()).await.expect("runs");
+        let out = action
+            .execute(&echo_cmd(), CancelHandle::never())
+            .await
+            .expect("runs");
         assert!(out.ok, "{out:?}");
         assert!(out.output.contains("hi-from-exec"), "{out:?}");
         assert_eq!(out.exit_code, Some(0));
@@ -351,22 +397,34 @@ mod tests {
     async fn typed_input_is_validated_strictly() {
         let action = ProcessExecAction::new(Supervisor::new());
         for bad in [
-            json!({}),                                       // no program
-            json!({ "program": "" }),                        // empty program
-            json!({ "program": "x", "wat": 1 }),             // unknown field
-            json!({ "program": "x", "args": "not-array" }),  // wrong type
-            json!({ "program": "x", "args": [1] }),          // non-string arg
-            json!({ "program": "x", "env": { "A": 1 } }),    // non-string env value
+            json!({}),                                                          // no program
+            json!({ "program": "" }),                                           // empty program
+            json!({ "program": "x", "wat": 1 }),                                // unknown field
+            json!({ "program": "x", "args": "not-array" }),                     // wrong type
+            json!({ "program": "x", "args": [1] }),                             // non-string arg
+            json!({ "program": "x", "env": { "A": 1 } }), // non-string env value
             json!({ "program": "x", "cwd": "${LMG_EXEC_DEFINITELY_UNSET_3}" }), // missing required ref
         ] {
-            let err = action.execute(&bad, CancelHandle::never()).await.unwrap_err();
-            assert!(matches!(err, ActionError::InvalidInput(_)), "{bad} -> {err}");
+            let err = action
+                .execute(&bad, CancelHandle::never())
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, ActionError::InvalidInput(_)),
+                "{bad} -> {err}"
+            );
         }
         let err = action
-            .execute(&json!({ "program": "x", "cwd": "${LMG_EXEC_DEFINITELY_UNSET_3}" }), CancelHandle::never())
+            .execute(
+                &json!({ "program": "x", "cwd": "${LMG_EXEC_DEFINITELY_UNSET_3}" }),
+                CancelHandle::never(),
+            )
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("LMG_EXEC_DEFINITELY_UNSET_3"), "names the variable: {err}");
+        assert!(
+            err.to_string().contains("LMG_EXEC_DEFINITELY_UNSET_3"),
+            "names the variable: {err}"
+        );
     }
 
     #[tokio::test]
@@ -393,7 +451,10 @@ mod tests {
         } else {
             json!({ "program": "sh", "args": ["-c", "printf '%s\\n' \"$1\"", "sh", "${LMG_EXEC_SHORT}"] })
         };
-        let out = action.execute(&input, CancelHandle::never()).await.expect("runs");
+        let out = action
+            .execute(&input, CancelHandle::never())
+            .await
+            .expect("runs");
         assert!(out.ok, "{out:?}");
         assert!(out.output.contains("a b"), "{out:?}");
     }
@@ -411,9 +472,15 @@ mod tests {
         } else {
             json!({ "program": "sh", "args": ["-c", "printf '%s\n' \"$1\"", "sh", "${LMG_EXEC_SECRET}"] })
         };
-        let out = action.execute(&input, CancelHandle::never()).await.expect("runs");
+        let out = action
+            .execute(&input, CancelHandle::never())
+            .await
+            .expect("runs");
         assert!(out.ok, "{out:?}");
-        assert!(!out.output.contains("s3cr3t-value"), "the secret leaked: {out:?}");
+        assert!(
+            !out.output.contains("s3cr3t-value"),
+            "the secret leaked: {out:?}"
+        );
         assert!(out.output.contains(crate::mask::MASK), "{out:?}");
     }
 
@@ -428,12 +495,24 @@ mod tests {
         } else {
             json!({ "command": "sh -c 'echo ${LMG_LEGACY_WORD}'" })
         };
-        let out = action.execute(&input, CancelHandle::never()).await.expect("runs");
+        let out = action
+            .execute(&input, CancelHandle::never())
+            .await
+            .expect("runs");
         assert!(out.ok, "{out:?}");
         assert!(out.output.contains("exp"), "{out:?}");
         // Unknown fields rejected, empty command rejected.
-        assert!(action.execute(&json!({ "command": "x", "extra": 1 }), CancelHandle::never()).await.is_err());
-        assert!(action.execute(&json!({ "command": "   " }), CancelHandle::never()).await.is_err());
+        assert!(action
+            .execute(
+                &json!({ "command": "x", "extra": 1 }),
+                CancelHandle::never()
+            )
+            .await
+            .is_err());
+        assert!(action
+            .execute(&json!({ "command": "   " }), CancelHandle::never())
+            .await
+            .is_err());
     }
 
     /// Both halves of "a failure is a RECORD, not an exception" — the property the jobs
@@ -443,14 +522,21 @@ mod tests {
         let action = LegacyCommandAction::new(Supervisor::new());
 
         // A non-zero exit RAN: not ok, the code is kept, and there is no spawn error.
-        let cmd = if cfg!(windows) { "cmd /c exit 3" } else { "sh -c 'exit 3'" };
+        let cmd = if cfg!(windows) {
+            "cmd /c exit 3"
+        } else {
+            "sh -c 'exit 3'"
+        };
         let out = action
             .execute(&json!({ "command": cmd }), CancelHandle::never())
             .await
             .expect("ran");
         assert!(!out.ok, "{out:?}");
         assert_eq!(out.exit_code, Some(3));
-        assert!(out.error.is_none(), "the command ran; it just failed: {out:?}");
+        assert!(
+            out.error.is_none(),
+            "the command ran; it just failed: {out:?}"
+        );
 
         // A program that cannot be spawned is reported BY NAME, so the job log says what was
         // missing instead of "failed".
@@ -484,13 +570,17 @@ mod tests {
         // cancels from the outside a moment later.
         let handle = src.handle();
         let started = std::time::Instant::now();
-        let task = tokio::spawn(async move { action.execute(&cmd, handle).await.expect("outcome") });
+        let task =
+            tokio::spawn(async move { action.execute(&cmd, handle).await.expect("outcome") });
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         src.cancel();
         let out = task.await.expect("task");
         assert!(out.canceled, "{out:?}");
         assert!(!out.ok);
-        assert!(started.elapsed() < std::time::Duration::from_secs(10), "must not wait out the child");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "must not wait out the child"
+        );
     }
 
     #[tokio::test]
@@ -509,7 +599,10 @@ mod tests {
         let started = std::time::Instant::now();
         let out = action.execute(&cmd, src.handle()).await.expect("outcome");
         assert!(out.canceled, "{out:?}");
-        assert!(started.elapsed() < std::time::Duration::from_secs(10), "{out:?}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{out:?}"
+        );
     }
 
     #[test]

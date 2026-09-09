@@ -14,8 +14,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use super::descriptor::{PageDescriptor, PluginDescriptor};
-use super::factory::{PluginFactory, PluginInstance};
 use super::engine::PluginHost;
+use super::factory::{ApplyOutcome, PluginFactory, PluginInstance};
 use super::scope::PluginScope;
 use crate::jobs::JobSystem;
 use crate::log;
@@ -355,14 +355,19 @@ struct JobsPlugin {
     jobs: Arc<JobSystem>,
 }
 
-/// The jobs config row is validated through the v2 definition model (docs/11 §9 S1):
+/// The jobs config row is validated through the v2 definition model (docs/11 §3/§9):
 /// this is the server-side authority for every PUT /api/plugins/jobs/config and every
 /// plugin start. Errors carry the dotted field path so the panel can point its form at
-/// the offender. Definitions still do not drive the scheduler - that wiring is a later
-/// stage - but anything this build would silently not execute is refused here rather
-/// than accepted.
-fn validate_jobs_config(config: &Value) -> Result<(), String> {
-    crate::jobs::def::JobsConfig::parse(config)
+/// the offender, and action.input is checked against the RESOLVED capability's own
+/// schema (S3) - a saved job can never hold an input its first run would reject. An
+/// unregistered action type is not an error here; it is a warning on the PUT response
+/// and `actionAvailable: false` in the listing, because disabling a provider must not
+/// lock its jobs' config.
+fn validate_jobs_config(
+    config: &Value,
+    actions: &crate::services::action::ActionRegistry,
+) -> Result<(), String> {
+    crate::jobs::def::JobsConfig::parse_with_actions(config, actions)
         .map(|_| ())
         .map_err(|err| err.to_string())
 }
@@ -407,7 +412,7 @@ impl PluginFactory for JobsPlugin {
                     "definitions": {
                         "type": "object",
                         "maxProperties": 512,
-                        "description": "v2 job definitions keyed by stable id (docs/11 §3). The scheduler still reads jobs.json today: definitions are validated and stored here, and do not drive scheduling until the config-driven stage lands.",
+                        "description": "v2 job definitions keyed by stable id (docs/11 §3). This row is the scheduler's source of definitions; editing it applies in place, without restarting the plugin.",
                         "additionalProperties": { "$ref": "#/definitions/jobDefinition" }
                     }
                 },
@@ -471,12 +476,24 @@ impl PluginFactory for JobsPlugin {
             }),
             pages: vec![page("jobs", JOBS_ID, "Jobs", 50, false)],
             routes: vec!["/api/jobs".into()],
-            restart_on_config_change: true,
+            // FALSE from S3 (docs/11 §8): the row is applied in place through
+            // [JobsInstance::apply_config]. A restart here would run
+            // [JobsInstance::stop] - cancelling and awaiting every in-flight run - on
+            // every edit of any job; the in-place apply is the whole point of the
+            // third semantics.
+            restart_on_config_change: false,
         }
     }
 
     fn validate_config(&self, config: &Value) -> Result<(), String> {
-        validate_jobs_config(config)
+        validate_jobs_config(config, self.jobs.actions())
+    }
+
+    fn config_warnings(&self, config: &Value) -> Vec<String> {
+        match crate::jobs::def::JobsConfig::parse_with_actions(config, self.jobs.actions()) {
+            Ok((_, warnings)) => warnings,
+            Err(_) => Vec::new(), // a rejected row never reaches the warning path
+        }
     }
 
     /// Boot path: same row, older possible author. A pre-v2 gateway accepted ANY object
@@ -488,8 +505,8 @@ impl PluginFactory for JobsPlugin {
     /// warn itself is asserted at the def.rs unit level (parse_boot reports the drops
     /// that feed it); log output is println and not capturable from integration tests.
     fn validate_config_for_start(&self, config: &Value) -> Result<(), String> {
-        match crate::jobs::def::JobsConfig::parse_boot(config) {
-            Ok(boot) => {
+        match crate::jobs::def::JobsConfig::parse_boot_with_actions(config, self.jobs.actions()) {
+            Ok((boot, _)) => {
                 for (id, reason) in boot.dropped {
                     log::warn(
                         "ignoring a config job definition saved by an older validator",
@@ -502,7 +519,11 @@ impl PluginFactory for JobsPlugin {
         }
     }
 
-    async fn create(&self, _config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
+    async fn create(&self, config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
+        // The row this instance runs on is applied BEFORE the tick can start, so a job
+        // whose definition just changed cannot fire under a half-applied table. Cheap by
+        // contract: parse and swap, no IO.
+        self.jobs.apply_config(config)?;
         Ok(Arc::new(JobsInstance {
             jobs: self.jobs.clone(),
         }))
@@ -537,6 +558,17 @@ impl PluginInstance for JobsInstance {
                 "jobs plugin stopped; in-flight runs canceled",
                 Some(json!({ "runs": canceled })),
             );
+        }
+    }
+
+    /// The in-place row apply (docs/11 §8): definitions, capacity and retention move
+    /// under the run; a run already claimed keeps its snapshot to the end. Failure is
+    /// reported, never guessed at - the host keeps the instance Active and the
+    /// desired-vs-actual gap visible.
+    async fn apply_config(&self, config: &Value) -> ApplyOutcome {
+        match self.jobs.apply_config(config) {
+            Ok(()) => ApplyOutcome::Applied,
+            Err(err) => ApplyOutcome::Failed(err),
         }
     }
 }
@@ -616,7 +648,11 @@ impl PluginInstance for ProcessInstance {
         }
         // Withdraw FIRST, then cancel: nothing can start a new run of a capability that is
         // no longer resolvable while the in-flight ones are being reaped.
-        let canceled = self.services.runs.cancel_action_types(PROCESS_ACTIONS).await;
+        let canceled = self
+            .services
+            .runs
+            .cancel_action_types(PROCESS_ACTIONS)
+            .await;
         if canceled > 0 {
             log::log(
                 "info",

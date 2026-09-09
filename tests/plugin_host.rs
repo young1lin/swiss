@@ -458,7 +458,14 @@ async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<
         .expect("register echo");
 
     let services = local_mcp_gateway::services::RuntimeServices::new();
-    let jobs = JobSystem::open(dir.join("jobs.json"), services.clone());
+    // ONE config store shared by the host and the jobs system - the S3 shape: the jobs
+    // definitions row is plugin config, read and written through the same store.
+    let config_store = ConfigStore::memory(raw.clone());
+    let jobs = JobSystem::open(
+        dir.join("jobs.json"),
+        services.clone(),
+        config_store.clone(),
+    );
     let tunnel_store = Arc::new(Mutex::new(local_mcp_gateway::tunnel::TunnelStore::new(
         dir.join("tunnels.json"),
         19998,
@@ -983,6 +990,182 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     );
 }
 
+/// docs/11 §9 S3, the regression that matters most: editing a definition through
+/// PUT /api/plugins/jobs/config applies IN PLACE. The plugin does not restart - which
+/// for Jobs would mean cancelling every run it owns mid-flight - and a run already in
+/// flight finishes under the definition it claimed.
+#[tokio::test]
+async fn editing_a_config_definition_applies_in_place_without_killing_in_flight_runs() {
+    let command = if cfg!(windows) {
+        "ping -n 4 127.0.0.1"
+    } else {
+        "sleep 3"
+    };
+    let (app, _host, _registry) = full_app(
+        "applyinplace",
+        json!({
+            "plugins": { "jobs": { "config": { "definitions": {
+                "slow": {
+                    "trigger": { "kind": "interval", "everyMs": 3600000 },
+                    "action": { "type": "process.legacy-command", "input": { "command": command } },
+                    "timeoutMs": 30000
+                },
+                "other": {
+                    "trigger": { "kind": "cron", "expression": "30 3 * * *" },
+                    "action": { "type": "process.legacy-command", "input": { "command": "echo hi" } }
+                }
+            } } } }
+        }),
+    )
+    .await;
+
+    // Start a run and wait until the scheduler reports it in flight.
+    let run_app = app.clone();
+    let running = tokio::spawn(async move {
+        send(&run_app, json_body("POST", "/api/jobs/slow/run", json!({}))).await
+    });
+    let mut in_flight = false;
+    for _ in 0..300 {
+        let (_, body, _) = send(&app, local("GET", "/api/jobs")).await;
+        if body
+            .as_ref()
+            .and_then(|b| b["jobs"].as_array())
+            .and_then(|jobs| jobs.iter().find(|j| j["name"] == json!("slow")))
+            .is_some_and(|j| j["running"] == json!(true))
+        {
+            in_flight = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(in_flight, "the run reached the pool before the edit");
+
+    // Read the row, edit the OTHER definition, PUT it back with the fresh revision.
+    let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
+    let body = body.expect("the config row");
+    let revision = body["revision"].as_u64().expect("a revision");
+    let mut config = body["config"].clone();
+    config["definitions"]["other"]["disabled"] = json!(true);
+    let (status, body, _) = send(
+        &app,
+        json_body(
+            "PUT",
+            "/api/plugins/jobs/config",
+            json!({ "revision": revision, "config": config }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body.as_ref().unwrap());
+    let body = body.unwrap();
+    assert_eq!(
+        body["applied"],
+        json!(true),
+        "the row applied in place: {body}"
+    );
+    assert_eq!(body["warnings"], json!([]), "every action resolves: {body}");
+
+    // The plugin never bounced: the inventory row stays active with no lastError, and
+    // the run survived the edit - it completes on its own terms, not canceled.
+    let (_, body, _) = send(&app, local("GET", "/api/plugins")).await;
+    let entry = body.expect("JSON")["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == json!("jobs"))
+        .expect("the jobs row")
+        .clone();
+    assert_eq!(entry["state"], json!("active"), "{entry}");
+    assert!(
+        entry.get("lastError").is_none() || entry["lastError"].is_null(),
+        "{entry}"
+    );
+
+    let (status, body, _) = running.await.expect("the run task");
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(
+        body.unwrap()["run"]["ok"],
+        json!(true),
+        "not canceled by the edit"
+    );
+
+    // And the edit IS live: the disabled definition no longer reports a next firing.
+    let (_, body, _) = send(&app, local("GET", "/api/jobs")).await;
+    let other = body.unwrap()["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["name"] == json!("other"))
+        .cloned()
+        .unwrap();
+    assert_eq!(other["enabled"], json!(false));
+    assert!(other.get("nextDueAt").is_none());
+}
+
+/// docs/11 §3.4/§9 S3: a definition whose action provider is not registered SAVES - the
+/// PUT carries a warning, the listing reports actionAvailable: false, and running it is
+/// a visible refusal, not a silent skip.
+#[tokio::test]
+async fn an_unregistered_action_saves_with_a_warning_and_refuses_to_run() {
+    let (app, _host, _registry) = full_app("noaction", json!({ "plugins": { "jobs": {} } })).await;
+    let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
+    let revision = body.unwrap()["revision"].as_u64().expect("a revision");
+    let (status, body, _) = send(
+        &app,
+        json_body(
+            "PUT",
+            "/api/plugins/jobs/config",
+            json!({ "revision": revision, "config": { "definitions": {
+                "ghosted": {
+                    "trigger": { "kind": "interval", "everyMs": 60000 },
+                    "action": { "type": "no.such.action", "input": {} }
+                }
+            } } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", body.as_ref().unwrap());
+    let body = body.unwrap();
+    assert!(
+        body["warnings"][0]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no.such.action is not registered"),
+        "{body}"
+    );
+
+    let (_, body, _) = send(&app, local("GET", "/api/jobs")).await;
+    let job = &body.unwrap()["jobs"][0];
+    assert_eq!(job["actionAvailable"], json!(false), "{job}");
+    assert_eq!(
+        job["editableInV1"],
+        json!(false),
+        "v1 cannot spell it: {job}"
+    );
+
+    // Running it is a visible missing-dependency refusal.
+    let (status, body, _) = send(&app, json_body("POST", "/api/jobs/ghosted/run", json!({}))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{:?}", body);
+}
+
+/// docs/11 §7.2/§9 S3: the config write keeps the revision CAS. A PUT against a stale
+/// revision is a 409, not a silent overwrite of someone else's edit.
+#[tokio::test]
+async fn a_stale_jobs_config_revision_is_a_conflict() {
+    let (app, _host, _registry) = full_app("staleconf", json!({ "plugins": { "jobs": {} } })).await;
+    let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
+    let revision = body.unwrap()["revision"].as_u64().expect("a revision");
+    let (status, _, _) = send(
+        &app,
+        json_body(
+            "PUT",
+            "/api/plugins/jobs/config",
+            json!({ "revision": revision.wrapping_add(7), "config": { "definitions": {} } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
 /// The S1 follow-up pair, end to end: a config row holding an old placeholder
 /// definition (`{"x": {}}` - exactly what the pre-v2 validator accepted) must NOT
 /// fail the jobs plugin at boot (one stale entry must not take the scheduler down for
@@ -1095,6 +1278,7 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
             jobs: JobSystem::open(
                 dir.join("jobs.json"),
                 local_mcp_gateway::services::RuntimeServices::new(),
+                ConfigStore::memory(json!({})),
             ),
             tunnels: Arc::new(local_mcp_gateway::tunnel::api::Tunnels {
                 store: Arc::new(Mutex::new(local_mcp_gateway::tunnel::TunnelStore::new(

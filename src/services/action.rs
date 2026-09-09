@@ -194,9 +194,21 @@ pub trait Action: Send + Sync {
     /// render. Metadata for humans; validation lives in [Action::execute].
     fn schema(&self) -> Value;
 
+    /// Validate an input WITHOUT running it - the config-save path's door to the same
+    /// check execute() applies (docs/11 §3.4: action.input is validated by the resolved
+    /// capability's own schema). Default: any object-shaped input passes, which stays
+    /// correct for capabilities with no pre-run parse of their own.
+    fn validate_input(&self, _input: &Value) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Run the capability to completion. Implementations must return within the caller's
     /// timeout policy and must honour "cancel" when [Action::cancelable] is true.
-    async fn execute(&self, input: &Value, cancel: CancelHandle) -> Result<ActionOutcome, ActionError>;
+    async fn execute(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+    ) -> Result<ActionOutcome, ActionError>;
 }
 
 /// Name -> impl map. Registration refuses duplicates: two providers claiming one id is a
@@ -274,7 +286,11 @@ mod tests {
         fn schema(&self) -> Value {
             json!({ "type": "object" })
         }
-        async fn execute(&self, input: &Value, _cancel: CancelHandle) -> Result<ActionOutcome, ActionError> {
+        async fn execute(
+            &self,
+            input: &Value,
+            _cancel: CancelHandle,
+        ) -> Result<ActionOutcome, ActionError> {
             let mut out = ActionOutcome::ok();
             out.output = input.to_string();
             out.chars = out.output.chars().count();

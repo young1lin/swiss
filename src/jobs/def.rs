@@ -64,6 +64,7 @@ impl std::error::Error for ConfigError {}
 /// The parsed `plugins.jobs.config` row (docs/11 §3.1-§3.2). No Clone: this is the
 /// one parsed view of a revision, not a value to copy around (the trigger's compiled
 /// cron is part of its identity).
+#[derive(Clone)]
 pub struct JobsConfig {
     pub max_concurrent_runs: usize,
     pub max_queued_runs: usize,
@@ -93,6 +94,7 @@ impl Default for Retention {
 
 /// One v2 job definition. The stable identity is `id`; `title` is display-only, so
 /// renaming a job means deleting one id and creating another (docs/11 §3.1).
+#[derive(Clone)]
 pub struct JobDefinition {
     pub id: String,
     pub title: String,
@@ -108,6 +110,7 @@ pub struct JobDefinition {
 }
 
 /// When a job fires (docs/11 §3.3). Exactly one kind per definition, chosen by `kind`.
+#[derive(Clone)]
 pub enum Trigger {
     Manual,
     Interval {
@@ -131,6 +134,7 @@ pub enum FirstRun {
 /// Which capability a job runs and with what input (docs/11 §3.4). The input is kept
 /// VERBATIM: `${ENV_VAR}` refs stay refs on disk and resolve at run time, and the
 /// capability itself owns the input's schema - this layer only checks it is an object.
+#[derive(Clone)]
 pub struct ActionRef {
     pub type_: String,
     pub input: Value,
@@ -355,6 +359,73 @@ impl JobsConfig {
     /// old validator never accepted those and they cannot be pre-upgrade leftovers.
     pub fn parse_boot(config: &Value) -> Result<BootParsed, ConfigError> {
         parse_at(config, true)
+    }
+
+    /// The S3 save path (docs/11 §3.4, §9): strict parse PLUS per-action input
+    /// validation through the resolved capability, and one warning per definition
+    /// whose action type is not currently registered. Registration is not required to
+    /// SAVE - the provider may be disabled - but the PUT response carries the warning,
+    /// and the listing reports `actionAvailable: false` for those rows.
+    pub fn parse_with_actions(
+        config: &Value,
+        actions: &crate::services::action::ActionRegistry,
+    ) -> Result<(JobsConfig, Vec<String>), ConfigError> {
+        let parsed = parse_at(config, false)?;
+        let mut warnings = Vec::new();
+        for def in &parsed.config.definitions {
+            match actions.get(&def.action.type_) {
+                Some(action) => {
+                    if let Err(err) = action.validate_input(&def.action.input) {
+                        return Err(ConfigError::new(
+                            format!("definitions.{}.action.input", def.id),
+                            err,
+                        ));
+                    }
+                }
+                None => warnings.push(format!(
+                    "action {} is not registered; runs will be refused until its plugin is enabled",
+                    def.action.type_
+                )),
+            }
+        }
+        Ok((parsed.config, warnings))
+    }
+
+    /// The S3 boot path: the placeholder leniency of [JobsConfig::parse_boot], with input
+    /// validation layered on the same way. A definition whose action input the resolved
+    /// capability rejects is DROPPED with its reason (a leftover, not a new save), while
+    /// an unregistered action type is only warned about: the provider may simply be
+    /// disabled right now (docs/11 §3.4).
+    pub fn parse_boot_with_actions(
+        config: &Value,
+        actions: &crate::services::action::ActionRegistry,
+    ) -> Result<(BootParsed, Vec<String>), ConfigError> {
+        let mut parsed = parse_at(config, true)?;
+        let mut warnings = Vec::new();
+        // Dropped-by-input reasons collect here first: `definitions` is mutably borrowed
+        // by retain, so the report list cannot be touched inside the closure.
+        let mut input_dropped: Vec<(String, String)> = Vec::new();
+        parsed
+            .config
+            .definitions
+            .retain(|def| match actions.get(&def.action.type_) {
+                Some(action) => match action.validate_input(&def.action.input) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        input_dropped.push((def.id.clone(), format!("action.input: {err}")));
+                        false
+                    }
+                },
+                None => {
+                    warnings.push(format!(
+                    "action {} is not registered; runs will be refused until its plugin is enabled",
+                    def.action.type_
+                ));
+                    true
+                }
+            });
+        parsed.dropped.extend(input_dropped);
+        Ok((parsed, warnings))
     }
 }
 
@@ -1020,6 +1091,232 @@ impl JobDefinition {
     }
 }
 
+// --- S3: the v2 fields of the /api/jobs row (docs/11 §7.1) -----------------------------
+//
+// The listing must carry the definition's own fields (trigger, action, policies) so
+// a v2 client never needs a second endpoint, and so the panel's future form (S6) can
+// round-trip through the config editor losslessly. Serializers, not projections: they
+// spell the config grammar back, the same names [JobsConfig::parse] reads.
+impl JobDefinition {
+    /// The definition as the config row spells it (docs/11 §3) - the exact grammar
+    /// [JobsConfig::parse] reads back. The v1 edit path writes rows through this, so a
+    /// folded edit can never smuggle in a shape the strict validator would refuse.
+    pub fn to_config_json(&self) -> Value {
+        json!({
+            "title": self.title,
+            "labels": self.labels,
+            "disabled": self.disabled,
+            "trigger": self.trigger_json(),
+            "action": self.action_json(),
+            "timeoutMs": self.timeout_ms,
+            "overlap": self.overlap.as_str(),
+            "misfire": self.misfire.as_str(),
+            "retry": self.retry_json(),
+            "output": self.output_json(),
+        })
+    }
+
+    /// The definition-level v2 fields, as the /api/jobs row carries them.
+    pub fn v2_view_fields(&self) -> Map<String, Value> {
+        let mut m = Map::new();
+        m.insert("id".into(), json!(self.id));
+        m.insert("title".into(), json!(self.title));
+        m.insert("labels".into(), json!(self.labels));
+        m.insert("trigger".into(), self.trigger_json());
+        m.insert("action".into(), self.action_json());
+        m.insert("overlap".into(), json!(self.overlap.as_str()));
+        m.insert("misfire".into(), json!(self.misfire.as_str()));
+        m.insert("retry".into(), self.retry_json());
+        m.insert("output".into(), self.output_json());
+        m
+    }
+
+    /// The trigger in config spelling (docs/11 §3.3).
+    pub fn trigger_json(&self) -> Value {
+        match &self.trigger {
+            Trigger::Manual => json!({ "kind": "manual" }),
+            Trigger::Interval {
+                every_ms,
+                first_run,
+            } => json!({
+                "kind": "interval",
+                "everyMs": every_ms,
+                "firstRun": first_run.as_str(),
+            }),
+            Trigger::Cron { expression, .. } => json!({
+                "kind": "cron",
+                "expression": expression,
+                "timezone": "local",
+            }),
+        }
+    }
+
+    /// The action ref in config spelling (docs/11 §3.4). The input rides verbatim -
+    /// `${ENV_VAR}` refs stay refs on the wire, exactly as they were saved.
+    pub fn action_json(&self) -> Value {
+        json!({
+            "type": self.action.type_,
+            "input": self.action.input,
+            "schemaVersion": self.action.schema_version,
+        })
+    }
+
+    fn retry_json(&self) -> Value {
+        json!({
+            "maxAttempts": self.retry.max_attempts,
+            "delayMs": self.retry.delay_ms,
+            "backoff": self.retry.backoff.as_str(),
+            "retryOn": self.retry.retry_on.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+        })
+    }
+
+    fn output_json(&self) -> Value {
+        json!({
+            "capture": self.output.capture.as_str(),
+            "maxBytes": self.output.max_bytes,
+        })
+    }
+}
+
+impl Trigger {
+    /// The config spelling of each first-run rule.
+    pub fn first_run_str(&self) -> Option<&'static str> {
+        match self {
+            Trigger::Interval { first_run, .. } => Some(first_run.as_str()),
+            _ => None,
+        }
+    }
+}
+
+impl FirstRun {
+    /// The config spelling (docs/11 §3.3).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FirstRun::AfterInterval => "after-interval",
+            FirstRun::Immediate => "immediate",
+        }
+    }
+}
+
+impl Overlap {
+    /// The config spelling (docs/11 §3.2).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Overlap::Skip => "skip",
+            Overlap::QueueOne => "queue-one",
+        }
+    }
+}
+
+impl Misfire {
+    /// The config spelling (docs/11 §3.2).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Misfire::Skip => "skip",
+            Misfire::RunOnce => "run-once",
+        }
+    }
+}
+
+impl Backoff {
+    /// The config spelling (docs/11 §3.2).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Backoff::Fixed => "fixed",
+            Backoff::Exponential => "exponential",
+        }
+    }
+}
+
+impl RetryOn {
+    /// The config spelling (docs/11 §3.2).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RetryOn::Failure => "failure",
+            RetryOn::Timeout => "timeout",
+        }
+    }
+}
+
+impl OutputCapture {
+    /// The config spelling (docs/11 §3.2).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OutputCapture::Tail => "tail",
+            OutputCapture::None => "none",
+        }
+    }
+}
+
+/// Whether a definition fires at "now" - the pure half of the S3 tick (docs/11 §6).
+/// Manual never auto-fires (Run now is its only door); interval anchors on the last run
+/// or the given boot anchor; cron matches this LOCAL minute and skips when the last run
+/// already sits inside it - the same rules the v1 scheduler ran, now against the v2
+/// trigger with the PRE-COMPILED expression.
+pub fn definition_due(
+    def: &JobDefinition,
+    now: i64,
+    now_local: &chrono::NaiveDateTime,
+    anchor_ms: i64,
+    last_run_ms: Option<i64>,
+) -> bool {
+    use chrono::{Datelike, Timelike};
+    match &def.trigger {
+        Trigger::Manual => false,
+        Trigger::Interval { every_ms, .. } => {
+            let base = last_run_ms.unwrap_or(anchor_ms);
+            now.saturating_sub(base) >= *every_ms as i64
+        }
+        Trigger::Cron { compiled, .. } => {
+            if !compiled.matches(&super::schedule::fields_of(now_local)) {
+                return false;
+            }
+            match last_run_ms
+                .and_then(super::local_minute_of_ms)
+                .map(|t| (t.year(), t.ordinal(), t.hour(), t.minute()))
+            {
+                Some(last) => {
+                    let cur = (
+                        now_local.year(),
+                        now_local.ordinal(),
+                        now_local.hour(),
+                        now_local.minute(),
+                    );
+                    last != cur
+                }
+                None => true,
+            }
+        }
+    }
+}
+
+/// The ISO stamp of a definition's next firing (docs/11 §7.1's nextDueAt): intervals
+/// anchor on the last run (or boot), cron scans forward from now with the compiled
+/// expression, manual has none.
+pub fn next_due_of(
+    def: &JobDefinition,
+    last_run_ms: Option<i64>,
+    now: i64,
+    anchor_ms: i64,
+) -> Option<String> {
+    use chrono::TimeZone;
+    match &def.trigger {
+        Trigger::Manual => None,
+        Trigger::Interval { every_ms, .. } => {
+            let base = last_run_ms.unwrap_or(anchor_ms);
+            Some(super::state::iso_of_ms(base + *every_ms as i64))
+        }
+        Trigger::Cron { compiled, .. } => {
+            let now_local = super::local_minute_of_ms(now)?;
+            let next = compiled.next_after(&now_local)?;
+            chrono::Local
+                .from_local_datetime(&next)
+                .single()
+                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, false))
+        }
+    }
+}
+
 /// One argv entry as display text: bare when it needs no quoting, double-quoted when it
 /// contains whitespace or a quote. Round-tripping it back to argv is not promised - that
 /// is exactly why the row carrying a synthesized command is marked not editable in v1.
@@ -1045,6 +1342,33 @@ fn display_quote(arg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn config_json_round_trips_to_an_editable_definition() {
+        let def = JobDef {
+            name: "nightly".into(),
+            command: "echo ok".into(),
+            every_sec: None,
+            cron: Some("30 3 * * *".into()),
+            enabled: true,
+            timeout_ms: 600_000,
+            cwd: None,
+        };
+        let v2 = JobDefinition::from_v1(&def);
+        let json = v2.to_config_json();
+        let parsed = JobsConfig::parse(&json!({ "definitions": { "nightly": json } }))
+            .expect("round trip parses")
+            .definitions
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(
+            parsed.editable_in_v1(),
+            "title={:?} labels={:?} overlap={:?}",
+            parsed.title,
+            parsed.labels,
+            parsed.overlap.as_str()
+        );
+    }
 
     /// A minimal valid definition body, mutated per case.
     fn def_with(trigger: Value) -> Value {

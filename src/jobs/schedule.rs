@@ -19,6 +19,7 @@ use chrono::{Datelike, TimeDelta, Timelike};
 /// One field's worth of a cron expression: the matched values as a bitmask over the field's
 /// legal range, plus whether the field was a bare "*" (which the day-of-month/day-of-week OR
 /// rule treats as "unrestricted").
+#[derive(Clone, Copy)]
 struct Field<const LO: u8, const HI: u8> {
     mask: u64,
     star: bool,
@@ -84,10 +85,12 @@ impl<const LO: u8, const HI: u8> Field<LO, HI> {
 }
 
 fn val(raw: &str, whole: &str) -> Result<u8, String> {
-    raw.parse::<u8>().map_err(|_| format!("bad value {raw:?} in cron field {whole:?}"))
+    raw.parse::<u8>()
+        .map_err(|_| format!("bad value {raw:?} in cron field {whole:?}"))
 }
 
 /// A parsed 5-field cron expression. Constructed through [CronExpr::parse].
+#[derive(Clone)]
 pub struct CronExpr {
     minutes: Field<0, 59>,
     hours: Field<0, 23>,
@@ -243,9 +246,21 @@ mod tests {
     #[test]
     fn malformed_expressions_are_rejected_with_a_reason() {
         for bad in [
-            "", "* * * *", "* * * * * *", "60 * * * *", "* 24 * * *", "* * 0 * *",
-            "* * 32 * *", "* * * 0 *", "* * * 13 *", "* * * * 8", "5-2 * * * *",
-            "a * * * *", "*/0 * * * *", "1,,2 * * * *", "5/0 * * * *",
+            "",
+            "* * * *",
+            "* * * * * *",
+            "60 * * * *",
+            "* 24 * * *",
+            "* * 0 * *",
+            "* * 32 * *",
+            "* * * 0 *",
+            "* * * 13 *",
+            "* * * * 8",
+            "5-2 * * * *",
+            "a * * * *",
+            "*/0 * * * *",
+            "1,,2 * * * *",
+            "5/0 * * * *",
         ] {
             assert!(CronExpr::parse(bad).is_err(), "should reject {bad:?}");
         }

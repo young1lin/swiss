@@ -165,8 +165,11 @@ pub async fn run_gateway() -> Result<(), String> {
     // the jobs plugin's lifecycle decision (host/builtin.rs), not a boot-time branch here.
     // Its runs go through the shared coordinator above: the scheduler decides WHEN, the
     // coordinator owns the run and the supervisor owns the child process.
-    let jobs =
-        crate::jobs::JobSystem::open(crate::paths::data_path(&["jobs.json"]), services.clone());
+    let jobs = crate::jobs::JobSystem::open(
+        crate::paths::data_path(&["jobs.json"]),
+        services.clone(),
+        config_store.clone(),
+    );
 
     // Named per-client tokens, seeded from the existing secret so clients already configured
     // keep authenticating (as the "default" token). A pre-multi-token rotation in managed.json

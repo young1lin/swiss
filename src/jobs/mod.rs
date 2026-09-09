@@ -37,17 +37,19 @@ pub mod state;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
 
-use chrono::{Datelike, Timelike};
-
+use crate::config_store::ConfigStore;
 use crate::log;
 use crate::secure::statefile::{read_secure_json, write_secure_json};
 use crate::services::runs::{SubmitError, SubmitRequest};
 use crate::services::RuntimeServices;
 use crate::util::now_ms;
+
+use def::JobDefinition;
 
 /// The owner every scheduled run is registered under. Cancellation is scoped by this exact
 /// string: stopping Jobs takes back the runs Jobs started and nothing else.
@@ -140,6 +142,7 @@ impl JobDef {
         Ok(def)
     }
 
+    #[allow(dead_code)] // pairs with JobStore::save: read back by S4's migration tests
     fn to_json(&self) -> Value {
         let mut m = Map::new();
         m.insert("name".into(), json!(self.name));
@@ -163,8 +166,11 @@ impl JobDef {
     }
 }
 
-/// The job table, sealed into jobs.json. Invalid entries are dropped with a warning at load -
-/// one hand-mangled job must not cost the whole table (the managed-store rule).
+/// The v1 job table, sealed into jobs.json. From S3 on the scheduler never consults it -
+/// definitions live in the plugin config row (docs/11 §9 S3) - and the whole type exists
+/// as the READ-ONLY migration input S4 consumes. Its write side is kept (unused until
+/// then) because the migration's tests round-trip it.
+#[allow(dead_code)]
 pub struct JobStore {
     pub jobs: Vec<JobDef>,
     path: PathBuf,
@@ -199,8 +205,8 @@ impl JobStore {
     }
 
     /// Seal the table to disk. The error is RETURNED, not just logged: a config write that
-    /// could not persist must not answer the caller with a success (docs/10 §5). Callers on a
-    /// RUN path deliberately degrade it to a warning instead — see their own comments.
+    /// could not persist must not answer the caller with a success (docs/10 §5).
+    #[allow(dead_code)] // the S4 migration and its tests; the S3 scheduler never writes
     fn save(&self) -> Result<(), String> {
         write_secure_json(
             &self.path,
@@ -244,7 +250,17 @@ impl std::fmt::Display for RunError {
 /// The scheduler plus its mutable state. Shared as one Arc between the boot sequence, the tick
 /// task and the /api/jobs handlers - the same shape as Tunnels.
 pub struct JobSystem {
-    store: Mutex<JobStore>,
+    /// The APPLIED definitions row (docs/11 §9 S3): parsed from plugins.jobs.config by
+    /// [JobSystem::apply_config], which is the one writer - boot, plugin reconcile and the
+    /// v1 API edit path all go through it, so capacity, retention and the table itself
+    /// can never fall out of step.
+    config: Mutex<def::JobsConfig>,
+    /// The config revision the applied row came from. `/api/jobs` reports it so a client
+    /// can tell a stale listing from a fresh one (docs/11 §7.1).
+    applied_revision: AtomicU64,
+    /// The gateway's config store: the v1 API's edit path writes the SAME row the plugin
+    /// host reconciles, revision-checked, instead of growing a second definition file.
+    config_store: Arc<ConfigStore>,
     /// Run FACTS, sealed into jobs-state.json (docs/11 §4): the interval anchor, lastOk,
     /// the failure streak. Definitions and facts stopped sharing a file in S2.
     state: state::JobsState,
@@ -264,7 +280,11 @@ pub struct JobSystem {
 }
 
 impl JobSystem {
-    pub fn open(path: PathBuf, services: Arc<RuntimeServices>) -> Arc<Self> {
+    pub fn open(
+        path: PathBuf,
+        services: Arc<RuntimeServices>,
+        config_store: Arc<ConfigStore>,
+    ) -> Arc<Self> {
         // The siblings of jobs.json place the other two artifacts (docs/11 §4): run state
         // sits NEXT TO the definitions file, the per-job logs under logs/jobs beside it.
         // One argument keeps every caller colocating the family - and gives each
@@ -274,7 +294,14 @@ impl JobSystem {
             .map(std::path::Path::to_path_buf)
             .unwrap_or_default();
         Arc::new(JobSystem {
-            store: Mutex::new(JobStore::open(path)),
+            config: Mutex::new(def::JobsConfig {
+                max_concurrent_runs: def::DEFAULT_MAX_CONCURRENT_RUNS,
+                max_queued_runs: def::DEFAULT_MAX_QUEUED_RUNS,
+                retention: def::Retention::default(),
+                definitions: Vec::new(),
+            }),
+            applied_revision: AtomicU64::new(0),
+            config_store,
             state: state::JobsState::open(dir.join("jobs-state.json")),
             runlog: runlog::RunLog::at(dir.join("logs").join("jobs")),
             services,
@@ -282,6 +309,58 @@ impl JobSystem {
             anchor_ms: now_ms() as i64,
             timer: Mutex::new(None),
         })
+    }
+
+    /// Apply a `plugins.jobs.config` row IN PLACE (docs/11 §8): swap the definitions,
+    /// push the new capacity to the shared coordinator (a lower bound does not touch runs
+    /// already executing) and re-budget the run log. Called at boot (plugin create) and
+    /// on every config apply - plugin reconcile or the v1 edit path, both of which land
+    /// here so there is exactly one interpretation of the row.
+    ///
+    /// The boot leniency applies here too: a leftover entry an older validator let in is
+    /// dropped with a warn, not allowed to fail the whole table (docs/11 §9 S1). An
+    /// unregistered action type only warns - the provider may be disabled, and its jobs
+    /// report `actionAvailable: false` until it returns.
+    pub fn apply_config(&self, config: &Value) -> Result<(), String> {
+        let (parsed, _warnings) =
+            def::JobsConfig::parse_boot_with_actions(config, &self.services.actions)
+                .map_err(|err| err.to_string())?;
+        for (id, reason) in &parsed.dropped {
+            log::warn(
+                "ignoring a config job definition saved by an older validator",
+                Some(json!({ "id": id, "reason": reason })),
+            );
+        }
+        let revision = self.config_store.snapshot().revision;
+        let (max_concurrent, max_queued, retention) = {
+            let mut cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
+            *cfg = parsed.config;
+            (
+                cfg.max_concurrent_runs,
+                cfg.max_queued_runs,
+                cfg.retention.clone(),
+            )
+        };
+        self.applied_revision.store(revision, Ordering::SeqCst);
+        self.services
+            .runs
+            .set_capacity(crate::services::runs::RunCapacity {
+                max_concurrent,
+                max_queued,
+            });
+        self.runlog
+            .set_limits(runlog::limits_of_retention(&retention));
+        Ok(())
+    }
+
+    /// The registry-backed action lookup behind `actionAvailable` (docs/11 §7.1).
+    pub fn actions(&self) -> &Arc<crate::services::action::ActionRegistry> {
+        &self.services.actions
+    }
+
+    /// The config revision currently applied - what /api/jobs reports as configRevision.
+    pub fn applied_revision(&self) -> u64 {
+        self.applied_revision.load(Ordering::SeqCst)
     }
 
     /// Start the one-second tick task. stop() aborts it.
@@ -343,28 +422,28 @@ impl JobSystem {
     }
 
     /// The pure half of the tick: given a clock, which jobs fire? Split from due_jobs_now so
-    /// the decision is testable against synthetic times.
+    /// the decision is testable against synthetic times. Reads the APPLIED config table
+    /// (docs/11 §9 S3) - jobs.json no longer feeds the scheduler.
     pub fn due_jobs(&self, now: i64, now_local: &chrono::NaiveDateTime) -> Vec<String> {
         let running = self
             .runtime
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        store
-            .jobs
+        let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
+        cfg.definitions
             .iter()
-            .filter(|j| j.enabled && !running.get(&j.name).copied().unwrap_or(false))
-            .filter(|j| {
-                job_due(
-                    j,
+            .filter(|d| !d.disabled && !running.get(d.id.as_str()).copied().unwrap_or(false))
+            .filter(|d| {
+                def::definition_due(
+                    d,
                     now,
                     now_local,
                     self.anchor_ms,
-                    self.state.get(&j.name).last_run_at,
+                    self.state.get(&d.id).last_run_at,
                 )
             })
-            .map(|j| j.name.clone())
+            .map(|d| d.id.clone())
             .collect()
     }
 
@@ -373,10 +452,14 @@ impl JobSystem {
     /// re-run when it finishes). The anchor moves for the OCCURRENCE, not for a success: a
     /// refused occurrence still counts, or a job would retry every tick while the pool is
     /// full. The second claimant of a busy job gets Busy, not a queue.
-    fn claim(&self, name: &str, now: i64) -> Result<JobDef, RunError> {
+    ///
+    /// The definition is CLONED here on purpose: an apply_config that rewrites the table
+    /// mid-flight cannot reach into a run that already claimed its snapshot (docs/11 §8,
+    /// "修改中任务") - the run finishes under the definition it started with.
+    fn claim(&self, name: &str, now: i64) -> Result<JobDefinition, RunError> {
         let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
-        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(def) = store.jobs.iter().find(|j| j.name == name).cloned() else {
+        let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(def) = cfg.definitions.iter().find(|d| d.id == name).cloned() else {
             return Err(RunError::Unknown(format!("unknown job: {name}")));
         };
         if rt.get(name).copied().unwrap_or(false) {
@@ -408,9 +491,11 @@ impl JobSystem {
         let def = self.claim(name, now_ms() as i64)?;
         let submitted = self.services.runs.submit(SubmitRequest {
             owner: JOBS_OWNER.to_string(),
-            label: def.name.clone(),
-            action_type: JOBS_ACTION.to_string(),
-            input: legacy_input(&def),
+            label: def.id.clone(),
+            // The definition's OWN action ref (docs/11 §3.4): any registered capability,
+            // input verbatim - env refs stay refs and resolve inside the action.
+            action_type: def.action.type_.clone(),
+            input: def.action.input.clone(),
             timeout_ms: def.timeout_ms,
             // overlap=skip, this build's only policy: the per-job claim above already refused
             // a second run of THIS job, so a full pool is a refusal as well, not a queue.
@@ -478,11 +563,11 @@ impl JobSystem {
     /// Persist the outcome of the last actual run. Skipped for a refusal: a job that could
     /// not start did not exit, and lastOk must not claim otherwise.
     fn persist_last_ok(&self, name: &str, ok: bool) {
-        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
         // The job may have been deleted mid-run; the run record is already on disk, and a
         // deleted definition owns no state line (delete forgets it) - settle would only
         // resurrect a line for a job that no longer exists.
-        if !store.jobs.iter().any(|j| j.name == name) {
+        if !cfg.definitions.iter().any(|d| d.id == name) {
             return;
         }
         // Best-effort: the run already happened and its record is already in the run log. A
@@ -499,56 +584,92 @@ impl JobSystem {
             .insert(name.to_string(), false);
     }
 
-    /// Insert or update a job (validated first). An edit cannot fabricate or lose run
-    /// history any more by construction: run facts live in jobs-state.json keyed by id
-    /// (docs/11 §4), and this writes definitions only.
+    /// The v1 edit path (docs/11 §7.1): fold a v1-shaped body into the definitions row,
+    /// through the SAME revision-checked config write the plugin host reconciles from. A
+    /// definition the v1 shape cannot spell without loss (`editableInV1: false`) is
+    /// refused with [WriteError::NotEditableV1] - overwriting it would silently drop
+    /// fields, and the honest door is PUT /api/plugins/jobs/config.
     ///
-    /// A persist failure is RETURNED. The in-memory table keeps the edit (the scheduler is
-    /// already running it, and silently reverting would be its own lie), but the caller is
-    /// told the save did not reach disk instead of being shown a success.
-    pub fn upsert(&self, def: JobDef) -> Result<(), String> {
-        def.validate()?;
-        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        match store.jobs.iter_mut().find(|j| j.name == def.name) {
-            Some(existing) => *existing = def,
-            None => store.jobs.push(def),
-        }
-        store.save()
+    /// `def` is the v1-shaped JobDef the API layer shaped from the body; the id is its
+    /// name. A NEW id is created through the v1->v2 migration mapping (legacy command
+    /// action, exactly what the v1 row meant); an EXISTING editable definition is edited
+    /// in place, keeping every v2 field the v1 shape does not know.
+    pub fn upsert_v1(&self, def: JobDef) -> Result<(), WriteError> {
+        def.validate().map_err(WriteError::Invalid)?;
+        let mut row = self.config_store.plugin_config("jobs");
+        let defs = definitions_map_of(&mut row)?;
+        let edited = match defs.get(def.name.as_str()) {
+            Some(existing) => {
+                // Parse under the definition's OWN id: title == id is one of the
+                // editable-in-v1 conditions, and a placeholder key would break it.
+                let one =
+                    def::JobsConfig::parse(&json!({ "definitions": { &def.name: existing } }))
+                        .map_err(|e| WriteError::Invalid(e.to_string()))?;
+                let current = one
+                    .definitions
+                    .into_iter()
+                    .next()
+                    .expect("one definition went in, one comes out");
+                if !current.editable_in_v1() {
+                    return Err(WriteError::NotEditableV1(def.name.clone()));
+                }
+                apply_v1_edit(current, &def)
+            }
+            None => def::JobDefinition::from_v1(&def),
+        };
+        defs.insert(def.name.clone(), definition_to_config(&edited));
+        self.commit_row(row).map_err(WriteError::Persist)
     }
 
-    /// Delete a job. Its run history stays on disk (the log outlives the job that wrote it,
-    /// exactly like an MCP's call log).
-    ///
-    /// `Ok(false)` means there was no such job; `Err` means it was removed from the table but
-    /// the new table did not reach disk, so the deletion will not survive a restart. Those are
-    /// different answers and the API gives different ones.
-    pub fn delete(&self, name: &str) -> Result<bool, String> {
-        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        let before = store.jobs.len();
-        store.jobs.retain(|j| j.name != name);
-        let removed = store.jobs.len() != before;
-        if removed {
-            store.save()?;
-            // The deleted definition's scheduling facts go with it (docs/11 §4); the run
-            // HISTORY stays in the log file, which outlives the job that wrote it.
-            // Best-effort like every state write on a non-config path.
-            self.state.forget(name);
+    /// Delete a definition (docs/11 §7.1/§8): the row loses the id, the run history
+    /// stays on disk, and a run already in flight keeps its claimed snapshot to the end.
+    /// `Ok(false)` means there was no such id.
+    pub fn delete(&self, name: &str) -> Result<bool, WriteError> {
+        let mut row = self.config_store.plugin_config("jobs");
+        let defs = definitions_map_of(&mut row)?;
+        if defs.shift_remove(name).is_none() {
+            return Ok(false);
         }
-        Ok(removed)
+        self.commit_row(row).map_err(WriteError::Persist)?;
+        // The deleted definition's scheduling facts go with it (docs/11 §4); the run
+        // HISTORY stays in the log file, which outlives the job that wrote it. Best-effort
+        // like every state write on a non-config path.
+        self.state.forget(name);
+        Ok(true)
     }
 
-    /// One job's API view: the definition plus the live facts (running, next due). Built for
+    /// Validate a full row strictly (the v1 path shares the plugin row's rules) and land
+    /// it: revision-checked store write, then [JobSystem::apply_config] so the running
+    /// table, capacity and retention move in one step.
+    fn commit_row(&self, row: Value) -> Result<(), String> {
+        def::JobsConfig::parse_with_actions(&row, &self.services.actions)
+            .map_err(|e| e.to_string())?;
+        let expected = self.config_store.snapshot().revision;
+        self.config_store
+            .update_plugin("jobs", expected, row.clone())
+            .map_err(|e| e.to_string())?;
+        self.apply_config(&row)
+    }
+
+    /// One job's API row (docs/11 §7.1): every v1 field the panel reads, exactly the
+    /// shape they had when definitions lived in jobs.json, plus the v2 fields. Built for
     /// GET /api/jobs and the PUT reply, so both show the same shape.
-    pub fn job_view(&self, def: &JobDef) -> Value {
+    pub fn job_view(&self, def: &JobDefinition) -> Value {
         let running = self
             .runtime
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get(&def.name)
+            .get(def.id.as_str())
             .copied()
             .unwrap_or(false);
-        let st = self.state.get(&def.name);
-        let mut v = def.to_json();
+        let st = self.state.get(&def.id);
+        let mut v = def.to_v1_view();
+        for (key, value) in def.v2_view_fields() {
+            v[key] = value;
+        }
+        v["source"] = json!("config");
+        v["actionAvailable"] = json!(self.services.actions.get(&def.action.type_).is_some());
+        v["configRevision"] = json!(self.applied_revision());
         // The live facts the panel reads: lastRunAt / lastOk come from the state file,
         // exactly the shape they had when they rode inside the definition (docs/11 §7.1
         // keeps the v1 /api/jobs fields frozen).
@@ -559,8 +680,10 @@ impl JobSystem {
             v["lastOk"] = json!(ok);
         }
         v["running"] = json!(running);
-        if def.enabled {
-            if let Some(next) = next_due_iso(def, st.last_run_at, now_ms() as i64, self.anchor_ms) {
+        if !def.disabled {
+            if let Some(next) =
+                def::next_due_of(def, st.last_run_at, now_ms() as i64, self.anchor_ms)
+            {
                 v["nextDueAt"] = json!(next);
             }
         }
@@ -569,8 +692,8 @@ impl JobSystem {
 
     /// The listing behind GET /api/jobs.
     pub fn all_views(&self) -> Vec<Value> {
-        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        store.jobs.iter().map(|j| self.job_view(j)).collect()
+        let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
+        cfg.definitions.iter().map(|d| self.job_view(d)).collect()
     }
 
     /// One job's run facts (docs/11 §4) - what lastRunAt / lastOk used to be inside a
@@ -595,29 +718,81 @@ impl JobSystem {
     }
 }
 
-/// Test-only wiring: the shared services with the legacy command capability registered —
-/// exactly what the process plugin's start does in a real boot, without a plugin host.
-#[cfg(test)]
-pub(crate) fn test_services() -> Arc<RuntimeServices> {
-    let services = RuntimeServices::new();
-    services
-        .actions
-        .register(Arc::new(
-            crate::services::actions::LegacyCommandAction::new(services.supervisor.clone()),
-        ))
-        .expect("the legacy command capability registers once");
-    services
+/// Why a definition write did not land. The three answers the v1 API maps to 400 / 409
+/// / 500: a bad definition is the caller's, a not-editable-in-v1 row points at the config
+/// editor, and a failed persist is this gateway's.
+#[derive(Debug)]
+pub enum WriteError {
+    Invalid(String),
+    NotEditableV1(String),
+    Persist(String),
 }
 
-/// A v1 job's action input: the command string exactly as saved (refs stay refs - they
-/// resolve inside the capability, at run time) plus the optional working directory.
-fn legacy_input(def: &JobDef) -> Value {
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WriteError::Invalid(m) | WriteError::Persist(m) => write!(f, "{m}"),
+            WriteError::NotEditableV1(name) => write!(
+                f,
+                "job {name} cannot be edited through the v1 shape without losing fields; use PUT /api/plugins/jobs/config"
+            ),
+        }
+    }
+}
+
+/// The definitions object of a config row, created empty when absent.
+fn definitions_map_of(row: &mut Value) -> Result<&mut Map<String, Value>, WriteError> {
+    if row.get("definitions").is_none() {
+        row["definitions"] = json!({});
+    }
+    row.get_mut("definitions")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| {
+            WriteError::Invalid("definitions must be an object keyed by job id".to_string())
+        })
+}
+
+/// Fold a v1-shaped edit onto an editable definition (docs/11 §7.1): command/cwd move
+/// into the legacy action input, the schedule becomes the matching trigger, and every
+/// v2 field the shape does not know keeps its value - the caller checked
+/// [def::JobDefinition::editable_in_v1], so there are none to lose today, and the check
+/// plus this fold are what keep that promise true.
+fn apply_v1_edit(mut current: JobDefinition, def: &JobDef) -> JobDefinition {
     let mut input = Map::new();
     input.insert("command".into(), json!(def.command));
     if let Some(cwd) = &def.cwd {
         input.insert("cwd".into(), json!(cwd));
     }
-    Value::Object(input)
+    current.action.input = Value::Object(input);
+    let first_run = match current.trigger {
+        def::Trigger::Interval { first_run, .. } => first_run,
+        _ => def::FirstRun::AfterInterval,
+    };
+    current.trigger = match (def.every_sec, def.cron.as_deref()) {
+        (Some(secs), _) => def::Trigger::Interval {
+            every_ms: secs.saturating_mul(1000),
+            first_run,
+        },
+        (None, Some(expr)) => match schedule::CronExpr::parse(expr) {
+            Ok(compiled) => def::Trigger::Cron {
+                expression: expr.to_string(),
+                compiled,
+            },
+            // def.validate() parsed this cron already; unreachable in practice.
+            Err(_) => current.trigger.clone(),
+        },
+        (None, None) => def::Trigger::Manual,
+    };
+    current.disabled = !def.enabled;
+    current.timeout_ms = def.timeout_ms;
+    current
+}
+
+/// A definition as the config row spells it - the exact grammar
+/// [def::JobsConfig::parse] reads back, so a v1 edit can never smuggle in a shape the
+/// strict validator would not have accepted.
+fn definition_to_config(def: &JobDefinition) -> Value {
+    def.to_config_json()
 }
 
 /// One run's JSONL record and API-reply shape - built in ONE place so the file line and the
@@ -652,48 +827,6 @@ pub fn run_record(trigger: &str, out: &runner::RunOutcome) -> Map<String, Value>
     rec
 }
 
-/// Whether a job fires at "now". Interval: last run (or the boot anchor for a never-run job) plus
-/// the interval has passed. Cron: this local minute matches AND the last run is not inside this
-/// very minute - the second half is what makes a restart within the firing minute (03:30:05 ran,
-/// gateway restarted, 03:30:59 ticks again) skip instead of double-firing. The last-run stamp is
-/// a PARAMETER (run facts live in the state file since S2, not inside the definition).
-pub fn job_due(
-    def: &JobDef,
-    now: i64,
-    now_local: &chrono::NaiveDateTime,
-    anchor_ms: i64,
-    last_run_ms: Option<i64>,
-) -> bool {
-    if let Some(secs) = def.every_sec {
-        let base = last_run_ms.unwrap_or(anchor_ms);
-        return now.saturating_sub(base) >= (secs as i64) * 1000;
-    }
-    let Some(expr) = &def.cron else {
-        return false;
-    };
-    let Ok(expr) = schedule::CronExpr::parse(expr) else {
-        return false; // validation rejects this at every entry point; unreachable in practice
-    };
-    if !expr.matches(&schedule::fields_of(now_local)) {
-        return false;
-    }
-    match last_run_ms
-        .and_then(local_minute_of_ms)
-        .map(|t| (t.year(), t.ordinal(), t.hour(), t.minute()))
-    {
-        Some(last) => {
-            let cur = (
-                now_local.year(),
-                now_local.ordinal(),
-                now_local.hour(),
-                now_local.minute(),
-            );
-            last != cur
-        }
-        None => true,
-    }
-}
-
 /// A unix-ms stamp as a local naive datetime (None when out of range).
 fn local_minute_of_ms(ms: i64) -> Option<chrono::NaiveDateTime> {
     use chrono::TimeZone;
@@ -703,29 +836,19 @@ fn local_minute_of_ms(ms: i64) -> Option<chrono::NaiveDateTime> {
         .map(|dt| dt.naive_local())
 }
 
-/// The ISO stamp of a job's next firing - what a human scheduling "3 a.m. nightly" wants to
-/// read back. Intervals anchor on lastRunAt (or boot); cron scans forward from now. Cron results
-/// carry the LOCAL offset on purpose (chrono's to_rfc3339) - the field names a wall-clock time.
-fn next_due_iso(
-    def: &JobDef,
-    last_run_ms: Option<i64>,
-    now: i64,
-    anchor_ms: i64,
-) -> Option<String> {
-    if let Some(secs) = def.every_sec {
-        let base = last_run_ms.unwrap_or(anchor_ms);
-        return Some(state::iso_of_ms(base + (secs as i64) * 1000));
-    }
-    let expr = schedule::CronExpr::parse(def.cron.as_deref()?).ok()?;
-    let now_local = local_minute_of_ms(now)?;
-    let next = expr.next_after(&now_local)?;
-    use chrono::TimeZone;
-    chrono::Local
-        .from_local_datetime(&next)
-        .single()
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, false))
+/// Test-only wiring: the shared services with the legacy command capability registered —
+/// exactly what the process plugin's start does in a real boot, without a plugin host.
+#[cfg(test)]
+pub(crate) fn test_services() -> Arc<RuntimeServices> {
+    let services = RuntimeServices::new();
+    services
+        .actions
+        .register(Arc::new(
+            crate::services::actions::LegacyCommandAction::new(services.supervisor.clone()),
+        ))
+        .expect("the legacy command capability registers once");
+    services
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,30 +886,66 @@ mod tests {
         }
     }
 
+    /// A system plus a file-backed config store in the same scratch tree - the S3 shape:
+    /// definitions live in plugins.jobs.config, jobs.json is the migration input.
+    fn system_at(
+        path: PathBuf,
+        services: Arc<RuntimeServices>,
+    ) -> (Arc<JobSystem>, Arc<ConfigStore>) {
+        let store = ConfigStore::from_loaded(
+            path.parent()
+                .expect("jobs.json has a parent")
+                .join("gateway.config.json"),
+            json!({}),
+        );
+        let sys = JobSystem::open(path, services, store.clone());
+        (sys, store)
+    }
+
+    fn system(name: &str, services: Arc<RuntimeServices>) -> (Arc<JobSystem>, Arc<ConfigStore>) {
+        system_at(scratch_path(name), services)
+    }
+
+    /// The definitions row these tests spell: v1 JobDefs through the migration mapping,
+    /// the way the S4 migration and the v1 API both build rows.
+    fn row_of(defs: &[JobDef]) -> Value {
+        let mut definitions = Map::new();
+        for def in defs {
+            let v2 = def::JobDefinition::from_v1(def);
+            definitions.insert(v2.id.clone(), v2.to_config_json());
+        }
+        json!({ "definitions": definitions })
+    }
+
+    /// Land a row the way the plugin host does: revision-checked store write, then the
+    /// in-place apply.
+    fn install(sys: &JobSystem, store: &ConfigStore, row: Value) {
+        let rev = store.snapshot().revision;
+        store
+            .update_plugin("jobs", rev, row.clone())
+            .expect("the scratch config store accepts the row");
+        sys.apply_config(&row).expect("the row applies");
+    }
+
     #[test]
     fn definitions_validate_at_every_entry_point() {
         assert!(interval_job("ok", 60).validate().is_ok());
         assert!(cron_job("ok2", "30 3 * * *").validate().is_ok());
-        // bad names
         assert!(interval_job("not/ok", 60).validate().is_err());
         assert!(interval_job("", 60).validate().is_err());
-        // empty command
         let mut j = interval_job("ok", 60);
         j.command = "   ".into();
         assert!(j.validate().is_err());
-        // both schedules at once, or neither
         let mut j = interval_job("ok", 60);
         j.cron = Some("* * * * *".into());
         assert!(j.validate().is_err());
         let mut j = interval_job("ok", 60);
         j.every_sec = None;
         assert!(j.validate().is_err());
-        // zero interval / timeout
         assert!(interval_job("ok", 0).validate().is_err());
         let mut j = interval_job("ok", 60);
         j.timeout_ms = 0;
         assert!(j.validate().is_err());
-        // unparsable cron
         assert!(cron_job("ok", "99 * * * *").validate().is_err());
     }
 
@@ -797,8 +956,8 @@ mod tests {
             let mut store = JobStore::open(path.clone());
             store.jobs.push(interval_job("keep-me", 300));
             store.jobs.push({
-                let mut bad = interval_job("bad-cron", 0); // zero interval: invalid
-                bad.cron = Some("* * * * *".into()); // and doubly-scheduled
+                let mut bad = interval_job("bad-cron", 0);
+                bad.cron = Some("* * * * *".into());
                 bad
             });
             store.save().expect("the scratch file is writable");
@@ -806,7 +965,6 @@ mod tests {
         let reloaded = JobStore::open(path);
         assert_eq!(reloaded.jobs.len(), 1, "only the valid entry survives");
         assert_eq!(reloaded.jobs[0].name, "keep-me");
-        // Defaults ride through: enabled by default, the runner's default timeout preserved.
         assert_eq!(reloaded.jobs[0].timeout_ms, 30_000);
     }
 
@@ -833,107 +991,144 @@ mod tests {
             .unwrap()
             .naive_local();
         let anchor = now - 5000;
-        // Never ran: due once the interval since boot has passed.
-        let j = interval_job("j", 10); // 10s
-        assert!(!job_due(&j, anchor + 9000, &local, anchor, None));
-        assert!(job_due(&j, anchor + 10_000, &local, anchor, None));
-        // Ran 4s ago on a 10s interval: not yet; ran 11s ago: due.
-        assert!(!job_due(&j, now, &local, anchor, Some(now - 4000)));
-        assert!(job_due(&j, now, &local, anchor, Some(now - 11_000)));
+        let d = def::JobDefinition::from_v1(&interval_job("j", 10));
+        assert!(!def::definition_due(
+            &d,
+            anchor + 9000,
+            &local,
+            anchor,
+            None
+        ));
+        assert!(def::definition_due(
+            &d,
+            anchor + 10_000,
+            &local,
+            anchor,
+            None
+        ));
+        assert!(!def::definition_due(
+            &d,
+            now,
+            &local,
+            anchor,
+            Some(now - 4000)
+        ));
+        assert!(def::definition_due(
+            &d,
+            now,
+            &local,
+            anchor,
+            Some(now - 11_000)
+        ));
     }
 
     #[test]
     fn cron_due_requires_a_matching_minute_and_not_the_same_one_twice() {
-        // 03:30 local, some date.
         let now_local: chrono::NaiveDateTime = chrono::NaiveDate::from_ymd_opt(2026, 9, 8)
             .unwrap()
             .and_hms_opt(3, 30, 5)
             .unwrap();
-        let j = cron_job("j", "30 3 * * *");
+        let d = def::JobDefinition::from_v1(&cron_job("j", "30 3 * * *"));
         assert!(
-            job_due(&j, 0, &now_local, 0, None),
+            def::definition_due(&d, 0, &now_local, 0, None),
             "matching minute, never ran"
         );
-        // last run inside THIS minute (a restart at :05 after a run at :02): skip.
         let same_minute_ms = chrono::Local
             .from_local_datetime(&now_local)
             .unwrap()
             .timestamp_millis();
-        assert!(!job_due(&j, 0, &now_local, 0, Some(same_minute_ms)));
-        // last run was yesterday: due again.
+        assert!(!def::definition_due(
+            &d,
+            0,
+            &now_local,
+            0,
+            Some(same_minute_ms)
+        ));
         let yesterday = same_minute_ms - 24 * 60 * 60 * 1000;
-        assert!(job_due(&j, 0, &now_local, 0, Some(yesterday)));
-        // A non-matching minute is never due.
+        assert!(def::definition_due(&d, 0, &now_local, 0, Some(yesterday)));
         let off = chrono::NaiveDate::from_ymd_opt(2026, 9, 8)
             .unwrap()
             .and_hms_opt(3, 31, 0)
             .unwrap();
-        assert!(!job_due(&j, 0, &off, 0, Some(yesterday)));
+        assert!(!def::definition_due(&d, 0, &off, 0, Some(yesterday)));
     }
 
-    #[tokio::test]
-    async fn a_manual_run_claims_executes_records_and_persists() {
-        let path = scratch_path("manual");
-        let sys = JobSystem::open(path.clone(), test_services());
-        sys.upsert(interval_job("echo-job", 3600)).expect("valid");
-
-        let (_seq, out) = sys
-            .clone()
-            .execute("echo-job", "manual")
-            .await
-            .expect("runs");
-        assert!(out.ok, "{out:?}");
-
-        // The claim is released: a second run goes through.
-        assert!(sys.clone().execute("echo-job", "manual").await.is_ok());
-        // The run log holds both runs, newest first.
-        let (page, _) = sys.read_runs("echo-job", None, 10);
-        assert_eq!(page.len(), 2);
-        assert_eq!(page[0]["trigger"], json!("manual"));
-        // The outcome survived to disk - in the STATE file now, not the definition file
-        // (docs/11 §4): a fresh system over the same paths reads the same facts.
-        let reopened = JobSystem::open(path.clone(), test_services());
-        let st = reopened.run_state("echo-job");
-        assert_eq!(st.last_ok, Some(true));
-        assert!(st.last_run_at.is_some(), "the claim stamped lastRunAt");
-        // And jobs.json no longer carries run facts at all: the sealed definitions file
-        // holds intent only (docs/10 §5, docs/11 §4).
-        if let Ok(Some(raw)) = crate::secure::statefile::read_secure_json(&path) {
-            let arr = raw["jobs"].as_array().expect("the jobs array");
-            assert!(!arr.is_empty());
-            for entry in arr {
-                assert!(
-                    entry.get("lastRunAt").is_none(),
-                    "absent, not moved: {entry}"
-                );
-                assert!(entry.get("lastOk").is_none(), "absent, not moved: {entry}");
-            }
-        } else {
-            panic!("jobs.json must still seal and load: {path:?}");
+    #[test]
+    fn a_manual_definition_never_auto_fires_and_has_no_next_due() {
+        let d = def::JobDefinition {
+            trigger: def::Trigger::Manual,
+            ..def::JobDefinition::from_v1(&interval_job("by-hand", 60))
+        };
+        let now_local = chrono::Local::now().naive_local();
+        assert!(!def::definition_due(&d, i64::MAX, &now_local, 0, None));
+        assert!(def::next_due_of(&d, None, 0, 0).is_none());
+        // The v1 shape cannot spell a schedule-less job: its validator still refuses one.
+        assert!(JobDef {
+            every_sec: None,
+            cron: None,
+            ..interval_job("x", 60)
         }
+        .validate()
+        .is_err());
     }
 
-    #[tokio::test]
-    async fn an_unknown_job_is_unknown_and_a_claimed_job_is_busy() {
-        let path = scratch_path("claims");
-        let sys = JobSystem::open(path, test_services());
-        match sys.clone().execute("ghost", "manual").await {
-            Err(RunError::Unknown(msg)) => assert!(msg.contains("ghost"), "{msg}"),
-            other => panic!("expected Unknown, got {other:?}"),
+    /// The S3 promise in one assertion set (docs/11 §9 S3): the row IS the table. A due
+    /// interval job fires, a future one does not, a disabled one does not, a manual one
+    /// never auto-fires - and a jobs.json row schedules nothing any more.
+    #[test]
+    fn config_definitions_drive_the_due_set() {
+        let path = scratch_path("due-set");
+        let (sys, store) = system_at(path.clone(), test_services());
+        let mut disabled = interval_job("off", 1);
+        disabled.enabled = false;
+        let manual = def::JobDefinition {
+            trigger: def::Trigger::Manual,
+            ..def::JobDefinition::from_v1(&interval_job("by-hand", 1))
+        };
+        let mut row = row_of(&[interval_job("due-now", 1), interval_job("later", 3_600)]);
+        row["definitions"]["off"] = def::JobDefinition::from_v1(&disabled).to_config_json();
+        row["definitions"]["by-hand"] = manual.to_config_json();
+        install(&sys, &store, row);
+
+        let now = sys.anchor_ms + 1500;
+        let local = local_minute_of_ms(now).expect("a local time");
+        assert_eq!(
+            sys.due_jobs(now, &local),
+            vec!["due-now".to_string()],
+            "only the elapsed interval fires"
+        );
+        // jobs.json no longer schedules anything, even with a v1 row sitting on disk
+        // next to the config store - which is exactly what an S3 boot of an old tree
+        // looks like until the S4 migration moves it.
+        {
+            let mut legacy = JobStore::open(path.clone());
+            legacy.jobs.push(interval_job("legacy-row", 1));
+            legacy.save().expect("the scratch file is writable");
         }
-        // Claim directly, then confirm execute refuses to double-start.
-        sys.upsert(interval_job("busy-job", 3600)).expect("valid");
-        let _def = sys
-            .claim("busy-job", now_ms() as i64)
-            .expect("first claim wins");
-        match sys.clone().execute("busy-job", "manual").await {
-            Err(RunError::Busy(msg)) => assert!(msg.contains("already running"), "{msg}"),
-            other => panic!("expected Busy, got {other:?}"),
-        }
-        // And a claimed job is not reported due by the tick.
-        assert!(!sys.due_jobs_now().contains(&"busy-job".to_string()));
+        assert_eq!(
+            sys.due_jobs(now, &local).len(),
+            1,
+            "jobs.json is not consulted"
+        );
     }
 
+    /// docs/11 §8: capacity changes reach the shared coordinator on apply.
+    #[test]
+    fn apply_config_moves_capacity() {
+        let (sys, store) = system("capacity-apply", test_services());
+        assert_eq!(
+            sys.services.runs.capacity().max_concurrent,
+            crate::services::runs::DEFAULT_MAX_CONCURRENT_RUNS
+        );
+        install(
+            &sys,
+            &store,
+            json!({ "maxConcurrentRuns": 5, "maxQueuedRuns": 7, "definitions": {} }),
+        );
+        let cap = sys.services.runs.capacity();
+        assert_eq!(cap.max_concurrent, 5);
+        assert_eq!(cap.max_queued, 7);
+    }
     /// A command that outlives any test, spelled per platform.
     fn long_command() -> String {
         if cfg!(windows) {
@@ -959,20 +1154,71 @@ mod tests {
         false
     }
 
-    /// The process plugin is disabled: the capability is simply not registered. A job that
-    /// comes due must SAY so — a missing dependency is reported, never silently skipped.
     #[tokio::test]
-    async fn a_missing_capability_is_reported_and_recorded() {
-        let path = scratch_path("nocap");
-        let sys = JobSystem::open(path.clone(), RuntimeServices::new());
-        sys.upsert(interval_job("orphan", 3600)).expect("valid");
+    async fn a_manual_run_claims_executes_records_and_persists() {
+        let path = scratch_path("manual");
+        let (sys, store) = system_at(path.clone(), test_services());
+        install(&sys, &store, row_of(&[interval_job("echo-job", 3_600)]));
+
+        let (_seq, out) = sys
+            .clone()
+            .execute("echo-job", "manual")
+            .await
+            .expect("runs");
+        assert!(out.ok, "{out:?}");
+        assert!(sys.clone().execute("echo-job", "manual").await.is_ok());
+        let (page, _) = sys.read_runs("echo-job", None, 10);
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0]["trigger"], json!("manual"));
+
+        // A fresh boot over the same tree reads the same facts: the config row is
+        // re-applied the way plugin create does, and the state file carries the run
+        // facts across the boundary (docs/11 §4).
+        let reopened = JobSystem::open(path, test_services(), store.clone());
+        reopened
+            .apply_config(&store.plugin_config("jobs"))
+            .expect("the persisted row re-applies");
+        let st = reopened.run_state("echo-job");
+        assert_eq!(st.last_ok, Some(true));
+        assert!(st.last_run_at.is_some(), "the claim stamped lastRunAt");
+        assert_eq!(
+            reopened.all_views().len(),
+            1,
+            "the reopened system lists the config's definition"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_job_is_unknown_and_a_claimed_job_is_busy() {
+        let (sys, store) = system("claims", test_services());
+        match sys.clone().execute("ghost", "manual").await {
+            Err(RunError::Unknown(msg)) => assert!(msg.contains("ghost"), "{msg}"),
+            other => panic!("expected Unknown, got {other:?}"),
+        }
+        install(&sys, &store, row_of(&[interval_job("busy-job", 3_600)]));
+        let _def = sys
+            .claim("busy-job", now_ms() as i64)
+            .expect("first claim wins");
+        match sys.clone().execute("busy-job", "manual").await {
+            Err(RunError::Busy(msg)) => assert!(msg.contains("already running"), "{msg}"),
+            other => panic!("expected Busy, got {other:?}"),
+        }
+        assert!(!sys.due_jobs_now().contains(&"busy-job".to_string()));
+    }
+
+    /// The process plugin is disabled: the capability is simply not registered. A job that
+    /// comes due must SAY so - a missing dependency is reported, never silently skipped -
+    /// and the listing reports it as not action-available while remaining saved.
+    #[tokio::test]
+    async fn a_missing_capability_is_reported_recorded_and_listed() {
+        let (sys, store) = system("nocap", RuntimeServices::new());
+        install(&sys, &store, row_of(&[interval_job("orphan", 3_600)]));
 
         match sys.clone().execute("orphan", "timer").await {
             Err(RunError::Unavailable(msg)) => assert!(msg.contains(JOBS_ACTION), "{msg}"),
             other => panic!("expected Unavailable, got {other:?}"),
         }
 
-        // The occurrence is in the history: the job was due and did not run.
         let (page, _) = sys.read_runs("orphan", None, 10);
         assert_eq!(page.len(), 1, "{page:?}");
         assert_eq!(page[0]["ok"], json!(false));
@@ -981,30 +1227,40 @@ mod tests {
             .unwrap_or_default()
             .contains(JOBS_ACTION));
 
-        // The claim was released, and lastOk was NOT written: nothing exited. The
-        // occurrence anchor still moved, so a full pool cannot make a job retry every
-        // tick.
         let view = sys.all_views().remove(0);
         assert_eq!(view["running"], json!(false));
+        assert_eq!(
+            view["actionAvailable"],
+            json!(false),
+            "the listing says the provider is gone"
+        );
+        assert_eq!(
+            view["editableInV1"],
+            json!(true),
+            "the definition itself stays a plain legacy row"
+        );
         let st = sys.run_state("orphan");
         assert_eq!(st.last_ok, None, "a refusal is not an outcome");
         assert!(st.last_run_at.is_some());
     }
 
-    /// The pool's bound is GLOBAL: a manual run of another producer can fill it, and the
-    /// scheduled occurrence is refused visibly rather than queued out of sight.
+    /// The pool's bound is GLOBAL and now config-driven: a row with one slot and no
+    /// queue is the visible-refusal setup, and a manual run of another producer filling
+    /// that slot refuses the scheduled occurrence instead of queueing it out of sight.
     #[tokio::test]
     async fn a_full_pool_refuses_the_occurrence_visibly() {
-        let path = scratch_path("capacity");
-        let services = test_services();
-        services
-            .runs
-            .set_capacity(crate::services::runs::RunCapacity {
-                max_concurrent: 1,
-                max_queued: 0,
-            });
-        let sys = JobSystem::open(path, services.clone());
-        sys.upsert(interval_job("waiting", 3600)).expect("valid");
+        let (sys, store) = system("capacity", test_services());
+        install(
+            &sys,
+            &store,
+            json!({
+                "maxConcurrentRuns": 1,
+                "maxQueuedRuns": 0,
+                "definitions": row_of(&[interval_job("waiting", 3_600)])["definitions"],
+            }),
+        );
+        assert_eq!(sys.services.runs.capacity().max_concurrent, 1);
+        let services = sys.services.clone();
 
         let hog = services
             .runs
@@ -1028,8 +1284,6 @@ mod tests {
             1,
             "the refused occurrence is recorded: {page:?}"
         );
-
-        // The other producer's run is untouched by the refusal, and reaped here.
         assert_eq!(services.runs.shutdown_all().await, 1);
         assert!(
             hog.done.await.is_ok(),
@@ -1041,19 +1295,17 @@ mod tests {
     /// and the record says WHICH kind of not-ok it was.
     #[tokio::test]
     async fn a_wedged_command_is_killed_at_the_job_deadline() {
-        let path = scratch_path("deadline");
-        let sys = JobSystem::open(path, test_services());
-        let mut def = interval_job("wedged", 3600);
+        let (sys, store) = system("deadline", test_services());
+        let mut def = interval_job("wedged", 3_600);
         def.command = long_command();
-        def.timeout_ms = 400;
-        sys.upsert(def).expect("valid");
+        def.timeout_ms = 1_500; // v2 floors timeoutMs at 1000 (docs/11 §3.2)
+        install(&sys, &store, row_of(&[def]));
 
         let started = std::time::Instant::now();
-        let (_seq, out) = sys
-            .clone()
-            .execute("wedged", "timer")
-            .await
-            .expect("reports");
+        let (_seq, out) = match sys.clone().execute("wedged", "timer").await {
+            Ok(r) => r,
+            Err(err) => panic!("the run must report, not refuse: {err}"),
+        };
         assert!(out.timed_out, "{out:?}");
         assert!(!out.ok);
         assert!(
@@ -1074,12 +1326,10 @@ mod tests {
     /// cancelled AND awaited, and the per-job claims they held are gone.
     #[tokio::test]
     async fn shutdown_cancels_the_runs_this_scheduler_owns() {
-        let path = scratch_path("shutdown");
-        let services = test_services();
-        let sys = JobSystem::open(path, services.clone());
-        let mut def = interval_job("slow", 3600);
+        let (sys, store) = system("shutdown", test_services());
+        let mut def = interval_job("slow", 3_600);
         def.command = long_command();
-        sys.upsert(def).expect("valid");
+        install(&sys, &store, row_of(&[def]));
 
         let running = {
             let sys = sys.clone();
@@ -1092,57 +1342,48 @@ mod tests {
         assert!(out.canceled, "{out:?}");
         assert!(!out.ok);
         assert!(!out.timed_out, "nobody waited too long; it was cancelled");
-
-        // No claim survives a shutdown, so enabling again does not find a wedged job.
-        assert_eq!(sys.all_views().remove(0)["running"], json!(false));
+        assert!(!sys.all_views().iter().any(|v| v["running"] == json!(true)));
     }
-
     /// docs/10 §5 asks for this by name: a persist that failed must not be reported as a
-    /// save. The store keeps the edit in memory (the scheduler is already running it, and
-    /// silently reverting would be a second lie), but the caller hears the truth.
+    /// save. The config row is the definition store now, so a store whose file cannot be
+    /// written refuses the v1 edit - and nothing half-applies anywhere.
     #[test]
     fn a_config_write_that_cannot_persist_is_an_error_not_a_warning() {
         crate::secure::key::use_test_master_key();
-        // A path under a directory that does not exist: every write to it fails, on every
-        // platform, without needing permissions a test cannot portably set.
-        let path = std::env::temp_dir()
-            .join(format!("lmg-jobs-gone-{}", crate::util::random_hex(8)))
-            .join("nested")
-            .join("jobs.json");
-        let sys = JobSystem::open(path, test_services());
+        let dir =
+            std::env::temp_dir().join(format!("lmg-jobs-gone-{}", crate::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        // jobs.json and the runlog tree stay real; only the config file sits under a
+        // directory that does not exist, so every store persist fails on every platform.
+        let store =
+            ConfigStore::from_loaded(dir.join("gone").join("gateway.config.json"), json!({}));
+        let sys = JobSystem::open(dir.join("jobs.json"), test_services(), store);
 
-        let err = sys
-            .upsert(interval_job("doomed", 60))
-            .expect_err("the write cannot succeed");
-        assert!(err.contains("could not persist"), "{err}");
-        assert_eq!(
-            sys.all_views().len(),
-            1,
-            "the edit is live even though the save failed"
+        match sys.upsert_v1(interval_job("doomed", 60)) {
+            Err(WriteError::Persist(err)) => assert!(!err.is_empty()),
+            other => panic!("the write cannot succeed: {other:?}"),
+        }
+        assert!(
+            sys.all_views().is_empty(),
+            "nothing half-applied: the row never landed"
         );
-
-        let err = sys
-            .delete("doomed")
-            .expect_err("the removal cannot reach disk either");
-        assert!(err.contains("could not persist"), "{err}");
         // Deleting something that was never there is not a failed write; it is a miss.
-        assert_eq!(sys.delete("never-existed"), Ok(false));
+        assert!(matches!(sys.delete("never-existed"), Ok(false)));
     }
 
     #[test]
-    fn upsert_never_touches_run_state_and_delete_forgets_it() {
-        let path = scratch_path("upsert");
-        let sys = JobSystem::open(path, test_services());
-        sys.upsert(interval_job("edit-me", 60)).expect("valid");
-        // Run facts arrive through the state file, not the definition table.
+    fn v1_edits_never_touch_run_state_and_delete_forgets_it() {
+        let store = ConfigStore::memory(json!({}));
+        let sys = JobSystem::open(scratch_path("upsert"), test_services(), store);
+        sys.upsert_v1(interval_job("edit-me", 60)).expect("valid");
+        // Run facts arrive through the state file, not the definition row.
         sys.state.claim("edit-me", 123, None);
         sys.state.settle("edit-me", false, None);
-        sys.upsert(interval_job("edit-me", 120))
+        sys.upsert_v1(interval_job("edit-me", 120))
             .expect("valid edit");
-        {
-            let store = sys.store.lock().unwrap();
-            assert_eq!(store.jobs[0].every_sec, Some(120));
-        }
+        let view = sys.all_views().remove(0);
+        assert_eq!(view["everySec"], json!(120), "the edit landed in the row");
+        assert_eq!(view["source"], json!("config"));
         let st = sys.run_state("edit-me");
         assert_eq!(
             st.last_run_at,
@@ -1152,11 +1393,10 @@ mod tests {
         assert_eq!(st.last_ok, Some(false));
         assert_eq!(st.consecutive_failures, 1);
         // The v1 /api/jobs shape still SHOWS the facts next to the definition.
-        let view = sys.all_views().remove(0);
         assert_eq!(view["lastOk"], json!(false));
         assert!(view["lastRunAt"].as_str().is_some());
-        assert_eq!(sys.delete("edit-me"), Ok(true));
-        assert_eq!(sys.delete("edit-me"), Ok(false), "already gone");
+        assert!(matches!(sys.delete("edit-me"), Ok(true)));
+        assert!(matches!(sys.delete("edit-me"), Ok(false)), "already gone");
         assert!(sys.all_views().is_empty());
         // The deleted definition's state line is gone too (docs/11 §4); the run history
         // file is deliberately NOT touched - it outlives the job.
@@ -1164,12 +1404,16 @@ mod tests {
     }
 
     #[test]
-    fn a_job_view_reports_running_and_a_next_due() {
-        let path = scratch_path("view");
-        let sys = JobSystem::open(path, test_services());
-        sys.upsert(interval_job("viewed", 60)).expect("valid");
-        sys.upsert(cron_job("nightly", "30 3 * * *"))
-            .expect("valid");
+    fn a_job_view_reports_running_a_next_due_and_the_v2_fields() {
+        let (sys, store) = system("view", test_services());
+        install(
+            &sys,
+            &store,
+            row_of(&[
+                interval_job("viewed", 60),
+                cron_job("nightly", "30 3 * * *"),
+            ]),
+        );
         let views: Vec<Value> = sys.all_views();
         assert_eq!(views.len(), 2);
         for v in &views {
@@ -1178,16 +1422,106 @@ mod tests {
                 v.get("nextDueAt").and_then(Value::as_str).is_some(),
                 "every enabled job shows its next firing: {v}"
             );
+            // The v2 fields ride along (docs/11 §7.1) so a v2 client needs no second
+            // endpoint and the panel's future form can round-trip through the row.
+            assert_eq!(v["source"], json!("config"));
+            assert_eq!(v["actionAvailable"], json!(true));
+            assert_eq!(v["editableInV1"], json!(true));
+            assert!(v["configRevision"].as_u64().is_some(), "{v}");
+            assert!(
+                v["trigger"]
+                    .as_object()
+                    .is_some_and(|t| t.contains_key("kind")),
+                "{v}"
+            );
+            assert!(
+                v["action"]
+                    .as_object()
+                    .is_some_and(|a| a.contains_key("type")),
+                "{v}"
+            );
         }
-        // A disabled job shows no nextDueAt - nothing is scheduled.
+        // A disabled definition shows no nextDueAt - nothing is scheduled.
         let mut disabled = interval_job("off", 60);
         disabled.enabled = false;
-        sys.upsert(disabled).expect("valid");
+        let mut row = row_of(&[disabled]);
+        row["definitions"].as_object_mut().expect("map").insert(
+            "viewed".into(),
+            def::JobDefinition::from_v1(&interval_job("viewed", 60)).to_config_json(),
+        );
+        install(&sys, &store, row);
         let v = sys
             .all_views()
             .into_iter()
             .find(|v| v["name"] == json!("off"))
             .unwrap();
         assert!(v.get("nextDueAt").is_none());
+    }
+
+    /// docs/11 §8: deleting a definition cancels its FUTURE schedule only. The run in
+    /// flight holds the snapshot it claimed and finishes normally, and the history file
+    /// outlives the job that wrote it.
+    #[tokio::test]
+    async fn deleting_a_definition_keeps_its_in_flight_run_and_history() {
+        let (sys, store) = system("delete-inflight", test_services());
+        let mut def = interval_job("keeper", 3_600);
+        def.command = if cfg!(windows) {
+            "ping -n 3 127.0.0.1".into() // ~2s: long enough to delete mid-run
+        } else {
+            "sleep 2".into()
+        };
+        install(&sys, &store, row_of(&[def]));
+
+        let running = {
+            let sys = sys.clone();
+            tokio::spawn(async move { sys.execute("keeper", "timer").await })
+        };
+        assert!(
+            wait_running(&sys, "keeper").await,
+            "the run reached the pool"
+        );
+        assert!(matches!(sys.delete("keeper"), Ok(true)));
+        let (_seq, out) = running.await.expect("the run task").expect("reports");
+        assert!(
+            out.ok,
+            "the in-flight run was NOT canceled by the delete: {out:?}"
+        );
+        assert!(sys.all_views().is_empty(), "the schedule is gone");
+        let (page, _) = sys.read_runs("keeper", None, 5);
+        assert_eq!(page.len(), 1, "the history outlives the definition");
+    }
+
+    /// docs/11 §7.1: a definition the v1 shape cannot spell without loss refuses the v1
+    /// edit outright - overwriting it would silently drop fields.
+    #[test]
+    fn v1_edit_of_a_v2_only_definition_is_refused() {
+        let (sys, store) = system("v2-only", test_services());
+        install(
+            &sys,
+            &store,
+            json!({
+                "definitions": {
+                    "proud": {
+                        "title": "A titled job",
+                        "trigger": { "kind": "interval", "everyMs": 60000 },
+                        "action": {
+                            "type": "process.legacy-command",
+                            "input": { "command": "echo hi" }
+                        }
+                    }
+                }
+            }),
+        );
+        let view = sys.all_views().remove(0);
+        assert_eq!(view["editableInV1"], json!(false), "{view}");
+        match sys.upsert_v1(interval_job("proud", 60)) {
+            Err(err @ WriteError::NotEditableV1(_)) => assert!(
+                err.to_string().contains("/api/plugins/jobs/config"),
+                "{err}"
+            ),
+            other => panic!("expected NotEditableV1, got {other:?}"),
+        }
+        // The refused edit changed nothing.
+        assert_eq!(sys.all_views().remove(0)["title"], json!("A titled job"));
     }
 }
