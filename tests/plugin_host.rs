@@ -360,7 +360,8 @@ async fn config_driven_restart_only_for_plugins_that_declare_it() {
     host.start_enabled().await;
     let before = host.plugin("alpha").unwrap().config_revision();
 
-    let snapshot = host.store()
+    let snapshot = host
+        .store()
         .update_plugin("alpha", host.revision(), json!({ "tuned": true }))
         .expect("config update");
     host.reconcile("alpha").await.expect("reconciles");
@@ -368,7 +369,10 @@ async fn config_driven_restart_only_for_plugins_that_declare_it() {
     // restart_on_config_change: the instance is recycled on the new config.
     assert_eq!(counters.stops.load(Ordering::SeqCst), 1);
     assert_eq!(counters.creates.load(Ordering::SeqCst), 2);
-    assert_eq!(host.plugin("alpha").unwrap().config_revision(), snapshot.revision);
+    assert_eq!(
+        host.plugin("alpha").unwrap().config_revision(),
+        snapshot.revision
+    );
     assert_ne!(snapshot.revision, before, "the row moved the revision");
 
     // ...and a plugin that does NOT declare it keeps the instance it has. The revision still
@@ -394,8 +398,15 @@ async fn config_driven_restart_only_for_plugins_that_declare_it() {
         .expect("config update");
     host.reconcile("beta").await.expect("reconciles");
     assert_eq!(counters.stops.load(Ordering::SeqCst), 0, "no bounce");
-    assert_eq!(counters.creates.load(Ordering::SeqCst), 1, "the same instance");
-    assert_eq!(host.plugin("beta").unwrap().config_revision(), snapshot.revision);
+    assert_eq!(
+        counters.creates.load(Ordering::SeqCst),
+        1,
+        "the same instance"
+    );
+    assert_eq!(
+        host.plugin("beta").unwrap().config_revision(),
+        snapshot.revision
+    );
 }
 
 // --- the full composition: the real app with the host booted --------------------------------------
@@ -407,7 +418,12 @@ fn test_master_key() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| {
         // Safety: one write, under a OnceLock, of a variable nothing in this binary caches.
-        unsafe { std::env::set_var(local_mcp_gateway::secure::key::MASTER_KEY_ENV, "ab".repeat(32)) }
+        unsafe {
+            std::env::set_var(
+                local_mcp_gateway::secure::key::MASTER_KEY_ENV,
+                "ab".repeat(32),
+            )
+        }
     });
 }
 
@@ -415,8 +431,10 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
     // The sealed state files (managed.json, jobs.json, tunnels.json) need a test master key,
     // and every write must stay inside this test's own directory.
     test_master_key();
-    let dir = std::env::temp_dir().join(format!("lmg-plugins-{tag}-{}",
-        local_mcp_gateway::util::random_hex(8)));
+    let dir = std::env::temp_dir().join(format!(
+        "lmg-plugins-{tag}-{}",
+        local_mcp_gateway::util::random_hex(8)
+    ));
     std::fs::create_dir_all(&dir).expect("scratch directory");
     dir
 }
@@ -431,9 +449,10 @@ fn echo_def() -> ServerDef {
 /// layered over every merged tree.
 async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<Registry>) {
     let dir = scratch_dir(tag);
-    let registry = Registry::new(3_600_000);
+    let calls = Arc::new(local_mcp_gateway::calls::CallLog::at(dir.join("calls")));
+    let registry = Registry::new(3_600_000, calls.clone());
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
-    let adapter = make_adapter(&echo_def(), "echo").expect("echo adapter");
+    let adapter = make_adapter(&echo_def(), "echo", &calls).expect("echo adapter");
     registry
         .register("echo", Source::Config, echo_def(), adapter)
         .expect("register echo");
@@ -455,6 +474,7 @@ async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<
         registry.clone(),
         Arc::new(single_token_manager(TOKEN)),
         managed.clone(),
+        calls,
         "MCP_GATEWAY_TOKEN",
         19998,
     );
@@ -468,8 +488,7 @@ async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<
         browse: ctx.browser_resolver(),
         services: services.clone(),
     };
-    builtin::register_all(&mut host, &deps)
-        .expect("the built-ins register without conflicts");
+    builtin::register_all(&mut host, &deps).expect("the built-ins register without conflicts");
     let host = Arc::new(host);
     host.start_enabled().await;
     assert!(ctx.plugin_host.set(host.clone()).is_ok(), "host set once");
@@ -481,10 +500,7 @@ async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<
     (app, host, registry)
 }
 
-async fn send(
-    app: &axum::Router,
-    req: Request<Body>,
-) -> (StatusCode, Option<Value>, String) {
+async fn send(app: &axum::Router, req: Request<Body>) -> (StatusCode, Option<Value>, String) {
     let response = app.clone().oneshot(req).await.expect("router answers");
     let status = response.status();
     let text = String::from_utf8_lossy(
@@ -503,7 +519,10 @@ fn local(method: &str, uri: &str) -> Request<Body> {
         .method(method)
         .uri(uri)
         .header(header::HOST, "127.0.0.1:19999")
-        .header(header::AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {TOKEN}")).unwrap())
+        .header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {TOKEN}")).unwrap(),
+        )
         .body(Body::empty())
         .expect("a request")
 }
@@ -513,7 +532,10 @@ fn json_body(method: &str, uri: &str, body: Value) -> Request<Body> {
         .method(method)
         .uri(uri)
         .header(header::HOST, "127.0.0.1:19999")
-        .header(header::AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {TOKEN}")).unwrap())
+        .header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {TOKEN}")).unwrap(),
+        )
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(serde_json::to_vec(&body).unwrap()))
         .expect("a request")
@@ -524,13 +546,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
     let (app, host, registry) = full_app("shape", json!({})).await;
 
     // The plugin did the boot-start the old register_one did: the echo MCP is up.
-    let lifecycle = registry
-        .get("echo")
-        .unwrap()
-        .data
-        .read()
-        .unwrap()
-        .lifecycle;
+    let lifecycle = registry.get("echo").unwrap().data.read().unwrap().lifecycle;
     assert_eq!(
         local_mcp_gateway::registry::Lifecycle::Started,
         lifecycle,
@@ -540,7 +556,12 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
     let (status, body, _) = send(&app, local("GET", "/api/plugins")).await;
     assert_eq!(status, StatusCode::OK);
     let body = body.expect("JSON");
-    let mut keys: Vec<&str> = body.as_object().unwrap().keys().map(String::as_str).collect();
+    let mut keys: Vec<&str> = body
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
     keys.sort_unstable();
     assert_eq!(keys, vec!["pages", "plugins", "revision"]);
 
@@ -557,7 +578,10 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
         assert_eq!(plugin["enabled"], json!(true), "{plugin}");
         assert_eq!(plugin["state"], json!("active"), "{plugin}");
         assert_eq!(plugin["configRevision"], body["revision"], "{plugin}");
-        assert!(plugin.get("lastError").is_none(), "absent when clean: {plugin}");
+        assert!(
+            plugin.get("lastError").is_none(),
+            "absent when clean: {plugin}"
+        );
     }
 
     // Pages in registration order; the fixed view table of this build.
@@ -580,7 +604,13 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
         vec![
             ("mcps".into(), "mcp".into(), "#mcps".into(), true, 10),
             ("traffic".into(), "mcp".into(), "#traffic".into(), false, 20),
-            ("tunnels".into(), "tunnels".into(), "#tunnels".into(), false, 30),
+            (
+                "tunnels".into(),
+                "tunnels".into(),
+                "#tunnels".into(),
+                false,
+                30
+            ),
             ("data".into(), "data".into(), "#data".into(), false, 40),
             ("jobs".into(), "jobs".into(), "#jobs".into(), false, 50),
         ],
@@ -620,13 +650,7 @@ async fn boot_disabled_plugins_guard_every_route_they_own() {
     .await;
 
     // Nothing started: the registry is populated (routes stable) but idle.
-    let lifecycle = registry
-        .get("echo")
-        .unwrap()
-        .data
-        .read()
-        .unwrap()
-        .lifecycle;
+    let lifecycle = registry.get("echo").unwrap().data.read().unwrap().lifecycle;
     assert_ne!(
         local_mcp_gateway::registry::Lifecycle::Started,
         lifecycle,
@@ -664,16 +688,18 @@ async fn boot_disabled_plugins_guard_every_route_they_own() {
     // client POSTing an MCP path gets the plugin 503, and no lazy proc spawns behind it.
     let (status, body, _) = send(
         &app,
-        json_body("POST", "/echo", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })),
+        json_body(
+            "POST",
+            "/echo",
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert!(
-        body.unwrap()["error"]
-            .as_str()
-            .unwrap()
-            .contains("mcp plugin is disabled"),
-    );
+    assert!(body.unwrap()["error"]
+        .as_str()
+        .unwrap()
+        .contains("mcp plugin is disabled"),);
 
     // Host-owned routes are untouched, and the new management surface is reachable.
     for uri in ["/health", "/api/plugins"] {
@@ -698,7 +724,10 @@ async fn enable_disable_over_the_api_is_live_and_repeatable() {
     // Enabled at boot: the jobs API answers its normal shape.
     let (status, body, _) = send(&app, local("GET", "/api/jobs")).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.unwrap().get("jobs").is_some(), "the jobs shape is unchanged");
+    assert!(
+        body.unwrap().get("jobs").is_some(),
+        "the jobs shape is unchanged"
+    );
 
     for round in 0..2 {
         // Disable: persisted (the row moves), reconciled (the API goes away) — same answer
@@ -765,7 +794,11 @@ async fn unknown_plugins_and_stale_revisions_are_refused() {
         .contains("configuration changed"));
     let (status, _, _) = send(
         &app,
-        json_body("POST", "/api/plugins/jobs/disable", json!({ "revision": stale })),
+        json_body(
+            "POST",
+            "/api/plugins/jobs/disable",
+            json!({ "revision": stale }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -801,7 +834,11 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
         .unwrap()
         .contains("definitions.a"));
     let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
-    assert_eq!(body.unwrap()["revision"], json!(before), "nothing persisted");
+    assert_eq!(
+        body.unwrap()["revision"],
+        json!(before),
+        "nothing persisted"
+    );
 
     // A valid PUT persists, bumps the revision, and echoes the round-trip. The
     // definition is a v2 one (docs/11 §3): the row's validator is the v2 model now, and
@@ -830,7 +867,11 @@ async fn config_api_validates_before_persisting_and_serves_the_schema() {
     // And a non-object config is refused by the store itself (shape gate).
     let (status, _, _) = send(
         &app,
-        json_body("PUT", "/api/plugins/data/config", json!({ "config": [1, 2] })),
+        json_body(
+            "PUT",
+            "/api/plugins/data/config",
+            json!({ "config": [1, 2] }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -864,7 +905,10 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let msg = body.unwrap()["error"].as_str().unwrap_or_default().to_string();
+    let msg = body.unwrap()["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     assert!(msg.contains("definitions.nightly.misfire"), "{msg}");
     assert!(msg.contains("not implemented until S5"), "{msg}");
 
@@ -882,7 +926,10 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let msg = body.unwrap()["error"].as_str().unwrap_or_default().to_string();
+    let msg = body.unwrap()["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     assert!(msg.contains("definitions.nightly.trigger.everyMs"), "{msg}");
 
     // ...and an unknown field, listing the layer's legal ones.
@@ -900,13 +947,20 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let msg = body.unwrap()["error"].as_str().unwrap_or_default().to_string();
+    let msg = body.unwrap()["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     assert!(msg.contains("definitions.nightly.command"), "{msg}");
     assert!(msg.contains("trigger"), "{msg}");
 
     // The failed PUTs persisted nothing; a definition the model accepts does.
     let (_, body, _) = send(&app, local("GET", "/api/plugins/jobs/config")).await;
-    assert_eq!(body.unwrap()["revision"], json!(before), "nothing persisted");
+    assert_eq!(
+        body.unwrap()["revision"],
+        json!(before),
+        "nothing persisted"
+    );
     let (status, body, _) = send(
         &app,
         json_body(
@@ -968,7 +1022,10 @@ async fn a_placeholder_definition_boots_lenient_but_a_manual_save_is_strict() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let msg = body.unwrap()["error"].as_str().unwrap_or_default().to_string();
+    let msg = body.unwrap()["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     assert!(msg.contains("definitions.x"), "{msg}");
 }
 #[tokio::test]
@@ -986,7 +1043,10 @@ async fn enabled_plugins_keep_every_api_shape_they_had() {
 
     let (status, body, _) = send(&app, local("GET", "/api/db")).await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.unwrap().get("connections").is_some(), "the /api/db shape");
+    assert!(
+        body.unwrap().get("connections").is_some(),
+        "the /api/db shape"
+    );
 
     let (status, body, _) = send(&app, local("GET", "/api/mcps")).await;
     assert_eq!(status, StatusCode::OK);
@@ -1027,7 +1087,10 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
     builtin::register_all(
         &mut host,
         &builtin::BuiltinDeps {
-            registry: Registry::new(60_000),
+            registry: Registry::new(
+                60_000,
+                Arc::new(local_mcp_gateway::calls::CallLog::at(dir.join("calls"))),
+            ),
             managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
             jobs: JobSystem::open(
                 dir.join("jobs.json"),
@@ -1103,7 +1166,10 @@ async fn the_execution_surface_lists_capabilities_and_runs_them() {
     let (status, body, text) = send(&app, local("GET", "/api/actions")).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let actions = body.expect("JSON")["actions"].as_array().cloned().unwrap();
-    let types: Vec<&str> = actions.iter().map(|a| a["type"].as_str().unwrap()).collect();
+    let types: Vec<&str> = actions
+        .iter()
+        .map(|a| a["type"].as_str().unwrap())
+        .collect();
     assert_eq!(
         types,
         vec!["process.exec", "process.legacy-command"],
@@ -1116,7 +1182,10 @@ async fn the_execution_surface_lists_capabilities_and_runs_them() {
             action["schema"]["properties"].is_object(),
             "a capability publishes the schema a form is written against: {action}"
         );
-        assert!(action["title"].as_str().unwrap_or_default().len() > 4, "{action}");
+        assert!(
+            action["title"].as_str().unwrap_or_default().len() > 4,
+            "{action}"
+        );
     }
 
     // A submission is answered NOW with a runId; the work outlives the request.
@@ -1139,7 +1208,10 @@ async fn the_execution_surface_lists_capabilities_and_runs_them() {
     assert_eq!(view["state"], json!("succeeded"), "{view}");
     assert_eq!(view["exitCode"], json!(0), "{view}");
     assert!(
-        view["output"].as_str().unwrap_or_default().contains("hi-from-run"),
+        view["output"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("hi-from-run"),
         "the captured tail is readable: {view}"
     );
     assert!(view["ms"].as_u64().is_some(), "{view}");
@@ -1187,7 +1259,10 @@ async fn a_submission_refusal_is_typed_and_leaves_no_run_behind() {
     for (body, expected, needle) in cases {
         let (status, json, text) = send(&app, json_body("POST", "/api/runs", body.clone())).await;
         assert_eq!(status, expected, "{body} -> {text}");
-        let message = json.expect("JSON")["error"].as_str().unwrap_or_default().to_string();
+        let message = json.expect("JSON")["error"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         assert!(message.contains(needle), "{body} -> {message}");
     }
 
@@ -1200,10 +1275,17 @@ async fn a_submission_refusal_is_typed_and_leaves_no_run_behind() {
     for uri in ["/api/runs/12345", "/api/runs/not-a-number"] {
         let (status, body, text) = send(&app, local("GET", uri)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{uri} -> {text}");
-        assert!(body.expect("JSON")["error"].as_str().unwrap().contains("no run"));
+        assert!(body.expect("JSON")["error"]
+            .as_str()
+            .unwrap()
+            .contains("no run"));
     }
     let (status, _, _) = send(&app, local("POST", "/api/runs/12345/cancel")).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "cancelling nothing is not a success");
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "cancelling nothing is not a success"
+    );
 }
 
 #[tokio::test]
@@ -1228,9 +1310,16 @@ async fn disabling_the_process_plugin_withdraws_its_capabilities_but_keeps_the_h
 
     // The capability list is the LIVE truth, not a compiled-in catalogue...
     let (status, body, _) = send(&app, local("GET", "/api/actions")).await;
-    assert_eq!(status, StatusCode::OK, "the surface itself is host-owned and stays up");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the surface itself is host-owned and stays up"
+    );
     assert!(
-        body.expect("JSON")["actions"].as_array().unwrap().is_empty(),
+        body.expect("JSON")["actions"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
         "a stopped provider's capabilities leave the listing"
     );
 
@@ -1282,7 +1371,10 @@ async fn disabling_the_process_plugin_withdraws_its_capabilities_but_keeps_the_h
     let run_id = body.expect("JSON")["runId"].as_u64().expect("a runId");
     let view = await_run(&app, run_id).await;
     assert_eq!(view["state"], json!("succeeded"), "{view}");
-    assert!(view["output"].as_str().unwrap().contains("after-enable"), "{view}");
+    assert!(
+        view["output"].as_str().unwrap().contains("after-enable"),
+        "{view}"
+    );
 }
 
 /// The same echo, spelled as the pre-v2 "command" string the legacy capability tokenizes.
@@ -1324,7 +1416,8 @@ async fn a_long_run_is_cancelable_over_the_api_and_reaped_before_the_answer() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 
-    let (status, body, text) = send(&app, local("POST", &format!("/api/runs/{run_id}/cancel"))).await;
+    let (status, body, text) =
+        send(&app, local("POST", &format!("/api/runs/{run_id}/cancel"))).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let view = body.expect("JSON");
     assert_eq!(
@@ -1370,7 +1463,10 @@ async fn every_contributed_page_entry_is_actually_served() {
 
     // The management view draws rows from these fields; an id is not a label.
     for plugin in body["plugins"].as_array().unwrap() {
-        assert!(plugin["label"].as_str().unwrap_or_default().len() > 1, "{plugin}");
+        assert!(
+            plugin["label"].as_str().unwrap_or_default().len() > 1,
+            "{plugin}"
+        );
         assert!(plugin["version"].as_str().is_some(), "{plugin}");
         assert!(plugin["kind"].as_str().is_some(), "{plugin}");
     }

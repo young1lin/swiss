@@ -51,6 +51,10 @@ pub struct AppContext {
     pub registry: Arc<Registry>,
     pub tokens: Arc<TokenManager>,
     pub store: Arc<ManagedStore>,
+    /// The call log this app's adapters write and its admin API reads - one instance per
+    /// app, threaded everywhere it is needed (the S2 instantiation: no process-global
+    /// log directory, so two apps in one process never see each other's calls).
+    pub calls: Arc<crate::calls::CallLog>,
     /// Name of the env var the token was seeded from. Safe to show in client configs.
     pub token_env: String,
     /// The port this instance listens on — import detection reads it to recognize entries that
@@ -77,6 +81,7 @@ impl AppContext {
         registry: Arc<Registry>,
         tokens: Arc<TokenManager>,
         store: Arc<ManagedStore>,
+        calls: Arc<crate::calls::CallLog>,
         token_env: impl Into<String>,
         port: u16,
     ) -> Arc<Self> {
@@ -85,6 +90,7 @@ impl AppContext {
             registry,
             tokens,
             store,
+            calls,
             token_env: token_env.into(),
             port,
             tunnel_links: std::sync::RwLock::new(None),
@@ -556,7 +562,10 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         None => app,
     };
     let app = app
-        .layer(middleware::from_fn_with_state(guard_ctx.clone(), loopback_guard))
+        .layer(middleware::from_fn_with_state(
+            guard_ctx.clone(),
+            loopback_guard,
+        ))
         .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(ctx);
     match (extra, boundary) {

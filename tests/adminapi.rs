@@ -53,6 +53,7 @@ struct Harness {
     app: axum::Router,
     registry: Arc<Registry>,
     store: Arc<ManagedStore>,
+    calls: Arc<local_mcp_gateway::calls::CallLog>,
     path: std::path::PathBuf,
 }
 
@@ -66,16 +67,29 @@ fn setup() -> Harness {
         .join("managed.json");
     std::fs::create_dir_all(path.parent().expect("the scratch file has a parent"))
         .expect("create the scratch directory");
-    let registry = Registry::new(60_000);
+    let calls = Arc::new(local_mcp_gateway::calls::CallLog::at(
+        path.parent()
+            .expect("the scratch file has a parent")
+            .join("calls"),
+    ));
+    let registry = Registry::new(60_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(path.clone()));
     let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
     // The gateway's own port: the import planner uses it to recognise (and skip) entries that
     // already point at this gateway.
-    let ctx = AppContext::new(registry.clone(), tokens, store.clone(), "MCP_GATEWAY_TOKEN", 19999);
+    let ctx = AppContext::new(
+        registry.clone(),
+        tokens,
+        store.clone(),
+        calls.clone(),
+        "MCP_GATEWAY_TOKEN",
+        19999,
+    );
     Harness {
         app: build_app(ctx, None),
         registry,
         store,
+        calls,
         path,
     }
 }
@@ -88,7 +102,7 @@ impl Harness {
     /// Register an MCP the way a config file would — no managed entry, no start.
     fn register(&self, name: &str, d: Value) {
         let d = def(d);
-        let adapter = make_adapter(&d, name).expect("adapter");
+        let adapter = make_adapter(&d, name, &self.calls).expect("adapter");
         self.registry
             .register(name, Source::Config, d, adapter)
             .expect("register");
@@ -97,7 +111,12 @@ impl Harness {
     /// Register the fixture MCP under `name`, the way a config file would.
     fn register_fixture(&self, name: &str) {
         let d = def(json!({ "type": "fixture" }));
-        let adapter: Arc<dyn Adapter> = Arc::new(DirectAdapter::new(&d, name, Fixture::new(name)));
+        let adapter: Arc<dyn Adapter> = Arc::new(DirectAdapter::new(
+            &d,
+            name,
+            Fixture::new(name),
+            self.calls.clone(),
+        ));
         self.registry
             .register(name, Source::Config, d, adapter)
             .expect("register");
@@ -152,9 +171,9 @@ impl Harness {
     async fn send(&self, req: Request<Body>) -> (StatusCode, Value) {
         let mut req = req;
         // Every local client sends a Host; the loopback guard ahead of the routes reads it.
-        req.headers_mut().entry(header::HOST).or_insert(
-            header::HeaderValue::from_static("127.0.0.1:19999"),
-        );
+        req.headers_mut()
+            .entry(header::HOST)
+            .or_insert(header::HeaderValue::from_static("127.0.0.1:19999"));
         let res = self.app.clone().oneshot(req).await.expect("router answers");
         let status = res.status();
         let bytes = axum::body::to_bytes(res.into_body(), 8 * 1024 * 1024)
@@ -322,7 +341,8 @@ async fn goes_back_to_name_order_when_the_arrangement_is_cleared() {
     for n in ["b", "c", "a"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    h.put("/api/order", json!({ "order": ["c", "b", "a"] })).await;
+    h.put("/api/order", json!({ "order": ["c", "b", "a"] }))
+        .await;
     h.put("/api/order", json!({ "order": [] })).await;
     assert_eq!(h.names().await, ["a", "b", "c"]);
 }
@@ -356,7 +376,8 @@ async fn keeps_a_renamed_mcps_position_and_prunes_a_deleted_one_from_the_order()
     for n in ["a", "b", "c"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    h.put("/api/order", json!({ "order": ["a", "b", "c"] })).await;
+    h.put("/api/order", json!({ "order": ["a", "b", "c"] }))
+        .await;
     let (status, _) = h.post("/api/mcps/a/rename", json!({ "name": "z" })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(h.store.get_order(), ["z", "b", "c"]);
@@ -609,8 +630,14 @@ async fn answers_a_listing_for_an_mcp_that_was_never_started() {
         h.get("/api/mcps/f3/tools").await.0,
         StatusCode::SERVICE_UNAVAILABLE
     );
-    assert_eq!(h.get("/api/mcps/ghost/tools").await.0, StatusCode::NOT_FOUND);
-    assert_eq!(h.get("/api/mcps/f3/nonsense").await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        h.get("/api/mcps/ghost/tools").await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        h.get("/api/mcps/f3/nonsense").await.0,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]
@@ -655,7 +682,9 @@ async fn lists_creates_revokes_and_rotates_named_tokens() {
     assert!(!body["tokens"].to_string().contains(TOKEN), "{body}");
 
     // Create a named token; its secret comes back once and authenticates an MCP request.
-    let (status, made) = h.post("/api/tokens", json!({ "label": "claude-code" })).await;
+    let (status, made) = h
+        .post("/api/tokens", json!({ "label": "claude-code" }))
+        .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(made["label"], json!("claude-code"));
     let secret = made["secret"].as_str().expect("a secret").to_string();
@@ -711,7 +740,9 @@ async fn lists_creates_revokes_and_rotates_named_tokens() {
 #[tokio::test]
 async fn hands_a_stored_secret_back_so_a_connect_command_needs_no_rotate() {
     let h = setup();
-    let (status, made) = h.post("/api/tokens", json!({ "label": "claude-code" })).await;
+    let (status, made) = h
+        .post("/api/tokens", json!({ "label": "claude-code" }))
+        .await;
     assert_eq!(status, StatusCode::CREATED);
     let id = made["id"].as_str().expect("an id").to_string();
 
@@ -813,7 +844,8 @@ async fn with_echo() -> Harness {
 async fn records_mcp_traffic_attributed_to_the_token_and_the_self_reported_client() {
     let _lock = traffic_lock().await;
     let h = with_echo().await;
-    h.mcp("/echo", TOKEN, init_frame("claude-code", "1.2.3")).await;
+    h.mcp("/echo", TOKEN, init_frame("claude-code", "1.2.3"))
+        .await;
 
     let (status, body) = h.get("/api/traffic").await;
     assert_eq!(status, StatusCode::OK);
@@ -854,7 +886,8 @@ async fn attributes_a_tokens_later_frames_to_the_name_it_announced_at_initialize
     // initialize announces the client name once; the tools/list after it carries no clientInfo,
     // but it is the same token — so it inherits "claude-code" rather than appearing as a second,
     // unknown client.
-    h.mcp("/echo", TOKEN, init_frame("claude-code", "2.1.88")).await;
+    h.mcp("/echo", TOKEN, init_frame("claude-code", "2.1.88"))
+        .await;
     h.mcp(
         "/echo",
         TOKEN,
@@ -863,7 +896,10 @@ async fn attributes_a_tokens_later_frames_to_the_name_it_announced_at_initialize
     .await;
 
     let (_, body) = h.get("/api/traffic").await;
-    assert_eq!(entry_for(&body, "tools/list")["clientName"], json!("claude-code"));
+    assert_eq!(
+        entry_for(&body, "tools/list")["clientName"],
+        json!("claude-code")
+    );
 }
 
 #[tokio::test]
@@ -979,7 +1015,11 @@ async fn folds_clients_over_the_whole_ring_not_over_the_returned_page() {
                 "params": { "clientInfo": { "name": "app-a", "version": "1" } } }),
         "ta",
     );
-    record("m2", json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }), "ta");
+    record(
+        "m2",
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+        "ta",
+    );
     for i in 0..8 {
         record(
             "m3",
@@ -1130,7 +1170,10 @@ async fn records_every_tool_call_with_its_source_and_clears_on_request() {
     assert_eq!(calls[0]["ok"], json!(true));
     assert_eq!(calls[0]["via"], json!("mcp"));
     assert!(
-        calls[0]["args"].as_str().unwrap_or_default().contains("from-client"),
+        calls[0]["args"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("from-client"),
         "{}",
         calls[0]
     );
@@ -1173,7 +1216,10 @@ async fn serves_one_tools_recent_runs_for_the_run_tab_dropdown() {
     assert_eq!(entries.len(), 1); // limit honoured: only the newest
     assert_eq!(entries[0]["via"], json!("mcp"));
     assert!(
-        entries[0]["args"].as_str().unwrap_or_default().contains("from-client"),
+        entries[0]["args"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("from-client"),
         "{}",
         entries[0]
     );
@@ -1288,7 +1334,10 @@ async fn edits_a_config_file_mcp_and_persists_an_override() {
     let (status, put) = h.put("/api/mcps/cfg", json!({ "type": "echo" })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(put["lifecycle"], json!("started"));
-    assert!(h.store.has("cfg"), "the override is persisted to managed.json");
+    assert!(
+        h.store.has("cfg"),
+        "the override is persisted to managed.json"
+    );
 }
 
 #[tokio::test]
@@ -1320,7 +1369,9 @@ async fn renames_a_managed_mcp() {
         .post("/api/mcps", json!({ "name": "e5", "type": "echo" }))
         .await;
     assert_eq!(status, StatusCode::CREATED);
-    let (status, _) = h.post("/api/mcps/e5/rename", json!({ "name": "e5b" })).await;
+    let (status, _) = h
+        .post("/api/mcps/e5/rename", json!({ "name": "e5b" }))
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert!(!h.registry.has("e5"));
     assert!(h.registry.has("e5b"));
@@ -1364,7 +1415,10 @@ async fn persists_added_mcps_to_managed_json() {
 async fn rejects_an_invalid_name_and_a_duplicate() {
     let h = setup();
     let (status, _) = h
-        .post("/api/mcps", json!({ "name": "bad name!", "command": "node x" }))
+        .post(
+            "/api/mcps",
+            json!({ "name": "bad name!", "command": "node x" }),
+        )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     h.post("/api/mcps", json!({ "name": "dup", "type": "echo" }))
@@ -1426,7 +1480,10 @@ async fn adds_a_remote_http_mcp_and_never_hands_its_key_to_the_browser() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(h.def_of("remote")["url"], json!("https://mcp.context7.com/mcp"));
+    assert_eq!(
+        h.def_of("remote")["url"],
+        json!("https://mcp.context7.com/mcp")
+    );
     assert_eq!(
         h.def_of("remote")["headers"]["Authorization"],
         json!("Bearer sk-live-1")
@@ -1436,7 +1493,10 @@ async fn adds_a_remote_http_mcp_and_never_hands_its_key_to_the_browser() {
     // definition and must never receive the credential.
     let (_, details) = h.get("/api/mcps/remote/details").await;
     assert_eq!(details["config"]["headers"]["Authorization"], json!(MASK));
-    assert_eq!(details["config"]["url"], json!("https://mcp.context7.com/mcp"));
+    assert_eq!(
+        details["config"]["url"],
+        json!("https://mcp.context7.com/mcp")
+    );
 }
 
 #[tokio::test]
@@ -1486,7 +1546,10 @@ async fn rejects_a_rest_mcp_with_no_tools_and_an_http_mcp_with_no_url() {
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body["error"].as_str().unwrap_or_default().contains("tools"), "{body}");
+    assert!(
+        body["error"].as_str().unwrap_or_default().contains("tools"),
+        "{body}"
+    );
 
     let (status, body) = h
         .post(
@@ -1496,7 +1559,10 @@ async fn rejects_a_rest_mcp_with_no_tools_and_an_http_mcp_with_no_url() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(
-        body["error"].as_str().unwrap_or_default().contains("url is required"),
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("url is required"),
         "{body}"
     );
 }
@@ -1565,7 +1631,11 @@ async fn never_stores_the_mask_sentinel_when_the_type_changes_under_an_edit() {
             json!({ "type": "pg", "url": format!("postgresql://u:{MASK}@127.0.0.1:5432/d") }),
         )
         .await;
-    assert!(!h.def_of("db").to_string().contains('•'), "{}", h.def_of("db"));
+    assert!(
+        !h.def_of("db").to_string().contains('•'),
+        "{}",
+        h.def_of("db")
+    );
     // No usable url survived, so the edit is refused out loud.
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -1724,7 +1794,9 @@ async fn survives_a_restart_because_the_assignment_is_on_disk_not_in_the_registr
 async fn answers_404_for_an_unknown_mcp_and_400_for_an_unknown_group() {
     let h = with_mcps();
     assert_eq!(
-        h.put("/api/mcps/ghost/group", json!({ "group": null })).await.0,
+        h.put("/api/mcps/ghost/group", json!({ "group": null }))
+            .await
+            .0,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
@@ -1741,8 +1813,11 @@ async fn renames_a_group_and_carries_its_members() {
     h.put("/api/groups", json!({ "groups": ["Docs", "Search"] }))
         .await;
     for name in ["context7", "deepwiki"] {
-        h.put(&format!("/api/mcps/{name}/group"), json!({ "group": "Docs" }))
-            .await;
+        h.put(
+            &format!("/api/mcps/{name}/group"),
+            json!({ "group": "Docs" }),
+        )
+        .await;
     }
 
     let (status, _) = h
@@ -1768,7 +1843,10 @@ async fn refuses_a_rename_onto_the_reserved_name_an_existing_group_or_a_missing_
         ("Ghost", "X", StatusCode::NOT_FOUND),
     ] {
         let (status, _) = h
-            .post(&format!("/api/groups/{from}/rename"), json!({ "name": name }))
+            .post(
+                &format!("/api/groups/{from}/rename"),
+                json!({ "name": name }),
+            )
             .await;
         assert_eq!(status, expected, "renaming {from} to {name}");
     }
@@ -1797,7 +1875,10 @@ async fn deleting_a_group_by_omission_returns_its_mcps_to_default_without_deleti
 async fn carries_an_mcps_group_through_a_rename_and_drops_it_on_delete() {
     let h = setup();
     let (status, _) = h
-        .post("/api/mcps", json!({ "name": "a", "type": "echo", "enabled": false }))
+        .post(
+            "/api/mcps",
+            json!({ "name": "a", "type": "echo", "enabled": false }),
+        )
         .await;
     assert_eq!(status, StatusCode::CREATED);
     h.put("/api/groups", json!({ "groups": ["Docs"] })).await;

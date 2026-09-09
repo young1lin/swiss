@@ -20,7 +20,10 @@
 //!   `process.legacy-command` capability over the shared process supervisor. That is what
 //!   gives a job bounded output capture, a real cancel, and one global concurrency bound
 //!   shared with manual runs - instead of a second execution path of its own.
-//! - runlog.rs: what is remembered (logs/jobs/<name>.jsonl, byte- and age-capped).
+//! - runlog.rs: what is remembered (logs/jobs/<name>.jsonl, byte- and age-capped) -
+//!   an INSTANCE the system owns, never a process-global directory.
+//! - state.rs: run FACTS (docs/11 §4) - the interval anchor, lastOk, the failure
+//!   streak - sealed into jobs-state.json, one line per job, best-effort writes.
 //! - api.rs: the /api/jobs management surface (the panel does not know it exists).
 //! - def.rs: the v2 definition model (docs/11) - parsed, validated and projected, but
 //!   not yet the scheduler's source of definitions.
@@ -30,6 +33,7 @@ pub mod def;
 pub mod runlog;
 pub mod runner;
 pub mod schedule;
+pub mod state;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -63,10 +67,6 @@ pub struct JobDef {
     pub enabled: bool,
     pub timeout_ms: u64,
     pub cwd: Option<String>,
-    /// When the job last STARTED (the interval anchor), if ever. Gateway-maintained.
-    pub last_run_ms: Option<i64>,
-    /// Whether that last run exited 0. Gateway-maintained.
-    pub last_ok: Option<bool>,
 }
 
 impl JobDef {
@@ -131,11 +131,10 @@ impl JobDef {
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
-            last_run_ms: v
-                .get("lastRunAt")
-                .and_then(Value::as_str)
-                .and_then(crate::util::parse_iso_ms),
-            last_ok: v.get("lastOk").and_then(Value::as_bool),
+            // lastRunAt / lastOk in an old jobs.json are READ PAST here on purpose: run
+            // state moved to jobs-state.json (docs/11 §4), and the S4 migration reads
+            // those v1 keys deliberately when it moves them. For loading they are simply
+            // not definition fields any more.
         };
         def.validate()?;
         Ok(def)
@@ -156,24 +155,12 @@ impl JobDef {
         if let Some(cwd) = &self.cwd {
             m.insert("cwd".into(), json!(cwd));
         }
-        if let Some(ms) = self.last_run_ms {
-            m.insert("lastRunAt".into(), json!(iso_of_ms(ms)));
-        }
-        if let Some(ok) = self.last_ok {
-            m.insert("lastOk".into(), json!(ok));
-        }
+        // Run facts (lastRunAt / lastOk) are NOT written here any more: a definition file
+        // holds intent, the state file holds facts (docs/11 §4). Every run used to
+        // rewrite jobs.json just to move the anchor; now jobs.json only changes when a
+        // definition changes.
         Value::Object(m)
     }
-}
-
-/// RFC3339 UTC (millisecond precision, Z-suffixed) from a unix millisecond stamp - the same
-/// shape log::iso_now produces, so a reader parses lastRunAt with the same util it parses every
-/// other timestamp here. chrono rather than the time crate: from_timestamp_millis is right here
-/// and chrono is already linked for the local-time cron work.
-fn iso_of_ms(ms: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms)
-        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        .unwrap_or_default()
 }
 
 /// The job table, sealed into jobs.json. Invalid entries are dropped with a warning at load -
@@ -258,6 +245,11 @@ impl std::fmt::Display for RunError {
 /// task and the /api/jobs handlers - the same shape as Tunnels.
 pub struct JobSystem {
     store: Mutex<JobStore>,
+    /// Run FACTS, sealed into jobs-state.json (docs/11 §4): the interval anchor, lastOk,
+    /// the failure streak. Definitions and facts stopped sharing a file in S2.
+    state: state::JobsState,
+    /// The per-job run history (logs/jobs), owned - no process-global directory any more.
+    runlog: runlog::RunLog,
     /// The shared run services. The scheduler owns WHEN a job runs; the coordinator owns the
     /// run itself (bounds, cancellation, the terminal state) and the supervisor owns the
     /// child process. This subsystem spawns nothing of its own any more.
@@ -273,8 +265,18 @@ pub struct JobSystem {
 
 impl JobSystem {
     pub fn open(path: PathBuf, services: Arc<RuntimeServices>) -> Arc<Self> {
+        // The siblings of jobs.json place the other two artifacts (docs/11 §4): run state
+        // sits NEXT TO the definitions file, the per-job logs under logs/jobs beside it.
+        // One argument keeps every caller colocating the family - and gives each
+        // JobSystem its own private tree, which is the point of this stage.
+        let dir = path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
         Arc::new(JobSystem {
             store: Mutex::new(JobStore::open(path)),
+            state: state::JobsState::open(dir.join("jobs-state.json")),
+            runlog: runlog::RunLog::at(dir.join("logs").join("jobs")),
             services,
             runtime: Mutex::new(HashMap::new()),
             anchor_ms: now_ms() as i64,
@@ -353,19 +355,27 @@ impl JobSystem {
             .jobs
             .iter()
             .filter(|j| j.enabled && !running.get(&j.name).copied().unwrap_or(false))
-            .filter(|j| job_due(j, now, now_local, self.anchor_ms))
+            .filter(|j| {
+                job_due(
+                    j,
+                    now,
+                    now_local,
+                    self.anchor_ms,
+                    self.state.get(&j.name).last_run_at,
+                )
+            })
             .map(|j| j.name.clone())
             .collect()
     }
 
-    /// Atomically claim one job for a run: marks it running and stamps last_run_ms (the
+    /// Atomically claim one job for a run: marks it running and stamps the anchor (the
     /// interval anchor moves to the run's START, so a long run does not queue an immediate
     /// re-run when it finishes). The anchor moves for the OCCURRENCE, not for a success: a
     /// refused occurrence still counts, or a job would retry every tick while the pool is
     /// full. The second claimant of a busy job gets Busy, not a queue.
     fn claim(&self, name: &str, now: i64) -> Result<JobDef, RunError> {
         let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
-        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let Some(def) = store.jobs.iter().find(|j| j.name == name).cloned() else {
             return Err(RunError::Unknown(format!("unknown job: {name}")));
         };
@@ -373,14 +383,11 @@ impl JobSystem {
             return Err(RunError::Busy(format!("job {name} is already running")));
         }
         rt.insert(name.to_string(), true);
-        if let Some(j) = store.jobs.iter_mut().find(|j| j.name == name) {
-            j.last_run_ms = Some(now);
-        }
         // Best-effort on purpose: the run is about to happen either way, and refusing to run
         // because the ANCHOR could not be written would turn a disk problem into a missed job.
-        // The warning is in save(); the cost of the failure is one possible re-fire after a
-        // restart, which the cron same-minute rule already guards for cron jobs.
-        let _ = store.save();
+        // The cost of a failed write is one possible re-fire after a restart, which the cron
+        // same-minute rule already guards for cron jobs - see state.rs for the full trade.
+        self.state.claim(name, now, None);
         Ok(def)
     }
 
@@ -440,7 +447,7 @@ impl JobSystem {
     /// sequence number, or 0 when the record could not be written (a warning, not a failure:
     /// the run itself already happened).
     fn record_run(&self, name: &str, trigger: &str, out: &runner::RunOutcome) -> u64 {
-        let seq = match runlog::append_run(name, run_record(trigger, out)) {
+        let seq = match self.runlog.append_run(name, run_record(trigger, out)) {
             Ok(seq) => seq,
             Err(err) => {
                 log::warn(
@@ -471,15 +478,17 @@ impl JobSystem {
     /// Persist the outcome of the last actual run. Skipped for a refusal: a job that could
     /// not start did not exit, and lastOk must not claim otherwise.
     fn persist_last_ok(&self, name: &str, ok: bool) {
-        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        // The job may have been deleted mid-run; the run record is already on disk, so there
-        // is nothing to persist back for it.
-        if let Some(j) = store.jobs.iter_mut().find(|j| j.name == name) {
-            j.last_ok = Some(ok);
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        // The job may have been deleted mid-run; the run record is already on disk, and a
+        // deleted definition owns no state line (delete forgets it) - settle would only
+        // resurrect a line for a job that no longer exists.
+        if !store.jobs.iter().any(|j| j.name == name) {
+            return;
         }
         // Best-effort: the run already happened and its record is already in the run log. A
-        // failed write here loses one lastOk flag, not the history.
-        let _ = store.save();
+        // failed write here loses one lastOk flag, not the history. The coordinator's run id
+        // rides along from S5, when execute() can carry it back.
+        self.state.settle(name, ok, None);
     }
 
     /// Drop the per-job claim, whatever the run's outcome was.
@@ -490,8 +499,9 @@ impl JobSystem {
             .insert(name.to_string(), false);
     }
 
-    /// Insert or update a job (validated first). An update keeps the accumulated lastRunAt /
-    /// lastOk - editing a schedule must not fabricate a "never ran" history.
+    /// Insert or update a job (validated first). An edit cannot fabricate or lose run
+    /// history any more by construction: run facts live in jobs-state.json keyed by id
+    /// (docs/11 §4), and this writes definitions only.
     ///
     /// A persist failure is RETURNED. The in-memory table keeps the edit (the scheduler is
     /// already running it, and silently reverting would be its own lie), but the caller is
@@ -500,13 +510,7 @@ impl JobSystem {
         def.validate()?;
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         match store.jobs.iter_mut().find(|j| j.name == def.name) {
-            Some(existing) => {
-                let last_run_ms = existing.last_run_ms;
-                let last_ok = existing.last_ok;
-                *existing = def;
-                existing.last_run_ms = last_run_ms;
-                existing.last_ok = last_ok;
-            }
+            Some(existing) => *existing = def,
             None => store.jobs.push(def),
         }
         store.save()
@@ -525,6 +529,10 @@ impl JobSystem {
         let removed = store.jobs.len() != before;
         if removed {
             store.save()?;
+            // The deleted definition's scheduling facts go with it (docs/11 §4); the run
+            // HISTORY stays in the log file, which outlives the job that wrote it.
+            // Best-effort like every state write on a non-config path.
+            self.state.forget(name);
         }
         Ok(removed)
     }
@@ -539,10 +547,20 @@ impl JobSystem {
             .get(&def.name)
             .copied()
             .unwrap_or(false);
+        let st = self.state.get(&def.name);
         let mut v = def.to_json();
+        // The live facts the panel reads: lastRunAt / lastOk come from the state file,
+        // exactly the shape they had when they rode inside the definition (docs/11 §7.1
+        // keeps the v1 /api/jobs fields frozen).
+        if let Some(ms) = st.last_run_at {
+            v["lastRunAt"] = json!(state::iso_of_ms(ms));
+        }
+        if let Some(ok) = st.last_ok {
+            v["lastOk"] = json!(ok);
+        }
         v["running"] = json!(running);
         if def.enabled {
-            if let Some(next) = next_due_iso(def, now_ms() as i64, self.anchor_ms) {
+            if let Some(next) = next_due_iso(def, st.last_run_at, now_ms() as i64, self.anchor_ms) {
                 v["nextDueAt"] = json!(next);
             }
         }
@@ -554,6 +572,27 @@ impl JobSystem {
         let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         store.jobs.iter().map(|j| self.job_view(j)).collect()
     }
+
+    /// One job's run facts (docs/11 §4) - what lastRunAt / lastOk used to be inside a
+    /// JobDef, now read from jobs-state.json.
+    pub fn run_state(&self, name: &str) -> state::JobRunState {
+        self.state.get(name)
+    }
+
+    /// One page of a job's run history (docs/11 §7.3), read from THIS system's log.
+    pub fn read_runs(
+        &self,
+        job: &str,
+        before: Option<u64>,
+        limit: usize,
+    ) -> (Vec<Value>, Option<u64>) {
+        self.runlog.read_page(job, before, limit)
+    }
+
+    /// Age-and-trim this system's run logs - the hourly sweep task's jobs half.
+    pub fn sweep_run_logs(&self) {
+        self.runlog.sweep_all();
+    }
 }
 
 /// Test-only wiring: the shared services with the legacy command capability registered —
@@ -563,9 +602,9 @@ pub(crate) fn test_services() -> Arc<RuntimeServices> {
     let services = RuntimeServices::new();
     services
         .actions
-        .register(Arc::new(crate::services::actions::LegacyCommandAction::new(
-            services.supervisor.clone(),
-        )))
+        .register(Arc::new(
+            crate::services::actions::LegacyCommandAction::new(services.supervisor.clone()),
+        ))
         .expect("the legacy command capability registers once");
     services
 }
@@ -616,10 +655,17 @@ pub fn run_record(trigger: &str, out: &runner::RunOutcome) -> Map<String, Value>
 /// Whether a job fires at "now". Interval: last run (or the boot anchor for a never-run job) plus
 /// the interval has passed. Cron: this local minute matches AND the last run is not inside this
 /// very minute - the second half is what makes a restart within the firing minute (03:30:05 ran,
-/// gateway restarted, 03:30:59 ticks again) skip instead of double-firing.
-pub fn job_due(def: &JobDef, now: i64, now_local: &chrono::NaiveDateTime, anchor_ms: i64) -> bool {
+/// gateway restarted, 03:30:59 ticks again) skip instead of double-firing. The last-run stamp is
+/// a PARAMETER (run facts live in the state file since S2, not inside the definition).
+pub fn job_due(
+    def: &JobDef,
+    now: i64,
+    now_local: &chrono::NaiveDateTime,
+    anchor_ms: i64,
+    last_run_ms: Option<i64>,
+) -> bool {
     if let Some(secs) = def.every_sec {
-        let base = def.last_run_ms.unwrap_or(anchor_ms);
+        let base = last_run_ms.unwrap_or(anchor_ms);
         return now.saturating_sub(base) >= (secs as i64) * 1000;
     }
     let Some(expr) = &def.cron else {
@@ -631,8 +677,7 @@ pub fn job_due(def: &JobDef, now: i64, now_local: &chrono::NaiveDateTime, anchor
     if !expr.matches(&schedule::fields_of(now_local)) {
         return false;
     }
-    match def
-        .last_run_ms
+    match last_run_ms
         .and_then(local_minute_of_ms)
         .map(|t| (t.year(), t.ordinal(), t.hour(), t.minute()))
     {
@@ -661,10 +706,15 @@ fn local_minute_of_ms(ms: i64) -> Option<chrono::NaiveDateTime> {
 /// The ISO stamp of a job's next firing - what a human scheduling "3 a.m. nightly" wants to
 /// read back. Intervals anchor on lastRunAt (or boot); cron scans forward from now. Cron results
 /// carry the LOCAL offset on purpose (chrono's to_rfc3339) - the field names a wall-clock time.
-fn next_due_iso(def: &JobDef, now: i64, anchor_ms: i64) -> Option<String> {
+fn next_due_iso(
+    def: &JobDef,
+    last_run_ms: Option<i64>,
+    now: i64,
+    anchor_ms: i64,
+) -> Option<String> {
     if let Some(secs) = def.every_sec {
-        let base = def.last_run_ms.unwrap_or(anchor_ms);
-        return Some(iso_of_ms(base + (secs as i64) * 1000));
+        let base = last_run_ms.unwrap_or(anchor_ms);
+        return Some(state::iso_of_ms(base + (secs as i64) * 1000));
     }
     let expr = schedule::CronExpr::parse(def.cron.as_deref()?).ok()?;
     let now_local = local_minute_of_ms(now)?;
@@ -683,21 +733,10 @@ mod tests {
 
     fn scratch_path(name: &str) -> PathBuf {
         crate::secure::key::use_test_master_key();
-        let dir = std::env::temp_dir().join(format!("lmg-jobs-{}-{}", name, crate::util::random_hex(8)));
+        let dir =
+            std::env::temp_dir().join(format!("lmg-jobs-{}-{}", name, crate::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         dir.join("jobs.json")
-    }
-
-    /// Point the PROCESS-WIDE run log at a private directory, and hand back the lock that
-    /// makes that safe. The guard is returned rather than dropped here on purpose: the log
-    /// directory is global state, so a test that forgets to hold it would race every other
-    /// test that writes a run (docs/10 §8 calls this debt out by name).
-    async fn runlog_scratch() -> tokio::sync::MutexGuard<'static, ()> {
-        let guard = runlog::RUNLOG_TEST_LOCK.lock().await;
-        let dir = std::env::temp_dir().join(format!("lmg-jobs-log-{}", crate::util::random_hex(8)));
-        std::fs::create_dir_all(&dir).expect("runlog dir");
-        runlog::set_run_log_dir(dir);
-        guard
     }
 
     fn interval_job(name: &str, every_sec: u64) -> JobDef {
@@ -713,8 +752,6 @@ mod tests {
             enabled: true,
             timeout_ms: 30_000,
             cwd: None,
-            last_run_ms: None,
-            last_ok: None,
         }
     }
 
@@ -781,75 +818,103 @@ mod tests {
             "everySec": 60,
         });
         let def = JobDef::from_json(&v).expect("a valid def");
-        assert!(def.enabled, "a hand-edited file with no flag must not disable the job");
+        assert!(
+            def.enabled,
+            "a hand-edited file with no flag must not disable the job"
+        );
         assert_eq!(def.timeout_ms, runner::DEFAULT_TIMEOUT_MS);
     }
 
     #[test]
     fn interval_due_anchors_on_last_run_or_boot() {
         let now = 1_000_000_000_i64 * 1000;
-        let local = chrono::Local.timestamp_millis_opt(now).unwrap().naive_local();
+        let local = chrono::Local
+            .timestamp_millis_opt(now)
+            .unwrap()
+            .naive_local();
         let anchor = now - 5000;
         // Never ran: due once the interval since boot has passed.
         let j = interval_job("j", 10); // 10s
-        assert!(!job_due(&j, anchor + 9000, &local, anchor));
-        assert!(job_due(&j, anchor + 10_000, &local, anchor));
+        assert!(!job_due(&j, anchor + 9000, &local, anchor, None));
+        assert!(job_due(&j, anchor + 10_000, &local, anchor, None));
         // Ran 4s ago on a 10s interval: not yet; ran 11s ago: due.
-        let j = JobDef { last_run_ms: Some(now - 4000), ..j };
-        assert!(!job_due(&j, now, &local, anchor));
-        let j = JobDef { last_run_ms: Some(now - 11_000), ..j };
-        assert!(job_due(&j, now, &local, anchor));
+        assert!(!job_due(&j, now, &local, anchor, Some(now - 4000)));
+        assert!(job_due(&j, now, &local, anchor, Some(now - 11_000)));
     }
 
     #[test]
     fn cron_due_requires_a_matching_minute_and_not_the_same_one_twice() {
         // 03:30 local, some date.
-        let now_local: chrono::NaiveDateTime =
-            chrono::NaiveDate::from_ymd_opt(2026, 9, 8).unwrap().and_hms_opt(3, 30, 5).unwrap();
+        let now_local: chrono::NaiveDateTime = chrono::NaiveDate::from_ymd_opt(2026, 9, 8)
+            .unwrap()
+            .and_hms_opt(3, 30, 5)
+            .unwrap();
         let j = cron_job("j", "30 3 * * *");
-        assert!(job_due(&j, 0, &now_local, 0), "matching minute, never ran");
+        assert!(
+            job_due(&j, 0, &now_local, 0, None),
+            "matching minute, never ran"
+        );
         // last run inside THIS minute (a restart at :05 after a run at :02): skip.
         let same_minute_ms = chrono::Local
             .from_local_datetime(&now_local)
             .unwrap()
             .timestamp_millis();
-        let j = JobDef { last_run_ms: Some(same_minute_ms), ..j };
-        assert!(!job_due(&j, 0, &now_local, 0));
+        assert!(!job_due(&j, 0, &now_local, 0, Some(same_minute_ms)));
         // last run was yesterday: due again.
         let yesterday = same_minute_ms - 24 * 60 * 60 * 1000;
-        let j = JobDef { last_run_ms: Some(yesterday), ..j };
-        assert!(job_due(&j, 0, &now_local, 0));
+        assert!(job_due(&j, 0, &now_local, 0, Some(yesterday)));
         // A non-matching minute is never due.
-        let off = chrono::NaiveDate::from_ymd_opt(2026, 9, 8).unwrap().and_hms_opt(3, 31, 0).unwrap();
-        assert!(!job_due(&j, 0, &off, 0));
+        let off = chrono::NaiveDate::from_ymd_opt(2026, 9, 8)
+            .unwrap()
+            .and_hms_opt(3, 31, 0)
+            .unwrap();
+        assert!(!job_due(&j, 0, &off, 0, Some(yesterday)));
     }
 
     #[tokio::test]
     async fn a_manual_run_claims_executes_records_and_persists() {
-        let _log = runlog_scratch().await;
         let path = scratch_path("manual");
         let sys = JobSystem::open(path.clone(), test_services());
         sys.upsert(interval_job("echo-job", 3600)).expect("valid");
 
-        let (_seq, out) = sys.clone().execute("echo-job", "manual").await.expect("runs");
+        let (_seq, out) = sys
+            .clone()
+            .execute("echo-job", "manual")
+            .await
+            .expect("runs");
         assert!(out.ok, "{out:?}");
 
         // The claim is released: a second run goes through.
         assert!(sys.clone().execute("echo-job", "manual").await.is_ok());
         // The run log holds both runs, newest first.
-        let (page, _) = runlog::read_page("echo-job", None, 10);
+        let (page, _) = sys.read_runs("echo-job", None, 10);
         assert_eq!(page.len(), 2);
         assert_eq!(page[0]["trigger"], json!("manual"));
-        // The outcome survived to disk.
-        let reloaded = JobStore::open(path);
-        let saved = reloaded.jobs.iter().find(|j| j.name == "echo-job").unwrap();
-        assert_eq!(saved.last_ok, Some(true));
-        assert!(saved.last_run_ms.is_some(), "the claim stamped lastRunAt");
+        // The outcome survived to disk - in the STATE file now, not the definition file
+        // (docs/11 §4): a fresh system over the same paths reads the same facts.
+        let reopened = JobSystem::open(path.clone(), test_services());
+        let st = reopened.run_state("echo-job");
+        assert_eq!(st.last_ok, Some(true));
+        assert!(st.last_run_at.is_some(), "the claim stamped lastRunAt");
+        // And jobs.json no longer carries run facts at all: the sealed definitions file
+        // holds intent only (docs/10 §5, docs/11 §4).
+        if let Ok(Some(raw)) = crate::secure::statefile::read_secure_json(&path) {
+            let arr = raw["jobs"].as_array().expect("the jobs array");
+            assert!(!arr.is_empty());
+            for entry in arr {
+                assert!(
+                    entry.get("lastRunAt").is_none(),
+                    "absent, not moved: {entry}"
+                );
+                assert!(entry.get("lastOk").is_none(), "absent, not moved: {entry}");
+            }
+        } else {
+            panic!("jobs.json must still seal and load: {path:?}");
+        }
     }
 
     #[tokio::test]
     async fn an_unknown_job_is_unknown_and_a_claimed_job_is_busy() {
-        let _log = runlog_scratch().await;
         let path = scratch_path("claims");
         let sys = JobSystem::open(path, test_services());
         match sys.clone().execute("ghost", "manual").await {
@@ -858,7 +923,9 @@ mod tests {
         }
         // Claim directly, then confirm execute refuses to double-start.
         sys.upsert(interval_job("busy-job", 3600)).expect("valid");
-        let _def = sys.claim("busy-job", now_ms() as i64).expect("first claim wins");
+        let _def = sys
+            .claim("busy-job", now_ms() as i64)
+            .expect("first claim wins");
         match sys.clone().execute("busy-job", "manual").await {
             Err(RunError::Busy(msg)) => assert!(msg.contains("already running"), "{msg}"),
             other => panic!("expected Busy, got {other:?}"),
@@ -896,7 +963,6 @@ mod tests {
     /// comes due must SAY so — a missing dependency is reported, never silently skipped.
     #[tokio::test]
     async fn a_missing_capability_is_reported_and_recorded() {
-        let _log = runlog_scratch().await;
         let path = scratch_path("nocap");
         let sys = JobSystem::open(path.clone(), RuntimeServices::new());
         sys.upsert(interval_job("orphan", 3600)).expect("valid");
@@ -907,33 +973,36 @@ mod tests {
         }
 
         // The occurrence is in the history: the job was due and did not run.
-        let (page, _) = runlog::read_page("orphan", None, 10);
+        let (page, _) = sys.read_runs("orphan", None, 10);
         assert_eq!(page.len(), 1, "{page:?}");
         assert_eq!(page[0]["ok"], json!(false));
-        assert!(page[0]["error"].as_str().unwrap_or_default().contains(JOBS_ACTION));
+        assert!(page[0]["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(JOBS_ACTION));
 
-        // The claim was released, and lastOk was NOT written: nothing exited.
+        // The claim was released, and lastOk was NOT written: nothing exited. The
+        // occurrence anchor still moved, so a full pool cannot make a job retry every
+        // tick.
         let view = sys.all_views().remove(0);
         assert_eq!(view["running"], json!(false));
-        let reloaded = JobStore::open(path);
-        assert_eq!(reloaded.jobs[0].last_ok, None, "a refusal is not an outcome");
-        assert!(
-            reloaded.jobs[0].last_run_ms.is_some(),
-            "the occurrence anchor still moved, so a full pool cannot make a job retry every tick"
-        );
+        let st = sys.run_state("orphan");
+        assert_eq!(st.last_ok, None, "a refusal is not an outcome");
+        assert!(st.last_run_at.is_some());
     }
 
     /// The pool's bound is GLOBAL: a manual run of another producer can fill it, and the
     /// scheduled occurrence is refused visibly rather than queued out of sight.
     #[tokio::test]
     async fn a_full_pool_refuses_the_occurrence_visibly() {
-        let _log = runlog_scratch().await;
         let path = scratch_path("capacity");
         let services = test_services();
-        services.runs.set_capacity(crate::services::runs::RunCapacity {
-            max_concurrent: 1,
-            max_queued: 0,
-        });
+        services
+            .runs
+            .set_capacity(crate::services::runs::RunCapacity {
+                max_concurrent: 1,
+                max_queued: 0,
+            });
         let sys = JobSystem::open(path, services.clone());
         sys.upsert(interval_job("waiting", 3600)).expect("valid");
 
@@ -953,19 +1022,25 @@ mod tests {
             Err(RunError::Capacity(msg)) => assert!(msg.contains("maxConcurrentRuns"), "{msg}"),
             other => panic!("expected Capacity, got {other:?}"),
         }
-        let (page, _) = runlog::read_page("waiting", None, 10);
-        assert_eq!(page.len(), 1, "the refused occurrence is recorded: {page:?}");
+        let (page, _) = sys.read_runs("waiting", None, 10);
+        assert_eq!(
+            page.len(),
+            1,
+            "the refused occurrence is recorded: {page:?}"
+        );
 
         // The other producer's run is untouched by the refusal, and reaped here.
         assert_eq!(services.runs.shutdown_all().await, 1);
-        assert!(hog.done.await.is_ok(), "the hog reported its own terminal view");
+        assert!(
+            hog.done.await.is_ok(),
+            "the hog reported its own terminal view"
+        );
     }
 
     /// The job's own timeoutMs is the deadline, enforced by cancellation: the child is killed
     /// and the record says WHICH kind of not-ok it was.
     #[tokio::test]
     async fn a_wedged_command_is_killed_at_the_job_deadline() {
-        let _log = runlog_scratch().await;
         let path = scratch_path("deadline");
         let sys = JobSystem::open(path, test_services());
         let mut def = interval_job("wedged", 3600);
@@ -974,13 +1049,23 @@ mod tests {
         sys.upsert(def).expect("valid");
 
         let started = std::time::Instant::now();
-        let (_seq, out) = sys.clone().execute("wedged", "timer").await.expect("reports");
+        let (_seq, out) = sys
+            .clone()
+            .execute("wedged", "timer")
+            .await
+            .expect("reports");
         assert!(out.timed_out, "{out:?}");
         assert!(!out.ok);
-        assert!(!out.canceled, "the deadline owns this outcome, not a cancel");
-        assert!(started.elapsed().as_secs() < 20, "it did not wait out the command");
+        assert!(
+            !out.canceled,
+            "the deadline owns this outcome, not a cancel"
+        );
+        assert!(
+            started.elapsed().as_secs() < 20,
+            "it did not wait out the command"
+        );
 
-        let (page, _) = runlog::read_page("wedged", None, 5);
+        let (page, _) = sys.read_runs("wedged", None, 5);
         assert_eq!(page[0]["timedOut"], json!(true), "{page:?}");
         assert_eq!(page[0]["ok"], json!(false));
     }
@@ -989,7 +1074,6 @@ mod tests {
     /// cancelled AND awaited, and the per-job claims they held are gone.
     #[tokio::test]
     async fn shutdown_cancels_the_runs_this_scheduler_owns() {
-        let _log = runlog_scratch().await;
         let path = scratch_path("shutdown");
         let services = test_services();
         let sys = JobSystem::open(path, services.clone());
@@ -1031,7 +1115,11 @@ mod tests {
             .upsert(interval_job("doomed", 60))
             .expect_err("the write cannot succeed");
         assert!(err.contains("could not persist"), "{err}");
-        assert_eq!(sys.all_views().len(), 1, "the edit is live even though the save failed");
+        assert_eq!(
+            sys.all_views().len(),
+            1,
+            "the edit is live even though the save failed"
+        );
 
         let err = sys
             .delete("doomed")
@@ -1042,25 +1130,37 @@ mod tests {
     }
 
     #[test]
-    fn upsert_preserves_history_and_delete_removes_only_the_job() {
+    fn upsert_never_touches_run_state_and_delete_forgets_it() {
         let path = scratch_path("upsert");
         let sys = JobSystem::open(path, test_services());
         sys.upsert(interval_job("edit-me", 60)).expect("valid");
-        {
-            let mut store = sys.store.lock().unwrap();
-            store.jobs[0].last_ok = Some(false);
-            store.jobs[0].last_run_ms = Some(123);
-        }
-        sys.upsert(interval_job("edit-me", 120)).expect("valid edit");
+        // Run facts arrive through the state file, not the definition table.
+        sys.state.claim("edit-me", 123, None);
+        sys.state.settle("edit-me", false, None);
+        sys.upsert(interval_job("edit-me", 120))
+            .expect("valid edit");
         {
             let store = sys.store.lock().unwrap();
             assert_eq!(store.jobs[0].every_sec, Some(120));
-            assert_eq!(store.jobs[0].last_ok, Some(false), "history is kept");
-            assert_eq!(store.jobs[0].last_run_ms, Some(123));
         }
+        let st = sys.run_state("edit-me");
+        assert_eq!(
+            st.last_run_at,
+            Some(123),
+            "an edit cannot fabricate a never-ran"
+        );
+        assert_eq!(st.last_ok, Some(false));
+        assert_eq!(st.consecutive_failures, 1);
+        // The v1 /api/jobs shape still SHOWS the facts next to the definition.
+        let view = sys.all_views().remove(0);
+        assert_eq!(view["lastOk"], json!(false));
+        assert!(view["lastRunAt"].as_str().is_some());
         assert_eq!(sys.delete("edit-me"), Ok(true));
         assert_eq!(sys.delete("edit-me"), Ok(false), "already gone");
         assert!(sys.all_views().is_empty());
+        // The deleted definition's state line is gone too (docs/11 §4); the run history
+        // file is deliberately NOT touched - it outlives the job.
+        assert_eq!(sys.run_state("edit-me"), state::JobRunState::default());
     }
 
     #[test]
@@ -1068,7 +1168,8 @@ mod tests {
         let path = scratch_path("view");
         let sys = JobSystem::open(path, test_services());
         sys.upsert(interval_job("viewed", 60)).expect("valid");
-        sys.upsert(cron_job("nightly", "30 3 * * *")).expect("valid");
+        sys.upsert(cron_job("nightly", "30 3 * * *"))
+            .expect("valid");
         let views: Vec<Value> = sys.all_views();
         assert_eq!(views.len(), 2);
         for v in &views {

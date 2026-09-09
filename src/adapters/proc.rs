@@ -195,7 +195,23 @@ fn cmd_exe() -> String {
 fn is_cmd_meta(c: char) -> bool {
     matches!(
         c,
-        '(' | ')' | ']' | '[' | '%' | '!' | '^' | '"' | '`' | '<' | '>' | '&' | '|' | ';' | ',' | ' ' | '*' | '?'
+        '(' | ')'
+            | ']'
+            | '['
+            | '%'
+            | '!'
+            | '^'
+            | '"'
+            | '`'
+            | '<'
+            | '>'
+            | '&'
+            | '|'
+            | ';'
+            | ','
+            | ' '
+            | '*'
+            | '?'
     )
 }
 
@@ -255,7 +271,13 @@ fn cmd_escape_arg(arg: &str, double_escape: bool) -> String {
     for _ in 0..(1 + usize::from(double_escape)) {
         out = out
             .chars()
-            .map(|c| if is_cmd_meta(c) { format!("^{c}") } else { c.to_string() })
+            .map(|c| {
+                if is_cmd_meta(c) {
+                    format!("^{c}")
+                } else {
+                    c.to_string()
+                }
+            })
             .collect();
     }
     out
@@ -615,12 +637,14 @@ pub struct ProcAdapter {
     pid: std::sync::Mutex<Option<u32>>,
     /// Shared-child mirror for `ping()` and the per-request proxy servers.
     peer: Arc<std::sync::RwLock<Option<Peer<RoleClient>>>>,
+    /// Where calls through this adapter are recorded.
+    log: std::sync::Arc<crate::calls::CallLog>,
 }
 
 impl ProcAdapter {
     /// `def` must already be a `resolve_def()` clone (env refs expanded), exactly as
     /// `make_adapter` hands it over.
-    pub fn new(def: &ServerDef, name: &str) -> Self {
+    pub fn new(def: &ServerDef, name: &str, log: std::sync::Arc<crate::calls::CallLog>) -> Self {
         let env: BTreeMap<String, String> = def
             .get("env")
             .and_then(Value::as_object)
@@ -653,6 +677,7 @@ impl ProcAdapter {
             live: tokio::sync::Mutex::new(None),
             pid: std::sync::Mutex::new(None),
             peer: Arc::new(std::sync::RwLock::new(None)),
+            log,
         }
     }
 
@@ -857,6 +882,7 @@ impl super::Adapter for ProcAdapter {
         let name_cell = self.name.clone();
         let cfg = self.cfg.clone();
         let disabled_cell = self.disabled.clone();
+        let log = self.log.clone();
         Ok(super::rmcp_endpoint(move |source| {
             super::proxy::ProxyServer::new(
                 remote.clone(),
@@ -871,6 +897,7 @@ impl super::Adapter for ProcAdapter {
                     // capabilities are read", so the toggles alone decide what is announced.
                     remote_caps: None,
                     disabled: disabled_cell.clone(),
+                    log: log.clone(),
                 },
                 source,
             )
@@ -973,9 +1000,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn cmd_shim_detection_matches_parse_js() {
-        assert!(is_cmd_shim(
-            r"C:\repo\node_modules\.bin\my-tool.CMD"
-        ));
+        assert!(is_cmd_shim(r"C:\repo\node_modules\.bin\my-tool.CMD"));
         // Not a shim: the .cmd is not directly inside node_modules/.bin.
         assert!(!is_cmd_shim(r"C:\Users\x\AppData\Roaming\npm\npx.cmd"));
         assert!(!is_cmd_shim(r"C:\repo\node_modules\.bin\sub\tool.cmd"));
@@ -1098,7 +1123,7 @@ mod tests {
             "env": { "A": "1", "B": 2, "C": "3" },
         }))
         .unwrap();
-        let adapter = ProcAdapter::new(&def, "fetch");
+        let adapter = ProcAdapter::new(&def, "fetch", crate::calls::test_log());
         assert_eq!(adapter.command, "uvx mcp-server-fetch");
         assert_eq!(adapter.cwd.as_deref(), Some("C:\\work"));
         // Non-string env entries are skipped, string ones kept.

@@ -20,9 +20,7 @@ use serde_json::{json, Map, Value};
 
 use crate::adapters::make_adapter;
 use crate::app::{admin_error, admin_json, AppContext};
-use crate::calls::{
-    clear_calls, read_call, read_calls, read_tool_history, with_call_source_panel, CALLS_PAGE_SIZE,
-};
+use crate::calls::{with_call_source_panel, CALLS_PAGE_SIZE};
 use crate::config::ServerDef;
 use crate::log;
 use crate::managed::ManagedEntry;
@@ -349,7 +347,7 @@ async fn add_managed(
     enabled: bool,
     start_now: bool,
 ) -> Result<Value, String> {
-    let adapter = make_adapter(&def, name)?;
+    let adapter = make_adapter(&def, name, &ctx.calls)?;
     ctx.store.add(ManagedEntry {
         name: name.to_string(),
         def: def.clone(),
@@ -524,20 +522,32 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // from the list are appended by GET /api/mcps in name order, so a fresh MCP never vanishes.
     r = r.route(
         "/api/order",
-        put(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
-            let body = body.0;
-            let Some(order) = body.get("order").and_then(Value::as_array) else {
-                return admin_error(StatusCode::BAD_REQUEST, "order must be an array of MCP names");
-            };
-            if !order.iter().all(|n| n.as_str().is_some()) {
-                return admin_error(StatusCode::BAD_REQUEST, "order must be an array of MCP names");
-            }
-            let names: Vec<String> = order.iter().filter_map(Value::as_str).map(str::to_string).collect();
-            match ctx.store.set_order(names) {
-                Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
-                Ok(()) => admin_json(StatusCode::OK, json!({ "order": ctx.store.get_order() })),
-            }
-        }),
+        put(
+            |State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+                let body = body.0;
+                let Some(order) = body.get("order").and_then(Value::as_array) else {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "order must be an array of MCP names",
+                    );
+                };
+                if !order.iter().all(|n| n.as_str().is_some()) {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "order must be an array of MCP names",
+                    );
+                }
+                let names: Vec<String> = order
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect();
+                match ctx.store.set_order(names) {
+                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
+                    Ok(()) => admin_json(StatusCode::OK, json!({ "order": ctx.store.get_order() })),
+                }
+            },
+        ),
     );
 
     // The panel's custom sidebar groups, sent as one whole ordered list: creating, reordering
@@ -545,20 +555,34 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // the store returns its MCPs to the default group.
     r = r.route(
         "/api/groups",
-        put(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
-            let body = body.0;
-            let Some(groups) = body.get("groups").and_then(Value::as_array) else {
-                return admin_error(StatusCode::BAD_REQUEST, "groups must be an array of group names");
-            };
-            if !groups.iter().all(|n| n.as_str().is_some()) {
-                return admin_error(StatusCode::BAD_REQUEST, "groups must be an array of group names");
-            }
-            let names: Vec<String> = groups.iter().filter_map(Value::as_str).map(str::to_string).collect();
-            match ctx.store.set_groups(names) {
-                Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
-                Ok(()) => admin_json(StatusCode::OK, json!({ "groups": ctx.store.get_groups() })),
-            }
-        }),
+        put(
+            |State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+                let body = body.0;
+                let Some(groups) = body.get("groups").and_then(Value::as_array) else {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "groups must be an array of group names",
+                    );
+                };
+                if !groups.iter().all(|n| n.as_str().is_some()) {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "groups must be an array of group names",
+                    );
+                }
+                let names: Vec<String> = groups
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect();
+                match ctx.store.set_groups(names) {
+                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
+                    Ok(()) => {
+                        admin_json(StatusCode::OK, json!({ "groups": ctx.store.get_groups() }))
+                    }
+                }
+            },
+        ),
     );
 
     // Rename in place: the group keeps its slot in the order and takes its members with it,
@@ -734,38 +758,44 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // overwritten.
     r = r.route(
         "/api/mcps/import",
-        post(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
-            let body = body.0;
-            let mut taken: std::collections::HashSet<String> = ctx.registry.names().into_iter().collect();
-            for m in ctx.store.all() {
-                taken.insert(m.name.clone());
-            }
-            let plan = match crate::mcp_import::plan_mcp_import(&body, &taken, ctx.port) {
-                Ok(plan) => plan,
-                // Node's handler let planMcpImport throw into the router's catch-all, which
-                // answered 500 {error} — structural surprises are server errors there, not 400s.
-                Err(err) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
-            };
-            let mut imported: Vec<Value> = Vec::new();
-            let mut skipped: Vec<Value> = plan
-                .skip
-                .iter()
-                .map(|s| serde_json::to_value(s).unwrap_or(Value::Null))
-                .collect();
-            for item in plan.add {
-                let type_ = item.def.type_().to_string();
-                match add_managed(&ctx, &item.name, item.def.clone(), true, false).await {
-                    Ok(lifecycle) => imported.push(json!({
-                        "name": item.name,
-                        "from": item.wanted,
-                        "type": type_,
-                        "lifecycle": lifecycle,
-                    })),
-                    Err(err) => skipped.push(json!({ "name": item.wanted, "reason": err })),
+        post(
+            |State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+                let body = body.0;
+                let mut taken: std::collections::HashSet<String> =
+                    ctx.registry.names().into_iter().collect();
+                for m in ctx.store.all() {
+                    taken.insert(m.name.clone());
                 }
-            }
-            admin_json(StatusCode::OK, json!({ "imported": imported, "skipped": skipped }))
-        }),
+                let plan = match crate::mcp_import::plan_mcp_import(&body, &taken, ctx.port) {
+                    Ok(plan) => plan,
+                    // Node's handler let planMcpImport throw into the router's catch-all, which
+                    // answered 500 {error} — structural surprises are server errors there, not 400s.
+                    Err(err) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
+                };
+                let mut imported: Vec<Value> = Vec::new();
+                let mut skipped: Vec<Value> = plan
+                    .skip
+                    .iter()
+                    .map(|s| serde_json::to_value(s).unwrap_or(Value::Null))
+                    .collect();
+                for item in plan.add {
+                    let type_ = item.def.type_().to_string();
+                    match add_managed(&ctx, &item.name, item.def.clone(), true, false).await {
+                        Ok(lifecycle) => imported.push(json!({
+                            "name": item.name,
+                            "from": item.wanted,
+                            "type": type_,
+                            "lifecycle": lifecycle,
+                        })),
+                        Err(err) => skipped.push(json!({ "name": item.wanted, "reason": err })),
+                    }
+                }
+                admin_json(
+                    StatusCode::OK,
+                    json!({ "imported": imported, "skipped": skipped }),
+                )
+            },
+        ),
     );
 
     // A REAL connection test against the values in the form: build_def validates them,
@@ -779,7 +809,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     //   error does not.
     r = r.route(
         "/api/mcps/test",
-        post(|State(_ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
+        post(|State(ctx): State<Arc<AppContext>>, body: crate::app::NodeBody| async move {
             const TESTABLE_TYPES: [&str; 6] = ["mysql", "redis", "pg", "mongo", "http", "rest"];
             const TEST_TIMEOUT_MS: u64 = 5000;
             let body = body.0;
@@ -852,7 +882,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             }
 
             let adapter = match build_def(&body) {
-                Ok(def) => match crate::adapters::make_adapter(&def, "test") {
+                Ok(def) => match crate::adapters::make_adapter(&def, "test", &ctx.calls) {
                     Ok(adapter) => adapter,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 },
@@ -1062,7 +1092,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 Ok(def) => def,
                 Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
             };
-            let adapter = match make_adapter(&def, &name) {
+            let adapter = match make_adapter(&def, &name, &ctx.calls) {
                 Ok(adapter) => adapter,
                 Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
             };
@@ -1143,7 +1173,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .get("pageSize")
                     .and_then(|p| p.parse::<i64>().ok())
                     .unwrap_or(CALLS_PAGE_SIZE as i64);
-                let mut result = read_calls(&name, page, page_size).await;
+                let mut result = ctx.calls.read_calls(&name, page, page_size).await;
                 result["name"] = json!(name);
                 result["stderr"] = json!(entry
                     .data
@@ -1159,7 +1189,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 if !ctx.registry.has(&name) {
                     return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
                 }
-                clear_calls(&name).await;
+                ctx.calls.clear_calls(&name).await;
                 admin_json(StatusCode::OK, json!({ "name": name, "cleared": true }))
             },
         ),
@@ -1175,7 +1205,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             let Ok(seq) = seq.parse::<u64>() else {
                 return admin_error(StatusCode::BAD_REQUEST, "seq must be a number");
             };
-            match read_call(&name, seq).await {
+            match ctx.calls.read_call(&name, seq).await {
                 None => admin_error(
                     StatusCode::NOT_FOUND,
                     &format!("no call #{seq} in the log for {name}"),
@@ -1207,13 +1237,15 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .get("limit")
                     .and_then(|l| l.parse::<usize>().ok())
                     .filter(|l| *l > 0);
-                let entries = read_tool_history(
-                    &name,
-                    &tool,
-                    limit.unwrap_or(crate::calls::TOOL_HISTORY_MAX),
-                    q.get("q").map(String::as_str),
-                )
-                .await;
+                let entries = ctx
+                    .calls
+                    .read_tool_history(
+                        &name,
+                        &tool,
+                        limit.unwrap_or(crate::calls::TOOL_HISTORY_MAX),
+                        q.get("q").map(String::as_str),
+                    )
+                    .await;
                 admin_json(StatusCode::OK, json!({ "tool": tool, "entries": entries }))
             },
         ),
@@ -1275,65 +1307,83 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // primitive. Same reasoning as /call: the browser never holds the gateway token.
     r = r.route(
         "/api/mcps/{name}/resource",
-        post(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>, body: crate::app::NodeBody| async move {
-            let Some(entry) = ctx.registry.get(&name) else {
-                return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
-            };
-            let server = entry.data.read().ok().and_then(|d| d.server.clone());
-            let Some(server) = server else {
-                return admin_error(StatusCode::SERVICE_UNAVAILABLE, &format!("MCP '{name}' is not started"));
-            };
-            ctx.registry.note_activity(&name); // reading a resource is traffic too
-            let body = body.0;
-            let uri = body.get("uri").and_then(Value::as_str).unwrap_or("").trim().to_string();
-            if uri.is_empty() {
-                return admin_error(StatusCode::BAD_REQUEST, "uri is required");
-            }
-            let t0 = Instant::now();
-            let outcome = with_call_source_panel(async { server.probe.read_resource(&uri).await }).await;
-            match outcome {
-                Ok(out) => {
-                    let contents = out.get("contents").and_then(Value::as_array).cloned().unwrap_or_default();
-                    let text = contents
-                        .iter()
-                        .map(|c| {
-                            c.get("text")
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                                .unwrap_or_else(|| {
-                                    c.get("blob")
-                                        .and_then(Value::as_str)
-                                        .map(|b| {
-                                            let bytes = crate::util::to_hex(b.as_bytes()).len() / 2;
-                                            format!("[{bytes} bytes of binary]")
-                                        })
-                                        .unwrap_or_default()
-                                })
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n\n");
-                    let mut body = json!({
-                        "ok": true,
-                        "ms": t0.elapsed().as_millis() as u64,
-                        "text": text,
-                    });
-                    // mimeType rides the FIRST content block and is absent when it carries none
-                    // (Node read `contents[0]?.mimeType` — undefined drops out of the JSON).
-                    if let Some(mime) = contents.first().and_then(|c| c.get("mimeType")) {
-                        if let Some(obj) = body.as_object_mut() {
-                            obj.insert("mimeType".into(), mime.clone());
-                        }
-                    }
-                    admin_json(StatusCode::OK, body)
+        post(
+            |State(ctx): State<Arc<AppContext>>,
+             Path(name): Path<String>,
+             body: crate::app::NodeBody| async move {
+                let Some(entry) = ctx.registry.get(&name) else {
+                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
+                };
+                let server = entry.data.read().ok().and_then(|d| d.server.clone());
+                let Some(server) = server else {
+                    return admin_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        &format!("MCP '{name}' is not started"),
+                    );
+                };
+                ctx.registry.note_activity(&name); // reading a resource is traffic too
+                let body = body.0;
+                let uri = body
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if uri.is_empty() {
+                    return admin_error(StatusCode::BAD_REQUEST, "uri is required");
                 }
-                // A URI that names nothing is the interesting answer here, not a transport
-                // failure.
-                Err(err) => admin_json(
-                    StatusCode::OK,
-                    json!({ "ok": false, "ms": t0.elapsed().as_millis() as u64, "text": err }),
-                ),
-            }
-        }),
+                let t0 = Instant::now();
+                let outcome =
+                    with_call_source_panel(async { server.probe.read_resource(&uri).await }).await;
+                match outcome {
+                    Ok(out) => {
+                        let contents = out
+                            .get("contents")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        let text = contents
+                            .iter()
+                            .map(|c| {
+                                c.get("text")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| {
+                                        c.get("blob")
+                                            .and_then(Value::as_str)
+                                            .map(|b| {
+                                                let bytes =
+                                                    crate::util::to_hex(b.as_bytes()).len() / 2;
+                                                format!("[{bytes} bytes of binary]")
+                                            })
+                                            .unwrap_or_default()
+                                    })
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
+                        let mut body = json!({
+                            "ok": true,
+                            "ms": t0.elapsed().as_millis() as u64,
+                            "text": text,
+                        });
+                        // mimeType rides the FIRST content block and is absent when it carries none
+                        // (Node read `contents[0]?.mimeType` — undefined drops out of the JSON).
+                        if let Some(mime) = contents.first().and_then(|c| c.get("mimeType")) {
+                            if let Some(obj) = body.as_object_mut() {
+                                obj.insert("mimeType".into(), mime.clone());
+                            }
+                        }
+                        admin_json(StatusCode::OK, body)
+                    }
+                    // A URI that names nothing is the interesting answer here, not a transport
+                    // failure.
+                    Err(err) => admin_json(
+                        StatusCode::OK,
+                        json!({ "ok": false, "ms": t0.elapsed().as_millis() as u64, "text": err }),
+                    ),
+                }
+            },
+        ),
     );
 
     // Toggle this MCP's resources on or off (all of them — the master switch). Live: the

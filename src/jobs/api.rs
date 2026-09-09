@@ -76,7 +76,8 @@ fn def_from_body(name: &str, body: &Value) -> Result<JobDef, String> {
     let every_sec = match body.get("everySec") {
         None | Some(Value::Null) => None,
         Some(v) => Some(
-            whole_number(v).ok_or_else(|| "everySec must be a whole number of seconds (>= 1)".to_string())?,
+            whole_number(v)
+                .ok_or_else(|| "everySec must be a whole number of seconds (>= 1)".to_string())?,
         ),
     };
     let cron = match body.get("cron") {
@@ -93,17 +94,9 @@ fn def_from_body(name: &str, body: &Value) -> Result<JobDef, String> {
         enabled: body.get("enabled").and_then(Value::as_bool).unwrap_or(true),
         timeout_ms: body
             .get("timeoutMs")
-            .and_then(|v| {
-                if v.is_null() {
-                    None
-                } else {
-                    whole_number(v)
-                }
-            })
+            .and_then(|v| if v.is_null() { None } else { whole_number(v) })
             .unwrap_or(super::runner::DEFAULT_TIMEOUT_MS),
         cwd: opt_str("cwd"),
-        last_run_ms: None,
-        last_ok: None,
     })
 }
 
@@ -186,7 +179,8 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
     r = r.route(
         "/api/jobs/{name}/runs",
         get(
-            |Path(name): Path<String>,
+            |State(jobs): State<Arc<JobSystem>>,
+             Path(name): Path<String>,
              Query(q): Query<HashMap<String, String>>| async move {
                 if !super::runlog::valid_name(&name) {
                     return admin_error(StatusCode::NOT_FOUND, &format!("unknown job: {name}"));
@@ -196,7 +190,7 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
                     .and_then(|v| v.parse::<usize>().ok())
                     .unwrap_or(super::runlog::RUNS_PAGE_SIZE);
                 let before = q.get("before").and_then(|v| v.parse::<u64>().ok());
-                let (runs, next) = super::runlog::read_page(&name, before, limit);
+                let (runs, next) = jobs.read_runs(&name, before, limit);
                 // nextBefore is absent (not null) when the history is exhausted - the panel's
                 // absent-not-null convention.
                 let mut body = Map::new();
@@ -219,44 +213,41 @@ mod tests {
     use axum::http::Request;
     use tower::util::ServiceExt;
 
-    /// A job system on private files, plus the run-log lock. The lock comes back with it
-    /// because set_run_log_dir writes PROCESS-WIDE state: every test here must hold it for as
-    /// long as it uses the system, or two tests share one log directory.
-    async fn scratch_system(name: &str) -> (tokio::sync::MutexGuard<'static, ()>, Arc<JobSystem>) {
-        let guard = super::super::runlog::RUNLOG_TEST_LOCK.lock().await;
+    /// A job system on its own private tree: jobs.json, jobs-state.json and logs/jobs all
+    /// derive from one scratch directory, so no two tests share anything (the S2
+    /// instantiation - what used to need a process-wide lock is now per-instance).
+    async fn scratch_system(name: &str) -> Arc<JobSystem> {
         crate::secure::key::use_test_master_key();
-        let dir = std::env::temp_dir().join(format!("lmg-jobs-api-{}-{}", name, crate::util::random_hex(8)));
+        let dir = std::env::temp_dir().join(format!(
+            "lmg-jobs-api-{}-{}",
+            name,
+            crate::util::random_hex(8)
+        ));
         std::fs::create_dir_all(&dir).expect("scratch dir");
-        let log_dir = dir.join("logs");
-        std::fs::create_dir_all(&log_dir).expect("log dir");
-        super::super::runlog::set_run_log_dir(log_dir);
-        (
-            guard,
-            JobSystem::open(dir.join("jobs.json"), super::super::test_services()),
-        )
+        JobSystem::open(dir.join("jobs.json"), super::super::test_services())
     }
 
     /// The same thing, but pointed at a path under a directory that does not exist, so every
     /// persist fails while everything else about the system stays real.
-    async fn unwritable_system(
-        name: &str,
-    ) -> (tokio::sync::MutexGuard<'static, ()>, Arc<JobSystem>) {
-        let guard = super::super::runlog::RUNLOG_TEST_LOCK.lock().await;
+    async fn unwritable_system(name: &str) -> Arc<JobSystem> {
         crate::secure::key::use_test_master_key();
-        let dir = std::env::temp_dir().join(format!("lmg-jobs-api-{}-{}", name, crate::util::random_hex(8)));
-        let log_dir = dir.join("logs");
-        std::fs::create_dir_all(&log_dir).expect("log dir");
-        super::super::runlog::set_run_log_dir(log_dir);
-        (
-            guard,
-            JobSystem::open(
-                dir.join("gone").join("jobs.json"),
-                super::super::test_services(),
-            ),
+        let dir = std::env::temp_dir().join(format!(
+            "lmg-jobs-api-{}-{}",
+            name,
+            crate::util::random_hex(8)
+        ));
+        JobSystem::open(
+            dir.join("gone").join("jobs.json"),
+            super::super::test_services(),
         )
     }
 
-    async fn call(router: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    async fn call(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
         let req = Request::builder()
             .method(method)
             .uri(uri)
@@ -292,7 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn put_list_delete_round_trip() {
-        let (_log, sys) = scratch_system("crud").await;
+        let sys = scratch_system("crud").await;
         let router = mount(sys.clone());
 
         // Create: minimal body, defaults applied.
@@ -306,7 +297,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["job"]["cron"], json!("30 3 * * *"));
         assert_eq!(body["job"]["enabled"], json!(true), "default on");
-        assert_eq!(body["job"]["timeoutMs"], json!(super::super::runner::DEFAULT_TIMEOUT_MS));
+        assert_eq!(
+            body["job"]["timeoutMs"],
+            json!(super::super::runner::DEFAULT_TIMEOUT_MS)
+        );
 
         // List shows it.
         let (status, body) = call(&router, "GET", "/api/jobs", None).await;
@@ -333,15 +327,15 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_definitions_are_400_with_a_reason() {
-        let (_log, sys) = scratch_system("validate").await;
+        let sys = scratch_system("validate").await;
         let router = mount(sys.clone());
         for body in [
-            json!({ "cron": "30 3 * * *" }),                        // no command
-            json!({ "command": "  " , "cron": "30 3 * * *" }),     // blank command
-            json!({ "command": "x" }),                              // no schedule
+            json!({ "cron": "30 3 * * *" }),                   // no command
+            json!({ "command": "  " , "cron": "30 3 * * *" }), // blank command
+            json!({ "command": "x" }),                         // no schedule
             json!({ "command": "x", "everySec": 60, "cron": "* * * * *" }), // both
-            json!({ "command": "x", "everySec": 0 }),               // zero interval
-            json!({ "command": "x", "cron": "99 * * * *" }),        // bad cron
+            json!({ "command": "x", "everySec": 0 }),          // zero interval
+            json!({ "command": "x", "cron": "99 * * * *" }),   // bad cron
         ] {
             let (status, body) = call(&router, "PUT", "/api/jobs/bad", Some(body)).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -363,7 +357,7 @@ mod tests {
     /// a 200 for the second would lose their edit without saying so.
     #[tokio::test]
     async fn a_save_that_never_reached_disk_is_a_500_not_a_success() {
-        let (_log, sys) = unwritable_system("persist").await;
+        let sys = unwritable_system("persist").await;
         let router = mount(sys.clone());
 
         let (status, body) = call(
@@ -375,12 +369,21 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
         assert!(
-            body["error"].as_str().unwrap_or_default().contains("persist"),
+            body["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("persist"),
             "{body}"
         );
 
         // An invalid definition is still a 400 on that very same route.
-        let (status, _) = call(&router, "PUT", "/api/jobs/bad", Some(json!({ "command": "x" }))).await;
+        let (status, _) = call(
+            &router,
+            "PUT",
+            "/api/jobs/bad",
+            Some(json!({ "command": "x" })),
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
         // The row is live in memory, so DELETE finds it - and cannot persist its removal.
@@ -393,7 +396,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_manual_run_returns_the_record_and_history_shows_it() {
-        let (_log, sys) = scratch_system("run").await;
+        let sys = scratch_system("run").await;
         let router = mount(sys.clone());
         call(
             &router,
@@ -408,7 +411,13 @@ mod tests {
         assert_eq!(body["run"]["ok"], json!(true), "{body}");
         assert_eq!(body["run"]["trigger"], json!("manual"));
         assert!(body["run"]["seq"].as_u64().is_some(), "{body}");
-        assert!(body["run"]["output"].as_str().unwrap_or("").contains("hello-jobs"), "{body}");
+        assert!(
+            body["run"]["output"]
+                .as_str()
+                .unwrap_or("")
+                .contains("hello-jobs"),
+            "{body}"
+        );
 
         let (status, body) = call(&router, "GET", "/api/jobs/echoer/runs?limit=5", None).await;
         assert_eq!(status, StatusCode::OK);

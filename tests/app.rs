@@ -22,24 +22,24 @@ fn echo_def() -> ServerDef {
     ServerDef(json!({ "type": "echo" }).as_object().cloned().unwrap())
 }
 
-/// A router with one started echo MCP, ready to serve.
+/// A router with one started echo MCP, ready to serve. The app's call log points at its
+/// OWN scratch directory (the S2 instantiation): no two tests share one, so a call one test
+/// makes can never surface in another test's Logs page.
 async fn app_with_echo() -> axum::Router {
-    let registry = Registry::new(3_600_000);
-    let store = Arc::new(ManagedStore::open_at(
-        std::env::temp_dir()
-            .join(format!(
-                "lmg-app-{}",
-                local_mcp_gateway::util::random_hex(8)
-            ))
-            .join("managed.json"),
+    let scratch = std::env::temp_dir().join(format!(
+        "lmg-app-{}",
+        local_mcp_gateway::util::random_hex(8)
     ));
-    let adapter = make_adapter(&echo_def(), "echo").expect("echo adapter");
+    let calls = Arc::new(local_mcp_gateway::calls::CallLog::at(scratch.join("calls")));
+    let registry = Registry::new(3_600_000, calls.clone());
+    let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));
+    let adapter = make_adapter(&echo_def(), "echo", &calls).expect("echo adapter");
     registry
         .register("echo", Source::Config, echo_def(), adapter)
         .expect("register");
     registry.start("echo").await.expect("start");
     let tokens = Arc::new(single_token_manager(TOKEN));
-    let ctx = AppContext::new(registry, tokens, store, "MCP_GATEWAY_TOKEN", 19998);
+    let ctx = AppContext::new(registry, tokens, store, calls, "MCP_GATEWAY_TOKEN", 19998);
     build_app(ctx, None)
 }
 
@@ -133,12 +133,13 @@ async fn health_and_panel_serve() {
     // The page registry and its lazily imported view modules are served like every other panel
     // module: no-store is already the default, and the content type must be exact so browsers
     // accept them as module scripts in subdirectories too.
-    for path in ["/admin/js/page-registry.js", "/admin/js/page-core.js", "/admin/js/views/jobs.js"] {
-        let (status, _, body) = send(
-            &app,
-            local(Request::get(path).body(Body::empty()).unwrap()),
-        )
-        .await;
+    for path in [
+        "/admin/js/page-registry.js",
+        "/admin/js/page-core.js",
+        "/admin/js/views/jobs.js",
+    ] {
+        let (status, _, body) =
+            send(&app, local(Request::get(path).body(Body::empty()).unwrap())).await;
         assert_eq!(status, StatusCode::OK, "{path} must serve");
         assert!(body.contains("export "), "{path} must be a module");
     }
@@ -229,11 +230,8 @@ async fn tools_paging_via_the_admin_api() {
 #[tokio::test]
 async fn panel_call_runs_a_tool_and_logs_it() {
     let app = app_with_echo().await;
-    // Point the call log at a temp dir so the test never touches the real data dir.
-    local_mcp_gateway::calls::set_call_log_dir(std::env::temp_dir().join(format!(
-        "lmg-calls-{}",
-        local_mcp_gateway::util::random_hex(8)
-    )));
+    // The app's log already points at its own scratch dir (app_with_echo): the panel call
+    // writes there and only there, and the assertions below read the same instance.
     let req = Request::post("/api/mcps/echo/call")
         .header(header::HOST, "127.0.0.1:19999")
         .header(header::CONTENT_TYPE, "application/json")

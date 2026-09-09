@@ -181,6 +181,9 @@ pub struct ProxyOpts {
     /// contract — the remote keeping its own copy of the tool changes nothing for a client that
     /// can neither see nor call it.
     pub disabled: ToolToggle,
+    /// Where calls through this proxy are recorded - the app's CallLog, threaded from
+    /// make_adapter through the adapter into every per-request server it builds.
+    pub log: std::sync::Arc<crate::calls::CallLog>,
 }
 
 /// An MCP server whose handlers forward every request to an already-connected remote — port of
@@ -198,6 +201,7 @@ pub struct ProxyServer {
     /// Live disabled-tool set, shared with the adapter (see ProxyOpts::disabled).
     disabled: ToolToggle,
     source: CallSource,
+    log: std::sync::Arc<crate::calls::CallLog>,
 }
 
 impl ProxyServer {
@@ -213,6 +217,7 @@ impl ProxyServer {
             call_timeout_ms: opts.call_timeout_ms,
             disabled: opts.disabled,
             source,
+            log: opts.log,
         }
     }
 
@@ -361,11 +366,12 @@ impl ServerHandler for ProxyServer {
         let timeout = self.call_timeout_ms;
         let source = self.source.clone();
         let disabled = self.disabled.clone();
+        let log = self.log.clone();
         let tool = request.name.to_string();
         let args = request.arguments.clone().map(Value::Object);
         async move {
             let logged_tool = tool.clone();
-            calls::logged(
+            log.logged(
                 mcp.as_deref(),
                 &source,
                 &logged_tool,
@@ -450,6 +456,7 @@ impl ServerHandler for ProxyServer {
         let remote = self.remote.clone();
         let mcp = self.name_snapshot();
         let source = self.source.clone();
+        let log = self.log.clone();
         let uri = request.uri.clone();
         async move {
             if !self.expose_resources {
@@ -457,7 +464,7 @@ impl ServerHandler for ProxyServer {
             }
             // Logged like tools/call above (and like the direct adapters' resource reads): a
             // read is a billed/observable action on the remote, and the Logs tab must show it.
-            calls::logged(
+            log.logged(
                 mcp.as_deref(),
                 &source,
                 "resources/read",
@@ -677,6 +684,7 @@ mod tests {
                 // before its capabilities are read.
                 remote_caps: None,
                 disabled: Arc::new(RwLock::new(disabled)),
+                log: crate::calls::test_log(),
             },
             crate::calls::current_source(),
         )
@@ -693,7 +701,9 @@ mod tests {
         });
         let disabled: std::collections::HashSet<String> = ["t1".to_string()].into();
         let server = proxy_server_with_disabled(remote, None, disabled);
-        let client = crate::introspect::open_session(server).await.expect("session");
+        let client = crate::introspect::open_session(server)
+            .await
+            .expect("session");
         let result = client.list_tools(None).await.expect("tools/list");
         let names: Vec<String> = result.tools.iter().map(|t| t.name.to_string()).collect();
         assert_eq!(names, vec!["t0".to_string(), "t2".to_string()]);

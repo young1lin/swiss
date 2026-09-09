@@ -288,21 +288,27 @@ pub trait Adapter: Send + Sync {
 /// Map a config/managed ServerDef to its Adapter — port of `factory.ts` minus the
 /// third-party module door (ADR-001: an external adapter becomes a proc or http MCP).
 /// `${ENV_VAR}` refs are expanded HERE, never at load, so persisted defs keep the reference.
-pub fn make_adapter(raw_def: &ServerDef, name: &str) -> Result<Arc<dyn Adapter>, String> {
+/// `log` is the call log every adapter records into - the caller's, so an app and its
+/// adapters share exactly one view of what was called.
+pub fn make_adapter(
+    raw_def: &ServerDef,
+    name: &str,
+    log: &std::sync::Arc<crate::calls::CallLog>,
+) -> Result<Arc<dyn Adapter>, String> {
     let def = crate::config::resolve_def(raw_def);
     match def.type_() {
-        "echo" => Ok(Arc::new(echo::EchoAdapter::new(name))),
+        "echo" => Ok(Arc::new(echo::EchoAdapter::new(name, log.clone()))),
         "mysql" => {
             let engine = mysql::MysqlEngine::new(&def, name)?;
-            Ok(Arc::new(direct::DirectAdapter::new(&def, name, engine)))
+            Ok(Arc::new(direct::DirectAdapter::new(&def, name, engine, log.clone())))
         }
-        "pg" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, pg::PgEngine::new(&def, name)))),
-        "redis" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, redis::RedisEngine::new(&def, name)))),
-        "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?))),
-        "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name))),
-        "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name)?)),
+        "pg" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, pg::PgEngine::new(&def, name), log.clone()))),
+        "redis" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, redis::RedisEngine::new(&def, name), log.clone()))),
+        "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?, log.clone()))),
+        "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name, log.clone()))),
+        "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name, log.clone())?)),
         #[cfg(feature = "mongo")]
-        "mongo" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, mongo::MongoEngine::new(&def, name)?))),
+        "mongo" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, mongo::MongoEngine::new(&def, name)?, log.clone()))),
         #[cfg(not(feature = "mongo"))]
         "mongo" => Err("Mongo adapter is unavailable in this build; rebuild with --features mongo".into()),
         other => Err(format!(
@@ -327,7 +333,7 @@ mod tests {
     }
 
     fn kind_of(v: Value) -> Result<String, String> {
-        make_adapter(&def(v), "an-mcp").map(|a| a.kind().to_string())
+        make_adapter(&def(v), "an-mcp", &crate::calls::test_log()).map(|a| a.kind().to_string())
     }
 
     fn rest_def() -> Value {
@@ -344,7 +350,10 @@ mod tests {
             kind_of(json!({ "type": "mysql", "host": "x" })),
             Ok("mysql".into())
         );
-        assert_eq!(kind_of(json!({ "type": "pg", "url": "x" })), Ok("pg".into()));
+        assert_eq!(
+            kind_of(json!({ "type": "pg", "url": "x" })),
+            Ok("pg".into())
+        );
         assert_eq!(
             kind_of(json!({ "type": "redis", "host": "x" })),
             Ok("redis".into())
@@ -365,7 +374,9 @@ mod tests {
         let err = kind_of(json!({ "type": "nope" })).unwrap_err();
         assert!(err.contains("Unknown adapter type: nope"), "{err}");
         // The message is the whole help a user gets in the panel, so it lists what IS available.
-        for built_in in ["echo", "mysql", "pg", "redis", "mongo", "proc", "http", "rest"] {
+        for built_in in [
+            "echo", "mysql", "pg", "redis", "mongo", "proc", "http", "rest",
+        ] {
             assert!(err.contains(built_in), "{built_in} missing from: {err}");
         }
         // A def with no type at all lands in the same arm rather than panicking.
@@ -406,9 +417,11 @@ mod tests {
         assert!(kind_of(json!({ "type": "rest" }))
             .unwrap_err()
             .contains("`tools` array"));
-        assert!(kind_of(json!({ "type": "rest", "tools": [{ "name": "t" }] }))
-            .unwrap_err()
-            .contains("has no request"));
+        assert!(
+            kind_of(json!({ "type": "rest", "tools": [{ "name": "t" }] }))
+                .unwrap_err()
+                .contains("has no request")
+        );
     }
 
     #[tokio::test]
@@ -418,11 +431,13 @@ mod tests {
         let http = make_adapter(
             &def(json!({ "type": "http", "url": "https://example.test/mcp" })),
             "an-mcp",
+            &crate::calls::test_log(),
         )
         .expect("http adapter");
         assert!(http.ping().await.is_none());
 
-        let rest = make_adapter(&def(rest_def()), "an-mcp").expect("rest adapter");
+        let rest = make_adapter(&def(rest_def()), "an-mcp", &crate::calls::test_log())
+            .expect("rest adapter");
         assert!(rest.ping().await.is_none());
     }
 
@@ -430,13 +445,19 @@ mod tests {
     fn only_the_db_adapters_carry_toggles_and_a_browser() {
         // The toggles are the DirectAdapter shell's; echo has neither, which is what makes the
         // panel hide those controls for it.
-        let echo = make_adapter(&def(json!({ "type": "echo" })), "an-mcp").expect("echo");
+        let echo = make_adapter(
+            &def(json!({ "type": "echo" })),
+            "an-mcp",
+            &crate::calls::test_log(),
+        )
+        .expect("echo");
         assert!(echo.tool_toggle().is_none());
         assert!(echo.browser().is_none());
 
         let mysql = make_adapter(
             &def(json!({ "type": "mysql", "host": "x", "database": "shop" })),
             "an-mcp",
+            &crate::calls::test_log(),
         )
         .expect("mysql");
         assert!(mysql.tool_toggle().is_some());
@@ -445,8 +466,12 @@ mod tests {
 
         // ...and the browser needs a database to scope itself to, so a server-wide mysql def has
         // the toggles but no browser tab.
-        let unscoped =
-            make_adapter(&def(json!({ "type": "mysql", "host": "x" })), "an-mcp").expect("mysql");
+        let unscoped = make_adapter(
+            &def(json!({ "type": "mysql", "host": "x" })),
+            "an-mcp",
+            &crate::calls::test_log(),
+        )
+        .expect("mysql");
         assert!(unscoped.tool_toggle().is_some());
         assert!(unscoped.browser().is_none());
     }
@@ -458,7 +483,7 @@ mod tests {
         let raw = def(json!({ "type": "http", "url": "${LMG_TEST_MISSING_URL}" }));
         // An unset ref resolves to nothing, which is exactly the "needs a url" error — proof the
         // expansion ran, since the unexpanded string is a perfectly good non-empty url.
-        let err = match make_adapter(&raw, "an-mcp") {
+        let err = match make_adapter(&raw, "an-mcp", &crate::calls::test_log()) {
             Err(err) => err,
             Ok(_) => panic!("an unset url ref must not build an http adapter"),
         };

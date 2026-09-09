@@ -293,19 +293,12 @@ fn required_bounded(
 
 /// `additionalProperties: false` semantics: every key must be known, and the error names
 /// the layer's legal fields - the house style services::actions uses for exec input.
-fn check_known(
-    obj: &Map<String, Value>,
-    parent: &str,
-    known: &[&str],
-) -> Result<(), ConfigError> {
+fn check_known(obj: &Map<String, Value>, parent: &str, known: &[&str]) -> Result<(), ConfigError> {
     for key in obj.keys() {
         if !known.contains(&key.as_str()) {
             return Err(ConfigError::new(
                 field_path(parent, key),
-                format!(
-                    "unknown field {key:?} (known fields: {})",
-                    known.join(", ")
-                ),
+                format!("unknown field {key:?} (known fields: {})", known.join(", ")),
             ));
         }
     }
@@ -395,8 +388,7 @@ fn parse_at(config: &Value, boot: bool) -> Result<BootParsed, ConfigError> {
     // (docs/11 §3.2).
     if let Some(v) = obj.get("schemaVersion") {
         if v != &Value::Null {
-            let n = whole_u64(v)
-                .ok_or_else(|| type_err("schemaVersion", "a whole number"))?;
+            let n = whole_u64(v).ok_or_else(|| type_err("schemaVersion", "a whole number"))?;
             if n != 2 {
                 return Err(ConfigError::new(
                     "schemaVersion",
@@ -405,12 +397,22 @@ fn parse_at(config: &Value, boot: bool) -> Result<BootParsed, ConfigError> {
             }
         }
     }
-    let max_concurrent_runs =
-        opt_bounded(obj, "maxConcurrentRuns", "", DEFAULT_MAX_CONCURRENT_RUNS as u64, 1, 64)?
-            as usize;
-    let max_queued_runs =
-        opt_bounded(obj, "maxQueuedRuns", "", DEFAULT_MAX_QUEUED_RUNS as u64, 0, 1024)?
-            as usize;
+    let max_concurrent_runs = opt_bounded(
+        obj,
+        "maxConcurrentRuns",
+        "",
+        DEFAULT_MAX_CONCURRENT_RUNS as u64,
+        1,
+        64,
+    )? as usize;
+    let max_queued_runs = opt_bounded(
+        obj,
+        "maxQueuedRuns",
+        "",
+        DEFAULT_MAX_QUEUED_RUNS as u64,
+        0,
+        1024,
+    )? as usize;
     let retention = parse_retention(obj.get("retention"))?;
     let (definitions, dropped) = parse_definitions(obj.get("definitions"), boot)?;
     Ok(BootParsed {
@@ -567,18 +569,17 @@ fn parse_definition(id: &str, body: &Value, parent: &str) -> Result<JobDefinitio
         1000,
         86_400_000,
     )?;
-    let overlap =
-        if enum_str(obj, "overlap", parent, &["skip", "queue-one"])? == Some("queue-one") {
-            Overlap::QueueOne
-        } else {
-            Overlap::Skip
-        };
-    let misfire =
-        if enum_str(obj, "misfire", parent, &["skip", "run-once"])? == Some("run-once") {
-            Misfire::RunOnce
-        } else {
-            Misfire::Skip
-        };
+    let overlap = if enum_str(obj, "overlap", parent, &["skip", "queue-one"])? == Some("queue-one")
+    {
+        Overlap::QueueOne
+    } else {
+        Overlap::Skip
+    };
+    let misfire = if enum_str(obj, "misfire", parent, &["skip", "run-once"])? == Some("run-once") {
+        Misfire::RunOnce
+    } else {
+        Misfire::Skip
+    };
     let retry = parse_retry(obj.get("retry"), &field_path(parent, "retry"))?;
     let output = parse_output(obj.get("output"), &field_path(parent, "output"))?;
 
@@ -647,15 +648,16 @@ fn parse_labels(v: Option<&Value>, parent: &str) -> Result<Vec<String>, ConfigEr
     if items.len() > 16 {
         return Err(ConfigError::new(
             parent,
-            format!("holds {} entries; at most 16 labels are accepted", items.len()),
+            format!(
+                "holds {} entries; at most 16 labels are accepted",
+                items.len()
+            ),
         ));
     }
     let mut labels = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
         let path = format!("{parent}[{i}]");
-        let s = item
-            .as_str()
-            .ok_or_else(|| type_err(path, "a string"))?;
+        let s = item.as_str().ok_or_else(|| type_err(path, "a string"))?;
         if s.chars().count() > 64 {
             return Err(ConfigError::new(
                 format!("{parent}[{i}]"),
@@ -672,16 +674,12 @@ fn parse_trigger(v: Option<&Value>, parent: &str) -> Result<Trigger, ConfigError
     let obj = body
         .as_object()
         .ok_or_else(|| type_err(parent, "an object"))?;
-    let kind = obj
-        .get("kind")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            ConfigError::new(
-                field_path(parent, "kind"),
-                "is required and selects the trigger: \"manual\", \"interval\" or \"cron\""
-                    .to_string(),
-            )
-        })?;
+    let kind = obj.get("kind").and_then(Value::as_str).ok_or_else(|| {
+        ConfigError::new(
+            field_path(parent, "kind"),
+            "is required and selects the trigger: \"manual\", \"interval\" or \"cron\"".to_string(),
+        )
+    })?;
     match kind {
         "manual" => {
             check_known(obj, parent, &["kind"])?;
@@ -690,22 +688,19 @@ fn parse_trigger(v: Option<&Value>, parent: &str) -> Result<Trigger, ConfigError
         "interval" => {
             check_known(obj, parent, &["kind", "everyMs", "firstRun"])?;
             // 1 second to 365 days (docs/11 §3.3).
-            let every_ms = required_bounded(
-                obj.get("everyMs"),
-                parent,
-                "everyMs",
-                1000,
-                31_536_000_000,
-            )?;
-            let first_run =
-                if enum_str(obj, "firstRun", parent, &["after-interval", "immediate"])?
-                    == Some("immediate")
-                {
-                    FirstRun::Immediate
-                } else {
-                    FirstRun::AfterInterval
-                };
-            Ok(Trigger::Interval { every_ms, first_run })
+            let every_ms =
+                required_bounded(obj.get("everyMs"), parent, "everyMs", 1000, 31_536_000_000)?;
+            let first_run = if enum_str(obj, "firstRun", parent, &["after-interval", "immediate"])?
+                == Some("immediate")
+            {
+                FirstRun::Immediate
+            } else {
+                FirstRun::AfterInterval
+            };
+            Ok(Trigger::Interval {
+                every_ms,
+                first_run,
+            })
         }
         "cron" => {
             check_known(obj, parent, &["kind", "expression", "timezone"])?;
@@ -749,9 +744,7 @@ fn parse_trigger(v: Option<&Value>, parent: &str) -> Result<Trigger, ConfigError
         }
         other => Err(ConfigError::new(
             field_path(parent, "kind"),
-            format!(
-                "must be \"manual\", \"interval\" or \"cron\", got {other:?}"
-            ),
+            format!("must be \"manual\", \"interval\" or \"cron\", got {other:?}"),
         )),
     }
 }
@@ -817,11 +810,13 @@ fn parse_action(v: Option<&Value>, parent: &str) -> Result<ActionRef, ConfigErro
 fn parse_retry(v: Option<&Value>, parent: &str) -> Result<RetryPolicy, ConfigError> {
     let obj = match v {
         None | Some(Value::Null) => return Ok(RetryPolicy::default()),
-        Some(v) => v
-            .as_object()
-            .ok_or_else(|| type_err(parent, "an object"))?,
+        Some(v) => v.as_object().ok_or_else(|| type_err(parent, "an object"))?,
     };
-    check_known(obj, parent, &["maxAttempts", "delayMs", "backoff", "retryOn"])?;
+    check_known(
+        obj,
+        parent,
+        &["maxAttempts", "delayMs", "backoff", "retryOn"],
+    )?;
     let max_attempts = opt_bounded(obj, "maxAttempts", parent, 1, 1, 10)? as u32;
     let delay_ms = opt_bounded(obj, "delayMs", parent, 0, 0, 3_600_000)?;
     let backoff =
@@ -854,7 +849,12 @@ fn parse_retry(v: Option<&Value>, parent: &str) -> Result<RetryPolicy, ConfigErr
             // An empty array is legal and means "never retry" (docs/11 §3.2).
             list
         }
-        Some(_) => return Err(type_err(field_path(parent, "retryOn"), "an array of strings")),
+        Some(_) => {
+            return Err(type_err(
+                field_path(parent, "retryOn"),
+                "an array of strings",
+            ))
+        }
     };
     Ok(RetryPolicy {
         max_attempts,
@@ -867,17 +867,14 @@ fn parse_retry(v: Option<&Value>, parent: &str) -> Result<RetryPolicy, ConfigErr
 fn parse_output(v: Option<&Value>, parent: &str) -> Result<OutputPolicy, ConfigError> {
     let obj = match v {
         None | Some(Value::Null) => return Ok(OutputPolicy::default()),
-        Some(v) => v
-            .as_object()
-            .ok_or_else(|| type_err(parent, "an object"))?,
+        Some(v) => v.as_object().ok_or_else(|| type_err(parent, "an object"))?,
     };
     check_known(obj, parent, &["capture", "maxBytes"])?;
-    let capture =
-        if enum_str(obj, "capture", parent, &["tail", "none"])? == Some("none") {
-            OutputCapture::None
-        } else {
-            OutputCapture::Tail
-        };
+    let capture = if enum_str(obj, "capture", parent, &["tail", "none"])? == Some("none") {
+        OutputCapture::None
+    } else {
+        OutputCapture::Tail
+    };
     let max_bytes = opt_bounded(obj, "maxBytes", parent, 16_384, 1024, 1_048_576)? as usize;
     Ok(OutputPolicy { capture, max_bytes })
 }
@@ -1003,9 +1000,8 @@ impl JobDefinition {
                 o.get("command")
                     .and_then(Value::as_str)
                     .is_some_and(|c| !c.trim().is_empty())
-                    && o.iter().all(|(k, v)| {
-                        matches!(k.as_str(), "command" | "cwd") && v.is_string()
-                    })
+                    && o.iter()
+                        .all(|(k, v)| matches!(k.as_str(), "command" | "cwd") && v.is_string())
             });
         let v1_trigger = match &self.trigger {
             Trigger::Cron { .. } => true,
@@ -1080,7 +1076,11 @@ mod tests {
 
     fn parse_one(body: Value) -> JobDefinition {
         let parsed = JobsConfig::parse(&one_def(body)).expect("a valid definition");
-        parsed.definitions.into_iter().next().expect("one definition")
+        parsed
+            .definitions
+            .into_iter()
+            .next()
+            .expect("one definition")
     }
 
     /// Set (or overwrite) one key on a definition body.
@@ -1099,8 +1099,6 @@ mod tests {
             enabled,
             timeout_ms: 120_000,
             cwd: Some("C:/work".into()),
-            last_run_ms: None,
-            last_ok: None,
         }
     }
 
@@ -1150,7 +1148,10 @@ mod tests {
         assert!(!def.disabled);
         assert_eq!(def.timeout_ms, 600_000);
         // The credential stays a REFERENCE, never a resolved value (docs/11 §2 rule 2).
-        assert_eq!(def.action.input["env"]["PGPASSWORD"], json!("${APP_DB_PASSWORD}"));
+        assert_eq!(
+            def.action.input["env"]["PGPASSWORD"],
+            json!("${APP_DB_PASSWORD}")
+        );
         assert!(matches!(def.trigger, Trigger::Cron { .. }));
     }
 
@@ -1206,10 +1207,22 @@ mod tests {
             (json!({ "retention": { "days": 0 } }), "retention.days"),
             (json!({ "retention": { "days": 3651 } }), "retention.days"),
             (json!({ "retention": { "days": "180" } }), "retention.days"),
-            (json!({ "retention": { "maxBytesPerJob": 65535 } }), "retention.maxBytesPerJob"),
-            (json!({ "retention": { "maxBytesPerJob": 67108865 } }), "retention.maxBytesPerJob"),
-            (json!({ "retention": { "maxHistoryBytes": 1048575 } }), "retention.maxHistoryBytes"),
-            (json!({ "retention": { "maxHistoryBytes": 1073741825 } }), "retention.maxHistoryBytes"),
+            (
+                json!({ "retention": { "maxBytesPerJob": 65535 } }),
+                "retention.maxBytesPerJob",
+            ),
+            (
+                json!({ "retention": { "maxBytesPerJob": 67108865 } }),
+                "retention.maxBytesPerJob",
+            ),
+            (
+                json!({ "retention": { "maxHistoryBytes": 1048575 } }),
+                "retention.maxHistoryBytes",
+            ),
+            (
+                json!({ "retention": { "maxHistoryBytes": 1073741825 } }),
+                "retention.maxHistoryBytes",
+            ),
             (json!({ "definitions": [] }), "definitions"),
         ] {
             let err = refused(&config);
@@ -1231,8 +1244,16 @@ mod tests {
     fn definition_level_fields_are_bounds_and_type_checked_with_paths() {
         for (key, value, path) in [
             ("timeoutMs", json!(999), "definitions.nightly.timeoutMs"),
-            ("timeoutMs", json!(86_400_001), "definitions.nightly.timeoutMs"),
-            ("timeoutMs", json!("600000"), "definitions.nightly.timeoutMs"),
+            (
+                "timeoutMs",
+                json!(86_400_001),
+                "definitions.nightly.timeoutMs",
+            ),
+            (
+                "timeoutMs",
+                json!("600000"),
+                "definitions.nightly.timeoutMs",
+            ),
             ("title", json!(5), "definitions.nightly.title"),
             ("labels", json!("db"), "definitions.nightly.labels"),
             ("labels", json!([0]), "definitions.nightly.labels[0]"),
@@ -1262,13 +1283,34 @@ mod tests {
         assert_eq!(refused_def(body).path, "definitions.nightly.labels[0]");
         // Retry: the object's own bounds apply before anything else.
         for (retry, path) in [
-            (json!({ "maxAttempts": 0 }), "definitions.nightly.retry.maxAttempts"),
-            (json!({ "maxAttempts": 11 }), "definitions.nightly.retry.maxAttempts"),
-            (json!({ "maxAttempts": 1.5 }), "definitions.nightly.retry.maxAttempts"),
-            (json!({ "delayMs": 3_600_001 }), "definitions.nightly.retry.delayMs"),
-            (json!({ "retryOn": "failure" }), "definitions.nightly.retry.retryOn"),
-            (json!({ "retryOn": ["gone"] }), "definitions.nightly.retry.retryOn[0]"),
-            (json!({ "backoff": "linear" }), "definitions.nightly.retry.backoff"),
+            (
+                json!({ "maxAttempts": 0 }),
+                "definitions.nightly.retry.maxAttempts",
+            ),
+            (
+                json!({ "maxAttempts": 11 }),
+                "definitions.nightly.retry.maxAttempts",
+            ),
+            (
+                json!({ "maxAttempts": 1.5 }),
+                "definitions.nightly.retry.maxAttempts",
+            ),
+            (
+                json!({ "delayMs": 3_600_001 }),
+                "definitions.nightly.retry.delayMs",
+            ),
+            (
+                json!({ "retryOn": "failure" }),
+                "definitions.nightly.retry.retryOn",
+            ),
+            (
+                json!({ "retryOn": ["gone"] }),
+                "definitions.nightly.retry.retryOn[0]",
+            ),
+            (
+                json!({ "backoff": "linear" }),
+                "definitions.nightly.retry.backoff",
+            ),
         ] {
             let mut body = def_body();
             set(&mut body, "retry", retry);
@@ -1288,7 +1330,12 @@ mod tests {
 
     #[test]
     fn numbers_reject_strings_fractions_and_negatives_but_tolerate_js_spelling() {
-        for bad in [json!("300000"), json!(300000.5), json!(-300000), json!(true)] {
+        for bad in [
+            json!("300000"),
+            json!(300000.5),
+            json!(-300000),
+            json!(true),
+        ] {
             let err = refused(&json!({ "definitions": { "nightly": def_with(json!({
                 "kind": "interval", "everyMs": bad,
             })) } }));
@@ -1320,8 +1367,16 @@ mod tests {
         let err = refused_def(body);
         assert_eq!(err.path, "definitions.nightly.command");
         for legal in [
-            "title", "labels", "disabled", "trigger", "action", "timeoutMs", "overlap",
-            "misfire", "retry", "output",
+            "title",
+            "labels",
+            "disabled",
+            "trigger",
+            "action",
+            "timeoutMs",
+            "overlap",
+            "misfire",
+            "retry",
+            "output",
         ] {
             assert!(err.message.contains(legal), "{err}");
         }
@@ -1352,7 +1407,11 @@ mod tests {
 
         // Action, retry, output and retention layers.
         let mut body = def_body();
-        set(&mut body, "action", json!({ "type": "process.exec", "program": "cargo" }));
+        set(
+            &mut body,
+            "action",
+            json!({ "type": "process.exec", "program": "cargo" }),
+        );
         let err = refused_def(body);
         assert_eq!(err.path, "definitions.nightly.action.program");
         assert!(err.message.contains("input"), "{err}");
@@ -1382,7 +1441,11 @@ mod tests {
             Trigger::Manual
         ));
         let def = parse_one(def_with(json!({ "kind": "interval", "everyMs": 60000 })));
-        let Trigger::Interval { every_ms, first_run } = &def.trigger else {
+        let Trigger::Interval {
+            every_ms,
+            first_run,
+        } = &def.trigger
+        else {
             panic!("expected an interval trigger");
         };
         assert_eq!(*every_ms, 60_000);
@@ -1395,8 +1458,10 @@ mod tests {
         };
         assert_eq!(*first_run, FirstRun::Immediate);
         assert!(matches!(
-            parse_one(def_with(json!({ "kind": "cron", "expression": "30 3 * * *" })))
-                .trigger,
+            parse_one(def_with(
+                json!({ "kind": "cron", "expression": "30 3 * * *" })
+            ))
+            .trigger,
             Trigger::Cron { .. }
         ));
 
@@ -1409,21 +1474,53 @@ mod tests {
 
         for (trigger, path, fragment) in [
             // kind missing, or not one of the three.
-            (json!({ "everyMs": 60000 }), "definitions.nightly.trigger.kind", "manual"),
-            (json!({ "kind": "webhook" }), "definitions.nightly.trigger.kind", "cron"),
+            (
+                json!({ "everyMs": 60000 }),
+                "definitions.nightly.trigger.kind",
+                "manual",
+            ),
+            (
+                json!({ "kind": "webhook" }),
+                "definitions.nightly.trigger.kind",
+                "cron",
+            ),
             // interval: everyMs required and bounded; firstRun is an enum.
-            (json!({ "kind": "interval" }), "definitions.nightly.trigger.everyMs", "required"),
-            (json!({ "kind": "interval", "everyMs": 999 }), "definitions.nightly.trigger.everyMs", "between 1000"),
-            (json!({ "kind": "interval", "everyMs": 31_536_000_001u64 }), "definitions.nightly.trigger.everyMs", "between 1000"),
+            (
+                json!({ "kind": "interval" }),
+                "definitions.nightly.trigger.everyMs",
+                "required",
+            ),
+            (
+                json!({ "kind": "interval", "everyMs": 999 }),
+                "definitions.nightly.trigger.everyMs",
+                "between 1000",
+            ),
+            (
+                json!({ "kind": "interval", "everyMs": 31_536_000_001u64 }),
+                "definitions.nightly.trigger.everyMs",
+                "between 1000",
+            ),
             (
                 json!({ "kind": "interval", "everyMs": 60000, "firstRun": "now" }),
                 "definitions.nightly.trigger.firstRun",
                 "after-interval",
             ),
             // cron: field count and values come from CronExpr; timezone is local-only.
-            (json!({ "kind": "cron", "expression": "30 3 * *" }), "definitions.nightly.trigger.expression", "5 fields"),
-            (json!({ "kind": "cron", "expression": "" }), "definitions.nightly.trigger.expression", "cron"),
-            (json!({ "kind": "cron", "expression": "99 * * * *" }), "definitions.nightly.trigger.expression", "0..=59"),
+            (
+                json!({ "kind": "cron", "expression": "30 3 * *" }),
+                "definitions.nightly.trigger.expression",
+                "5 fields",
+            ),
+            (
+                json!({ "kind": "cron", "expression": "" }),
+                "definitions.nightly.trigger.expression",
+                "cron",
+            ),
+            (
+                json!({ "kind": "cron", "expression": "99 * * * *" }),
+                "definitions.nightly.trigger.expression",
+                "0..=59",
+            ),
             (
                 json!({ "kind": "cron", "expression": "30 3 * * *", "timezone": "UTC" }),
                 "definitions.nightly.trigger.timezone",
@@ -1452,7 +1549,11 @@ mod tests {
         // delayMs counts toward the same ceiling: 10 * (5,040,001 + 3,600,000) ms.
         let mut body = def_body();
         set(&mut body, "timeoutMs", json!(5_040_001));
-        set(&mut body, "retry", json!({ "maxAttempts": 10, "delayMs": 3_600_000 }));
+        set(
+            &mut body,
+            "retry",
+            json!({ "maxAttempts": 10, "delayMs": 3_600_000 }),
+        );
         let err = refused_def(body);
         assert_eq!(err.path, "definitions.nightly.retry");
         assert!(err.message.contains("24 h"), "{err}");
@@ -1466,12 +1567,36 @@ mod tests {
         for (key, value, path) in [
             ("overlap", json!("queue-one"), "definitions.nightly.overlap"),
             ("misfire", json!("run-once"), "definitions.nightly.misfire"),
-            ("retry", json!({ "maxAttempts": 2 }), "definitions.nightly.retry"),
-            ("retry", json!({ "delayMs": 1000 }), "definitions.nightly.retry"),
-            ("retry", json!({ "backoff": "exponential" }), "definitions.nightly.retry"),
-            ("retry", json!({ "retryOn": [] }), "definitions.nightly.retry"),
-            ("retry", json!({ "retryOn": ["timeout"] }), "definitions.nightly.retry"),
-            ("output", json!({ "capture": "none" }), "definitions.nightly.output.capture"),
+            (
+                "retry",
+                json!({ "maxAttempts": 2 }),
+                "definitions.nightly.retry",
+            ),
+            (
+                "retry",
+                json!({ "delayMs": 1000 }),
+                "definitions.nightly.retry",
+            ),
+            (
+                "retry",
+                json!({ "backoff": "exponential" }),
+                "definitions.nightly.retry",
+            ),
+            (
+                "retry",
+                json!({ "retryOn": [] }),
+                "definitions.nightly.retry",
+            ),
+            (
+                "retry",
+                json!({ "retryOn": ["timeout"] }),
+                "definitions.nightly.retry",
+            ),
+            (
+                "output",
+                json!({ "capture": "none" }),
+                "definitions.nightly.output.capture",
+            ),
         ] {
             let mut body = def_body();
             set(&mut body, key, value);
@@ -1484,8 +1609,16 @@ mod tests {
         let mut body = def_body();
         set(&mut body, "overlap", json!("skip"));
         set(&mut body, "misfire", json!("skip"));
-        set(&mut body, "retry", json!({ "maxAttempts": 1, "delayMs": 0, "backoff": "fixed", "retryOn": ["failure"] }));
-        set(&mut body, "output", json!({ "capture": "tail", "maxBytes": 16384 }));
+        set(
+            &mut body,
+            "retry",
+            json!({ "maxAttempts": 1, "delayMs": 0, "backoff": "fixed", "retryOn": ["failure"] }),
+        );
+        set(
+            &mut body,
+            "output",
+            json!({ "capture": "tail", "maxBytes": 16384 }),
+        );
         let def = parse_one(body);
         assert_eq!(def.overlap, Overlap::Skip);
         assert_eq!(def.misfire, Misfire::Skip);
@@ -1585,7 +1718,10 @@ mod tests {
                 "input": { "program": "echo", "args": ["a b", "c\"d"] },
             },
         }));
-        assert_eq!(def.to_v1_view()["command"], json!("echo \"a b\" \"c\\\"d\""));
+        assert_eq!(
+            def.to_v1_view()["command"],
+            json!("echo \"a b\" \"c\\\"d\"")
+        );
 
         // A capability with no command shape still projects a row: a bracketed
         // placeholder, read-only.
@@ -1596,7 +1732,10 @@ mod tests {
         let view = def.to_v1_view();
         assert_eq!(view["command"], json!("[http.request]"));
         assert_eq!(view["editableInV1"], json!(false));
-        assert!(view.get("everySec").is_none(), "1500 ms is not a whole second: {view}");
+        assert!(
+            view.get("everySec").is_none(),
+            "1500 ms is not a whole second: {view}"
+        );
 
         // v2 decoration (title, labels) also makes the row not v1-editable: a v1
         // overwrite would drop it.
@@ -1616,10 +1755,20 @@ mod tests {
         let err = refused(&leftover);
         assert_eq!(err.path, "definitions.x.trigger", "{err}");
         let boot = JobsConfig::parse_boot(&leftover).expect("boot tolerates it");
-        assert!(boot.config.definitions.is_empty(), "the placeholder does not run");
+        assert!(
+            boot.config.definitions.is_empty(),
+            "the placeholder does not run"
+        );
         assert_eq!(boot.dropped.len(), 1);
-        assert_eq!(boot.dropped[0].0, "x", "the drop report feeds the boot warn");
-        assert!(boot.dropped[0].1.contains("trigger"), "{}", boot.dropped[0].1);
+        assert_eq!(
+            boot.dropped[0].0, "x",
+            "the drop report feeds the boot warn"
+        );
+        assert!(
+            boot.dropped[0].1.contains("trigger"),
+            "{}",
+            boot.dropped[0].1
+        );
 
         // A valid neighbour survives; only the stale entry goes.
         let mixed = json!({ "definitions": { "x": {}, "good": def_body() } });
@@ -1676,11 +1825,11 @@ mod tests {
         );
         // But the input must at least be an object, at its own path.
         let mut body = def_body();
-        set(&mut body, "action", json!({ "type": "process.exec", "input": "cargo" }));
-        assert_eq!(
-            refused_def(body).path,
-            "definitions.nightly.action.input"
+        set(
+            &mut body,
+            "action",
+            json!({ "type": "process.exec", "input": "cargo" }),
         );
+        assert_eq!(refused_def(body).path, "definitions.nightly.action.input");
     }
 }
-

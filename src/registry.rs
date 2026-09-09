@@ -19,7 +19,6 @@ use std::sync::{Arc, RwLock};
 use serde_json::{json, Value};
 
 use crate::adapters::{Adapter, McpEndpoint};
-use crate::calls::{clear_calls, forget_call_alias, rename_calls};
 use crate::config::ServerDef;
 use crate::log;
 use crate::paging::PageCache;
@@ -144,6 +143,9 @@ type Evictor = Box<dyn Fn(&str) + Send + Sync>;
 
 pub struct Registry {
     entries: RwLock<HashMap<String, Arc<EntryInner>>>,
+    /// The call log every registered MCP records into - shared with the adapters (handed out
+    /// at make_adapter time) and used here for rename/delete following and alias cleanup.
+    calls: Arc<crate::calls::CallLog>,
     /// Called when an entry's name is abandoned (rename's old name, or delete) so the router can
     /// close the endpoint it cached under that name. Without it the handler leaks: the POST path
     /// that normally evicts a stale handler never runs for a name that no longer resolves.
@@ -158,9 +160,10 @@ fn msg(err: &str) -> String {
 }
 
 impl Registry {
-    pub fn new(interval_ms: u64) -> Arc<Self> {
+    pub fn new(interval_ms: u64, calls: Arc<crate::calls::CallLog>) -> Arc<Self> {
         Arc::new(Self {
             entries: RwLock::new(HashMap::new()),
+            calls,
             evictor: RwLock::new(None),
             timer: std::sync::Mutex::new(None),
             sweeper: std::sync::Mutex::new(None),
@@ -182,7 +185,7 @@ impl Registry {
         // This name now belongs to this MCP, so any leftover rename redirect for it must go —
         // otherwise a new MCP reusing a freed name would have its calls filed under the MCP that
         // vacated it.
-        forget_call_alias(name);
+        self.calls.forget_alias(name);
         // A lazy proc's resting state is idle (spawnable on demand); everything else starts stopped.
         let lifecycle = if is_lazy(&def) {
             Lifecycle::Idle
@@ -541,7 +544,7 @@ impl Registry {
         self.fire_evictor(old_name); // the handler cached under the old name is now unreachable — close + free it
                                      // Carry the call history over and re-key the adapter, so a rename doesn't split one MCP's
                                      // log into a dead half and an empty half.
-        rename_calls(old_name, new_name).await;
+        self.calls.rename_calls(old_name, new_name).await;
         if let Ok(d) = entry.data.read() {
             d.adapter.rename(new_name);
         }
@@ -569,7 +572,7 @@ impl Registry {
             entries.remove(name);
         }
         self.fire_evictor(name); // free the cached handler — the POST path won't, for a name that no longer exists
-        clear_calls(name).await; // nothing left to show it against
+        self.calls.clear_calls(name).await; // nothing left to show it against
         log::log(
             "info",
             "mcp deleted",
@@ -826,10 +829,11 @@ mod tests {
         ServerDef(v.as_object().cloned().unwrap_or_default())
     }
 
-    /// Point the call log at the test binary scratch directory: delete/rename touch it, and a
-    /// unit test must never write into the real `~/.mcp-gateway`.
-    fn use_temp_call_log() {
-        crate::calls::test_log_dir();
+    /// The call log every registry test drives: the test binary's shared scratch instance.
+    /// Delete/rename follow it, and a unit test must never write into the real
+    /// `~/.mcp-gateway`.
+    fn use_temp_call_log() -> Arc<crate::calls::CallLog> {
+        crate::calls::test_log()
     }
 
     /// The Rust shape of the Node suite fakeAdapter / countingAdapter: builds a real echo
@@ -869,7 +873,9 @@ mod tests {
             if self.build_delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.build_delay_ms)).await;
             }
-            crate::adapters::echo::EchoAdapter::new("fake").build().await
+            crate::adapters::echo::EchoAdapter::new("fake", crate::calls::test_log())
+                .build()
+                .await
         }
         async fn ping(&self) -> Option<Result<(), String>> {
             if self.ping_delay_ms > 0 {
@@ -892,7 +898,7 @@ mod tests {
     }
 
     fn reg() -> Arc<Registry> {
-        Registry::new(60_000)
+        Registry::new(60_000, crate::calls::test_log())
     }
 
     fn server_of(r: &Registry, name: &str) -> Option<McpEndpoint> {
@@ -923,8 +929,13 @@ mod tests {
     #[tokio::test]
     async fn starts_and_exposes_a_server_then_stops_and_clears_it() {
         let r = reg();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         assert!(!is_running(&r, "a"));
         r.start("a").await.unwrap();
         assert!(is_running(&r, "a"));
@@ -936,8 +947,13 @@ mod tests {
     async fn start_is_idempotent_and_does_not_rebuild() {
         let r = reg();
         let fake = Fake::default().arc();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), fake.clone())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            fake.clone(),
+        )
+        .unwrap();
         r.start("a").await.unwrap();
         let first = server_of(&r, "a").unwrap();
         r.start("a").await.unwrap();
@@ -949,8 +965,13 @@ mod tests {
     #[tokio::test]
     async fn stop_is_idempotent() {
         let r = reg();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.start("a").await.unwrap();
         r.stop("a").await.unwrap();
         assert!(r.stop("a").await.is_ok());
@@ -960,8 +981,13 @@ mod tests {
     async fn restart_rebuilds_the_server() {
         let r = reg();
         let fake = Fake::default().arc();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), fake.clone())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            fake.clone(),
+        )
+        .unwrap();
         r.start("a").await.unwrap();
         let before = server_of(&r, "a").unwrap();
         r.restart("a").await.unwrap();
@@ -974,8 +1000,13 @@ mod tests {
     async fn rename_moves_the_entry_under_a_new_key() {
         use_temp_call_log();
         let r = reg();
-        r.register("old", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "old",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.start("old").await.unwrap();
         r.rename("old", "new").await.unwrap();
         assert!(!r.has("old"));
@@ -986,10 +1017,20 @@ mod tests {
     #[tokio::test]
     async fn rejects_a_rename_onto_an_existing_name() {
         let r = reg();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
-        r.register("b", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
+        r.register(
+            "b",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         let err = r.rename("a", "b").await.unwrap_err();
         assert!(err.contains("already exists"), "{err}");
         assert!(r.has("a") && r.has("b"));
@@ -998,8 +1039,13 @@ mod tests {
     #[tokio::test]
     async fn renaming_to_the_same_name_is_a_no_op() {
         let r = reg();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.rename("a", "a").await.unwrap();
         assert!(r.has("a"));
     }
@@ -1009,8 +1055,13 @@ mod tests {
         use_temp_call_log();
         let r = reg();
         let fake = Fake::default().arc();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), fake.clone())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            fake.clone(),
+        )
+        .unwrap();
         r.start("a").await.unwrap();
         r.delete("a").await.unwrap();
         assert!(!r.has("a"));
@@ -1024,8 +1075,13 @@ mod tests {
     async fn deletes_a_config_mcp_as_well() {
         use_temp_call_log();
         let r = reg();
-        r.register("a", Source::Config, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Config,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.start("a").await.unwrap();
         r.delete("a").await.unwrap();
         assert!(!r.has("a"));
@@ -1034,10 +1090,20 @@ mod tests {
     #[tokio::test]
     async fn refuses_a_duplicate_registration() {
         let r = reg();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         // `register` hands back the entry on success, which has no Debug — match, do not unwrap.
-        let err = match r.register("a", Source::Config, def(json!({"type":"fake"})), Fake::default().arc()) {
+        let err = match r.register(
+            "a",
+            Source::Config,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        ) {
             Err(err) => err,
             Ok(_) => panic!("a duplicate registration must be refused, not shadowed"),
         };
@@ -1055,8 +1121,13 @@ mod tests {
                 v.push(name.to_string());
             }
         }));
-        r.register("old", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "old",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.rename("old", "new").await.unwrap();
         r.delete("new").await.unwrap();
         // A handler cached under a name that no longer resolves is never evicted by the POST
@@ -1082,13 +1153,25 @@ mod tests {
             ..Default::default()
         }
         .arc();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), old).unwrap();
-        r.start("a").await.unwrap();
-        r.update_def("a", def(json!({"type":"fake","host":"x"})), new.clone(), true)
-            .await
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), old)
             .unwrap();
+        r.start("a").await.unwrap();
+        r.update_def(
+            "a",
+            def(json!({"type":"fake","host":"x"})),
+            new.clone(),
+            true,
+        )
+        .await
+        .unwrap();
         // A connection edit must not silently re-enable every tool and resource the user turned off.
-        assert!(new.tools.as_ref().unwrap().read().unwrap().contains("hidden"));
+        assert!(new
+            .tools
+            .as_ref()
+            .unwrap()
+            .read()
+            .unwrap()
+            .contains("hidden"));
         assert!(!new.resources.as_ref().unwrap().load(Ordering::SeqCst));
         assert!(is_running(&r, "a"));
     }
@@ -1096,16 +1179,33 @@ mod tests {
     #[tokio::test]
     async fn update_def_with_start_false_swaps_the_definition_and_leaves_it_stopped() {
         let r = reg();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.start("a").await.unwrap();
         let next = Fake::default().arc();
-        r.update_def("a", def(json!({"type":"fake","port":1})), next.clone(), false)
-            .await
-            .unwrap();
+        r.update_def(
+            "a",
+            def(json!({"type":"fake","port":1})),
+            next.clone(),
+            false,
+        )
+        .await
+        .unwrap();
         assert!(!is_running(&r, "a"));
         assert_eq!(next.builds(), 0);
-        let port = r.get("a").unwrap().data.read().unwrap().def.get_number("port");
+        let port = r
+            .get("a")
+            .unwrap()
+            .data
+            .read()
+            .unwrap()
+            .def
+            .get_number("port");
         assert_eq!(port, Some(1.0));
     }
 
@@ -1118,7 +1218,12 @@ mod tests {
             "ok",
             Source::Config,
             def(json!({"type":"fake"})),
-            Fake { ping: Some(Ok(())), ping_delay_ms: 5, ..Default::default() }.arc(),
+            Fake {
+                ping: Some(Ok(())),
+                ping_delay_ms: 5,
+                ..Default::default()
+            }
+            .arc(),
         )
         .unwrap();
         r.start("ok").await.unwrap();
@@ -1154,8 +1259,13 @@ mod tests {
     #[tokio::test]
     async fn reports_unknown_when_an_adapter_has_no_ping() {
         let r = reg();
-        r.register("none", Source::Config, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "none",
+            Source::Config,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.start("none").await.unwrap();
         r.check_all().await;
         assert_eq!(row(&r, "none")["state"], "unknown");
@@ -1168,7 +1278,11 @@ mod tests {
             "off",
             Source::Config,
             def(json!({"type":"fake"})),
-            Fake { ping: Some(Err("should not be called".into())), ..Default::default() }.arc(),
+            Fake {
+                ping: Some(Err("should not be called".into())),
+                ..Default::default()
+            }
+            .arc(),
         )
         .unwrap();
         r.check_all().await; // never started
@@ -1214,9 +1328,18 @@ mod tests {
     #[tokio::test]
     async fn builds_once_when_two_starts_arrive_together() {
         let r = reg();
-        let fake = Fake { build_delay_ms: 30, ..Default::default() }.arc();
-        r.register("a", Source::Managed, def(json!({"type":"counting"})), fake.clone())
-            .unwrap();
+        let fake = Fake {
+            build_delay_ms: 30,
+            ..Default::default()
+        }
+        .arc();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"counting"})),
+            fake.clone(),
+        )
+        .unwrap();
         let (x, y) = tokio::join!(r.start("a"), r.start("a"));
         x.unwrap();
         y.unwrap();
@@ -1229,9 +1352,18 @@ mod tests {
     #[tokio::test]
     async fn does_not_leave_a_server_behind_when_stop_races_start() {
         let r = reg();
-        let fake = Fake { build_delay_ms: 30, ..Default::default() }.arc();
-        r.register("a", Source::Managed, def(json!({"type":"counting"})), fake.clone())
-            .unwrap();
+        let fake = Fake {
+            build_delay_ms: 30,
+            ..Default::default()
+        }
+        .arc();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"counting"})),
+            fake.clone(),
+        )
+        .unwrap();
         let (x, y) = tokio::join!(r.start("a"), r.stop("a"));
         x.unwrap();
         y.unwrap();
@@ -1247,9 +1379,18 @@ mod tests {
     #[tokio::test]
     async fn serializes_restart_against_a_concurrent_start() {
         let r = reg();
-        let fake = Fake { build_delay_ms: 30, ..Default::default() }.arc();
-        r.register("a", Source::Managed, def(json!({"type":"counting"})), fake.clone())
-            .unwrap();
+        let fake = Fake {
+            build_delay_ms: 30,
+            ..Default::default()
+        }
+        .arc();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"counting"})),
+            fake.clone(),
+        )
+        .unwrap();
         r.start("a").await.unwrap();
         let (x, y) = tokio::join!(r.restart("a"), r.start("a"));
         x.unwrap();
@@ -1263,10 +1404,19 @@ mod tests {
     async fn refuses_a_start_that_slips_into_the_delete_window() {
         use_temp_call_log();
         let gate = Arc::new(tokio::sync::Notify::new());
-        let fake = Fake { close_gate: Some(gate.clone()), ..Default::default() }.arc();
+        let fake = Fake {
+            close_gate: Some(gate.clone()),
+            ..Default::default()
+        }
+        .arc();
         let r = reg();
-        r.register("x", Source::Managed, def(json!({"type":"fake"})), fake.clone())
-            .unwrap();
+        r.register(
+            "x",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            fake.clone(),
+        )
+        .unwrap();
         r.start("x").await.unwrap();
         assert_eq!(fake.builds(), 1);
 
@@ -1305,8 +1455,13 @@ mod tests {
     #[tokio::test]
     async fn a_lazy_entry_rests_at_idle_and_returns_to_idle_when_stopped() {
         let r = reg();
-        r.register("p", Source::Managed, def(json!({"type":"proc"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "p",
+            Source::Managed,
+            def(json!({"type":"proc"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         assert_eq!(lifecycle(&r, "p"), Lifecycle::Idle);
         r.start("p").await.unwrap();
         r.stop("p").await.unwrap();
@@ -1319,8 +1474,13 @@ mod tests {
     async fn ensure_started_wakes_an_idle_entry_and_passes_a_running_one_through() {
         let r = reg();
         let fake = Fake::default().arc();
-        r.register("p", Source::Managed, def(json!({"type":"proc"})), fake.clone())
-            .unwrap();
+        r.register(
+            "p",
+            Source::Managed,
+            def(json!({"type":"proc"})),
+            fake.clone(),
+        )
+        .unwrap();
         r.ensure_started("p").await.unwrap();
         assert!(is_running(&r, "p"));
         r.ensure_started("p").await.unwrap();
@@ -1330,16 +1490,26 @@ mod tests {
     #[tokio::test]
     async fn the_idle_reaper_only_arms_for_lazy_entries() {
         let r = reg();
-        r.register("eager", Source::Managed, def(json!({"type":"mysql"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "eager",
+            Source::Managed,
+            def(json!({"type":"mysql"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.start("eager").await.unwrap();
         r.note_activity("eager");
         // This timer once armed for every started entry, silently stopping http MCPs and DB pools
         // ten minutes after boot.
         assert_eq!(deadline(&r, "eager"), None);
 
-        r.register("lazy", Source::Managed, def(json!({"type":"proc"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "lazy",
+            Source::Managed,
+            def(json!({"type":"proc"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.start("lazy").await.unwrap();
         assert!(deadline(&r, "lazy").is_some());
     }
@@ -1348,7 +1518,8 @@ mod tests {
     async fn idle_ms_zero_opts_out_of_reaping_entirely() {
         let r = reg();
         let d = def(json!({"type":"proc","idleMs":0}));
-        r.register("p", Source::Managed, d, Fake::default().arc()).unwrap();
+        r.register("p", Source::Managed, d, Fake::default().arc())
+            .unwrap();
         r.start("p").await.unwrap();
         assert_eq!(deadline(&r, "p"), None);
         r.reap_idle().await;
@@ -1374,7 +1545,8 @@ mod tests {
     async fn activity_pushes_the_reap_deadline_back() {
         let r = reg();
         let d = def(json!({"type":"proc","idleMs":50}));
-        r.register("p", Source::Managed, d, Fake::default().arc()).unwrap();
+        r.register("p", Source::Managed, d, Fake::default().arc())
+            .unwrap();
         r.start("p").await.unwrap();
         let first = deadline(&r, "p").unwrap();
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -1385,8 +1557,13 @@ mod tests {
     #[tokio::test]
     async fn child_pids_is_empty_when_nothing_was_spawned() {
         let r = reg();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), Fake::default().arc())
-            .unwrap();
+        r.register(
+            "a",
+            Source::Managed,
+            def(json!({"type":"fake"})),
+            Fake::default().arc(),
+        )
+        .unwrap();
         r.start("a").await.unwrap();
         // Empty is the signal that a memory measurement needs no process-tree walk at all.
         assert!(r.child_pids().is_empty());
@@ -1397,8 +1574,10 @@ mod tests {
         let r = reg();
         let a = Fake::default().arc();
         let b = Fake::default().arc();
-        r.register("a", Source::Managed, def(json!({"type":"fake"})), a.clone()).unwrap();
-        r.register("b", Source::Managed, def(json!({"type":"fake"})), b.clone()).unwrap();
+        r.register("a", Source::Managed, def(json!({"type":"fake"})), a.clone())
+            .unwrap();
+        r.register("b", Source::Managed, def(json!({"type":"fake"})), b.clone())
+            .unwrap();
         r.start("a").await.unwrap();
         r.start("b").await.unwrap();
         r.close_all().await;
@@ -1419,8 +1598,13 @@ mod tests {
             }
         }
         let r = reg();
-        r.register("x", Source::Config, def(json!({"type":"broken"})), Arc::new(Broken))
-            .unwrap();
+        r.register(
+            "x",
+            Source::Config,
+            def(json!({"type":"broken"})),
+            Arc::new(Broken),
+        )
+        .unwrap();
         let err = r.start("x").await.unwrap_err();
         assert!(err.contains("ER_ACCESS_DENIED_ERROR"));
         let row = row(&r, "x");

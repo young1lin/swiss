@@ -83,12 +83,18 @@ pub struct DirectAdapter<E: Engine> {
     name: Arc<std::sync::RwLock<String>>,
     disabled: ToolToggle,
     resources_on: ResourceToggle,
+    log: std::sync::Arc<crate::calls::CallLog>,
 }
 
 impl<E: Engine> DirectAdapter<E> {
     /// `def` must already be a `resolve_def()` clone (env refs expanded), exactly as
     /// `make_adapter` hands it over.
-    pub fn new(def: &ServerDef, name: &str, engine: E) -> Self {
+    pub fn new(
+        def: &ServerDef,
+        name: &str,
+        engine: E,
+        log: std::sync::Arc<crate::calls::CallLog>,
+    ) -> Self {
         // Seed the toggles from the def at construction (boot + tests pass them on the def). The
         // live path mutates the toggle cells directly — `def` here is a resolve_def() clone,
         // never the same object the registry holds, so writing to the def later would not reach
@@ -112,6 +118,7 @@ impl<E: Engine> DirectAdapter<E> {
             name: Arc::new(std::sync::RwLock::new(name.to_string())),
             disabled: Arc::new(std::sync::RwLock::new(disabled)),
             resources_on: Arc::new(std::sync::atomic::AtomicBool::new(resources_on)),
+            log,
         }
     }
 }
@@ -129,11 +136,13 @@ impl<E: Engine + 'static> Adapter for DirectAdapter<E> {
         let engine: Arc<dyn Engine> = self.engine.clone();
         let disabled = self.disabled.clone();
         let resources_on = self.resources_on.clone();
+        let log = self.log.clone();
         Ok(rmcp_endpoint(move |source| ToolServer {
             engine: engine.clone(),
             disabled_tools: disabled.read().map(|g| g.clone()).unwrap_or_default(),
             resources_on: resources_on.load(std::sync::atomic::Ordering::SeqCst),
             source,
+            log: log.clone(),
         }))
     }
 
@@ -207,7 +216,10 @@ mod tests {
             json!(["true"]),
         ] {
             assert!(
-                !def_bool(&def(json!({ "type": "redis", "readonly": off })), "readonly"),
+                !def_bool(
+                    &def(json!({ "type": "redis", "readonly": off })),
+                    "readonly"
+                ),
                 "{off} must not read as on"
             );
         }
@@ -262,7 +274,10 @@ mod tests {
         let first = lazy.get().await.expect("first open");
         let second = lazy.get().await.expect("second get");
         assert_eq!(o.count.load(Ordering::SeqCst), 1, "opened more than once");
-        assert!(Arc::ptr_eq(&first, &second), "two handles for one connection");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "two handles for one connection"
+        );
     }
 
     #[tokio::test]
@@ -446,7 +461,9 @@ mod tests {
             }
         }
         fn resources(&self) -> Option<Arc<dyn ResourceProvider>> {
-            self.0.with_resources.then(|| Arc::new(FakeResources) as Arc<dyn ResourceProvider>)
+            self.0
+                .with_resources
+                .then(|| Arc::new(FakeResources) as Arc<dyn ResourceProvider>)
         }
         async fn ping(&self) -> Option<Result<(), String>> {
             self.0.pings.fetch_add(1, Ordering::SeqCst);
@@ -465,13 +482,20 @@ mod tests {
     fn adapter(d: Value) -> (DirectAdapter<Handle>, Arc<Fake>) {
         let engine = Fake::new();
         (
-            DirectAdapter::new(&def(d), "fake-mcp", Handle(engine.clone())),
+            DirectAdapter::new(
+                &def(d),
+                "fake-mcp",
+                Handle(engine.clone()),
+                crate::calls::test_log(),
+            ),
             engine,
         )
     }
 
     fn disabled_of(a: &DirectAdapter<Handle>) -> Vec<String> {
-        let cell = a.tool_toggle().expect("a direct adapter always has a tool toggle");
+        let cell = a
+            .tool_toggle()
+            .expect("a direct adapter always has a tool toggle");
         let mut names: Vec<String> = cell.read().unwrap().iter().cloned().collect();
         names.sort();
         names
@@ -480,7 +504,11 @@ mod tests {
     /// Tool names off a live tools/list, through the probe half of the endpoint — no transport
     /// and no connection needed, which is the whole point of building lazily.
     async fn tool_names(endpoint: &McpEndpoint) -> Vec<String> {
-        let (items, _) = endpoint.probe.list("tools", None).await.expect("tools/list");
+        let (items, _) = endpoint
+            .probe
+            .list("tools", None)
+            .await
+            .expect("tools/list");
         items
             .iter()
             .filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string))
@@ -607,7 +635,12 @@ mod tests {
             ping_result: None,
             with_resources: false,
         });
-        let a = DirectAdapter::new(&def(json!({ "type": "fake" })), "fake-mcp", Handle(engine));
+        let a = DirectAdapter::new(
+            &def(json!({ "type": "fake" })),
+            "fake-mcp",
+            Handle(engine),
+            crate::calls::test_log(),
+        );
         assert!(a.resource_toggle().unwrap().load(Ordering::SeqCst));
         let endpoint = a.build().await.expect("build");
         assert!(resource_uris(&endpoint).await.is_empty());

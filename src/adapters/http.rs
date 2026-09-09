@@ -396,12 +396,18 @@ pub struct HttpAdapter {
     name: Arc<RwLock<String>>,
     /// One connection, opened once in build() and shared by every per-request server.
     conn: Arc<Lazy<RemoteSession>>,
+    /// Where calls through this adapter are recorded.
+    log: std::sync::Arc<crate::calls::CallLog>,
 }
 
 impl HttpAdapter {
     /// `def` must be the resolve_def() clone make_adapter hands over. A bad proxy URL or a
     /// malformed header name is a start error, not a first-call mystery.
-    pub fn new(def: &ServerDef, name: &str) -> Result<Self, String> {
+    pub fn new(
+        def: &ServerDef,
+        name: &str,
+        log: std::sync::Arc<crate::calls::CallLog>,
+    ) -> Result<Self, String> {
         let url = def
             .get_str("url")
             .filter(|u| !u.is_empty())
@@ -447,6 +453,7 @@ impl HttpAdapter {
             disabled: Arc::new(std::sync::RwLock::new(disabled)),
             name: Arc::new(RwLock::new(name.to_string())),
             conn,
+            log,
         })
     }
 
@@ -462,6 +469,7 @@ impl HttpAdapter {
         let expose_resources = self.expose_resources;
         let expose_prompts = self.expose_prompts;
         let disabled = self.disabled.clone();
+        let log = self.log.clone();
         move |source| {
             ProxyServer::new(
                 session.client.clone(),
@@ -473,6 +481,7 @@ impl HttpAdapter {
                     call_timeout_ms: None,
                     remote_caps: Some(session.caps.clone()),
                     disabled: disabled.clone(),
+                    log: log.clone(),
                 },
                 source,
             )
@@ -489,7 +498,6 @@ impl Adapter for HttpAdapter {
     fn tool_toggle(&self) -> Option<super::ToolToggle> {
         Some(self.disabled.clone())
     }
-
 
     async fn build(&self) -> Result<McpEndpoint, String> {
         // Connect eagerly: the initialize handshake is the reachability check. A metered remote
@@ -599,7 +607,8 @@ mod tests {
 
     #[test]
     fn reads_the_response_carrying_our_id_out_of_an_sse_stream() {
-        let stream = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":true}}\n\n";
+        let stream =
+            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"ok\":true}}\n\n";
         assert_eq!(
             sse_message(stream, 7).unwrap(),
             json!({ "jsonrpc": "2.0", "id": 7, "result": { "ok": true } })
@@ -639,8 +648,8 @@ mod tests {
 
     #[test]
     fn a_stream_with_no_answer_for_our_request_is_an_error_not_an_empty_result() {
-        let err = sse_message("data: {\"jsonrpc\":\"2.0\",\"id\":9,\"result\":1}\n\n", 4)
-            .unwrap_err();
+        let err =
+            sse_message("data: {\"jsonrpc\":\"2.0\",\"id\":9,\"result\":1}\n\n", 4).unwrap_err();
         assert!(err.contains("no response for request 4"), "{err}");
         assert!(sse_message("", 1).is_err());
         // Unparseable payloads are skipped rather than failing the whole read.
@@ -656,7 +665,7 @@ mod tests {
     // ---- construction ------------------------------------------------------------------
 
     fn adapter_err(d: Value) -> String {
-        match HttpAdapter::new(&def(d), "r") {
+        match HttpAdapter::new(&def(d), "r", crate::calls::test_log()) {
             Err(err) => err,
             Ok(_) => panic!("this def must not build an http adapter"),
         }
@@ -675,7 +684,8 @@ mod tests {
         // An empty proxy is "no proxy", exactly as Node's truthiness check read it.
         assert!(HttpAdapter::new(
             &def(json!({ "type": "http", "url": "https://x.test/mcp", "proxy": "" })),
-            "r"
+            "r",
+            crate::calls::test_log(),
         )
         .is_ok());
     }
@@ -689,6 +699,7 @@ mod tests {
                 "disabledTools": ["hidden", 5],
             })),
             "r",
+            crate::calls::test_log(),
         )
         .expect("adapter");
         assert_eq!(a.kind(), "http");
@@ -702,6 +713,7 @@ mod tests {
         let a = HttpAdapter::new(
             &def(json!({ "type": "http", "url": "https://x.test/mcp" })),
             "r",
+            crate::calls::test_log(),
         )
         .expect("adapter");
         a.rename("renamed");
@@ -727,8 +739,9 @@ mod tests {
     async fn remote_echo() -> Remote {
         use crate::registry::{Registry, Source};
         let echo = def(json!({ "type": "echo" }));
-        let registry = Registry::new(3_600_000);
-        let adapter = crate::adapters::make_adapter(&echo, "echo").expect("echo adapter");
+        let registry = Registry::new(3_600_000, crate::calls::test_log());
+        let adapter = crate::adapters::make_adapter(&echo, "echo", &crate::calls::test_log())
+            .expect("echo adapter");
         registry
             .register("echo", Source::Config, echo, adapter)
             .expect("register");
@@ -743,6 +756,7 @@ mod tests {
             registry.clone(),
             tokens,
             store,
+            crate::calls::test_log(),
             "MCP_GATEWAY_TOKEN",
             19998,
         );
@@ -769,6 +783,7 @@ mod tests {
                 "headers": { "Authorization": format!("Bearer {token}") },
             })),
             "r",
+            crate::calls::test_log(),
         )
         .expect("adapter")
     }
@@ -778,7 +793,11 @@ mod tests {
         let remote = remote_echo().await;
         let proxy = proxy_of(&remote.url, TOKEN);
         let endpoint = proxy.build().await.expect("the handshake succeeds");
-        let (tools, _) = endpoint.probe.list("tools", None).await.expect("tools/list");
+        let (tools, _) = endpoint
+            .probe
+            .list("tools", None)
+            .await
+            .expect("tools/list");
         let names: Vec<String> = tools
             .iter()
             .filter_map(|t| t.get("name").and_then(Value::as_str).map(str::to_string))

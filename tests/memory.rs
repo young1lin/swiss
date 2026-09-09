@@ -75,24 +75,24 @@ fn growth_mb(before: u64) -> f64 {
 }
 
 async fn app_with_echo() -> axum::Router {
-    let registry = Registry::new(3_600_000);
     let scratch = std::env::temp_dir().join(format!(
         "lmg-memory-{}",
         local_mcp_gateway::util::random_hex(8)
     ));
+    // The call log is real, and the panel-call path writes to it. The app's OWN instance
+    // points at scratch, so the test neither touches the data dir nor measures the absence
+    // of logging.
+    let calls = Arc::new(local_mcp_gateway::calls::CallLog::at(scratch.join("calls")));
+    let registry = Registry::new(3_600_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));
-    // The call log is real, and the panel-call path writes to it. Point it at scratch so the
-    // test neither touches the data dir nor measures the absence of logging.
-    local_mcp_gateway::calls::set_call_log_dir(scratch.join("calls"));
-
     let def = ServerDef(json!({ "type": "echo" }).as_object().cloned().unwrap());
-    let adapter = make_adapter(&def, "echo").expect("echo adapter");
+    let adapter = make_adapter(&def, "echo", &calls).expect("echo adapter");
     registry
         .register("echo", Source::Config, def, adapter)
         .expect("register");
     registry.start("echo").await.expect("start");
     let tokens = Arc::new(single_token_manager(TOKEN));
-    let ctx = AppContext::new(registry, tokens, store, "MCP_GATEWAY_TOKEN", 19998);
+    let ctx = AppContext::new(registry, tokens, store, calls, "MCP_GATEWAY_TOKEN", 19998);
     build_app(ctx, None)
 }
 

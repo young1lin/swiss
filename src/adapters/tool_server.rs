@@ -16,7 +16,7 @@ use rmcp::{RoleServer, ServerHandler};
 use serde_json::{json, Map, Value};
 
 use crate::adapters::resources::{ResourceBody, ResourceEntry, ResourceFault, ResourceProvider};
-use crate::calls::{self, CallSource};
+use crate::calls::CallSource;
 use crate::dbbrowser_api::BrowserFlavor;
 
 pub struct ToolDef {
@@ -279,6 +279,8 @@ pub struct ToolServer {
     pub resources_on: bool,
     /// Who is calling (see `calls::CallSource`).
     pub source: CallSource,
+    /// Where the call is recorded: the app's CallLog, threaded in at construction.
+    pub log: std::sync::Arc<crate::calls::CallLog>,
 }
 
 fn tool_to_rmcp(def: &ToolDef) -> Tool {
@@ -395,11 +397,12 @@ impl ServerHandler for ToolServer {
         let engine = self.engine.clone();
         let advertised = self.advertised();
         let source = self.source.clone();
+        let log = self.log.clone();
         // logged() holds `&tool` for as long as its future lives, while the run block below
         // needs the name by value — two bindings, one borrow each.
         let tool_for_log = tool.clone();
         async move {
-            calls::logged(
+            log.logged(
                 mcp.as_deref(),
                 &source,
                 &tool_for_log,
@@ -507,6 +510,7 @@ impl ServerHandler for ToolServer {
         let limits = self.engine.meta().limits();
         let mcp = self.engine.meta().name.clone();
         let source = self.source.clone();
+        let log = self.log.clone();
         let uri = request.uri;
         async move {
             let Some(provider) = provider else {
@@ -518,7 +522,7 @@ impl ServerHandler for ToolServer {
             // Reads go through the call log, so the panel's Logs tab shows which schema a
             // client attached. The resources toggle does NOT gate reads in the Node build — a
             // URI the client already holds keeps working.
-            calls::logged(
+            log.logged(
                 mcp.as_deref(),
                 &source,
                 "resources/read",

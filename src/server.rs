@@ -65,7 +65,13 @@ pub async fn run_gateway() -> Result<(), String> {
         crate::proc_pids::reap_proc_pids(std::process::id());
     }
 
-    let registry = Registry::new(15_000);
+    // The ONE call log for this app (S2 instantiation): the registry, the adapters and the
+    // admin API all share this instance, so what an adapter records is exactly what the Logs
+    // tab reads - and nothing outside this app can see it.
+    let call_log = std::sync::Arc::new(crate::calls::CallLog::at(crate::paths::data_path(&[
+        "logs", "calls",
+    ])));
+    let registry = Registry::new(15_000, call_log.clone());
     let store = Arc::new(ManagedStore::open());
 
     // --- the composition point (host/builtin.rs carries the design) ----------------------------
@@ -96,7 +102,7 @@ pub async fn run_gateway() -> Result<(), String> {
 
     // Register + start every config-defined MCP; one failure must not take down the rest.
     for (name, def) in cfg.servers.clone() {
-        register_one(&registry, &store, &name, def, Source::Config).await;
+        register_one(&registry, &store, &name, def, Source::Config, &call_log).await;
     }
 
     // Restore user-added MCPs from managed.json; start the ones marked enabled. An `override`
@@ -105,7 +111,7 @@ pub async fn run_gateway() -> Result<(), String> {
         if m.override_ && registry.has(&m.name) {
             // `start: m.enabled` — an override must not resurrect an MCP the user stopped, and
             // the config loop above already left a disabled one unstarted.
-            let adapter = match make_adapter(&m.def, &m.name) {
+            let adapter = match make_adapter(&m.def, &m.name, &call_log) {
                 Ok(adapter) => adapter,
                 Err(err) => {
                     log::error(
@@ -135,7 +141,15 @@ pub async fn run_gateway() -> Result<(), String> {
         if registry.has(&m.name) {
             continue; // never overwrite a config MCP with a non-override
         }
-        register_one(&registry, &store, &m.name, m.def.clone(), Source::Managed).await;
+        register_one(
+            &registry,
+            &store,
+            &m.name,
+            m.def.clone(),
+            Source::Managed,
+            &call_log,
+        )
+        .await;
     }
 
     // The shared runtime services (docs/09 §3, docs/10 §2): the action registry every
@@ -151,10 +165,8 @@ pub async fn run_gateway() -> Result<(), String> {
     // the jobs plugin's lifecycle decision (host/builtin.rs), not a boot-time branch here.
     // Its runs go through the shared coordinator above: the scheduler decides WHEN, the
     // coordinator owns the run and the supervisor owns the child process.
-    let jobs = crate::jobs::JobSystem::open(
-        crate::paths::data_path(&["jobs.json"]),
-        services.clone(),
-    );
+    let jobs =
+        crate::jobs::JobSystem::open(crate::paths::data_path(&["jobs.json"]), services.clone());
 
     // Named per-client tokens, seeded from the existing secret so clients already configured
     // keep authenticating (as the "default" token). A pre-multi-token rotation in managed.json
@@ -174,6 +186,7 @@ pub async fn run_gateway() -> Result<(), String> {
         registry.clone(),
         tokens,
         store.clone(),
+        call_log.clone(),
         cfg.token_env.clone(),
         cfg.port,
     );
@@ -236,13 +249,17 @@ pub async fn run_gateway() -> Result<(), String> {
     // Retention runs on a boot sweep plus an hourly timer: the per-append check inside
     // record_call only ever fires for an MCP still being called, which is the opposite of the
     // log that needs ageing out.
-    tokio::spawn(async {
-        loop {
-            crate::calls::sweep_call_logs().await;
-            // Job run logs age out on the same cadence and for the same reason: the per-append
-            // check only ever fires for a job still running.
-            crate::jobs::runlog::sweep_all();
-            tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
+    tokio::spawn({
+        let jobs = jobs.clone();
+        async move {
+            loop {
+                call_log.sweep_call_logs().await;
+                // Job run logs age out on the same cadence and for the same reason: the
+                // per-append check only ever fires for a job still running. Through the
+                // system's OWN log (S2): there is no process-global run-log directory left.
+                jobs.sweep_run_logs();
+                tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
+            }
         }
     });
 
@@ -300,7 +317,7 @@ pub async fn run_gateway() -> Result<(), String> {
         );
     }
     registry.close_all().await;
-    crate::calls::flush_calls(None).await; // the last calls before a restart are the ones worth having on disk
+    ctx.calls.flush_calls(None).await; // the last calls before a restart are the ones worth having on disk
     crate::traffic::flush_traffic().await; // and the last traffic rows
     Ok(())
 }
@@ -316,6 +333,7 @@ async fn register_one(
     name: &str,
     mut def: crate::config::ServerDef,
     source: Source,
+    log: &std::sync::Arc<crate::calls::CallLog>,
 ) {
     let result = async {
         // Apply persisted tool toggles before the adapter captures the def, so a toggle survives
@@ -324,7 +342,7 @@ async fn register_one(
         if !disabled.is_empty() {
             def.set("disabledTools", json!(disabled));
         }
-        let adapter = make_adapter(&def, name)?;
+        let adapter = make_adapter(&def, name, log)?;
         let resource = store.resource_enabled(name);
         if let Some(on) = resource {
             if let Some(toggle) = adapter.resource_toggle() {
@@ -418,6 +436,12 @@ mod tests {
             .clone()
     }
 
+    /// A registry wired to the test binary's shared call log, the way boot wires one to
+    /// the app's own.
+    fn test_registry() -> Arc<Registry> {
+        Registry::new(3_600_000, crate::calls::test_log())
+    }
+
     /// The boot-start half of the old register_one, which now lives in the MCP plugin:
     /// registration stops at `register_one`, then the plugin's start decides who actually
     /// comes up. Every lifecycle test below drives the same pair the boot sequence runs.
@@ -427,9 +451,17 @@ mod tests {
 
     #[tokio::test]
     async fn a_plain_config_mcp_boots_started() {
-        let registry = Registry::new(3_600_000);
+        let registry = test_registry();
         let store = scratch_store();
-        register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        register_one(
+            &registry,
+            &store,
+            "echo",
+            echo(),
+            Source::Config,
+            &crate::calls::test_log(),
+        )
+        .await;
         boot_mcps(&registry, &store).await;
         assert_eq!(lifecycle(&registry, "echo"), Lifecycle::Started);
     }
@@ -438,9 +470,17 @@ mod tests {
     async fn a_lazy_mcp_is_registered_but_left_idle() {
         // The memory the gateway exists to save: an idle npx/uvx child is 50-150 MB of nothing,
         // so a lazy MCP waits for the first request instead of starting at boot.
-        let registry = Registry::new(3_600_000);
+        let registry = test_registry();
         let store = scratch_store();
-        register_one(&registry, &store, "lazy", lazy_echo(), Source::Config).await;
+        register_one(
+            &registry,
+            &store,
+            "lazy",
+            lazy_echo(),
+            Source::Config,
+            &crate::calls::test_log(),
+        )
+        .await;
         boot_mcps(&registry, &store).await;
         assert!(registry.has("lazy"), "registered, so the route exists");
         assert_ne!(
@@ -455,11 +495,19 @@ mod tests {
         // gateway.config.json is the user's committed file and the panel does not rewrite it, so
         // a config MCP's run state lives in managed.json. Starting unconditionally made Stop last
         // only until the next boot.
-        let registry = Registry::new(3_600_000);
+        let registry = test_registry();
         let store = scratch_store();
         store.set_enabled("echo", false).expect("record the Stop");
 
-        register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        register_one(
+            &registry,
+            &store,
+            "echo",
+            echo(),
+            Source::Config,
+            &crate::calls::test_log(),
+        )
+        .await;
         boot_mcps(&registry, &store).await;
         assert!(registry.has("echo"), "still registered, just not started");
         assert_ne!(lifecycle(&registry, "echo"), Lifecycle::Started);
@@ -471,7 +519,7 @@ mod tests {
         // than in the side-map. Node gates its managed restore on `m.enabled && !isLazy(m.def)`;
         // qualifying the Rust gate with `source == Source::Config` let a Stop here last only
         // until the next boot.
-        let registry = Registry::new(3_600_000);
+        let registry = test_registry();
         let store = scratch_store();
         store
             .add(crate::managed::ManagedEntry {
@@ -482,7 +530,15 @@ mod tests {
             })
             .expect("add a stopped managed entry");
 
-        register_one(&registry, &store, "added", echo(), Source::Managed).await;
+        register_one(
+            &registry,
+            &store,
+            "added",
+            echo(),
+            Source::Managed,
+            &crate::calls::test_log(),
+        )
+        .await;
         boot_mcps(&registry, &store).await;
         assert!(registry.has("added"));
         assert_ne!(
@@ -495,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn an_enabled_managed_mcp_does_boot_started() {
         // The other half of the gate: it must not have turned into "never start a managed MCP".
-        let registry = Registry::new(3_600_000);
+        let registry = test_registry();
         let store = scratch_store();
         store
             .add(crate::managed::ManagedEntry {
@@ -506,7 +562,15 @@ mod tests {
             })
             .expect("add an enabled managed entry");
 
-        register_one(&registry, &store, "added", echo(), Source::Managed).await;
+        register_one(
+            &registry,
+            &store,
+            "added",
+            echo(),
+            Source::Managed,
+            &crate::calls::test_log(),
+        )
+        .await;
         boot_mcps(&registry, &store).await;
         assert_eq!(lifecycle(&registry, "added"), Lifecycle::Started);
     }
@@ -515,13 +579,21 @@ mod tests {
     async fn tool_toggles_reach_the_def_before_the_adapter_captures_it() {
         // The adapter reads disabledTools when it is built, so the toggle has to be written into
         // the def first or it silently does not survive a restart.
-        let registry = Registry::new(3_600_000);
+        let registry = test_registry();
         let store = scratch_store();
         store
             .set_disabled_tools("echo", &["echo".to_string()])
             .expect("record the toggle");
 
-        register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        register_one(
+            &registry,
+            &store,
+            "echo",
+            echo(),
+            Source::Config,
+            &crate::calls::test_log(),
+        )
+        .await;
         let def = def_in_registry(&registry, "echo");
         assert_eq!(
             def.get("disabledTools"),
@@ -534,7 +606,7 @@ mod tests {
     async fn an_mcp_that_cannot_be_built_is_logged_and_the_boot_carries_on() {
         // One bad entry in a config file must not take down every other MCP with it — the boot
         // loop calls this once per MCP and never sees an error back.
-        let registry = Registry::new(3_600_000);
+        let registry = test_registry();
         let store = scratch_store();
         register_one(
             &registry,
@@ -542,12 +614,21 @@ mod tests {
             "broken",
             def_of(json!({ "type": "no-such-adapter-kind" })),
             Source::Config,
+            &crate::calls::test_log(),
         )
         .await;
         assert!(!registry.has("broken"), "nothing half-registered was left");
 
         // And the next MCP still boots normally.
-        register_one(&registry, &store, "echo", echo(), Source::Config).await;
+        register_one(
+            &registry,
+            &store,
+            "echo",
+            echo(),
+            Source::Config,
+            &crate::calls::test_log(),
+        )
+        .await;
         boot_mcps(&registry, &store).await;
         assert_eq!(lifecycle(&registry, "echo"), Lifecycle::Started);
     }

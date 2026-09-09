@@ -24,7 +24,7 @@ use serde_json::json;
 /// rather than through the `#[tool_router]` macros — the Node build registers `tools/list` and
 /// `tools/call` handlers directly, and the hand-written form ports that shape exactly while
 /// keeping the `macros` feature (and `pastey`) out of the build.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct EchoServer {
     /// The MCP's registry name, followed across renames — the call-log wrapper reads it at call
     /// time. `None` is the nameless singleton (tests), whose calls are not logged.
@@ -32,6 +32,23 @@ pub struct EchoServer {
     /// Who is calling — captured at factory time and carried here, because the handler runs on
     /// rmcp's own task where no task-local reaches (see `calls::CallSource`).
     pub source: crate::calls::CallSource,
+    /// Where the call is recorded: the app's CallLog, threaded in at construction.
+    pub log: std::sync::Arc<crate::calls::CallLog>,
+}
+
+/// The default is the nameless singleton (tests): no registry name, calls not recorded.
+/// Manual because [CallLog] has neither Default nor Debug - an Arc to it is all a server
+/// needs, and a default server simply records nowhere.
+impl Default for EchoServer {
+    fn default() -> Self {
+        Self {
+            name: None,
+            source: crate::calls::CallSource::default(),
+            log: std::sync::Arc::new(crate::calls::CallLog::at(
+                std::env::temp_dir().join(format!("lmg-echo-nolog-{}", crate::util::random_hex(8))),
+            )),
+        }
+    }
 }
 
 /// The tool definition, byte-for-byte the schema the Node build publishes. The rmcp model types
@@ -81,6 +98,7 @@ impl ServerHandler for EchoServer {
             .as_ref()
             .and_then(|n| n.read().ok().map(|g| g.clone()));
         let source = self.source.clone();
+        let log = self.log.clone();
         let tool = request.name.to_string();
         let args = request
             .arguments
@@ -88,7 +106,7 @@ impl ServerHandler for EchoServer {
             .map(serde_json::Value::Object)
             .unwrap_or(serde_json::Value::Null);
         async move {
-            crate::calls::logged(
+            log.logged(
                 mcp.as_deref(),
                 &source,
                 &tool,
@@ -145,12 +163,14 @@ impl ServerHandler for EchoServer {
 /// logging under its new name instead of splitting the log across two keys.
 pub struct EchoAdapter {
     name: Arc<std::sync::RwLock<String>>,
+    log: std::sync::Arc<crate::calls::CallLog>,
 }
 
 impl EchoAdapter {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, log: std::sync::Arc<crate::calls::CallLog>) -> Self {
         Self {
             name: Arc::new(std::sync::RwLock::new(name.to_string())),
+            log,
         }
     }
 }
@@ -167,9 +187,11 @@ impl super::Adapter for EchoAdapter {
         // wrapper always sees the current registry name, and receives the call source at factory
         // time (see calls::CallSource).
         let name = self.name.clone();
+        let log = self.log.clone();
         Ok(super::rmcp_endpoint(move |source| EchoServer {
             name: Some(name.clone()),
             source,
+            log: log.clone(),
         }))
     }
 
