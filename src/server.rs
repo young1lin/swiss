@@ -216,6 +216,10 @@ pub async fn run_gateway() -> Result<(), String> {
     };
     crate::host::builtin::register_all(&mut host, &deps)
         .expect("the built-in plugins register without id or route conflicts");
+    host.register(Arc::new(crate::plugins::http_tools::HttpToolsPlugin::new(
+        services.clone(),
+    )))
+    .expect("the http-tools plugin registers");
     // The capability probe the inventory's requiresMet answers through (docs/12 W3): one
     // closure over the shared services, so "connection-catalog" tracks the catalog's real
     // presence as MCP starts and stops.
