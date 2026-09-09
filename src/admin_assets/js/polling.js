@@ -3,6 +3,7 @@ import { currentPageCount, navigatePage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { rowOf } from "./sidebar.js";
+import { triggerSummary } from "./jobs-v2.js";
 
 
 /* --- polling ---------------------------------------------------------------------------------- */
@@ -121,10 +122,9 @@ async function tunTab(t) {
    header chip and the view footer — the mcpChipText drift taught that lesson once already.
    ================================================================================================ */
 
-/** The row schedule text — exactly one of these is set (the PUT API enforces it). */
-function jobSchedLabel(j) {
-  return j.cron ? "cron " + j.cron : (j.everySec ? "every " + j.everySec + " s" : "no schedule");
-}
+// The row schedule text is jobs-v2.js's triggerSummary (imported at the top): the v2
+// trigger object with a v1-field fallback, so the same row renders on any gateway this
+// panel can talk to.
 
 /** The row dot: running beats everything, off is idle, a recorded failure is down, and a job that
  *  never ran yet is idle rather than up — no run has ever succeeded. */
@@ -137,13 +137,19 @@ function jobDotClass(j) {
 
 function jobRowHtml(j) {
   var busy = state.jobs.busy[j.name];
+  // The v2 identity (docs/11 §7.1): the title is the human name when one is set, the id
+  // stays beside it because every action still addresses the id.
+  var title = j.title && j.title !== j.name ? esc(j.title) + ' <span class="via">· ' + esc(j.name) + "</span>" : esc(j.name);
+  var labels = (j.labels || []).length
+    ? ' <span class="via">' + j.labels.map(function (l) { return "#" + esc(l); }).join(" ") + "</span>"
+    : "";
   // data-last/data-next always render (possibly empty) so patchJobs can always fill them in.
   return '<div class="tun-row" data-job="' + esc(j.name) + '">' +
       '<span class="dot ' + esc(busy ? "starting" : jobDotClass(j)) + '" data-dot></span>' +
       '<div class="tun-main">' +
-        '<div class="tun-name">' + esc(j.name) + (j.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
+        '<div class="tun-name">' + title + labels + (j.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
         '<div class="tun-sub"><code>' + esc(j.command) + "</code>" +
-          ' <span class="via">· ' + esc(jobSchedLabel(j)) + "</span>" +
+          ' <span class="via">· ' + esc(triggerSummary(j)) + "</span>" +
           ' <span class="via" data-last>' + (j.lastRunAt
             ? "· last " + esc(whenLabel(j.lastRunAt)) + (j.lastOk === false ? " · failed" : "")
             : "") + "</span>" +

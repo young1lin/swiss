@@ -223,7 +223,11 @@ mod tests {
     fn the_shell_is_embedded_and_whole() {
         let html = admin_html().expect("index.html is embedded");
         assert!(html.to_ascii_lowercase().contains("<!doctype html"));
-        assert!(html.len() > 200, "not a truncated read: {} bytes", html.len());
+        assert!(
+            html.len() > 200,
+            "not a truncated read: {} bytes",
+            html.len()
+        );
     }
 
     #[test]
@@ -239,5 +243,50 @@ mod tests {
         // single file, and it is not the empty-input hash of a tree that failed to enumerate.
         assert_ne!(stamp, sha1_hex(b""));
         assert!(PanelAssets::iter().count() > 1, "more than one asset");
+    }
+
+    /// ADR-009 / docs/11 §9 S6: the panel tree is COPIED from the Node build's src/admin,
+    /// never edited here. When the sibling checkout is present (the normal dev machine),
+    /// every embedded byte must equal its Node source - a tree that drifted apart here is
+    /// a fork of the panel, which is the one thing this file must never grow. Without the
+    /// sibling (a CI box, say) the check has nothing to compare against and says so.
+    #[test]
+    fn the_tree_is_byte_for_byte_the_node_builds() {
+        let node_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("local-mcp-gateway")
+            .join("src")
+            .join("admin");
+        if !node_root.is_dir() {
+            eprintln!("sibling Node checkout not found; skipping the byte parity check");
+            return;
+        }
+        let mut mismatches = Vec::new();
+        let mut compared = 0usize;
+        for entry in PanelAssets::iter() {
+            let embedded = PanelAssets::get(&entry).expect("iterated asset");
+            let source = node_root.join(entry.as_ref());
+            let Ok(source_bytes) = std::fs::read(&source) else {
+                mismatches.push(format!("{}: no Node source", entry));
+                continue;
+            };
+            compared += 1;
+            if embedded.data != source_bytes {
+                mismatches.push(format!(
+                    "{}: {} embedded bytes vs {} source bytes",
+                    entry,
+                    embedded.data.len(),
+                    source_bytes.len()
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "the panel was edited here instead of copied: {mismatches:#?}"
+        );
+        assert!(
+            compared > 5,
+            "the tree walked more than a shell: {compared} files"
+        );
     }
 }

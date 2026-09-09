@@ -4,7 +4,12 @@ import { histButtonLabel } from "./run-history.js";
 /* --- Run: invoke a tool from the panel -------------------------------------------------------- */
 /** Argument inputs generated from the tool's own inputSchema, so this works for any MCP the gateway
  *  hosts — including a proc child whose tools the gateway knows nothing about. */
-function argFieldsHtml(tool) {
+function argFieldsHtml(tool, idPrefix, values) {
+  // idPrefix keeps the ids unique when the fields are embedded next to the Run view's own
+  // (the jobs editor reuses this builder inside its sheet under a "ja-" prefix), and
+  // `values` prefills them from an existing definition's action.input.
+  var pfx = idPrefix || "r-arg-";
+  var have = values || {};
   var schema = tool.inputSchema || {};
   var props = schema.properties || {};
   var required = schema.required || [];
@@ -12,7 +17,7 @@ function argFieldsHtml(tool) {
   if (!keys.length) return '<div class="hint">This tool takes no arguments.</div>';
   return keys.map(function (k) {
     var p = props[k] || {};
-    var id = "r-arg-" + k;
+    var id = pfx + k;
     var kind = p.type === "array" ? "array"
       : p.type === "object" ? "object"
       : p.type === "boolean" ? "boolean"
@@ -28,14 +33,15 @@ function argFieldsHtml(tool) {
     if (kind === "boolean") {
       // Name and star in one span: .check is a flex row with an 8px gap, so a bare text node would
       // leave the star floating a gap away from the name it belongs to.
-      return '<div><label class="check"><input type="checkbox"' + attrs + "><span>" + esc(k) + star +
+      var chk = have[k] ? " checked" : "";
+      return '<div><label class="check"><input type="checkbox"' + attrs + chk + "><span>" + esc(k) + star +
         "</span></label>" + hint + "</div>";
     }
     // A constrained field renders as a dropdown rather than a free-text box that shows the allowed
     // values nowhere. The blank first option keeps "leave this argument out" reachable.
     if (Array.isArray(p.enum) && p.enum.length) {
       var opts = '<option value=""></option>' + p.enum.map(function (v) {
-        return '<option value="' + esc(v) + '">' + esc(v) + "</option>";
+        return '<option value="' + esc(v) + '"' + (have[k] === v ? " selected" : "") + '>' + esc(v) + "</option>";
       }).join("");
       return '<div><label class="field"><span>' + esc(k) + star + "  ·  " + esc(kind) + "</span>" +
         "<select" + attrs + ">" + opts + "</select></label>" + hint + "</div>";
@@ -46,18 +52,20 @@ function argFieldsHtml(tool) {
     var ph = k === "sql" ? "SELECT 1"
       : kind === "array" ? "one value per line" + (itemType ? " (" + itemType + ")" : "")
       : kind === "object" ? "{ }" : "";
+    var prefilled = have[k] == null ? "" : kind === "object" || kind === "array" ? JSON.stringify(have[k], null, 1) : String(have[k]);
     var input = area
-      ? "<textarea" + attrs + ' placeholder="' + esc(ph) + '"></textarea>'
-      : '<input type="text"' + attrs + ' placeholder="' + esc(ph) + '">';
+      ? "<textarea" + attrs + ' placeholder="' + esc(ph) + '">' + esc(prefilled) + "</textarea>"
+      : '<input type="text"' + attrs + ' placeholder="' + esc(ph) + '" value="' + esc(prefilled) + '">';
     return '<div><label class="field"><span>' + esc(k) + star + "  ·  " + esc(kind) + "</span>" + input + "</label>" + hint + "</div>";
   }).join("");
 }
 
-function readRunArgs(tool) {
+function readRunArgs(tool, idPrefix) {
+  var pfx = idPrefix || "r-arg-";
   var out = {};
   var props = (tool && tool.inputSchema && tool.inputSchema.properties) || {};
   Object.keys(props).forEach(function (k) {
-    var node = $("r-arg-" + k);
+    var node = $(pfx + k);
     if (!node) return;
     var kind = node.dataset.kind;
     if (kind === "boolean") { if (node.checked) out[k] = true; return; }

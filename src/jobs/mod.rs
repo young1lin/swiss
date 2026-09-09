@@ -551,15 +551,15 @@ impl JobSystem {
         }
     }
 
-    /// The manual-run door (POST /run and tests): ONE attempt, no occurrence key, no
-    /// retry - a manual run is a human's explicit act, not an occurrence the scheduler
-    /// owns (docs/11 §6.1), so it never moves a scheduling anchor either. Busy when
-    /// this job already has a run in flight, whatever started it (the label gate).
-    pub async fn execute(
-        self: Arc<Self>,
+    /// The manual submission half, shared by both manual doors (docs/11 §7.3): the
+    /// check-then-submit under the gate, and on a submission refusal the record plus the
+    /// typed error. There is exactly ONE execution path into the coordinator - the sync
+    /// and async doors differ only in who waits for the outcome.
+    async fn submit_manual(
+        self: &Arc<Self>,
         name: &str,
         trigger: &str,
-    ) -> Result<(u64, runner::RunOutcome), RunError> {
+    ) -> Result<crate::services::runs::SubmittedRun, RunError> {
         let def = self.definition_of(name)?;
         let label = format!("job:{}", def.id);
         let submitted = {
@@ -578,24 +578,51 @@ impl JobSystem {
                 queue_if_busy: false,
             })
         };
-        let (run_id, out) = match submitted {
-            Ok(s) => {
-                let id = s.run_id;
-                (Some(id), Self::await_outcome(s).await)
-            }
+        match submitted {
+            Ok(s) => Ok(s),
             Err(err) => {
                 let refusal = runner::RunOutcome::refused(err.to_string());
                 self.record_ran(name, trigger, None, (1, 1), None, &refusal);
-                return Err(match err {
+                Err(match err {
                     SubmitError::Capacity(m) => RunError::Capacity(m),
                     SubmitError::Action(m) => RunError::Unavailable(m),
-                });
+                })
             }
-        };
+        }
+    }
 
-        let seq = self.record_ran(name, trigger, None, (1, 1), run_id, &out);
-        self.persist_last_ok(name, out.ok, run_id);
+    /// The manual-run door (POST /run and tests): ONE attempt, no occurrence key, no
+    /// retry - a manual run is a human's explicit act, not an occurrence the scheduler
+    /// owns (docs/11 §6.1), so it never moves a scheduling anchor either. Busy when
+    /// this job already has a run in flight, whatever started it (the label gate).
+    pub async fn execute(
+        self: Arc<Self>,
+        name: &str,
+        trigger: &str,
+    ) -> Result<(u64, runner::RunOutcome), RunError> {
+        let submitted = self.submit_manual(name, trigger).await?;
+        let run_id = submitted.run_id;
+        let out = Self::await_outcome(submitted).await;
+        let seq = self.record_ran(name, trigger, None, (1, 1), Some(run_id), &out);
+        self.persist_last_ok(name, out.ok, Some(run_id));
         Ok((seq, out))
+    }
+
+    /// The async manual door (POST /run with {"async": true}, docs/11 §7.3): submit,
+    /// hand the runId back immediately, and finish the bookkeeping in a detached task.
+    /// The run outlives the request by design - closing the page does not stop the job;
+    /// the record and lastOk settle exactly as the sync door would have written them.
+    pub async fn execute_async(self: Arc<Self>, name: &str) -> Result<u64, RunError> {
+        let submitted = self.submit_manual(name, "manual").await?;
+        let run_id = submitted.run_id;
+        let sys = Arc::clone(&self);
+        let job = name.to_string();
+        tokio::spawn(async move {
+            let out = Self::await_outcome(submitted).await;
+            sys.record_ran(&job, "manual", None, (1, 1), Some(run_id), &out);
+            sys.persist_last_ok(&job, out.ok, Some(run_id));
+        });
+        Ok(run_id)
     }
 
     /// One scheduled occurrence, start to finish (docs/11 §6): claim + occurrence
@@ -697,7 +724,14 @@ impl JobSystem {
                     // not claim an exit that never happened. Retrying it would only
                     // keep hitting the same missing wall (docs/11 §6.4).
                     let refusal = runner::RunOutcome::refused(reason.clone());
-                    self.record_ran(name, "timer", Some(&key), (attempt, attempts), None, &refusal);
+                    self.record_ran(
+                        name,
+                        "timer",
+                        Some(&key),
+                        (attempt, attempts),
+                        None,
+                        &refusal,
+                    );
                     log::warn(
                         "job occurrence refused: the action is not registered",
                         Some(json!({ "name": name, "reason": reason })),
@@ -753,6 +787,25 @@ impl JobSystem {
         };
         log::log(level, msg, Some(json!({ "name": name, "seq": seq })));
         seq
+    }
+    /// Test seam: append one bare history record for `job` without running anything -
+    /// pagination tests need a known number of entries, not real processes.
+    #[cfg(test)]
+    pub(crate) fn append_test_run(&self, job: &str, at_seq: u64) -> u64 {
+        let entry = json!({
+            "at": state::iso_of_ms(crate::util::now_ms() as i64),
+            "trigger": "timer",
+            "ok": true,
+            "ms": 5,
+            "outcome": "ran",
+            "attempt": 1,
+            "attempts": 1,
+            "seq": at_seq,
+        });
+        let Value::Object(map) = entry else {
+            unreachable!()
+        };
+        self.runlog.append_run(job, map).unwrap_or(0)
     }
 
     /// One ATTEMPT's record (docs/11 §7.3): outcome "ran" (or "refused" for a

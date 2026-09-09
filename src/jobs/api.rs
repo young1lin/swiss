@@ -8,8 +8,10 @@
 //! - PUT    /api/jobs/{name}      - create or update (body: command + everySec|cron,
 //!   enabled?, timeoutMs?, cwd?)
 //! - DELETE /api/jobs/{name}      - remove the job (its run history stays)
-//! - POST   /api/jobs/{name}/run  - run now, wait for the outcome, return the record
-//! - GET    /api/jobs/{name}/runs - run history page (newest first; ?limit=&before=)
+//! - POST   /api/jobs/{name}/run  - run now, wait for the outcome, return the record;
+//!   body {"async": true} -> 202 {"runId": N}, polled via GET /api/runs/{id}
+//! - GET    /api/jobs/{name}/runs - run history page (newest first; ?limit=&cursor=,
+//!   `before` kept as the old spelling of `cursor`)
 //!
 //! Example - vacuum a database through the MCP every night at 03:30 local time:
 //!   curl -X PUT http://127.0.0.1:19999/api/jobs/nightly-vacuum \
@@ -162,9 +164,22 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
     r = r.route(
         "/api/jobs/{name}/run",
         post(
-            |State(jobs): State<Arc<JobSystem>>, Path(name): Path<String>| async move {
-                // Waits for the outcome (bounded by the job's own timeoutMs): the caller - an
-                // AI agent testing a job, or a human - wants the record, not a 202 to poll.
+            |State(jobs): State<Arc<JobSystem>>,
+             Path(name): Path<String>,
+             body: crate::app::NodeBody| async move {
+                // {"async": true} (docs/11 §7.3): 202 + the runId, the work outlives the
+                // request - the panel's Run now polls GET /api/runs/{id} so closing the
+                // page never cancels a job. The SAME coordinator run as the sync door;
+                // the record and lastOk settle identically, one tick later.
+                if body.0.get("async").and_then(Value::as_bool) == Some(true) {
+                    return match jobs.clone().execute_async(&name).await {
+                        Ok(run_id) => admin_json(StatusCode::ACCEPTED, json!({ "runId": run_id })),
+                        Err(err) => fail(&err),
+                    };
+                }
+                // Default: waits for the outcome (bounded by the job's own timeoutMs) - the
+                // caller, an AI agent testing a job or a human, wants the record, not a
+                // 202 to poll.
                 match jobs.clone().execute(&name, "manual").await {
                     Ok((seq, out)) => {
                         let mut rec = ran_record("manual", None, 1, 1, None, &out);
@@ -192,7 +207,12 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
                     .get("limit")
                     .and_then(|v| v.parse::<usize>().ok())
                     .unwrap_or(super::runlog::RUNS_PAGE_SIZE);
-                let before = q.get("before").and_then(|v| v.parse::<u64>().ok());
+                // `cursor` is the spelling docs/11 §7.3 gives the page walk; `before` stays
+                // as its alias so existing clients (and the shared tests) see no change.
+                let before = q
+                    .get("cursor")
+                    .or_else(|| q.get("before"))
+                    .and_then(|v| v.parse::<u64>().ok());
                 let (runs, next) = jobs.read_runs(&name, before, limit);
                 // nextBefore is absent (not null) when the history is exhausted - the panel's
                 // absent-not-null convention.
@@ -547,5 +567,115 @@ mod tests {
         // Unknown job: 404.
         let (status, _) = call(&router, "POST", "/api/jobs/ghost/run", None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// docs/11 §7.3, the S6 half: POST /run with {"async": true} is a 202 carrying the
+    /// runId. The run outlives the request - the response carries NO record - but the
+    /// SAME coordinator run settles into the history with the same shape the sync door
+    /// writes (outcome, runId, attempt fields), and lastOk lands with it.
+    #[tokio::test]
+    async fn an_async_manual_run_is_a_202_whose_record_settles_later() {
+        let (sys, _store) = scratch_system("async-run").await;
+        let router = mount(sys.clone());
+        call(
+            &router,
+            "PUT",
+            "/api/jobs/slow-echoer",
+            Some(json!({ "command": if cfg!(windows) { "cmd /c echo async-hello" } else { "sh -c 'echo async-hello'" }, "everySec": 3600 })),
+        )
+        .await;
+
+        let (status, body) = call(
+            &router,
+            "POST",
+            "/api/jobs/slow-echoer/run",
+            Some(json!({ "async": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        let run_id = body["runId"].as_u64().expect("the runId to poll");
+        assert!(
+            body.get("run").is_none(),
+            "no record yet - the work is still going"
+        );
+
+        // The coordinator knows the run (what GET /api/runs/{id} reads): same run id,
+        // live right after the 202.
+        let listed = sys.services.runs.list();
+        assert!(
+            listed.iter().any(|v| v.run_id == run_id),
+            "run {run_id} is in the coordinator index"
+        );
+
+        // The settled record: poll the history like the panel does, bounded.
+        let mut record = None;
+        for _ in 0..300 {
+            let (_, body) = call(&router, "GET", "/api/jobs/slow-echoer/runs?limit=5", None).await;
+            if let Some(rec) = body["runs"].as_array().and_then(|a| a.first()) {
+                if rec["runId"].as_u64() == Some(run_id) {
+                    record = Some(rec.clone());
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let rec = record.expect("the async run's record settled");
+        assert_eq!(rec["outcome"], json!("ran"), "{rec}");
+        assert_eq!(rec["trigger"], json!("manual"));
+        assert_eq!(rec["attempt"], json!(1), "a manual run is one attempt");
+        assert!(
+            rec.get("occurrenceKey").is_none(),
+            "manual has no occurrence"
+        );
+        assert!(
+            rec["output"].as_str().unwrap_or("").contains("async-hello"),
+            "{rec}"
+        );
+        // And the run facts settled with it, exactly as the sync door writes them.
+        assert_eq!(sys.run_state("slow-echoer").last_ok, Some(true));
+    }
+
+    /// docs/11 §7.3: `cursor` is the pagination parameter's name now, `before` its
+    /// alias - both spellings walk the same pages.
+    #[tokio::test]
+    async fn the_history_cursor_parameter_walks_the_same_pages_as_before() {
+        let (sys, _store) = scratch_system("cursor").await;
+        // A history of three records, written straight into the log this system reads.
+        for seq in [1u64, 2, 3] {
+            sys.append_test_run("pager", seq);
+        }
+        let router = mount(sys.clone());
+
+        let (status, body) = call(&router, "GET", "/api/jobs/pager/runs?limit=2", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["runs"].as_array().map(Vec::len), Some(2));
+        let next = body["nextBefore"].as_u64().expect("a page remains");
+
+        // The new spelling and the alias return the same page.
+        let (status, by_cursor) = call(
+            &router,
+            "GET",
+            &format!("/api/jobs/pager/runs?limit=2&cursor={next}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{by_cursor}");
+        let (status, by_before) = call(
+            &router,
+            "GET",
+            &format!("/api/jobs/pager/runs?limit=2&before={next}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{by_before}");
+        assert_eq!(
+            by_cursor["runs"], by_before["runs"],
+            "cursor and before are one parameter"
+        );
+        assert_eq!(
+            by_cursor["runs"].as_array().map(Vec::len),
+            Some(1),
+            "the oldest record"
+        );
     }
 }
