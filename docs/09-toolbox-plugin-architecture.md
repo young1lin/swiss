@@ -23,7 +23,7 @@
 
 | 已核实的 RH 源码 | 实际机制 | 本项目取舍 |
 | --- | --- | --- |
-| `cordis-plugin-loader/src/config/entry.ts`（EntryOptions、Entry.update） | 配置 row 包含 id/name/config/disabled/inject；配置修改与更换实现分开处理 | 用稳定实例 ID、编译内置 factory、typed config 和明确重启策略 |
+| `cordis-plugin-loader/src/config/entry.ts`（EntryOptions、Entry.update） | 配置 row 包含 id/name/config/disabled/inject，另有 group 嵌套；配置修改与更换实现分开处理（本设计暂不采用 group） | 用稳定实例 ID、编译内置 factory、typed config 和明确重启策略 |
 | `cordis/src/fiber.ts`（resolveConfig、FiberState、_unload） | 插件 schema 校验；依赖影响状态；资源 effect 统一清理、等待异步 disposer | PluginScope 收回任务/服务/订阅；Rust 明确规定停止阶段和依赖顺序 |
 | `cordis/src/reflect.ts`（provide） | 服务注册有所有者；撤销影响消费者；重复提供冲突可见 | typed capability + generation + dependency graph，拒绝重复注册 |
 | `rh-client-modules/lib/index.js` | 从同一插件树发现客户端贡献，生成带版本的 bundle 入口 | 从同一 inventory 生成页面列表和资源版本，不再靠逐个请求 API 猜插件是否存在 |
