@@ -62,50 +62,64 @@ pub async fn run_gateway() -> Result<(), String> {
     let registry = Registry::new(15_000);
     let store = Arc::new(ManagedStore::open());
 
+    // --- the composition point (subsystems.rs carries the design) ------------------------------
+    // Each optional subsystem boots here in declaration order and contributes one router that
+    // build_app folds behind the single loopback boundary. A config row
+    // {"<name>": {"disabled": true}} swaps the whole subsystem for an explicit-absence stub —
+    // its state file is never touched, so removing the row restores it exactly.
+
     // Tunnels come up BEFORE the MCP registration loops (Node index.ts's order): an SSH
     // handshake takes seconds and must never sit behind a slow MCP start, and an MCP whose
     // database is only reachable through a tunnel gets its tunnel first. The store loads before
     // requests are accepted so the panel sees persisted connections and rules.
-    let tunnel_store = Arc::new(std::sync::Mutex::new(crate::tunnel::TunnelStore::new(
-        crate::paths::data_path(&["tunnels.json"]),
-        cfg.port,
-    )));
-    // First run with no tunnels.json at all: adopt the forward-port config this gateway replaced
-    // (its rules become this store's first generation). Failure is logged, never fatal.
-    if let Ok(mut store) = tunnel_store.lock() {
-        if store.is_fresh() {
-            if let Some((rules, connections)) =
-                crate::tunnel::import::import_forward_port(&mut store, None)
-            {
-                log::log(
-                    "info",
-                    "imported forward-port tunnels on first run",
-                    Some(json!({ "rules": rules, "connections": connections })),
-                );
+    let mut tunnels: Option<Arc<crate::tunnel::Tunnels>> = None;
+    let mut tunnel_manager: Option<Arc<crate::tunnel::TunnelManager>> = None;
+    if crate::subsystems::disabled(&cfg.raw, "tunnels") {
+        crate::subsystems::log_disabled("tunnels");
+    } else {
+        let tunnel_store = Arc::new(std::sync::Mutex::new(crate::tunnel::TunnelStore::new(
+            crate::paths::data_path(&["tunnels.json"]),
+            cfg.port,
+        )));
+        // First run with no tunnels.json at all: adopt the forward-port config this gateway
+        // replaced (its rules become this store's first generation). Failure is logged, never
+        // fatal.
+        if let Ok(mut store) = tunnel_store.lock() {
+            if store.is_fresh() {
+                if let Some((rules, connections)) =
+                    crate::tunnel::import::import_forward_port(&mut store, None)
+                {
+                    log::log(
+                        "info",
+                        "imported forward-port tunnels on first run",
+                        Some(json!({ "rules": rules, "connections": connections })),
+                    );
+                }
             }
         }
+        let manager = crate::tunnel::TunnelManager::new(
+            tunnel_store.clone(),
+            Some(crate::tunnel::registry_view(registry.clone())),
+        );
+        tunnels = Some(Arc::new(crate::tunnel::Tunnels {
+            store: tunnel_store,
+            manager: manager.clone(),
+            registry: Some(registry.clone()),
+        }));
+        // Tunnel handshakes may take seconds or fail independently; never delay the listener.
+        let tunnel_boot = manager.clone();
+        tokio::spawn(async move {
+            for result in tunnel_boot.start_enabled().await {
+                if !result.ok {
+                    log::warn(
+                        "tunnel boot failed",
+                        Some(json!({ "rule": result.name, "error": result.error })),
+                    );
+                }
+            }
+        });
+        tunnel_manager = Some(manager);
     }
-    let tunnel_manager = crate::tunnel::TunnelManager::new(
-        tunnel_store.clone(),
-        Some(crate::tunnel::registry_view(registry.clone())),
-    );
-    let tunnels = Arc::new(crate::tunnel::Tunnels {
-        store: tunnel_store,
-        manager: tunnel_manager.clone(),
-        registry: Some(registry.clone()),
-    });
-    // Tunnel handshakes may take seconds or fail independently; never delay the gateway listener.
-    let tunnel_boot = tunnel_manager.clone();
-    tokio::spawn(async move {
-        for result in tunnel_boot.start_enabled().await {
-            if !result.ok {
-                log::warn(
-                    "tunnel boot failed",
-                    Some(json!({ "rule": result.name, "error": result.error })),
-                );
-            }
-        }
-    });
 
     // Register + start every config-defined MCP; one failure must not take down the rest.
     for (name, def) in cfg.servers.clone() {
@@ -153,6 +167,19 @@ pub async fn run_gateway() -> Result<(), String> {
 
     registry.start_timer();
 
+    // Scheduled command jobs (a Rust-side subsystem; see src/jobs/mod.rs). One task ticking
+    // once a second, no per-job tasks, and an empty jobs.json is a no-op - the feature costs
+    // nothing until a job exists.
+    let jobs: Option<Arc<crate::jobs::JobSystem>> =
+        if crate::subsystems::disabled(&cfg.raw, "jobs") {
+            crate::subsystems::log_disabled("jobs");
+            None
+        } else {
+            let jobs = crate::jobs::JobSystem::open(crate::paths::data_path(&["jobs.json"]));
+            jobs.start();
+            Some(jobs)
+        };
+
     // Named per-client tokens, seeded from the existing secret so clients already configured
     // keep authenticating (as the "default" token). A pre-multi-token rotation in managed.json
     // takes precedence over the .env seed.
@@ -174,13 +201,29 @@ pub async fn run_gateway() -> Result<(), String> {
         cfg.token_env.clone(),
         cfg.port,
     );
-    if let Ok(mut links) = ctx.tunnel_links.write() {
-        *links = Some(tunnel_manager.clone());
+    if let Some(manager) = &tunnel_manager {
+        if let Ok(mut links) = ctx.tunnel_links.write() {
+            *links = Some(manager.clone());
+        }
     }
-    // Mounted INSIDE build_app's loopback guard: axum's layer() only covers routes present at
-    // the call, so merging the tunnel API after build_app would leave every /api/tunnels route
-    // outside the boundary — and the guard is the only auth that tree has.
-    let app = build_app(ctx.clone(), Some(crate::tunnel::api::mount(tunnels.clone())));
+    // The subsystem routers, folded in declaration order. Mounted INSIDE build_app's loopback
+    // guard: axum's layer() only covers routes present at the call, so merging an extra tree
+    // after build_app would leave every one of its routes outside the boundary — and the guard
+    // is the only auth those trees have. A disabled subsystem contributes its explicit-absence
+    // stub (subsystems::absent_router) in the same position, so the routes exist either way.
+    let extra = match (&tunnels, &jobs) {
+        (Some(t), Some(j)) => crate::tunnel::api::mount(t.clone())
+            .merge(crate::jobs::api::mount(j.clone())),
+        (Some(t), None) => crate::tunnel::api::mount(t.clone()).merge(
+            crate::subsystems::absent_router("jobs", "/api/jobs"),
+        ),
+        (None, Some(j)) => crate::subsystems::absent_router("tunnels", "/api/tunnels")
+            .merge(crate::jobs::api::mount(j.clone())),
+        (None, None) => crate::subsystems::absent_router("tunnels", "/api/tunnels").merge(
+            crate::subsystems::absent_router("jobs", "/api/jobs"),
+        ),
+    };
+    let app = build_app(ctx.clone(), Some(extra));
 
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port))
         .await
@@ -207,6 +250,9 @@ pub async fn run_gateway() -> Result<(), String> {
     tokio::spawn(async {
         loop {
             crate::calls::sweep_call_logs().await;
+            // Job run logs age out on the same cadence and for the same reason: the per-append
+            // check only ever fires for a job still running.
+            crate::jobs::runlog::sweep_all();
             tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
         }
     });
@@ -247,9 +293,14 @@ pub async fn run_gateway() -> Result<(), String> {
 
     log::info("shutting down");
     registry.stop_timer();
+    if let Some(jobs) = &jobs {
+        jobs.stop();
+    }
     // Tunnels first: this releases every local port, and it leaves each rule's `enabled` flag
     // alone so the next boot brings back exactly the set that was running.
-    tunnel_manager.close_all().await;
+    if let Some(manager) = &tunnel_manager {
+        manager.close_all().await;
+    }
     registry.close_all().await;
     crate::calls::flush_calls(None).await; // the last calls before a restart are the ones worth having on disk
     crate::traffic::flush_traffic().await; // and the last traffic rows

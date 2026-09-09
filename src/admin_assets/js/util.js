@@ -32,7 +32,7 @@ var state = {
   trafficOpen: {},          // seq -> expanded: shows the raw request JSON for that interaction
   trafficFull: {},          // seq -> { body, response }, fetched on first expand (cf. d.callsFull)
   trafficSig: null,         // data signature; a poll skips re-render when unchanged (keeps expansion)
-  view: "mcps",      // "mcps" | "tunnels" | "traffic" | "data" — the toolbar switcher
+  view: "mcps",      // "mcps" | "tunnels" | "traffic" | "data" | "jobs" — the toolbar switcher
   panelVersion: null, // admin.html mtime stamp from /api/info; a change means a new build landed
   addGroup: null,     // sidebar group a header "+" targets for the next created MCP (add-sheet.js)
   db: null,           // the whole Data view state (data-view.js builds/owns it; redisValue rides on it)
@@ -44,6 +44,12 @@ var state = {
     dragging: null,  // id of the row being dragged — polls must not rebuild under it
     collapsed: {},   // group name -> true, per tab view preference (localStorage, like the sidebar)
     pendingGroup: null, // group chosen via a header "+", applied to the row the next create lands in
+  },
+  jobs: {             // jobs view state (jobs.js renders it; polling.js loads it)
+    data: [],        // rows from /api/jobs
+    busy: {},        // name -> Run now in flight
+    painted: "",     // joined row names at last render — the poll's structural signature
+    hist: null,      // the open history sheet: { name, runs }
   },
 };
 

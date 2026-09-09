@@ -5,6 +5,7 @@ import { patchDetailHead, renderPane } from "./pane.js";
 import { rowOf } from "./sidebar.js";
 import { trafficReload } from "./traffic.js";
 import { patchTunnels, renderTunnels } from "./tunnels.js";
+import { patchJobs, renderJobs } from "./jobs.js";
 
 /* --- polling ---------------------------------------------------------------------------------- */
 async function loadList() {
@@ -88,13 +89,14 @@ function setView(v) {
   Array.prototype.forEach.call(seg.querySelectorAll("button"), function (b) {
     b.setAttribute("aria-selected", String(b.dataset.view === v));
   });
-  // The sidebar is the MCP list; the tunnel, traffic and data views own the whole width.
-  document.querySelector(".sidebar").hidden = v === "tunnels" || v === "traffic" || v === "data";
+  // The sidebar is the MCP list; the full-width views own the whole pane.
+  document.querySelector(".sidebar").hidden = v === "tunnels" || v === "traffic" || v === "data" || v === "jobs";
   if (v === "tunnels") { loadTunnels(); }
   // Back to page one on entry: the ring keeps rolling while the view is closed, so the page you left
   // on may no longer exist — and a pager stranded past the end has no button back.
   else if (v === "traffic") { trafficReload(true); }
   else if (v === "data") { loadDbView(); }
+  else if (v === "jobs") { loadJobs(); }
   else { renderPane(); patchSidebar(); }
   updateCountChip();
 }
@@ -113,6 +115,10 @@ function mcpChipText() {
 
 function updateCountChip() {
   var chip = $("countChip");
+  if (state.view === "jobs") {
+    chip.textContent = jobsChipText();
+    return;
+  }
   if (state.view === "tunnels") {
     var d = tunData();
     var active = d.rules.filter(function (r) { return r.state === "up"; }).length;
@@ -138,6 +144,73 @@ async function loadTunnels(patchOnly) {
 function tunTab(t) {
   state.tun.tab = t;
   renderTunnels();
+}
+
+/* ================================================================================================
+   Jobs
+   ------------------------------------------------------------------------------------------------
+   The scheduled-command view, split exactly like Tunnels: this file owns the data loader and the
+   row template (jobs.js renders/wires/patches it). One builder (jobsChipText) feeds both the
+   header chip and the view footer — the mcpChipText drift taught that lesson once already.
+   ================================================================================================ */
+
+/** The row schedule text — exactly one of these is set (the PUT API enforces it). */
+function jobSchedLabel(j) {
+  return j.cron ? "cron " + j.cron : (j.everySec ? "every " + j.everySec + " s" : "no schedule");
+}
+
+/** The row dot: running beats everything, off is idle, a recorded failure is down, and a job that
+ *  never ran yet is idle rather than up — no run has ever succeeded. */
+function jobDotClass(j) {
+  if (j.running) return "starting";
+  if (!j.enabled) return "idle";
+  if (j.lastOk === false) return "down";
+  return j.lastRunAt ? "up" : "idle";
+}
+
+function jobRowHtml(j) {
+  var busy = state.jobs.busy[j.name];
+  // data-last/data-next always render (possibly empty) so patchJobs can always fill them in.
+  return '<div class="tun-row" data-job="' + esc(j.name) + '">' +
+      '<span class="dot ' + esc(busy ? "starting" : jobDotClass(j)) + '" data-dot></span>' +
+      '<div class="tun-main">' +
+        '<div class="tun-name">' + esc(j.name) + (j.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
+        '<div class="tun-sub"><code>' + esc(j.command) + "</code>" +
+          ' <span class="via">· ' + esc(jobSchedLabel(j)) + "</span>" +
+          ' <span class="via" data-last>' + (j.lastRunAt
+            ? "· last " + esc(whenLabel(j.lastRunAt)) + (j.lastOk === false ? " · failed" : "")
+            : "") + "</span>" +
+          ' <span class="via" data-next>' + (j.enabled && j.nextDueAt ? "· next " + esc(whenLabel(j.nextDueAt)) : "") + "</span>" +
+        "</div>" +
+      "</div>" +
+      '<div class="tun-acts">' +
+        '<button class="btn" data-run' + (busy || j.running ? " disabled" : "") + ">" + (busy ? "…" : "Run now") + "</button>" +
+        '<button class="btn" data-hist>History</button>' +
+        '<button class="btn" data-edit>Edit</button>' +
+        '<button class="btn danger" data-del>Delete</button>' +
+      "</div>" +
+    "</div>";
+}
+
+function jobsChipText() {
+  var rows = state.jobs.data;
+  var on = rows.filter(function (j) { return j.enabled; }).length;
+  var failing = rows.filter(function (j) { return j.enabled && j.lastOk === false; }).length;
+  return rows.length + (rows.length === 1 ? " job" : " jobs") + " · " + on + " on" +
+    (failing ? " · " + failing + " failing" : "");
+}
+
+/** `patchOnly` is what the poll passes: refresh the data, then patch rather than rebuild —
+ *  the same contract as loadTunnels. */
+async function loadJobs(patchOnly) {
+  var j = await apiJson("/api/jobs");
+  if (!j) return;
+  state.jobs.data = j.jobs || [];
+  if (state.view === "jobs") {
+    if (patchOnly && $("pane").querySelector("[data-foot]")) patchJobs();
+    else renderJobs();
+  }
+  updateCountChip();
 }
 
 /** `18989 → 127.0.0.1:18989   via bastion · serves pg-app ●` */
@@ -198,4 +271,4 @@ function connRowHtml(c) {
     "</div>";
 }
 
-export { connRowHtml, loadList, loadMemory, loadTunnels, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab, updateCountChip };
+export { connRowHtml, jobDotClass, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab, updateCountChip };

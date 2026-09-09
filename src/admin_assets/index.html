@@ -29,6 +29,9 @@
       <button role="tab" data-view="traffic" aria-selected="false">Traffic</button>
       <button role="tab" data-view="tunnels" aria-selected="false">Tunnels</button>
       <button role="tab" data-view="data" aria-selected="false">Data</button>
+      <!-- Jobs hides itself at boot when the gateway neither serves nor enables the subsystem
+           (jobs.js probeJobs): absent API (404) or a disabled row (503) both mean "no tab". -->
+      <button role="tab" data-view="jobs" aria-selected="false">Jobs</button>
     </div>
     <span class="chip" id="countChip"></span>
     <span class="grow"></span>

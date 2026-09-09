@@ -6,6 +6,7 @@
 gateway.config.json
 managed.json
 tunnels.json
+jobs.json
 .env
 *.log
 master.key

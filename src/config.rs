@@ -65,6 +65,12 @@ pub struct GatewayConfig {
     /// object key order is insertion-ordered which JSON preserves — serde_json's default Map is
     /// also insertion-ordered, but deterministic sorting here keeps snapshots stable).
     pub servers: BTreeMap<String, ServerDef>,
+    /// The whole config object as loaded, credential refs intact. The subsystem composition
+    /// (subsystems.rs) reads its per-subsystem rows from here — toggles like
+    /// {"jobs":{"disabled":true}} are ROW metadata, not parsed fields, so they never need a
+    /// struct field of their own (the RH entry-metadata rule: addressing a row and disabling
+    /// it are the same syntax as configuring it).
+    pub raw: Value,
 }
 
 /// Expand `${ENV_VAR}` references in ONE string — the build-time step of the credential model,
@@ -244,6 +250,7 @@ pub fn load_config(path: &Path) -> Result<GatewayConfig, String> {
         token,
         token_env,
         servers,
+        raw,
     })
 }
 

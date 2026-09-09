@@ -15,10 +15,11 @@ import { $, KINDS, THEME_KEY, api, loadCollapsed, loadTunCollapsed, state, toast
 import { closeSheet } from "./add-sheet.js";
 import { initSelects } from "./dropdown.js";
 import { dbPending, loadDbView } from "./data-view.js";
+import { probeJobs } from "./jobs.js";
 import { loadCalls, loadMeta, loadPage, openDetail, pageState } from "./detail.js";
 import { patchSidebar } from "./menu.js";
 import { closeMenu } from "./pane.js";
-import { loadList, loadMemory, loadTunnels, setView } from "./polling.js";
+import { loadJobs, loadList, loadMemory, loadTunnels, setView } from "./polling.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
 import { openTokensView } from "./tokens.js";
@@ -48,6 +49,10 @@ function maybeReloadPanel(newVersion) {
 function showApp() {
   loadList();
   loadInfo();
+  // Feature probe for the Jobs tab: hide it before anyone clicks when the gateway neither serves
+  // nor enables the subsystem. Not awaited — the tab is visible until the answer lands, and a
+  // wrong early click only toasts once.
+  void probeJobs();
 }
 
 /** Gateway facts the panel needs once: the token's env var name, and the named-token list (no
@@ -127,7 +132,14 @@ Array.prototype.forEach.call($("viewSeg").querySelectorAll("button"), function (
    the MCP list. */
 (function () {
   var v = (location.hash || "").replace(/^#/, "");
-  if (v === "tunnels" || v === "traffic" || v === "data") setView(v);
+  if (v === "jobs") {
+    // The probe is async, so the deep link waits for it rather than guessing: entering the view on
+    // a gateway without jobs would paint an empty pane that never fills. Still on #jobs when the
+    // answer lands means the reader meant it.
+    void probeJobs().then(function (ok) {
+      if (ok && (location.hash || "").replace(/^#/, "") === "jobs") setView("jobs");
+    });
+  } else if (v === "tunnels" || v === "traffic" || v === "data") setView(v);
 })();
 
 /* Polling is cheap: /api/mcps is status-only, and /api/memory reads process.memoryUsage() in-process.
@@ -147,6 +159,7 @@ function poll() {
     return;
   }
   loadList();
+  if (state.view === "jobs") { loadJobs(true); return; }
   if (state.view === "traffic") { loadTraffic(); return; }
   // The call log is live only while you are looking at it.
   if (state.detail && state.detail.tab === "logs") loadCalls(state.detail.name);
@@ -165,6 +178,7 @@ window.addEventListener("beforeunload", function (e) {
 $("refreshBtn").onclick = function () {
   if (state.view === "data") { loadDbView(); return; }
   if (state.view === "tunnels") { loadTunnels(); loadMemory(true); return; }
+  if (state.view === "jobs") { loadJobs(); loadMemory(true); return; }
   if (state.view === "traffic") { state.trafficSig = null; loadTraffic(); loadMemory(true); return; }
   poll();
   var d = state.detail;
@@ -187,7 +201,7 @@ document.addEventListener("keydown", function (e) {
   var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
   if (typing) return;
   if (e.key === "r") { $("refreshBtn").click(); return; }
-  if (state.view === "tunnels" || state.view === "data") return; // no sidebar on screen in these views
+  if (state.view === "tunnels" || state.view === "data" || state.view === "jobs") return; // no sidebar in these views
   if (e.key === "/") { e.preventDefault(); $("filter").focus(); return; }
   // Alt+arrows move the selected MCP through the list (the drag-free path to the same reorder).
   if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {

@@ -123,8 +123,9 @@ function patchSidebar() {
     if (m.state === "up") up++;
     else if (m.state === "down" || m.state === "error") bad++;
   });
-  // The chip belongs to whichever view is on screen; in the tunnel view it counts rules.
-  if (state.view !== "tunnels") {
+  // The chip belongs to whichever view is on screen; the tunnel and jobs views count their own
+  // rows (updateCountChip owns those), so the MCP text must not overwrite them mid-poll.
+  if (state.view !== "tunnels" && state.view !== "jobs") {
     $("countChip").textContent = state.mcps.length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
   }
   // Group headers name the sections now, so the standing "MCPS" caption is noise; it earns its line

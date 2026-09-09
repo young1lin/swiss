@@ -277,8 +277,10 @@ fn is_cmd_shim(program: &str) -> bool {
 }
 
 /// The Windows Job Object seam. The ONLY `unsafe` in this adapter lives here.
+/// pub(crate): the jobs runner puts its scheduled children under the same kill-on-close guard,
+/// so a timed-out command takes its whole subtree down exactly like a stopped proc MCP.
 #[cfg(windows)]
-mod win {
+pub(crate) mod win {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::JobObjects::{
         AssignProcessToJobObject, JobObjectExtendedLimitInformation, SetInformationJobObject,
