@@ -189,6 +189,23 @@ impl JobsState {
         self.persist(&jobs);
     }
 
+    /// Migration-only (docs/11 §5.1 step 5): seed a v1 row's run facts without
+    /// overwriting anything newer. A crash between the config write and the jobs.json
+    /// marker re-runs the seed against a state file that may already hold migrated
+    /// facts - or facts for a run that happened since - and the migration must converge,
+    /// not clobber. Best-effort persist, like every run-path write here.
+    pub fn seed(&self, job: &str, last_run_at: Option<i64>, last_ok: Option<bool>) {
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let st = jobs.entry(job.to_string()).or_default();
+        if st.last_run_at.is_none() {
+            st.last_run_at = last_run_at;
+        }
+        if st.last_ok.is_none() {
+            st.last_ok = last_ok;
+        }
+        self.persist(&jobs);
+    }
+
     /// Drop a deleted definition's line. The run history stays in the log file, which
     /// outlives the job that wrote it; only the scheduling facts go.
     pub fn forget(&self, job: &str) {

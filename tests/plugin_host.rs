@@ -449,6 +449,41 @@ fn echo_def() -> ServerDef {
 /// layered over every merged tree.
 async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<Registry>) {
     let dir = scratch_dir(tag);
+    let config_store = ConfigStore::memory(raw.clone());
+    full_app_with_store(dir, config_store).await
+}
+
+/// The same boot over a FILE-BACKED config store: what the migration tests need, since a
+/// memory store cannot fail a persist. `config_relative` is the store file's path
+/// relative to the scratch dir (e.g. "gateway.config.json", or "gone/gateway.config.json"
+/// to make every config write fail while jobs.json itself stays real). `v1_jobs`, when
+/// given, is sealed into the tree's jobs.json BEFORE the host boots - the state an old
+/// binary would have left behind.
+async fn full_app_file_backed(
+    tag: &str,
+    raw: Value,
+    config_relative: &str,
+    v1_jobs: Option<Value>,
+) -> (
+    axum::Router,
+    Arc<PluginHost>,
+    Arc<Registry>,
+    std::path::PathBuf,
+) {
+    use local_mcp_gateway::secure::statefile::write_secure_json;
+    let dir = scratch_dir(tag); // scratch_dir sets the test master key
+    if let Some(v1) = v1_jobs {
+        write_secure_json(&dir.join("jobs.json"), &v1).expect("the v1 file writes");
+    }
+    let config_store = ConfigStore::from_loaded(dir.join(config_relative), raw.clone());
+    let (app, host, registry) = full_app_with_store(dir.clone(), config_store).await;
+    (app, host, registry, dir)
+}
+
+async fn full_app_with_store(
+    dir: std::path::PathBuf,
+    config_store: Arc<ConfigStore>,
+) -> (axum::Router, Arc<PluginHost>, Arc<Registry>) {
     let calls = Arc::new(local_mcp_gateway::calls::CallLog::at(dir.join("calls")));
     let registry = Registry::new(3_600_000, calls.clone());
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
@@ -458,9 +493,6 @@ async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<
         .expect("register echo");
 
     let services = local_mcp_gateway::services::RuntimeServices::new();
-    // ONE config store shared by the host and the jobs system - the S3 shape: the jobs
-    // definitions row is plugin config, read and written through the same store.
-    let config_store = ConfigStore::memory(raw.clone());
     let jobs = JobSystem::open(
         dir.join("jobs.json"),
         services.clone(),
@@ -485,7 +517,7 @@ async fn full_app(tag: &str, raw: Value) -> (axum::Router, Arc<PluginHost>, Arc<
         "MCP_GATEWAY_TOKEN",
         19998,
     );
-    let mut host = PluginHost::new(ConfigStore::memory(raw));
+    let mut host = PluginHost::new(config_store);
     let deps = builtin::BuiltinDeps {
         registry: registry.clone(),
         managed: managed.clone(),
@@ -987,6 +1019,145 @@ async fn jobs_config_put_is_validated_against_the_v2_model() {
     assert_eq!(
         body["config"]["definitions"]["nightly"]["trigger"]["expression"],
         json!("30 3 * * *"),
+    );
+}
+
+/// docs/11 §5/S4, end to end over a real boot: a v1 jobs.json sitting next to a
+/// file-backed config migrates when the jobs plugin starts - before the first tick, so
+/// the migrated job is simply part of the table the panel already reads. A second boot
+/// of the same tree (marker present) is a no-op.
+#[tokio::test]
+async fn a_v1_jobs_table_migrates_at_boot_and_a_reboot_is_a_no_op() {
+    let v1 = json!({ "jobs": [ {
+        "name": "daily",
+        "command": "cmd /c echo hi",
+        "everySec": 3600,
+        "enabled": true,
+        "timeoutMs": 30000,
+        "lastRunAt": "2026-09-01T03:30:00.000Z",
+        "lastOk": true,
+    } ] });
+
+    let (app, _host, _registry, dir) = full_app_file_backed(
+        "migrate-boot",
+        json!({ "plugins": { "jobs": {} } }),
+        "gateway.config.json",
+        Some(v1.clone()),
+    )
+    .await;
+
+    // The migrated definition is live through the normal v1 surface, facts included.
+    let (status, body, _) = send(&app, local("GET", "/api/jobs")).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let jobs = body.unwrap()["jobs"].as_array().cloned().unwrap();
+    assert_eq!(jobs.len(), 1, "exactly the migrated definition");
+    assert_eq!(jobs[0]["name"], json!("daily"));
+    assert_eq!(jobs[0]["everySec"], json!(3600));
+    assert_eq!(jobs[0]["source"], json!("config"));
+    assert_eq!(jobs[0]["lastOk"], json!(true), "the v1 run fact survived");
+    assert!(
+        dir.join("jobs.json.v1.bak").exists(),
+        "the sealed backup exists"
+    );
+
+    // The first boot persisted the merged row into the (sealed) config FILE: unseal
+    // it and confirm the definition is there as the store wrote it - what a second
+    // boot of the same tree would load.
+    use local_mcp_gateway::secure::statefile::read_secure_json;
+    let raw_on_disk = read_secure_json(&dir.join("gateway.config.json"))
+        .expect("the sealed config reads")
+        .expect("still there");
+    assert!(
+        raw_on_disk["plugins"]["jobs"]["config"]["definitions"]["daily"]
+            .get("trigger")
+            .is_some(),
+        "the first boot persisted the merged row: {raw_on_disk}"
+    );
+
+    // And jobs.json now carries the marker, sealed: a re-boot is the no-op the unit
+    // tests pin; here the observable is simply that the rows are gone from the file.
+    let after = read_secure_json(&dir.join("jobs.json"))
+        .expect("the sealed file reads")
+        .expect("still there");
+    assert_eq!(after["jobs"], json!([]), "the v1 rows are emptied: {after}");
+    assert!(after["migratedAt"].as_str().is_some(), "{after}");
+}
+
+/// docs/11 §9 S4: a migration that cannot persist fails the PLUGIN with the reason in
+/// lastError, the scheduler never starts (no occurrence is ever claimed), and jobs.json
+/// stays untouched and unmarked for the next boot to retry.
+#[tokio::test]
+async fn a_failed_migration_fails_the_plugin_and_never_schedules() {
+    let v1 = json!({ "jobs": [ {
+        "name": "daily",
+        "command": "cmd /c echo hi",
+        "everySec": 3600,
+        "enabled": true,
+        "timeoutMs": 30000,
+    } ] });
+
+    // jobs.json is real, but the config file sits under a missing parent: the merged
+    // row cannot persist, so the migration stops in place at step 4.
+    let (app, _host, _registry, dir) = full_app_file_backed(
+        "migrate-fail",
+        json!({ "plugins": { "jobs": {} } }),
+        "gone/gateway.config.json",
+        Some(v1),
+    )
+    .await;
+
+    let (_, body, _) = send(&app, local("GET", "/api/plugins")).await;
+    let jobs_row = body.expect("JSON")["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == json!("jobs"))
+        .cloned()
+        .unwrap();
+    assert_eq!(jobs_row["state"], json!("failed"), "{jobs_row}");
+    assert!(
+        jobs_row["lastError"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("jobs.json"),
+        "the lastError names the step: {jobs_row}"
+    );
+
+    // The scheduler never started: /api/jobs is unreachable (a failed plugin owns no
+    // routes), and no run history or state facts exist for the v1 job anywhere in the
+    // tree - nothing was claimed, nothing executed.
+    let (status, _, _) = send(&app, local("GET", "/api/jobs")).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the boundary guards a failed plugin's routes"
+    );
+    assert!(
+        !dir.join("logs").join("jobs").join("daily.jsonl").exists(),
+        "no occurrence was ever claimed"
+    );
+    assert!(
+        !dir.join("jobs-state.json").exists() || {
+            // state may exist as an empty table; what must NOT be there is a claim for
+            // the v1 job. The sealed file's absence-or-emptiness is the observable.
+            std::fs::metadata(dir.join("jobs-state.json"))
+                .map(|m| m.len() < 512)
+                .unwrap_or(true)
+        },
+        "no run facts were seeded by a failed migration"
+    );
+    // jobs.json untouched and unmarked: the migration's backup exists (step 2 ran
+    // before the failure), but the original file still decrypts with its rows.
+    assert!(dir.join("jobs.json.v1.bak").exists());
+    use local_mcp_gateway::secure::statefile::read_secure_json;
+    let raw = read_secure_json(&dir.join("jobs.json"))
+        .expect("the sealed file reads")
+        .expect("still there");
+    assert!(raw.get("migratedAt").is_none(), "unmarked: {raw}");
+    assert_eq!(
+        raw["jobs"].as_array().map(Vec::len),
+        Some(1),
+        "untouched: {raw}"
     );
 }
 

@@ -520,10 +520,22 @@ impl PluginFactory for JobsPlugin {
     }
 
     async fn create(&self, config: &Value) -> Result<Arc<dyn PluginInstance>, String> {
-        // The row this instance runs on is applied BEFORE the tick can start, so a job
-        // whose definition just changed cannot fire under a half-applied table. Cheap by
-        // contract: parse and swap, no IO.
-        self.jobs.apply_config(config)?;
+        // The v1 table migrates FIRST (docs/11 §5.1): jobs.json rows merge into the
+        // config row and their run facts seed the state file, before any apply. A failed
+        // step fails this create - the plugin lands failed with the reason, jobs.json
+        // stays untouched and unmarked, and the scheduler never ticks over a
+        // half-migrated tree.
+        crate::jobs::migrate::run(&self.jobs)?;
+        // Apply the row the STORE holds now - the migration may have merged v1
+        // definitions into it, and the `config` argument is the pre-migration
+        // snapshot. Still before the tick can start, still cheap by contract.
+        let row = self.jobs.current_config();
+        let row = if row.as_object().is_some_and(|m| m.is_empty()) {
+            config.clone()
+        } else {
+            row
+        };
+        self.jobs.apply_config(&row)?;
         Ok(Arc::new(JobsInstance {
             jobs: self.jobs.clone(),
         }))

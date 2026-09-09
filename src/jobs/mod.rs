@@ -25,11 +25,13 @@
 //! - state.rs: run FACTS (docs/11 §4) - the interval anchor, lastOk, the failure
 //!   streak - sealed into jobs-state.json, one line per job, best-effort writes.
 //! - api.rs: the /api/jobs management surface (the panel does not know it exists).
-//! - def.rs: the v2 definition model (docs/11) - parsed, validated and projected, but
-//!   not yet the scheduler's source of definitions.
+//! - def.rs: the v2 definition model (docs/11) - the scheduler's source of definitions
+//!   since S3, applied from the plugin config row.
+//! - migrate.rs: the one-time v1 jobs.json → config row migration (docs/11 §5, S4).
 
 pub mod api;
 pub mod def;
+pub mod migrate;
 pub mod runlog;
 pub mod runner;
 pub mod schedule;
@@ -261,6 +263,10 @@ pub struct JobSystem {
     /// The gateway's config store: the v1 API's edit path writes the SAME row the plugin
     /// host reconciles, revision-checked, instead of growing a second definition file.
     config_store: Arc<ConfigStore>,
+    /// The v1 jobs.json path. From S3 on the scheduler never consults the file; the
+    /// path is kept for the S4 migration (docs/11 §5), which reads it once and
+    /// rewrites it with its completion marker.
+    jobs_path: PathBuf,
     /// Run FACTS, sealed into jobs-state.json (docs/11 §4): the interval anchor, lastOk,
     /// the failure streak. Definitions and facts stopped sharing a file in S2.
     state: state::JobsState,
@@ -302,6 +308,7 @@ impl JobSystem {
             }),
             applied_revision: AtomicU64::new(0),
             config_store,
+            jobs_path: path,
             state: state::JobsState::open(dir.join("jobs-state.json")),
             runlog: runlog::RunLog::at(dir.join("logs").join("jobs")),
             services,
@@ -361,6 +368,13 @@ impl JobSystem {
     /// The config revision currently applied - what /api/jobs reports as configRevision.
     pub fn applied_revision(&self) -> u64 {
         self.applied_revision.load(Ordering::SeqCst)
+    }
+
+    /// The jobs config row as the STORE holds it right now - the row apply_config
+    /// reads at boot after the S4 migration may have merged v1 definitions into it
+    /// (docs/11 §5.1). `{}` when no row exists yet.
+    pub fn current_config(&self) -> Value {
+        self.config_store.plugin_config("jobs")
     }
 
     /// Start the one-second tick task. stop() aborts it.
