@@ -92,12 +92,12 @@ pub async fn run_gateway() -> Result<(), String> {
     )));
     let tunnel_manager = crate::tunnel::TunnelManager::new(
         tunnel_store.clone(),
-        Some(crate::tunnel::registry_view(registry.clone())),
+        Some(crate::mcp_link::registry_view(registry.clone())),
     );
     let tunnels = Arc::new(crate::tunnel::Tunnels {
         store: tunnel_store,
         manager: tunnel_manager.clone(),
-        registry: Some(registry.clone()),
+        mcp_display: Some(crate::mcp_link::registry_display(registry.clone())),
     });
 
     // Register + start every config-defined MCP; one failure must not take down the rest.

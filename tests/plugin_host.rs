@@ -508,7 +508,9 @@ async fn full_app_with_store(
     let tunnels = Arc::new(local_mcp_gateway::tunnel::api::Tunnels {
         store: tunnel_store,
         manager: tunnel_manager.clone(),
-        registry: Some(registry.clone()),
+        mcp_display: Some(local_mcp_gateway::mcp_link::registry_display(
+            registry.clone(),
+        )),
     });
 
     let ctx = local_mcp_gateway::app::AppContext::new(
@@ -1498,7 +1500,7 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
                     ))),
                     None,
                 ),
-                registry: None,
+                mcp_display: None,
             }),
             tunnel_manager: TunnelManager::new(
                 Arc::new(Mutex::new(local_mcp_gateway::tunnel::TunnelStore::new(

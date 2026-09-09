@@ -4,18 +4,15 @@
 //! MCP (mysql/redis/pg) whose connection definition points at a loopback host:port is presumed
 //! to be served by the forwarding rule that binds that local port. It powers the rule editor's
 //! pre-checked "Serves MCPs" suggestion (`GET /api/tunnels/suggest/:port`) and nothing else —
-//! display and guard rail only, never automation. `RegistryView` is the read-only registry
-//! window the manager gets (has/stateOf/isStarted/startedAt).
-
-use std::sync::Arc;
+//! display and guard rail only, never automation. The registry-backed window itself lives in
+//! the composition layer (mcp_link.rs): this module stays pure def analysis, so the tunnel
+//! subsystem never names the registry's type.
 
 #[cfg(test)]
 use serde_json::Value;
 
-use super::manager::McpView;
 use super::types::value_number;
 use crate::config::{resolve_def, ServerDef};
-use crate::registry::{EntryInner, Health, Lifecycle, Registry};
 
 fn is_loopback(host: &str) -> bool {
     let lower = host.trim().to_ascii_lowercase();
@@ -105,71 +102,6 @@ pub fn mcp_loopback_port(def: &ServerDef) -> Option<u16> {
         return Some(port);
     }
     None
-}
-
-/// MCP names whose loopback target is `localPort` — pre-checked in the rule editor.
-pub fn suggest_mcps(registry: &Registry, local_port: u16) -> Vec<String> {
-    registry
-        .all()
-        .iter()
-        .filter_map(|entry| {
-            let def = entry.data.read().ok().map(|d| d.def.clone())?;
-            if mcp_loopback_port(&def) == Some(local_port) {
-                Some(entry.name())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// The read-only view of the registry the tunnel subsystem gets. Nothing here can start or stop
-/// an MCP.
-pub fn registry_view(registry: Arc<Registry>) -> Box<dyn McpView> {
-    Box::new(RegistryView(registry))
-}
-
-struct RegistryView(Arc<Registry>);
-
-impl RegistryView {
-    fn entry(&self, name: &str) -> Option<Arc<EntryInner>> {
-        self.0.get(name)
-    }
-}
-
-impl McpView for RegistryView {
-    fn has(&self, name: &str) -> bool {
-        self.0.has(name)
-    }
-
-    fn state_of(&self, name: &str) -> Option<String> {
-        let entry = self.entry(name)?;
-        let d = entry.data.read().ok()?;
-        Some(match d.lifecycle {
-            Lifecycle::Started => match d.status {
-                Health::Up => "up".into(),
-                Health::Down => "down".into(),
-                Health::Unknown => "unknown".into(),
-            },
-            other => other.as_str().to_string(),
-        })
-    }
-
-    fn is_started(&self, name: &str) -> bool {
-        self.entry(name)
-            .and_then(|e| {
-                e.data
-                    .read()
-                    .ok()
-                    .map(|d| d.lifecycle == Lifecycle::Started)
-            })
-            .unwrap_or(false)
-    }
-
-    fn started_at(&self, name: &str) -> Option<String> {
-        self.entry(name)
-            .and_then(|e| e.data.read().ok()?.started_at.clone())
-    }
 }
 
 #[cfg(test)]

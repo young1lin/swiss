@@ -38,8 +38,7 @@ pub mod ssh;
 pub mod store;
 pub mod types;
 
-pub use api::Tunnels;
+pub use api::{McpDisplay, Tunnels};
 pub use manager::{McpView, OpError, OpResult, TunnelManager};
-pub use mcpmatch::registry_view;
 pub use store::TunnelStore;
 pub use types::{FailureKind, RuleDef, RuleState, SshConnDef, TunnelError};

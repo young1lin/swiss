@@ -23,6 +23,7 @@ pub mod log;
 pub mod managed;
 pub mod mask;
 pub mod mcp_import;
+pub mod mcp_link;
 pub mod mem;
 pub mod paging;
 pub mod pathenv;

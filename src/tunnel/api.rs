@@ -5,8 +5,8 @@
 //! has none either — the router boundary IS the gate). Every response is shape-identical to
 //! the Node build's: camelCase, absent-not-null, the panel JS is the spec.
 //!
-//! `registry` is optional and read-only here: it feeds the "Serves MCPs" suggestion. Nothing in
-//! this file starts, stops or restarts an MCP.
+//! `mcp_display` is optional and read-only here: it feeds the "Serves MCPs" suggestion and the
+//! rows' MCP name column. Nothing in this file starts, stops or restarts an MCP.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -19,7 +19,6 @@ use axum::{Json, Router};
 use serde_json::{json, Map, Value};
 
 use super::manager::{OpError, TunnelManager};
-use super::mcpmatch::suggest_mcps;
 use super::port::{force_free, port_owner, probe_port};
 use super::store::{ConnInput, RuleInput, TunnelStore};
 use super::types::{value_number, AuthType, GroupKind, SshConnDef};
@@ -27,14 +26,24 @@ use crate::app::{admin_error, admin_json};
 use crate::config::ServerDef;
 use crate::mask::{mask_def, unmask_body};
 use crate::paths::home_dir;
-use crate::registry::Registry;
+
+/// The read-only MCP world the tunnel API displays: the rows' MCP names and the rule editor's
+/// loopback-port suggestion. Composition supplies the registry-backed impl; a registry-less
+/// composition runs without it. Display and guard rail only — nothing here can start or stop
+/// an MCP, which is what keeps the tunnel subsystem independent of the registry's type.
+pub trait McpDisplay: Send + Sync {
+    /// Every known MCP name.
+    fn names(&self) -> Vec<String>;
+    /// Which MCPs point at this local port — the editor's pre-checked suggestion.
+    fn suggest(&self, local_port: u16) -> Vec<String>;
+}
 
 /// The state the tunnel routes carry: everything the panel's tunnels page talks to.
 pub struct Tunnels {
     pub store: Arc<Mutex<TunnelStore>>,
     pub manager: Arc<TunnelManager>,
-    /// Read-only; feeds the MCP suggestion list.
-    pub registry: Option<Arc<Registry>>,
+    /// Read-only; feeds the MCP suggestion list and the rows' MCP names.
+    pub mcp_display: Option<Arc<dyn McpDisplay>>,
 }
 
 fn with_store<T>(t: &Arc<Tunnels>, f: impl FnOnce(&mut TunnelStore) -> T) -> T {
@@ -355,8 +364,8 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
             let mut body = t.manager.rows();
             body["ruleGroups"] = json!(with_store(&t, |s| s.groups_of(GroupKind::Rules)));
             body["connGroups"] = json!(with_store(&t, |s| s.groups_of(GroupKind::Connections)));
-            body["mcps"] = match &t.registry {
-                Some(reg) => json!(reg.names()),
+            body["mcps"] = match &t.mcp_display {
+                Some(view) => json!(view.names()),
                 None => json!([]),
             };
             admin_json(StatusCode::OK, body)
@@ -505,8 +514,8 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
                 let Some(port) = parse_port(&port) else {
                     return admin_error(StatusCode::BAD_REQUEST, &format!("invalid port: {port}"));
                 };
-                let mcps = match &t.registry {
-                    Some(reg) => suggest_mcps(reg, port),
+                let mcps = match &t.mcp_display {
+                    Some(view) => view.suggest(port),
                     None => Vec::new(),
                 };
                 admin_json(StatusCode::OK, json!({ "port": port, "mcps": mcps }))
