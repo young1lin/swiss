@@ -27,13 +27,13 @@ use axum::http::{header, Request, StatusCode};
 use serde_json::json;
 use tower::ServiceExt;
 
-use lmg_mcp::adapters::make_adapter;
 use lmg::app::{build_app, AppContext, BODY_LIMIT};
+use lmg_core::platform::self_working_set;
 use lmg_host::config::ServerDef;
 use lmg_host::managed::ManagedStore;
-use lmg_core::platform::self_working_set;
-use lmg_mcp::registry::{Registry, Source};
 use lmg_host::token::single_token_manager;
+use lmg_mcp::adapters::make_adapter;
+use lmg_mcp::registry::{Registry, Source};
 
 const TOKEN: &str = "test-token-0123456789abcdef";
 
@@ -75,10 +75,8 @@ fn growth_mb(before: u64) -> f64 {
 }
 
 async fn app_with_echo() -> axum::Router {
-    let scratch = std::env::temp_dir().join(format!(
-        "lmg-memory-{}",
-        lmg_core::util::random_hex(8)
-    ));
+    let scratch =
+        std::env::temp_dir().join(format!("lmg-memory-{}", lmg_core::util::random_hex(8)));
     // The call log is real, and the panel-call path writes to it. The app's OWN instance
     // points at scratch, so the test neither touches the data dir nor measures the absence
     // of logging.

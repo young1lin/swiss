@@ -13,17 +13,17 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use async_trait::async_trait;
+use lmg::app::{build_app, AppContext};
+use lmg_host::config::ServerDef;
+use lmg_host::managed::ManagedStore;
+use lmg_host::token::TokenManager;
 use lmg_mcp::adapters::direct::DirectAdapter;
 use lmg_mcp::adapters::resources::{
     ResourceBody, ResourceEntry, ResourceFault, ResourcePage, ResourceProvider, ResourceTemplate,
 };
 use lmg_mcp::adapters::tool_server::{Engine, ServerMeta, ToolDef};
 use lmg_mcp::adapters::{make_adapter, Adapter};
-use lmg::app::{build_app, AppContext};
-use lmg_host::config::ServerDef;
-use lmg_host::managed::ManagedStore;
 use lmg_mcp::registry::{Registry, Source};
-use lmg_host::token::TokenManager;
 
 const TOKEN: &str = "admin-tok-0123456789abcdef";
 
@@ -60,10 +60,7 @@ struct Harness {
 fn setup() -> Harness {
     sandbox();
     let path = std::env::temp_dir()
-        .join(format!(
-            "lmg-adminapi-{}",
-            lmg_core::util::random_hex(8)
-        ))
+        .join(format!("lmg-adminapi-{}", lmg_core::util::random_hex(8)))
         .join("managed.json");
     std::fs::create_dir_all(path.parent().expect("the scratch file has a parent"))
         .expect("create the scratch directory");

@@ -16,4 +16,3 @@ async fn main() {
     let code = lmg::cli::main(args).await;
     std::process::exit(code);
 }
-

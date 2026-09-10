@@ -12,19 +12,19 @@ use axum::http::{header, HeaderValue, Request, StatusCode};
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
-use lmg_mcp::adapters::make_adapter;
 use lmg::app::build_app;
+use lmg::builtin;
 use lmg_host::config::ServerDef;
 use lmg_host::config_store::ConfigStore;
-use lmg::builtin;
 use lmg_host::host::descriptor::{PluginDescriptor, PluginState};
 use lmg_host::host::factory::{PluginFactory, PluginInstance};
 use lmg_host::host::scope::PluginScope;
 use lmg_host::host::PluginHost;
-use lmg_jobs::jobs::JobSystem;
 use lmg_host::managed::ManagedStore;
-use lmg_mcp::registry::{Registry, Source};
 use lmg_host::token::single_token_manager;
+use lmg_jobs::jobs::JobSystem;
+use lmg_mcp::adapters::make_adapter;
+use lmg_mcp::registry::{Registry, Source};
 use lmg_tunnels::tunnel::manager::TunnelManager;
 
 const TOKEN: &str = "test-token-0123456789abcdef";
@@ -420,12 +420,7 @@ fn test_master_key() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| {
         // Safety: one write, under a OnceLock, of a variable nothing in this binary caches.
-        unsafe {
-            std::env::set_var(
-                lmg_core::secure::key::MASTER_KEY_ENV,
-                "ab".repeat(32),
-            )
-        }
+        unsafe { std::env::set_var(lmg_core::secure::key::MASTER_KEY_ENV, "ab".repeat(32)) }
     });
 }
 
@@ -508,9 +503,7 @@ async fn full_app_with_store(
     let tunnels = Arc::new(lmg_tunnels::tunnel::api::Tunnels {
         store: tunnel_store,
         manager: tunnel_manager.clone(),
-        mcp_display: Some(lmg::mcp_link::registry_display(
-            registry.clone(),
-        )),
+        mcp_display: Some(lmg::mcp_link::registry_display(registry.clone())),
     });
 
     let ctx = lmg::app::AppContext::new(
@@ -534,9 +527,9 @@ async fn full_app_with_store(
         services: services.clone(),
     };
     builtin::register_all(&mut host, &deps).expect("the built-ins register without conflicts");
-    host.register(Arc::new(
-        lmg::plugins::http_tools::HttpToolsPlugin::new(services.clone()),
-    ))
+    host.register(Arc::new(lmg::plugins::http_tools::HttpToolsPlugin::new(
+        services.clone(),
+    )))
     .expect("the http-tools plugin registers");
     host.set_capability_probe({
         let catalog = services.catalog.clone();
