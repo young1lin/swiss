@@ -6,6 +6,7 @@ members = [
     "crates/lmg-data",
     "crates/lmg-tunnels",
     "crates/lmg-jobs",
+    "crates/lmg-terminal",
     "crates/lmg-panel",
 ]
 resolver = "2"
