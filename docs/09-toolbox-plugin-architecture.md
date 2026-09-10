@@ -167,6 +167,7 @@ Axum 路由不能永久捕获昂贵 `Arc<PluginInstance>` 后只修改一个 ena
 Shell 只做 inventory、路由选择、布局、通用通知、主题、共享组件和页面挂载。插件自己提供 mount/update/unmount；导航、settings、toolbar 使用有限且有文档的 slot contract。
 
 - 一插件可贡献多个页面或不贡献页面，纯前端 formatter 不要求启动后端实例。
+- The panel's level-one navigation groups pages by `pluginId`, takes each group's order from the smallest page `order` in it, and adds no host fields to do it; two-level rendering and the fallback group labels are specified in `docs/13-panel-navigation-spec.md`.
 - 点击页面才 dynamic import 入口；切走注销订阅/DOM/轮询/大查询结果。ESM 模块缓存未必卸载，不承诺 JS 代码立即从浏览器内存消失。
 - 页面通过注入的 api/actions/run/config 客户端访问能力，不读取其他插件的全局 state。
 - 后端统一 inventory 投影 compiled/desired/actual/lastError/pages/actions，前端不能以探测 `/api/jobs` 的成功失败来决定完整能力树。
