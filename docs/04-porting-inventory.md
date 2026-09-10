@@ -4,6 +4,13 @@ Every backend source file in the Node build, with its destination, phase and ris
 from `../local-mcp-gateway/src` on 2026-09-07. **15,395 lines of backend TypeScript** is the real
 size of this job — the other 7,193 lines of that tree are the panel, which is copied, not ported.
 
+> **The port is complete; the destinations below are pre-workspace paths.** Every `src/…`
+> destination in this table names the single-crate layout the port was planned in. The code has
+> since been split into eight crates (`4147e8a`) — `src/adapters/x.rs` is now
+> `crates/lmg-mcp/src/adapters/x.rs`, `src/secure/` is `crates/lmg-core/src/secure/`, and so on.
+> The current map is in `docs/02-architecture.md`; this table is kept for what it actually
+> records — which Node module became which Rust module, and what each one cost.
+
 Risk is about *unknowns*, not size: a 600-line SQL adapter is long but mechanical; a 137-line
 process-tree walk is short and full of platform traps.
 

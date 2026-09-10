@@ -10,15 +10,24 @@ shipped as a **single self-contained `.exe`** with no Node, no `node_modules`, n
 
 ## Status
 
-**Core implementation complete** — all planned adapter families are wired into the factory: echo,
+**Implementation complete** — all planned adapter families are wired into the factory: echo,
 MySQL, PostgreSQL, Redis, MongoDB, proc, HTTP, REST, and SSH tunnels. The admin API, embedded panel,
 sealed-envelope compatibility, lazy proc lifecycle, and loopback security paths are implemented.
-Scheduled command jobs, their panel page, and startup-time subsystem switches are included in
-baseline `81882cc`. Validation passes with default features and `mongo` (647 library tests and
-82 integration tests with `mongo`), plus Clippy with `-D warnings` in both combinations. On
-memory-constrained Windows machines, use `-j 1` to reduce compiler memory pressure.
+The build has since become the plugin toolbox `docs/09`–`12` describe: a plugin host over shared
+Action / Run / process services, configuration-driven Jobs, a connection catalog that keeps Data
+independent of MCP, and eight crates that still link into one `lmg.exe`.
+
+Validation passes with default features and `mongo` — **848 tests** (725 unit across the eight
+packages, 123 integration) plus Clippy with `-D warnings` in both combinations. Run the gates with
+`--workspace`: without it cargo selects the root package alone, checks 187 of those tests, and
+still reports ok.
 The MongoDB driver remains an opt-in feature so the default binary stays small.
-`docs/01`–`08` describe the original compatibility port; `09`–`10` propose its next architecture.
+
+`docs/01`–`08` describe the original compatibility port; `09`–`12` describe the toolbox it became.
+**The one thing still outstanding is the number this project exists for.** `docs/01` now records
+14.0 MB for the gateway with the panel and an echo MCP — against Node's 117.5 MB baseline — but the
+rows that matter, the full adapter workload, are still empty: filling them needs live mysql, pg and
+redis and a real MCP client driving them (`docs/12` W2).
 
 | Doc | What it settles |
 | --- | --- |
@@ -30,11 +39,15 @@ The MongoDB driver remains an opt-in feature so the default binary stays small.
 | [`docs/06-roadmap.md`](docs/06-roadmap.md) | Six phases, each with an exit criterion |
 | [`docs/07-decisions.md`](docs/07-decisions.md) | The calls that need a human: what gets dropped, and why |
 | [`docs/08-testing.md`](docs/08-testing.md) | How 10,859 lines of vitest become the acceptance spec |
-| [`docs/09-toolbox-plugin-architecture.md`](docs/09-toolbox-plugin-architecture.md) | **Proposal:** RH-inspired developer toolbox, plugin/page contracts, module boundaries, staged migration |
-| [`docs/10-config-driven-jobs.md`](docs/10-config-driven-jobs.md) | **Proposal:** configuration-driven Jobs, shared Actions/runs, policy defaults, compatibility and recovery |
+| [`docs/09-toolbox-plugin-architecture.md`](docs/09-toolbox-plugin-architecture.md) | RH-inspired developer toolbox: plugin/page contracts, module boundaries, staged migration. **P1–P6 shipped** |
+| [`docs/10-config-driven-jobs.md`](docs/10-config-driven-jobs.md) | Configuration-driven Jobs: shared Actions/runs, policy defaults, compatibility and recovery. **Shipped** |
+| [`docs/11-jobs-v2-implementation-spec.md`](docs/11-jobs-v2-implementation-spec.md) | The Jobs v2 schema, migration and scheduling semantics — stages S1–S6 with their acceptance tests. **Shipped; now the field contract of record** |
+| [`docs/12-remaining-work-spec.md`](docs/12-remaining-work-spec.md) | The connection catalog, the touchstone plugin, the workspace split — and W2, the memory measurement, **still open** |
 
-The toolbox proposals are not implemented configuration or API documentation. They do not change
-the existing Node-panel source-of-truth, sealed formats, or the v1 port boundaries below.
+Everything docs/09 and docs/10 designed is now code, and each document's status header names the
+commit that landed it. None of it changed the Node-panel source-of-truth, the sealed formats, or
+the v1 port boundaries below — the panel is still copied byte for byte, and a test fails if it
+ever stops being.
 
 ## The one-paragraph version
 

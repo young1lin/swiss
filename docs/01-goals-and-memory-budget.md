@@ -189,9 +189,15 @@ the wrong way, is worth stopping for.
 | --- | --- | --- | --- | --- |
 | 2026-09-07 | Node (baseline) | mysql, pg, 2×redis, 2×http, echo | 117.5 | 2×proc asleep |
 | 2026-09-07 | Rust Phase 0 (spike) | echo only | **9.1** | release, after 60 requests; 1 thread, 4.0 MB private, 1.05 MB exe |
-| | Rust Phase 1 | echo + panel | | |
+| 2026-09-10 | Rust Phase 1 | echo + panel | **14.0** | release+mongo, scratch home, echo settled; measured across the crate split (`4147e8a`: 14.2 → 14.0) |
 | | Rust Phase 2 | mysql, pg, 2×redis | | |
 | | Rust Phase 4 | full parity | | |
+
+Phase 1 reading: 14.0 MB with the whole gateway present — panel embedded, registry, both on-disk
+logs, the plugin host and every adapter family compiled in — against a 9.1 MB spike that had none
+of it. That is inside the 12–20 MB budget with the target workload still to come, and it is the
+last row this project can fill without live databases: Phase 2 and Phase 4 need mysql, pg and
+redis actually running, plus a real MCP client driving them (docs/12 W2).
 
 Phase 0 reading: the spike (axum + rmcp stateless + bearer gate, no panel, no registry, no DB
 pools) settles at 9.1 MB working set after traffic — below the 4–6 MB "baseline" estimate plus

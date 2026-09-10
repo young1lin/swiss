@@ -1,6 +1,13 @@
-# 09 — 开发瑞士军刀插件架构（提议）
+# 09 — 开发瑞士军刀插件架构
 
-> 状态：设计提议，尚未实施重构。代码基线：`81882cc`。
+> 状态：**P1–P6 全部已实施**。代码基线：`4147e8a`。
+> P1–P3（`5f18951`）：PluginHost 与插件生命周期、ActionRegistry / RunCoordinator /
+> ProcessSupervisor、面板 PageRegistry 与 `/api/plugins` 清单。
+> P4（`9e76351`）：连接目录 `crates/lmg-host/src/services/catalog.rs`，Data 不再依赖 MCP。
+> P6（`9cdd7c6`）：试金石插件 `src/plugins/http_tools.rs`——加它没有改动 `crates/lmg-host/src/host/` 一行，
+> 这一点由测试 `the_host_never_learns_this_plugins_id` 持续守住。
+> P5（`4147e8a`）：workspace 拆分成八个 crate，仍是一个 `lmg.exe`（体积 +1.1%）。
+> 实施过程见 [12](12-remaining-work-spec.md)。
 > 产品方向：一个低内存、单进程的开发工具宿主；MCP 是重要插件，但不再是其他功能必须依附的核心。
 > 本文不改变现有线上配置、接口或前端源文件归属。Jobs 详细契约见 [10](10-config-driven-jobs.md)。
 
@@ -167,7 +174,7 @@ Shell 只做 inventory、路由选择、布局、通用通知、主题、共享�
 - 路由、Action、页面 ID 冲突在注册时拒绝。页面资源路径必须受限，禁止路径穿越与任意远端脚本 URL。
 - 注册表中可有受限通用表格/表单页面；复杂 Data 等页面保留手写实现，不强行用 JSON 描述整个 UI。
 
-当前前端仍以 Node 项目的 `src/admin` 为唯一源，`src/admin_assets` 是逐字节副本。页面注册化先在 Node 源完成再同步，不在 Rust 侧 fork。若以后把前端归属迁到独立 web 工作区，需单独更新 ADR/AGENTS 并统一两边消费同一制品；不能借“项目规整”偷偷改规则。
+当前前端仍以 Node 项目的 `src/admin` 为唯一源，`crates/lmg-panel/src/admin_assets` 是逐字节副本。页面注册化先在 Node 源完成再同步，不在 Rust 侧 fork。若以后把前端归属迁到独立 web 工作区，需单独更新 ADR/AGENTS 并统一两边消费同一制品；不能借“项目规整”偷偷改规则。
 
 ## 7. 项目规整：先逻辑分层，再用 workspace 固化边界
 
@@ -202,9 +209,9 @@ Cargo features 表达编译能力，不取代运行时开关。发行版保留�
 
 优先修的具体点：
 
-1. `src/jobs/runner.rs` 的 read_to_end → 有界尾缓冲；取消必须收回两个管道 reader。
+1. `crates/lmg-jobs/src/jobs/runner.rs` 的 read_to_end → 有界尾缓冲；取消必须收回两个管道 reader。
 2. `src/app.rs` 的请求 Value DOM、整份响应缓存 → envelope + 原始字节、受限流式旁路预览，保持脱敏与背压。
-3. `src/traffic.rs` 按条数的 ring + 每条 spawned 写入 → 总字节预算、有界 writer 队列、可见的饱和策略。
+3. `crates/lmg-mcp/src/traffic.rs` 按条数的 ring + 每条 spawned 写入 → 总字节预算、有界 writer 队列、可见的饱和策略。
 4. 全局缓存、路由引用环和 detached task → 插件实例所有权与可验证释放。
 5. 保留 proc 默认 lazy/idle-reap、不探测计费 HTTP/rest、现有共享池；调整池大小前先测实际并发与健康检查。
 
@@ -238,9 +245,34 @@ Cargo features 表达编译能力，不取代运行时开关。发行版保留�
 
 P1/P2 中已知的输出上限、取消、保存失败等安全/正确性修复先落地，不等到全部模块迁移。每个阶段独立可回退，行为变化先有回归测试。目录搬迁与协议变化分开提交。
 
-## 11. 本次实际完成与未完成
+## 11. 实施状态
 
-- 已提交现有 Jobs 后端、复制面板和子系统开关基线：`81882cc`。增加 jobs.json 的 Git 忽略保护。
-- 已验证默认测试；Mongo 验证首次并行编译遭 Windows 1455 分页文件限制，`-j 1` 重试成功：647 个库测试和 82 个集成测试通过。两种 features 的 Clippy -D warnings 通过。
-- 改动面板文件与 Node 对应文件 SHA256 一致；改动 JavaScript 的 node --check 通过。
-- 本次只新增提议文档与 README 入口；没有实现上述 v2 schema/插件宿主，没有迁移线上配置，没有重新部署网关，没有修改 RH。
+> 本节是分阶段的施工记录，按落地顺序读。下面 P1–P3 的部分写于 `5f18951`，后面三条是它之后的事；全部六项都已完成，顶部的状态行是权威。
+
+**P1–P3（`5f18951`）。**
+
+- P1 最小宿主契约：`crates/lmg-host/src/host/` 的 PluginDescriptor / PluginScope / PluginHost，显式组合表在
+  `src/builtin.rs`；六态生命周期、并发 start 单飞、路由边界的结构化 503、失败隔离（一个插件
+  起不来是一行状态，不是启动失败）。启停经 ConfigStore 写入，CAS 冲突返回 409。
+- P2 运行服务：ActionRegistry（能力按名字解析，不再对子系统种类做 match）、边读边限量的
+  ProcessSupervisor（Windows Job Object / POSIX 进程组，子进程树随之消亡）、RunCoordinator
+  （有界、按 owner 作用域、终态 first-wins、期限走与手动停止相同的取消路径）。Jobs 由执行者
+  变成这个池的 producer，`/api/actions` 与 `/api/runs` 是宿主自有路由。
+- P3 页面贡献：面板的 `page-core.js` / `page-registry.js` / `views/plugins.js` 从 `/api/plugins`
+  清单渲染标签页，Node 参考源先改、再逐字节复制。
+
+**P4（`9e76351`）连接目录。** `crates/lmg-host/src/services/catalog.rs` 成为 Data 取连接的唯一
+入口，provider 由 MCP 侧在 start 时注册、stop 时撤销。原来的问题——Data 不拥有资源，停用 MCP
+会连带打瘫它——因此消失：Data 现在看到的是一份可能为空的目录，而不是一个不见了的模块。
+
+**P6（`9cdd7c6`）试金石插件。** `src/plugins/http_tools.rs`。它存在的意义不是这个功能，而是
+证明“加一个插件不用动宿主”：加它没有改 `crates/lmg-host/src/host/` 一行，测试
+`the_host_never_learns_this_plugins_id` 把这一点钉住。
+
+**P5（`4147e8a`）workspace 拆分。** 八个 crate，仍是一个 `lmg.exe`（体积 +1.1%）。放在最后是
+对的：先让契约在单 crate 里跑通，再用 manifest 把已经成立的边界固化——`lmg-data` 的
+Cargo.toml 里没有 `lmg-mcp`，所以那条边再也回不来。见 ADR-010。
+
+docs/10 的配置驱动那一半（v2 schema、配置作为定义的唯一来源、`jobs.json` 迁移、schema 驱动的
+面板）也已在 `6bcdf9e`–`18ad5f2` 落地，分阶段记录见 [11](11-jobs-v2-implementation-spec.md)。
+剩下的唯一未完成项是 [12](12-remaining-work-spec.md) 的 W2：内存实测。

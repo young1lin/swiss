@@ -1,45 +1,57 @@
 # 02 — Architecture
 
-## One crate, one binary
+## Eight crates, one binary
 
 ```
 local-mcp-gateway-rust/
-  Cargo.toml
-  build.rs                  # Windows manifest + version resource only
-  src/
-    main.rs                 # thin: parse argv, hand off to lib
-    lib.rs                  # pub mod wiring; what the integration tests drive
-    config.rs               # GatewayConfig / ServerDef, ${ENV} expansion
-    app.rs                  # axum Router assembly  (was: router.ts + http.ts)
-    local_only.rs           # loopback enforcement   (SECURITY — port the tests first)
-    auth.rs  token.rs       # bearer parsing, the named-token set
-    registry.rs             # lifecycle, health probe, lazy wake, idle reap
-    calls.rs  traffic.rs    # the two on-disk logs
-    mask.rs                 # the shared secret wordlist + panel masking
-    paging.rs               # tool/resource/prompt page cache
-    admin/
-      mod.rs                # asset embedding + serving
-      api.rs                # /api/*                (was: adminapi.ts, 914 lines)
-      dbbrowser.rs          # /api/data/*           (was: dbbrowser*.ts, 1104 lines)
-    adapters/
-      mod.rs                # the Adapter trait
-      factory.rs            # type -> adapter
-      echo.rs proc.rs http.rs rest.rs
-      sql.rs mysql.rs pg.rs redis.rs mongo.rs
-      resources.rs tool_server.rs proxy.rs
-    tunnels/
-      mod.rs manager.rs forward.rs port.rs store.rs ssh.rs api.rs mcpmatch.rs
-    secure/
-      mod.rs envelope.rs key.rs statefile.rs envstore.rs
-    daemon.rs cli.rs pidfile.rs         # the `lmg` command
-    platform/
-      mod.rs windows.rs unix.rs         # process tree, job objects, DPAPI, machine id
-    admin_assets/                       # copied verbatim from ../local-mcp-gateway/src/admin
-  tests/                                # integration; drives lib.rs through tower::oneshot
+  Cargo.toml                            # the workspace, and the `lmg` composition package
+  build.rs                              # Windows manifest + version resource only
+  crates/
+    lmg-core/src/                       # knows nothing about gateways
+      paths.rs log.rs util.rs atomic_json.rs
+      secure/ mod.rs envelope.rs key.rs statefile.rs envstore.rs
+      platform/ mod.rs windows.rs unix.rs privfs.rs   # process tree, job objects, DPAPI
+    lmg-host/src/                       # the mechanism every subsystem shares
+      host/ mod.rs descriptor.rs factory.rs engine.rs api.rs scope.rs
+      services/ mod.rs action.rs actions.rs runs.rs process.rs catalog.rs api.rs
+      config.rs config_store.rs managed.rs token.rs auth.rs local_only.rs
+      mask.rs mem.rs pathenv.rs proc_pids.rs dbbrowser.rs reply.rs
+    lmg-mcp/src/                        # MCP itself: the largest crate
+      registry.rs calls.rs traffic.rs paging.rs mcp_import.rs introspect.rs
+      adapters/ mod.rs echo.rs proc.rs http.rs rest.rs direct.rs proxy.rs
+                sql.rs mysql.rs pg.rs redis.rs mongo.rs
+                resources.rs tool_server.rs *_browser.rs *_resources.rs
+    lmg-data/src/     dbbrowser_api.rs   # /api/data/* over the connection catalog
+    lmg-tunnels/src/  tunnel/…           # types, store, manager, forward, port, ssh, mcpmatch, import, api
+    lmg-jobs/src/     jobs/…             # def, migrate, schedule, clock, state, runner, runlog, api
+    lmg-panel/src/    admin.rs
+                      admin_assets/      # copied verbatim from ../local-mcp-gateway/src/admin
+  src/                                   # the composition crate: what wires the rest together
+    main.rs lib.rs                       # thin argv parse; what the integration tests drive
+    app.rs server.rs adminapi.rs         # axum Router assembly, /api/*
+    builtin.rs plugins/                  # every plugin descriptor, incl. the http-tools sample
+    bootstrap.rs subsystems.rs port.rs mcp_link.rs
+    daemon.rs cli.rs pidfile.rs          # the `lmg` command
+    skill_install.rs
+  tests/                                 # integration; drives lib.rs through tower::oneshot
 ```
 
-Single crate, not a workspace. A workspace buys nothing at runtime and costs build complexity;
-`src/lib.rs` alongside `src/main.rs` is already enough for `tests/` to drive the real app.
+**A workspace, and the dependency edges are the point.** It buys nothing at runtime — the product
+is still one static `lmg.exe`, and the split cost +1.1% of binary size in crate-boundary codegen —
+but it makes the plugin architecture a fact the compiler enforces rather than a claim in a
+document. The edges are exactly:
+
+```
+lmg-core  ←  lmg-host  ←  { lmg-mcp, lmg-data, lmg-tunnels, lmg-jobs, lmg-panel }  ←  lmg
+```
+
+No subsystem crate depends on another. That is not decoration: Data used to reach into MCP for
+its connections, and the connection catalog in `crates/lmg-host/src/services/catalog.rs` exists so that
+edge could be deleted (docs/09 P4). If a future change needs `lmg-data → lmg-mcp` back, the
+contract is missing something — add it to the catalog rather than the edge.
+
+`src/` is deliberately the smallest crate that could hold what is left: composition names every
+other crate, so nothing else has to.
 
 ## Runtime model — and the trap in it
 

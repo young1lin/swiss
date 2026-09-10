@@ -36,7 +36,7 @@ MCP the gateway hosts, it just runs out-of-process, which is where untrusted thi
 arguably belonged. What is genuinely lost is the in-process `dbBrowser` / `redisBrowser` /
 `mongoBrowser` hooks: a third-party adapter can no longer appear in the Data view.
 
-**What shipped.** `make_adapter` in `src/adapters/mod.rs` matches the built-in type names and
+**What shipped.** `make_adapter` in `crates/lmg-mcp/src/adapters/mod.rs` matches the built-in type names and
 nothing else; an unrecognised `type` fails at adapter-build time with an error that lists them
 (`Unknown adapter type: … (built-in: echo | mysql | pg | redis | mongo | proc | http | rest)`).
 There is no `adapter` field, no module resolution against the data dir, and no runtime loading of
@@ -48,11 +48,15 @@ named above — a third-party adapter can no longer appear in the Data view.
 
 ## ADR-002 — One crate, not a workspace
 
-**Status: Accepted.**
+**Status: Superseded by ADR-010 (`4147e8a`).**
 
 A workspace buys nothing at runtime and costs build and navigation complexity. `src/lib.rs` beside
 `src/main.rs` already lets `tests/` drive the real application. Revisit only if compile times become
 the bottleneck, which at ~15,000 lines they will not.
+
+*What actually forced the revisit was not compile time.* It was that "MCP is a plugin, not the
+trunk" became a claim no one could check: Data reached into MCP, and nothing but review caught it.
+See ADR-010.
 
 ---
 
@@ -202,12 +206,37 @@ command-line sweep can go.
 
 **Status: Accepted.**
 
-`src/admin/` is copied byte for byte from the Node build and is not edited in this repository. It
-follows that every `/api/*` response must be shape-identical to the Node build's.
+`crates/lmg-panel/src/admin_assets/` is copied byte for byte from the Node build's `src/admin/` and
+is not edited in this repository. It follows that every `/api/*` response must be shape-identical
+to the Node build's.
 
 This looks like a constraint and is actually the plan's best asset: 7,193 lines that need no porting
 and no review, plus an executable specification for the admin API that cannot drift, because it is
 the same file. A panel change belongs in the Node build, followed by a re-copy.
 
-Enforcement: a golden-response test harness built in Phase 1 (docs/05 §3), and a CI check that
-`src/admin_assets/` matches the upstream tree.
+Enforcement: a golden-response test harness built in Phase 1 (docs/05 §3), plus
+`the_tree_is_byte_for_byte_the_node_builds` in `crates/lmg-panel/src/admin.rs`, which compares the
+two trees as sets and by content whenever the sibling checkout is present. It refuses to pass by
+skipping: a developer machine without the sibling is a failure, not an excuse, because a check that
+quietly compares nothing is worse than no check — it reports ok.
+
+---
+
+## ADR-010 — Eight crates, still one binary
+
+**Status: Accepted (`4147e8a`). Supersedes ADR-002.**
+
+The source is a cargo workspace: `lmg-core`, `lmg-host`, the five subsystem crates (`lmg-mcp`,
+`lmg-data`, `lmg-tunnels`, `lmg-jobs`, `lmg-panel`) and the `lmg` composition crate. The product is
+unchanged — one static `lmg.exe`, measured at +1.1% (9,861,632 → 9,972,224 bytes, release+mongo)
+for the crate-boundary codegen, with the idle footprint flat at ~14 MB.
+
+**The split buys nothing at runtime, and saying otherwise is forbidden.** What it buys is that the
+architecture stops being a claim. "MCP is a plugin, not the trunk" and "no subsystem depends on
+another" were true only as long as everyone remembered; now `lmg-data` has no `lmg-mcp` in its
+manifest, so the next change that would reintroduce that edge does not compile. When some future
+change appears to need such an edge, the honest reading is that the host contract is missing
+something — the connection catalog exists because of exactly that (docs/09 P4).
+
+The cost is real and accepted: eight manifests to keep in step, and gate commands that need
+`--workspace` or they silently check the root package alone.

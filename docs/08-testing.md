@@ -136,23 +136,39 @@ The phase tables above are the plan the port was written against. This is the re
 remaining gap is visible without re-deriving it:
 
 ```
-cargo test                     592 lib + 65 adminapi + 12 app + 4 envelope_compat + 1 memory
-cargo test --features mongo    610 lib  (the extra 18 are the mongo adapter's)
+cargo test --workspace         848 = 725 unit + 123 integration
+  lmg          67 unit + 120 integration  (adminapi 65, app 12, plugin_host 32,
+                                           http_adapter 6, envelope_compat 4, memory 1)
+  lmg-mcp     266 unit +   3 integration  (dbbrowser_wiring)
+  lmg-host    174 unit
+  lmg-jobs     86 unit
+  lmg-tunnels  59 unit
+  lmg-core     46 unit
+  lmg-data     18 unit
+  lmg-panel     9 unit
+
+cargo test --workspace --features mongo
+             866  (lmg-mcp goes 266 -> 284: the mongo adapter's own 18)
 ```
+
+**Drop `--workspace` and this shrinks to 187.** Cargo then selects the root package alone —
+its 67 unit tests plus the integration suite — and the seven member crates, which hold 78% of
+the tests and most of the code, are never built. The run still says ok. Every gate command in
+this repository therefore carries `--workspace`; a green run that omitted it means nothing.
 
 On a unix host add 6 more: `platform/unix.rs` compiles only there.
 
-Every module in `src/` carries an inline `#[cfg(test)] mod tests` **except** these:
+Every module in the workspace carries an inline `#[cfg(test)] mod tests` **except** these:
 
 | Module | Lines | Why not, and what it would take |
 | --- | --- | --- |
-| `adapters/mysql_browser.rs` | 401 | Orchestration only — every path is `async fn` over a live connection, and the SQL it builds is quoted by `dbbrowser::quote_ident`, which is tested there. It belongs with the self-skipping DB tests. |
-| `platform/windows.rs` | 378 | Win32 FFI: DPAPI, Toolhelp, registry. Its process walk is covered — the BFS both platforms share now lives un-`cfg`'d in `platform/mod.rs` and is tested on whatever host runs the suite. What is left is the FFI itself, which needs the OS to answer. |
-| `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (65) and `tests/app.rs` (12), which is where a route contract belongs. |
-| `lib.rs`, `main.rs`, `secure/mod.rs`, `tunnel/mod.rs` | 109 | Re-export shells with no behaviour of their own. |
+| `lmg-mcp` `adapters/mysql_browser.rs` | 401 | Orchestration only — every path is `async fn` over a live connection, and the SQL it builds is quoted by `dbbrowser::quote_ident`, which is tested there. It belongs with the self-skipping DB tests. |
+| `lmg-core` `platform/windows.rs` | 378 | Win32 FFI: DPAPI, Toolhelp, registry. Its process walk is covered — the BFS both platforms share now lives un-`cfg`'d in `lmg-core`'s `platform/mod.rs` and is tested on whatever host runs the suite. What is left is the FFI itself, which needs the OS to answer. |
+| `lmg` `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (65) and `tests/app.rs` (12), which is where a route contract belongs. |
+| `lmg` `lib.rs`/`main.rs`, `lmg-core` `secure/mod.rs`, `lmg-tunnels` `tunnel/mod.rs` | 109 | Re-export shells with no behaviour of their own. |
 
 The DB browsers are mostly I/O, but not entirely, and the difference is worth naming: their
-injection surface is `dbbrowser::quote_ident`, which is tested in `dbbrowser.rs` — the browsers
+injection surface is `dbbrowser::quote_ident`, which is tested in `lmg-host`'s `dbbrowser.rs` — the browsers
 only call it. What was left untested was the pure logic buried between the awaits, so it was
 lifted out: `redis_browser::scan_args` (the panel sends every param as a JSON string, and an
 unclamped COUNT asks redis for the whole keyspace in one round trip) and `pg_browser::total_of`
@@ -160,10 +176,10 @@ unclamped COUNT asks redis for the whole keyspace in one round trip) and `pg_bro
 paging). Building the SCAN args before the connection also means a bad `type` is reported as a
 bad `type`, not as whatever the socket said.
 
-`server.rs` is tested at `register_one`, not at `run_gateway` — the boot itself binds a port and
+`lmg`'s `server.rs` is tested at `register_one`, not at `run_gateway` — the boot itself binds a port and
 never returns, and the daemon tests already drive it from outside. `register_one` is where the
 decisions live: a panel Stop, a persisted tool toggle and the lazy rule all have to survive a
-restart. `admin.rs` is tested at its hand-rolled SHA-1, which nothing else in the tree checks,
+restart. `lmg-panel`'s `admin.rs` is tested at its hand-rolled SHA-1, which nothing else in the tree checks,
 against the published vectors and every block-padding boundary.
 
 The two platform halves must export the same names with the same signatures: `mod.rs` re-exports
@@ -203,10 +219,10 @@ Node-sealed fixtures is `tests/envelope_compat.rs`, and the RSS guard is `tests/
 ## CI
 
 ```bash
-cargo clippy --all-targets -- -D warnings
-cargo clippy --all-targets --features mongo -- -D warnings
-cargo test
-cargo test --features mongo
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --features mongo -- -D warnings
+cargo test --workspace
+cargo test --workspace --features mongo
 cargo tree -d
 cargo build --release --features mongo   # the shipping binary (ADR-004); record its size
 ```

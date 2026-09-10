@@ -9,8 +9,22 @@ if the numbers do not appear.
 The Rust implementation now contains all 70 planned backend modules, wires every adapter family
 through the factory, and includes the MongoDB adapter and production `/api/db` browser mount. The
 current verification gate is green: default tests, Mongo-enabled tests, strict Clippy, and the
-Mongo-enabled release build all pass. Runtime RSS measurements for the full adapter workload remain
-a separate acceptance task because they require live external services.
+Mongo-enabled release build all pass.
+
+Since then the build has become the toolbox docs/09 and docs/10 describe, and both documents are
+now fully implemented (`4147e8a`). A plugin host owns the subsystems; Actions, Runs and the process
+supervisor are shared services rather than each subsystem's own; Jobs are defined in configuration
+with occurrence keys, misfire, DST and retry semantics; Data reaches its connections through a
+catalog contract instead of reaching into MCP; and the source is eight crates whose dependency
+edges the compiler enforces, still linking into one `lmg.exe`. `docs/11` and `docs/12` record the
+stages and their acceptance criteria.
+
+**Two acceptance tasks remain, and neither is code.** docs/01's Phase 1 row is filled — 14.0 MB
+with the panel and an echo MCP, comfortably inside the 12–20 MB budget — but Phase 2 and Phase 4,
+the rows for the realistic adapter workload, still need live mysql, pg and redis plus a real MCP
+client. That is the number this project exists for, and it is the one thing the whole toolbox
+effort has not verified. Phase 6, running both builds side by side for a week before the swap,
+has not started.
 
 ## Phase 0 — The spike that can kill the project
 

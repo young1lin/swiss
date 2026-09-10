@@ -100,7 +100,7 @@ strip = "symbols"
 cargo tree -d                 # a duplicated TLS stack or runtime must fail the build
 cargo tree -e features        # what actually got pulled in
 cargo bloat --release --crates    # which crate owns the binary
-cargo clippy -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 `cargo tree -d` earns its place: the usual way a 15 MB target becomes a 30 MB one is a transitive

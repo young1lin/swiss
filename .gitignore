@@ -14,3 +14,7 @@ master.key
 # Stray dev binaries at the repo root
 /lmg-dev.exe
 /lmg.exe
+
+# Claude Code scratch: agent worktrees and per-machine settings
+/.claude/worktrees/
+/.claude/settings.local.json
