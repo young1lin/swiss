@@ -408,4 +408,32 @@
     .db-bar { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); background: color-mix(in srgb, var(--amber) 10%, var(--card)); border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--sep)); border-radius: var(--r-card); font-size: var(--f-body); }
     .db-bar .btn { margin-left: auto; }
     .db-bar .btn.commit { background: var(--accent); color: var(--accent-text); }
+
+    /* --- terminal (docs/14 §2) ----------------------------------------------------------------- */
+    /* The stage is the one pane child that must NOT scroll with the pane: a terminal has
+       its own scrollbar inside xterm's viewport, and the page growing under it would put
+       two scrollbars on one grid of text. Fixed height against the viewport with a floor
+       for short windows; the measure cap still applies, so a terminal on a 2560px monitor
+       reads as a card, same as every other block. */
+    .term-page { display: flex; flex-direction: column; min-height: calc(100vh - 190px); }
+    .term-stage {
+      position: relative; flex: 1; min-height: 320px;
+      background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-card);
+      padding: var(--s2) var(--s4); overflow: hidden;
+    }
+    /* Off-stage holders keep their buffer (that IS the tab's scrollback) but not their
+       pixels: hidden, not display:none — xterm's renderer needs a laid-out element when
+       the holder comes back on stage and refits. */
+    .term-holder { position: absolute; inset: var(--s1) var(--s2); }
+    .term-holder[hidden] { display: none; }
+    /* The picker's select sits in the pane head; its label reads like the form labels
+       elsewhere instead of floating raw next to the Open button. */
+    .term-open { align-items: center; }
+    .term-open .field { margin: 0; }
+    /* Session tabs reuse .seg wholesale; the only new glyph is the close × inside a tab,
+       which must not read as the tab's own label. */
+    .term-tabs button span[data-act="close"] { margin-left: 6px; color: var(--text-3); font-size: var(--f-caption); }
+    .term-tabs button span[data-act="close"]:hover { color: var(--red); }
+    /* The one-line story under the stage: attached / reconnecting / the close reason. */
+    .term-status { min-height: 1.4em; }
     .db-hint { color: var(--text-3); font-size: var(--f-body); padding: var(--s4); }
