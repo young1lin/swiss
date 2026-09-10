@@ -15,7 +15,14 @@ export function sessionUrl(id) { return sessionsUrl() + "/" + encodeURIComponent
 export function ticketUrl(id) { return sessionUrl(id) + "/ticket"; }
 export function resizeUrl(id) { return sessionUrl(id) + "/resize"; }
 export function streamUrl(id, ticket) {
-  return sessionUrl(id) + "/stream?ticket=" + encodeURIComponent(ticket);
+  /* Absolute, always: the WebSocket constructor rejects a relative URL with a SyntaxError
+     before any connection is attempted. The page origin decides ws/wss; outside a browser
+     (node tests) there is no location and the bare path comes back, which keeps this pure. */
+  var base = "";
+  if (typeof location !== "undefined" && location && location.host) {
+    base = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
+  }
+  return base + sessionUrl(id) + "/stream?ticket=" + encodeURIComponent(ticket);
 }
 
 /** Reconnect pacing after a socket drops. Quick first retry (a lid-close round trip is

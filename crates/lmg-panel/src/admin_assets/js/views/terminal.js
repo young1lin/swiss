@@ -303,6 +303,9 @@ async function openSession() {
   try {
     await wireTerminal(m);
   } catch (e) {
+    /* A vendored package that failed to load must say so - a silently vanishing tab teaches
+       the user that Open is decorative. */
+    toast("could not load the terminal packages: " + String(e && e.message || e), true);
     models.splice(models.indexOf(m), 1);
     active = null;
     paintTabs();

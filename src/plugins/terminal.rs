@@ -121,7 +121,11 @@ impl PluginFactory for TerminalPlugin {
                 order: 70,
                 path: "#terminal".into(),
                 entry: "/admin/js/views/terminal.js".into(),
-                sidebar: true,
+                // sidebar:true would park the shell's MCP list beside the terminal: the flag
+                // means "this page renders INTO that list's layout", and only the mcps page
+                // does (page-registry hides .sidebar for every page without it). docs/14's
+                // sketch said true; the browser said otherwise.
+                sidebar: false,
             }],
             routes: vec!["/api/terminal".into()],
             // The allowlist and the local switch are read at start; a config PUT
@@ -261,6 +265,9 @@ mod tests {
         assert_eq!(descriptor.pages.len(), 1);
         assert_eq!(descriptor.pages[0].order, 70);
         assert_eq!(descriptor.pages[0].entry, "/admin/js/views/terminal.js");
+        // The MCP sidebar is the mcps page's chrome; leaving this true renders the hosted
+        // server list beside a terminal (the bug the first browser run caught).
+        assert!(!descriptor.pages[0].sidebar);
     }
 
     #[tokio::test]

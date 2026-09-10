@@ -331,6 +331,10 @@ PluginDescriptor {
 
 **T5（§8，`3877c17`）**
 
+- 描述符草案里 `page(…, 70, true)` 的第 5 参是**错的**：`sidebar:true` 的含义是"本页渲染进
+  MCP 侧栏布局"（壳层 `page-registry.js` 对没有该标志的每个页面隐藏 `.sidebar`），只有
+  mcps 页该有。照抄草案让终端页旁边常驻 MCP 服务器列表 —— 首次真人浏览器点击发现，
+  修正为 `false` 并在插件工厂测试里钉死。
 - `POST /api/terminal/sessions/{id}/ticket` 不在 §8 路由表里：ticket 活 10s、宽限 60s，
   开球时的 ticket 永远活不到重连，必须先补铸一张。
 - 不带 ticket 的 stream 答 **400** 并点名 mint 路由（表里暗示默认 403；缺 ticket 是客户端
