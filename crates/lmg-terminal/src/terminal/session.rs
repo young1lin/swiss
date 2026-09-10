@@ -506,15 +506,17 @@ impl TerminalSessions {
     }
 
     /// Close every session — the plugin stopping. Returns how many were closed.
+    ///
+    /// Closing OVER the sessions, not asking each one to close: dropping the table's
+    /// command senders is the signal every driver already selects on
+    /// (Wake::Command(None) => Shutdown), and "the terminal plugin is stopping" is the
+    /// reason a stopping plugin owes its clients — "closed on request" is the DELETE
+    /// path's story, not this one's.
     pub async fn shutdown(&self) -> usize {
-        let ids: Vec<String> = {
-            let state = self.table.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.live.keys().cloned().collect()
-        };
-        for id in &ids {
-            let _ = self.close(id).await;
-        }
-        ids.len()
+        let mut state = self.table.state.lock().unwrap_or_else(|e| e.into_inner());
+        let closed = state.live.len();
+        state.live.clear();
+        closed
     }
 
     async fn send(&self, id: &str, command: DriverCommand) -> Result<(), TerminalError> {

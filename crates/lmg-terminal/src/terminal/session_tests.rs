@@ -756,13 +756,32 @@ async fn a_shell_that_exits_ends_the_session_with_its_code() {
 }
 
 #[tokio::test]
-async fn shutdown_closes_every_session() {
+async fn shutdown_closes_every_session_saying_why() {
     let mut h = Harness::new(quiet(true));
+    // Two sessions, one watched: a stopping plugin must tell the client it is
+    // stopping, not that somebody requested a close.
     h.open(LOCAL_TARGET).await.expect("one");
     let _one = h.far();
-    h.open("box-one").await.expect("two");
+    let two = h.open("box-one").await.expect("two");
     let _two = h.far();
+    let mut attachment = h
+        .sessions
+        .attach(&two.id, &two.ticket)
+        .await
+        .expect("attaches");
     assert_eq!(h.sessions.shutdown().await, 2);
+    let mut line = String::new();
+    for _ in 0..2 {
+        match frame(&mut attachment, "the shutdown frames").await {
+            ClientFrame::Data(bytes) => line.push_str(&String::from_utf8_lossy(&bytes)),
+            ClientFrame::Error(message) => assert!(
+                message.contains("the terminal plugin is stopping"),
+                "{message}"
+            ),
+            ClientFrame::Exit { .. } => panic!("a stop is not an exit"),
+        }
+    }
+    assert!(line.contains("the terminal plugin is stopping"), "{line:?}");
     for _ in 0..50 {
         if h.sessions.list().is_empty() {
             break;

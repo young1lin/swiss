@@ -29,6 +29,9 @@ lmg-mcp = { path = "crates/lmg-mcp" }
 lmg-data = { path = "crates/lmg-data" }
 lmg-tunnels = { path = "crates/lmg-tunnels" }
 lmg-jobs = { path = "crates/lmg-jobs" }
+# The terminal session machine (docs/14 T4): routes and the plugin wrapper live in this
+# crate's src/plugins; the crate itself stays free of axum so its tests need no server.
+lmg-terminal = { path = "crates/lmg-terminal" }
 lmg-panel = { path = "crates/lmg-panel" }
 # The rmcp `macros` feature stays off: servers implement ServerHandler by hand, mirroring the
 # Node build's setRequestHandler exactly and keeping pastey out of the build.
@@ -36,7 +39,7 @@ rmcp = { version = "3.2", default-features = false, features = [
     "server", "client", "transport-streamable-http-server",
     "transport-child-process",
 ] }
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio", "ws"] }
 tokio = { version = "1", default-features = false, features = [
     "rt", "macros", "net", "time", "signal", "sync", "fs", "io-util", "process",
 ] }
@@ -103,6 +106,12 @@ rmcp = { version = "3.2", default-features = false, features = [
 # over a quarter hour of simulated outage in microseconds. Resolver v2 keeps a dev-dependency
 # feature out of `cargo build`, so the shipping binary carries none of it.
 tokio = { version = "1", features = ["test-util"] }
+# The real WebSocket client the terminal route tests drive handshakes with (docs/14 T5).
+# The same crate axum's ws feature already compiled in, with no TLS feature — the gateway
+# is loopback, so the test talks ws:// to 127.0.0.1 and nothing else enters the build.
+tokio-tungstenite = { version = "0.29", default-features = false, features = [
+    "connect",
+] }
 
 [target.'cfg(windows)'.dev-dependencies]
 reqwest = { version = "0.13", default-features = false, features = [

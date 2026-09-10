@@ -6,3 +6,5 @@
 //! src/host and exactly one register line in server.rs per plugin.
 
 pub mod http_tools;
+pub mod terminal;
+pub mod terminal_api;

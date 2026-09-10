@@ -154,6 +154,12 @@ pub async fn run_gateway() -> Result<(), String> {
         .await;
     }
 
+    // The terminal routes' state slot (docs/14 T5): built before the host so the router
+    // mounted below and the plugin instance that fills the slot share ONE seat, the
+    // ctx.tunnel_links pattern — an empty slot is a live state (the plugin is not
+    // serving), not a different router.
+    let terminal_state = crate::plugins::terminal_api::TerminalState::new();
+
     // The shared runtime services (docs/09 §3, docs/10 §2): the action registry every
     // capability provider registers into, the bounded run pool both the scheduler and the
     // panel submit to, and the one child-process supervisor. Constructed here, owned by no
@@ -222,6 +228,11 @@ pub async fn run_gateway() -> Result<(), String> {
         services.clone(),
     )))
     .expect("the http-tools plugin registers");
+    host.register(Arc::new(crate::plugins::terminal::TerminalPlugin::new(
+        services.clone(),
+        terminal_state.clone(),
+    )))
+    .expect("the terminal plugin registers");
     // The capability probe the inventory's requiresMet answers through (docs/12 W3): one
     // closure over the shared services, so "connection-catalog" tracks the catalog's real
     // presence as MCP starts and stops.
@@ -250,7 +261,11 @@ pub async fn run_gateway() -> Result<(), String> {
     // different router).
     let extra = lmg_tunnels::tunnel::api::mount(tunnels.clone())
         .merge(lmg_jobs::jobs::api::mount(jobs.clone()))
-        .merge(lmg_host::services::api::mount(services.clone()));
+        .merge(lmg_host::services::api::mount(services.clone()))
+        // Inside the SAME guard and plugin boundary as the trees above: the terminal
+        // routes are owned by the terminal plugin (route_owner prefix /api/terminal),
+        // so a disabled plugin answers the structured 503 with no 503 of its own here.
+        .merge(crate::plugins::terminal_api::mount(terminal_state));
     let app = build_app(ctx.clone(), Some(extra));
 
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port))
