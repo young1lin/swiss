@@ -190,6 +190,7 @@ the wrong way, is worth stopping for.
 | 2026-09-07 | Node (baseline) | mysql, pg, 2×redis, 2×http, echo | 117.5 | 2×proc asleep |
 | 2026-09-07 | Rust Phase 0 (spike) | echo only | **9.1** | release, after 60 requests; 1 thread, 4.0 MB private, 1.05 MB exe |
 | 2026-09-10 | Rust Phase 1 | echo + panel | **14.0** | release+mongo, scratch home, echo settled; measured across the crate split (`4147e8a`: 14.2 → 14.0) |
+| 2026-09-10 | Rust + terminal plugin | echo + panel + terminal | **13.7** | release+mongo, scratch home, plugin loaded, zero sessions (−0.3 vs Phase 1, i.e. noise); exe 10,649,600 B, +662 KB over the 9,972,224 B ADR-010 baseline — +138 KB under the +800 KB budget; +233 KB per attached local session (budget 1.0 MB, `docs/14` §7) |
 | | Rust Phase 2 | mysql, pg, 2×redis | | |
 | | Rust Phase 4 | full parity | | |
 

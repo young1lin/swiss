@@ -1,6 +1,7 @@
 # 14 — 终端插件实施规范（网页终端 / SSH / 本地 Shell）
 
-> 状态：**设计提议，未实施**。代码基线 `394bd44`。
+> 状态：**已实施**。T1–T4 `310ffe2`→`378d8fd`，T5 `3877c17`，T6（Node 仓库）`873a238`，T7 `616b530`，
+> T8 为本文所在提交。全部实施偏差见 §8.1。
 > 前置阅读：`AGENTS.md`（它的规则高于本文任何便利）、`docs/09-toolbox-plugin-architecture.md`
 > §3/§4/§9（插件契约、共享能力、加一个插件要做什么）、`docs/12-remaining-work-spec.md` W3
 > （连接目录 —— 本文的能力契约照它抄）、`docs/07-decisions.md` ADR-004 / ADR-008 / ADR-009 / ADR-010。
@@ -302,6 +303,56 @@ PluginDescriptor {
 
 `order: 70` 排在 `http-tools` 的 60 之后、`plugins` 的 1000 之前。按 `docs/13` 的分组规则，它自成
 一个一级组，没有二级栏。
+
+### 8.1 实施偏差记录（实施后补，2026-09-10）
+
+实施与本文的每一处出入，按阶段收录；这里的每一条在对应提交信息里有完整的推理。
+
+**T2（§4，`1fc2d12`）**
+
+- `open_shell` 的返回不是 `-> ShellSessionGuard`：guard 随泵任务**走进去**而不是返回给调用方 ——
+  只有泵知道会话何时真正结束，返回给 provider 的 guard 没有地方存活。
+- 停止窗口 3s，不是连接目录的 5s：挂着的终端不会自己交还，排空只为还在落地的 open。
+
+**T3（§5，`eb01733`）**
+
+- windows features 三个不是两个：`Win32_System_Pipes` 新增，`Win32_Security` 显式点名
+  （原本只经 DPAPI 传递依赖；删 DPAPI 的人不该顺手带走 pty 和作业守卫）。
+- `open_pty` 返回 `PtyHandle` + `PtyPump` 一对：ConPTY 的输出管道 tokio 轮询不了，本地会话
+  就是值一条阻塞线程 —— 线程预算就是这个拆分的原因。
+- `KillOnCloseJob` 从 lmg-host 下沉到 `lmg_core::platform`：pty 缝隙在 lmg-host 之下，
+  需要同一份子树保证。
+
+**T4（§8，`378d8fd`）**
+
+- `ticket(id)` 成为 `open()` 之外的第二个入口 → §8 路由表因此多一条补铸路由（见 T5）。
+- 录像只写 `"o"` 事件，不写 `"r"`。
+- `TerminalError` 手写 `From<ShellError>`，不用 `#[from]`：消费者不该反过来规定契约的形状。
+
+**T5（§8，`3877c17`）**
+
+- `POST /api/terminal/sessions/{id}/ticket` 不在 §8 路由表里：ticket 活 10s、宽限 60s，
+  开球时的 ticket 永远活不到重连，必须先补铸一张。
+- 不带 ticket 的 stream 答 **400** 并点名 mint 路由（表里暗示默认 403；缺 ticket 是客户端
+  bug，不是被拒的凭证）。
+- `shutdown()` 越过逐会话 Close，直接丢弃表的命令发送端 → 停止中的插件对客户端说
+  `closed: the terminal plugin is stopping`，把 "closed on request" 留给 DELETE 路径。
+
+**T6（§2，Node 仓库 `873a238`）**
+
+- xterm 的 UMD 构建不能 `import()`：addon-unicode11 绑定顶层 `this`，在模块里是 undefined
+  → 改为经典 `<script>` 标签注入（`load-classic.js`），每包一个 `index.js` shim 再导出命名
+  导出。vendored 字节未动，版本号在目录名里，升级即新目录加改一行 import。
+- WebGL addon 先核验为纯 JS（无 WebAssembly、无 .wasm fetch、无 base64 载荷）后随包发布；
+  上下文丢失即 dispose，回落 DOM 渲染 —— 三条资源约束里 "不改 mime_of" 因此原样成立。
+
+**T7（`616b530`）**：无偏差；`the_tree_is_byte_for_byte_the_node_builds` 真跑真过。
+
+**实施后验证**（debug 构建，`127.0.0.1:19998`，scratch home）：插件清页（order 70）、
+vendored 资源与 content-type、targets 诚实空态、真 ConPTY 本地会话经 WS 字节回环、列表
+attached/bytesOut、asciicast v2 落盘可读、DELETE 后清表 —— 11/11 通过；强杀网关后
+cmd 子进程 0 残留（§10 第 8 条）。§10 第 3 条（真 SSH 主机上的 vim/htop/中文 emoji）与
+每远端会话 RSS 需要一台真实主机，本机没有 —— 留待有主机时补量，不当作已过。
 
 ## 9. 阶段
 

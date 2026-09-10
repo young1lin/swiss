@@ -48,12 +48,12 @@ for how configuration drives them.
 A cargo workspace that still ships one static `lmg.exe`. The edges are the architecture:
 
 ```
-lmg-core  ←  lmg-host  ←  { lmg-mcp, lmg-data, lmg-tunnels, lmg-jobs, lmg-panel }  ←  lmg
+lmg-core  ←  lmg-host  ←  { lmg-mcp, lmg-data, lmg-tunnels, lmg-jobs, lmg-terminal, lmg-panel }  ←  lmg
 ```
 
 `lmg-core` knows nothing about gateways (paths, logging, sealed files, platform calls).
 `lmg-host` is the mechanism every subsystem shares — the plugin host, actions, runs, the process
-supervisor, config, the security boundary. The five subsystem crates are peers that never depend
+supervisor, config, the security boundary. The six subsystem crates are peers that never depend
 on each other; `lmg` (the root `src/`) is composition and nothing else. If a change seems to need
 an edge between two subsystem crates, the host contract is missing something — add it there
 instead. Full map in `docs/02-architecture.md`.
@@ -141,4 +141,6 @@ file (`os error 1455`), which is why `[profile.dev]` in the root manifest keeps 
   acceptance spec; see `docs/08-testing.md`.
 - **Write all code comments in English**, including in docs code samples.
 - **Never commit** `gateway.config.json`, `.env`, `managed.json`, `tunnels.json`, `master.key` or
-  `*.log` — all gitignored, all carry real secrets locally.
+  `*.log` — all gitignored, all carry real secrets locally. The same goes for
+  `~/.mcp-gateway/terminal/*.cast`: a terminal recording is output-only by design, but shells echo
+  what was typed, so a recording can still hold a password that was entered.

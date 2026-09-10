@@ -24,6 +24,7 @@ local-mcp-gateway-rust/
     lmg-data/src/     dbbrowser_api.rs   # /api/data/* over the connection catalog
     lmg-tunnels/src/  tunnel/…           # types, store, manager, forward, port, ssh, mcpmatch, import, api
     lmg-jobs/src/     jobs/…             # def, migrate, schedule, clock, state, runner, runlog, api
+    lmg-terminal/src/ terminal/…         # config, session, tickets, recording, local shells (no axum, no SSH)
     lmg-panel/src/    admin.rs
                       admin_assets/      # copied verbatim from ../local-mcp-gateway/src/admin;
                                          # renders the two-level navigation (docs/13)
@@ -43,7 +44,7 @@ but it makes the plugin architecture a fact the compiler enforces rather than a 
 document. The edges are exactly:
 
 ```
-lmg-core  ←  lmg-host  ←  { lmg-mcp, lmg-data, lmg-tunnels, lmg-jobs, lmg-panel }  ←  lmg
+lmg-core  ←  lmg-host  ←  { lmg-mcp, lmg-data, lmg-tunnels, lmg-jobs, lmg-terminal, lmg-panel }  ←  lmg
 ```
 
 No subsystem crate depends on another. That is not decoration: Data used to reach into MCP for

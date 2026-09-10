@@ -240,3 +240,46 @@ something — the connection catalog exists because of exactly that (docs/09 P4)
 
 The cost is real and accepted: eight manifests to keep in step, and gate commands that need
 `--workspace` or they silently check the root package alone.
+
+## ADR-011 — The terminal plugin: WebSocket, hand-written ConPTY, no tunnels edge
+
+**Status: Accepted (`310ffe2` … `616b530`, T1–T7 of docs/14). Grows ADR-010's set to nine crates.**
+
+Three decisions, each with the number that justified it:
+
+**WebSocket, not SSE.** A terminal is a bidirectional byte stream; SSE is a one-way text channel.
+Over SSE every PTY byte would need base64 or JSON wrapping — a flooding terminal produces MBs per
+second, and wrapping burns CPU and memory on exactly that hot path — while client→server would
+still need POSTs for keystrokes and resizes: a second channel with its own ordering problems.
+axum's `ws` feature costs `tokio-tungstenite` + `tungstenite` in the lock and nothing else: it is
+already axum's own websocket stack, so `cargo tree -d` gains no second TLS stack, runtime, or RNG.
+Binary frames carry raw PTY bytes both ways; the only JSON on the socket is one tagged resize
+struct and the server's exit/error/stalled notices.
+Measured: the exe goes 9,972,224 → 10,649,600 B (release+mongo), **+662 KB against a +800 KB
+budget** (docs/14 §7); ~440 KB of that is the vendored xterm panel tree that rust-embed puts in
+the read-only section — code that is never executed is never paged in, so it is exe weight, not
+RSS.
+
+**Hand-written ConPTY FFI, not `portable-pty`.** ~300 lines against the `windows` crate the
+gateway already links, versus a dependency tree carrying its own winpty compatibility path in a
+process budgeted at 15 MB — ADR-010's "every dependency justifies its weight" decided outright.
+`open_pty` returns a `PtyHandle` + `PtyPump` pair: the handle is cheap and cloneable, the pump is
+exactly one and lives on a `spawn_blocking` thread — that thread is why local sessions carry a
+lower cap than remote ones (docs/14 §7). `cargo tree -d` after T3 was byte-identical to before
+it: the seam added zero dependencies.
+Measured: **+233 KB working set per attached idle local session** (budget 1.0 MB), and the plugin
+loaded with zero sessions reads **13.7 MB against the 14.0 MB ADR-010 baseline** — a −0.3 MB
+delta that is measurement noise, not a saving; the honest claim is "flat".
+
+**`lmg-terminal` links no SSH and has no edge to `lmg-tunnels`.** Remote shells arrive through
+the `ssh-shell` capability seat in `lmg-host`: the tunnels plugin registers a provider on start
+and withdraws it on stop, and the terminal dials through the tunnel manager's own refcount —
+sharing the client the tunnels already hold instead of dialing a second one. The plugin's
+`requires` stays empty on purpose: a terminal with local shells enabled must work on a machine
+with no tunnels at all, and `requires: ["ssh-shell"]` would park it in waitingDependency instead
+of honestly listing targets. When tunnels is absent or stopped, `/api/terminal/targets` says so
+by name and the panel shows the reason instead of an empty list.
+
+The number this ADR deliberately does not fill in: per-remote-session RSS. It needs a real SSH
+host to open a real session against, and this machine has none — the budget row (≤ 256 KB) stays
+**unmeasured** rather than being claimed as passed.
