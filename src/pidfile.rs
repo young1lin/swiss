@@ -165,6 +165,10 @@ mod tests {
         // Named by port, and kept in the data dir rather than beside the config: `lmg status` has
         // to find a running daemon from any cwd, and the port is what tells two instances apart.
         let home = lmg_core::paths::test_home();
+        // Pin it: paths reads MCP_GATEWAY_HOME fresh on every call, and a parallel test in
+        // this binary may install its own scratch home between our two lines otherwise —
+        // the equality below only holds while the variable points at OUR home.
+        unsafe { std::env::set_var("MCP_GATEWAY_HOME", &home) };
         assert_eq!(pid_file_path(19999), home.join("gateway-19999.pid"));
         assert_eq!(log_file_path(19999), home.join("gateway-19999.log"));
     }
