@@ -210,7 +210,6 @@
       padding: 0 var(--s3) 0 var(--s4);
       background: var(--sidebar);
       border-bottom: 1px solid var(--sep);
-      position: sticky; top: 0; z-index: 10;
     }
     .brand { font-size: var(--f-body); font-weight: 600; }
     .grow { flex: 1; }
@@ -225,7 +224,19 @@
     }
     .chip.button:hover { background: var(--hover); color: var(--text-2); cursor: pointer; }
 
-    .shell { display: flex; height: calc(100vh - 44px); }
+    /* The shell fills whatever the bars leave. Previously this subtracted a hand-copied 44px, which
+       was a second source of truth for the toolbar's height; a second bar would have made it three.
+       min-height:0 is what lets the inner scrollers actually scroll inside a flex column. */
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    .shell { display: flex; flex: 1; min-height: 0; }
+
+    /* The subsection bar (docs/13 D6/D7): one full-width row between the toolbar and the shell,
+       dressed in the toolbar's own vocabulary so no new colour enters the panel. */
+    .subbar {
+      display: flex; align-items: center; gap: var(--s3);
+      padding: var(--s1) var(--s4);
+      background: var(--sidebar); border-bottom: 1px solid var(--sep);
+    }
 
     /* --- sidebar ------------------------------------------------------------------------------- */
     .sidebar {

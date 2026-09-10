@@ -228,8 +228,9 @@
     /* The list rows reuse .group/.dot/.btn; only the row layout is new. Deliberately not a table:
        the MCP side already establishes inset grouped lists as this panel's list idiom. */
     /* .seg's default bottom margin spaces it off the tab body. Where it sits inline beside other
-       controls instead — the toolbar, a section header — that margin shifts it off their centre. */
-    .toolbar .seg, .sec-head .seg { margin-bottom: 0; }
+       controls instead — the toolbar, a section header, the subsection bar — that margin shifts it
+       off their centre. */
+    .toolbar .seg, .sec-head .seg, .subbar .seg { margin-bottom: 0; }
     .tun-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); }
     .tun-row + .tun-row { border-top: 1px solid var(--sep-soft); }
     .tun-row:hover { background: var(--hover); }
