@@ -23,7 +23,8 @@ packages, 123 integration) plus Clippy with `-D warnings` in both combinations. 
 still reports ok.
 The MongoDB driver remains an opt-in feature so the default binary stays small.
 
-`docs/01`–`08` describe the original compatibility port; `09`–`12` describe the toolbox it became.
+`docs/01`–`08` describe the original compatibility port; `09`–`12` describe the toolbox it became;
+`13`–`14` are proposals that are not built yet.
 **The one thing still outstanding is the number this project exists for.** `docs/01` now records
 14.0 MB for the gateway with the panel and an echo MCP — against Node's 117.5 MB baseline — but the
 rows that matter, the full adapter workload, are still empty: filling them needs live mysql, pg and
@@ -43,6 +44,8 @@ redis and a real MCP client driving them (`docs/12` W2).
 | [`docs/10-config-driven-jobs.md`](docs/10-config-driven-jobs.md) | Configuration-driven Jobs: shared Actions/runs, policy defaults, compatibility and recovery. **Shipped** |
 | [`docs/11-jobs-v2-implementation-spec.md`](docs/11-jobs-v2-implementation-spec.md) | The Jobs v2 schema, migration and scheduling semantics — stages S1–S6 with their acceptance tests. **Shipped; now the field contract of record** |
 | [`docs/12-remaining-work-spec.md`](docs/12-remaining-work-spec.md) | The connection catalog, the touchstone plugin, the workspace split — and W2, the memory measurement, **still open** |
+| [`docs/13-panel-navigation-spec.md`](docs/13-panel-navigation-spec.md) | Two-level panel navigation: pages grouped by the plugin that contributes them. **Proposal, not implemented** |
+| [`docs/14-terminal-plugin-spec.md`](docs/14-terminal-plugin-spec.md) | A web terminal plugin — remote SSH through a host capability, local PTY, xterm.js. **Proposal, not implemented** |
 
 Everything docs/09 and docs/10 designed is now code, and each document's status header names the
 commit that landed it. None of it changed the Node-panel source-of-truth, the sealed formats, or
