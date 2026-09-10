@@ -13,6 +13,9 @@
 //! - [`runs`]: the shared run registry and coordinator — bounded, owner-scoped and
 //!   first-wins, so scheduled runs and manual runs share one accounting without either
 //!   owning the other.
+//! - [`catalog`] and [`shell`]: the two typed capability seats. One provider registers,
+//!   consumers take leases, and a provider stopping withdraws before it closes — the
+//!   pattern that lets two plugins cooperate without a crate edge between them.
 //!
 //! Nothing here knows about Jobs, MCP or the panel: the consumers are plugins.
 
@@ -22,6 +25,7 @@ pub mod api;
 pub mod catalog;
 pub mod process;
 pub mod runs;
+pub mod shell;
 
 use std::sync::Arc;
 
@@ -29,8 +33,9 @@ use crate::services::action::ActionRegistry;
 use crate::services::catalog::CatalogRegistry;
 use crate::services::process::Supervisor;
 use crate::services::runs::RunCoordinator;
+use crate::services::shell::ShellRegistry;
 
-/// The three shared services, constructed ONCE by the composition root and handed to the
+/// The shared services, constructed ONCE by the composition root and handed to the
 /// plugins that contribute to (or execute through) them. Not an AppContext under another
 /// name: it holds no business state, only the registries a capability provider registers
 /// into and the pool every producer's runs are accounted in.
@@ -45,6 +50,10 @@ pub struct RuntimeServices {
     /// consumers (Data) take request-scoped leases. Constructed here so it OUTLIVES every
     /// plugin instance — a provider stopping and starting again finds the same seat.
     pub catalog: Arc<CatalogRegistry>,
+    /// The interactive shell capability (docs/14 §4): the provider (Tunnels) registers on
+    /// start; the consumer (Terminal) takes a session-scoped lease per open PTY. Same
+    /// reason for living here as the catalog — the seat outlives both plugins.
+    pub shells: Arc<ShellRegistry>,
 }
 
 impl RuntimeServices {
@@ -55,6 +64,7 @@ impl RuntimeServices {
             actions,
             supervisor: Supervisor::new(),
             catalog: Arc::new(CatalogRegistry::new()),
+            shells: Arc::new(ShellRegistry::new()),
         })
     }
 
