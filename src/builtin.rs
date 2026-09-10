@@ -72,6 +72,7 @@ pub fn register_all(host: &mut PluginHost, deps: &BuiltinDeps) -> Result<(), Str
     host.register(Arc::new(TunnelsPlugin {
         tunnels: deps.tunnels.clone(),
         manager: deps.tunnel_manager.clone(),
+        services: deps.services.clone(),
     }))?;
     host.register(Arc::new(DataPlugin))?;
     host.register(Arc::new(JobsPlugin {
@@ -247,6 +248,7 @@ pub async fn start_hosted_mcps(registry: &Arc<Registry>, managed: &Arc<ManagedSt
 struct TunnelsPlugin {
     tunnels: Arc<lmg_tunnels::tunnel::api::Tunnels>,
     manager: Arc<TunnelManager>,
+    services: Arc<RuntimeServices>,
 }
 
 #[async_trait]
@@ -270,6 +272,8 @@ impl PluginFactory for TunnelsPlugin {
         Ok(Arc::new(TunnelsInstance {
             tunnels: self.tunnels.clone(),
             manager: self.manager.clone(),
+            services: self.services.clone(),
+            shells: lmg_tunnels::tunnel::shell::TunnelShells::new(self.manager.clone()),
         }))
     }
 }
@@ -282,6 +286,10 @@ impl PluginFactory for TunnelsPlugin {
 struct TunnelsInstance {
     tunnels: Arc<lmg_tunnels::tunnel::api::Tunnels>,
     manager: Arc<TunnelManager>,
+    services: Arc<RuntimeServices>,
+    /// The interactive-shell provider this instance registers (docs/14 T2). One per
+    /// INSTANCE: a stopped instance drains ITS sessions, never the next one's.
+    shells: Arc<lmg_tunnels::tunnel::shell::TunnelShells>,
 }
 
 #[async_trait]
@@ -314,11 +322,31 @@ impl PluginInstance for TunnelsInstance {
                 }
             }
         });
+        // Register the shell capability LAST, for the same reason the MCP plugin registers
+        // its catalog last: a failed start must never leave a provider behind that a
+        // stopped subsystem is supposedly serving (docs/12 W3, docs/14 §4).
+        self.services
+            .shells
+            .register(self.shells.clone(), TUNNELS_ID)
+            .map_err(|err| format!("interactive shell registration: {err}"))?;
         Ok(())
     }
 
     async fn stop(&self) {
+        // The same withdraw-drain-close order the catalog uses (docs/12 W3): no NEW
+        // terminals reach a client that is about to close, the live ones get a short
+        // window, and the warning names how many were closed over. The window is short on
+        // purpose — an attached terminal does not hand itself back (docs/14 §4).
+        self.services.shells.begin_withdraw();
+        self.shells.ledger().begin_withdraw();
+        lmg_host::services::shell::drain_sessions(
+            self.shells.ledger(),
+            std::time::Duration::from_millis(lmg_host::services::shell::DRAIN_TIMEOUT_MS),
+            TUNNELS_ID,
+        )
+        .await;
         self.manager.close_all().await;
+        self.services.shells.clear();
     }
 }
 

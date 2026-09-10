@@ -227,7 +227,15 @@ pub async fn run_gateway() -> Result<(), String> {
     // presence as MCP starts and stops.
     host.set_capability_probe({
         let catalog = services.catalog.clone();
-        Arc::new(move |cap: &str| cap == "connection-catalog" && catalog.has_provider())
+        let shells = services.shells.clone();
+        Arc::new(move |cap: &str| match cap {
+            "connection-catalog" => catalog.has_provider(),
+            // docs/14 §4: the terminal plugin does NOT declare requires:["ssh-shell"] —
+            // a local session needs no SSH at all — but the probe still answers, so the
+            // inventory can say honestly whether remote targets are reachable.
+            "ssh-shell" => shells.has_provider(),
+            _ => false,
+        })
     });
     let host = Arc::new(host);
     host.start_enabled().await;

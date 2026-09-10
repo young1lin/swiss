@@ -19,6 +19,9 @@
 //!  - `mcpmatch`— THE ROUTER SEAM: maps an MCP definition's loopback target to a local port,
 //!    which is how the panel suggests "this rule serves that MCP" and how the
 //!    manager knows a rule has live dependents. Read-only on the registry.
+//!  - `shell`  — the interactive-shell PROVIDER (docs/14 T2): the tunnels connections seen as
+//!    hosts a PTY can be opened on, handed to the host's shell capability so the
+//!    terminal plugin never links an SSH client.
 //!  - `import` — the one-shot forward-port config adoption on first run.
 //!  - `api`    — the /api/tunnels admin routes, shape-identical to the Node build's.
 //!
@@ -34,11 +37,13 @@ pub mod import;
 pub mod manager;
 pub mod mcpmatch;
 pub mod port;
+pub mod shell;
 pub mod ssh;
 pub mod store;
 pub mod types;
 
 pub use api::{McpDisplay, Tunnels};
-pub use manager::{McpView, OpError, OpResult, TunnelManager};
+pub use manager::{McpView, OpError, OpResult, ShellSessionGuard, TunnelManager};
+pub use shell::TunnelShells;
 pub use store::TunnelStore;
 pub use types::{FailureKind, RuleDef, RuleState, SshConnDef, TunnelError};

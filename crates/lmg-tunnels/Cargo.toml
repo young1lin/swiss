@@ -23,6 +23,9 @@ base64 = "0.23"
 sha2 = "0.10"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
 futures-core = { version = "0.3", default-features = false }
+# Already in the workspace graph (lmg-host, lmg-mcp, lmg-data); promoted from dev-dependencies
+# because ShellProvider is an async trait this crate now implements. No new weight.
+async-trait = "0.1"
 
 [dev-dependencies]
 # test-utils pins the deterministic master key for this crate's own test binaries.
@@ -36,5 +39,4 @@ base64 = "0.23"
 sha2 = "0.10"
 socket2 = "0.6"
 rand = "0.8"
-async-trait = "0.1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

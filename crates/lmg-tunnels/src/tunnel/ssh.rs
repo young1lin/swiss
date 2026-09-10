@@ -15,8 +15,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
-use russh::client::{Handle, Handler};
+use russh::client::{Handle, Handler, Msg};
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
+use russh::{ChannelMsg, ChannelReadHalf, ChannelWriteHalf};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -25,6 +26,7 @@ use super::types::{ConnState, FailureKind, SshConnDef, TunnelError};
 use lmg_core::log;
 use lmg_core::paths::home_dir;
 use lmg_host::config::resolve_env_refs;
+use lmg_host::services::shell::{PtyEndpoint, PtyEvent, PtyIn, PtyInput, PtyOut, PtySize};
 
 /// ssh2's readyTimeout: TCP + kex + auth inside one 15s budget.
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -35,6 +37,14 @@ const KEEPALIVE: Duration = Duration::from_secs(15);
 const KEEPALIVE_MAX: usize = 3;
 /// A wedged transport must not block a shutdown (ssh.end()'s own cap).
 const END_TIMEOUT: Duration = Duration::from_millis(1500);
+/// What the far side is told it is talking to. xterm.js reports itself as an xterm with
+/// 256 colours, and telling the remote anything else means a wrong terminfo entry and a
+/// display that redraws incorrectly.
+const TERM: &str = "xterm-256color";
+/// How long to wait for a server's want_reply answer to the pty and shell requests. A
+/// server that has accepted a session channel and then says nothing is wedged; hanging
+/// the open forever would leave the panel spinning with no way to find out why.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Expand a leading `~` in a key path. The panel's own default is `~/.ssh/id_rsa`.
 pub fn expand_home(p: &str) -> String {
@@ -436,6 +446,78 @@ impl SshConnection {
         Ok(Box::pin(channel.into_stream()))
     }
 
+    /// Open an interactive PTY on this connection and pump it against `endpoint`.
+    ///
+    /// Resolves once the shell has STARTED, not when it ends: the pump runs in its own
+    /// task and `hold` — the manager's reference on this client — travels with it, so the
+    /// connection is released exactly when the session is over and not a moment before.
+    ///
+    /// russh has had PTY channels all along; no new SSH dependency is involved (docs/14
+    /// §4). What is new is the shape of the plumbing on this side of it.
+    pub async fn open_shell(
+        &self,
+        size: PtySize,
+        endpoint: PtyEndpoint,
+        hold: Box<dyn Send + 'static>,
+    ) -> Result<(), TunnelError> {
+        let handle = {
+            let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
+            if self.state() != ConnState::Connected {
+                return Err(TunnelError::new(
+                    "ssh connection is not established",
+                    FailureKind::Network,
+                ));
+            }
+            let Some(live) = live.as_ref() else {
+                return Err(TunnelError::new(
+                    "ssh connection is not established",
+                    FailureKind::Network,
+                ));
+            };
+            live.handle.clone()
+        };
+        let channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|err| as_tunnel_error(err, Some("could not open a session channel")))?;
+        let (mut read, write) = channel.split();
+
+        // Both requests carry want_reply and are confirmed BEFORE the shell is reported
+        // open. Fire-and-forget would mean a server that refuses a PTY hands the user a
+        // working-looking terminal with no tty behind it - no echo, no job control, and
+        // nothing saying why.
+        write
+            .request_pty(
+                true,
+                TERM,
+                size.cols as u32,
+                size.rows as u32,
+                0,
+                0,
+                &[], // no modes: let the far side keep its defaults, as ssh(1) does
+            )
+            .await
+            .map_err(|err| as_tunnel_error(err, Some("pty request failed")))?;
+        await_request_reply(&mut read, "a pseudo-terminal").await?;
+        write
+            .request_shell(true)
+            .await
+            .map_err(|err| as_tunnel_error(err, Some("shell request failed")))?;
+        await_request_reply(&mut read, "an interactive shell").await?;
+
+        tokio::spawn(async move {
+            let (out, input) = endpoint.split();
+            // The input pump is a child of the output pump rather than a sibling: when the
+            // far side goes away there is nothing left to type into, and an orphan parked
+            // on next() would hold `hold` - and so the whole SSH client - open forever.
+            let typing = tokio::spawn(pump_input(input, write));
+            pump_output(&mut read, out).await;
+            typing.abort();
+            drop(hold);
+        });
+        Ok(())
+    }
+
     /// End the session (best effort, capped): a wedged transport must not block a shutdown.
     pub async fn end(&self) {
         let live = self.live.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -594,6 +676,107 @@ impl TestResult {
         }
         Value::Object(m)
     }
+}
+
+// --- interactive shell plumbing (docs/14 T2) -------------------------------------------------
+
+/// Consume the server's answer to one `want_reply` channel request. Anything other than
+/// Success is reported by name: "the server refused a pseudo-terminal" is something a user
+/// can act on, where a terminal that silently behaves oddly is not.
+async fn await_request_reply(read: &mut ChannelReadHalf, what: &str) -> Result<(), TunnelError> {
+    let reply = tokio::time::timeout(REQUEST_TIMEOUT, read.wait())
+        .await
+        .map_err(|_| {
+            TunnelError::new(
+                format!("the server did not answer the request for {what}"),
+                FailureKind::Network,
+            )
+        })?;
+    match reply {
+        Some(ChannelMsg::Success) => Ok(()),
+        Some(ChannelMsg::Failure) => Err(TunnelError::new(
+            format!("the server refused {what}"),
+            FailureKind::Network,
+        )),
+        Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => Err(TunnelError::new(
+            format!("the session channel closed while requesting {what}"),
+            FailureKind::Network,
+        )),
+        // Data before the reply would be a protocol violation on a channel that has not
+        // been given a shell yet; treat anything unexpected as a refusal rather than
+        // guessing, so an odd server cannot produce a half-open terminal.
+        Some(_) => Err(TunnelError::new(
+            format!("the server answered the request for {what} unexpectedly"),
+            FailureKind::Network,
+        )),
+    }
+}
+
+/// Remote -> consumer, until the channel ends or the consumer drops its session.
+///
+/// The send is deliberately NOT inside the select: parking here is the backpressure that
+/// stops us draining the SSH window, which is what makes the far side slow down instead of
+/// this process buffering an unbounded flood (docs/14 §6.8).
+async fn pump_output(read: &mut ChannelReadHalf, out: PtyOut) {
+    let mut code: Option<i32> = None;
+    loop {
+        let msg = tokio::select! {
+            // Both arms are mpsc recv(), which is cancel-safe: whichever loses the race
+            // has consumed nothing.
+            msg = read.wait() => msg,
+            _ = out.closed() => break,
+        };
+        match msg {
+            Some(ChannelMsg::Data { data }) => {
+                if out.send(PtyEvent::Data(data.to_vec())).await.is_err() {
+                    return; // the consumer left; no exit event to deliver
+                }
+            }
+            // stderr on a PTY session is unusual but legal. A terminal shows it inline,
+            // exactly where the shell meant it to appear.
+            Some(ChannelMsg::ExtendedData { data, .. }) => {
+                if out.send(PtyEvent::Data(data.to_vec())).await.is_err() {
+                    return;
+                }
+            }
+            Some(ChannelMsg::ExitStatus { exit_status }) => code = Some(exit_status as i32),
+            Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
+                let _ = out
+                    .send(PtyEvent::Error(format!(
+                        "the remote shell was killed by {signal_name:?}"
+                    )))
+                    .await;
+            }
+            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+            Some(_) => {}
+        }
+    }
+    // Best effort: the consumer may already be gone, which is not an error here.
+    let _ = out.send(PtyEvent::Exit { code }).await;
+}
+
+/// Consumer -> remote, until the consumer drops its session or the transport refuses.
+///
+/// Its own task so that a flooding terminal cannot starve it: an interrupt typed while the
+/// output pump is parked on a full queue still reaches the far side (docs/14 §10 item 7).
+async fn pump_input(mut input: PtyIn, write: ChannelWriteHalf<Msg>) {
+    while let Some(next) = input.next().await {
+        let sent = match next {
+            PtyInput::Data(bytes) => write.data_bytes(bytes).await,
+            PtyInput::Resize(size) => {
+                write
+                    .window_change(size.cols as u32, size.rows as u32, 0, 0)
+                    .await
+            }
+        };
+        if sent.is_err() {
+            return; // the transport is gone; the output pump reports the end
+        }
+    }
+    // The consumer closed the tab: send EOF so the remote shell sees its stdin end and
+    // exits on its own, rather than being cut off mid-command.
+    let _ = write.eof().await;
+    let _ = write.close().await;
 }
 
 #[cfg(test)]

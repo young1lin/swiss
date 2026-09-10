@@ -361,6 +361,62 @@ impl PtyEndpoint {
     pub fn is_closed(&self) -> bool {
         self.output.is_closed()
     }
+
+    /// Split into the two directions so a provider can pump each in its OWN task.
+    ///
+    /// Necessary rather than stylistic. One `select!` loop cannot do this correctly: it
+    /// must park on a full output queue (that parking is the backpressure), and while it
+    /// is parked nothing is reading input — so a Ctrl-C typed into a terminal that is
+    /// flooding would never reach the far side, which is acceptance item 7 in docs/14
+    /// §10. Moving the send inside the select instead makes it cancellable, and a
+    /// cancelled send drops the bytes it was carrying. Two tasks have neither problem.
+    pub fn split(self) -> (PtyOut, PtyIn) {
+        (
+            PtyOut {
+                output: self.output,
+            },
+            PtyIn { input: self.input },
+        )
+    }
+}
+
+/// The outbound half of a [PtyEndpoint]: whatever the far side produced.
+#[derive(Clone)]
+pub struct PtyOut {
+    output: mpsc::Sender<PtyEvent>,
+}
+
+impl PtyOut {
+    /// Publish one event, parking while the consumer is behind. See [PtyEndpoint::send].
+    pub async fn send(&self, event: PtyEvent) -> Result<(), ShellError> {
+        self.output
+            .send(event)
+            .await
+            .map_err(|_| ShellError::Closed("the shell consumer has gone away".to_string()))
+    }
+
+    /// Resolves when the consumer drops its session. A provider that is merely waiting
+    /// for output needs this: without it, a quiet remote shell would hold its connection
+    /// open long after the tab that asked for it went away.
+    pub async fn closed(&self) {
+        self.output.closed().await
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.output.is_closed()
+    }
+}
+
+/// The inbound half of a [PtyEndpoint]: keystrokes and resizes.
+pub struct PtyIn {
+    input: mpsc::Receiver<PtyInput>,
+}
+
+impl PtyIn {
+    /// The next thing the consumer sent; None once the session has been dropped.
+    pub async fn next(&mut self) -> Option<PtyInput> {
+        self.input.recv().await
+    }
 }
 
 /// What a provider registers: the hosts it can open a shell on, and how to open one.
@@ -774,6 +830,50 @@ mod tests {
             );
         }
         assert_eq!(session.next_event().await, Some(PtyEvent::Data(vec![255])));
+    }
+
+    #[tokio::test]
+    async fn a_split_endpoint_still_takes_input_while_its_output_is_parked() {
+        // docs/14 §10 item 7: Ctrl-C must reach a terminal that is flooding. With the two
+        // directions in one select! loop it could not - the loop would be parked on the
+        // full output queue. Split, the input side keeps moving.
+        let ledger = SessionLedger::new();
+        let lease = ledger.grant("box-one", "terminal");
+        let (session, endpoint) = PtySession::duplex("s1", "box-one", size(), lease);
+        let (out, mut input) = endpoint.split();
+        for i in 0..OUTPUT_QUEUE_CHUNKS {
+            out.send(PtyEvent::Data(vec![i as u8]))
+                .await
+                .expect("the queue has room");
+        }
+        let flooding = out.send(PtyEvent::Data(b"more".to_vec()));
+        tokio::pin!(flooding);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut flooding)
+                .await
+                .is_err(),
+            "the output side is parked, as it should be"
+        );
+        // ...and the interrupt still gets through, which is the whole point.
+        session.write(vec![0x03]).await.expect("Ctrl-C is accepted");
+        assert_eq!(input.next().await, Some(PtyInput::Data(vec![0x03])));
+    }
+
+    #[tokio::test]
+    async fn a_split_output_half_learns_that_the_consumer_left() {
+        let ledger = SessionLedger::new();
+        let lease = ledger.grant("box-one", "terminal");
+        let (session, endpoint) = PtySession::duplex("s1", "box-one", size(), lease);
+        let (out, mut input) = endpoint.split();
+        assert!(!out.is_closed());
+        drop(session);
+        // A quiet remote produces nothing to fail on, so "the consumer left" has to be
+        // observable on its own - otherwise the connection outlives the tab.
+        tokio::time::timeout(Duration::from_secs(5), out.closed())
+            .await
+            .expect("closed() resolves when the session drops");
+        assert!(out.is_closed());
+        assert!(input.next().await.is_none());
     }
 
     #[tokio::test]
