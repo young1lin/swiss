@@ -1,4 +1,34 @@
 /* Pure page registration: descriptors are data, loaders are lazy, and failures are retryable. */
+
+/* Group page descriptors by the plugin that contributed them. Pure data in, pure data out:
+   the shell renders the result, so this stays unit-testable without a DOM.
+   - group order is the SMALLEST page order in the group, so a plugin cannot jump the row by
+     contributing one late page, and no groupOrder field has to exist;
+   - inside a group, page order decides, and replace() order breaks ties;
+   - a page whose pluginId has no inventory row (the client-side "plugins" page, pluginId
+     "host") still gets a group: fallback label first, then the page's own label. Never drop
+     a page because its plugin row is missing - a page that cannot be reached is worse than
+     a group with an ugly name. */
+function groupPages(pages, plugins, fallbackLabels) {
+  var byId = new Map((plugins || []).map(function (p) { return [p.id, p]; }));
+  var groups = new Map();
+  pages.forEach(function (page) {
+    var gid = page.pluginId || page.id;
+    var group = groups.get(gid);
+    if (!group) {
+      var known = byId.get(gid);
+      var label = (known && known.label) || (fallbackLabels && fallbackLabels[gid]) || page.label;
+      group = { id: gid, label: label, order: page.order, pages: [] };
+      groups.set(gid, group);
+    }
+    if (page.order < group.order) group.order = page.order;
+    group.pages.push(page);
+  });
+  return Array.from(groups.values())
+    .map(function (g) { g.pages.sort(function (a, b) { return a.order - b.order; }); return g; })
+    .sort(function (a, b) { return a.order - b.order; });
+}
+
 function createPageRegistry(importer) {
   var entries = new Map();
   var modules = new Map();
@@ -10,6 +40,7 @@ function createPageRegistry(importer) {
     if (!entryOk) throw new Error("Page entry must be a local admin module");
     return Object.assign({}, page, { order: Number.isFinite(page.order) ? page.order : 0 });
   }
+  function listSorted() { return Array.from(entries.values()).sort(function (a, b) { return a.order - b.order; }); }
   return {
     replace: function (pages) {
       if (!Array.isArray(pages)) throw new Error("Pages must be an array");
@@ -25,7 +56,8 @@ function createPageRegistry(importer) {
       });
     },
     get: function (id) { return entries.get(id); },
-    list: function () { return Array.from(entries.values()).sort(function (a, b) { return a.order - b.order; }); },
+    list: listSorted,
+    groups: function (plugins, fallbackLabels) { return groupPages(listSorted(), plugins, fallbackLabels); },
     load: function (id) {
       var page = entries.get(id);
       if (!page) return Promise.reject(new Error("Unknown page: " + id));
@@ -41,4 +73,4 @@ function createPageRegistry(importer) {
   };
 }
 
-export { createPageRegistry };
+export { createPageRegistry, groupPages };

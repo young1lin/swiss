@@ -10,6 +10,10 @@ var legacy = [
   { id: "jobs", pluginId: "jobs", label: "Jobs" },
 ].map(function (p, i) { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
 var management = { id: "plugins", pluginId: "host", label: "Plugins", order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
+/* Group labels used when the host serves no plugin inventory (an older gateway answers 404 on
+   /api/plugins), plus the one group that has no inventory row at all: the management page is
+   synthesized here, not contributed by a plugin. */
+var GROUP_LABELS = { mcp: "MCP", tunnels: "Tunnels", data: "Data", jobs: "Jobs", host: "Gateway" };
 var registry = createPageRegistry();
 registry.replace(legacy);
 var inventory = null;
@@ -27,17 +31,41 @@ function unavailable(page) {
   var plugin = pluginFor(page);
   return plugin && (plugin.enabled === false || ["disabled", "failed", "waitingDependency", "not-built"].indexOf(plugin.state) >= 0) ? plugin : null;
 }
+/* Two-level navigation (docs/13): level one is one tab per plugin group, level two the current
+   group's pages. Both bars delegate clicks on [data-view], and a level-one button also carries
+   data-view (its group's default page) so the deep selector in jobs.js keeps matching. */
+function pageTab(p) {
+  var off = unavailable(p);
+  return '<button role="tab" data-view="' + esc(p.id) + '" aria-selected="' + String(p.id === state.view) + '"' +
+    (off ? ' title="' + esc(off.lastError || "Plugin disabled") + '"' : "") + ">" + esc(p.label) + (off ? " · off" : "") + "</button>";
+}
 function paintNavigation() {
+  var groups = registry.groups(inventory && inventory.plugins, GROUP_LABELS);
+  var current = groups.find(function (g) {
+    return g.pages.some(function (p) { return p.id === state.view; });
+  });
   var seg = $("viewSeg");
-  seg.innerHTML = registry.list().map(function (p) {
-    var off = unavailable(p);
-    return '<button role="tab" data-view="' + esc(p.id) + '" aria-selected="' + String(p.id === state.view) + '"' +
-      (off ? ' title="' + esc(off.lastError || "Plugin disabled") + '"' : "") + '>' + esc(p.label) + (off ? " · off" : "") + "</button>";
+  seg.innerHTML = groups.map(function (g) {
+    var allOff = g.pages.every(function (p) { return !!unavailable(p); });
+    return '<button role="tab" data-group="' + esc(g.id) + '" data-view="' + esc(g.pages[0].id) +
+      '" aria-selected="' + String(!!current && current.id === g.id) + '">' + esc(g.label) + (allOff ? " · off" : "") + "</button>";
   }).join("");
   seg.onclick = function (event) {
     var button = event.target.closest("[data-view]");
     if (button) void navigatePage(button.dataset.view);
   };
+  var subBar = $("subBar");
+  var subSeg = $("subSeg");
+  if (current && current.pages.length >= 2) {
+    subBar.hidden = false;
+    subSeg.innerHTML = current.pages.map(pageTab).join("");
+    subSeg.onclick = seg.onclick;
+  } else {
+    // One page per group is the norm (five of six today): a permanently visible bar of one tab
+    // would be a permanent empty stripe, so the whole container leaves the layout instead (D5).
+    subBar.hidden = true;
+    subSeg.innerHTML = "";
+  }
 }
 
 async function reloadPluginInventory() {

@@ -100,12 +100,12 @@ impl PluginFactory for McpPlugin {
         PluginDescriptor {
             id: MCP_ID.into(),
             kind: "mcp".into(),
-            label: "MCPs".into(),
+            label: "MCP".into(),
             version: "0.1".into(),
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
             pages: vec![
-                page("mcps", MCP_ID, "MCPs", 10, true),
+                page("mcps", MCP_ID, "Servers", 10, true),
                 page("traffic", MCP_ID, "Traffic", 20, false),
             ],
             routes: vec!["/api/mcps".into(), "/api/traffic".into()],
@@ -704,6 +704,55 @@ impl PluginInstance for ProcessInstance {
                 "info",
                 "process plugin stopped; in-flight runs canceled",
                 Some(json!({ "runs": canceled })),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Uniquely-named scratch paths under the temp dir: the factory constructors want a path,
+    /// and two tests (or two runs) must never share one.
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "lmg-builtin-{}-{}-{}",
+            tag,
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::SeqCst),
+        ))
+    }
+
+    /// The two-level navigation (docs/13 N4) shows the PLUGIN label on level one and the PAGE
+    /// labels on level two, so a plugin whose label duplicates one of its own pages would
+    /// render the same word twice in one bar - "MCPs" over "MCPs", which is exactly what the
+    /// MCPs to MCP / MCPs to Servers rename fixed. Should the duplication ever come back, it
+    /// comes back as this failure. (Single-page plugins are fine either way: their level-two
+    /// bar never renders, so this pins the contract only where it bites.)
+    #[test]
+    fn mcp_plugin_label_differs_from_every_page_label() {
+        let dir = scratch_dir("labels");
+        let factory = McpPlugin {
+            registry: Registry::new(
+                60_000,
+                Arc::new(lmg_mcp::calls::CallLog::at(dir.join("calls"))),
+            ),
+            managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
+            services: lmg_host::services::RuntimeServices::new(),
+        };
+        let descriptor = factory.descriptor();
+        assert_eq!(descriptor.id, MCP_ID);
+        assert!(
+            !descriptor.pages.is_empty(),
+            "the MCP plugin is the multi-page case the contract exists for"
+        );
+        for page in &descriptor.pages {
+            assert_ne!(
+                descriptor.label, page.label,
+                "level-one '{}' duplicates level-two '{}'; navigation labels must differ",
+                descriptor.label, page.label,
             );
         }
     }

@@ -25,7 +25,8 @@ local-mcp-gateway-rust/
     lmg-tunnels/src/  tunnel/…           # types, store, manager, forward, port, ssh, mcpmatch, import, api
     lmg-jobs/src/     jobs/…             # def, migrate, schedule, clock, state, runner, runlog, api
     lmg-panel/src/    admin.rs
-                      admin_assets/      # copied verbatim from ../local-mcp-gateway/src/admin
+                      admin_assets/      # copied verbatim from ../local-mcp-gateway/src/admin;
+                                         # renders the two-level navigation (docs/13)
   src/                                   # the composition crate: what wires the rest together
     main.rs lib.rs                       # thin argv parse; what the integration tests drive
     app.rs server.rs adminapi.rs         # axum Router assembly, /api/*
