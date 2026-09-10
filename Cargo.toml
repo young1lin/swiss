@@ -123,6 +123,21 @@ default = []
 # a panic and never a silently missing endpoint.
 mongo = ["lmg-mcp/mongo"]
 
+# Full debuginfo is what makes a debug build of this workspace unbuildable on a small paging
+# file: eight link targets, each carrying a complete PDB, exhaust it (os error 1455) when cargo
+# links them in parallel — which is why every gate run so far has had to pass
+# CARGO_PROFILE_DEV_DEBUG=line-tables-only by hand. Putting it here instead means the gate
+# commands in AGENTS.md are the whole story, with no environment variable written down nowhere.
+# Line tables keep what is actually read (a panic or a failing assert still names its file and
+# line) and drop what is not. Costs nothing at runtime: this profile never ships.
+#
+# Deliberately not `[profile.dev.package."*"] debug = 0`, tempting as it is: dependency
+# debuginfo is most of the bytes, but changing it invalidates every dependency in the target
+# directory, and on a machine with Smart App Control that means several hundred freshly linked
+# build scripts and proc-macro DLLs for the OS to refuse one at a time.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
 opt-level = "z"
 lto = "fat"
