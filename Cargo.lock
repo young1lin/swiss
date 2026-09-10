@@ -1989,7 +1989,6 @@ dependencies = [
  "time",
  "tokio",
  "tower",
- "windows 0.58.0",
 ]
 
 [[package]]

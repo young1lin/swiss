@@ -1,11 +1,22 @@
-//! Platform seams: file privacy, the machine id, process walking and DPAPI all live behind this
-//! module so the rest of the crate stays platform-agnostic.
+//! Platform seams: file privacy, the machine id, process walking, DPAPI, the kill-on-close job
+//! guard and local pseudo-terminals all live behind this module so the rest of the crate stays
+//! platform-agnostic. It is also where `unsafe` is allowed to live (AGENTS.md): every FFI call
+//! the gateway makes is in this directory, and nothing above it needs any.
+
+pub mod pty;
 
 mod privfs;
 pub use privfs::{
     chmod_private, mkdir_private, private_file_mode, write_file_private, PRIVATE_DIR_MODE,
     PRIVATE_FILE_MODE,
 };
+
+/// The Windows subtree-kill guard. Every child the gateway spawns — proc MCPs, scheduled jobs,
+/// local terminals — is assigned through it, so ADR-008 is one mechanism rather than several.
+#[cfg(windows)]
+mod job;
+#[cfg(windows)]
+pub use job::KillOnCloseJob;
 
 #[cfg(windows)]
 mod windows;

@@ -71,7 +71,7 @@ pub fn proc_call_timeout_ms() -> u64 {
 // supervisor shares both with this adapter); re-exported so this stays their historical home
 // for every existing caller. The unit tests for both moved along with the code.
 #[cfg(windows)]
-use lmg_host::services::process::win::KillOnCloseJob;
+use lmg_core::platform::KillOnCloseJob;
 pub use lmg_host::services::process::{decode_child_output, tokenize_command};
 
 /// Keep the tail of the stderr ring, bounded by chars (Node: `slice(-STDERR_MAX)` on a buffer

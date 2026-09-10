@@ -35,6 +35,12 @@ windows = { version = "0.58", features = [
     "Win32_System_JobObjects",               # KILL_ON_JOB_CLOSE subtree kill for proc children
     "Win32_System_Diagnostics_ToolHelp",     # Toolhelp32 snapshot, replacing the other powershell spawn
     "Win32_System_ProcessStatus",            # GetProcessMemoryInfo for the memory view
+    "Win32_System_Console",                  # ConPTY: Create/Resize/ClosePseudoConsole
+    "Win32_System_Pipes",                    # ConPTY: the two anonymous pipes + PeekNamedPipe
+    # Named explicitly although Win32_Security_Cryptography already pulls it in: CreatePipe,
+    # CreateProcessW and CreateJobObjectW all name SECURITY_ATTRIBUTES, and a reader deleting
+    # DPAPI one day should not silently take the pty and the job guard down with it.
+    "Win32_Security",
 ] }
 
 [target.'cfg(not(windows))'.dependencies]

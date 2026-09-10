@@ -15,9 +15,11 @@
 //!   task outlives the run that started it.
 //! - Platform-safe subtree teardown, the same mechanics the proc adapter uses: a Windows
 //!   kill-on-close Job Object assigned at spawn (one handle owns the whole tree, PID-reuse
-//!   safe) and a Unix private process group killed via kill(-pgid). The Win32 seam lives
-//!   HERE (the only unsafe in this crate); the proc adapter and the jobs runner reuse it
-//!   so every child of this gateway dies with the same guarantee.
+//!   safe) and a Unix private process group killed via kill(-pgid). The Win32 seam moved
+//!   DOWN to `lmg_core::platform::KillOnCloseJob` when the local terminal needed it too
+//!   (docs/14 T3), so this crate now holds no unsafe at all; the proc adapter, the jobs
+//!   runner and the terminal all assign through that one function, and every child of this
+//!   gateway dies with the same guarantee.
 //!
 //! Environment references in typed input are resolved STRICTLY by the action layer: a
 //! missing required env var is an error naming the variable (docs/10 §6), never a silent
@@ -30,6 +32,9 @@ use std::time::{Duration, Instant};
 
 use tokio::io::AsyncReadExt;
 use tokio::task::JoinHandle;
+
+#[cfg(windows)]
+use lmg_core::platform::KillOnCloseJob;
 
 use crate::services::action::CancelHandle;
 
@@ -289,7 +294,7 @@ impl Supervisor {
         // inherits the job, so one handle owns the whole tree — for the deadline kill AND
         // for the moment the run ends while a backgrounded descendant is still alive.
         #[cfg(windows)]
-        let job = child.raw_handle().and_then(win::KillOnCloseJob::assign);
+        let job = child.raw_handle().and_then(KillOnCloseJob::assign);
 
         // Readers as tracked tasks JOINED by this future (never detached): a deadline kill
         // cannot discard what was already read, because the bytes live in the shared
@@ -472,6 +477,86 @@ pub fn resolve_refs_strict(value: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// Split a command string into argv, honoring single/double quotes. On Windows a backslash is a
+/// path separator, NOT an escape — so backslashes are kept literal and the only recognized
+/// escapes inside double quotes are `\"` and `\\` (port of `tokenizeCommand`; hand-rolled, no
+/// regex per the crate rules).
+pub fn tokenize_command(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if let Some(q) = quote {
+            // Inside double quotes, only \" and \\ are escapes; everything else (incl. \a) is
+            // literal. Inside single quotes nothing is escaped at all.
+            if c == '\\'
+                && q == '"'
+                && i + 1 < chars.len()
+                && (chars[i + 1] == '"' || chars[i + 1] == '\\')
+            {
+                cur.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == q {
+                quote = None;
+                i += 1;
+                continue;
+            }
+            cur.push(c);
+        } else {
+            if c == '"' || c == '\'' {
+                quote = Some(c);
+                i += 1;
+                continue;
+            }
+            if c.is_whitespace() {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                i += 1;
+                continue;
+            }
+            cur.push(c);
+        }
+        i += 1;
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+/// Decode a child-process stderr chunk. Valid UTF-8 is kept (npx, Python, most MCP servers).
+/// Bytes that are not UTF-8 — typical of cmd.exe on a Chinese Windows, CP936/GBK — are decoded
+/// as GBK so the panel shows 「不是内部或外部命令」 instead of mojibake. ASCII-only English cmd
+/// errors are valid UTF-8 and take the first branch.
+pub fn decode_child_output(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_string();
+    }
+    // The crate carries encoding_rs with default features off, so the alloc-gated convenience
+    // `decode()` is unavailable — drive the streaming decoder by hand into a caller-allocated
+    // buffer. Malformed sequences come back as U+FFFD, exactly what Node's non-fatal
+    // TextDecoder("gbk") produced (a per-chunk decoder, like here, splits a multibyte char
+    // across chunk boundaries the same way Node's did).
+    let mut decoder = encoding_rs::GBK.new_decoder();
+    let cap = decoder
+        .max_utf8_buffer_length(bytes.len())
+        .unwrap_or(bytes.len() * 3 + 3);
+    let mut out = vec![0u8; cap];
+    let (_result, _read, written, had_errors) = decoder.decode_to_utf8(bytes, &mut out, true);
+    if had_errors {
+        // Bytes GBK cannot decode either — the lossy-UTF-8 last resort (Node's third branch,
+        // reachable there only when the "gbk" label itself was unsupported).
+        String::from_utf8_lossy(bytes).into_owned()
+    } else {
+        String::from_utf8_lossy(&out[..written]).into_owned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,176 +638,5 @@ mod tests {
         let cap = capture.lock().unwrap();
         assert_eq!(cap.total(), payload.len() as u64, "everything was read");
         assert!(cap.retained() <= 64, "retention never exceeds the cap");
-    }
-}
-
-/// Split a command string into argv, honoring single/double quotes. On Windows a backslash is a
-/// path separator, NOT an escape — so backslashes are kept literal and the only recognized
-/// escapes inside double quotes are `\"` and `\\` (port of `tokenizeCommand`; hand-rolled, no
-/// regex per the crate rules).
-pub fn tokenize_command(s: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let mut quote: Option<char> = None;
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if let Some(q) = quote {
-            // Inside double quotes, only \" and \\ are escapes; everything else (incl. \a) is
-            // literal. Inside single quotes nothing is escaped at all.
-            if c == '\\'
-                && q == '"'
-                && i + 1 < chars.len()
-                && (chars[i + 1] == '"' || chars[i + 1] == '\\')
-            {
-                cur.push(chars[i + 1]);
-                i += 2;
-                continue;
-            }
-            if c == q {
-                quote = None;
-                i += 1;
-                continue;
-            }
-            cur.push(c);
-        } else {
-            if c == '"' || c == '\'' {
-                quote = Some(c);
-                i += 1;
-                continue;
-            }
-            if c.is_whitespace() {
-                if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                }
-                i += 1;
-                continue;
-            }
-            cur.push(c);
-        }
-        i += 1;
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
-}
-/// Decode a child-process stderr chunk. Valid UTF-8 is kept (npx, Python, most MCP servers).
-/// Bytes that are not UTF-8 — typical of cmd.exe on a Chinese Windows, CP936/GBK — are decoded
-/// as GBK so the panel shows 「不是内部或外部命令」 instead of mojibake. ASCII-only English cmd
-/// errors are valid UTF-8 and take the first branch.
-pub fn decode_child_output(bytes: &[u8]) -> String {
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        return text.to_string();
-    }
-    // The crate carries encoding_rs with default features off, so the alloc-gated convenience
-    // `decode()` is unavailable — drive the streaming decoder by hand into a caller-allocated
-    // buffer. Malformed sequences come back as U+FFFD, exactly what Node's non-fatal
-    // TextDecoder("gbk") produced (a per-chunk decoder, like here, splits a multibyte char
-    // across chunk boundaries the same way Node's did).
-    let mut decoder = encoding_rs::GBK.new_decoder();
-    let cap = decoder
-        .max_utf8_buffer_length(bytes.len())
-        .unwrap_or(bytes.len() * 3 + 3);
-    let mut out = vec![0u8; cap];
-    let (_result, _read, written, had_errors) = decoder.decode_to_utf8(bytes, &mut out, true);
-    if had_errors {
-        // Bytes GBK cannot decode either — the lossy-UTF-8 last resort (Node's third branch,
-        // reachable there only when the "gbk" label itself was unsupported).
-        String::from_utf8_lossy(bytes).into_owned()
-    } else {
-        String::from_utf8_lossy(&out[..written]).into_owned()
-    }
-}
-/// The Windows Job Object seam. The ONLY `unsafe` in the services layer lives here.
-/// pub: this supervisor's own children, the proc adapter's children and the jobs runner's
-/// scheduled children all sit under the same kill-on-close guard, so a timed-out command takes its whole subtree down exactly like a stopped proc MCP.
-#[cfg(windows)]
-pub mod win {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, JobObjectExtendedLimitInformation, SetInformationJobObject,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-
-    // CreateJobObjectW is not reachable through the windows crate here: its signature names
-    // SECURITY_ATTRIBUTES, which sits behind the `Win32_Security` feature this crate does not
-    // enable (and Cargo.toml is frozen for this port). The import is declared by hand instead —
-    // same kernel32 symbol the crate itself links, null/null are the documented "no attributes,
-    // unnamed object" arguments.
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn CreateJobObjectW(
-            lpjobattributes: *const core::ffi::c_void,
-            lpname: *const u16,
-        ) -> *mut core::ffi::c_void;
-    }
-
-    /// An owned kill-on-close job handle. Dropping it closes the handle, and the job carries
-    /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — so the drop TERMINATES every process in the job:
-    /// the child plus its whole subtree, since processes created by a job member inherit the
-    /// job. This is what makes both graceful close and a hard gateway kill tear down the tree.
-    pub struct KillOnCloseJob(HANDLE);
-
-    // SAFETY: the HANDLE inside is owned exclusively by this wrapper (never cloned out), and a
-    // Win32 job handle is a plain kernel object reference that CloseHandle accepts from any
-    // thread — so moving or sharing the wrapper is as safe as moving the integer it holds.
-    unsafe impl Send for KillOnCloseJob {}
-    unsafe impl Sync for KillOnCloseJob {}
-
-    impl KillOnCloseJob {
-        /// Put the just-spawned child (by its raw process handle) into a fresh kill-on-close
-        /// job. `None` when the job cannot be created, configured or assigned — the caller
-        /// falls back to killing by PID.
-        pub fn assign(child: *mut core::ffi::c_void) -> Option<Self> {
-            // SAFETY: both arguments are null (the documented "default security, unnamed
-            // object" form); the returned handle is checked before any use.
-            let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-            if raw.is_null() {
-                return None;
-            }
-            let job = HANDLE(raw);
-            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            // SAFETY: `info` is a live local outliving the call; the class/length pair matches
-            // its type exactly as SetInformationJobObject documents.
-            let configured = unsafe {
-                SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const core::ffi::c_void,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                )
-            };
-            if configured.is_err() {
-                // SAFETY: plain close of an owned, member-less job handle.
-                unsafe {
-                    let _ = CloseHandle(job);
-                };
-                return None;
-            }
-            // SAFETY: the child handle comes straight from the spawn and stays open for the
-            // child's lifetime; assignment only records job membership.
-            let assigned = unsafe { AssignProcessToJobObject(job, HANDLE(child)) };
-            if assigned.is_err() {
-                // SAFETY: as above — the job has no members once assignment failed.
-                unsafe {
-                    let _ = CloseHandle(job);
-                };
-                return None;
-            }
-            Some(Self(job))
-        }
-    }
-
-    impl Drop for KillOnCloseJob {
-        fn drop(&mut self) {
-            // SAFETY: the handle is owned (never cloned or shared) and closed exactly here;
-            // closing a kill-on-close job handle is precisely the subtree-kill mechanism.
-            unsafe {
-                let _ = CloseHandle(self.0);
-            }
-        }
     }
 }
