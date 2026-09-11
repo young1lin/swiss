@@ -603,24 +603,43 @@ impl Table {
             .ok_or_else(|| TerminalError::Refused(format!("no such shell target: {target}")))
     }
 
-    /// Take a slot under both caps, or say which one is full. The guard holds the slot
+    /// Take a slot under the caps, or say which one is full. The guard holds the slot
     /// across the open's awaits.
+    ///
+    /// Local sessions are UNCAPPED (the operator's call, 2026-09-12): a local PTY costs a
+    /// thread stack on a machine the operator owns, and they asked for as many tabs as they
+    /// like — so a local open takes no checks and consumes no budget. Remote targets keep
+    /// both caps, and only remote sessions count toward them: an SSH channel costs the far
+    /// host's memory too, and a runaway loop of opens must not march through a host one
+    /// after another while ten harmless local tabs sit between them.
     fn reserve(self: &Arc<Self>, target: &str) -> Result<Reservation, TerminalError> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let total = state.live.len() + state.opening.len();
-        if total >= self.config.max_sessions {
-            return Err(TerminalError::Refused(format!(
-                "already at maxSessions ({}); close a terminal before opening another",
-                self.config.max_sessions
-            )));
-        }
-        let on_target = state.live.values().filter(|e| e.target == target).count()
-            + state.opening.iter().filter(|t| *t == target).count();
-        if on_target >= self.config.max_sessions_per_target {
-            return Err(TerminalError::Refused(format!(
-                "already at maxSessionsPerTarget ({}) for {target}",
-                self.config.max_sessions_per_target
-            )));
+        if target != LOCAL_TARGET {
+            let remote_opening = state
+                .opening
+                .iter()
+                .filter(|t| *t != LOCAL_TARGET)
+                .count();
+            let total = state
+                .live
+                .values()
+                .filter(|e| e.target != LOCAL_TARGET)
+                .count()
+                + remote_opening;
+            if total >= self.config.max_sessions {
+                return Err(TerminalError::Refused(format!(
+                    "already at maxSessions ({}); close a terminal before opening another",
+                    self.config.max_sessions
+                )));
+            }
+            let on_target = state.live.values().filter(|e| e.target == target).count()
+                + state.opening.iter().filter(|t| *t == target).count();
+            if on_target >= self.config.max_sessions_per_target {
+                return Err(TerminalError::Refused(format!(
+                    "already at maxSessionsPerTarget ({}) for {target}",
+                    self.config.max_sessions_per_target
+                )));
+            }
         }
         state.opening.push(target.to_string());
         Ok(Reservation {

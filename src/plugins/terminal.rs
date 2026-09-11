@@ -75,13 +75,15 @@ impl PluginFactory for TerminalPlugin {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 64,
-                        "default": 4
+                        "default": 4,
+                        "description": "Remote sessions only; local sessions are uncapped."
                     },
                     "maxSessionsPerTarget": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 64,
-                        "default": 2
+                        "default": 2,
+                        "description": "Remote sessions only; local sessions are uncapped."
                     },
                     "idleTimeoutMinutes": {
                         "type": "integer",

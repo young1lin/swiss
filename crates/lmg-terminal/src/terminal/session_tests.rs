@@ -209,7 +209,7 @@ impl Harness {
             .register(
                 Arc::new(FakeShells {
                     ledger: SessionLedger::new(),
-                    targets: vec![target("box-one"), target("box-two")],
+                    targets: vec![target("box-one"), target("box-two"), target("box-three")],
                     far: self.far_tx.clone(),
                 }),
                 who,
@@ -312,16 +312,36 @@ async fn the_local_shell_is_refused_while_it_is_switched_off() {
 
 #[tokio::test]
 async fn the_total_cap_refuses_the_next_session_and_names_itself() {
+    // Remote targets: both caps apply (an SSH channel costs the far host too).
     let mut h = Harness::new(TerminalConfig {
         max_sessions: 2,
         max_sessions_per_target: 2,
         ..quiet(true)
     });
-    h.open(LOCAL_TARGET).await.expect("one");
-    h.open(LOCAL_TARGET).await.expect("two");
-    let err = h.open(LOCAL_TARGET).await.expect_err("three is too many");
+    h.open("box-one").await.expect("one");
+    h.open("box-two").await.expect("two");
+    let err = h.open("box-three").await.expect_err("three is too many");
     assert!(err.to_string().contains("maxSessions (2)"), "{err}");
     assert_eq!(h.sessions.list().len(), 2);
+}
+
+#[tokio::test]
+async fn local_sessions_are_uncapped_and_consume_no_remote_budget() {
+    // The operator's call (2026-09-12): a local PTY costs a thread stack on a machine the
+    // operator owns, and they asked to open as many local tabs as they like. A wall of
+    // local sessions must neither be refused itself nor eat the budget a remote open needs.
+    let mut h = Harness::new(TerminalConfig {
+        max_sessions: 2,
+        max_sessions_per_target: 1,
+        ..quiet(true)
+    });
+    for i in 0..5 {
+        h.open(LOCAL_TARGET)
+            .await
+            .unwrap_or_else(|e| panic!("local tab {i} should be allowed: {e}"));
+    }
+    h.open("box-one").await.expect("a remote seat is still free");
+    assert_eq!(h.sessions.list().len(), 6);
 }
 
 #[tokio::test]
