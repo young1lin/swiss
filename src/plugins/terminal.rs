@@ -61,7 +61,7 @@ impl PluginFactory for TerminalPlugin {
                             },
                             "shell": {
                                 "type": "string",
-                                "description": "Program to run instead of the platform's default shell (local sessions only)."
+                                "description": "Program to run instead of the platform's default shell (local sessions only). Empty = the default: pwsh.exe, then powershell.exe, then COMSPEC on Windows; $SHELL on unix."
                             }
                         },
                         "additionalProperties": false
@@ -213,6 +213,13 @@ mod tests {
         let defaults = TerminalConfig::default();
         let props = &schema["properties"];
         assert_eq!(props["local"]["properties"]["enabled"]["default"], json!(false));
+        // docs/15 §2.1: the schema is the sheet's hint, so the default order it states must
+        // name the same shells conpty's probe prefers.
+        let shell_desc = props["local"]["properties"]["shell"]["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(shell_desc.contains("pwsh.exe"), "{shell_desc}");
+        assert!(shell_desc.contains("COMSPEC"), "{shell_desc}");
         assert_eq!(
             props["maxSessions"]["default"],
             json!(defaults.max_sessions)

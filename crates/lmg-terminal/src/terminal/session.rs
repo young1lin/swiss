@@ -51,6 +51,8 @@ use super::local::{LocalShell, LOCAL_LABEL, LOCAL_TARGET};
 use super::recording::Recorder;
 use super::tickets::{TicketBook, TicketError};
 
+use lmg_core::platform::pty::ShellCandidate;
+
 /// docs/14 §7: 64 KB per session, a constant and not a config item, because it is a line
 /// in the memory budget rather than a preference.
 pub const CATCHUP_BYTES: usize = 64 * 1024;
@@ -96,7 +98,13 @@ pub struct TargetsView {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct LocalView {
     pub enabled: bool,
+    /// The program a session would actually run, resolved to an absolute path where the
+    /// platform can (docs/15 §2.1) — the panel's `local · …` label must be the truth.
     pub shell: String,
+    /// Every shell this host offers, probed once at plugin start: the settings sheet's
+    /// candidate list. Additive on purpose — the panel's older readers only look at
+    /// `enabled` and `shell` (docs/15 §2.2).
+    pub shells: Vec<ShellCandidate>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -343,12 +351,13 @@ impl TerminalSessions {
         TargetsView {
             local: LocalView {
                 enabled: table.config.local.enabled,
-                shell: table
-                    .config
-                    .local
-                    .shell
-                    .clone()
-                    .unwrap_or_else(|| table.local.program()),
+                shell: match table.config.local.shell.as_deref() {
+                    // A configured name is resolved so the label shows the path that
+                    // would actually spawn, not what the user typed.
+                    Some(configured) => table.local.resolve(configured),
+                    None => table.local.program(),
+                },
+                shells: table.local.candidates(),
             },
             remote: RemoteView {
                 presence: presence.as_str().to_string(),
@@ -391,6 +400,10 @@ impl TerminalSessions {
 
         let id = lmg_core::util::random_hex(16);
         let session = if target == LOCAL_TARGET {
+            // The request's one-shot override beats the plugin's configured shell; with
+            // neither, the default the probe cached at start runs. Without this the
+            // config row only ever changed the label, never the program (docs/15 §2).
+            let shell = shell.or_else(|| table.config.local.shell.as_deref());
             table.local.open(&id, size, shell)?
         } else {
             table.shells.open(target, "terminal", size).await?

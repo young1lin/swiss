@@ -510,6 +510,84 @@ mod tests {
         assert!(parse_control("not json at all").is_none());
     }
 
+    /// docs/15 §2.3: the targets route's local object carries the candidate shells (an
+    /// array of {program,label}) and a shell that is a resolved absolute path, so the
+    /// panel's `local · …` label and the settings sheet's dropdown are the truth about
+    /// this host. Driven through the mounted router with a fixed fake local shell.
+    #[tokio::test]
+    async fn the_targets_route_lists_local_shells_and_a_resolved_shell() {
+        use axum::body::Body;
+        use lmg_host::services::shell::{PtySession, PtySize, ShellError, ShellRegistry};
+        use lmg_terminal::terminal::{LocalShell, TerminalConfig, TerminalSessions};
+        use tower::util::ServiceExt;
+
+        struct FixedLocal;
+        impl LocalShell for FixedLocal {
+            fn program(&self) -> String {
+                r"C:\shells\pwsh.exe".to_string()
+            }
+            fn candidates(&self) -> Vec<lmg_core::platform::pty::ShellCandidate> {
+                vec![
+                    lmg_core::platform::pty::ShellCandidate {
+                        program: r"C:\shells\pwsh.exe".to_string(),
+                        label: "PowerShell 7".to_string(),
+                    },
+                    lmg_core::platform::pty::ShellCandidate {
+                        program: r"C:\Windows\system32\cmd.exe".to_string(),
+                        label: "cmd".to_string(),
+                    },
+                ]
+            }
+            fn open(
+                &self,
+                _session_id: &str,
+                _size: PtySize,
+                _shell: Option<&str>,
+            ) -> Result<PtySession, ShellError> {
+                Err(ShellError::Failed("this test never opens a session".into()))
+            }
+        }
+
+        let state = TerminalState::new();
+        let dir = std::env::temp_dir().join(format!("lmg-targets-{}", lmg_core::util::random_hex(8)));
+        state.install(TerminalSessions::new(
+            TerminalConfig::default(),
+            Arc::new(ShellRegistry::new()),
+            Arc::new(FixedLocal),
+            dir,
+        ));
+        let app = mount(state);
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/terminal/targets")
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("a response");
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+            .await
+            .expect("a body");
+        let body: Value = serde_json::from_slice(&bytes).expect("the targets view");
+        let shells = body["local"]["shells"]
+            .as_array()
+            .expect("local.shells is an array");
+        assert_eq!(shells.len(), 2, "{shells:?}");
+        assert!(shells.iter().all(|s| {
+            !s["program"].as_str().unwrap_or("").is_empty() && !s["label"].as_str().unwrap_or("").is_empty()
+        }));
+        let shell = body["local"]["shell"].as_str().expect("local.shell is a string");
+        assert_eq!(shell, r"C:\shells\pwsh.exe");
+        assert!(
+            std::path::Path::new(shell).is_absolute(),
+            "resolved to an absolute path, got {shell}"
+        );
+        // The old fields are untouched — an older panel still reads them (docs/15 §2.2).
+        assert_eq!(body["local"]["enabled"], json!(false));
+    }
+
     #[test]
     fn server_control_objects_are_exact() {
         assert_eq!(control("stalled", &[]), r#"{"t":"stalled"}"#);

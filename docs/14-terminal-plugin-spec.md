@@ -205,12 +205,24 @@ action 用的，交互式会话既不结束也没有上限，塞进去只会把�
 独立的阻塞线程池，不冲突。**代价是一个线程栈**，这是本地会话要设上限的直接原因（§7）。
 远端会话没有这个问题：russh 的 channel 本来就是异步的。
 
+**默认 shell 的解析顺序**（docs/15 §2.1 定稿，实现是 `conpty.rs` 里的纯函数族）：Windows 上
+`pwsh.exe`（PATH 可解析）→ `powershell.exe` → `COMSPEC` → 裸 `cmd.exe`；unix 不变
+（`$SHELL` → `/bin/sh`）。在 PATH 上找可执行按 `CreateProcessW` 的规矩来：名字原样先试，
+无扩展名才追加 `PATHEXT`；探测只问 `metadata().is_file()`——WindowsApps 下的执行别名
+（reparse point）过这一关，而 `canonicalize` 会把它溶进版本化的包目录里，路径随每次 Store
+更新失效，所以不用。`GET /api/terminal/targets` 的 `local.shell` 报**解析后的绝对路径**，
+`local.shells` 是插件 start 时探测一次并缓存的候选表（pwsh、Windows PowerShell、cmd，加
+`%ProgramFiles%` 下的 PowerShell 7 与 Git bash 两个 PATH 之外的固定位置），绝不在每次 GET
+时碰文件系统。
+
 ## 6. 安全与审计
 
 1. **本地 shell 默认关闭。** `plugins.terminal.config.local.enabled` 默认 `false`，写进
-   `config_schema`，面板的插件配置页自动能改。理由要说明白：网关本来就以用户身份运行，本地 shell
-   不给**本地**攻击者任何新东西；但它把一个回环 HTTP 端口变成了任意代码执行入口，这个升级值得
-   用户亲手点一下。
+   `config_schema`。开关在**终端页**：目标下拉旁的齿轮（或本地行缺席时的「Local shell is
+   off — turn it on」）打开 Local shell 设置 sheet（docs/15 §2；Plugins 页的通用 schema
+   表单是 docs/09 P3 的承诺，仍单独立项不做）。理由要说明白：网关本来就以用户身份运行，本地
+   shell 不给**本地**攻击者任何新东西；但它把一个回环 HTTP 端口变成了任意代码执行入口，这个
+   升级值得用户亲手点一下。
 2. **远端目标可以再收窄。** `plugins.terminal.config.allowedTargets: []`（空 = 全部隧道连接）。
 3. **凭据永远不落地在这里。** 终端从头到尾看不到密码或私钥 —— provider 开好 channel 递过来的是
    字节流。配置里若真需要写凭据，规矩不变：`${ENV_VAR}` 引用，绝不写字面量。
@@ -358,6 +370,17 @@ PluginDescriptor {
   上下文丢失即 dispose，回落 DOM 渲染 —— 三条资源约束里 "不改 mime_of" 因此原样成立。
 
 **T7（`616b530`）**：无偏差；`the_tree_is_byte_for_byte_the_node_builds` 真跑真过。
+
+**docs/15（本文 §5/§6.1 的补丁，2026-09-12）**
+
+- `default_shell` 的解析顺序落在 `conpty.rs` 的纯函数族里（`find_on_path_with` /
+  `default_shell_in` / `shell_candidates_in`；PATH、PATHEXT、COMSPEC、ProgramFiles 全部
+  作为入参，测试用临时目录拼环境，不改进程环境）。追加的 PATHEXT 扩展名规范为小写：
+  Windows 匹配本来不分大小写，但返回的路径该读作 `pwsh.exe`，不是 PATHEXT 的大写拼写。
+- **`local.shell` 此前只改 targets 视图的标签，从不影响真正拉起的程序**——保存 "Git Bash"
+  仍会开默认 shell。本次在 `TerminalSessions::open` 的本地分支补上「请求级 `shell`
+  覆盖 > 配置 `local.shell` > 平台默认」的顺序。spec §2.2 的改动清单没有这一条，但不补
+  上，设置 sheet 的 Shell 输入框就是装饰；偏差记录于此。
 
 **实施后验证**（debug 构建，`127.0.0.1:19998`，scratch home）：插件清页（order 70）、
 vendored 资源与 content-type、targets 诚实空态、真 ConPTY 本地会话经 WS 字节回环、列表

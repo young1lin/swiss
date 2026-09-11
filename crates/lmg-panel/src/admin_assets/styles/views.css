@@ -507,6 +507,24 @@
     }
     .term-new:hover { background: color-mix(in srgb, var(--t-accent) 85%, white); }
     .term-none { font-size: var(--f-label); color: var(--t-dim); }
+/* The Local shell settings entry beside the picker (docs/15 §2.1): a quiet gear, not a
+   second accent button — Open session stays the bar's one loud action. */
+.term-gear {
+  flex: none; width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--t-edge); border-radius: 6px;
+  background: transparent; color: var(--t-dim); cursor: pointer;
+}
+.term-gear:hover { color: var(--t-fg); border-color: var(--t-dim); }
+.term-gear:focus-visible { outline: none; border-color: var(--t-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 25%, transparent); }
+/* The clickable "Local shell is off" line in the empty bar (docs/15 §2.1): text that
+   acts, not a button that shouts. */
+.term-off {
+  font: inherit; font-size: var(--f-label); color: var(--t-accent);
+  background: none; border: none; padding: 0; cursor: pointer;
+  text-decoration: underline;
+}
+.term-off:hover { color: var(--t-fg); }
     /* The surface. Flush: xterm draws its own padding, a frame of panel padding here
        is what made the old page read as a form with a TV in it. */
     .term-stage {

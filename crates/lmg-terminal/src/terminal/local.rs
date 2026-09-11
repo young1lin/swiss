@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use lmg_core::platform::pty::{self, PtyCommand, PtyGeometry, PtyHandle, PtyPump};
+use lmg_core::platform::pty::{self, PtyCommand, PtyGeometry, PtyHandle, ShellCandidate, PtyPump};
 use lmg_host::services::shell::{
     PtyEvent, PtyIn, PtyInput, PtyOut, PtySession, PtySize, SessionLedger, ShellError,
 };
@@ -54,6 +54,18 @@ pub trait LocalShell: Send + Sync {
     /// local switch, so it must be the truth about this host, not a guess.
     fn program(&self) -> String;
 
+    /// The shells this host offers a local terminal, probed once at plugin start
+    /// (docs/15 §2.1): the settings sheet's candidate list. Never a per-request probe —
+    /// detection walks PATH, which is fine once at start and wrong on every GET.
+    fn candidates(&self) -> Vec<ShellCandidate>;
+
+    /// The program string the panel should label a configured shell with: resolved to an
+    /// absolute path where the platform can (docs/15 §2.1). The default is the identity,
+    /// which is exactly right for the tests' fake and for unix.
+    fn resolve(&self, program: &str) -> String {
+        program.to_string()
+    }
+
     /// Open one local PTY. `shell` overrides the program; the session id is only used for
     /// the lease's forensics ("closed over N sessions").
     fn open(
@@ -70,6 +82,10 @@ pub struct LocalShells {
     /// ledger is what the lease inside each session decrements on drop. Keeping the same
     /// mechanism as the remote side means the driver holds one kind of session.
     ledger: Arc<SessionLedger>,
+    /// The default shell and the candidate list, probed ONCE here (construction is the
+    /// plugin's start) and reused by every open — a session must not re-walk PATH either.
+    default: PtyCommand,
+    candidates: Vec<ShellCandidate>,
 }
 
 impl Default for LocalShells {
@@ -82,6 +98,8 @@ impl LocalShells {
     pub fn new() -> Self {
         LocalShells {
             ledger: SessionLedger::new(),
+            default: pty::default_shell(),
+            candidates: pty::shell_candidates(),
         }
     }
 
@@ -94,7 +112,15 @@ impl LocalShells {
 
 impl LocalShell for LocalShells {
     fn program(&self) -> String {
-        pty::default_shell().program
+        self.default.program.clone()
+    }
+
+    fn candidates(&self) -> Vec<ShellCandidate> {
+        self.candidates.clone()
+    }
+
+    fn resolve(&self, program: &str) -> String {
+        pty::resolve_program(program)
     }
 
     fn open(
@@ -105,7 +131,7 @@ impl LocalShell for LocalShells {
     ) -> Result<PtySession, ShellError> {
         let mut command = match shell.map(str::trim).filter(|s| !s.is_empty()) {
             Some(program) => PtyCommand::new(program),
-            None => pty::default_shell(),
+            None => self.default.clone(),
         };
         // Every terminal program reads TERM before it decides what it may draw. Without
         // it a shell assumes "dumb" and the panel gets a terminal with no colour and no
@@ -284,5 +310,23 @@ mod tests {
         let shells = LocalShells::new();
         assert_eq!(shells.program(), pty::default_shell().program);
         assert!(!shells.program().is_empty());
+    }
+
+    #[test]
+    fn the_candidate_list_is_probed_once_and_is_never_empty() {
+        // docs/15 §2.1: the settings sheet's dropdown comes from this list, and every
+        // host offers at least one shell (cmd via COMSPEC on Windows, $SHELL on unix) —
+        // an empty list means the probe broke, not that the host has no shells.
+        let shells = LocalShells::new();
+        let candidates = shells.candidates();
+        assert!(!candidates.is_empty());
+        assert!(
+            candidates
+                .iter()
+                .all(|c| !c.program.is_empty() && !c.label.is_empty()),
+            "{candidates:?}"
+        );
+        // The cached answer is stable across calls — the probe ran once, at construction.
+        assert_eq!(shells.candidates(), candidates);
     }
 }

@@ -81,7 +81,7 @@ export function targetRows(reply) {
   var note = "";
   var r = reply || {};
   if (r.local && r.local.enabled) {
-    rows.push({ id: "local", label: "local · " + (r.local.shell || "shell") });
+    rows.push({ id: "local", label: "local · " + localShellLabel(r.local) });
   }
   var remote = r.remote || {};
   var targets = Array.isArray(remote.targets) ? remote.targets : [];
@@ -95,12 +95,63 @@ export function targetRows(reply) {
       state: t.state || "",
     });
   });
+  var reason = remote.presence === "absent" && remote.reason ? String(remote.reason) : "";
   if (!rows.length) {
-    note = remote.presence === "absent" && remote.reason
-      ? String(remote.reason)
-      : "no terminal targets — connect a tunnel first, or enable the local shell in the plugin config";
+    note = reason
+      || "no terminal targets — connect a tunnel first, or enable the local shell in the plugin config";
   }
-  return { rows: rows, note: note };
+  /* localOff turns the empty bar's line into the clickable "turn it on" that opens the
+     settings sheet (docs/15 §2.1); reason rides along separately so the tunnels story
+     stays visible next to it instead of being buried in the note. */
+  var localOff = !!(r.local && r.local.enabled === false);
+  return { rows: rows, note: note, reason: reason, localOff: localOff };
+}
+
+/** The local picker row's name: the candidates list names the configured shell when it
+ *  knows it ("PowerShell 7"); anything else falls back to the program's file name — a
+ *  full path in a dropdown is noise, not a name. Windows paths compare
+ *  case-insensitively and either slash counts, because a config value may carry both. */
+export function localShellLabel(local) {
+  var l = local || {};
+  var program = String(l.shell || "");
+  var shells = Array.isArray(l.shells) ? l.shells : [];
+  for (var i = 0; i < shells.length; i++) {
+    var c = shells[i];
+    if (c && typeof c.program === "string" && sameProgram(c.program, program)) {
+      return String(c.label || baseName(program)) || "shell";
+    }
+  }
+  return baseName(program) || "shell";
+}
+
+function sameProgram(a, b) {
+  if (!b) return false;
+  return a.split(/[\\/]/).join("/").toLowerCase() === b.split(/[\\/]/).join("/").toLowerCase();
+}
+
+function baseName(p) {
+  var parts = String(p || "").split(/[\\/]/);
+  return parts[parts.length - 1] || "";
+}
+
+/** The Local shell sheet's config: the CURRENT plugin config with only `local` replaced,
+ *  so a save cannot silently drop a limit someone else set (docs/15 §2.1). An empty
+ *  shell string is omitted rather than sent as "" — that is how "the platform default"
+ *  stays expressible. */
+export function withLocalConfig(config, enabled, shell) {
+  var out = Object.assign({}, config || {});
+  var local = { enabled: !!enabled };
+  var s = String(shell == null ? "" : shell).trim();
+  if (s) local.shell = s;
+  out.local = local;
+  return out;
+}
+
+/** The PUT body for /api/plugins/terminal/config: the config above plus the revision the
+ *  GET carried, so a save that raced another panel loses loudly (409) instead of
+ *  overwriting it. */
+export function configPutBody(config, revision, enabled, shell) {
+  return { config: withLocalConfig(config, enabled, shell), revision: revision };
 }
 
 /** The picker's label for a session tab: short, monospace-friendly, stable. The listing

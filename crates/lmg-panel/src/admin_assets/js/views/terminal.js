@@ -19,10 +19,11 @@ import { loadUnicode11Addon } from "../vendor/xterm/addon-unicode11-0.8.0/index.
 import { loadWebLinksAddon } from "../vendor/xterm/addon-web-links-0.11.0/index.js";
 import { loadWebglAddon } from "../vendor/xterm/addon-webgl-0.18.0/index.js";
 import {
-  clampGeometry, frameStatus, keyAction, mouseAction, nextReconnectDelay, resizeFrame,
-  resizeUrl, sessionAlive, sessionLabel, sessionsUrl, streamUrl, targetRows, targetsUrl,
-  ticketUrl,
+  clampGeometry, configPutBody, frameStatus, keyAction, mouseAction, nextReconnectDelay,
+  resizeFrame, resizeUrl, sessionAlive, sessionLabel, sessionsUrl, streamUrl, targetRows,
+  targetsUrl, ticketUrl,
 } from "../terminal-core.js";
+import { closeSheet } from "../add-sheet.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
@@ -461,6 +462,70 @@ async function closeSession(id) {
   await apiJson(sessionsUrl() + "/" + encodeURIComponent(id), { method: "DELETE" });
 }
 
+/* The Local shell settings sheet (docs/15 §2): the switch docs/14 §6.1 asks for and
+   the shell picker. Saving is a plugin-config PUT — the terminal plugin restarts on
+   config change, so every open session closes with a reason; the confirm names how many,
+   and the revision from the GET makes a save that raced another panel lose loudly (409)
+   instead of silently overwriting it. */
+async function openLocalSheet() {
+  var got = await apiJson("/api/plugins/terminal/config");
+  if (!got) return;   // the toast already said why
+  var local = (got.config && got.config.local) || {};
+  var l = (targets && targets.local) || {};
+  var shells = Array.isArray(l.shells) ? l.shells : [];
+  /* The switch's reason line is the schema's own description: one source, no fork — the
+     sentence next to the checkbox can never drift from the one the backend enforces. */
+  var whyOff = "";
+  try { whyOff = got.schema.properties.local.properties.enabled.description || ""; } catch (e) { /* an older schema: no line */ }
+  var options = shells.map(function (s) {
+    return '<option value="' + esc(s.program) + '">' + esc(s.label) + " · " + esc(s.program) + "</option>";
+  }).join("");
+  $("sheet").innerHTML =
+    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Local shell settings">' +
+      '<div class="sheet-head"><h2>Local shell</h2></div>' +
+      '<div class="sheet-body">' +
+        '<div class="fld"><label class="check"><input type="checkbox" id="ls-enabled"' + (local.enabled ? " checked" : "") + ">Enabled</label>" +
+          (whyOff ? '<div class="hint">' + esc(whyOff) + "</div>" : "") + "</div>" +
+        /* A datalist, not a select: the candidates are suggestions, and any path the
+           gateway can spawn is legal (docs/15 §2.1 — "may be typed by hand"). */
+        '<label class="field"><span>Shell</span>' +
+          '<input id="ls-shell" list="ls-shells" value="' + esc(local.shell || "") + '" placeholder="' + esc(l.shell || "the platform default") + '" autocomplete="off" spellcheck="false">' +
+          '<datalist id="ls-shells">' + options + "</datalist></label>" +
+        '<div class="hint">Empty = the platform default (' + esc(l.shell || "?") + "). Saving restarts the terminal plugin and closes every open session.</div>" +
+      "</div>" +
+      '<div class="sheet-foot"><button class="btn" id="ls-cancel">Cancel</button>' +
+        '<button class="btn primary" id="ls-save">Save</button></div>' +
+    "</div>";
+  $("sheet").hidden = false;
+  $("ls-cancel").onclick = closeSheet;
+  $("ls-save").onclick = function () { void saveLocalSheet(got); };
+  $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
+  $("ls-enabled").focus();
+}
+
+async function saveLocalSheet(got) {
+  var enabled = $("ls-enabled").checked;
+  var shell = $("ls-shell").value;
+  /* restart_on_config_change is the honest cost of this save (docs/15 §2.1): the
+     plugin restarts, and with it every session — say how many and let the user back out. */
+  if (sessions.length) {
+    var n = sessions.length;
+    if (!window.confirm("Saving restarts the terminal plugin and closes " + n + " session" + (n === 1 ? "" : "s") + ".")) return;
+  }
+  var saved = await apiJson("/api/plugins/terminal/config", {
+    method: "PUT",
+    body: JSON.stringify(configPutBody(got.config, got.revision, enabled, shell)),
+  });
+  if (!saved) return;
+  closeSheet();
+  toast("Saved — the terminal plugin restarted with the new local shell settings");
+  await reload();
+  /* The row the user just switched on is the one they mean to open next; select it
+     explicitly instead of trusting the rows' order to put it first forever. */
+  var pick = $("term-target");
+  if (pick && targetRows(targets).rows.some(function (r) { return r.id === "local"; })) pick.value = "local";
+}
+
 /* The page: one bar (tabs left, picker + Open right), the dark surface, the status
    foot. No pane-head, no description paragraph — the nav tab already says Terminal,
    and every real web terminal spends its top row on tabs, not on prose. */
@@ -477,8 +542,18 @@ function render() {
             pick.rows.map(function (r) {
               return '<option value="' + esc(r.id) + '">' + esc(r.label) + (r.state ? " (" + esc(r.state) + ")" : "") + "</option>";
             }).join("") + "</select>" +
+            /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
+               picker, not a second loud button — Open session stays the bar's one accent. */
+            '<button class="term-gear" id="term-set" title="Local shell settings" aria-label="Local shell settings">⚙</button>' +
             '<button class="btn term-new" id="term-new">Open session</button>'
-          : '<span class="term-none">' + esc(pick.note) + "</span>") +
+          /* Local off and nothing to pick: the line itself is the way in (docs/15
+             §2.1) — a dead-end note that names a setting nobody can reach is how the
+             gap this sheet closes came to exist. The tunnels reason, when there is one,
+             stays readable beside it. */
+          : (pick.localOff
+              ? '<button class="term-off" id="term-off">Local shell is off — turn it on</button>' +
+                (pick.reason ? '<span class="term-none">' + esc(pick.reason) + "</span>" : "")
+              : '<span class="term-none">' + esc(pick.note) + "</span>")) +
       "</div></div>" +
     '<div class="term-stage" id="term-stage">' +
       '<div class="term-empty" id="term-empty" hidden>' +
@@ -493,6 +568,10 @@ function render() {
 
   var button = $("term-new");
   if (button) button.onclick = function () { void openSession(); };
+  var gear = $("term-set");
+  if (gear) gear.onclick = function () { void openLocalSheet(); };
+  var off = $("term-off");
+  if (off) off.onclick = function () { void openLocalSheet(); };
   var tabs = $("term-tabs");
   if (tabs) {
     tabs.onclick = function (event) {

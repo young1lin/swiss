@@ -23,6 +23,7 @@
 
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,7 +44,7 @@ use windows::Win32::System::Threading::{
     PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 
-use super::{PtyCommand, PtyGeometry};
+use super::{PtyCommand, PtyGeometry, ShellCandidate};
 use crate::platform::job::KillOnCloseJob;
 
 /// Output pipe buffer. The 4 KB default makes conhost block on roughly every screenful of a
@@ -261,11 +262,183 @@ fn available(reader: &File) -> io::Result<u32> {
     Ok(avail)
 }
 
-/// The shell a local session gets when the configuration names none.
+/// The shell a local session gets when the configuration names none (docs/15 §2.1):
+/// PowerShell 7 if PATH can resolve it, then Windows PowerShell, then COMSPEC, then the
+/// bare cmd.exe. pwsh leads because COMSPEC is cmd on every Windows box — the previous
+/// default handed every terminal a cmd.exe nobody asked for on machines carrying three
+/// better shells.
 pub fn default_shell() -> PtyCommand {
-    // COMSPEC is what every Windows shell launcher uses, and it is set even in a service
-    // context; cmd.exe is the fallback because it is the one program guaranteed to be there.
-    PtyCommand::new(std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()))
+    let path = std::env::var("PATH").unwrap_or_default();
+    let comspec = std::env::var("COMSPEC").ok();
+    PtyCommand::new(default_shell_in(&path, comspec.as_deref()))
+}
+
+/// The pure core of [default_shell]: PATH and COMSPEC as parameters, so a test can stage
+/// a fake `pwsh.exe` in a scratch directory and prove the order without touching the
+/// process environment.
+pub fn default_shell_in(path: &str, comspec: Option<&str>) -> String {
+    for name in ["pwsh.exe", "powershell.exe"] {
+        if let Some(found) = find_on_path(name, path) {
+            return found.to_string_lossy().into_owned();
+        }
+    }
+    // COMSPEC is set even in a service context; the bare name is the last-ditch fallback
+    // for a host with neither a resolvable shell nor COMSPEC.
+    comspec.unwrap_or("cmd.exe").to_string()
+}
+
+/// Resolve `name` against `path` roughly the way CreateProcessW does with a null
+/// application name: each PATH directory in order, the name as given first and each
+/// PATHEXT extension appended when the name carries none. The probe is
+/// `metadata().is_file()` — an app execution alias (the Store's pwsh under WindowsApps)
+/// is a reparse point that satisfies it, while `canonicalize` would dissolve the alias
+/// into a versioned package folder whose path breaks on every Store update, so it is
+/// deliberately not used here.
+pub fn find_on_path(name: &str, path: &str) -> Option<PathBuf> {
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    find_on_path_with(name, path, &pathext)
+}
+
+/// [find_on_path] with PATHEXT as a parameter — the deterministic core the tests drive.
+pub fn find_on_path_with(name: &str, path: &str, pathext: &str) -> Option<PathBuf> {
+    // A name that already carries a directory is not PATH-searchable; the caller handles
+    // absolute paths, and CreateProcessW itself handles relative ones with separators.
+    // Joining them onto a PATH directory would return a path that never existed.
+    if name.is_empty() || name.contains(['/', '\\']) {
+        return None;
+    }
+    let exts: Vec<String> = pathext
+        .split(';')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        // Lowercased: Windows matches the probe case-insensitively either way, but the
+        // RETURNED path should read like the file ("pwsh.exe"), not like PATHEXT's
+        // uppercase spelling of the extension we appended.
+        .map(|e| format!(".{}", e.trim_start_matches('.').to_ascii_lowercase()))
+        .collect();
+    let mut names = vec![name.to_string()];
+    // cmd's rule: extensions are only tried when the name has none, so "pwsh.exe" can
+    // never resolve to "pwsh.exe.exe".
+    if Path::new(name).extension().is_none() {
+        names.extend(exts.iter().map(|e| format!("{name}{e}")));
+    }
+    for dir in path.split(';') {
+        let dir = dir.trim();
+        if dir.is_empty() {
+            continue;
+        }
+        for candidate in &names {
+            let full = Path::new(dir).join(candidate);
+            if std::fs::metadata(&full)
+                .map(|m| m.is_file())
+                .unwrap_or(false)
+            {
+                return Some(full);
+            }
+        }
+    }
+    None
+}
+
+/// The label the panel shows for a shell program. The well-known Windows shells get their
+/// real names — this is what makes `local · PowerShell 7` readable instead of a path —
+/// and everything else falls back to the file name.
+fn shell_label(path: &Path) -> String {
+    let file = path
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match file.to_ascii_lowercase().as_str() {
+        "pwsh.exe" => return "PowerShell 7".into(),
+        "powershell.exe" => return "Windows PowerShell".into(),
+        "cmd.exe" => return "cmd".into(),
+        _ => {}
+    }
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    if file.eq_ignore_ascii_case("bash.exe") && (lower.contains("\\git\\") || lower.contains("/git/")) {
+        return "Git Bash".into();
+    }
+    file
+}
+
+/// Offer one probed program unless an identical one was offered already (Windows paths
+/// compare case-insensitively). The PATH probe and the fixed spots can both find pwsh.
+fn offer(found: &mut Vec<ShellCandidate>, seen: &mut Vec<String>, program: PathBuf) {
+    let key = program.to_string_lossy().to_ascii_lowercase();
+    if seen.contains(&key) {
+        return;
+    }
+    seen.push(key);
+    let label = shell_label(&program);
+    found.push(ShellCandidate {
+        program: program.to_string_lossy().into_owned(),
+        label,
+    });
+}
+
+/// Every shell this host offers a local terminal, in preference order (docs/15 §2.1):
+/// pwsh and Windows PowerShell from PATH, cmd from COMSPEC, then the two fixed spots a
+/// PATH miss hides — a PowerShell 7 under Program Files and Git's bash. Probed ONCE at
+/// plugin start by the caller and cached: this walks PATH with a stat per candidate,
+/// which is fine once and wrong on every GET.
+pub fn shell_candidates() -> Vec<ShellCandidate> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let program_files = std::env::var("ProgramFiles").ok();
+    let comspec = std::env::var("COMSPEC").ok();
+    shell_candidates_in(&path, program_files.as_deref(), comspec.as_deref())
+}
+
+/// [shell_candidates] with the environment as parameters, so the probe is testable
+/// against scratch directories instead of whatever this build machine has installed.
+pub fn shell_candidates_in(
+    path: &str,
+    program_files: Option<&str>,
+    comspec: Option<&str>,
+) -> Vec<ShellCandidate> {
+    let mut found = Vec::new();
+    let mut seen = Vec::new();
+    if let Some(p) = find_on_path("pwsh.exe", path) {
+        offer(&mut found, &mut seen, p);
+    }
+    if let Some(p) = find_on_path("powershell.exe", path) {
+        offer(&mut found, &mut seen, p);
+    }
+    let cmd = comspec.map(PathBuf::from).or_else(|| find_on_path("cmd.exe", path));
+    if let Some(p) = cmd {
+        offer(&mut found, &mut seen, p);
+    }
+    if let Some(root) = program_files.map(str::trim).filter(|s| !s.is_empty()) {
+        let pwsh = Path::new(root).join(r"PowerShell\7\pwsh.exe");
+        if pwsh.is_file() {
+            offer(&mut found, &mut seen, pwsh);
+        }
+        let bash = Path::new(root).join(r"Git\bin\bash.exe");
+        if bash.is_file() {
+            offer(&mut found, &mut seen, bash);
+        }
+    }
+    found
+}
+
+/// The program a configured shell string would actually run, for the panel's label
+/// (docs/15 §2.1: `local.shell` reports a resolved absolute path, not the bare name the
+/// user typed). An absolute path passes through untouched — it is already the truth,
+/// exists or not — and an unresolvable name comes back as given, because CreateProcessW
+/// gets the last word at open time and refusing here would be a guess, not a resolution.
+pub fn resolve_program(program: &str) -> String {
+    let path = std::env::var("PATH").unwrap_or_default();
+    resolve_program_in(program, &path)
+}
+
+/// [resolve_program] with PATH as a parameter — the testable core.
+pub fn resolve_program_in(program: &str, path: &str) -> String {
+    let trimmed = program.trim();
+    if trimmed.is_empty() || Path::new(trimmed).is_absolute() {
+        return trimmed.to_string();
+    }
+    find_on_path(trimmed, path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 /// Open a pseudoconsole and start `command` attached to it.
@@ -581,6 +754,145 @@ mod tests {
         // And the rest of the environment is still there — a shell with no SystemRoot is not a
         // shell anyone can use.
         assert!(entries.len() > 1, "the inherited environment was dropped");
+    }
+
+    // --- shell discovery (docs/15 §2) ---------------------------------------------------
+
+    /// A scratch directory holding fake executables. Empty files: the probe only asks
+    /// whether a file is there, never whether it runs.
+    fn scratch_shells(names: &[&str]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("lmg-path-{}", crate::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        for name in names {
+            std::fs::write(dir.join(name), b"").expect("fake executable");
+        }
+        dir
+    }
+
+    #[test]
+    fn find_on_path_resolves_with_and_without_the_extension() {
+        let dir = scratch_shells(&["pwsh.exe"]);
+        let path = dir.to_string_lossy().into_owned();
+        // The name as given is tried first, so an explicit .exe always wins...
+        assert_eq!(
+            find_on_path_with("pwsh.exe", &path, ".COM;.EXE"),
+            Some(dir.join("pwsh.exe"))
+        );
+        // ...and a bare name gets PATHEXT appended, exactly like cmd would.
+        assert_eq!(
+            find_on_path_with("pwsh", &path, ".COM;.EXE"),
+            Some(dir.join("pwsh.exe"))
+        );
+        // An extension outside PATHEXT is not double-suffixed.
+        assert_eq!(find_on_path_with("pwsh.exe", &path, ".COM;.BAT"), Some(dir.join("pwsh.exe")));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn find_on_path_takes_the_first_directory_that_has_it() {
+        let a = scratch_shells(&["pwsh.exe"]);
+        let b = scratch_shells(&["pwsh.exe"]);
+        let path = format!("{};{}", a.display(), b.display());
+        assert_eq!(find_on_path_with("pwsh.exe", &path, ".EXE"), Some(a.join("pwsh.exe")));
+        // An empty segment is skipped, not joined onto "".
+        let with_gap = format!(";;{};", b.display());
+        assert_eq!(find_on_path_with("pwsh.exe", &with_gap, ".EXE"), Some(b.join("pwsh.exe")));
+        // Nothing anywhere: empty PATH, and a name no directory holds.
+        assert_eq!(find_on_path_with("pwsh.exe", "", ".EXE"), None);
+        let empty = scratch_shells(&[]);
+        assert_eq!(
+            find_on_path_with("no-such-program-9d2f1a", empty.to_string_lossy().as_ref(), ".EXE"),
+            None
+        );
+        // A name carrying a directory is not PATH-searchable at all.
+        assert_eq!(find_on_path_with(r".\pwsh.exe", &path, ".EXE"), None);
+        std::fs::remove_dir_all(&a).ok();
+        std::fs::remove_dir_all(&b).ok();
+        std::fs::remove_dir_all(&empty).ok();
+    }
+
+    #[test]
+    fn default_shell_prefers_pwsh_and_falls_back_to_comspec() {
+        // The order docs/15 §2.1 fixes, proven against a PATH we build in the test — the
+        // process environment is never touched.
+        let pwsh = scratch_shells(&["pwsh.exe"]);
+        let powershell = scratch_shells(&["powershell.exe"]);
+        let cmd = scratch_shells(&["cmd.exe"]);
+        assert_eq!(
+            default_shell_in(
+                &format!("{};{}", pwsh.display(), powershell.display()),
+                Some(cmd.to_string_lossy().as_ref())
+            ),
+            pwsh.join("pwsh.exe").to_string_lossy().into_owned()
+        );
+        assert_eq!(
+            default_shell_in(powershell.to_string_lossy().as_ref(), Some(cmd.to_string_lossy().as_ref())),
+            powershell.join("powershell.exe").to_string_lossy().into_owned()
+        );
+        // No shell on PATH: COMSPEC is the honest default, and without it the bare name.
+        assert_eq!(
+            default_shell_in("", Some(cmd.to_string_lossy().as_ref())),
+            cmd.to_string_lossy().into_owned()
+        );
+        assert_eq!(default_shell_in("", None), "cmd.exe");
+        for d in [&pwsh, &powershell, &cmd] {
+            std::fs::remove_dir_all(d).ok();
+        }
+    }
+
+    #[test]
+    fn the_candidate_list_names_the_shells_it_found() {
+        let pwsh = scratch_shells(&["pwsh.exe"]);
+        let cmd = scratch_shells(&["cmd.exe"]);
+        // A ProgramFiles tree with a PowerShell 7 install and Git's bash.
+        let pf = std::env::temp_dir().join(format!("lmg-pf-{}", crate::util::random_hex(8)));
+        std::fs::create_dir_all(pf.join(r"PowerShell\7")).expect("pf pwsh dir");
+        std::fs::create_dir_all(pf.join(r"Git\bin")).expect("pf git dir");
+        std::fs::write(pf.join(r"PowerShell\7\pwsh.exe"), b"").expect("fake pf pwsh");
+        std::fs::write(pf.join(r"Git\bin\bash.exe"), b"").expect("fake git bash");
+
+        let found = shell_candidates_in(
+            pwsh.to_string_lossy().as_ref(),
+            Some(pf.to_string_lossy().as_ref()),
+            Some(cmd.join("cmd.exe").to_string_lossy().as_ref()),
+        );
+        let labels: Vec<&str> = found.iter().map(|c| c.label.as_str()).collect();
+        // PATH's pwsh and the ProgramFiles install are different files, so both are
+        // offered; the dedupe only removes the SAME path twice.
+        assert!(labels.contains(&"PowerShell 7"), "{labels:?}");
+        assert!(labels.contains(&"cmd"), "{labels:?}");
+        assert!(labels.contains(&"Git Bash"), "{labels:?}");
+        assert!(found.iter().all(|c| Path::new(&c.program).is_absolute()), "{found:?}");
+
+        // Same pwsh found twice (COMSPEC pointing at the PATH hit) is offered once.
+        let deduped = shell_candidates_in(
+            pwsh.to_string_lossy().as_ref(),
+            None,
+            Some(pwsh.join("pwsh.exe").to_string_lossy().as_ref()),
+        );
+        let pwsh_rows = deduped.iter().filter(|c| c.label == "PowerShell 7").count();
+        assert_eq!(pwsh_rows, 1, "{deduped:?}");
+
+        for d in [&pwsh, &cmd, &pf] {
+            std::fs::remove_dir_all(d).ok();
+        }
+    }
+
+    #[test]
+    fn resolving_a_configured_shell_tells_the_truth_about_it() {
+        let dir = scratch_shells(&["pwsh.exe"]);
+        let path = dir.to_string_lossy().into_owned();
+        // A bare name resolves to the absolute path a session would actually spawn.
+        assert_eq!(
+            resolve_program_in("pwsh.exe", &path),
+            dir.join("pwsh.exe").to_string_lossy().into_owned()
+        );
+        // An absolute path is already the truth and passes through untouched.
+        let absolute = r"C:\Program Files\PowerShell\7\pwsh.exe";
+        assert_eq!(resolve_program_in(absolute, &path), absolute);
+        // An unresolvable name is returned as given: CreateProcessW gets the last word.
+        assert_eq!(resolve_program_in("no-such-shell-9d2f1a.exe", &path), "no-such-shell-9d2f1a.exe");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

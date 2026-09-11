@@ -1,6 +1,8 @@
 # 15 — 终端页两处缺口：粘贴，与本地 PowerShell 7
 
-> 状态：**待实施**。本文只写清「是什么、为什么、改哪里、怎么验」，不含实现代码。
+> 状态：**已实施**（2026-09-12）。P1：Node `0cd1090`、本仓 mirror `ab8eb6c`；P2 为本仓
+> 「feat(terminal): local shell defaults to pwsh」提交（Rust + Node + mirror）。实施偏差记在
+> docs/14 §8.1。本文只写清「是什么、为什么、改哪里、怎么验」，不含实现代码。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/14-terminal-plugin-spec.md`（终端插件的整体设计，
 > 本文是它的补丁，不重述）、`docs/09-toolbox-plugin-architecture.md` §3/§4（插件配置契约）。
 > **本仓库的 `crates/lmg-panel/src/admin_assets/` 一个字节都不能手改。** 面板改动先落在

@@ -24,6 +24,7 @@ use lmg_host::services::shell::{
 };
 
 use super::*;
+use lmg_core::platform::pty::ShellCandidate;
 use crate::terminal::config::LocalConfig;
 use crate::terminal::local::LocalShell;
 
@@ -84,6 +85,9 @@ impl ShellProvider for FakeShells {
 struct FakeLocal {
     ledger: Arc<SessionLedger>,
     far: mpsc::UnboundedSender<FarSide>,
+    /// What each open was told to run (None = the default) — the tests' only window into
+    /// the shell a session would actually spawn.
+    opened: Arc<std::sync::Mutex<Vec<Option<String>>>>,
 }
 
 impl LocalShell for FakeLocal {
@@ -91,12 +95,29 @@ impl LocalShell for FakeLocal {
         "fake-shell".to_string()
     }
 
+    fn candidates(&self) -> Vec<ShellCandidate> {
+        vec![
+            ShellCandidate {
+                program: "C:\\shells\\pwsh.exe".to_string(),
+                label: "PowerShell 7".to_string(),
+            },
+            ShellCandidate {
+                program: "C:\\Windows\\system32\\cmd.exe".to_string(),
+                label: "cmd".to_string(),
+            },
+        ]
+    }
+
     fn open(
         &self,
         session_id: &str,
         size: PtySize,
-        _shell: Option<&str>,
+        shell: Option<&str>,
     ) -> Result<PtySession, ShellError> {
+        self.opened
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(shell.map(str::to_string));
         let lease = self.ledger.grant(LOCAL_TARGET, session_id);
         let (session, endpoint) = PtySession::duplex(session_id, LOCAL_TARGET, size, lease);
         let (out, input) = endpoint.split();
@@ -113,6 +134,8 @@ struct Harness {
     far: mpsc::UnboundedReceiver<FarSide>,
     far_tx: mpsc::UnboundedSender<FarSide>,
     dir: PathBuf,
+    /// The fake local shell's record of every open (see FakeLocal.opened).
+    local_opens: Arc<std::sync::Mutex<Vec<Option<String>>>>,
 }
 
 /// Timers off. The default for anything not about time — see the module note.
@@ -159,12 +182,14 @@ impl Harness {
             .join(lmg_core::util::random_hex(8));
         let (far_tx, far_rx) = mpsc::unbounded_channel();
         let shells = Arc::new(ShellRegistry::new());
+        let local_opens = Arc::new(std::sync::Mutex::new(Vec::new()));
         let sessions = TerminalSessions::new(
             config,
             Arc::clone(&shells),
             Arc::new(FakeLocal {
                 ledger: SessionLedger::new(),
                 far: far_tx.clone(),
+                opened: Arc::clone(&local_opens),
             }),
             dir.clone(),
         );
@@ -174,6 +199,7 @@ impl Harness {
             far: far_rx,
             far_tx,
             dir,
+            local_opens,
         }
     }
 
@@ -394,6 +420,61 @@ async fn the_local_view_reports_the_program_that_would_actually_run() {
     let view = h.sessions.targets();
     assert!(!view.local.enabled);
     assert_eq!(view.local.shell, "fake-shell");
+}
+
+#[tokio::test]
+async fn the_local_view_lists_the_candidates_the_sheet_offers() {
+    // docs/15 §2.1: local.shells is the settings sheet's dropdown — the machine hands the
+    // fake's fixed list through untouched, and the view adds nothing of its own.
+    let h = Harness::new(quiet(false));
+    let view = h.sessions.targets();
+    assert_eq!(view.local.shells.len(), 2);
+    assert_eq!(view.local.shells[0].label, "PowerShell 7");
+    assert_eq!(view.local.shells[1].label, "cmd");
+    assert!(view.local.shells[0].program.ends_with("pwsh.exe"));
+}
+
+#[tokio::test]
+async fn the_configured_local_shell_is_what_a_session_runs_unless_overridden() {
+    // docs/15 §2: the settings sheet writes local.shell; before this the config row only
+    // ever changed the LABEL — a saved "Git Bash" still opened the default. The request's
+    // one-shot override (the API's shell field) must keep winning.
+    let mut config = quiet(true);
+    config.local.shell = Some("C:\\Program Files\\Git\\bin\\bash.exe".to_string());
+    let mut h = Harness::new(config);
+
+    h.open(LOCAL_TARGET).await.expect("opens with the config shell");
+    // The recorder's mutex is scoped on purpose: FakeLocal::open locks it from INSIDE the
+    // awaited open() call, so holding it across the second open would deadlock the
+    // current_thread runtime — lock, assert, release, then open again.
+    {
+        let opens = h.local_opens.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            opens.last(),
+            Some(&Some("C:\\Program Files\\Git\\bin\\bash.exe".to_string()))
+        );
+    }
+
+    h.sessions
+        .open(LOCAL_TARGET, size(), Some("pwsh.exe"))
+        .await
+        .expect("opens with the override");
+    {
+        let opens = h.local_opens.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            opens.last(),
+            Some(&Some("pwsh.exe".to_string())),
+            "the request override wins"
+        );
+    }
+
+    // And the view reports the configured shell through the fake's resolver (identity).
+    let view = h.sessions.targets();
+    assert_eq!(
+        view.local.shell,
+        "C:\\Program Files\\Git\\bin\\bash.exe",
+        "the label says what would run"
+    );
 }
 
 // --- tickets -------------------------------------------------------------------------------

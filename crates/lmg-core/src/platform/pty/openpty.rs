@@ -22,7 +22,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::{PtyCommand, PtyGeometry};
+use super::{PtyCommand, PtyGeometry, ShellCandidate};
 
 /// What both halves reach.
 struct Shared {
@@ -134,9 +134,27 @@ impl Drop for PtyPump {
     }
 }
 
-/// The shell a local session gets when the configuration names none.
+/// The shell a local session gets when the configuration names none: $SHELL, then
+/// /bin/sh. Unix is unchanged by docs/15 §2.1 (the pwsh default order is a Windows gap).
 pub fn default_shell() -> PtyCommand {
     PtyCommand::new(std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()))
+}
+
+/// The one shell this host offers: $SHELL (already absolute), so the settings sheet has a
+/// candidate to show rather than an empty dropdown.
+pub fn shell_candidates() -> Vec<ShellCandidate> {
+    let program = default_shell().program;
+    let label = std::path::Path::new(&program)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| program.clone());
+    vec![ShellCandidate { program, label }]
+}
+
+/// Unix needs no PATH rewrite: exec semantics resolve at spawn, and $SHELL arrives
+/// absolute. The identity keeps the panel's label exactly what the user configured.
+pub fn resolve_program(program: &str) -> String {
+    program.to_string()
 }
 
 /// Open a pty and start `command` on the far side of it.

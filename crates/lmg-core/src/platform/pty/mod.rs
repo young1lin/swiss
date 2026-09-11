@@ -38,12 +38,26 @@
 #[cfg(windows)]
 mod conpty;
 #[cfg(windows)]
-pub use conpty::{default_shell, open_pty, PtyHandle, PtyPump};
+pub use conpty::{
+    default_shell, default_shell_in, find_on_path, find_on_path_with, open_pty,
+    resolve_program, resolve_program_in, shell_candidates, shell_candidates_in, PtyHandle,
+    PtyPump,
+};
 
 #[cfg(not(windows))]
 mod openpty;
 #[cfg(not(windows))]
-pub use openpty::{default_shell, open_pty, PtyHandle, PtyPump};
+pub use openpty::{default_shell, open_pty, resolve_program, shell_candidates, PtyHandle, PtyPump};
+
+/// One shell this host can offer a local terminal, as the settings sheet lists it: the
+/// program (an absolute path — what would actually run) and a human label. Plain data in
+/// lmg-core so the pty seam, the session machine and the /targets JSON share one type
+/// instead of mapping between three (docs/15 §2.1).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ShellCandidate {
+    pub program: String,
+    pub label: String,
+}
 
 /// Terminal geometry in character cells.
 ///
