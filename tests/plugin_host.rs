@@ -527,10 +527,6 @@ async fn full_app_with_store(
         services: services.clone(),
     };
     builtin::register_all(&mut host, &deps).expect("the built-ins register without conflicts");
-    host.register(Arc::new(lmg::plugins::http_tools::HttpToolsPlugin::new(
-        services.clone(),
-    )))
-    .expect("the http-tools plugin registers");
     host.set_capability_probe({
         let catalog = services.catalog.clone();
         Arc::new(move |cap: &str| cap == "connection-catalog" && catalog.has_provider())
@@ -618,12 +614,8 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
         .map(|p| p["id"].as_str().unwrap())
         .collect();
     // The process plugin is in the inventory but contributes no page: a capability provider
-    // is managed like any other plugin, it just has nothing to navigate to. The http-tools
-    // touchstone (docs/12 W4) rides the same table, registered after the built-ins.
-    assert_eq!(
-        ids,
-        vec!["mcp", "tunnels", "data", "jobs", "process", "http-tools"]
-    );
+    // is managed like any other plugin, it just has nothing to navigate to.
+    assert_eq!(ids, vec!["mcp", "tunnels", "data", "jobs", "process"]);
     for plugin in body["plugins"].as_array().unwrap() {
         assert_eq!(plugin["enabled"], json!(true), "{plugin}");
         assert_eq!(plugin["state"], json!("active"), "{plugin}");
@@ -663,13 +655,6 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
             ),
             ("data".into(), "data".into(), "#data".into(), false, 40),
             ("jobs".into(), "jobs".into(), "#jobs".into(), false, 50),
-            (
-                "http-tools".into(),
-                "http-tools".into(),
-                "#http-tools".into(),
-                true,
-                60
-            ),
         ],
     );
     let entries: Vec<String> = body["pages"]
@@ -686,7 +671,6 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
             "/admin/js/views/tunnels.js",
             "/admin/js/views/data.js",
             "/admin/js/views/jobs.js",
-            "/admin/js/views/http-tools.js",
         ]
     );
 
@@ -1556,19 +1540,11 @@ async fn the_execution_surface_lists_capabilities_and_runs_them() {
         .collect();
     assert_eq!(
         types,
-        vec!["http.request", "process.exec", "process.legacy-command"],
-        "the capabilities of this build, in id order: the http-tools touchstone plus the process plugin's two",
+        vec!["process.exec", "process.legacy-command"],
+        "the capabilities of this build, in id order: the process plugin's two",
     );
     for action in &actions {
-        assert_eq!(
-            action["provider"],
-            if action["type"] == "http.request" {
-                json!("http-tools")
-            } else {
-                json!("process")
-            },
-            "{action}"
-        );
+        assert_eq!(action["provider"], json!("process"), "{action}");
         assert_eq!(action["cancelable"], json!(true), "{action}");
         assert!(
             action["schema"]["properties"].is_object(),
@@ -1715,9 +1691,9 @@ async fn disabling_the_process_plugin_withdraws_its_capabilities_but_keeps_the_h
         .iter()
         .map(|a| a["type"].as_str().unwrap_or(""))
         .collect();
-    // A stopped provider's capabilities leave the listing; the http-tools touchstone is
-    // an independent provider and stays — exactly the isolation the plugin story claims.
-    assert_eq!(remaining, vec!["http.request"]);
+    // A stopped provider's capabilities leave the listing entirely; the surface itself
+    // is host-owned and stays up.
+    assert_eq!(remaining, Vec::<&str>::new());
 
     // ...so a submission against a withdrawn capability is refused, not silently dropped.
     let (status, body, _) = send(
@@ -1752,10 +1728,7 @@ async fn disabling_the_process_plugin_withdraws_its_capabilities_but_keeps_the_h
         .iter()
         .map(|a| a["type"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(
-        types,
-        vec!["http.request", "process.exec", "process.legacy-command"]
-    );
+    assert_eq!(types, vec!["process.exec", "process.legacy-command"]);
 
     let (status, body, _) = send(
         &app,
@@ -1972,272 +1945,3 @@ async fn the_catalog_seat_survives_a_hundred_mcp_restarts() {
 }
 // --- W4: the touchstone plugin (docs/12) ---------------------------------------------------------
 
-/// Poll one run to a terminal state through the public read (the panel's own loop).
-async fn wait_run(app: &axum::Router, run_id: u64) -> Value {
-    for _ in 0..200 {
-        let (status, body, text) = send(app, local("GET", &format!("/api/runs/{run_id}"))).await;
-        assert_eq!(status, StatusCode::OK, "{text}");
-        let view = body.expect("JSON run view");
-        let state = view["state"].as_str().unwrap_or_default().to_string();
-        if !matches!(state.as_str(), "queued" | "running") {
-            return view;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    panic!("run {run_id} never reached a terminal state");
-}
-
-async fn submit_http_run(app: &axum::Router, input: Value) -> Value {
-    let (status, body, text) = send(
-        app,
-        json_body(
-            "POST",
-            "/api/runs",
-            json!({ "action": "http.request", "input": input, "timeoutMs": 15000 }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{text}");
-    let run_id = body.expect("JSON")["runId"].as_u64().expect("runId");
-    wait_run(app, run_id).await
-}
-
-#[tokio::test]
-async fn http_tools_contributes_and_withdraws_its_capability() {
-    let (app, _host, _registry) = full_app("w4-cap", json!({})).await;
-
-    // Registered and running: the action lists with its schema, the page is in the
-    // inventory, and the view asset the page points at is actually served.
-    let (status, body, _) = send(&app, local("GET", "/api/actions")).await;
-    assert_eq!(status, StatusCode::OK);
-    let actions = body.expect("JSON")["actions"]
-        .as_array()
-        .expect("actions")
-        .clone();
-    let action = actions
-        .iter()
-        .find(|a| a["type"] == "http.request")
-        .expect("http.request is listed");
-    assert_eq!(action["provider"], "http-tools");
-    assert_eq!(action["cancelable"], json!(true));
-    assert!(action["schema"]["properties"]["url"].is_object());
-
-    let (status, body, _) = send(&app, local("GET", "/api/plugins")).await;
-    assert_eq!(status, StatusCode::OK);
-    let body = body.expect("JSON");
-    let pages: Vec<&str> = body["pages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["id"].as_str().unwrap_or_default())
-        .collect();
-    assert!(pages.contains(&"http-tools"), "{pages:?}");
-    let (status, _, _) = send(&app, local("GET", "/admin/js/views/http-tools.js")).await;
-    assert_eq!(
-        status,
-        StatusCode::OK,
-        "the page entry points at a served asset"
-    );
-
-    // Disabled: the capability and the page leave with the plugin — the touchstone's
-    // whole claim is that "off" means really gone, through the same contracts the
-    // built-ins use.
-    let (status, _, text) = send(&app, local("POST", "/api/plugins/http-tools/disable")).await;
-    assert_eq!(status, StatusCode::OK, "{text}");
-    let (_status, body, _) = send(&app, local("GET", "/api/actions")).await;
-    let actions = body.expect("JSON")["actions"]
-        .as_array()
-        .expect("actions")
-        .clone();
-    assert!(
-        !actions.iter().any(|a| a["type"] == "http.request"),
-        "a stopped provider's actions leave the listing"
-    );
-    let row = plugin_row(&app, "http-tools").await;
-    assert_eq!(row["state"], json!("disabled"), "{row}");
-    // And a submission against the withdrawn capability is a typed refusal.
-    let (status, body, _) = send(
-        &app,
-        json_body(
-            "POST",
-            "/api/runs",
-            json!({ "action": "http.request", "input": { "url": "http://127.0.0.1:1/x" } }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body.expect("JSON")["error"]
-        .as_str()
-        .unwrap_or("")
-        .contains("http.request"));
-
-    // Enabled again: both listings recover, seat re-registered.
-    let (status, _, text) = send(&app, local("POST", "/api/plugins/http-tools/enable")).await;
-    assert_eq!(status, StatusCode::OK, "{text}");
-    let (_status, body, _) = send(&app, local("GET", "/api/actions")).await;
-    let actions = body.expect("JSON")["actions"]
-        .as_array()
-        .expect("actions")
-        .clone();
-    assert!(actions.iter().any(|a| a["type"] == "http.request"));
-}
-
-/// A tiny loopback echo the action can really talk to: POST /echo answers with the
-/// header and body it saw; GET /big answers with `pad` filler and the secret near the
-/// END (the output policy keeps the TAIL, so the mask has to survive the cut).
-async fn echo_listener() -> (String, tokio::task::JoinHandle<()>) {
-    let app = axum::Router::new()
-        .route(
-            "/echo",
-            axum::routing::post(|headers: axum::http::HeaderMap, body: String| async move {
-                let seen = headers
-                    .get("x-echo")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
-                    .to_string();
-                format!("seen-header={seen} seen-body={body}")
-            }),
-        )
-        .route(
-            "/big",
-            axum::routing::get(|| async move {
-                let mut text = "a".repeat(40_000);
-                text.push_str(" tail-token=");
-                text.push_str(&std::env::var("HTTPTOOLS_IT_SECRET").unwrap_or_default());
-                text
-            }),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
-    let port = listener.local_addr().expect("addr").port();
-    let task = tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
-    });
-    (format!("http://127.0.0.1:{port}"), task)
-}
-
-#[tokio::test]
-async fn allowed_hosts_refuse_visibly_without_any_network() {
-    // The allowlist is enforced at INPUT time, so the refusal path needs no listener:
-    // the run fails with an error naming the host and the knob.
-    let (app, _host, _registry) = full_app(
-        "w4-allow",
-        json!({ "plugins": { "http-tools": { "config": { "allowedHosts": ["127.0.0.1"] } } } }),
-    )
-    .await;
-    let view = submit_http_run(
-        &app,
-        json!({ "url": "http://example.com/x", "method": "GET" }),
-    )
-    .await;
-    assert_eq!(view["state"], "failed", "{view}");
-    let err = view["error"].as_str().unwrap_or_default();
-    assert!(err.contains("example.com"), "{err}");
-    assert!(err.contains("allowedHosts"), "{err}");
-}
-
-#[tokio::test]
-async fn http_request_runs_masks_secrets_and_tail_caps_output() {
-    std::env::set_var("HTTPTOOLS_IT_SECRET", "it-secret-value-12");
-    let (base, _task) = echo_listener().await;
-    let (app, _host, _registry) = full_app(
-        "w4-run",
-        json!({ "plugins": { "http-tools": { "config": { "allowedHosts": ["127.0.0.1"] } } } }),
-    )
-    .await;
-
-    // A real round trip: env refs resolve into header and body, the echo shows them
-    // back, and BOTH leave as the mask — never the secret.
-    let view = submit_http_run(
-        &app,
-        json!({
-            "url": format!("{base}/echo"),
-            "method": "POST",
-            "headers": { "x-echo": "${HTTPTOOLS_IT_SECRET}" },
-            "body": "ping ${HTTPTOOLS_IT_SECRET}",
-        }),
-    )
-    .await;
-    assert_eq!(view["state"], "succeeded", "{view}");
-    let out = view["output"].as_str().unwrap_or_default();
-    assert!(out.starts_with("HTTP 200"), "{out}");
-    assert!(out.contains(lmg_host::mask::MASK), "masked: {out}");
-    assert!(
-        !out.contains("it-secret-value-12"),
-        "the secret never lands: {out}"
-    );
-
-    // The tail cap: a 40k body keeps the LAST 16k chars, and the mask — applied BEFORE
-    // the cut, to values THIS run resolved (the header ref below is what registers the
-    // secret) — survives at the end. The full length is reported for the reader.
-    let view = submit_http_run(
-        &app,
-        json!({ "url": format!("{base}/big"), "headers": { "x-echo": "${HTTPTOOLS_IT_SECRET}" } }),
-    )
-    .await;
-    assert_eq!(view["state"], "succeeded", "{view}");
-    assert_eq!(view["outputTruncated"], json!(true), "{view}");
-    let chars = view["chars"].as_u64().expect("chars") as usize;
-    assert!(chars > 40_000, "full length reported: {chars}");
-    let out = view["output"].as_str().unwrap_or_default();
-    assert!(
-        out.contains(lmg_host::mask::MASK),
-        "tail still masked: {out}"
-    );
-    assert!(!out.contains("it-secret-value-12"), "{out}");
-    assert!(
-        out.chars().count() <= 16_384 + 64,
-        "the cap holds (status lines aside)"
-    );
-
-    std::env::remove_var("HTTPTOOLS_IT_SECRET");
-}
-
-#[tokio::test]
-async fn the_http_tools_config_row_validates_on_put() {
-    let (app, _host, _registry) = full_app("w4-config", json!({})).await;
-    let (_, body, _) = send(&app, local("GET", "/api/plugins")).await;
-    let revision = body.expect("JSON")["revision"].as_i64().expect("revision");
-    // A typo'd allowlist is a 400 naming the field, never a silent allow-everything.
-    let (status, body, _) = send(
-        &app,
-        json_body(
-            "PUT",
-            "/api/plugins/http-tools/config",
-            json!({ "revision": revision, "config": { "allowedHosts": [""] } }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(body.expect("JSON")["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("allowedHosts"));
-    // And a valid row restarts the instance (restart_on_config_change) into the new
-    // allowlist: a host outside it is now refused.
-    let (_, body, _) = send(&app, local("GET", "/api/plugins")).await;
-    let revision = body.expect("JSON")["revision"].as_i64().expect("revision");
-    let (status, _, text) = send(
-        &app,
-        json_body(
-            "PUT",
-            "/api/plugins/http-tools/config",
-            json!({ "revision": revision, "config": { "allowedHosts": ["127.0.0.1"] } }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{text}");
-    let row = plugin_row(&app, "http-tools").await;
-    assert_eq!(
-        row["state"],
-        json!("active"),
-        "restarted into the new row: {row}"
-    );
-    let view = submit_http_run(&app, json!({ "url": "http://outside.example.net/x" })).await;
-    assert_eq!(view["state"], "failed", "{view}");
-    assert!(view["error"]
-        .as_str()
-        .unwrap_or_default()
-        .contains("allowedHosts"));
-}

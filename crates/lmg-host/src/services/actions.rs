@@ -59,10 +59,10 @@ fn ref_names(value: &str) -> Vec<String> {
     out
 }
 
-/// Resolve one input string strictly and remember what the refs resolved to (for masking).
-/// pub(crate) so other typed actions (the http-tools plugin) reuse the SAME strictness
-/// and masking collection instead of growing a second scanner.
-pub fn resolve_with_secrets(
+/// Resolve one input string strictly and remember what the refs resolved to (for masking),
+/// so every field of every action goes through the SAME strictness and masking collection
+/// instead of growing a second scanner.
+fn resolve_with_secrets(
     value: &str,
     field: &str,
     secrets: &mut Vec<String>,

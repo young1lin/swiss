@@ -274,9 +274,11 @@ with no tunnels at all, and `requires: ["ssh-shell"]` would park it in waitingDe
 of honestly listing targets. When tunnels is absent or stopped, `/api/terminal/targets` says so
 by name and the panel shows the reason instead of an empty list.
 
-The number this ADR deliberately does not fill in: per-remote-session RSS. It needs a real SSH
-host to open a real session against, and this machine has none — the budget row (≤ 256 KB) stays
-**unmeasured** rather than being claimed as passed.
+Per-remote-session RSS, measured 2026-09-11 against the two real hosts (开发机 + 构建机,
+release build `3c3fd7f`): baseline 23,258 KB → one attached session 23,844 KB (+586 KB, including
+the one-time SSH channel setup and code paging) → four attached sessions (2+2) 24,596 KB. Marginal
+cost (4−1)/3 = **250.7 KB per session** — inside the ≤ 256 KB row, though only just; a record, not
+a gate.
 
 ---
 

@@ -224,10 +224,6 @@ pub async fn run_gateway() -> Result<(), String> {
     };
     crate::builtin::register_all(&mut host, &deps)
         .expect("the built-in plugins register without id or route conflicts");
-    host.register(Arc::new(crate::plugins::http_tools::HttpToolsPlugin::new(
-        services.clone(),
-    )))
-    .expect("the http-tools plugin registers");
     host.register(Arc::new(crate::plugins::terminal::TerminalPlugin::new(
         services.clone(),
         terminal_state.clone(),

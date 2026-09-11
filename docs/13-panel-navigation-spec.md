@@ -33,11 +33,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 `<div class="seg" id="viewSeg" role="tablist">`：
 
 ```
-MCPs | Traffic | Tunnels | Data | Jobs | HTTP | Plugins
+MCPs | Traffic | Tunnels | Data | Jobs | Terminal | Plugins
 ```
 
 这一行是把 `/api/plugins` 的 `pages[]` 按 `order` 排序后平铺的结果。当前的贡献是（`src/builtin.rs`
-与 `src/plugins/http_tools.rs`）：
+与 `src/plugins/terminal.rs`，docs/14）：
 
 | pluginId | 插件 label | page id | page label | order | sidebar |
 | --- | --- | --- | --- | --- | --- |
@@ -46,7 +46,7 @@ MCPs | Traffic | Tunnels | Data | Jobs | HTTP | Plugins
 | `tunnels` | Tunnels | `tunnels` | Tunnels | 30 | |
 | `data` | Data | `data` | Data | 40 | |
 | `jobs` | Jobs | `jobs` | Jobs | 50 | |
-| `http-tools` | HTTP Tools | `http-tools` | HTTP | 60 | ✅ |
+| `terminal` | Terminal | `terminal` | Terminal | 70 | |
 | （无，前端合成） | — | `plugins` | Plugins | 1000 | |
 | `process` | Process | —（不贡献页面） | | | |
 
@@ -93,7 +93,7 @@ MCPs | Traffic | Tunnels | Data | Jobs | HTTP | Plugins
 
 一级顺序 = 组内 `min(page.order)`。这样一个插件不能靠「补一个 order 很小的次要页面」把自己顶到前面，
 也不需要再发明一个 `groupOrder`。用当前数据算出来是 `mcp`(10) → `tunnels`(30) → `data`(40) →
-`jobs`(50) → `http-tools`(60) → `host`(1000)，与今天的一行顺序完全一致。
+`jobs`(50) → `terminal`(70) → `host`(1000)，与今天的一行顺序完全一致。
 
 ### D2 — 分组是纯函数，住在 `page-core.js`
 
@@ -266,8 +266,8 @@ page("mcps", MCP_ID, "MCPs", 10, true),   // →  page("mcps", MCP_ID, "Servers"
 一级 `MCP` / 二级 `Servers | Traffic`。`Servers` 而不是 `List` / `MCPs`：这一页是被托管的 MCP 服务器
 清单，`Servers` 说的是内容，`List` 说的是控件。
 
-`http-tools` 插件的 label 是 `HTTP Tools`，页面 label 是 `HTTP`。二级化之后一级显示 `HTTP Tools`，
-比现在的 `HTTP` 更清楚，**不要改它**。
+一级显示的是插件 `label`（终端插件两级同为 `Terminal`；此前的 `http-tools` 一级是 `HTTP Tools`、
+平铺时是 `HTTP`——这正是二级化要修的差异）。**不要改插件或页面的 label 来迁就显示。**
 
 ## 5. 阶段
 
@@ -346,9 +346,9 @@ Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\lmg-panel\src\admin_ass
 ## 7. 不做什么
 
 - **不做侧边栏归属的重构。** 现在 `page.sidebar` 是按页面给的，而 `.sidebar` 的内容由
-  `js/sidebar.js` 固定渲染 MCP 列表 —— 于是 `http-tools`（`sidebar: true`）会显示一列 MCP。这确实
-  是个疣子，但它今天就在，与二级化无关；两件事混在一个提交里会让面板复制的历史读不懂。要修就单开
-  一份规范，让页面能声明自己的侧边栏内容。
+  `js/sidebar.js` 固定渲染 MCP 列表 —— 于是历史上 `http-tools`（`sidebar: true`）会显示一列
+  MCP。该插件已删除，现存页面里只有 `mcps` 打开侧边栏，疣子暂无实例；但机制还在，与二级化无关，
+  两件事混在一个提交里会让面板复制的历史读不懂。要修就单开一份规范，让页面能声明自己的侧边栏内容。
 - **不做 tab 溢出折叠**（「更多 ▾」）。六格离拥挤还很远，先有结构再谈容量。
 - **不做路由分层**（D3）。
 - **不给 `PageDescriptor` 加字段**（D1）。

@@ -71,8 +71,8 @@ Wetty、code-server 全都是它；能与它相提并论的替代品不存在。
    当 ES 模块 import，要么就自己写一个十几行的本地 shim 把 UMD 的全局导出成具名导出。选后者时
    shim 归属 `js/vendor/`，并在文件头注明来源包名与**精确版本号**。
 3. **面板是从 Node 仓库复制过来的（ADR-009）。** vendored 的文件也是面板的一部分，所以它们必须先
-   落在 `../local-mcp-gateway/src/admin/js/vendor/`，再整树复制。`views/http-tools.js` 就是先例：
-   一个纯 Rust 插件的页面，照样先在 Node 仓库里安家（docs/12 W4）。
+   落在 `../local-mcp-gateway/src/admin/js/vendor/`，再整树复制——包括纯 Rust 插件的页面，照样先在
+   Node 仓库里安家（试金石插件 docs/12 W4 当时就是这么做的）。
 
 ### vendoring 的规矩
 
@@ -299,7 +299,7 @@ PluginDescriptor {
 }
 ```
 
-`order: 70` 排在 `http-tools` 的 60 之后、`plugins` 的 1000 之前。按 `docs/13` 的分组规则，它自成
+`order: 70` 排在 `jobs` 的 50 之后、`plugins` 的 1000 之前。按 `docs/13` 的分组规则，它自成
 一个一级组，没有二级栏。
 
 ### 8.1 实施偏差记录（实施后补，2026-09-10）
@@ -357,8 +357,12 @@ PluginDescriptor {
 **实施后验证**（debug 构建，`127.0.0.1:19998`，scratch home）：插件清页（order 70）、
 vendored 资源与 content-type、targets 诚实空态、真 ConPTY 本地会话经 WS 字节回环、列表
 attached/bytesOut、asciicast v2 落盘可读、DELETE 后清表 —— 11/11 通过；强杀网关后
-cmd 子进程 0 残留（§10 第 8 条）。§10 第 3 条（真 SSH 主机上的 vim/htop/中文 emoji）与
-每远端会话 RSS 需要一台真实主机，本机没有 —— 留待有主机时补量，不当作已过。
+cmd 子进程 0 残留（§10 第 8 条）。
+
+**真主机补测**（2026-09-11，release `3c3fd7f`，开发机/构建机）：§10 第 3 条三项机器验证
+通过——中文+`✓` 回显字节完整、`vim` 打开（~ 波浪线行）后 `:q!` 干净退出、`htop` 运行后 `q` 退出；
+另经 Chrome（CDP 键盘注入）在面板里开真实远端会话，输入 `echo 面板-中文-直通OK` 回显字形正确。
+每远端会话 RSS 边际成本 (4−1)/3 = 250.7 KB（ADR-011），在 ≤ 256 KB 预算行内。
 
 ## 9. 阶段
 
@@ -404,7 +408,7 @@ loopback 守卫之内**，理由见 `src/app.rs` 那段注释），插件工厂�
 `../local-mcp-gateway/src/admin/js/vendor/xterm/<version>/…` + `js/views/terminal.js`
 （+ 需要的 `js/terminal-*.js`）。§2 的三条约束逐条核对。目标列表放侧边栏还是页内，由实现者定，
 但**不要**去改共享 `.sidebar` 的内容归属（那是 `docs/13` §7 明确列为不做的事）。
-Node 网关上这一页与 `http-tools` 一样：插件不存在于 `legacy` 清单，所以它不出现，不报错。
+Node 网关上这一页不出现：终端插件不在它的 `legacy` 清单里，所以不渲染，也不报错。
 门禁：Node 仓库 `npx vitest run`。
 
 ### T7 — 整树复制回本仓库

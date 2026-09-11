@@ -2,7 +2,7 @@
 //! speaks (docs/09 §3, docs/10 §2).
 //!
 //! An Action is ONE callable capability with a stable string id ("process.exec",
-//! "mcp.call", "http.request", ...). The registry is a plain name -> impl map, NOT an
+//! "mcp.call", ...). The registry is a plain name -> impl map, NOT an
 //! enum: adding a capability means registering an impl, and Jobs never learns any of
 //! their names — a configured definition carries the id as data and the registry resolves
 //! it at run time. That is the whole point of the layer: the scheduler must not grow a

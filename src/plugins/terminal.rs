@@ -1,7 +1,7 @@
 //! The terminal plugin's factory (docs/14 §9 T5): descriptor, config validation, and
 //! the instance that owns the session machine's lifetime.
 //!
-//! Shaped after http_tools.rs, the touchstone plugin: everything the host needs is said
+//! A plugin built purely on the public contracts: everything the host needs is said
 //! here in data — descriptor, schema, routes — and the host never learns the id
 //! "terminal". The instance's whole job is to build the [TerminalSessions] the routes
 //! drive (T4's machine, over the shell capability seat and the local PTY seam) and to
@@ -116,8 +116,8 @@ impl PluginFactory for TerminalPlugin {
                 id: "terminal".into(),
                 plugin_id: PLUGIN_ID.into(),
                 label: "Terminal".into(),
-                // docs/14 §8: after http-tools' 60, before plugins' 1000 — its own
-                // first-level group under the docs/13 rules.
+                // docs/14 §8: its own first-level group under the docs/13 rules,
+                // before the plugins page's 1000.
                 order: 70,
                 path: "#terminal".into(),
                 entry: "/admin/js/views/terminal.js".into(),

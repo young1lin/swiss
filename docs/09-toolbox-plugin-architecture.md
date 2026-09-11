@@ -4,8 +4,8 @@
 > P1–P3（`5f18951`）：PluginHost 与插件生命周期、ActionRegistry / RunCoordinator /
 > ProcessSupervisor、面板 PageRegistry 与 `/api/plugins` 清单。
 > P4（`9e76351`）：连接目录 `crates/lmg-host/src/services/catalog.rs`，Data 不再依赖 MCP。
-> P6（`9cdd7c6`）：试金石插件 `src/plugins/http_tools.rs`——加它没有改动 `crates/lmg-host/src/host/` 一行，
-> 这一点由测试 `the_host_never_learns_this_plugins_id` 持续守住。
+> P6（`9cdd7c6`，后随用户决定移除）：试金石插件——加它没有改动 `crates/lmg-host/src/host/` 一行；
+> 契约随后由终端插件（docs/14）在同一路径上再次验证。
 > P5（`4147e8a`）：workspace 拆分成八个 crate，仍是一个 `lmg.exe`（体积 +1.1%）。
 > 实施过程见 [12](12-remaining-work-spec.md)。
 > 产品方向：一个低内存、单进程的开发工具宿主；MCP 是重要插件，但不再是其他功能必须依附的核心。
@@ -266,9 +266,10 @@ P1/P2 中已知的输出上限、取消、保存失败等安全/正确性修复�
 入口，provider 由 MCP 侧在 start 时注册、stop 时撤销。原来的问题——Data 不拥有资源，停用 MCP
 会连带打瘫它——因此消失：Data 现在看到的是一份可能为空的目录，而不是一个不见了的模块。
 
-**P6（`9cdd7c6`）试金石插件。** `src/plugins/http_tools.rs`。它存在的意义不是这个功能，而是
-证明“加一个插件不用动宿主”：加它没有改 `crates/lmg-host/src/host/` 一行，测试
-`the_host_never_learns_this_plugins_id` 把这一点钉住。
+**P6（`9cdd7c6`）试金石插件。** 一个一次性的 HTTP 请求工具插件。它存在的意义不是这个功能，而是
+证明“加一个插件不用动宿主”：加它没有改 `crates/lmg-host/src/host/` 一行。任务完成后，插件本体
+已按用户决定删除（2026-09-11，连同面板视图与专属测试）；契约的活性证明由终端插件承担——它走的
+正是同一条 descriptor/action/page 路径。
 
 **P5（`4147e8a`）workspace 拆分。** 八个 crate，仍是一个 `lmg.exe`（体积 +1.1%）。放在最后是
 对的：先让契约在单 crate 里跑通，再用 manifest 把已经成立的边界固化——`lmg-data` 的
@@ -276,4 +277,4 @@ Cargo.toml 里没有 `lmg-mcp`，所以那条边再也回不来。见 ADR-010。
 
 docs/10 的配置驱动那一半（v2 schema、配置作为定义的唯一来源、`jobs.json` 迁移、schema 驱动的
 面板）也已在 `6bcdf9e`–`18ad5f2` 落地，分阶段记录见 [11](11-jobs-v2-implementation-spec.md)。
-剩下的唯一未完成项是 [12](12-remaining-work-spec.md) 的 W2：内存实测。
+剩下的唯一未完成项是 [06](06-roadmap.md) 的 Phase 6 切换周（日历活，不是代码）。

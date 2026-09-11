@@ -30,7 +30,7 @@
 
 RH 参考的是 `rh-jobs` 的运行登记、容量控制、取消和 first-wins 终态，而不是抄一个 cron 系统：所检查版本的 RH Jobs 是进程内后台任务注册表；独立的 `rh-schedule` 是会话提醒系统，既不消费 Jobs 注册表，也不是配置定义的 cron。RH 的容量控制是按 owner 的准入检查，超限立即拒绝，不维护运行队列。这里的持久化任务定义、cron 和有界排队层都属于本项目新增设计。
 
-`process.exec` 是通用进程执行插件提供的 Action；MCP 插件提供 `mcp.call`；HTTP 请求插件可以提供 `http.request`。这些名字是本提议的稳定能力 ID，不是当前已存在的 API。
+`process.exec` 是通用进程执行插件提供的 Action；MCP 插件提供 `mcp.call`。这些名字是本提议的稳定能力 ID，不是当前已存在的 API。
 
 轻量的 `RunRegistry / RunCoordinator` 是共享运行服务，统一登记定时和手动运行；Jobs Scheduler 只是其中一个 producer。停用 Jobs 不会让其他插件失去手动 Action 执行能力，也不能取消其他 producer 的运行。每次运行登记 producer、provider 和可选 jobId，按所有权取消；不要求引入一套常驻消息队列。通用进程监督器供 proc MCP 与 Jobs 共用，但两者的“常驻 MCP 子进程”和“一次性命令”生命周期仍不同。
 
