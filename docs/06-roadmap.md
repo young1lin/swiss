@@ -6,10 +6,11 @@ if the numbers do not appear.
 
 ## Current implementation status
 
-The Rust implementation now contains all 70 planned backend modules, wires every adapter family
-through the factory, and includes the MongoDB adapter and production `/api/db` browser mount. The
-current verification gate is green: default tests, Mongo-enabled tests, strict Clippy, and the
-Mongo-enabled release build all pass.
+The Rust implementation now contains all 70 planned backend modules and wires every adapter
+family through the factory. The MongoDB adapter was deleted outright (ADR-012), as was the
+HTTP Tools touchstone plugin once it had served its proof; neither is feature-gated. The
+current verification gate is green: 941 workspace tests, strict Clippy, and the release
+build all pass.
 
 Since then the build has become the toolbox docs/09 and docs/10 describe, and both documents are
 now fully implemented (`4147e8a`). A plugin host owns the subsystems; Actions, Runs and the process
@@ -21,8 +22,13 @@ stages and their acceptance criteria.
 
 **One acceptance task remains, and it is not code.** docs/01's rows are all filled now — the
 realistic adapter workload measured 22.4 MB against a fresh Node run's 113.8 MB on the same
-data directory and traffic (2026-09-11, `3c3fd7f`). Phase 6, running both builds side by side
-for a week before the swap, has not started.
+data directory and traffic (2026-09-11, `3c3fd7f`). Phase 6's calendar week is underway de
+facto: since the W2 measurement the Rust build is the only gateway on the real port (Node
+stopped — the two cannot hold the tunnel listeners simultaneously anyway), and it carries
+daily traffic: all seven MCPs, the two SSH tunnel connections, remote terminal sessions
+against both hosts, and the vim/htop/CJK acceptance legs. The week accrues by itself; the
+swap-back path (shared data dir, Node still installable) is exactly the property Phase 6
+exists to preserve.
 
 ## Phase 0 — The spike that can kill the project
 

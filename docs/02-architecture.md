@@ -31,7 +31,7 @@ local-mcp-gateway-rust/
   src/                                   # the composition crate: what wires the rest together
     main.rs lib.rs                       # thin argv parse; what the integration tests drive
     app.rs server.rs adminapi.rs         # axum Router assembly, /api/*
-    builtin.rs plugins/                  # every plugin descriptor, incl. the http-tools sample
+    builtin.rs plugins/                  # every plugin descriptor
     bootstrap.rs subsystems.rs port.rs mcp_link.rs
     daemon.rs cli.rs pidfile.rs          # the `lmg` command
     skill_install.rs

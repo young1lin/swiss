@@ -95,7 +95,7 @@ jobs:
 
       # Tests run on the native target only — a cross-compiled binary cannot execute.
       # `--workspace` for the same reason as the lint step: the root package holds 209 of the
-      # suite's 951 tests, and a green run without it would never build the other seven crates.
+      # suite's 941 tests, and a green run without it would never build the other seven crates.
       - name: Test
         if: matrix.cross != true
         run: cargo test --workspace --locked

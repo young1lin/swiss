@@ -147,7 +147,8 @@ cargo test --workspace         848 = 725 unit + 123 integration
   lmg-panel     9 unit
 
 cargo test --workspace
-             951  (the terminal plugin added its own since the 848 this file once recorded)
+             941  (the terminal plugin added its own, and the mongo/http-tools removals took
+                  theirs, since the 848 this file once recorded)
 ```
 
 **Drop `--workspace` and this shrinks to 187.** Cargo then selects the root package alone —

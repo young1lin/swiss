@@ -116,8 +116,8 @@ cargo tree -d                  # a duplicated TLS stack or runtime must fail rev
 cargo run -- start --no-open   # the gateway itself, on 127.0.0.1:19999
 ```
 
-**`--workspace` is not optional.** Without it cargo selects the root package alone — 209 of the
-suite's 951 tests — and the seven member crates, most of the tests, are never even built. The run
+**`--workspace` is not optional.** Without it cargo selects the root package alone — 199 of the
+suite's 941 tests — and the seven member crates, most of the tests, are never even built. The run
 still reports ok. The same applies to clippy. `lmg start` / `stop` / `status` / `logs` / `token` are the CLI; `MCP_GATEWAY_TOKEN` pins
 the bearer token when you want a fixed one.
 
