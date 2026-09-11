@@ -30,7 +30,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 bigdecimal = { version = "0.4", default-features = false }
 redis = { version = "0.27", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
 encoding_rs = { version = "0.8", default-features = false }
-mongodb = { version = "3", optional = true, default-features = false, features = ["compat-3-0-0", "rustls-tls"] }
 base64 = "0.23"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
 rand = "0.8"
@@ -58,6 +57,4 @@ anyhow = "1"
 default = []
 # Cross-crate test support (see calls::test_log); dev-dependencies only.
 test-utils = []
-# The heaviest driver (ADR-004): off by default, ON in the shipped release via the bin crate's
-# forwarding feature of the same name.
-mongo = ["dep:mongodb"]
+

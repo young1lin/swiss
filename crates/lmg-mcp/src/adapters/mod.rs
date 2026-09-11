@@ -11,10 +11,6 @@
 pub mod direct;
 pub mod echo;
 pub mod http;
-#[cfg(feature = "mongo")]
-pub mod mongo;
-#[cfg(feature = "mongo")]
-pub mod mongo_resources;
 pub mod mysql;
 pub mod mysql_browser;
 pub mod mysql_resources;
@@ -307,12 +303,12 @@ pub fn make_adapter(
         "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?, log.clone()))),
         "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name, log.clone()))),
         "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name, log.clone())?)),
-        #[cfg(feature = "mongo")]
-        "mongo" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, mongo::MongoEngine::new(&def, name)?, log.clone()))),
-        #[cfg(not(feature = "mongo"))]
-        "mongo" => Err("Mongo adapter is unavailable in this build; rebuild with --features mongo".into()),
+        // ADR-012: MongoDB support was deleted outright. A config migrated from the Node build
+        // (which does have mongo) must fail with a message that says what happened, not one
+        // that sends its reader hunting for a typo among the built-in types.
+        "mongo" => Err("the mongo adapter was removed from lmg (ADR-012); this build has no MongoDB support".into()),
         other => Err(format!(
-            "Unknown adapter type: {other} (built-in: echo | mysql | pg | redis | mongo | proc | http | rest)"
+            "Unknown adapter type: {other} (built-in: echo | mysql | pg | redis | proc | http | rest)"
         )),
     }
 }
@@ -374,9 +370,7 @@ mod tests {
         let err = kind_of(json!({ "type": "nope" })).unwrap_err();
         assert!(err.contains("Unknown adapter type: nope"), "{err}");
         // The message is the whole help a user gets in the panel, so it lists what IS available.
-        for built_in in [
-            "echo", "mysql", "pg", "redis", "mongo", "proc", "http", "rest",
-        ] {
+        for built_in in ["echo", "mysql", "pg", "redis", "proc", "http", "rest"] {
             assert!(err.contains(built_in), "{built_in} missing from: {err}");
         }
         // A def with no type at all lands in the same arm rather than panicking.
@@ -385,26 +379,14 @@ mod tests {
             .contains("Unknown adapter type"));
     }
 
-    #[cfg(feature = "mongo")]
     #[test]
-    fn the_mongo_type_is_available_in_a_mongo_build() {
-        // ADR-004: the SHIPPED release is built with --features mongo, so this is the arm users
-        // get. `cargo test` without the feature runs the other one below.
-        assert_eq!(
-            kind_of(json!({ "type": "mongo", "url": "mongodb://localhost:27017/shop" })),
-            Ok("mongo".into())
-        );
-    }
-
-    #[cfg(not(feature = "mongo"))]
-    #[test]
-    fn a_build_without_mongo_says_so_instead_of_calling_it_an_unknown_type() {
-        // The distinction matters to whoever reads the panel: "unknown type" sends them looking
-        // for a typo, when the answer is which binary they are running.
+    fn the_mongo_type_names_its_removal_instead_of_a_typo_hunt() {
+        // ADR-012: MongoDB support is gone from every build alike, so there is exactly one arm
+        // and one message, whatever the binary.
         let err = kind_of(json!({ "type": "mongo", "url": "mongodb://localhost:27017/shop" }))
             .unwrap_err();
-        assert!(err.contains("unavailable in this build"), "{err}");
-        assert!(err.contains("--features mongo"), "{err}");
+        assert!(err.contains("removed from lmg"), "{err}");
+        assert!(err.contains("no MongoDB support"), "{err}");
     }
 
     #[test]

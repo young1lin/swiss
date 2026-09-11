@@ -12,15 +12,13 @@
 ## 0. 怎么用这份文档
 
 分成 T1–T8 八个阶段，**一个阶段一个提交**。每个阶段独立可验收、独立可回退，且每个阶段结束时
-`cargo build --release --features mongo` 仍然出一个能跑的 `lmg.exe`。行为变化先有测试。
+`cargo build --release` 仍然出一个能跑的 `lmg.exe`。行为变化先有测试。
 
-四条门禁，每个提交前全过：
+门禁，每个提交前全过：
 
 ```bash
 cargo test --workspace
-cargo test --workspace --features mongo
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --workspace --all-targets --features mongo -- -D warnings
 cargo tree -d          # 多出来的第二份 TLS 栈、第二个 runtime、第二个 rand，都算评审失败
 ```
 

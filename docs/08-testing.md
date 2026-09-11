@@ -33,8 +33,8 @@ Two environment rules carry over exactly:
 
 - **`MCP_GATEWAY_MASTER_KEY` in every test.** It overrides every OS key source, so the suite never
   spawns a keystore helper (`powershell`, `security`, `secret-tool`) and runs identically in CI.
-- **DB tests self-skip without credentials.** `direct-adapters`, `dbbrowser`, `sql`, `db-resources`
-  and `mongo-resources` must skip cleanly, not fail, on a machine with no database.
+- **DB tests self-skip without credentials.** `direct-adapters`, `dbbrowser`, `sql` and
+  `db-resources` must skip cleanly, not fail, on a machine with no database.
 
 ## Test inventory, by phase
 
@@ -73,7 +73,7 @@ Add one file with no Node counterpart: **the golden-response harness** (docs/05 
 | `sql.test.ts` | 334 |
 | `db-resources.test.ts` | 273 |
 | `tool-server.test.ts` | 213 |
-| `mongo-resources.test.ts` | 174 |
+| `mongo-resources.test.ts` | 174 | deleted with the adapter (ADR-012) |
 | `traffic.test.ts` | 163 |
 | `resources.test.ts` | 150 |
 | `admin-data-grid.test.ts` | 66 |
@@ -147,8 +147,9 @@ cargo test --workspace         848 = 725 unit + 123 integration
   lmg-data     18 unit
   lmg-panel     9 unit
 
-cargo test --workspace --features mongo
-             866  (lmg-mcp goes 266 -> 284: the mongo adapter's own 18)
+cargo test --workspace
+             951  (the mongo adapter's own 18 went with ADR-012; the terminal plugin added its own since
+              the 848 this file once recorded)
 ```
 
 **Drop `--workspace` and this shrinks to 187.** Cargo then selects the root package alone —
@@ -220,11 +221,9 @@ Node-sealed fixtures is `tests/envelope_compat.rs`, and the RSS guard is `tests/
 
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --workspace --all-targets --features mongo -- -D warnings
 cargo test --workspace
-cargo test --workspace --features mongo
 cargo tree -d
-cargo build --release --features mongo   # the shipping binary (ADR-004); record its size
+cargo build --release   # the shipping binary (ADR-012); record its size
 ```
 
 Mirror the Node build's rule: **`cargo clippy` and `cargo test` must both be green before a change

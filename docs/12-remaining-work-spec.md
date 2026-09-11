@@ -23,9 +23,7 @@ W4 与 docs/09 的 P5→P6 顺序相反，是有意的：试金石插件是发�
 
 ```bash
 cargo test --workspace
-cargo test --workspace --features mongo
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --workspace --all-targets --features mongo -- -D warnings
 cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 ```
 
@@ -60,7 +58,7 @@ cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 
 ### 测量方法（照 docs/01 §"如何测"执行，此处固化为可重复步骤）
 
-1. 构建：`cargo build --release --features mongo`（ADR-004 的出厂组合）。
+1. 构建：`cargo build --release`（ADR-012 之后的出厂组合,mongo 已删）。
 2. Node 与 Rust **对同一个数据目录**，分别监听 19999 / 19998。
 3. 用真实 MCP 客户端依次触达：echo → mysql → pg → 2×redis → 1×http；每个至少 10 次调用，总计不少于 60 次请求。
 4. 三个数字一起记，缺一个都不算完整：
@@ -75,7 +73,7 @@ cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 | --- | --- | --- |
 | Rust Phase 1 | echo + 面板，无 DB | ✅ 14.0 MB（`4147e8a`，2026-09-10） |
 | Rust Phase 2 | mysql + pg + 2×redis | 空着，需要本机起这四个服务 |
-| Rust Phase 4 | 全功能（含 tunnels、http、mongo） | 空着，需要一条真实 SSH 目标 |
+| Rust Phase 4 | 全功能（含 tunnels、http） | 空着，需要一条真实 SSH 目标 |
 
 ### 判定
 
@@ -213,7 +211,7 @@ docs/09 §9 要的验收样例是 **HTTP 工具插件**。选它有一个现成�
 强制规则：
 
 - 依赖方向单向：`core ← host ← 各插件 crate ← bin`。**插件 crate 之间禁止互相依赖**——W3 之后 Data 不再依赖 MCP，这条才成立，所以顺序不能反。
-- `mongo` feature 在 workspace 里逐层传递，两种组合都要构建通过。
+- ~~`mongo` feature 在 workspace 里逐层传递，两种组合都要构建通过。~~ 已随 ADR-012 删除,只剩一种组合。
 - 产物仍是**单个静态 exe**，`-C target-feature=+crt-static`（ADR-006），CI 的五个目标不变。
 - 拆分提交里**不允许有任何行为改动**：diff 应该几乎全是移动和 `use` 路径调整。行为改动另开提交。
 

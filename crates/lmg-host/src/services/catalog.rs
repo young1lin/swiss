@@ -32,7 +32,7 @@ use crate::dbbrowser::BrowserFlavor;
 pub struct ConnectionInfo {
     pub id: String,
     pub label: String,
-    /// The browser dialect ("mysql", "pg", "redis", "mongo") — or "none" for a registered
+    /// The browser dialect ("mysql", "pg", "redis") — or "none" for a registered
     /// entry with nothing to browse, kept in the list so lookup errors can name its type.
     pub dialect: String,
     pub readonly: bool,
@@ -184,7 +184,7 @@ impl ConnectionLease {
         &self.holder
     }
 
-    /// The connection's dialect, for mismatch messages ("is not a mongo connection").
+    /// The connection's dialect, for mismatch messages ("is not a redis connection").
     pub fn dialect(&self) -> &str {
         &self.dialect
     }

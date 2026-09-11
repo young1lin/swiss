@@ -36,15 +36,15 @@ use axum::Router;
 use serde_json::{json, Map, Value};
 
 use lmg_core::log;
-use lmg_host::dbbrowser::{js_to_string, BrowserFlavor, DbBrowser, MongoBrowser, RedisBrowser};
+use lmg_host::dbbrowser::{js_to_string, BrowserFlavor, DbBrowser, RedisBrowser};
 use lmg_host::reply::{admin_error, admin_json};
 use lmg_host::services::catalog::{
     CatalogError, CatalogPresence, CatalogRegistry, ConnectionLease,
 };
 
 /// One browsable-connection row: everything the panel's picker needs, nothing secret. The
-/// redis and mongo flavours ride the same list with editable false (the key and document
-/// browsers are read-only by design; writes go through the MCP's own tools).
+/// redis flavour rides the same list with editable false (the key browser is read-only by
+/// design; writes go through the MCP's own tools).
 pub fn browsable_connections(catalog: &CatalogRegistry) -> Vec<Value> {
     let mut rows: Vec<(String, Value)> = catalog
         .list()
@@ -55,7 +55,7 @@ pub fn browsable_connections(catalog: &CatalogRegistry) -> Vec<Value> {
             if c.dialect == "none" {
                 return None;
             }
-            let editable = !matches!(c.dialect.as_str(), "redis" | "mongo");
+            let editable = c.dialect.as_str() != "redis";
             let row = json!({
                 "name": c.id,
                 "dialect": c.dialect,
@@ -193,7 +193,7 @@ fn catalog_guard(catalog: &CatalogRegistry) -> Result<(), Fail> {
 /// returned LEASE is the point (docs/12 W3): callers keep it in scope until the browser call
 /// completes — that scope is exactly what a draining provider waits on, so no pool closes
 /// under a live page. The dialect string in the mismatch message is Node's adapter type for
-/// every real dialect (mysql/pg/redis/mongo), so the 404 text survives the seam change.
+/// every real dialect (mysql/pg/redis), so the 404 text survives the seam change.
 fn lease_db(
     catalog: &CatalogRegistry,
     name: &str,
@@ -207,28 +207,6 @@ fn lease_db(
                 status: StatusCode::NOT_FOUND,
                 message: format!(
                     "MCP '{}' ({}) has no database to browse",
-                    name,
-                    lease.dialect()
-                ),
-            })
-        }
-    };
-    Ok((lease, browser))
-}
-
-fn lease_mongo(
-    catalog: &CatalogRegistry,
-    name: &str,
-) -> Result<(ConnectionLease, Arc<dyn MongoBrowser>), Fail> {
-    catalog_guard(catalog)?;
-    let lease = catalog.lease(name, "data").map_err(lease_fail)?;
-    let browser = match lease.flavor() {
-        BrowserFlavor::Mongo(mb) => mb.clone(),
-        _ => {
-            return Err(Fail {
-                status: StatusCode::NOT_FOUND,
-                message: format!(
-                    "MCP '{}' ({}) is not a mongo connection",
                     name,
                     lease.dialect()
                 ),
@@ -540,47 +518,6 @@ async fn edits(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
     b.apply_edits(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
-// --- the mongo collection browser (same /api/db namespace; dialect "mongo") ------------------------
-
-async fn collections(
-    catalog: &CatalogRegistry,
-    name: &str,
-    q: &HashMap<String, String>,
-) -> Result<Value, Fail> {
-    let (_lease, mb) = lease_mongo(catalog, name)?;
-    let mut o = Map::new();
-    if let Some(grep) = q_non_empty(q, "grep") {
-        o.insert("grep".into(), grep);
-    }
-    let list = mb
-        .list_collections(&Value::Object(o))
-        .await
-        .map_err(Fail::bad)?;
-    Ok(json!({ "collections": list }))
-}
-
-async fn docs(
-    catalog: &CatalogRegistry,
-    name: &str,
-    q: &HashMap<String, String>,
-) -> Result<Value, Fail> {
-    let (_lease, mb) = lease_mongo(catalog, name)?;
-    let mut o = Map::new();
-    o.insert("collection".into(), json!(q_or_empty(q, "collection")));
-    if let Some(filter) = q_non_empty(q, "filter") {
-        o.insert("filterJson".into(), filter);
-    }
-    if let Some(offset) = q_raw(q, "offset") {
-        o.insert("offset".into(), offset);
-    }
-    if let Some(limit) = q_raw(q, "limit") {
-        o.insert("limit".into(), limit);
-    }
-    mb.read_collection(&Value::Object(o))
-        .await
-        .map_err(Fail::bad)
-}
-
 // --- the redis key browser (same /api/db namespace; dialect "redis") ------------------------------
 
 async fn keys(
@@ -688,22 +625,6 @@ async fn import_route(
     reply(import(&catalog, &name, &body.0).await)
 }
 
-async fn collections_route(
-    Extension(catalog): Extension<Arc<CatalogRegistry>>,
-    Path(name): Path<String>,
-    Query(q): Query<HashMap<String, String>>,
-) -> Response {
-    reply(collections(&catalog, &name, &q).await)
-}
-
-async fn docs_route(
-    Extension(catalog): Extension<Arc<CatalogRegistry>>,
-    Path(name): Path<String>,
-    Query(q): Query<HashMap<String, String>>,
-) -> Response {
-    reply(docs(&catalog, &name, &q).await)
-}
-
 async fn keys_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -770,9 +691,6 @@ where
         .route("/api/db/{name}/schema", get(schema_route))
         .route("/api/db/{name}/export", get(export_route))
         .route("/api/db/{name}/import", post(import_route))
-        // --- mongo collection browser (same /api/db namespace; dialect "mongo") ---
-        .route("/api/db/{name}/collections", get(collections_route))
-        .route("/api/db/{name}/docs", get(docs_route))
         // --- redis key browser (same /api/db namespace; dialect "redis") ---
         .route("/api/db/{name}/keys", get(keys_route))
         .route("/api/db/{name}/command", post(command_route))
@@ -787,7 +705,7 @@ where
 mod tests {
     // Ported from dbbrowser.test.ts's "data browser API" describe: a stub browser over the real
     // router, so the routes and the payload contract are tested end-to-end without a live
-    // MySQL/Postgres/Redis/Mongo.
+    // MySQL/Postgres/Redis.
     use super::*;
     use async_trait::async_trait;
     use axum::body::Body;
@@ -991,38 +909,6 @@ mod tests {
         }
     }
 
-    /// The Node suite's fake mongo browser.
-    struct StubMongo;
-
-    #[async_trait]
-    impl MongoBrowser for StubMongo {
-        fn readonly(&self) -> bool {
-            false
-        }
-        fn label(&self) -> String {
-            "app @ localhost:27017".into()
-        }
-        async fn list_collections(&self, o: &Value) -> Result<Value, String> {
-            let mut collections = vec![
-                json!({ "name": "users", "type": "collection", "approxDocs": 12, "size": "4 KB" }),
-            ];
-            if o.get("grep").is_none() {
-                collections.push(json!({ "name": "events", "type": "collection", "approxDocs": 9000, "size": "1.2 MB" }));
-            }
-            Ok(Value::Array(collections))
-        }
-        async fn read_collection(&self, o: &Value) -> Result<Value, String> {
-            Ok(json!({
-                "collection": o.get("collection").and_then(Value::as_str).unwrap_or(""),
-                "documents": [{ "_id": 1, "name": "a" }, { "_id": 2, "name": "b" }],
-                "total": 2,
-                "offset": 0,
-                "limit": 50,
-                "fields": ["_id", "name"],
-            }))
-        }
-    }
-
     /// One row as the stub provider serves it — the old seam's shape, moved provider-side.
     struct StubRow {
         name: String,
@@ -1035,7 +921,6 @@ mod tests {
         match f {
             BrowserFlavor::Db(db) => BrowserFlavor::Db(db.clone()),
             BrowserFlavor::Redis(rb) => BrowserFlavor::Redis(rb.clone()),
-            BrowserFlavor::Mongo(mb) => BrowserFlavor::Mongo(mb.clone()),
             BrowserFlavor::None => BrowserFlavor::None,
         }
     }
@@ -1044,7 +929,6 @@ mod tests {
         match &row.browser {
             BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label(), db.readonly()),
             BrowserFlavor::Redis(rb) => ("redis".into(), rb.label(), rb.readonly()),
-            BrowserFlavor::Mongo(mb) => ("mongo".into(), mb.label(), mb.readonly()),
             BrowserFlavor::None => ("none".into(), row.name.clone(), true),
         }
     }
@@ -1577,15 +1461,6 @@ mod tests {
         })
     }
 
-    fn mongo_entry(name: &str) -> Arc<StubRow> {
-        Arc::new(StubRow {
-            name: name.into(),
-            adapter_type: "mongo".into(),
-            state: "stopped".into(),
-            browser: BrowserFlavor::Mongo(Arc::new(StubMongo)),
-        })
-    }
-
     #[tokio::test]
     async fn serves_the_redis_key_browser() {
         let app = router_of(vec![redis_entry("cache")]);
@@ -1666,75 +1541,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn serves_the_mongo_collection_browser() {
-        let app = router_of(vec![mongo_entry("mgo")]);
-        let (status, _, body, _) = call(app, "GET", "/api/db", None).await;
-        assert_eq!(status, StatusCode::OK);
-        let row = body.expect("json")["connections"][0].clone();
-        assert_eq!(row["dialect"], "mongo");
-        assert_eq!(row["editable"], false);
-
-        let app = router_of(vec![mongo_entry("mgo")]);
-        let (status, _, body, _) =
-            call(app, "GET", "/api/db/mgo/collections?grep=user", None).await;
-        assert_eq!(status, StatusCode::OK);
-        let collections = body.expect("json")["collections"]
-            .as_array()
-            .expect("collections")
-            .clone();
-        assert_eq!(collections.len(), 1);
-        assert_eq!(collections[0]["name"], "users");
-        assert_eq!(collections[0]["approxDocs"], 12);
-
-        let app = router_of(vec![mongo_entry("mgo")]);
-        let (status, _, body, _) = call(
-            app,
-            "GET",
-            "/api/db/mgo/docs?collection=users&limit=50",
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let body = body.expect("json");
-        assert_eq!(body["collection"], "users");
-        assert_eq!(body["total"], 2);
-        assert_eq!(body["fields"], json!(["_id", "name"]));
-
-        // SQL-only route refuses a mongo connection.
-        let app = router_of(vec![mongo_entry("mgo")]);
-        let (status, _, body, _) = call(app, "GET", "/api/db/mgo/tables", None).await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(
-            body.expect("json")["error"],
-            "MCP 'mgo' (mongo) has no database to browse"
-        );
-    }
-
-    #[tokio::test]
-    async fn mongo_and_redis_kinds_answer_the_flavored_404s() {
-        // The flavored lookups name what the MCP is NOT.
+    async fn non_sql_kinds_answer_the_flavored_404s() {
+        // The flavored lookups name what the MCP is NOT. ADR-012 removed the mongo browser,
+        // so the surviving cross-dialect case is a redis connection on an SQL route; the
+        // /collections and /docs routes are gone with it and fall to the router's 404.
         let app = router_of(vec![redis_entry("cache")]);
-        let (status, _, body, _) = call(app, "GET", "/api/db/cache/collections", None).await;
+        let (status, _, body, _) = call(app, "GET", "/api/db/cache/tables", None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(
             body.expect("json")["error"],
-            "MCP 'cache' (redis) is not a mongo connection"
+            "MCP 'cache' (redis) has no database to browse"
         );
 
-        let app = router_of(vec![mongo_entry("mgo")]);
-        let (status, _, body, _) = call(app, "GET", "/api/db/mgo/keys", None).await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(
-            body.expect("json")["error"],
-            "MCP 'mgo' (mongo) is not a redis connection"
-        );
-
-        let app = router_of(vec![mongo_entry("mgo")]);
+        let app = router_of(vec![redis_entry("cache")]);
         let (status, _, _body, _) = call(
             app,
             "POST",
-            "/api/db/mgo/command",
-            Some(json!({ "command": "GET x" })),
+            "/api/db/cache/query",
+            Some(json!({ "sql": "SELECT 1" })),
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -1820,7 +1644,6 @@ mod tests {
                             }),
                         ),
                         redis_entry("cache"),
-                        mongo_entry("mgo"),
                     ],
                     tracker: tracker.clone(),
                 }),
@@ -1834,7 +1657,6 @@ mod tests {
             "/api/db/db/data?table=users",
             "/api/db/db/schema?table=users",
             "/api/db/cache/keys",
-            "/api/db/mgo/collections",
         ] {
             let (status, _, _, _) = call(app.clone(), "GET", uri, None).await;
             assert_eq!(status, StatusCode::OK, "{uri}");

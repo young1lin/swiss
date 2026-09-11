@@ -38,8 +38,8 @@ The estimate, built up rather than guessed:
 | Registry, traffic, call-log working set | 1–2 |
 | **Total** | **~11–17** |
 
-Add 3–5 MB if the `mongo` feature is compiled in — which is why it is a Cargo feature that is off
-by default (see ADR-004).
+The `mongodb` driver is no longer in the binary at all — MongoDB support was deleted outright
+(ADR-012), so it is not even a compile-time option.
 
 ## Measured result (2026-09-07, final acceptance)
 

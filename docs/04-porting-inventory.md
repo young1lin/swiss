@@ -105,8 +105,8 @@ leaves no orphan when the gateway is killed with Task Manager's End Task.
 | `adapters/http.ts` | 91 | `adapters/http.rs` | Low | reqwest; keep the proxy support undici was there for |
 | `adapters/rest.ts` | 128 | `adapters/rest.rs` | Low | |
 | `adapters/rest-template.ts` | 122 | `adapters/rest.rs` | Low | |
-| `adapters/mongo.ts` | 452 | `adapters/mongo.rs` | Med | Behind the `mongo` feature |
-| `adapters/mongo-resources.ts` | 266 | same | Low | |
+| `adapters/mongo.ts` | 452 | — | — | Ported once, then deleted with the feature (ADR-012) |
+| `adapters/mongo-resources.ts` | 266 | — | — | Same |
 
 **Exit criterion:** feature parity. Every panel view works against the Rust binary.
 

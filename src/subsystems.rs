@@ -22,7 +22,7 @@
 //! tests below pin the row semantics the host now inherits.
 //!
 //! What is deliberately NOT ported: dynamic loading (no dylib; a Rust "plugin" is a module
-//! behind a feature flag when it must be optional at link time — see the mongo feature),
+//! compiled straight into the binary),
 //! and realms (single-tenant local process). Runtime start/stop DID arrive — with the host —
 //! and the MCP hosting core is a plugin now too (row "mcp"), while per-MCP disable remains
 //! the panel's per-entry toggle in managed.json.

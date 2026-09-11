@@ -18,9 +18,7 @@
 
 ```bash
 cargo test --workspace
-cargo test --workspace --features mongo
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --workspace --all-targets --features mongo -- -D warnings
 ```
 
 ## 1. 现状与目标的差距

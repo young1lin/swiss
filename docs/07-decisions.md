@@ -81,22 +81,16 @@ the 117.5 MB baseline, so this is not a regression — but it is also not a savi
 
 ## ADR-004 — `mongo` is an opt-in compile feature
 
-**Status: Accepted.**
+**Status: Superseded by ADR-012 (2026-09-11): the feature and the adapter were deleted outright.**
+Kept as history: for a year of the port's life the `mongodb` driver sat behind an off-by-default
+Cargo feature, forwarded `mongo = ["lmg-mcp/mongo"]` from the bin crate, and the shipped release
+was built with `--features mongo`.
 
-The `mongodb` crate is the heaviest dependency in the set, worth an estimated 3–5 MB of the target
-budget. No MCP on the reference machine uses it (live types on 2026-09-07: 2×redis, 2×proc, 2×http,
-1×pg, 1×mysql, 1×echo).
-
-`default = []`, `mongo = ["dep:mongodb"]`. The shipped release build turns it **on** — a published
-binary must serve every adapter type the config schema documents — but a user building for their own
-machine gets a smaller binary for free, and CI gains a cheap check that the feature boundary is real.
-
-Concretely, the shipping command is `cargo build --release --features mongo`, and
-`.github/workflows/build.yml` builds every target that way. A plain `cargo build --release` is the
-*small* build, not the release artefact: it produces a binary that rejects a `mongo` MCP at startup.
-
-If a `mongo` MCP is configured and the binary was built without the feature, the failure must be a
-clear startup error naming the feature, not a panic and not a silently-missing endpoint.
+The original reasoning: the `mongodb` crate is the heaviest dependency in the set, worth an
+estimated 3–5 MB of the target budget, and no MCP on the reference machine used it (live types on
+2026-09-07: 2×redis, 2×proc, 2×http, 1×pg, 1×mysql, 1×echo). A `mongo` MCP configured on a
+featureless build had to fail with a clear startup error naming the feature, never a panic and
+never a silently-missing endpoint.
 
 ---
 
@@ -283,3 +277,30 @@ by name and the panel shows the reason instead of an empty list.
 The number this ADR deliberately does not fill in: per-remote-session RSS. It needs a real SSH
 host to open a real session against, and this machine has none — the budget row (≤ 256 KB) stays
 **unmeasured** rather than being claimed as passed.
+
+---
+
+## ADR-012 — MongoDB support is deleted, not feature-gated
+
+**Status: Accepted (2026-09-11). Supersedes ADR-004.**
+
+The user's call, made after a year of the port shipping with the feature on and never once using
+it: this machine runs no MongoDB, and the driver's weight (heaviest dependency in the set, an
+estimated 3–5 MB) bought nothing. ADR-004's compromise — keep the code, hide it behind a flag —
+cost two build combinations on every gate run and a second adapter surface to review, for a
+capability with zero users.
+
+What was deleted, whole:
+
+- the `mongo` cargo feature in the bin crate and in `lmg-mcp`, and the `mongodb` dependency;
+- `adapters/mongo.rs` and `adapters/mongo_resources.rs` (engine, tools, resources);
+- the `MongoBrowser` trait, the `BrowserFlavor::Mongo` variant, `lease_mongo`, and the
+  `/api/db/{name}/collections` + `/api/db/{name}/docs` routes;
+- the mongo column of the admin form (`DIRECT_FIELDS`, `REQUIRED_FIELD`, `TESTABLE_TYPES`) and
+  `mongo` in every built-in list a user can be shown.
+
+What survives, deliberately: a `mongo`-typed MCP in a migrated config fails at `make_adapter`
+with "the mongo adapter was removed from lmg (ADR-012); this build has no MongoDB support" —
+the Node build DOES have mongo (docs/05), so a migrated config must hear what happened, not hunt
+for a typo. The shipped build is now plain `cargo build --release`; the gate suite runs one
+feature combination.

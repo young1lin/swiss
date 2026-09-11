@@ -24,9 +24,7 @@ npx vitest run                                    # 全量，别只跑改动的�
 
 # 本仓库（复制回来之后）
 cargo test --workspace
-cargo test --workspace --features mongo
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --workspace --all-targets --features mongo -- -D warnings
 ```
 
 ## 1. 现状

@@ -17,9 +17,10 @@ The build has since become the plugin toolbox `docs/09`–`12` describe: a plugi
 Action / Run / process services, configuration-driven Jobs, a connection catalog that keeps Data
 independent of MCP, and eight crates that still link into one `lmg.exe`.
 
-Validation passes with default features and `mongo` — **848 tests** (725 unit across the eight
-packages, 123 integration) plus Clippy with `-D warnings` in both combinations. Run the gates with
-`--workspace`: without it cargo selects the root package alone, checks 187 of those tests, and
+Validation passes with default features — **951 tests** (813 unit across the eight
+packages, 138 integration) plus Clippy with `-D warnings`. MongoDB support is deleted, not
+feature-gated (ADR-012). Run the gates with
+`--workspace`: without it cargo selects the root package alone, checks 209 of those tests, and
 still reports ok.
 The MongoDB driver remains an opt-in feature so the default binary stays small.
 

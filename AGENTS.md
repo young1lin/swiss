@@ -109,17 +109,15 @@ correctness boundary.
 ## Commands
 
 ```bash
-cargo build --release --features mongo   # the shipping exe (target/release/lmg.exe) - ADR-004
-cargo test --workspace                                                 # default features
-cargo test --workspace --features mongo                                # and the shipping set
+cargo build --release             # the shipping exe (target/release/lmg.exe) - ADR-012
+cargo test --workspace            # the one feature combination there is (mongo is gone, ADR-012)
 cargo clippy --workspace --all-targets -- -D warnings                  # must be clean
-cargo clippy --workspace --all-targets --features mongo -- -D warnings # both combinations
 cargo tree -d                  # a duplicated TLS stack or runtime must fail review
 cargo run -- start --no-open   # the gateway itself, on 127.0.0.1:19999
 ```
 
-**`--workspace` is not optional.** Without it cargo selects the root package alone — 187 of the
-suite's 848 tests — and the seven member crates, 78% of the tests, are never even built. The run
+**`--workspace` is not optional.** Without it cargo selects the root package alone — 209 of the
+suite's 951 tests — and the seven member crates, most of the tests, are never even built. The run
 still reports ok. The same applies to clippy. `lmg start` / `stop` / `status` / `logs` / `token` are the CLI; `MCP_GATEWAY_TOKEN` pins
 the bearer token when you want a fixed one.
 

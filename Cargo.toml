@@ -127,11 +127,6 @@ reqwest = { version = "0.13", default-features = false, features = [
 
 [features]
 default = []
-# The heaviest driver, worth an estimated 3-5 MB — off by default for user builds, ON in the
-# shipped release (ADR-004). Forwards to the crate that carries the driver (lmg-mcp); a
-# configured mongo MCP on a featureless build fails with an error naming the feature, never
-# a panic and never a silently missing endpoint.
-mongo = ["lmg-mcp/mongo"]
 
 # Full debuginfo is what makes a debug build of this workspace unbuildable on a small paging
 # file: eight link targets, each carrying a complete PDB, exhaust it (os error 1455) when cargo

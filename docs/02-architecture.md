@@ -19,7 +19,7 @@ local-mcp-gateway-rust/
     lmg-mcp/src/                        # MCP itself: the largest crate
       registry.rs calls.rs traffic.rs paging.rs mcp_import.rs introspect.rs
       adapters/ mod.rs echo.rs proc.rs http.rs rest.rs direct.rs proxy.rs
-                sql.rs mysql.rs pg.rs redis.rs mongo.rs
+                sql.rs mysql.rs pg.rs redis.rs
                 resources.rs tool_server.rs *_browser.rs *_resources.rs
     lmg-data/src/     dbbrowser_api.rs   # /api/data/* over the connection catalog
     lmg-tunnels/src/  tunnel/…           # types, store, manager, forward, port, ssh, mcpmatch, import, api
@@ -150,7 +150,6 @@ pub trait Adapter: Send + Sync {
 
     fn db_browser(&self)    -> Option<&dyn DbBrowser>    { None }
     fn redis_browser(&self) -> Option<&dyn RedisBrowser> { None }
-    fn mongo_browser(&self) -> Option<&dyn MongoBrowser> { None }
 }
 ```
 

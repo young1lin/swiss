@@ -33,7 +33,6 @@ use serde_json::{json, Map, Value};
 pub enum BrowserFlavor {
     Db(Arc<dyn DbBrowser>),
     Redis(Arc<dyn RedisBrowser>),
-    Mongo(Arc<dyn MongoBrowser>),
     /// Registered but nothing to browse (echo / proc / http / rest). Present so the lookup
     /// errors can name the adapter type exactly as Node's did; GET /api/db skips these rows.
     None,
@@ -456,16 +455,6 @@ pub trait DbBrowser: Send + Sync {
     async fn import_table(&self, o: &Value) -> Result<Value, String>;
     /// Rename / truncate / drop a table. Refused outright on a readonly connection.
     async fn ddl_op(&self, o: &Value) -> Result<Value, String>;
-}
-
-/// The mongo flavour of the Data view: list collections, find with a JSON filter. Read-only —
-/// writes stay on the MCP's mongo_insert/update/delete tools.
-#[async_trait]
-pub trait MongoBrowser: Send + Sync {
-    fn readonly(&self) -> bool;
-    fn label(&self) -> String;
-    async fn list_collections(&self, o: &Value) -> Result<Value, String>;
-    async fn read_collection(&self, o: &Value) -> Result<Value, String>;
 }
 
 /// The redis flavour of the Data view: page keys by SCAN, read one key type-aware.

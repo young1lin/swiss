@@ -8,7 +8,7 @@
 | `node:http` + the hand-written `Router` | **`axum`** | The Node build wrote its own router to avoid express's ~9.6 MB. axum has no such problem — that comment does not transfer |
 | `mysql2`, `pg` | **`sqlx`** | One crate for both. **Do not use the `query!` macros** — they need a live database at compile time, and this is a generic SQL browser anyway. Runtime `query()` throughout |
 | `ioredis` | **`redis`** (redis-rs) | `fred` is the richer client and the heavier one; nothing here needs it |
-| `mongodb` | **`mongodb`** | The fattest crate in the set. Behind an off-by-default Cargo feature — ADR-004 |
+| `mongodb` | — | Not ported: deleted outright (ADR-012) |
 | `undici` | **`reqwest`** | Carries the `http`/`rest` adapters *and* their HTTP-proxy support, which is why undici was there |
 | `ssh2` | **`russh`** + `russh-keys` | Pure Rust, async, no libssh2 build step |
 | `zod` | **`serde`** + `schemars` | `schemars` generates the JSON Schema that `tools/list` publishes |
@@ -57,7 +57,6 @@ sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio", "tls-rustls-ring", "mysql", "postgres", "json",
 ] }
 redis = { version = "0.27", default-features = false, features = ["tokio-comp", "streams", "acl"] }
-mongodb = { version = "3", default-features = false, features = ["compat-3-0-0", "rustls-tls"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa", "des"] }
 
@@ -84,7 +83,6 @@ windows = { version = "0.58", features = [
 
 [features]
 default = []
-mongo = ["dep:mongodb"]
 
 [profile.release]
 opt-level = "z"
