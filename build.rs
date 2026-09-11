@@ -80,17 +80,21 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 mod tests {
     use super::*;
 
-    // Pinned against `date -u` output for the same instants; the algorithm is the kind of
-    // code that is "obviously right" until a leap year disagrees.
+    // NOTE: cargo never compiles a build script as a test target, so `cargo test` does not run
+    // these. They run by hand — `rustc --test build.rs -o <scratch>/build-tests.exe`, then
+    // execute it — which is how the constants below were checked against Python's
+    // `date(1970,1,1) + timedelta(days=n)`. The algorithm is the kind of code that is
+    // "obviously right" until a leap year disagrees.
     #[test]
     fn civil_dates_match_known_days() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(13_514), (2006, 12, 31)); // the `1234567890` eve
-        assert_eq!(civil_from_days(13_515), (2007, 1, 1));
-        assert_eq!(civil_from_days(20_650), (2026, 7, 14));
-        // A leap day: 2024-02-29 is day 19_781.
-        assert_eq!(civil_from_days(19_781), (2024, 2, 29));
-        assert_eq!(civil_from_days(19_782), (2024, 3, 1));
+        assert_eq!(civil_from_days(13_514), (2007, 1, 1));
+        assert_eq!(civil_from_days(13_515), (2007, 1, 2));
+        assert_eq!(civil_from_days(20_650), (2026, 7, 16));
+        // A leap day: 2024-02-29 is day 19_782, and the day after it is March.
+        assert_eq!(civil_from_days(19_781), (2024, 2, 28));
+        assert_eq!(civil_from_days(19_782), (2024, 2, 29));
+        assert_eq!(civil_from_days(19_783), (2024, 3, 1));
     }
 
     #[test]

@@ -57,12 +57,13 @@ pub fn is_launcher_noise(name: &str) -> bool {
     LAUNCHER_NOISE
         .iter()
         .any(|known| name.eq_ignore_ascii_case(known))
-        || LAUNCHER_NOISE_PREFIXES
-        .iter()
-            .any(|prefix| {
-                name.len() >= prefix.len()
-                    && name[..prefix.len()].eq_ignore_ascii_case(prefix)
-            })
+        || LAUNCHER_NOISE_PREFIXES.iter().any(|prefix| {
+            // `get`, not a byte-index slice: a variable name is arbitrary Unicode on Windows,
+            // and this runs on every name at the top of main — a multibyte character straddling
+            // the prefix length must answer "not noise", never panic the whole CLI.
+            name.get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
 }
 
 /// The noise names actually present in THIS process's environment. The exact names cover the
@@ -143,6 +144,16 @@ mod tests {
         assert!(!is_launcher_noise("CITY"));
         assert!(!is_launcher_noise("NO_COLORS_PLEASE"));
         assert!(!is_launcher_noise("WT_SESSIONS"));
+    }
+
+    #[test]
+    fn a_non_ascii_name_straddling_the_prefix_length_is_not_noise_and_does_not_panic() {
+        // Windows allows any Unicode in a variable name. Eleven ASCII bytes followed by a
+        // three-byte character put a char boundary past the CLAUDE_CODE_ prefix length (12),
+        // which a byte-index slice would panic on — at the top of main, for every command.
+        assert!(!is_launcher_noise("ABCDEFGHIJK\u{4e2d}"));
+        assert!(!is_launcher_noise("\u{4e2d}"));
+        assert!(is_launcher_noise("CLAUDE_CODE_\u{4e2d}"));
     }
 
     #[test]
