@@ -227,9 +227,10 @@
       background: var(--bar);
       border-bottom: 1px solid var(--sep);
     }
-    /* The brand carries a mark: the swiss logo (logo.svg), a red tile with a white cross. It
-       is the one saturated thing on the bar, which is what makes the bar read as a header and not
-       as a second sidebar laid on its side. */
+    /* The brand carries a mark: the swiss logo (logo.svg), a red shield with a white cross -
+       the pocket-knife emblem, distinct from the flag's plain field. It is the one saturated
+       thing on the bar, which is what makes the bar read as a header and not as a second
+       sidebar laid on its side. */
     .brand { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--f-body); font-weight: 650; letter-spacing: -0.01em; margin-right: var(--s1); }
     .brand-mark { width: 18px; height: 18px; border-radius: 5px; flex: 0 0 auto; }
     .grow { flex: 1; }

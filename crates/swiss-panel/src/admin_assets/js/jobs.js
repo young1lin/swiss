@@ -22,6 +22,7 @@ import { closeSheet } from "./add-sheet.js";
 import { jobDotClass, jobRowHtml, jobsChipText, loadJobs } from "./polling.js";
 import { argFieldsHtml, readRunArgs } from "./run.js";
 import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
+import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
 
 var probed = null; // null = not probed yet; then the cached boolean answer for this page load
 
@@ -161,9 +162,123 @@ function deleteJob(job) {
 
 /* --- the create/edit sheet (v1: the shape every field of this form can spell) ------------------- */
 
+/* The schedule builder. Cron's grammar was the complaint: "every morning at 5:59" should not
+   have to be composed as "59 5 * * *". The builder offers the four ways a person actually
+   thinks about "when" (interval, daily, weekly, monthly) as plain controls, keeps raw cron as
+   a fifth mode for expressions the presets cannot spell, and answers every state with one
+   plain sentence (cronstrue, vendored under js/vendor/cronstrue, MIT) — the sentence IS the
+   validation: what reads back wrong is wrong, and what cannot be said does not save. */
+
+/** The wire takes one argv line: the textarea is typing comfort for a long command, and its
+ *  breaks fold to a single space. The preview under the box shows exactly this join, so a line
+ *  break never silently means a second command — one job supervises one process. */
+function joinCommand(text) { return text.trim().replace(/\s*\n+\s*/g, " "); }
+
+var DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function two(n) { return (n < 10 ? "0" : "") + n; }
+
+/** cronstrue, with the two checks of our own: exactly five fields (the API is a 5-field cron;
+ *  cronstrue also speaks 6-7 field dialects, whose descriptions would lie about what saves),
+ *  and a missing global means the vendor file was not served — say that, not a TypeError. */
+var cronstrueLib = null;
+
+/** cronstrue, loaded once through the vendored shim (docs/14 §2: UMD bundles arrive as
+ *  classic scripts, not imports). Sheets call ensureCronstrue with their own re-say as the
+ *  ready callback; before the library lands, describeCron's complaint names it instead of
+ *  throwing a TypeError about it. */
+function ensureCronstrue(ready) {
+  if (cronstrueLib) { if (ready) ready(cronstrueLib); return; }
+  loadCronstrue().then(function (lib) {
+    cronstrueLib = lib;
+    if (ready) ready(lib);
+  }, function () { /* the say-line's own complaint covers the failure */ });
+}
+
+function describeCron(expr) {
+  if (!/^(\S+\s+){4}\S+$/.test(expr)) throw new Error("give all five cron fields");
+  if (!cronstrueLib) throw new Error("cronstrue is still loading — one moment");
+  return cronstrueLib.toString(expr, { throwExceptionOnParseError: true });
+}
+
+/** The builder state a job's trigger round-trips into. A cron the presets can spell comes back
+ *  as its preset; anything else lands in the raw-cron mode rather than being flattened into a
+ *  schedule the presets only almost express. */
+function schedFromJob(v) {
+  var every = v.everySec == null || v.everySec === "" ? null : Number(v.everySec);
+  if (every) {
+    // The largest unit that divides the interval evenly, so "7200" reads back as 2 hours.
+    if (every % 3600 === 0) return { mode: "interval", every: every / 3600, unit: "hours" };
+    if (every % 60 === 0) return { mode: "interval", every: every / 60, unit: "minutes" };
+    return { mode: "interval", every: every, unit: "seconds" };
+  }
+  var cron = v.cron || "", m;
+  if ((m = cron.match(/^(\d+) (\d+) \* \* \*$/))) {
+    return { mode: "daily", time: two(+m[2]) + ":" + two(+m[1]) };
+  }
+  if ((m = cron.match(/^(\d+) (\d+) \* \* (.+)$/)) && m[4] !== "*") {
+    var days = [], ok = true;
+    m[4].split(",").forEach(function (part) {
+      var r = part.split("-");
+      var a = +r[0], b = +r[r.length - 1];
+      if (isNaN(a) || isNaN(b) || a < 0 || b > 7) { ok = false; return; }
+      a = a % 7; b = b % 7; // cron's 7 is Sunday again
+      for (var d = a; ; d = (d + 1) % 7) {
+        if (days.indexOf(d) < 0) days.push(d);
+        if (d === b) break;
+      }
+    });
+    if (ok) {
+      days.sort(function (a, b) { return a - b; });
+      return { mode: "weekly", time: two(+m[2]) + ":" + two(+m[1]), days: days };
+    }
+  }
+  if ((m = cron.match(/^(\d+) (\d+) (\d+) \* \*$/))) {
+    return { mode: "monthly", time: two(+m[2]) + ":" + two(+m[1]), day: +m[3] };
+  }
+  if (cron) return { mode: "cron", cron: cron };
+  return { mode: "daily", time: "08:00" }; // a new job's opening state: a benign default
+}
+
+/** Validate the builder state and produce what saves: {everySec}|{cron} plus the sentence the
+ *  preview shows. Throws the field-level complaint; the sheet prints it, the save toasts it. */
+function schedToBody(s) {
+  if (s.mode === "interval") {
+    if (!(s.every > 0)) throw new Error("the interval needs a number of " + s.unit + " (at least 1)");
+    var mult = s.unit === "hours" ? 3600 : s.unit === "minutes" ? 60 : 1;
+    // The unit options are plural ("hours"); the sentence singularises for "every 1 hour".
+    var unit = s.every === 1 ? s.unit.replace(/s$/, "") : s.unit;
+    return { body: { everySec: s.every * mult }, say: "Every " + s.every + " " + unit + "." };
+  }
+  var t = /^(\d{1,2}):(\d{2})$/.exec(s.time || "");
+  if (!t) throw new Error("the time must be HH:MM (24-hour)");
+  var hh = +t[1], mm = +t[2];
+  if (hh > 23 || mm > 59) throw new Error("the time must be a real time of day");
+  var expr;
+  if (s.mode === "daily") expr = mm + " " + hh + " * * *";
+  else if (s.mode === "weekly") {
+    if (!s.days || !s.days.length) throw new Error("weekly needs at least one day picked");
+    expr = mm + " " + hh + " * * " + s.days.join(",");
+  } else if (s.mode === "monthly") {
+    if (!(s.day >= 1 && s.day <= 31)) throw new Error("the day of month must be between 1 and 31");
+    expr = mm + " " + hh + " " + s.day + " * *";
+  } else {
+    expr = (s.cron || "").trim().replace(/\s+/g, " ");
+    if (!expr) throw new Error("the cron expression is empty");
+    return { body: { cron: expr }, say: describeCron(expr) + "." };
+  }
+  return { body: { cron: expr }, say: describeCron(expr) + "." };
+}
+
+/* The live builder state of whichever v1 sheet is open — saveJob reads it back; the sheet's
+   own closures keep it current on every input. */
+var schedState = null;
+
 function openJobSheet(job) {
   var editing = !!job;
   var v = job || { name: "", command: "", everySec: "", cron: "", timeoutMs: "", cwd: "", env: {}, enabled: true };
+  var sched = schedFromJob(v);
+  schedState = sched;
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit job" : "New job") + '">' +
       '<div class="sheet-head"><h2>' + (editing ? "Edit " + esc(job.name) : "New job") + "</h2></div>" +
@@ -171,16 +286,22 @@ function openJobSheet(job) {
         // The name IS the identity (the PUT path is the job), so it is fixed once created.
         '<label class="field"><span>Name</span><input id="jf-name" value="' + esc(v.name || "") + '"' +
           (editing ? " disabled" : "") + ' placeholder="nightly-vacuum" autocomplete="off"></label>' +
-        '<label class="field"><span>Command</span><input id="jf-command" value="' + esc(v.command) + '"' +
-          ' placeholder="cmd /c backup.bat" autocomplete="off"></label>' +
-        '<div class="hint">ARGV, not a shell line — pipes and redirections need "cmd /c \u2026" (Windows) or "sh -c \u2026" (Unix) around them. ${ENV} refs expand at run time.</div>' +
-        '<div class="two">' +
-          '<label class="field"><span>everySec</span><input id="jf-every" value="' + esc(v.everySec == null ? "" : String(v.everySec)) + '" placeholder="3600" autocomplete="off"></label>' +
-          '<label class="field"><span>cron (local time)</span><input id="jf-cron" value="' + esc(v.cron || "") + '" placeholder="30 3 * * *" autocomplete="off"></label>' +
+        '<label class="field"><span>Command</span><textarea id="jf-command" rows="2" placeholder="cmd /c backup.bat --flag value" spellcheck="false">' + esc(v.command) + "</textarea></label>" +
+        '<div class="sched-say cmd-say" id="jf-cmd-say"></div>' +
+        '<div class="hint">One command — a job supervises one process, not a shell script. Pipes and redirections need "cmd /c \u2026" (Windows) or "sh -c \u2026" (Unix) around them. ${ENV} refs expand at run time; several steps belong in a script the command runs, or in several jobs.</div>' +
+        '<div class="sheet-cap">Schedule</div>' +
+        '<div class="sched" id="jf-sched">' +
+          '<div class="seg" role="tablist">' + ["interval", "daily", "weekly", "monthly", "cron"].map(function (m) {
+            return '<button type="button" role="tab" data-mode="' + m + '" aria-selected="' + (sched.mode === m) + '">' + m + "</button>";
+          }).join("") + "</div>" +
+          '<div id="jf-sched-fields"></div>' +
+          '<div class="sched-say" id="jf-say"></div>' +
         "</div>" +
-        '<div class="hint">Fill exactly one of the two: an interval, or a 5-field cron in local time.</div>' +
+        '<div class="sheet-cap">Environment</div>' +
+        '<div class="sheet-cap">Options</div>' +
         '<div class="two">' +
-          '<label class="field"><span>timeoutMs</span><input id="jf-timeout" value="' + esc(v.timeoutMs == null ? "" : String(v.timeoutMs)) + '" placeholder="600000" autocomplete="off"></label>' +
+          '<label class="field"><span>Timeout (minutes)</span><input id="jf-timeout" type="number" min="0.5" step="0.5" value="' +
+            (v.timeoutMs ? Math.max(0.5, Math.round(v.timeoutMs / 6000) / 10) : 10) + '" autocomplete="off"></label>' +
           '<label class="field"><span>Working directory</span><input id="jf-cwd" value="' + esc(v.cwd || "") + '" placeholder="Optional" autocomplete="off"></label>' +
         "</div>" +
         '<label class="field"><span>Environment variables</span><textarea id="jf-env" rows="3" placeholder="DEPLOY_ENV=staging&#10;LOG_DIR=C:\\logs" spellcheck="false">' + esc(envToLines(v.env)) + "</textarea></label>" +
@@ -196,28 +317,127 @@ function openJobSheet(job) {
   $("jf-advanced").onclick = function () { void openV2Sheet(job); };
   $("jf-save").onclick = function () { void saveJob(job); };
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
+
+  /* The builder's two-way wire: field edits flow into the state and the sentence re-says
+     itself; a mode switch re-renders the mode's fields from the state it is switching to. */
+  function readFields() {
+    if (sched.mode === "interval") {
+      sched.every = Number($("jf-ev").value) || 0;
+      sched.unit = $("jf-ev-u").value;
+    } else if (sched.mode === "cron") {
+      sched.cron = $("jf-cron-in").value;
+    } else {
+      sched.time = $("jf-at").value || "";
+      if (sched.mode === "weekly") {
+        sched.days = [];
+        Array.prototype.forEach.call(document.querySelectorAll("#jf-days button.on"), function (b) {
+          sched.days.push(+b.getAttribute("data-dow"));
+        });
+      } else if (sched.mode === "monthly") {
+        sched.day = Number($("jf-md").value) || 0;
+      }
+    }
+    say();
+  }
+
+  function say() {
+    var el = $("jf-say");
+    el.className = "sched-say";
+    el.textContent = "";
+    try { el.textContent = schedToBody(sched).say; }
+    catch (err) { el.className = "sched-say bad"; el.textContent = err.message || String(err); }
+  }
+
+  function renderFields() {
+    var html = "";
+    if (sched.mode === "interval") {
+      html = '<div class="two">' +
+        '<label class="field"><span>Run every</span><input id="jf-ev" type="number" min="1" value="' + (sched.every || "") + '" autocomplete="off"></label>' +
+        '<label class="field"><span>Unit</span><select id="jf-ev-u">' +
+          ["seconds", "minutes", "hours"].map(function (u) {
+            return '<option value="' + u + '"' + (sched.unit === u ? " selected" : "") + ">" + u + "</option>";
+          }).join("") + "</select></label></div>";
+    } else if (sched.mode === "cron") {
+      html = '<label class="field"><span>Cron expression (local time)</span><input id="jf-cron-in" value="' + esc(sched.cron || "") + '" placeholder="30 3 * * *" autocomplete="off"></label>' +
+        '<div class="hint">Five fields: minute hour day-of-month month day-of-week.</div>';
+    } else {
+      var at = '<label class="field"><span>At</span><input id="jf-at" type="time" value="' + esc(sched.time || "08:00") + '"></label>';
+      if (sched.mode === "daily") html = at;
+      if (sched.mode === "weekly") {
+        html = '<label class="field"><span>On</span><div class="days" id="jf-days">' +
+          DOW_LABELS.map(function (d, i) {
+            var on = sched.days && sched.days.indexOf(i) >= 0;
+            return '<button type="button" data-dow="' + i + '" class="' + (on ? "on" : "") + '" aria-pressed="' + on + '">' + d + "</button>";
+          }).join("") + "</div></label>" + at;
+      }
+      if (sched.mode === "monthly") {
+        html = '<div class="two">' +
+          '<label class="field"><span>On day</span><input id="jf-md" type="number" min="1" max="31" value="' + (sched.day || 1) + '" autocomplete="off"></label>' +
+          at + "</div>";
+      }
+    }
+    $("jf-sched-fields").innerHTML = html;
+    Array.prototype.forEach.call($("jf-sched-fields").querySelectorAll("input, select"), function (el2) {
+      el2.oninput = readFields;
+      el2.onchange = readFields;
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("#jf-days button"), function (b) {
+      b.onclick = function () {
+        b.classList.toggle("on");
+        b.setAttribute("aria-pressed", b.classList.contains("on") ? "true" : "false");
+        readFields();
+      };
+    });
+    say();
+  }
+
+  Array.prototype.forEach.call($("jf-sched").querySelectorAll("[data-mode]"), function (b) {
+    b.onclick = function () {
+      readFields();
+      var next = b.getAttribute("data-mode");
+      // Switching keeps what the modes share and fills a sane opening state for what they do
+      // not, so the schedule the user was shaping stays shapeable.
+      if (next !== "interval" && !sched.time) sched.time = "08:00";
+      if (next === "weekly" && !sched.days) sched.days = [1];
+      if (next === "monthly" && !sched.day) sched.day = 1;
+      sched.mode = next;
+      Array.prototype.forEach.call($("jf-sched").querySelectorAll("[data-mode]"), function (b2) {
+        b2.setAttribute("aria-selected", b2.getAttribute("data-mode") === next ? "true" : "false");
+      });
+      renderFields();
+    };
+  });
+  renderFields();
+  ensureCronstrue(function () { say(); }); // the sentence appears the moment the library does
+  var cmdSay = $("jf-cmd-say");
+  function sayCommand() {
+    cmdSay.className = "sched-say cmd-say";
+    cmdSay.textContent = "";
+    var joined = joinCommand($("jf-command").value);
+    if (joined) cmdSay.textContent = "Saves as: " + joined;
+  }
+  $("jf-command").oninput = sayCommand;
+  sayCommand();
   $("jf-command").focus();
 }
 
 async function saveJob(existing) {
   // On edit the name input is disabled, so it still carries the identity the URL needs.
   var name = $("jf-name").value.trim();
-  var command = $("jf-command").value.trim();
-  var every = $("jf-every").value.trim();
-  var cron = $("jf-cron").value.trim();
+  // The preview under the box has been showing this exact join all along.
+  var command = joinCommand($("jf-command").value);
   if (!name) { toast("Name is required", true); return; }
   if (!command) { toast("Command is required", true); return; }
-  if (!every && !cron) { toast("Give everySec or cron — exactly one", true); return; }
-  if (every && cron) { toast("everySec and cron are mutually exclusive", true); return; }
-  if (every && !/^\d+$/.test(every)) { toast("everySec must be a whole number of seconds", true); return; }
+  // The builder produces (and has already said) the schedule: the same sentence it showed is
+  // what saves, and the same complaint it printed is what toasts here.
+  var sched;
+  try { sched = schedToBody(schedState); } catch (err) { toast(String(err.message || err), true); return; }
   var body = { name: name, command: command, enabled: $("jf-enabled").checked };
-  if (every) body.everySec = Number(every);
-  if (cron) body.cron = cron;
-  var t = $("jf-timeout").value.trim();
-  if (t) {
-    if (!/^\d+$/.test(t)) { toast("timeoutMs must be a whole number", true); return; }
-    body.timeoutMs = Number(t);
-  }
+  if (sched.body.everySec != null) body.everySec = sched.body.everySec;
+  else body.cron = sched.body.cron;
+  // Minutes in the sheet, milliseconds on the wire — nobody should ever have to type 600000.
+  var mins = Number($("jf-timeout").value);
+  if (mins > 0) body.timeoutMs = Math.round(mins * 60000);
   var cwd = $("jf-cwd").value.trim();
   if (cwd) body.cwd = cwd;
   // The env box: every line a KEY=value the run will be handed. A bad line stops the
@@ -295,7 +515,8 @@ async function openV2Sheet(job) {
               return '<option value="' + f + '"' + (form.firstRun === f ? " selected" : "") + ">" + f + "</option>";
             }).join("") + "</select></label>" +
         "</div>" +
-        '<label class="field" id="jv-cron-row"><span>cron (local time)</span><input id="jv-cron" value="' + esc(form.cron) + '" placeholder="30 3 * * *" autocomplete="off"></label>' +
+        '<label class="field" id="jv-cron-row"><span>cron (local time)</span><input id="jv-cron" value="' + esc(form.cron) + '" placeholder="30 3 * * *" autocomplete="off">' +
+          '<div class="sched-say" id="jv-cron-say"></div></label>' +
         '<div class="two">' +
           '<label class="field"><span>timeoutMs</span><input id="jv-timeout" value="' + esc(form.timeoutMs) + '" placeholder="600000" autocomplete="off"></label>' +
           '<label class="check"><input type="checkbox" id="jv-disabled"' + (form.disabled ? " checked" : "") + ">Disabled</label>" +
@@ -358,6 +579,20 @@ async function openV2Sheet(job) {
   }
   syncTriggerRows();
   $("jv-kind").onchange = syncTriggerRows;
+
+  // The raw cron field gets the same one-sentence answer as the builder: whatever mode a
+  // definition came from, the expression on screen is the schedule that will fire.
+  var jvSay = $("jv-cron-say");
+  function sayV2() {
+    var expr = $("jv-cron").value.trim();
+    jvSay.className = "sched-say";
+    jvSay.textContent = "";
+    try { if (expr) jvSay.textContent = describeCron(expr) + "."; }
+    catch (err) { jvSay.className = "sched-say bad"; jvSay.textContent = err.message || String(err); }
+  }
+  $("jv-cron").oninput = sayV2;
+  sayV2();
+  ensureCronstrue(function () { sayV2(); });
 
   // Switching the action type rebuilds the input form from that capability's schema.
   $("jv-action").onchange = function () {

@@ -568,3 +568,40 @@
     .term-dot.bad { background: var(--t-bad); }
     .term-zoom { margin-left: auto; }   /* the zoom note sits at the right edge, away from the status */
     .db-hint { color: var(--text-3); font-size: var(--f-body); padding: var(--s4); }
+
+    /* --- Jobs schedule builder ------------------------------------------------------------------- */
+    /* The v1 sheet's schedule control. Four ways a person thinks about "when" as presets, raw
+       cron as a fifth mode for what the presets cannot spell, and the schedule said back in one
+       plain sentence - the sentence is the validation. Everything here is the panel's own
+       vocabulary: .seg for the modes, .field for the mode's inputs, no new chrome. */
+    .sched .seg { display: flex; width: 100%; margin-bottom: var(--s3); }
+    .sched .seg button { flex: 1; }
+    /* Weekday picks: toggle buttons, quiet until on - where the accent says "picked" the way a
+       checked box would, without the box. */
+    .days { display: flex; gap: var(--s1); }
+    .days button {
+      flex: 1; padding: 5px 0; border: 0; border-radius: var(--r-btn); cursor: pointer;
+      font-size: var(--f-label); font-weight: 500; color: var(--text-2); background: var(--sep-soft);
+    }
+    .days button:hover { color: var(--text); }
+    .days button.on {
+      background: color-mix(in srgb, var(--accent) 16%, var(--card));
+      color: var(--accent); font-weight: 600;
+    }
+    /* The one-sentence answer. What reads back wrong is wrong - so an unusable schedule shows
+       in the error red, and a usable one in the quiet secondary text, never both. */
+    .sched-say {
+      margin-top: var(--s1); padding: var(--s2) var(--s3); border-radius: 8px;
+      background: var(--sep-soft); font-size: var(--f-label); color: var(--text-2);
+      min-height: 17px;
+    }
+    .sched-say:empty { display: none; }
+    .sched-say.bad { color: var(--red); }
+    /* The command's answer line, unlike the schedule sentence, IS a value you would copy —
+       so it earns the mono face (base.css rule 1). */
+    .cmd-say { font-family: var(--mono); }
+    /* Section captions inside a sheet - the pane's .sec-cap, spaced for the sheet's grid. */
+    .sheet-cap {
+      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase;
+      letter-spacing: .04em; color: var(--text-3); margin-top: var(--s2);
+    }
