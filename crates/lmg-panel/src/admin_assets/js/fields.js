@@ -133,7 +133,7 @@ function fieldHtml(spec, val, p) {
   var id = p + spec.k;
   if (spec.bool) {
     var on = val === undefined ? !!spec.def : !!val && val !== "false";
-    return '<div><label class="check"><input type="checkbox" id="' + id + '"' + (on ? " checked" : "") + '>' +
+    return '<div class="fld"><label class="check"><input type="checkbox" id="' + id + '"' + (on ? " checked" : "") + '>' +
       esc(spec.label) + "</label>" + (spec.hint ? '<div class="hint">' + esc(spec.hint) + "</div>" : "") + "</div>";
   }
   /* `json` fields hold an authored structure (a rest MCP's tool declarations) rather than a value or a
@@ -146,7 +146,7 @@ function fieldHtml(spec, val, p) {
   var body = spec.area
     ? "<textarea id=\"" + id + '"' + fill + (spec.ph ? ' placeholder="' + esc(spec.ph) + '"' : "") + ">" + esc(v) + "</textarea>"
     : '<input type="text" id="' + id + '" value="' + esc(v) + '"' + fill + (spec.ph ? ' placeholder="' + esc(spec.ph) + '"' : "") + ">";
-  return '<div><label class="field"><span>' + esc(spec.label) + "</span>" + body + "</label>" +
+  return '<div class="fld"><label class="field"><span>' + esc(spec.label) + "</span>" + body + "</label>" +
     (spec.hint ? '<div class="hint">' + esc(spec.hint) + "</div>" : "") + "</div>";
 }
 

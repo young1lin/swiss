@@ -51,46 +51,57 @@
       --sans: Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
       --mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
 
-      /* Light. Cards are off-white and the canvas sits a step below what it was: a full-height wall
-         of #fff beside a near-white canvas is where the glare came from, and taking both down a
-         notch keeps the same card/canvas separation with less of it. The status colours are the
-         darker, less fluorescent members of their Apple pairs for the same reason — a column of
-         nine saturated green pills is a lot of light for what is only a row control. */
-      --bg: #ececf1;
-      --sidebar: #e3e3ea;
-      --card: #fbfbfd;
-      --text: #1d1d1f;
-      --text-2: #6b6b70;
-      --text-3: #96969b;
-      --sep: rgba(0, 0, 0, 0.09);
-      --sep-soft: rgba(0, 0, 0, 0.055);
-      --hover: rgba(0, 0, 0, 0.045);
-      --accent: #0069d9;
+      /* Light. Four surfaces, each one step apart, and every step visible: the canvas is a cool
+         near-white, the sidebar and the bars sit one step below it, the cards one step above it
+         (pure white, lifted by a one-pixel shadow rather than a heavier hairline). The previous
+         palette put the toolbar, the sidebar and the canvas on three near-identical greys and the
+         cards on a fifth — the whole panel read as one flat grey slab with rectangles drawn on it.
+         The status colours are the darker, less fluorescent members of their pairs: a column of
+         nine saturated green dots is a lot of light for what is only a row marker. */
+      --bg: #f5f6f8;
+      --sidebar: #eef0f3;
+      --bar: #ffffff;
+      --card: #ffffff;
+      --field: #ffffff;
+      --text: #15171c;
+      --text-2: #5f6673;
+      --text-3: #8b92a0;
+      --sep: rgba(20, 24, 36, 0.10);
+      --sep-soft: rgba(20, 24, 36, 0.06);
+      --hover: rgba(20, 24, 36, 0.045);
+      --accent: #2563eb;
       --accent-text: #ffffff;
-      --green: #248a3d;
-      --red: #d70015;
-      --amber: #b25000;
-      --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.22);
-      --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.16);
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --shadow-card: 0 1px 2px rgba(20, 24, 36, 0.05), 0 0 0 1px rgba(20, 24, 36, 0.045);
+      --shadow-btn: 0 1px 1px rgba(20, 24, 36, 0.04);
+      --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px rgba(20, 24, 36, 0.06);
+      --shadow-pop: 0 8px 24px rgba(20, 24, 36, 0.14), 0 0 0 1px rgba(20, 24, 36, 0.06);
     }
-    /* Dark. Written once; `data-theme` is always resolved before it reaches the DOM. */
+    /* Dark. Written once; `data-theme` is always resolved before it reaches the DOM. The same
+       four-step ladder, inverted: bars and sidebar darkest, canvas one up, cards one above that. */
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #1c1c1e;
-      --sidebar: #252527;
-      --card: #2c2c2e;
-      --text: #f2f2f7;
-      --text-2: #9b9ba0;
-      --text-3: #6e6e73;
-      --sep: rgba(255, 255, 255, 0.1);
+      --bg: #17181c;
+      --sidebar: #1e1f24;
+      --bar: #1e1f24;
+      --card: #24262c;
+      --field: #1b1c21;
+      --text: #ecedf1;
+      --text-2: #9a9fab;
+      --text-3: #6b7080;
+      --sep: rgba(255, 255, 255, 0.10);
       --sep-soft: rgba(255, 255, 255, 0.06);
       --hover: rgba(255, 255, 255, 0.06);
-      --accent: #0a84ff;
-      --green: #30d158;
-      --red: #ff453a;
-      --amber: #ffd60a;
-      --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6);
-      --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
+      --accent: #3b82f6;
+      --green: #4ade80;
+      --red: #f87171;
+      --amber: #fbbf24;
+      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.06);
+      --shadow-btn: none;
+      --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
     }
 
     * { box-sizing: border-box; }
@@ -114,15 +125,16 @@
     /* A push button, not a pill: macOS reserves the full-round shape for toolbar segments and tags.
        These are "Start", "Try", "Read" — rounded rects. */
     .btn {
-      font-size: var(--f-body); font-weight: 500;
+      font-size: var(--f-body); font-weight: 500; line-height: 20px;
       padding: 4px var(--s3); border-radius: var(--r-btn);
       background: var(--card); color: var(--text);
-      box-shadow: inset 0 0 0 1px var(--sep);
-      transition: background .12s ease;
+      box-shadow: inset 0 0 0 1px var(--sep), var(--shadow-btn);
+      transition: background .12s ease, box-shadow .12s ease;
       white-space: nowrap;
     }
-    .btn:hover { background: var(--hover); }
-    .btn.primary { background: var(--accent); color: var(--accent-text); box-shadow: none; font-weight: 550; }
+    .btn:hover { background: color-mix(in srgb, var(--hover), var(--card)); }
+    .btn:active { box-shadow: inset 0 0 0 1px var(--sep); }
+    .btn.primary { background: var(--accent); color: var(--accent-text); box-shadow: var(--shadow-btn); font-weight: 550; }
     .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
     .btn.danger { color: var(--red); }
     .btn:disabled, .btn.disabled { opacity: .4; cursor: default; background: var(--card); }
@@ -152,13 +164,17 @@
     .group-cap { font-size: var(--f-caption); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: var(--s4) var(--s4) var(--s1); }
     .btn.icon { padding: 4px 8px; font-size: 14px; line-height: 1; color: var(--text-2); }
 
+    /* Fields sit on --field, not --card: inside a white card or a white sheet a white input has no
+       edge but its hairline, and on the dark side a field one step darker than its card is what
+       makes it read as a well you type into rather than a label. */
     input, select, textarea {
       font: inherit; width: 100%;
-      color: var(--text); background: var(--card);
+      color: var(--text); background: var(--field);
       border: 1px solid var(--sep); border-radius: var(--r-row);
       padding: 5px var(--s2);
       transition: border-color .12s ease, box-shadow .12s ease;
     }
+    input::placeholder, textarea::placeholder { color: var(--text-3); }
     input:focus, select:focus, textarea:focus {
       outline: none; border-color: var(--accent);
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
@@ -172,10 +188,10 @@
     select.dd-native { display: none !important; }
     .dd { display: inline-flex; align-items: center; gap: var(--s2); width: auto; min-width: 0;
       font: inherit; color: var(--text); text-align: left;
-      background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-row);
+      background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row);
       padding: 5px var(--s2); cursor: pointer;
       transition: border-color .12s ease, box-shadow .12s ease; }
-    .dd:hover { background: var(--hover); }
+    .dd:hover { background: color-mix(in srgb, var(--hover), var(--field)); }
     .dd:focus { outline: none; border-color: var(--accent);
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
     .dd[aria-expanded="true"] { border-color: var(--accent); }
@@ -206,12 +222,22 @@
     /* A macOS toolbar has no row of outlined pills. Its items are borderless until you point at them,
        and its readouts are plain text — so .btn and .chip both shed their chrome in here. */
     .toolbar {
-      height: 44px; display: flex; align-items: center; gap: var(--s3);
+      height: 48px; display: flex; align-items: center; gap: var(--s3);
       padding: 0 var(--s3) 0 var(--s4);
-      background: var(--sidebar);
+      background: var(--bar);
       border-bottom: 1px solid var(--sep);
     }
-    .brand { font-size: var(--f-body); font-weight: 600; }
+    /* The brand carries a mark: a small accent tile with the panel's own status-dot inside it. It
+       is the one saturated thing on the bar, which is what makes the bar read as a header and not
+       as a second sidebar laid on its side. */
+    .brand { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--f-body); font-weight: 650; letter-spacing: -0.01em; margin-right: var(--s1); }
+    .brand::before {
+      content: ""; width: 20px; height: 20px; border-radius: 6px; flex: none;
+      background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 65%, #7c3aed));
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 1px 2px rgba(20, 24, 36, 0.18);
+      -webkit-mask: radial-gradient(circle at 50% 50%, transparent 3.5px, #000 4.5px);
+              mask: radial-gradient(circle at 50% 50%, transparent 3.5px, #000 4.5px);
+    }
     .grow { flex: 1; }
     .toolbar .btn {
       background: none; box-shadow: none; color: var(--text-2); font-weight: 450;
@@ -234,8 +260,8 @@
        dressed in the toolbar's own vocabulary so no new colour enters the panel. */
     .subbar {
       display: flex; align-items: center; gap: var(--s3);
-      padding: var(--s1) var(--s4);
-      background: var(--sidebar); border-bottom: 1px solid var(--sep);
+      padding: 6px var(--s4);
+      background: var(--bar); border-bottom: 1px solid var(--sep);
     }
 
     /* --- sidebar ------------------------------------------------------------------------------- */
@@ -243,8 +269,8 @@
       width: 248px; flex: none; display: flex; flex-direction: column;
       background: var(--sidebar); border-right: 1px solid var(--sep);
     }
-    .side-head { display: flex; gap: var(--s1); padding: var(--s2) var(--s2) var(--s1); }
-    .side-head input { background: var(--card); }
+    .side-head { display: flex; gap: var(--s1); padding: var(--s3) var(--s2) var(--s1); }
+    .side-head input { background: var(--field); }
     .side-head .btn { background: none; box-shadow: none; }
     .side-cap {
       font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
@@ -258,15 +284,16 @@
        method (http / npx / uvx / ...), which is short, uniform, and the thing you actually scan for. */
     .side-row {
       display: flex; align-items: center; gap: var(--s2);
-      width: 100%; height: 32px; flex: none; text-align: left;
+      width: 100%; height: 30px; flex: none; text-align: left;
       padding: 0 var(--s2); border-radius: var(--r-row);
       color: var(--text);
     }
     .side-row:hover { background: var(--hover); }
-    /* Tinted, not a solid blue slab: every row carries a semantic status dot (green / red / amber),
-       and those wash out against a saturated fill. State has to survive selection. */
-    .side-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-    .side-row[aria-selected="true"] .side-name { color: var(--accent); font-weight: 590; }
+    /* Selection is the card colour lifted off the sidebar with a hairline shadow — the Finder /
+       Xcode source-list idiom — and the name takes the accent. A tinted blue slab washed out the
+       status dot every row carries; state has to survive selection. */
+    .side-row[aria-selected="true"] { background: var(--card); box-shadow: var(--shadow-card); }
+    .side-row[aria-selected="true"] .side-name { color: var(--accent); font-weight: 600; }
     /* Drag-to-reorder: the insertion point, shown on the row the payload would land beside. */
     .side-row.dragging { opacity: 0.55; }
     .side-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }

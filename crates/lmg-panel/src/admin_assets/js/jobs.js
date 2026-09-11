@@ -131,13 +131,16 @@ async function runJob(name) {
   // poll gives up after 30 minutes and lets the history sheet tell the rest of the story.
   for (var i = 0; i < 1800; i++) {
     await new Promise(function (res) { setTimeout(res, 1000); });
+    // The coordinator's run view is FLAT ({runId, state, ms, …}) — only the sync door wraps
+    // its record in {run}. Reading v.run here left the button on "…" for the full 30-minute
+    // poll after a 40 ms echo had long finished.
     var v = await apiJson("/api/runs/" + runId);
-    if (!v || !v.run) continue;
-    if (v.run.state === "queued" || v.run.state === "running") continue;
+    if (!v || !v.state) continue;
+    if (v.state === "queued" || v.state === "running") continue;
     delete state.jobs.busy[name];
-    var ok = v.run.state === "succeeded";
-    toast(name + ": " + v.run.state + (v.run.ms != null ? " in " + v.run.ms + " ms" : "") +
-      (v.run.error ? " \u2014 " + v.run.error : ""), !ok);
+    var ok = v.state === "succeeded";
+    toast(name + ": " + v.state + (v.ms != null ? " in " + v.ms + " ms" : "") +
+      (v.error ? " \u2014 " + v.error : ""), !ok);
     await loadJobs();
     return;
   }
@@ -471,7 +474,7 @@ function renderRunsSheet(nextBefore) {
         '<span class="dot ' + (r.ok ? "up" : "down") + '"></span>' +
         '<span class="call-tool">' + esc(whenLabel(r.at)) + "</span>" +
         '<span class="call-meta">' + esc(historyMeta(r)) + "</span>" +
-        '<span class="chev">&#9662;</span>' +
+        '<span class="chev">&#8250;</span>' +
       "</button>" +
       '<div class="call-body" hidden><pre class="logs">' +
         esc((r.error ? r.error + "\n\n" : "") + (r.output || "") +
@@ -484,7 +487,11 @@ function renderRunsSheet(nextBefore) {
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="Run history">' +
       '<div class="sheet-head"><h2>Runs — ' + esc(hist.name) + "</h2></div>" +
       '<div class="sheet-body">' +
-        (rows || '<div class="rowmsg">No runs recorded yet — wait for the schedule, or press Run now.</div>') +
+        // One card holding every run, so the rows stack flush instead of each taking the
+        // sheet's field gap — forty runs read as one list, not forty islands.
+        '<div class="group">' +
+        (rows || '<div class="row"><span class="rowmsg">No runs recorded yet — wait for the schedule, or press Run now.</span></div>') +
+        "</div>" +
       "</div>" +
       '<div class="sheet-foot">' +
         (nextBefore ? '<button class="btn" id="jr-more">Load more</button>' : "") +
@@ -499,7 +506,10 @@ function renderRunsSheet(nextBefore) {
   Array.prototype.forEach.call($("sheet").querySelectorAll(".call-sum"), function (b) {
     b.onclick = function () {
       var body = b.parentElement.querySelector(".call-body");
-      if (body) body.hidden = !body.hidden;
+      if (!body) return;
+      body.hidden = !body.hidden;
+      // .open is what turns the chevron — the Logs and Traffic rows key on it, not on `hidden`.
+      b.parentElement.classList.toggle("open", !body.hidden);
     };
   });
 }

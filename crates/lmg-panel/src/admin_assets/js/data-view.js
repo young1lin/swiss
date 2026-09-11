@@ -1,6 +1,6 @@
 import { $, apiJson, el, state } from "./util.js";
 import { dbIsMongo, dbIsRedis, dbLoadCollections, dbLoadKeys, dbLoadRedisValue, dbOpenMongo } from "./data-browsers.js";
-import { dbSqlPaint } from "./data-filters.js";
+import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
 
@@ -107,7 +107,12 @@ async function loadDbView() {
     dbDropEdits();
   }
   renderDbSide();
-  renderDbToolbar();
+  // The skeleton above was drawn before /api/db answered, i.e. with no connection: its hint said
+  // "No database MCP registered" and its console wore the SQL placeholder. With the connection
+  // known, dress everything that depends on its KIND (redis / mongo / SQL) — a redis connection
+  // entered first used to keep the SQL console and that hint until something else redrew them.
+  dbSyncKind();
+  renderDbToolbar(); renderDbFilters(); renderDbGrid();
   // A refresh re-fetches what is MISSING, not what is already on screen — reloading keys would
   // throw away the pages the user paged in with "More".
   if (d.conn && dbIsRedis()) { if (!d.redis) dbLoadKeys(true); else renderDbTables(); }
@@ -159,7 +164,8 @@ function renderDbView() {
     var gb = $("dbGrep");
     if (gb) gb.value = "";
     dbDropEdits();
-    renderDbTables(); renderDbToolbar(); renderDbGrid(); renderDbBar();
+    dbSyncKind();
+    renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
     if (dbIsRedis()) dbLoadKeys(true);
     else if (dbIsMongo()) dbLoadCollections();
     else dbLoadTables();
@@ -188,13 +194,7 @@ function renderDbView() {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); dbRunSql(); }
   };
   dbSqlPaint();
-  var isRedis2 = dbIsRedis();
-  if (isRedis2) {
-    $("dbSql").placeholder = "GET mykey · HGETALL myhash · LRANGE mylist 0 -1 · TTL mykey — read-only";
-    $("dbSqlExplain").hidden = true; // EXPLAIN is SQL; a redis command has no plan
-    var hint = $("dbSqlHint");
-    if (hint) hint.textContent = "read-only · KEYS is refused, use the key list · Ctrl+Enter runs";
-  }
+  dbSyncKind();
   // wrapped: onclick hands the handler the click EVENT, and dbRunSql's first parameter is
   // `explain` — an event object is truthy, so a plain Run has been quietly running EXPLAIN.
   $("dbSqlRun").onclick = function () { dbRunSql(false); };
@@ -211,6 +211,32 @@ function renderDbView() {
   dbHistoryLoad();
   dbHistoryRender();
   renderDbToolbar(); renderDbGrid(); renderDbBar();
+}
+
+/* Everything in the skeleton that reads differently per connection KIND: the sidebar filter's
+   placeholder, the console's placeholder and hint, and whether Explain exists (EXPLAIN is SQL; a
+   redis command has no plan). Called on mount once the connections are known, and again on every
+   switch — it used to run once, at mount, before /api/db had even answered, so it never saw a
+   redis connection and a mongo one never had a matching console at all. */
+function dbSyncKind() {
+  var grep = $("dbGrep"), sql = $("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
+  if (!grep || !sql || !explain || !hint) return;
+  if (dbIsRedis()) {
+    grep.placeholder = "Filter keys"; grep.setAttribute("aria-label", "Filter keys");
+    sql.placeholder = "GET mykey · HGETALL myhash · LRANGE mylist 0 -1 · TTL mykey — read-only";
+    explain.hidden = true;
+    hint.textContent = "read-only · KEYS is refused, use the key list · Ctrl+Enter runs";
+  } else if (dbIsMongo()) {
+    grep.placeholder = "Filter collections"; grep.setAttribute("aria-label", "Filter collections");
+    sql.placeholder = "Command — read-only";
+    explain.hidden = true;
+    hint.textContent = "read-only · Ctrl+Enter runs";
+  } else {
+    grep.placeholder = "Filter tables"; grep.setAttribute("aria-label", "Filter tables");
+    sql.placeholder = "SELECT … — read-only, results capped at the page size";
+    explain.hidden = false;
+    hint.textContent = "read-only · Ctrl+Enter runs";
+  }
 }
 
 function renderDbSide() {
@@ -268,6 +294,7 @@ function renderDbTables() {
     }
     (mo ? mo.collections : []).forEach(function (c) {
       var b = el("button", "db-table" + (c.name === d.table ? " sel" : ""));
+      b.title = c.name;
       b.appendChild(el("div", "db-table-name", c.name));
       b.appendChild(el("div", "db-table-meta",
         c.type + (c.approxDocs != null ? " · ~" + Number(c.approxDocs).toLocaleString() + " docs" : "") +
@@ -289,6 +316,7 @@ function renderDbTables() {
     }
     (rr ? rr.keys : []).forEach(function (k) {
       var b = el("button", "db-table" + (k.key === d.redisKey ? " sel" : ""));
+      b.title = k.key; // the row truncates with an ellipsis; the full key is one hover away
       b.appendChild(el("div", "db-table-name", k.key));
       var meta = k.type;
       if (k.ttl >= 0) meta += " · ttl " + k.ttl + "s";
@@ -315,6 +343,7 @@ function renderDbTables() {
   }
   d.tables.forEach(function (t) {
     var b = el("button", "db-table" + (t.name === d.table && t.schema === d.schema ? " sel" : ""));
+    b.title = t.name;
     b.appendChild(el("div", "db-table-name", t.name));
     b.appendChild(el("div", "db-table-meta",
       t.type + (t.approxRows != null ? " · ~" + Number(t.approxRows).toLocaleString() + " rows" : "") +

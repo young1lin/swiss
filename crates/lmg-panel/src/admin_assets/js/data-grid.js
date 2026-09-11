@@ -41,7 +41,7 @@ function renderDbToolbar() {
   head.innerHTML = "";
   var left = el("div", "db-head-left");
   if (d.sqlResult) {
-    left.appendChild(el("h2", "db-title pane-title", d.sqlResult.explained ? "Execution plan" : "SQL results"));
+    left.appendChild(el("h2", "db-title pane-title", d.sqlResult.explained ? "Execution plan" : (dbIsRedis() ? "Command reply" : "SQL results")));
     left.appendChild(el("div", "db-meta", d.sqlResult.rowCount + " row" + (d.sqlResult.rowCount === 1 ? "" : "s") +
       (d.sqlResult.note ? " · " + d.sqlResult.note : "")));
   } else if (d.data) {
@@ -86,7 +86,7 @@ function renderDbToolbar() {
     ctl.appendChild(mn);
   }
   if (d.sqlResult) {
-    var back = el("button", "btn", "Back to table");
+    var back = el("button", "btn", dbIsRedis() ? "Back to keys" : dbIsMongo() ? "Back to collection" : "Back to table");
     back.onclick = function () {
       d.sqlResult = null;
       dbClearSel(); // "q"-prefixed query keys must not leak into the table grid

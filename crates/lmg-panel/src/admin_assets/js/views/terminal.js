@@ -308,6 +308,7 @@ function select(id) {
     paintStage();
     if (!m.ws && !m.gone && !m.userClosed) void resume(m);
     scheduleFit();
+    if (m.term) m.term.focus(); // switching tabs types into the one you switched to
   }).catch(function (error) {
     toast(String(error && error.message || error), true);
   });
@@ -392,6 +393,10 @@ async function openSession() {
   paintTabs();
   paintStage();
   if (reply.ticket) connect(m, reply.ticket);
+  /* Keyboard focus moves INTO the new terminal. It stayed on the Open button, so the Enter
+     a user reaches for to get a prompt opened a second session on the same host instead -
+     and a third pressed the per-target cap. Every real terminal focuses the shell it opens. */
+  if (m.term && active === m.id) m.term.focus();
 }
 
 /* Closing a tab: a live session is DELETEd (the gateway writes the visible reason into

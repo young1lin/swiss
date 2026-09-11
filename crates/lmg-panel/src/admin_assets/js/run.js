@@ -86,6 +86,17 @@ function readRunArgs(tool, idPrefix) {
     if (kind === "object") { try { out[k] = JSON.parse(raw); } catch (e) { throw new Error("`" + k + "` is not valid JSON"); } return; }
     out[k] = raw;
   });
+  // A required argument left blank is refused HERE, with the field focused, instead of being
+  // sent and coming back as "-32603: sql is required" from the far side. The red * already says
+  // it is required; the form should act on that before the call leaves the browser.
+  var required = (tool && tool.inputSchema && tool.inputSchema.required) || [];
+  for (var i = 0; i < required.length; i++) {
+    var rk = required[i];
+    if (!(rk in props) || out[rk] !== undefined) continue;
+    var missing = $(pfx + rk);
+    if (missing && typeof missing.focus === "function") missing.focus();
+    throw new Error("`" + rk + "` is required");
+  }
   return out;
 }
 

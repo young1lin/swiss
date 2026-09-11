@@ -11,8 +11,10 @@
     .pane > .empty { max-width: none; }
 
     .pane-head { display: flex; align-items: flex-start; gap: var(--s4); margin-bottom: var(--s5); }
-    .pane-title { font-size: var(--f-title); font-weight: 600; letter-spacing: -0.012em; margin: 0; }
-    .pane-desc { font-size: var(--f-head); font-weight: 400; color: var(--text-2); margin-top: 3px; max-width: 60ch; }
+    .pane-title { font-size: var(--f-title); font-weight: 650; letter-spacing: -0.015em; margin: 0; line-height: 1.25; }
+    /* Body size, not head size: at 15px the description of a page outweighed the rows under it,
+       and three lines of it pushed the first row below the fold on a laptop. It is a caption. */
+    .pane-desc { font-size: var(--f-body); font-weight: 400; color: var(--text-2); margin-top: var(--s1); max-width: 68ch; line-height: 1.5; }
     .pane-sub { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); margin-top: var(--s2); }
     /* The mount path — the one part of the header you would actually copy, so it keeps the monospace
        face the title gave up. */
@@ -26,20 +28,27 @@
     .empty h2 { font-size: var(--f-head); font-weight: 550; color: var(--text-2); margin: 0 0 var(--s1); }
 
     /* Segmented control. */
-    .seg { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: var(--s4); background: var(--sep-soft); border-radius: 8px; }
-    .seg button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; }
-    .seg button[aria-selected="true"] { background: var(--card); color: var(--text); box-shadow: 0 .5px 1.5px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.04); }
+    .seg { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: var(--s4); background: var(--sep-soft); border-radius: 8px; }
+    .seg button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; }
+    .seg button:hover { color: var(--text); }
+    .seg button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 24, 36, .10), 0 0 0 1px rgba(20, 24, 36, .05); }
+    :root[data-theme="dark"] .seg button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 9%); box-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 255, 255, .06); }
     /* A tab's item count. Glued straight onto the label ("Tools 1") it read as a typo; separated and
        dimmed, it reads as a count. */
     .seg-n { font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 5px; }
     .seg button[aria-selected="true"] .seg-n { color: var(--text-2); }
 
-    /* Grouped inset list — hairlines, no drop shadow. */
-    .group { background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-card); overflow: hidden; }
+    /* Grouped inset list. A card is lifted off the canvas by --shadow-card — a hairline ring plus a
+       one-pixel drop — rather than a drawn border: the ring is the edge, the drop is what makes a
+       white card on a near-white canvas read as a surface instead of an outline. */
+    .group { background: var(--card); border: 0; box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
     .group + .cap { margin-top: var(--s5); }
     .cap { font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: 0 var(--s1) var(--s2); }
     .row { display: flex; gap: var(--s3); padding: var(--s3) var(--s4); align-items: baseline; }
     .row + .row { border-top: 1px solid var(--sep-soft); }
+    /* A row's main column grows; the trailing .row-act stays its natural width. Without this the
+       Tokens sheet's buttons hugged the label instead of sitting at the row's end. */
+    .row > .row-main { flex: 1; min-width: 0; }
     /* A selected client row in the Traffic summary — narrows the activity log below to it. */
     .row.row-sel { background: color-mix(in srgb, var(--accent) 9%, transparent); }
     .row .k { flex: none; width: 152px; color: var(--text-2); font-size: var(--f-label); }
@@ -92,7 +101,7 @@
     /* --- call log (Logs tab) ------------------------------------------------------------------- */
     /* center, not baseline: this header carries a segmented control and a button next to its caption,
        and a segmented control has no baseline to share. */
-    .sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); }
+    .sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); min-height: 36px; }
     .sec-cap { font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
     .call + .call { border-top: 1px solid var(--sep-soft); }
     .call-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; padding: var(--s2) var(--s4); cursor: pointer; }
@@ -179,7 +188,7 @@
     /* Overflow menu. */
     .menu {
       position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; min-width: 236px;
-      background: var(--card); border: 1px solid var(--sep); border-radius: 10px;
+      background: var(--card); border: 0; border-radius: 10px;
       box-shadow: var(--shadow-pop); padding: var(--s1); display: grid;
     }
     /* The pane's overflow menu anchors to .pane-actions; a menu opened from the sidebar has no such
@@ -206,17 +215,35 @@
     }
 
     /* Sheet (Add) + sign-in. */
-    .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.28); display: grid; place-items: start center; padding-top: 8vh; z-index: 40; }
-    .sheet { width: min(560px, 92vw); background: var(--bg); border-radius: 14px; box-shadow: var(--shadow-sheet); overflow: hidden; }
-    .sheet-head { display: flex; align-items: center; padding: var(--s4); border-bottom: 1px solid var(--sep); }
-    .sheet-head h2 { font-size: var(--f-head); font-weight: 600; margin: 0; }
-    .sheet-body { padding: var(--s4); display: grid; gap: var(--s3); max-height: 66vh; overflow-y: auto; }
-    .sheet-foot { display: flex; justify-content: flex-end; gap: var(--s2); padding: var(--s3) var(--s4); border-top: 1px solid var(--sep); }
+    .backdrop { position: fixed; inset: 0; background: rgba(12, 14, 20, .38); display: grid; place-items: start center; padding-top: 8vh; z-index: 40; }
+    /* A sheet is a card, not a second canvas: on the canvas colour its fields had no edge but their
+       hairline and the whole dialog read as a grey slab over a grey slab. */
+    .sheet { width: min(560px, 92vw); background: var(--card); border-radius: 14px; box-shadow: var(--shadow-sheet); overflow: hidden; }
+    .sheet-head { display: flex; align-items: center; padding: var(--s4) var(--s5); border-bottom: 1px solid var(--sep-soft); }
+    .sheet-head h2 { font-size: var(--f-head); font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+    .sheet-body { padding: var(--s4) var(--s5); display: grid; gap: var(--s3); max-height: 66vh; overflow-y: auto; }
+    .sheet-foot { display: flex; justify-content: flex-end; gap: var(--s2); padding: var(--s3) var(--s5); border-top: 1px solid var(--sep-soft); background: color-mix(in srgb, var(--bg) 60%, var(--card)); }
+    /* An input beside its button (the Tokens sheet's "label + Create"): .two is the form's own
+       two-column grid, and outside a .form it was two stacked full-width blocks. */
+    .sheet-body > .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+    .sheet-body > .two:has(> .btn) { grid-template-columns: 1fr auto; gap: var(--s2); align-items: center; }
+    /* One generated field after another (fields.js): the Add sheet pours them into a plain div,
+       so they carried no gap at all and every hint ran straight into the next label. Inside a
+       .form the grid gap already spaces them; the margin only fills in where there is none. */
+    .fld + .fld { margin-top: var(--s3); }
+    .form .fld + .fld { margin-top: 0; }
+    .fld .hint { margin-top: var(--s1); }
+    /* The nested card a sheet shows a list in (tokens, a job's runs) is inset, not lifted: it sits
+       on the sheet's own colour, so it keeps a hairline and gives up the drop shadow. */
+    .sheet-body > .group { box-shadow: inset 0 0 0 1px var(--sep); }
+    /* Expandable rows (a job's run history) stack flush — the sheet's grid gap is for fields, and a
+       12px gutter between every run made a list of forty read as forty separate cards. */
+    .sheet-body > .group > .call { margin: 0; }
     .hint { font-size: var(--f-label); color: var(--text-3); }
 
     .toast {
       position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%);
-      background: var(--card); border: 1px solid var(--sep); border-radius: 10px;
+      background: var(--card); border: 0; border-radius: 10px;
       box-shadow: var(--shadow-pop); padding: var(--s2) var(--s4);
       font-size: var(--f-body); max-width: 78vw; z-index: 50;
     }
@@ -268,7 +295,7 @@
     .keylist { display: grid; gap: 2px; max-height: 210px; overflow-y: auto; }
     .keylist button { text-align: left; font-family: var(--mono); font-size: var(--f-label); padding: 4px var(--s2); border-radius: 6px; }
     .keylist button:hover { background: var(--hover); }
-    .mcp-picks { display: grid; gap: var(--s1); max-height: 168px; overflow-y: auto; padding: var(--s2); background: var(--card); border: 1px solid var(--sep); border-radius: 8px; }
+    .mcp-picks { display: grid; gap: var(--s1); max-height: 168px; overflow-y: auto; padding: var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: 8px; }
     .with-btn { display: flex; gap: var(--s2); align-items: flex-end; }
     .with-btn > label { flex: 1; }
 
@@ -276,13 +303,15 @@
     .pane > .db-root { max-width: none; }
     .db-root { display: flex; gap: var(--s4); height: 100%; min-height: 420px; }
     .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; }
-    .db-tables { flex: 1; overflow-y: auto; background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-card); padding: var(--s1); }
-    .db-table { display: block; width: 100%; text-align: left; padding: 6px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
+    .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); padding: var(--s1); }
+    .db-table { display: block; width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-table:hover { background: var(--hover); }
-    .db-table.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-    .db-table.sel .db-table-name { color: var(--accent); font-weight: 590; }
-    .db-table-name { font-size: var(--f-body); }
-    .db-table-meta { font-size: var(--f-caption); color: var(--text-3); margin-top: 1px; }
+    .db-table.sel { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+    .db-table.sel .db-table-name { color: var(--accent); font-weight: 600; }
+    /* A long key ("wsproxy:console:token:session:…") or table name is cut with an ellipsis, not
+       sliced at the card's edge; the full name is the row's title, one hover away. */
+    .db-table-name { font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-table-meta { font-size: var(--f-caption); color: var(--text-3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
     .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
@@ -300,9 +329,9 @@
     .db-filter .db-act { font-size: var(--f-body); }
     .db-filter-add { font-size: var(--f-label); }
     .db-filter-hint { font-size: var(--f-caption); color: var(--text-3); margin-left: var(--s2); }
-    .db-tabs { display: inline-flex; gap: 2px; padding: 2px; background: var(--sep-soft); border-radius: 8px; }
+    .db-tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--sep-soft); border-radius: 8px; }
     .db-tabs button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; background: none; border: none; cursor: pointer; }
-    .db-tabs button[aria-selected="true"] { background: var(--card); color: var(--text); box-shadow: 0 .5px 1.5px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.04); }
+    .db-tabs button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 24, 36, .10), 0 0 0 1px rgba(20, 24, 36, .05); }
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
     .db-keytype { font-size: var(--f-caption); padding: 1px 6px; border-radius: 980px; background: var(--sep-soft); color: var(--text-2); margin-left: var(--s2); }
@@ -314,7 +343,7 @@
     .db-pageinfo { font-size: var(--f-label); color: var(--text-2); white-space: nowrap; }
     /* SQL highlighting. The console is a transparent textarea over a highlighted <pre> (the
        classic overlay): both wear .db-sql-face so every metric matches character-for-character. */
-    .db-sql-wrap { position: relative; height: 118px; background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-row); transition: border-color .12s ease, box-shadow .12s ease; }
+    .db-sql-wrap { position: relative; height: 118px; background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row); transition: border-color .12s ease, box-shadow .12s ease; }
     .db-sql-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
     .db-sql-face { font-family: var(--mono); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; margin: 0; border: 0; tab-size: 2; }
     #dbSql { position: absolute; inset: 0; width: 100%; height: 100%; background: transparent; color: transparent; caret-color: var(--accent); resize: none; outline: none; }
@@ -330,10 +359,10 @@
     .db-console-row { display: flex; align-items: center; gap: var(--s2); }
     .db-console-row .hint { color: var(--text-3); font-size: var(--f-label); }
     #dbSql { min-height: 84px; }
-    .db-grid-wrap { flex: 1; overflow: auto; background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-card); min-height: 200px; }
+    .db-grid-wrap { flex: 1; overflow: auto; background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); min-height: 200px; }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
     .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); border-right: 1px solid var(--sep-soft); padding: 4px var(--s2); white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
-    .db-grid thead th { position: sticky; top: 0; background: var(--card); z-index: 1; font-weight: 590; cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }
+    .db-grid thead th { position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 55%, var(--card)); z-index: 1; font-weight: 600; cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }
     .db-grid thead th:hover { background: var(--hover); }
     /* The select-all corner is not clickable — the pointer should not promise it is. */
     .db-grid thead th.db-rowctl { cursor: default; }
