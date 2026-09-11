@@ -128,4 +128,39 @@ function formToV2(form, base, actionInput) {
   return def;
 }
 
-export { cloneJson, defTemplate, formToV2, historyMeta, triggerSummary, v2ToForm };
+export { cloneJson, defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, triggerSummary, v2ToForm };
+
+/* --- the v1 form's environment-variables box -----------------------------------------------
+ * KEY=value lines in a textarea <-> the env object the PUT body and the action input
+ * carry. Pure so the parsing rules are pinned by tests, not by typing into the sheet. */
+
+/** env object -> "KEY=value" lines, in the object's own key order. */
+function envToLines(env) {
+  if (!env || typeof env !== "object") return "";
+  return Object.keys(env)
+    .map(function (k) { return k + "=" + env[k]; })
+    .join("\n");
+}
+
+/** "KEY=value" lines -> { env, error }. Blank lines are skipped; a line without "=", an
+ * empty key, or a key containing "=" or NUL is an error the form shows verbatim — a
+ * silent drop here would mean a job that runs WITHOUT a variable the user believes it
+ * has, which is the worst kind of wrong. */
+function parseEnvLines(text) {
+  var env = {};
+  var lines = String(text == null ? "" : text).split(/\r?\n/);
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line) continue;
+    var eq = line.indexOf("=");
+    if (eq <= 0) {
+      return { env: null, error: "line " + (i + 1) + ": expected KEY=value, got \"" + line + "\"" };
+    }
+    var key = line.slice(0, eq);
+    if (key.indexOf("\u0000") >= 0) {
+      return { env: null, error: "line " + (i + 1) + ": the key contains a NUL character" };
+    }
+    env[key] = line.slice(eq + 1);
+  }
+  return { env: env, error: "" };
+}

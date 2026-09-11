@@ -263,7 +263,8 @@ impl Action for LegacyCommandAction {
             "additionalProperties": false,
             "properties": {
                 "command": { "type": "string", "description": "ARGV-style command line; quoted per the legacy tokenizer; no shell unless the command is one" },
-                "cwd": { "type": "string", "description": "working directory" }
+                "cwd": { "type": "string", "description": "working directory" },
+                "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "extra environment variables for this command, ADDED on top of the inherited environment; ${ENV_VAR} refs in values resolve at run time" }
             },
             "x-env-refs": "${ENV_VAR} references resolve leniently (an unset variable becomes empty), preserving legacy behaviour"
         })
@@ -315,9 +316,9 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
         .as_object()
         .ok_or_else(|| invalid("input must be an object".to_string()))?;
     for key in obj.keys() {
-        if !matches!(key.as_str(), "command" | "cwd") {
+        if !matches!(key.as_str(), "command" | "cwd" | "env") {
             return Err(invalid(format!(
-                "input: unknown field {key:?} (known: command, cwd)"
+                "input: unknown field {key:?} (known: command, cwd, env)"
             )));
         }
     }
@@ -354,11 +355,45 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
         Some(Value::String(s)) if !s.is_empty() => Some(crate::config::resolve_env_refs(s)),
         Some(_) => return Err(invalid("input.cwd: must be a string".into())),
     };
+    // Per-job env vars, ADDED on top of the inherited environment (the supervisor applies
+    // them with Command::env, so PATH and friends survive). Values resolve ${ENV_VAR} refs
+    // the same lenient way the command does. Masking follows the command path's rule:
+    // only what a REF RESOLVED TO is registered as a secret — a ref may pull a credential
+    // out of the sealed store, but a value the user typed as a literal (a mode name, a
+    // path) is job configuration, and masking it would shred the run's own output.
+    let mut env = Vec::new();
+    match obj.get("env") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(map)) => {
+            for (k, v) in map {
+                let Some(v) = v.as_str() else {
+                    return Err(invalid(format!(
+                        "input.env.{k}: must be a string"
+                    )));
+                };
+                if k.is_empty() || k.contains('=') || k.contains('\0') {
+                    return Err(invalid(format!(
+                        "input.env.{k}: not a usable variable name"
+                    )));
+                }
+                for name in ref_names(v) {
+                    if let Ok(resolved_ref) = std::env::var(&name) {
+                        if resolved_ref.len() >= 8 && !secrets.contains(&resolved_ref) {
+                            secrets.push(resolved_ref);
+                        }
+                    }
+                }
+                let resolved_value = crate::config::resolve_env_refs(v);
+                env.push((k.clone(), resolved_value));
+            }
+        }
+        Some(_) => return Err(invalid("input.env: must be an object of string values".into())),
+    }
     Ok(ProcSpec {
         program: resolved.to_string_lossy().into_owned(),
         args: args.to_vec(),
         cwd,
-        env: Vec::new(),
+        env,
         secrets,
     })
 }
@@ -616,3 +651,51 @@ mod tests {
         assert!(ref_names("no refs").is_empty());
     }
 }
+
+#[tokio::test]
+async fn legacy_command_env_vars_reach_the_child_and_refs_in_values_resolve() {
+    // The per-job env box: variables are ADDED on top of the inherited environment
+    // (PATH still resolves the program), and a value's ${REF} resolves at run time.
+    // A LONG LITERAL stays readable in the output (it is job configuration the user
+    // typed); only what a REF resolved to is masked (it may be a credential).
+    unsafe { std::env::set_var("LMG_LEGACY_FROM", "carried-long-ref-value") };
+    let action = LegacyCommandAction::new(Supervisor::new());
+    let input = if cfg!(windows) {
+        json!({
+            "command": "cmd /c echo direct=%JOB_VAR% ref=%JOB_REF%",
+            "env": { "JOB_VAR": "daily-check-literal", "JOB_REF": "${LMG_LEGACY_FROM}" }
+        })
+    } else {
+        json!({
+            "command": "sh -c 'echo direct=$JOB_VAR ref=$JOB_REF'",
+            "env": { "JOB_VAR": "daily-check-literal", "JOB_REF": "${LMG_LEGACY_FROM}" }
+        })
+    };
+    let out = action
+        .execute(&input, CancelHandle::never())
+        .await
+        .expect("runs");
+    assert!(out.ok, "{out:?}");
+    // The literal (13 chars) survives verbatim; the ref-resolved value (22 chars) is masked.
+    assert!(out.output.contains("direct=daily-check-literal"), "{out:?}");
+    assert!(
+        !out.output.contains("carried-long-ref-value"),
+        "the ref-resolved value leaked: {out:?}"
+    );
+    // Shape errors: non-string values and unusable names are refused, not defaulted.
+    assert!(action
+        .execute(
+            &json!({ "command": "x", "env": { "A": 1 } }),
+            CancelHandle::never()
+        )
+        .await
+        .is_err());
+    assert!(action
+        .execute(
+            &json!({ "command": "x", "env": { "BAD=NAME": "v" } }),
+            CancelHandle::never()
+        )
+        .await
+        .is_err());
+}
+

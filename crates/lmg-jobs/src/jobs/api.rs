@@ -6,7 +6,7 @@
 //! Endpoints:
 //! - GET    /api/jobs             - list jobs with lastRunAt/lastOk/running/nextDueAt
 //! - PUT    /api/jobs/{name}      - create or update (body: command + everySec|cron,
-//!   enabled?, timeoutMs?, cwd?)
+//!   enabled?, timeoutMs?, cwd?, env? — an object of per-run environment variables)
 //! - DELETE /api/jobs/{name}      - remove the job (its run history stays)
 //! - POST   /api/jobs/{name}/run  - run now, wait for the outcome, return the record;
 //!   body {"async": true} -> 202 {"runId": N}, polled via GET /api/runs/{id}
@@ -98,6 +98,25 @@ fn def_from_body(name: &str, body: &Value) -> Result<JobDef, String> {
         Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
         Some(_) => return Err("cron must be a string".into()),
     };
+    // Per-job env vars (the panel's "Environment variables" box). Same rules the
+    // capability's own input parser enforces, refused HERE so a bad row never lands.
+    let env = match body.get("env") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(map)) => {
+            let mut out = std::collections::BTreeMap::new();
+            for (k, v) in map {
+                let Some(s) = v.as_str() else {
+                    return Err(format!("env.{k}: must be a string"));
+                };
+                if k.is_empty() || k.contains('=') || k.contains('\0') {
+                    return Err(format!("env.{k}: not a usable variable name"));
+                }
+                out.insert(k.clone(), s.to_string());
+            }
+            if out.is_empty() { None } else { Some(out) }
+        }
+        Some(_) => return Err("env: must be an object of string values".into()),
+    };
     Ok(JobDef {
         name: name.to_string(),
         command,
@@ -110,6 +129,7 @@ fn def_from_body(name: &str, body: &Value) -> Result<JobDef, String> {
             .and_then(|v| if v.is_null() { None } else { whole_number(v) })
             .unwrap_or(super::runner::DEFAULT_TIMEOUT_MS),
         cwd: opt_str("cwd"),
+        env,
     })
 }
 
@@ -374,7 +394,7 @@ mod tests {
             &router,
             "PUT",
             "/api/jobs/shaped",
-            Some(json!({ "command": "echo ok", "cron": "30 3 * * *", "cwd": "C:\\tmp", "timeoutMs": 12000 })),
+            Some(json!({ "command": "echo ok", "cron": "30 3 * * *", "cwd": "C:\\tmp", "timeoutMs": 12000, "env": { "DEPLOY_ENV": "staging", "EXTRA_FLAG": "1" } })),
         )
         .await;
         let (status, body) = call(&router, "GET", "/api/jobs", None).await;
@@ -387,6 +407,11 @@ mod tests {
         assert_eq!(job["enabled"], json!(true));
         assert_eq!(job["timeoutMs"], json!(12000));
         assert_eq!(job["cwd"], json!("C:\\tmp"));
+        // The per-job env box round-trips: what the panel saved is what a run gets.
+        assert_eq!(
+            job["env"],
+            json!({ "DEPLOY_ENV": "staging", "EXTRA_FLAG": "1" })
+        );
         assert_eq!(job["running"], json!(false));
         assert!(
             job.get("lastRunAt").is_none(),

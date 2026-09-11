@@ -72,6 +72,10 @@ pub struct JobDef {
     pub enabled: bool,
     pub timeout_ms: u64,
     pub cwd: Option<String>,
+    /// Per-job environment variables, added on top of the inherited environment at run
+    /// time (the panel's "Environment variables" box). Sorted keys: a state file must
+    /// serialize deterministically no matter which map the edit came through.
+    pub env: Option<std::collections::BTreeMap<String, String>>,
 }
 
 impl JobDef {
@@ -136,6 +140,23 @@ impl JobDef {
                 .and_then(Value::as_str)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
+            env: match v.get("env") {
+                None | Some(Value::Null) => None,
+                Some(Value::Object(map)) => {
+                    let mut out = std::collections::BTreeMap::new();
+                    for (k, val) in map {
+                        let Some(s) = val.as_str() else {
+                            return Err(format!("env.{k}: must be a string"));
+                        };
+                        if k.is_empty() || k.contains('=') || k.contains('\0') {
+                            return Err(format!("env.{k}: not a usable variable name"));
+                        }
+                        out.insert(k.clone(), s.to_string());
+                    }
+                    if out.is_empty() { None } else { Some(out) }
+                }
+                Some(_) => return Err("env: must be an object of string values".into()),
+            },
             // lastRunAt / lastOk in an old jobs.json are READ PAST here on purpose: run
             // state moved to jobs-state.json (docs/11 §4), and the S4 migration reads
             // those v1 keys deliberately when it moves them. For loading they are simply
@@ -160,6 +181,9 @@ impl JobDef {
         m.insert("timeoutMs".into(), json!(self.timeout_ms));
         if let Some(cwd) = &self.cwd {
             m.insert("cwd".into(), json!(cwd));
+        }
+        if let Some(env) = &self.env {
+            m.insert("env".into(), json!(env));
         }
         // Run facts (lastRunAt / lastOk) are NOT written here any more: a definition file
         // holds intent, the state file holds facts (docs/11 §4). Every run used to
@@ -1079,6 +1103,9 @@ fn apply_v1_edit(mut current: JobDefinition, def: &JobDef) -> JobDefinition {
     if let Some(cwd) = &def.cwd {
         input.insert("cwd".into(), json!(cwd));
     }
+    if let Some(env) = &def.env {
+        input.insert("env".into(), json!(env));
+    }
     current.action.input = Value::Object(input);
     let first_run = match current.trigger {
         def::Trigger::Interval { first_run, .. } => first_run,
@@ -1211,6 +1238,7 @@ mod tests {
             enabled: true,
             timeout_ms: 30_000,
             cwd: None,
+            env: None,
         }
     }
 

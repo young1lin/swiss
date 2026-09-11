@@ -960,6 +960,9 @@ impl JobDefinition {
         if let Some(cwd) = &def.cwd {
             input.insert("cwd".into(), json!(cwd));
         }
+        if let Some(env) = &def.env {
+            input.insert("env".into(), json!(env));
+        }
         JobDefinition {
             id: def.name.clone(),
             // v1 had no separate title; the name is the honest one (docs/11 §5.2).
@@ -1006,6 +1009,14 @@ impl JobDefinition {
             if let Some(cwd) = self.action.input.get("cwd").and_then(Value::as_str) {
                 m.insert("cwd".into(), json!(cwd));
             }
+            // The per-job env vars ride inside the action input; echo them back so the
+            // panel's edit form can show what a run will be handed (docs/11 SS7.1).
+            if let Some(Value::Object(env)) = self.action.input.get("env") {
+                let all_strings = env.iter().all(|(_, v)| v.is_string());
+                if all_strings && !env.is_empty() {
+                    m.insert("env".into(), Value::Object(env.clone()));
+                }
+            }
         }
         m.insert("editableInV1".into(), json!(self.editable_in_v1()));
         Value::Object(m)
@@ -1037,9 +1048,10 @@ impl JobDefinition {
     }
 
     /// Whether the v1 PUT shape can rewrite this definition without losing anything:
-    /// exactly the legacy action (command/cwd only), a trigger v1 can spell, and no v2
-    /// decoration. Everything else must go through PUT /api/plugins/jobs/config, and the
-    /// v1 PUT answers 409 for it (docs/11 §7.1) - overwriting would silently drop fields.
+    /// exactly the legacy action (command/cwd/env — env is a v1 field now too), a trigger
+    /// v1 can spell, and no v2 decoration. Everything else must go through
+    /// PUT /api/plugins/jobs/config, and the v1 PUT answers 409 for it (docs/11 §7.1) -
+    /// overwriting would silently drop fields.
     pub fn editable_in_v1(&self) -> bool {
         let legacy_input = self.action.type_ == JOBS_ACTION
             && self.action.schema_version == 1
@@ -1047,8 +1059,13 @@ impl JobDefinition {
                 o.get("command")
                     .and_then(Value::as_str)
                     .is_some_and(|c| !c.trim().is_empty())
-                    && o.iter()
-                        .all(|(k, v)| matches!(k.as_str(), "command" | "cwd") && v.is_string())
+                    && o.iter().all(|(k, v)| match k.as_str() {
+                        "command" | "cwd" => v.is_string(),
+                        "env" => v
+                            .as_object()
+                            .is_some_and(|m| m.values().all(Value::is_string)),
+                        _ => false,
+                    })
             });
         let v1_trigger = match &self.trigger {
             Trigger::Cron { .. } => true,
@@ -1421,6 +1438,7 @@ mod tests {
             enabled: true,
             timeout_ms: 600_000,
             cwd: None,
+            env: None,
         };
         let v2 = JobDefinition::from_v1(&def);
         let json = v2.to_config_json();
@@ -1492,6 +1510,7 @@ mod tests {
             enabled,
             timeout_ms: 120_000,
             cwd: Some("C:/work".into()),
+            env: None,
         }
     }
 

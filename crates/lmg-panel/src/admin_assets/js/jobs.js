@@ -21,7 +21,7 @@ import { $, api, apiJson, esc, state, toast, whenLabel } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { jobDotClass, jobRowHtml, jobsChipText, loadJobs } from "./polling.js";
 import { argFieldsHtml, readRunArgs } from "./run.js";
-import { defTemplate, formToV2, historyMeta, v2ToForm } from "./jobs-v2.js";
+import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
 
 var probed = null; // null = not probed yet; then the cached boolean answer for this page load
 
@@ -160,7 +160,7 @@ function deleteJob(job) {
 
 function openJobSheet(job) {
   var editing = !!job;
-  var v = job || { name: "", command: "", everySec: "", cron: "", timeoutMs: "", cwd: "", enabled: true };
+  var v = job || { name: "", command: "", everySec: "", cron: "", timeoutMs: "", cwd: "", env: {}, enabled: true };
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit job" : "New job") + '">' +
       '<div class="sheet-head"><h2>' + (editing ? "Edit " + esc(job.name) : "New job") + "</h2></div>" +
@@ -180,6 +180,8 @@ function openJobSheet(job) {
           '<label class="field"><span>timeoutMs</span><input id="jf-timeout" value="' + esc(v.timeoutMs == null ? "" : String(v.timeoutMs)) + '" placeholder="600000" autocomplete="off"></label>' +
           '<label class="field"><span>Working directory</span><input id="jf-cwd" value="' + esc(v.cwd || "") + '" placeholder="Optional" autocomplete="off"></label>' +
         "</div>" +
+        '<label class="field"><span>Environment variables</span><textarea id="jf-env" rows="3" placeholder="DEPLOY_ENV=staging&#10;LOG_DIR=C:\\logs" spellcheck="false">' + esc(envToLines(v.env)) + "</textarea></label>" +
+        '<div class="hint">One KEY=value per line, added to the command\u2019s environment on top of what the gateway inherits. ${ENV} refs in a value resolve at run time.</div>' +
         '<label class="check"><input type="checkbox" id="jf-enabled"' + (v.enabled ? " checked" : "") + ">Enabled</label>" +
       "</div>" +
       '<div class="sheet-foot"><button class="btn" id="jf-advanced">Advanced\u2026</button>' +
@@ -215,6 +217,12 @@ async function saveJob(existing) {
   }
   var cwd = $("jf-cwd").value.trim();
   if (cwd) body.cwd = cwd;
+  // The env box: every line a KEY=value the run will be handed. A bad line stops the
+  // save — a job quietly running WITHOUT a variable the user believes it has is the
+  // worst kind of wrong.
+  var parsed = parseEnvLines($("jf-env").value);
+  if (parsed.error) { toast(parsed.error, true); return; }
+  if (Object.keys(parsed.env).length) body.env = parsed.env;
   var j = await apiJson("/api/jobs/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
   if (!j) return;
   closeSheet();

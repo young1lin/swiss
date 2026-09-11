@@ -263,6 +263,7 @@ pub struct ConfigError {
 | --- | --- |
 | `name` | 定义的键；`title` 同值 |
 | `command` + `cwd` | `action = { type: "process.legacy-command", input: { command, cwd? } }` |
+| `env`（2026-09-11 起） | `input.env`：每任务环境变量对象,叠加在继承环境之上;值里 `${REF}` 运行时解析,只有**解析产物**参与输出脱敏（手敲字面值不掩） |
 | `everySec: N` | `trigger = { kind: "interval", everyMs: N*1000, firstRun: "after-interval" }` |
 | `cron: "..."` | `trigger = { kind: "cron", expression: "...", timezone: "local" }` |
 | `enabled: false` | `disabled: true` |
@@ -347,6 +348,9 @@ pub trait Clock: Send + Sync {
 ### 7.1 v1 `/api/jobs`：保持形状，扩展字段
 
 现有面板依赖这些字段，**一个都不能少、不能改类型**：`name`、`command`、`everySec`|`cron`、`enabled`、`timeoutMs`、`cwd`、`lastRunAt`、`lastOk`、`running`、`nextDueAt`。
+
+2026-09-11 追加 `env`（对象,键→字符串值,PUT 可写、列表回显）：任务级环境变量 —— 用户原话就是
+"给 Job 设置环境变量,然后执行相应的命令,每天执行",cron 即每天。
 
 v2 追加（新增字段是安全的，面板会忽略不认识的键）：`id`、`title`、`labels`、`trigger`、`action`、`overlap`、`misfire`、`retry`、`output`、`source`（`"config"`）、`actionAvailable`（bool）、`editableInV1`（bool）、`configRevision`。
 
