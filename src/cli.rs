@@ -189,6 +189,18 @@ fn row(label: &str, value: &str) -> String {
     format!("  {label:<9}{value}")
 }
 
+/// The one line the version flag prints — the build's name tag (docs/16 H3): version, the
+/// git hash build.rs stamped in, and the build time. The parenthesised pair is what the
+/// status command and scripts/deploy.ps1 parse, so this shape is a small public contract.
+pub fn version_line() -> String {
+    format!(
+        "lmg {} ({}, {})",
+        env!("CARGO_PKG_VERSION"),
+        env!("LMG_GIT_HASH"),
+        env!("LMG_BUILD_TIME")
+    )
+}
+
 pub fn render_status(st: &StatusResult) -> String {
     let mut lines = vec![
         "gateway running".to_string(),
@@ -216,6 +228,14 @@ pub fn render_status(st: &StatusResult) -> String {
                 &format!("{gateway_mb} MB gateway + {kids} MB children ({procs} proc)"),
             ));
         }
+    }
+    if let Some(build) = &st.build {
+        let hash = build.get("hash").and_then(Value::as_str).unwrap_or("?");
+        let time = build.get("time").and_then(Value::as_str).unwrap_or("?");
+        lines.push(row("build", &format!("{hash} ({time})")));
+    }
+    if let Some(note) = &st.build_note {
+        lines.push(format!("note: {note}"));
     }
     lines.push(row("log", &st.log_file));
 
@@ -349,7 +369,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
         return 0;
     }
     if p.version {
-        io.out(env!("CARGO_PKG_VERSION"));
+        io.out(&version_line());
         return 0;
     }
     if !p.unknown.is_empty() {
@@ -573,8 +593,9 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
     }
 }
 
-/// The `--json` shape of status — camelCase, absent-not-null, the Node build's StatusResult.
-fn status_json(st: &StatusResult) -> Value {
+/// The `--json` shape of status — camelCase, absent-not-null, the Node build's StatusResult,
+/// plus the docs/16 H3 build pair (build, diskBuild and, on disagreement, buildNote).
+pub(crate) fn status_json(st: &StatusResult) -> Value {
     let mut out = serde_json::Map::new();
     out.insert("running".into(), Value::Bool(st.running));
     out.insert("port".into(), serde_json::json!(st.port));
@@ -594,6 +615,15 @@ fn status_json(st: &StatusResult) -> Value {
         out.insert("url".into(), serde_json::json!(url));
     }
     out.insert("logFile".into(), serde_json::json!(st.log_file));
+    if let Some(build) = &st.build {
+        out.insert("build".into(), build.clone());
+    }
+    if let Some(disk) = &st.disk_build {
+        out.insert("diskBuild".into(), serde_json::json!(disk));
+    }
+    if let Some(note) = &st.build_note {
+        out.insert("buildNote".into(), serde_json::json!(note));
+    }
     if let Some(health) = &st.health {
         out.insert("health".into(), health.clone());
     }
@@ -790,6 +820,28 @@ mod tests {
 
         let p = parse_argv(&argv(&["start", "--port", "abc"]));
         assert!(p.bad_port);
+    }
+
+    #[test]
+    fn the_version_line_names_the_build() {
+        // docs/16 H3: "which build is this" is answerable from the binary itself, and the
+        // parenthesised pair is exactly what the status command and deploy.ps1 parse.
+        let line = version_line();
+        let rest = line
+            .strip_prefix(&format!("lmg {} (", env!("CARGO_PKG_VERSION")))
+            .unwrap_or_else(|| panic!("not the version shape: {line}"));
+        let (hash, time) = rest
+            .split_once(", ")
+            .unwrap_or_else(|| panic!("no hash/time pair: {line}"));
+        let time = time.strip_suffix(')').unwrap_or_else(|| panic!("unterminated: {line}"));
+        // A git-less box builds "unknown"; a repo builds a short hex id, optionally -dirty.
+        let bare = hash.strip_suffix("-dirty").unwrap_or(hash);
+        assert!(
+            hash == "unknown" || (bare.len() >= 7 && bare.bytes().all(|b| b.is_ascii_hexdigit())),
+            "hash not a build stamp: {line}"
+        );
+        assert_eq!(time.len(), 20, "RFC 3339 UTC: {line}");
+        assert!(time.ends_with('Z'), "{line}");
     }
 
     #[test]

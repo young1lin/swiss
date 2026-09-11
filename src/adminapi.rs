@@ -371,9 +371,11 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // build lands — one edited module counts as much as the shell — so an update never costs the
     // operator a manual refresh.
     r = r.route("/api/info", get(|State(ctx): State<Arc<AppContext>>| async move {
+        // The build stamp (docs/16 H3) joins tokenEnv/panelVersion — additive to the Node
+        // shape: the panel reads named fields only, and the stamp is metadata, never a secret.
         admin_json(
             StatusCode::OK,
-            json!({ "tokenEnv": ctx.token_env, "panelVersion": lmg_panel::admin::panel_version_stamp() }),
+            json!({ "tokenEnv": ctx.token_env, "panelVersion": lmg_panel::admin::panel_version_stamp(), "build": crate::app::build_info() }),
         )
     }));
 

@@ -66,6 +66,34 @@ pub struct StatusResult {
     pub log_file: String,
     pub health: Option<Value>,
     pub memory: Option<Value>,
+    /// The RUNNING daemon's build, straight off /health (docs/16 H3).
+    pub build: Option<Value>,
+    /// The build of the entry ON DISK, from running the entry's own --version.
+    pub disk_build: Option<String>,
+    /// Set when the two disagree — "I rebuilt but never restarted", made visible.
+    pub build_note: Option<String>,
+}
+
+/// Pull the git hash out of a version line ("lmg 0.1.0 (23047d8, 2026-09-11T13:16:40Z)") —
+/// the exact pair shape version_line() prints; writer and reader in two files, one format,
+/// so this parser is the contract's other half.
+pub fn parse_version_hash(line: &str) -> Option<&str> {
+    let start = line.find('(')? + 1;
+    let rest = &line[start..];
+    let end = rest.find(',')?;
+    let hash = rest[..end].trim();
+    (!hash.is_empty()).then_some(hash)
+}
+
+/// The build of the gateway binary ON DISK: run the entry's own --version and read its hash
+/// (docs/16 H3). A missing entry or a non-gateway placeholder answers None — never a guess.
+fn disk_build_of(entry: &str) -> Option<String> {
+    let out = std::process::Command::new(entry).arg("--version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let line = String::from_utf8_lossy(&out.stdout);
+    parse_version_hash(&line).map(str::to_string)
 }
 
 pub fn url_for(port: u16) -> String {
@@ -528,6 +556,9 @@ pub async fn daemon_status(port: u16) -> StatusResult {
         log_file: log_file_path(port).to_string_lossy().into_owned(),
         memory: None,
         health: None,
+        build: None,
+        disk_build: None,
+        build_note: None,
     };
     if let Some(rec) = &rec {
         if let Some(started) = lmg_core::util::parse_iso_ms(&rec.started_at) {
@@ -557,6 +588,26 @@ pub async fn daemon_status(port: u16) -> StatusResult {
         .cloned()
         .unwrap_or_else(|| json!([])) }));
     result.memory = memory;
+
+    // The build pair (docs/16 H3): what the daemon REPORTS it is, versus what the entry on
+    // disk would report. A disagreement is the deploy that never happened — exactly the
+    // thing status exists to surface.
+    result.build = live.as_ref().and_then(|v| v.get("build")).cloned();
+    if let Some(entry) = result.entry.clone() {
+        if let Some(disk) = disk_build_of(&entry) {
+            let running = result
+                .build
+                .as_ref()
+                .and_then(|b| b.get("hash"))
+                .and_then(Value::as_str);
+            if let Some(running) = running.filter(|running| *running != disk) {
+                result.build_note = Some(format!(
+                    "the binary on disk is {disk}; the running daemon is {running} — restart to pick it up"
+                ));
+            }
+            result.disk_build = Some(disk);
+        }
+    }
     result
 }
 
@@ -655,7 +706,14 @@ mod tests {
             let app = axum::Router::new()
                 .route(
                     "/health",
-                    get(|| async { axum::Json(json!({ "ok": true })) }),
+                    // Carries a build stamp the way the real one does (docs/16 H3), so the
+                    // status path has a running-build to compare the disk entry against.
+                    get(|| async {
+                        axum::Json(json!({
+                            "ok": true,
+                            "build": { "hash": "aaaaaaa", "time": "2026-01-01T00:00:00Z" }
+                        }))
+                    }),
                 )
                 .route(
                     "/api/mcps",
@@ -1173,11 +1231,38 @@ mod tests {
         remove_pid_file(port);
     }
 
+    /// A fake entry whose --version reports the given hash — the "binary on disk" half of the
+    /// build comparison. A .cmd on Windows (Rust spawns .bat/.cmd through cmd.exe), a shell
+    /// script elsewhere. NOTE: never point this comparison at the test binary itself in a
+    /// pid record — a test runner asked for --version just runs the whole suite again.
+    fn version_probe_entry(dir: &Path, hash: &str) -> std::path::PathBuf {
+        let line = format!("lmg 0.1.0 ({hash}, 2026-01-01T00:00:00Z)");
+        #[cfg(windows)]
+        let (script, text) = (dir.join("version-probe.cmd"), format!("@echo {line}\r\n"));
+        #[cfg(not(windows))]
+        let (script, text) = (dir.join("version-probe.sh"), format!("#!/bin/sh\necho '{line}'\n"));
+        std::fs::write(&script, text).expect("write the version probe");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .expect("exec bit for the probe");
+        }
+        script
+    }
+
     #[tokio::test]
     async fn reports_the_running_daemon_with_its_mcps_and_its_memory() {
         let _lock = daemon_state().await;
         let gw = FakeGateway::start().await;
         let pid = plant_own_pid(gw.port);
+        // The entry the record names must answer --version (daemon_status runs it for the
+        // disk build), and the test binary itself would misbehave asked that — point it at a
+        // probe reporting the SAME hash the fake gateway serves: the matching-build path.
+        let mut rec = read_pid_file(gw.port).expect("planted");
+        rec.entry = version_probe_entry(&data_dir(), "aaaaaaa").to_string_lossy().into_owned();
+        rec.node = rec.entry.clone();
+        write_pid_file(&rec);
 
         let status = daemon_status(gw.port).await;
         assert!(status.running);
@@ -1185,7 +1270,8 @@ mod tests {
         assert_eq!(status.url.as_deref(), Some(url_for(gw.port).as_str()));
         assert_eq!(
             status.entry.as_deref(),
-            Some(server_entry().to_string_lossy().as_ref())
+            Some(rec.entry.as_str()),
+            "the entry the record names is what stop/status act on"
         );
         let health = status.health.expect("a running daemon reports health");
         assert_eq!(health["ok"], json!(true));
@@ -1196,7 +1282,61 @@ mod tests {
         );
         // startedAt is an ISO stamp, so the uptime is a duration rather than a guess.
         assert!(status.uptime_ms.is_some());
+        // The build pair agrees (disk probe says what /health says): no note (docs/16 H3).
+        assert_eq!(status.build.as_ref().map(|b| b["hash"].clone()), Some(json!("aaaaaaa")));
+        assert_eq!(status.disk_build.as_deref(), Some("aaaaaaa"));
+        assert_eq!(status.build_note, None);
         remove_pid_file(gw.port);
         gw.stop();
+    }
+
+    #[tokio::test]
+    async fn status_flags_a_daemon_running_another_build_than_the_entry_on_disk() {
+        // The 2026-09-11 confusion as a test: "19999 runs the old binary" was believed
+        // deployed because nothing surfaced WHICH build was running. The fake gateway serves
+        // build aaaaaaa; the probe standing in for the on-disk entry reports bbbbbbb — status
+        // must carry both and say what to do (docs/16 H3).
+        let _lock = daemon_state().await;
+        let gw = FakeGateway::start().await;
+        let entry = version_probe_entry(&data_dir(), "bbbbbbb");
+        write_pid_file(&PidRecord {
+            pid: std::process::id(),
+            port: gw.port,
+            entry: entry.to_string_lossy().into_owned(),
+            node: entry.to_string_lossy().into_owned(),
+            started_at: lmg_core::log::iso_now(),
+        });
+
+        let status = daemon_status(gw.port).await;
+        assert!(status.running);
+        assert_eq!(status.build.as_ref().map(|b| b["hash"].clone()), Some(json!("aaaaaaa")));
+        assert_eq!(status.disk_build.as_deref(), Some("bbbbbbb"));
+        let note = status.build_note.as_deref().expect("a disagreement is a note");
+        assert!(note.contains("bbbbbbb") && note.contains("aaaaaaa"), "{note}");
+        assert!(note.contains("restart"), "{note}");
+
+        let text = crate::cli::render_status(&status);
+        assert!(text.contains("build"), "{text}");
+        assert!(text.contains("note:"), "{text}");
+        let json_text = serde_json::to_string(&crate::cli::status_json(&status)).unwrap_or_default();
+        assert!(json_text.contains("\"diskBuild\":\"bbbbbbb\""), "{json_text}");
+        remove_pid_file(gw.port);
+        gw.stop();
+    }
+
+    #[test]
+    fn the_version_hash_is_parsed_from_the_parenthesised_pair() {
+        assert_eq!(
+            parse_version_hash("lmg 0.1.0 (23047d8, 2026-09-11T13:16:40Z)"),
+            Some("23047d8")
+        );
+        assert_eq!(
+            parse_version_hash("lmg 0.1.0 (23047d8-dirty, 2026-09-11T13:16:40Z)"),
+            Some("23047d8-dirty")
+        );
+        // Anything not the version_line shape is a None, never a guess.
+        assert_eq!(parse_version_hash("lmg 0.1.0"), None);
+        assert_eq!(parse_version_hash(""), None);
+        assert_eq!(parse_version_hash("lmg 0.1.0 (, x)"), None);
     }
 }

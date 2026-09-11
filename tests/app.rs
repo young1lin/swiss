@@ -106,7 +106,13 @@ async fn health_and_panel_serve() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json.unwrap(), json!({ "ok": true }));
+    // ok plus the build stamp (docs/16 H3): the loopback-only port makes a short git hash
+    // safe to serve unauthenticated, and it is what the status command compares against
+    // the binary on disk.
+    let health = json.unwrap();
+    assert_eq!(health["ok"], json!(true));
+    assert_eq!(health["build"]["hash"], json!(env!("LMG_GIT_HASH")));
+    assert!(!health["build"]["time"].as_str().unwrap_or("").is_empty());
 
     let (status, _, text) = send(&app, local(Request::get("/").body(Body::empty()).unwrap())).await;
     assert_eq!(status, StatusCode::OK);
@@ -201,7 +207,11 @@ async fn admin_api_lists_mcps_and_info() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json.unwrap()["tokenEnv"], "MCP_GATEWAY_TOKEN");
+    let info = json.unwrap();
+    assert_eq!(info["tokenEnv"], "MCP_GATEWAY_TOKEN");
+    // The build stamp rides here too (docs/16 H3) — additive to the Node shape; the panel
+    // reads named fields only.
+    assert_eq!(info["build"]["hash"], json!(env!("LMG_GIT_HASH")));
 }
 
 #[tokio::test]

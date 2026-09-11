@@ -55,6 +55,14 @@ commit that landed it. None of it changed the Node-panel source-of-truth, the se
 the v1 port boundaries below — the panel is still copied byte for byte, and a test fails if it
 ever stops being.
 
+## Deploying
+
+`cargo build --release` makes the exe; `scripts/deploy.ps1` ships it: gates, stop,
+build, `start --no-open`, then an assertion that the daemon on 19999 reports the hash this
+build stamped into `lmg --version` (docs/16 H3). `-SkipGates` exists for hotfixes.
+Deploying touches production — it is the operator's step, never part of iterating on a change
+(live verification belongs to `scripts/test-instance.ps1` on 19998).
+
 ## The one-paragraph version
 
 The admin panel (7,193 lines of dependency-free ES modules and CSS) ports **verbatim** — embedded in

@@ -36,6 +36,15 @@ use lmg_panel::admin;
 /// previewed in the traffic log (the Node build's capture cap).
 const RESPONSE_CAPTURE: usize = 16 * 1024;
 
+/// Which build is running — the stamp build.rs planted at compile time (docs/16 H3). Served on
+/// every surface an operator can check (/health, /api/info, the status command, --version), so
+/// "is the running daemon the binary I just built?" is answerable without guessing. A short git
+/// hash and an RFC 3339 time, nothing more: this is a loopback-only service, and a commit id
+/// names code, not the machine or its user.
+pub fn build_info() -> Value {
+    json!({ "hash": env!("LMG_GIT_HASH"), "time": env!("LMG_BUILD_TIME") })
+}
+
 /// One MCP endpoint per started MCP, cached by the entry's generation — the port of the Node
 /// build's `handlers` map. Rebuilt when the entry restarts (generation bump): the endpoint is
 /// built by `adapter.build()` at start, so a config edit that swapped the adapter is served by a
@@ -270,7 +279,9 @@ async fn panel_asset(Path(path): Path<String>) -> Response {
 }
 
 async fn health() -> Response {
-    admin_json(StatusCode::OK, json!({ "ok": true }))
+    // ok plus the build stamp, deliberately on the unauthenticated route: a liveness probe is
+    // exactly where "up, but up since before your deploy" wants to be visible (docs/16 H3).
+    admin_json(StatusCode::OK, json!({ "ok": true, "build": build_info() }))
 }
 
 async fn health_check(State(ctx): State<Arc<AppContext>>) -> Response {

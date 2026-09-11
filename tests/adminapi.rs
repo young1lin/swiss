@@ -664,6 +664,9 @@ async fn exposes_the_tokens_env_var_name_never_the_token() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["tokenEnv"], json!("MCP_GATEWAY_TOKEN"));
     assert!(!body.to_string().contains(TOKEN), "{body}");
+    // The build stamp (docs/16 H3) — present, and never a secret either.
+    assert_eq!(body["build"]["hash"], json!(env!("LMG_GIT_HASH")));
+    assert!(!body["build"].to_string().contains(TOKEN), "{body}");
 }
 
 #[tokio::test]
