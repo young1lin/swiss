@@ -3,6 +3,7 @@
 //! exists.
 
 pub mod atomic_json;
+pub mod env;
 pub mod log;
 pub mod paths;
 pub mod platform;

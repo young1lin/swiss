@@ -220,7 +220,9 @@ action 用的，交互式会话既不结束也没有上限，塞进去只会把�
 是「你是终端，尽管画」；第三条是因为网关是个守护进程，环境是谁启动它就继承谁的：从一个给自己的
 工具 shell 设了 `NO_COLOR=1` 的 agent 环境里 `lmg start`，19999 上每个本地 pwsh 都被
 `$PSStyle.OutputRendering=PlainText` 变成了黑白（实测）。启动者的口味不是标签页的口味。
-`PtyCommand::env_remove` 就是为这件事加的。
+`PtyCommand::env_remove` 就是为这件事加的。自 docs/16 §1 起，守护进程本身在两条路径
+（`start` 的 spawn 与 `serve` 进程内）都会先按黑名单清洗环境；本节这条 `NO_COLOR` 删除
+保留不动——它是「标签页的环境」这一层的语义，不依赖守护进程是否干净。
 
 ## 6. 安全与审计
 

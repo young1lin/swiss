@@ -363,6 +363,11 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
         .stdin(std::process::Stdio::null())
         .stdout(open_log(&log))
         .stderr(open_log(&log));
+    // The daemon's environment is this machine's, not this shell's (docs/16 §1): an agent or
+    // CI launcher must not speak for every child the gateway will ever spawn. The serve path
+    // repeats the scrub in its own process, so this covers the spawn even where main() grew a
+    // regression.
+    lmg_core::env::scrub_command(&mut command);
     if let Some(port) = opts.port {
         // So the child listens where we asked, including a first run that has no config to
         // persist into.
@@ -978,6 +983,84 @@ mod tests {
         assert!(matches!(result, StartResult::Failed { .. }));
         assert_eq!(read_pid_file(port), None);
         let _ = std::fs::remove_file(log_file_path(port));
+    }
+
+    // --- the daemon's environment (docs/16 §1) ------------------------------------------------
+
+    /// A fake entry that dumps the environment it was handed to a file and exits — the probe
+    /// that makes the scrub observable from outside the process. A .cmd on Windows (Rust spawns
+    /// .bat/.cmd through cmd.exe with argument escaping since the BatBadBut hardening, so
+    /// Command::new works on the script path); a shell script elsewhere.
+    fn env_probe_entry(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dump = dir.join("env-dump.txt");
+        #[cfg(windows)]
+        let (script, text) = (
+            dir.join("env-probe.cmd"),
+            format!("@set > \"{}\"\r\n", dump.display()),
+        );
+        #[cfg(not(windows))]
+        let (script, text) = (
+            dir.join("env-probe.sh"),
+            format!("#!/bin/sh\nenv > '{}'\n", dump.display()),
+        );
+        std::fs::write(&script, text).expect("write the probe script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+                .expect("exec bit for the probe");
+        }
+        (script, dump)
+    }
+
+    #[tokio::test]
+    async fn the_spawned_daemon_does_not_inherit_the_launchers_noise() {
+        // The 2026-09-11 incident as a test: a launcher carrying NO_COLOR=1 started the
+        // gateway, and every child below it went colourless. The daemon's environment must be
+        // this machine's, not the launching shell's (docs/16 §1) — the exact names and the
+        // prefix family both go, while the machine's own variables survive.
+        let _lock = daemon_state().await;
+        let (entry, dump) = env_probe_entry(&data_dir());
+        // SAFETY: planted under the same data-dir lock every other env-planting test in this
+        // module holds, and no test in this binary reads these names.
+        unsafe {
+            std::env::set_var("NO_COLOR", "1");
+            std::env::set_var("CLAUDE_CODE_PROBE", "1");
+        }
+        let port = free_port();
+        let result = start_daemon(StartOptions {
+            port: Some(port),
+            entry: Some(entry),
+            timeout_ms: Some(200),
+            ..Default::default()
+        })
+        .await;
+        // The probe is not a gateway — health never answers, so the start fails. The dump it
+        // left behind is the point.
+        assert!(matches!(result, StartResult::Failed { .. }));
+        let text = std::fs::read_to_string(&dump).expect("the probe dumped its environment");
+        assert!(
+            !text.lines().any(|l| l.to_ascii_uppercase().starts_with("NO_COLOR=")),
+            "the launcher's NO_COLOR must not reach the daemon: {text}"
+        );
+        assert!(
+            !text
+                .lines()
+                .any(|l| l.to_ascii_uppercase().starts_with("CLAUDE_CODE_PROBE=")),
+            "prefix-family noise must not reach the daemon: {text}"
+        );
+        assert!(
+            text.lines().any(|l| l.to_ascii_uppercase().starts_with("PATH=")),
+            "the machine's own variables DO reach the daemon: {text}"
+        );
+        // SAFETY: restore the machine for the rest of the test binary.
+        unsafe {
+            std::env::remove_var("NO_COLOR");
+            std::env::remove_var("CLAUDE_CODE_PROBE");
+        }
+        remove_pid_file(port);
+        let _ = std::fs::remove_file(log_file_path(port));
+        let _ = std::fs::remove_file(&dump);
     }
 
     // --- stopping ----------------------------------------------------------------------------

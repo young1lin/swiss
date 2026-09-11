@@ -162,6 +162,9 @@ impl LocalShell for LocalShells {
 /// is whatever launched it — an agent harness sets NO_COLOR=1 for its own tool shells,
 /// and a gateway started from one handed every local pwsh a colourless PSStyle
 /// (OutputRendering=PlainText, seen on 19999). The launcher's taste is not the tab's.
+/// The daemon layer has since scrubbed the launcher's noise at the source (docs/16 §1,
+/// on both the spawn and the serve path); this strike stays anyway — a terminal tab's
+/// environment is this layer's own contract, not an implementation detail of a clean daemon.
 fn shell_command(shell: Option<&str>, default: &PtyCommand) -> PtyCommand {
     let command = match shell.map(str::trim).filter(|s| !s.is_empty()) {
         Some(program) => PtyCommand::new(program),
