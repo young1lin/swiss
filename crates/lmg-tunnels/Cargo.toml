@@ -18,9 +18,9 @@ thiserror = "2"
 russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa", "des"] }
 # TCP keepalive on forwarded sockets; already in the graph via tokio and hyper-util.
 socket2 = "0.6"
-rand = "0.8"
+rand = "0.9"
 base64 = "0.23"
-sha2 = "0.10"
+sha2 = "0.11"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
 futures-core = { version = "0.3", default-features = false }
 # Already in the workspace graph (lmg-host, lmg-mcp, lmg-data); promoted from dev-dependencies
@@ -38,7 +38,7 @@ serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 serde = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 base64 = "0.23"
-sha2 = "0.10"
+sha2 = "0.11"
 socket2 = "0.6"
-rand = "0.8"
+rand = "0.9"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

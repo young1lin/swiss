@@ -1,6 +1,8 @@
 # 16 — 运维加固：守护进程的环境、隔离的测试实例、一步部署、CI，与依赖体检
 
-> 状态：**待实施**（2026-09-11 立项）。本文只写清「是什么、为什么、改哪里、怎么验」，不含实现代码。
+> 状态：**H1–H5 已实施**（2026-09-12；提交 bcc73ad / 42fbf6d / 15bb55f / H5 见 git log，H4 经核已由
+> 既有 `.github/workflows/build.yml` 全覆盖、未另建 ci.yml）。H6（可选）另行处理。本文只写清
+> 「是什么、为什么、改哪里、怎么验」，不含实现代码。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/05-wire-compatibility.md`（状态目录与密钥，H2 要用）、
 > `docs/14-terminal-plugin-spec.md` §5 末尾「本地 shell 的环境」（H1 的前情）。
 > 代码注释一律英文；文档散文中文。本仓库的 `crates/lmg-panel/src/admin_assets/` 一个字节都不能手改
@@ -168,6 +170,15 @@ workflow 文件本地无法运行；验收是第一次推送后的绿勾。提�
 ### 5.2 测试
 
 现有全部测试 + `seal-fixture` 往返。没有新测试——这一条是依赖体检，不是行为变化。
+
+### 5.3 实施记录（2026-09-12）
+
+已合：本仓四个 crate 的直接依赖全部升到 russh 0.63 那一代（aes-gcm 0.11、sha2 0.11、hkdf 0.13、
+rand 0.9），九对重复（aead、aes、aes-gcm、cipher、ctr、ghash、polyval、universal-hash、inout）
+整体消失；`opens_a_node_sealed_fixture` 在新栈上原样通过（冻结格式无损）。体积
+7,972,352 → 7,966,208 字节。合不掉的一侧全部查明了归属（sqlx 0.8.6 钉 sha2/hmac/hkdf/rand 0.8
+一代，axum 0.8.9 钉 base64 0.22，pageant/process-wrap 钉 windows 0.62，syn 3 仅 proc-macro），
+逐条写进 **ADR-013**（`docs/07-decisions.md`）。未新增任何一对；TLS 栈与运行时单份。
 
 ## 6. H6（可选）— `views/terminal.js` 拆出设置表
 

@@ -18,11 +18,11 @@ thiserror = "2"
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 # RFC3339 timestamps for the gateway's own logging — chrono appears only under sqlx, in lmg-mcp.
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
-rand = "0.8"
+rand = "0.9"
 # The sealed-envelope format (docs/05 §1) — frozen, byte-identical to the Node build.
-hkdf = "0.12"
-sha2 = "0.10"
-aes-gcm = "0.10"
+hkdf = "0.13"
+sha2 = "0.11"
+aes-gcm = "0.11"
 # Pinned to rmcp's own base64 major so the graph holds ONE copy (cargo tree -d stays clean).
 base64 = "0.23"
 

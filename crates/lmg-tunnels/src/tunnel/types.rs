@@ -64,9 +64,12 @@ pub(crate) fn is_port_f(n: f64) -> bool {
 
 /// `randomUUID()` — a v4 UUID, hand-rolled (16 random bytes, RFC 4122 version/variant bits).
 pub fn new_id() -> String {
-    use rand::RngCore;
+    // TryRngCore per rand 0.9; an OS CSPRNG error is a broken machine, not a case to handle.
+    use rand::TryRngCore;
     let mut b = [0u8; 16];
-    rand::rngs::OsRng.fill_bytes(&mut b);
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut b)
+        .expect("the OS CSPRNG answered an error");
     b[6] = (b[6] & 0x0f) | 0x40; // version 4
     b[8] = (b[8] & 0x3f) | 0x80; // variant 10
     let h = util::to_hex(&b);

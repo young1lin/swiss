@@ -18,7 +18,7 @@ time = { version = "0.3", default-features = false, features = ["std", "formatti
 futures-core = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-sha2 = "0.10"
+sha2 = "0.11"
 encoding_rs = { version = "0.8", default-features = false }
 
 [target.'cfg(not(windows))'.dependencies]

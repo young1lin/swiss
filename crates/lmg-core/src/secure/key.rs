@@ -94,7 +94,9 @@ fn dpapi_source() -> Result<KeyMaterial, String> {
             // First run on this machine: generate, protect, persist (0600, atomically enough for
             // a first-write; a concurrent double-generate just seals under whichever wins later).
             let mut key = [0u8; KEY_LEN];
-            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut key);
+            // TryRngCore per rand 0.9 (see envelope.rs); an Err here is a broken machine.
+            rand::TryRngCore::try_fill_bytes(&mut rand::rngs::OsRng, &mut key)
+                .expect("the OS CSPRNG answered an error");
             let protected =
                 platform::dpapi_protect(&key).map_err(|e| format!("DPAPI protect failed: {e}"))?;
             let text = base64::engine::general_purpose::STANDARD.encode(&protected);

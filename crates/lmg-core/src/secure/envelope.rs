@@ -11,12 +11,15 @@
 //! / env) — a diagnostic, never trusted: opening always tries every available candidate and lets
 //! the tag decide.
 
+use aes_gcm::aead::consts::U12;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use hkdf::Hkdf;
-use rand::RngCore;
+// rand 0.9: the OS RNG speaks the fallible TryRngCore (rand_core 0.9 split the trait). An OS
+// CSPRNG that answers Err is a broken machine, not a case to handle - expect it away.
+use rand::TryRngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
@@ -94,16 +97,24 @@ fn file_key(master: &[u8], salt: &[u8]) -> Result<[u8; 32], EnvelopeError> {
 pub fn seal(master: &[u8], key_source: &str, plaintext: &str) -> Sealed {
     let mut salt = [0u8; 16];
     let mut iv = [0u8; 12];
-    rand::rngs::OsRng.fill_bytes(&mut salt);
-    rand::rngs::OsRng.fill_bytes(&mut iv);
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut salt)
+        .expect("the OS CSPRNG answered an error");
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut iv)
+        .expect("the OS CSPRNG answered an error");
 
     let key = file_key(master, &salt).expect("HKDF with fixed lengths cannot fail");
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+    // hybrid-array (the aead 0.6 generation) deprecates from_slice: fixed-size values convert
+    // with From, and only file-sourced slices deserve a fallible TryFrom. Same bytes, same
+    // format — the fixture test pins that.
+    let key_bytes: Key<Aes256Gcm> = key.into();
+    let cipher = Aes256Gcm::new(&key_bytes);
     // No AAD — the Node build passes none, so the format does not either. The crate appends the
     // 16-byte tag to the ciphertext, which is how the split below recovers it.
     let out = cipher
         .encrypt(
-            Nonce::from_slice(&iv),
+            &Nonce::<U12>::from(iv),
             Payload {
                 msg: plaintext.as_bytes(),
                 aad: &[],
@@ -138,11 +149,15 @@ pub fn unseal(master: &[u8], sealed: &Sealed) -> Result<String, EnvelopeError> {
     let ct = decode("ct", &sealed.ct)?;
 
     let key = file_key(master, &salt)?;
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+    let key_bytes: Key<Aes256Gcm> = key.into();
+    let cipher = Aes256Gcm::new(&key_bytes);
+    // An iv that is not 12 bytes is a malformed or tampered envelope — the same "not openable
+    // here" answer a bad tag gets, never a panic on file-sourced data.
+    let nonce = Nonce::<U12>::try_from(iv.as_slice()).map_err(|_| EnvelopeError::AuthFailed)?;
     let mut ciphertext = ct;
     ciphertext.extend_from_slice(&tag);
     let plaintext = cipher.decrypt(
-        Nonce::from_slice(&iv),
+        &nonce,
         Payload {
             msg: &ciphertext,
             aad: &[],

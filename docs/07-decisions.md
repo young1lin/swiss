@@ -309,3 +309,35 @@ combination.
 ADR had kept — a `"mongo"` arm in `make_adapter` that named the removal for a config migrated
 from Node — lost its reason and went with it. A `mongo`-typed MCP now fails like any other
 unknown type, listing the built-ins. Neither build carries the word.
+---
+
+## ADR-013 — The RustCrypto duplicate stack: merge our own generation away, then name who pins the rest
+
+**Status: Accepted (2026-09-12).**
+
+`cargo tree -d` showed the RustCrypto stack twice: our own sealing path sat on the
+aes-gcm 0.10 / digest 0.10 generation while russh 0.63 pulls the aes-gcm 0.11 / digest 0.11
+generation. The audit (docs/16 H5) moved every direct crypto dependency of ours — lmg-core,
+lmg-host, lmg-tunnels, lmg-mcp — onto the newer generation: aes-gcm 0.11, sha2 0.11,
+hkdf 0.13, rand 0.9 (rand 0.9's OS RNG speaks the fallible TryRngCore; a CSPRNG error is a
+broken machine and is expected away). The sealed-envelope format is a byte-level contract
+(docs/05): the Node-sealed fixture still opens, which is the gate that proves the primitives
+did not move.
+
+What the merge removed outright (nine pairs, both copies gone): aead, aes, aes-gcm, cipher,
+ctr, ghash, polyval, universal-hash, inout.
+
+What the merge could not remove, and who pins it (all verified with `cargo tree -i`):
+
+| Duplicate | Pinned by | Movable from here? |
+|---|---|---|
+| sha2/sha1/digest/block-buffer/crypto-common/generic-array 0.10, hkdf/hmac 0.12, rand 0.8, rand_core 0.6, rand_chacha 0.3, getrandom 0.2 | sqlx 0.8.6 (sqlx-core/-mysql/-postgres; rand 0.8 also via rsa 0.9 to num-bigint-dig) | not until sqlx moves generations |
+| base64 0.22 vs 0.23 | axum 0.8.9 pins 0.22 | not until axum moves |
+| windows 0.62 vs our 0.58 | pageant (russh) + process-wrap (rmcp) | yes in principle — bumping our own windows dep to 0.62 is a real follow-up, and a large diff |
+| syn 2/3, windows-implement/interface 0.58/0.6x | proc-macro crates only | build-time only, no binary cost |
+
+Binary cost, `target-release-lmg.exe` (path separators flattened for this table): 7,972,352 to 7,966,208 bytes (-6 KB, -0.08%). The honest
+reading: sqlx still links the 0.10 generation, so the disk saving is small; the win is that the
+workspace no longer OWNS the old generation, and the aes-gcm chain (the one crate family we
+could fully merge) is single-copy. Hard constraints held: no new duplicate pair appeared, and
+the TLS stack and async runtime stay single.
