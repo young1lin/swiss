@@ -410,30 +410,111 @@
     .db-bar .btn.commit { background: var(--accent); color: var(--accent-text); }
 
     /* --- terminal (docs/14 §2) ----------------------------------------------------------------- */
-    /* The stage is the one pane child that must NOT scroll with the pane: a terminal has
-       its own scrollbar inside xterm's viewport, and the page growing under it would put
-       two scrollbars on one grid of text. Fixed height against the viewport with a floor
-       for short windows; the measure cap still applies, so a terminal on a 2560px monitor
-       reads as a card, same as every other block. */
-    .term-page { display: flex; flex-direction: column; min-height: calc(100vh - 190px); }
-    .term-stage {
-      position: relative; flex: 1; min-height: 320px;
-      background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-card);
-      padding: var(--s2) var(--s4); overflow: hidden;
+    /* =====================================================================================
+       Terminal — the pane stops being a form here. Every real web terminal (ttyd, wetty,
+       VS Code's integrated panel) gives the terminal the whole viewport: one bar of
+       session tabs up top, a deep dark surface that IS the terminal, a one-line status
+       foot. The chrome wears its own fixed palette, not the panel tokens — a terminal
+       keeps its colors whatever the app theme is doing around it. Reference designs
+       studied in vendor-refs/ttyd and vendor-refs/wetty (ttyd's xterm palette is used
+       verbatim below, in terminal.js). */
+    .pane > .term-page { max-width: none; }
+    .term-page {
+      display: flex; flex-direction: column;
+      /* 44px toolbar + the pane's 24/32 padding — measured, not guessed: any taller and
+         the pane grows its own scrollbar, any shorter and a light strip shows below. */
+      height: calc(100vh - 100px); min-height: 340px;
+      --t-bg: #2b2b2b; --t-bar: #232323; --t-edge: #3d3d3d;
+      --t-fg: #d2d2d2; --t-dim: #8f8f8f; --t-accent: #427ab3;
+      --t-ok: #5ea702; --t-warn: #cfae00; --t-bad: #d81e00;
     }
-    /* Off-stage holders keep their buffer (that IS the tab's scrollback) but not their
-       pixels: hidden, not display:none — xterm's renderer needs a laid-out element when
-       the holder comes back on stage and refits. */
-    .term-holder { position: absolute; inset: var(--s1) var(--s2); }
+    /* The bar: tabs grow on the left, the picker and Open sit on the right. Same dark
+       as the stage so the bar and the surface read as one instrument. */
+    .term-bar {
+      display: flex; align-items: flex-end; gap: var(--s3);
+      background: var(--t-bar); border: 1px solid var(--t-edge);
+      border-radius: var(--r-card) var(--r-card) 0 0;
+      padding: 6px 8px 0; flex: none;
+    }
+    .term-tabs {
+      display: flex; align-items: flex-end; gap: 2px;
+      min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none;
+    }
+    .term-tabs::-webkit-scrollbar { display: none; }
+    .term-tabs[hidden] { display: none; }
+    .term-tabs button {
+      display: inline-flex; align-items: center; gap: 7px;
+      max-width: 220px; white-space: nowrap; overflow: hidden;
+      font-size: var(--f-label); font-weight: 500; color: var(--t-dim);
+      background: transparent; border: none; box-shadow: none;
+      border-radius: 7px 7px 0 0; padding: 6px 8px 7px 12px; cursor: default;
+    }
+    .term-tabs button:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 6%, transparent); }
+    .term-tabs button[aria-selected="true"] {
+      color: var(--t-fg); background: var(--t-bg);
+      /* Merge into the surface: grow 1px over the bar's border and cover it, so the
+         active tab reads as the top of the terminal, not a pill sitting in front. */
+      position: relative; margin-bottom: -1px; border-bottom: 1px solid var(--t-bg);
+      box-shadow: inset 0 2px 0 var(--t-accent);
+    }
+    .term-tab-label { overflow: hidden; text-overflow: ellipsis; }
+    .term-tab-x {
+      flex: none; width: 17px; height: 17px; line-height: 15px; text-align: center;
+      font-size: var(--f-caption); color: var(--t-dim); border-radius: 4px;
+    }
+    .term-tab-x:hover { color: var(--t-bg); background: var(--t-bad); }
+    /* The picker row. A native select, styled to belong to the dark bar; the panel's
+       dependency-free rule keeps it a select rather than a custom dropdown. */
+    .term-ctl { display: flex; align-items: center; gap: var(--s2); padding: 4px 2px 7px; flex: none; }
+    .term-pick {
+      font-size: var(--f-label); color: var(--t-fg);
+      background: var(--t-bg); border: 1px solid var(--t-edge); border-radius: 7px;
+      padding: 4px 8px; max-width: 360px; text-overflow: ellipsis;
+    }
+    .term-pick:focus { outline: none; border-color: var(--t-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 25%, transparent); }
+    .term-new {
+      background: var(--t-accent); color: #fff; font-weight: 560; box-shadow: none;
+      border-radius: 7px; padding: 5px 14px;
+    }
+    .term-new:hover { background: color-mix(in srgb, var(--t-accent) 85%, white); }
+    .term-none { font-size: var(--f-label); color: var(--t-dim); }
+    /* The surface. Flush: xterm draws its own padding, a frame of panel padding here
+       is what made the old page read as a form with a TV in it. */
+    .term-stage {
+      position: relative; flex: 1; min-height: 0;
+      background: var(--t-bg); border: 1px solid var(--t-edge);
+      border-top: none; border-bottom: none; border-radius: 0;
+      overflow: hidden;
+    }
+    .term-holder { position: absolute; inset: 0; padding: 8px 10px; }
     .term-holder[hidden] { display: none; }
-    /* The picker's select sits in the pane head; its label reads like the form labels
-       elsewhere instead of floating raw next to the Open button. */
-    .term-open { align-items: center; }
-    .term-open .field { margin: 0; }
-    /* Session tabs reuse .seg wholesale; the only new glyph is the close × inside a tab,
-       which must not read as the tab's own label. */
-    .term-tabs button span[data-act="close"] { margin-left: 6px; color: var(--text-3); font-size: var(--f-caption); }
-    .term-tabs button span[data-act="close"]:hover { color: var(--red); }
-    /* The one-line story under the stage: attached / reconnecting / the close reason. */
-    .term-status { min-height: 1.4em; }
+    /* The stage's scrollbar belongs to the surface, not the panel chrome. */
+    .term-stage .xterm-viewport::-webkit-scrollbar { width: 10px; }
+    .term-stage .xterm-viewport::-webkit-scrollbar-thumb { background: var(--t-edge); border-radius: 5px; }
+    .term-stage .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+    /* The empty state: a ghost prompt, not an apology box. */
+    .term-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--t-dim); }
+    .term-empty h2 { font-size: var(--f-body); font-weight: 550; color: var(--t-fg); margin: 0; }
+    .term-empty p { margin: 0; font-size: var(--f-label); }
+    .term-ghost { font-family: var(--mono); font-size: 28px; color: var(--t-dim); display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .term-ghost-dollar { color: var(--t-ok); }
+    .term-ghost-cursor { width: 15px; height: 30px; background: var(--t-dim); animation: term-blink 1.1s steps(1) infinite; }
+    @keyframes term-blink { 50% { opacity: 0; } }
+    /* The status foot: one quiet line INSIDE the instrument — attached / reconnecting /
+       the close reason — with a state dot that answers before the words do. */
+    /* The status foot caps the instrument like a tmux statusline: a dark strip that is
+       part of the card (bar above, surface, foot below), never a caption floating on the
+       pane's light background. Always rendered — an empty strip still caps the card. */
+    .term-foot {
+      flex: none; display: flex; align-items: center; gap: 8px;
+      font-family: var(--mono); font-size: var(--f-caption); color: var(--t-dim);
+      background: var(--t-bar); border: 1px solid var(--t-edge); border-top: none;
+      border-radius: 0 0 var(--r-card) var(--r-card);
+      padding: 5px 12px; min-height: 26px;
+    }
+    .term-foot[hidden] { display: flex; }
+    .term-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--t-dim); }
+    .term-dot.ok { background: var(--t-ok); }
+    .term-dot.warn { background: var(--t-warn); }
+    .term-dot.bad { background: var(--t-bad); }
     .db-hint { color: var(--text-3); font-size: var(--f-body); padding: var(--s4); }

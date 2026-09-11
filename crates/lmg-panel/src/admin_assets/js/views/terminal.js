@@ -59,12 +59,29 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
 function model(id) { return models.find(function (m) { return m.id === id; }) || null; }
 
-/* The status line under the stage: one sentence for whichever session is on stage. */
+/* The status foot under the surface: a state dot that answers before the words do,
+   then one sentence for whichever session is on stage. The tone classes come from the
+   status strings this file and the gateway's control frames produce. */
+function statusTone(text) {
+  if (!text) return "";
+  if (/attached/.test(text)) return "ok";
+  if (/connecting|opening|reconnecting/.test(text)) return "warn";
+  if (/closed|exited|gone|stalled|not running|failed|could not/.test(text)) return "bad";
+  return "";
+}
+
 function paintStatus() {
   var line = $("term-status");
   if (!line) return;
   var m = model(active);
-  line.textContent = m ? m.status : "";
+  var text = m ? m.status : "";
+  line.hidden = false;   // the foot always caps the card; an empty strip is still its shape
+  line.textContent = "";
+  if (!text) return;
+  var dot = document.createElement("span");
+  dot.className = "term-dot " + statusTone(text);
+  line.appendChild(dot);
+  line.appendChild(document.createTextNode(text));
 }
 
 /* The session tabs. A tab exists for every wired model plus every live listing row the
@@ -85,8 +102,10 @@ function paintTabs() {
   bar.innerHTML = all.map(function (m) {
     var label = esc(sessionLabel(m)) + (m.gone ? " · closed" : "");
     return '<button role="tab" data-act="select" data-id="' + esc(m.id) + '"' +
-      ' aria-selected="' + String(m.id === active) + '">' + label +
-      ' <span data-act="close" data-id="' + esc(m.id) + '" title="Close session" role="button">\u00d7</span></button>';
+      ' aria-selected="' + String(m.id === active) + '" title="' + label + '">' +
+      '<span class="term-tab-label">' + label + "</span>" +
+      ' <span class="term-tab-x" data-act="close" data-id="' + esc(m.id) + '" title="Close session" role="button">\u00d7</span>' +
+      "</button>";
   }).join("");
 }
 
@@ -143,11 +162,19 @@ function wireTerminal(m) {
   });
 }
 
+/* A terminal wears its own palette whatever the panel theme is doing — this is ttyd's
+   xterm theme, used verbatim because it is the most-copied xterm.js palette and its
+   bg/fg/cursor and 16 ANSI colors are tuned as a set (borrowing half of it is how you
+   get a terminal that looks almost right). */
 function termTheme() {
-  var cs = getComputedStyle(document.documentElement);
-  function v(name) { var x = cs.getPropertyValue(name).trim(); return x || null; }
-  var theme = { background: v("--card"), foreground: v("--text"), cursor: v("--accent") };
-  return theme.background && theme.foreground ? theme : {};
+  return {
+    foreground: "#d2d2d2", background: "#2b2b2b", cursor: "#adadad",
+    black: "#000000", red: "#d81e00", green: "#5ea702", yellow: "#cfae00",
+    blue: "#427ab3", magenta: "#89658e", cyan: "#00a7aa", white: "#dbded8",
+    brightBlack: "#686a66", brightRed: "#f54235", brightGreen: "#99e343",
+    brightYellow: "#fdeb61", brightBlue: "#84b0d8", brightMagenta: "#bc94b7",
+    brightCyan: "#37e6e8", brightWhite: "#f1f1f0",
+  };
 }
 
 var encoder = null;
@@ -384,28 +411,34 @@ async function closeSession(id) {
   await apiJson(sessionsUrl() + "/" + encodeURIComponent(id), { method: "DELETE" });
 }
 
+/* The page: one bar (tabs left, picker + Open right), the dark surface, the status
+   foot. No pane-head, no description paragraph — the nav tab already says Terminal,
+   and every real web terminal spends its top row on tabs, not on prose. */
 function render() {
   var pane = $("pane");
   if (!pane) return;
   var pick = targetRows(targets);
-  pane.innerHTML = '<div class="wide term-page">' +
-    '<div class="pane-head"><div><h1 class="pane-title">Terminal</h1>' +
-      '<div class="pane-desc">A real terminal on the hosts the tunnels already reach, or on this machine when the local shell is enabled. A dropped socket does not end a session - it waits out the grace window and catches up on reconnect.</div></div>' +
-      '<div class="pane-actions term-open">' +
+  pane.innerHTML = '<div class="term-page">' +
+    '<div class="term-bar">' +
+      '<div class="term-tabs" id="term-tabs" role="tablist" aria-label="Sessions" hidden></div>' +
+      '<div class="term-ctl">' +
         (pick.rows.length
-          ? '<label class="field"><span>target</span><select id="term-target">' +
+          ? '<select id="term-target" class="term-pick" aria-label="Target">' +
             pick.rows.map(function (r) {
               return '<option value="' + esc(r.id) + '">' + esc(r.label) + (r.state ? " (" + esc(r.state) + ")" : "") + "</option>";
-            }).join("") + "</select></label>" +
-            '<button class="btn primary" id="term-new">Open</button>'
-          : '<span class="pane-sub">' + esc(pick.note) + "</span>") +
+            }).join("") + "</select>" +
+            '<button class="btn term-new" id="term-new">Open session</button>'
+          : '<span class="term-none">' + esc(pick.note) + "</span>") +
       "</div></div>" +
-    '<div class="seg term-tabs" id="term-tabs" role="tablist" aria-label="Sessions" hidden></div>' +
     '<div class="term-stage" id="term-stage">' +
-      '<div class="empty" id="term-empty" hidden><div><h2>No session yet</h2>' +
-        "<p class=\"hint\">Pick a target above and open one.</p></div></div>" +
+      '<div class="term-empty" id="term-empty" hidden>' +
+        '<div class="term-ghost" aria-hidden="true"><span class="term-ghost-dollar">$</span><span class="term-ghost-cursor"></span></div>' +
+        '<h2>No session yet</h2>' +
+        "<p>Pick a host in the bar above and open one.</p>" +
+        "<p>A dropped socket does not end a session \u2014 it waits out the grace window and catches up.</p>" +
+      "</div>" +
     "</div>" +
-    '<div class="pane-sub term-status" id="term-status"></div>' +
+    '<div class="term-foot" id="term-status"></div>' +
     "</div>";
 
   var button = $("term-new");
