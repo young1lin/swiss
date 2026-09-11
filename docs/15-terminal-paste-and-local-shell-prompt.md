@@ -51,7 +51,8 @@
 - 停 19998 只按端口找 PID：`Get-NetTCPConnection -LocalPort 19998`。绝不 `Get-Process lmg`。
 - 两个实例共用 `~/.mcp-gateway/gateway.config.json`。spec §4.2 在 19998 上保存 terminal 配置会写进
   生产配置——验收完把 `local.enabled` 恢复成用户要的值（用户要的是**打开、pwsh**），并在汇报里写明
-  你最终留下的是什么。
+  你最终留下的是什么。（自 docs/16 H2 起这一条作废：19998 用 `scripts/test-instance.ps1` 起在自己的
+  测试家 `%LOCALAPPDATA%\lmg-test-home`，保存只写测试家。原文保留作历史。）
 - 浏览器实测用 `.agents/skills/agent-browser`（先 `agent-browser skills get core`）。这台机器上它
   冷启动慢，每条命令前加 `timeout`，只开一个命名会话，结束 `agent-browser close`。
   粘贴的验证手段：`press Control+v` 后截图看有没有 `^V`；对 `.xterm-helper-textarea` 派发合成

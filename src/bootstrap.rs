@@ -302,6 +302,22 @@ mod tests {
     }
 
     #[test]
+    fn a_home_nested_under_missing_directories_is_created_whole() {
+        // docs/16 H2: scripts/test-instance.ps1 points MCP_GATEWAY_HOME at a directory that
+        // may not exist yet (and -Fresh deletes it first). serve must create the whole path —
+        // create_dir_all, not mkdir — or every first run of the test instance panics on a
+        // missing parent instead of seeding a gateway.
+        let sb = Sandbox::new();
+        let nested = sb.base.join("home").join("a").join("b");
+        // SAFETY: under the Sandbox's data-dir lock, like every other MCP_GATEWAY_HOME write.
+        unsafe { std::env::set_var("MCP_GATEWAY_HOME", &nested) };
+        let report = sb.boot();
+        assert!(report.created, "a nonexistent home is created, not an error");
+        assert_eq!(report.data_dir, nested);
+        assert!(nested.join("gateway.config.json").is_file());
+    }
+
+    #[test]
     fn a_second_boot_changes_nothing_and_reports_nothing_new() {
         // Safe to call every boot: it acts only on what is missing. Re-seeding would hand every
         // client a token that no longer works.

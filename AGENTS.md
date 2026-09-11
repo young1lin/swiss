@@ -132,17 +132,23 @@ Port **19999 is production for the human on this machine**: their panel is open 
 browser/API verification runs on a second instance bound to **19998**:
 
 ```powershell
-$env:MCP_GATEWAY_PORT = "19998"; & target-test\release\lmg.exe serve   # background job
+scripts/test-instance.ps1            # -Start (default): snapshot state into the test home, serve on 19998
+scripts/test-instance.ps1 -Fresh     # wipe the test home first — a clean instance
+scripts/test-instance.ps1 -Stop      # kill by the port's owning PID, never by process name
 ```
 
-- The env var beats `gateway.config.json` and is **not persisted**. Do NOT use `--port`/`-p`:
-  both `start` and `serve` write the port into the config, hijacking the user's default.
-- The 19999 daemon holds `target\release\lmg.exe`, so iteration builds go to a separate
-  directory: `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`.
-- The 19998 instance shares the state dir — keep it read-only (navigate, query, attach) and
-  kill it when verification ends, **by the port's owning PID**
-  (`Get-NetTCPConnection -LocalPort 19998`), never by process name (`Get-Process lmg` kills
-  the user's instance too).
+- The script (`scripts/test-instance.ps1`, docs/16 H2) copies the sealed state files into
+  `%LOCALAPPDATA%\lmg-test-home` (DPAPI opens a copied `master.key` on the same machine under
+  the same user — docs/05) and points `MCP_GATEWAY_HOME` there, so a save on 19998 writes the
+  **test home**, never the user's config. No read-only discipline needed any more — the
+  snapshot is the isolation.
+- It serves from `target-test\release\lmg.exe`: the 19999 daemon holds `target\release\lmg.exe`,
+  so iteration builds still go to a separate directory
+  (`$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`).
+- Still never `--port`/`-p` on either instance: both `start` and `serve` write the port into
+  the config. The env vars the script sets are not persisted.
+- Kill 19998 **by the port's owning PID** (`Get-NetTCPConnection -LocalPort 19998`), never by
+  process name (`Get-Process lmg` kills the user's instance too). `-Stop` does exactly this.
 - **Deploying to 19999 is the last step, done once**: only after every gate passes AND live
   verification on 19998 succeeds, stop 19999, rebuild the main target, start it again — and
 treat that as a deployment, not a test.
