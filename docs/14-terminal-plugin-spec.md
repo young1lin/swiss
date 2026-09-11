@@ -271,6 +271,11 @@ POST   /api/terminal/sessions/{id}/resize   { cols, rows }  // 冗余通道，�
 DELETE /api/terminal/sessions/{id}
 ```
 
+**附着是扇出,不是接管**(2026-09-11 起):同一个会话可以有多个附着 socket,输出复制给每一个,
+任一附着的输入都进 PTY;一个 socket 掉线只移除它自己,**最后一个**掉线才开始宽限计时。这正是
+"两个页面开同一个会话"的语义 —— 第二个页面附着不许弄瞎第一个。(`POST …/ticket` 为重连与第二
+页面附着 mint 新票的路由。)
+
 WS 帧：
 
 - **二进制帧 = 原始 PTY 字节**，两个方向都是。不做 base64、不做 JSON 包装 —— 一个终端每秒可以

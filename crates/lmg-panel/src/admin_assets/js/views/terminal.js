@@ -297,7 +297,9 @@ function select(id) {
   if (!m) {
     var row = sessions.find(function (s) { return s && s.id === id; });
     if (!row) return;
-    m = { id: id, target: row.target, status: "connecting\u2026", attempt: 0, userClosed: false, gone: false, sentCols: 0, sentRows: 0 };
+    // label from the listing row: without it the tab falls back to the raw target
+    // UUID - exactly what a second page adopting this session used to show.
+    m = { id: id, target: row.target, label: row.label, status: "connecting\u2026", attempt: 0, userClosed: false, gone: false, sentCols: 0, sentRows: 0 };
     models.push(m);
     paintTabs();
   }

@@ -836,3 +836,41 @@ async fn recording_off_means_no_file_and_a_null_path() {
     assert_eq!(h.sessions.list()[0].recording, None);
     assert!(!h.dir.join(format!("{}.cast", opened.id)).exists());
 }
+
+#[tokio::test]
+async fn a_second_attachment_joins_rather_than_replaces() {
+    // Two panel tabs, one session: attaching the second must not blind the first
+    // (the single-slot bug), dropping one must not detach the other, and output
+    // produced while both hold on reaches BOTH.
+    let mut h = Harness::new(quiet(true));
+    let (opened, far, mut first) = h.started(LOCAL_TARGET).await;
+
+    let ticket = h.sessions.ticket(&opened.id).expect("mints");
+    let mut second = h.sessions.attach(&opened.id, &ticket).await.expect("joins");
+
+    far.say("both-tabs").await;
+    for (name, attachment) in [("first", &mut first), ("second", &mut second)] {
+        match frame(attachment, name).await {
+            ClientFrame::Data(bytes) => assert!(
+                String::from_utf8_lossy(&bytes).contains("both-tabs"),
+                "{name} got: {bytes:?}"
+            ),
+            other => panic!("{name} got {other:?} instead of the shared output"),
+        }
+    }
+
+    // One tab closing its socket detaches ONE: the session stays attached, and the
+    // survivor keeps receiving.
+    drop(first);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    far.say("survivor").await;
+    match frame(&mut second, "the surviving tab").await {
+        ClientFrame::Data(bytes) => assert!(
+            String::from_utf8_lossy(&bytes).contains("survivor"),
+            "survivor got: {bytes:?}"
+        ),
+        other => panic!("the surviving tab got {other:?}"),
+    }
+    assert!(h.sessions.list()[0].attached, "one live tab still counts as attached");
+}
+

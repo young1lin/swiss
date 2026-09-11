@@ -320,7 +320,8 @@ async fn stream(
             ),
         );
     };
-    // attach spends the ticket and takes over the session's output. Doing this before
+    // attach spends the ticket and joins the session's output (a fan-out: a second
+    // panel tab attaching must not blind the first). Doing this before
     // on_upgrade (rather than inside the upgraded callback) is what lets a wrong,
     // expired or replayed ticket be refused as an HTTP status the panel can show,
     // instead of as a socket that opens and immediately dies.

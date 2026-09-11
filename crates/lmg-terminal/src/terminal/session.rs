@@ -231,13 +231,19 @@ struct SessionStats {
 }
 
 enum DriverCommand {
-    Attach {
-        frames: mpsc::Sender<ClientFrame>,
-        stalled: watch::Sender<bool>,
-    },
+    Attach(AttachedSink),
     Input(Vec<u8>),
     Resize(PtySize),
     Close,
+}
+
+/// One attached socket's server-side end, as the driver holds it. A Vec of these, not a
+/// single slot: two panel tabs may watch one session, so output fans out to every
+/// attachment, input from any attachment reaches the PTY, and one socket going away
+/// removes only its own entry — the grace clock starts when the LAST one drops.
+struct AttachedSink {
+    frames: mpsc::Sender<ClientFrame>,
+    stalled: watch::Sender<bool>,
 }
 
 struct Entry {
@@ -419,8 +425,8 @@ impl TerminalSessions {
             id: id.clone(),
             session,
             commands: commands_rx,
-            sink: None,
-            stalled: None,
+            attached: Vec::new(),
+            place_at: 0,
             pending: None,
             backlog: Backlog::default(),
             recorder,
@@ -467,8 +473,12 @@ impl TerminalSessions {
         Ok(self.table.tickets.mint(id))
     }
 
-    /// Spend a ticket and take over the session's output. A second attach replaces the
-    /// first: a reconnect must not be refused because a dead socket is still on the books.
+    /// Spend a ticket and JOIN the session's output. Attachments fan out — a second
+    /// panel tab attaching must not blind the first (that was the single-slot bug):
+    /// every attached socket receives every frame from here on, and the grace window
+    /// only starts once the last one is gone. A reconnect is just another attach, so
+    /// the old guarantee survives: a reconnect is never refused because a dead socket
+    /// is still on the books — the dead one is pruned the moment output tries it.
     pub async fn attach(&self, id: &str, ticket: &str) -> Result<Attachment, TerminalError> {
         self.table
             .tickets
@@ -478,10 +488,10 @@ impl TerminalSessions {
         let (frames_tx, frames_rx) = mpsc::channel(CLIENT_QUEUE_FRAMES);
         let (stalled_tx, stalled_rx) = watch::channel(false);
         commands
-            .send(DriverCommand::Attach {
+            .send(DriverCommand::Attach(AttachedSink {
                 frames: frames_tx,
                 stalled: stalled_tx,
-            })
+            }))
             .await
             .map_err(|_| TerminalError::NoSession)?;
         Ok(Attachment {
@@ -698,8 +708,12 @@ struct Driver {
     id: String,
     session: PtySession,
     commands: mpsc::Receiver<DriverCommand>,
-    sink: Option<mpsc::Sender<ClientFrame>>,
-    stalled: Option<watch::Sender<bool>>,
+    attached: Vec<AttachedSink>,
+    /// Where [Driver::place] is inside [Driver::attached]: the index whose permit the
+    /// frame in flight is currently waiting on. A fresh attachment pushes at the end,
+    /// so a join mid-frame is simply served when the cursor reaches it — no duplicate,
+    /// no hole.
+    place_at: usize,
     /// The one frame in flight. Holding it in a field rather than in a local is what lets
     /// the send be interrupted by a command and resumed, instead of being cancelled —
     /// a cancelled `send` drops the bytes it was carrying.
@@ -740,7 +754,7 @@ impl Driver {
     async fn pump(&mut self) -> CloseReason {
         loop {
             // A reconnected client is owed the catch-up buffer before anything new.
-            if self.pending.is_none() && self.sink.is_some() && !self.backlog.is_empty() {
+            if self.pending.is_none() && !self.attached.is_empty() && !self.backlog.is_empty() {
                 self.pending = self.backlog.pop();
             }
             if self.pending.is_some() {
@@ -758,14 +772,14 @@ impl Driver {
                 let Driver {
                     session,
                     commands,
-                    sink,
+                    attached,
                     ..
                 } = &mut *self;
                 tokio::select! {
                     biased;
                     command = commands.recv() => Wake::Command(command),
                     event = session.next_event() => Wake::Event(event),
-                    _ = sink_closed(sink) => Wake::Detached,
+                    _ = all_sinks_closed(attached) => Wake::Detached,
                     _ = deadline(idle_at) => Wake::Idle,
                     _ = deadline(grace_at) => Wake::Abandoned,
                 }
@@ -803,21 +817,32 @@ impl Driver {
         self.pending = Some(ClientFrame::Data(bytes));
     }
 
-    /// Hand [Driver::pending] to the attached client, parking until it fits. Commands are
-    /// still served while parked — that is what keeps a Ctrl-C alive during a flood.
+    /// Hand [Driver::pending] to EVERY attached client, parking until it fits on each in
+    /// turn. Commands are still served while parked — that is what keeps a Ctrl-C alive
+    /// during a flood. The cursor ([Driver::place_at]) says which attachment the frame in
+    /// flight is waiting on; it only resets once the last one has its copy, so an attach
+    /// that arrives mid-frame is served when the cursor reaches it — no duplicate, no
+    /// hole — and a detach that arrives mid-frame only removes its own unserved slot.
     async fn place(&mut self) -> Option<CloseReason> {
         let mut notice_at = Some(Instant::now() + STALL_NOTICE);
         let stall_at = (!self.config.stall.is_zero()).then(|| Instant::now() + self.config.stall);
         loop {
-            let Some(sink) = self.sink.clone() else {
+            if self.attached.is_empty() {
                 // Nobody to hand it to: it goes in the catch-up buffer, and the grace
                 // clock (started by the detach) decides how long that is worth doing.
                 if let Some(ClientFrame::Data(bytes)) = self.pending.take() {
                     self.backlog.push(&bytes);
                 }
                 return None;
-            };
+            }
+            if self.place_at >= self.attached.len() {
+                self.pending = None;
+                self.place_at = 0;
+                self.set_stalled(false);
+                return None;
+            }
 
+            let sink = self.attached[self.place_at].frames.clone();
             let placed = {
                 let commands = &mut self.commands;
                 tokio::select! {
@@ -834,11 +859,12 @@ impl Driver {
 
             match placed {
                 Placed::Permit(permit) => {
-                    if let Some(frame) = self.pending.take() {
+                    // Clone, not take: the SAME frame goes to every attachment. The
+                    // completion branch above is what clears it, once all have a copy.
+                    if let Some(frame) = self.pending.clone() {
                         permit.send(frame);
                     }
-                    self.set_stalled(false);
-                    return None;
+                    self.place_at += 1;
                 }
                 Placed::Command(Some(command)) => {
                     if let Some(reason) = self.command(command).await {
@@ -846,7 +872,16 @@ impl Driver {
                     }
                 }
                 Placed::Command(None) => return Some(CloseReason::Shutdown),
-                Placed::Detached => self.detach(),
+                Placed::Detached => {
+                    // This attachment's receiver is gone. It was never served this
+                    // frame and never will be — drop the slot, not the session.
+                    if self.place_at < self.attached.len() {
+                        self.attached.remove(self.place_at);
+                    }
+                    if self.attached.is_empty() {
+                        self.detach();
+                    }
+                }
                 Placed::Notice => {
                     self.set_stalled(true);
                     notice_at = None;
@@ -858,9 +893,8 @@ impl Driver {
 
     async fn command(&mut self, command: DriverCommand) -> Option<CloseReason> {
         match command {
-            DriverCommand::Attach { frames, stalled } => {
-                self.sink = Some(frames);
-                self.stalled = Some(stalled);
+            DriverCommand::Attach(sink) => {
+                self.attached.push(sink);
                 self.detached_since = None;
                 self.stats.attached.store(true, Ordering::Relaxed);
                 None
@@ -880,10 +914,12 @@ impl Driver {
         }
     }
 
-    /// The socket went away. Not a close: the grace window starts here.
+    /// Every socket is gone. Not a close: the grace window starts here — for ALL of
+    /// them, since one live tab keeps the session honestly attached.
     fn detach(&mut self) {
-        if self.sink.take().is_some() {
-            self.stalled = None;
+        if !self.attached.is_empty() {
+            self.attached.clear();
+            self.place_at = 0;
             self.stats.attached.store(false, Ordering::Relaxed);
             self.detached_since = Some(Instant::now());
         }
@@ -893,8 +929,8 @@ impl Driver {
     /// when the value is the same, so a client waiting on `changed()` would be woken by
     /// every successful write and could not tell a stall from ordinary progress.
     fn set_stalled(&mut self, stalled: bool) {
-        if let Some(sender) = &self.stalled {
-            sender.send_if_modified(|current| {
+        for sink in &self.attached {
+            sink.stalled.send_if_modified(|current| {
                 let changed = *current != stalled;
                 *current = stalled;
                 changed
@@ -925,13 +961,12 @@ impl Driver {
         // for a local shell, reaps the child's whole subtree (ADR-008).
     }
 
-    /// Best-effort delivery on the way out. Bounded: the most likely reason a session is
-    /// closing is that nobody is reading it.
+    /// Best-effort delivery on the way out, to every socket still holding one. Bounded:
+    /// the most likely reason a session is closing is that nobody is reading it.
     async fn hand_over(&mut self, frame: ClientFrame) {
-        let Some(sink) = self.sink.clone() else {
-            return;
-        };
-        let _ = tokio::time::timeout(CLOSE_FLUSH, sink.send(frame)).await;
+        for sink in &self.attached {
+            let _ = tokio::time::timeout(CLOSE_FLUSH, sink.frames.send(frame.clone())).await;
+        }
     }
 }
 
@@ -943,11 +978,18 @@ async fn deadline(at: Option<Instant>) {
     }
 }
 
-/// Resolves when an attached client drops its receiver, or never when there is none.
-async fn sink_closed(sink: &Option<mpsc::Sender<ClientFrame>>) {
-    match sink {
-        Some(sink) => sink.closed().await,
-        None => std::future::pending().await,
+/// Resolves when EVERY attached socket has dropped its receiver — the earliest moment
+/// the grace clock may start. Awaited one at a time: each completion lets the loop
+/// re-prune the ones that went meanwhile, which is exact for the all-closed question
+/// (a socket that drops while another still lives is pruned lazily on its next send —
+/// and it does not matter, because the session is still honestly attached).
+async fn all_sinks_closed(attached: &[AttachedSink]) {
+    if attached.is_empty() {
+        // Nobody to wait for — and resolving instantly here would spin the pump.
+        std::future::pending::<()>().await;
+    }
+    for sink in attached {
+        sink.frames.closed().await;
     }
 }
 

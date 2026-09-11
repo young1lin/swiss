@@ -504,11 +504,13 @@
        the close reason — with a state dot that answers before the words do. */
     /* The status foot caps the instrument like a tmux statusline: a dark strip that is
        part of the card (bar above, surface, foot below), never a caption floating on the
-       pane's light background. Always rendered — an empty strip still caps the card. */
+       pane's light background. Always rendered — an empty strip still caps the card. The
+       top hairline is not decoration: with the border off, a full screen of text read as
+       glued to the status line, the exact seam every tmux bar draws a line on. */
     .term-foot {
       flex: none; display: flex; align-items: center; gap: 8px;
       font-family: var(--mono); font-size: var(--f-caption); color: var(--t-dim);
-      background: var(--t-bar); border: 1px solid var(--t-edge); border-top: none;
+      background: var(--t-bar); border: 1px solid var(--t-edge);
       border-radius: 0 0 var(--r-card) var(--r-card);
       padding: 5px 12px; min-height: 26px;
     }
