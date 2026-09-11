@@ -1,4 +1,4 @@
-import { esc, state } from "./util.js";
+import { esc, icon, state } from "./util.js";
 import { rowOf } from "./sidebar.js";
 
 /* --- Logs: what was called, with what, and what came back ------------------------------------- */
@@ -39,7 +39,7 @@ function callHtml(d, c) {
     : "";
   return '<div class="call' + (d.callsOpen[c.seq] ? " open" : "") + '" data-seq="' + c.seq + '">' +
     '<div class="call-sum" data-callseq="' + c.seq + '" role="button" tabindex="0">' +
-      '<span class="chev">&#8250;</span>' +
+      '<span class="chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
       '<span class="dot ' + (c.ok ? "up" : "down") + '"></span>' +
       '<span class="call-tool">' + esc(c.tool) + "</span>" +
       '<span class="call-arg">' + esc(c.args || "no arguments") + "</span>" +

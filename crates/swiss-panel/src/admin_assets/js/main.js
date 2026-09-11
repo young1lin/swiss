@@ -97,7 +97,9 @@ function setTheme(p) {
 function paintThemeBtn() {
   var dark = document.documentElement.getAttribute("data-theme") === "dark";
   var b = $("themeBtn");
-  b.innerHTML = dark ? "&#9728;" : "&#9790;"; // sun / moon
+  // The sprite swap (docs/18 V2): switch the referenced symbol, not the button's HTML.
+  var use = b.querySelector("use");
+  if (use) use.setAttribute("href", dark ? "#i-sun" : "#i-moon");
   b.title = dark ? "Switch to light" : "Switch to dark";
 }
 $("themeBtn").onclick = function (e) {

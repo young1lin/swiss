@@ -1,4 +1,4 @@
-import { DEFAULT_GROUP, api, apiJson, el, saveCollapsed, state, toast } from "./util.js";
+import { DEFAULT_GROUP, api, apiJson, el, icon, saveCollapsed, state, toast } from "./util.js";
 import { openSheet } from "./add-sheet.js";
 import { openDetail } from "./detail.js";
 import { patchSidebar, popupMenu, wireDrag } from "./menu.js";
@@ -106,7 +106,9 @@ function groupNode(g) {
   var head = el("div", "grp-head");
   var toggle = el("button", "grp-toggle");
   toggle.type = "button";
-  toggle.appendChild(el("span", "grp-chev", "›"));
+  var chev = el("span", "grp-chev");
+  chev.innerHTML = icon("chevron-right");
+  toggle.appendChild(chev);
   toggle.appendChild(el("span", "grp-name", g.name));
   toggle.appendChild(el("span", "grp-n", String(g.rows.length)));
   toggle.onclick = function () {
@@ -120,7 +122,8 @@ function groupNode(g) {
   // Adding an MCP lives on the group, not in the sidebar header: an MCP is always added INTO a
   // group, and doing it from here means the new one lands where you meant it to instead of appearing
   // in `default` to be dragged over afterwards.
-  var add = el("button", "grp-add", "+");
+  var add = el("button", "grp-add");
+  add.innerHTML = icon("plus");
   add.type = "button";
   add.title = "Add an MCP to " + g.name;
   add.setAttribute("aria-label", "Add an MCP to " + g.name);
@@ -130,7 +133,8 @@ function groupNode(g) {
   // `default` cannot be renamed or deleted: it is the fallback every other group's members land in,
   // so removing it would leave MCPs pointing at nothing.
   if (!isDefault) {
-    var more = el("button", "grp-more", "···");
+    var more = el("button", "grp-more");
+    more.innerHTML = icon("ellipsis");
     more.type = "button";
     more.title = "Rename or delete this group";
     more.setAttribute("aria-label", "Group actions");
@@ -146,7 +150,8 @@ function groupNode(g) {
   } else {
     // A reserved slot, not a button. Without it `default`'s + lands where every other group's ⋯ sits,
     // so the one glyph that is always visible jumps 20px sideways from one group header to the next.
-    var pad = el("span", "grp-more spacer", "···");
+    var pad = el("span", "grp-more spacer");
+    pad.innerHTML = icon("ellipsis");
     pad.setAttribute("aria-hidden", "true");
     head.appendChild(pad);
   }

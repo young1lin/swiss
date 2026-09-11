@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, apiJson, esc, state, whenLabel } from "./util.js";
+import { $, DEFAULT_GROUP, apiJson, esc, icon, state, whenLabel } from "./util.js";
 import { fmtJson } from "./logs.js";
 
 /* --- traffic: who (token + self-reported client) asked what, across every MCP -----------------
@@ -69,7 +69,7 @@ function trafficRow(e) {
   // Collapsed: method + a one-line params preview + meta. Expanded (chevron): the raw request JSON.
   return '<div class="call' + (state.trafficOpen[e.seq] ? " open" : "") + '" data-tseq="' + e.seq + '">' +
     '<div class="call-sum" data-tog="' + e.seq + '" role="button" tabindex="0">' +
-      '<span class="chev">&#8250;</span>' +
+      '<span class="chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
       '<span class="dot ' + (e.ok ? "up" : "down") + '"></span>' +
       '<span class="call-tool">' + esc(e.method) + "</span>" +
       '<span class="call-arg">' + esc(e.params || "") + "</span>" +
@@ -130,22 +130,28 @@ function renderTraffic() {
   // connection to query). Click a row to filter the activity log to that client.
   var clientBlock;
   if (clients.length) {
+    // One line per client (docs/18 V4): name, token, paths, last seen, request count — a
+    // five-column grid, not a card-per-client with two lines of prose.
+    var head = '<div class="cli-head"><span>Client</span><span>Token</span><span>Paths</span>' +
+      '<span>Last</span><span class="cli-n">Requests</span><span></span></div>';
     var rows = clients.map(function (c) {
       var isSel = sel === c.key;
-      var mcps = (c.mcps || []).map(function (m) { return "/" + m; }).join("  ");
+      var mcps = (c.mcps || []).map(function (m) { return "/" + m; }).join(" ");
       var tokens = c.tokens || [];
-      var tokenLine = tokens.length ? "token " + tokens.join(", ") : "no token";
-      return '<div class="row row-act' + (isSel ? " row-sel" : "") + '" data-ckey="' + esc(c.key) + '" role="button" tabindex="0">' +
-        '<div class="row-main">' +
-          '<div class="name">' + esc(c.label) + "</div>" +
-          '<div class="desc">' + esc(tokenLine) + " · " + esc(mcps) + " · " + esc(ago(c.lastAt)) +
-          " · " + c.count.toLocaleString() + " request" + (c.count === 1 ? "" : "s") + "</div>" +
-        "</div>" +
-        (isSel ? '<button class="btn icon" data-cclr title="Stop filtering">&#10005;</button>' : "") +
+      var tokenLine = tokens.length ? tokens.join(", ") : "no token";
+      return '<div class="cli-row' + (isSel ? " sel" : "") + '" data-ckey="' + esc(c.key) + '" role="button" tabindex="0">' +
+        '<span class="cli-name"><code>' + esc(c.label) + "</code></span>" +
+        '<span class="cli-token">' + esc(tokenLine) + "</span>" +
+        '<span class="cli-paths">' + esc(mcps) + "</span>" +
+        '<span class="cli-last">' + esc(ago(c.lastAt)) + "</span>" +
+        '<span class="cli-n">' + c.count.toLocaleString() + "</span>" +
+        (isSel
+          ? '<button class="btn ghost icon" data-cclr title="Stop filtering">' + icon("x") + "</button>"
+          : '<span class="cli-x"></span>') +
       "</div>";
     }).join("");
     clientBlock = '<div class="cap" style="padding-top:var(--s5)">Clients · ' + clients.length + "</div>" +
-      '<div class="group">' + rows + "</div>";
+      '<div class="group">' + head + rows + "</div>";
   } else {
     clientBlock = '<div class="cap" style="padding-top:var(--s5)">Clients</div>' +
       '<div class="group"><div class="row"><span class="rowmsg">No clients yet. When a client sends its first request (initialize, tools/list, …) it appears here with the MCPs it is using.</span></div></div>';
@@ -223,16 +229,16 @@ function tunGroupHeadHtml(name, n) {
   return '<div class="sec-head tun-sec" data-tg="' + esc(name) + '" data-tgt role="button" tabindex="0" ' +
       'title="Collapse or expand this group">' +
       '<span class="tun-sec-cap">' +
-        '<span class="tun-chev" aria-hidden="true">&#8250;</span>' +
+        '<span class="tun-chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
         '<span class="sec-cap">' + esc(name) + "</span>" +
         '<span class="seg-n tun-count">' + n + "</span>" +
       "</span>" +
       '<span style="display:flex;gap:var(--s2)" data-tgnoclick>' +
         '<button class="btn icon" type="button" data-tgadd title="Add to ' + esc(name) +
-          '" aria-label="Add to ' + esc(name) + '">+</button>' +
+          '" aria-label="Add to ' + esc(name) + '">' + icon("plus") + "</button>" +
         (isDefault
           ? "" // the default group cannot be renamed or deleted — no menu, no phantom spacer to hold
-          : '<button class="btn icon" type="button" data-tgmore title="Rename or delete this group" aria-label="Group actions">&#8943;</button>') +
+          : '<button class="btn icon" type="button" data-tgmore title="Rename or delete this group" aria-label="Group actions">' + icon("ellipsis") + "</button>") +
       "</span>" +
     "</div>";
 }

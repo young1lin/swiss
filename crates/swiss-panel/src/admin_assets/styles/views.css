@@ -1,17 +1,18 @@
     /* --- detail pane --------------------------------------------------------------------------- */
-    .pane { flex: 1; overflow-y: auto; padding: var(--s6) var(--s8) var(--s8); }
+    .pane { flex: 1; overflow-y: auto; padding: var(--s5) var(--s8) var(--s8); }
     /* The measure. Every top-level block in the pane is capped, so one tool card reads as a card and
        not as a stripe across a 2560px monitor. `.wide` is the opt-out for content whose rows are
        genuinely wide (the call log, the traffic log, the tunnel table) — still capped, just further. */
-    /* Centred, not left-hugging. Capped at 820px against a 1263px pane, a left-aligned column leaves
-       ~400px of empty canvas stacked down one side — the content looks pushed against the sidebar
-       rather than laid out. System Settings centres its column for the same reason. */
-    .pane > * { max-width: var(--measure); margin-inline: auto; }
+    /* Left-hugging (docs/18 V4). Centring was the first attempt, and with the sidebar already
+       pushing the pane off-centre the auto margins read as two blank gutters with the content
+       floating between them. The cap stays — only the centring goes; emptiness belongs on the
+       right, where it reads as room rather than as imbalance. */
+    .pane > * { max-width: var(--measure); margin-inline: 0; }
     .pane > .wide { max-width: var(--measure-wide); }
     .pane > .empty { max-width: none; }
 
     .pane-head { display: flex; align-items: flex-start; gap: var(--s4); margin-bottom: var(--s5); }
-    .pane-title { font-size: var(--f-title); font-weight: 650; letter-spacing: -0.015em; margin: 0; line-height: 1.25; }
+    .pane-title { font-size: var(--f-title); font-weight: 600; letter-spacing: -0.02em; margin: 0; line-height: 1.25; }
     /* Body size, not head size: at 15px the description of a page outweighed the rows under it,
        and three lines of it pushed the first row below the fold on a laptop. It is a caption. */
     .pane-desc { font-size: var(--f-body); font-weight: 400; color: var(--text-2); margin-top: var(--s1); max-width: 68ch; line-height: 1.5; }
@@ -25,14 +26,22 @@
     /* height:100% resolves against .pane when this is a direct child; min-height carries it when the
        tunnel view nests it inside a .wide wrapper. */
     .empty { height: 100%; min-height: 320px; display: grid; place-items: center; text-align: center; color: var(--text-3); }
-    .empty h2 { font-size: var(--f-head); font-weight: 550; color: var(--text-2); margin: 0 0 var(--s1); }
+    /* The empty state's own rhythm (docs/18 V7): a quiet icon, a heading, one line of hint,
+       maybe one ghost action — vertical, centred, nothing else competing. */
+    .empty > div { display: grid; justify-items: center; }
+    .empty-ic .ic { width: 20px; height: 20px; }
+    .empty h2 { font-size: var(--f-head); font-weight: 550; color: var(--text-2); margin: var(--s3) 0 0; }
+    .empty p { font-size: var(--f-label); color: var(--text-3); max-width: 44ch; margin: var(--s1) 0 0; }
+    .empty [data-empty-action] { margin-top: var(--s4); }
 
     /* Segmented control. */
     .seg { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: var(--s4); background: var(--sep-soft); border-radius: 8px; }
     .seg button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; }
     .seg button:hover { color: var(--text); }
-    .seg button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 24, 36, .10), 0 0 0 1px rgba(20, 24, 36, .05); }
-    :root[data-theme="dark"] .seg button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 9%); box-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 1px rgba(255, 255, 255, .06); }
+    /* Hairline rings, no drops (docs/18 V6): the selected tab is a card with an edge, not a
+       keycap — brightness separates it from the well, and the ring closes the silhouette. */
+    .seg button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--sep); }
+    :root[data-theme="dark"] .seg button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 7%); box-shadow: inset 0 0 0 1px var(--sep); }
     /* A tab's item count. Glued straight onto the label ("Tools 1") it read as a typo; separated and
        dimmed, it reads as a count. */
     .seg-n { font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; margin-left: 5px; }
@@ -102,7 +111,7 @@
     /* center, not baseline: this header carries a segmented control and a button next to its caption,
        and a segmented control has no baseline to share. */
     .sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); min-height: 36px; }
-    .sec-cap { font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); }
+    .sec-cap { font-size: var(--f-caption); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
     .call + .call { border-top: 1px solid var(--sep-soft); }
     .call-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; padding: var(--s2) var(--s4); cursor: pointer; }
     .call-sum:hover { background: var(--hover); }
@@ -117,7 +126,7 @@
     .call-body pre.logs { padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: 8px; max-height: 360px; }
     #runOut:not(:empty) { max-height: 480px; margin-top: var(--s2); background: var(--sep-soft); border-radius: 8px; }
     .call-body pre.logs.err { color: var(--red); }
-    .chev { color: var(--text-3); font-size: 13px; width: 9px; flex: none; transition: transform .15s ease; }
+    .chev { color: var(--text-3); width: 12px; flex: none; transition: transform .15s ease; }
     .call.open .chev { transform: rotate(90deg); }
     @media (prefers-reduced-motion: reduce) { .chev { transition: none; } }
 
@@ -218,7 +227,12 @@
     .backdrop { position: fixed; inset: 0; background: rgba(12, 14, 20, .38); display: grid; place-items: start center; padding-top: 8vh; z-index: 40; }
     /* A sheet is a card, not a second canvas: on the canvas colour its fields had no edge but their
        hairline and the whole dialog read as a grey slab over a grey slab. */
-    .sheet { width: min(560px, 92vw); background: var(--card); border-radius: 14px; box-shadow: var(--shadow-sheet); overflow: hidden; }
+    .sheet { width: min(560px, 92vw); background: var(--card); border-radius: 10px; box-shadow: var(--shadow-sheet); overflow: hidden; }
+    /* Entrances (docs/18 V1): the floating layers rise 4px in 120ms — the same tempo as the .12s
+       hover transitions, stated once for opening rather than a new motion language. */
+    @keyframes pop-in { from { opacity: 0; transform: translateY(4px); } }
+    .sheet, .menu.float { animation: pop-in .12s ease-out; }
+    @media (prefers-reduced-motion: reduce) { .sheet, .menu.float { animation: none; } }
     .sheet-head { display: flex; align-items: center; padding: var(--s4) var(--s5); border-bottom: 1px solid var(--sep-soft); }
     .sheet-head h2 { font-size: var(--f-head); font-weight: 650; margin: 0; letter-spacing: -0.01em; }
     .sheet-body { padding: var(--s4) var(--s5); display: grid; gap: var(--s3); max-height: 66vh; overflow-y: auto; }
@@ -258,16 +272,24 @@
        controls instead — the toolbar, a section header, the subsection bar — that margin shifts it
        off their centre. */
     .toolbar .seg, .sec-head .seg, .subbar .seg { margin-bottom: 0; }
-    .tun-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4); }
+    /* 960px is the support floor (docs/18 V3): the level-one tabs scroll inside the bar rather
+       than clip or push the right-hand controls off screen. */
+    .toolbar .seg { overflow-x: auto; scrollbar-width: none; }
+    .toolbar .seg::-webkit-scrollbar { display: none; }
+    /* 42px rows (docs/18 V4): two lines of text still clear it, and a list of nine stops
+       reading as nine cards. */
+    .tun-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s4); min-height: 42px; }
     .tun-row + .tun-row { border-top: 1px solid var(--sep-soft); }
     .tun-row:hover { background: var(--hover); }
     .tun-main { flex: 1; min-width: 0; }
-    .tun-name { font-size: var(--f-body); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .tun-sub { font-size: var(--f-label); color: var(--text-2); font-family: var(--mono); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tun-name { font-size: var(--f-body); font-weight: 500; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tun-sub { font-size: var(--f-label); color: var(--text-2); font-family: var(--mono); line-height: 1.35; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tun-sub .via { font-family: var(--sans); }
     .tun-err { font-size: var(--f-label); color: var(--red); font-family: var(--mono); margin-top: 2px; }
     .tun-acts { display: flex; gap: var(--s2); flex: none; }
-    .tun-foot { font-size: var(--f-label); color: var(--text-3); padding: var(--s3) var(--s1) 0; }
+    .tun-foot { font-size: var(--f-label); color: var(--text-3); padding: var(--s3) var(--s1) 0; display: flex; justify-content: space-between; gap: var(--s3); }
+    /* The right-hand slot: a value you would copy (the inventory revision), so it earns mono. */
+    .tun-foot-rev { font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); }
     /* Grouped tunnel lists speak the pane's own section idiom — .sec-head caption over a .group
        card, exactly like the Traffic view's sections — not the sidebar's tree headers. Only the
        collapse behaviour, the section spacing and the drag affordances are new. */
@@ -299,11 +321,31 @@
     .with-btn { display: flex; gap: var(--s2); align-items: flex-end; }
     .with-btn > label { flex: 1; }
 
+    /* Traffic clients (docs/18 V4): one line per client in a five-column grid — name, token,
+       paths, last seen, request count — instead of a two-line card row. Same grid for the
+       header so the columns line up; the last column is the clear-filter slot, usually empty. */
+    .cli-head, .cli-row {
+      display: grid; grid-template-columns: minmax(160px, 1fr) auto minmax(0, 2fr) auto auto auto;
+      gap: var(--s3); align-items: center; min-height: 36px; padding: var(--s1) var(--s4);
+    }
+    .cli-head { font-size: var(--f-caption); color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--sep-soft); }
+    .cli-row { cursor: pointer; }
+    .cli-row + .cli-row { border-top: 1px solid var(--sep-soft); }
+    .cli-row:hover { background: var(--hover); }
+    .cli-row.sel { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+    .cli-name code { font-weight: 550; }
+    .cli-token, .cli-paths { font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cli-last { font-size: var(--f-label); color: var(--text-3); white-space: nowrap; }
+    .cli-n { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--f-label); color: var(--text-2); }
+    .cli-x { width: 25px; } /* the clear button's width, reserved so counts stay aligned */
+
     /* --- data view (the DBeaver-style browser) --------------------------------------------------- */
     .pane > .db-root { max-width: none; }
-    .db-root { display: flex; gap: var(--s4); height: 100%; min-height: 420px; }
-    .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; }
-    .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); padding: var(--s1); }
+    /* One surface (docs/18 V4): the key list and the value area are halves of a single card
+       split by a hairline — not two rounded cards floating side by side on the canvas. */
+    .db-root { display: flex; height: 100%; min-height: 420px; background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
+    .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
+    .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s1); }
     .db-table { display: block; width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-table:hover { background: var(--hover); }
     .db-table.sel { background: color-mix(in srgb, var(--accent) 11%, transparent); }
@@ -313,7 +355,7 @@
     .db-table-name { font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-table-meta { font-size: var(--f-caption); color: var(--text-3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
-    .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; }
+    .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; padding: var(--s3) var(--s4) 0; }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
     .db-head-left { min-width: 0; }
     .db-title { margin: 0; font-size: var(--f-head); }
@@ -331,7 +373,8 @@
     .db-filter-hint { font-size: var(--f-caption); color: var(--text-3); margin-left: var(--s2); }
     .db-tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--sep-soft); border-radius: 8px; }
     .db-tabs button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; background: none; border: none; cursor: pointer; }
-    .db-tabs button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(20, 24, 36, .10), 0 0 0 1px rgba(20, 24, 36, .05); }
+    .db-tabs button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--sep); }
+    :root[data-theme="dark"] .db-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 7%); box-shadow: inset 0 0 0 1px var(--sep); }
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
     .db-keytype { font-size: var(--f-caption); padding: 1px 6px; border-radius: 980px; background: var(--sep-soft); color: var(--text-2); margin-left: var(--s2); }
@@ -359,7 +402,7 @@
     .db-console-row { display: flex; align-items: center; gap: var(--s2); }
     .db-console-row .hint { color: var(--text-3); font-size: var(--f-label); }
     #dbSql { min-height: 84px; }
-    .db-grid-wrap { flex: 1; overflow: auto; background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); min-height: 200px; }
+    .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
     .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); border-right: 1px solid var(--sep-soft); padding: 4px var(--s2); white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
     .db-grid thead th { position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 55%, var(--card)); z-index: 1; font-weight: 600; cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }

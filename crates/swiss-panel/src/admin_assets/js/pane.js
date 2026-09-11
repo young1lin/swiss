@@ -1,4 +1,5 @@
-import { $, DEFAULT_GROUP, KINDS, esc, state } from "./util.js";
+import { $, DEFAULT_GROUP, KINDS, emptyHtml, esc, icon, state } from "./util.js";
+import { openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
 import { act, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
 import { wireTabBody } from "./run-history.js";
@@ -47,9 +48,13 @@ function renderPane() {
   var pane = $("pane");
   var d = state.detail;
   if (!d) {
-    pane.innerHTML =
-      '<div class="empty"><div><h2>' + (state.mcps.length ? "Select an MCP" : "No MCPs registered") + "</h2>" +
-      '<p class="hint">' + (state.mcps.length ? "Its tools, resources and configuration appear here." : "Add one with the + on a group header.") + "</p></div></div>";
+    // The shared empty state (docs/18 V7), and the one place it carries an action: the pane's
+    // own "add" answers the question the empty screen just asked.
+    pane.innerHTML = state.mcps.length
+      ? emptyHtml({ icon: "server", title: "Select an MCP", hint: "Its tools, resources and configuration appear here." })
+      : emptyHtml({ icon: "server", title: "No MCPs registered", hint: "Add one with the + on a group header.", action: "Add an MCP" });
+    var addBtn = pane.querySelector("[data-empty-action]");
+    if (addBtn) addBtn.onclick = function () { openSheet(null); };
     return;
   }
   var m = rowOf(d.name) || { name: d.name, state: "unknown", type: "?", source: "?", lifecycle: "stopped" };
@@ -76,7 +81,7 @@ function renderPane() {
         // buttons on six healthy MCPs says nothing. Stop is a plain button with the same footprint.
         '<button class="btn' + (started ? "" : " primary") + '" id="primaryBtn"' + (busyVerb ? " disabled" : "") + ">" +
           (busyVerb ? "…" : started ? "Stop" : "Start") + "</button>" +
-        '<button class="btn icon" id="menuBtn" aria-label="More actions" title="More actions">&#183;&#183;&#183;</button>' +
+        '<button class="btn icon" id="menuBtn" aria-label="More actions" title="More actions">' + icon("ellipsis") + "</button>" +
       "</div>" +
     "</div>";
 

@@ -1,4 +1,4 @@
-import { apiJson, el, state, toast } from "./util.js";
+import { apiJson, el, emptyHtml, state, toast } from "./util.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbTables } from "./data-view.js";
@@ -50,7 +50,8 @@ async function dbLoadRedisValue(key) {
 function dbRenderRedisValue(wrap) {
   var d = state.db;
   if (!d.redisKey) {
-    wrap.appendChild(el("div", "db-hint", "Select a key on the left to view its value."));
+    // The shared empty state (docs/18 V7).
+    wrap.innerHTML = emptyHtml({ icon: "database", title: "Select a key", hint: "Pick a key on the left to view its value." });
     return;
   }
   var v = d.redisValue;

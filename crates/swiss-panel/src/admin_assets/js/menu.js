@@ -73,7 +73,12 @@ function wireDrag(row) {
  *  description, the source, the latency, the reason a row is red — lives here, and in the pane
  *  header for the selected MCP. */
 function tooltipOf(m) {
-  var bits = ["/" + m.name, m.type, m.source, state.busy[m.name] ? state.busy[m.name] + "…" : m.state];
+  // Idle is the one state word that names no behaviour of its own (docs/18 V6): a lazy proc
+  // has no child yet and wakes on the first request — say that, so a hollow ring explains itself.
+  var stateWord = state.busy[m.name] ? state.busy[m.name] + "…"
+    : m.state === "idle" ? "idle — lazy: no child yet, wakes on the first request"
+    : m.state;
+  var bits = ["/" + m.name, m.type, m.source, stateWord];
   if (m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.description) bits.unshift(m.description);
   if (m.reason) bits.push(m.reason);

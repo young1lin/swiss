@@ -56,15 +56,18 @@ function paintNavigation() {
   };
   var subBar = $("subBar");
   var subSeg = $("subSeg");
+  var subName = $("subName");
+  // D5 revised (docs/18 V3): the bar is always present — hiding it for single-page groups
+  // bounced the panel's layout ~40px on every level-one tab switch.
+  subBar.hidden = false;
   if (current && current.pages.length >= 2) {
-    subBar.hidden = false;
     subSeg.innerHTML = current.pages.map(pageTab).join("");
     subSeg.onclick = seg.onclick;
+    subName.textContent = "";
   } else {
-    // One page per group is the norm (five of six today): a permanently visible bar of one tab
-    // would be a permanent empty stripe, so the whole container leaves the layout instead (D5).
-    subBar.hidden = true;
+    // A single-page group shows the page's name: the bar names where you are, never an empty stripe.
     subSeg.innerHTML = "";
+    subName.textContent = current ? current.pages[0].label : "";
   }
 }
 

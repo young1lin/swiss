@@ -1,4 +1,5 @@
-import { $, DEFAULT_GROUP, api, apiJson, esc, saveTunCollapsed, state, toast } from "./util.js";
+import { $, DEFAULT_GROUP, api, apiJson, emptyHtml, esc, saveTunCollapsed, state, toast } from "./util.js";
+import { copyText } from "./connect.js";
 import { act } from "./detail.js";
 import { popupMenu } from "./menu.js";
 import { connRowHtml, loadTunnels, ruleRowHtml, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab } from "./polling.js";
@@ -183,13 +184,13 @@ function renderTunnels() {
   if (isConns) {
     body = d.connections.length
       ? grouped.map(groupHtml).join("")
-      : '<div class="empty"><div><h2>No SSH connections</h2><p class="hint">Add one with New, then point a forwarding rule at it.</p></div></div>';
+      : emptyHtml({ icon: "plug", title: "No SSH connections", hint: "Add one with New, then point a forwarding rule at it." });
     var connected = d.connections.filter(function (c) { return c.state === "connected"; }).length;
     foot = d.connections.length + " connection" + (d.connections.length === 1 ? "" : "s") + ", " + connected + " connected";
   } else {
     body = d.rules.length
       ? grouped.map(groupHtml).join("")
-      : '<div class="empty"><div><h2>No forwarding rules</h2><p class="hint">Add one with New. Each rule binds a local port and forwards it over SSH.</p></div></div>';
+      : emptyHtml({ icon: "plug", title: "No forwarding rules", hint: "Add one with New. Each rule binds a local port and forwards it over SSH." });
     var active = d.rules.filter(function (r) { return r.state === "up"; }).length;
     foot = d.rules.length + " rule" + (d.rules.length === 1 ? "" : "s") + ", " + active + " active";
   }
@@ -304,17 +305,32 @@ function wireTunnels() {
     var rule = tunData().rules.filter(function (r) { return r.id === id; })[0];
     var act = node.querySelector("[data-act]");
     if (act) act.onclick = function () { ruleAct(id, act.dataset.act); };
-    node.querySelector("[data-edit]").onclick = function () { openRuleSheet(rule); };
-    node.querySelector("[data-del]").onclick = function () { deleteRule(rule, false); };
-    var free = node.querySelector("[data-free]");
-    if (free) free.onclick = function () { forceFreePort(Number(free.dataset.free), id); };
+    var ruleMore = node.querySelector("[data-more]");
+    if (ruleMore) ruleMore.onclick = function () {
+      // The overflow half of the row (docs/18 V5). Force free appears only when a port is
+      // actually held — it is a remedy, not a standing action.
+      var items = [
+        { label: "Edit", fn: function () { openRuleSheet(rule); } },
+        { label: "Copy local port", fn: function () { copyText(String(rule.localPort), "Local port"); } },
+      ];
+      if (rule.portOwner) items.push({ label: "Force free " + rule.localPort, fn: function () { forceFreePort(rule.localPort, id); } });
+      items.push({ sep: true }, { label: "Delete", danger: true, fn: function () { deleteRule(rule, false); } });
+      popupMenu(ruleMore.getBoundingClientRect(), items);
+    };
   });
   Array.prototype.forEach.call(pane.querySelectorAll("[data-conn]"), function (node) {
     var id = node.dataset.conn;
     var conn = tunData().connections.filter(function (c) { return c.id === id; })[0];
     node.querySelector("[data-test]").onclick = function () { testConn(id); };
-    node.querySelector("[data-edit]").onclick = function () { openConnSheet(conn); };
-    node.querySelector("[data-del]").onclick = function () { deleteConn(conn); };
+    var connMore = node.querySelector("[data-more]");
+    if (connMore) connMore.onclick = function () {
+      popupMenu(connMore.getBoundingClientRect(), [
+        { label: "Edit", fn: function () { openConnSheet(conn); } },
+        { label: "Copy host", fn: function () { copyText(conn.host + ":" + conn.port, "Host"); } },
+        { sep: true },
+        { label: "Delete", danger: true, fn: function () { deleteConn(conn); } },
+      ]);
+    };
   });
 }
 

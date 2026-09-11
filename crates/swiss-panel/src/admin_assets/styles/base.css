@@ -11,16 +11,17 @@
           into the status line where a monospace face is earned.
 
        2. SATURATION IS FOR STATE. Status dots, the accent, and error red stay loud. Launch-method
-          tags (http / npx / uvx / …) get a quiet hue each so a scan of the list can tell them
-          apart — tinted chips, not outlined badges.
+          tags (http / npx / uvx / …) were quietly hued once; they are monochrome now (docs/18
+          V6) — the hues carried no information (mysql and redis both red, pg and http both
+          blue), so the chip says "launch method" and nothing else.
 
        3. TEXT NEEDS A MEASURE. Cards used to stretch to the window's full width, which made a single
           tool card look lost in a 1500px field. Content is capped at --measure; the log and traffic
           views, whose rows are genuinely wide, get --measure-wide. Neither is ever unbounded.
 
-       Font note: this gateway runs on Windows, where the SF stack falls through to Segoe UI. Tracking
-       is neutral except on the one size large enough to want it, and Inter is honored first if it is
-       ever installed.
+       Font note (docs/18 V1): Windows-first — Inter is honored first if installed, then Segoe UI
+       Variable Text with optical sizing on, then plain Segoe UI. Tracking is neutral except on the
+       sizes large enough to want it (pane titles pull -0.02em).
     --------------------------------------------------------------------------------------------- */
     :root {
       /* Set from <head> before first paint, and re-resolved whenever the picker or the OS changes.
@@ -40,68 +41,70 @@
       --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
 
       /* Content measure. Nothing in the pane is ever full-bleed. */
-      --measure: 820px;
+      --measure: 920px;
       --measure-wide: 1180px;
 
-      --r-card: 10px;
+      --r-card: 8px;
       --r-row: 6px;
       --r-btn: 6px;
       --r-pill: 980px;
 
-      --sans: Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif;
       --mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
 
-      /* Light. Four surfaces, each one step apart, and every step visible: the canvas is a cool
-         near-white, the sidebar and the bars sit one step below it, the cards one step above it
-         (pure white, lifted by a one-pixel shadow rather than a heavier hairline). The previous
-         palette put the toolbar, the sidebar and the canvas on three near-identical greys and the
-         cards on a fifth — the whole panel read as one flat grey slab with rectangles drawn on it.
-         The status colours are the darker, less fluorescent members of their pairs: a column of
-         nine saturated green dots is a lot of light for what is only a row marker. */
-      --bg: #f5f6f8;
-      --sidebar: #eef0f3;
+      /* Light. The canvas is a neutral near-white, the sidebar one grey step below it, cards pure
+         white — separated by a 1px hairline ONLY, no drop shadow anywhere on the page (docs/18 V1):
+         a shadow lets two near-identical surfaces pass for different layers, a hairline forces the
+         grey ladder to do that work honestly. The older lesson stands: three near-identical greys
+         plus a fifth for the cards read as one flat slab with rectangles drawn on it. The status
+         colours are the darker, less fluorescent members of their pairs: a column of nine
+         saturated green dots is a lot of light for what is only a row marker. */
+      --bg: #fafafa;
+      --sidebar: #f4f4f5;
       --bar: #ffffff;
       --card: #ffffff;
       --field: #ffffff;
-      --text: #15171c;
-      --text-2: #5f6673;
-      --text-3: #8b92a0;
-      --sep: rgba(20, 24, 36, 0.10);
-      --sep-soft: rgba(20, 24, 36, 0.06);
-      --hover: rgba(20, 24, 36, 0.045);
+      --text: #111114;
+      --text-2: #6b7280;
+      --text-3: #9ca3af;
+      --sep: rgba(0, 0, 0, 0.08);
+      --sep-soft: rgba(0, 0, 0, 0.05);
+      --hover: rgba(0, 0, 0, 0.04);
       --accent: #2563eb;
       --accent-text: #ffffff;
       --green: #16a34a;
       --red: #dc2626;
       --amber: #d97706;
-      --shadow-card: 0 1px 2px rgba(20, 24, 36, 0.05), 0 0 0 1px rgba(20, 24, 36, 0.045);
-      --shadow-btn: 0 1px 1px rgba(20, 24, 36, 0.04);
-      --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px rgba(20, 24, 36, 0.06);
-      --shadow-pop: 0 8px 24px rgba(20, 24, 36, 0.14), 0 0 0 1px rgba(20, 24, 36, 0.06);
+      --shadow-card: 0 0 0 1px var(--sep); /* the hairline ring is the card's whole edge */
+      --shadow-btn: none;
+      --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px var(--sep);
+      --shadow-pop: 0 8px 24px rgba(20, 24, 36, 0.14), 0 0 0 1px var(--sep);
     }
-    /* Dark. Written once; `data-theme` is always resolved before it reaches the DOM. The same
-       four-step ladder, inverted: bars and sidebar darkest, canvas one up, cards one above that. */
+    /* Dark. Written once; `data-theme` is always resolved before it reaches the DOM. A warm
+       near-black (#0f1012, not the old blue-grey): the dark side should read as paper,
+       not as an IDE theme. Brightness is the ladder — sidebar and bars one step up, cards another —
+       and the only lift a card gets is its hairline plus a 1px top highlight (docs/18 V1). */
     :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #17181c;
-      --sidebar: #1e1f24;
-      --bar: #1e1f24;
-      --card: #24262c;
-      --field: #1b1c21;
-      --text: #ecedf1;
-      --text-2: #9a9fab;
-      --text-3: #6b7080;
-      --sep: rgba(255, 255, 255, 0.10);
-      --sep-soft: rgba(255, 255, 255, 0.06);
-      --hover: rgba(255, 255, 255, 0.06);
+      --bg: #0f1012;
+      --sidebar: #141518;
+      --bar: #141518;
+      --card: #191a1e;
+      --field: #0f1012;
+      --text: #ededef;
+      --text-2: #9a9ca3;
+      --text-3: #66686f;
+      --sep: rgba(255, 255, 255, 0.08);
+      --sep-soft: rgba(255, 255, 255, 0.05);
+      --hover: rgba(255, 255, 255, 0.05);
       --accent: #3b82f6;
       --green: #4ade80;
       --red: #f87171;
       --amber: #fbbf24;
-      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.06);
+      --shadow-card: 0 0 0 1px var(--sep), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --shadow-btn: none;
-      --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
-      --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--sep);
+      --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--sep);
     }
 
     * { box-sizing: border-box; }
@@ -114,13 +117,16 @@
       color: var(--text);
       background: var(--bg);
       -webkit-font-smoothing: antialiased;
+      font-feature-settings: "cv11", "ss01"; /* Inter refinements; harmless where Inter is absent */
+      font-variant-numeric: tabular-nums;    /* memory, latency, counts and times column-align */
+      font-optical-sizing: auto;             /* Segoe UI Variable / Inter pick their own cut */
     }
     [hidden] { display: none !important; }
     code { font-family: var(--mono); font-size: 0.92em; }
 
     /* --- controls ------------------------------------------------------------------------------ */
     button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
-    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+    :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 1px; border-radius: 6px; }
 
     /* A push button, not a pill: macOS reserves the full-round shape for toolbar segments and tags.
        These are "Start", "Try", "Read" — rounded rects. */
@@ -128,7 +134,7 @@
       font-size: var(--f-body); font-weight: 500; line-height: 20px;
       padding: 4px var(--s3); border-radius: var(--r-btn);
       background: var(--card); color: var(--text);
-      box-shadow: inset 0 0 0 1px var(--sep), var(--shadow-btn);
+      box-shadow: inset 0 0 0 1px var(--sep);
       transition: background .12s ease, box-shadow .12s ease;
       white-space: nowrap;
     }
@@ -137,6 +143,10 @@
     .btn.primary { background: var(--accent); color: var(--accent-text); box-shadow: var(--shadow-btn); font-weight: 550; }
     .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
     .btn.danger { color: var(--red); }
+    /* The quiet slots: toolbar icon buttons, a row's secondary affordance (docs/18 V1). Chrome
+       appears only on hover — the toolbar's own idiom. V2's icon buttons and V5's ⋯ hang off it. */
+    .btn.ghost { background: none; box-shadow: none; color: var(--text-2); }
+    .btn.ghost:hover { background: var(--hover); color: var(--text); }
     .btn:disabled, .btn.disabled { opacity: .4; cursor: default; background: var(--card); }
 
     /* A tool's visibility is a state you set, not an action you fire, so it is a switch — the control
@@ -151,7 +161,7 @@
     }
     .sw::after {
       content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
-      border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .28);
+      border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px var(--sep-soft); /* hairline world: no drops, even on the knob */
       transition: transform .15s ease;
     }
     /* Accent, not green: green already means "this MCP is up" on every sidebar row, and a switch is
@@ -161,8 +171,12 @@
     .sw:disabled { opacity: .4; cursor: default; }
     @media (prefers-reduced-motion: reduce) { .sw, .sw::after { transition: none; } }
     .row.muted .name { color: var(--text-3); }
-    .group-cap { font-size: var(--f-caption); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: var(--s4) var(--s4) var(--s1); }
-    .btn.icon { padding: 4px 8px; font-size: 14px; line-height: 1; color: var(--text-2); }
+    .group-cap { font-size: var(--f-caption); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); padding: var(--s4) var(--s4) var(--s1); }
+    .btn.icon { padding: 4px 8px; font-size: 14px; line-height: 1; color: var(--text-2); display: inline-flex; align-items: center; justify-content: center; }
+    /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here. */
+    .ic { width: 16px; height: 16px; flex: none; }
+    /* Disclosure chevrons read better a step smaller than action icons. */
+    .chev .ic, .grp-chev .ic, .tun-chev .ic { width: 12px; height: 12px; }
 
     /* Fields sit on --field, not --card: inside a white card or a white sheet a white input has no
        edge but its hairline, and on the dark side a field one step darker than its card is what
@@ -226,7 +240,12 @@
       padding: 0 var(--s3) 0 var(--s4);
       background: var(--bar);
       border-bottom: 1px solid var(--sep);
+      min-width: 0; /* lets the level-one seg scroll instead of pushing the right side off */
     }
+    /* The toolbar's right-hand trio (docs/18 V3): one 2px cluster of quiet icon buttons. */
+    .tool-acts { display: inline-flex; gap: 2px; }
+    #memChip { font-family: var(--mono); }
+    @media (max-width: 960px) { #memChip { display: none; } /* 960px is the support floor */ }
     /* The brand carries a mark: the swiss logo (logo.svg), a red shield with a white cross -
        the pocket-knife emblem, distinct from the flag's plain field. It is the one saturated
        thing on the bar, which is what makes the bar read as a header and not as a second
@@ -255,9 +274,12 @@
        dressed in the toolbar's own vocabulary so no new colour enters the panel. */
     .subbar {
       display: flex; align-items: center; gap: var(--s3);
-      padding: 6px var(--s4);
+      min-height: 36px;
+      padding: 4px var(--s4);
       background: var(--bar); border-bottom: 1px solid var(--sep);
     }
+    /* The single-page spelling of the page bar (docs/18 V3): the page's own name, body weight. */
+    .subbar-name { font-size: var(--f-body); font-weight: 500; color: var(--text-2); }
 
     /* --- sidebar ------------------------------------------------------------------------------- */
     .sidebar {
@@ -268,7 +290,7 @@
     .side-head input { background: var(--field); }
     .side-head .btn { background: none; box-shadow: none; }
     .side-cap {
-      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+      font-size: var(--f-caption); font-weight: 500; text-transform: uppercase; letter-spacing: .06em;
       color: var(--text-3); padding: var(--s2) var(--s3) var(--s1);
     }
     .side-list { flex: 1; overflow-y: auto; padding: 0 var(--s2) var(--s4); }
@@ -284,11 +306,11 @@
       color: var(--text);
     }
     .side-row:hover { background: var(--hover); }
-    /* Selection is the card colour lifted off the sidebar with a hairline shadow — the Finder /
-       Xcode source-list idiom — and the name takes the accent. A tinted blue slab washed out the
-       status dot every row carries; state has to survive selection. */
-    .side-row[aria-selected="true"] { background: var(--card); box-shadow: var(--shadow-card); }
-    .side-row[aria-selected="true"] .side-name { color: var(--accent); font-weight: 600; }
+    /* Selection (docs/18 V6): a 2px accent bar on the leading edge over an 8% tint — the row
+       stays flat in the list and the status dot survives it. The previous white-card float (the
+       Finder/Xcode idiom) read as a second surface and fought the dot it sat beside. */
+    .side-row[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+    .side-row[aria-selected="true"] .side-name { color: var(--text); font-weight: 600; }
     /* Drag-to-reorder: the insertion point, shown on the row the payload would land beside. */
     .side-row.dragging { opacity: 0.55; }
     .side-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
@@ -297,32 +319,14 @@
       flex: 1; min-width: 0; font-size: var(--f-body); font-weight: 500;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    /* How this MCP is launched. A quiet hue per method — readable, not a status badge. */
+    /* How this MCP is launched (docs/18 V6): an address, not a state — one monochrome chip.
+       The per-method hues carried nothing a scan could use (mysql and redis were both red,
+       pg and http both blue); mono on a 5% wash says "launch method" and nothing else. */
     .side-type {
       flex: none; font-family: var(--mono); font-size: var(--f-caption); font-weight: 550;
-      white-space: nowrap; padding: 1px 6px; border-radius: 5px;
-      color: var(--tag-fg, var(--text-2)); background: var(--tag-bg, var(--sep-soft));
+      white-space: nowrap; padding: 1px 6px; border-radius: 4px;
+      color: var(--text-3); background: color-mix(in srgb, var(--text) 5%, transparent);
     }
-    .side-type[data-tag="http"]   { --tag-fg: #0369a1; --tag-bg: rgba(3, 105, 161, 0.12); }
-    .side-type[data-tag="rest"]   { --tag-fg: #5b21b6; --tag-bg: rgba(91, 33, 182, 0.12); }
-    .side-type[data-tag="npx"]    { --tag-fg: #c2410c; --tag-bg: rgba(194, 65, 12, 0.12); }
-    .side-type[data-tag="uvx"]    { --tag-fg: #0f766e; --tag-bg: rgba(15, 118, 110, 0.12); }
-    .side-type[data-tag="docker"] { --tag-fg: #075985; --tag-bg: rgba(7, 89, 133, 0.12); }
-    .side-type[data-tag="echo"]   { --tag-fg: #3f6212; --tag-bg: rgba(63, 98, 18, 0.12); }
-    .side-type[data-tag="mysql"]  { --tag-fg: #b45309; --tag-bg: rgba(180, 83, 9, 0.12); }
-    .side-type[data-tag="pg"]     { --tag-fg: #1d4ed8; --tag-bg: rgba(29, 78, 216, 0.12); }
-    .side-type[data-tag="redis"]  { --tag-fg: #b91c1c; --tag-bg: rgba(185, 28, 28, 0.12); }
-    .side-type[data-tag="proc"]   { --tag-fg: #44403c; --tag-bg: rgba(68, 64, 60, 0.10); }
-    :root[data-theme="dark"] .side-type[data-tag="http"]   { --tag-fg: #7dd3fc; --tag-bg: rgba(14, 165, 233, 0.18); }
-    :root[data-theme="dark"] .side-type[data-tag="rest"]   { --tag-fg: #c4b5fd; --tag-bg: rgba(139, 92, 246, 0.20); }
-    :root[data-theme="dark"] .side-type[data-tag="npx"]    { --tag-fg: #fdba74; --tag-bg: rgba(234, 88, 12, 0.20); }
-    :root[data-theme="dark"] .side-type[data-tag="uvx"]    { --tag-fg: #5eead4; --tag-bg: rgba(20, 184, 166, 0.18); }
-    :root[data-theme="dark"] .side-type[data-tag="docker"] { --tag-fg: #7dd3fc; --tag-bg: rgba(2, 132, 199, 0.20); }
-    :root[data-theme="dark"] .side-type[data-tag="echo"]   { --tag-fg: #bef264; --tag-bg: rgba(101, 163, 13, 0.18); }
-    :root[data-theme="dark"] .side-type[data-tag="mysql"]  { --tag-fg: #fbbf24; --tag-bg: rgba(217, 119, 6, 0.20); }
-    :root[data-theme="dark"] .side-type[data-tag="pg"]     { --tag-fg: #93c5fd; --tag-bg: rgba(59, 130, 246, 0.20); }
-    :root[data-theme="dark"] .side-type[data-tag="redis"]  { --tag-fg: #fca5a5; --tag-bg: rgba(239, 68, 68, 0.20); }
-    :root[data-theme="dark"] .side-type[data-tag="proc"]   { --tag-fg: #d6d3d1; --tag-bg: rgba(168, 162, 158, 0.16); }
 
     /* --- sidebar groups -------------------------------------------------------------------------
        A disclosure header per group, in the source-list idiom: the header is a caption, not a row, so
@@ -337,7 +341,7 @@
       font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
       color: var(--text-3);
     }
-    .grp-chev { flex: none; width: 10px; font-size: 10px; transition: transform .15s ease; }
+    .grp-chev { flex: none; width: 12px; transition: transform .15s ease; }
     .side-group:not(.collapsed) .grp-chev { transform: rotate(90deg); }
     @media (prefers-reduced-motion: reduce) { .grp-chev { transition: none; } }
     .grp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -364,10 +368,12 @@
     .grp-head.drop-into { box-shadow: inset 0 0 0 1.5px var(--accent); }
 
     /* Status is a dot plus neutral text — color is reserved for interaction, not for body copy. */
-    .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-3); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--text-3); }
     .dot.up { background: var(--green); }
     .dot.down, .dot.error { background: var(--red); }
-    .dot.idle { background: var(--accent); } /* a lazy proc: no child spawned, starts on first request */
+    /* A lazy proc (docs/18 V6): idle is the absence of a claim, so the dot is a hollow ring in
+       the quiet text tone — not a filled blue disc arguing with the greens and the reds. */
+    .dot.idle { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
     .dot.starting, .dot.stopping { background: var(--amber); animation: pulse 1.1s ease-in-out infinite; }
     @keyframes pulse { 50% { opacity: .35; } }
     @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }

@@ -67,6 +67,30 @@ function esc(s) {
 }
 function now() { return new Date().toLocaleTimeString(); }
 
+/** One inline icon from the shell's sprite (docs/18 V2). Stroke follows currentColor and .ic
+ *  sizes it; decorative by default, an image with a name when `label` is passed (icon buttons). */
+function icon(name, label) {
+  return label
+    ? '<svg class="ic" role="img" aria-label="' + esc(label) + '"><use href="#i-' + name + '"></use></svg>'
+    : '<svg class="ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
+}
+
+/** One empty state (docs/18 V7): icon, title, one line of hint, optional ghost action. Every
+ *  view's "nothing here" is this shape — the Terminal alone keeps its own, because it lives in
+ *  the black frame with its own tokens. The action button carries data-empty-action so the
+ *  owning view can wire it without inventing per-view ids. */
+function emptyHtml(opts) {
+  var action = opts.action
+    ? '<button class="btn ghost" data-empty-action="' + esc(opts.action) + '">' + esc(opts.action) + "</button>"
+    : "";
+  return '<div class="empty"><div>' +
+    '<span class="empty-ic">' + icon(opts.icon) + "</span>" +
+    "<h2>" + esc(opts.title) + "</h2>" +
+    (opts.hint ? '<p class="hint">' + esc(opts.hint) + "</p>" : "") +
+    action +
+    "</div></div>";
+}
+
 /** One time format for row lists: time-of-day inside the last 24h, date+time beyond it (the
  *  pure time becomes ambiguous the moment a list spans midnight). Run-history had this logic as
  *  histWhen; Traffic rows now share it instead of printing bare times on pages days old. */
@@ -128,4 +152,4 @@ async function apiJson(path, opts) {
   }
 }
 
-export { $, COLLAPSE_KEY, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, TUN_COLLAPSE_KEY, api, apiJson, el, esc, loadCollapsed, loadTunCollapsed, now, saveCollapsed, saveTunCollapsed, state, toast, whenLabel };
+export { $, COLLAPSE_KEY, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, TUN_COLLAPSE_KEY, api, apiJson, el, emptyHtml, esc, icon, loadCollapsed, loadTunCollapsed, now, saveCollapsed, saveTunCollapsed, state, toast, whenLabel };

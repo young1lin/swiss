@@ -17,8 +17,9 @@
    (action input built from GET /api/actions, run.js's builder) plus a JSON editor, round-tripping
    losslessly so fields this form does not know survive the save.
    ================================================================================================ */
-import { $, api, apiJson, esc, state, toast, whenLabel } from "./util.js";
+import { $, api, apiJson, emptyHtml, esc, icon, state, toast, whenLabel } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
+import { popupMenu } from "./menu.js";
 import { jobDotClass, jobRowHtml, jobsChipText, loadJobs } from "./polling.js";
 import { argFieldsHtml, readRunArgs } from "./run.js";
 import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
@@ -48,7 +49,7 @@ function renderJobs() {
   state.jobs.painted = rows.map(function (j) { return j.name; }).join("\n");
   var body = rows.length
     ? '<div class="group">' + rows.map(jobRowHtml).join("") + "</div>"
-    : '<div class="empty"><div><h2>No jobs yet</h2><p class="hint">Scheduled commands the gateway runs on this machine. Add one with New.</p></div></div>';
+    : emptyHtml({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands the gateway runs on this machine. Add one with New." });
   // .wide + .pane-head + .tun-foot: the Tunnels view's exact frame — the rows are the same
   // name-plus-subtext-plus-buttons shape, so they wear the same classes.
   $("pane").innerHTML = '<div class="wide">' +
@@ -103,14 +104,21 @@ function wireJobs() {
     var job = jobByName(row.getAttribute("data-job"));
     if (!job) return;
     row.querySelector("[data-run]").onclick = function () { void runJob(job.name); };
-    row.querySelector("[data-hist]").onclick = function () { void openRunsSheet(job.name); };
-    row.querySelector("[data-edit]").onclick = function () {
-      // A definition the v1 shape cannot spell (docs/11 §7.1: editableInV1 false) goes
-      // straight to the advanced sheet — the v1 form would silently drop its fields.
-      if (job.editableInV1 === false) void openV2Sheet(job);
-      else openJobSheet(job);
+    var more = row.querySelector("[data-more]");
+    if (more) more.onclick = function () {
+      // The overflow half of the row (docs/18 V5): the rare verbs and the destructive one.
+      popupMenu(more.getBoundingClientRect(), [
+        { label: "Edit", fn: function () {
+            // A definition the v1 shape cannot spell (docs/11 §7.1: editableInV1 false) goes
+            // straight to the advanced sheet — the v1 form would silently drop its fields.
+            if (job.editableInV1 === false) void openV2Sheet(job);
+            else openJobSheet(job);
+          } },
+        { label: "History", fn: function () { void openRunsSheet(job.name); } },
+        { sep: true },
+        { label: "Delete", danger: true, fn: function () { deleteJob(job); } },
+      ]);
     };
-    row.querySelector("[data-del]").onclick = function () { deleteJob(job); };
   });
 }
 
@@ -709,7 +717,7 @@ function renderRunsSheet(nextBefore) {
         '<span class="dot ' + (r.ok ? "up" : "down") + '"></span>' +
         '<span class="call-tool">' + esc(whenLabel(r.at)) + "</span>" +
         '<span class="call-meta">' + esc(historyMeta(r)) + "</span>" +
-        '<span class="chev">&#8250;</span>' +
+        '<span class="chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
       "</button>" +
       '<div class="call-body" hidden><pre class="logs">' +
         esc((r.error ? r.error + "\n\n" : "") + (r.output || "") +

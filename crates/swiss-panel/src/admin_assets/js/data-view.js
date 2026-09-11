@@ -1,4 +1,4 @@
-import { $, apiJson, el, state } from "./util.js";
+import { $, apiJson, el, icon, state } from "./util.js";
 import { dbIsRedis, dbLoadKeys, dbLoadRedisValue } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -326,11 +326,13 @@ function renderDbTables() {
   var from = d.tablesTotal ? d.tablesPage * d.tablesLimit + 1 : 0;
   var to = d.tablesPage * d.tablesLimit + d.tables.length;
   foot.appendChild(el("span", "", from.toLocaleString() + "–" + to.toLocaleString() + " of " + d.tablesTotal.toLocaleString()));
-  var prev = el("button", "btn icon", "‹");
+  var prev = el("button", "btn icon");
+  prev.innerHTML = icon("chevron-left");
   prev.title = "Previous page of tables";
   prev.disabled = d.tablesPage === 0;
   prev.onclick = function () { d.tablesPage--; dbLoadTables(); };
-  var next = el("button", "btn icon", "›");
+  var next = el("button", "btn icon");
+  next.innerHTML = icon("chevron-right");
   next.title = "Next page of tables";
   next.disabled = !d.more;
   next.onclick = function () { d.tablesPage++; dbLoadTables(); };

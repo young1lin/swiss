@@ -11,7 +11,7 @@
    instead of silently overwriting it. A failed START is not a failed request — the row comes back
    state="failed" with its lastError, and the retry is pressing Enable again.
    ================================================================================================ */
-import { $, apiJson, esc, toast } from "../util.js";
+import { $, apiJson, emptyHtml, esc, toast } from "../util.js";
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
 
 var busy = {}; // plugin id -> true while its own toggle is in flight
@@ -33,6 +33,7 @@ function stateLabel(p) {
   if (busy[p.id]) return "working…";
   return p.enabled ? p.state : "disabled";
 }
+// (docs/18 V4): the state word left the row — the dot carries it; stateLabel stays for tooltips.
 
 /** The dependency badge (docs/12 W3): a plugin whose required capability has no provider
  *  says SO on its row — "needs connection-catalog (no provider)" — instead of failing
@@ -45,24 +46,26 @@ export function requiresBadge(p) {
   return '· needs ' + esc(missing.join(", ")) + ' <span class="warn">(no provider)</span>';
 }
 
-function rowHtml(p) {
+/** One plugins row (docs/18 V4): dot + name + one grey line (id, pages, requirements,
+ *  error) — version rides the row title, the state word is the dot's job — and the toggle
+ *  is the panel's switch, the control every other row-level on/off uses. Exported pure. */
+export function rowHtml(p) {
   var pages = (p.pages || []).join(", ");
-  return '<div class="tun-row" data-plugin="' + esc(p.id) + '">' +
+  return '<div class="tun-row" data-plugin="' + esc(p.id) + '"' +
+      (p.version ? ' title="v' + esc(p.version) + '"' : "") + ">" +
       '<span class="dot ' + esc(dotClass(p)) + '" data-dot></span>' +
       '<div class="tun-main">' +
         '<div class="tun-name">' + esc(p.label || p.id) +
           (p.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
         '<div class="tun-sub"><code>' + esc(p.id) + "</code>" +
-          ' <span class="via">· ' + esc(p.kind || "") + (p.version ? " v" + esc(p.version) : "") + "</span>" +
-          ' <span class="via" data-state>· ' + esc(stateLabel(p)) + "</span>" +
           (pages ? ' <span class="via">· pages: ' + esc(pages) + "</span>" : ' <span class="via">· no page</span>') +
           '<span class="via" data-reqs>' + requiresBadge(p) + "</span>" +
           '<span data-err>' + (p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "") + "</span>" +
         "</div>" +
       "</div>" +
       '<div class="tun-acts">' +
-        '<button class="btn" data-toggle' + (busy[p.id] ? " disabled" : "") + ">" +
-          (busy[p.id] ? "…" : p.enabled ? "Disable" : "Enable") + "</button>" +
+        '<button class="sw" data-toggle role="switch" aria-checked="' + (p.enabled ? "true" : "false") + '"' +
+          ' aria-label="Toggle ' + esc(p.label || p.id) + '"' + (busy[p.id] ? " disabled" : "") + "></button>" +
       "</div>" +
     "</div>";
 }
@@ -80,15 +83,15 @@ function render() {
   var all = rows();
   var body = all.length
     ? '<div class="group">' + all.map(rowHtml).join("") + "</div>"
-    : '<div class="empty"><div><h2>No plugins</h2><p class="hint">This gateway reports an empty inventory.</p></div></div>';
+    : emptyHtml({ icon: "power", title: "No plugins", hint: "This gateway reports an empty inventory." });
   $("pane").innerHTML = '<div class="wide">' +
     '<div class="pane-head"><div><h1 class="pane-title">Plugins</h1>' +
       '<div class="pane-desc">What this build is composed of. Disabling one stops its subsystem and takes its pages and API routes off the air until it is enabled again; definitions, logs and state files are left alone.</div>' +
     "</div></div>" +
-    '<div class="sec-head"><span class="sec-cap">Installed</span>' +
-      '<span class="via">revision ' + esc(String(inv().revision)) + "</span></div>" +
+    '<div class="sec-head"><span class="sec-cap">Installed</span></div>' +
     body +
-    '<div class="tun-foot" data-foot>' + esc(chipText()) + "</div>" +
+    '<div class="tun-foot" data-foot><span data-foot-text>' + esc(chipText()) + "</span>" +
+      '<span class="tun-foot-rev">revision ' + esc(String(inv().revision)) + "</span></div>" +
   "</div>";
   wire();
 }
@@ -103,8 +106,6 @@ function patch() {
     if (!p) return;
     var dot = row.querySelector("[data-dot]");
     if (dot) dot.className = "dot " + dotClass(p);
-    var st = row.querySelector("[data-state]");
-    if (st) st.textContent = "· " + stateLabel(p);
     var err = row.querySelector("[data-err]");
     if (err) err.innerHTML = p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "";
     var reqs = row.querySelector("[data-reqs]");
@@ -112,12 +113,12 @@ function patch() {
     var button = row.querySelector("[data-toggle]");
     if (button) {
       button.disabled = !!busy[p.id];
-      button.textContent = busy[p.id] ? "…" : p.enabled ? "Disable" : "Enable";
+      button.setAttribute("aria-checked", p.enabled ? "true" : "false");
     }
     var name = row.querySelector(".tun-name");
     if (name) name.innerHTML = esc(p.label || p.id) + (p.enabled ? "" : ' <span class="via">· off</span>');
   });
-  var foot = pane.querySelector("[data-foot]");
+  var foot = pane.querySelector("[data-foot-text]");
   if (foot) foot.textContent = chipText();
 }
 

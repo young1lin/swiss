@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, api, apiJson, esc, state, toast, whenLabel } from "./util.js";
+import { $, DEFAULT_GROUP, api, apiJson, esc, icon, state, toast, whenLabel } from "./util.js";
 import { currentPageCount, navigatePage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
@@ -158,9 +158,9 @@ function jobRowHtml(j) {
       "</div>" +
       '<div class="tun-acts">' +
         '<button class="btn" data-run' + (busy || j.running ? " disabled" : "") + ">" + (busy ? "…" : "Run now") + "</button>" +
-        '<button class="btn" data-hist>History</button>' +
-        '<button class="btn" data-edit>Edit</button>' +
-        '<button class="btn danger" data-del>Delete</button>' +
+        // One primary per row (docs/18 V5): Edit, History and Delete answer from the ellipsis
+        // menu (jobs.js), so Delete is not a red button repeated down the whole list.
+        '<button class="btn ghost icon" data-more aria-label="Row actions" title="Row actions">' + icon("ellipsis") + "</button>" +
       "</div>" +
     "</div>";
 }
@@ -205,10 +205,6 @@ function ruleSubHtml(r) {
 function ruleRowHtml(r) {
   var busy = state.tun.busy[r.id];
   var running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
-  // A held port is the one error with a remedy on the row itself.
-  var force = r.portOwner
-    ? '<button class="btn danger" data-free="' + esc(String(r.localPort)) + '">Force free</button>'
-    : "";
   return '<div class="tun-row" draggable="true" data-rule="' + esc(r.id) + '">' +
       '<span class="dot ' + esc(busy ? "starting" : r.state) + '" data-dot></span>' +
       '<div class="tun-main">' +
@@ -217,11 +213,12 @@ function ruleRowHtml(r) {
         (r.state === "error" || r.state === "reconnecting"
           ? '<div class="tun-err" data-reason>' + esc(r.reason || "") + "</div>" : "") +
       "</div>" +
-      '<div class="tun-acts">' + force +
-        '<button class="btn' + (running ? "" : " primary") + '" data-act="' + (running ? "stop" : "start") +
+      '<div class="tun-acts">' +
+        // Start/Stop is hairline, not solid (docs/18 V5 + 17 §2.1: one solid accent per page,
+        // and that is the page's New — a column of solid Starts is a column of shouting).
+        '<button class="btn" data-act="' + (running ? "stop" : "start") +
           '"' + (busy ? " disabled" : "") + ">" + (busy ? "…" : running ? "Stop" : "Start") + "</button>" +
-        '<button class="btn" data-edit>Edit</button>' +
-        '<button class="btn danger" data-del>Delete</button>' +
+        '<button class="btn ghost icon" data-more aria-label="Row actions" title="Row actions">' + icon("ellipsis") + "</button>" +
       "</div>" +
     "</div>";
 }
@@ -239,8 +236,7 @@ function connRowHtml(c) {
       "</div>" +
       '<div class="tun-acts">' +
         '<button class="btn" data-test' + (busy ? " disabled" : "") + ">" + (busy ? "…" : "Test") + "</button>" +
-        '<button class="btn" data-edit>Edit</button>' +
-        '<button class="btn danger" data-del>Delete</button>' +
+        '<button class="btn ghost icon" data-more aria-label="Row actions" title="Row actions">' + icon("ellipsis") + "</button>" +
       "</div>" +
     "</div>";
 }

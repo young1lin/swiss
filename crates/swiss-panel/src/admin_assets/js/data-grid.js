@@ -1,4 +1,4 @@
-import { $, apiJson, el, state, toast } from "./util.js";
+import { $, apiJson, el, emptyHtml, icon, state, toast } from "./util.js";
 import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
 import { dbCellMenu, dbExportCsv, dbOpenImport, dbResultCellMenu, dbSelAll } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText } from "./data-cell.js";
@@ -99,7 +99,8 @@ function renderDbToolbar() {
     var to = d.offset + d.data.rows.length;
     dataCtl.appendChild(el("span", "db-pageinfo",
       d.data.total ? first.toLocaleString() + "–" + to.toLocaleString() + " of " + d.data.total.toLocaleString() : "0 rows"));
-    var prev = el("button", "btn icon", "‹");
+    var prev = el("button", "btn icon");
+    prev.innerHTML = icon("chevron-left");
     prev.title = "Previous page";
     prev.disabled = d.offset === 0;
     prev.onclick = function () {
@@ -108,7 +109,8 @@ function renderDbToolbar() {
       dbDropEdits();
       dbLoadData(true);
     };
-    var next = el("button", "btn icon", "›");
+    var next = el("button", "btn icon");
+    next.innerHTML = icon("chevron-right");
     next.title = "Next page";
     next.disabled = to >= d.data.total;
     next.onclick = function () {
@@ -250,7 +252,9 @@ function renderDbGrid() {
   if (d.tab !== "data") { renderDbDetailGrid(wrap); return; }
   if (!d.conn) { wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first.")); return; }
   if (!d.table || !d.data) {
-    wrap.appendChild(el("div", "db-hint", d.table ? "Loading…" : "Select a table on the left to browse its rows."));
+    if (d.table) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+    // The shared empty state (docs/18 V7); "Loading…" stays a quiet one-liner.
+    wrap.innerHTML = emptyHtml({ icon: "database", title: "Select a table", hint: "Pick a table on the left to browse its rows." });
     return;
   }
   if (d.loading) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
