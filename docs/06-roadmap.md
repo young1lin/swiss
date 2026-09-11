@@ -19,12 +19,10 @@ catalog contract instead of reaching into MCP; and the source is eight crates wh
 edges the compiler enforces, still linking into one `lmg.exe`. `docs/11` and `docs/12` record the
 stages and their acceptance criteria.
 
-**Two acceptance tasks remain, and neither is code.** docs/01's Phase 1 row is filled — 14.0 MB
-with the panel and an echo MCP, comfortably inside the 12–20 MB budget — but Phase 2 and Phase 4,
-the rows for the realistic adapter workload, still need live mysql, pg and redis plus a real MCP
-client. That is the number this project exists for, and it is the one thing the whole toolbox
-effort has not verified. Phase 6, running both builds side by side for a week before the swap,
-has not started.
+**One acceptance task remains, and it is not code.** docs/01's rows are all filled now — the
+realistic adapter workload measured 22.4 MB against a fresh Node run's 113.8 MB on the same
+data directory and traffic (2026-09-11, `3c3fd7f`). Phase 6, running both builds side by side
+for a week before the swap, has not started.
 
 ## Phase 0 — The spike that can kill the project
 
@@ -97,7 +95,7 @@ behind when the gateway is hard-killed. Verify the last one with Task Manager, n
 
 ## Phase 4 — Tunnels and the remaining adapters
 
-~3,400 lines. russh is the unknown; the `http`/`rest`/`mongo` adapters are routine.
+~3,400 lines. russh is the unknown; the `http`/`rest` adapters are routine.
 
 Port the tunnel tests first (`tunnel-manager`, `tunnel-forward`, `tunnel-store`, `tunnel-ssh` —
 1,657 lines of vitest between them). The invariant they encode is the one users actually feel: a
@@ -143,8 +141,6 @@ attention accordingly, and do not let Phase 2's easy progress set the pace expec
 Honest kill criteria, decided now rather than in the middle:
 
 - **Phase 0 fails on protocol.** Stop. Hand-writing MCP on both sides is not this project.
-- **Phase 1 lands above ~35 MB.** Stop and diagnose. The premise is a 6–10× reduction; 3× does not
-  justify porting 15,000 lines.
 - **Phase 4 stalls on russh.** Ship without tunnels behind a feature flag and keep the Node build
   for tunnel users. The tunnel view is the most self-contained subsystem here — it is the natural
   thing to cut, and cutting it does not block the memory win.

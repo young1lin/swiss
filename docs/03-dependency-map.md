@@ -8,7 +8,6 @@
 | `node:http` + the hand-written `Router` | **`axum`** | The Node build wrote its own router to avoid express's ~9.6 MB. axum has no such problem — that comment does not transfer |
 | `mysql2`, `pg` | **`sqlx`** | One crate for both. **Do not use the `query!` macros** — they need a live database at compile time, and this is a generic SQL browser anyway. Runtime `query()` throughout |
 | `ioredis` | **`redis`** (redis-rs) | `fred` is the richer client and the heavier one; nothing here needs it |
-| `mongodb` | — | Not ported: deleted outright (ADR-012) |
 | `undici` | **`reqwest`** | Carries the `http`/`rest` adapters *and* their HTTP-proxy support, which is why undici was there |
 | `ssh2` | **`russh`** + `russh-keys` | Pure Rust, async, no libssh2 build step |
 | `zod` | **`serde`** + `schemars` | `schemars` generates the JSON Schema that `tools/list` publishes |

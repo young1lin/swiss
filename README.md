@@ -3,15 +3,17 @@
 A Rust port of [`local-mcp-gateway`](../local-mcp-gateway): one local process that hosts every MCP
 server an AI client needs, exposed on HTTP paths under `127.0.0.1:19999`.
 
-**Why the port exists:** memory. The Node build measures **117.5 MB RSS** on a typical workload
-(1×mysql, 1×pg, 2×redis, 2×http, 1×echo live; 2×proc asleep). Roughly 45 MB of that is the V8
-floor, which no amount of tuning in JavaScript can reach past. The target here is **12–20 MB**,
-shipped as a **single self-contained `.exe`** with no Node, no `node_modules`, no npx wrapper.
+**Why the port exists:** memory. The Node build measures **113.8 MB RSS** on a typical workload
+(re-measured 2026-09-11; the 2026-09-07 baseline read 117.5 MB) with 1×mysql, 1×pg, 2×redis,
+2×http live and 2×proc asleep. Roughly 45 MB of that is the V8 floor, which no amount of tuning
+in JavaScript can reach past. The same workload on this port reads **22.4 MB** (private bytes
+8.6 MB), shipped as a **single self-contained `.exe`** with no Node, no `node_modules`, no npx
+wrapper. Memory numbers are records, not gates.
 
 ## Status
 
 **Implementation complete** — all planned adapter families are wired into the factory: echo,
-MySQL, PostgreSQL, Redis, MongoDB, proc, HTTP, REST, and SSH tunnels. The admin API, embedded panel,
+MySQL, PostgreSQL, Redis, proc, HTTP, REST, and SSH tunnels. The admin API, embedded panel,
 sealed-envelope compatibility, lazy proc lifecycle, and loopback security paths are implemented.
 The build has since become the plugin toolbox `docs/09`–`12` describe: a plugin host over shared
 Action / Run / process services, configuration-driven Jobs, a connection catalog that keeps Data
@@ -25,11 +27,11 @@ still reports ok.
 The MongoDB driver remains an opt-in feature so the default binary stays small.
 
 `docs/01`–`08` describe the original compatibility port; `09`–`12` describe the toolbox it became;
-`13`–`14` are proposals that are not built yet.
-**The one thing still outstanding is the number this project exists for.** `docs/01` now records
-14.0 MB for the gateway with the panel and an echo MCP — against Node's 117.5 MB baseline — but the
-rows that matter, the full adapter workload, are still empty: filling them needs live mysql, pg and
-redis and a real MCP client driving them (`docs/12` W2).
+`13`–`14` (panel navigation, the web terminal) are shipped.
+**The number this project exists for is in.** `docs/01` records the full-workload side by side
+(2026-09-11, `3c3fd7f`): Node **113.8 MB** vs Rust **22.4 MB** on the same data directory and the
+same 60-call traffic — −80% RSS, −93% private bytes. What remains of the roadmap is the cutover
+week (`docs/06` Phase 6), which is calendar, not code.
 
 | Doc | What it settles |
 | --- | --- |

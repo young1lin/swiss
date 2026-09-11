@@ -24,7 +24,10 @@ for this program is 45–60 MB.** Getting under it is the entire reason this rep
 
 ## Target
 
-**12–20 MB RSS** for the same adapter set, in a single self-contained `.exe`.
+As small as the same adapter set allows, in a single self-contained `.exe`. The original
+working figure was ~12–20 MB RSS; per the user's call (2026-09-11) memory numbers are **records,
+not gates** — no band is enforced anywhere, and a debug build costing more is fine. What stays
+load-bearing is the direction: every MB of idle cost has to be argued for.
 
 The estimate, built up rather than guessed:
 
@@ -38,10 +41,25 @@ The estimate, built up rather than guessed:
 | Registry, traffic, call-log working set | 1–2 |
 | **Total** | **~11–17** |
 
-The `mongodb` driver is no longer in the binary at all — MongoDB support was deleted outright
-(ADR-012), so it is not even a compile-time option.
+## Measured result (2026-09-11, current build side by side)
 
-## Measured result (2026-09-07, final acceptance)
+The pre-split monolith's acceptance below (2026-09-07) read 20.3 MB. The split binary, with the
+terminal plugin shipped and MongoDB deleted (ADR-012, exe 10,649,600 → 7,948,288 B), re-measured
+the same workload family this morning against a fresh Node run on the same data directory:
+
+| | Node | Rust (`3c3fd7f`) | |
+| --- | --- | --- | --- |
+| Gateway RSS | 113.8 MB | **22.4 MB** | −80%, ~91 MB back |
+| Private bytes | 124.9 MB | **8.6 MB** | −93% |
+| Threads | 13 | **6** | current_thread runtime |
+| Binary | node_modules + runtime | **7.9 MB** single `.exe` | self-contained |
+
+Private bytes are the honest "owned memory" story — the working set carries ~14 MB of paged-in
+image and section pages. The ~8 MB over the no-DB Phase 1 reading is the named slice: sqlx mysql
++ pg pools, 2×redis connections, and two `russh` sessions carrying 9 forwarding rules (the DBs
+themselves all arrive through those tunnels on this machine). Numbers are records, not gates.
+
+## Measured result (2026-09-07, the pre-split monolith)
 
 Same workload as the Node measurement above — 1×mysql, 1×pg, 2×redis, 2×http and 1×echo started,
 2×proc idle, plus the SSH-tunnel subsystem running its rules — read from the finished port's own
@@ -57,7 +75,7 @@ Same workload as the Node measurement above — 1×mysql, 1×pg, 2×redis, 2×ht
 | Binary | node_modules + runtime | **6.4 MB** single `.exe` | self-contained |
 | Tests | — | 224 (lib) | green |
 
-20.3 MB sits at the top of the 12–20 MB target band, and the overshoot is accounted for: the
+20.3 MB, and the gap to the estimate is accounted for: the
 estimate table above predates the tunnel subsystem, whose `russh` sessions (key exchange state,
 per-rule buffers) are the slice the estimate did not name. The naive-RSS caveat in
 `docs/08-testing.md` applies to both columns equally.
@@ -191,17 +209,18 @@ the wrong way, is worth stopping for.
 | 2026-09-07 | Rust Phase 0 (spike) | echo only | **9.1** | release, after 60 requests; 1 thread, 4.0 MB private, 1.05 MB exe |
 | 2026-09-10 | Rust Phase 1 | echo + panel | **14.0** | release+mongo, scratch home, echo settled; measured across the crate split (`4147e8a`: 14.2 → 14.0) |
 | 2026-09-10 | Rust + terminal plugin | echo + panel + terminal | **13.7** | release+mongo, scratch home, plugin loaded, zero sessions (−0.3 vs Phase 1, i.e. noise); exe 10,649,600 B, +662 KB over the 9,972,224 B ADR-010 baseline — +138 KB under the +800 KB budget; +233 KB per attached local session (budget 1.0 MB, `docs/14` §7) |
-| | Rust Phase 2 | mysql, pg, 2×redis | | |
-| | Rust Phase 4 | full parity | | |
+| | Rust Phase 2 | mysql, pg, 2×redis | **21.8** | 2026-09-11, `3c3fd7f` release; all three DBs ride the gateway's own SSH tunnels; 40/40 calls ok; WS 21.8, private 8.2, 3 threads; 2×http started not driven, 2×proc asleep |
+| | Rust Phase 4 | full workload | **22.4** | 2026-09-11, `3c3fd7f` release; 60/60 calls ok incl. 12× web-reader (http); 9 tunnel rules over 2 SSH connections live; WS 22.4, private 8.6, 6 threads |
+| 2026-09-11 | Node (re-measure) | same set, same data dir, same 60-call traffic | **113.8** | fresh side-by-side: private 124.9 MB, 13 threads — consistent with the 117.5 baseline |
 
 Phase 1 reading: 14.0 MB with the whole gateway present — panel embedded, registry, both on-disk
 logs, the plugin host and every adapter family compiled in — against a 9.1 MB spike that had none
-of it. That is inside the 12–20 MB budget with the target workload still to come, and it is the
-last row this project can fill without live databases: Phase 2 and Phase 4 need mysql, pg and
+of it. The target workload was still to come at that point, and it was the
+last row this project could fill without live databases: Phase 2 and Phase 4 need mysql, pg and
 redis actually running, plus a real MCP client driving them (docs/12 W2).
 
 Phase 0 reading: the spike (axum + rmcp stateless + bearer gate, no panel, no registry, no DB
 pools) settles at 9.1 MB working set after traffic — below the 4–6 MB "baseline" estimate plus
 the protocol stack, which is where it should be. It is **not** the final number: the panel
 embed, the registry, the call/traffic logs and two TLS-carrying drivers are still to come, and
-they are what the 12–20 MB budget was set for. The premise is confirmed at the floor.
+they are what the estimate table had not named. The premise is confirmed at the floor.

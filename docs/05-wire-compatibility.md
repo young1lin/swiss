@@ -164,6 +164,5 @@ Only these, and each is an ADR in docs/07:
 | `"adapter": "./mod.mjs"` third-party module loading is dropped | ADR-001 |
 | The traffic ring stops being resident (file format unchanged) | ADR-005 |
 | The `--max-semi-space-size` / `--max-old-space-size` flags disappear with V8 | ADR-003 |
-| `mongo` MCPs are not served — the adapter is deleted, and a migrated config fails with a named error | ADR-012 |
 
 Anything else that changes on the wire is a bug in the port.

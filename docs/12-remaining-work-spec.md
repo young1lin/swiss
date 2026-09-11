@@ -1,9 +1,11 @@
 # 12 — 剩余工作实施规范（文档校正 / 内存实测 / P4 / P6 / P5）
 
-> 状态：**W1、W3、W4、W5 已实施；只剩 W2 内存实测**。写作基线 `5f18951`，完成基线 `4147e8a`。
-> W1 文档校正 · W3 连接目录 `9e76351` · W4 试金石插件 `9cdd7c6` · W5 workspace 拆分 `4147e8a`。
-> **W2 做不了自动化**：Phase 1 那行已经填上（14.0 MB，`4147e8a`），但 Phase 2 与 Phase 4 需要本机
-> 起 mysql / pg / redis 和真实 MCP 客户端，读任务管理器的工作集。那是这个项目存在的理由，只能人手测。
+> 状态：**全部已实施**。写作基线 `5f18951`，完成基线 `4147e8a`。
+> W1 文档校正 · W2 内存实测（2026-09-11，见下）· W3 连接目录 `9e76351` · W4 试金石插件 `9cdd7c6`
+> · W5 workspace 拆分 `4147e8a`。W2 最终在 `3c3fd7f`（ADR-012 之后的 release）上完成：
+> 本机没有独立 DB 服务，mysql/pg/redis 全部经网关自己的 SSH 隧道到达，压测用官方 MCP SDK
+> 客户端直打各适配器端点（`../local-mcp-gateway/scripts/w2-drive.mjs`），Node 侧同数据目录
+> 同流量顺序复测（隧道本地端口互斥，无法并排）。数字在 docs/01 的表里。
 > Jobs 的部分单独在 [11](11-jobs-v2-implementation-spec.md)。
 > 前置阅读：`AGENTS.md`、`docs/09-toolbox-plugin-architecture.md` §3/§4/§10。
 
@@ -58,7 +60,7 @@ cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 
 ### 测量方法（照 docs/01 §"如何测"执行，此处固化为可重复步骤）
 
-1. 构建：`cargo build --release`（ADR-012 之后的出厂组合,mongo 已删）。
+1. 构建：`cargo build --release`（出厂组合）。
 2. Node 与 Rust **对同一个数据目录**，分别监听 19999 / 19998。
 3. 用真实 MCP 客户端依次触达：echo → mysql → pg → 2×redis → 1×http；每个至少 10 次调用，总计不少于 60 次请求。
 4. 三个数字一起记，缺一个都不算完整：
@@ -72,16 +74,17 @@ cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 | 行 | 条件 | 状态 |
 | --- | --- | --- |
 | Rust Phase 1 | echo + 面板，无 DB | ✅ 14.0 MB（`4147e8a`，2026-09-10） |
-| Rust Phase 2 | mysql + pg + 2×redis | 空着，需要本机起这四个服务 |
-| Rust Phase 4 | 全功能（含 tunnels、http） | 空着，需要一条真实 SSH 目标 |
+| Rust Phase 2 | mysql + pg + 2×redis | ✅ 21.8 MB（`3c3fd7f`，2026-09-11，DB 全经自身隧道） |
+| Rust Phase 4 | 全功能（含 tunnels、http） | ✅ 22.4 MB（`3c3fd7f`，2026-09-11，60/60 调用；Node 同流量复测 113.8 MB） |
 
 ### 判定
 
-- docs/01 给的预算是 12–20 MB。Phase 4 落在 20 MB 以内 → 前提成立，继续。
-- 超出 20 MB → **停下来诊断**，先找出是哪个子系统吃掉的（`/api/memory` 已经按子系统分列），再决定是否继续 W3–W5。docs/06 的 kill criteria 在这里生效。
-- 测完把数字连同日期、构建 commit 一起写进 docs/01 的表，并在 README 的一句话摘要里更新。
+没有预算带，没有 kill line：数字本身就是交付物（用户 2026-09-11 的决定——内存数字只做
+记录，不做门槛；debug 构建超多少都无所谓）。唯一的判定是与 Node 同流量对照的差距
+（Node 基线 117.5 MB，2026-09-11 复测 113.8 MB）。测完把数字连同日期、构建 commit 一起
+写进 docs/01 的表，并在 README 的一句话摘要里更新。
 
-**验收**：docs/01 的表里 Phase 2 与 Phase 4 两行有数字、有日期、有条件说明；如果超预算，同一提交里附上分子系统的诊断结论。
+**验收**：docs/01 的表里 Phase 2 与 Phase 4 两行有数字、有日期、有条件说明。
 
 ---
 
@@ -211,7 +214,6 @@ docs/09 §9 要的验收样例是 **HTTP 工具插件**。选它有一个现成�
 强制规则：
 
 - 依赖方向单向：`core ← host ← 各插件 crate ← bin`。**插件 crate 之间禁止互相依赖**——W3 之后 Data 不再依赖 MCP，这条才成立，所以顺序不能反。
-- ~~`mongo` feature 在 workspace 里逐层传递，两种组合都要构建通过。~~ 已随 ADR-012 删除,只剩一种组合。
 - 产物仍是**单个静态 exe**，`-C target-feature=+crt-static`（ADR-006），CI 的五个目标不变。
 - 拆分提交里**不允许有任何行为改动**：diff 应该几乎全是移动和 `use` 路径调整。行为改动另开提交。
 

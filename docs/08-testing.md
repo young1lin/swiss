@@ -73,7 +73,6 @@ Add one file with no Node counterpart: **the golden-response harness** (docs/05 
 | `sql.test.ts` | 334 |
 | `db-resources.test.ts` | 273 |
 | `tool-server.test.ts` | 213 |
-| `mongo-resources.test.ts` | 174 | deleted with the adapter (ADR-012) |
 | `traffic.test.ts` | 163 |
 | `resources.test.ts` | 150 |
 | `admin-data-grid.test.ts` | 66 |
@@ -148,8 +147,7 @@ cargo test --workspace         848 = 725 unit + 123 integration
   lmg-panel     9 unit
 
 cargo test --workspace
-             951  (the mongo adapter's own 18 went with ADR-012; the terminal plugin added its own since
-              the 848 this file once recorded)
+             951  (the terminal plugin added its own since the 848 this file once recorded)
 ```
 
 **Drop `--workspace` and this shrinks to 187.** Cargo then selects the root package alone —

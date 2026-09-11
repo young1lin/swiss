@@ -54,8 +54,6 @@ Secrets: put the credential in `~/.mcp-gateway/.env`, reference `${REDIS_PASS}` 
 
 **Postgres** `type: pg` — `description, url, readonly, maxRows` (`url` required)
 
-**Mongo** `type: mongo` — `description, url, database, readonly, maxRows`. Drop `readonly` for write tools.
-
 Add returns `201` `{ name, type, lifecycle }`. Unset `${ENV}` → `down`; fill it and restart.
 
 ## Connect a client

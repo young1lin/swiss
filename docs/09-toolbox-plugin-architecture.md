@@ -236,7 +236,7 @@ Cargo features 表达编译能力，不取代运行时开关。发行版保留�
 
 | 阶段 | 主要提交 | 退出条件 |
 | --- | --- | --- |
-| P0 基线与测量 | `81882cc`；记录历史兼容与已知资源风险 | 默认/mongo 测试、两种 Clippy 通过；不修改运行配置 |
+| P0 基线与测量 | `81882cc`；记录历史兼容与已知资源风险 | 默认测试、Clippy 通过；不修改运行配置 |
 | P1 最小宿主契约 | PluginDescriptor、PluginScope、inventory、显式组合表；先包装 Jobs/Tunnels | 安全路由不漏挂；双插件可独立启停；失败隔离；资源清理可测试 |
 | P2 运行服务与 Jobs | 有界输出、ProcessSupervisor、Action/RunRegistry、v2 Jobs schema | Jobs 配置不混 lastRun；保存失败可见；取消/并发/队列/漏跑测试通过 |
 | P3 页面贡献 | Node 前端先实现 PageRegistry/slots + schema 编辑，复制面板 | 新页只注册贡献；切页清理；后台任务不依附页面；旧链接兼容 |

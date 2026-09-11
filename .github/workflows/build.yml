@@ -67,15 +67,12 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake clang
 
-      # Both feature sets: `mongo` is opt-in (ADR-004), so a default build and the shipping
-      # build compile different code and can fail clippy independently.
       # `--workspace` is load-bearing since the crate split: without it cargo selects the root
       # package alone, and the seven member crates — most of the code — go unchecked.
       - name: Lint
         if: matrix.cross != true
         run: |
           cargo clippy --workspace --all-targets --locked -- -D warnings
-          cargo clippy --workspace --all-targets --features mongo --locked -- -D warnings
 
       # A duplicated TLS stack or async runtime is how a 15 MB target quietly becomes 30 MB.
       # Plain `cargo tree -d` cannot gate this: it exits 0 whatever it finds, and the tree
@@ -89,7 +86,7 @@ jobs:
           cargo tree -d --locked || true
           # Only the column-0 lines are the duplicated crates themselves; everything indented
           # under them is a parent that merely depends on one, and must not count.
-          heavy=$(cargo tree -d --locked --features mongo             | grep -E '^(tokio|rustls|native-tls|openssl|openssl-sys|hyper|aws-lc-rs) v'             | sort -u)
+          heavy=$(cargo tree -d --locked             | grep -E '^(tokio|rustls|native-tls|openssl|openssl-sys|hyper|aws-lc-rs) v'             | sort -u)
           if [ -n "$heavy" ]; then
             echo "::error::a runtime or TLS stack is linked twice:"
             echo "$heavy"
@@ -97,16 +94,14 @@ jobs:
           fi
 
       # Tests run on the native target only — a cross-compiled binary cannot execute.
-      # `--workspace` for the same reason as the lint step: the root package holds 187 of the
-      # suite's 848 tests, and a green run without it would never build the other seven crates.
+      # `--workspace` for the same reason as the lint step: the root package holds 209 of the
+      # suite's 951 tests, and a green run without it would never build the other seven crates.
       - name: Test
         if: matrix.cross != true
-        run: cargo test --workspace --features mongo --locked
+        run: cargo test --workspace --locked
 
-      # The shipped release carries the mongo driver (ADR-004): default builds leave it out,
-      # the downloadable binary turns everything on.
       - name: Build
-        run: cargo build --release --features mongo --locked --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package
         shell: bash

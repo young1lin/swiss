@@ -110,7 +110,7 @@ correctness boundary.
 
 ```bash
 cargo build --release             # the shipping exe (target/release/lmg.exe) - ADR-012
-cargo test --workspace            # the one feature combination there is (mongo is gone, ADR-012)
+cargo test --workspace            # the one feature combination there is
 cargo clippy --workspace --all-targets -- -D warnings                  # must be clean
 cargo tree -d                  # a duplicated TLS stack or runtime must fail review
 cargo run -- start --no-open   # the gateway itself, on 127.0.0.1:19999
