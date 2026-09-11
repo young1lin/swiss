@@ -1,4 +1,7 @@
 /target
+# The 19998 iteration build dir (AGENTS.md live-testing rule) — a whole second cargo
+# target tree, thousands of files the Git GUI would otherwise list as pending.
+/target-test/
 **/*.rs.bk
 *.pdb
 
@@ -18,3 +21,10 @@ master.key
 # Claude Code scratch: agent worktrees and per-machine settings
 /.claude/worktrees/
 /.claude/settings.local.json
+
+# Local agent scratch that stays untracked on purpose (memory rule), and the
+# browser-verification screenshots a live check leaves at the repo root.
+/.agents/
+/conpty_ref.rs
+/term-*.png
+/job-*.png
