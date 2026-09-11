@@ -471,6 +471,25 @@ fn cte_main_verb(stmt: &str) -> Option<&'static str> {
 /// Run one (possibly multi-statement) string over the simple protocol — the port of
 /// `pool.query(prepared.sql)`. Every statement completion yields its own query result, so
 /// groups map one-to-one onto statements and the Node build's array-of-results shape survives.
+///
+/// The end-of-stream verdict for the trailing open group: the simple protocol closes EVERY
+/// statement with a completion (the Left in the loop). Rows sitting in an open group at stream
+/// end therefore mean the connection was cut mid-statement — a dropped tunnel forward, a killed
+/// server. Shipping those rows as a completed group would be a success-shaped truncation
+/// ("here is your data" minus the tail that never arrived); Node's pg driver errored here, and
+/// so does this. An open group with NOTHING is the normal end of a healthy stream.
+fn open_group_verdict(open_rows: usize) -> Result<(), String> {
+    if open_rows == 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "connection lost mid-query ({} row(s) of the last statement arrived without \
+             its completion) — the server or the tunnel dropped the connection, retry the query",
+            open_rows
+        ))
+    }
+}
+
 pub async fn run_pg_statements(pool: &PgPool, sql: &str) -> Result<Vec<PgGroup>, String> {
     use futures_core::Stream;
     use std::future::poll_fn;
@@ -503,17 +522,21 @@ pub async fn run_pg_statements(pool: &PgPool, sql: &str) -> Result<Vec<PgGroup>,
                     rows_affected: None,
                 });
             }
-            Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err)),
-            Poll::Ready(None) => return Poll::Ready(Ok(())),
+            Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err.to_string())),
+            Poll::Ready(None) => {
+                return Poll::Ready(open_group_verdict(
+                    groups.last().expect("always one open group").rows.len(),
+                ));
+            }
             Poll::Pending => return Poll::Pending,
         }
     })
     .await;
-    outcome.map_err(|e: sqlx::Error| e.to_string())?;
+    outcome?;
 
-    // The loop above opens one trailing group that never completed; drop it unless it collected
-    // rows (which the simple protocol never produces without a completion, but a driver change
-    // must not lose data silently).
+    // The loop above opens one trailing group that never completed. The Ready(None) arm
+    // already refuses an open group that collected rows (a cut connection), so what is left
+    // here is the normal empty tail of a healthy stream — drop it.
     if groups
         .last()
         .map(|g| g.rows.is_empty() && g.rows_affected.is_none())
@@ -900,3 +923,15 @@ mod tests {
         );
     }
 }
+    #[test]
+    fn rows_in_an_open_group_at_stream_end_are_a_cut_not_a_result() {
+        // Every statement closes with a completion; rows without one are the tail of a
+        // connection that died mid-query. They must surface as an error, never as a
+        // completed (silently short) group.
+        assert!(open_group_verdict(0).is_ok());
+        let cut = open_group_verdict(7).expect_err("cut mid-statement");
+        assert!(cut.contains("connection lost mid-query"), "{cut}");
+        assert!(cut.contains("7 row(s)"), "{cut}");
+        assert!(cut.contains("retry"), "{cut}");
+    }
+

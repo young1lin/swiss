@@ -398,6 +398,26 @@ pub async fn run_query(
 /// result sets never ship (mysql2 returned the first set too), and the stream MUST reach its end
 /// anyway — sqlx returns the connection to the pool only after the trailing ReadyForQuery, and
 /// breaking early leaves it dirty (five health pings were enough to hang every pool slot).
+/// The end-of-stream verdict for one MySQL statement. sqlx ends EVERY statement with the
+/// Left terminator (an OK packet, or the rows_affected: 0 EOF of a result set — see the
+/// drain-loop notes above). A stream that ends WITHOUT one was cut mid-statement: a dropped
+/// tunnel forward, a killed server. mysql2 answered that with PROTOCOL_CONNECTION_LOST;
+/// answering `rows: []` here instead would be a success-shaped lie — "the table is empty" —
+/// for whatever subset of rows arrived before the cut. That exact lie was seen live against
+/// a flapping tunnel: same minute, COUNT(*) on a live pooled connection, `SELECT *` empty
+/// on one that had just died.
+fn stream_end_verdict(terminated: bool, rows: usize) -> Result<(), String> {
+    if terminated {
+        Ok(())
+    } else {
+        Err(format!(
+            "connection lost mid-query ({} row(s) arrived; the statement never finished) — \
+             the server or the tunnel dropped the connection, retry the query",
+            rows
+        ))
+    }
+}
+
 async fn collect_outcome<S>(stream: S, sql: &str) -> Result<QueryOutcome, String>
 where
     S: futures_core::Stream<
@@ -430,15 +450,19 @@ where
                     };
                 }
             }
-            Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err)),
-            Poll::Ready(None) => return Poll::Ready(Ok(())),
+            Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err.to_string())),
+            Poll::Ready(None) => {
+                // No terminator ever arrived: the connection was cut. Say so instead of
+                // shipping whatever subset of the result made it through as the truth.
+                return Poll::Ready(stream_end_verdict(terminated, rows.len()));
+            }
             Poll::Pending => return Poll::Pending,
         }
     })
     .await;
     match outcome {
         Ok(()) => Ok(QueryOutcome { rows, affected }),
-        Err(err) => Err(err.to_string()),
+        Err(msg) => Err(msg),
     }
 }
 
@@ -793,3 +817,18 @@ mod tests {
         assert!(!ping_ok(&[]));
     }
 }
+    #[test]
+    fn a_stream_that_never_terminates_is_an_error_not_an_empty_success() {
+        // The paid-for lesson, as a rule: every MySQL statement ends with the EOF/OK
+        // terminator, so a stream that ends without one was cut mid-query. Answering
+        // Ok(rows-so-far) there told a caller their table was EMPTY (or silently short)
+        // while the tunnel was flapping — the worst failure shape there is.
+        assert!(stream_end_verdict(true, 0).is_ok());
+        assert!(stream_end_verdict(true, 4).is_ok());
+        let cut = stream_end_verdict(false, 0).expect_err("cut before any row");
+        assert!(cut.contains("connection lost mid-query"), "{cut}");
+        let partial = stream_end_verdict(false, 3).expect_err("cut mid-result-set");
+        assert!(partial.contains("3 row(s)"), "{partial}");
+        assert!(partial.contains("retry"), "{partial}");
+    }
+
