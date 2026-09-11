@@ -19,8 +19,9 @@ import { loadUnicode11Addon } from "../vendor/xterm/addon-unicode11-0.8.0/index.
 import { loadWebLinksAddon } from "../vendor/xterm/addon-web-links-0.11.0/index.js";
 import { loadWebglAddon } from "../vendor/xterm/addon-webgl-0.18.0/index.js";
 import {
-  clampGeometry, frameStatus, nextReconnectDelay, resizeFrame, resizeUrl,
-  sessionAlive, sessionLabel, sessionsUrl, streamUrl, targetRows, targetsUrl, ticketUrl,
+  clampGeometry, frameStatus, keyAction, mouseAction, nextReconnectDelay, resizeFrame,
+  resizeUrl, sessionAlive, sessionLabel, sessionsUrl, streamUrl, targetRows, targetsUrl,
+  ticketUrl,
 } from "../terminal-core.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
@@ -123,6 +124,17 @@ function paintStage() {
   });
 }
 
+/* Copy the selection and clear it — Windows Terminal's semantics: the next Ctrl+C must
+   be the interrupt again. writeText works on http://127.0.0.1 (a potentially-trustworthy
+   origin); the rare refusal gets a sentence rather than silence. */
+function copySelection(term) {
+  var text = term.getSelection();
+  navigator.clipboard.writeText(text).catch(function () {
+    toast("could not write the selection to the clipboard", true);
+  });
+  term.clearSelection();
+}
+
 /* Create the terminal for one session and append its holder. The holder stays hidden
    until the session is selected - xterm keeps its buffer offscreen, fit measures only
    what is visible. */
@@ -156,6 +168,37 @@ function wireTerminal(m) {
       term.loadAddon(gl);
     } catch (e) { /* the DOM renderer stays */ }
     term.onData(function (text) { sendInput(m, text); });
+    /* Windows Terminal's key story, not xterm's Linux default (docs/15 §1): without this
+       handler xterm turns Ctrl+V into the ^V control byte and the shell sees nothing
+       pasted. Returning false skips xterm's own handling — and nothing else: the browser
+       then delivers its native paste event to the focused .xterm-helper-textarea, whose
+       listener xterm already installs, so the text rides onData to the shell exactly as
+       a Ctrl+Shift+V always did (verified on 19998 before this was written). Deliberately
+       no navigator.clipboard.readText() here — the native event needs no permission prompt. */
+    term.attachCustomKeyEventHandler(function (ev) {
+      var action = keyAction(ev, term.hasSelection());
+      if (action === "paste") return false;   // no preventDefault: the browser paste IS the payload
+      if (action === "copy") { copySelection(term); return false; }
+      return true;   // "sigint" and everything else stay xterm's business
+    });
+    /* Right-click pastes, or copies a selection away; Shift+right-click keeps the
+       browser's menu as the escape hatch (docs/15 §1). */
+    holder.addEventListener("contextmenu", function (ev) {
+      var action = mouseAction(ev, term.hasSelection());
+      if (action === "menu") return;
+      ev.preventDefault();
+      if (action === "copy") { copySelection(term); term.focus(); return; }
+      /* term.paste() is xterm's public API and rides the same bracketed-paste path as
+         the keyboard. readText may prompt for clipboard access once; a refusal must not
+         strand the click silently. */
+      navigator.clipboard.readText().then(function (text) {
+        term.paste(text);
+        term.focus();   // the click landed on the surface, not the keyboard focus
+      }).catch(function () {
+        toast("the browser refused to read the clipboard — use Ctrl+V", true);
+        term.focus();
+      });
+    });
     m.term = term;
     m.fit = fit;
     m.holder = holder;

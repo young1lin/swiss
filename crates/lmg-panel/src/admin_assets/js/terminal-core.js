@@ -1,5 +1,6 @@
 /* The terminal view's pure half (docs/14 §8): URL building, reconnect pacing, the
-   close-frame stories, geometry clamping and the target-picker rows. Plain data in,
+   close-frame stories, geometry clamping, the target-picker rows, and the Windows-Terminal
+   key/mouse actions (docs/15 §1). Plain data in,
    plain data out — the contract with the gateway's Rust side is pinned by the tests in
    test/admin-terminal.test.ts, not by clicking. The DOM/xterm/WS wiring stays in
    views/terminal.js; everything a test needs to trust lives here. */
@@ -110,4 +111,39 @@ export function sessionLabel(session) {
   if (session.label) return String(session.label);
   var t = session.target || "?";
   return t === "local" ? "local" : t;
+}
+
+/** What one keyboard event means inside the terminal, Windows Terminal style (docs/15
+ *  §1): "paste" | "copy" | "sigint" | null, where null means "not ours — xterm keeps the
+ *  event". Takes a duck-typed { key, code, ctrlKey, shiftKey, altKey, metaKey, type }
+ *  rather than a KeyboardEvent so a test can press any combination without a DOM, and
+ *  judges keydown ONLY: xterm hands keypress and keyup to the custom handler too, and
+ *  deciding on those would fire every action twice. Ctrl+C is the load-bearing
+ *  asymmetry — with a selection it copies (and must NOT reach the shell as ^C), without
+ *  one it stays the interrupt a flooding program is counting on. */
+export function keyAction(ev, hasSelection) {
+  if (!ev || ev.type !== "keydown") return null;
+  if (ev.metaKey || ev.altKey) return null;   // mac paste and the browser's own menu combos
+  var key = String(ev.key || "").toLowerCase();
+  if (ev.ctrlKey) {
+    if (key === "v") return "paste";                                // Ctrl+V, Ctrl+Shift+V
+    if (key === "c") {
+      if (ev.shiftKey) return hasSelection ? "copy" : null;         // Ctrl+Shift+C
+      return hasSelection ? "copy" : "sigint";                      // Ctrl+C
+    }
+    if (key === "insert") return hasSelection ? "copy" : null;      // Ctrl+Insert
+    return null;
+  }
+  if (ev.shiftKey && key === "insert") return "paste";              // Shift+Insert
+  return null;
+}
+
+/** What a right-click on the terminal surface means: paste with no selection, copy one
+ *  away, and Shift+right-click keeps the browser's context menu as the escape hatch. Only
+ *  button === 2 is judged — the wiring subscribes to contextmenu, whose button is the one
+ *  that opened it. */
+export function mouseAction(ev, hasSelection) {
+  if (!ev || ev.button !== 2) return null;
+  if (ev.shiftKey) return "menu";
+  return hasSelection ? "copy" : "paste";
 }
