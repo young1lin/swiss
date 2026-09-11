@@ -215,6 +215,13 @@ action 用的，交互式会话既不结束也没有上限，塞进去只会把�
 `%ProgramFiles%` 下的 PowerShell 7 与 Git bash 两个 PATH 之外的固定位置），绝不在每次 GET
 时碰文件系统。
 
+**本地 shell 的环境**（`local.rs::shell_command`，2026-09-11 补）：子进程拿到的是网关自己的环境，
+再叠三条固定改动 —— `TERM=xterm-256color`、`COLORTERM=truecolor`，并**删掉** `NO_COLOR`。前两条
+是「你是终端，尽管画」；第三条是因为网关是个守护进程，环境是谁启动它就继承谁的：从一个给自己的
+工具 shell 设了 `NO_COLOR=1` 的 agent 环境里 `lmg start`，19999 上每个本地 pwsh 都被
+`$PSStyle.OutputRendering=PlainText` 变成了黑白（实测）。启动者的口味不是标签页的口味。
+`PtyCommand::env_remove` 就是为这件事加的。
+
 ## 6. 安全与审计
 
 1. **本地 shell 默认关闭。** `plugins.terminal.config.local.enabled` 默认 `false`，写进

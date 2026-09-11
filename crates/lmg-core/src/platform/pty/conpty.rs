@@ -599,7 +599,7 @@ fn spawn_attached(
     startup.StartupInfo.hStdError = HANDLE::default();
 
     let mut command_line = wide(&command_line(command));
-    let environment = environment_block(&command.env);
+    let environment = environment_block(&command.env, &command.env_remove);
     let cwd = command.cwd.as_ref().map(|dir| wide(&dir.to_string_lossy()));
     let mut info = PROCESS_INFORMATION::default();
 
@@ -644,11 +644,14 @@ fn wide(text: &str) -> Vec<u16> {
         .collect()
 }
 
-/// The environment the child gets: this process's, with the caller's entries replacing
-/// same-named ones. Sorted case-insensitively and NUL-terminated twice, which is the block
-/// format `CREATE_UNICODE_ENVIRONMENT` expects.
-fn environment_block(overrides: &[(String, String)]) -> Vec<u16> {
+/// The environment the child gets: this process's, minus `removals`, with the caller's
+/// entries replacing same-named ones. Sorted case-insensitively and NUL-terminated twice,
+/// which is the block format `CREATE_UNICODE_ENVIRONMENT` expects.
+fn environment_block(overrides: &[(String, String)], removals: &[String]) -> Vec<u16> {
     let mut merged: Vec<(String, String)> = std::env::vars().collect();
+    // Windows variable names are case-insensitive, so `no_color` and `NO_COLOR` are the
+    // same variable and both have to go.
+    merged.retain(|(existing, _)| !removals.iter().any(|r| existing.eq_ignore_ascii_case(r)));
     for (key, value) in overrides {
         merged.retain(|(existing, _)| !existing.eq_ignore_ascii_case(key));
         merged.push((key.clone(), value.clone()));
@@ -742,7 +745,7 @@ mod tests {
 
     #[test]
     fn an_override_replaces_the_inherited_variable_rather_than_adding_a_second() {
-        let block = environment_block(&[("PATH".into(), "only-this".into())]);
+        let block = environment_block(&[("PATH".into(), "only-this".into())], &[]);
         let text = String::from_utf16_lossy(&block);
         let entries: Vec<&str> = text.split('\0').filter(|e| !e.is_empty()).collect();
         let paths: Vec<&&str> = entries
@@ -896,8 +899,34 @@ mod tests {
     }
 
     #[test]
+    fn a_removal_drops_the_inherited_variable_whatever_its_case() {
+        // The launcher's NO_COLOR (an agent harness sets one for its tool shells) must
+        // not reach a shell a browser tab opened; the block is built from the live
+        // environment, so the variable is planted in this process and cleaned up after.
+        std::env::set_var("LMG_PTY_REMOVE_ME", "1");
+        let block = environment_block(&[], &["lmg_pty_remove_me".into()]);
+        std::env::remove_var("LMG_PTY_REMOVE_ME");
+        let text = String::from_utf16_lossy(&block);
+        assert!(
+            !text.to_uppercase().contains("LMG_PTY_REMOVE_ME="),
+            "the removed variable is still in the block"
+        );
+        // Removal happens before the overrides land, so a variable can be both removed
+        // from the inheritance and set explicitly — the explicit value wins.
+        std::env::set_var("LMG_PTY_REMOVE_ME", "inherited");
+        let block = environment_block(
+            &[("LMG_PTY_REMOVE_ME".into(), "explicit".into())],
+            &["LMG_PTY_REMOVE_ME".into()],
+        );
+        std::env::remove_var("LMG_PTY_REMOVE_ME");
+        let text = String::from_utf16_lossy(&block);
+        assert!(text.contains("LMG_PTY_REMOVE_ME=explicit"), "{text}");
+        assert!(!text.contains("LMG_PTY_REMOVE_ME=inherited"));
+    }
+
+    #[test]
     fn the_block_ends_with_the_double_nul_createprocess_looks_for() {
-        let block = environment_block(&[("LMG_PTY_TEST".into(), "1".into())]);
+        let block = environment_block(&[("LMG_PTY_TEST".into(), "1".into())], &[]);
         assert_eq!(block.last(), Some(&0));
         assert_eq!(block[block.len() - 2], 0);
     }

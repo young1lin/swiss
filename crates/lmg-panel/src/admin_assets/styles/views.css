@@ -566,4 +566,5 @@
     .term-dot.ok { background: var(--t-ok); }
     .term-dot.warn { background: var(--t-warn); }
     .term-dot.bad { background: var(--t-bad); }
+    .term-zoom { margin-left: auto; }   /* the zoom note sits at the right edge, away from the status */
     .db-hint { color: var(--text-3); font-size: var(--f-body); padding: var(--s4); }

@@ -129,14 +129,7 @@ impl LocalShell for LocalShells {
         size: PtySize,
         shell: Option<&str>,
     ) -> Result<PtySession, ShellError> {
-        let mut command = match shell.map(str::trim).filter(|s| !s.is_empty()) {
-            Some(program) => PtyCommand::new(program),
-            None => self.default.clone(),
-        };
-        // Every terminal program reads TERM before it decides what it may draw. Without
-        // it a shell assumes "dumb" and the panel gets a terminal with no colour and no
-        // cursor addressing — which looks like a broken terminal, not a missing variable.
-        command = command.env("TERM", super::recording::RECORDING_TERM);
+        let command = shell_command(shell, &self.default);
 
         let (handle, pump) = pty::open_pty(&command, PtyGeometry::new(size.cols, size.rows))
             .map_err(|err| {
@@ -156,6 +149,28 @@ impl LocalShell for LocalShells {
         tokio::spawn(forward_input(input, handle));
         Ok(session)
     }
+}
+
+/// What a local session runs: the requested program (or the host default) in an
+/// environment that says "you are a terminal, draw" whatever the gateway's own says.
+///
+/// Every terminal program reads TERM before it decides what it may draw; without it a
+/// shell assumes "dumb" and the panel gets no colour and no cursor addressing — which
+/// looks like a broken terminal, not a missing variable. COLORTERM tells the ones that
+/// check (chalk, ls, bat) that the 24-bit palette xterm.js renders is really there. And
+/// NO_COLOR is dropped, not just left alone: the gateway is a daemon whose environment
+/// is whatever launched it — an agent harness sets NO_COLOR=1 for its own tool shells,
+/// and a gateway started from one handed every local pwsh a colourless PSStyle
+/// (OutputRendering=PlainText, seen on 19999). The launcher's taste is not the tab's.
+fn shell_command(shell: Option<&str>, default: &PtyCommand) -> PtyCommand {
+    let command = match shell.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(program) => PtyCommand::new(program),
+        None => default.clone(),
+    };
+    command
+        .env("TERM", super::recording::RECORDING_TERM)
+        .env("COLORTERM", "truecolor")
+        .env_remove("NO_COLOR")
 }
 
 /// The blocking half: read the pipe until it ends or nobody wants it any more.
@@ -301,6 +316,82 @@ mod tests {
         };
         let text = err.to_string();
         assert!(text.contains("no-such-program-9d2f1a"), "{text}");
+    }
+
+    #[test]
+    fn the_shell_environment_says_terminal_whatever_the_gateway_inherited() {
+        // TERM and COLORTERM are set, NO_COLOR is struck from the inheritance — and the
+        // same for a requested program as for the default, since the environment is
+        // about the tab, not the shell.
+        let default = PtyCommand::new("default-shell.exe");
+        for shell in [None, Some("other-shell.exe"), Some("  ")] {
+            let cmd = shell_command(shell, &default);
+            assert_eq!(
+                cmd.program,
+                match shell {
+                    Some("other-shell.exe") => "other-shell.exe",
+                    _ => "default-shell.exe",
+                }
+            );
+            assert!(cmd.env.contains(&("TERM".into(), super::super::recording::RECORDING_TERM.into())));
+            assert!(cmd.env.contains(&("COLORTERM".into(), "truecolor".into())));
+            assert_eq!(cmd.env_remove, vec!["NO_COLOR".to_string()]);
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_local_pwsh_keeps_its_colours_under_a_no_color_launcher() {
+        // The bug as seen: the gateway inherits NO_COLOR=1 from whoever started it, the
+        // local pwsh inherits it from the gateway, and PSStyle goes PlainText. Plant the
+        // variable in this process, open a real shell, and ask it what it decided.
+        let Some(pwsh) = pty::find_on_path("pwsh.exe", &std::env::var("PATH").unwrap_or_default()) else {
+            eprintln!("no pwsh on PATH; skipping");
+            return;
+        };
+        std::env::set_var("NO_COLOR", "1");
+        let shells = LocalShells::new();
+        let opened = shells.open(
+            "sess-colour",
+            PtySize::new(120, 30).unwrap(),
+            Some(&pwsh.to_string_lossy()),
+        );
+        std::env::remove_var("NO_COLOR");
+        let mut session = opened.expect("pwsh opens");
+        // Typed at the prompt, not before it: bytes that land while PSReadLine is still
+        // initialising are re-read as a multi-line paste and never run.
+        let banner = read_until(&mut session, "> ", Duration::from_secs(30)).await;
+        assert!(banner.contains("> "), "no prompt: {banner:?}");
+        session
+            .write(b"Write-Host ('render=' + $PSStyle.OutputRendering + ' nocolor=[' + $env:NO_COLOR + ']')\r".to_vec())
+            .await
+            .expect("writes");
+        let text = read_until(&mut session, "render=", Duration::from_secs(30)).await;
+        session.write(b"exit\r".to_vec()).await.expect("writes");
+        let (tail, _) = drain(&mut session, Duration::from_secs(20)).await;
+        let all = format!("{text}{tail}");
+        assert!(all.contains("render=Host nocolor=[]"), "{all}");
+    }
+
+    /// Read events until `needle` has been seen in the output (as printed, so it must be
+    /// something the shell echoes verbatim) or the deadline passes.
+    async fn read_until(session: &mut PtySession, needle: &str, deadline: Duration) -> String {
+        let mut text = Vec::new();
+        let _ = tokio::time::timeout(deadline, async {
+            while let Some(event) = session.next_event().await {
+                match event {
+                    PtyEvent::Data(bytes) => {
+                        text.extend_from_slice(&bytes);
+                        if String::from_utf8_lossy(&text).contains(needle) {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+        })
+        .await;
+        String::from_utf8_lossy(&text).into_owned()
     }
 
     #[test]

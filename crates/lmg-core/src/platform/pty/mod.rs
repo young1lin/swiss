@@ -86,6 +86,11 @@ pub struct PtyCommand {
     /// Added to the gateway's own environment, not replacing it: a shell with no PATH, no HOME
     /// and no SystemRoot is not a shell anyone can use.
     pub env: Vec<(String, String)>,
+    /// Dropped from the inherited environment before `env` is applied. A daemon's
+    /// environment is an accident of whoever launched it — an agent harness that sets
+    /// NO_COLOR for its own tool shells, say — and a shell started from a browser tab
+    /// must not inherit that launcher's opinion of what a terminal can draw.
+    pub env_remove: Vec<String>,
     pub cwd: Option<std::path::PathBuf>,
 }
 
@@ -104,6 +109,11 @@ impl PtyCommand {
 
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn env_remove(mut self, key: impl Into<String>) -> Self {
+        self.env_remove.push(key.into());
         self
     }
 
@@ -250,10 +260,12 @@ mod tests {
         let cmd = PtyCommand::new("bash")
             .arg("-l")
             .env("TERM", "xterm-256color")
+            .env_remove("NO_COLOR")
             .cwd("/tmp");
         assert_eq!(cmd.program, "bash");
         assert_eq!(cmd.args, vec!["-l".to_string()]);
         assert_eq!(cmd.env, vec![("TERM".to_string(), "xterm-256color".into())]);
+        assert_eq!(cmd.env_remove, vec!["NO_COLOR".to_string()]);
         assert_eq!(cmd.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
     }
 

@@ -184,6 +184,9 @@ pub fn open_pty(command: &PtyCommand, size: PtyGeometry) -> io::Result<(PtyHandl
 
     let mut spawn = Command::new(&command.program);
     spawn.args(&command.args);
+    for key in &command.env_remove {
+        spawn.env_remove(key);
+    }
     for (key, value) in &command.env {
         spawn.env(key, value);
     }

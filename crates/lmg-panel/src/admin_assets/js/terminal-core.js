@@ -1,6 +1,6 @@
 /* The terminal view's pure half (docs/14 §8): URL building, reconnect pacing, the
-   close-frame stories, geometry clamping, the target-picker rows, and the Windows-Terminal
-   key/mouse actions (docs/15 §1). Plain data in,
+   close-frame stories, geometry clamping, the target-picker rows, the Windows-Terminal
+   key/mouse actions (docs/15 §1) and the font-size zoom steps. Plain data in,
    plain data out — the contract with the gateway's Rust side is pinned by the tests in
    test/admin-terminal.test.ts, not by clicking. The DOM/xterm/WS wiring stays in
    views/terminal.js; everything a test needs to trust lives here. */
@@ -183,10 +183,48 @@ export function keyAction(ev, hasSelection) {
       return hasSelection ? "copy" : "sigint";                      // Ctrl+C
     }
     if (key === "insert") return hasSelection ? "copy" : null;      // Ctrl+Insert
+    /* Font zoom, Windows Terminal's keys: Ctrl+= / Ctrl++ (the shifted = and the numpad
+       +), Ctrl+- / Ctrl+_ , Ctrl+0 back to the default. Claimed here so the terminal
+       grows instead of the whole page — a browser-zoomed panel is the complaint this
+       answers, not the feature. */
+    if (key === "=" || key === "+") return "zoom-in";
+    if (key === "-" || key === "_") return "zoom-out";
+    if (key === "0") return "zoom-reset";
     return null;
   }
   if (ev.shiftKey && key === "insert") return "paste";              // Shift+Insert
   return null;
+}
+
+/** Font sizes the zoom steps through: the default, the floor below which cells stop
+ *  being glyphs, and a ceiling that still fits a prompt on a laptop. */
+export var FONT_DEFAULT = 13;
+export var FONT_MIN = 8;
+export var FONT_MAX = 32;
+
+/** The next font size for one zoom action, clamped: "zoom-in" | "zoom-out" | "zoom-reset";
+ *  anything else — or a size that is not a number — comes back as the default, so a
+ *  corrupt stored value can never wedge the terminal at 0px. */
+export function nextFontSize(current, action) {
+  var size = readFontSize(current);
+  if (action === "zoom-in") return Math.min(FONT_MAX, size + 1);
+  if (action === "zoom-out") return Math.max(FONT_MIN, size - 1);
+  return FONT_DEFAULT;
+}
+
+/** A stored font size back into a usable one: an integer inside the bounds, or the
+ *  default. localStorage hands back strings, and older panels stored nothing. */
+export function readFontSize(raw) {
+  var n = Math.round(Number(raw));
+  if (!isFinite(n) || n < FONT_MIN || n > FONT_MAX) return FONT_DEFAULT;
+  return n;
+}
+
+/** What a Ctrl+wheel over the terminal means: "zoom-in" scrolling up, "zoom-out"
+ *  scrolling down, null for a plain scroll (which stays xterm's scrollback). */
+export function wheelAction(ev) {
+  if (!ev || !ev.ctrlKey || !ev.deltaY) return null;
+  return ev.deltaY < 0 ? "zoom-in" : "zoom-out";
 }
 
 /** What a right-click on the terminal surface means: paste with no selection, copy one

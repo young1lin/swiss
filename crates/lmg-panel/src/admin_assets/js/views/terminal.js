@@ -19,9 +19,9 @@ import { loadUnicode11Addon } from "../vendor/xterm/addon-unicode11-0.8.0/index.
 import { loadWebLinksAddon } from "../vendor/xterm/addon-web-links-0.11.0/index.js";
 import { loadWebglAddon } from "../vendor/xterm/addon-webgl-0.18.0/index.js";
 import {
-  clampGeometry, configPutBody, frameStatus, keyAction, mouseAction, nextReconnectDelay,
-  resizeFrame, resizeUrl, sessionAlive, sessionLabel, sessionsUrl, streamUrl, targetRows,
-  targetsUrl, ticketUrl,
+  FONT_DEFAULT, clampGeometry, configPutBody, frameStatus, keyAction, mouseAction, nextFontSize,
+  nextReconnectDelay, readFontSize, resizeFrame, resizeUrl, sessionAlive, sessionLabel,
+  sessionsUrl, streamUrl, targetRows, targetsUrl, ticketUrl, wheelAction,
 } from "../terminal-core.js";
 import { closeSheet } from "../add-sheet.js";
 
@@ -37,6 +37,11 @@ var active = null;     // the session id whose terminal is on stage
 var epoch = 0;         // mount generation: loops and sockets from an older mount stop
 var seq = 0;           // temp ids for sessions opened but not yet answered
 var fitTimer = null;
+/* The terminal's own font size, zoomed with Ctrl+=/-/0 or Ctrl+wheel and remembered
+   per browser — a preference about this screen, not gateway state, so localStorage
+   like the theme. Read once at module load; a blocked store just means 13px. */
+var FONT_SIZE_KEY = "lmg.terminal.fontSize";
+var fontSize = readFontSize(readStoredFontSize());
 /* Sessions the user dismissed. The gateway keeps a closed row in the listing until its
    grace window lapses; without this set, every repaint would resurrect a tab the user
    has already closed, and dismissing would look decorative. Cleared of ids the listing
@@ -79,11 +84,20 @@ function paintStatus() {
   var text = m ? m.status : "";
   line.hidden = false;   // the foot always caps the card; an empty strip is still its shape
   line.textContent = "";
-  if (!text) return;
-  var dot = document.createElement("span");
-  dot.className = "term-dot " + statusTone(text);
-  line.appendChild(dot);
-  line.appendChild(document.createTextNode(text));
+  if (text) {
+    var dot = document.createElement("span");
+    dot.className = "term-dot " + statusTone(text);
+    line.appendChild(dot);
+    line.appendChild(document.createTextNode(text));
+  }
+  /* A zoomed terminal says so, and how to get back - the size is remembered across
+     reloads, so without this line a 20px terminal next week would look like a bug. */
+  if (fontSize !== FONT_DEFAULT) {
+    var zoom = document.createElement("span");
+    zoom.className = "term-zoom";
+    zoom.textContent = fontSize + "px \u00b7 Ctrl+0 resets";
+    line.appendChild(zoom);
+  }
 }
 
 /* The session tabs. A tab exists for every wired model plus every live listing row the
@@ -125,6 +139,23 @@ function paintStage() {
   });
 }
 
+function readStoredFontSize() {
+  try { return localStorage.getItem(FONT_SIZE_KEY); } catch (e) { return null; }
+}
+
+/* Apply one font size to every wired terminal and refit the one on stage - the others
+   are refitted when they are selected, exactly as after a window resize. */
+function setFontSize(size) {
+  if (size === fontSize) return;
+  fontSize = size;
+  try { localStorage.setItem(FONT_SIZE_KEY, String(size)); } catch (e) { /* per-tab only */ }
+  models.forEach(function (m) {
+    if (m.term) m.term.options.fontSize = size;
+  });
+  scheduleFit();
+  paintStatus();
+}
+
 /* Copy the selection and clear it — Windows Terminal's semantics: the next Ctrl+C must
    be the interrupt again. writeText works on http://127.0.0.1 (a potentially-trustworthy
    origin); the rare refusal gets a sentence rather than silence. */
@@ -145,7 +176,7 @@ function wireTerminal(m) {
   return load().then(function (got) {
     var term = new got.Terminal({
       fontFamily: FONT,
-      fontSize: 13,
+      fontSize: fontSize,
       scrollback: 5000,
       allowProposedApi: true,   // terminal.unicode (the Unicode11 table) is a proposed API
       theme: termTheme(),
@@ -180,8 +211,21 @@ function wireTerminal(m) {
       var action = keyAction(ev, term.hasSelection());
       if (action === "paste") return false;   // no preventDefault: the browser paste IS the payload
       if (action === "copy") { copySelection(term); return false; }
+      if (action === "zoom-in" || action === "zoom-out" || action === "zoom-reset") {
+        ev.preventDefault();   // or the browser zooms the whole page on the same keys
+        setFontSize(nextFontSize(fontSize, action));
+        return false;
+      }
       return true;   // "sigint" and everything else stay xterm's business
     });
+    /* Ctrl+wheel zooms the terminal, not the page; a plain wheel stays scrollback.
+       Not passive: preventDefault is the whole point when Ctrl is down. */
+    holder.addEventListener("wheel", function (ev) {
+      var action = wheelAction(ev);
+      if (!action) return;
+      ev.preventDefault();
+      setFontSize(nextFontSize(fontSize, action));
+    }, { passive: false });
     /* Right-click pastes, or copies a selection away; Shift+right-click keeps the
        browser's menu as the escape hatch (docs/15 §1). */
     holder.addEventListener("contextmenu", function (ev) {
