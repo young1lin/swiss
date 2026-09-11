@@ -41,7 +41,10 @@ function load() {
     packages = Promise.all([
       loadXterm(), loadFitAddon(), loadUnicode11Addon(), loadWebLinksAddon(), loadWebglAddon(),
     ]).then(function (got) {
-      return { Terminal: got[0], FitAddon: got[1], Unicode11: got[2], WebLinks: got[3], WebglAddon: got[4] };
+      /* Key names are the CONSTRUCTORS wireTerminal news up (got.Terminal, got.FitAddon,
+         got.Unicode11Addon, got.WebLinksAddon, got.WebglAddon) - a mismatch here is
+         "X is not a constructor" at first Open, which is exactly how it once shipped. */
+      return { Terminal: got[0], FitAddon: got[1], Unicode11Addon: got[2], WebLinksAddon: got[3], WebglAddon: got[4] };
     });
   }
   return packages;
@@ -337,7 +340,14 @@ async function openSession() {
     paintStatus();
     return;
   }
+  /* The model's id changes here (pending-N -> the gateway's id); everything keyed on
+     the id must follow in the same breath. active is the one that is easy to forget,
+     and forgetting it kills the status line AND hides the holder for every fresh
+     open: model(active) stops resolving, paintStatus paints "", and paintStage's
+     data-term match hides all holders. Found by the browser gate's status trail. */
+  var wasActive = active === m.id;
   m.id = String(reply.id);
+  if (wasActive) active = m.id;
   m.holder.setAttribute("data-term", m.id);
   paintTabs();
   paintStage();
