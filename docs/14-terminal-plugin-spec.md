@@ -313,6 +313,10 @@ PluginDescriptor {
 - `open_shell` 的返回不是 `-> ShellSessionGuard`：guard 随泵任务**走进去**而不是返回给调用方 ——
   只有泵知道会话何时真正结束，返回给 provider 的 guard 没有地方存活。
 - 停止窗口 3s，不是连接目录的 5s：挂着的终端不会自己交还，排空只为还在落地的 open。
+- 等 `want_reply` 的回执时必须**跳过 `WindowAdjusted`**：russh 把通道窗口调整同普通消息一样从
+  `wait()` 投递，而 OpenSSH 恰好在 shell 启动瞬间发一条 2 MiB 的调整 —— 不跳过它，
+  每次远程 open 都死于 "answered unexpectedly"（真机首次连接抓到，诊断靠把枚举变体
+  打进错误文本后重放）。
 
 **T3（§5，`eb01733`）**
 

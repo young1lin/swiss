@@ -35,6 +35,11 @@ var active = null;     // the session id whose terminal is on stage
 var epoch = 0;         // mount generation: loops and sockets from an older mount stop
 var seq = 0;           // temp ids for sessions opened but not yet answered
 var fitTimer = null;
+/* Sessions the user dismissed. The gateway keeps a closed row in the listing until its
+   grace window lapses; without this set, every repaint would resurrect a tab the user
+   has already closed, and dismissing would look decorative. Cleared of ids the listing
+   no longer carries so it cannot grow without bound. */
+var dismissed = new Set();
 
 function load() {
   if (!packages) {
@@ -69,9 +74,11 @@ function paintTabs() {
   var bar = $("term-tabs");
   if (!bar) return;
   var known = models.map(function (m) { return m.id; });
-  var extra = sessions.filter(function (s) { return s && s.id && known.indexOf(s.id) < 0; });
+  var extra = sessions.filter(function (s) {
+    return s && s.id && known.indexOf(s.id) < 0 && !dismissed.has(s.id);
+  });
   var all = models.concat(extra.map(function (s) {
-    return { id: s.id, target: s.target, status: "", gone: false };
+    return { id: s.id, target: s.target, label: s.label, status: "", gone: false };
   }));
   var any = all.length > 0;
   bar.hidden = !any;
@@ -295,8 +302,12 @@ async function openSession() {
   var pick = $("term-target");
   if (!pick || !pick.value) return;
   var my = epoch;
+  // The short tab label comes from the picker row ("jdoe-demo"), not the target id -
+  // a remote session without this showed its raw connection UUID on the tab.
+  var row = targetRows(targets).rows.find(function (r) { return r.id === pick.value; });
   var m = {
-    id: "pending-" + (++seq), target: pick.value, status: "opening\u2026",
+    id: "pending-" + (++seq), target: pick.value, label: row ? String(row.label).split(" \u00b7 ")[0] : "",
+    status: "opening\u2026",
     attempt: 0, userClosed: false, gone: false, sentCols: 0, sentRows: 0,
   };
   models.push(m);
@@ -359,6 +370,7 @@ async function openSession() {
    already gone, a DELETE would just be a 404. */
 async function closeSession(id) {
   var m = model(id);
+  dismissed.add(id);   // stays dismissed until the listing itself drops the row
   if (m && m.term) { m.term.dispose(); }
   if (m && m.holder) { m.holder.remove(); }
   models = models.filter(function (x) { return x.id !== id; });
@@ -424,13 +436,33 @@ async function reload() {
     var body = await r.json().catch(function () { return []; });
     sessions = Array.isArray(body) ? body : [];
   }
+  // A dismissed id the listing no longer carries will never come back; forget it.
+  var listed = new Set(sessions.map(function (s) { return s && s.id; }));
+  for (var d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
   render();
 }
 
+/* The shell has no unmount hook; mounting again is the only signal that the last
+   page's terminals are unreachable. Without this, every visit away and back leaked the
+   previous mount whole: the WebSockets stayed open (so the gateway's grace clock never
+   started - the session read as attached forever) and each xterm kept its canvases and
+   its WebGL context for the life of the tab. The gateway sessions themselves stay -
+   re-entry adopts them again; only the client-side resources are released here. */
+function releaseModels() {
+  models.forEach(function (m) {
+    if (m.ws) { try { m.ws.close(); } catch (e) { /* already gone */ } }
+    if (m.term) { try { m.term.dispose(); } catch (e) { /* already gone */ } }
+    if (m.holder) { m.holder.remove(); }
+    m.ws = null; m.term = null; m.holder = null;
+  });
+}
+
 export async function mount() {
-  epoch += 1;
+  epoch += 1;               // stale callbacks from the last mount die here
+  releaseModels();
   models = [];
   active = null;
+  dismissed = new Set();   // a fresh mount knows nothing of the last page's tabs
   await reload();
 }
 
@@ -445,6 +477,8 @@ export async function poll() {
   if (!r.ok) return;
   var body = await r.json().catch(function () { return []; });
   sessions = Array.isArray(body) ? body : [];
+  var listed = new Set(sessions.map(function (s) { return s && s.id; }));
+  for (var d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
   paintTabs();
 }
 

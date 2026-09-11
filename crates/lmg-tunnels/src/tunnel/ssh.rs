@@ -684,14 +684,29 @@ impl TestResult {
 /// Success is reported by name: "the server refused a pseudo-terminal" is something a user
 /// can act on, where a terminal that silently behaves oddly is not.
 async fn await_request_reply(read: &mut ChannelReadHalf, what: &str) -> Result<(), TunnelError> {
-    let reply = tokio::time::timeout(REQUEST_TIMEOUT, read.wait())
-        .await
-        .map_err(|_| {
-            TunnelError::new(
-                format!("the server did not answer the request for {what}"),
-                FailureKind::Network,
-            )
-        })?;
+    // A server may widen the channel window at ANY moment - including between our
+    // request and its reply - and russh surfaces those adjustments through wait()
+    // like any other channel message. They are not answers; skip them and keep
+    // waiting. (OpenSSH sends a 2 MiB WindowAdjusted exactly here, right as the shell
+    // starts, which is what once made every remote open fail as "unexpected".)
+    loop {
+        let reply = tokio::time::timeout(REQUEST_TIMEOUT, read.wait())
+            .await
+            .map_err(|_| {
+                TunnelError::new(
+                    format!("the server did not answer the request for {what}"),
+                    FailureKind::Network,
+                )
+            })?;
+        match reply {
+            Some(ChannelMsg::WindowAdjusted { .. }) => continue,
+            other => return answer_of(other, what),
+        }
+    }
+}
+
+/// The single-message decision left after window adjustments have been skipped.
+fn answer_of(reply: Option<ChannelMsg>, what: &str) -> Result<(), TunnelError> {
     match reply {
         Some(ChannelMsg::Success) => Ok(()),
         Some(ChannelMsg::Failure) => Err(TunnelError::new(
@@ -705,8 +720,8 @@ async fn await_request_reply(read: &mut ChannelReadHalf, what: &str) -> Result<(
         // Data before the reply would be a protocol violation on a channel that has not
         // been given a shell yet; treat anything unexpected as a refusal rather than
         // guessing, so an odd server cannot produce a half-open terminal.
-        Some(_) => Err(TunnelError::new(
-            format!("the server answered the request for {what} unexpectedly"),
+        Some(other) => Err(TunnelError::new(
+            format!("the server answered the request for {what} unexpectedly ({other:?})"),
             FailureKind::Network,
         )),
     }

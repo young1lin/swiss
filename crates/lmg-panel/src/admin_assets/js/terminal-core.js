@@ -102,9 +102,12 @@ export function targetRows(reply) {
   return { rows: rows, note: note };
 }
 
-/** The picker's label for a session tab: short, monospace-friendly, stable. */
+/** The picker's label for a session tab: short, monospace-friendly, stable. The listing
+ *  rows carry the connection's label ("jdoe-demo"); without it a remote tab would show
+ *  the raw connection UUID, which is noise, not a name. */
 export function sessionLabel(session) {
   if (!session) return "?";
+  if (session.label) return String(session.label);
   var t = session.target || "?";
   return t === "local" ? "local" : t;
 }
