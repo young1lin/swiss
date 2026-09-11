@@ -119,6 +119,14 @@ cargo run -- start --no-open   # the gateway itself, on 127.0.0.1:19999
 The build links with `rust-lld` (`.cargo/config.toml`) - measured ~28% off a
 cold `cargo test --workspace` on this machine; drop it only with new numbers in hand.
 
+The release profile is deliberately the slowest thing here (opt-level z, fat LTO,
+codegen-units 1 - the memory budget pays for it). Two speedups were measured and
+REJECTED, with numbers, at docs/16 follow-up time: incremental release (incompatible
+with fat LTO by construction) and a thin-LTO/CGU-16 fast-lane profile (full build
+236 s vs 246 s, touch rebuild 160 s, exe +27% - the floor is dependency codegen at
+opt-level z, not linking). Keep `target` warm; a 4-minute full build
+means fingerprints were invalidated, not that everyday work costs 4 minutes.
+
 **`--workspace` is not optional.** Without it cargo selects the root package alone — 199 of the
 suite's 941 tests — and the seven member crates, most of the tests, are never even built. The run
 still reports ok. The same applies to clippy. `lmg start` / `stop` / `status` / `logs` / `token` are the CLI; `MCP_GATEWAY_TOKEN` pins
