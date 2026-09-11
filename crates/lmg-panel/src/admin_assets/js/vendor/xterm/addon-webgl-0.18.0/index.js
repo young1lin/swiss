@@ -3,12 +3,13 @@
    as a classic script; this shim loads it once and hands the class back as a named
    export. Upgrading = a new versioned directory plus a changed import path; this
    directory dies in the same commit. */
-import { loadClassic } from "../load-classic.js";
+import { loadClassic, unwrapGlobal } from "../load-classic.js";
 
 export async function loadWebglAddon() {
   await loadClassic(new URL("./addon-webgl.js", import.meta.url));
-  if (typeof window.WebglAddon !== "function") {
-    throw new Error("addon-webgl.js loaded but window.WebglAddon is missing");
+  var cls = unwrapGlobal(window.WebglAddon, "WebglAddon");
+  if (!cls) {
+    throw new Error("addon-webgl.js loaded but window.WebglAddon carries no WebglAddon class");
   }
-  return window.WebglAddon;
+  return cls;
 }

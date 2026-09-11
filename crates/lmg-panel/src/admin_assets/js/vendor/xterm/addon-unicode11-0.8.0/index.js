@@ -3,12 +3,13 @@
    as a classic script; this shim loads it once and hands the class back as a named
    export. Upgrading = a new versioned directory plus a changed import path; this
    directory dies in the same commit. */
-import { loadClassic } from "../load-classic.js";
+import { loadClassic, unwrapGlobal } from "../load-classic.js";
 
 export async function loadUnicode11Addon() {
   await loadClassic(new URL("./addon-unicode11.js", import.meta.url));
-  if (typeof window.Unicode11Addon !== "function") {
-    throw new Error("addon-unicode11.js loaded but window.Unicode11Addon is missing");
+  var cls = unwrapGlobal(window.Unicode11Addon, "Unicode11Addon");
+  if (!cls) {
+    throw new Error("addon-unicode11.js loaded but window.Unicode11Addon carries no Unicode11Addon class");
   }
-  return window.Unicode11Addon;
+  return cls;
 }

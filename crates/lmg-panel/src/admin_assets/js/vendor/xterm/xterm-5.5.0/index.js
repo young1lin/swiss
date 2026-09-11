@@ -4,7 +4,7 @@
    the stylesheet once, then hands the constructor back as a named export. Upgrading =
    a new versioned directory plus a changed import path; this directory dies in the same
    commit (docs/14 §2, vendoring rules). */
-import { loadClassic } from "../load-classic.js";
+import { loadClassic, unwrapGlobal } from "../load-classic.js";
 
 export async function loadXterm() {
   await loadClassic(new URL("./xterm.js", import.meta.url));
@@ -16,8 +16,12 @@ export async function loadXterm() {
     link.setAttribute("data-xterm-css", "1");
     document.head.appendChild(link);
   }
-  if (typeof window.Terminal !== "function") {
-    throw new Error("xterm.js loaded but window.Terminal is missing");
+  /* The core bundle copies each export onto the global (window.Terminal IS the class),
+     but unwrapGlobal also accepts the namespace shape the addon bundles use, so the
+     core shim does not care which convention a future xterm picks. */
+  var cls = unwrapGlobal(window.Terminal, "Terminal");
+  if (!cls) {
+    throw new Error("xterm.js loaded but window.Terminal carries no Terminal class");
   }
-  return window.Terminal;
+  return cls;
 }

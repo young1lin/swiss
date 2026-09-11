@@ -8,6 +8,18 @@
 var inflight = new Map();   // href -> Promise (settled loads stay, as a once-only guard)
 var settled = new Set();    // hrefs that finished, so repeat wants resolve immediately
 
+/* The vendored addon UMD bundles assign a NAMESPACE object onto the global they are
+   handed (window.FitAddon = { FitAddon: class, __esModule: true }) - the class lives one
+   level down. The core bundle instead copies each export straight onto the global, so
+   window.Terminal already IS the class. unwrapGlobal accepts either shape, either way
+   round, so a future xterm that changes convention needs a one-line shim change, not a
+   rewrite. Returns null when neither shape is present - the shims turn that into their
+   "loaded but missing" error, which is what a 404-in-disguise looks like here. */
+export function unwrapGlobal(ns, name) {
+  if (ns && typeof ns[name] === "function") return ns[name];
+  return typeof ns === "function" ? ns : null;
+}
+
 export function loadClassic(href) {
   var url = String(href);
   if (settled.has(url)) return Promise.resolve();
