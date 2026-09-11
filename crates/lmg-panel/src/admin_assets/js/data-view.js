@@ -17,33 +17,42 @@ var DB_PAGE_SIZES = [10, 20, 50, 100, 200, 500];
 var DB_HISTORY_KEY = "mcp_gateway_db_sql_history";
 var DB_HISTORY_MAX = 50;
 
-state.db = {
-  conns: [],            // rows from /api/db
-  conn: null,           // selected connection (MCP name)
-  tables: [],           // ONE page of the table list
-  tablesTotal: 0, tablesPage: 0, tablesLimit: 200, more: false, grep: "",
-  table: null, schema: null,
-  data: null,           // last /api/db/:name/data page
-  filters: [],          // [{ column, op, value }] — server-side WHERE terms (AND-ed)
-  pageSize: 50, offset: 0, order: null, dir: "asc", loading: false,
-  sqlPreview: false,    // pending bar: show the SQL Commit will run
-  updates: {},          // pkKey -> { pk, changes: { col: value-or-null } }
-  deletes: {},          // pkKey -> pk object
-  inserts: [],          // [{ values: { col: value-or-null } }]
-  sel: {},             // rowKey -> true — checked rows the next Copy pulls (grid or query result)
-  selAnchor: -1,       // visible row index of the last checkbox click (Shift range start)
-  sqlOpen: false, sqlText: "", sqlResult: null, sqlBusy: false,
-  history: [],         // last-run console queries, newest first (per-browser, localStorage)
-  tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
-  redis: null,         // { keys, cursor, done, total } while a redis connection is selected
-  mongo: null,         // { collections, docs, docTotal, docOffset, filter } while mongo is selected
-  redisKey: null,      // the key whose value is shown in the pane
-  detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
-  detailBusy: false,
-};
+/* The view's whole state. Built by a FACTORY, not a module-top literal: leaving the view
+   nulls state.db (views/data.js unmount frees it), and a dynamic import evaluates this
+   module exactly once — a top-level literal would leave state.db null on every entry but
+   the first, crashing renderDbView halfway through its wiring and leaving the SQL console
+   and cell editing dead. Every entry rebuilds what unmount freed. */
+function dbFreshState() {
+  return {
+    conns: [],            // rows from /api/db
+    conn: null,           // selected connection (MCP name)
+    tables: [],           // ONE page of the table list
+    tablesTotal: 0, tablesPage: 0, tablesLimit: 200, more: false, grep: "",
+    table: null, schema: null,
+    data: null,           // last /api/db/:name/data page
+    filters: [],          // [{ column, op, value }] — server-side WHERE terms (AND-ed)
+    pageSize: 50, offset: 0, order: null, dir: "asc", loading: false,
+    sqlPreview: false,    // pending bar: show the SQL Commit will run
+    updates: {},          // pkKey -> { pk, changes: { col: value-or-null } }
+    deletes: {},          // pkKey -> pk object
+    inserts: [],          // [{ values: { col: value-or-null } }]
+    sel: {},             // rowKey -> true — checked rows the next Copy pulls (grid or query result)
+    selAnchor: -1,       // visible row index of the last checkbox click (Shift range start)
+    sqlOpen: false, sqlText: "", sqlResult: null, sqlBusy: false,
+    history: [],         // last-run console queries, newest first (per-browser, localStorage)
+    tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
+    redis: null,         // { keys, cursor, done, total } while a redis connection is selected
+    mongo: null,         // { collections, docs, docTotal, docOffset, filter } while mongo is selected
+    redisKey: null,      // the key whose value is shown in the pane
+    detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
+    detailBusy: false,
+  };
+}
+state.db = dbFreshState();
 
 function dbPending() {
   var d = state.db;
+  if (!d) return 0;  // between unmount and the next mount there is nothing buffered
   return Object.keys(d.updates).length + Object.keys(d.deletes).length + d.inserts.length;
 }
 
@@ -80,6 +89,10 @@ function dbPkVals(pkCols, row) {
 /* --- view skeleton ------------------------------------------------------------------------------- */
 
 async function loadDbView() {
+  // The entry choke point: unmount freed state.db, and nothing else rebuilds it — the
+  // module-top assignment ran exactly once, on first import. Without this every second
+  // entry died reading state.db.grep halfway through renderDbView's wiring.
+  if (!state.db) state.db = dbFreshState();
   renderDbView();
   var j = await apiJson("/api/db");
   if (!j) return;

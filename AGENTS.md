@@ -125,6 +125,28 @@ The Node-sealed envelope fixture is regenerated with `cd ../local-mcp-gateway &&
 ../local-mcp-gateway-rust/scripts/seal-fixture.mts` when the envelope format ever changes (it
 must not — docs/05).
 
+## Live testing ports — 19998 tests, 19999 is the user's
+
+Port **19999 is production for the human on this machine**: their panel is open against it.
+**Never stop, restart, or redeploy 19999 as a step of iterating on a change.** All live
+browser/API verification runs on a second instance bound to **19998**:
+
+```powershell
+$env:MCP_GATEWAY_PORT = "19998"; & target-test\release\lmg.exe serve   # background job
+```
+
+- The env var beats `gateway.config.json` and is **not persisted**. Do NOT use `--port`/`-p`:
+  both `start` and `serve` write the port into the config, hijacking the user's default.
+- The 19999 daemon holds `target\release\lmg.exe`, so iteration builds go to a separate
+  directory: `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`.
+- The 19998 instance shares the state dir — keep it read-only (navigate, query, attach) and
+  kill it when verification ends, **by the port's owning PID**
+  (`Get-NetTCPConnection -LocalPort 19998`), never by process name (`Get-Process lmg` kills
+  the user's instance too).
+- **Deploying to 19999 is the last step, done once**: only after every gate passes AND live
+  verification on 19998 succeeds, stop 19999, rebuild the main target, start it again — and
+treat that as a deployment, not a test.
+
 On Windows, note two environment traps that are not this repo's doing. Windows **Smart App
 Control**, if enabled, blocks freshly linked unsigned executables — cargo's build scripts and test
 binaries — with `os error 4551`; the failure looks like a broken test but the binary never ran, and
