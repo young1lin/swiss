@@ -18,4 +18,4 @@ pub mod skill_install;
 pub mod subsystems;
 
 #[doc(inline)]
-pub use lmg_host::reply;
+pub use swiss_host::reply;

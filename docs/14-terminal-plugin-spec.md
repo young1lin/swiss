@@ -5,14 +5,14 @@
 > 前置阅读：`AGENTS.md`（它的规则高于本文任何便利）、`docs/09-toolbox-plugin-architecture.md`
 > §3/§4/§9（插件契约、共享能力、加一个插件要做什么）、`docs/12-remaining-work-spec.md` W3
 > （连接目录 —— 本文的能力契约照它抄）、`docs/07-decisions.md` ADR-004 / ADR-008 / ADR-009 / ADR-010。
-> **本仓库的 `crates/lmg-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在
+> **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在
 > `../local-mcp-gateway/src/admin/`，再整目录复制回来。
 > 新写的代码注释一律英文；文档散文中文。
 
 ## 0. 怎么用这份文档
 
 分成 T1–T8 八个阶段，**一个阶段一个提交**。每个阶段独立可验收、独立可回退，且每个阶段结束时
-`cargo build --release` 仍然出一个能跑的 `lmg.exe`。行为变化先有测试。
+`cargo build --release` 仍然出一个能跑的 `swiss.exe`。行为变化先有测试。
 
 门禁，每个提交前全过：
 
@@ -63,7 +63,7 @@ Wetty、code-server 全都是它；能与它相提并论的替代品不存在。
 ### 面板资源管道的三条硬约束（先读这三条，再决定怎么 vendor）
 
 1. **只能是 UTF-8 文本，且扩展名只能是 `.html` / `.css` / `.js` / `.svg`。**
-   `crates/lmg-panel/src/admin.rs` 的 `mime_of()` 只认这四种，`admin_asset()` 用
+   `crates/swiss-panel/src/admin.rs` 的 `mime_of()` 只认这四种，`admin_asset()` 用
    `String::from_utf8_lossy` 返回 `String`。**字体、wasm、png 一律进不来** —— 不是难，是这条路
    不存在。所以：终端字体用系统等宽栈（`ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono",
    monospace`），不要 Nerd Font、不要 web font。
@@ -111,7 +111,7 @@ ws = ["dep:hyper", "tokio", "dep:tokio-tungstenite", "dep:sha1", "dep:base64"]
 
 ## 4. 远端：SSH 走宿主能力契约，不走 crate 边界
 
-`lmg-tunnels` 里已经有整套东西：`SshConnDef`（`crates/lmg-tunnels/src/tunnel/types.rs:103`）、
+`swiss-tunnels` 里已经有整套东西：`SshConnDef`（`crates/swiss-tunnels/src/tunnel/types.rs:103`）、
 `SshConnection`（`ssh.rs`）、host key TOFU（`fingerprint()` + `SshHooks::on_host_key` +
 `trust_host_key`）、连接的引用计数与共享（`manager.rs` 的 `conns` + `refs()`）。russh 0.63.2 的
 channel 也**已经**支持 PTY，不需要任何新的 SSH 依赖：
@@ -124,10 +124,10 @@ channel.window_change(col_width, row_height, pix_width, pix_height).await
 channel.data(reader).await            // or data_bytes(impl Into<Bytes>)
 ```
 
-**但 `lmg-terminal` 不许依赖 `lmg-tunnels`。** ADR-010 把这条写死了：五个子系统 crate 谁都不依赖
+**但 `swiss-terminal` 不许依赖 `swiss-tunnels`。** ADR-010 把这条写死了：五个子系统 crate 谁都不依赖
 谁；出现这种需求，正确的读法是**宿主契约缺了一样东西**（docs/12 W3 的连接目录就是这么来的）。
 
-所以加第二个共享能力，形状照 `crates/lmg-host/src/services/catalog.rs` 抄：
+所以加第二个共享能力，形状照 `crates/swiss-host/src/services/catalog.rs` 抄：
 
 ```rust
 //! The interactive shell capability — who can open a PTY on a remote host, and for how long.
@@ -166,7 +166,7 @@ pub trait ShellProvider: Send + Sync {
 - 注册表 `ShellRegistry` 进 `RuntimeServices`（`services/mod.rs`），与 `catalog` 并列，**在插件之外
   构造**，这样 provider 停了再起还是同一个座位。
 - provider 由 **Tunnels 插件**在 `start()` 时注册、`stop()` 时 withdraw-then-drain。实现放
-  `crates/lmg-tunnels/`，它是唯一碰 russh 的地方。
+  `crates/swiss-tunnels/`，它是唯一碰 russh 的地方。
 - `SshLike` trait 加一个 `open_shell(...)`；引用计数**必须走 manager**，新增
   `TunnelManager::open_shell(conn_id, size) -> ShellSessionGuard`，guard 的 `Drop` 走 manager 现有的
   release 路径（`manager.rs:390` 那段 `refs().fetch_sub`）。别在 provider 里重写一遍引用计数：
@@ -189,13 +189,13 @@ pub trait ShellProvider: Send + Sync {
 路径 —— 这个进程的预算是 15 MB，AGENTS.md 的原话是「一个新依赖要为自己的重量辩护」。手写 FFI
 大约 150 行，且这个仓库已经有 Windows FFI 的落脚点。
 
-**位置**：`crates/lmg-core/src/platform/pty.rs`，暴露一个安全 API
-（`open_pty(size, command, env, cwd) -> (PtyMaster, Child)`）。这样 `unsafe` 全部留在 `lmg-core` 的
-platform 模块里（AGENTS.md：unsafe 只属于 Windows FFI 边界），`lmg-terminal` 一行 unsafe 都没有。
+**位置**：`crates/swiss-core/src/platform/pty.rs`，暴露一个安全 API
+（`open_pty(size, command, env, cwd) -> (PtyMaster, Child)`）。这样 `unsafe` 全部留在 `swiss-core` 的
+platform 模块里（AGENTS.md：unsafe 只属于 Windows FFI 边界），`swiss-terminal` 一行 unsafe 都没有。
 unix 侧用已有的 `libc` 依赖走 `openpty`。
 
 **子进程回收**：本地 shell 必须进 Job Object（ADR-008，`KILL_ON_JOB_CLOSE`）。逻辑已经在
-`crates/lmg-host/src/services/process.rs`，把里面的 job 分配抽成一个可复用的函数即可。
+`crates/swiss-host/src/services/process.rs`，把里面的 job 分配抽成一个可复用的函数即可。
 **不要**把 PTY 塞进 `Supervisor` 的采集路径：那条路径是给「跑完就结束、输出有硬字节上限」的
 action 用的，交互式会话既不结束也没有上限，塞进去只会把两种语义都弄坏。要复用的只有「把子进程
 挂到 job 上」这一件事。
@@ -220,7 +220,7 @@ action 用的，交互式会话既不结束也没有上限，塞进去只会把�
 **本地 shell 的环境**（`local.rs::shell_command`，2026-09-11 补）：子进程拿到的是网关自己的环境，
 再叠三条固定改动 —— `TERM=xterm-256color`、`COLORTERM=truecolor`，并**删掉** `NO_COLOR`。前两条
 是「你是终端，尽管画」；第三条是因为网关是个守护进程，环境是谁启动它就继承谁的：从一个给自己的
-工具 shell 设了 `NO_COLOR=1` 的 agent 环境里 `lmg start`，19999 上每个本地 pwsh 都被
+工具 shell 设了 `NO_COLOR=1` 的 agent 环境里 `swiss start`，19999 上每个本地 pwsh 都被
 `$PSStyle.OutputRendering=PlainText` 变成了黑白（实测）。启动者的口味不是标签页的口味。
 `PtyCommand::env_remove` 就是为这件事加的。自 docs/16 §1 起，守护进程本身在两条路径
 （`start` 的 spawn 与 `serve` 进程内）都会先按黑名单清洗环境；本节这条 `NO_COLOR` 删除
@@ -351,7 +351,7 @@ PluginDescriptor {
   （原本只经 DPAPI 传递依赖；删 DPAPI 的人不该顺手带走 pty 和作业守卫）。
 - `open_pty` 返回 `PtyHandle` + `PtyPump` 一对：ConPTY 的输出管道 tokio 轮询不了，本地会话
   就是值一条阻塞线程 —— 线程预算就是这个拆分的原因。
-- `KillOnCloseJob` 从 lmg-host 下沉到 `lmg_core::platform`：pty 缝隙在 lmg-host 之下，
+- `KillOnCloseJob` 从 swiss-host 下沉到 `swiss_core::platform`：pty 缝隙在 swiss-host 之下，
   需要同一份子树保证。
 
 **T4（§8，`378d8fd`）**
@@ -415,30 +415,30 @@ is not running"，恢复后两台主机重新 `connected`；第 5 条 terminal �
 
 ## 9. 阶段
 
-### T1 — 能力契约（`lmg-host`，无行为变化）
+### T1 — 能力契约（`swiss-host`，无行为变化）
 
-`crates/lmg-host/src/services/shell.rs`：`ShellTarget` / `PtySession` / `ShellError` /
+`crates/swiss-host/src/services/shell.rs`：`ShellTarget` / `PtySession` / `ShellError` /
 `ShellProvider` / `ShellRegistry`，形状照 `catalog.rs`；`RuntimeServices` 加 `shells` 字段。
 测试：重复注册要吵着失败；withdraw 之后不再发放；drain 超时返回还欠着的数量。
 这一阶段没有 provider、没有 consumer，四条门禁必须全绿。
 
-### T2 — SSH provider（`lmg-tunnels`）
+### T2 — SSH provider（`swiss-tunnels`）
 
 `SshLike::open_shell`、`TunnelManager::open_shell` + `ShellSessionGuard`（引用计数走 manager 现有
 release 路径），Tunnels 插件在 `start`/`stop` 里注册/撤销 provider。
 测试：用 `SshLike` 的假实现（`manager.rs` 已有这个测试形态）断言——开会话后 `refs` 加一、guard drop
 后减一并在归零时关闭；provider withdraw 后新会话被拒且错误文案里点名 tunnels 插件。
 
-### T3 — 本地 PTY（`lmg-core` + job object）
+### T3 — 本地 PTY（`swiss-core` + job object）
 
-`crates/lmg-core/src/platform/pty.rs`（Windows ConPTY / unix openpty），`Cargo.toml` 加
+`crates/swiss-core/src/platform/pty.rs`（Windows ConPTY / unix openpty），`Cargo.toml` 加
 `Win32_System_Console`、`Win32_System_Pipes`；`services/process.rs` 抽出 job 分配函数。
 测试（Windows 上跑真的进程）：开一个 `cmd /c echo hi` 的 PTY 读到 `hi`；resize 不报错；
 把网关进程强杀之后子进程不残留（这条**用任务管理器人工确认**并写进提交信息，测试测不了）。
 
-### T4 — 会话机（`lmg-terminal` crate）
+### T4 — 会话机（`swiss-terminal` crate）
 
-新 crate，依赖 `lmg-core` + `lmg-host`，**不依赖任何其它子系统 crate**。会话表、票据、上限、
+新 crate，依赖 `swiss-core` + `swiss-host`，**不依赖任何其它子系统 crate**。会话表、票据、上限、
 超时、背压、断线宽限、asciicast 写入器。
 这一阶段**不接 HTTP**：全部逻辑对着假的 `ShellProvider` 与假的本地 PTY 做单元测试。
 测试：票据单次有效 + 10 秒过期 + 绑定会话；超过 `maxSessions` 被拒且文案说明；
@@ -463,19 +463,19 @@ Node 网关上这一页不出现：终端插件不在它的 `legacy` 清单里�
 ### T7 — 整树复制回本仓库
 
 ```powershell
-Remove-Item -Recurse -Force crates\lmg-panel\src\admin_assets
-Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\lmg-panel\src\admin_assets
+Remove-Item -Recurse -Force crates\swiss-panel\src\admin_assets
+Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\swiss-panel\src\admin_assets
 ```
 
-整棵树，不挑文件（ADR-009）。立刻 `cargo test -p lmg-panel`，
+整棵树，不挑文件（ADR-009）。立刻 `cargo test -p swiss-panel`，
 `the_tree_is_byte_for_byte_the_node_builds` 必须**通过**而不是 skip。这一提交只有 `admin_assets/`。
 
 ### T8 — 实测与文档
 
 - 按 §7 的表逐项量，数字写进 `docs/01`（新增一行终端的条目）与提交信息。
-- `docs/02` 加 `lmg-terminal` 到 crate 图（`lmg-core ← lmg-host ← { …, lmg-terminal } ← lmg`）。
+- `docs/02` 加 `swiss-terminal` 到 crate 图（`swiss-core ← swiss-host ← { …, swiss-terminal } ← swiss`）。
 - `docs/07` 加一条 ADR：为什么是 WebSocket 而不是 SSE、为什么手写 ConPTY 而不是 `portable-pty`、
-  为什么终端不依赖 `lmg-tunnels`。**把量出来的体积与 RSS 写进去**，ADR-010 的规矩在这儿一样成立：
+  为什么终端不依赖 `swiss-tunnels`。**把量出来的体积与 RSS 写进去**，ADR-010 的规矩在这儿一样成立：
   没测过的收益不许写。
 - `README.md` 文档表格里 `docs/14` 那行的状态改掉；`AGENTS.md` 的「Never commit」清单加
   `~/.mcp-gateway/terminal/*.cast`。
@@ -484,14 +484,14 @@ Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\lmg-panel\src\admin_ass
 ## 10. 验收
 
 1. 四条门禁全绿，`cargo tree -d` 只多出 `tokio-tungstenite` / `tungstenite`。
-2. `cargo test -p lmg-panel the_tree_is_byte_for_byte` 通过（不是 skip）。
+2. `cargo test -p swiss-panel the_tree_is_byte_for_byte` 通过（不是 skip）。
 3. 浏览器里：对一台已配好的隧道主机开会话 → 能登录、能 `vim`、能 `htop`、中文与 emoji 不错位、
    拖窗口改大小后远端 `stty size` 跟着变。
 4. 关掉 tunnels 插件 → 远端目标列表变空且**文案点名 tunnels 插件**；本地会话（若已启用）不受影响。
 5. 关掉 terminal 插件 → `/api/terminal/*` 全是结构化 503，一级导航那格带 `· off`。
 6. 拔网线/断开 WS 60 秒内重连 → 会话还在，缺的输出补上；超过宽限 → 会话已关闭且列表里没有它。
 7. 在会话里跑 `yes` 十秒再 Ctrl-C → 进程 RSS 不持续增长（背压生效），终端显示不错位（没丢字节）。
-8. 强杀 `lmg.exe` → 任务管理器里没有残留的 shell 子进程（ADR-008）。
+8. 强杀 `swiss.exe` → 任务管理器里没有残留的 shell 子进程（ADR-008）。
 9. `asciinema play ~/.mcp-gateway/terminal/<id>.cast` 能回放。
 10. §7 的每一行都有实测数字，且都在预算内 —— 否则按 §11 处理，不要「先合了再说」。
 

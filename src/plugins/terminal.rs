@@ -5,7 +5,7 @@
 //! here in data — descriptor, schema, routes — and the host never learns the id
 //! "terminal". The instance's whole job is to build the [TerminalSessions] the routes
 //! drive (T4's machine, over the shell capability seat and the local PTY seam) and to
-//! tear it down on stop; every session-level rule already lives in lmg-terminal, tested
+//! tear it down on stop; every session-level rule already lives in swiss-terminal, tested
 //! there without a server.
 
 use std::sync::Arc;
@@ -13,12 +13,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use lmg_host::host::descriptor::{PageDescriptor, PluginDescriptor};
-use lmg_host::host::factory::{PluginFactory, PluginInstance};
-use lmg_host::host::scope::PluginScope;
-use lmg_host::services::shell::ShellRegistry;
-use lmg_host::services::RuntimeServices;
-use lmg_terminal::terminal::{LocalShells, TerminalConfig, TerminalSessions};
+use swiss_host::host::descriptor::{PageDescriptor, PluginDescriptor};
+use swiss_host::host::factory::{PluginFactory, PluginInstance};
+use swiss_host::host::scope::PluginScope;
+use swiss_host::services::shell::ShellRegistry;
+use swiss_host::services::RuntimeServices;
+use swiss_terminal::terminal::{LocalShells, TerminalConfig, TerminalSessions};
 
 use super::terminal_api::TerminalState;
 
@@ -169,7 +169,7 @@ impl PluginInstance for TerminalInstance {
         // Recordings land in ~/.mcp-gateway/terminal/<sessionId>.cast. Created eagerly
         // so a session open never races a mkdir, and so a read-only data dir fails
         // HERE — on the inventory row — instead of on the first open.
-        let dir = lmg_core::paths::data_path(&["terminal"]);
+        let dir = swiss_core::paths::data_path(&["terminal"]);
         std::fs::create_dir_all(&dir)
             .map_err(|err| format!("could not create {}: {err}", dir.display()))?;
         let sessions = TerminalSessions::new(
@@ -189,7 +189,7 @@ impl PluginInstance for TerminalInstance {
         if let Some(sessions) = self.state.withdraw() {
             let closed = sessions.shutdown().await;
             if closed > 0 {
-                lmg_core::log::log(
+                swiss_core::log::log(
                     "info",
                     "the terminal plugin stopped with live sessions",
                     Some(json!({ "sessions": closed })),

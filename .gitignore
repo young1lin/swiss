@@ -14,9 +14,11 @@ jobs.json
 *.log
 master.key
 
-# Stray dev binaries at the repo root
-/lmg-dev.exe
+# Stray dev binaries at the repo root (lmg-* are the pre-rename builds still on disk)
+/swiss-dev.exe
+/swiss.exe
 /lmg.exe
+/lmg-dev.exe
 
 # Claude Code scratch: agent worktrees and per-machine settings
 /.claude/worktrees/

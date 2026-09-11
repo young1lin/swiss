@@ -1,38 +1,38 @@
 ---
-name: local-mcp-gateway
-description: local-mcp-gateway (lmg). Invoke only when the user explicitly asks.
+name: swiss
+description: swiss (the local dev toolbox). Invoke only when the user explicitly asks.
 disable-model-invocation: true
 ---
 
-# local-mcp-gateway
+# swiss
 
-One localhost Node process hosting MCP servers on `http://127.0.0.1:19999/<name>`.
-State: `~/.mcp-gateway/` (`MCP_GATEWAY_HOME` to override).
+One local process hosting MCP servers on `http://127.0.0.1:19999/<name>`.
+State: `~/.mcp-gateway/` (`SWISS_HOME` to override; the legacy `MCP_GATEWAY_HOME` still works).
 
-Do not cat `.env` — it holds database passwords. For the client token, run `lmg token` (or `lmg creds`
+Do not cat `.env` — it holds database passwords. For the client token, run `swiss token` (or `swiss creds`
 for url + token). The panel itself has no login — loopback only.
 
 ## Gateway
 
 ```bash
-lmg status          # up? url, every MCP, memory — or "not running"
-lmg start           # detached background service, then opens the panel
-lmg start -p 18000  # listen there; saved as the new default
-lmg start --no-open
-lmg logs            # -f to follow
-lmg stop
-lmg open            # panel in a browser
-lmg token           # bearer token only (one line, for scripts)
-lmg creds           # panel url + client token — tell the user these
-lmg skill install   # copy this skill to ~/.agents, ~/.claude, ~/.cursor skills dirs
+swiss status          # up? url, every MCP, memory — or "not running"
+swiss start           # detached background service, then opens the panel
+swiss start -p 18000  # listen there; saved as the new default
+swiss start --no-open
+swiss logs            # -f to follow
+swiss stop
+swiss open            # panel in a browser
+swiss token           # bearer token only (one line, for scripts)
+swiss creds           # panel url + client token — tell the user these
+swiss skill install   # copy this skill to ~/.agents, ~/.claude, ~/.cursor skills dirs
 ```
 
-On Windows, `lmg status` first — the port refuses a duplicate. `lmg -p <port> <cmd>` for a non-default instance.
+On Windows, `swiss status` first — the port refuses a duplicate. `swiss -p <port> <cmd>` for a non-default instance.
 
 ## Admin API
 
 Base `http://127.0.0.1:19999`, loopback only (that is the whole gate). MCP endpoints still need
-`Authorization: Bearer <token>` from `lmg token`; the `/api` routes need no header.
+`Authorization: Bearer <token>` from `swiss token`; the `/api` routes need no header.
 
 | Action | Method + path | Body |
 | --- | --- | --- |

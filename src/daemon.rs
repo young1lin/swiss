@@ -14,10 +14,10 @@ use crate::pidfile::{
     is_pid_alive, log_file_path, read_pid_file, remove_pid_file, write_pid_file, PidRecord,
 };
 use crate::port::{as_listen_port_value, env_listen_port, DEFAULT_PORT};
-use lmg_core::paths::{data_dir, data_path};
-use lmg_core::platform::tree_kill;
-use lmg_core::secure::envstore::{read_env_store, write_env_store};
-use lmg_core::secure::statefile::{read_secure_json, write_secure_json};
+use swiss_core::paths::{data_dir, data_path};
+use swiss_core::platform::tree_kill;
+use swiss_core::secure::envstore::{read_env_store, write_env_store};
+use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
 
 const POLL_MS: u64 = 150;
 const LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
@@ -74,7 +74,7 @@ pub struct StatusResult {
     pub build_note: Option<String>,
 }
 
-/// Pull the git hash out of a version line ("lmg 0.1.0 (23047d8, 2026-09-11T13:16:40Z)") —
+/// Pull the git hash out of a version line ("swiss 0.1.0 (23047d8, 2026-09-11T13:16:40Z)") —
 /// the exact pair shape version_line() prints; writer and reader in two files, one format,
 /// so this parser is the contract's other half.
 pub fn parse_version_hash(line: &str) -> Option<&str> {
@@ -100,9 +100,9 @@ pub fn url_for(port: u16) -> String {
     format!("http://127.0.0.1:{port}/")
 }
 
-/// The port to act on when none was given. Env (`MCP_GATEWAY_PORT`) wins, then the config file,
+/// The port to act on when none was given. Env (`SWISS_PORT`) wins, then the config file,
 /// then 19999. Read straight out of the file rather than through load_config(), because every
-/// command here must work even when the config is invalid — `lmg stop` on a gateway whose config
+/// command here must work even when the config is invalid — `swiss stop` on a gateway whose config
 /// you just broke is exactly when you need it most.
 pub fn resolve_port() -> u16 {
     env_listen_port()
@@ -110,8 +110,8 @@ pub fn resolve_port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
-/// Write `port` into gateway.config.json so the next `lmg start` (and the child about to spawn)
-/// listens there. No-op when there is no config yet — first-run seed reads `MCP_GATEWAY_PORT`.
+/// Write `port` into gateway.config.json so the next `swiss start` (and the child about to spawn)
+/// listens there. No-op when there is no config yet — first-run seed reads `SWISS_PORT`.
 pub fn persist_listen_port(port: u16) {
     let path = data_path(&["gateway.config.json"]);
     if !path.exists() {
@@ -142,7 +142,7 @@ fn read_config_raw() -> Option<Value> {
 /// The gateway executable to spawn: this very binary. The Node build had a .js entry beside the
 /// CLI; a single-binary release points at itself.
 pub fn server_entry() -> std::path::PathBuf {
-    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("lmg"))
+    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("swiss"))
 }
 
 /// True for a path inside npm's npx cache, which is version-keyed and cleared on update — a
@@ -153,7 +153,7 @@ pub fn is_npx_cache_path(path: &Path) -> bool {
 
 /// The env store path handed to read_env_store/write_env_store (the sealed .env replacement).
 fn env_store() -> std::collections::HashMap<String, String> {
-    read_env_store(&lmg_core::secure::envstore::env_store_path())
+    read_env_store(&swiss_core::secure::envstore::env_store_path())
 }
 
 /// The token a client needs for the authenticated endpoints. Precedence mirrors the server boot:
@@ -165,7 +165,10 @@ fn read_env_key(key: &str) -> Option<String> {
             return Some(v);
         }
     }
-    env_store().get(key).cloned()
+    // An empty stored value counts as missing — token_lookup on the serve side treats it the
+    // same way, so a deliberately-empty entry cannot wedge the pair fallback while serve falls
+    // through and the CLI would print an empty token.
+    env_store().get(key).filter(|v| !v.is_empty()).cloned()
 }
 
 pub fn read_gateway_token() -> Option<String> {
@@ -180,26 +183,30 @@ pub fn read_gateway_token() -> Option<String> {
         .as_ref()
         .and_then(|c| c.get("tokenEnv"))
         .and_then(Value::as_str)
-        .unwrap_or("MCP_GATEWAY_TOKEN")
+        .unwrap_or(swiss_host::config::TOKEN_ENV)
         .to_string();
-    read_env_key(&name)
+    read_env_key(&name).or_else(|| {
+        // The config and the pin can come from different eras. swiss-host owns the one
+        // resolution rule so the auth check, `swiss creds` and the panel can never disagree.
+        swiss_host::config::token_pair_other(&name).and_then(read_env_key)
+    })
 }
 
-/// Panel URL + bearer token, for `lmg creds`. Never dumps the rest of the env store (DB
+/// Panel URL + bearer token, for `swiss creds`. Never dumps the rest of the env store (DB
 /// passwords live there). The panel itself has no login — the loopback guard is its boundary —
 /// so there is no username or password to print.
 pub fn read_creds() -> (String, Option<String>) {
     (url_for(resolve_port()), read_gateway_token())
 }
 
-/// One decrypted bundle of every state file — what 'lmg export' writes and 'lmg import' reads.
+/// One decrypted bundle of every state file — what 'swiss export' writes and 'swiss import' reads.
 /// The ONLY plaintext export path: machine binding cuts both ways, so moving to a new machine
 /// (or recovering from a lost OS credential) needs an operator-initiated export on a machine
 /// that can still read the files.
 pub fn export_state() -> Value {
     json!({
         "version": 1,
-        "exportedAt": lmg_core::log::iso_now(),
+        "exportedAt": swiss_core::log::iso_now(),
         "config": read_secure_json(&data_path(&["gateway.config.json"])).ok().flatten(),
         "managed": read_secure_json(&data_path(&["managed.json"])).ok().flatten(),
         "tunnels": read_secure_json(&data_path(&["tunnels.json"])).ok().flatten(),
@@ -214,7 +221,7 @@ pub fn export_state() -> Value {
 /// the restored file names.
 pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
     let Some(obj) = bundle.as_object() else {
-        return Err("not a state bundle (expected JSON written by 'lmg export')".into());
+        return Err("not a state bundle (expected JSON written by 'swiss export')".into());
     };
     if obj.get("version").and_then(Value::as_i64) != Some(1) {
         return Err(format!(
@@ -246,7 +253,7 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
                 merged.insert(k.clone(), s.to_string());
             }
         }
-        write_env_store(&merged, &lmg_core::secure::envstore::env_store_path())?;
+        write_env_store(&merged, &swiss_core::secure::envstore::env_store_path())?;
         restored.push("env.json".into());
     }
     Ok(restored)
@@ -344,7 +351,7 @@ fn tail_log(path: &Path) -> String {
 /// The spawn options are each load-bearing on Windows: CREATE_NEW_PROCESS_GROUP detaches the
 /// child from our console's Ctrl-C group (closing the terminal must not signal it),
 /// CREATE_NO_WINDOW keeps it invisible, and routing stdio to a file means no inherited terminal
-/// handles (and gives `lmg logs` something to read). No job object is attached, so the child
+/// handles (and gives `swiss logs` something to read). No job object is attached, so the child
 /// keeps running when this process exits.
 pub async fn start_daemon(opts: StartOptions) -> StartResult {
     if let Some(port) = opts.port {
@@ -395,11 +402,11 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
     // CI launcher must not speak for every child the gateway will ever spawn. The serve path
     // repeats the scrub in its own process, so this covers the spawn even where main() grew a
     // regression.
-    lmg_core::env::scrub_command(&mut command);
+    swiss_core::env::scrub_command(&mut command);
     if let Some(port) = opts.port {
         // So the child listens where we asked, including a first run that has no config to
-        // persist into.
-        command.env("MCP_GATEWAY_PORT", port.to_string());
+        // persist into. The serve child reads SWISS_PORT first.
+        command.env("SWISS_PORT", port.to_string());
     }
     #[cfg(windows)]
     {
@@ -429,11 +436,11 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
         port,
         entry: entry.to_string_lossy().into_owned(),
         node: entry.to_string_lossy().into_owned(),
-        started_at: lmg_core::log::iso_now(),
+        started_at: swiss_core::log::iso_now(),
     });
 
     if wait_for_health(&client, port, timeout_ms, || !is_pid_alive(pid)).await {
-        // Two racing `lmg start`s both reach here: the loser's child died on EADDRINUSE while
+        // Two racing `swiss start`s both reach here: the loser's child died on EADDRINUSE while
         // the WINNER answered the health poll — the port being up proves nothing about whose
         // child it is. Only our own child still standing counts as "started"; otherwise this is
         // a failure with a pid file that must go (it points at the dead loser, not the daemon
@@ -540,7 +547,7 @@ async fn get_json(
     res.json::<Value>().await.ok()
 }
 
-/// What `lmg status` prints. "Running" means it answered — not that a pid file exists, which is
+/// What `swiss status` prints. "Running" means it answered — not that a pid file exists, which is
 /// a claim about the past.
 pub async fn daemon_status(port: u16) -> StatusResult {
     let client = reqwest::Client::new();
@@ -561,8 +568,8 @@ pub async fn daemon_status(port: u16) -> StatusResult {
         build_note: None,
     };
     if let Some(rec) = &rec {
-        if let Some(started) = lmg_core::util::parse_iso_ms(&rec.started_at) {
-            let now = lmg_core::util::now_ms() as i64;
+        if let Some(started) = swiss_core::util::parse_iso_ms(&rec.started_at) {
+            let now = swiss_core::util::now_ms() as i64;
             result.uptime_ms = Some((now - started).max(0) as u64);
         }
     }
@@ -622,14 +629,14 @@ mod tests {
     use super::*;
 
     /// The state files and the pid files all live in the one scratch data dir the whole test
-    /// binary shares, and `MCP_GATEWAY_PORT` is process-wide, so every test that writes one takes
-    /// this first and starts from a machine that has never run the gateway.
+    /// binary shares, and the port/token env vars are process-wide, so every test that writes
+    /// one takes this first and starts from a machine that has never run the gateway.
     async fn daemon_state() -> tokio::sync::MutexGuard<'static, ()> {
-        let guard = lmg_core::paths::DATA_DIR_LOCK.lock().await;
-        lmg_core::paths::test_home();
+        let guard = swiss_core::paths::DATA_DIR_LOCK.lock().await;
+        swiss_core::paths::test_home();
         // Pin the key before anything seals, so no test here depends on DPAPI or on which other
         // test happened to install the deterministic key first.
-        lmg_core::secure::key::use_test_master_key();
+        swiss_core::secure::key::use_test_master_key();
         clear_state();
         guard
     }
@@ -639,8 +646,14 @@ mod tests {
         for file in ["gateway.config.json", "managed.json", "tunnels.json"] {
             let _ = std::fs::remove_file(data_path(&[file]));
         }
-        let _ = std::fs::remove_file(lmg_core::secure::envstore::env_store_path());
-        for key in ["MCP_GATEWAY_PORT", "MCP_GATEWAY_TOKEN", "LMG_TEST_TOKEN"] {
+        let _ = std::fs::remove_file(swiss_core::secure::envstore::env_store_path());
+        for key in [
+            "SWISS_PORT",
+            "SWISS_TOKEN",
+            "MCP_GATEWAY_PORT",
+            "MCP_GATEWAY_TOKEN",
+            "SWISS_TEST_TOKEN",
+        ] {
             unsafe { std::env::remove_var(key) };
         }
     }
@@ -663,7 +676,7 @@ mod tests {
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect();
-        write_env_store(&store, &lmg_core::secure::envstore::env_store_path())
+        write_env_store(&store, &swiss_core::secure::envstore::env_store_path())
             .expect("seal the env");
     }
 
@@ -673,7 +686,7 @@ mod tests {
             port,
             entry: server_entry().to_string_lossy().into_owned(),
             node: server_entry().to_string_lossy().into_owned(),
-            started_at: lmg_core::log::iso_now(),
+            started_at: swiss_core::log::iso_now(),
         });
         pid
     }
@@ -765,13 +778,13 @@ mod tests {
     fn spots_a_path_inside_the_npx_cache() {
         // A daemon started from there stops being restartable the moment the cache turns over.
         assert!(is_npx_cache_path(Path::new(
-            "C:\\Users\\x\\AppData\\Local\\npm-cache\\_npx\\a1b2\\lmg.exe"
+            "C:\\Users\\x\\AppData\\Local\\npm-cache\\_npx\\a1b2\\swiss.exe"
         )));
-        assert!(is_npx_cache_path(Path::new("/home/x/.npm/_npx/a1b2/lmg")));
-        assert!(!is_npx_cache_path(Path::new("C:\\tools\\lmg.exe")));
-        assert!(!is_npx_cache_path(Path::new("/usr/local/bin/lmg")));
+        assert!(is_npx_cache_path(Path::new("/home/x/.npm/_npx/a1b2/swiss")));
+        assert!(!is_npx_cache_path(Path::new("C:\\tools\\swiss.exe")));
+        assert!(!is_npx_cache_path(Path::new("/usr/local/bin/swiss")));
         // "_npx" inside a longer name is not the cache.
-        assert!(!is_npx_cache_path(Path::new("/home/x/my_npx_tools/lmg")));
+        assert!(!is_npx_cache_path(Path::new("/home/x/my_npx_tools/swiss")));
     }
 
     #[test]
@@ -831,7 +844,7 @@ mod tests {
 
     #[tokio::test]
     async fn persisting_a_port_is_a_no_op_before_there_is_a_config() {
-        // First run reads MCP_GATEWAY_PORT; seeding a half-built config here would hand the
+        // First run reads SWISS_PORT; seeding a half-built config here would hand the
         // bootstrap a file to adopt that the user never wrote.
         let _lock = daemon_state().await;
         persist_listen_port(18083);
@@ -843,9 +856,9 @@ mod tests {
     #[tokio::test]
     async fn reads_the_token_from_managed_json_before_the_env_store() {
         // Precedence mirrors the server boot: a rotation persisted in managed.json wins over the
-        // seed the env store holds, or `lmg creds` would print a token that no longer works.
+        // seed the env store holds, or `swiss creds` would print a token that no longer works.
         let _lock = daemon_state().await;
-        seal_env(&[("MCP_GATEWAY_TOKEN", "from-env-store")]);
+        seal_env(&[("SWISS_TOKEN", "from-env-store")]);
         assert_eq!(read_gateway_token().as_deref(), Some("from-env-store"));
 
         seal("managed.json", json!({ "token": "rotated" }));
@@ -859,16 +872,55 @@ mod tests {
         let _ = std::fs::remove_file(data_path(&["managed.json"]));
         seal(
             "gateway.config.json",
-            json!({ "tokenEnv": "LMG_TEST_TOKEN" }),
+            json!({ "tokenEnv": "SWISS_TEST_TOKEN" }),
         );
-        seal_env(&[("LMG_TEST_TOKEN", "named-var")]);
+        seal_env(&[("SWISS_TEST_TOKEN", "named-var")]);
         assert_eq!(read_gateway_token().as_deref(), Some("named-var"));
         clear_state();
     }
 
     #[tokio::test]
+    async fn the_well_known_token_names_fall_back_to_each_other() {
+        // A pre-rename config names the legacy variable while the operator pinned the token
+        // under the new one, and the reverse: the config and the pin can come from different
+        // eras, and an existing token must be found either way.
+        let _lock = daemon_state().await;
+        seal("gateway.config.json", json!({ "tokenEnv": "MCP_GATEWAY_TOKEN" }));
+        seal_env(&[("SWISS_TOKEN", "new-era-pin")]);
+        assert_eq!(read_gateway_token().as_deref(), Some("new-era-pin"));
+
+        seal("gateway.config.json", json!({ "tokenEnv": "SWISS_TOKEN" }));
+        seal_env(&[("MCP_GATEWAY_TOKEN", "legacy-pin")]);
+        assert_eq!(read_gateway_token().as_deref(), Some("legacy-pin"));
+        clear_state();
+    }
+
+    #[tokio::test]
+    async fn an_empty_stored_value_falls_through_to_the_pair() {
+        // The store can hold an empty entry under the config's name; the serve side
+        // (token_lookup) treats empty as missing, and the CLI must agree — otherwise creds
+        // prints an empty token while serve authenticates the pair partner's value.
+        let _lock = daemon_state().await;
+        seal("gateway.config.json", json!({ "tokenEnv": "MCP_GATEWAY_TOKEN" }));
+        seal_env(&[("MCP_GATEWAY_TOKEN", ""), ("SWISS_TOKEN", "the-real-pin")]);
+        assert_eq!(read_gateway_token().as_deref(), Some("the-real-pin"));
+        clear_state();
+    }
+
+    #[tokio::test]
+    async fn a_custom_token_env_name_gets_no_fallback() {
+        // Only the two well-known names cross-fallback: a config naming its own variable must
+        // not quietly authenticate with a token pinned under a name its operator never wrote.
+        let _lock = daemon_state().await;
+        seal("gateway.config.json", json!({ "tokenEnv": "MY_OWN_TOKEN" }));
+        seal_env(&[("MCP_GATEWAY_TOKEN", "legacy-pin"), ("SWISS_TOKEN", "new-pin")]);
+        assert_eq!(read_gateway_token(), None);
+        clear_state();
+    }
+
+    #[tokio::test]
     async fn creds_report_the_panel_url_and_the_token_and_nothing_else() {
-        // The rest of the env store is DB passwords; `lmg creds` prints what a client needs to
+        // The rest of the env store is DB passwords; `swiss creds` prints what a client needs to
         // connect and stops there. The panel has no login, so there is no password to print.
         let _lock = daemon_state().await;
         seal_env(&[("MCP_GATEWAY_TOKEN", "tok"), ("DB_PASSWORD", "hunter2")]);
@@ -982,7 +1034,7 @@ mod tests {
         let result = start_daemon(StartOptions {
             port: Some(gw.port),
             // Unspawnable, so any attempt to start would surface as a failure rather than pass.
-            entry: Some(std::path::PathBuf::from("lmg-no-such-binary")),
+            entry: Some(std::path::PathBuf::from("swiss-no-such-binary")),
             ..Default::default()
         })
         .await;
@@ -1005,7 +1057,7 @@ mod tests {
         let port = free_port();
         let result = start_daemon(StartOptions {
             port: Some(port),
-            entry: Some(std::path::PathBuf::from("lmg-no-such-binary")),
+            entry: Some(std::path::PathBuf::from("swiss-no-such-binary")),
             timeout_ms: Some(200),
             ..Default::default()
         })
@@ -1033,7 +1085,7 @@ mod tests {
         plant_dead_pid(port);
         let result = start_daemon(StartOptions {
             port: Some(port),
-            entry: Some(std::path::PathBuf::from("lmg-no-such-binary")),
+            entry: Some(std::path::PathBuf::from("swiss-no-such-binary")),
             timeout_ms: Some(200),
             ..Default::default()
         })
@@ -1226,7 +1278,7 @@ mod tests {
         let pid = plant_dead_pid(port);
         let status = daemon_status(port).await;
         assert!(!status.running);
-        assert_eq!(status.pid, Some(pid)); // still reported, so `lmg stop` has something to act on
+        assert_eq!(status.pid, Some(pid)); // still reported, so `swiss stop` has something to act on
         assert_eq!(status.url, None);
         remove_pid_file(port);
     }
@@ -1236,7 +1288,7 @@ mod tests {
     /// script elsewhere. NOTE: never point this comparison at the test binary itself in a
     /// pid record — a test runner asked for --version just runs the whole suite again.
     fn version_probe_entry(dir: &Path, hash: &str) -> std::path::PathBuf {
-        let line = format!("lmg 0.1.0 ({hash}, 2026-01-01T00:00:00Z)");
+        let line = format!("swiss 0.1.0 ({hash}, 2026-01-01T00:00:00Z)");
         #[cfg(windows)]
         let (script, text) = (dir.join("version-probe.cmd"), format!("@echo {line}\r\n"));
         #[cfg(not(windows))]
@@ -1304,7 +1356,7 @@ mod tests {
             port: gw.port,
             entry: entry.to_string_lossy().into_owned(),
             node: entry.to_string_lossy().into_owned(),
-            started_at: lmg_core::log::iso_now(),
+            started_at: swiss_core::log::iso_now(),
         });
 
         let status = daemon_status(gw.port).await;
@@ -1327,16 +1379,16 @@ mod tests {
     #[test]
     fn the_version_hash_is_parsed_from_the_parenthesised_pair() {
         assert_eq!(
-            parse_version_hash("lmg 0.1.0 (23047d8, 2026-09-11T13:16:40Z)"),
+            parse_version_hash("swiss 0.1.0 (23047d8, 2026-09-11T13:16:40Z)"),
             Some("23047d8")
         );
         assert_eq!(
-            parse_version_hash("lmg 0.1.0 (23047d8-dirty, 2026-09-11T13:16:40Z)"),
+            parse_version_hash("swiss 0.1.0 (23047d8-dirty, 2026-09-11T13:16:40Z)"),
             Some("23047d8-dirty")
         );
         // Anything not the version_line shape is a None, never a guess.
-        assert_eq!(parse_version_hash("lmg 0.1.0"), None);
+        assert_eq!(parse_version_hash("swiss 0.1.0"), None);
         assert_eq!(parse_version_hash(""), None);
-        assert_eq!(parse_version_hash("lmg 0.1.0 (, x)"), None);
+        assert_eq!(parse_version_hash("swiss 0.1.0 (, x)"), None);
     }
 }

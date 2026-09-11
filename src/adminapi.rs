@@ -19,21 +19,21 @@ use axum::Router;
 use serde_json::{json, Map, Value};
 
 use crate::app::{admin_error, admin_json, AppContext};
-use lmg_core::log;
-use lmg_host::config::ServerDef;
-use lmg_host::managed::ManagedEntry;
-use lmg_host::mask::{mask_def, unmask_body};
-use lmg_host::mem::get_memory_info;
-use lmg_mcp::adapters::make_adapter;
-use lmg_mcp::calls::{with_call_source_panel, CALLS_PAGE_SIZE};
-use lmg_mcp::paging::{list_page, PageCache, PAGE_SIZE};
-use lmg_mcp::registry::Lifecycle;
-use lmg_tunnels::tunnel::manager::TunnelLinks;
+use swiss_core::log;
+use swiss_host::config::ServerDef;
+use swiss_host::managed::ManagedEntry;
+use swiss_host::mask::{mask_def, unmask_body};
+use swiss_host::mem::get_memory_info;
+use swiss_mcp::adapters::make_adapter;
+use swiss_mcp::calls::{with_call_source_panel, CALLS_PAGE_SIZE};
+use swiss_mcp::paging::{list_page, PageCache, PAGE_SIZE};
+use swiss_mcp::registry::Lifecycle;
+use swiss_tunnels::tunnel::manager::TunnelLinks;
 
 // --- tunnel seam ---------------------------------------------------------------------------------
 
 // `TunnelLinks` — what this API is allowed to do with tunnels — is defined by the tunnel
-// side (lmg_tunnels::TunnelLinks); the tunnel manager implements it. Deliberately that
+// side (swiss_tunnels::TunnelLinks); the tunnel manager implements it. Deliberately that
 // narrow: an MCP operation must never start or stop a tunnel.
 
 /// Consult the tunnel seam, if the boot sequence installed one (None until the tunnel subsystem
@@ -345,7 +345,7 @@ async fn add_managed(
     })?;
     if let Err(err) = ctx
         .registry
-        .register(name, lmg_mcp::registry::Source::Managed, def, adapter)
+        .register(name, swiss_mcp::registry::Source::Managed, def, adapter)
     {
         let _ = ctx.store.remove(name);
         return Err(err);
@@ -375,7 +375,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         // shape: the panel reads named fields only, and the stamp is metadata, never a secret.
         admin_json(
             StatusCode::OK,
-            json!({ "tokenEnv": ctx.token_env, "panelVersion": lmg_panel::admin::panel_version_stamp(), "build": crate::app::build_info() }),
+            json!({ "tokenEnv": ctx.token_env, "panelVersion": swiss_panel::admin::panel_version_stamp(), "build": crate::app::build_info() }),
         )
     }));
 
@@ -471,7 +471,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .and_then(|p| p.parse::<usize>().ok())
                     .unwrap_or(0);
                 let page_size = q.get("pageSize").and_then(|p| p.parse::<usize>().ok());
-                let query = lmg_mcp::traffic::TrafficQuery {
+                let query = swiss_mcp::traffic::TrafficQuery {
                     mcp: q.get("mcp").map(String::as_str),
                     client: q.get("client").map(String::as_str),
                     method: q.get("method").map(String::as_str),
@@ -479,8 +479,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     page,
                     page_size,
                 };
-                let mut out = lmg_mcp::traffic::read_traffic(&query);
-                out["clients"] = json!(lmg_mcp::traffic::traffic_clients());
+                let mut out = swiss_mcp::traffic::read_traffic(&query);
+                out["clients"] = json!(swiss_mcp::traffic::traffic_clients());
                 admin_json(StatusCode::OK, out)
             },
         )
@@ -488,7 +488,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             |Query(q): Query<std::collections::HashMap<String, String>>| async move {
                 // ?client=<prefixed key> clears only that client's rows; without it, all traffic.
                 let client = q.get("client").cloned();
-                lmg_mcp::traffic::clear_traffic(client.as_deref());
+                swiss_mcp::traffic::clear_traffic(client.as_deref());
                 admin_json(StatusCode::OK, json!({ "ok": true, "client": client }))
             },
         ),
@@ -499,7 +499,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             let Ok(seq) = seq.parse::<u64>() else {
                 return admin_error(StatusCode::BAD_REQUEST, "seq must be a number");
             };
-            match lmg_mcp::traffic::read_traffic_entry(seq) {
+            match swiss_mcp::traffic::read_traffic_entry(seq) {
                 None => admin_error(
                     StatusCode::NOT_FOUND,
                     "No such interaction (the ring may have rolled over)",
@@ -757,7 +757,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 for m in ctx.store.all() {
                     taken.insert(m.name.clone());
                 }
-                let plan = match lmg_mcp::mcp_import::plan_mcp_import(&body, &taken, ctx.port) {
+                let plan = match swiss_mcp::mcp_import::plan_mcp_import(&body, &taken, ctx.port) {
                     Ok(plan) => plan,
                     // Node's handler let planMcpImport throw into the router's catch-all, which
                     // answered 500 {error} — structural surprises are server errors there, not 400s.
@@ -873,7 +873,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             }
 
             let adapter = match build_def(&body) {
-                Ok(def) => match lmg_mcp::adapters::make_adapter(&def, "test", &ctx.calls) {
+                Ok(def) => match swiss_mcp::adapters::make_adapter(&def, "test", &ctx.calls) {
                     Ok(adapter) => adapter,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
                 },
@@ -934,13 +934,13 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     );
 
     // Stop the gateway. This endpoint exists because Windows has no deliverable SIGTERM, so
-    // `lmg stop` has no other way to reach the graceful sequence. The local-only guard ahead of
+    // `swiss stop` has no other way to reach the graceful sequence. The local-only guard ahead of
     // every route means it is unreachable from another machine.
     r = r.route(
         "/api/shutdown",
         post(|State(ctx): State<Arc<AppContext>>| async move {
             log::info("shutdown requested over the admin API");
-            // Answer before tearing anything down: `lmg stop` distinguishes a clean stop from a
+            // Answer before tearing anything down: `swiss stop` distinguishes a clean stop from a
             // crash by receiving this response. The signal fires just after the response is
             // handed to the connection (Node waited on the socket's finish event).
             let tx = ctx.shutdown.clone();
@@ -1045,8 +1045,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             // resurrects it. The write is atomic and touches only this key — ${ENV} refs
             // elsewhere survive verbatim.
             let source = ctx.registry.get(&name).and_then(|e| e.data.read().ok().map(|d| d.source));
-            if source == Some(lmg_mcp::registry::Source::Config)
-                && !lmg_host::config::remove_config_server(&name, &lmg_host::config::config_path()) {
+            if source == Some(swiss_mcp::registry::Source::Config)
+                && !swiss_host::config::remove_config_server(&name, &swiss_host::config::config_path()) {
                     log::log(
                         "warn",
                         "config entry was already gone on delete",
@@ -1088,7 +1088,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
             };
             let source = entry.data.read().ok().map(|d| d.source);
-            let persist = if source == Some(lmg_mcp::registry::Source::Config) {
+            let persist = if source == Some(swiss_mcp::registry::Source::Config) {
                 ctx.store.upsert_override(&name, def.clone())
             } else {
                 ctx.store.update_def(&name, def.clone())
@@ -1233,7 +1233,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .read_tool_history(
                         &name,
                         &tool,
-                        limit.unwrap_or(lmg_mcp::calls::TOOL_HISTORY_MAX),
+                        limit.unwrap_or(swiss_mcp::calls::TOOL_HISTORY_MAX),
                         q.get("q").map(String::as_str),
                     )
                     .await;
@@ -1280,7 +1280,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                             "ok": !is_error,
                             "isError": is_error,
                             "ms": t0.elapsed().as_millis() as u64,
-                            "text": lmg_mcp::calls::content_text(&out),
+                            "text": swiss_mcp::calls::content_text(&out),
                         }),
                     )
                 }
@@ -1344,7 +1344,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                                             .and_then(Value::as_str)
                                             .map(|b| {
                                                 let bytes =
-                                                    lmg_core::util::to_hex(b.as_bytes()).len() / 2;
+                                                    swiss_core::util::to_hex(b.as_bytes()).len() / 2;
                                                 format!("[{bytes} bytes of binary]")
                                             })
                                             .unwrap_or_default()

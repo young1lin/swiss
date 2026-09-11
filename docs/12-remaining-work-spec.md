@@ -98,7 +98,7 @@ cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 
 ### 目标契约
 
-新增 `crates/lmg-host/src/services/catalog.rs`，与 `ActionRegistry` 同级的**类型化能力注册**：
+新增 `crates/swiss-host/src/services/catalog.rs`，与 `ActionRegistry` 同级的**类型化能力注册**：
 
 ```rust
 /// A connection definition someone can browse or call, independent of who owns the driver.
@@ -170,7 +170,7 @@ pub enum CatalogError {
 > 插件本体已于 2026-09-11 按用户决定删除（连同面板视图与专属测试）。试金石的使命——从零加插件、
 > `host/` 零改动——已经完成，并由终端插件在同一路径上再次验证。下文保留为实施记录。
 
-docs/09 §9 要的验收样例是 **HTTP 工具插件**。选它有一个现成理由：`reqwest` 已经在依赖图里（`crates/lmg-mcp/src/adapters/http.rs` 用着），所以这个插件不会让二进制变大，符合"每个新依赖都要证明自己的重量"。
+docs/09 §9 要的验收样例是 **HTTP 工具插件**。选它有一个现成理由：`reqwest` 已经在依赖图里（`crates/swiss-mcp/src/adapters/http.rs` 用着），所以这个插件不会让二进制变大，符合"每个新依赖都要证明自己的重量"。
 
 ### 范围（刻意小）
 
@@ -184,7 +184,7 @@ docs/09 §9 要的验收样例是 **HTTP 工具插件**。选它有一个现成�
 
 功能本身不重要，**下面这条才是**：
 
-> 从零加上这个插件，`crates/lmg-host/src/host/` 下**一个文件都不需要改**，`src/server.rs` 只增加一行 `register`。
+> 从零加上这个插件，`crates/swiss-host/src/host/` 下**一个文件都不需要改**，`src/server.rs` 只增加一行 `register`。
 
 如果做的过程中发现必须改 host，那就说明契约有缺口——**先把缺口作为独立提交修掉**（并在 docs/09 §4 里补上这条契约），再回来加插件。这正是试金石的用途：它是用来发现问题的，不是用来展示成功的。
 
@@ -205,14 +205,14 @@ docs/09 §9 要的验收样例是 **HTTP 工具插件**。选它有一个现成�
 
 | crate | 内容 | 允许依赖 |
 | --- | --- | --- |
-| `lmg-core` | `paths` `log` `util` `atomic_json` `mask` `paging` `platform/` `secure/` | 无（只依赖外部 crate） |
-| `lmg-host` | `config_store` `host/` `services/` `auth` `local_only` `token` `app`（路由骨架） | core |
-| `lmg-mcp` | `registry` `adapters/` `calls` `traffic` `managed` `mcp_import` `introspect` | core, host |
-| `lmg-data` | `dbbrowser` `dbbrowser_api` `*_browser` | core, host |
-| `lmg-tunnels` | `tunnel/` | core, host |
-| `lmg-jobs` | `jobs/` | core, host |
-| `lmg-panel` | `admin` + `admin_assets/`（rust-embed） | core |
-| `lmg`（bin） | `main` `cli` `daemon` `server` `pidfile` `bootstrap` `subsystems` `skill_install` | 全部 |
+| `swiss-core` | `paths` `log` `util` `atomic_json` `mask` `paging` `platform/` `secure/` | 无（只依赖外部 crate） |
+| `swiss-host` | `config_store` `host/` `services/` `auth` `local_only` `token` `app`（路由骨架） | core |
+| `swiss-mcp` | `registry` `adapters/` `calls` `traffic` `managed` `mcp_import` `introspect` | core, host |
+| `swiss-data` | `dbbrowser` `dbbrowser_api` `*_browser` | core, host |
+| `swiss-tunnels` | `tunnel/` | core, host |
+| `swiss-jobs` | `jobs/` | core, host |
+| `swiss-panel` | `admin` + `admin_assets/`（rust-embed） | core |
+| `swiss`（bin） | `main` `cli` `daemon` `server` `pidfile` `bootstrap` `subsystems` `skill_install` | 全部 |
 
 强制规则：
 
@@ -236,13 +236,13 @@ docs/09 §9 要的验收样例是 **HTTP 工具插件**。选它有一个现成�
 | W1 | 四处文档与事实一致；`git status` 干净 |
 | W2 | docs/01 三行有数字、日期、条件；超预算时附诊断 |
 | W3 | 租约生命周期测试齐全；MCP 停用时 `/api/db` 是点名的 503；100 次启停无泄漏 |
-| W4 | `crates/lmg-host/src/host/` 零改动（若有改动，必须是独立的契约修补提交）；`src/server.rs` 只加一行 |
+| W4 | `crates/swiss-host/src/host/` 零改动（若有改动，必须是独立的契约修补提交）；`src/server.rs` 只加一行 |
 | W5 | 五目标构建；`cargo tree -d` 干净；无行为改动；无"省内存"的表述 |
 
 通用（每一项都查）：
 
 1. 四条门禁命令的输出贴在 PR 描述里。
-2. `crates/lmg-panel/src/admin_assets/` 的改动为 0（W4 的页面除外，且必须走 Node 先行 + SHA256 核对）。
+2. `crates/swiss-panel/src/admin_assets/` 的改动为 0（W4 的页面除外，且必须走 Node 先行 + SHA256 核对）。
 3. 新注释全英文。
 4. 配置 / 磁盘 / 网络路径上没有新的 `.unwrap()`。
 5. 新依赖必须在提交信息里说明它的重量，并且是 `default-features = false` 起步。

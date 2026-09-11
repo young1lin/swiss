@@ -3,7 +3,7 @@
 > 状态：**已实施**。完成基线 `ce409be`（Rust 侧 N4；Node 侧 N1–N2 为 `4c2c964`、`9021853`，N3 为 `f88d7e2`）。原设计基线 `394bd44`。
 > 前置阅读：`AGENTS.md`（它的规则高于本文任何便利）、`docs/09-toolbox-plugin-architecture.md` §6
 > （页面契约）、`docs/07-decisions.md` ADR-009（面板只读）与 ADR-010（八个 crate）。
-> **本仓库的 `crates/lmg-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在
+> **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在
 > `../local-mcp-gateway/src/admin/`，跑完 Node 侧的 vitest，再整目录复制回来。
 > 新写的代码注释一律英文；文档散文中文。
 
@@ -65,7 +65,7 @@ MCPs | Traffic | Tunnels | Data | Jobs | Terminal | Plugins
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ MCP Gateway   [ MCP | Tunnels | Data | Jobs | HTTP | Plugins ]  … mem …  │  ← 顶栏，一级
+│ swiss         [ MCP | Tunnels | Data | Jobs | HTTP | Plugins ]  … mem …  │  ← 顶栏，一级
 ├──────────────────────────────────────────────────────────────────────────┤
 │ [ Servers | Traffic ]                                                    │  ← 二级，仅当 ≥2 页时出现
 ├───────────────┬──────────────────────────────────────────────────────────┤
@@ -304,12 +304,12 @@ page("mcps", MCP_ID, "MCPs", 10, true),   // →  page("mcps", MCP_ID, "Servers"
 ### N3 — 整树复制回本仓库
 
 ```powershell
-Remove-Item -Recurse -Force crates\lmg-panel\src\admin_assets
-Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\lmg-panel\src\admin_assets
+Remove-Item -Recurse -Force crates\swiss-panel\src\admin_assets
+Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\swiss-panel\src\admin_assets
 ```
 
 - 复制**整棵树**，不要挑文件（ADR-009）。
-- 立刻跑 `cargo test -p lmg-panel`：`the_tree_is_byte_for_byte_the_node_builds` 必须通过，且必须是
+- 立刻跑 `cargo test -p swiss-panel`：`the_tree_is_byte_for_byte_the_node_builds` 必须通过，且必须是
   真的比对过 —— 它现在会 `assert_eq!(compared, PanelAssets::iter().count())`，比对数为 0 会失败。
 - 这一提交里**只有** `admin_assets/` 的变化，不掺任何 Rust 改动。这样将来 `git log -- admin_assets`
   就是一份干净的「面板从 Node 复制过来」的历史。
@@ -336,7 +336,7 @@ Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\lmg-panel\src\admin_ass
 
 1. Node 仓库 `npx vitest run` 全绿，`admin-pages.test.ts` 里 D2 列的五条都在。
 2. 本仓库四条门禁全绿。
-3. `cargo test -p lmg-panel the_tree_is_byte_for_byte` 通过（不是 skip）。
+3. `cargo test -p swiss-panel the_tree_is_byte_for_byte` 通过（不是 skip）。
 4. `curl -s localhost:19999/api/plugins` 的 `pages[].pluginId` 输出未变 —— 后端契约没动。
 5. 浏览器里：`#traffic` 直接打开 → 一级 MCP 选中、二级 Traffic 选中；`#tunnels` → 无二级栏；
    窗口高度改变时 pane 与 sidebar 各自滚动，页面本身不出现滚动条。

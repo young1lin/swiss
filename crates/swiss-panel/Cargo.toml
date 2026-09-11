@@ -1,0 +1,19 @@
+[package]
+name = "swiss-panel"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+swiss-core = { path = "../swiss-core" }
+swiss-host = { path = "../swiss-host" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+# The admin panel, embedded byte-for-byte and served from &'static [u8].
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync", "test-util"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+serde = { version = "1", features = ["derive"] }

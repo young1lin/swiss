@@ -7,9 +7,9 @@
 
 你在两个相邻仓库里工作：
 
-- `<repo>` — Rust 版网关（cargo workspace，产物是单个 `lmg.exe`）。
+- `<repo>` — Rust 版网关（cargo workspace，产物是单个 `swiss.exe`）。
 - `<node-repo>` — Node/TypeScript 版，它的 `src/admin/` 是两边共用的
-  面板源码。Rust 仓库里的 `crates/lmg-panel/src/admin_assets/` 是它的逐字节拷贝，**只能复制，不能手改**；
+  面板源码。Rust 仓库里的 `crates/swiss-panel/src/admin_assets/` 是它的逐字节拷贝，**只能复制，不能手改**；
   测试 `the_tree_is_byte_for_byte_the_node_builds` 会拦住任何分叉。
 
 任务：实施 `docs/15-terminal-paste-and-local-shell-spec.md`。先完整读完这份 spec，再读它开头列的
@@ -20,10 +20,10 @@
 - `../local-mcp-gateway/src/admin/js/views/terminal.js`（`wireTerminal`、`sendInput`、`openSession`）
 - `../local-mcp-gateway/src/admin/js/terminal-core.js`（纯函数层，`targetRows`）
 - `../local-mcp-gateway/test/admin-terminal.test.ts`
-- `crates/lmg-core/src/platform/pty/conpty.rs`（`default_shell`、`command_line`）
-- `crates/lmg-terminal/src/terminal/local.rs`、`config.rs`
+- `crates/swiss-core/src/platform/pty/conpty.rs`（`default_shell`、`command_line`）
+- `crates/swiss-terminal/src/terminal/local.rs`、`config.rs`
 - `src/plugins/terminal.rs`、`src/plugins/terminal_api.rs`
-- `crates/lmg-host/src/host/api.rs` 的 `put_config`
+- `crates/swiss-host/src/host/api.rs` 的 `put_config`
 - `../local-mcp-gateway/src/admin/js/views/plugins.js`（确认它确实没有配置表单）
 
 **交付**（spec §3 的两个提交，顺序不能反）：
@@ -46,13 +46,13 @@
 
 - 19999 是生产实例，**不要停、不要重启、不要部署**。所有实测都在 19998：
   `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`，然后
-  `$env:MCP_GATEWAY_PORT = "19998"; & target-test\release\lmg.exe serve`。永远用环境变量，
+  `$env:MCP_GATEWAY_PORT = "19998"; & target-test\release\swiss.exe serve`。永远用环境变量，
   不要 `--port`（它会写进配置）。
-- 停 19998 只按端口找 PID：`Get-NetTCPConnection -LocalPort 19998`。绝不 `Get-Process lmg`。
+- 停 19998 只按端口找 PID：`Get-NetTCPConnection -LocalPort 19998`。绝不 `Get-Process swiss`。
 - 两个实例共用 `~/.mcp-gateway/gateway.config.json`。spec §4.2 在 19998 上保存 terminal 配置会写进
   生产配置——验收完把 `local.enabled` 恢复成用户要的值（用户要的是**打开、pwsh**），并在汇报里写明
   你最终留下的是什么。（自 docs/16 H2 起这一条作废：19998 用 `scripts/test-instance.ps1` 起在自己的
-  测试家 `%LOCALAPPDATA%\lmg-test-home`，保存只写测试家。原文保留作历史。）
+  测试家 `%LOCALAPPDATA%\swiss-test-home`，保存只写测试家。原文保留作历史。）
 - 浏览器实测用 `.agents/skills/agent-browser`（先 `agent-browser skills get core`）。这台机器上它
   冷启动慢，每条命令前加 `timeout`，只开一个命名会话，结束 `agent-browser close`。
   粘贴的验证手段：`press Control+v` 后截图看有没有 `^V`；对 `.xterm-helper-textarea` 派发合成

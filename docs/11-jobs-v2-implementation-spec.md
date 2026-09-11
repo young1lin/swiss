@@ -12,7 +12,7 @@
 - 分成 S1–S6 六个阶段，**一个阶段一个提交**，每个阶段独立可验收、独立可回退。
 - 每个阶段的"完成"是机械可检查的：本文列出的测试全部存在且通过，加上四条门禁命令全绿。
 - 行为变化先有测试：改动前失败、改动后通过（AGENTS.md「Making changes」）。
-- **本仓库的 `crates/lmg-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在 `../local-mcp-gateway/src/admin/`，再整目录复制回来，见 S6。
+- **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在 `../local-mcp-gateway/src/admin/`，再整目录复制回来，见 S6。
 - 新写的代码注释一律英文。文档散文可以中文。
 - 每个阶段提交前跑：
 
@@ -29,15 +29,15 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 | 位置 | 当时 | 目标（现已实现） | 阶段 |
 | --- | --- | --- | --- |
-| `crates/lmg-jobs/src/jobs/mod.rs:55` `JobDef` | v1：name + command + everySec/cron + enabled + timeoutMs + cwd，**lastRunAt / lastOk 混在同一个结构体里** | v2 `JobDefinition`：稳定 id、title、labels、disabled、trigger、action、policy；运行状态搬走 | S1, S2 |
-| `crates/lmg-jobs/src/jobs/mod.rs:178` `JobStore` | 密封 `jobs.json` 是定义的唯一来源，也是 lastRun 的写入点 | 定义来自 `gateway.config.json → plugins.jobs.config.definitions`；`jobs.json` 迁移后只读、清空、留备份 | S3, S4 |
+| `crates/swiss-jobs/src/jobs/mod.rs:55` `JobDef` | v1：name + command + everySec/cron + enabled + timeoutMs + cwd，**lastRunAt / lastOk 混在同一个结构体里** | v2 `JobDefinition`：稳定 id、title、labels、disabled、trigger、action、policy；运行状态搬走 | S1, S2 |
+| `crates/swiss-jobs/src/jobs/mod.rs:178` `JobStore` | 密封 `jobs.json` 是定义的唯一来源，也是 lastRun 的写入点 | 定义来自 `gateway.config.json → plugins.jobs.config.definitions`；`jobs.json` 迁移后只读、清空、留备份 | S3, S4 |
 | `src/builtin.rs:362` `validate_jobs_config` | 只检查每项是不是 object，descriptor 里自己写着 "the scheduler reads jobs.json today" | 完整 v2 校验，是配置写入的服务端权威 | S1, S3 |
-| `crates/lmg-jobs/src/jobs/schedule.rs` | 每次求值重新 parse cron；无 occurrence 持久化、无 misfire、无 DST 语义 | 编译一次复用；持久化 occurrence key；misfire 与 DST 明确 | S5 |
-| `crates/lmg-jobs/src/jobs/mod.rs:264` `JobSystem.runtime` | 每任务一个 bool，overlap 只有 skip | overlap = skip / queue-one，经 `RunCoordinator` 判定；retry 属于一次 occurrence | S5 |
-| `crates/lmg-host/src/services/runs.rs:45` 容量默认值 | 注释说"jobs 的 reconciler 会覆盖"，但 `set_capacity` 只有测试在调用 | `plugins.jobs.config.maxConcurrentRuns / maxQueuedRuns` 真正驱动 `set_capacity` | S3 |
-| `crates/lmg-jobs/src/jobs/runlog.rs:34` | `DIR` / `STATES` 是进程级 `OnceLock`，测试靠 `RUNLOG_TEST_LOCK` 串行 | 实例化为 `RunLog`，由 `JobSystem` 持有；测试锁删除 | S2 |
-| `crates/lmg-jobs/src/jobs/runlog.rs` 读取 | `read_page` 读整个文件 | 从文件尾部按块读的游标分页；模块总预算淘汰 | S2, S5 |
-| `crates/lmg-panel/src/admin_assets/js/jobs.js` | 手写字段表单 + 6s 轮询 | schema 驱动的编辑器、runId 模型、游标历史 | S6 |
+| `crates/swiss-jobs/src/jobs/schedule.rs` | 每次求值重新 parse cron；无 occurrence 持久化、无 misfire、无 DST 语义 | 编译一次复用；持久化 occurrence key；misfire 与 DST 明确 | S5 |
+| `crates/swiss-jobs/src/jobs/mod.rs:264` `JobSystem.runtime` | 每任务一个 bool，overlap 只有 skip | overlap = skip / queue-one，经 `RunCoordinator` 判定；retry 属于一次 occurrence | S5 |
+| `crates/swiss-host/src/services/runs.rs:45` 容量默认值 | 注释说"jobs 的 reconciler 会覆盖"，但 `set_capacity` 只有测试在调用 | `plugins.jobs.config.maxConcurrentRuns / maxQueuedRuns` 真正驱动 `set_capacity` | S3 |
+| `crates/swiss-jobs/src/jobs/runlog.rs:34` | `DIR` / `STATES` 是进程级 `OnceLock`，测试靠 `RUNLOG_TEST_LOCK` 串行 | 实例化为 `RunLog`，由 `JobSystem` 持有；测试锁删除 | S2 |
+| `crates/swiss-jobs/src/jobs/runlog.rs` 读取 | `read_page` 读整个文件 | 从文件尾部按块读的游标分页；模块总预算淘汰 | S2, S5 |
+| `crates/swiss-panel/src/admin_assets/js/jobs.js` | 手写字段表单 + 6s 轮询 | schema 驱动的编辑器、runId 模型、游标历史 | S6 |
 
 ## 2. 不可破坏的约束
 
@@ -134,7 +134,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 **总期限的硬校验**：`maxAttempts * (timeoutMs + delayMs) ≤ 86400000`（24 小时）。校验期就要算出来并拒绝，而不是等运行时才发现一个任务可以近乎无限地重试。
 
-未知字段一律拒绝（`additionalProperties: false` 的语义），错误信息里写出字段名和该层的合法字段清单——照 `services::actions` 里 `parse_exec_input` 的写法。数字不接受字符串、不接受负数、不接受小数（`crates/lmg-jobs/src/jobs/api.rs` 的 `whole_number` 是现成参考，它容忍 `60.0` 这种 JS 写法）。
+未知字段一律拒绝（`additionalProperties: false` 的语义），错误信息里写出字段名和该层的合法字段清单——照 `services::actions` 里 `parse_exec_input` 的写法。数字不接受字符串、不接受负数、不接受小数（`crates/swiss-jobs/src/jobs/api.rs` 的 `whole_number` 是现成参考，它容忍 `60.0` 这种 JS 写法）。
 
 ### 3.3 trigger
 
@@ -164,7 +164,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### 3.5 Rust 类型
 
-新文件 `crates/lmg-jobs/src/jobs/def.rs`。类型是纯数据 + 纯函数，不碰 IO，便于全量单测：
+新文件 `crates/swiss-jobs/src/jobs/def.rs`。类型是纯数据 + 纯函数，不碰 IO，便于全量单测：
 
 ```rust
 pub struct JobsConfig {
@@ -213,7 +213,7 @@ pub struct ConfigError {
 
 定义是用户意图，运行状态是网关维护的事实，两者不能共用一个可写文件（docs/10 §5）。
 
-新文件 `~/.mcp-gateway/jobs-state.json`（密封，私有权限），由 `crates/lmg-jobs/src/jobs/state.rs` 拥有：
+新文件 `~/.mcp-gateway/jobs-state.json`（密封，私有权限），由 `crates/swiss-jobs/src/jobs/state.rs` 拥有：
 
 ```json
 {
@@ -270,7 +270,7 @@ pub struct ConfigError {
 | `timeoutMs` | `timeoutMs`（同值） |
 | `lastRunAt` / `lastOk` | 写入 `jobs-state.json`，**不进配置** |
 
-**必须用 `process.legacy-command` 而不是 `process.exec`**：老的 tokenizer 和宽松的 `${VAR}` 展开是既有命令的语义，改成严格解析会悄悄改变用户已有任务的含义（`crates/lmg-host/src/services/actions.rs` 里 `LegacyCommandAction` 的注释说明了这一点）。
+**必须用 `process.legacy-command` 而不是 `process.exec`**：老的 tokenizer 和宽松的 `${VAR}` 展开是既有命令的语义，改成严格解析会悄悄改变用户已有任务的含义（`crates/swiss-host/src/services/actions.rs` 里 `LegacyCommandAction` 的注释说明了这一点）。
 
 ### 5.3 回退
 
@@ -363,7 +363,7 @@ v2 追加（新增字段是安全的，面板会忽略不认识的键）：`id`�
 
 ### 7.2 v2 编辑：复用现成的配置接口
 
-**不新增 CRUD 端点。** v2 的定义编辑就是插件配置写入，`PUT /api/plugins/jobs/config`（`crates/lmg-host/src/host/api.rs`）已经具备 docs/10 §5 要求的全部性质：带 revision 的 CAS、服务端校验、持久化失败报 500、成功后 reconcile。
+**不新增 CRUD 端点。** v2 的定义编辑就是插件配置写入，`PUT /api/plugins/jobs/config`（`crates/swiss-host/src/host/api.rs`）已经具备 docs/10 §5 要求的全部性质：带 revision 的 CAS、服务端校验、持久化失败报 500、成功后 reconcile。
 
 需要补的只有两件：
 
@@ -387,7 +387,7 @@ Jobs 的 `restart_on_config_change` 现在是 `true`（`src/builtin.rs:394`）�
 
 留 `true` 不行，改回 `false` 更不行（那样编辑就完全不生效）。需要的是第三种语义。
 
-因此给 `PluginInstance` 加第三种语义（`crates/lmg-host/src/host/factory.rs` + `crates/lmg-host/src/host/engine.rs`）：
+因此给 `PluginInstance` 加第三种语义（`crates/swiss-host/src/host/factory.rs` + `crates/swiss-host/src/host/engine.rs`）：
 
 ```rust
 /// Apply a new config row IN PLACE, without a restart. Default: NotApplicable, so a plugin
@@ -414,13 +414,13 @@ Jobs 的 `apply_config` 语义：
 
 ### S1 — v2 定义模型（纯逻辑，无行为变化）
 
-新增 `crates/lmg-jobs/src/jobs/def.rs`：§3.5 的类型、`JobsConfig::parse`、v1↔v2 投影函数。**不接线**，`JobSystem` 还不使用它。
+新增 `crates/swiss-jobs/src/jobs/def.rs`：§3.5 的类型、`JobsConfig::parse`、v1↔v2 投影函数。**不接线**，`JobSystem` 还不使用它。
 
 `validate_jobs_config` 改为调用 `JobsConfig::parse`，于是 `PUT /api/plugins/jobs/config` 立刻获得真校验。此时 `definitions` 仍然不驱动任何调度——descriptor 的 `config_schema` 描述必须继续如实说明这一点。
 
 按 §2 规则 5：`retry`、`misfire`、`overlap: "queue-one"`、`output.capture: "none"` 在本阶段一律拒绝非默认值，错误信息写 not implemented until S5。
 
-测试（`crates/lmg-jobs/src/jobs/def.rs` 内联）：
+测试（`crates/swiss-jobs/src/jobs/def.rs` 内联）：
 - 每个字段的下界、上界、类型错误各一条，断言错误 `path` 正确。
 - 未知字段被拒绝，且信息里列出该层的合法字段。
 - 三种 trigger 的解析与拒绝（`kind` 缺失、两个 kind、cron 字段数不对、timezone 非 local）。
@@ -430,7 +430,7 @@ Jobs 的 `apply_config` 语义：
 
 ### S2 — 运行状态与日志实例化
 
-新增 `crates/lmg-jobs/src/jobs/state.rs`（§4）。`crates/lmg-jobs/src/jobs/runlog.rs` 的 `DIR` / `STATES` / `RUNLOG_TEST_LOCK` 全部删除，改成 `RunLog { dir, states: Mutex<HashMap<..>>, limits }`，由 `JobSystem` 持有；测试各自建自己的临时目录。
+新增 `crates/swiss-jobs/src/jobs/state.rs`（§4）。`crates/swiss-jobs/src/jobs/runlog.rs` 的 `DIR` / `STATES` / `RUNLOG_TEST_LOCK` 全部删除，改成 `RunLog { dir, states: Mutex<HashMap<..>>, limits }`，由 `JobSystem` 持有；测试各自建自己的临时目录。
 
 `JobDef` 的 `last_run_ms` / `last_ok` 字段移除，改从 `JobsState` 读；`jobs.json` 写入时不再写这两个键（读取时仍接受，供 S4 迁移用）。
 
@@ -460,7 +460,7 @@ Jobs 的 `apply_config` 语义：
 
 ### S4 — 迁移
 
-新增 `crates/lmg-jobs/src/jobs/migrate.rs`，实现 §5。
+新增 `crates/swiss-jobs/src/jobs/migrate.rs`，实现 §5。
 
 测试：
 - 全新数据目录（无 `jobs.json`）：no-op。
@@ -507,11 +507,11 @@ Jobs 的 `apply_config` 语义：
 ## 11. 验收清单（我 review 时逐条对）
 
 1. 四条门禁命令的输出，贴在 PR 描述里。
-2. `git diff --stat` 里 `crates/lmg-panel/src/admin_assets/` 是否为 0（S6 除外，且 S6 必须附 SHA256 核对）。
+2. `git diff --stat` 里 `crates/swiss-panel/src/admin_assets/` 是否为 0（S6 除外，且 S6 必须附 SHA256 核对）。
 3. 每个 v2 字段：解析测试、边界测试、错误路径断言各存在。
 4. 任何"接受但未实现"的字段是否按 §2 规则 5 被拒绝。
 5. 迁移的幂等与崩溃恢复测试，是否真的中断在两步之间，而不是把完整流程调用两次。
-6. 调度测试是否用注入时钟；`grep -rn "sleep" crates/lmg-jobs/src/jobs/` 不应出现真实时间等待（`delayMs` 的实现除外，且它必须与取消 `select!`）。
+6. 调度测试是否用注入时钟；`grep -rn "sleep" crates/swiss-jobs/src/jobs/` 不应出现真实时间等待（`delayMs` 的实现除外，且它必须与取消 `select!`）。
 7. `jobs.json` 迁移后 `jobs` 数组是否真的清空（这是防重复执行的关键）。
 8. `RunCoordinator` 的容量是否被配置真正驱动（`set_capacity` 有调用方）。
 9. 定义编辑是否会取消在途运行（不应该）。

@@ -27,7 +27,7 @@ porting the module they cover:
 | `vi.useFakeTimers()` | `tokio::time::pause()` + `advance()` |
 | `vi.mock()` of a module | Inject a trait object. Where the Node build mocks a module, the Rust port takes a `&dyn` parameter — this is where the port improves on the original |
 | `test/fixtures/` | `tests/fixtures/`, copied verbatim |
-| `beforeEach` tmp data dir | `std::env::temp_dir().join(format!("lmg-<tag>-{}", random_hex(8)))` + `MCP_GATEWAY_HOME` — no `tempfile` crate, in the spirit of ADR-007 |
+| `beforeEach` tmp data dir | `std::env::temp_dir().join(format!("swiss-<tag>-{}", random_hex(8)))` + `MCP_GATEWAY_HOME` — no `tempfile` crate, in the spirit of ADR-007 |
 
 Two environment rules carry over exactly:
 
@@ -136,15 +136,15 @@ remaining gap is visible without re-deriving it:
 
 ```
 cargo test --workspace         848 = 725 unit + 123 integration
-  lmg          67 unit + 120 integration  (adminapi 65, app 12, plugin_host 32,
+  swiss          67 unit + 120 integration  (adminapi 65, app 12, plugin_host 32,
                                            http_adapter 6, envelope_compat 4, memory 1)
-  lmg-mcp     266 unit +   3 integration  (dbbrowser_wiring)
-  lmg-host    174 unit
-  lmg-jobs     86 unit
-  lmg-tunnels  59 unit
-  lmg-core     46 unit
-  lmg-data     18 unit
-  lmg-panel     9 unit
+  swiss-mcp     266 unit +   3 integration  (dbbrowser_wiring)
+  swiss-host    174 unit
+  swiss-jobs     86 unit
+  swiss-tunnels  59 unit
+  swiss-core     46 unit
+  swiss-data     18 unit
+  swiss-panel     9 unit
 
 cargo test --workspace
              941  (the terminal plugin added its own, and the mongo/http-tools removals took
@@ -162,13 +162,13 @@ Every module in the workspace carries an inline `#[cfg(test)] mod tests` **excep
 
 | Module | Lines | Why not, and what it would take |
 | --- | --- | --- |
-| `lmg-mcp` `adapters/mysql_browser.rs` | 401 | Orchestration only — every path is `async fn` over a live connection, and the SQL it builds is quoted by `dbbrowser::quote_ident`, which is tested there. It belongs with the self-skipping DB tests. |
-| `lmg-core` `platform/windows.rs` | 378 | Win32 FFI: DPAPI, Toolhelp, registry. Its process walk is covered — the BFS both platforms share now lives un-`cfg`'d in `lmg-core`'s `platform/mod.rs` and is tested on whatever host runs the suite. What is left is the FFI itself, which needs the OS to answer. |
-| `lmg` `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (65) and `tests/app.rs` (12), which is where a route contract belongs. |
-| `lmg` `lib.rs`/`main.rs`, `lmg-core` `secure/mod.rs`, `lmg-tunnels` `tunnel/mod.rs` | 109 | Re-export shells with no behaviour of their own. |
+| `swiss-mcp` `adapters/mysql_browser.rs` | 401 | Orchestration only — every path is `async fn` over a live connection, and the SQL it builds is quoted by `dbbrowser::quote_ident`, which is tested there. It belongs with the self-skipping DB tests. |
+| `swiss-core` `platform/windows.rs` | 378 | Win32 FFI: DPAPI, Toolhelp, registry. Its process walk is covered — the BFS both platforms share now lives un-`cfg`'d in `swiss-core`'s `platform/mod.rs` and is tested on whatever host runs the suite. What is left is the FFI itself, which needs the OS to answer. |
+| `swiss` `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (65) and `tests/app.rs` (12), which is where a route contract belongs. |
+| `swiss` `lib.rs`/`main.rs`, `swiss-core` `secure/mod.rs`, `swiss-tunnels` `tunnel/mod.rs` | 109 | Re-export shells with no behaviour of their own. |
 
 The DB browsers are mostly I/O, but not entirely, and the difference is worth naming: their
-injection surface is `dbbrowser::quote_ident`, which is tested in `lmg-host`'s `dbbrowser.rs` — the browsers
+injection surface is `dbbrowser::quote_ident`, which is tested in `swiss-host`'s `dbbrowser.rs` — the browsers
 only call it. What was left untested was the pure logic buried between the awaits, so it was
 lifted out: `redis_browser::scan_args` (the panel sends every param as a JSON string, and an
 unclamped COUNT asks redis for the whole keyspace in one round trip) and `pg_browser::total_of`
@@ -176,10 +176,10 @@ unclamped COUNT asks redis for the whole keyspace in one round trip) and `pg_bro
 paging). Building the SCAN args before the connection also means a bad `type` is reported as a
 bad `type`, not as whatever the socket said.
 
-`lmg`'s `server.rs` is tested at `register_one`, not at `run_gateway` — the boot itself binds a port and
+`swiss`'s `server.rs` is tested at `register_one`, not at `run_gateway` — the boot itself binds a port and
 never returns, and the daemon tests already drive it from outside. `register_one` is where the
 decisions live: a panel Stop, a persisted tool toggle and the lazy rule all have to survive a
-restart. `lmg-panel`'s `admin.rs` is tested at its hand-rolled SHA-1, which nothing else in the tree checks,
+restart. `swiss-panel`'s `admin.rs` is tested at its hand-rolled SHA-1, which nothing else in the tree checks,
 against the published vectors and every block-padding boundary.
 
 The two platform halves must export the same names with the same signatures: `mod.rs` re-exports

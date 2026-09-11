@@ -9,12 +9,12 @@ use axum::http::{header, Request, StatusCode};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use lmg::app::{build_app, AppContext, BODY_LIMIT};
-use lmg_host::config::ServerDef;
-use lmg_host::managed::ManagedStore;
-use lmg_host::token::single_token_manager;
-use lmg_mcp::adapters::make_adapter;
-use lmg_mcp::registry::{Registry, Source};
+use swiss::app::{build_app, AppContext, BODY_LIMIT};
+use swiss_host::config::ServerDef;
+use swiss_host::managed::ManagedStore;
+use swiss_host::token::single_token_manager;
+use swiss_mcp::adapters::make_adapter;
+use swiss_mcp::registry::{Registry, Source};
 
 const TOKEN: &str = "test-token-0123456789abcdef";
 
@@ -26,8 +26,8 @@ fn echo_def() -> ServerDef {
 /// OWN scratch directory (the S2 instantiation): no two tests share one, so a call one test
 /// makes can never surface in another test's Logs page.
 async fn app_with_echo() -> axum::Router {
-    let scratch = std::env::temp_dir().join(format!("lmg-app-{}", lmg_core::util::random_hex(8)));
-    let calls = Arc::new(lmg_mcp::calls::CallLog::at(scratch.join("calls")));
+    let scratch = std::env::temp_dir().join(format!("swiss-app-{}", swiss_core::util::random_hex(8)));
+    let calls = Arc::new(swiss_mcp::calls::CallLog::at(scratch.join("calls")));
     let registry = Registry::new(3_600_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));
     let adapter = make_adapter(&echo_def(), "echo", &calls).expect("echo adapter");
@@ -111,7 +111,7 @@ async fn health_and_panel_serve() {
     // the binary on disk.
     let health = json.unwrap();
     assert_eq!(health["ok"], json!(true));
-    assert_eq!(health["build"]["hash"], json!(env!("LMG_GIT_HASH")));
+    assert_eq!(health["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
     assert!(!health["build"]["time"].as_str().unwrap_or("").is_empty());
 
     let (status, _, text) = send(&app, local(Request::get("/").body(Body::empty()).unwrap())).await;
@@ -211,7 +211,7 @@ async fn admin_api_lists_mcps_and_info() {
     assert_eq!(info["tokenEnv"], "MCP_GATEWAY_TOKEN");
     // The build stamp rides here too (docs/16 H3) — additive to the Node shape; the panel
     // reads named fields only.
-    assert_eq!(info["build"]["hash"], json!(env!("LMG_GIT_HASH")));
+    assert_eq!(info["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
 }
 
 #[tokio::test]
@@ -349,7 +349,7 @@ async fn mcp_endpoint_serves_a_real_client() {
     .auth_header(TOKEN);
     let transport = StreamableHttpClientTransport::with_client(reqwest::Client::new(), config);
     let client =
-        rmcp::service::serve_client(lmg_mcp::introspect::GatewayIntrospectClient, transport)
+        rmcp::service::serve_client(swiss_mcp::introspect::GatewayIntrospectClient, transport)
             .await
             .expect("initialize against the gateway endpoint");
 

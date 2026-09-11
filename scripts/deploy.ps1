@@ -4,7 +4,7 @@
 # failed with "Access is denied (os error 5)" - the linker cannot overwrite the exe a running
 # daemon holds - and nothing anywhere said WHICH build was running afterwards. This script
 # fixes the order, then proves the result: /health must report the hash this build stamped
-# into lmg.exe --version, or the script fails loudly with both values.
+# into swiss.exe --version, or the script fails loudly with both values.
 #
 # Run it from YOUR OWN terminal at the repo root, not from an agent tool shell: a deploy is
 # the operator's decision (H1 scrubs the daemon's environment anyway, but the habit stands).
@@ -16,7 +16,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Exe = 'target\release\lmg.exe'
+$Exe = 'target\release\swiss.exe'
 
 function Fail($message) {
     Write-Host $message -ForegroundColor Red
@@ -54,7 +54,7 @@ if ($LASTEXITCODE -ne 0) { Fail "status says the daemon is not running" }
 
 # The proof: the daemon now serving is THIS build, not the previous one still holding the port.
 $version = (& $Exe --version) | Select-Object -First 1
-if (-not ($version -match '^lmg \S+ \((?<hash>[^,]+), ')) {
+if (-not ($version -match '^swiss \S+ \((?<hash>[^,]+), ')) {
     Fail "cannot read a build hash from version line: $version"
 }
 $built = $Matches.hash

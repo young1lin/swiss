@@ -7,7 +7,7 @@ size of this job — the other 7,193 lines of that tree are the panel, which is 
 > **The port is complete; the destinations below are pre-workspace paths.** Every `src/…`
 > destination in this table names the single-crate layout the port was planned in. The code has
 > since been split into eight crates (`4147e8a`) — `src/adapters/x.rs` is now
-> `crates/lmg-mcp/src/adapters/x.rs`, `src/secure/` is `crates/lmg-core/src/secure/`, and so on.
+> `crates/swiss-mcp/src/adapters/x.rs`, `src/secure/` is `crates/swiss-core/src/secure/`, and so on.
 > The current map is in `docs/02-architecture.md`; this table is kept for what it actually
 > records — which Node module became which Rust module, and what each one cost.
 
@@ -108,7 +108,7 @@ leaves no orphan when the gateway is killed with Task Manager's End Task.
 
 **Exit criterion:** feature parity. Every panel view works against the Rust binary.
 
-## Phase 5 — The `lmg` command and shipping
+## Phase 5 — The `swiss` command and shipping
 
 | File | Lines | Destination | Risk | Note |
 | --- | --- | --- | --- | --- |
@@ -120,7 +120,7 @@ leaves no orphan when the gateway is killed with Task Manager's End Task.
 | `skill-install.ts` | 63 | `skill.rs` | Low | Ship `.agents/skills` beside the exe |
 | `types.d.ts` | 3 | *(deleted)* | — | |
 
-**Exit criterion:** `lmg start` / `stop` / `status` behave identically, and a single `.exe` runs on a
+**Exit criterion:** `swiss start` / `stop` / `status` behave identically, and a single `.exe` runs on a
 machine with no Node installed.
 
 ## Not ported — carried across

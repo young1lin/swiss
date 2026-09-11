@@ -14,7 +14,7 @@
 
 - 一个已注册 Action 的任务，从创建、编辑、校验、调度、并发、超时、重试到输出保留，都由一份有版本的定义决定。
 - UI 表单、JSON 编辑器、CLI 导入和 API 操作同一份定义，运行状态不混入定义。
-- 页面和 CLI 手动执行、定时任务调用同一个 Action，不通过 shell 再启动 `lmg` 调自己。
+- 页面和 CLI 手动执行、定时任务调用同一个 Action，不通过 shell 再启动 `swiss` 调自己。
 - 增加一种新执行能力只注册 Action 及其输入 schema，不修改调度器。任意新业务实现仍然需要代码。
 - 配置缺省即使用安全、可见的内置默认值；`disabled: true` 显式停用。默认启用不代表创建示例任务或自动执行导入的未知命令。导入先预览、校验，再显式应用。
 
@@ -164,12 +164,12 @@ UI 是配置编辑器，不是第二个数据库。表单与 JSON 高级编辑�
 
 | 位置 | 已有 | 下一步 |
 | --- | --- | --- |
-| `crates/lmg-jobs/src/jobs/mod.rs` | JobDef、密封 JobStore、每秒一个 scheduler、每任务互斥 | 定义与 lastRun 分离；原子配置更新；追踪并回收所有运行任务；总并发和容量限制 |
-| `crates/lmg-jobs/src/jobs/runner.rs` | 超时、命令解析、平台进程树、输出结果 | read_to_end 改为边读边限量；完整取消 reader；进程能力上移到共享服务 |
-| `crates/lmg-jobs/src/jobs/schedule.rs` | interval、当地 cron | 编译后复用规则；维护 next due；持久化 occurrence / misfire / DST |
-| `crates/lmg-jobs/src/jobs/runlog.rs` | 单任务磁盘大小和年龄限制 | 实例化状态；有界尾读和分页；模块总预算 |
-| `crates/lmg-jobs/src/jobs/api.rs` | CRUD、同步 run、历史 | 共用 schema；严格验证；真实保存失败；适配统一 RunCoordinator |
-| `crates/lmg-panel/src/admin_assets/js/jobs.js` | 手工字段表单和列表轮询 | Node 参考源先改；统一页面注册、schema 编辑和通用 run 视图后再同步 |
+| `crates/swiss-jobs/src/jobs/mod.rs` | JobDef、密封 JobStore、每秒一个 scheduler、每任务互斥 | 定义与 lastRun 分离；原子配置更新；追踪并回收所有运行任务；总并发和容量限制 |
+| `crates/swiss-jobs/src/jobs/runner.rs` | 超时、命令解析、平台进程树、输出结果 | read_to_end 改为边读边限量；完整取消 reader；进程能力上移到共享服务 |
+| `crates/swiss-jobs/src/jobs/schedule.rs` | interval、当地 cron | 编译后复用规则；维护 next due；持久化 occurrence / misfire / DST |
+| `crates/swiss-jobs/src/jobs/runlog.rs` | 单任务磁盘大小和年龄限制 | 实例化状态；有界尾读和分页；模块总预算 |
+| `crates/swiss-jobs/src/jobs/api.rs` | CRUD、同步 run、历史 | 共用 schema；严格验证；真实保存失败；适配统一 RunCoordinator |
+| `crates/swiss-panel/src/admin_assets/js/jobs.js` | 手工字段表单和列表轮询 | Node 参考源先改；统一页面注册、schema 编辑和通用 run 视图后再同步 |
 
 基线还存在测试隔离欠账：若干设置进程级 runlog 目录的测试没有统一持有 `RUNLOG_TEST_LOCK`。本次测试通过不能证明这些并发窗口不存在；资源实例化会消除这类全局测试状态，改造前应先补锁和回归测试。
 

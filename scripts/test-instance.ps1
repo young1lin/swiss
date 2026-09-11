@@ -1,7 +1,7 @@
 # The isolated 19998 test instance (docs/16 H2).
 #
 # One script, one rule: live verification of this repo runs on an instance whose state lives
-# in its OWN home (%LOCALAPPDATA%\lmg-test-home), so a save on 19998 can never write the
+# in its OWN home (%LOCALAPPDATA%\swiss-test-home), so a save on 19998 can never write the
 # user's production config in ~\.mcp-gateway (the 2026-09-11 footgun).
 #
 # Why copying master.key works: every state file is AES-256-GCM sealed under a master key
@@ -16,8 +16,8 @@
 #   scripts/test-instance.ps1 -Stop      # kill whatever owns port 19998 - by pid, never name
 #
 # Stop deliberately finds its victim ONLY through Get-NetTCPConnection's OwningProcess:
-# Get-Process lmg would kill the user's 19999 daemon too, which is also an lmg.exe.
-# The instance is a hard kill (the serve path writes no pid file, so 'lmg stop' has nothing
+# Get-Process swiss would kill the user's 19999 daemon too, which is also an swiss.exe.
+# The instance is a hard kill (the serve path writes no pid file, so 'swiss stop' has nothing
 # to act on); orphaned proc children are reaped from the port-scoped ledger on the next boot.
 
 [CmdletBinding()]
@@ -30,9 +30,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $Port = 19998
-$TestHome = Join-Path $env:LOCALAPPDATA 'lmg-test-home'
+$TestHome = Join-Path $env:LOCALAPPDATA 'swiss-test-home'
 $ProdHome = Join-Path $env:USERPROFILE '.mcp-gateway'
-$Exe = Join-Path $PSScriptRoot '..\target-test\release\lmg.exe'
+$Exe = Join-Path $PSScriptRoot '..\target-test\release\swiss.exe'
 $HealthUrl = "http://127.0.0.1:$Port/health"
 
 # Sealed state worth snapshotting: keys, config, managed MCPs, tunnels, jobs and their run
@@ -117,8 +117,8 @@ Write-Host ("snapshotted from " + $ProdHome + " : " + ($copied -join ', '))
 
 # Env vars, never --port: the flag writes itself into the config (AGENTS.md), and the env is
 # exactly what this script is for - scoped to this serve process and its children only.
-$env:MCP_GATEWAY_HOME = $TestHome
-$env:MCP_GATEWAY_PORT = "$Port"
+$env:SWISS_HOME = $TestHome
+$env:SWISS_PORT = "$Port"
 
 $out = Join-Path $TestHome 'serve.out'
 $err = Join-Path $TestHome 'serve.err'

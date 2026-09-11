@@ -1,4 +1,4 @@
-# Build lmg for every platform and publish binaries on version tags.
+# Build swiss for every platform and publish binaries on version tags.
 #
 # - push to a branch / PR: build + test every target, upload the binaries as workflow artifacts
 # - push of a v* tag (e.g. v0.1.0): same builds, plus a GitHub Release with one binary per target
@@ -35,21 +35,21 @@ jobs:
         include:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            exe: lmg.exe
+            exe: swiss.exe
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            exe: lmg
+            exe: swiss
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
-            exe: lmg
+            exe: swiss
           - target: aarch64-apple-darwin
             os: macos-latest
-            exe: lmg
+            exe: swiss
           # Intel macs build as a cross target from the arm runner — Apple clang links both
           # architectures out of the box, no extra toolchain needed.
           - target: x86_64-apple-darwin
             os: macos-latest
-            exe: lmg
+            exe: swiss
             cross: true
 
     steps:
@@ -111,7 +111,7 @@ jobs:
             refs/tags/*) ;;
             *) VERSION="$VERSION-$(echo "$GITHUB_SHA" | cut -c1-8)" ;;
           esac
-          ASSET="lmg-${VERSION}-${{ matrix.target }}"
+          ASSET="swiss-${VERSION}-${{ matrix.target }}"
           if [ "${{ runner.os }}" = "Windows" ]; then ASSET="${ASSET}.exe"; fi
           mkdir -p dist-bin
           cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" "dist-bin/${ASSET}"

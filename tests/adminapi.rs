@@ -13,17 +13,17 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use async_trait::async_trait;
-use lmg::app::{build_app, AppContext};
-use lmg_host::config::ServerDef;
-use lmg_host::managed::ManagedStore;
-use lmg_host::token::TokenManager;
-use lmg_mcp::adapters::direct::DirectAdapter;
-use lmg_mcp::adapters::resources::{
+use swiss::app::{build_app, AppContext};
+use swiss_host::config::ServerDef;
+use swiss_host::managed::ManagedStore;
+use swiss_host::token::TokenManager;
+use swiss_mcp::adapters::direct::DirectAdapter;
+use swiss_mcp::adapters::resources::{
     ResourceBody, ResourceEntry, ResourceFault, ResourcePage, ResourceProvider, ResourceTemplate,
 };
-use lmg_mcp::adapters::tool_server::{Engine, ServerMeta, ToolDef};
-use lmg_mcp::adapters::{make_adapter, Adapter};
-use lmg_mcp::registry::{Registry, Source};
+use swiss_mcp::adapters::tool_server::{Engine, ServerMeta, ToolDef};
+use swiss_mcp::adapters::{make_adapter, Adapter};
+use swiss_mcp::registry::{Registry, Source};
 
 const TOKEN: &str = "admin-tok-0123456789abcdef";
 
@@ -35,8 +35,8 @@ fn sandbox() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| {
         let home = std::env::temp_dir().join(format!(
-            "lmg-adminapi-home-{}",
-            lmg_core::util::random_hex(8)
+            "swiss-adminapi-home-{}",
+            swiss_core::util::random_hex(8)
         ));
         std::fs::create_dir_all(&home).expect("create the scratch home");
         // Safety: this runs once, before any test has touched the paths or key modules, and both
@@ -53,18 +53,18 @@ struct Harness {
     app: axum::Router,
     registry: Arc<Registry>,
     store: Arc<ManagedStore>,
-    calls: Arc<lmg_mcp::calls::CallLog>,
+    calls: Arc<swiss_mcp::calls::CallLog>,
     path: std::path::PathBuf,
 }
 
 fn setup() -> Harness {
     sandbox();
     let path = std::env::temp_dir()
-        .join(format!("lmg-adminapi-{}", lmg_core::util::random_hex(8)))
+        .join(format!("swiss-adminapi-{}", swiss_core::util::random_hex(8)))
         .join("managed.json");
     std::fs::create_dir_all(path.parent().expect("the scratch file has a parent"))
         .expect("create the scratch directory");
-    let calls = Arc::new(lmg_mcp::calls::CallLog::at(
+    let calls = Arc::new(swiss_mcp::calls::CallLog::at(
         path.parent()
             .expect("the scratch file has a parent")
             .join("calls"),
@@ -665,7 +665,7 @@ async fn exposes_the_tokens_env_var_name_never_the_token() {
     assert_eq!(body["tokenEnv"], json!("MCP_GATEWAY_TOKEN"));
     assert!(!body.to_string().contains(TOKEN), "{body}");
     // The build stamp (docs/16 H3) — present, and never a secret either.
-    assert_eq!(body["build"]["hash"], json!(env!("LMG_GIT_HASH")));
+    assert_eq!(body["build"]["hash"], json!(env!("SWISS_GIT_HASH")));
     assert!(!body["build"].to_string().contains(TOKEN), "{body}");
 }
 
@@ -805,7 +805,7 @@ async fn returns_the_new_secret_after_a_rotate_not_the_old_one() {
 async fn traffic_lock() -> tokio::sync::MutexGuard<'static, ()> {
     static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let guard = LOCK.lock().await;
-    lmg_mcp::traffic::clear_traffic(None);
+    swiss_mcp::traffic::clear_traffic(None);
     guard
 }
 
@@ -944,7 +944,7 @@ async fn pages_the_activity_log_newest_first_and_filters_to_actions_server_side(
     // 7 protocol frames + 3 actions, interleaved so a naive slice cannot pass by accident.
     for i in 0..10 {
         let action = i % 3 == 2;
-        lmg_mcp::traffic::record_traffic(
+        swiss_mcp::traffic::record_traffic(
             "m",
             Some(&json!({
                 "jsonrpc": "2.0", "id": i,
@@ -1007,7 +1007,7 @@ async fn folds_clients_over_the_whole_ring_not_over_the_returned_page() {
     let _lock = traffic_lock().await;
     let h = setup();
     let record = |mcp: &str, body: Value, token: &str| {
-        lmg_mcp::traffic::record_traffic(mcp, Some(&body), Some(token), true, 1, None);
+        swiss_mcp::traffic::record_traffic(mcp, Some(&body), Some(token), true, 1, None);
     };
     record(
         "m1",
@@ -1066,7 +1066,7 @@ async fn clears_one_clients_traffic_leaving_the_others_intact() {
     let _lock = traffic_lock().await;
     let h = setup();
     for token in ["clrA", "clrB"] {
-        lmg_mcp::traffic::record_traffic(
+        swiss_mcp::traffic::record_traffic(
             "m",
             Some(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })),
             Some(token),
@@ -1965,8 +1965,8 @@ async fn removes_the_entry_from_gateway_config_json_and_the_runtime_registry() {
     // Unlike the Node suite, the data dir is not swapped per test — one sandbox home serves the
     // whole binary — so this is the only test that touches gateway.config.json.
     let h = setup();
-    let config = lmg_host::config::config_path();
-    lmg_core::secure::statefile::write_secure_json(
+    let config = swiss_host::config::config_path();
+    swiss_core::secure::statefile::write_secure_json(
         &config,
         &json!({
             "port": 19999,
@@ -1987,7 +1987,7 @@ async fn removes_the_entry_from_gateway_config_json_and_the_runtime_registry() {
     assert_eq!(body["deleted"], json!(true));
     assert!(!h.registry.has("doomed"));
 
-    let after = lmg_core::secure::statefile::read_secure_json(&config)
+    let after = swiss_core::secure::statefile::read_secure_json(&config)
         .expect("the config is readable")
         .expect("the config is there");
     assert!(after["servers"].get("doomed").is_none(), "{after}");

@@ -5,7 +5,7 @@
 > docs/14 §8.1。本文只写清「是什么、为什么、改哪里、怎么验」，不含实现代码。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/14-terminal-plugin-spec.md`（终端插件的整体设计，
 > 本文是它的补丁，不重述）、`docs/09-toolbox-plugin-architecture.md` §3/§4（插件配置契约）。
-> **本仓库的 `crates/lmg-panel/src/admin_assets/` 一个字节都不能手改。** 面板改动先落在
+> **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能手改。** 面板改动先落在
 > `../local-mcp-gateway/src/admin/`，再整目录复制回来，`the_tree_is_byte_for_byte_the_node_builds`
 > 测试是门禁。代码注释一律英文；文档散文中文。
 
@@ -16,15 +16,15 @@
 | 现象 | 根因 | 证据 |
 |---|---|---|
 | 终端里 **Ctrl+V 粘贴无效** | xterm.js 把 Ctrl+V 当成终端控制键 `^V`（0x16，tty 的 lnext）发给 shell；它只给 Ctrl+Shift+V / Shift+Insert 留粘贴。面板没有装 `attachCustomKeyEventHandler`，所以拿到的是 xterm 的 Linux 习惯 | 在会话里按 Ctrl+V，屏幕出现 `^V`；对 `.xterm-helper-textarea` 派发合成 `paste` 事件，文本正常到达远端 bash（括号粘贴高亮）—— 说明 paste 管道完好，坏的只是按键映射 |
-| **连不上本地 PowerShell 7** | ① 本地 shell 默认关闭（`plugins.terminal.config.local.enabled = false`，docs/14 §6.1 有意为之）；② docs/14 §6.1 承诺「面板的插件配置页自动能改」，但 Plugins 页至今只有 Enable/Disable，**没有任何配置表单**，而 `gateway.config.json` 是加密的，用户没有手改的路；③ 即使打开，Windows 默认程序是 `COMSPEC`（`cmd.exe`），不是 pwsh | `GET /api/terminal/targets` → `{"local":{"enabled":false,"shell":"C:\\WINDOWS\\system32\\cmd.exe"}}`；`views/plugins.js` 只有 `toggle()`；`crates/lmg-core/src/platform/pty/conpty.rs::default_shell()` 读 `COMSPEC` |
+| **连不上本地 PowerShell 7** | ① 本地 shell 默认关闭（`plugins.terminal.config.local.enabled = false`，docs/14 §6.1 有意为之）；② docs/14 §6.1 承诺「面板的插件配置页自动能改」，但 Plugins 页至今只有 Enable/Disable，**没有任何配置表单**，而 `gateway.config.json` 是加密的，用户没有手改的路；③ 即使打开，Windows 默认程序是 `COMSPEC`（`cmd.exe`），不是 pwsh | `GET /api/terminal/targets` → `{"local":{"enabled":false,"shell":"C:\\WINDOWS\\system32\\cmd.exe"}}`；`views/plugins.js` 只有 `toggle()`；`crates/swiss-core/src/platform/pty/conpty.rs::default_shell()` 读 `COMSPEC` |
 
 已经存在、**不用重做**的东西：
 
-- 本地 PTY 全链路（ConPTY、job object、读线程、背压）—— `crates/lmg-core/src/platform/pty/`、
-  `crates/lmg-terminal/src/terminal/local.rs`。`local.rs` 的测试已经证明默认 shell 能开、能收字节。
-- 配置解析 `TerminalConfig::parse`（`crates/lmg-terminal/src/terminal/config.rs`）已接受
+- 本地 PTY 全链路（ConPTY、job object、读线程、背压）—— `crates/swiss-core/src/platform/pty/`、
+  `crates/swiss-terminal/src/terminal/local.rs`。`local.rs` 的测试已经证明默认 shell 能开、能收字节。
+- 配置解析 `TerminalConfig::parse`（`crates/swiss-terminal/src/terminal/config.rs`）已接受
   `local.enabled` / `local.shell`，且有 `"shell": "pwsh.exe"` 的测试用例。
-- `PUT /api/plugins/terminal/config`（`crates/lmg-host/src/host/api.rs::put_config`）：body
+- `PUT /api/plugins/terminal/config`（`crates/swiss-host/src/host/api.rs::put_config`）：body
   `{ "config": {...}, "revision": n }`，校验后落盘；terminal 的 descriptor 标了
   `restart_on_config_change: true`，所以保存即重启插件——**会关闭所有活动会话**，面板会收到
   带原因的关闭帧。
@@ -116,12 +116,12 @@ UI（API 已支持 `shell` 字段，留给以后）；cwd / env 配置。
 
 **Rust**
 
-- `crates/lmg-core/src/platform/pty/conpty.rs::default_shell()`：改成按 §2.1 第 1 条解析。
+- `crates/swiss-core/src/platform/pty/conpty.rs::default_shell()`：改成按 §2.1 第 1 条解析。
   把「在 PATH 上找可执行」抽成 `pub fn find_on_path(name: &str, path: &str) -> Option<PathBuf>`
   之类的**纯函数**（PATH 作为参数传入，测试不碰真实环境），注意 `PATHEXT`、执行别名
   （WindowsApps 下的 reparse point：`metadata().is_file()` 为真即可，不要 `canonicalize`，
   它会解析到 `WindowsApps\Microsoft.PowerShell_…` 里去，路径难看且版本一变就失效）。
-- `crates/lmg-terminal/src/terminal/local.rs`：`LocalShell` trait 加 `fn candidates(&self)
+- `crates/swiss-terminal/src/terminal/local.rs`：`LocalShell` trait 加 `fn candidates(&self)
   -> Vec<ShellCandidate>`；`LocalShells` 在构造时探测一次。测试用的假 shell 返回固定列表。
 - `src/plugins/terminal_api.rs` 的 targets 路由：`local` 对象加 `shells`。**保持现有字段不动**
   （面板旧代码读 `local.enabled` / `local.shell`）。
@@ -172,7 +172,7 @@ npm run typecheck && npx vitest run
 ```powershell
 # 构建到隔离目录，起测试实例
 $env:CARGO_TARGET_DIR = "target-test"; cargo build --release
-$env:MCP_GATEWAY_PORT = "19998"; & target-test\release\lmg.exe serve
+$env:MCP_GATEWAY_PORT = "19998"; & target-test\release\swiss.exe serve
 ```
 
 1. **粘贴**：开一个远端会话（或本地），按 Ctrl+V → 剪贴板内容出现在提示符后，**没有** `^V`。
@@ -182,7 +182,7 @@ $env:MCP_GATEWAY_PORT = "19998"; & target-test\release\lmg.exe serve
    以 `pwsh.exe` 结尾，`local.shells` 至少含 PowerShell 7 与 cmd。终端页 → Local shell 设置 →
    打开 Enabled → 保存 → 下拉出现 `local · PowerShell 7` → Open session → 看到 `PS C:\…>`
    提示符，`$PSVersionTable.PSVersion` 打出 7.x。关掉 Enabled 保存后本地行消失、空态文案可点。
-3. **回归**：`docs/14` §10 的验收项跑一遍（尤其：会话关闭时 `lmg.exe` 的子进程树被回收；
+3. **回归**：`docs/14` §10 的验收项跑一遍（尤其：会话关闭时 `swiss.exe` 的子进程树被回收；
    `~/.mcp-gateway/terminal/*.cast` 仍在录）。
 
 注意事项（都是这次踩过的坑）：
@@ -191,6 +191,6 @@ $env:MCP_GATEWAY_PORT = "19998"; & target-test\release\lmg.exe serve
   写进生产配置**，19999 下次重启就生效。验收 §4.2 做完要把 `local.enabled` 改回用户想要的值，
   并在汇报里写明。
 - 19998 起来后 tunnels 插件会尝试绑同一批本地端口，全部因「被 19999 持有」失败，属正常噪音。
-- 杀 19998 只按端口 PID：`Get-NetTCPConnection -LocalPort 19998`，绝不 `Get-Process lmg`。
+- 杀 19998 只按端口 PID：`Get-NetTCPConnection -LocalPort 19998`，绝不 `Get-Process swiss`。
 - agent-browser 在这台机器上冷启动要一两分钟，命令前加 `timeout`，别叠加起多个会话；结束用
   `agent-browser close`。

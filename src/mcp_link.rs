@@ -11,10 +11,10 @@
 
 use std::sync::Arc;
 
-use lmg_mcp::registry::{EntryInner, Health, Lifecycle, Registry};
-use lmg_tunnels::tunnel::api::McpDisplay;
-use lmg_tunnels::tunnel::manager::McpView;
-use lmg_tunnels::tunnel::mcpmatch::mcp_loopback_port;
+use swiss_mcp::registry::{EntryInner, Health, Lifecycle, Registry};
+use swiss_tunnels::tunnel::api::McpDisplay;
+use swiss_tunnels::tunnel::manager::McpView;
+use swiss_tunnels::tunnel::mcpmatch::mcp_loopback_port;
 
 /// The manager's read-only registry window (has/stateOf/isStarted/startedAt). Nothing here can
 /// start or stop an MCP.

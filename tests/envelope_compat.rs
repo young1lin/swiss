@@ -14,7 +14,7 @@
 //! `HKDF_INFO` — every one of which compiles, passes a Rust-only round trip, and then fails to open
 //! a single real file on a user's machine. See docs/05-wire-compatibility.md.
 
-use lmg_core::secure::envelope::{is_sealed, seal, unseal, Sealed};
+use swiss_core::secure::envelope::{is_sealed, seal, unseal, Sealed};
 
 /// The key the fixture was sealed under: `Buffer.alloc(32, 7)`.
 const FIXTURE_KEY: [u8; 32] = [7u8; 32];
@@ -45,6 +45,7 @@ fn the_fixture_is_recognised_as_sealed() {
 #[test]
 fn the_fixture_carries_the_frozen_format_fields() {
     let f = fixture();
+    // FROZEN wire marker: the envelope key is the format's historical name (docs/05 §1).
     assert_eq!(f.lmg, 1);
     assert_eq!(f.alg, "aes-256-gcm");
     // keySource is a diagnostic, never trusted for key selection — but it must survive a read.

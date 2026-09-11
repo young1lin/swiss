@@ -1,38 +1,38 @@
 [workspace]
 members = [
-    "crates/lmg-core",
-    "crates/lmg-host",
-    "crates/lmg-mcp",
-    "crates/lmg-data",
-    "crates/lmg-tunnels",
-    "crates/lmg-jobs",
-    "crates/lmg-terminal",
-    "crates/lmg-panel",
+    "crates/swiss-core",
+    "crates/swiss-host",
+    "crates/swiss-mcp",
+    "crates/swiss-data",
+    "crates/swiss-tunnels",
+    "crates/swiss-jobs",
+    "crates/swiss-terminal",
+    "crates/swiss-panel",
 ]
 resolver = "2"
 
 [package]
-name = "lmg"
+name = "swiss"
 version = "0.1.0"
 edition = "2021"
-description = "One local process that hosts every MCP server an AI client needs, on 127.0.0.1 HTTP paths."
+description = "A developer's Swiss Army knife: one tiny local process, every tool behind one loopback port."
 license = "MIT"
 
 [[bin]]
-name = "lmg"
+name = "swiss"
 path = "src/main.rs"
 
 [dependencies]
-lmg-core = { path = "crates/lmg-core" }
-lmg-host = { path = "crates/lmg-host" }
-lmg-mcp = { path = "crates/lmg-mcp" }
-lmg-data = { path = "crates/lmg-data" }
-lmg-tunnels = { path = "crates/lmg-tunnels" }
-lmg-jobs = { path = "crates/lmg-jobs" }
+swiss-core = { path = "crates/swiss-core" }
+swiss-host = { path = "crates/swiss-host" }
+swiss-mcp = { path = "crates/swiss-mcp" }
+swiss-data = { path = "crates/swiss-data" }
+swiss-tunnels = { path = "crates/swiss-tunnels" }
+swiss-jobs = { path = "crates/swiss-jobs" }
 # The terminal session machine (docs/14 T4): routes and the plugin wrapper live in this
 # crate's src/plugins; the crate itself stays free of axum so its tests need no server.
-lmg-terminal = { path = "crates/lmg-terminal" }
-lmg-panel = { path = "crates/lmg-panel" }
+swiss-terminal = { path = "crates/swiss-terminal" }
+swiss-panel = { path = "crates/swiss-panel" }
 # The rmcp `macros` feature stays off: servers implement ServerHandler by hand, mirroring the
 # Node build's setRequestHandler exactly and keeping pastey out of the build.
 rmcp = { version = "3.2", default-features = false, features = [
@@ -93,8 +93,8 @@ libc = "0.2"
 [dev-dependencies]
 # Test-only: a real MCP client (rmcp's own) against the gateway over a real socket, plus raw-HTTP
 # probes for the 2025-era handshake. Dev-deps do not enter the shipping binary's feature set.
-lmg-core = { path = "crates/lmg-core", features = ["test-utils"] }
-lmg-mcp = { path = "crates/lmg-mcp", features = ["test-utils"] }
+swiss-core = { path = "crates/swiss-core", features = ["test-utils"] }
+swiss-mcp = { path = "crates/swiss-mcp", features = ["test-utils"] }
 rmcp = { version = "3.2", default-features = false, features = [
     "client", "transport-streamable-http-client-reqwest",
 ] }

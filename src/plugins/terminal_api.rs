@@ -1,11 +1,11 @@
 //! The /api/terminal routes (docs/14 §8) — the HTTP and WebSocket half of the session
-//! machine that lives in [lmg_terminal] (docs/14 T4).
+//! machine that lives in [swiss_terminal] (docs/14 T4).
 //!
 //! Mounted through the extra tree in server.rs, which is the whole reason this file sits
-//! in the composition crate and not in lmg-terminal: build_app layers the loopback guard
+//! in the composition crate and not in swiss-terminal: build_app layers the loopback guard
 //! and the plugin boundary over the extra tree at mount time, and axum's layer() only
 //! covers routes that exist when it is called — merging anything later would leave every
-//! /api/terminal route outside the only auth this tree has. Keeping lmg-terminal free of
+//! /api/terminal route outside the only auth this tree has. Keeping swiss-terminal free of
 //! axum is also what lets its 43 session tests run with no server, no socket, no timing.
 //!
 //! ## State: one slot the plugin lifecycle owns
@@ -52,9 +52,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 
-use lmg_host::reply::{admin_error, admin_json, NodeBody};
-use lmg_host::services::shell::{PtySize, MAX_PTY_AXIS, MIN_PTY_AXIS};
-use lmg_terminal::terminal::{Attachment, ClientFrame, TerminalError, TerminalSessions};
+use swiss_host::reply::{admin_error, admin_json, NodeBody};
+use swiss_host::services::shell::{PtySize, MAX_PTY_AXIS, MIN_PTY_AXIS};
+use swiss_terminal::terminal::{Attachment, ClientFrame, TerminalError, TerminalSessions};
 
 /// The /api/terminal router's state: the seat the terminal plugin's instance sits in
 /// while it serves. Constructed once by the boot sequence, handed both to the plugin
@@ -517,8 +517,8 @@ mod tests {
     #[tokio::test]
     async fn the_targets_route_lists_local_shells_and_a_resolved_shell() {
         use axum::body::Body;
-        use lmg_host::services::shell::{PtySession, PtySize, ShellError, ShellRegistry};
-        use lmg_terminal::terminal::{LocalShell, TerminalConfig, TerminalSessions};
+        use swiss_host::services::shell::{PtySession, PtySize, ShellError, ShellRegistry};
+        use swiss_terminal::terminal::{LocalShell, TerminalConfig, TerminalSessions};
         use tower::util::ServiceExt;
 
         struct FixedLocal;
@@ -526,13 +526,13 @@ mod tests {
             fn program(&self) -> String {
                 r"C:\shells\pwsh.exe".to_string()
             }
-            fn candidates(&self) -> Vec<lmg_core::platform::pty::ShellCandidate> {
+            fn candidates(&self) -> Vec<swiss_core::platform::pty::ShellCandidate> {
                 vec![
-                    lmg_core::platform::pty::ShellCandidate {
+                    swiss_core::platform::pty::ShellCandidate {
                         program: r"C:\shells\pwsh.exe".to_string(),
                         label: "PowerShell 7".to_string(),
                     },
-                    lmg_core::platform::pty::ShellCandidate {
+                    swiss_core::platform::pty::ShellCandidate {
                         program: r"C:\Windows\system32\cmd.exe".to_string(),
                         label: "cmd".to_string(),
                     },
@@ -549,7 +549,7 @@ mod tests {
         }
 
         let state = TerminalState::new();
-        let dir = std::env::temp_dir().join(format!("lmg-targets-{}", lmg_core::util::random_hex(8)));
+        let dir = std::env::temp_dir().join(format!("swiss-targets-{}", swiss_core::util::random_hex(8)));
         state.install(TerminalSessions::new(
             TerminalConfig::default(),
             Arc::new(ShellRegistry::new()),

@@ -1,0 +1,44 @@
+[package]
+name = "swiss-tunnels"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+swiss-core = { path = "../swiss-core" }
+swiss-host = { path = "../swiss-host" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync", "io-util", "process"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+thiserror = "2"
+# The SSH client. `ring` rather than the default aws-lc-rs backend: ring builds with plain
+# MSVC tools. `rsa` for ~/.ssh/id_rsa; `des` only to decrypt legacy PEM keys. No flate2:
+# servers negotiate `none` compression for tunnels.
+russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa", "des"] }
+# TCP keepalive on forwarded sockets; already in the graph via tokio and hyper-util.
+socket2 = "0.6"
+rand = "0.9"
+base64 = "0.23"
+sha2 = "0.11"
+time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing"] }
+futures-core = { version = "0.3", default-features = false }
+# Already in the workspace graph (swiss-host, swiss-mcp, swiss-data); promoted from dev-dependencies
+# because ShellProvider is an async trait this crate now implements. No new weight.
+async-trait = "0.1"
+
+[dev-dependencies]
+# test-utils pins the deterministic master key for this crate's own test binaries.
+swiss-core = { path = "../swiss-core", features = ["test-utils"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync", "test-util"] }
+# Router-level tests drive `mount()` with oneshot requests, the way the panel does.
+tower = { version = "0.5", default-features = false, features = ["util"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+serde = { version = "1", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+base64 = "0.23"
+sha2 = "0.11"
+socket2 = "0.6"
+rand = "0.9"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }

@@ -1,6 +1,6 @@
-//! The `lmg` command line — port of `cli.ts`.
+//! The `swiss` command line — port of `cli.ts`.
 //!
-//! Deliberately free of the server's module graph: `lmg status` does not build a registry or a
+//! Deliberately free of the server's module graph: `swiss status` does not build a registry or a
 //! driver pool just to print a line. The server is reached as a subprocess (`start`) or over
 //! loopback HTTP (everything else).
 
@@ -66,9 +66,9 @@ pub trait Ops {
 }
 
 pub const USAGE: &str =
-    "local MCP gateway — one local endpoint in front of your databases and remote MCPs
+    "swiss — one local endpoint in front of your databases and remote MCPs
 
-usage: lmg <command> [options]
+usage: swiss <command> [options]
 
   start            start the gateway in the background and open the panel
   stop             ask it to shut down, then force it if it will not
@@ -194,10 +194,10 @@ fn row(label: &str, value: &str) -> String {
 /// status command and scripts/deploy.ps1 parse, so this shape is a small public contract.
 pub fn version_line() -> String {
     format!(
-        "lmg {} ({}, {})",
+        "swiss {} ({}, {})",
         env!("CARGO_PKG_VERSION"),
-        env!("LMG_GIT_HASH"),
-        env!("LMG_BUILD_TIME")
+        env!("SWISS_GIT_HASH"),
+        env!("SWISS_BUILD_TIME")
     )
 }
 
@@ -360,7 +360,7 @@ fn report_stop(r: StopResult, io: &dyn Io) -> i32 {
 }
 
 /// Decide and report. Returns the process exit code: 0 done, 1 refused or failed, 3 nothing
-/// running — the third one so `lmg status` is usable in a script without parsing text.
+/// running — the third one so `swiss status` is usable in a script without parsing text.
 pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
     let p = parse_argv(argv);
 
@@ -531,7 +531,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
         }
         "import" => {
             let Some(file) = &p.file else {
-                io.err("usage: lmg import <file written by lmg export>");
+                io.err("usage: swiss import <file written by swiss export>");
                 return 1;
             };
             let text = match std::fs::read_to_string(file) {
@@ -571,7 +571,7 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
             if p.skill_sub.as_deref() != Some("install") {
                 match p.skill_sub {
                     Some(sub) => io.err(&format!("unknown skill subcommand: {sub}")),
-                    None => io.err("usage: lmg skill install"),
+                    None => io.err("usage: swiss skill install"),
                 }
                 return 1;
             }
@@ -647,7 +647,7 @@ pub async fn tail_log(port: u16, lines: u64, follow: bool, io: &dyn Io) {
         }
         Err(_) => {
             // No file yet. Without --follow that is the whole answer; WITH it, the common case
-            // is "lmg start just fired and the child has not written its first line" — wait for
+            // is "swiss start just fired and the child has not written its first line" — wait for
             // the file instead of quitting.
             if !follow {
                 io.err(&format!("no log yet at {}", file.display()));
@@ -753,10 +753,10 @@ impl Ops for RealOps {
             daemon::persist_listen_port(port);
             // SAFETY: this runs before any thread exists (the runtime boots the server below),
             // so no other thread can observe the write concurrently.
-            unsafe { std::env::set_var("MCP_GATEWAY_PORT", port.to_string()) };
+            unsafe { std::env::set_var("SWISS_PORT", port.to_string()) };
         }
         if let Err(err) = crate::server::run_gateway().await {
-            lmg_core::log::error("fatal", Some(serde_json::json!({ "err": err })));
+            swiss_core::log::error("fatal", Some(serde_json::json!({ "err": err })));
             std::process::exit(1);
         }
     }
@@ -828,7 +828,7 @@ mod tests {
         // parenthesised pair is exactly what the status command and deploy.ps1 parse.
         let line = version_line();
         let rest = line
-            .strip_prefix(&format!("lmg {} (", env!("CARGO_PKG_VERSION")))
+            .strip_prefix(&format!("swiss {} (", env!("CARGO_PKG_VERSION")))
             .unwrap_or_else(|| panic!("not the version shape: {line}"));
         let (hash, time) = rest
             .split_once(", ")

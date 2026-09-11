@@ -9,7 +9,7 @@
 //!
 //! - It CANNOT assert an absolute ceiling. The measurement is this test binary's working set, and
 //!   that includes the test harness, an rmcp client, reqwest and every dev-dependency — none of
-//!   which are in the shipping `lmg`. An absolute number here would be measuring the wrong
+//!   which are in the shipping `swiss`. An absolute number here would be measuring the wrong
 //!   process. The shipped figure is measured from the binary itself (docs/01).
 //! - It CAN assert that serving does not GROW the footprint. That is the actual regression shape:
 //!   a leak, an unbounded buffer, or a payload-proportional allocation on a forwarding path. A
@@ -27,13 +27,13 @@ use axum::http::{header, Request, StatusCode};
 use serde_json::json;
 use tower::ServiceExt;
 
-use lmg::app::{build_app, AppContext, BODY_LIMIT};
-use lmg_core::platform::self_working_set;
-use lmg_host::config::ServerDef;
-use lmg_host::managed::ManagedStore;
-use lmg_host::token::single_token_manager;
-use lmg_mcp::adapters::make_adapter;
-use lmg_mcp::registry::{Registry, Source};
+use swiss::app::{build_app, AppContext, BODY_LIMIT};
+use swiss_core::platform::self_working_set;
+use swiss_host::config::ServerDef;
+use swiss_host::managed::ManagedStore;
+use swiss_host::token::single_token_manager;
+use swiss_mcp::adapters::make_adapter;
+use swiss_mcp::registry::{Registry, Source};
 
 const TOKEN: &str = "test-token-0123456789abcdef";
 
@@ -76,11 +76,11 @@ fn growth_mb(before: u64) -> f64 {
 
 async fn app_with_echo() -> axum::Router {
     let scratch =
-        std::env::temp_dir().join(format!("lmg-memory-{}", lmg_core::util::random_hex(8)));
+        std::env::temp_dir().join(format!("swiss-memory-{}", swiss_core::util::random_hex(8)));
     // The call log is real, and the panel-call path writes to it. The app's OWN instance
     // points at scratch, so the test neither touches the data dir nor measures the absence
     // of logging.
-    let calls = Arc::new(lmg_mcp::calls::CallLog::at(scratch.join("calls")));
+    let calls = Arc::new(swiss_mcp::calls::CallLog::at(scratch.join("calls")));
     let registry = Registry::new(3_600_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));
     let def = ServerDef(json!({ "type": "echo" }).as_object().cloned().unwrap());

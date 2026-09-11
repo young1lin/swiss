@@ -1,5 +1,5 @@
-//! What `lmg start` records about the daemon it detached, so that a later `lmg stop` /
-//! `lmg status` — run from any directory, possibly after a reboot — can find it and be sure it
+//! What `swiss start` records about the daemon it detached, so that a later `swiss stop` /
+//! `swiss status` — run from any directory, possibly after a reboot — can find it and be sure it
 //! is still ours — port of `pidfile.ts`.
 //!
 //! `entry` and `node` are not decoration: a detached daemon outlives the CLI that started it, so
@@ -9,9 +9,9 @@
 
 use serde_json::Value;
 
-use lmg_core::atomic_json::write_json_atomic;
-use lmg_core::paths::{data_dir, data_path};
-use lmg_core::platform::pid_alive;
+use swiss_core::atomic_json::write_json_atomic;
+use swiss_core::paths::{data_dir, data_path};
+use swiss_core::platform::pid_alive;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PidRecord {
@@ -68,7 +68,7 @@ pub fn parse_pid_record(raw: &Value) -> Option<PidRecord> {
 
 /// The record for a port, or None when there is none to be had. Missing, empty and torn files
 /// are all "no daemon": this file's whole purpose is to be read after an unclean kill, so a
-/// parse failure has to report "not running" rather than crash out of `lmg status`.
+/// parse failure has to report "not running" rather than crash out of `swiss status`.
 pub fn read_pid_file(port: u16) -> Option<PidRecord> {
     let text = std::fs::read_to_string(pid_file_path(port)).ok()?;
     let parsed: Value = serde_json::from_str(&text).ok()?;
@@ -129,8 +129,8 @@ mod tests {
     /// so the tests that write one take this first and leave the dir as they found it. The lock is
     /// the data dir's, not this module's: the daemon tests plant pid files in the same directory.
     fn pid_dir() -> tokio::sync::MutexGuard<'static, ()> {
-        let guard = lmg_core::paths::DATA_DIR_LOCK.blocking_lock();
-        lmg_core::paths::test_home();
+        let guard = swiss_core::paths::DATA_DIR_LOCK.blocking_lock();
+        swiss_core::paths::test_home();
         sweep();
         guard
     }
@@ -146,8 +146,8 @@ mod tests {
         PidRecord {
             pid: 4242,
             port,
-            entry: "D:\\dev\\mcp-gateway\\lmg.exe".into(),
-            node: "D:\\dev\\mcp-gateway\\lmg.exe".into(),
+            entry: "D:\\dev\\mcp-gateway\\swiss.exe".into(),
+            node: "D:\\dev\\mcp-gateway\\swiss.exe".into(),
             started_at: "2026-08-14T15:00:00.000Z".into(),
         }
     }
@@ -162,9 +162,9 @@ mod tests {
 
     #[test]
     fn lives_in_the_data_dir_named_by_port() {
-        // Named by port, and kept in the data dir rather than beside the config: `lmg status` has
+        // Named by port, and kept in the data dir rather than beside the config: `swiss status` has
         // to find a running daemon from any cwd, and the port is what tells two instances apart.
-        let home = lmg_core::paths::test_home();
+        let home = swiss_core::paths::test_home();
         // Pin it: paths reads MCP_GATEWAY_HOME fresh on every call, and a parallel test in
         // this binary may install its own scratch home between our two lines otherwise —
         // the equality below only holds while the variable points at OUR home.
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn treats_a_torn_or_non_json_file_as_absent_instead_of_failing() {
         // The file exists precisely to be read after an unclean kill, so a torn one must not blow
-        // up — that would make `lmg status` fail instead of reporting "not running".
+        // up — that would make `swiss status` fail instead of reporting "not running".
         let _lock = pid_dir();
         std::fs::write(pid_file_path(19993), r#"{"pid":4242,"po"#).expect("write a torn file");
         assert_eq!(read_pid_file(19993), None);
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn records_parse_strictly_and_drop_unknown_keys() {
         let rec = parse_pid_record(&json!({
-            "pid": 4242, "port": 19998, "entry": "C:\\lmg.exe", "node": "C:\\lmg.exe",
+            "pid": 4242, "port": 19998, "entry": "C:\\swiss.exe", "node": "C:\\swiss.exe",
             "startedAt": "2026-09-07T10:00:00.000Z", "futureField": true,
         }))
         .expect("valid record parses");
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn lists_the_ports_with_a_pid_file_sorted_ignoring_everything_else_in_the_dir() {
         let _lock = pid_dir();
-        let home = lmg_core::paths::test_home();
+        let home = swiss_core::paths::test_home();
         write_pid_file(&rec(19995));
         write_pid_file(&rec(8080));
         std::fs::write(home.join("managed.json"), "{}").expect("write");

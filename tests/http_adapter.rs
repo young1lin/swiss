@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use lmg_host::config::ServerDef;
-use lmg_mcp::adapters::http::HttpAdapter;
-use lmg_mcp::adapters::Adapter as _;
+use swiss_host::config::ServerDef;
+use swiss_mcp::adapters::http::HttpAdapter;
+use swiss_mcp::adapters::Adapter as _;
 use serde_json::{json, Value};
 
 const TOKEN: &str = "remote-token-0123456789abcdef";
@@ -24,7 +24,7 @@ fn def(v: Value) -> ServerDef {
 /// The gateway itself, serving one echo MCP over HTTP on an ephemeral loopback port.
 struct Remote {
     url: String,
-    registry: Arc<lmg_mcp::registry::Registry>,
+    registry: Arc<swiss_mcp::registry::Registry>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -36,30 +36,30 @@ impl Remote {
 }
 
 async fn remote_echo() -> Remote {
-    use lmg_mcp::registry::{Registry, Source};
+    use swiss_mcp::registry::{Registry, Source};
     let echo = def(json!({ "type": "echo" }));
-    let registry = Registry::new(3_600_000, lmg_mcp::calls::test_log());
-    let adapter = lmg_mcp::adapters::make_adapter(&echo, "echo", &lmg_mcp::calls::test_log())
+    let registry = Registry::new(3_600_000, swiss_mcp::calls::test_log());
+    let adapter = swiss_mcp::adapters::make_adapter(&echo, "echo", &swiss_mcp::calls::test_log())
         .expect("echo adapter");
     registry
         .register("echo", Source::Config, echo, adapter)
         .expect("register");
     registry.start("echo").await.expect("start");
-    let store = Arc::new(lmg_host::managed::ManagedStore::open_at(
+    let store = Arc::new(swiss_host::managed::ManagedStore::open_at(
         std::env::temp_dir()
-            .join(format!("lmg-http-{}", lmg_core::util::random_hex(8)))
+            .join(format!("swiss-http-{}", swiss_core::util::random_hex(8)))
             .join("managed.json"),
     ));
-    let tokens = Arc::new(lmg_host::token::single_token_manager(TOKEN));
-    let ctx = lmg::app::AppContext::new(
+    let tokens = Arc::new(swiss_host::token::single_token_manager(TOKEN));
+    let ctx = swiss::app::AppContext::new(
         registry.clone(),
         tokens,
         store,
-        lmg_mcp::calls::test_log(),
+        swiss_mcp::calls::test_log(),
         "MCP_GATEWAY_TOKEN",
         19998,
     );
-    let app = lmg::app::build_app(ctx, None);
+    let app = swiss::app::build_app(ctx, None);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind a loopback port");
@@ -82,7 +82,7 @@ fn proxy_of(url: &str, token: &str) -> HttpAdapter {
             "headers": { "Authorization": format!("Bearer {token}") },
         })),
         "r",
-        lmg_mcp::calls::test_log(),
+        swiss_mcp::calls::test_log(),
     )
     .expect("adapter")
 }

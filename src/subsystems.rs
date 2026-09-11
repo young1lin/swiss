@@ -70,7 +70,7 @@ pub fn absent_router(subsystem: &'static str, prefix: &str) -> Router {
 /// The composition-point bookkeeping: what a disabled subsystem's boot logs, in one shape so
 /// an operator grepping "subsystem" finds every toggle in the boot log.
 pub fn log_disabled(subsystem: &str) {
-    lmg_core::log::log(
+    swiss_core::log::log(
         "info",
         "subsystem disabled",
         Some(serde_json::json!({
@@ -168,17 +168,17 @@ mod tests {
         // The toggle reads GatewayConfig::raw, so the load must retain unknown rows verbatim —
         // a parser that dropped what it did not understand would silently re-enable every
         // subsystem on the next boot.
-        lmg_core::secure::key::use_test_master_key();
-        let dir = std::env::temp_dir().join(format!("lmg-subs-{}", lmg_core::util::random_hex(8)));
+        swiss_core::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!("swiss-subs-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch dir");
-        unsafe { std::env::set_var("LMG_SUBS_TOKEN", "tok") };
+        unsafe { std::env::set_var("SWISS_SUBS_TOKEN", "tok") };
         let path = dir.join("gateway.config.json");
         std::fs::write(
             &path,
-            r##"{"tokenEnv":"LMG_SUBS_TOKEN","servers":{},"jobs":{"disabled":true},"tunnels":{}}"##,
+            r##"{"tokenEnv":"SWISS_SUBS_TOKEN","servers":{},"jobs":{"disabled":true},"tunnels":{}}"##,
         )
         .expect("write a legacy-plaintext config (accepted, then re-sealed)");
-        let cfg = lmg_host::config::load_config(&path).expect("loads");
+        let cfg = swiss_host::config::load_config(&path).expect("loads");
         assert!(disabled(&cfg.raw, "jobs"), "the row survived the load");
         assert!(!disabled(&cfg.raw, "tunnels"));
     }

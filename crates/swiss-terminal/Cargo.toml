@@ -1,0 +1,28 @@
+[package]
+name = "swiss-terminal"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# ADR-010: a subsystem crate depends on swiss-core and swiss-host and on NO other subsystem
+# crate. SSH arrives through the shell capability seat in swiss-host (docs/14 §4), the local
+# PTY through the platform seam in swiss-core (docs/14 §5), so nothing here links russh and
+# nothing here holds an unsafe block.
+[dependencies]
+swiss-core = { path = "../swiss-core" }
+swiss-host = { path = "../swiss-host" }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+thiserror = "2"
+
+[dev-dependencies]
+# test-utils pins the scratch MCP_GATEWAY_HOME for this crate's test binary, so a recording
+# test can never write into the real ~/.mcp-gateway/terminal.
+swiss-core = { path = "../swiss-core", features = ["test-utils"] }
+# test-util: the pausable clock. A 30-minute idle timeout and a 60-second reconnect grace
+# are asserted in microseconds instead of being trusted to a comment.
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync", "test-util"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+# The fake shell provider implements the host's ShellProvider trait, which is async.
+async-trait = "0.1"

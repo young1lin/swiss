@@ -1,4 +1,4 @@
-//! The gateway's boot sequence — the port of `index.ts`, shared by `lmg serve` (foreground) and
+//! The gateway's boot sequence — the port of `index.ts`, shared by `swiss serve` (foreground) and
 //! the detached daemon: PATH repair, proc-PID reaping, tunnel boot (with the forward-port
 //! first-run import), MCP registration, and the shutdown order (tunnels close before the
 //! registry, so every forwarded local port is released while MCP connections still drain).
@@ -7,21 +7,21 @@ use std::sync::Arc;
 
 use crate::app::{build_app, AppContext};
 use crate::bootstrap::ensure_first_run;
-use lmg_core::log;
-use lmg_core::secure::envstore::{env_store_path, inject_env_store};
-use lmg_host::config::{config_path, load_config};
-use lmg_host::managed::ManagedStore;
-use lmg_host::token::TokenManager;
-use lmg_mcp::adapters::make_adapter;
-use lmg_mcp::registry::{Registry, Source};
+use swiss_core::log;
+use swiss_core::secure::envstore::{env_store_path, inject_env_store};
+use swiss_host::config::{config_path, load_config};
+use swiss_host::managed::ManagedStore;
+use swiss_host::token::TokenManager;
+use swiss_mcp::adapters::make_adapter;
+use swiss_mcp::registry::{Registry, Source};
 use serde_json::json;
 
 pub async fn run_gateway() -> Result<(), String> {
-    // A detached `lmg start` (and Cursor's agent shell) often inherit a PATH that is missing
+    // A detached `swiss start` (and Cursor's agent shell) often inherit a PATH that is missing
     // user-level bins — uv/uvx live in ~/.local/bin. Put them back before any proc MCP spawns.
     // Safe to set here: boot is single-threaded on the current_thread runtime, before any task
     // that could read the environment concurrently has been spawned.
-    let login_path = lmg_host::pathenv::login_path_from_env();
+    let login_path = swiss_host::pathenv::login_path_from_env();
     unsafe { std::env::set_var("PATH", &login_path) };
 
     // Create the data dir, seed a default config, and guarantee a token exists — before
@@ -36,7 +36,7 @@ pub async fn run_gateway() -> Result<(), String> {
     // every plugin enable/disable/config write goes through its revision-checked CAS. No
     // migration happens at boot — the file is only written when an operator changes something.
     let config_store =
-        lmg_host::config_store::ConfigStore::from_loaded(config_path(), cfg.raw.clone());
+        swiss_host::config_store::ConfigStore::from_loaded(config_path(), cfg.raw.clone());
 
     // Reap proc-MCP children a PREVIOUS instance orphaned when it was hard-killed (task /End,
     // crash) before close() could tree-kill them. Read from a persisted ledger of spawned PIDs,
@@ -47,7 +47,7 @@ pub async fn run_gateway() -> Result<(), String> {
     // child. (The Node build also ran a command-line sweep for known MCP packages here; it
     // needs WMI for command lines, which is not ported — the ledger covers every child this
     // build spawns.)
-    lmg_host::proc_pids::set_proc_pid_file(lmg_host::proc_pids::proc_pid_file(cfg.port));
+    swiss_host::proc_pids::set_proc_pid_file(swiss_host::proc_pids::proc_pid_file(cfg.port));
     // Probe the port BEFORE reaping: the pid ledger is port-scoped, so a live gateway on this
     // port shares the very file about to be swept — reaping under its feet would tree-kill ITS
     // proc children. Something answering means this boot fails at bind anyway; the ledger stays
@@ -62,13 +62,13 @@ pub async fn run_gateway() -> Result<(), String> {
             Some(json!({ "host": cfg.host, "port": cfg.port })),
         );
     } else {
-        lmg_host::proc_pids::reap_proc_pids(std::process::id());
+        swiss_host::proc_pids::reap_proc_pids(std::process::id());
     }
 
     // The ONE call log for this app (S2 instantiation): the registry, the adapters and the
     // admin API all share this instance, so what an adapter records is exactly what the Logs
     // tab reads - and nothing outside this app can see it.
-    let call_log = std::sync::Arc::new(lmg_mcp::calls::CallLog::at(lmg_core::paths::data_path(&[
+    let call_log = std::sync::Arc::new(swiss_mcp::calls::CallLog::at(swiss_core::paths::data_path(&[
         "logs", "calls",
     ])));
     let registry = Registry::new(15_000, call_log.clone());
@@ -87,16 +87,16 @@ pub async fn run_gateway() -> Result<(), String> {
     // database is only reachable through a tunnel gets its tunnel first. The store loads before
     // requests are accepted so the panel sees persisted connections and rules.
     let tunnel_store = Arc::new(std::sync::Mutex::new(
-        lmg_tunnels::tunnel::TunnelStore::new(
-            lmg_core::paths::data_path(&["tunnels.json"]),
+        swiss_tunnels::tunnel::TunnelStore::new(
+            swiss_core::paths::data_path(&["tunnels.json"]),
             cfg.port,
         ),
     ));
-    let tunnel_manager = lmg_tunnels::tunnel::TunnelManager::new(
+    let tunnel_manager = swiss_tunnels::tunnel::TunnelManager::new(
         tunnel_store.clone(),
         Some(crate::mcp_link::registry_view(registry.clone())),
     );
-    let tunnels = Arc::new(lmg_tunnels::tunnel::Tunnels {
+    let tunnels = Arc::new(swiss_tunnels::tunnel::Tunnels {
         store: tunnel_store,
         manager: tunnel_manager.clone(),
         mcp_display: Some(crate::mcp_link::registry_display(registry.clone())),
@@ -165,7 +165,7 @@ pub async fn run_gateway() -> Result<(), String> {
     // panel submit to, and the one child-process supervisor. Constructed here, owned by no
     // plugin — the /api/actions and /api/runs surface reads them even while every provider
     // is disabled.
-    let services = lmg_host::services::RuntimeServices::new();
+    let services = swiss_host::services::RuntimeServices::new();
 
     // Scheduled command jobs (a Rust-side subsystem; see src/jobs/mod.rs). One task ticking
     // once a second, no per-job tasks, and an empty jobs.json is a no-op - the feature costs
@@ -173,8 +173,8 @@ pub async fn run_gateway() -> Result<(), String> {
     // the jobs plugin's lifecycle decision (host/builtin.rs), not a boot-time branch here.
     // Its runs go through the shared coordinator above: the scheduler decides WHEN, the
     // coordinator owns the run and the supervisor owns the child process.
-    let jobs = lmg_jobs::jobs::JobSystem::open(
-        lmg_core::paths::data_path(&["jobs.json"]),
+    let jobs = swiss_jobs::jobs::JobSystem::open(
+        swiss_core::paths::data_path(&["jobs.json"]),
         services.clone(),
         config_store.clone(),
     );
@@ -184,14 +184,14 @@ pub async fn run_gateway() -> Result<(), String> {
     // takes precedence over the .env seed.
     let tokens = Arc::new(TokenManager::new(
         store.clone(),
-        lmg_host::managed::load_managed_token(&lmg_core::paths::data_path(&["managed.json"]))
+        swiss_host::managed::load_managed_token(&swiss_core::paths::data_path(&["managed.json"]))
             .as_deref()
             .or(Some(cfg.token.as_str())),
     ));
 
     // Restore the traffic ring's pre-restart tail before the server accepts requests, so the
     // first panel poll sees the history that was there before the restart.
-    lmg_mcp::traffic::init_traffic_log();
+    swiss_mcp::traffic::init_traffic_log();
 
     let ctx = AppContext::new(
         registry.clone(),
@@ -213,7 +213,7 @@ pub async fn run_gateway() -> Result<(), String> {
     // the MCPs that may ride them — the old boot order, now expressed as data. A plugin whose
     // start fails is recorded on its inventory row and the boot continues: one plugin's
     // failure is a row, never a failed gateway.
-    let mut host = lmg_host::host::PluginHost::new(config_store.clone());
+    let mut host = swiss_host::host::PluginHost::new(config_store.clone());
     let deps = crate::builtin::BuiltinDeps {
         registry: registry.clone(),
         managed: store.clone(),
@@ -255,9 +255,9 @@ pub async fn run_gateway() -> Result<(), String> {
     // boundary, which answers a structured 503 on every path of a plugin that is not serving
     // (replacing the boot-time absent_router stubs: absence is now a live state, not a
     // different router).
-    let extra = lmg_tunnels::tunnel::api::mount(tunnels.clone())
-        .merge(lmg_jobs::jobs::api::mount(jobs.clone()))
-        .merge(lmg_host::services::api::mount(services.clone()))
+    let extra = swiss_tunnels::tunnel::api::mount(tunnels.clone())
+        .merge(swiss_jobs::jobs::api::mount(jobs.clone()))
+        .merge(swiss_host::services::api::mount(services.clone()))
         // Inside the SAME guard and plugin boundary as the trees above: the terminal
         // routes are owned by the terminal plugin (route_owner prefix /api/terminal),
         // so a disabled plugin answers the structured 503 with no 503 of its own here.
@@ -355,7 +355,7 @@ pub async fn run_gateway() -> Result<(), String> {
     }
     registry.close_all().await;
     ctx.calls.flush_calls(None).await; // the last calls before a restart are the ones worth having on disk
-    lmg_mcp::traffic::flush_traffic().await; // and the last traffic rows
+    swiss_mcp::traffic::flush_traffic().await; // and the last traffic rows
     Ok(())
 }
 
@@ -368,9 +368,9 @@ async fn register_one(
     registry: &Arc<Registry>,
     store: &Arc<ManagedStore>,
     name: &str,
-    mut def: lmg_host::config::ServerDef,
+    mut def: swiss_host::config::ServerDef,
     source: Source,
-    log: &std::sync::Arc<lmg_mcp::calls::CallLog>,
+    log: &std::sync::Arc<swiss_mcp::calls::CallLog>,
 ) {
     let result = async {
         // Apply persisted tool toggles before the adapter captures the def, so a toggle survives
@@ -424,7 +424,7 @@ mod tests {
     // the Node build's index.ts pins — is the per-MCP registration decision, which is where a
     // panel Stop, a tool toggle and the lazy rule all have to survive a restart.
     use super::*;
-    use lmg_mcp::registry::Lifecycle;
+    use swiss_mcp::registry::Lifecycle;
     use serde_json::Value;
 
     /// A store of this test's own. The directory has to exist before anything writes: `open_at`
@@ -432,24 +432,24 @@ mod tests {
     /// up, leaving them green for the wrong reason.
     fn scratch_store() -> Arc<ManagedStore> {
         let dir =
-            std::env::temp_dir().join(format!("lmg-server-{}", lmg_core::util::random_hex(8)));
+            std::env::temp_dir().join(format!("swiss-server-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("create the scratch directory");
         Arc::new(ManagedStore::open_at(dir.join("managed.json")))
     }
 
-    fn def_of(value: Value) -> lmg_host::config::ServerDef {
-        lmg_host::config::ServerDef(value.as_object().cloned().expect("an object"))
+    fn def_of(value: Value) -> swiss_host::config::ServerDef {
+        swiss_host::config::ServerDef(value.as_object().cloned().expect("an object"))
     }
 
     /// An echo MCP: no child process, no port, no driver — so what is measured is the decision,
     /// not an adapter's startup.
-    fn echo() -> lmg_host::config::ServerDef {
+    fn echo() -> swiss_host::config::ServerDef {
         def_of(json!({ "type": "echo" }))
     }
 
     /// Lazy without being a proc: `is_lazy` defaults to true for `proc` and follows an explicit
     /// `lazy` otherwise, so this exercises the boot rule with nothing to spawn.
-    fn lazy_echo() -> lmg_host::config::ServerDef {
+    fn lazy_echo() -> swiss_host::config::ServerDef {
         def_of(json!({ "type": "echo", "lazy": true }))
     }
 
@@ -463,7 +463,7 @@ mod tests {
             .lifecycle
     }
 
-    fn def_in_registry(registry: &Arc<Registry>, name: &str) -> lmg_host::config::ServerDef {
+    fn def_in_registry(registry: &Arc<Registry>, name: &str) -> swiss_host::config::ServerDef {
         registry
             .get(name)
             .expect("the entry was registered")
@@ -477,7 +477,7 @@ mod tests {
     /// A registry wired to the test binary's shared call log, the way boot wires one to
     /// the app's own.
     fn test_registry() -> Arc<Registry> {
-        Registry::new(3_600_000, lmg_mcp::calls::test_log())
+        Registry::new(3_600_000, swiss_mcp::calls::test_log())
     }
 
     /// The boot-start half of the old register_one, which now lives in the MCP plugin:
@@ -497,7 +497,7 @@ mod tests {
             "echo",
             echo(),
             Source::Config,
-            &lmg_mcp::calls::test_log(),
+            &swiss_mcp::calls::test_log(),
         )
         .await;
         boot_mcps(&registry, &store).await;
@@ -516,7 +516,7 @@ mod tests {
             "lazy",
             lazy_echo(),
             Source::Config,
-            &lmg_mcp::calls::test_log(),
+            &swiss_mcp::calls::test_log(),
         )
         .await;
         boot_mcps(&registry, &store).await;
@@ -543,7 +543,7 @@ mod tests {
             "echo",
             echo(),
             Source::Config,
-            &lmg_mcp::calls::test_log(),
+            &swiss_mcp::calls::test_log(),
         )
         .await;
         boot_mcps(&registry, &store).await;
@@ -560,7 +560,7 @@ mod tests {
         let registry = test_registry();
         let store = scratch_store();
         store
-            .add(lmg_host::managed::ManagedEntry {
+            .add(swiss_host::managed::ManagedEntry {
                 name: "added".into(),
                 def: echo(),
                 enabled: false,
@@ -574,7 +574,7 @@ mod tests {
             "added",
             echo(),
             Source::Managed,
-            &lmg_mcp::calls::test_log(),
+            &swiss_mcp::calls::test_log(),
         )
         .await;
         boot_mcps(&registry, &store).await;
@@ -592,7 +592,7 @@ mod tests {
         let registry = test_registry();
         let store = scratch_store();
         store
-            .add(lmg_host::managed::ManagedEntry {
+            .add(swiss_host::managed::ManagedEntry {
                 name: "added".into(),
                 def: echo(),
                 enabled: true,
@@ -606,7 +606,7 @@ mod tests {
             "added",
             echo(),
             Source::Managed,
-            &lmg_mcp::calls::test_log(),
+            &swiss_mcp::calls::test_log(),
         )
         .await;
         boot_mcps(&registry, &store).await;
@@ -629,7 +629,7 @@ mod tests {
             "echo",
             echo(),
             Source::Config,
-            &lmg_mcp::calls::test_log(),
+            &swiss_mcp::calls::test_log(),
         )
         .await;
         let def = def_in_registry(&registry, "echo");
@@ -652,7 +652,7 @@ mod tests {
             "broken",
             def_of(json!({ "type": "no-such-adapter-kind" })),
             Source::Config,
-            &lmg_mcp::calls::test_log(),
+            &swiss_mcp::calls::test_log(),
         )
         .await;
         assert!(!registry.has("broken"), "nothing half-registered was left");
@@ -664,7 +664,7 @@ mod tests {
             "echo",
             echo(),
             Source::Config,
-            &lmg_mcp::calls::test_log(),
+            &swiss_mcp::calls::test_log(),
         )
         .await;
         boot_mcps(&registry, &store).await;

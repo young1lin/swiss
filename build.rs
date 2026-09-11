@@ -1,7 +1,7 @@
 // The build stamp (docs/16 H3): which commit this binary was built from, and when.
 //
 // `git rev-parse --short HEAD` + a dirty marker from `git status --porcelain`, stamped into
-// LMG_GIT_HASH, and an RFC 3339 UTC LMG_BUILD_TIME computed from the epoch by hand (no
+// SWISS_GIT_HASH, and an RFC 3339 UTC SWISS_BUILD_TIME computed from the epoch by hand (no
 // chrono here: the build script must not grow dependencies). Everything else is std.
 //
 // Failure is not an option: a machine with no git (or a tarball checkout) builds fine with
@@ -16,8 +16,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     let hash = git_hash().unwrap_or_else(|| "unknown".to_string());
-    println!("cargo:rustc-env=LMG_GIT_HASH={hash}");
-    println!("cargo:rustc-env=LMG_BUILD_TIME={}", rfc3339_now());
+    println!("cargo:rustc-env=SWISS_GIT_HASH={hash}");
+    println!("cargo:rustc-env=SWISS_BUILD_TIME={}", rfc3339_now());
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs/heads");
 }

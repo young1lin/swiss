@@ -2,8 +2,10 @@
 # Never touches 19999 except a read-only /health at the very end.
 $ErrorActionPreference = "Continue"
 $Token = "acceptance-token-for-1998"
+# The token pin deliberately stays on the legacy name: the snapshotted production config still
+# carries tokenEnv MCP_GATEWAY_TOKEN, and this script is the regression proof that pin still works.
 $env:MCP_GATEWAY_TOKEN = $Token
-$Exe = "target-test\release\lmg.exe"
+$Exe = "target-test\release\swiss.exe"
 $Health98 = "http://127.0.0.1:19998/health"
 
 Write-Output "=== [0] launcher env (this very shell) ==="
@@ -29,15 +31,15 @@ if ($ver -notmatch [regex]::Escape($health.build.hash)) { Write-Output "MISMATCH
 if ($info.build.hash -ne $health.build.hash) { Write-Output "MISMATCH info vs health"; exit 1 }
 Write-Output "OK: all three name the same build"
 
-Write-Output "=== [4] H3: lmg status prints a build row ==="
-$env:MCP_GATEWAY_HOME = Join-Path $env:LOCALAPPDATA "lmg-test-home"
-$env:MCP_GATEWAY_PORT = "19998"
+Write-Output "=== [4] H3: swiss status prints a build row ==="
+$env:SWISS_HOME = Join-Path $env:LOCALAPPDATA "swiss-test-home"
+$env:SWISS_PORT = "19998"
 $status = & $Exe status 2>&1 | Out-String
 $status.Split("`n") | Where-Object { $_ -match "build|running|url" } | ForEach-Object { Write-Output ("  " + $_.TrimEnd()) }
 if ($status -notmatch "build") { Write-Output "NO BUILD ROW"; exit 1 }
 Write-Output "OK: status carries the build"
-Remove-Item Env:\MCP_GATEWAY_HOME -ErrorAction SilentlyContinue
-Remove-Item Env:\MCP_GATEWAY_PORT -ErrorAction SilentlyContinue
+Remove-Item Env:\SWISS_HOME -ErrorAction SilentlyContinue
+Remove-Item Env:\SWISS_PORT -ErrorAction SilentlyContinue
 
 Write-Output "=== [5] H1: a local shell on the daemon reports a scrubbed env ==="
 $open = Invoke-RestMethod -Uri "http://127.0.0.1:19998/api/terminal/sessions" -Method Post -Headers $hdr -Body ('{"target":"local","cols":120,"rows":30}') -ContentType "application/json" -TimeoutSec 15
@@ -87,7 +89,7 @@ $saved = Invoke-RestMethod -Uri "http://127.0.0.1:19998/api/plugins/terminal/con
 Write-Output ("save answered ok: " + ($saved.ok | Out-String).Trim())
 Start-Sleep -Milliseconds 800
 $prodAfter = (Get-Item $prodCfg).LastWriteTimeUtc
-$testCfg = Join-Path $env:LOCALAPPDATA "lmg-test-home\gateway.config.json"
+$testCfg = Join-Path $env:LOCALAPPDATA "swiss-test-home\gateway.config.json"
 $testAfter = (Get-Item $testCfg).LastWriteTimeUtc
 Write-Output ("prod mtime AFTER : " + $prodAfter.ToString("o") + "  (unchanged: " + ($prodBefore -eq $prodAfter) + ")")
 Write-Output ("test mtime AFTER : " + $testAfter.ToString("o"))

@@ -1,0 +1,372 @@
+    /* ---------------------------------------------------------------------------------------------
+       Structure over palette. This is the shape Apple uses for a management UI (System Settings):
+       sidebar + detail pane, grouped inset lists, one primary action with the rest behind an overflow
+       menu, a strict type ramp and a 4pt spacing grid.
+
+       Three rules the previous pass got wrong, and this one enforces:
+
+       1. MONOSPACE IS FOR VALUES YOU WOULD COPY — an endpoint path, a tool name, a JSON payload.
+          Never for identity. A 26px monospace pane title is the single loudest tell that a UI is
+          imitating Apple rather than following it; the title is now sans, and the mount path moved
+          into the status line where a monospace face is earned.
+
+       2. SATURATION IS FOR STATE. Status dots, the accent, and error red stay loud. Launch-method
+          tags (http / npx / uvx / …) get a quiet hue each so a scan of the list can tell them
+          apart — tinted chips, not outlined badges.
+
+       3. TEXT NEEDS A MEASURE. Cards used to stretch to the window's full width, which made a single
+          tool card look lost in a 1500px field. Content is capped at --measure; the log and traffic
+          views, whose rows are genuinely wide, get --measure-wide. Neither is ever unbounded.
+
+       Font note: this gateway runs on Windows, where the SF stack falls through to Segoe UI. Tracking
+       is neutral except on the one size large enough to want it, and Inter is honored first if it is
+       ever installed.
+    --------------------------------------------------------------------------------------------- */
+    :root {
+      /* Set from <head> before first paint, and re-resolved whenever the picker or the OS changes.
+         What lands here is always a concrete light/dark — "auto" is resolved in JS — so the dark
+         palette is written once, below, instead of once for the media query and again for the
+         picker with the two free to drift apart. */
+      color-scheme: light;
+
+      /* Type ramp — five roles, nothing in between. */
+      --f-title: 22px;      /* pane title */
+      --f-head: 15px;       /* pane description, sheet heading */
+      --f-body: 13px;       /* default */
+      --f-label: 12px;      /* secondary text */
+      --f-caption: 11px;    /* group captions, uppercase */
+
+      /* 4pt spacing grid. */
+      --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+
+      /* Content measure. Nothing in the pane is ever full-bleed. */
+      --measure: 820px;
+      --measure-wide: 1180px;
+
+      --r-card: 10px;
+      --r-row: 6px;
+      --r-btn: 6px;
+      --r-pill: 980px;
+
+      --sans: Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      --mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+      /* Light. Four surfaces, each one step apart, and every step visible: the canvas is a cool
+         near-white, the sidebar and the bars sit one step below it, the cards one step above it
+         (pure white, lifted by a one-pixel shadow rather than a heavier hairline). The previous
+         palette put the toolbar, the sidebar and the canvas on three near-identical greys and the
+         cards on a fifth — the whole panel read as one flat grey slab with rectangles drawn on it.
+         The status colours are the darker, less fluorescent members of their pairs: a column of
+         nine saturated green dots is a lot of light for what is only a row marker. */
+      --bg: #f5f6f8;
+      --sidebar: #eef0f3;
+      --bar: #ffffff;
+      --card: #ffffff;
+      --field: #ffffff;
+      --text: #15171c;
+      --text-2: #5f6673;
+      --text-3: #8b92a0;
+      --sep: rgba(20, 24, 36, 0.10);
+      --sep-soft: rgba(20, 24, 36, 0.06);
+      --hover: rgba(20, 24, 36, 0.045);
+      --accent: #2563eb;
+      --accent-text: #ffffff;
+      --green: #16a34a;
+      --red: #dc2626;
+      --amber: #d97706;
+      --shadow-card: 0 1px 2px rgba(20, 24, 36, 0.05), 0 0 0 1px rgba(20, 24, 36, 0.045);
+      --shadow-btn: 0 1px 1px rgba(20, 24, 36, 0.04);
+      --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px rgba(20, 24, 36, 0.06);
+      --shadow-pop: 0 8px 24px rgba(20, 24, 36, 0.14), 0 0 0 1px rgba(20, 24, 36, 0.06);
+    }
+    /* Dark. Written once; `data-theme` is always resolved before it reaches the DOM. The same
+       four-step ladder, inverted: bars and sidebar darkest, canvas one up, cards one above that. */
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #17181c;
+      --sidebar: #1e1f24;
+      --bar: #1e1f24;
+      --card: #24262c;
+      --field: #1b1c21;
+      --text: #ecedf1;
+      --text-2: #9a9fab;
+      --text-3: #6b7080;
+      --sep: rgba(255, 255, 255, 0.10);
+      --sep-soft: rgba(255, 255, 255, 0.06);
+      --hover: rgba(255, 255, 255, 0.06);
+      --accent: #3b82f6;
+      --green: #4ade80;
+      --red: #f87171;
+      --amber: #fbbf24;
+      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.06);
+      --shadow-btn: none;
+      --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      font-size: var(--f-body);
+      line-height: 1.45;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+    [hidden] { display: none !important; }
+    code { font-family: var(--mono); font-size: 0.92em; }
+
+    /* --- controls ------------------------------------------------------------------------------ */
+    button { font: inherit; cursor: pointer; border: 0; background: none; color: inherit; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+    /* A push button, not a pill: macOS reserves the full-round shape for toolbar segments and tags.
+       These are "Start", "Try", "Read" — rounded rects. */
+    .btn {
+      font-size: var(--f-body); font-weight: 500; line-height: 20px;
+      padding: 4px var(--s3); border-radius: var(--r-btn);
+      background: var(--card); color: var(--text);
+      box-shadow: inset 0 0 0 1px var(--sep), var(--shadow-btn);
+      transition: background .12s ease, box-shadow .12s ease;
+      white-space: nowrap;
+    }
+    .btn:hover { background: color-mix(in srgb, var(--hover), var(--card)); }
+    .btn:active { box-shadow: inset 0 0 0 1px var(--sep); }
+    .btn.primary { background: var(--accent); color: var(--accent-text); box-shadow: var(--shadow-btn); font-weight: 550; }
+    .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
+    .btn.danger { color: var(--red); }
+    .btn:disabled, .btn.disabled { opacity: .4; cursor: default; background: var(--card); }
+
+    /* A tool's visibility is a state you set, not an action you fire, so it is a switch — the control
+       every row-level on/off in System Settings uses. It was an outlined uppercase "ON" pill, and a
+       column of nine of those read as nine status badges arguing with the sidebar's status dots
+       instead of as nine controls. A <button role="switch"> rather than a checkbox, so a row stays
+       one HTML string and keeps the same disabled/reload handling as every other row button. */
+    .sw {
+      flex: none; width: 38px; height: 22px; border-radius: var(--r-pill); position: relative;
+      background: var(--sep); box-shadow: inset 0 0 0 1px var(--sep-soft);
+      transition: background .15s ease;
+    }
+    .sw::after {
+      content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+      border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .28);
+      transition: transform .15s ease;
+    }
+    /* Accent, not green: green already means "this MCP is up" on every sidebar row, and a switch is
+       not a health reading. macOS switches are the accent colour for exactly this reason. */
+    .sw[aria-checked="true"] { background: var(--accent); box-shadow: none; }
+    .sw[aria-checked="true"]::after { transform: translateX(16px); }
+    .sw:disabled { opacity: .4; cursor: default; }
+    @media (prefers-reduced-motion: reduce) { .sw, .sw::after { transition: none; } }
+    .row.muted .name { color: var(--text-3); }
+    .group-cap { font-size: var(--f-caption); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: var(--s4) var(--s4) var(--s1); }
+    .btn.icon { padding: 4px 8px; font-size: 14px; line-height: 1; color: var(--text-2); }
+
+    /* Fields sit on --field, not --card: inside a white card or a white sheet a white input has no
+       edge but its hairline, and on the dark side a field one step darker than its card is what
+       makes it read as a well you type into rather than a label. */
+    input, select, textarea {
+      font: inherit; width: 100%;
+      color: var(--text); background: var(--field);
+      border: 1px solid var(--sep); border-radius: var(--r-row);
+      padding: 5px var(--s2);
+      transition: border-color .12s ease, box-shadow .12s ease;
+    }
+    input::placeholder, textarea::placeholder { color: var(--text-3); }
+    input:focus, select:focus, textarea:focus {
+      outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    }
+    textarea { min-height: 62px; font-family: var(--mono); font-size: var(--f-label); resize: vertical; }
+    select { appearance: none; padding-right: var(--s6); background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%); background-position: right 13px center, right 8px center; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+    /* The custom dropdown face (js/dropdown.js). A native select's option POPUP cannot be styled,
+       so every select is hidden (select.dd-native) and rendered by a trigger + floating menu. The
+       trigger borrows the closed select's exact chrome — same fill, border, radius, focus ring —
+       so the two eras of the control read as one family. */
+    select.dd-native { display: none !important; }
+    .dd { display: inline-flex; align-items: center; gap: var(--s2); width: auto; min-width: 0;
+      font: inherit; color: var(--text); text-align: left;
+      background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row);
+      padding: 5px var(--s2); cursor: pointer;
+      transition: border-color .12s ease, box-shadow .12s ease; }
+    .dd:hover { background: color-mix(in srgb, var(--hover), var(--field)); }
+    .dd:focus { outline: none; border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+    .dd[aria-expanded="true"] { border-color: var(--accent); }
+    .dd[disabled] { opacity: .4; cursor: default; background: var(--card); }
+    .dd-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dd-chev { flex: none; width: 7px; height: 7px; margin-right: 2px;
+      border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
+      transform: rotate(45deg); transition: transform .15s ease; }
+    .dd[aria-expanded="true"] .dd-chev { transform: rotate(225deg); }
+    @media (prefers-reduced-motion: reduce) { .dd-chev { transition: none; } }
+    /* The popup: the panel's floating-menu chrome, with the pick-column ticks so the current choice
+       reads as "which one", not a list of actions. Sizing only — the z-index that lifts a floating
+       menu above a sheet backdrop lives in views.css's .menu.float, next to the rest of the layer
+       table. It cannot live here: a same-specificity .dd-menu in this file loses the cascade tie to
+       views.css's later .menu rule (base.css is linked first), which is exactly how the
+       dropdown-behind-the-sheet bug shipped once already. */
+    .dd-menu { min-width: 0; max-height: 280px; overflow-y: auto; }
+    label.field .dd { width: 100%; }
+    label.field { display: block; }
+    label.field > span { display: block; font-size: var(--f-label); color: var(--text-2); margin-bottom: var(--s1); }
+    /* The one place colour marks something other than state: a required argument in Run. Leaving it
+       out is the error the form is about to report, so it is the same red that reports it. */
+    .req-star { color: var(--red); font-weight: 700; }
+    label.check { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-body); }
+    label.check input { width: auto; accent-color: var(--accent); }
+
+    /* --- shell --------------------------------------------------------------------------------- */
+    /* A macOS toolbar has no row of outlined pills. Its items are borderless until you point at them,
+       and its readouts are plain text — so .btn and .chip both shed their chrome in here. */
+    .toolbar {
+      height: 48px; display: flex; align-items: center; gap: var(--s3);
+      padding: 0 var(--s3) 0 var(--s4);
+      background: var(--bar);
+      border-bottom: 1px solid var(--sep);
+    }
+    /* The brand carries a mark: the swiss logo (logo.svg), a red tile with a white cross. It
+       is the one saturated thing on the bar, which is what makes the bar read as a header and not
+       as a second sidebar laid on its side. */
+    .brand { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--f-body); font-weight: 650; letter-spacing: -0.01em; margin-right: var(--s1); }
+    .brand-mark { width: 18px; height: 18px; border-radius: 5px; flex: 0 0 auto; }
+    .grow { flex: 1; }
+    .toolbar .btn {
+      background: none; box-shadow: none; color: var(--text-2); font-weight: 450;
+    }
+    .toolbar .btn:hover { background: var(--hover); color: var(--text); }
+    .chip {
+      font-size: var(--f-label); font-variant-numeric: tabular-nums;
+      color: var(--text-3); background: none;
+      padding: 2px var(--s1); border-radius: var(--r-btn); white-space: nowrap;
+    }
+    .chip.button:hover { background: var(--hover); color: var(--text-2); cursor: pointer; }
+
+    /* The shell fills whatever the bars leave. Previously this subtracted a hand-copied 44px, which
+       was a second source of truth for the toolbar's height; a second bar would have made it three.
+       min-height:0 is what lets the inner scrollers actually scroll inside a flex column. */
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    .shell { display: flex; flex: 1; min-height: 0; }
+
+    /* The subsection bar (docs/13 D6/D7): one full-width row between the toolbar and the shell,
+       dressed in the toolbar's own vocabulary so no new colour enters the panel. */
+    .subbar {
+      display: flex; align-items: center; gap: var(--s3);
+      padding: 6px var(--s4);
+      background: var(--bar); border-bottom: 1px solid var(--sep);
+    }
+
+    /* --- sidebar ------------------------------------------------------------------------------- */
+    .sidebar {
+      width: 248px; flex: none; display: flex; flex-direction: column;
+      background: var(--sidebar); border-right: 1px solid var(--sep);
+    }
+    .side-head { display: flex; gap: var(--s1); padding: var(--s3) var(--s2) var(--s1); }
+    .side-head input { background: var(--field); }
+    .side-head .btn { background: none; box-shadow: none; }
+    .side-cap {
+      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+      color: var(--text-3); padding: var(--s2) var(--s3) var(--s1);
+    }
+    .side-list { flex: 1; overflow-y: auto; padding: 0 var(--s2) var(--s4); }
+    /* One line per row, like every Apple source list. The previous two-line row carried a truncated
+       description, so all eleven rows ended in an ellipsis and the list read as a ragged wall — the
+       description said less than the name it sat under. It is still one hover away (the row's title)
+       and is set in full in the pane header. What earns the trailing slot instead is the launch
+       method (http / npx / uvx / ...), which is short, uniform, and the thing you actually scan for. */
+    .side-row {
+      display: flex; align-items: center; gap: var(--s2);
+      width: 100%; height: 30px; flex: none; text-align: left;
+      padding: 0 var(--s2); border-radius: var(--r-row);
+      color: var(--text);
+    }
+    .side-row:hover { background: var(--hover); }
+    /* Selection is the card colour lifted off the sidebar with a hairline shadow — the Finder /
+       Xcode source-list idiom — and the name takes the accent. A tinted blue slab washed out the
+       status dot every row carries; state has to survive selection. */
+    .side-row[aria-selected="true"] { background: var(--card); box-shadow: var(--shadow-card); }
+    .side-row[aria-selected="true"] .side-name { color: var(--accent); font-weight: 600; }
+    /* Drag-to-reorder: the insertion point, shown on the row the payload would land beside. */
+    .side-row.dragging { opacity: 0.55; }
+    .side-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+    .side-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+    .side-name {
+      flex: 1; min-width: 0; font-size: var(--f-body); font-weight: 500;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* How this MCP is launched. A quiet hue per method — readable, not a status badge. */
+    .side-type {
+      flex: none; font-family: var(--mono); font-size: var(--f-caption); font-weight: 550;
+      white-space: nowrap; padding: 1px 6px; border-radius: 5px;
+      color: var(--tag-fg, var(--text-2)); background: var(--tag-bg, var(--sep-soft));
+    }
+    .side-type[data-tag="http"]   { --tag-fg: #0369a1; --tag-bg: rgba(3, 105, 161, 0.12); }
+    .side-type[data-tag="rest"]   { --tag-fg: #5b21b6; --tag-bg: rgba(91, 33, 182, 0.12); }
+    .side-type[data-tag="npx"]    { --tag-fg: #c2410c; --tag-bg: rgba(194, 65, 12, 0.12); }
+    .side-type[data-tag="uvx"]    { --tag-fg: #0f766e; --tag-bg: rgba(15, 118, 110, 0.12); }
+    .side-type[data-tag="docker"] { --tag-fg: #075985; --tag-bg: rgba(7, 89, 133, 0.12); }
+    .side-type[data-tag="echo"]   { --tag-fg: #3f6212; --tag-bg: rgba(63, 98, 18, 0.12); }
+    .side-type[data-tag="mysql"]  { --tag-fg: #b45309; --tag-bg: rgba(180, 83, 9, 0.12); }
+    .side-type[data-tag="pg"]     { --tag-fg: #1d4ed8; --tag-bg: rgba(29, 78, 216, 0.12); }
+    .side-type[data-tag="redis"]  { --tag-fg: #b91c1c; --tag-bg: rgba(185, 28, 28, 0.12); }
+    .side-type[data-tag="proc"]   { --tag-fg: #44403c; --tag-bg: rgba(68, 64, 60, 0.10); }
+    :root[data-theme="dark"] .side-type[data-tag="http"]   { --tag-fg: #7dd3fc; --tag-bg: rgba(14, 165, 233, 0.18); }
+    :root[data-theme="dark"] .side-type[data-tag="rest"]   { --tag-fg: #c4b5fd; --tag-bg: rgba(139, 92, 246, 0.20); }
+    :root[data-theme="dark"] .side-type[data-tag="npx"]    { --tag-fg: #fdba74; --tag-bg: rgba(234, 88, 12, 0.20); }
+    :root[data-theme="dark"] .side-type[data-tag="uvx"]    { --tag-fg: #5eead4; --tag-bg: rgba(20, 184, 166, 0.18); }
+    :root[data-theme="dark"] .side-type[data-tag="docker"] { --tag-fg: #7dd3fc; --tag-bg: rgba(2, 132, 199, 0.20); }
+    :root[data-theme="dark"] .side-type[data-tag="echo"]   { --tag-fg: #bef264; --tag-bg: rgba(101, 163, 13, 0.18); }
+    :root[data-theme="dark"] .side-type[data-tag="mysql"]  { --tag-fg: #fbbf24; --tag-bg: rgba(217, 119, 6, 0.20); }
+    :root[data-theme="dark"] .side-type[data-tag="pg"]     { --tag-fg: #93c5fd; --tag-bg: rgba(59, 130, 246, 0.20); }
+    :root[data-theme="dark"] .side-type[data-tag="redis"]  { --tag-fg: #fca5a5; --tag-bg: rgba(239, 68, 68, 0.20); }
+    :root[data-theme="dark"] .side-type[data-tag="proc"]   { --tag-fg: #d6d3d1; --tag-bg: rgba(168, 162, 158, 0.16); }
+
+    /* --- sidebar groups -------------------------------------------------------------------------
+       A disclosure header per group, in the source-list idiom: the header is a caption, not a row, so
+       it never competes with the MCPs under it. `default` is always first and always present — it is
+       where an MCP lives until you move it, and where the members of a deleted group land. */
+    .side-group + .side-group { margin-top: var(--s2); }
+    .grp-head { display: flex; align-items: center; border-radius: var(--r-row); }
+    .grp-head:hover { background: var(--hover); }
+    .grp-toggle {
+      flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s1);
+      height: 24px; padding: 0 var(--s1); text-align: left;
+      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+      color: var(--text-3);
+    }
+    .grp-chev { flex: none; width: 10px; font-size: 10px; transition: transform .15s ease; }
+    .side-group:not(.collapsed) .grp-chev { transform: rotate(90deg); }
+    @media (prefers-reduced-motion: reduce) { .grp-chev { transition: none; } }
+    .grp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .grp-n { flex: none; font-variant-numeric: tabular-nums; font-weight: 500; opacity: .8; }
+    .grp-add, .grp-more {
+      flex: none; padding: 2px 6px; border-radius: 4px; line-height: 1;
+      font-size: 13px; color: var(--text-3);
+    }
+    /* Adding an MCP is the common act and it is always "into this group", so + stays visible — dimmed
+       until you point at the header. The rename/delete ⋯ is rare, and appears only on hover: one
+       persistent glyph per group is a hierarchy, two would be a toolbar. */
+    .grp-add { opacity: .55; }
+    .grp-more { opacity: 0; }
+    .grp-head:hover .grp-add, .grp-head:hover .grp-more,
+    .grp-add:focus-visible, .grp-more:focus-visible { opacity: 1; }
+    .grp-add:hover, .grp-more:hover { color: var(--text); background: var(--sep-soft); }
+    .grp-more.spacer { visibility: hidden; pointer-events: none; }
+    .side-group.collapsed .grp-rows { display: none; }
+    /* The indent is what makes this read as a tree: a row's content starts under its group's NAME,
+       past the disclosure triangle, and its hover/selection fill indents with it. */
+    .grp-rows { padding-left: 12px; }
+    /* Dropping onto the header itself appends to that group, which is the only way to reach an
+       empty one. */
+    .grp-head.drop-into { box-shadow: inset 0 0 0 1.5px var(--accent); }
+
+    /* Status is a dot plus neutral text — color is reserved for interaction, not for body copy. */
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-3); }
+    .dot.up { background: var(--green); }
+    .dot.down, .dot.error { background: var(--red); }
+    .dot.idle { background: var(--accent); } /* a lazy proc: no child spawned, starts on first request */
+    .dot.starting, .dot.stopping { background: var(--amber); animation: pulse 1.1s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .35; } }
+    @media (prefers-reduced-motion: reduce) { .dot { animation: none !important; } }

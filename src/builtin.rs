@@ -13,17 +13,17 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use lmg_core::log;
-use lmg_host::host::descriptor::{PageDescriptor, PluginDescriptor};
-use lmg_host::host::engine::PluginHost;
-use lmg_host::host::factory::{ApplyOutcome, PluginFactory, PluginInstance};
-use lmg_host::host::scope::PluginScope;
-use lmg_host::managed::ManagedStore;
-use lmg_host::services::actions::{LegacyCommandAction, ProcessExecAction};
-use lmg_host::services::RuntimeServices;
-use lmg_jobs::jobs::JobSystem;
-use lmg_mcp::registry::{is_lazy, Registry, Source};
-use lmg_tunnels::tunnel::manager::TunnelManager;
+use swiss_core::log;
+use swiss_host::host::descriptor::{PageDescriptor, PluginDescriptor};
+use swiss_host::host::engine::PluginHost;
+use swiss_host::host::factory::{ApplyOutcome, PluginFactory, PluginInstance};
+use swiss_host::host::scope::PluginScope;
+use swiss_host::managed::ManagedStore;
+use swiss_host::services::actions::{LegacyCommandAction, ProcessExecAction};
+use swiss_host::services::RuntimeServices;
+use swiss_jobs::jobs::JobSystem;
+use swiss_mcp::registry::{is_lazy, Registry, Source};
+use swiss_tunnels::tunnel::manager::TunnelManager;
 
 pub const MCP_ID: &str = "mcp";
 pub const TUNNELS_ID: &str = "tunnels";
@@ -52,7 +52,7 @@ pub struct BuiltinDeps {
     pub registry: Arc<Registry>,
     pub managed: Arc<ManagedStore>,
     pub jobs: Arc<JobSystem>,
-    pub tunnels: Arc<lmg_tunnels::tunnel::api::Tunnels>,
+    pub tunnels: Arc<swiss_tunnels::tunnel::api::Tunnels>,
     pub tunnel_manager: Arc<TunnelManager>,
     /// The shared action registry, run pool, process supervisor and connection catalog.
     /// Capability plugins register INTO these; the host's /api/actions, /api/runs and
@@ -122,7 +122,7 @@ impl PluginFactory for McpPlugin {
             registry: self.registry.clone(),
             managed: self.managed.clone(),
             services: self.services.clone(),
-            tracker: lmg_host::services::catalog::LeaseTracker::new(),
+            tracker: swiss_host::services::catalog::LeaseTracker::new(),
         }))
     }
 }
@@ -145,7 +145,7 @@ struct McpInstance {
     services: Arc<RuntimeServices>,
     /// The lease ledger backing the catalog this instance registers. One per instance:
     /// a stopped instance drains ITS leases, never the next one's.
-    tracker: Arc<lmg_host::services::catalog::LeaseTracker>,
+    tracker: Arc<swiss_host::services::catalog::LeaseTracker>,
 }
 
 #[async_trait]
@@ -158,7 +158,7 @@ impl PluginInstance for McpInstance {
         self.services
             .catalog
             .register(
-                Arc::new(lmg_mcp::registry::RegistryCatalog::new(
+                Arc::new(swiss_mcp::registry::RegistryCatalog::new(
                     self.registry.clone(),
                     self.tracker.clone(),
                 )),
@@ -173,9 +173,9 @@ impl PluginInstance for McpInstance {
         // to close), drain what is in flight with an honest warning when the wait was not
         // clean, close the pools, and only then free the catalog seat for the next start.
         self.services.catalog.begin_withdraw();
-        lmg_host::services::catalog::drain_leases(
+        swiss_host::services::catalog::drain_leases(
             &self.tracker,
-            std::time::Duration::from_millis(lmg_host::services::catalog::DRAIN_TIMEOUT_MS),
+            std::time::Duration::from_millis(swiss_host::services::catalog::DRAIN_TIMEOUT_MS),
             MCP_ID,
         );
         // close_all stops the health/idle timer together with every entry (registry.rs).
@@ -246,7 +246,7 @@ pub async fn start_hosted_mcps(registry: &Arc<Registry>, managed: &Arc<ManagedSt
 // --- Tunnels ---
 
 struct TunnelsPlugin {
-    tunnels: Arc<lmg_tunnels::tunnel::api::Tunnels>,
+    tunnels: Arc<swiss_tunnels::tunnel::api::Tunnels>,
     manager: Arc<TunnelManager>,
     services: Arc<RuntimeServices>,
 }
@@ -273,7 +273,7 @@ impl PluginFactory for TunnelsPlugin {
             tunnels: self.tunnels.clone(),
             manager: self.manager.clone(),
             services: self.services.clone(),
-            shells: lmg_tunnels::tunnel::shell::TunnelShells::new(self.manager.clone()),
+            shells: swiss_tunnels::tunnel::shell::TunnelShells::new(self.manager.clone()),
         }))
     }
 }
@@ -284,12 +284,12 @@ impl PluginFactory for TunnelsPlugin {
 /// import also moved INSIDE start: a disabled tunnels plugin no longer touches tunnels.json
 /// at boot (server.rs used to do the import before any lifecycle existed).
 struct TunnelsInstance {
-    tunnels: Arc<lmg_tunnels::tunnel::api::Tunnels>,
+    tunnels: Arc<swiss_tunnels::tunnel::api::Tunnels>,
     manager: Arc<TunnelManager>,
     services: Arc<RuntimeServices>,
     /// The interactive-shell provider this instance registers (docs/14 T2). One per
     /// INSTANCE: a stopped instance drains ITS sessions, never the next one's.
-    shells: Arc<lmg_tunnels::tunnel::shell::TunnelShells>,
+    shells: Arc<swiss_tunnels::tunnel::shell::TunnelShells>,
 }
 
 #[async_trait]
@@ -298,7 +298,7 @@ impl PluginInstance for TunnelsInstance {
         if let Ok(mut store) = self.tunnels.store.lock() {
             if store.is_fresh() {
                 if let Some((rules, connections)) =
-                    lmg_tunnels::tunnel::import::import_forward_port(&mut store, None)
+                    swiss_tunnels::tunnel::import::import_forward_port(&mut store, None)
                 {
                     log::log(
                         "info",
@@ -342,9 +342,9 @@ impl PluginInstance for TunnelsInstance {
         // purpose — an attached terminal does not hand itself back (docs/14 §4).
         self.services.shells.begin_withdraw();
         self.shells.ledger().begin_withdraw();
-        lmg_host::services::shell::drain_sessions(
+        swiss_host::services::shell::drain_sessions(
             self.shells.ledger(),
-            std::time::Duration::from_millis(lmg_host::services::shell::DRAIN_TIMEOUT_MS),
+            std::time::Duration::from_millis(swiss_host::services::shell::DRAIN_TIMEOUT_MS),
             TUNNELS_ID,
         )
         .await;
@@ -427,9 +427,9 @@ struct JobsPlugin {
 /// lock its jobs' config.
 fn validate_jobs_config(
     config: &Value,
-    actions: &lmg_host::services::action::ActionRegistry,
+    actions: &swiss_host::services::action::ActionRegistry,
 ) -> Result<(), String> {
-    lmg_jobs::jobs::def::JobsConfig::parse_with_actions(config, actions)
+    swiss_jobs::jobs::def::JobsConfig::parse_with_actions(config, actions)
         .map(|_| ())
         .map_err(|err| err.to_string())
 }
@@ -553,7 +553,7 @@ impl PluginFactory for JobsPlugin {
     }
 
     fn config_warnings(&self, config: &Value) -> Vec<String> {
-        match lmg_jobs::jobs::def::JobsConfig::parse_with_actions(config, self.jobs.actions()) {
+        match swiss_jobs::jobs::def::JobsConfig::parse_with_actions(config, self.jobs.actions()) {
             Ok((_, warnings)) => warnings,
             Err(_) => Vec::new(), // a rejected row never reaches the warning path
         }
@@ -568,7 +568,7 @@ impl PluginFactory for JobsPlugin {
     /// warn itself is asserted at the def.rs unit level (parse_boot reports the drops
     /// that feed it); log output is println and not capturable from integration tests.
     fn validate_config_for_start(&self, config: &Value) -> Result<(), String> {
-        match lmg_jobs::jobs::def::JobsConfig::parse_boot_with_actions(config, self.jobs.actions())
+        match swiss_jobs::jobs::def::JobsConfig::parse_boot_with_actions(config, self.jobs.actions())
         {
             Ok((boot, _)) => {
                 for (id, reason) in boot.dropped {
@@ -589,7 +589,7 @@ impl PluginFactory for JobsPlugin {
         // step fails this create - the plugin lands failed with the reason, jobs.json
         // stays untouched and unmarked, and the scheduler never ticks over a
         // half-migrated tree.
-        lmg_jobs::jobs::migrate::run(&self.jobs)?;
+        swiss_jobs::jobs::migrate::run(&self.jobs)?;
         // Apply the row the STORE holds now - the migration may have merged v1
         // definitions into it, and the `config` argument is the pre-migration
         // snapshot. Still before the tick can start, still cheap by contract.
@@ -749,7 +749,7 @@ mod tests {
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
         static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         std::env::temp_dir().join(format!(
-            "lmg-builtin-{}-{}-{}",
+            "swiss-builtin-{}-{}-{}",
             tag,
             std::process::id(),
             SEQ.fetch_add(1, Ordering::SeqCst),
@@ -768,10 +768,10 @@ mod tests {
         let factory = McpPlugin {
             registry: Registry::new(
                 60_000,
-                Arc::new(lmg_mcp::calls::CallLog::at(dir.join("calls"))),
+                Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
             ),
             managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
-            services: lmg_host::services::RuntimeServices::new(),
+            services: swiss_host::services::RuntimeServices::new(),
         };
         let descriptor = factory.descriptor();
         assert_eq!(descriptor.id, MCP_ID);

@@ -17,7 +17,7 @@ now fully implemented (`4147e8a`). A plugin host owns the subsystems; Actions, R
 supervisor are shared services rather than each subsystem's own; Jobs are defined in configuration
 with occurrence keys, misfire, DST and retry semantics; Data reaches its connections through a
 catalog contract instead of reaching into MCP; and the source is eight crates whose dependency
-edges the compiler enforces, still linking into one `lmg.exe`. `docs/11` and `docs/12` record the
+edges the compiler enforces, still linking into one `swiss.exe`. `docs/11` and `docs/12` record the
 stages and their acceptance criteria.
 
 **One acceptance task remains, and it is not code.** docs/01's rows are all filled now — the
@@ -110,14 +110,14 @@ local port is bound only while its tunnel can carry traffic, so a dead tunnel gi
 
 **Exit:** feature parity. Every panel view works against the Rust binary, including Tunnels.
 
-## Phase 5 — `lmg` and shipping
+## Phase 5 — `swiss` and shipping
 
 ~1,200 lines. The CLI is mechanical; the daemon is not — detached spawn, pid file, graceful-then-
 force stop, and the Windows "no deliverable SIGTERM" problem the Node build solves by asking the
 running gateway to shut itself down over HTTP. Port that approach; it is the reason children do not
 get orphaned on stop.
 
-**Exit:** `lmg start` / `stop` / `status` behave identically, and the `.exe` runs on a machine with
+**Exit:** `swiss start` / `stop` / `status` behave identically, and the `.exe` runs on a machine with
 no Node installed. Build with `-C target-feature=+crt-static` so there is no MSVC redistributable to
 chase — see ADR-006.
 

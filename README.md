@@ -1,4 +1,8 @@
-# local-mcp-gateway-rust
+# swiss
+
+<p><img src="assets/logo-wordmark.svg" alt="swiss" align="top" height="56"></p>
+
+A developer's Swiss Army knife - one tiny local process, every tool behind one loopback port.
 
 A Rust port of [`local-mcp-gateway`](../local-mcp-gateway): one local process that hosts every MCP
 server an AI client needs, exposed on HTTP paths under `127.0.0.1:19999`.
@@ -17,7 +21,7 @@ MySQL, PostgreSQL, Redis, proc, HTTP, REST, and SSH tunnels. The admin API, embe
 sealed-envelope compatibility, lazy proc lifecycle, and loopback security paths are implemented.
 The build has since become the plugin toolbox `docs/09`–`12` describe: a plugin host over shared
 Action / Run / process services, configuration-driven Jobs, a connection catalog that keeps Data
-independent of MCP, and eight crates that still link into one `lmg.exe`.
+independent of MCP, and eight crates that still link into one `swiss.exe`.
 
 Validation passes with default features — **941 tests** (810 unit across the eight
 packages, 131 integration) plus Clippy with `-D warnings`. Run the gates with
@@ -59,7 +63,7 @@ ever stops being.
 
 `cargo build --release` makes the exe; `scripts/deploy.ps1` ships it: gates, stop,
 build, `start --no-open`, then an assertion that the daemon on 19999 reports the hash this
-build stamped into `lmg --version` (docs/16 H3). `-SkipGates` exists for hotfixes.
+build stamped into `swiss --version` (docs/16 H3). `-SkipGates` exists for hotfixes.
 Deploying touches production — it is the operator's step, never part of iterating on a change
 (live verification belongs to `scripts/test-instance.ps1` on 19998).
 

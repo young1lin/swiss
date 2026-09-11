@@ -26,15 +26,15 @@ use tokio_tungstenite::tungstenite;
 use tokio_tungstenite::tungstenite::protocol::Message;
 use tower::ServiceExt;
 
-use lmg_host::config_store::ConfigStore;
-use lmg_host::managed::ManagedStore;
-use lmg_host::services::shell::{
+use swiss_host::config_store::ConfigStore;
+use swiss_host::managed::ManagedStore;
+use swiss_host::services::shell::{
     PtyEvent, PtyIn, PtyInput, PtyOut, PtySession, PtySize, SessionLedger, ShellError,
     ShellProvider, ShellTarget,
 };
-use lmg_host::token::{single_token_manager, TokenManager};
-use lmg_mcp::calls::CallLog;
-use lmg_mcp::registry::Registry;
+use swiss_host::token::{single_token_manager, TokenManager};
+use swiss_mcp::calls::CallLog;
+use swiss_mcp::registry::Registry;
 
 const TOKEN: &str = "test-terminal-token-0123456789";
 
@@ -45,7 +45,7 @@ type Ws = tokio_tungstenite::WebSocketStream<
 // --- the fake shell -------------------------------------------------------------------------------
 
 /// The far side of one fake session: what the test writes output into and reads
-/// keystrokes out of (the same shape lmg-terminal's own session tests use).
+/// keystrokes out of (the same shape swiss-terminal's own session tests use).
 struct FarSide {
     out: PtyOut,
     input: PtyIn,
@@ -116,15 +116,15 @@ struct Rig {
 /// data_path("terminal"); without this a test would touch the real home) and install
 /// the deterministic master key every sealed state file in this repo's tests uses.
 fn pin_home_and_key() {
-    let _ = lmg_core::paths::test_home();
+    let _ = swiss_core::paths::test_home();
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| unsafe {
-        std::env::set_var(lmg_core::secure::key::MASTER_KEY_ENV, "cd".repeat(32))
+        std::env::set_var(swiss_core::secure::key::MASTER_KEY_ENV, "cd".repeat(32))
     });
 }
 
 /// Timers off, recording off — the defaults for anything not about time or recording
-/// (the same "quiet" shape lmg-terminal's session tests use).
+/// (the same "quiet" shape swiss-terminal's session tests use).
 fn quiet() -> Value {
     json!({ "idleTimeoutMinutes": 0, "stallSeconds": 0, "recording": false })
 }
@@ -134,8 +134,8 @@ fn quiet() -> Value {
 async fn rig(tag: &str, terminal_config: Value) -> Rig {
     pin_home_and_key();
     let dir = std::env::temp_dir().join(format!(
-        "lmg-terminal-ws-{tag}-{}",
-        lmg_core::util::random_hex(8)
+        "swiss-terminal-ws-{tag}-{}",
+        swiss_core::util::random_hex(8)
     ));
     std::fs::create_dir_all(&dir).expect("scratch directory");
 
@@ -152,7 +152,7 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
     let registry = Registry::new(3_600_000, calls.clone());
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
 
-    let services = lmg_host::services::RuntimeServices::new();
+    let services = swiss_host::services::RuntimeServices::new();
     let (far_tx, far_rx) = mpsc::unbounded_channel();
     services
         .shells
@@ -165,23 +165,23 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
         )
         .expect("the shell seat was free (tunnels is disabled)");
 
-    let jobs = lmg_jobs::jobs::JobSystem::open(
+    let jobs = swiss_jobs::jobs::JobSystem::open(
         dir.join("jobs.json"),
         services.clone(),
         config_store.clone(),
     );
-    let tunnel_store = Arc::new(Mutex::new(lmg_tunnels::tunnel::TunnelStore::new(
+    let tunnel_store = Arc::new(Mutex::new(swiss_tunnels::tunnel::TunnelStore::new(
         dir.join("tunnels.json"),
         19997,
     )));
-    let tunnel_manager = lmg_tunnels::tunnel::TunnelManager::new(tunnel_store.clone(), None);
-    let tunnels = Arc::new(lmg_tunnels::tunnel::api::Tunnels {
+    let tunnel_manager = swiss_tunnels::tunnel::TunnelManager::new(tunnel_store.clone(), None);
+    let tunnels = Arc::new(swiss_tunnels::tunnel::api::Tunnels {
         store: tunnel_store,
         manager: tunnel_manager.clone(),
         mcp_display: None,
     });
 
-    let ctx = lmg::app::AppContext::new(
+    let ctx = swiss::app::AppContext::new(
         registry.clone(),
         Arc::new(single_token_manager(TOKEN)) as Arc<TokenManager>,
         managed.clone(),
@@ -191,9 +191,9 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
     );
     let _ = ctx.catalog.set(services.catalog.clone());
 
-    let terminal_state = lmg::plugins::terminal_api::TerminalState::new();
-    let mut host = lmg_host::host::PluginHost::new(config_store);
-    let deps = lmg::builtin::BuiltinDeps {
+    let terminal_state = swiss::plugins::terminal_api::TerminalState::new();
+    let mut host = swiss_host::host::PluginHost::new(config_store);
+    let deps = swiss::builtin::BuiltinDeps {
         registry,
         managed,
         jobs: jobs.clone(),
@@ -201,8 +201,8 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
         tunnel_manager,
         services: services.clone(),
     };
-    lmg::builtin::register_all(&mut host, &deps).expect("the built-ins register");
-    host.register(Arc::new(lmg::plugins::terminal::TerminalPlugin::new(
+    swiss::builtin::register_all(&mut host, &deps).expect("the built-ins register");
+    host.register(Arc::new(swiss::plugins::terminal::TerminalPlugin::new(
         services.clone(),
         terminal_state.clone(),
     )))
@@ -211,11 +211,11 @@ async fn rig(tag: &str, terminal_config: Value) -> Rig {
     host.start_enabled().await;
     assert!(ctx.plugin_host.set(host.clone()).is_ok(), "host set once");
 
-    let extra = lmg_tunnels::tunnel::api::mount(tunnels)
-        .merge(lmg_jobs::jobs::api::mount(jobs))
-        .merge(lmg_host::services::api::mount(services))
-        .merge(lmg::plugins::terminal_api::mount(terminal_state));
-    let app = lmg::app::build_app(ctx, Some(extra));
+    let extra = swiss_tunnels::tunnel::api::mount(tunnels)
+        .merge(swiss_jobs::jobs::api::mount(jobs))
+        .merge(swiss_host::services::api::mount(services))
+        .merge(swiss::plugins::terminal_api::mount(terminal_state));
+    let app = swiss::app::build_app(ctx, Some(extra));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -816,8 +816,8 @@ async fn stopping_the_plugin_closes_live_sessions_with_a_visible_reason() {
 async fn disabled_rig(tag: &str, raw: Value) -> Rig {
     pin_home_and_key();
     let dir = std::env::temp_dir().join(format!(
-        "lmg-terminal-ws-{tag}-{}",
-        lmg_core::util::random_hex(8)
+        "swiss-terminal-ws-{tag}-{}",
+        swiss_core::util::random_hex(8)
     ));
     std::fs::create_dir_all(&dir).expect("scratch directory");
     // memory() already returns an Arc; one more wrapper would not unwrap anywhere.
@@ -827,24 +827,24 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
     let registry = Registry::new(3_600_000, calls.clone());
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
 
-    let services = lmg_host::services::RuntimeServices::new();
-    let jobs = lmg_jobs::jobs::JobSystem::open(
+    let services = swiss_host::services::RuntimeServices::new();
+    let jobs = swiss_jobs::jobs::JobSystem::open(
         dir.join("jobs.json"),
         services.clone(),
         config_store.clone(),
     );
-    let tunnel_store = Arc::new(Mutex::new(lmg_tunnels::tunnel::TunnelStore::new(
+    let tunnel_store = Arc::new(Mutex::new(swiss_tunnels::tunnel::TunnelStore::new(
         dir.join("tunnels.json"),
         19997,
     )));
-    let tunnel_manager = lmg_tunnels::tunnel::TunnelManager::new(tunnel_store.clone(), None);
-    let tunnels = Arc::new(lmg_tunnels::tunnel::api::Tunnels {
+    let tunnel_manager = swiss_tunnels::tunnel::TunnelManager::new(tunnel_store.clone(), None);
+    let tunnels = Arc::new(swiss_tunnels::tunnel::api::Tunnels {
         store: tunnel_store,
         manager: tunnel_manager.clone(),
         mcp_display: None,
     });
 
-    let ctx = lmg::app::AppContext::new(
+    let ctx = swiss::app::AppContext::new(
         registry.clone(),
         Arc::new(single_token_manager(TOKEN)) as Arc<TokenManager>,
         managed.clone(),
@@ -854,9 +854,9 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
     );
     let _ = ctx.catalog.set(services.catalog.clone());
 
-    let terminal_state = lmg::plugins::terminal_api::TerminalState::new();
-    let mut host = lmg_host::host::PluginHost::new(config_store);
-    let deps = lmg::builtin::BuiltinDeps {
+    let terminal_state = swiss::plugins::terminal_api::TerminalState::new();
+    let mut host = swiss_host::host::PluginHost::new(config_store);
+    let deps = swiss::builtin::BuiltinDeps {
         registry,
         managed,
         jobs: jobs.clone(),
@@ -864,8 +864,8 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
         tunnel_manager,
         services: services.clone(),
     };
-    lmg::builtin::register_all(&mut host, &deps).expect("the built-ins register");
-    host.register(Arc::new(lmg::plugins::terminal::TerminalPlugin::new(
+    swiss::builtin::register_all(&mut host, &deps).expect("the built-ins register");
+    host.register(Arc::new(swiss::plugins::terminal::TerminalPlugin::new(
         services.clone(),
         terminal_state.clone(),
     )))
@@ -874,11 +874,11 @@ async fn disabled_rig(tag: &str, raw: Value) -> Rig {
     host.start_enabled().await;
     assert!(ctx.plugin_host.set(host.clone()).is_ok(), "host set once");
 
-    let extra = lmg_tunnels::tunnel::api::mount(tunnels)
-        .merge(lmg_jobs::jobs::api::mount(jobs))
-        .merge(lmg_host::services::api::mount(services))
-        .merge(lmg::plugins::terminal_api::mount(terminal_state));
-    let app = lmg::app::build_app(ctx, Some(extra));
+    let extra = swiss_tunnels::tunnel::api::mount(tunnels)
+        .merge(swiss_jobs::jobs::api::mount(jobs))
+        .merge(swiss_host::services::api::mount(services))
+        .merge(swiss::plugins::terminal_api::mount(terminal_state));
+    let app = swiss::app::build_app(ctx, Some(extra));
 
     // No shell provider and no real socket needed — the boundary answers first.
     Rig {

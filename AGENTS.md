@@ -5,7 +5,8 @@ Guidance for AI coding agents working in this repo. Single source of truth for a
 
 ## What this is
 
-The Rust port of `local-mcp-gateway` (the Node original lives at `../local-mcp-gateway` and is the
+The project is named **swiss** — the developer's Swiss Army knife toolbox. It began as the Rust
+port of `local-mcp-gateway` (the Node original lives at `../local-mcp-gateway` and is the
 **reference implementation** — when this document and that code disagree, that code is right).
 One local process, every MCP server on an HTTP path under `127.0.0.1:19999`, shipped as a single
 static `.exe`. The port exists for one reason: memory. See `docs/01-goals-and-memory-budget.md`.
@@ -45,16 +46,16 @@ for how configuration drives them.
 
 ## Where the code lives
 
-A cargo workspace that still ships one static `lmg.exe`. The edges are the architecture:
+A cargo workspace that still ships one static `swiss.exe`. The edges are the architecture:
 
 ```
-lmg-core  ←  lmg-host  ←  { lmg-mcp, lmg-data, lmg-tunnels, lmg-jobs, lmg-terminal, lmg-panel }  ←  lmg
+swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-panel }  ←  swiss
 ```
 
-`lmg-core` knows nothing about gateways (paths, logging, sealed files, platform calls).
-`lmg-host` is the mechanism every subsystem shares — the plugin host, actions, runs, the process
+`swiss-core` knows nothing about gateways (paths, logging, sealed files, platform calls).
+`swiss-host` is the mechanism every subsystem shares — the plugin host, actions, runs, the process
 supervisor, config, the security boundary. The six subsystem crates are peers that never depend
-on each other; `lmg` (the root `src/`) is composition and nothing else. If a change seems to need
+on each other; `swiss` (the root `src/`) is composition and nothing else. If a change seems to need
 an edge between two subsystem crates, the host contract is missing something — add it there
 instead. Full map in `docs/02-architecture.md`.
 
@@ -82,11 +83,11 @@ correctness boundary.
 
 ## Rust-specific rules
 
-- **The panel's JavaScript is the spec for the admin API.** `crates/lmg-panel/src/admin_assets/`
+- **The panel's JavaScript is the spec for the admin API.** `crates/swiss-panel/src/admin_assets/`
   is copied from `../local-mcp-gateway/src/admin` byte for byte and is not to be edited here.
   Every `/api/*` response must therefore be shape-identical to what the Node build returns. If a
   response shape feels wrong, fix it in the Node build first and copy the panel over again — never
-  fork the panel. `the_tree_is_byte_for_byte_the_node_builds` in `crates/lmg-panel/src/admin.rs`
+  fork the panel. `the_tree_is_byte_for_byte_the_node_builds` in `crates/swiss-panel/src/admin.rs`
   enforces this whenever the sibling checkout is present, which on a developer's machine it is.
 - **No `serde_json::Value` on a forwarding path.** The proxying adapters (`proc`, `http`, `rest`)
   must pass payloads through as `&RawValue`, parsing only the envelope fields they route on.
@@ -109,7 +110,7 @@ correctness boundary.
 ## Commands
 
 ```bash
-cargo build --release             # the shipping exe (target/release/lmg.exe) - ADR-012
+cargo build --release             # the shipping exe (target/release/swiss.exe) - ADR-012
 cargo test --workspace            # the one feature combination there is
 cargo clippy --workspace --all-targets -- -D warnings                  # must be clean
 cargo tree -d                  # a duplicated TLS stack or runtime must fail review
@@ -129,8 +130,12 @@ means fingerprints were invalidated, not that everyday work costs 4 minutes.
 
 **`--workspace` is not optional.** Without it cargo selects the root package alone — 199 of the
 suite's 941 tests — and the seven member crates, most of the tests, are never even built. The run
-still reports ok. The same applies to clippy. `lmg start` / `stop` / `status` / `logs` / `token` are the CLI; `MCP_GATEWAY_TOKEN` pins
-the bearer token when you want a fixed one.
+still reports ok. The same applies to clippy. `swiss start` / `stop` / `status` / `logs` / `token`
+are the CLI; `swiss token` manages the bearer token; `SWISS_TOKEN` pins it, and the Node-era
+`MCP_GATEWAY_TOKEN` is still honored. A pin must use the name the config's `tokenEnv` carries:
+the named variable resolves first, so on a home upgraded from the Node era (whose config says
+`MCP_GATEWAY_TOKEN`) it is `MCP_GATEWAY_TOKEN` that pins — the pair partner is only consulted
+when the named variable holds nothing.
 
 The Node-sealed envelope fixture is regenerated with `cd ../local-mcp-gateway && npx tsx
 ../local-mcp-gateway-rust/scripts/seal-fixture.mts` when the envelope format ever changes (it
@@ -149,17 +154,18 @@ scripts/test-instance.ps1 -Stop      # kill by the port's owning PID, never by p
 ```
 
 - The script (`scripts/test-instance.ps1`, docs/16 H2) copies the sealed state files into
-  `%LOCALAPPDATA%\lmg-test-home` (DPAPI opens a copied `master.key` on the same machine under
-  the same user — docs/05) and points `MCP_GATEWAY_HOME` there, so a save on 19998 writes the
-  **test home**, never the user's config. No read-only discipline needed any more — the
+  `%LOCALAPPDATA%\swiss-test-home` (DPAPI opens a copied `master.key` on the same machine under
+  the same user — docs/05) and points `SWISS_HOME` there, so a save on 19998 writes the
+  **test home**, never the user's config — the script sets the new name, and the legacy
+  `MCP_GATEWAY_HOME` still works. No read-only discipline needed any more — the
   snapshot is the isolation.
-- It serves from `target-test\release\lmg.exe`: the 19999 daemon holds `target\release\lmg.exe`,
+- It serves from `target-test\release\swiss.exe`: the 19999 daemon holds `target\release\swiss.exe`,
   so iteration builds still go to a separate directory
   (`$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`).
 - Still never `--port`/`-p` on either instance: both `start` and `serve` write the port into
   the config. The env vars the script sets are not persisted.
 - Kill 19998 **by the port's owning PID** (`Get-NetTCPConnection -LocalPort 19998`), never by
-  process name (`Get-Process lmg` kills the user's instance too). `-Stop` does exactly this.
+  process name (`Get-Process swiss` kills the user's instance too). `-Stop` does exactly this.
 - **Deploying to 19999 is the last step, done once**: only after every gate passes AND live
   verification on 19998 succeeds, stop 19999, rebuild the main target, start it again — and
 treat that as a deployment, not a test.
@@ -169,6 +175,18 @@ Control**, if enabled, blocks freshly linked unsigned executables — cargo's bu
 binaries — with `os error 4551`; the failure looks like a broken test but the binary never ran, and
 re-running usually gets past it. And full debuginfo across eight link targets exhausts the paging
 file (`os error 1455`), which is why `[profile.dev]` in the root manifest keeps line tables only.
+
+## Line endings - LF everywhere
+
+`.gitattributes` enforces `* text=auto eol=lf`: every text file is LF in the index AND in the
+working tree, on every platform — CRLF never enters a commit.
+
+- New files are written with LF. Editors on Windows must not convert back — the attributes file
+  covers a fresh checkout, but a misconfigured editor can still dirty an existing tree.
+- Binary types are marked binary in `.gitattributes`; never let git normalize them.
+- The panel tree `crates/swiss-panel/src/admin_assets` is a byte-for-byte copy of the Node
+  build's `src/admin`, which carries the same LF policy via a scoped attribute there — edit
+  the Node side, then copy.
 
 ## Making changes
 

@@ -9,7 +9,7 @@ Get it wrong and the user's configuration has to be exported and re-imported by 
 
 ## The data directory
 
-`~/.mcp-gateway` (overridable with `MCP_GATEWAY_HOME`). Verified layout on this machine, 2026-09-07:
+`~/.mcp-gateway` (overridable with `SWISS_HOME` / the legacy `MCP_GATEWAY_HOME`). Verified layout on this machine, 2026-09-07:
 
 ```
 ~/.mcp-gateway/
@@ -30,6 +30,13 @@ Get it wrong and the user's configuration has to be exported and re-imported by 
 
 Port-scoping is deliberate and load-bearing: two gateways on different ports must coexist, and a
 shared PID ledger let one instance's reap kill the other instance's live children. Keep the naming.
+
+> **Rename note:** the product is now named `swiss`; the on-disk wire surface is unchanged — the
+> `~/.mcp-gateway` home, the state file names, the sealed envelope (its `"lmg": 1` marker and
+> `lmg-state-v1` HKDF info are frozen history a rename must not touch), and the config field
+> names, including legacy `tokenEnv` values seeded with `MCP_GATEWAY_TOKEN`. Env overrides are
+> now read as `SWISS_HOME` / `SWISS_PORT` / `SWISS_TOKEN` / `SWISS_MASTER_KEY` first, with the
+> `MCP_GATEWAY_*` names still honored, so state and shells written before the rename keep working.
 
 ## 1. The sealed envelope — FROZEN
 

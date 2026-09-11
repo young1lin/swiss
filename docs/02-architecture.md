@@ -4,28 +4,28 @@
 
 ```
 local-mcp-gateway-rust/
-  Cargo.toml                            # the workspace, and the `lmg` composition package
+  Cargo.toml                            # the workspace, and the `swiss` composition package
   build.rs                              # Windows manifest + version resource only
   crates/
-    lmg-core/src/                       # knows nothing about gateways
+    swiss-core/src/                       # knows nothing about gateways
       paths.rs log.rs util.rs atomic_json.rs
       secure/ mod.rs envelope.rs key.rs statefile.rs envstore.rs
       platform/ mod.rs windows.rs unix.rs privfs.rs   # process tree, job objects, DPAPI
-    lmg-host/src/                       # the mechanism every subsystem shares
+    swiss-host/src/                       # the mechanism every subsystem shares
       host/ mod.rs descriptor.rs factory.rs engine.rs api.rs scope.rs
       services/ mod.rs action.rs actions.rs runs.rs process.rs catalog.rs api.rs
       config.rs config_store.rs managed.rs token.rs auth.rs local_only.rs
       mask.rs mem.rs pathenv.rs proc_pids.rs dbbrowser.rs reply.rs
-    lmg-mcp/src/                        # MCP itself: the largest crate
+    swiss-mcp/src/                        # MCP itself: the largest crate
       registry.rs calls.rs traffic.rs paging.rs mcp_import.rs introspect.rs
       adapters/ mod.rs echo.rs proc.rs http.rs rest.rs direct.rs proxy.rs
                 sql.rs mysql.rs pg.rs redis.rs
                 resources.rs tool_server.rs *_browser.rs *_resources.rs
-    lmg-data/src/     dbbrowser_api.rs   # /api/data/* over the connection catalog
-    lmg-tunnels/src/  tunnel/…           # types, store, manager, forward, port, ssh, mcpmatch, import, api
-    lmg-jobs/src/     jobs/…             # def, migrate, schedule, clock, state, runner, runlog, api
-    lmg-terminal/src/ terminal/…         # config, session, tickets, recording, local shells (no axum, no SSH)
-    lmg-panel/src/    admin.rs
+    swiss-data/src/     dbbrowser_api.rs   # /api/data/* over the connection catalog
+    swiss-tunnels/src/  tunnel/…           # types, store, manager, forward, port, ssh, mcpmatch, import, api
+    swiss-jobs/src/     jobs/…             # def, migrate, schedule, clock, state, runner, runlog, api
+    swiss-terminal/src/ terminal/…         # config, session, tickets, recording, local shells (no axum, no SSH)
+    swiss-panel/src/    admin.rs
                       admin_assets/      # copied verbatim from ../local-mcp-gateway/src/admin;
                                          # renders the two-level navigation (docs/13)
   src/                                   # the composition crate: what wires the rest together
@@ -33,23 +33,23 @@ local-mcp-gateway-rust/
     app.rs server.rs adminapi.rs         # axum Router assembly, /api/*
     builtin.rs plugins/                  # every plugin descriptor
     bootstrap.rs subsystems.rs port.rs mcp_link.rs
-    daemon.rs cli.rs pidfile.rs          # the `lmg` command
+    daemon.rs cli.rs pidfile.rs          # the `swiss` command
     skill_install.rs
   tests/                                 # integration; drives lib.rs through tower::oneshot
 ```
 
 **A workspace, and the dependency edges are the point.** It buys nothing at runtime — the product
-is still one static `lmg.exe`, and the split cost +1.1% of binary size in crate-boundary codegen —
+is still one static `swiss.exe`, and the split cost +1.1% of binary size in crate-boundary codegen —
 but it makes the plugin architecture a fact the compiler enforces rather than a claim in a
 document. The edges are exactly:
 
 ```
-lmg-core  ←  lmg-host  ←  { lmg-mcp, lmg-data, lmg-tunnels, lmg-jobs, lmg-terminal, lmg-panel }  ←  lmg
+swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-panel }  ←  swiss
 ```
 
 No subsystem crate depends on another. That is not decoration: Data used to reach into MCP for
-its connections, and the connection catalog in `crates/lmg-host/src/services/catalog.rs` exists so that
-edge could be deleted (docs/09 P4). If a future change needs `lmg-data → lmg-mcp` back, the
+its connections, and the connection catalog in `crates/swiss-host/src/services/catalog.rs` exists so that
+edge could be deleted (docs/09 P4). If a future change needs `swiss-data → swiss-mcp` back, the
 contract is missing something — add it to the catalog rather than the edge.
 
 `src/` is deliberately the smallest crate that could hold what is left: composition names every

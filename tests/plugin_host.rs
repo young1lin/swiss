@@ -12,20 +12,20 @@ use axum::http::{header, HeaderValue, Request, StatusCode};
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 
-use lmg::app::build_app;
-use lmg::builtin;
-use lmg_host::config::ServerDef;
-use lmg_host::config_store::ConfigStore;
-use lmg_host::host::descriptor::{PluginDescriptor, PluginState};
-use lmg_host::host::factory::{PluginFactory, PluginInstance};
-use lmg_host::host::scope::PluginScope;
-use lmg_host::host::PluginHost;
-use lmg_host::managed::ManagedStore;
-use lmg_host::token::single_token_manager;
-use lmg_jobs::jobs::JobSystem;
-use lmg_mcp::adapters::make_adapter;
-use lmg_mcp::registry::{Registry, Source};
-use lmg_tunnels::tunnel::manager::TunnelManager;
+use swiss::app::build_app;
+use swiss::builtin;
+use swiss_host::config::ServerDef;
+use swiss_host::config_store::ConfigStore;
+use swiss_host::host::descriptor::{PluginDescriptor, PluginState};
+use swiss_host::host::factory::{PluginFactory, PluginInstance};
+use swiss_host::host::scope::PluginScope;
+use swiss_host::host::PluginHost;
+use swiss_host::managed::ManagedStore;
+use swiss_host::token::single_token_manager;
+use swiss_jobs::jobs::JobSystem;
+use swiss_mcp::adapters::make_adapter;
+use swiss_mcp::registry::{Registry, Source};
+use swiss_tunnels::tunnel::manager::TunnelManager;
 
 const TOKEN: &str = "test-token-0123456789abcdef";
 
@@ -420,7 +420,7 @@ fn test_master_key() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| {
         // Safety: one write, under a OnceLock, of a variable nothing in this binary caches.
-        unsafe { std::env::set_var(lmg_core::secure::key::MASTER_KEY_ENV, "ab".repeat(32)) }
+        unsafe { std::env::set_var(swiss_core::secure::key::MASTER_KEY_ENV, "ab".repeat(32)) }
     });
 }
 
@@ -429,8 +429,8 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
     // and every write must stay inside this test's own directory.
     test_master_key();
     let dir = std::env::temp_dir().join(format!(
-        "lmg-plugins-{tag}-{}",
-        lmg_core::util::random_hex(8)
+        "swiss-plugins-{tag}-{}",
+        swiss_core::util::random_hex(8)
     ));
     std::fs::create_dir_all(&dir).expect("scratch directory");
     dir
@@ -467,7 +467,7 @@ async fn full_app_file_backed(
     Arc<Registry>,
     std::path::PathBuf,
 ) {
-    use lmg_core::secure::statefile::write_secure_json;
+    use swiss_core::secure::statefile::write_secure_json;
     let dir = scratch_dir(tag); // scratch_dir sets the test master key
     if let Some(v1) = v1_jobs {
         write_secure_json(&dir.join("jobs.json"), &v1).expect("the v1 file writes");
@@ -481,7 +481,7 @@ async fn full_app_with_store(
     dir: std::path::PathBuf,
     config_store: Arc<ConfigStore>,
 ) -> (axum::Router, Arc<PluginHost>, Arc<Registry>) {
-    let calls = Arc::new(lmg_mcp::calls::CallLog::at(dir.join("calls")));
+    let calls = Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls")));
     let registry = Registry::new(3_600_000, calls.clone());
     let managed = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
     let adapter = make_adapter(&echo_def(), "echo", &calls).expect("echo adapter");
@@ -489,24 +489,24 @@ async fn full_app_with_store(
         .register("echo", Source::Config, echo_def(), adapter)
         .expect("register echo");
 
-    let services = lmg_host::services::RuntimeServices::new();
+    let services = swiss_host::services::RuntimeServices::new();
     let jobs = JobSystem::open(
         dir.join("jobs.json"),
         services.clone(),
         config_store.clone(),
     );
-    let tunnel_store = Arc::new(Mutex::new(lmg_tunnels::tunnel::TunnelStore::new(
+    let tunnel_store = Arc::new(Mutex::new(swiss_tunnels::tunnel::TunnelStore::new(
         dir.join("tunnels.json"),
         19998,
     )));
     let tunnel_manager = TunnelManager::new(tunnel_store.clone(), None);
-    let tunnels = Arc::new(lmg_tunnels::tunnel::api::Tunnels {
+    let tunnels = Arc::new(swiss_tunnels::tunnel::api::Tunnels {
         store: tunnel_store,
         manager: tunnel_manager.clone(),
-        mcp_display: Some(lmg::mcp_link::registry_display(registry.clone())),
+        mcp_display: Some(swiss::mcp_link::registry_display(registry.clone())),
     });
 
-    let ctx = lmg::app::AppContext::new(
+    let ctx = swiss::app::AppContext::new(
         registry.clone(),
         Arc::new(single_token_manager(TOKEN)),
         managed.clone(),
@@ -535,9 +535,9 @@ async fn full_app_with_store(
     host.start_enabled().await;
     assert!(ctx.plugin_host.set(host.clone()).is_ok(), "host set once");
 
-    let extra = lmg_tunnels::tunnel::api::mount(tunnels)
-        .merge(lmg_jobs::jobs::api::mount(jobs))
-        .merge(lmg_host::services::api::mount(services));
+    let extra = swiss_tunnels::tunnel::api::mount(tunnels)
+        .merge(swiss_jobs::jobs::api::mount(jobs))
+        .merge(swiss_host::services::api::mount(services));
     let app = build_app(ctx, Some(extra));
     (app, host, registry)
 }
@@ -590,7 +590,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
     // The plugin did the boot-start the old register_one did: the echo MCP is up.
     let lifecycle = registry.get("echo").unwrap().data.read().unwrap().lifecycle;
     assert_eq!(
-        lmg_mcp::registry::Lifecycle::Started,
+        swiss_mcp::registry::Lifecycle::Started,
         lifecycle,
         "the mcp plugin boots eligible MCPs"
     );
@@ -694,7 +694,7 @@ async fn boot_disabled_plugins_guard_every_route_they_own() {
     // Nothing started: the registry is populated (routes stable) but idle.
     let lifecycle = registry.get("echo").unwrap().data.read().unwrap().lifecycle;
     assert_ne!(
-        lmg_mcp::registry::Lifecycle::Started,
+        swiss_mcp::registry::Lifecycle::Started,
         lifecycle,
         "a disabled mcp plugin must not boot MCPs"
     );
@@ -1077,7 +1077,7 @@ async fn a_v1_jobs_table_migrates_at_boot_and_a_reboot_is_a_no_op() {
     // The first boot persisted the merged row into the (sealed) config FILE: unseal
     // it and confirm the definition is there as the store wrote it - what a second
     // boot of the same tree would load.
-    use lmg_core::secure::statefile::read_secure_json;
+    use swiss_core::secure::statefile::read_secure_json;
     let raw_on_disk = read_secure_json(&dir.join("gateway.config.json"))
         .expect("the sealed config reads")
         .expect("still there");
@@ -1163,7 +1163,7 @@ async fn a_failed_migration_fails_the_plugin_and_never_schedules() {
     // jobs.json untouched and unmarked: the migration's backup exists (step 2 ran
     // before the failure), but the original file still decrypts with its rows.
     assert!(dir.join("jobs.json.v1.bak").exists());
-    use lmg_core::secure::statefile::read_secure_json;
+    use swiss_core::secure::statefile::read_secure_json;
     let raw = read_secure_json(&dir.join("jobs.json"))
         .expect("the sealed file reads")
         .expect("still there");
@@ -1457,21 +1457,21 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
         &builtin::BuiltinDeps {
             registry: Registry::new(
                 60_000,
-                Arc::new(lmg_mcp::calls::CallLog::at(dir.join("calls"))),
+                Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
             ),
             managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
             jobs: JobSystem::open(
                 dir.join("jobs.json"),
-                lmg_host::services::RuntimeServices::new(),
+                swiss_host::services::RuntimeServices::new(),
                 ConfigStore::memory(json!({})),
             ),
-            tunnels: Arc::new(lmg_tunnels::tunnel::api::Tunnels {
-                store: Arc::new(Mutex::new(lmg_tunnels::tunnel::TunnelStore::new(
+            tunnels: Arc::new(swiss_tunnels::tunnel::api::Tunnels {
+                store: Arc::new(Mutex::new(swiss_tunnels::tunnel::TunnelStore::new(
                     dir.join("tunnels.json"),
                     19998,
                 ))),
                 manager: TunnelManager::new(
-                    Arc::new(Mutex::new(lmg_tunnels::tunnel::TunnelStore::new(
+                    Arc::new(Mutex::new(swiss_tunnels::tunnel::TunnelStore::new(
                         dir.join("tunnels2.json"),
                         19998,
                     ))),
@@ -1480,13 +1480,13 @@ fn route_ownership_is_longest_prefix_at_segment_boundaries() {
                 mcp_display: None,
             }),
             tunnel_manager: TunnelManager::new(
-                Arc::new(Mutex::new(lmg_tunnels::tunnel::TunnelStore::new(
+                Arc::new(Mutex::new(swiss_tunnels::tunnel::TunnelStore::new(
                     dir.join("tunnels3.json"),
                     19998,
                 ))),
                 None,
             ),
-            services: lmg_host::services::RuntimeServices::new(),
+            services: swiss_host::services::RuntimeServices::new(),
         },
     )
     .expect("built-ins register");

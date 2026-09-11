@@ -15,7 +15,7 @@ records the choice and what it cost.
 **Status: Accepted — option A.** Shipped.
 
 **Context.** `factory.ts` lets a config entry name a module to load at runtime:
-`"type": "mine", "adapter": "my-lmg-adapter"` or `"./my-adapter.mjs"` resolved against the data dir.
+`"type": "mine", "adapter": "my-swiss-adapter"` or `"./my-adapter.mjs"` resolved against the data dir.
 The module exports `createAdapter(def, name)` and behaves exactly like a built-in — same lifecycle,
 same call log, same panel. `AGENTS.md` in the Node build documents this as the same door built-ins
 take, so it is a published contract, not an accident.
@@ -36,7 +36,7 @@ MCP the gateway hosts, it just runs out-of-process, which is where untrusted thi
 arguably belonged. What is genuinely lost is the in-process `dbBrowser` / `redisBrowser` /
 `mongoBrowser` hooks: a third-party adapter can no longer appear in the Data view.
 
-**What shipped.** `make_adapter` in `crates/lmg-mcp/src/adapters/mod.rs` matches the built-in type names and
+**What shipped.** `make_adapter` in `crates/swiss-mcp/src/adapters/mod.rs` matches the built-in type names and
 nothing else; an unrecognised `type` fails at adapter-build time with an error that lists them
 (`Unknown adapter type: … (built-in: echo | mysql | pg | redis | proc | http | rest)`).
 There is no `adapter` field, no module resolution against the data dir, and no runtime loading of
@@ -83,7 +83,7 @@ the 117.5 MB baseline, so this is not a regression — but it is also not a savi
 
 **Status: Superseded by ADR-012 (2026-09-11): the feature and the adapter were deleted outright.**
 Kept as history: for a year of the port's life the `mongodb` driver sat behind an off-by-default
-Cargo feature, forwarded `mongo = ["lmg-mcp/mongo"]` from the bin crate, and the shipped release
+Cargo feature, forwarded `mongo = ["swiss-mcp/mongo"]` from the bin crate, and the shipped release
 was built with `--features mongo`.
 
 The original reasoning: the `mongodb` crate is the heaviest dependency in the set, worth an
@@ -125,11 +125,11 @@ already permits — it stays deferred as the optimisation this ADR always said i
 
 **Status: Accepted — option B shipped. Option A is not built.**
 
-The Node build is an npm package with a `lmg` bin. A Rust binary can ship either way:
+The Node build is an npm package with a `swiss` bin. A Rust binary can ship either way:
 
 | | Approach | Effect |
 | --- | --- | --- |
-| **A** | **Keep npm.** Per-platform `optionalDependencies` carrying prebuilt binaries, the way esbuild and swc do it | `npm i -g local-mcp-gateway` and `lmg start` keep working. Existing users notice nothing. Keeps the package name, the README, the install instructions |
+| **A** | **Keep npm.** Per-platform `optionalDependencies` carrying prebuilt binaries, the way esbuild and swc do it | `npm i -g local-mcp-gateway` and `swiss start` keep working. Existing users notice nothing. Keeps the package name, the README, the install instructions |
 | **B** | **GitHub Releases only.** A bare `.exe` per platform | Simplest to build. Every existing user has to change how they install, and `npx local-mcp-gateway` stops existing |
 | **C** | Both | A little release plumbing; nobody has to move |
 
@@ -200,7 +200,7 @@ command-line sweep can go.
 
 **Status: Accepted.**
 
-`crates/lmg-panel/src/admin_assets/` is copied byte for byte from the Node build's `src/admin/` and
+`crates/swiss-panel/src/admin_assets/` is copied byte for byte from the Node build's `src/admin/` and
 is not edited in this repository. It follows that every `/api/*` response must be shape-identical
 to the Node build's.
 
@@ -209,7 +209,7 @@ and no review, plus an executable specification for the admin API that cannot dr
 the same file. A panel change belongs in the Node build, followed by a re-copy.
 
 Enforcement: a golden-response test harness built in Phase 1 (docs/05 §3), plus
-`the_tree_is_byte_for_byte_the_node_builds` in `crates/lmg-panel/src/admin.rs`, which compares the
+`the_tree_is_byte_for_byte_the_node_builds` in `crates/swiss-panel/src/admin.rs`, which compares the
 two trees as sets and by content whenever the sibling checkout is present. It refuses to pass by
 skipping: a developer machine without the sibling is a failure, not an excuse, because a check that
 quietly compares nothing is worse than no check — it reports ok.
@@ -220,14 +220,14 @@ quietly compares nothing is worse than no check — it reports ok.
 
 **Status: Accepted (`4147e8a`). Supersedes ADR-002.**
 
-The source is a cargo workspace: `lmg-core`, `lmg-host`, the five subsystem crates (`lmg-mcp`,
-`lmg-data`, `lmg-tunnels`, `lmg-jobs`, `lmg-panel`) and the `lmg` composition crate. The product is
-unchanged — one static `lmg.exe`, measured at +1.1% (9,861,632 → 9,972,224 bytes, release+mongo)
+The source is a cargo workspace: `swiss-core`, `swiss-host`, the five subsystem crates (`swiss-mcp`,
+`swiss-data`, `swiss-tunnels`, `swiss-jobs`, `swiss-panel`) and the `swiss` composition crate. The product is
+unchanged — one static `swiss.exe`, measured at +1.1% (9,861,632 → 9,972,224 bytes, release+mongo)
 for the crate-boundary codegen, with the idle footprint flat at ~14 MB.
 
 **The split buys nothing at runtime, and saying otherwise is forbidden.** What it buys is that the
 architecture stops being a claim. "MCP is a plugin, not the trunk" and "no subsystem depends on
-another" were true only as long as everyone remembered; now `lmg-data` has no `lmg-mcp` in its
+another" were true only as long as everyone remembered; now `swiss-data` has no `swiss-mcp` in its
 manifest, so the next change that would reintroduce that edge does not compile. When some future
 change appears to need such an edge, the honest reading is that the host contract is missing
 something — the connection catalog exists because of exactly that (docs/09 P4).
@@ -265,8 +265,8 @@ Measured: **+233 KB working set per attached idle local session** (budget 1.0 MB
 loaded with zero sessions reads **13.7 MB against the 14.0 MB ADR-010 baseline** — a −0.3 MB
 delta that is measurement noise, not a saving; the honest claim is "flat".
 
-**`lmg-terminal` links no SSH and has no edge to `lmg-tunnels`.** Remote shells arrive through
-the `ssh-shell` capability seat in `lmg-host`: the tunnels plugin registers a provider on start
+**`swiss-terminal` links no SSH and has no edge to `swiss-tunnels`.** Remote shells arrive through
+the `ssh-shell` capability seat in `swiss-host`: the tunnels plugin registers a provider on start
 and withdraws it on stop, and the terminal dials through the tunnel manager's own refcount —
 sharing the client the tunnels already hold instead of dialing a second one. The plugin's
 `requires` stays empty on purpose: a terminal with local shells enabled must work on a machine
@@ -294,7 +294,7 @@ capability with zero users.
 
 What was deleted, whole:
 
-- the `mongo` cargo feature in the bin crate and in `lmg-mcp`, and the `mongodb` dependency;
+- the `mongo` cargo feature in the bin crate and in `swiss-mcp`, and the `mongodb` dependency;
 - `adapters/mongo.rs` and `adapters/mongo_resources.rs` (engine, tools, resources);
 - the `MongoBrowser` trait, the `BrowserFlavor::Mongo` variant, `lease_mongo`, and the
   `/api/db/{name}/collections` + `/api/db/{name}/docs` routes;
@@ -317,8 +317,8 @@ unknown type, listing the built-ins. Neither build carries the word.
 
 `cargo tree -d` showed the RustCrypto stack twice: our own sealing path sat on the
 aes-gcm 0.10 / digest 0.10 generation while russh 0.63 pulls the aes-gcm 0.11 / digest 0.11
-generation. The audit (docs/16 H5) moved every direct crypto dependency of ours — lmg-core,
-lmg-host, lmg-tunnels, lmg-mcp — onto the newer generation: aes-gcm 0.11, sha2 0.11,
+generation. The audit (docs/16 H5) moved every direct crypto dependency of ours — swiss-core,
+swiss-host, swiss-tunnels, swiss-mcp — onto the newer generation: aes-gcm 0.11, sha2 0.11,
 hkdf 0.13, rand 0.9 (rand 0.9's OS RNG speaks the fallible TryRngCore; a CSPRNG error is a
 broken machine and is expected away). The sealed-envelope format is a byte-level contract
 (docs/05): the Node-sealed fixture still opens, which is the gate that proves the primitives
@@ -336,7 +336,7 @@ What the merge could not remove, and who pins it (all verified with `cargo tree 
 | windows 0.62 vs our 0.58 | pageant (russh) + process-wrap (rmcp) | yes in principle — bumping our own windows dep to 0.62 is a real follow-up, and a large diff |
 | syn 2/3, windows-implement/interface 0.58/0.6x | proc-macro crates only | build-time only, no binary cost |
 
-Binary cost, `target-release-lmg.exe` (path separators flattened for this table): 7,972,352 to 7,966,208 bytes (-6 KB, -0.08%). The honest
+Binary cost, `target-release-swiss.exe` (path separators flattened for this table): 7,972,352 to 7,966,208 bytes (-6 KB, -0.08%). The honest
 reading: sqlx still links the 0.10 generation, so the disk saving is small; the win is that the
 workspace no longer OWNS the old generation, and the aes-gcm chain (the one crate family we
 could fully merge) is single-copy. Hard constraints held: no new duplicate pair appeared, and

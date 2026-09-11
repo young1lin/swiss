@@ -36,7 +36,7 @@ name = "local-mcp-gateway"
 edition = "2024"
 
 [[bin]]
-name = "lmg"
+name = "swiss"
 path = "src/main.rs"
 
 [dependencies]

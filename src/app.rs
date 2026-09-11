@@ -21,14 +21,14 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{json, Value};
 
-use lmg_host::auth;
-use lmg_host::local_only::remote_request_reason;
-use lmg_host::managed::ManagedStore;
-use lmg_host::token::TokenManager;
-use lmg_mcp::adapters::HttpMcp;
-use lmg_mcp::registry::{EntryInner, Lifecycle, Registry};
-use lmg_mcp::traffic::record_traffic;
-use lmg_panel::admin;
+use swiss_host::auth;
+use swiss_host::local_only::remote_request_reason;
+use swiss_host::managed::ManagedStore;
+use swiss_host::token::TokenManager;
+use swiss_mcp::adapters::HttpMcp;
+use swiss_mcp::registry::{EntryInner, Lifecycle, Registry};
+use swiss_mcp::traffic::record_traffic;
+use swiss_panel::admin;
 
 // BODY_LIMIT comes in through the pub use below; a second private use would collide.
 
@@ -42,7 +42,7 @@ const RESPONSE_CAPTURE: usize = 16 * 1024;
 /// hash and an RFC 3339 time, nothing more: this is a loopback-only service, and a commit id
 /// names code, not the machine or its user.
 pub fn build_info() -> Value {
-    json!({ "hash": env!("LMG_GIT_HASH"), "time": env!("LMG_BUILD_TIME") })
+    json!({ "hash": env!("SWISS_GIT_HASH"), "time": env!("SWISS_BUILD_TIME") })
 }
 
 /// One MCP endpoint per started MCP, cached by the entry's generation — the port of the Node
@@ -61,7 +61,7 @@ pub struct AppContext {
     /// The call log this app's adapters write and its admin API reads - one instance per
     /// app, threaded everywhere it is needed (the S2 instantiation: no process-global
     /// log directory, so two apps in one process never see each other's calls).
-    pub calls: Arc<lmg_mcp::calls::CallLog>,
+    pub calls: Arc<swiss_mcp::calls::CallLog>,
     /// Name of the env var the token was seeded from. Safe to show in client configs.
     pub token_env: String,
     /// The port this instance listens on — import detection reads it to recognize entries that
@@ -70,7 +70,7 @@ pub struct AppContext {
     /// The read-only tunnel view the MCP admin API consults (details/rename/delete). Set once by
     /// the boot sequence after the tunnel manager comes up, before the listener accepts requests;
     /// None on a gateway with no tunnel subsystem mounted.
-    pub tunnel_links: std::sync::RwLock<Option<Arc<dyn lmg_tunnels::TunnelLinks>>>,
+    pub tunnel_links: std::sync::RwLock<Option<Arc<dyn swiss_tunnels::TunnelLinks>>>,
     /// Signalled by POST /api/shutdown; the server's main loop selects on it and runs the
     /// graceful sequence (the Node build emitted SIGTERM at itself — there is no signal on
     /// Windows, so this channel IS the signal).
@@ -79,12 +79,12 @@ pub struct AppContext {
     /// `None` in compositions that predate the host (tests, the http adapter's import probe):
     /// every host-dependent guard treats absence as "no plugin gating", which is exactly the
     /// pre-host behavior.
-    pub plugin_host: std::sync::OnceLock<Arc<lmg_host::host::PluginHost>>,
+    pub plugin_host: std::sync::OnceLock<Arc<swiss_host::host::PluginHost>>,
     /// The connection catalog the /api/db routes lease through (docs/12 W3). Set once by
     /// the boot sequence from RuntimeServices — the SAME instance the MCP plugin
     /// registers into — before the listener accepts requests. Absent in compositions that
     /// mount no Data plugin: /api/db then answers an honest 503 rather than pretending.
-    pub catalog: std::sync::OnceLock<Arc<lmg_host::services::catalog::CatalogRegistry>>,
+    pub catalog: std::sync::OnceLock<Arc<swiss_host::services::catalog::CatalogRegistry>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -93,7 +93,7 @@ impl AppContext {
         registry: Arc<Registry>,
         tokens: Arc<TokenManager>,
         store: Arc<ManagedStore>,
-        calls: Arc<lmg_mcp::calls::CallLog>,
+        calls: Arc<swiss_mcp::calls::CallLog>,
         token_env: impl Into<String>,
         port: u16,
     ) -> Arc<Self> {
@@ -198,13 +198,13 @@ pub use crate::reply::{admin_error, admin_json, NodeBody, NodeBodyRejection};
 /// pre-host compositions (tests, the import probe) — means no gating, exactly as before.
 fn plugin_client_guard(ctx: &AppContext) -> Option<Response> {
     let host = ctx.plugin_host.get()?;
-    lmg_host::host::api::client_path_guard(host)
+    swiss_host::host::api::client_path_guard(host)
 }
 
 /// The bearer gate. Runs BEFORE the request body is read: an MCP POST can carry up to BODY_LIMIT
 /// and none of it needs to be read to know the caller cannot be served. The matched token is
 /// returned so the call log and the traffic log can attribute the request to the client.
-fn verify_bearer(ctx: &AppContext, headers: &HeaderMap) -> Option<lmg_host::token::TokenRec> {
+fn verify_bearer(ctx: &AppContext, headers: &HeaderMap) -> Option<swiss_host::token::TokenRec> {
     let presented = auth::bearer_secret(
         headers
             .get(header::AUTHORIZATION)
@@ -240,7 +240,7 @@ async fn loopback_guard(State(ctx): State<Arc<AppContext>>, req: Request, next: 
     match remote_request_reason(Some(peer.as_str()), host.as_deref(), origin.as_deref()) {
         None => next.run(req).await,
         Some(reason) => {
-            lmg_core::log::warn(
+            swiss_core::log::warn(
                 "refused a non-local request",
                 Some(
                     json!({ "reason": reason, "method": req.method().as_str(), "url": req.uri().path() }),
@@ -376,7 +376,7 @@ async fn mcp_post(
     // Every request this gateway answers runs attributed to the client that made it, so the call
     // log and the traffic log can tell clients apart (with_call_client scopes the task-local the
     // tool handlers read).
-    let response = lmg_mcp::calls::with_call_client_mcp(client.label.clone(), async {
+    let response = swiss_mcp::calls::with_call_client_mcp(client.label.clone(), async {
         handler.handle(forwarded).await
     })
     .await;
@@ -414,7 +414,7 @@ async fn mcp_post(
         t0.elapsed().as_millis() as u64,
         Some(&String::from_utf8_lossy(&captured_prefix)),
     );
-    lmg_core::log::log(
+    swiss_core::log::log(
         "info",
         "request",
         Some(
@@ -436,8 +436,8 @@ pub(crate) async fn fallback_404(req: Request) -> Response {
 
 /// The `/api/plugins` tree with this build's 404-for-a-wrong-method rule applied, so the
 /// management routes answer like every other admin route rather than axum's default 405.
-fn host_api_tree(host: Arc<lmg_host::host::PluginHost>) -> Router<()> {
-    lmg_host::host::api::mount(host).method_not_allowed_fallback(fallback_404)
+fn host_api_tree(host: Arc<swiss_host::host::PluginHost>) -> Router<()> {
+    swiss_host::host::api::mount(host).method_not_allowed_fallback(fallback_404)
 }
 
 /// Build the gateway router. The caller serves it with
@@ -466,7 +466,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
     let guard_ctx = ctx.clone();
     let plugin_host = ctx.plugin_host.get().cloned();
     let boundary = plugin_host.as_ref().map(|host| {
-        middleware::from_fn_with_state(host.clone(), lmg_host::host::api::plugin_boundary)
+        middleware::from_fn_with_state(host.clone(), swiss_host::host::api::plugin_boundary)
     });
     // The host's own management surface travels with the extra tree: same loopback guard,
     // same body limit. It stays reachable while every plugin is down — no plugin may claim a
@@ -483,12 +483,12 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         .route("/health", get(health))
         .route("/health/check", get(health_check))
         .merge(
-            lmg_data::dbbrowser_api::dbbrowser_router::<Arc<AppContext>>(
+            swiss_data::dbbrowser_api::dbbrowser_router::<Arc<AppContext>>(
                 // The W3 seam (docs/12): /api/db leases through the connection catalog the MCP
                 // plugin provides. Compositions that never set one (no Data plugin mounted)
                 // get an empty registry — every route then answers the honest 503.
                 ctx.catalog.get().cloned().unwrap_or_else(|| {
-                    Arc::new(lmg_host::services::catalog::CatalogRegistry::new())
+                    Arc::new(swiss_host::services::catalog::CatalogRegistry::new())
                 }),
             ),
         )

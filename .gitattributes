@@ -1,0 +1,14 @@
+# One line-ending policy for the whole repo: LF in the index AND in the working tree,
+# on every platform (see AGENTS.md "Line endings"). CRLF never enters a commit.
+* text=auto eol=lf
+
+# Binary guards: git must never normalize or diff these (none tracked today).
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.pdb binary
+*.woff binary
+*.woff2 binary
+*.cast binary
