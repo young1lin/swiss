@@ -1,5 +1,5 @@
 import { $, apiJson, el, state, toast } from "./util.js";
-import { dbIsMongo, dbIsRedis, dbLoadDocs, dbRenderMongoDocs, dbRenderRedisValue } from "./data-browsers.js";
+import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
 import { dbCellMenu, dbExportCsv, dbOpenImport, dbResultCellMenu, dbSelAll } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText } from "./data-cell.js";
 import { dbEditCellEnter } from "./data-edit.js";
@@ -56,9 +56,6 @@ function renderDbToolbar() {
       (conn2 ? conn2.label : "") +
       (d.redis && d.redis.total != null ? " · " + Number(d.redis.total).toLocaleString() + " keys" : "") +
       " · read-only view · Command for queries"));
-  } else if (dbIsMongo()) {
-    left.appendChild(el("h2", "db-title pane-title", d.table ? d.table : "Collections"));
-    left.appendChild(el("div", "db-meta", d.table ? (d.mongo && d.mongo.docTotal ? d.mongo.docTotal.toLocaleString() + " documents" : "Loading…") : "Select a collection on the left"));
   } else {
     left.appendChild(el("h2", "db-title pane-title", "Data"));
     left.appendChild(el("div", "db-meta", d.conn ? (d.table ? "Loading…" : "Select a table on the left") : "No database MCP registered"));
@@ -66,27 +63,10 @@ function renderDbToolbar() {
   head.appendChild(left);
 
   var ctl = el("div", "db-head-ctl");
-  var nosql = dbIsRedis() || dbIsMongo();
+  var nosql = dbIsRedis();
   if (d.data && !d.sqlResult && !nosql) dbRenderTabs(ctl);
-  if (dbIsMongo() && d.table && d.mongo && d.mongo.docs) {
-    // The mongo pager: same shape as the SQL one, driving docOffset.
-    var from = d.mongo.docOffset + 1;
-    var to = d.mongo.docOffset + d.mongo.docs.length;
-    ctl.appendChild(el("span", "db-pageinfo",
-      d.mongo.docTotal ? from.toLocaleString() + "–" + to.toLocaleString() + " of " + d.mongo.docTotal.toLocaleString() : "0 documents"));
-    var mp = el("button", "btn icon", "\u2039");
-    mp.title = "Previous page";
-    mp.disabled = d.mongo.docOffset === 0;
-    mp.onclick = function () { d.mongo.docOffset = Math.max(0, d.mongo.docOffset - d.pageSize); dbLoadDocs(false); };
-    var mn = el("button", "btn icon", "\u203a");
-    mn.title = "Next page";
-    mn.disabled = to >= d.mongo.docTotal;
-    mn.onclick = function () { d.mongo.docOffset += d.pageSize; dbLoadDocs(false); };
-    ctl.appendChild(mp);
-    ctl.appendChild(mn);
-  }
   if (d.sqlResult) {
-    var back = el("button", "btn", dbIsRedis() ? "Back to keys" : dbIsMongo() ? "Back to collection" : "Back to table");
+    var back = el("button", "btn", dbIsRedis() ? "Back to keys" : "Back to table");
     back.onclick = function () {
       d.sqlResult = null;
       dbClearSel(); // "q"-prefixed query keys must not leak into the table grid
@@ -267,7 +247,6 @@ function renderDbGrid() {
 
   if (d.sqlResult || d.sqlBusy) { renderDbResultGrid(wrap); return; }
   if (dbIsRedis()) { dbRenderRedisValue(wrap); return; }
-  if (dbIsMongo()) { dbRenderMongoDocs(wrap); return; }
   if (d.tab !== "data") { renderDbDetailGrid(wrap); return; }
   if (!d.conn) { wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first.")); return; }
   if (!d.table || !d.data) {

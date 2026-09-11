@@ -1,5 +1,5 @@
 import { $, apiJson, el, state, toast } from "./util.js";
-import { dbIsMongo, dbIsRedis, dbLoadCollections, dbLoadKeys } from "./data-browsers.js";
+import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbOpenCellEditor } from "./data-cell.js";
 import { dbLoadData, renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
@@ -60,7 +60,6 @@ async function dbRunDdl(op, to) {
   if (op === "truncate") { dbDropEdits(); }
   d.tablesPage = 0;
   if (dbIsRedis()) dbLoadKeys(true);
-  else if (dbIsMongo()) dbLoadCollections();
   else dbLoadTables();
   if (d.table) dbLoadData(true);
   else renderDbTables();

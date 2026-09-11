@@ -21,7 +21,7 @@ var AUTOSTART_EAGER = {
   k: "autostart", label: "Start automatically at boot", bool: true, def: true,
   hint: "Off: idle at boot — the first client request starts it.",
 };
-var TESTABLE_TYPES = ["mysql", "redis", "pg", "mongo", "http", "rest"];
+var TESTABLE_TYPES = ["mysql", "redis", "pg", "http", "rest"];
 var TYPE_FIELDS = {
   proc: [
     DESC_FIELD,
@@ -56,14 +56,6 @@ var TYPE_FIELDS = {
     { k: "url", label: "Connection URL", area: true, ph: "postgresql://user:pass@127.0.0.1:5432/db?sslmode=disable" },
     { k: "maxRows", label: "Default row limit", num: true, half: true, ph: "200" },
     { k: "readonly", label: "Read-only", bool: true, hint: "Sets default_transaction_read_only on the session." },
-    AUTOSTART_EAGER,
-  ],
-  mongo: [
-    DESC_FIELD,
-    { k: "url", label: "Connection URL", area: true, ph: "mongodb://user:pass@127.0.0.1:27017/db?authSource=admin" },
-    { k: "database", label: "Database (override)", half: true, ph: "defaults to the URL path" },
-    { k: "maxRows", label: "Default row limit", num: true, half: true, ph: "200" },
-    { k: "readonly", label: "Read-only", bool: true, hint: "Hides the write tools and refuses $out/$merge." },
     AUTOSTART_EAGER,
   ],
   http: [
@@ -108,7 +100,6 @@ var TYPE_LABELS = {
   mysql: "mysql — in-process driver",
   redis: "redis — in-process driver",
   pg: "postgres — in-process driver",
-  mongo: "mongo — in-process driver",
   http: "http — proxy a remote MCP endpoint",
   rest: "rest — declare tools over a plain HTTP API",
 };

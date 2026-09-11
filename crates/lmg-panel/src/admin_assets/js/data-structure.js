@@ -1,5 +1,5 @@
 import { $, apiJson, el, state } from "./util.js";
-import { dbIsMongo, dbIsRedis } from "./data-browsers.js";
+import { dbIsRedis } from "./data-browsers.js";
 import { dbTableMenu } from "./data-edit.js";
 import { dbHighlightSql, renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -54,7 +54,7 @@ function dbRenderTabs(ctl) {
   });
   ctl.appendChild(seg);
   // The Table menu: rename / truncate / drop, guarded by typed confirms server- AND client-side.
-  if (!dbIsRedis() && !dbIsMongo()) {
+  if (!dbIsRedis()) {
     var tblBtn = el("button", "btn", "Table \u25be");
     tblBtn.title = "Rename, truncate or drop this table";
     tblBtn.onclick = function (e) { e.stopPropagation(); dbTableMenu(tblBtn); };

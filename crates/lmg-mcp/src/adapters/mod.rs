@@ -303,10 +303,6 @@ pub fn make_adapter(
         "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?, log.clone()))),
         "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name, log.clone()))),
         "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name, log.clone())?)),
-        // ADR-012: MongoDB support was deleted outright. A config migrated from the Node build
-        // (which does have mongo) must fail with a message that says what happened, not one
-        // that sends its reader hunting for a typo among the built-in types.
-        "mongo" => Err("the mongo adapter was removed from lmg (ADR-012); this build has no MongoDB support".into()),
         other => Err(format!(
             "Unknown adapter type: {other} (built-in: echo | mysql | pg | redis | proc | http | rest)"
         )),
@@ -377,16 +373,6 @@ mod tests {
         assert!(kind_of(json!({ "host": "x" }))
             .unwrap_err()
             .contains("Unknown adapter type"));
-    }
-
-    #[test]
-    fn the_mongo_type_names_its_removal_instead_of_a_typo_hunt() {
-        // ADR-012: MongoDB support is gone from every build alike, so there is exactly one arm
-        // and one message, whatever the binary.
-        let err = kind_of(json!({ "type": "mongo", "url": "mongodb://localhost:27017/shop" }))
-            .unwrap_err();
-        assert!(err.contains("removed from lmg"), "{err}");
-        assert!(err.contains("no MongoDB support"), "{err}");
     }
 
     #[test]

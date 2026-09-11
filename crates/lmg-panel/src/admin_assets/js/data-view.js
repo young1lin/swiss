@@ -1,5 +1,5 @@
 import { $, apiJson, el, state } from "./util.js";
-import { dbIsMongo, dbIsRedis, dbLoadCollections, dbLoadKeys, dbLoadRedisValue, dbOpenMongo } from "./data-browsers.js";
+import { dbIsRedis, dbLoadKeys, dbLoadRedisValue } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
@@ -42,7 +42,6 @@ function dbFreshState() {
     history: [],         // last-run console queries, newest first (per-browser, localStorage)
     tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
-    mongo: null,         // { collections, docs, docTotal, docOffset, filter } while mongo is selected
     redisKey: null,      // the key whose value is shown in the pane
     detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
     detailBusy: false,
@@ -102,24 +101,23 @@ async function loadDbView() {
   if (!stillThere) {
     d.conn = d.conns.length ? d.conns[0].name : null;
     d.table = null; d.schema = null; d.data = null; d.tables = [];
-    d.redis = null; d.redisKey = null; d.redisValue = null; d.mongo = null;
+    d.redis = null; d.redisKey = null; d.redisValue = null;
     d.sqlResult = null;
     dbDropEdits();
   }
   renderDbSide();
   // The skeleton above was drawn before /api/db answered, i.e. with no connection: its hint said
   // "No database MCP registered" and its console wore the SQL placeholder. With the connection
-  // known, dress everything that depends on its KIND (redis / mongo / SQL) — a redis connection
+  // known, dress everything that depends on its KIND (redis / SQL) — a redis connection
   // entered first used to keep the SQL console and that hint until something else redrew them.
   dbSyncKind();
   renderDbToolbar(); renderDbFilters(); renderDbGrid();
   // A refresh re-fetches what is MISSING, not what is already on screen — reloading keys would
   // throw away the pages the user paged in with "More".
   if (d.conn && dbIsRedis()) { if (!d.redis) dbLoadKeys(true); else renderDbTables(); }
-  else if (d.conn && dbIsMongo()) { if (!d.mongo || !d.mongo.collections.length) dbLoadCollections(); else renderDbTables(); }
   else if (d.conn) { if (!d.tables.length) dbLoadTables(); else renderDbTables(); }
   else renderDbTables();
-  if (d.table && !d.data && !dbIsRedis() && !dbIsMongo()) dbLoadData(true);
+  if (d.table && !d.data && !dbIsRedis()) dbLoadData(true);
 }
 
 function renderDbView() {
@@ -157,7 +155,7 @@ function renderDbView() {
     d.conn = this.value; d.table = null; d.schema = null; d.data = null;
     d.tables = []; d.tablesPage = 0; d.order = null; d.sqlResult = null;
     d.redis = null; d.redisKey = null; d.redisValue = null;
-    d.mongo = null; d.filters = [];
+    d.filters = [];
     // A sidebar search is table-list-scoped: carrying "tsys_" from one connection into the next
     // silently filters the new list down to nothing. Reset it and the box that shows it.
     d.grep = "";
@@ -167,7 +165,6 @@ function renderDbView() {
     dbSyncKind();
     renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
     if (dbIsRedis()) dbLoadKeys(true);
-    else if (dbIsMongo()) dbLoadCollections();
     else dbLoadTables();
   };
   // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
@@ -180,7 +177,6 @@ function renderDbView() {
     t = setTimeout(function () {
       state.db.grep = v; state.db.tablesPage = 0;
       if (dbIsRedis()) dbLoadKeys(true);
-      else if (dbIsMongo()) dbLoadCollections();
       else dbLoadTables();
     }, 300);
   };
@@ -217,7 +213,7 @@ function renderDbView() {
    placeholder, the console's placeholder and hint, and whether Explain exists (EXPLAIN is SQL; a
    redis command has no plan). Called on mount once the connections are known, and again on every
    switch — it used to run once, at mount, before /api/db had even answered, so it never saw a
-   redis connection and a mongo one never had a matching console at all. */
+   redis connection. */
 function dbSyncKind() {
   var grep = $("dbGrep"), sql = $("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
   if (!grep || !sql || !explain || !hint) return;
@@ -226,11 +222,6 @@ function dbSyncKind() {
     sql.placeholder = "GET mykey · HGETALL myhash · LRANGE mylist 0 -1 · TTL mykey — read-only";
     explain.hidden = true;
     hint.textContent = "read-only · KEYS is refused, use the key list · Ctrl+Enter runs";
-  } else if (dbIsMongo()) {
-    grep.placeholder = "Filter collections"; grep.setAttribute("aria-label", "Filter collections");
-    sql.placeholder = "Command — read-only";
-    explain.hidden = true;
-    hint.textContent = "read-only · Ctrl+Enter runs";
   } else {
     grep.placeholder = "Filter tables"; grep.setAttribute("aria-label", "Filter tables");
     sql.placeholder = "SELECT … — read-only, results capped at the page size";
@@ -285,28 +276,6 @@ function renderDbTables() {
   box.innerHTML = "";
   if (!d.conn) {
     box.appendChild(el("div", "db-hint", "Add a mysql or pg MCP, then browse it here."));
-    return;
-  }
-  if (dbIsMongo()) {
-    var mo = d.mongo;
-    if (!mo || !mo.collections.length) {
-      box.appendChild(el("div", "db-hint", d.grep ? 'No collections match "' + d.grep + '"' : "No collections."));
-    }
-    (mo ? mo.collections : []).forEach(function (c) {
-      var b = el("button", "db-table" + (c.name === d.table ? " sel" : ""));
-      b.title = c.name;
-      b.appendChild(el("div", "db-table-name", c.name));
-      b.appendChild(el("div", "db-table-meta",
-        c.type + (c.approxDocs != null ? " · ~" + Number(c.approxDocs).toLocaleString() + " docs" : "") +
-        (c.size ? " · " + c.size : "")));
-      b.onclick = function () { dbOpenMongo(c.name); };
-      box.appendChild(b);
-    });
-    var foot3 = $("dbTablesPager");
-    if (foot3) {
-      foot3.innerHTML = "";
-      foot3.appendChild(el("span", "", (mo ? mo.collections.length : 0) + " collections"));
-    }
     return;
   }
   if (dbIsRedis()) {

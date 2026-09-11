@@ -1,5 +1,5 @@
 import { $, el, esc, state } from "./util.js";
-import { dbIsMongo, dbIsRedis, dbLoadKeys } from "./data-browsers.js";
+import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbDropEdits, dbOkToDrop } from "./data-view.js";
 
@@ -103,7 +103,6 @@ function renderDbFilters() {
     box.appendChild(rf);
     return;
   }
-  if (dbIsMongo()) return; // the mongo JSON filter box lives in the docs pane
   if (!d.data || d.tab !== "data") return; // filters belong to the row grid only
   var cols = d.data.columns.map(function (c) { return c.name; });
   d.filters.forEach(function (f, i) {

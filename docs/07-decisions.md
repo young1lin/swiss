@@ -38,7 +38,7 @@ arguably belonged. What is genuinely lost is the in-process `dbBrowser` / `redis
 
 **What shipped.** `make_adapter` in `crates/lmg-mcp/src/adapters/mod.rs` matches the built-in type names and
 nothing else; an unrecognised `type` fails at adapter-build time with an error that lists them
-(`Unknown adapter type: … (built-in: echo | mysql | pg | redis | mongo | proc | http | rest)`).
+(`Unknown adapter type: … (built-in: echo | mysql | pg | redis | proc | http | rest)`).
 There is no `adapter` field, no module resolution against the data dir, and no runtime loading of
 any kind. This is a breaking change to a contract the Node `AGENTS.md` published; no adapter on the
 reference machine used the door, so nothing had to migrate, and the loss that remains is the one
@@ -301,8 +301,11 @@ What was deleted, whole:
 - the mongo column of the admin form (`DIRECT_FIELDS`, `REQUIRED_FIELD`, `TESTABLE_TYPES`) and
   `mongo` in every built-in list a user can be shown.
 
-What survives, deliberately: a `mongo`-typed MCP in a migrated config fails at `make_adapter`
-with "the mongo adapter was removed from lmg (ADR-012); this build has no MongoDB support" —
-the Node build DOES have mongo (docs/05), so a migrated config must hear what happened, not hunt
-for a typo. The shipped build is now plain `cargo build --release`; the gate suite runs one
-feature combination.
+The shipped build is now plain `cargo build --release`; the gate suite runs one feature
+combination.
+
+**Follow-up (2026-09-11, later the same day).** The Node build dropped MongoDB too
+(`local-mcp-gateway` d1957fe: adapter, resources, browser, panel, driver), so the one thing this
+ADR had kept — a `"mongo"` arm in `make_adapter` that named the removal for a config migrated
+from Node — lost its reason and went with it. A `mongo`-typed MCP now fails like any other
+unknown type, listing the built-ins. Neither build carries the word.

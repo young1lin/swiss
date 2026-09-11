@@ -1542,9 +1542,9 @@ mod tests {
 
     #[tokio::test]
     async fn non_sql_kinds_answer_the_flavored_404s() {
-        // The flavored lookups name what the MCP is NOT. ADR-012 removed the mongo browser,
-        // so the surviving cross-dialect case is a redis connection on an SQL route; the
-        // /collections and /docs routes are gone with it and fall to the router's 404.
+        // The flavored lookups name what the MCP is NOT: the cross-dialect case is a redis
+        // connection on an SQL route. (A document-store flavour once had /collections and
+        // /docs routes here - ADR-012 - and those now fall to the router's 404.)
         let app = router_of(vec![redis_entry("cache")]);
         let (status, _, body, _) = call(app, "GET", "/api/db/cache/tables", None).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
