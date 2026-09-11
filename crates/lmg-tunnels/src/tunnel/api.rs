@@ -15,7 +15,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, post, put};
-use axum::{Json, Router};
+use axum::Router;
 use serde_json::{json, Map, Value};
 
 use super::manager::{OpError, TunnelManager};
@@ -661,8 +661,8 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
             |State(t): State<Arc<Tunnels>>,
              Path(id): Path<String>,
              Query(q): Query<HashMap<String, String>>,
-             body: Option<Json<Value>>| async move {
-                let body = body.map(|Json(v)| v).unwrap_or(Value::Null);
+             body: lmg_host::reply::NodeBody| async move {
+                let body = body.0;
                 let force = wants_force(&q, &body);
                 match t.manager.delete_rule(&id, force).await {
                     Ok(()) => admin_json(StatusCode::OK, json!({ "id": id, "deleted": true })),
@@ -708,8 +708,8 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
             |State(t): State<Arc<Tunnels>>,
              Path(id): Path<String>,
              Query(q): Query<HashMap<String, String>>,
-             body: Option<Json<Value>>| async move {
-                let body = body.map(|Json(v)| v).unwrap_or(Value::Null);
+             body: lmg_host::reply::NodeBody| async move {
+                let body = body.0;
                 let force = wants_force(&q, &body);
                 if let Err(err) = t.manager.stop_rule(&id, true, force).await {
                     return fail(&err);
@@ -877,6 +877,66 @@ mod tests {
             Some(Vec::new()),
             "an explicit [] clears the links"
         );
+    }
+
+    /// The panel's `api()` helper stamps `Content-Type: application/json` on EVERY request, and
+    /// the row buttons send no body at all. Stop and delete must read that as "no options",
+    /// not as a JSON parse error — which is what axum's `Json` extractor made of it (400 on
+    /// every Stop click in the tunnels page).
+    #[tokio::test]
+    async fn stop_and_delete_accept_the_panels_bodiless_json_post() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        lmg_core::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!("lmg-tapi-{}", lmg_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("create the scratch dir");
+        let store = Arc::new(Mutex::new(TunnelStore::new(dir.join("tunnels.json"), 19999)));
+        let id = {
+            let mut s = store.lock().unwrap();
+            let conn = s
+                .add_connection(&conn_input(
+                    json!({ "name": "box", "host": "127.0.0.1", "username": "u", "authType": "password", "password": "p" })
+                        .as_object()
+                        .unwrap(),
+                ))
+                .expect("a connection");
+            s.add_rule(&rule_input(&json!({
+                "name": "pg", "connectionId": conn.id, "localPort": 5433,
+                "targetHost": "127.0.0.1", "targetPort": 5432
+            })))
+            .expect("a rule")
+            .id
+        };
+        let manager = TunnelManager::new(store.clone(), None);
+        let app = mount(Arc::new(Tunnels {
+            store,
+            manager,
+            mcp_display: None,
+        }));
+
+        let bodiless = |uri: String, method: &str| {
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::empty())
+                .expect("request literal")
+        };
+        let stop = app
+            .clone()
+            .oneshot(bodiless(format!("/api/tunnels/rules/{id}/stop"), "POST"))
+            .await
+            .expect("infallible router");
+        assert_eq!(stop.status(), StatusCode::OK, "a bodiless stop is a plain stop");
+
+        let delete = app
+            .oneshot(bodiless(format!("/api/tunnels/rules/{id}"), "DELETE"))
+            .await
+            .expect("infallible router");
+        assert_eq!(delete.status(), StatusCode::OK, "a bodiless delete is a plain delete");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

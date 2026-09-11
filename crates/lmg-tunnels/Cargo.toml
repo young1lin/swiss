@@ -32,6 +32,8 @@ async-trait = "0.1"
 lmg-core = { path = "../lmg-core", features = ["test-utils"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync", "test-util"] }
+# Router-level tests drive `mount()` with oneshot requests, the way the panel does.
+tower = { version = "0.5", default-features = false, features = ["util"] }
 serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 serde = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

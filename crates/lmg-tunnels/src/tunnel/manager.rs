@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -286,6 +286,13 @@ pub struct TunnelManager {
     mismatches: Mutex<HashMap<String, String>>,
     mcps: Option<Box<dyn McpView>>,
     make_connection: ConnFactory,
+    /// Raised by `close_all`, lowered by the next `start_enabled`. A start that lands in
+    /// between is refused: the boot task's per-connection groups are plain spawns that
+    /// outlive the plugin scope, and one of them starting a rule AFTER close_all had passed
+    /// it left a listening forward on a client close_all then ended — "up" in the panel, every
+    /// connection through it "ssh connection is not established" (a rapid Restart of the
+    /// tunnels plugin did exactly this to two Redis rules).
+    closed: AtomicBool,
 }
 
 impl TunnelManager {
@@ -306,7 +313,15 @@ impl TunnelManager {
             mismatches: Mutex::new(HashMap::new()),
             mcps,
             make_connection,
+            closed: AtomicBool::new(false),
         })
+    }
+
+    /// Lower the `close_all` gate so rules may start again. The plugin's start path calls
+    /// this before it spawns the boot task; `start_enabled` calls it too, for callers that
+    /// go straight to the manager.
+    pub fn reopen(&self) {
+        self.closed.store(false, Ordering::SeqCst);
     }
 
     // --- runtime bookkeeping ----------------------------------------------------------------------
@@ -648,12 +663,29 @@ impl TunnelManager {
     ) -> Result<(), TunnelError> {
         let rt = self.rt(&rule.id);
         self.clear_retry(&rt);
-        {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(TunnelError::new(
+                "tunnels are closed (the plugin is stopped or stopping)",
+                FailureKind::Config,
+            ));
+        }
+        let listening_on_live_client = {
             let mut data = rt.data.lock().unwrap_or_else(|e| e.into_inner());
-            if data.forward.as_ref().is_some_and(|f| f.listening()) {
+            let listening = data.forward.as_ref().is_some_and(|f| f.listening());
+            let live = data
+                .holding
+                .as_ref()
+                .is_some_and(|c| c.state() == ConnState::Connected);
+            if listening && live {
                 data.state = RuleState::Up;
                 return Ok(());
             }
+            listening
+        };
+        // A listener whose SSH client is gone forwards nothing: every accept fails to open a
+        // channel. Rebuild it rather than report a port that is bound to a dead session.
+        if listening_on_live_client {
+            self.teardown(&rt).await;
         }
         let conn = self.with_store(|s| s.connection(&rule.connection_id));
         let Some(conn) = conn else {
@@ -852,6 +884,7 @@ impl TunnelManager {
 
     /// Start every rule marked enabled. Never throws: one bad rule must not hold up the gateway.
     pub async fn start_enabled(self: &Arc<Self>) -> Vec<OpResult> {
+        self.reopen();
         let rules: Vec<RuleDef> = self
             .with_store(|s| s.rules())
             .into_iter()
@@ -1354,6 +1387,9 @@ impl TunnelManager {
     /// Must finish inside the shutdown budget: closes are local and the SSH end() has its own
     /// 1.5s cap.
     pub async fn close_all(self: &Arc<Self>) {
+        // Raised BEFORE the stops: a start that queues behind one of them (or arrives after
+        // the sweep) must find the gate up, or it rebuilds what this is tearing down.
+        self.closed.store(true, Ordering::SeqCst);
         let rts: Vec<Arc<RuleRuntime>> = self
             .runtimes
             .lock()
@@ -1435,7 +1471,7 @@ mod tests {
     use super::*;
     use crate::tunnel::types::AuthType;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicBool, AtomicU32};
+    use std::sync::atomic::AtomicU32;
     use std::time::Duration as StdDuration;
 
     use lmg_host::services::shell::{
@@ -2528,6 +2564,80 @@ mod tests {
         assert!(results.iter().any(|x| x.name == "bad" && !x.ok));
         assert_eq!(state_of(&m, &off.id), "stopped");
         drop(squatter);
+        m.close_all().await;
+    }
+
+    /// The tunnels plugin's Restart, clicked twice in a row: the first boot task is still
+    /// starting rules when close_all runs. Every rule it starts AFTER close_all passed it used
+    /// to keep a listening forward on the client close_all then ended — reported "up", every
+    /// connection through it refused with "ssh connection is not established".
+    #[tokio::test]
+    async fn a_start_that_lands_during_or_after_close_all_is_refused_not_leaked() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let mut rules = Vec::new();
+        for i in 0..6 {
+            let r = add_rule(&store, rule_input(&format!("r{i}"), &c.id, free_port().await, echo));
+            store.lock().unwrap().set_enabled(&r.id, true).expect("enable");
+            rules.push(r);
+        }
+
+        // Boot in the background, close while it is still working through the group.
+        let booting = tokio::spawn({
+            let m = m.clone();
+            async move { m.start_enabled().await }
+        });
+        tokio::task::yield_now().await;
+        m.close_all().await;
+        let _ = booting.await;
+        // The boot's group task is a detached spawn; give it every chance to run past close_all.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        for r in &rules {
+            assert_ne!(state_of(&m, &r.id), "up", "{} came up after close_all", r.name);
+            assert!(port_is_free(r.local_port).await, "{} still holds its port", r.name);
+        }
+        for i in 0..built_len(&built) {
+            assert!(!nth(&built, i).is_connected(), "a client survived close_all");
+        }
+        // A rule asked to start behind the gate is refused, not half-built.
+        let refused = m.start_rule(&rules[0].id).await.expect_err("closed");
+        assert!(refused.message().contains("closed"), "{}", refused.message());
+        assert_eq!(state_of(&m, &rules[0].id), "stopped");
+
+        // The next boot lowers the gate and everything comes back.
+        let results = m.start_enabled().await;
+        assert!(results.iter().all(|x| x.ok), "{results:?}");
+        for r in &rules {
+            assert_eq!(state_of(&m, &r.id), "up");
+        }
+        m.close_all().await;
+    }
+
+    /// A listening forward whose client has been ended (a stray `end()` from any path) is
+    /// rebuilt on the next start rather than reported "up" over a dead session.
+    #[tokio::test]
+    async fn a_listener_on_a_dead_client_is_rebuilt_on_start_not_reported_up() {
+        let (_dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let echo = echo_server().await;
+        let c = add_conn(&store);
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("pg", &c.id, port, echo));
+        m.start_rule(&r.id).await.expect("start");
+        let first = nth(&built, 0);
+        first.end().await; // the session is gone; the listener is not
+        assert!(!port_is_free(port).await, "the stale listener is still bound");
+
+        m.start_rule(&r.id).await.expect("restart over the dead client");
+        assert_eq!(state_of(&m, &r.id), "up");
+        // The dead client was the rule's last reference, so it left the map; the restart
+        // built a fresh one instead of reviving it.
+        assert!(!first.is_connected(), "the ended client stays ended");
+        assert!(nth(&built, built_len(&built) - 1).is_connected(), "a live client replaced it");
+        assert_eq!(round_trip(port, "hello").await, "HELLO");
         m.close_all().await;
     }
 

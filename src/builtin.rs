@@ -311,6 +311,9 @@ impl PluginInstance for TunnelsInstance {
         // Boot handshakes take seconds and fail independently — a SCOPED task now, tracked
         // and cancelled by the host on stop (this used to be a detached tokio::spawn the
         // shutdown path could not account for).
+        // Lower the close_all gate synchronously, before the routes mount: a Start click that
+        // beats the boot task to the manager must not be refused as "closed".
+        self.manager.reopen();
         let manager = self.manager.clone();
         scope.spawn(async move {
             for result in manager.start_enabled().await {
