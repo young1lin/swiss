@@ -283,6 +283,7 @@ function startRename(id) {
   if (!labelEl || btn.querySelector(".term-rename")) return;
   var input = document.createElement("input");
   input.className = "term-rename";
+  input.id = "term-rename";   // the a11y auditor wants a name on every form field
   input.maxLength = 40;
   input.value = m.customTitle || m.shellTitle || "";
   input.setAttribute("aria-label", "Rename tab");
