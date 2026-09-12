@@ -1639,28 +1639,30 @@ pub fn build_pg_ddl(
                 line.push_str(&format!(" DEFAULT {d}"));
             }
         }
-        lines.push(line + ",");
+        lines.push(line);
     }
     if !primary_key.is_empty() {
         let cols = primary_key
             .iter()
             .map(|c| quote_ident(DbDialect::Pg, c))
             .collect::<Result<Vec<_>, _>>()?;
-        lines.push(format!("    PRIMARY KEY ({}),", cols.join(", ")));
+        lines.push(format!("    PRIMARY KEY ({})", cols.join(", ")));
     }
     for fk in foreign_keys {
         lines.push(format!(
-            "    FOREIGN KEY ({}) REFERENCES {}.{} ({}),",
+            "    FOREIGN KEY ({}) REFERENCES {}.{} ({})",
             quote_ident(DbDialect::Pg, &fk.column)?,
             quote_ident(DbDialect::Pg, &fk.ref_schema)?,
             quote_ident(DbDialect::Pg, &fk.ref_table)?,
             quote_ident(DbDialect::Pg, &fk.ref_column)?
         ));
     }
+    // Lines join with their own commas — the last one must not carry one into the closing
+    // paren, or the sketch (and any SQL dump that replays it, docs/22 W4.4) is invalid SQL.
     let body = if lines.is_empty() {
         String::new()
     } else {
-        format!("\n{}\n", lines.join("\n"))
+        format!("\n{}\n", lines.join(",\n"))
     };
     Ok(format!(
         "CREATE TABLE {}.{} ({body});",
@@ -2929,6 +2931,10 @@ mod tests {
         assert!(ddl.contains("\"note\" text"));
         assert!(ddl.contains("PRIMARY KEY (\"id\")"));
         assert!(ddl.contains("FOREIGN KEY (\"id\") REFERENCES \"public\".\"users\" (\"id\")"));
+        // docs/22 W4.4 live-verify caught this once: a trailing comma after the last clause
+        // made the sketch (and any SQL dump that replays it) invalid SQL. The tail must be
+        // the clause, then the paren — never a comma between them.
+        assert!(ddl.ends_with("    FOREIGN KEY (\"id\") REFERENCES \"public\".\"users\" (\"id\")\n);"));
     }
 
     #[test]
