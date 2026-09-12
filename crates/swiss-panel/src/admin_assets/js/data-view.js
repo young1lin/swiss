@@ -321,7 +321,7 @@ function dbSyncKind() {
     grep.title = "Filter tables: comma-separated terms AND together, | is OR, * is a wildcard";
     sql.placeholder = "SELECT / UPDATE / DELETE … — one statement per run";
     explain.hidden = false;
-    hint.textContent = "one statement per run · Ctrl+Enter runs";
+    hint.textContent = "one statement per run · a blank line starts a new block · Ctrl+Enter runs the caret's block";
   }
 }
 

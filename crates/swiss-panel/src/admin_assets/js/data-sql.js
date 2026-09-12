@@ -1,6 +1,6 @@
 import { $, apiJson, el, state, toast } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
-import { dbHighlightSql } from "./data-filters.js";
+import { dbHighlightSql, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
 
@@ -138,6 +138,20 @@ function dbApplyReadback(rows, pkCols, pk, row) {
   return rows;
 }
 
+/** docs/22 W1.4 / W1.10: put a generated statement into the console — visible, editable, and
+ *  in history once run, instead of hiding behind a one-off request. */
+function dbFillConsole(sql) {
+  var d = state.db;
+  d.sqlText = sql;
+  d.sqlOpen = true;
+  var con = $("dbConsole");
+  if (con) con.hidden = false;
+  var ta = $("dbSql");
+  if (ta) ta.value = sql;
+  dbSqlPaint();
+  if (ta) ta.focus();
+}
+
 async function dbCommit() {
   var d = state.db;
   if (!d.conn || !d.table || !d.data) return;
@@ -232,10 +246,67 @@ function dbHistoryRender() {
 
 /* --- SQL console --------------------------------------------------------------------------------- */
 
+/** docs/22 W1.10: the table menu's SQL templates. Column names pass the identifier whitelist
+ *  (never a bare splice), value positions are ? placeholders, and one comment line says what to
+ *  do with them — the template lands in the console runnable after the ?s are filled in. */
+function dbTemplateSql(kind, dialect, schema, table, columns, pk) {
+  var q = function (n) {
+    var safe = dbQuoteIdentSafe(n);
+    if (!safe) throw new Error("not a valid identifier: " + n);
+    return dialect === "mysql" ? "`" + safe + "`" : '"' + safe + '"';
+  };
+  var t = (schema ? q(schema) + "." : "") + q(table);
+  var cols = columns.map(q);
+  var key = pk.map(q);
+  var hint = "-- replace each ? with a value before running";
+  if (kind === "select") {
+    return hint + "\nSELECT " + cols.join(", ") + "\nFROM " + t +
+      (key.length ? "\nWHERE " + key.map(function (c) { return c + " = ?"; }).join(" AND ") : "") + ";";
+  }
+  if (kind === "insert") {
+    return hint + "\nINSERT INTO " + t + " (" + cols.join(", ") + ")\nVALUES (" +
+      cols.map(function () { return "?"; }).join(", ") + ");";
+  }
+  if (kind === "update") {
+    var keyNames = {};
+    pk.forEach(function (p) { keyNames[p] = true; });
+    var set = columns.filter(function (n) { return !keyNames[n]; }).map(q);
+    if (!set.length || !key.length) {
+      throw new Error("an UPDATE template needs a non-key column and a primary key");
+    }
+    return hint + "\nUPDATE " + t + "\nSET " + set.map(function (c) { return c + " = ?"; }).join(", ") +
+      "\nWHERE " + key.map(function (c) { return c + " = ?"; }).join(" AND ") + ";";
+  }
+  if (!key.length) throw new Error("a DELETE template needs a primary key");
+  return hint + "\nDELETE FROM " + t + "\nWHERE " + key.map(function (c) { return c + " = ?"; }).join(" AND ") + ";";
+}
+
+/** docs/22 W1.8: split SQL text into blank-line-separated blocks and return the one the caret
+ *  sits in — Ctrl+Enter on a three-block script runs only the second block. A caret inside a
+ *  blank gap belongs to the block AFTER it (that is where the cursor visually rests); a missing
+ *  caret means the end of the text. No blank lines means one block: exactly the whole box, the
+ *  behaviour the console always had. */
+function dbSubqueryAt(text, caret) {
+  var t = String(text);
+  var seps = [];
+  t.replace(/\n[ \t]*\n/g, function (m, i) { seps.push([i, i + m.length]); return m; });
+  if (!seps.length) return t;
+  var at = typeof caret === "number" && caret >= 0 && caret <= t.length ? caret : t.length;
+  var start = 0, end = t.length;
+  for (var i = 0; i < seps.length; i++) {
+    if (at < seps[i][0]) { end = seps[i][0]; break; }
+    start = seps[i][1];
+  }
+  return t.slice(start, end);
+}
+
 async function dbRunSql(explain) { // falsy runs the statement; "plan"|"analyze" prefix EXPLAIN
   var d = state.db;
   if (!d.conn) { toast("No database connection", true); return; }
-  var sql = (d.sqlText || "").trim();
+  // docs/22 W1.8: the run covers the block the caret is in — one block per run keeps the
+  // single-statement guard honest on multi-part scripts.
+  var ta = $("dbSql");
+  var sql = dbSubqueryAt(d.sqlText || "", ta ? ta.selectionStart : null).trim();
   if (!sql) { toast("Type a command first", true); return; }
   // The redis console: one command per run; the server-side guard still refuses what would
   // break the shared connection or the server. Writes (SET, DEL, EXPIRE…) run.
@@ -278,4 +349,4 @@ async function dbRunSql(explain) { // falsy runs the statement; "plan"|"analyze"
   renderDbGrid();
 }
 
-export { dbApplyReadback, dbCommit, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbRunSql, dbSqlLiteral, dbStatsSql, dbWithExplain, renderDbBar };
+export { dbApplyReadback, dbCommit, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbRunSql, dbSqlLiteral, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };
