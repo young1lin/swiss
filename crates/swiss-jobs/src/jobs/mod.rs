@@ -32,6 +32,7 @@
 pub mod api;
 pub mod clock;
 pub mod def;
+pub mod groups;
 pub mod migrate;
 pub mod runlog;
 pub mod runner;
@@ -49,6 +50,7 @@ use swiss_core::log;
 use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
 use swiss_core::util::now_ms;
 use swiss_host::config_store::ConfigStore;
+use swiss_host::groups::DEFAULT_GROUP;
 use swiss_host::services::runs::{SubmitError, SubmitRequest};
 use swiss_host::services::RuntimeServices;
 
@@ -342,6 +344,7 @@ impl JobSystem {
                 max_concurrent_runs: def::DEFAULT_MAX_CONCURRENT_RUNS,
                 max_queued_runs: def::DEFAULT_MAX_QUEUED_RUNS,
                 retention: def::Retention::default(),
+                groups: vec![DEFAULT_GROUP.to_string()],
                 definitions: Vec::new(),
             }),
             applied_revision: AtomicU64::new(0),
@@ -412,6 +415,161 @@ impl JobSystem {
     /// The config revision currently applied - what /api/jobs reports as configRevision.
     pub fn applied_revision(&self) -> u64 {
         self.applied_revision.load(Ordering::SeqCst)
+    }
+
+    /// The groups of the APPLIED config (docs/20 G4) - never empty: the parser
+    /// materializes `["default"]` for a row that names none.
+    pub fn groups(&self) -> Vec<String> {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .groups
+            .clone()
+    }
+
+    /// The group one definition renders under: its own entry while it still exists, else
+    /// the first slot (the sink). This is /api/jobs' `group` and the family's canonical
+    /// answer for `assign` with `null`. Takes the list as an argument so callers that
+    /// already hold the config lock (all_views) cannot re-enter it.
+    fn group_of_def(def: &JobDefinition, groups: &[String]) -> String {
+        def.group
+            .as_ref()
+            .filter(|g| groups.iter().any(|n| n == *g))
+            .cloned()
+            .unwrap_or_else(|| groups[0].clone())
+    }
+
+    /// Does this job id exist in the applied table? The family's member check.
+    pub fn has_job(&self, id: &str) -> bool {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .definitions
+            .iter()
+            .any(|d| d.id == id)
+    }
+
+    /// The flat member order of the jobs scope: definition order in the row, which is
+    /// also run-log and display order (docs/20 G4's `set_order`).
+    pub fn job_ids(&self) -> Vec<String> {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .definitions
+            .iter()
+            .map(|d| d.id.clone())
+            .collect()
+    }
+
+    /// Build the row's one-model view (docs/20 G4): names from `groups`, members from
+    /// each definition's group entry. Reading the STORED row (not the applied config)
+    /// keeps every family mutation one read-mutate-commit cycle over the same bytes.
+    fn row_groups(row: &Value) -> swiss_host::groups::Groups {
+        let names = match row.get("groups") {
+            Some(Value::Array(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        if names.is_empty() {
+            return swiss_host::groups::Groups::from_parts(
+                vec![DEFAULT_GROUP.to_string()],
+                std::collections::BTreeMap::new(),
+            );
+        }
+        let mut members = std::collections::BTreeMap::new();
+        if let Some(Value::Object(defs)) = row.get("definitions") {
+            for (id, def) in defs {
+                if let Some(g) = def.get("group").and_then(Value::as_str) {
+                    members.insert(id.clone(), g.to_string());
+                }
+            }
+        }
+        swiss_host::groups::Groups::from_parts(names, members)
+    }
+
+    /// Write a mutated one-model view back into the row and land it through the one door:
+    /// strict parse, revision-checked store write, apply in place (docs/11 §8 - no restart,
+    /// configRevision advances). Everything the family asks of the jobs scope ends here.
+    fn commit_groups(
+        &self,
+        mut row: Value,
+        groups: &swiss_host::groups::Groups,
+    ) -> Result<(), String> {
+        row["groups"] = json!(groups.names());
+        if let Some(Value::Object(defs)) = row.get_mut("definitions") {
+            for (id, def) in defs.iter_mut() {
+                match groups.members().get(id) {
+                    Some(g) => def["group"] = json!(g),
+                    None => {
+                        if let Some(obj) = def.as_object_mut() {
+                            obj.remove("group");
+                        }
+                    }
+                }
+            }
+        }
+        self.commit_row(row)
+    }
+
+    /// The family's set_names: replace the whole list; members of dropped groups lose
+    /// their entry and render in the new first group.
+    pub fn set_groups(&self, next: &[String]) -> Result<Vec<String>, String> {
+        let row = self.current_config();
+        let mut groups = Self::row_groups(&row);
+        groups.set_names(next.to_vec())?;
+        self.commit_groups(row, &groups)?;
+        Ok(groups.names())
+    }
+
+    /// The family's rename: keep the slot, carry the members.
+    pub fn rename_group(&self, from: &str, to: &str) -> Result<(Vec<String>, usize), String> {
+        let row = self.current_config();
+        let mut groups = Self::row_groups(&row);
+        let (names, moved) = groups.rename(from, to)?;
+        self.commit_groups(row, &groups)?;
+        Ok((names, moved))
+    }
+
+    /// The family's assign: put one job in a group (canonical casing kept), or `None` for
+    /// the sink. Answers the group the job now renders under.
+    pub fn set_job_group(&self, id: &str, group: Option<&str>) -> Result<String, String> {
+        if !self.has_job(id) {
+            return Err(format!("unknown member: {id}"));
+        }
+        let row = self.current_config();
+        let mut groups = Self::row_groups(&row);
+        let answer = groups.assign(id, group)?;
+        self.commit_groups(row, &groups)?;
+        Ok(answer)
+    }
+
+    /// The family's set_order: rewrite the DEFINITION order (the row's map order, which is
+    /// display order); ids the panel does not know stay appended in their current order,
+    /// exactly like the mcps scope appends unknown names.
+    pub fn reorder(&self, ids: &[String]) -> Result<Vec<String>, String> {
+        let mut row = self.current_config();
+        let Some(Value::Object(defs)) = row.get("definitions").cloned() else {
+            self.commit_row(row.clone())?;
+            return Ok(Vec::new());
+        };
+        let mut ordered = Map::new();
+        for id in ids {
+            if let Some(def) = defs.get(id) {
+                ordered.insert(id.clone(), def.clone());
+            }
+        }
+        for (id, def) in &defs {
+            if !ordered.contains_key(id) {
+                ordered.insert(id.clone(), def.clone());
+            }
+        }
+        let final_order: Vec<String> = ordered.keys().cloned().collect();
+        row["definitions"] = Value::Object(ordered);
+        self.commit_row(row)?;
+        Ok(final_order)
     }
 
     /// The jobs config row as the STORE holds it right now - the row apply_config
@@ -989,6 +1147,12 @@ impl JobSystem {
     /// shape they had when definitions lived in jobs.json, plus the v2 fields. Built for
     /// GET /api/jobs and the PUT reply, so both show the same shape.
     pub fn job_view(&self, def: &JobDefinition) -> Value {
+        self.job_view_in(def, &self.groups())
+    }
+
+    /// [job_view] against a caller-supplied groups list - the building loop's form: it
+    /// snapshots definitions AND groups under one lock, then builds views lock-free.
+    fn job_view_in(&self, def: &JobDefinition, groups: &[String]) -> Value {
         // "Running" is the coordinator's truth now (docs/11 §6.2): the label count is
         // owner-blind, so a manual submission of the same job shows as running too -
         // which is exactly what the reader wants to know.
@@ -1003,6 +1167,9 @@ impl JobSystem {
             v[key] = value;
         }
         v["source"] = json!("config");
+        // The group this job renders under (docs/20 G4): its stored entry while that group
+        // still exists, else the first slot - the same sink rule every scope serves.
+        v["group"] = json!(Self::group_of_def(def, groups));
         v["actionAvailable"] = json!(self.services.actions.get(&def.action.type_).is_some());
         v["configRevision"] = json!(self.applied_revision());
         // The live facts the panel reads: lastRunAt / lastOk come from the state file,
@@ -1030,10 +1197,15 @@ impl JobSystem {
         v
     }
 
-    /// The listing behind GET /api/jobs.
+    /// The listing behind GET /api/jobs. Definitions and groups snapshot under ONE lock,
+    /// then the views build outside it - job_view reads run state and the coordinator, and
+    /// taking the config lock again inside would deadlock the very lock held here.
     pub fn all_views(&self) -> Vec<Value> {
-        let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
-        cfg.definitions.iter().map(|d| self.job_view(d)).collect()
+        let (defs, groups) = {
+            let cfg = self.config.lock().unwrap_or_else(|e| e.into_inner());
+            (cfg.definitions.clone(), cfg.groups.clone())
+        };
+        defs.iter().map(|d| self.job_view_in(d, &groups)).collect()
     }
 
     /// One job's run facts (docs/11 §4) - what lastRunAt / lastOk used to be inside a
