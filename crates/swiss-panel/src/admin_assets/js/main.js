@@ -14,11 +14,11 @@
 import { $, THEME_KEY, api, loadCollapsed, loadTunCollapsed, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { initSelects } from "./dropdown.js";
-import { initPages, pageHasPendingChanges, pageUsesSidebar, pollPage, refreshPage } from "./page-registry.js";
+import { initPages, pageHasPendingChanges, pageUsesSidebar, pollPage } from "./page-registry.js";
 import { openDetail } from "./detail.js";
 import { patchSidebar } from "./menu.js";
 import { closeMenu } from "./pane.js";
-import { loadMemory } from "./polling.js";
+import { loadMemory, refreshNow } from "./polling.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
 import { openTokensView } from "./tokens.js";
@@ -146,10 +146,9 @@ window.addEventListener("beforeunload", function (e) {
   }
 });
 
-$("refreshBtn").onclick = function () {
-  loadMemory(true);
-  void refreshPage();
-};
+// The toolbar refresh button is gone: every view already reloads on the 6s poll, so the
+// button duplicated it. The one explicit refresh left is the memory chip's click (and the r
+// key below) — both land in polling.js refreshNow, which keeps Data's manual reload alive.
 
 $("filter").oninput = function () { state.filter = this.value; patchSidebar(); };
 
@@ -163,7 +162,7 @@ document.addEventListener("keydown", function (e) {
   }
   var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
   if (typing) return;
-  if (e.key === "r") { $("refreshBtn").click(); return; }
+  if (e.key === "r") { refreshNow(); return; }
   if (!pageUsesSidebar()) return;
   if (e.key === "/") { e.preventDefault(); $("filter").focus(); return; }
   // Alt+arrows move the selected MCP through the list (the drag-free path to the same reorder).

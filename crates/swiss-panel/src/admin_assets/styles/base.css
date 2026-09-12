@@ -242,8 +242,11 @@
       border-bottom: 1px solid var(--sep);
       min-width: 0; /* lets the level-one seg scroll instead of pushing the right side off */
     }
-    /* The toolbar's right-hand trio (docs/18 V3): one 2px cluster of quiet icon buttons. */
+    /* The toolbar's right-hand pair (docs/18 V3): one 2px cluster of quiet icon buttons. The
+       refresh button that used to open the trio is gone — the memory chip is the refresh. */
     .tool-acts { display: inline-flex; gap: 2px; }
+    /* The memory chip IS the refresh control (renderMemory wires the click): mono because the
+       value is a copyable number, .chip.button for the hover affordance. */
     #memChip { font-family: var(--mono); }
     @media (max-width: 960px) { #memChip { display: none; } /* 960px is the support floor */ }
     /* The brand carries a mark: the swiss logo (logo.svg), a red shield with a white cross -

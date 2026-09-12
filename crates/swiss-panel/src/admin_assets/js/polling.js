@@ -1,5 +1,5 @@
 import { $, DEFAULT_GROUP, api, apiJson, dotTitle, esc, icon, state, toast, whenLabel } from "./util.js";
-import { currentPageCount, navigatePage } from "./page-registry.js";
+import { currentPageCount, navigatePage, refreshPage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { rowOf } from "./sidebar.js";
@@ -39,10 +39,20 @@ function renderMemory() {
   chip.title = "gateway RSS " + m.gatewayMb + " MB (heap " + m.heapUsedMb + "/" + m.heapTotalMb +
     " MB, external " + m.externalMb + " MB)" +
     (m.childrenMb ? "\nproc-MCP children " + m.childrenMb + " MB across " + (m.processCount - 1) + " processes" : "") +
-    (m.childrenPending ? "\nChild processes could not be measured — click to retry." : "");
-  chip.className = "chip" + (m.childrenPending ? " button" : "");
-  chip.onclick = m.childrenPending ? function () { loadMemory(true); } : null;
+    (m.childrenPending ? "\nChild processes could not be measured — click to retry." : "") +
+    "\nClick or press r — refreshes memory and the current view.";
+  // The chip is the toolbar's refresh control now (the button is gone): a control on every
+  // paint, not only the old childrenPending retry — this function re-runs every 6s poll and
+  // would otherwise strip the class and the click with the first one.
+  chip.className = "chip button";
+  chip.onclick = refreshNow;
 }
+
+/** The panel's ONE explicit refresh (the toolbar button is gone — the memory chip and the r
+ *  key both land here): re-read memory with the child walk, and reload the active view. On
+ *  Data this click is the only manual reload there is — its poll deliberately leaves the
+ *  paged-in lists alone, so without this the view could never be forced up to date. */
+function refreshNow() { loadMemory(true); void refreshPage(); }
 
 /* ================================================================================================
    Tunnels
@@ -248,4 +258,4 @@ function connRowHtml(c) {
     "</div>";
 }
 
-export { connRowHtml, jobDotClass, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab, updateCountChip };
+export { connRowHtml, jobDotClass, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab, updateCountChip };
