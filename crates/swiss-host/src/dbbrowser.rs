@@ -103,18 +103,25 @@ pub const BROWSE_TABLES_MAX: i64 = 1000;
 /// The operators a grid filter may use. Deliberately a whitelist: the panel offers exactly these
 /// and anything else is refused, because the fragment is interpolated into SQL by identifier —
 /// every VALUE stays a bound parameter, but the operator slot must never be free text.
-pub const BROWSE_FILTER_OPS: [&str; 10] = [
+pub const BROWSE_FILTER_OPS: [&str; 13] = [
     "eq",
     "ne",
     "gt",
     "gte",
     "lt",
     "lte",
+    "in",
+    "notIn",
+    "between",
     "like",
     "notLike",
     "isNull",
     "isNotNull",
 ];
+
+/// Values one in/not-in filter may list. The route caps FILTER COUNT; this caps LIST LENGTH,
+/// so a hand-written URL cannot ask for a thousand-term IN either.
+pub const BROWSE_IN_MAX: usize = 100;
 
 /// Cap on rows in one import batch — one transaction, one bounded payload.
 pub const IMPORT_ROW_CAP: usize = 10_000;
@@ -827,6 +834,44 @@ pub fn build_filter_where(
                     type_of.get(f.column.as_str()).copied().flatten(),
                 );
                 parts.push(format!("{col} {sql_op} {typed}"));
+            }
+            // docs/22 W1.2: IN/NOT IN bind a comma-separated list, BETWEEN the closed interval
+            // lo,hi. Every item is its own bound parameter carrying the same typed placeholder a
+            // comparison gets, so a list over a bigint column on Postgres does not hit the 42883
+            // a bare text bind would.
+            "in" | "notIn" | "between" => {
+                let v = f.value.as_ref().filter(|v| !v.is_null());
+                let text = v.map(|x| js_to_string(Some(x))).unwrap_or_default();
+                let items: Vec<&str> = text.split(',').map(str::trim).collect();
+                if f.op == "between" {
+                    if items.len() != 2 || items.iter().any(|s| s.is_empty()) {
+                        return Err("a 'between' filter needs exactly two values: lo,hi".into());
+                    }
+                } else if items.iter().any(|s| s.is_empty()) {
+                    // Covers the empty value too: "".split(',') is [""].
+                    return Err(format!(
+                        "an '{}' filter needs a comma-separated list of values",
+                        f.op
+                    ));
+                } else if items.len() > BROWSE_IN_MAX {
+                    return Err(format!(
+                        "an '{}' filter accepts at most {BROWSE_IN_MAX} values",
+                        f.op
+                    ));
+                }
+                let dtype = type_of.get(f.column.as_str()).copied().flatten();
+                let mut phs: Vec<String> = Vec::with_capacity(items.len());
+                for item in items {
+                    bind(&mut params, numeric_bind_value(item));
+                    // params.len() IS this item's 1-based number — bind() just pushed it.
+                    phs.push(typed_ph(dialect, &params, dtype));
+                }
+                if f.op == "between" {
+                    parts.push(format!("{col} BETWEEN {} AND {}", phs[0], phs[1]));
+                } else {
+                    let neg = if f.op == "notIn" { "NOT " } else { "" };
+                    parts.push(format!("{col} {neg}IN ({})", phs.join(", ")));
+                }
             }
             other => return Err(format!("unknown filter operator: {other}")),
         }
@@ -1746,6 +1791,78 @@ mod tests {
         let out = build_filter_where(DbDialect::Mysql, &n, &[]).unwrap();
         assert_eq!(out.frag, "");
         assert_eq!(out.params, Vec::<Value>::new());
+    }
+
+    #[test]
+    fn in_not_in_and_between_bind_every_value() {
+        // docs/22 W1.2: IN/NOT IN split the value on commas and bind each item; BETWEEN takes
+        // exactly lo,hi (the closed interval). Values stay bound parameters with the same typed
+        // placeholder a comparison gets — never inlined into the SQL.
+        let cols = vec![FilterColumn::Column(col("id", "bigint", false, true))];
+        let out = build_filter_where(
+            DbDialect::Mysql,
+            &cols,
+            &filter(json!([{ "column": "id", "op": "in", "value": "1, 2, 3" }])),
+        )
+        .unwrap();
+        assert_eq!(out.frag, " WHERE \x60id\x60 IN (?, ?, ?)");
+        assert_eq!(out.params, vec![json!(1), json!(2), json!(3)]);
+        let out = build_filter_where(
+            DbDialect::Mysql,
+            &cols,
+            &filter(json!([{ "column": "id", "op": "notIn", "value": "4,5" }])),
+        )
+        .unwrap();
+        assert_eq!(out.frag, " WHERE \x60id\x60 NOT IN (?, ?)");
+        assert_eq!(out.params, vec![json!(4), json!(5)]);
+        // Postgres types every placeholder against the column, same as a comparison.
+        let out = build_filter_where(
+            DbDialect::Pg,
+            &cols,
+            &filter(json!([{ "column": "id", "op": "between", "value": "10,20" }])),
+        )
+        .unwrap();
+        assert_eq!(
+            out.frag,
+            " WHERE \"id\" BETWEEN CAST($1 AS bigint) AND CAST($2 AS bigint)"
+        );
+        assert_eq!(out.params, vec![json!(10), json!(20)]);
+        // Text items stay strings — MySQL coerces them against the column itself.
+        let out = build_filter_where(
+            DbDialect::Mysql,
+            &cols,
+            &filter(json!([{ "column": "id", "op": "in", "value": "a,b" }])),
+        )
+        .unwrap();
+        assert_eq!(out.params, vec![json!("a"), json!("b")]);
+        // Empty or malformed lists are the caller's whole mistake, not a silent default.
+        for bad in ["", "1,,2", "1,  "] {
+            let err = build_filter_where(
+                DbDialect::Mysql,
+                &cols,
+                &filter(json!([{ "column": "id", "op": "in", "value": bad }])),
+            )
+            .unwrap_err();
+            assert!(err.contains("comma-separated"), "{bad}: {err}");
+        }
+        for bad in ["", "1", "1,2,3", "1,"] {
+            let err = build_filter_where(
+                DbDialect::Mysql,
+                &cols,
+                &filter(json!([{ "column": "id", "op": "between", "value": bad }])),
+            )
+            .unwrap_err();
+            assert!(err.contains("two values"), "{bad}: {err}");
+        }
+        // A hand-written URL cannot ask for an unbounded IN list.
+        let long = vec!["7"; BROWSE_IN_MAX + 1].join(",");
+        let err = build_filter_where(
+            DbDialect::Mysql,
+            &cols,
+            &filter(json!([{ "column": "id", "op": "in", "value": long }])),
+        )
+        .unwrap_err();
+        assert!(err.contains("at most"), "{err}");
     }
 
     #[test]
