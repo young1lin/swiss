@@ -521,7 +521,7 @@ pub struct BrowseFilter {
 }
 
 /// A statement plus its bound parameters.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BuiltStatement {
     pub sql: String,
     pub params: Vec<Value>,
@@ -1264,6 +1264,173 @@ pub fn readback_plan(
 /// dropped from SET/INSERT (a stale page may reference a dropped column); an edit that ends up
 /// with nothing to do is an error, because "commit 3 changes" that silently did 2 is a lie.
 ///
+/// The INSERT for one map of values — the shared body of the edit grid's insert arm and both
+/// import modes (docs/22 W4.5): the same known-column filter, the same placeholder typing, the
+/// same column order (the map's own), so a row commits as the same statement wherever it came
+/// from. Returns the columns it mapped (an upsert tail addresses them), the SQL without any
+/// suffix, and the bound parameters in SQL order.
+fn insert_half(
+    dialect: DbDialect,
+    table_ref: &str,
+    values: &Map<String, Value>,
+    known: &HashSet<&str>,
+    type_of: &HashMap<&str, &str>,
+) -> Result<(Vec<String>, String, Vec<Value>), String> {
+    // Object.keys order — the panel's own insertion order.
+    let cols: Vec<&String> = values
+        .keys()
+        .filter(|c| known.contains(c.as_str()))
+        .collect();
+    if cols.is_empty() {
+        return Err("insert names no column of this table".into());
+    }
+    let mut params: Vec<Value> = Vec::new();
+    let mut value_sql: Vec<String> = Vec::new();
+    for c in &cols {
+        params.push(values[*c].clone());
+        value_sql.push(typed_ph(dialect, &params, type_of.get(c.as_str()).copied()));
+    }
+    let names = cols
+        .iter()
+        .map(|c| quote_ident(dialect, c))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok((
+        cols.into_iter().cloned().collect(),
+        format!(
+            "INSERT INTO {table_ref} ({names}) VALUES ({})",
+            value_sql.join(", ")
+        ),
+        params,
+    ))
+}
+
+/// The import modes (docs/22 W4.5): insert keeps today's behavior; upsert turns every row's
+/// INSERT into a conflict-aware statement so re-importing a file lands instead of key-clashing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportMode {
+    Insert,
+    Upsert,
+}
+
+/// Read the `mode` option: absent, null and empty stay the insert default; anything but the two
+/// known spellings is the caller's whole mistake.
+pub fn parse_import_mode(v: Option<&Value>) -> Result<ImportMode, String> {
+    let empty = matches!(v, None | Some(Value::Null))
+        || matches!(v, Some(Value::String(s)) if s.is_empty());
+    if empty {
+        return Ok(ImportMode::Insert);
+    }
+    match v {
+        Some(Value::String(s)) if s == "insert" => Ok(ImportMode::Insert),
+        Some(Value::String(s)) if s == "upsert" => Ok(ImportMode::Upsert),
+        Some(other) => Err(format!(
+            "mode must be insert or upsert, not {}",
+            js_to_string(Some(other))
+        )),
+        None => Ok(ImportMode::Insert),
+    }
+}
+
+/// The conflict tail of an upsert import (docs/22 W4.5), adminer's insertUpdate per dialect
+/// (`drivers/mysql.inc.php:292`, `drivers/pgsql.inc.php:340`): MySQL maps every column the row
+/// carries (`col` = VALUES(col)) — a table without any unique key simply never conflicts;
+/// Postgres targets the table's primary key and updates the non-key columns from EXCLUDED,
+/// DO NOTHING when the row carries nothing but key columns. An Err is Postgres without a
+/// primary key — ON CONFLICT has no target there, and the caller degrades to plain inserts
+/// with a note instead of failing the whole file.
+pub fn upsert_suffix(
+    dialect: DbDialect,
+    row_columns: &[String],
+    primary_key: &[String],
+) -> Result<String, String> {
+    match dialect {
+        DbDialect::Mysql => {
+            let sets: Result<Vec<String>, String> = row_columns
+                .iter()
+                .map(|c| {
+                    let q = quote_ident(dialect, c)?;
+                    Ok(format!("{q} = VALUES({q})"))
+                })
+                .collect();
+            Ok(format!(" ON DUPLICATE KEY UPDATE {}", sets?.join(", ")))
+        }
+        DbDialect::Pg => {
+            if primary_key.is_empty() {
+                return Err(
+                    "table has no primary key — Postgres has no ON CONFLICT target".into(),
+                );
+            }
+            let conflict = primary_key
+                .iter()
+                .map(|c| quote_ident(dialect, c))
+                .collect::<Result<Vec<_>, _>>()?;
+            let key: HashSet<&str> = primary_key.iter().map(String::as_str).collect();
+            let updates: Result<Vec<String>, String> = row_columns
+                .iter()
+                .filter(|c| !key.contains(c.as_str()))
+                .map(|c| {
+                    let q = quote_ident(dialect, c)?;
+                    Ok(format!("{q} = EXCLUDED.{q}"))
+                })
+                .collect();
+            let updates = updates?;
+            Ok(if updates.is_empty() {
+                format!(" ON CONFLICT ({}) DO NOTHING", conflict.join(", "))
+            } else {
+                format!(
+                    " ON CONFLICT ({}) DO UPDATE SET {}",
+                    conflict.join(", "),
+                    updates.join(", ")
+                )
+            })
+        }
+    }
+}
+
+/// Import rows → statements (docs/22 W4.5). Insert mode produces exactly the statements the
+/// edit grid's insert arm builds, one per row, by construction. Upsert appends the conflict
+/// tail per row (the columns a row carries vary — empty CSV cells drop). A table that cannot
+/// upsert (Postgres without a primary key) comes back in INSERT form plus the note that says
+/// why, so the file still lands in one transaction instead of failing on statement one.
+pub fn build_import_statements(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    rows: &[Map<String, Value>],
+    columns: &[BrowseColumn],
+    primary_key: &[String],
+    mode: ImportMode,
+) -> Result<(Vec<BuiltStatement>, Option<&'static str>), String> {
+    let table_ref = qualified(dialect, schema, table)?;
+    let known: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    let type_of: HashMap<&str, &str> = columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
+        .collect();
+    let degraded =
+        if mode == ImportMode::Upsert && dialect == DbDialect::Pg && primary_key.is_empty() {
+            Some("table has no primary key — upsert is not possible on Postgres, rows were inserted instead")
+        } else {
+            None
+        };
+    let upsert = mode == ImportMode::Upsert && degraded.is_none();
+    let mut out: Vec<BuiltStatement> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let (cols, sql, params) = insert_half(dialect, &table_ref, row, &known, &type_of)?;
+        let suffix = if upsert {
+            upsert_suffix(dialect, &cols, primary_key)?
+        } else {
+            String::new()
+        };
+        out.push(BuiltStatement {
+            sql: format!("{sql}{suffix}"),
+            params,
+        });
+    }
+    Ok((out, degraded))
+}
+
 /// Updates and deletes address rows by the FULL primary key only — the DBeaver default — so an
 /// edit can never fan out over more rows than the cell you changed.
 pub fn build_edit_statements(
@@ -1299,30 +1466,11 @@ pub fn build_edit_statements(
             };
         match edit {
             BrowseEdit::Insert { values } => {
-                // Object.keys order — the panel's own insertion order.
-                let cols: Vec<&String> = values
-                    .keys()
-                    .filter(|c| known.contains(c.as_str()))
-                    .collect();
-                if cols.is_empty() {
-                    return Err("insert names no column of this table".into());
-                }
-                let mut value_sql: Vec<String> = Vec::new();
-                for c in &cols {
-                    params.push(values[*c].clone());
-                    value_sql.push(typed_ph(dialect, &params, type_of.get(c.as_str()).copied()));
-                }
-                let names = cols
-                    .iter()
-                    .map(|c| quote_ident(dialect, c))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(", ");
+                let (_, sql, insert_params) =
+                    insert_half(dialect, &table_ref, values, &known, &type_of)?;
                 out.push(BuiltStatement {
-                    sql: format!(
-                        "INSERT INTO {table_ref} ({names}) VALUES ({})",
-                        value_sql.join(", ")
-                    ),
-                    params,
+                    sql,
+                    params: insert_params,
                 });
             }
             BrowseEdit::Delete { pk } => {
@@ -3073,5 +3221,110 @@ mod tests {
     fn an_empty_sql_insert_batch_finishes_into_nothing() {
         let batch = SqlInsertBatch::new(DbDialect::Mysql, None, "t", &["a".to_string()]).unwrap();
         assert_eq!(batch.finish(), None);
+    }
+
+    // --- import upsert (docs/22 W4.5) ----------------------------------------------------------------
+
+    #[test]
+    fn upsert_tails_match_adminer_per_dialect() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        // MySQL maps every column the row carries — adminer's ON DUPLICATE KEY UPDATE.
+        assert_eq!(
+            upsert_suffix(DbDialect::Mysql, &cols, &["id".to_string()]).unwrap(),
+            " ON DUPLICATE KEY UPDATE `id` = VALUES(`id`), `name` = VALUES(`name`)"
+        );
+        // MySQL needs no primary key: ON DUPLICATE KEY UPDATE rides any unique key.
+        assert!(upsert_suffix(DbDialect::Mysql, &cols, &[]).is_ok());
+        // Postgres targets the primary key and updates the rest from EXCLUDED.
+        assert_eq!(
+            upsert_suffix(DbDialect::Pg, &cols, &["id".to_string()]).unwrap(),
+            " ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\""
+        );
+        // A row that carries nothing but key columns has nothing to update — DO NOTHING.
+        assert_eq!(
+            upsert_suffix(DbDialect::Pg, &["id".to_string()], &["id".to_string()]).unwrap(),
+            " ON CONFLICT (\"id\") DO NOTHING"
+        );
+        // A composite key targets every key column, in table order; mapped non-key columns
+        // all update.
+        assert_eq!(
+            upsert_suffix(DbDialect::Pg, &cols, &["a".to_string(), "b".to_string()]).unwrap(),
+            " ON CONFLICT (\"a\", \"b\") DO UPDATE SET \"id\" = EXCLUDED.\"id\", \"name\" = EXCLUDED.\"name\""
+        );
+        // Postgres without a primary key has no conflict target at all.
+        assert!(upsert_suffix(DbDialect::Pg, &cols, &[]).is_err());
+    }
+
+    #[test]
+    fn import_insert_mode_is_the_edit_grids_insert_arm_byte_for_byte() {
+        let rows = vec![
+            row(&[("id", json!(1)), ("name", json!("alice"))]),
+            row(&[("id", json!(2)), ("name", json!("bob"))]),
+        ];
+        let edits = rows
+            .iter()
+            .cloned()
+            .map(|values| BrowseEdit::Insert { values })
+            .collect::<Vec<_>>();
+        let cols = stub_columns();
+        let pk = vec!["id".to_string()];
+        for dialect in [DbDialect::Mysql, DbDialect::Pg] {
+            let via_import =
+                build_import_statements(dialect, Some("app"), "users", &rows, &cols, &pk, ImportMode::Insert)
+                    .unwrap();
+            let via_grid = build_edit_statements(dialect, Some("app"), "users", &edits, &cols, &pk)
+                .unwrap();
+            assert_eq!(via_import.0, via_grid, "{dialect:?}");
+            assert_eq!(via_import.1, None);
+        }
+    }
+
+    #[test]
+    fn upsert_imports_carry_the_conflict_tail() {
+        let rows = vec![row(&[("id", json!(1)), ("name", json!("alice"))])];
+        let cols = stub_columns();
+        let pk = vec!["id".to_string()];
+        let (out, degraded) =
+            build_import_statements(DbDialect::Mysql, Some("app"), "users", &rows, &cols, &pk, ImportMode::Upsert)
+                .unwrap();
+        assert_eq!(degraded, None);
+        assert_eq!(
+            out[0].sql,
+            "INSERT INTO `app`.`users` (`id`, `name`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `id` = VALUES(`id`), `name` = VALUES(`name`)"
+        );
+        assert_eq!(out[0].params, vec![json!(1), json!("alice")]);
+
+        let (out, degraded) =
+            build_import_statements(DbDialect::Pg, Some("public"), "users", &rows, &cols, &pk, ImportMode::Upsert)
+                .unwrap();
+        assert_eq!(degraded, None);
+        assert_eq!(
+            out[0].sql,
+            "INSERT INTO \"public\".\"users\" (\"id\", \"name\") VALUES (CAST($1 AS int), CAST($2 AS text)) ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\""
+        );
+    }
+
+    #[test]
+    fn a_postgres_upsert_without_a_pk_degrades_to_insert_with_a_note() {
+        let rows = vec![row(&[("id", json!(1)), ("name", json!("alice"))])];
+        let cols = stub_columns();
+        let (out, degraded) = build_import_statements(
+            DbDialect::Pg,
+            Some("public"),
+            "users",
+            &rows,
+            &cols,
+            &[],
+            ImportMode::Upsert,
+        )
+        .unwrap();
+        let note = degraded.expect("Postgres without a pk must say why it degraded");
+        assert!(note.contains("no primary key"), "{note}");
+        assert!(note.contains("inserted instead"), "{note}");
+        // The statements are plain inserts — the file still lands, in the same transaction.
+        assert_eq!(
+            out[0].sql,
+            "INSERT INTO \"public\".\"users\" (\"id\", \"name\") VALUES (CAST($1 AS int), CAST($2 AS text))"
+        );
     }
 }

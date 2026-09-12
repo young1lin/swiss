@@ -556,11 +556,14 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
             "mapping must be an array (one per CSV column) of column names or null",
         ));
     }
-    log::log(
-        "info",
-        "data view import",
-        Some(json!({ "name": name, "table": coerced_str(body, "table"), "rows": lines.len() })),
-    );
+    // docs/22 W4.5: the panel picks the statement form — insert stays the default, and a
+    // payload without the field rides exactly as it did before the mode existed.
+    let mode = swiss_host::dbbrowser::parse_import_mode(body.get("mode")).map_err(Fail::bad)?;
+    let mut logged = json!({ "name": name, "table": coerced_str(body, "table"), "rows": lines.len() });
+    if mode == swiss_host::dbbrowser::ImportMode::Upsert {
+        logged["mode"] = json!("upsert");
+    }
+    log::log("info", "data view import", Some(logged));
     let mut o = Map::new();
     o.insert("table".into(), json!(coerced_str(body, "table")));
     if let Some(schema) = nonempty_str_field(body, "schema") {
@@ -572,6 +575,9 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
         "mapping".into(),
         body.get("mapping").cloned().unwrap_or(Value::Null),
     );
+    if mode == swiss_host::dbbrowser::ImportMode::Upsert {
+        o.insert("mode".into(), json!("upsert"));
+    }
     b.import_table(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
@@ -1104,6 +1110,7 @@ mod tests {
                     "header": o.get("header"),
                     "lines": o.get("lines"),
                     "mapping": o.get("mapping"),
+                    "mode": o.get("mode"),
                 }));
             }
             let header: Vec<String> = o
@@ -1845,6 +1852,91 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let err = body.expect("json")["error"].as_str().unwrap().to_string();
         assert!(err.contains("mapping"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_import_can_ask_for_upsert_and_refuses_unknown_modes() {
+        // docs/22 W4.5: mode "upsert" rides the payload to the browser; anything but the two
+        // known spellings is the route's own 400, the same rule ddl's op follows.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id", "name"],
+                "lines": ["1,alice", "2,bob"],
+                "mapping": ["id", "name"],
+                "mode": "upsert"
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json"), json!({ "inserted": 2 }));
+        assert_eq!(
+            seen.lock()
+                .expect("seen")
+                .imported
+                .take()
+                .expect("imported")["mode"],
+            json!("upsert")
+        );
+
+        // The default stays the default: no mode field reaches the browser at all, so an
+        // old panel riding a new backend keeps byte-identical import requests.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, _, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id"],
+                "lines": ["1"],
+                "mapping": ["id"]
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(seen
+            .lock()
+            .expect("seen")
+            .imported
+            .take()
+            .expect("imported")["mode"]
+            .is_null());
+
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id"],
+                "lines": ["1"],
+                "mapping": ["id"],
+                "mode": "merge"
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("mode must be insert or upsert"), "{err}");
     }
 
     #[tokio::test]

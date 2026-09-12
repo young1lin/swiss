@@ -8,7 +8,8 @@ use super::mysql::{
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
     browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    build_ddl_op_sql, build_edit_statements, export_row_limit, js_to_string, map_import_rows,
+    build_ddl_op_sql, build_edit_statements, build_import_statements, export_row_limit,
+    js_to_string, map_import_rows,
     readback_plan, sql_dump_foot, sql_dump_head, sql_literal, to_browse_columns, to_csv,
     to_json_lines, BrowseColumn, DbBrowser, DbDialect, DumpPiece, ReadBack, SqlDump,
     SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
@@ -525,18 +526,18 @@ impl DbBrowser for MysqlBrowser {
         if rows.is_empty() {
             return Err("nothing to import after mapping — every row was empty or skipped".into());
         }
-        let typed: Vec<swiss_host::dbbrowser::BrowseEdit> = rows
-            .into_iter()
-            .map(|values| swiss_host::dbbrowser::BrowseEdit::Insert { values })
-            .collect();
-        let (columns, _) = self.metadata(table).await?;
-        let stmts = build_edit_statements(
+        // docs/22 W4.5: upsert appends ON DUPLICATE KEY UPDATE per row; insert builds the
+        // exact statements the edit grid's insert arm builds. One transaction either way.
+        let mode = swiss_host::dbbrowser::parse_import_mode(o.get("mode"))?;
+        let (columns, primary) = self.metadata(table).await?;
+        let (stmts, degraded) = build_import_statements(
             DbDialect::Mysql,
             Some(&self.database),
             table,
-            &typed,
+            &rows,
             &columns,
-            &[],
+            &primary,
+            mode,
         )?;
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
@@ -544,7 +545,10 @@ impl DbBrowser for MysqlBrowser {
             super::mysql::run_query_tx(&mut tx, &stmt.sql, &stmt.params).await?;
         }
         tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(json!({ "inserted": typed.len() }))
+        if let Some(note) = degraded {
+            return Ok(json!({ "inserted": rows.len(), "mode": "insert", "note": note }));
+        }
+        Ok(json!({ "inserted": rows.len() }))
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {

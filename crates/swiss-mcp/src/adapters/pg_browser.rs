@@ -14,7 +14,8 @@ use super::sql::{clamp_row_limit, limit_report, with_row_limit};
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
     browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    browse_table_sort, build_ddl_op_sql, build_edit_statements, build_pg_ddl, export_row_limit,
+    browse_table_sort, build_ddl_op_sql, build_edit_statements, build_import_statements,
+    build_pg_ddl, export_row_limit,
     js_to_string, map_import_rows, readback_plan, sql_dump_foot, sql_dump_head, sql_literal,
     to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
     BrowseForeignKey, DbBrowser, DbDialect, DumpPiece, ReadBack, SqlDump, SqlInsertBatch,
@@ -654,20 +655,31 @@ impl DbBrowser for PgBrowser {
         if rows.is_empty() {
             return Err("nothing to import after mapping — every row was empty or skipped".into());
         }
-        let typed: Vec<swiss_host::dbbrowser::BrowseEdit> = rows
-            .into_iter()
-            .map(|values| swiss_host::dbbrowser::BrowseEdit::Insert { values })
-            .collect();
-        let (columns, _) = self.metadata(&schema, table).await?;
-        let stmts =
-            build_edit_statements(DbDialect::Pg, Some(&schema), table, &typed, &columns, &[])?;
+        // docs/22 W4.5: upsert appends ON CONFLICT (pk) DO UPDATE per row — a table without
+        // a primary key cannot target a conflict on Postgres, so the builder degrades to the
+        // plain insert statements and says so in the reply; insert mode stays byte-identical
+        // to the edit grid's insert arm. One transaction either way.
+        let mode = swiss_host::dbbrowser::parse_import_mode(o.get("mode"))?;
+        let (columns, primary) = self.metadata(&schema, table).await?;
+        let (stmts, degraded) = build_import_statements(
+            DbDialect::Pg,
+            Some(&schema),
+            table,
+            &rows,
+            &columns,
+            &primary,
+            mode,
+        )?;
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         for stmt in &stmts {
             super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
         }
         tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(json!({ "inserted": typed.len() }))
+        if let Some(note) = degraded {
+            return Ok(json!({ "inserted": rows.len(), "mode": "insert", "note": note }));
+        }
+        Ok(json!({ "inserted": rows.len() }))
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
