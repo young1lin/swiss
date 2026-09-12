@@ -183,6 +183,7 @@ document.addEventListener("keydown", function (e) {
 
 state.collapsed = loadCollapsed("mcps"); // before the first paint, so folded groups never flash open
 state.tun.collapsed = { conns: loadCollapsed("conns"), rules: loadCollapsed("rules") }; // same, per tab
+state.jobs.collapsed = loadCollapsed("jobs"); // the jobs scope's own fold map (docs/20 G4)
 showApp();
 // Ask for the child walk on the very first paint too, so the chip never shows a gateway-only total
 // that a poll silently corrects 6s later.

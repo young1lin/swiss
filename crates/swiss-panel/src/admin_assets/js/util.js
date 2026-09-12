@@ -42,15 +42,19 @@ var state = {
     busy: {},        // id -> verb in flight
     keys: null,      // cached /api/tunnels/keys
     dragging: null,  // id of the row being dragged — polls must not rebuild under it
-    draggingGroup: null, // name of the group header being dragged — same rebuild freeze as a row drag
-  pendingGroup: null, // group chosen via a header "+", preselected in the sheet it opens
-    pendingGroup: null, // group chosen via a header "+", preselected in the sheet it opensands in
+      draggingGroup: null, // name of the group header being dragged — same rebuild freeze as a row drag
+    pendingGroup: null, // group chosen via a header "+", preselected in the sheet it opens
   },
   jobs: {             // jobs view state (jobs.js renders it; polling.js loads it)
     data: [],        // rows from /api/jobs
+    groups: ["default"], // the scope's group names, from /api/jobs' top level (docs/20 G4)
+    collapsed: {},   // jobs fold map; group name -> true (localStorage, groups.js)
     busy: {},        // name -> Run now in flight
     painted: "",     // joined row names at last render — the poll's structural signature
     hist: null,      // the open history sheet: { name, runs }
+    dragging: null,      // id of the row being dragged — polls must not rebuild under it
+    draggingGroup: null, // name of the group header being dragged — same freeze as a row drag
+    pendingGroup: null,  // group chosen via a header "+", preselected in the sheet it opens
   },
 };
 

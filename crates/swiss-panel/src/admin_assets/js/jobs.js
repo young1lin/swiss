@@ -19,8 +19,9 @@
    ================================================================================================ */
 import { $, api, apiJson, dotTitle, emptyHtml, esc, icon, state, toast, whenLabel } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
+import { assignMember, groupFieldHtml, groupOf as makeGroupOf, lastGroup, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "./groups.js";
 import { popupMenu } from "./menu.js";
-import { jobDotClass, jobRowHtml, jobsChipText, loadJobs } from "./polling.js";
+import { jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs } from "./polling.js";
 import { argFieldsHtml, readRunArgs } from "./run.js";
 import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
 import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
@@ -42,13 +43,55 @@ async function probeJobs() {
 
 /* --- render ----------------------------------------------------------------------------------- */
 
+/** The rendering group of a job row — same one rule as every scope: the stored group while it
+ *  still exists, else the first group. */
+function jobGroupOfRow(j) {
+  return makeGroupOf(jobGroupsList())(j);
+}
+
+/** Persist the on-screen order: the family's order route for the jobs scope, ids in a row. */
+function saveJobOrder() {
+  void saveOrder("jobs", state.jobs.data.map(function (j) { return j.name; }));
+}
+
+/** Move one row to just before/after another, re-render, persist. */
+function moveJobRow(id, target, before) {
+  if (!id || !target || id === target) return;
+  var rows = state.jobs.data;
+  var item = rows.filter(function (r) { return r.name === id; })[0];
+  if (!item) return;
+  var to = rows.findIndex(function (r) { return r.name === target; });
+  if (to < 0) return; // target vanished mid-drag — leave everything where it is
+  rows.splice(rows.indexOf(item), 1);
+  rows.splice(before ? to : to + 1, 0, item);
+  renderJobs();
+  saveJobOrder();
+}
+
+/** Put one job in a group. Applied locally first so the row jumps immediately, then persisted
+ *  — a reject takes the server's word for it. */
+async function assignJobGroup(id, group) {
+  var row = state.jobs.data.filter(function (r) { return r.name === id; })[0];
+  if (!row) return;
+  var names = jobGroupsList();
+  if (jobGroupOfRow(row) === (group || names[0])) return;
+  row.group = group;
+  renderJobs();
+  var j = await assignMember("jobs", id, group);
+  if (!j) { await loadJobs(); return; }
+  row.group = j.group; // the canonical name the server stored
+  renderJobs();
+}
+
 function renderJobs() {
   var rows = state.jobs.data;
-  // The structural signature the poll compares against: any name added/removed/reordered means
-  // the row set changed and a full rebuild is due; dots and labels alone never justify one.
-  state.jobs.painted = rows.map(function (j) { return j.name; }).join("\n");
+  // The structural signature the poll compares against: the group names, then every row as
+  // name+group in order — any add/remove/reorder/regroup means a rebuild is due; dots and
+  // labels alone never justify one.
+  state.jobs.painted = jobGroupsList().join("\n") + "\u0000" +
+    rows.map(function (j) { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
   var body = rows.length
-    ? '<div class="group">' + rows.map(jobRowHtml).join("") + "</div>"
+    ? '<div id="jobGroups"></div>'
     : emptyHtml({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands the gateway runs on this machine. Add one with New." });
   // .wide + .pane-head + .tun-foot: the Tunnels view's exact frame — the rows are the same
   // name-plus-subtext-plus-buttons shape, so they wear the same classes.
@@ -57,20 +100,72 @@ function renderJobs() {
       '<div class="pane-desc">Scheduled commands the gateway runs locally — an interval or a 5-field cron in local time. Overlap, misfire and retry policies per job; every outcome lands in the run history.</div>' +
     "</div></div>" +
     '<div class="sec-head"><span class="sec-cap">Scheduled commands</span>' +
-      '<span style="display:flex;gap:var(--s2)"><button class="btn" id="jobNewAdv">New (advanced)</button>' +
+      '<span style="display:flex;gap:var(--s2)"><button class="btn" id="jobNewGroup">New group</button>' +
+      '<button class="btn" id="jobNewAdv">New (advanced)</button>' +
       '<button class="btn primary" id="jobNew">New</button></span></div>' +
     body +
     '<div class="tun-foot" data-foot>' + esc(jobsChipText()) + "</div>" +
   "</div>";
+  if (rows.length) {
+    // One group per slice — the component owns the header band and the empty line (docs/20
+    // G4). Empty groups keep their place: that is how you drag the first job into one.
+    var host = $("jobGroups");
+    slice(rows, jobGroupsList(), jobGroupOfRow).forEach(function (g) {
+      host.appendChild(mountGroup(jobCfg(), g));
+    });
+  }
   wireJobs();
 }
 
-/** Poll-safe update: dots, last/next labels, the Run-now button, the footer. Never structure. */
+/** The jobs scope's cfg for mountGroup (see groups.js for the full contract). Built fresh each
+ *  render so names and the fold map are always the live objects. */
+function jobCfg() {
+  return {
+    scope: "jobs",
+    density: "page",
+    names: jobGroupsList(),
+    collapsed: state.jobs.collapsed,
+    noun: "job",
+    addTitle: function (g) { return "Add a job to " + g; },
+    onAdd: function (g) {
+      state.jobs.pendingGroup = g; // a real name now — the sheet's save lands the job in it
+      openJobSheet(null);
+    },
+    reload: function () { return loadJobs(); },
+    render: renderJobs,
+    afterDrag: function () { renderJobs(); }, // the catch-up rebuild a deferred poll owes
+    drag: {
+      get: function () { return state.jobs.dragging; },
+      set: function (v) { state.jobs.dragging = v; },
+    },
+    dragGroup: {
+      get: function () { return state.jobs.draggingGroup; },
+      set: function (v) { state.jobs.draggingGroup = v; },
+    },
+    rowId: function (r) { return r.name; },
+    rowSel: function (r) {
+      var v = window.CSS && CSS.escape ? CSS.escape(r.name) : r.name;
+      return '[data-job="' + v + '"]';
+    },
+    rowsById: function () { return state.jobs.data; },
+    groupOfRow: jobGroupOfRow,
+    rowsHtml: function (g) { return g.rows.map(jobRowHtml).join(""); },
+    onMoveRow: moveJobRow,
+    onAssign: function (id, g) { void assignJobGroup(id, g); },
+  };
+}
+
+/** Poll-safe update: dots, last/next labels, the Run-now button, group counts, the footer.
+ *  Never structure — and never a rebuild mid-drag, which would cancel the gesture. */
 function patchJobs() {
   if (state.view !== "jobs") return;
   var pane = $("pane");
-  var sig = state.jobs.data.map(function (j) { return j.name; }).join("\n");
-  if (!pane.querySelector(".group") || sig !== state.jobs.painted) { renderJobs(); return; }
+  var sig = jobGroupsList().join("\n") + "\u0000" +
+    state.jobs.data.map(function (j) { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
+  if (!pane.querySelector(".group") || sig !== state.jobs.painted) {
+    if (!state.jobs.dragging && !state.jobs.draggingGroup) renderJobs();
+    return;
+  }
   Array.prototype.forEach.call(pane.querySelectorAll("[data-job]"), function (row) {
     var j = null;
     state.jobs.data.forEach(function (cand) { if (cand.name === row.getAttribute("data-job")) j = cand; });
@@ -90,6 +185,13 @@ function patchJobs() {
     var run = row.querySelector("[data-run]");
     if (run) { run.disabled = !!busy || !!j.running; run.textContent = busy ? "\u2026" : "Run now"; }
   });
+  // Group counts move with rows: a count that only refreshed on rebuild would disagree with
+  // the patched dots beside it for the rest of the poll.
+  Array.prototype.forEach.call(pane.querySelectorAll("[data-group]"), function (grp) {
+    var n = state.jobs.data.filter(function (j) { return jobGroupOfRow(j) === grp.dataset.group; }).length;
+    var badge = grp.querySelector(".grp-n");
+    if (badge) badge.textContent = String(n);
+  });
   var foot = pane.querySelector("[data-foot]");
   if (foot) foot.textContent = jobsChipText();
 }
@@ -103,6 +205,9 @@ function jobByName(name) {
 function wireJobs() {
   $("jobNew").onclick = function () { openJobSheet(null); };
   $("jobNewAdv").onclick = function () { void openV2Sheet(null); };
+  if ($("jobNewGroup")) $("jobNewGroup").onclick = function () {
+    newGroupFlow("jobs", jobGroupsList(), function () { return loadJobs(); });
+  };
   Array.prototype.forEach.call($("pane").querySelectorAll("[data-job]"), function (row) {
     var job = jobByName(row.getAttribute("data-job"));
     if (!job) return;
@@ -293,13 +398,21 @@ function openJobSheet(job) {
   var v = job || { name: "", command: "", everySec: "", cron: "", timeoutMs: "", cwd: "", env: {}, enabled: true };
   var sched = schedFromJob(v);
   schedState = sched;
+  // The Group promise of a header "+", consumed here: the select is the truth from now on.
+  var picked = null;
+  if (!editing) {
+    picked = state.jobs.pendingGroup != null ? state.jobs.pendingGroup
+      : resolveDefaultGroup(jobGroupsList(), lastGroup("jobs"));
+    state.jobs.pendingGroup = null;
+  }
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit job" : "New job") + '">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Edit " + esc(job.name) : "New job") + "</h2></div>" +
+      '<div class="sheet-head"><h2>' + (editing ? "Edit " + esc(job.name) : "New job in " + esc(picked)) + "</h2></div>" +
       '<div class="sheet-body">' +
         // The name IS the identity (the PUT path is the job), so it is fixed once created.
         '<label class="field"><span>Name</span><input id="jf-name" value="' + esc(v.name || "") + '"' +
           (editing ? " disabled" : "") + ' placeholder="nightly-vacuum" autocomplete="off"></label>' +
+        (editing ? "" : groupFieldHtml(jobGroupsList(), picked)) +
         '<label class="field"><span>Command</span><textarea id="jf-command" rows="2" placeholder="cmd /c backup.bat --flag value" spellcheck="false">' + esc(v.command) + "</textarea></label>" +
         '<div class="sched-say cmd-say" id="jf-cmd-say"></div>' +
         '<div class="hint">One command — a job supervises one process, not a shell script. Pipes and redirections need "cmd /c \u2026" (Windows) or "sh -c \u2026" (Unix) around them. ${ENV} refs expand at run time; several steps belong in a script the command runs, or in several jobs.</div>' +
@@ -462,7 +575,14 @@ async function saveJob(existing) {
   if (Object.keys(parsed.env).length) body.env = parsed.env;
   var j = await apiJson("/api/jobs/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
   if (!j) return;
+  var picked = $("g-sel") ? $("g-sel").value : null;
   closeSheet();
+  if (!existing && picked) {
+    // The select the sheet carried is where the new job lands (docs/20 G4). A gateway
+    // without the family route just keeps the first-group default - not worth a toast.
+    rememberGroup("jobs", picked);
+    await assignMember("jobs", name, picked);
+  }
   toast((existing ? "Saved " : "Added ") + name);
   await loadJobs();
 }
@@ -496,6 +616,15 @@ async function openV2Sheet(job) {
   var base = editing ? defs[name] : defTemplate("new-job");
   var actions = await fetchActions();
   var form = v2ToForm(base);
+  // The row's own groups list is the truth for this sheet: what the config PUT will carry.
+  // A header "+" promise is consumed here; the select is the truth from then on.
+  var rowGroups = config.groups && config.groups.length ? config.groups : ["default"];
+  var picked = null;
+  if (!editing) {
+    picked = state.jobs.pendingGroup != null ? state.jobs.pendingGroup
+      : resolveDefaultGroup(rowGroups, lastGroup("jobs"));
+    state.jobs.pendingGroup = null;
+  }
 
   var actionOpts = actions.map(function (a) {
     return '<option value="' + esc(a.type) + '"' + (a.type === form.actionType ? " selected" : "") + ">" +
@@ -508,9 +637,10 @@ async function openV2Sheet(job) {
 
   $("sheet").innerHTML =
     '<div class="sheet wide" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit definition" : "New definition") + '">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Definition \u2014 " + esc(name) : "New definition") + "</h2></div>" +
+      '<div class="sheet-head"><h2>' + (editing ? "Definition \u2014 " + esc(name) : "New definition in " + esc(picked)) + "</h2></div>" +
       '<div class="sheet-body">' +
         (editing ? "" : '<label class="field"><span>id</span><input id="jv-id" value="' + esc(name) + '" placeholder="nightly-vacuum" autocomplete="off"></label>') +
+        (editing ? "" : groupFieldHtml(rowGroups, picked)) +
         '<div class="two">' +
           '<label class="field"><span>title</span><input id="jv-title" value="' + esc(form.title) + '" autocomplete="off"></label>' +
           '<label class="field"><span>labels (comma-separated)</span><input id="jv-labels" value="' + esc(form.labels) + '" placeholder="ops, nightly" autocomplete="off"></label>' +
@@ -685,6 +815,16 @@ async function openV2Sheet(job) {
     if (!fresh) return;
     var cfg = fresh.config || {};
     var definitions = cfg.definitions || {};
+    if (!editing) {
+      // The group the sheet promised: a definition key, so the whole-row CAS carries it and
+      // no second request is needed (docs/20 G4). A "group" typed straight into the JSON
+      // wins over the select - the textarea is the truth once hand-edited.
+      var g = $("g-sel") ? $("g-sel").value : null;
+      if (g) {
+        if (def.group == null) def.group = g;
+        rememberGroup("jobs", g);
+      }
+    }
     definitions[id] = def;
     cfg.definitions = definitions;
     var reply = await apiJson("/api/plugins/jobs/config", {

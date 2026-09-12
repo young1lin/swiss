@@ -76,6 +76,9 @@ function tunGroupsList() {
   return state.tun.tab === "conns" ? tunData().connGroups || [] : tunData().ruleGroups || [];
 }
 
+/** The jobs scope's group names (docs/20 G4) — /api/jobs carries them at its top level. */
+function jobGroupsList() { return state.jobs.groups || ["default"]; }
+
 function setView(v) { return navigatePage(v); }
 
 /** The MCP chip text — ONE builder (menu.js's patchSidebar reuses it). The two copies had
@@ -178,6 +181,7 @@ async function loadJobs(patchOnly) {
   var j = await apiJson("/api/jobs");
   if (!j) return;
   state.jobs.data = j.jobs || [];
+  state.jobs.groups = j.groups && j.groups.length ? j.groups : ["default"];
   if (state.view === "jobs") {
     var { patchJobs, renderJobs } = await import("./jobs.js");
     if (patchOnly && $("pane").querySelector("[data-foot]")) patchJobs();
@@ -246,4 +250,4 @@ function connRowHtml(c) {
     "</div>";
 }
 
-export { connRowHtml, jobDotClass, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupsList, tunRows, tunScope, tunTab, updateCountChip };
+export { connRowHtml, jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupsList, tunRows, tunScope, tunTab, updateCountChip };
