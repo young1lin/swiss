@@ -45,18 +45,23 @@ fn pg_table_list_supplies_every_placeholder() {
     // Regression: the Data view's listTables once passed [grep] alone against a statement
     // with $1..$4, and Postgres refused every page with "bind message supplies N parameters,
     // but prepared statement requires N+1".
-    assert_eq!(pg_browse_table_params(None).len(), 2);
+    assert_eq!(pg_browse_table_params(None, None).len(), 2);
     assert_eq!(
-        pg_browse_table_params(Some("us")),
+        pg_browse_table_params(None, Some("us")),
         vec![json!(null), json!("%us%")]
+    );
+    // docs/22 W1.1: a schema pick fills the $1 slot the same statement always carried.
+    assert_eq!(
+        pg_browse_table_params(Some("app"), Some("us")),
+        vec![json!("app"), json!("%us%")]
     );
     assert_eq!(
         max_placeholder(LIST_TABLES_SQL),
-        pg_browse_table_params(Some("us")).len() + 2
+        pg_browse_table_params(None, Some("us")).len() + 2
     );
     assert_eq!(
         max_placeholder(COUNT_TABLES_SQL),
-        pg_browse_table_params(Some("us")).len()
+        pg_browse_table_params(None, Some("us")).len()
     );
 }
 

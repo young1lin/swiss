@@ -95,6 +95,9 @@ impl DbBrowser for PgBrowser {
             .max(0.0) as i64;
         let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
         let grep = o.get("grep").and_then(Value::as_str);
+        // docs/22 W1.1: the panel's schema picker narrows the catalog walk server-side; MySQL
+        // has no such parameter (one database per connection) and ignores it.
+        let schema = o.get("schema").and_then(Value::as_str).map(str::to_string);
         let sort = browse_table_sort(
             o.get("sort").and_then(Value::as_str),
             o.get("dir").and_then(Value::as_str),
@@ -109,14 +112,19 @@ impl DbBrowser for PgBrowser {
         let (list_sql, count_sql, list_params, count_params) = match grammar {
             Some(w) => {
                 let (ls, cs) = pg_list_tables_grammar_sql(sort, &w.frag, w.params.len());
-                let mut lp: Vec<Value> = vec![Value::Null];
+                let mut lp: Vec<Value> = vec![
+                    schema
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ];
                 lp.extend(w.params.iter().cloned());
                 lp.push(json!(limit));
                 lp.push(json!(page.saturating_mul(limit)));
                 (ls, cs, lp, w.params)
             }
             None => {
-                let filters = pg_browse_table_params(grep);
+                let filters = pg_browse_table_params(schema.as_deref(), grep);
                 let lp = vec![
                     filters[0].clone(),
                     filters[1].clone(),

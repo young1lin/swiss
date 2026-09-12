@@ -241,12 +241,16 @@ pub const PG_BROWSE_FK_SQL: &str = "
 
 /// The filter params LIST_TABLES_SQL / COUNT_TABLES_SQL expect: `[schema-or-null,
 /// grep-or-null]` (the LIMIT/OFFSET pair is appended by the caller). The Data view lists every
-/// non-system schema, so the schema slot is always null — but it must still BE there, or the
-/// bind message supplies one parameter fewer than the statement's placeholders and Postgres
-/// refuses the query.
-pub fn pg_browse_table_params(grep: Option<&str>) -> Vec<Value> {
+/// non-system schema by default (null), but the panel's schema picker (docs/22 W1.1) and the
+/// pg_list_tables tool both narrow the walk to one schema — and the slot must still BE there
+/// either way, or the bind message supplies one parameter fewer than the statement's
+/// placeholders and Postgres refuses the query.
+pub fn pg_browse_table_params(schema: Option<&str>, grep: Option<&str>) -> Vec<Value> {
     vec![
-        Value::Null,
+        schema
+            .filter(|s| !s.is_empty())
+            .map(|s| Value::String(s.to_string()))
+            .unwrap_or(Value::Null),
         grep.map(like_contains)
             .map(Value::String)
             .unwrap_or(Value::Null),
@@ -775,7 +779,12 @@ impl PgEngine {
 
     async fn call_list_tables(&self, args: &Value) -> Result<Value, String> {
         let paging = table_page_args(args.get("limit"), args.get("page"));
-        let filters = pg_browse_table_params(args.get("grep").and_then(Value::as_str));
+        // The tool's schema argument narrows the walk (Node's pg.ts did the same — the port had
+        // silently dropped it); null lists every non-system schema.
+        let filters = pg_browse_table_params(
+            args.get("schema").and_then(Value::as_str),
+            args.get("grep").and_then(Value::as_str),
+        );
         let list_params = vec![
             filters[0].clone(),
             filters[1].clone(),
@@ -924,6 +933,25 @@ impl Engine for PgEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browse_table_params_carry_the_schema_pick() {
+        // docs/22 W1.1: the schema picker narrows the walk to one schema; the slot stays bound
+        // (null) when the panel asks for every schema, and an empty string means the same as
+        // absent — the panel never sends one, a hand-written URL might.
+        assert_eq!(
+            pg_browse_table_params(None, None),
+            vec![Value::Null, Value::Null]
+        );
+        assert_eq!(
+            pg_browse_table_params(Some("app"), Some("us")),
+            vec![json!("app"), json!("%us%")]
+        );
+        assert_eq!(
+            pg_browse_table_params(Some(""), None),
+            vec![Value::Null, Value::Null]
+        );
+    }
 
     #[test]
     fn grammar_grep_sql_renumbers_the_paging_binds() {

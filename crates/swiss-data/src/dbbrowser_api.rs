@@ -275,6 +275,9 @@ async fn tables(
     if let Some(grep) = q_non_empty(q, "grep") {
         o.insert("grep".into(), grep);
     }
+    if let Some(schema) = q_non_empty(q, "schema") {
+        o.insert("schema".into(), schema);
+    }
     if let Some(page) = q_raw(q, "page") {
         o.insert("page".into(), page);
     }
@@ -1271,6 +1274,27 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let err = body.expect("json")["error"].as_str().unwrap().to_string();
         assert!(err.contains("unknown key"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn forwards_the_schema_filter_to_the_table_list() {
+        // docs/22 W1.1: the schema picker rides the /tables request as a plain param; MySQL
+        // ignores it (one database), Postgres narrows the catalog walk to that schema.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, _, _) = call(
+            app,
+            "GET",
+            "/api/db/db/tables?page=0&schema=app",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let opts = seen.lock().expect("seen").tables_opts.take();
+        assert_eq!(opts, Some(json!({ "page": "0", "schema": "app" })));
     }
 
     #[tokio::test]
