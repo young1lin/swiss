@@ -108,6 +108,11 @@ impl PluginFactory for McpPlugin {
             pages: vec![
                 page("mcps", MCP_ID, "Servers", 10, true),
                 page("traffic", MCP_ID, "Traffic", 20, false),
+                // Token management sits beside Servers and Traffic because the token exists
+                // FOR MCP clients — every connect command embeds one, Traffic attributes by
+                // it. The PAGE belongs to the MCP group; the /api/tokens routes stay HOST-
+                // owned (below), so the credential keeps working whatever a plugin does.
+                page("tokens", MCP_ID, "Token", 30, false),
             ],
             routes: vec!["/api/mcps".into(), "/api/traffic".into()],
             // The plugin reads nothing from a config row today; restarting every hosted MCP
@@ -762,6 +767,40 @@ mod tests {
     /// MCPs to MCP / MCPs to Servers rename fixed. Should the duplication ever come back, it
     /// comes back as this failure. (Single-page plugins are fine either way: their level-two
     /// bar never renders, so this pins the contract only where it bites.)
+    /// The MCP group's third page (panel: the toolbar token button is gone). Pinned here
+    /// because the entry path is a contract with the panel: the shell dynamic-imports
+    /// exactly `/admin/js/views/<id>.js`, so a renamed id strands the page. The routes
+    /// assertion pins the other half of the design: /api/tokens is HOST-owned and never
+    /// joins the plugin's routes, so disabling the MCP plugin takes the PAGE off the air
+    /// but leaves the credential API (and the CLI) serving.
+    #[test]
+    fn mcp_descriptor_contributes_the_token_page_but_keeps_its_routes_host_owned() {
+        let dir = scratch_dir("tokens-page");
+        let factory = McpPlugin {
+            registry: Registry::new(
+                60_000,
+                Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls"))),
+            ),
+            managed: Arc::new(ManagedStore::open_at(dir.join("managed.json"))),
+            services: swiss_host::services::RuntimeServices::new(),
+        };
+        let descriptor = factory.descriptor();
+        let tokens = descriptor
+            .pages
+            .iter()
+            .find(|p| p.id == "tokens")
+            .expect("the MCP plugin contributes the tokens page");
+        assert_eq!(tokens.label, "Token");
+        assert_eq!(tokens.entry, "/admin/js/views/tokens.js");
+        assert_eq!(tokens.path, "#tokens");
+        assert!(!tokens.sidebar, "the Token page has no sidebar of its own");
+        assert!(
+            !descriptor.routes.iter().any(|r| r.contains("tokens")),
+            "host-owned /api/tokens must not become a plugin route: {:?}",
+            descriptor.routes
+        );
+    }
+
     #[test]
     fn mcp_plugin_label_differs_from_every_page_label() {
         let dir = scratch_dir("labels");

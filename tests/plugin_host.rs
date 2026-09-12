@@ -646,6 +646,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
         vec![
             ("mcps".into(), "mcp".into(), "#mcps".into(), true, 10),
             ("traffic".into(), "mcp".into(), "#traffic".into(), false, 20),
+            ("tokens".into(), "mcp".into(), "#tokens".into(), false, 30),
             (
                 "tunnels".into(),
                 "tunnels".into(),
@@ -668,6 +669,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
         vec![
             "/admin/js/views/mcps.js",
             "/admin/js/views/traffic.js",
+            "/admin/js/views/tokens.js",
             "/admin/js/views/tunnels.js",
             "/admin/js/views/data.js",
             "/admin/js/views/jobs.js",
