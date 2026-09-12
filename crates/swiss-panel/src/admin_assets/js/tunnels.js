@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, api, apiJson, emptyHtml, esc, saveTunCollapsed, state, toast } from "./util.js";
+import { $, DEFAULT_GROUP, api, apiJson, dotTitle, emptyHtml, esc, saveTunCollapsed, state, toast } from "./util.js";
 import { copyText } from "./connect.js";
 import { act } from "./detail.js";
 import { popupMenu } from "./menu.js";
@@ -222,7 +222,9 @@ function patchTunnels() {
     var busy = state.tun.busy[row.id];
     var dot = node.querySelector("[data-dot]");
     var live = state.tun.tab === "conns" ? (row.state === "connected" ? "up" : row.state) : row.state;
-    if (dot) dot.className = "dot " + (busy ? "starting" : live);
+    // Title and class move together (docs/18 V6): the poll only patches, and a dot whose
+    // class moved but whose title stayed would keep explaining the previous state.
+    if (dot) { dot.className = "dot " + (busy ? "starting" : live); dot.title = dotTitle(busy ? "starting" : live, null, row.reason); }
     var reason = node.querySelector("[data-reason]");
     if (reason && reason.textContent !== (row.reason || "")) reason.textContent = row.reason || "";
     var act = node.querySelector("[data-act]");

@@ -91,6 +91,20 @@ function emptyHtml(opts) {
     "</div></div>";
 }
 
+/** The status dot's tooltip (docs/18 V6): a colour — and the idle hollow ring above all —
+ *  names no behaviour of its own, so the title says it aloud, reusing the state words the row
+ *  already paints, never a synonym of our own. ONE builder for every dot in the panel: the
+ *  chip text once drifted between two copies, and a dot whose title disagrees with its class
+ *  is the same bug one hover wide. */
+function dotTitle(word, latencyMs, reason) {
+  if (word === "up") return latencyMs != null ? "up · " + latencyMs + " ms" : "up";
+  // Idle is the one word that explains nothing: say what the ring means — nothing is wrong,
+  // it starts when it is first needed.
+  if (word === "idle") return "idle — starts on first request";
+  if (word === "error") return reason ? "error: " + reason : "error";
+  return word || ""; // starting / stopping / reconnecting / down — the word the row already shows
+}
+
 /** One time format for row lists: time-of-day inside the last 24h, date+time beyond it (the
  *  pure time becomes ambiguous the moment a list spans midnight). Run-history had this logic as
  *  histWhen; Traffic rows now share it instead of printing bare times on pages days old. */
@@ -152,4 +166,4 @@ async function apiJson(path, opts) {
   }
 }
 
-export { $, COLLAPSE_KEY, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, TUN_COLLAPSE_KEY, api, apiJson, el, emptyHtml, esc, icon, loadCollapsed, loadTunCollapsed, now, saveCollapsed, saveTunCollapsed, state, toast, whenLabel };
+export { $, COLLAPSE_KEY, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, TUN_COLLAPSE_KEY, api, apiJson, dotTitle, el, emptyHtml, esc, icon, loadCollapsed, loadTunCollapsed, now, saveCollapsed, saveTunCollapsed, state, toast, whenLabel };

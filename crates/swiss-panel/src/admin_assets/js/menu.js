@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, el, state } from "./util.js";
+import { $, DEFAULT_GROUP, dotTitle, el, state } from "./util.js";
 import { closeMenu } from "./pane.js";
 import { assignGroup, groupNode, groupOf, groupedMcps, moveRow, rowOf, visibleMcps } from "./sidebar.js";
 
@@ -111,7 +111,15 @@ function patchSidebar() {
     var node = list.querySelector('[data-name="' + (window.CSS && CSS.escape ? CSS.escape(m.name) : m.name) + '"]');
     if (!node) return;
     var busyVerb = state.busy[m.name];
-    node.querySelector(".dot").className = "dot " + (busyVerb ? "starting" : m.state);
+    var word = busyVerb ? "starting" : m.state;
+    var dot = node.querySelector(".dot");
+    if (dot) {
+      dot.className = "dot " + word;
+      // The title rides the same patch pass as the class (docs/18 V6): the poll never
+      // rebuilds the sidebar, so a title painted only at build time would go stale with the
+      // first state change and never move again.
+      dot.title = dotTitle(word, m.latencyMs, m.reason);
+    }
     // Patched rather than set at build time: an Edit that switches an MCP from npx to http keeps the
     // same name, so the row is never rebuilt and the trailing label would otherwise go stale.
     var tagEl = node.querySelector(".side-type");

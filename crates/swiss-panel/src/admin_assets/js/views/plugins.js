@@ -33,7 +33,8 @@ function stateLabel(p) {
   if (busy[p.id]) return "working…";
   return p.enabled ? p.state : "disabled";
 }
-// (docs/18 V4): the state word left the row — the dot carries it; stateLabel stays for tooltips.
+// (docs/18 V4): the state word left the row — the dot carries it; stateLabel is the dot's
+// title (docs/18 V6), so the host's own vocabulary explains the colour on hover.
 
 /** The dependency badge (docs/12 W3): a plugin whose required capability has no provider
  *  says SO on its row — "needs connection-catalog (no provider)" — instead of failing
@@ -53,7 +54,7 @@ export function rowHtml(p) {
   var pages = (p.pages || []).join(", ");
   return '<div class="tun-row" data-plugin="' + esc(p.id) + '"' +
       (p.version ? ' title="v' + esc(p.version) + '"' : "") + ">" +
-      '<span class="dot ' + esc(dotClass(p)) + '" data-dot></span>' +
+      '<span class="dot ' + esc(dotClass(p)) + '" data-dot title="' + esc(stateLabel(p)) + '"></span>' +
       '<div class="tun-main">' +
         '<div class="tun-name">' + esc(p.label || p.id) +
           (p.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
@@ -105,7 +106,9 @@ function patch() {
     rows().forEach(function (cand) { if (cand.id === row.getAttribute("data-plugin")) p = cand; });
     if (!p) return;
     var dot = row.querySelector("[data-dot]");
-    if (dot) dot.className = "dot " + dotClass(p);
+    // Class and title in one pass (docs/18 V6): the poll patches, never rebuilds, so the
+    // title must follow the class or it keeps explaining the state before the last change.
+    if (dot) { dot.className = "dot " + dotClass(p); dot.title = stateLabel(p); }
     var err = row.querySelector("[data-err]");
     if (err) err.innerHTML = p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "";
     var reqs = row.querySelector("[data-reqs]");

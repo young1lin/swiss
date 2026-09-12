@@ -36,6 +36,12 @@
 
     /* Segmented control. */
     .seg { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: var(--s4); background: var(--sep-soft); border-radius: 8px; }
+    /* An emptied .seg is not a control: the padding over --sep-soft is the control's well, so
+       with nothing inside it the well itself paints — a 6px grey square. The page bar showed
+       exactly that beside a single-page group's name (page-registry clears #subSeg instead of
+       hiding it). :empty, not a hidden flag, so every .seg that empties itself is covered;
+       paintNavigation empties via innerHTML = "", with no whitespace left behind. */
+    .seg:empty { display: none; }
     .seg button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; }
     .seg button:hover { color: var(--text); }
     /* Hairline rings, no drops (docs/18 V6): the selected tab is a card with an edge, not a
@@ -207,8 +213,12 @@
        where no click can reach it, because the full-screen backdrop eats the hit and closes the
        sheet. Stating the layer HERE is what makes it win: this rule outranks .menu above by
        specificity, while a same-specificity .dd-menu in base.css loses the tie to views.css's
-       later .menu rule — base.css is linked first. */
-    .menu.float { position: fixed; top: auto; right: auto; min-width: 0; z-index: 45; }
+       later .menu rule — base.css is linked first.
+       The width floor is the float's own (docs/18 V5 follow-up): .menu's 236px is sized for the
+       pane's overflow list, and this rule's old min-width: 0 let a row's ⋯ menu collapse to one
+       label's width — "History" measured 66px and "Force free 50383" sat clipped beside it.
+       160px holds the longest row-menu item on one line without inheriting the pane size. */
+    .menu.float { position: fixed; top: auto; right: auto; min-width: 160px; z-index: 45; }
     .menu button { text-align: left; font-size: var(--f-body); padding: 5px var(--s2); border-radius: 6px; white-space: nowrap; }
     .menu button:hover { background: var(--hover); }
     .menu button.danger { color: var(--red); }

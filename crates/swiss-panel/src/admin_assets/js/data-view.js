@@ -1,4 +1,5 @@
 import { $, apiJson, el, icon, state } from "./util.js";
+import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbLoadRedisValue } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -164,6 +165,11 @@ function renderDbView() {
     dbDropEdits();
     dbSyncKind();
     renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
+    // The page-bar count chip names the connection (views/data.js countText) and is otherwise
+    // written only on navigation — the switch has to rewrite it here or the bar keeps naming
+    // the connection this view just left behind.
+    var chip = $("countChip");
+    if (chip) chip.textContent = currentPageCount();
     if (dbIsRedis()) dbLoadKeys(true);
     else dbLoadTables();
   };
@@ -230,6 +236,14 @@ function dbSyncKind() {
   }
 }
 
+/** The one label a connection goes by — the sidebar dropdown's option text. The page-bar
+ *  count chip (views/data.js countText) shows the SAME string, so the bar and the control
+ *  that changes it can never disagree; two builders is how the bar ended up saying "Data"
+ *  twice while the dropdown said "shop-redis · redis". */
+function dbConnLabel(c) {
+  return c.name + " · " + c.dialect + (c.readonly ? " · read-only" : "");
+}
+
 function renderDbSide() {
   var d = state.db;
   var sel = $("dbConn");
@@ -244,7 +258,7 @@ function renderDbSide() {
   }
   sel.disabled = false;
   d.conns.forEach(function (c) {
-    var o = el("option", "", c.name + " · " + c.dialect + (c.readonly ? " · read-only" : ""));
+    var o = el("option", "", dbConnLabel(c));
     o.value = c.name;
     o.selected = c.name === d.conn;
     sel.appendChild(o);
@@ -353,4 +367,4 @@ function dbOpenTable(t) {
   dbLoadData();
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDropEdits, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, loadDbView, renderDbSide, renderDbTables, renderDbView };

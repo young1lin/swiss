@@ -17,7 +17,7 @@
    (action input built from GET /api/actions, run.js's builder) plus a JSON editor, round-tripping
    losslessly so fields this form does not know survive the save.
    ================================================================================================ */
-import { $, api, apiJson, emptyHtml, esc, icon, state, toast, whenLabel } from "./util.js";
+import { $, api, apiJson, dotTitle, emptyHtml, esc, icon, state, toast, whenLabel } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { popupMenu } from "./menu.js";
 import { jobDotClass, jobRowHtml, jobsChipText, loadJobs } from "./polling.js";
@@ -77,7 +77,10 @@ function patchJobs() {
     if (!j) return;
     var busy = state.jobs.busy[j.name];
     var dot = row.querySelector(".dot");
-    if (dot) dot.className = "dot " + (busy ? "starting" : jobDotClass(j));
+    var word = busy ? "starting" : jobDotClass(j);
+    // Title and class move together (docs/18 V6): the poll never rebuilds the list, so a
+    // title left behind by an earlier state would lie one hover later.
+    if (dot) { dot.className = "dot " + word; dot.title = dotTitle(word); }
     // Rendered as (possibly empty) spans at build time so the patch can always fill them.
     var last = row.querySelector("[data-last]");
     if (last) last.textContent = j.lastRunAt

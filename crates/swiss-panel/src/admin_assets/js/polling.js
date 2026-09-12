@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, api, apiJson, esc, icon, state, toast, whenLabel } from "./util.js";
+import { $, DEFAULT_GROUP, api, apiJson, dotTitle, esc, icon, state, toast, whenLabel } from "./util.js";
 import { currentPageCount, navigatePage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
@@ -144,8 +144,9 @@ function jobRowHtml(j) {
     ? ' <span class="via">' + j.labels.map(function (l) { return "#" + esc(l); }).join(" ") + "</span>"
     : "";
   // data-last/data-next always render (possibly empty) so patchJobs can always fill them in.
+  var word = busy ? "starting" : jobDotClass(j);
   return '<div class="tun-row" data-job="' + esc(j.name) + '">' +
-      '<span class="dot ' + esc(busy ? "starting" : jobDotClass(j)) + '" data-dot></span>' +
+      '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word)) + '"></span>' +
       '<div class="tun-main">' +
         '<div class="tun-name">' + title + labels + (j.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
         '<div class="tun-sub"><code>' + esc(j.command) + "</code>" +
@@ -193,9 +194,13 @@ function ruleSubHtml(r) {
   out += ' <span class="via">via ' + esc(r.connectionName) + "</span>";
   if (r.mcpRows && r.mcpRows.length) {
     out += ' <span class="via">· serves </span>' + r.mcpRows.map(function (m) {
+      // A known MCP's dot keeps its own one-word title (docs/18 V6); an unknown name paints
+      // no state, so it takes no title either — the hover falls through to the span around
+      // it, which already answers with "no MCP named …".
       return '<span class="serves' + (m.known ? "" : " unknown") + '" title="' +
         esc(m.known ? "MCP " + m.name + " is " + m.state : "no MCP named " + m.name) + '">' +
-        esc(m.name) + '<span class="dot ' + esc(m.known ? m.state : "") + '"></span></span>';
+        esc(m.name) + '<span class="dot ' + esc(m.known ? m.state : "") + '"' +
+        (m.known ? ' title="' + esc(dotTitle(m.state)) + '"' : "") + "></span></span>";
     }).join(", ");
   }
   if (r.remark) out += ' <span class="via">· ' + esc(r.remark) + "</span>";
@@ -204,9 +209,10 @@ function ruleSubHtml(r) {
 
 function ruleRowHtml(r) {
   var busy = state.tun.busy[r.id];
+  var word = busy ? "starting" : r.state;
   var running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
   return '<div class="tun-row" draggable="true" data-rule="' + esc(r.id) + '">' +
-      '<span class="dot ' + esc(busy ? "starting" : r.state) + '" data-dot></span>' +
+      '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word, null, r.reason)) + '"></span>' +
       '<div class="tun-main">' +
         '<div class="tun-name">' + esc(r.name) + "</div>" +
         '<div class="tun-sub">' + ruleSubHtml(r) + "</div>" +
@@ -225,8 +231,9 @@ function ruleRowHtml(r) {
 
 function connRowHtml(c) {
   var busy = state.tun.busy[c.id];
+  var word = busy ? "starting" : c.state === "connected" ? "up" : c.state;
   return '<div class="tun-row" draggable="true" data-conn="' + esc(c.id) + '">' +
-      '<span class="dot ' + esc(busy ? "starting" : c.state === "connected" ? "up" : c.state) + '" data-dot></span>' +
+      '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word, null, c.reason)) + '"></span>' +
       '<div class="tun-main">' +
         '<div class="tun-name">' + esc(c.name) + "</div>" +
         '<div class="tun-sub">' + esc(c.host + ":" + c.port) + ' <span class="via">· ' + esc(c.username) +
