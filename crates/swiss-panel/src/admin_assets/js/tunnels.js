@@ -207,8 +207,9 @@ function wireTunnels() {
   Array.prototype.forEach.call(pane.querySelectorAll("[data-tab]"), function (b) {
     b.onclick = function () { tunTab(b.dataset.tab); };
   });
-  if ($("tNewConn")) $("tNewConn").onclick = function () { state.tun.pendingGroup = null; openConnSheet(null); };
-  if ($("tNewRule")) $("tNewRule").onclick = function () { state.tun.pendingGroup = null; openRuleSheet(null); };
+  // The top New carries no group promise; the sheet falls back to the scope's last-used.
+  if ($("tNewConn")) $("tNewConn").onclick = function () { openConnSheet(null); };
+  if ($("tNewRule")) $("tNewRule").onclick = function () { openRuleSheet(null); };
   if ($("tNewGroup")) $("tNewGroup").onclick = function () {
     newGroupFlow(tunScope(), tunGroupsList(), function () { return loadTunnels(); });
   };
