@@ -2,12 +2,28 @@ import { $, apiJson, el, state, toast } from "./util.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbOpenCellEditor } from "./data-cell.js";
 import { dbLoadData, renderDbGrid } from "./data-grid.js";
-import { renderDbBar } from "./data-sql.js";
+import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user
    retypes the table name — because both destroy data with no transaction to roll back to. */
+/** docs/22 W1.10: build one template for the open table and drop it into the console. */
+function dbGenerateSql(kind) {
+  var d = state.db;
+  if (!d.data || !d.data.columns || !d.data.columns.length) {
+    toast("Open the table first — the template needs its column set", true);
+    return;
+  }
+  var dialect = (d.conns.find(function (c) { return c.name === d.conn; }) || {}).dialect || "mysql";
+  var sql;
+  try {
+    sql = dbTemplateSql(kind, dialect, d.schema, d.table,
+      d.data.columns.map(function (c) { return c.name; }), d.data.primaryKey || []);
+  } catch (err) { toast(String(err), true); return; }
+  dbFillConsole(sql);
+}
+
 function dbTableMenu(anchorEl) {
   var d = state.db;
   if (!d.conn || !d.table) return;
@@ -20,6 +36,13 @@ function dbTableMenu(anchorEl) {
     b.onclick = function () { closeMenu2(); fn(); };
     menu.appendChild(b);
   }
+  // docs/22 W1.10: generate this table's four statements from the column set the page already
+  // carries (the describe_table shape). Identifiers pass the whitelist, values are ?
+  // placeholders, and the template lands in the console — fill the ?s, run, and it is history.
+  ["select", "insert", "update", "delete"].forEach(function (kind) {
+    item("Generate " + kind.toUpperCase(), function () { dbGenerateSql(kind); });
+  });
+  menu.appendChild(document.createElement("hr"));
   item("Rename table\u2026", function () {
     var to = prompt("Rename " + (d.schema ? d.schema + "." : "") + d.table + " to:", d.table);
     if (!to || to === d.table) return;
