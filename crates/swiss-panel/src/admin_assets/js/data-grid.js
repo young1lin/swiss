@@ -4,7 +4,7 @@ import { dbCellMenu, dbExportCsv, dbOpenImport, dbResultCellMenu, dbSelAll } fro
 import { dbOpenCellEditor, dbCellText } from "./data-cell.js";
 import { dbEditCellEnter } from "./data-edit.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
-import { dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
+import { dbFillConsole, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbOkToDrop, dbPkKey, dbPkVals } from "./data-view.js";
 import { popupMenu } from "./menu.js";
