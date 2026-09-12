@@ -7,8 +7,8 @@ import { newGroup } from "./sidebar.js";
 /* --- Add sheet -------------------------------------------------------------------------------- */
 /** `group` is the group the new MCP joins — the header + that opened this sheet. */
 function openSheet(group) {
-  state.addGroup = group || DEFAULT_GROUP;
-  var into = state.addGroup === DEFAULT_GROUP ? "" : " to " + state.addGroup;
+  state.addGroup = group || state.groups[0] || DEFAULT_GROUP;
+  var into = " to " + state.addGroup; // every group names itself, `default` included
   var types = Object.keys(TYPE_FIELDS);
   var opts = types.map(function (t) { return '<option value="' + t + '">' + esc(TYPE_LABELS[t] || t) + "</option>"; }).join("");
   $("sheet").innerHTML =
@@ -111,8 +111,9 @@ async function submitAdd() {
   toast("Added " + body.name + " (" + (j.lifecycle || "stopped") + ")");
   state.selected = body.name;
   // Join the group whose + opened this sheet, BEFORE the list reload — so the row is drawn in its
-  // group once, rather than appearing under `default` and hopping a moment later.
-  if (state.addGroup && state.addGroup !== DEFAULT_GROUP) {
+  // group once, rather than hopping a moment later. `default` is a real group name now: joining it
+  // is an explicit assignment like any other.
+  if (state.addGroup) {
     await apiJson("/api/mcps/" + encodeURIComponent(body.name) + "/group",
       { method: "PUT", body: JSON.stringify({ group: state.addGroup }) });
   }

@@ -347,7 +347,6 @@
     }
     .grp-head:hover .grp-grip { opacity: .7; }
     .grp-grip:active { cursor: grabbing; }
-    .grp-grip.spacer { visibility: hidden; pointer-events: none; }
     .grp-toggle {
       flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s1);
       height: 24px; padding: 0 var(--s1); text-align: left;
@@ -371,7 +370,6 @@
     .grp-head:hover .grp-add, .grp-head:hover .grp-more,
     .grp-add:focus-visible, .grp-more:focus-visible { opacity: 1; }
     .grp-add:hover, .grp-more:hover { color: var(--text); background: var(--sep-soft); }
-    .grp-more.spacer { visibility: hidden; pointer-events: none; }
     .side-group.collapsed .grp-rows { display: none; }
     /* The indent is what makes this read as a tree: a row's content starts under its group's NAME,
        past the disclosure triangle, and its hover/selection fill indents with it. */

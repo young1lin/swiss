@@ -19,12 +19,18 @@ function visibleMcps() {
   });
 }
 
-function groupOf(m) { return m && m.group ? m.group : DEFAULT_GROUP; }
+/** The group a row renders under: its stored group when that group still exists, else the FIRST
+ *  group — that slot is the sink for unassigned MCPs, whatever it is called (mirrors the server). */
+function groupOf(m) {
+  if (m && m.group && state.groups.indexOf(m.group) >= 0) return m.group;
+  return state.groups[0] || DEFAULT_GROUP;
+}
 
 /**
- * The sidebar's shape: `default` first, then the custom groups in their stored order, each holding
- * its members in the flat `order` the server already sorted by. One flat order sliced by group is
- * why moving an MCP between groups never has to rewrite the ordering.
+ * The sidebar's shape: the groups in their stored order — `default` is an ordinary entry that the
+ * server keeps at the front until the user moves it — each holding its members in the flat `order`
+ * the server already sorted by. One flat order sliced by group is why moving an MCP between groups
+ * never has to rewrite the ordering.
  *
  * Empty groups keep their header — you have to be able to see a group you just made in order to drag
  * anything into it. A search is the one thing that hides a group, and only when nothing in it matches.
@@ -36,8 +42,8 @@ function groupedMcps() {
     var g = groupOf(m);
     (byGroup[g] = byGroup[g] || []).push(m);
   });
-  var out = [{ name: DEFAULT_GROUP, rows: byGroup[DEFAULT_GROUP] || [] }];
-  state.groups.forEach(function (g) { out.push({ name: g, rows: byGroup[g] || [] }); });
+  // The server's group list is complete and ordered; unassigned rows fall into groupOf's answer.
+  var out = state.groups.map(function (g) { return { name: g, rows: byGroup[g] || [] }; });
   if (state.filter.trim()) out = out.filter(function (g) { return g.rows.length; });
   return out;
 }
@@ -99,7 +105,6 @@ function nudgeSelected(up) {
 /** One group: a disclosure header, then its rows. Built as nodes rather than an HTML string because
  *  a group name is user input and every handler here needs the name in a closure anyway. */
 function groupNode(g) {
-  var isDefault = g.name === DEFAULT_GROUP;
   var wrap = el("div", "side-group" + (state.collapsed[g.name] ? " collapsed" : ""));
   wrap.dataset.group = g.name;
 
@@ -108,32 +113,27 @@ function groupNode(g) {
   // A drag HANDLE, not a draggable header: the + and ⋯ buttons must never live inside a
   // draggable element — a hand that moves a pixel while pressing one turns the click into a
   // cancelled drag and the button silently does nothing. The grip is the only draggable thing
-  // on the head, so buttons keep every click. `default` is pinned first (the fallback every
-  // group lands in, not a peer to shuffle) and never drags, but keeps a spacer grip so every
-  // header's name starts at the same x.
-  var grip = el("span", "grp-grip" + (isDefault ? " spacer" : ""));
+  // on the head, so buttons keep every click. Every group drags — `default` is an ordinary
+  // group; only the SERVER pins a role to the first slot (the fallback home), never a name.
+  var grip = el("span", "grp-grip");
   grip.innerHTML = icon("grip");
-  if (!isDefault) {
-    grip.title = "Drag to reorder this group";
-    grip.setAttribute("aria-label", "Reorder group " + g.name);
-    grip.draggable = true;
-    grip.addEventListener("dragstart", function (e) {
-      state.draggingGroup = g.name;
-      head.classList.add("dragging");
-      try { e.dataTransfer.setData("text/plain", g.name); } catch (err) { /* old IE */ }
-      e.dataTransfer.effectAllowed = "move";
+  grip.title = "Drag to reorder this group";
+  grip.setAttribute("aria-label", "Reorder group " + g.name);
+  grip.draggable = true;
+  grip.addEventListener("dragstart", function (e) {
+    state.draggingGroup = g.name;
+    head.classList.add("dragging");
+    try { e.dataTransfer.setData("text/plain", g.name); } catch (err) { /* old IE */ }
+    e.dataTransfer.effectAllowed = "move";
+  });
+  grip.addEventListener("dragend", function () {
+    state.draggingGroup = null; // lets the deferred rebuild run — same contract as a row drag
+    head.classList.remove("dragging");
+    document.querySelectorAll(".grp-head.drop-before, .grp-head.drop-after").forEach(function (h) {
+      h.classList.remove("drop-before", "drop-after");
     });
-    grip.addEventListener("dragend", function () {
-      state.draggingGroup = null; // lets the deferred rebuild run — same contract as a row drag
-      head.classList.remove("dragging");
-      document.querySelectorAll(".grp-head.drop-before, .grp-head.drop-after").forEach(function (h) {
-        h.classList.remove("drop-before", "drop-after");
-      });
-      patchSidebar();
-    });
-  } else {
-    grip.setAttribute("aria-hidden", "true");
-  }
+    patchSidebar();
+  });
   head.appendChild(grip);
   var toggle = el("button", "grp-toggle");
   toggle.type = "button";
@@ -161,41 +161,33 @@ function groupNode(g) {
   add.onclick = function (ev) { ev.stopPropagation(); openSheet(g.name); };
   head.appendChild(add);
 
-  // `default` cannot be renamed or deleted: it is the fallback every other group's members land in,
-  // so removing it would leave MCPs pointing at nothing.
-  if (!isDefault) {
-    var more = el("button", "grp-more");
-    more.innerHTML = icon("ellipsis");
-    more.type = "button";
-    more.title = "Move, rename or delete this group";
-    more.setAttribute("aria-label", "Group actions");
-    more.onclick = function (ev) {
-      ev.stopPropagation();
-      // Move up/down are the keyboard-and-precision path to what the grip does by drag:
-      // present exactly when the move exists, absent at the list's edges.
-      var i = state.groups.indexOf(g.name);
-      var items = [];
-      if (i > 0) items.push({ label: "Move up", fn: function () { moveGroupBy(g.name, -1); } });
-      if (i >= 0 && i < state.groups.length - 1) {
-        items.push({ label: "Move down", fn: function () { moveGroupBy(g.name, 1); } });
-      }
-      if (items.length) items.push({ sep: true });
-      items.push(
-        { label: "Rename…", fn: function () { renameGroup(g.name); } },
-        { sep: true },
-        { label: "Delete group", danger: true, fn: function () { deleteGroup(g.name); } },
-      );
-      popupMenu(more.getBoundingClientRect(), items);
-    };
-    head.appendChild(more);
-  } else {
-    // A reserved slot, not a button. Without it `default`'s + lands where every other group's ⋯ sits,
-    // so the one glyph that is always visible jumps 20px sideways from one group header to the next.
-    var pad = el("span", "grp-more spacer");
-    pad.innerHTML = icon("ellipsis");
-    pad.setAttribute("aria-hidden", "true");
-    head.appendChild(pad);
-  }
+  // Every group gets the full menu — `default` included: it is an ordinary group, renamable,
+  // deletable (the server refuses only deleting the LAST group, since something must catch
+  // unassigned MCPs) and reorderable like the rest.
+  var more = el("button", "grp-more");
+  more.innerHTML = icon("ellipsis");
+  more.type = "button";
+  more.title = "Move, rename or delete this group";
+  more.setAttribute("aria-label", "Group actions");
+  more.onclick = function (ev) {
+    ev.stopPropagation();
+    // Move up/down are the keyboard-and-precision path to what the grip does by drag:
+    // present exactly when the move exists, absent at the list's edges.
+    var i = state.groups.indexOf(g.name);
+    var items = [];
+    if (i > 0) items.push({ label: "Move up", fn: function () { moveGroupBy(g.name, -1); } });
+    if (i >= 0 && i < state.groups.length - 1) {
+      items.push({ label: "Move down", fn: function () { moveGroupBy(g.name, 1); } });
+    }
+    if (items.length) items.push({ sep: true });
+    items.push(
+      { label: "Rename…", fn: function () { renameGroup(g.name); } },
+      { sep: true },
+      { label: "Delete group", danger: true, fn: function () { deleteGroup(g.name); } },
+    );
+    popupMenu(more.getBoundingClientRect(), items);
+  };
+  head.appendChild(more);
   wireGroupDrop(head, g.name);
   wrap.appendChild(head);
 
@@ -250,17 +242,22 @@ function renameGroup(from) {
 
 async function deleteGroup(name) {
   var n = state.mcps.filter(function (m) { return groupOf(m) === name; }).length;
-  // Deleting a group deletes nothing else, so this only has to say where the MCPs go.
+  // Deleting a group deletes nothing else, so this only has to say where the MCPs go: the first
+  // remaining group — that slot is the server's sink for the deleted group's members.
+  var sink = state.groups.filter(function (g) { return g !== name; })[0];
+  if (!sink) { toast("At least one group must remain"); return; }
   if (n && !confirm("Delete group '" + name + "'?\n\nIts " + n + " MCP" + (n === 1 ? "" : "s") +
-      " move to '" + DEFAULT_GROUP + "'. Nothing is removed.")) return;
+      " move to '" + sink + "'. Nothing is removed.")) return;
   if (await saveGroups(state.groups.filter(function (g) { return g !== name; }))) toast("Deleted group " + name);
 }
 
-/** Move one MCP into a group. Applied locally first so the row jumps immediately, then persisted. */
+/** Move one MCP into a group. Applied locally first so the row jumps immediately, then persisted.
+ *  The group name goes over as-is — `default` is a real name now, and `null` (no explicit group)
+ *  is only sent by the pane's "remove from group" paths, which the server reads as "first group". */
 async function assignGroup(name, group) {
   var m = rowOf(name);
-  if (!m || groupOf(m) === (group || DEFAULT_GROUP)) return;
-  m.group = group || DEFAULT_GROUP;
+  if (!m || groupOf(m) === (group || state.groups[0])) return;
+  m.group = group;
   patchSidebar();
   var j = await apiJson("/api/mcps/" + encodeURIComponent(name) + "/group",
     { method: "PUT", body: JSON.stringify({ group: group }) });
@@ -271,8 +268,7 @@ async function assignGroup(name, group) {
 
 /** A group header is a drop target twice over: dropping a ROW on it is the only way into a group
  *  with no rows yet, and dropping another HEADER on it reorders the groups. The hovered half
- *  picks before/after; on `default` anything lands at the top of the custom list, shown as
- *  after — `default` keeps its pinned first slot. */
+ *  picks before/after — for every group alike; no header is pinned. */
 function wireGroupDrop(head, group) {
   var half = function (e) { return e.clientY < head.getBoundingClientRect().top + head.offsetHeight / 2; };
   head.addEventListener("dragover", function (e) {
@@ -280,9 +276,8 @@ function wireGroupDrop(head, group) {
       if (state.draggingGroup === group) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
-      var before = group !== DEFAULT_GROUP && half(e);
-      head.classList.toggle("drop-before", before);
-      head.classList.toggle("drop-after", !before);
+      head.classList.toggle("drop-before", half(e));
+      head.classList.toggle("drop-after", !half(e));
       return;
     }
     if (!state.dragging) return;
@@ -314,9 +309,9 @@ function wireGroupDrop(head, group) {
 function moveGroup(name, target, before) {
   if (!name || name === target) return;
   var rest = state.groups.filter(function (g) { return g !== name; });
-  var to = target === DEFAULT_GROUP ? 0 : rest.indexOf(target);
+  var to = rest.indexOf(target);
   if (to < 0) rest.push(name); // target vanished mid-drag — land at the end
-  else rest.splice(before && target !== DEFAULT_GROUP ? to : to + 1, 0, name);
+  else rest.splice(before ? to : to + 1, 0, name);
   state.groups = rest;
   patchSidebar();
   void saveGroups(rest);
@@ -340,7 +335,7 @@ function moveGroupBy(name, delta) {
 function dropInto(name, group) {
   var members = state.mcps.filter(function (m) { return groupOf(m) === group && m.name !== name; });
   if (members.length) moveRow(name, members[members.length - 1].name, false);
-  assignGroup(name, group === DEFAULT_GROUP ? null : group);
+  assignGroup(name, group); // the header's name is always a live group
 }
 
 export { assignGroup, deleteGroup, dropInto, groupNode, groupOf, groupedMcps, moveGroup, moveGroupBy, moveRow, navRows, newGroup, nudgeSelected, renameGroup, rowOf, saveGroups, saveOrder, visibleMcps, wireGroupDrop };

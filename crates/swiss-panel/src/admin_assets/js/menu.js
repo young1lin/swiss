@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, dotTitle, el, state } from "./util.js";
+import { $, dotTitle, el, state } from "./util.js";
 import { closeMenu } from "./pane.js";
 import { assignGroup, groupNode, groupOf, groupedMcps, moveRow, rowOf, visibleMcps } from "./sidebar.js";
 
@@ -58,7 +58,7 @@ function wireDrag(row) {
     // Order first, then membership: moveRow re-renders from the flat list, and doing it after the
     // reassignment would drop the row into the new group at whatever slot it happened to hold.
     moveRow(dragged, row.dataset.name, before);
-    if (target) assignGroup(dragged, groupOf(target) === DEFAULT_GROUP ? null : groupOf(target));
+    if (target) assignGroup(dragged, groupOf(target)); // a live group name, sent as-is
   });
   row.addEventListener("dragend", function () {
     state.dragging = null; // lets the deferred rebuild run — see patchSidebar

@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, KINDS, emptyHtml, esc, icon, state } from "./util.js";
+import { $, KINDS, emptyHtml, esc, icon, state } from "./util.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
 import { act, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
@@ -156,7 +156,8 @@ function closeMenu() {
  *  a string is more machinery than four lines of choices are worth. */
 function menuHtml(m) {
   var current = groupOf(m);
-  var picks = [DEFAULT_GROUP].concat(state.groups).map(function (g) {
+  // The server's list is complete (default included) and already in sidebar order.
+  var picks = state.groups.map(function (g) {
     return '<button class="pick' + (g === current ? " on" : "") + '" data-grp="' + esc(g) + '">' + esc(g) + "</button>";
   }).join("");
   return '<div class="menu" id="menu">' +
@@ -182,7 +183,7 @@ function wireMenu(d, m) {
       ev.stopPropagation();
       closeMenu();
       if (b.dataset.grp !== undefined) {
-        assignGroup(d.name, b.dataset.grp === DEFAULT_GROUP ? null : b.dataset.grp);
+        assignGroup(d.name, b.dataset.grp); // every name in the menu is a real group now
         return;
       }
       var a = b.dataset.act;

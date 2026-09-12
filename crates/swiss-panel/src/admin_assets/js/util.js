@@ -3,8 +3,9 @@ var TUN_COLLAPSE_KEY = "mcp_gateway_tun_collapsed";
 var TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
 var THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
 var KINDS = ["tools", "resources", "prompts"];
-/* Mirrors DEFAULT_GROUP in managed.ts. Every MCP is in a group; this is the one it is in until you
-   move it, and the one members of a deleted group fall back to. The server never stores it. */
+/* Mirrors DEFAULT_GROUP in managed.ts: the name a group list starts from — an ordinary group
+   the user can rename or delete, whose only privilege is being the initial FIRST entry (the
+   slot unassigned MCPs render under). The server now stores it like any other name. */
 var DEFAULT_GROUP = "default";
 
 var state = {
