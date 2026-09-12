@@ -357,6 +357,11 @@ async fn export(
     if let Some(limit) = q_raw(q, "limit") {
         o.insert("limit".into(), limit);
     }
+    // The grid's filters ride /export exactly as they ride /data (docs/22 W0.2): the download
+    // and the grid describe the same filtered set, and x-export-rows counts that set.
+    if let Some(filters) = parse_filters(q.get("filters"))? {
+        o.insert("filters".into(), filters);
+    }
     let out = b.export_table(&Value::Object(o)).await.map_err(Fail::bad)?;
     // The reply's own format decides the download's shape, not the request's spelling.
     let out_format = if out.get("format") == Some(&json!("json")) {
@@ -753,6 +758,7 @@ mod tests {
         edits: Option<Value>,
         query: Option<String>,
         filters: Option<Value>,
+        export_opts: Option<Value>,
         imported: Option<Value>,
         ddl: Option<Value>,
         tables_opts: Option<Value>,
@@ -852,6 +858,9 @@ mod tests {
             Ok(json!({ "columns": ["id"], "rows": [{ "id": 1 }], "rowCount": 1 }))
         }
         async fn export_table(&self, o: &Value) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.export_opts = Some(o.clone());
+            }
             let json_out = o.get("format") == Some(&json!("json"));
             Ok(json!({
                 "format": if json_out { "json" } else { "csv" },
@@ -1373,6 +1382,58 @@ mod tests {
             .unwrap()
             .contains("application/x-ndjson"));
         assert_eq!(text.split('\n').count(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_export_carries_the_grids_filters_to_the_browser() {
+        // docs/22 W0.2: the grid's filters ride /export exactly as they ride /data, so the
+        // download and the grid describe the same filtered set (and x-export-rows counts it).
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let terms = json!([{ "column": "name", "op": "like", "value": "al" }]).to_string();
+        let (status, _, _, _) = call(
+            app,
+            "GET",
+            &format!(
+                "/api/db/db/export?table=users&format=csv&filters={}",
+                urlencode(&terms)
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let opts = seen
+            .lock()
+            .expect("seen")
+            .export_opts
+            .take()
+            .expect("export opts recorded");
+        assert_eq!(
+            opts["filters"],
+            json!([{ "column": "name", "op": "like", "value": "al" }])
+        );
+        assert_eq!(opts["table"], "users");
+
+        // Malformed filters are the route's own 400, same rule as /data.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "GET",
+            "/api/db/db/export?table=users&filters=not-json",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("JSON array"), "{err}");
     }
 
     #[tokio::test]

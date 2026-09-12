@@ -858,6 +858,22 @@ pub fn browse_filters_of(v: Option<&Value>) -> Vec<BrowseFilter> {
         .collect()
 }
 
+/// The grid-filter WHERE behind rows, export and COUNT — ONE assembly point for the three
+/// (docs/22 W0.2), so the filter applied to a page is by construction the filter applied to
+/// the download that claims to export it. Values stay bound parameters and identifier vetting
+/// stays inside build_filter_where, next to the SQL it guards.
+pub fn browse_where(
+    dialect: DbDialect,
+    columns: &[BrowseColumn],
+    filters: Option<&Value>,
+) -> Result<BuiltWhere, String> {
+    let typed: Vec<FilterColumn> = columns
+        .iter()
+        .map(|c| FilterColumn::Column(c.clone()))
+        .collect();
+    build_filter_where(dialect, &typed, &browse_filters_of(filters))
+}
+
 // --- edit statements -----------------------------------------------------------------------------
 
 /// Read one posted edit ({op, pk?, changes?, values?}) into the typed shape the statement
@@ -1763,6 +1779,53 @@ mod tests {
             "SELECT COUNT(*) AS total FROM `users` WHERE `id` = ?"
         );
         assert_eq!(count.params, vec![json!(7)]);
+    }
+
+    #[test]
+    fn browse_where_is_the_one_assembly_rows_and_export_share() {
+        // docs/22 W0.2: rows, COUNT and export all build their WHERE through browse_where, so
+        // the download and the grid can never disagree — and an export with filters carries
+        // the same bound values the page did (never inlined into the SQL).
+        let columns = vec![
+            col("id", "bigint", false, true),
+            col("name", "text", true, false),
+        ];
+        let w = browse_where(
+            DbDialect::Mysql,
+            &columns,
+            Some(&json!([{ "column": "name", "op": "like", "value": "al" }])),
+        )
+        .unwrap();
+        assert_eq!(w.frag, " WHERE `name` LIKE ? ESCAPE '!'");
+        assert_eq!(w.params, vec![json!("%al%")]);
+        // The export statement (chunked page, no ORDER) carries the same WHERE.
+        let stmt = browse_rows_sql(
+            DbDialect::Mysql,
+            Some("app"),
+            "users",
+            &["`id`".to_string(), "`name`".to_string()],
+            None,
+            0,
+            5000,
+            &w.frag,
+            &w.params,
+        )
+        .unwrap();
+        assert_eq!(
+            stmt.sql,
+            "SELECT `id`, `name` FROM `app`.`users` WHERE `name` LIKE ? ESCAPE '!' LIMIT 5000 OFFSET 0"
+        );
+        assert_eq!(stmt.params, vec![json!("%al%")]);
+        let count = browse_count_sql(DbDialect::Mysql, Some("app"), "users", &w.frag, &w.params)
+            .unwrap();
+        assert_eq!(
+            count.sql,
+            "SELECT COUNT(*) AS total FROM `app`.`users` WHERE `name` LIKE ? ESCAPE '!'"
+        );
+        // No filters is still no WHERE at all — an unfiltered export is the whole table.
+        let bare = browse_where(DbDialect::Mysql, &columns, None).unwrap();
+        assert_eq!(bare.frag, "");
+        assert!(bare.params.is_empty());
     }
 
     #[test]

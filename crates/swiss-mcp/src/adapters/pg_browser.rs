@@ -151,16 +151,9 @@ impl DbBrowser for PgBrowser {
         )?;
         let offset = browse_offset(o.get("offset"));
         let limit = browse_page_size(o.get("limit"), 50);
-        // The grid's filters feed BOTH the page and the COUNT, on the same WHERE.
-        let filters = swiss_host::dbbrowser::browse_filters_of(o.get("filters"));
-        let where_ = swiss_host::dbbrowser::build_filter_where(
-            DbDialect::Pg,
-            &columns
-                .iter()
-                .map(|c| swiss_host::dbbrowser::FilterColumn::Column(c.clone()))
-                .collect::<Vec<_>>(),
-            &filters,
-        )?;
+        // The grid's filters feed the page, the COUNT and exports through one WHERE
+        // (browse_where) so the three can never drift (docs/22 W0.2).
+        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::pg_typed_exprs(&columns)?;
         let rows_stmt = browse_rows_sql(
             DbDialect::Pg,
@@ -370,6 +363,9 @@ impl DbBrowser for PgBrowser {
         let (columns, _) = self.metadata(&schema, table).await?;
         let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let cap = export_row_limit(o.get("limit"));
+        // An export of a filtered grid exports the FILTERED set: the same browse_where the
+        // page and its COUNT use (docs/22 W0.2), values bound, never inlined.
+        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let mut all: Vec<Map<String, Value>> = Vec::new();
         let mut capped = false;
         // Offset paging in chunks: simple, and the cap keeps the O(offset) tail-walk bounded.
@@ -385,8 +381,8 @@ impl DbBrowser for PgBrowser {
                 None,
                 offset,
                 chunk,
-                "",
-                &[],
+                &where_.frag,
+                &where_.params,
             )?;
             let rows = self.query(&stmt.sql, &stmt.params).await?;
             let fetched = rows.len() as i64;

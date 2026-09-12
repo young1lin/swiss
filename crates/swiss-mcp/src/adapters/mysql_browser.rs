@@ -104,16 +104,10 @@ impl DbBrowser for MysqlBrowser {
         )?;
         let offset = browse_offset(o.get("offset"));
         let limit = browse_page_size(o.get("limit"), 50);
-        // The grid's filters feed BOTH the page and the COUNT, on the same WHERE.
-        let filters = swiss_host::dbbrowser::browse_filters_of(o.get("filters"));
-        let where_ = swiss_host::dbbrowser::build_filter_where(
-            DbDialect::Mysql,
-            &columns
-                .iter()
-                .map(|c| swiss_host::dbbrowser::FilterColumn::Column(c.clone()))
-                .collect::<Vec<_>>(),
-            &filters,
-        )?;
+        // The grid's filters feed the page, the COUNT and exports through one WHERE
+        // (browse_where) so the three can never drift (docs/22 W0.2).
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::quoted_exprs(DbDialect::Mysql, &names)?;
         let rows_stmt = browse_rows_sql(
             DbDialect::Mysql,
@@ -275,6 +269,10 @@ impl DbBrowser for MysqlBrowser {
         let (columns, _) = self.metadata(table).await?;
         let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let cap = export_row_limit(o.get("limit"));
+        // An export of a filtered grid exports the FILTERED set: the same browse_where the
+        // page and its COUNT use (docs/22 W0.2), values bound, never inlined.
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
         let mut all: Vec<Map<String, Value>> = Vec::new();
         let mut capped = false;
         // Offset paging in chunks: simple, and the cap keeps the O(offset) tail-walk bounded.
@@ -290,8 +288,8 @@ impl DbBrowser for MysqlBrowser {
                 None,
                 offset,
                 chunk,
-                "",
-                &[],
+                &where_.frag,
+                &where_.params,
             )?;
             let rows = self.query(&stmt.sql, &stmt.params).await?;
             let fetched = rows.len() as i64;
