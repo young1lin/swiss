@@ -380,6 +380,11 @@ async fn add_managed(
 pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     let mut r = Router::new();
 
+    // The secrets scope joins the family table (docs/20 G6) right where the vault's own
+    // routes live below: the scope wraps the same write-only store, and co-locating the
+    // registration with the routes keeps the two from drifting apart.
+    swiss_host::secret_groups::register_secret_scopes(&_ctx.group_scopes);
+
     // The env var the seed token came from — metadata for the panel, never a secret. The panel
     // stamp summarizes the whole admin tree; the page polls it and reloads ITSELF when a new
     // build lands — one edited module counts as much as the shell — so an update never costs the
@@ -485,6 +490,18 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 json!({
                     "secrets": swiss_core::secure::secretstore::list_secrets(),
                     "rev": swiss_core::secure::secretstore::vault_rev(),
+                    // The one model's two lists (docs/20 G6), labels only: group names and
+                    // each stored name's sink-resolved group. A label names a folder, never a
+                    // credential - the write-only rule (docs/19 D5) is about values, and no
+                    // value crosses here.
+                    "groups": swiss_core::secure::secretstore::vault_groups(),
+                    "secretGroups": swiss_core::secure::secretstore::list_secrets()
+                        .into_iter()
+                        .map(|n| {
+                            let g = swiss_core::secure::secretstore::vault_group_of(&n);
+                            (n, g)
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>(),
                 }),
             )
         }),
