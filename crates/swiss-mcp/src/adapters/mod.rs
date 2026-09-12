@@ -283,7 +283,10 @@ pub trait Adapter: Send + Sync {
 
 /// Map a config/managed ServerDef to its Adapter — port of `factory.ts` minus the
 /// third-party module door (ADR-001: an external adapter becomes a proc or http MCP).
-/// `${ENV_VAR}` refs are expanded HERE, never at load, so persisted defs keep the reference.
+/// `${ENV_VAR}` and `secret://name` refs are expanded HERE, never at load, so persisted defs
+/// keep the reference. A vault reference that names a secret this machine does not hold REFUSES
+/// the build (docs/19 D4): an absent credential is a configuration error the operator can fix
+/// in one panel visit, not an empty password to debug on someone else's server.
 /// `log` is the call log every adapter records into - the caller's, so an app and its
 /// adapters share exactly one view of what was called.
 pub fn make_adapter(
@@ -291,7 +294,8 @@ pub fn make_adapter(
     name: &str,
     log: &std::sync::Arc<crate::calls::CallLog>,
 ) -> Result<Arc<dyn Adapter>, String> {
-    let def = swiss_host::config::resolve_def(raw_def);
+    let def = swiss_host::config::resolve_def_checked(raw_def)
+        .map_err(|e| format!("{name}: {e}"))?;
     match def.type_() {
         "echo" => Ok(Arc::new(echo::EchoAdapter::new(name, log.clone()))),
         "mysql" => {

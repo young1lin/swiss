@@ -327,14 +327,26 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
         .and_then(Value::as_str)
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| invalid("input.command: required non-empty string".into()))?;
-    // Lenient resolution (unset -> empty) and post-resolution tokenization are BOTH the
-    // documented legacy behaviour; changing either would silently rewrite old jobs.
-    let expanded = crate::config::resolve_env_refs(command);
-    // Mask what the refs resolved to (a credential referenced in a command must not
-    // survive into captured output just because the legacy path is lenient).
+    // Env refs keep the documented legacy behaviour (unset -> empty) and post-resolution
+    // tokenization; vault refs are the strict half of the same contract (docs/19 D4) — a
+    // missing secret:// reference is a configuration error, never an empty credential.
+    // What EITHER kind of ref resolved to is registered for masking: a credential must not
+    // survive into captured output just because the legacy env path is lenient.
     let mut secrets: Vec<String> = Vec::new();
+    let register = |secrets: &mut Vec<String>, resolved: &[String]| {
+        for v in resolved {
+            if v.len() >= 8 && !secrets.contains(v) {
+                secrets.push(v.clone());
+            }
+        }
+    };
+    let (expanded, resolved_secrets) = match swiss_core::secure::refs::resolve_collect(command) {
+        Ok(pair) => pair,
+        Err(e) => return Err(invalid(format!("input.command: {e}"))),
+    };
+    register(&mut secrets, &resolved_secrets);
     for name in ref_names(command) {
-        if let Ok(v) = std::env::var(&name) {
+        if let Some(v) = swiss_core::secure::envstore::env_lookup(&name) {
             if v.len() >= 8 && !secrets.contains(&v) {
                 secrets.push(v);
             }
@@ -352,7 +364,14 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
         .unwrap_or_else(|| program.as_str().into());
     let cwd = match obj.get("cwd") {
         None | Some(Value::Null) => None,
-        Some(Value::String(s)) if !s.is_empty() => Some(crate::config::resolve_env_refs(s)),
+        Some(Value::String(s)) if !s.is_empty() => {
+            let (resolved, got) = match swiss_core::secure::refs::resolve_collect(s) {
+                Ok(pair) => pair,
+                Err(e) => return Err(invalid(format!("input.cwd: {e}"))),
+            };
+            register(&mut secrets, &got);
+            Some(resolved)
+        }
         Some(_) => return Err(invalid("input.cwd: must be a string".into())),
     };
     // Per-job env vars, ADDED on top of the inherited environment (the supervisor applies
@@ -377,13 +396,17 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
                     )));
                 }
                 for name in ref_names(v) {
-                    if let Ok(resolved_ref) = std::env::var(&name) {
+                    if let Some(resolved_ref) = swiss_core::secure::envstore::env_lookup(&name) {
                         if resolved_ref.len() >= 8 && !secrets.contains(&resolved_ref) {
                             secrets.push(resolved_ref);
                         }
                     }
                 }
-                let resolved_value = crate::config::resolve_env_refs(v);
+                let (resolved_value, got) = match swiss_core::secure::refs::resolve_collect(v) {
+                    Ok(pair) => pair,
+                    Err(e) => return Err(invalid(format!("input.env.{k}: {e}"))),
+                };
+                register(&mut secrets, &got);
                 env.push((k.clone(), resolved_value));
             }
         }
@@ -697,5 +720,108 @@ async fn legacy_command_env_vars_reach_the_child_and_refs_in_values_resolve() {
         )
         .await
         .is_err());
-}
+    }
+
+    /// Plant a vault value under a test-unique name (one scratch home per test binary).
+    #[cfg(test)]
+    fn plant_secret(name: &str, value: &str) {
+        let _guard = swiss_core::paths::DATA_DIR_LOCK.blocking_lock();
+        let path = swiss_core::paths::test_home().join("secrets.json");
+        swiss_core::secure::secretstore::inject_vault(&path);
+        let rev = swiss_core::secure::secretstore::vault_rev();
+        swiss_core::secure::secretstore::put_secret(&path, name, value, rev).expect("plant");
+    }
+
+    #[test]
+    fn a_missing_vault_reference_in_a_command_is_refused() {
+        // The strict half of the credential contract (docs/19 D4): the legacy command path
+        // stays lenient for env refs, but a missing vault reference names itself and refuses.
+        let err = parse_legacy_input(&json!({
+            "command": "echo secret://actions-missing-key"
+        }))
+        .expect_err("refused");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("input.command") && msg.contains("secret://actions-missing-key")
+                && msg.contains("not in the vault"),
+            "names the input field and the reference: {msg}"
+        );
+    }
+
+    #[test]
+    fn a_present_vault_reference_resolves_and_masks() {
+        plant_secret("actions-present-key", "sk_live_actions_mask_me");
+        let spec = parse_legacy_input(&json!({
+            "command": "echo token=secret://actions-present-key",
+            "env": { "MODE": "secret://actions-present-key" }
+        }))
+        .expect("resolves");
+        // The command carries the value (tokenized: the token holding the resolved secret).
+        assert!(
+            spec.args.iter().any(|a| a.contains("sk_live_actions_mask_me")),
+            "program={:?} args={:?}",
+            spec.program,
+            spec.args
+        );
+        // ...the env row carries it...
+        assert!(
+            spec.env
+                .iter()
+                .any(|(k, v)| k == "MODE" && v.contains("sk_live_actions_mask_me"))
+        );
+        // ...and the same value is registered for masking, so captured output never echoes it.
+        assert!(
+            spec.secrets.iter().any(|s| s == "sk_live_actions_mask_me"),
+            "the resolved secret is masked: {:?}",
+            spec.secrets
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreferenced_vault_value_never_reaches_a_child_environment() {
+        // docs/19 D8 — the isolation the env store cannot offer: a vault value is ONLY ever
+        // present where a reference put it. Plant a secret, run a child that dumps its whole
+        // environment, reference nothing: the value must be absent. The job's own env row is
+        // the positive control proving the dump actually sees the child environment.
+        // plant_secret's blocking_lock is for the sync tests; this one is async.
+        {
+            let _guard = swiss_core::paths::DATA_DIR_LOCK.lock().await;
+            let path = swiss_core::paths::test_home().join("secrets.json");
+            swiss_core::secure::secretstore::inject_vault(&path);
+            let rev = swiss_core::secure::secretstore::vault_rev();
+            swiss_core::secure::secretstore::put_secret(
+                &path,
+                "actions-isolation",
+                "sk_live_isolation_canary",
+                rev,
+            )
+            .expect("plant");
+        }
+        let action = LegacyCommandAction::new(Supervisor::new());
+        let input = if cfg!(windows) {
+            json!({
+                "command": "cmd /c set",
+                "env": { "JOB_CANARY": "job-canary-present" }
+            })
+        } else {
+            json!({
+                "command": "sh -c 'env'",
+                "env": { "JOB_CANARY": "job-canary-present" }
+            })
+        };
+        let out = action
+            .execute(&input, CancelHandle::never())
+            .await
+            .expect("runs");
+        assert!(out.ok, "{out:?}");
+        assert!(
+            out.output.contains("job-canary-present"),
+            "positive control: the job env row reached the child: {out:?}"
+        );
+        assert!(
+            !out.output.contains("sk_live_isolation_canary"),
+            "an unreferenced vault value leaked into the child environment: {out:?}"
+        );
+    }
+
 

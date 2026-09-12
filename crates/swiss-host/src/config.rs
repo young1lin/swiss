@@ -75,33 +75,14 @@ pub struct GatewayConfig {
 
 /// Expand `${ENV_VAR}` references in ONE string — the build-time step of the credential model,
 /// shared with the tunnel connections so tunnels.json can hold refs exactly like the config
-/// files do. Hand-rolled scanner (ADR-007): `[A-Z0-9_]+` between `${` and `}`.
+/// files do.
+///
+/// Now a thin wrapper over the ONE shared resolver (docs/19 D1/D4, swiss-core refs.rs), which
+/// also speaks `secret://name`. This wrapper stays LENIENT on vault errors for the callers that
+/// have not been moved to the strict contract yet: a string it cannot fully resolve comes back
+/// exactly as authored, the pre-vault behaviour, rather than half-expanded.
 pub fn resolve_env_refs(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = String::with_capacity(value.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-            // Scan the candidate name; a non-conforming char closes it as literal text.
-            let mut j = i + 2;
-            while j < bytes.len()
-                && (bytes[j].is_ascii_uppercase() || bytes[j].is_ascii_digit() || bytes[j] == b'_')
-            {
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j] == b'}' && j > i + 2 {
-                let name = &value[i + 2..j];
-                out.push_str(&env_lookup(name).unwrap_or_default());
-                i = j + 1;
-                continue;
-            }
-        }
-        // Advance one character (not one byte) so multi-byte text survives.
-        let ch_len = value[i..].chars().next().map(char::len_utf8).unwrap_or(1);
-        out.push_str(&value[i..i + ch_len]);
-        i += ch_len;
-    }
-    out
+    swiss_core::secure::refs::resolve(value).unwrap_or_else(|_| value.to_string())
 }
 
 fn resolve_value(v: &Value) -> Value {
@@ -119,10 +100,15 @@ fn resolve_obj(o: &Map<String, Value>) -> Map<String, Value> {
         .collect()
 }
 
-/// True for a value that is exactly one `${ENV_VAR}` reference — i.e. a secret held in the
-/// sealed env store, not inline.
+/// True for a value that is exactly one credential reference — `${ENV_VAR}` (held in the
+/// sealed env store) or `secret://name` (held in the vault, docs/19 D1) — i.e. a secret held
+/// outside the file, not inline. The masking stack keys off this to show the reference instead
+/// of ever holding the value.
 pub fn is_env_ref(v: &Value) -> bool {
     let Some(s) = v.as_str() else { return false };
+    if let Some(name) = s.strip_prefix("secret://") {
+        return swiss_core::secure::secretstore::valid_name(name);
+    }
     if !s.starts_with("${") || !s.ends_with('}') || s.len() < 4 {
         return false;
     }
@@ -137,6 +123,18 @@ pub fn is_env_ref(v: &Value) -> bool {
 /// this is build-time, not load-time.
 pub fn resolve_def(def: &ServerDef) -> ServerDef {
     ServerDef(resolve_obj(&def.0))
+}
+
+/// The strict form (docs/19 D4): expand env refs AND vault refs across the whole definition
+/// tree, and refuse the definition when a vault reference names a secret this machine does not
+/// hold. The error carries the JSON path (`headers.Authorization references secret://x which is
+/// not in the vault`) plus no value ever — the caller prefixes the MCP's name.
+pub fn resolve_def_checked(def: &ServerDef) -> Result<ServerDef, String> {
+    let resolved =
+        swiss_core::secure::refs::resolve_value(&Value::Object(def.0.clone()))?;
+    Ok(ServerDef(
+        resolved.as_object().cloned().unwrap_or_default(),
+    ))
 }
 
 /// The token env var this build seeds into new configs.

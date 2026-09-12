@@ -318,6 +318,22 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
     Ok(ServerDef(def))
 }
 
+/// Map a vault mutation failure to its HTTP answer (docs/19 D5): a bad name is a 400 that
+/// quotes the grammar, a stale rev is a 409 carrying both numbers, a missing name a 404, and a
+/// failed seal a plain 500. None of them ever echoes the value.
+fn vault_error(e: &swiss_core::secure::secretstore::MutateError) -> Response {
+    use swiss_core::secure::secretstore::MutateError;
+    match e {
+        MutateError::InvalidName(_) => admin_error(StatusCode::BAD_REQUEST, &e.message()),
+        MutateError::RevMismatch { have, saw } => admin_json(
+            StatusCode::CONFLICT,
+            json!({ "error": e.message(), "have": have, "saw": saw }),
+        ),
+        MutateError::NotFound => admin_error(StatusCode::NOT_FOUND, &e.message()),
+        MutateError::Seal(_) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &e.message()),
+    }
+}
+
 // --- shared route plumbing ----------------------------------------------------------------------
 
 /// The lifecycle string after a lifecycle operation — `registry.get(name)?.lifecycle`.
@@ -453,6 +469,89 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 }
                 log::log("info", "token revoked", Some(json!({ "id": id })));
                 admin_json(StatusCode::OK, json!({ "ok": true }))
+            },
+        ),
+    );
+
+    // --- the secret vault (docs/19) ----------------------------------------------------------------
+    // Values only ever ENTER the vault: GET answers names + rev, PUT overwrites, DELETE removes.
+    // No route reads a value back — the panel cannot reveal what it never receives (docs/19 D5:
+    // write-only; a forgotten secret is re-stored, never revealed). Every mutation names the rev
+    // it planned against, the same discipline the plugins API has, so two panels cannot
+    // silently overwrite each other.
+    r = r.route(
+        "/api/secrets",
+        get(|| async {
+            admin_json(
+                StatusCode::OK,
+                json!({
+                    "secrets": swiss_core::secure::secretstore::list_secrets(),
+                    "rev": swiss_core::secure::secretstore::vault_rev(),
+                }),
+            )
+        }),
+    );
+    r = r.route(
+        "/api/secrets/{name}",
+        put(
+            |Path(name): Path<String>, body: crate::reply::NodeBody| async move {
+                let body = body.0;
+                // Both fields are required and honest about it: a missing rev is a malformed
+                // request (400), not a phony mismatch (409); an empty value is always a
+                // mistake, never a secret.
+                let Some(value) = body
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                else {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "input.value: required non-empty string",
+                    );
+                };
+                let Some(rev) = body.get("rev").and_then(Value::as_u64) else {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "input.rev: required (the number GET /api/secrets reported)",
+                    );
+                };
+                match swiss_core::secure::secretstore::put_secret(
+                    &swiss_core::secure::secretstore::secret_store_path(),
+                    &name,
+                    value,
+                    rev,
+                ) {
+                    Ok(new_rev) => {
+                        log::log("info", "secret stored", Some(json!({ "name": name })));
+                        admin_json(StatusCode::OK, json!({ "rev": new_rev }))
+                    }
+                    Err(e) => vault_error(&e),
+                }
+            },
+        )
+        .delete(
+            |Path(name): Path<String>,
+             Query(q): Query<std::collections::HashMap<String, String>>| async move {
+                // The rev rides as ?rev= — DELETE bodies are dropped by enough HTTP stacks
+                // that the query string is the one honest carrier. Missing is a malformed
+                // request (400), not a phony mismatch (409).
+                let Some(rev) = q.get("rev").and_then(|s| s.parse::<u64>().ok()) else {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "input.rev: required as ?rev=<the number GET /api/secrets reported>",
+                    );
+                };
+                match swiss_core::secure::secretstore::delete_secret(
+                    &swiss_core::secure::secretstore::secret_store_path(),
+                    &name,
+                    rev,
+                ) {
+                    Ok(new_rev) => {
+                        log::log("info", "secret deleted", Some(json!({ "name": name })));
+                        admin_json(StatusCode::OK, json!({ "rev": new_rev }))
+                    }
+                    Err(e) => vault_error(&e),
+                }
             },
         ),
     );
@@ -822,6 +921,19 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 let def = match build_def(&body) {
                     Ok(def) => def,
                     Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
+                };
+                // The one plain GET must carry resolved credentials: baseUrl, headers and
+                // proxy all pass the shared resolver first (docs/19 D4) — a missing vault
+                // reference fails the test honestly instead of shipping the reference text
+                // to a third party.
+                let def = match swiss_host::config::resolve_def_checked(&def) {
+                    Ok(def) => def,
+                    Err(err) => {
+                        return admin_json(
+                            StatusCode::OK,
+                            json!({ "ok": false, "ms": t0.elapsed().as_millis() as u64, "error": err }),
+                        )
+                    }
                 };
                 let base_url = def.get_str("baseUrl").unwrap_or("").to_string();
                 let mut headers = reqwest::header::HeaderMap::new();

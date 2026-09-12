@@ -9,6 +9,7 @@ use crate::app::{build_app, AppContext};
 use crate::bootstrap::ensure_first_run;
 use swiss_core::log;
 use swiss_core::secure::envstore::{env_store_path, inject_env_store};
+use swiss_core::secure::secretstore::{inject_vault, secret_store_path};
 use swiss_host::config::{config_path, load_config};
 use swiss_host::managed::ManagedStore;
 use swiss_host::token::TokenManager;
@@ -28,8 +29,10 @@ pub async fn run_gateway() -> Result<(), String> {
     // load_config reads that token. A no-op on every boot after the first.
     ensure_first_run();
     // Load the sealed env store into the in-process overlay (the .env replacement), then read
-    // the config through it.
+    // the config through it. The vault (docs/19) loads the same way — into its own lookup
+    // path, never into the env overlay: nothing merges vault values into a child environment.
     inject_env_store(&env_store_path());
+    inject_vault(&secret_store_path());
     let cfg = load_config(&config_path())?;
     // One source of truth for plugin rows from here on: the store wraps the raw config as
     // loaded (legacy root rows work as-is; versioned plugins.<id> rows take precedence) and
