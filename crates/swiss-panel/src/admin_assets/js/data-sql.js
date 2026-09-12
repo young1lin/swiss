@@ -19,6 +19,25 @@ function dbSqlLiteral(v) {
   return "'" + String(v).replace(/'/g, "''") + "'";
 }
 
+/** docs/22 W1.4: the one-column stats statements the header's right-click menu runs. Built with
+ *  the same identifier gate as the Commit preview — a column name that is not a bare word is
+ *  refused, never bare-spliced into SQL. `kind` picks the shape:
+ *  "dist" -> value + frequency (top 50); "num" -> COUNT/MIN/MAX/AVG. */
+function dbStatsSql(dialect, schema, table, column, kind) {
+  var q = function (n) {
+    var safe = dbQuoteIdentSafe(n);
+    if (!safe) throw new Error("not a valid identifier: " + n);
+    return dialect === "mysql" ? "`" + safe + "`" : '"' + safe + '"';
+  };
+  var target = (schema ? q(schema) + "." : "") + q(table);
+  var c = q(column);
+  if (kind === "num") {
+    return "SELECT COUNT(" + c + ") AS count, MIN(" + c + ") AS min, MAX(" + c + ") AS max, " +
+      "AVG(" + c + ") AS avg\nFROM " + target;
+  }
+  return "SELECT " + c + ", COUNT(*) AS count\nFROM " + target + "\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 50";
+}
+
 function dbPendingSql() {
   var d = state.db;
   if (!d.data) return [];
@@ -236,4 +255,4 @@ async function dbRunSql(explain) { // falsy runs the statement; "plan"|"analyze"
   renderDbGrid();
 }
 
-export { dbCommit, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbRunSql, dbSqlLiteral, dbWithExplain, renderDbBar };
+export { dbCommit, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbRunSql, dbSqlLiteral, dbStatsSql, dbWithExplain, renderDbBar };

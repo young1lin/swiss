@@ -4,7 +4,7 @@ import { dbCellMenu, dbExportCsv, dbOpenImport, dbResultCellMenu, dbSelAll } fro
 import { dbOpenCellEditor, dbCellText } from "./data-cell.js";
 import { dbEditCellEnter } from "./data-edit.js";
 import { renderDbFilters } from "./data-filters.js";
-import { renderDbBar } from "./data-sql.js";
+import { dbRunSql, dbSqlPaint, dbStatsSql, renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbOkToDrop, dbPkKey, dbPkVals } from "./data-view.js";
 import { popupMenu } from "./menu.js";
@@ -221,6 +221,25 @@ function renderDbToolbar() {
   head.appendChild(ctl);
 }
 
+/** docs/22 W1.4: fill the console with one generated stats statement and run it, so the SQL
+ *  is on screen (and in history) rather than hidden behind a one-off request. */
+function dbRunColumnStats(column, kind) {
+  var d = state.db;
+  var dialect = (d.conns.find(function (c) { return c.name === d.conn; }) || {}).dialect || "mysql";
+  var sql;
+  try {
+    sql = dbStatsSql(dialect, d.schema, d.table, column, kind);
+  } catch (err) { toast(String(err), true); return; }
+  d.sqlText = sql;
+  d.sqlOpen = true;
+  var con = $("dbConsole");
+  if (con) con.hidden = false;
+  var ta = $("dbSql");
+  if (ta) ta.value = sql;
+  dbSqlPaint();
+  void dbRunSql();
+}
+
 function dbPaintCell(td, v, has) {
   if (!has || v === undefined) return; // nothing set yet (an insert stub cell)
   if (v === null) { td.appendChild(el("span", "db-null", "NULL")); return; }
@@ -325,6 +344,17 @@ function renderDbGrid() {
       d.offset = 0;
       dbDropEdits();
       dbLoadData(true);
+    };
+    // docs/22 W1.4: the header's own right-click runs this column's stats — top values or
+    // COUNT/MIN/MAX/AVG. The statement is generated behind the identifier gate and lands in
+    // the console (visible, in history) with its result in the standing result grid.
+    th.oncontextmenu = function (e) {
+      e.preventDefault();
+      dbTipHide();
+      popupMenu(this.getBoundingClientRect(), [
+        { label: "Value distribution\u2026", fn: function () { dbRunColumnStats(c.name, "dist"); } },
+        { label: "Numeric stats\u2026", fn: function () { dbRunColumnStats(c.name, "num"); } },
+      ]);
     };
     hr.appendChild(th);
   });
