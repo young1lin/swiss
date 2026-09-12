@@ -53,6 +53,8 @@ week (`docs/06` Phase 6), which is calendar, not code.
 | [`docs/14-terminal-plugin-spec.md`](docs/14-terminal-plugin-spec.md) | A web terminal plugin — remote SSH through a host capability, local PTY, xterm.js. **Shipped**; its local shell is off by default — turn it on from the gear beside the Terminal page's target picker |
 | [`docs/15-terminal-paste-and-local-shell-spec.md`](docs/15-terminal-paste-and-local-shell-spec.md) | Terminal paste/copy keys the Windows way, and the local shell defaulting to pwsh with a panel switch. **Shipped** |
 | [`docs/16-operations-hardening-spec.md`](docs/16-operations-hardening-spec.md) | Operations hardening: a daemon environment scrubbed of the launcher's agent/CI noise, an isolated 19998 test home, build stamps and a one-step deploy script, Rust CI, a RustCrypto duplicate-stack audit. **H1-H5 shipped** - H4 was already covered by the pre-existing build.yml; the audit is ADR-013 |
+| [`docs/21-data-web-gap-analysis.md`](docs/21-data-web-gap-analysis.md) | Data view vs five mature web DB tools (Adminer, DbGate, CloudBeaver, pgAdmin4, pgweb): the 35-item gap table with file:line evidence, read out of the read-only `../terminals-ref` clones |
+| [`docs/22-data-parity-spec.md`](docs/22-data-parity-spec.md) | Data view full parity in six batches W0-W5: wiring-level exports/filters/timing, grid ergonomics, server-side completion, activity monitor, Redis structured editing, no-PK edits, streaming SQL dump, DDL minimal set. **Spec + hand-off prompt; not started** |
 
 Everything docs/09 and docs/10 designed is now code, and each document's status header names the
 commit that landed it. None of it changed the Node-panel source-of-truth, the sealed formats, or
