@@ -1,6 +1,7 @@
 import { $, apiJson, el, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
 import { dbClearSel, dbDropEdits, dbOkToDrop, dbPending, dbPkKey } from "./data-view.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
@@ -174,6 +175,14 @@ function dbCopyCsvCell(v) {
   return String.fromCharCode(34) + s.split(String.fromCharCode(34)).join(String.fromCharCode(34) + String.fromCharCode(34)) + String.fromCharCode(34);
 }
 
+/** docs/22 W1.5: one filter straight from a cell value — push it, paint the row, apply. */
+function dbPushCellFilter(column, op, value) {
+  var d = state.db;
+  d.filters.push({ column: column, op: op, value: value });
+  renderDbFilters();
+  dbApplyFilters();
+}
+
 function dbCellMenu(e, row, key, column, editInDialog) {
   e.preventDefault();
   var d = state.db;
@@ -196,6 +205,13 @@ function dbCellMenu(e, row, key, column, editInDialog) {
   item("Copy value", function () { dbCopyText(value === null || value === undefined ? "NULL" : String(value)); });
   if (editInDialog) {
     item("Edit in dialog\u2026", editInDialog); // long text / JSON: the user-chosen dialog path
+  }
+  // docs/22 W1.5: filter-by-value straight off a cell. NULL cells show none of these (there is
+  // no value to equal); the pushed filter lands in the standing filter row like a typed one.
+  if (!d.sqlResult && row && value !== null && value !== undefined) {
+    item("Filter = value", function () { dbPushCellFilter(column, "eq", value); });
+    item("Filter \u2260 value", function () { dbPushCellFilter(column, "ne", value); });
+    item("Filter contains", function () { dbPushCellFilter(column, "like", value); });
   }
   // Checked-row copies live in the SAME menu — one right-click reaches every format.
   if (!d.sqlResult) {
