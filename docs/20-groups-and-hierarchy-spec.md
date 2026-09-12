@@ -1,6 +1,6 @@
 # 20 — 分组与层级：一个模型、一族 API、一个组件
 
-> 状态：**待做**。基线 `109397e`（2026-09-13）。配套交接提示词：[20-groups-and-hierarchy-prompt.md](20-groups-and-hierarchy-prompt.md)。
+> 状态：**已实施（G1–G8，`72dc010` 起，完成于本提交）**。基线 `109397e`（2026-09-13）。配套交接提示词：[20-groups-and-hierarchy-prompt.md](20-groups-and-hierarchy-prompt.md)。
 > 设计语言的总纲从本文起由 `.claude/skills/swiss-design/SKILL.md` 承载：本文 §4 是那份语言在「分组列表」
 > 上的展开，两者冲突时以 skill 为准（skill 改了要回来改这里）。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/18-panel-visual-refresh-spec.md`（本文沿用它的 token、
@@ -18,6 +18,9 @@
 > 建议执行。追加（同日）："专门写个 swiss-design skill 专门用来写所有的设计风格，整体设计风格内容"。
 
 ## 0. 现状与缺口（为什么是它、为什么是现在）
+
+> 本节（含其行号引用，如 `src/adminapi.rs:481-`、`js/data-view.js:309-331`）描述的是**实施前**
+> 的代码——它们是 2026-09-13 截图核对时的证据坐标，实施后各文件行号已漂移，按函数名找，不按行号找。
 
 2026-09-13 在 19999 上逐页截图核对，以及读了三处服务端存储之后，问题可以说得很具体：
 
