@@ -165,6 +165,31 @@ pub fn put_secret(path: &Path, name: &str, value: &str, expect_rev: u64) -> Resu
     persist_then_commit(path, Vault { rev: rev + 1, secrets })
 }
 
+/// Bulk restore for 'swiss import' (docs/19 D7): merge imported entries into the vault,
+/// imported values winning over what is stored — the same semantics the env section of a
+/// bundle has. Nothing is deleted: a name absent from the bundle keeps its value, because an
+/// import is a restore, not a mirror. Entries whose name is not valid or whose value is not a
+/// string are skipped, not fatal — the env section of a bundle tolerates the same, and one bad
+/// hand-edited entry must not cost the operator the other forty.
+pub fn import_secrets(
+    path: &Path,
+    entries: &serde_json::Map<String, serde_json::Value>,
+) -> Result<u64, MutateError> {
+    // Merge against the FILE, not the in-process vault: 'swiss import' runs in a fresh CLI
+    // process where nothing has injected the vault yet, and the merge promise (a name the
+    // bundle does not mention keeps its value) is about what is stored on disk.
+    let Vault { rev, mut secrets } = read_file(path);
+    for (name, value) in entries {
+        if !valid_name(name) {
+            continue;
+        }
+        if let Some(s) = value.as_str() {
+            secrets.insert(name.clone(), s.to_string());
+        }
+    }
+    persist_then_commit(path, Vault { rev: rev + 1, secrets })
+}
+
 /// Remove one secret. Absent names answer NotFound rather than quietly bumping the rev.
 pub fn delete_secret(path: &Path, name: &str, expect_rev: u64) -> Result<u64, MutateError> {
     let current = vault().read().map(|v| (v.rev, v.secrets.clone())).ok();

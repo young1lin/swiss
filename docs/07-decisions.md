@@ -341,3 +341,40 @@ reading: sqlx still links the 0.10 generation, so the disk saving is small; the 
 workspace no longer OWNS the old generation, and the aes-gcm chain (the one crate family we
 could fully merge) is single-copy. Hard constraints held: no new duplicate pair appeared, and
 the TLS stack and async runtime stay single.
+
+## ADR-014 — The secret vault is a sealed file of its own, referenced by `secret://name`
+
+**Status: Accepted (2026-09-14).** Spec: docs/19.
+
+Credentials needed one more home. The env store doubles as the environment every child
+process reads, so a key stored there for one http MCP is readable by every proc MCP, job
+script and local shell; `${ENV_VAR}` also resolves missing names to empty, which is the wrong
+failure for a credential. The vault (docs/19) is a separate sealed file, `secrets.json`, in
+the same frozen envelope as every state file, holding `{rev, secrets: {name -> value}}` —
+D2 said "flat like the env store"; the rev needs one counter, so the values are flat under
+one key (recorded as a spec deviation in docs/19 §3).
+
+The decisions that shape the implementation:
+
+- **Names are lowercase kebab, `[a-z][a-z0-9-]{0,63}`** — a different character class than
+  `${UPPER_SNAKE}`, impossible to confuse by eye or grammar, and already the idiom of plugin
+  and page ids the panel speaks.
+- **`secret://name` resolves at every use point** — adapter build, ssh connect, rest test,
+  job run — through one resolver shared with env refs. Missing names are a hard refusal
+  naming the surface and the reference (never the value); missing env names stay lenient
+  (empty) because that contract already shipped.
+- **Write-only.** No API reads a value back; the panel lists names. A forgotten value can
+  only be re-stored, and the masking stack keys off `is_env_ref`, which now recognises
+  `secret://` too.
+- **Nothing merges the vault into a child environment.** The one exit for a value is
+  substitution at a use point (D8) — a vault value never reaches a proc child's `set` dump.
+- **Mutations are rev-checked** like the plugins API: PUT/DELETE name the rev they planned
+  against; a stale rev is a 409 with both numbers, a missing rev an honest 400.
+- **`export` carries the vault, `import` merges it** — values included, because the bundle is
+  already the one plaintext escape; a restore never deletes a name the bundle omits.
+- **Host-owned surface, not a plugin.** Every plugin may depend on the vault, so it cannot be
+disabled from the page that would do the disabling. The panel section lives on the host's own
+Plugins page.
+
+Node-parity rule held throughout: the resolver, the store, the API contract and the export
+section are shape-identical in both builds, and the panel is written once in the Node tree.

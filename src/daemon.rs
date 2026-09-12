@@ -214,6 +214,12 @@ pub fn export_state() -> Value {
             .into_iter()
             .map(|(k, v)| (k, Value::String(v)))
             .collect()),
+        // The vault rides the bundle whole: values included, because the bundle is already the
+        // one plaintext escape (docs/19 D7) — the CLI warns before writing it to a terminal.
+        "secrets": read_secure_json(&swiss_core::secure::secretstore::secret_store_path())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| serde_json::json!({ "rev": 0, "secrets": {} })),
     })
 }
 
@@ -255,6 +261,22 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
         }
         write_env_store(&merged, &swiss_core::secure::envstore::env_store_path())?;
         restored.push("env.json".into());
+    }
+    if let Some(vault) = obj.get("secrets") {
+        // Accept the export shape ({rev, secrets: {name -> value}}) or a bare map; imported
+        // values win, nothing is deleted (docs/19 D7 — a restore, not a mirror). The static
+        // empty map is only for a section that is neither — a borrowed Map::new() would die
+        // at the end of the expression.
+        let entries: serde_json::Map<String, Value> = match vault.get("secrets") {
+            Some(inner) => inner.as_object().cloned().unwrap_or_default(),
+            None => vault.as_object().cloned().unwrap_or_default(),
+        };
+        swiss_core::secure::secretstore::import_secrets(
+            &swiss_core::secure::secretstore::secret_store_path(),
+            &entries,
+        )
+        .map_err(|e| e.message())?;
+        restored.push("secrets.json".into());
     }
     Ok(restored)
 }
@@ -958,11 +980,51 @@ mod tests {
                 "gateway.config.json",
                 "managed.json",
                 "tunnels.json",
-                "env.json"
+                "env.json",
+                "secrets.json"
             ]
         );
         assert_eq!(export_state()["config"]["port"], json!(18084));
         assert_eq!(read_gateway_token().as_deref(), Some("tok"));
+        clear_state();
+    }
+
+    #[tokio::test]
+    async fn the_vault_rides_the_bundle_and_an_import_merges_not_mirrors() {
+        let _lock = daemon_state().await;
+        // Two secrets on the source machine; the bundle carries one of them, changed.
+        seal(
+            "secrets.json",
+            json!({ "rev": 4, "secrets": { "stripe-key": "sk_old", "keep-me": "v" } }),
+        );
+        let bundle = export_state();
+        assert_eq!(bundle["secrets"]["secrets"]["stripe-key"], json!("sk_old"));
+
+        // The target machine already holds the other name: a restore keeps it, and the
+        // imported value wins on the name both have (docs/19 D7).
+        seal(
+            "secrets.json",
+            json!({ "rev": 1, "secrets": { "keep-me": "target-value", "local-only": "x" } }),
+        );
+        import_state(&json!({
+            "version": 1,
+            "secrets": { "secrets": { "stripe-key": "sk_new", "keep-me": "source-value" } }
+        }))
+        .expect("the bundle imports");
+
+        let vault = export_state()["secrets"]["secrets"].clone();
+        assert_eq!(vault["stripe-key"], json!("sk_new")); // imported
+        assert_eq!(vault["keep-me"], json!("source-value")); // imported wins
+        assert_eq!(vault["local-only"], json!("x")); // nothing is deleted
+        // A tampered entry (bad name) is skipped without costing the rest.
+        import_state(&json!({
+            "version": 1,
+            "secrets": { "secrets": { "not_a_name": "y", "fresh-one": "z" } }
+        }))
+        .expect("the bundle imports");
+        let vault = export_state()["secrets"]["secrets"].clone();
+        assert_eq!(vault.get("not_a_name"), None);
+        assert_eq!(vault["fresh-one"], json!("z"));
         clear_state();
     }
 

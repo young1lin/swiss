@@ -36,8 +36,8 @@ $Exe = Join-Path $PSScriptRoot '..\target-test\release\swiss.exe'
 $HealthUrl = "http://127.0.0.1:$Port/health"
 
 # Sealed state worth snapshotting: keys, config, managed MCPs, tunnels, jobs and their run
-# facts, the env store. Copied, never linked - the test home must be a point-in-time snapshot
-# the test instance may then scribble over freely.
+# facts, the env store, the secret vault (docs/19). Copied, never linked - the test home must
+# be a point-in-time snapshot the test instance may then scribble over freely.
 $StateFiles = @(
     'master.key',
     'gateway.config.json',
@@ -45,7 +45,8 @@ $StateFiles = @(
     'tunnels.json',
     'jobs.json',
     'jobs-state.json',
-    'env.json'
+    'env.json',
+    'secrets.json'
 )
 
 function Get-PortOwnerPid {
