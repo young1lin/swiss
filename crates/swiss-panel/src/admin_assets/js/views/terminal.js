@@ -513,6 +513,9 @@ async function closeSession(id) {
 function render() {
   var pane = $("pane");
   if (!pane) return;
+  // term-host turns the pane into the definite-height flex column the page fills exactly
+  // (views.css); unmount() takes it back off so no other page inherits the layout.
+  pane.classList.add("term-host");
   var pick = targetRows(targets);
   pane.innerHTML = '<div class="term-page">' +
     '<div class="term-bar">' +
@@ -631,6 +634,8 @@ export function countText() {
 
 export function unmount() {
   epoch += 1;
+  var pane = $("pane");
+  if (pane) pane.classList.remove("term-host");
   if (fitTimer) { clearTimeout(fitTimer); fitTimer = null; }
   window.removeEventListener("resize", scheduleFit);
   models.forEach(function (m) {
