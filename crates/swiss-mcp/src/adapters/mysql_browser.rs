@@ -8,9 +8,9 @@ use super::mysql::{
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
     browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    build_ddl_op_sql, build_edit_statements, export_row_limit, map_import_rows, to_browse_columns,
-    to_csv, to_json_lines, BrowseColumn, DbBrowser, DbDialect, EXPORT_CHUNK, EXPORT_ROW_CAP,
-    IMPORT_ROW_CAP,
+    build_ddl_op_sql, build_edit_statements, export_row_limit, map_import_rows, readback_plan,
+    to_browse_columns, to_csv, to_json_lines, BrowseColumn, DbBrowser, DbDialect, ReadBack,
+    EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
 use sqlx::mysql::MySqlPool;
@@ -267,12 +267,31 @@ impl DbBrowser for MysqlBrowser {
             &columns,
             &primary,
         )?;
+        // docs/22 W1.7: same read-back as Postgres, shaped for MySQL — an insert's row comes
+        // back by LAST_INSERT_ID() on the same connection, an update's by its primary key;
+        // both inside the same transaction so the reply is what the commit really kept.
+        let col_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         let mut results: Vec<Value> = Vec::with_capacity(stmts.len());
         for (i, stmt) in stmts.iter().enumerate() {
+            let plan = readback_plan(
+                DbDialect::Mysql,
+                Some(&self.database),
+                table,
+                &col_names,
+                &primary,
+                &typed[i],
+            );
             let affected = super::mysql::run_query_tx(&mut tx, &stmt.sql, &stmt.params).await?;
-            results.push(json!({"op": typed[i].op(), "affected": affected}));
+            let row = match plan {
+                ReadBack::Select(s) => super::mysql::run_query_tx_rows(&mut tx, &s.sql, &s.params)
+                    .await?
+                    .into_iter()
+                    .next(),
+                _ => None,
+            };
+            results.push(json!({"op": typed[i].op(), "affected": affected, "row": row}));
         }
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(json!({ "results": results }))

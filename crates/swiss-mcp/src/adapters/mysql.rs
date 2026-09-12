@@ -523,6 +523,29 @@ pub async fn run_query_tx(
     Ok(result.rows_affected())
 }
 
+/// docs/22 W1.7: the rows-returning sibling of run_query_tx — the same-transaction read-back
+/// SELECT (by primary key, or by LAST_INSERT_ID() right after an insert) needs the committed
+/// row itself, not a count.
+pub async fn run_query_tx_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Map<String, Value>>, String> {
+    let mut query = sqlx::query(sql);
+    for p in params {
+        query = bind_value(query, p);
+    }
+    let rows = query.fetch_all(&mut **tx).await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(mysql_row_to_value)
+        .filter_map(|v| match v {
+            Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .collect())
+}
+
 /// The health verdict on `SELECT 1 AS ok`. A bare integer literal is typed LONGLONG by the
 /// server, so with the exact-string mapping the row comes back as `{ ok: "1" }`. Both spellings
 /// mean healthy; anything else (or no row at all) is not.

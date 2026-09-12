@@ -1115,6 +1115,112 @@ fn typed_ph(dialect: DbDialect, params: &[Value], data_type: Option<&str>) -> St
 /// dropped from SET/INSERT (a stale page may reference a dropped column); an edit that ends up
 /// with nothing to do is an error, because "commit 3 changes" that silently did 2 is a lie.
 ///
+/// How one edit's committed row comes home with the batch reply (docs/22 W1.7). The point is
+/// showing what the SERVER kept — silent truncation, column DEFAULTs, trigger rewrites —
+/// instead of the value the panel sent. Three shapes:
+///
+/// - an insert on Postgres rides its own INSERT (a RETURNING suffix carries the row out);
+/// - an insert on MySQL reads back by LAST_INSERT_ID() in the same transaction;
+/// - an update selects its row by primary key (the edit already carries those values).
+///
+/// Deletes read nothing back — the row is gone by design — and a table without a usable key
+/// reads nothing back either (W4.1 makes those editable later).
+#[derive(Clone, Debug)]
+pub enum ReadBack {
+    /// The suffix to append to the edit's own INSERT; its parameters are unchanged.
+    Returning(String),
+    /// A same-transaction SELECT. Its parameters are the edit's primary-key values — or empty
+    /// when the SQL carries LAST_INSERT_ID() itself.
+    Select(BuiltStatement),
+    /// No row to read (a delete, or no key to address one by).
+    None,
+}
+
+/// Read-back column list + addressing for one edit. `columns` is the full table column set (the
+/// row should come back shaped like a grid row); `pk` the table's primary-key column names.
+/// Identifier quoting goes through the same whitelist as every other statement here, so an
+/// unpromising name downgrades to ReadBack::None rather than poisoning the commit.
+pub fn readback_plan(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    columns: &[String],
+    pk: &[String],
+    edit: &BrowseEdit,
+) -> ReadBack {
+    let cols = || -> Option<String> {
+        columns
+            .iter()
+            .map(|c| quote_ident(dialect, c))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()
+            .map(|v| v.join(", "))
+    };
+    let target = || -> Option<String> {
+        let t = quote_ident(dialect, table).ok()?;
+        Some(match schema {
+            Some(s) => format!("{}.{t}", quote_ident(dialect, s).ok()?),
+            None => t,
+        })
+    };
+    match edit {
+        BrowseEdit::Delete { .. } => ReadBack::None,
+        BrowseEdit::Insert { .. } if dialect == DbDialect::Pg => match cols() {
+            Some(list) => ReadBack::Returning(format!(" RETURNING {list}")),
+            None => ReadBack::None,
+        },
+        BrowseEdit::Insert { .. } => {
+            // MySQL has no RETURNING: the auto-generated key of the statement that just ran is
+            // addressable as LAST_INSERT_ID() on the same connection, so the read-back SELECT
+            // needs no parameters at all. A composite key with an auto column cannot be
+            // addressed this way — those inserts read nothing back.
+            let (Some(list), Some(target), true) = (cols(), target(), pk.len() == 1) else {
+                return ReadBack::None;
+            };
+            let Some(k) = quote_ident(dialect, &pk[0]).ok() else {
+                return ReadBack::None;
+            };
+            ReadBack::Select(BuiltStatement {
+                sql: format!("SELECT {list} FROM {target} WHERE {k} = LAST_INSERT_ID()"),
+                params: Vec::new(),
+            })
+        }
+        BrowseEdit::Update { pk: values, .. } => {
+            let (Some(list), Some(target)) = (cols(), target()) else {
+                return ReadBack::None;
+            };
+            let mut where_parts: Vec<String> = Vec::with_capacity(pk.len());
+            let mut params: Vec<Value> = Vec::with_capacity(pk.len());
+            for k in pk {
+                let Some(v) = values.get(k) else {
+                    return ReadBack::None; // the edit cannot address its own row
+                };
+                let Some(quoted) = quote_ident(dialect, k).ok() else {
+                    return ReadBack::None;
+                };
+                params.push(v.clone());
+                where_parts.push(if dialect == DbDialect::Mysql {
+                    format!("{quoted} = ?")
+                } else {
+                    format!("{quoted} = ${}", params.len())
+                });
+            }
+            if where_parts.is_empty() {
+                return ReadBack::None; // no key columns: nothing to select by
+            }
+            ReadBack::Select(BuiltStatement {
+                sql: format!("SELECT {list} FROM {target} WHERE {}", where_parts.join(" AND ")),
+                params,
+            })
+        }
+    }
+}
+
+/// Turn a buffered edit list into executable statements: one statement per edit, in order, with
+/// every value bound and every identifier pre-vetted. Column names the table does not have are
+/// dropped from SET/INSERT (a stale page may reference a dropped column); an edit that ends up
+/// with nothing to do is an error, because "commit 3 changes" that silently did 2 is a lie.
+///
 /// Updates and deletes address rows by the FULL primary key only — the DBeaver default — so an
 /// edit can never fan out over more rows than the cell you changed.
 pub fn build_edit_statements(
@@ -2003,6 +2109,70 @@ mod tests {
         .unwrap();
         // A literal % stays literal (escaped); only * translates.
         assert_eq!(out.params, vec![json!("%100!%%")]);
+    }
+
+    #[test]
+    fn readback_plan_addresses_every_committed_row() {
+        // docs/22 W1.7: the commit reply carries what the SERVER kept, not what was sent.
+        let vmap = |pairs: &[(&str, i64)]| -> Map<String, Value> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), json!(v)))
+                .collect()
+        };
+        let columns = vec!["id".to_string(), "name".to_string()];
+        let pk = vec!["id".to_string()];
+        let upd = BrowseEdit::Update {
+            pk: vmap(&[("id", 7)]),
+            changes: vmap(&[("name", 0)]),
+        };
+        match readback_plan(DbDialect::Mysql, None, "users", &columns, &pk, &upd) {
+            ReadBack::Select(s) => {
+                assert_eq!(s.sql, "SELECT `id`, `name` FROM `users` WHERE `id` = ?");
+                assert_eq!(s.params, vec![json!(7)]);
+            }
+            other => panic!("mysql update selects its row back: {other:?}"),
+        }
+        match readback_plan(DbDialect::Pg, Some("app"), "users", &columns, &pk, &upd) {
+            ReadBack::Select(s) => {
+                assert_eq!(
+                    s.sql,
+                    "SELECT \"id\", \"name\" FROM \"app\".\"users\" WHERE \"id\" = $1"
+                );
+            }
+            other => panic!("pg update selects its row back: {other:?}"),
+        }
+        let ins = BrowseEdit::Insert {
+            values: vmap(&[("name", 0)]),
+        };
+        match readback_plan(DbDialect::Pg, None, "users", &columns, &pk, &ins) {
+            ReadBack::Returning(suffix) => {
+                assert_eq!(suffix, " RETURNING \"id\", \"name\"");
+            }
+            other => panic!("pg insert rides RETURNING: {other:?}"),
+        }
+        match readback_plan(DbDialect::Mysql, None, "users", &columns, &pk, &ins) {
+            ReadBack::Select(s) => {
+                assert_eq!(
+                    s.sql,
+                    "SELECT `id`, `name` FROM `users` WHERE `id` = LAST_INSERT_ID()"
+                );
+                assert!(s.params.is_empty());
+            }
+            other => panic!("mysql insert reads LAST_INSERT_ID back: {other:?}"),
+        }
+        let del = BrowseEdit::Delete {
+            pk: vmap(&[("id", 7)]),
+        };
+        assert!(matches!(
+            readback_plan(DbDialect::Mysql, None, "users", &columns, &pk, &del),
+            ReadBack::None
+        ));
+        // No key to address the row by: nothing comes back, the commit itself is unaffected.
+        assert!(matches!(
+            readback_plan(DbDialect::Mysql, None, "users", &columns, &[], &upd),
+            ReadBack::None
+        ));
     }
 
     #[test]

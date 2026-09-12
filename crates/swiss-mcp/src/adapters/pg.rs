@@ -679,6 +679,28 @@ pub async fn run_pg_tx(
     Ok(result.rows_affected())
 }
 
+/// docs/22 W1.7: the rows-returning sibling of run_pg_tx — an INSERT..RETURNING or the
+/// same-transaction read-back SELECT needs the committed row itself, not a count.
+pub async fn run_pg_tx_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Map<String, Value>>, String> {
+    let mut query = sqlx::query(sql);
+    for p in params {
+        query = bind_value(query, p);
+    }
+    let rows = query.fetch_all(&mut **tx).await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(pg_row_to_value)
+        .filter_map(|v| match v {
+            Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .collect())
+}
+
 /// Run one PARAMETERIZED statement (extended protocol — Postgres itself refuses a second
 /// statement at Parse) and return its rows.
 pub async fn pg_query_rows(

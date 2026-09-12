@@ -2,7 +2,7 @@ import { $, apiJson, el, state, toast } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbHighlightSql } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending } from "./data-view.js";
+import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
 
 /* --- pending-SQL preview ------------------------------------------------------------------------ */
 /* The exact statements the server will run on Commit, mirrored from buildEditStatements
@@ -123,6 +123,21 @@ function renderDbBar() {
   }
 }
 
+/** docs/22 W1.7: fold one committed row's read-back into the page's rows. The commit reply
+ *  carries what the SERVER kept — silent truncation, DEFAULTs, trigger rewrites — so patching it
+ *  in shows the truth immediately, whatever the reload race does next. Matching uses the same
+ *  pk key the grid's edit buffer uses. */
+function dbApplyReadback(rows, pkCols, pk, row) {
+  if (!rows || !pkCols || !pkCols.length || !row) return rows;
+  var want = dbPkKey(pkCols, pk);
+  rows.forEach(function (r) {
+    if (dbPkKey(pkCols, r) === want) {
+      Object.keys(row).forEach(function (c) { r[c] = row[c]; });
+    }
+  });
+  return rows;
+}
+
 async function dbCommit() {
   var d = state.db;
   if (!d.conn || !d.table || !d.data) return;
@@ -153,6 +168,14 @@ async function dbCommit() {
   if (!j) return; // the server rolled back; the buffer stays exactly as it was
   var affected = (j.results || []).reduce(function (a, r) { return a + (r.affected || 0); }, 0);
   toast("Committed " + edits.length + " change" + (edits.length > 1 ? "s" : "") + " · " + affected + " row" + (affected === 1 ? "" : "s") + " affected");
+  // docs/22 W1.7: each update's read-back row lands on the page before the reload, so the
+  // committed truth (truncated, defaulted, trigger-rewritten) is what the grid shows next.
+  var pkCols = (d.data && d.data.primaryKey) || [];
+  (j.results || []).forEach(function (r, i) {
+    if (r && r.row && edits[i] && edits[i].op === "update" && d.data && d.data.rows) {
+      dbApplyReadback(d.data.rows, pkCols, edits[i].pk, r.row);
+    }
+  });
   dbDropEdits();
   dbLoadData(true);
 }
@@ -255,4 +278,4 @@ async function dbRunSql(explain) { // falsy runs the statement; "plan"|"analyze"
   renderDbGrid();
 }
 
-export { dbCommit, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbRunSql, dbSqlLiteral, dbStatsSql, dbWithExplain, renderDbBar };
+export { dbApplyReadback, dbCommit, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbRunSql, dbSqlLiteral, dbStatsSql, dbWithExplain, renderDbBar };

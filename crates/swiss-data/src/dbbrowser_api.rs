@@ -870,7 +870,21 @@ mod tests {
                 .as_array()
                 .unwrap_or(&vec![])
                 .iter()
-                .map(|e| json!({ "op": e.get("op").and_then(Value::as_str).unwrap_or(""), "affected": 1 }))
+                .map(|e| {
+                    // docs/22 W1.7: the adapter reads every committed update/insert back in the
+                    // same transaction and adds "row" — a delete stays null. The stub mirrors
+                    // that shape so the route test can pin that the field survives the route.
+                    let op = e.get("op").and_then(Value::as_str).unwrap_or("");
+                    json!({
+                        "op": op,
+                        "affected": 1,
+                        "row": if op == "delete" {
+                            Value::Null
+                        } else {
+                            json!({ "id": 1, "name": "tru" })
+                        },
+                    })
+                })
                 .collect();
             Ok(json!({ "results": results }))
         }
@@ -1607,9 +1621,11 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        // docs/22 W1.7: each result also carries the committed row as the adapter read it back
+        // (same transaction) — the route passes the field through untouched.
         assert_eq!(
             body.expect("json")["results"],
-            json!([{ "op": "update", "affected": 1 }])
+            json!([{ "op": "update", "affected": 1, "row": { "id": 1, "name": "tru" } }])
         );
         assert_eq!(
             seen.lock().expect("seen").edits.take(),

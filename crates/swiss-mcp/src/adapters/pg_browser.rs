@@ -15,8 +15,9 @@ use async_trait::async_trait;
 use swiss_host::dbbrowser::{
     browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql, browse_table_sort,
     build_ddl_op_sql, build_edit_statements, build_pg_ddl, export_row_limit, js_to_string,
-    map_import_rows, to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
-    BrowseForeignKey, DbBrowser, DbDialect, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    map_import_rows, readback_plan, to_browse_columns, to_browse_indexes, to_csv, to_json_lines,
+    BrowseColumn, BrowseForeignKey, DbBrowser, DbDialect, ReadBack, EXPORT_CHUNK, EXPORT_ROW_CAP,
+    IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
 use sqlx::PgPool;
@@ -369,12 +370,48 @@ impl DbBrowser for PgBrowser {
             &columns,
             &primary,
         )?;
+        // docs/22 W1.7: every update/insert also reads its committed row back inside the same
+        // transaction — silent truncation, DEFAULTs and trigger rewrites land on screen instead
+        // of the value that was typed. Deletes read nothing back; a plan that cannot address a
+        // row comes home null and the commit itself is unaffected.
+        let col_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         let mut results: Vec<Value> = Vec::with_capacity(stmts.len());
         for (i, stmt) in stmts.iter().enumerate() {
-            let affected = super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
-            results.push(json!({"op": typed[i].op(), "affected": affected}));
+            let plan = readback_plan(
+                DbDialect::Pg,
+                Some(&schema),
+                table,
+                &col_names,
+                &primary,
+                &typed[i],
+            );
+            let (affected, row) = match &plan {
+                ReadBack::Returning(suffix) => {
+                    let rows = super::pg::run_pg_tx_rows(
+                        &mut tx,
+                        &format!("{}{}", stmt.sql, suffix),
+                        &stmt.params,
+                    )
+                    .await?;
+                    (rows.len() as u64, rows.into_iter().next())
+                }
+                _ => {
+                    let affected =
+                        super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
+                    let row = match plan {
+                        ReadBack::Select(s) => super::pg::run_pg_tx_rows(&mut tx, &s.sql, &s.params)
+                            .await?
+                            .into_iter()
+                            .next(),
+                        ReadBack::None => None,
+                        ReadBack::Returning(_) => unreachable!("matched above"),
+                    };
+                    (affected, row)
+                }
+            };
+            results.push(json!({"op": typed[i].op(), "affected": affected, "row": row}));
         }
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(json!({ "results": results }))
