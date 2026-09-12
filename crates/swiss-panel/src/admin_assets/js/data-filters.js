@@ -95,6 +95,18 @@ function renderDbFilters() {
       if (e.key === "Enter") { e.preventDefault(); clearTimeout(t2); d.grep = this.value; dbLoadKeys(true); }
     };
     rf.appendChild(ri);
+    // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
+    // it, and "" keeps the request byte-identical to the unfiltered one.
+    var rt = el("select");
+    rt.title = "Key type";
+    [""].concat(["string", "hash", "list", "set", "zset", "stream"]).forEach(function (t) {
+      var o = el("option", "", t || "All types");
+      o.value = t;
+      o.selected = (d.redisType || "") === t;
+      rt.appendChild(o);
+    });
+    rt.onchange = function () { d.redisType = this.value; dbLoadKeys(true); };
+    rf.appendChild(rt);
     if (d.redis && d.redis.total != null) {
       rf.appendChild(el("span", "db-filter-hint",
         (d.redis.keys ? d.redis.keys.length.toLocaleString() : "0") + " shown · " +

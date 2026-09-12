@@ -311,11 +311,14 @@ function dbSyncKind() {
   dbPaintSort();
   if (dbIsRedis()) {
     grep.placeholder = "Filter keys"; grep.setAttribute("aria-label", "Filter keys");
+    grep.title = "Filter keys (a SCAN MATCH pattern)";
     sql.placeholder = "SET k v · GET k · DEL k · HGETALL h · TTL k — one command per run";
     explain.hidden = true;
     hint.textContent = "writes run · KEYS is refused, use the key list · Ctrl+Enter runs";
   } else {
-    grep.placeholder = "Filter tables"; grep.setAttribute("aria-label", "Filter tables");
+    // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
+    grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", "Filter tables");
+    grep.title = "Filter tables: comma-separated terms AND together, | is OR, * is a wildcard";
     sql.placeholder = "SELECT / UPDATE / DELETE … — one statement per run";
     explain.hidden = false;
     hint.textContent = "one statement per run · Ctrl+Enter runs";
@@ -382,6 +385,7 @@ async function dbLoadTables() {
   if (box) { box.innerHTML = ""; box.appendChild(el("div", "db-hint", "Loading…")); }
   var q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?page=" + d.tablesPage;
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
+  if (d.schemaFilter) q += "&schema=" + encodeURIComponent(d.schemaFilter);
   if (d.sort) q += "&sort=" + encodeURIComponent(d.sort) + "&dir=" + encodeURIComponent(d.sortDir || "asc");
   var j = await apiJson(q);
   if (!j) { if ($("dbTables")) $("dbTables").innerHTML = ""; return; }
@@ -392,11 +396,41 @@ async function dbLoadTables() {
   renderDbTables();
 }
 
+/** A Postgres connection (many schemas) vs everything else. The schema grouping and the
+ *  schema picker exist only for it; MySQL is one database and redis has no schemas at all. */
+function dbIsPg() {
+  var c = state.db.conns.find(function (x) { return x.name === state.db.conn; });
+  return !!c && c.dialect === "pg";
+}
+
+/* The sidebar grep grammar (docs/22 W1.6): comma-separated terms AND together, "|" inside a
+   term is OR, "*" is a wildcard, everything case-insensitive. A bare term with no "*" keeps
+   the substring behaviour the list always had. Pure so the grammar can be pinned without a
+   DOM; the server's table grep speaks the same language in SQL. */
+function dbFilterMatches(tokens, name) {
+  var n = String(name).toLowerCase();
+  var terms = String(tokens).toLowerCase().split(",")
+    .map(function (s) { return s.trim(); }).filter(Boolean);
+  if (!terms.length) return true;
+  return terms.every(function (term) {
+    return term.split("|").some(function (alt) {
+      alt = alt.trim();
+      if (!alt) return false;
+      if (alt.indexOf("*") < 0) return n.indexOf(alt) >= 0;
+      var re = "^" + alt.split("*").map(function (p) {
+        return p.replace(/[.+?^\[\]{}()\\\-|]/g, "\\$&");
+      }).join(".*") + "$";
+      return new RegExp(re).test(n);
+    });
+  });
+}
+
 function renderDbTables() {
   var d = state.db;
   var box = $("dbTables");
   if (!box) return;
   box.innerHTML = "";
+  dbPaintSchemaOptions();
   if (!d.conn) {
     box.appendChild(el("div", "db-hint", "Add a mysql or pg MCP, then browse it here."));
     return;
@@ -434,16 +468,29 @@ function renderDbTables() {
   if (!d.tables.length) {
     box.appendChild(el("div", "db-hint", d.grep ? 'No tables match "' + d.grep + '".' : "No tables."));
   }
-  d.tables.forEach(function (t) {
-    var b = el("button", "db-table" + (t.name === d.table && t.schema === d.schema ? " sel" : ""));
-    b.title = t.name;
-    b.appendChild(el("div", "db-table-name", t.name));
-    b.appendChild(el("div", "db-table-meta",
-      t.type + (t.approxRows != null ? " · ~" + Number(t.approxRows).toLocaleString() + " rows" : "") +
-      (t.size ? " · " + t.size : "")));
-    b.onclick = function () { dbOpenTable(t); };
-    box.appendChild(b);
-  });
+  // docs/22 W1.1: a Postgres catalog is many schemas, so the page renders grouped — the docs/20
+  // §4 container vocabulary (band header, mixed-case name, tnum count, indented body behind the
+  // guide line). MySQL is one database: the flat list, no headers, visually exactly as before.
+  if (dbIsPg() && d.tables.length) {
+    var schemas = [];
+    d.tables.forEach(function (t) {
+      if (schemas.indexOf(t.schema) < 0) schemas.push(t.schema);
+    });
+    schemas.forEach(function (s) {
+      var rows = d.tables.filter(function (t) { return t.schema === s; });
+      var g = el("div", "grp grp--side");
+      var head = el("div", "grp-head");
+      head.appendChild(el("span", "grp-toggle", s));
+      head.appendChild(el("span", "grp-n", String(rows.length)));
+      g.appendChild(head);
+      var body = el("div", "grp-body");
+      rows.forEach(function (t) { body.appendChild(dbTableRow(t)); });
+      g.appendChild(body);
+      box.appendChild(g);
+    });
+  } else {
+    d.tables.forEach(function (t) { box.appendChild(dbTableRow(t)); });
+  }
   var foot = $("dbTablesPager");
   if (!foot) return;
   foot.innerHTML = "";
@@ -464,6 +511,49 @@ function renderDbTables() {
   foot.appendChild(next);
 }
 
+/** One table row, shared by the flat list and every schema group. */
+function dbTableRow(t) {
+  var d = state.db;
+  var b = el("button", "db-table" + (t.name === d.table && t.schema === d.schema ? " sel" : ""));
+  b.title = t.name;
+  b.appendChild(el("div", "db-table-name", t.name));
+  b.appendChild(el("div", "db-table-meta",
+    t.type + (t.approxRows != null ? " · ~" + Number(t.approxRows).toLocaleString() + " rows" : "") +
+    (t.size ? " · " + t.size : "")));
+  b.onclick = function () { dbOpenTable(t); };
+  return b;
+}
+
+/** The schema picker above the grep box (pg only): "All schemas" plus one option per schema
+ *  on the current page, counts from the page the list is showing. A schema picked on an earlier
+ *  page stays selectable even when this page does not carry it. */
+function dbPaintSchemaOptions() {
+  var d = state.db;
+  var sel = $("dbSchema");
+  if (!sel) return;
+  if (!d.conn || !dbIsPg()) { sel.hidden = true; return; }
+  sel.hidden = false;
+  var schemas = [];
+  d.tables.forEach(function (t) {
+    if (schemas.indexOf(t.schema) < 0) schemas.push(t.schema);
+  });
+  var current = d.schemaFilter || "";
+  if (current && schemas.indexOf(current) < 0) schemas.push(current);
+  schemas.sort();
+  sel.innerHTML = "";
+  var all = el("option", "", "All schemas");
+  all.value = "";
+  all.selected = current === "";
+  sel.appendChild(all);
+  schemas.forEach(function (s) {
+    var n = d.tables.filter(function (t) { return t.schema === s; }).length;
+    var o = el("option", "", s + " (" + n + ")");
+    o.value = s;
+    o.selected = s === current;
+    sel.appendChild(o);
+  });
+}
+
 function dbOpenTable(t) {
   var d = state.db;
   if (t.name === d.table && t.schema === d.schema) return;
@@ -477,4 +567,4 @@ function dbOpenTable(t) {
   dbLoadData();
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDropEdits, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDropEdits, dbFilterMatches, dbIsPg, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, loadDbView, renderDbSide, renderDbTables, renderDbView };
