@@ -6,13 +6,13 @@
 
 use super::direct::Lazy;
 use super::pg::{
-    pg_browse_table_params, pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL, LIST_TABLES_SQL,
+    pg_browse_table_params, pg_list_tables_sql, pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL,
     PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL, PK_SQL,
 };
 use super::sql::{clamp_row_limit, limit_report, with_row_limit};
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
-    browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
+    browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql, browse_table_sort,
     build_ddl_op_sql, build_edit_statements, build_pg_ddl, export_row_limit, js_to_string,
     map_import_rows, to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
     BrowseForeignKey, DbBrowser, DbDialect, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
@@ -109,8 +109,13 @@ impl DbBrowser for PgBrowser {
             json!(limit),
             json!(page.saturating_mul(limit)),
         ];
+        let sort = browse_table_sort(
+            o.get("sort").and_then(Value::as_str),
+            o.get("dir").and_then(Value::as_str),
+        )?;
+        let list_sql = pg_list_tables_sql(sort);
         let (list, count) = tokio::join!(
-            self.query(LIST_TABLES_SQL, &list_params),
+            self.query(&list_sql, &list_params),
             self.query(COUNT_TABLES_SQL, &filters)
         );
         let list = list?;

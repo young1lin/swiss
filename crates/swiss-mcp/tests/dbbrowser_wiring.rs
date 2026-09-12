@@ -7,8 +7,9 @@ use swiss_mcp::adapters::mysql::{
     MYSQL_BROWSE_COLUMNS_SQL, MYSQL_BROWSE_FK_SQL, MYSQL_BROWSE_INDEXES_SQL,
 };
 use swiss_mcp::adapters::pg::{
-    pg_browse_table_params, COUNT_TABLES_SQL, DESCRIBE_SQL, LIST_TABLES_SQL,
+    pg_browse_table_params, pg_list_tables_sql, COUNT_TABLES_SQL, DESCRIBE_SQL, LIST_TABLES_SQL,
 };
+use swiss_host::dbbrowser::{browse_table_sort, TableSort, TableSortKey};
 use serde_json::json;
 
 /// The Node test's `placeholders()` — the highest $n a statement carries, scanned by hand
@@ -56,6 +57,38 @@ fn pg_table_list_supplies_every_placeholder() {
     assert_eq!(
         max_placeholder(COUNT_TABLES_SQL),
         pg_browse_table_params(Some("us")).len()
+    );
+}
+
+#[test]
+fn pg_table_list_sort_rewrites_only_the_order_by() {
+    let name_asc = browse_table_sort(None, None).unwrap();
+    assert_eq!(name_asc, TableSort { key: TableSortKey::Name, desc: false });
+    // name/asc is the tool's standing statement with a case-insensitive name inside each
+    // schema — the default sort must not drift from the constant the MCP tool still uses.
+    assert_eq!(
+        pg_list_tables_sql(name_asc).replace("n.nspname, lower(c.relname)", "1, 2"),
+        LIST_TABLES_SQL
+    );
+    assert!(pg_list_tables_sql(TableSort { key: TableSortKey::Name, desc: true })
+        .contains("n.nspname, lower(c.relname) DESC"));
+    assert!(pg_list_tables_sql(TableSort { key: TableSortKey::Rows, desc: true })
+        .contains("ORDER BY approx_rows DESC NULLS LAST, n.nspname, c.relname"));
+    assert!(pg_list_tables_sql(TableSort { key: TableSortKey::Size, desc: false })
+        .contains("ORDER BY pg_total_relation_size(c.oid), n.nspname, c.relname"));
+}
+
+#[test]
+fn table_list_sort_refuses_unknown_keys_and_directions() {
+    assert!(browse_table_sort(Some("evil; --"), Some("asc")).is_err());
+    assert!(browse_table_sort(Some("name"), Some("sideways")).is_err());
+    assert_eq!(
+        browse_table_sort(Some("rows"), None).unwrap(),
+        TableSort { key: TableSortKey::Rows, desc: false }
+    );
+    assert_eq!(
+        browse_table_sort(None, Some("desc")).unwrap(),
+        TableSort { key: TableSortKey::Name, desc: true }
     );
 }
 

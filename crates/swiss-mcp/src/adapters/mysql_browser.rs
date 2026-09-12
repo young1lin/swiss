@@ -85,10 +85,15 @@ impl DbBrowser for MysqlBrowser {
             .max(0.0) as i64;
         let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
         let grep = o.get("grep").and_then(Value::as_str);
+        let sort = swiss_host::dbbrowser::browse_table_sort(
+            o.get("sort").and_then(Value::as_str),
+            o.get("dir").and_then(Value::as_str),
+        )?;
         let ((ls, lp), (cs, cp)) = super::mysql::mysql_list_tables_sql(
             &self.database,
             grep,
             (page, limit, page.saturating_mul(limit)),
+            Some(sort),
         );
         let (list, count) = tokio::join!(self.query(&ls, &lp), self.query(&cs, &cp));
         let list = list?;

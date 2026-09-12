@@ -490,6 +490,12 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
                 ctx.catalog.get().cloned().unwrap_or_else(|| {
                     Arc::new(swiss_host::services::catalog::CatalogRegistry::new())
                 }),
+                // The picker ranks by the sidebar's manual order (PUT /api/order), read live
+                // per request — one manual order for the same MCPs everywhere.
+                {
+                    let ctx = ctx.clone();
+                    Arc::new(move || ctx.store.get_order())
+                },
             ),
         )
         .merge(crate::adminapi::mount(ctx.clone()))

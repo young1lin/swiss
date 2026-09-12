@@ -530,6 +530,46 @@ pub fn browse_order(
     Ok(Some(format!("{} {}", quote_ident(dialect, order)?, d)))
 }
 
+/// Sort keys the Data view's table list accepts, mirroring Node's BrowseTableSort.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableSortKey {
+    Name,
+    Rows,
+    Size,
+}
+
+/// A validated table-list sort: key + direction. Name is the default (a missing or empty value,
+/// never a guess).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TableSort {
+    pub key: TableSortKey,
+    pub desc: bool,
+}
+
+/// Vet the panel's `sort`/`dir` query pair. Unknown keys and directions are refused rather than
+/// ignored — the same rule as [`browse_order`], for the same reason: a silently dropped sort
+/// changes what the pages show.
+pub fn browse_table_sort(sort: Option<&str>, dir: Option<&str>) -> Result<TableSort, String> {
+    let key = match sort.filter(|s| !s.is_empty()) {
+        None | Some("name") => TableSortKey::Name,
+        Some("rows") => TableSortKey::Rows,
+        Some("size") => TableSortKey::Size,
+        Some(other) => {
+            return Err(format!("cannot sort the table list by unknown key: {other}"))
+        }
+    };
+    let desc = match dir.filter(|d| !d.is_empty()) {
+        None | Some("asc") => false,
+        Some("desc") => true,
+        Some(other) => {
+            return Err(format!(
+                "table list sort direction must be asc or desc, not '{other}'"
+            ))
+        }
+    };
+    Ok(TableSort { key, desc })
+}
+
 #[allow(clippy::too_many_arguments)]
 /// The bounded SELECT behind one grid page. LIMIT/OFFSET are clamped integers, so they are
 /// inlined rather than bound (both dialects accept that only for literal ints); the WHERE

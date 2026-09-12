@@ -12,6 +12,7 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Either, Row};
 
 use swiss_host::config::ServerDef;
+use swiss_host::dbbrowser::{TableSort, TableSortKey};
 
 use super::direct::{def_bool, BoxFut, Lazy};
 use super::pg_resources::PgResources;
@@ -138,6 +139,26 @@ pub const COUNT_TABLES_SQL: &str = "
      AND ($1::text IS NULL OR n.nspname = $1)
      AND ($2::text IS NULL OR c.relname ILIKE $2 ESCAPE '!')";
 
+/// The Data view's table list with a chosen sort — Node's pgListTablesSql. The MCP tool keeps
+/// LIST_TABLES_SQL as-is (tools have no sort argument); the browser swaps the ORDER BY: name
+/// sorts SCHEMA-major and case-insensitively (the tool's ORDER BY 1, 2, made lower(relname)
+/// inside a schema, so a C-collation database does not rank 'Zebra' above 'apple'), rows/size
+/// sort by the catalog estimate / on-disk bytes with NULLS LAST (never-analyzed tables stay at
+/// the bottom) and abandon the schema grouping on purpose, with (schema, name) as the
+/// tiebreaker. Node replaces the literal ORDER BY; so does this, one string swap.
+pub fn pg_list_tables_sql(sort: TableSort) -> String {
+    let desc = if sort.desc { " DESC" } else { "" };
+    let clause = match sort.key {
+        TableSortKey::Rows => {
+            format!("approx_rows{desc} NULLS LAST, n.nspname, c.relname")
+        }
+        TableSortKey::Size => {
+            format!("pg_total_relation_size(c.oid){desc}, n.nspname, c.relname")
+        }
+        TableSortKey::Name => format!("n.nspname, lower(c.relname){desc}"),
+    };
+    LIST_TABLES_SQL.replacen("ORDER BY 1, 2", &format!("ORDER BY {clause}"), 1)
+}
 pub const DESCRIBE_SQL: &str = "
   SELECT column_name, data_type, is_nullable, column_default,
          character_maximum_length, numeric_precision, numeric_scale,

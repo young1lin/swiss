@@ -10,6 +10,7 @@ use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions,
 use sqlx::{Column, Either, Executor, Row};
 
 use swiss_host::config::ServerDef;
+use swiss_host::dbbrowser::{TableSort, TableSortKey};
 
 use super::direct::{def_bool, BoxFut, Lazy};
 use super::mysql_browser::MysqlBrowser;
@@ -91,6 +92,11 @@ fn tools() -> Vec<ToolDef> {
     ]
 }
 
+/// `col` (+ direction), with the name as an ascending tiebreaker so pages never shuffle equals.
+fn keyed_order(col: &str, desc: bool) -> String {
+    if desc { format!("{col} DESC, table_name") } else { format!("{col}, table_name") }
+}
+
 /// The `{ list, count }` pair behind mysql_list_tables, built as a pure function so the filtering
 /// and paging logic is testable without a live MySQL. count shares the list's WHERE so a page can
 /// report the filtered total beside the rows.
@@ -105,11 +111,21 @@ pub fn mysql_list_tables_sql(
     database: &str,
     grep: Option<&str>,
     paging: (i64, i64, i64), // (page, limit, offset)
+    sort: Option<TableSort>,
 ) -> ((String, Vec<Value>), (String, Vec<Value>)) {
     let pattern = grep.map(like_contains);
     let where_clause = match &pattern {
         Some(_) => "table_schema = ? AND table_name LIKE ? ESCAPE '!'",
         None => "table_schema = ?",
+    };
+    // Node's mysqlListOrder: the name sort keeps information_schema's own (case-insensitive)
+    // collation; rows/size sort by the statistics the SELECT already computes, with the name as
+    // an ascending tiebreaker — DESC applies to the chosen key only, never the tiebreaker.
+    let order = match sort {
+        Some(TableSort { key: TableSortKey::Rows, desc }) => keyed_order("approx_rows", desc),
+        Some(TableSort { key: TableSortKey::Size, desc }) => keyed_order("bytes", desc),
+        Some(TableSort { key: TableSortKey::Name, desc: false }) | None => "table_name".into(),
+        Some(TableSort { key: TableSortKey::Name, desc: true }) => "table_name DESC".into(),
     };
     let list_sql = format!(
         "
@@ -120,7 +136,7 @@ pub fn mysql_list_tables_sql(
             COALESCE(data_length, 0) + COALESCE(index_length, 0) AS bytes
         FROM information_schema.tables
        WHERE {where_clause}
-       ORDER BY table_name
+       ORDER BY {order}
        LIMIT ? OFFSET ?"
     );
     let count_sql = format!(
@@ -659,7 +675,7 @@ impl MysqlEngine {
         let paging = table_page_args(args.get("limit"), args.get("page"));
         let grep = args.get("grep").and_then(Value::as_str);
         let ((list_sql, list_params), (count_sql, count_params)) =
-            mysql_list_tables_sql(&database, grep, (paging.page, paging.limit, paging.offset));
+            mysql_list_tables_sql(&database, grep, (paging.page, paging.limit, paging.offset), None);
         let pool = self.conn.get().await?;
         let (list, count) = tokio::join!(
             run_query(&pool, &list_sql, &list_params),
@@ -792,19 +808,33 @@ mod tests {
     #[test]
     fn list_tables_sql_pairs_list_and_count() {
         let ((list_sql, list_params), (_count_sql, count_params)) =
-            mysql_list_tables_sql("mydb", None, (0, 200, 0));
+            mysql_list_tables_sql("mydb", None, (0, 200, 0), None);
         assert!(list_sql.contains("table_schema = ?"));
+        assert!(list_sql.contains("ORDER BY table_name"));
         assert!(!list_sql.contains("LIKE"));
         assert_eq!(list_params.len(), 3);
         assert_eq!(count_params.len(), 1);
 
         let ((list_sql, list_params), (_, count_params)) =
-            mysql_list_tables_sql("mydb", Some("users"), (2, 50, 100));
+            mysql_list_tables_sql("mydb", Some("users"), (2, 50, 100), None);
         assert!(list_sql.contains("LIKE ? ESCAPE '!'"));
         assert_eq!(list_params.len(), 4);
         assert_eq!(count_params.len(), 2);
         assert_eq!(list_params[0], json!("mydb"));
         assert_eq!(list_params[1], json!("%users%"));
+    }
+
+    #[test]
+    fn list_tables_sql_sorts_by_the_chosen_key_with_a_name_tiebreaker() {
+        let rows_desc = TableSort { key: TableSortKey::Rows, desc: true };
+        let size_asc = TableSort { key: TableSortKey::Size, desc: false };
+        let name_desc = TableSort { key: TableSortKey::Name, desc: true };
+        let ((list, _), _) = mysql_list_tables_sql("mydb", None, (0, 200, 0), Some(rows_desc));
+        assert!(list.contains("ORDER BY approx_rows DESC, table_name"));
+        let ((list, _), _) = mysql_list_tables_sql("mydb", None, (0, 200, 0), Some(size_asc));
+        assert!(list.contains("ORDER BY bytes, table_name"));
+        let ((list, _), _) = mysql_list_tables_sql("mydb", None, (0, 200, 0), Some(name_desc));
+        assert!(list.contains("ORDER BY table_name DESC"));
     }
 
     #[test]

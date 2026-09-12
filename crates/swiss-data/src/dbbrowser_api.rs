@@ -42,10 +42,21 @@ use swiss_host::services::catalog::{
     CatalogError, CatalogPresence, CatalogRegistry, ConnectionLease,
 };
 
+/// The sidebar's manual order, read live per request — the same list PUT /api/order stores.
+/// A closure (not a snapshot) so a drag in the panel reorders the picker on the next poll.
+pub type OrderSource = std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+
 /// One browsable-connection row: everything the panel's picker needs, nothing secret. The
 /// redis flavour rides the same list with editable false (the key browser is read-only by
 /// design; writes go through the MCP's own tools).
-pub fn browsable_connections(catalog: &CatalogRegistry) -> Vec<Value> {
+///
+/// The picker follows the sidebar's manual order (`order`): one manual order for the same
+/// MCPs everywhere, so dragging a row in the sidebar reorders the Data dropdown too. Names
+/// the order never covers — a freshly added MCP, or the whole list until the first drag —
+/// fall back to name order, exactly like GET /api/mcps.
+pub fn browsable_connections(catalog: &CatalogRegistry, order: &[String]) -> Vec<Value> {
+    let rank: std::collections::HashMap<&str, usize> =
+        order.iter().enumerate().map(|(i, n)| (n.as_str(), i)).collect();
     let mut rows: Vec<(String, Value)> = catalog
         .list()
         .into_iter()
@@ -67,8 +78,17 @@ pub fn browsable_connections(catalog: &CatalogRegistry) -> Vec<Value> {
             Some((c.id, row))
         })
         .collect();
-    // Node's `(a.name < b.name ? -1 : a.name > b.name ? 1 : 0)` sort — plain name order.
-    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    // Rank-first like /api/mcps: compare ranks only when they actually differ (both unranked
+    // would tie at MAX), and let names decide between equals — Node's comparator guard.
+    rows.sort_by(|a, b| {
+        let ra = rank.get(a.0.as_str()).copied().unwrap_or(usize::MAX);
+        let rb = rank.get(b.0.as_str()).copied().unwrap_or(usize::MAX);
+        if ra != rb {
+            ra.cmp(&rb)
+        } else {
+            a.0.cmp(&b.0)
+        }
+    });
     rows.into_iter().map(|(_, row)| row).collect()
 }
 
@@ -262,6 +282,12 @@ async fn tables(
     }
     if let Some(limit) = q_raw(q, "limit") {
         o.insert("limit".into(), limit);
+    }
+    if let Some(sort) = q_non_empty(q, "sort") {
+        o.insert("sort".into(), sort);
+    }
+    if let Some(dir) = q_non_empty(q, "dir") {
+        o.insert("dir".into(), dir);
     }
     b.list_tables(&Value::Object(o)).await.map_err(Fail::bad)
 }
@@ -570,7 +596,10 @@ async fn key(
 
 // --- the axum handlers ----------------------------------------------------------------------------
 
-async fn connections(Extension(catalog): Extension<Arc<CatalogRegistry>>) -> Response {
+async fn connections(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Extension(order): Extension<OrderSource>,
+) -> Response {
     // The honest 503 first (docs/12 W3): with no provider, an empty list would read as
     // "you have no connections" — the message names who is missing instead.
     if let Err(f) = catalog_guard(&catalog) {
@@ -578,7 +607,7 @@ async fn connections(Extension(catalog): Extension<Arc<CatalogRegistry>>) -> Res
     }
     admin_json(
         StatusCode::OK,
-        json!({ "connections": browsable_connections(&catalog) }),
+        json!({ "connections": browsable_connections(&catalog, &order()) }),
     )
 }
 
@@ -675,8 +704,8 @@ async fn edits_route(
 
 /// Mount the /api/db routes — the port of Node's `mountDbBrowseApi`. Generic over the state so
 /// app.rs can merge it into the gateway router unchanged (no handler here reads the state; the
-/// connection catalog arrives as an [`Extension`] layer).
-pub fn dbbrowser_router<S>(catalog: Arc<CatalogRegistry>) -> Router<S>
+/// connection catalog and the sidebar-order source arrive as [`Extension`] layers).
+pub fn dbbrowser_router<S>(catalog: Arc<CatalogRegistry>, order: OrderSource) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
@@ -699,6 +728,7 @@ where
         .route("/api/db/{name}/query", post(query_route))
         .route("/api/db/{name}/edits", post(edits_route))
         .layer(Extension(catalog))
+        .layer(Extension(order))
 }
 
 #[cfg(test)]
@@ -728,6 +758,7 @@ mod tests {
         filters: Option<Value>,
         imported: Option<Value>,
         ddl: Option<Value>,
+        tables_opts: Option<Value>,
     }
 
     type SeenRef = Arc<Mutex<Seen>>;
@@ -756,6 +787,15 @@ mod tests {
             "stub @ localhost".into()
         }
         async fn list_tables(&self, o: &Value) -> Result<Value, String> {
+            // The real browsers vet sort/dir inside listTables (mysql_browser/pg_browser); the
+            // stub does the same, so the route tests see the same 400 a bad key earns live.
+            swiss_host::dbbrowser::browse_table_sort(
+                o.get("sort").and_then(Value::as_str),
+                o.get("dir").and_then(Value::as_str),
+            )?;
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.tables_opts = Some(o.clone());
+            }
             Ok(json!({
                 "tables": [{ "schema": "app", "name": "users", "type": "table", "approxRows": 12, "size": "16 KB" }],
                 "total": 1,
@@ -986,16 +1026,29 @@ mod tests {
         catalog_router_of(|tracker| StubProvider { rows, tracker })
     }
 
+    /// router_of plus a sidebar order (Node's PUT /api/order list).
+    fn router_ordered_of(rows: Vec<Arc<StubRow>>, order: Vec<String>) -> Router<()> {
+        catalog_ordered_router_of(|tracker| StubProvider { rows, tracker }, order)
+    }
+
     /// Register a provider as "mcp" and mount the router over it — the composition the
     /// real app performs (MCP plugin provides, build_app mounts).
     fn catalog_router_of(
         provider: impl FnOnce(Arc<LeaseTracker>) -> StubProvider + 'static,
     ) -> Router<()> {
+        catalog_ordered_router_of(provider, Vec::new())
+    }
+
+    /// Same, with a sidebar order to rank the picker by (Node's PUT /api/order list).
+    fn catalog_ordered_router_of(
+        provider: impl FnOnce(Arc<LeaseTracker>) -> StubProvider + 'static,
+        order: Vec<String>,
+    ) -> Router<()> {
         let catalog = Arc::new(CatalogRegistry::new());
         catalog
             .register(Arc::new(provider(LeaseTracker::new())), "mcp")
             .expect("test provider registers");
-        dbbrowser_router(catalog)
+        dbbrowser_router(catalog, Arc::new(move || order.clone()))
     }
 
     /// The catalog WITHOUT a provider — the MCP-disabled composition.
@@ -1013,7 +1066,7 @@ mod tests {
         // The provider's stop choreography: withdraw, drain (nothing out), clear.
         catalog.begin_withdraw();
         catalog.clear();
-        let router = dbbrowser_router(catalog.clone());
+        let router = dbbrowser_router(catalog.clone(), Arc::new(Vec::new));
         (router, catalog)
     }
 
@@ -1087,6 +1140,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_picker_ranks_by_the_sidebars_manual_order() {
+        let stub = || {
+            Arc::new(StubDb { seen: Arc::new(Mutex::new(Seen::default())) }) as Arc<dyn DbBrowser>
+        };
+        let rows = vec![db_entry("db-b", stub()), db_entry("db-a", stub()), db_entry("db-c", stub())];
+        // No manual order yet — plain name order, like /api/mcps.
+        let app = router_of(rows.clone());
+        let (_, _, body, _) = call(app, "GET", "/api/db", None).await;
+        fn names(b: &Value) -> Vec<String> {
+            b["connections"].as_array().expect("connections")
+                .iter().map(|c| c["name"].as_str().expect("name").to_string()).collect()
+        }
+        assert_eq!(names(&body.expect("json")), vec!["db-a", "db-b", "db-c"]);
+        // The order a sidebar drag persists reorders the picker; a name the order never
+        // covers (db-b, never dragged) keeps its name-order slot at the end.
+        let app = router_ordered_of(rows, vec!["db-c".into(), "db-a".into(), "db-never".into()]);
+        let (_, _, body, _) = call(app, "GET", "/api/db", None).await;
+        assert_eq!(names(&body.expect("json")), vec!["db-c", "db-a", "db-b"]);
+    }
+
+    #[tokio::test]
     async fn unknown_and_non_browsable_mcps_are_404() {
         let app = router_of(vec![plain_entry("plain")]);
         let (status, _, body, _) = call(app, "GET", "/api/db/nope/tables", None).await;
@@ -1144,6 +1218,40 @@ mod tests {
             .map(|c| c["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["id", "name"]);
+    }
+
+    #[tokio::test]
+    async fn forwards_the_tables_sort_and_rejects_unknown_keys() {
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, _, _) = call(
+            app,
+            "GET",
+            "/api/db/db/tables?page=0&sort=rows&dir=desc",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let opts = seen.lock().expect("seen").tables_opts.take();
+        assert_eq!(
+            opts,
+            Some(json!({ "page": "0", "sort": "rows", "dir": "desc" }))
+        );
+
+        // A nonsense key or direction is the caller's whole mistake — 400, not a silent default.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/tables?sort=evil", None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("unknown key"), "{err}");
     }
 
     #[tokio::test]
@@ -1588,7 +1696,7 @@ mod tests {
     #[tokio::test]
     async fn a_provider_that_never_registered_is_a_generic_503() {
         let catalog = Arc::new(CatalogRegistry::new());
-        let app = dbbrowser_router(catalog);
+        let app = dbbrowser_router(catalog, Arc::new(Vec::new));
         let (status, _, body, _) = call(app, "GET", "/api/db", None).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
@@ -1617,7 +1725,7 @@ mod tests {
             )
             .expect("registers");
         catalog.begin_withdraw();
-        let app = dbbrowser_router(catalog);
+        let app = dbbrowser_router(catalog, Arc::new(Vec::new));
         let (status, _, body, _) = call(app, "GET", "/api/db/db/tables", None).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
@@ -1650,7 +1758,7 @@ mod tests {
                 "mcp",
             )
             .expect("registers");
-        let app = dbbrowser_router(catalog.clone());
+        let app = dbbrowser_router(catalog.clone(), Arc::new(Vec::new));
         for uri in [
             "/api/db",
             "/api/db/db/tables",
