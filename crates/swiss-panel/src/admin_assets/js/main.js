@@ -21,7 +21,6 @@ import { closeMenu } from "./pane.js";
 import { loadMemory, refreshNow } from "./polling.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
-import { openTokensView } from "./tokens.js";
 
 
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
@@ -68,8 +67,6 @@ async function loadInfo() {
     if (t.ok) state.tokens = (await t.json()).tokens || [];
   } catch (e) { /* the token list just stays empty */ }
 }
-$("tokenBtn").onclick = openTokensView;
-
 /* --- appearance ------------------------------------------------------------------------------- */
 /* Three choices, not a two-state switch: "auto" has to stay reachable, because on a machine that
    turns dark at sunset the right answer changes twice a day and a toggle can only ever be wrong

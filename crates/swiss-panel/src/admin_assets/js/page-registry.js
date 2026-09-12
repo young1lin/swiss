@@ -5,6 +5,7 @@ import { createPageRegistry } from "./page-core.js";
 var legacy = [
   { id: "mcps", pluginId: "mcp", label: "MCPs", sidebar: true },
   { id: "traffic", pluginId: "mcp", label: "Traffic" },
+  { id: "tokens", pluginId: "mcp", label: "Token" },
   { id: "tunnels", pluginId: "tunnels", label: "Tunnels" },
   { id: "data", pluginId: "data", label: "Data" },
   { id: "jobs", pluginId: "jobs", label: "Jobs" },

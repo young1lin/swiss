@@ -3,7 +3,7 @@ import { kindBody, logsBody } from "./logs.js";
 import { closeMenu } from "./pane.js";
 import { configBody, histClose } from "./run-history.js";
 import { runBody } from "./run.js";
-import { pickCopyToken, refreshTokens, rememberedTokenId } from "./tokens.js";
+import { pickCopyToken, refreshTokens, rememberedTokenId } from "./views/tokens.js";
 
 /* --- connecting a client ---------------------------------------------------------------------- */
 /**

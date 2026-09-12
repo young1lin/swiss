@@ -242,8 +242,8 @@
       border-bottom: 1px solid var(--sep);
       min-width: 0; /* lets the level-one seg scroll instead of pushing the right side off */
     }
-    /* The toolbar's right-hand pair (docs/18 V3): one 2px cluster of quiet icon buttons. The
-       refresh button that used to open the trio is gone — the memory chip is the refresh. */
+    /* The toolbar's right-hand button (docs/18 V3): appearance only. Refresh moved to the
+       memory chip; token management lives in the MCP group's Token page. */
     .tool-acts { display: inline-flex; gap: 2px; }
     /* The memory chip IS the refresh control (renderMemory wires the click): mono because the
        value is a copyable number, .chip.button for the hover affordance. */
