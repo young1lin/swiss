@@ -73,6 +73,110 @@ pub fn like_contains(filter: &str) -> String {
     out
 }
 
+/// Total LIKE patterns one table-list grep may expand to (AND terms x OR alternatives) — the
+/// grep-side twin of the route's filter-count cap, so a hand-written URL cannot ask for a
+/// hundred-term WHERE either.
+pub const BROWSE_GREP_MAX: usize = 32;
+
+/// One side of the sidebar grep grammar (docs/22 W1.6): comma-separated terms AND together,
+/// "|" inside a term is OR, "*" is a wildcard, everything case-insensitive (ILIKE on Postgres,
+/// MySQL's default _ci collation). The panel's pure `dbFilterMatches` speaks the same language
+/// client-side. Returns one list of LIKE patterns per AND-term — each escaped and %wrapped as
+/// `like_contains` would wrap it, except a term that carries its own "*", which anchors the
+/// pattern the wildcards shape ("user*" is `user%`, not `%user%%`). None when the grep uses none
+/// of the three grammar characters: that is the plain substring the list always matched, and the
+/// caller keeps its single-LIKE SQL byte-for-byte. Empty terms drop; empty alternatives never
+/// match (they are simply not bound).
+pub fn grep_patterns(grep: &str) -> Result<Option<Vec<Vec<String>>>, String> {
+    let trimmed = grep.trim();
+    if !trimmed.contains(['*', '|', ',']) {
+        return Ok(None);
+    }
+    let mut terms: Vec<Vec<String>> = Vec::new();
+    let mut total = 0usize;
+    for term in trimmed.split(',') {
+        let mut alts: Vec<String> = Vec::new();
+        for alt in term.split('|') {
+            let alt = alt.trim();
+            if alt.is_empty() {
+                continue;
+            }
+            let pattern = if alt.contains('*') {
+                // The user supplied the wildcards: escape the literals, translate the * to %,
+                // and do NOT add the substring wrap — "user*" means "starts with user".
+                let mut out = String::with_capacity(alt.len() + 2);
+                for c in alt.chars() {
+                    if matches!(c, '!' | '%' | '_') {
+                        out.push('!');
+                        out.push(c);
+                    } else if c == '*' {
+                        out.push('%');
+                    } else {
+                        out.push(c);
+                    }
+                }
+                out
+            } else {
+                like_contains(alt)
+            };
+            alts.push(pattern);
+            total += 1;
+            if total > BROWSE_GREP_MAX {
+                return Err(format!(
+                    "table filter accepts at most {BROWSE_GREP_MAX} patterns"
+                ));
+            }
+        }
+        if !alts.is_empty() {
+            terms.push(alts);
+        }
+    }
+    Ok(Some(terms))
+}
+
+/// The grep predicate as a SQL fragment: " AND (col ILIKE $n ESCAPE '!' OR ...)" per AND-term,
+/// ready to append to a table-list WHERE. Placeholders are "?" on MySQL and "$n" on Postgres,
+/// numbered to follow `first_param` existing bound parameters (Postgres binds the schema first).
+/// None for a plain substring grep — the caller keeps its own single-LIKE SQL.
+pub fn grep_where(
+    dialect: DbDialect,
+    subject: &str,
+    grep: &str,
+    first_param: usize,
+) -> Result<Option<BuiltWhere>, String> {
+    let Some(terms) = grep_patterns(grep)? else {
+        return Ok(None);
+    };
+    let like = if dialect == DbDialect::Pg {
+        "ILIKE"
+    } else {
+        "LIKE"
+    };
+    let mut params: Vec<Value> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    for alts in terms {
+        let mut phs: Vec<String> = Vec::with_capacity(alts.len());
+        for pattern in alts {
+            params.push(Value::String(pattern));
+            let n = first_param + params.len();
+            phs.push(if dialect == DbDialect::Mysql {
+                "?".to_string()
+            } else {
+                format!("${n}")
+            });
+        }
+        let one: Vec<String> = phs
+            .iter()
+            .map(|p| format!("{subject} {like} {p} ESCAPE '!'"))
+            .collect();
+        parts.push(format!("({})", one.join(" OR ")));
+    }
+    Ok(Some(BuiltWhere {
+        frag: format!(" AND {}", parts.join(" AND ")),
+        params,
+    }))
+}
+
 /// The SQL dialects the browser speaks (Node's `DbDialect`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DbDialect {
@@ -808,7 +912,28 @@ pub fn build_filter_where(
                 };
                 let dtype = type_of.get(f.column.as_str()).copied().flatten();
                 let subject = like_subject(dialect, &f.column, dtype)?;
-                let ph = bind(&mut params, Value::String(like_contains(&text)));
+                // A "*" in the value is the user's own wildcard (docs/22 W1.6): same escaping
+                // as like_contains, * translated to %, still wrapped as a substring — a value
+                // without * keeps the exact pattern the operator always built.
+                let pattern = if text.contains('*') {
+                    let mut out = String::with_capacity(text.len() + 2);
+                    out.push('%');
+                    for c in text.chars() {
+                        if matches!(c, '!' | '%' | '_') {
+                            out.push('!');
+                            out.push(c);
+                        } else if c == '*' {
+                            out.push('%');
+                        } else {
+                            out.push(c);
+                        }
+                    }
+                    out.push('%');
+                    out
+                } else {
+                    like_contains(&text)
+                };
+                let ph = bind(&mut params, Value::String(pattern));
                 parts.push(format!("{subject} {neg}{like} {ph} ESCAPE '!'"));
             }
             "eq" | "ne" | "gt" | "gte" | "lt" | "lte" => {
@@ -1791,6 +1916,93 @@ mod tests {
         let out = build_filter_where(DbDialect::Mysql, &n, &[]).unwrap();
         assert_eq!(out.frag, "");
         assert_eq!(out.params, Vec::<Value>::new());
+    }
+
+    #[test]
+    fn grep_patterns_parse_the_grammar_and_keep_plain_substrings_alone() {
+        // docs/22 W1.6: comma terms AND, | OR, * wildcard. A grep without any of the three
+        // grammar characters is the substring the list always matched — None, so the caller's
+        // single-LIKE SQL stays byte-for-byte what it was.
+        assert!(grep_patterns("").unwrap().is_none());
+        assert!(grep_patterns("users").unwrap().is_none());
+        assert!(grep_patterns("a%b").unwrap().is_none()); // % and _ are literals, not grammar
+        let g = grep_patterns("user*|account").unwrap().expect("grammar");
+        assert_eq!(g, vec![vec!["user%".to_string(), "%account%".to_string()]]);
+        let g = grep_patterns("a, b*|c").unwrap().expect("grammar");
+        assert_eq!(
+            g,
+            vec![
+                vec!["%a%".to_string()],
+                vec!["b%".to_string(), "%c%".to_string()]
+            ]
+        );
+        // Empty terms drop, empty alternatives never match, LIKE metacharacters stay literal.
+        let g = grep_patterns(" , a | , ").unwrap().expect("grammar");
+        assert_eq!(g, vec![vec!["%a%".to_string()]]);
+        let g = grep_patterns("a!b").unwrap();
+        assert!(g.is_none(), "! alone is not grammar");
+        // A hand-written URL cannot ask for an unbounded WHERE either.
+        let big = vec!["a|b"; 17].join(",");
+        let err = grep_patterns(&big).unwrap_err();
+        assert!(err.contains("at most"), "{err}");
+    }
+
+    #[test]
+    fn grep_where_numbers_placeholders_per_dialect() {
+        // Postgres numbers after the schema bind ($1): first pattern is $2.
+        let w = grep_where(
+            DbDialect::Pg,
+            "c.relname",
+            "user*|account",
+            1,
+        )
+        .unwrap()
+        .expect("grammar");
+        assert_eq!(
+            w.frag,
+            " AND (c.relname ILIKE $2 ESCAPE '!' OR c.relname ILIKE $3 ESCAPE '!')"
+        );
+        assert_eq!(w.params, vec![json!("user%"), json!("%account%")]);
+        // MySQL binds positionally and LIKE is case-insensitive under the default collation.
+        let w = grep_where(
+            DbDialect::Mysql,
+            "table_name",
+            "user*|account",
+            0,
+        )
+        .unwrap()
+        .expect("grammar");
+        assert_eq!(
+            w.frag,
+            " AND (table_name LIKE ? ESCAPE '!' OR table_name LIKE ? ESCAPE '!')"
+        );
+        // A plain substring grep produces no fragment at all — the caller keeps its own SQL.
+        assert!(grep_where(DbDialect::Pg, "c.relname", "users", 1)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_star_in_a_contains_value_is_a_like_wildcard() {
+        // docs/22 W1.6: inside a contains-filter value, * means "any run" — translated to LIKE's
+        // own % after the metacharacters are escaped, so the operator still matches as a
+        // substring but a value's own wildcards shape it.
+        let out = build_filter_where(
+            DbDialect::Mysql,
+            &names(&["name"]),
+            &filter(json!([{ "column": "name", "op": "like", "value": "a*b" }])),
+        )
+        .unwrap();
+        assert_eq!(out.frag, " WHERE `name` LIKE ? ESCAPE '!'");
+        assert_eq!(out.params, vec![json!("%a%b%")]);
+        let out = build_filter_where(
+            DbDialect::Mysql,
+            &names(&["name"]),
+            &filter(json!([{ "column": "name", "op": "like", "value": "100%" }])),
+        )
+        .unwrap();
+        // A literal % stays literal (escaped); only * translates.
+        assert_eq!(out.params, vec![json!("%100!%%")]);
     }
 
     #[test]

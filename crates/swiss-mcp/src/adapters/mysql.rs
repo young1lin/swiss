@@ -114,19 +114,53 @@ pub fn mysql_list_tables_sql(
     sort: Option<TableSort>,
 ) -> ((String, Vec<Value>), (String, Vec<Value>)) {
     let pattern = grep.map(like_contains);
-    let where_clause = match &pattern {
-        Some(_) => "table_schema = ? AND table_name LIKE ? ESCAPE '!'",
-        None => "table_schema = ?",
+    let (where_clause, head): (&str, Vec<Value>) = match &pattern {
+        Some(p) => (
+            "table_schema = ? AND table_name LIKE ? ESCAPE '!'",
+            vec![json!(database), json!(p)],
+        ),
+        None => ("table_schema = ?", vec![json!(database)]),
     };
-    // Node's mysqlListOrder: the name sort keeps information_schema's own (case-insensitive)
-    // collation; rows/size sort by the statistics the SELECT already computes, with the name as
-    // an ascending tiebreaker — DESC applies to the chosen key only, never the tiebreaker.
-    let order = match sort {
+    mysql_tables_sql_pair(where_clause, &head, mysql_list_order(sort), paging)
+}
+
+/// The grammar-grep variant (docs/22 W1.6): `pred` is the multi-LIKE fragment grep_where built
+/// (" AND (table_name LIKE ? ESCAPE '!' OR ...)") and `patterns` its bound values, slotted after
+/// the database bind. A grep without the grammar characters never reaches here — it keeps
+/// mysql_list_tables_sql's single-LIKE SQL byte-for-byte.
+pub fn mysql_list_tables_grammar_sql(
+    database: &str,
+    pred: &str,
+    patterns: &[Value],
+    paging: (i64, i64, i64),
+    sort: Option<TableSort>,
+) -> ((String, Vec<Value>), (String, Vec<Value>)) {
+    let where_clause = format!("table_schema = ?{pred}");
+    let mut head = vec![json!(database)];
+    head.extend(patterns.iter().cloned());
+    mysql_tables_sql_pair(&where_clause, &head, mysql_list_order(sort), paging)
+}
+
+/// Node's mysqlListOrder: the name sort keeps information_schema's own (case-insensitive)
+/// collation; rows/size sort by the statistics the SELECT already computes, with the name as
+/// an ascending tiebreaker — DESC applies to the chosen key only, never the tiebreaker.
+fn mysql_list_order(sort: Option<TableSort>) -> String {
+    match sort {
         Some(TableSort { key: TableSortKey::Rows, desc }) => keyed_order("approx_rows", desc),
         Some(TableSort { key: TableSortKey::Size, desc }) => keyed_order("bytes", desc),
         Some(TableSort { key: TableSortKey::Name, desc: false }) | None => "table_name".into(),
         Some(TableSort { key: TableSortKey::Name, desc: true }) => "table_name DESC".into(),
-    };
+    }
+}
+
+/// The list/count pair around one WHERE: count shares the list's WHERE so a page can report
+/// the filtered total beside the rows; the paging pair binds last.
+fn mysql_tables_sql_pair(
+    where_clause: &str,
+    head: &[Value],
+    order: String,
+    paging: (i64, i64, i64),
+) -> ((String, Vec<Value>), (String, Vec<Value>)) {
     let list_sql = format!(
         "
       SELECT table_name AS name,
@@ -146,15 +180,10 @@ pub fn mysql_list_tables_sql(
        WHERE {where_clause}"
     );
     let (_, limit, offset) = paging;
-    let list_params = match &pattern {
-        Some(p) => vec![json!(database), json!(p), json!(limit), json!(offset)],
-        None => vec![json!(database), json!(limit), json!(offset)],
-    };
-    let count_params = match &pattern {
-        Some(p) => vec![json!(database), json!(p)],
-        None => vec![json!(database)],
-    };
-    ((list_sql, list_params), (count_sql, count_params))
+    let mut list_params = head.to_vec();
+    list_params.push(json!(limit));
+    list_params.push(json!(offset));
+    ((list_sql, list_params), (count_sql, head.to_vec()))
 }
 
 /// Columns of one table for the Data view — the shape toBrowseColumns reads. Every column is
@@ -801,6 +830,33 @@ mod tests {
         assert_eq!(count_params.len(), 2);
         assert_eq!(list_params[0], json!("mydb"));
         assert_eq!(list_params[1], json!("%users%"));
+    }
+
+    #[test]
+    fn grammar_greps_expand_to_multi_like_sql() {
+        // docs/22 W1.6: "user*|account" is one OR over two patterns; the database bind stays
+        // first and the paging pair binds last, exactly like the single-LIKE statement.
+        let w = swiss_host::dbbrowser::grep_where(
+            swiss_host::dbbrowser::DbDialect::Mysql,
+            "table_name",
+            "user*|account",
+            0,
+        )
+        .unwrap()
+        .expect("grammar");
+        let ((list_sql, list_params), (count_sql, count_params)) =
+            mysql_list_tables_grammar_sql("mydb", &w.frag, &w.params, (0, 200, 0), None);
+        assert!(
+            list_sql.contains(
+                "WHERE table_schema = ? AND (table_name LIKE ? ESCAPE '!' OR table_name LIKE ? ESCAPE '!')"
+            ),
+            "{list_sql}"
+        );
+        assert_eq!(list_params.len(), 5); // db, two patterns, limit, offset
+        assert_eq!(count_params.len(), 3);
+        assert_eq!(list_params[1], json!("user%"));
+        assert_eq!(list_params[2], json!("%account%"));
+        assert!(count_sql.contains("COUNT(*)"));
     }
 
     #[test]

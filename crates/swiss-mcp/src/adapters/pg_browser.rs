@@ -6,7 +6,8 @@
 
 use super::direct::Lazy;
 use super::pg::{
-    pg_browse_table_params, pg_list_tables_sql, pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL,
+    pg_browse_table_params, pg_list_tables_grammar_sql, pg_list_tables_sql, pg_query_rows,
+COUNT_TABLES_SQL, DESCRIBE_SQL,
     PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL, PK_SQL,
 };
 use super::sql::{clamp_row_limit, limit_report, with_row_limit};
@@ -94,21 +95,45 @@ impl DbBrowser for PgBrowser {
             .max(0.0) as i64;
         let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
         let grep = o.get("grep").and_then(Value::as_str);
-        let filters = pg_browse_table_params(grep);
-        let list_params = vec![
-            filters[0].clone(),
-            filters[1].clone(),
-            json!(limit),
-            json!(page.saturating_mul(limit)),
-        ];
         let sort = browse_table_sort(
             o.get("sort").and_then(Value::as_str),
             o.get("dir").and_then(Value::as_str),
         )?;
-        let list_sql = pg_list_tables_sql(sort);
+        // docs/22 W1.6: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
+        // SQL with the LIMIT/OFFSET binds renumbered past the patterns; a plain substring keeps
+        // the const statements byte-for-byte.
+        let grammar = grep
+            .map(|g| swiss_host::dbbrowser::grep_where(DbDialect::Pg, "c.relname", g, 1))
+            .transpose()?
+            .flatten();
+        let (list_sql, count_sql, list_params, count_params) = match grammar {
+            Some(w) => {
+                let (ls, cs) = pg_list_tables_grammar_sql(sort, &w.frag, w.params.len());
+                let mut lp: Vec<Value> = vec![Value::Null];
+                lp.extend(w.params.iter().cloned());
+                lp.push(json!(limit));
+                lp.push(json!(page.saturating_mul(limit)));
+                (ls, cs, lp, w.params)
+            }
+            None => {
+                let filters = pg_browse_table_params(grep);
+                let lp = vec![
+                    filters[0].clone(),
+                    filters[1].clone(),
+                    json!(limit),
+                    json!(page.saturating_mul(limit)),
+                ];
+                (
+                    pg_list_tables_sql(sort),
+                    COUNT_TABLES_SQL.to_string(),
+                    lp,
+                    filters,
+                )
+            }
+        };
         let (list, count) = tokio::join!(
             self.query(&list_sql, &list_params),
-            self.query(COUNT_TABLES_SQL, &filters)
+            self.query(&count_sql, &count_params)
         );
         let list = list?;
         let total = total_of(&count?);

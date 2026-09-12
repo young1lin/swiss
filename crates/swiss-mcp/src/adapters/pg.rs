@@ -147,6 +147,11 @@ pub const COUNT_TABLES_SQL: &str = "
 /// the bottom) and abandon the schema grouping on purpose, with (schema, name) as the
 /// tiebreaker. Node replaces the literal ORDER BY; so does this, one string swap.
 pub fn pg_list_tables_sql(sort: TableSort) -> String {
+    with_pg_list_order(LIST_TABLES_SQL.to_string(), sort)
+}
+
+/// Node replaces the literal ORDER BY; so does this, one string swap.
+fn with_pg_list_order(sql: String, sort: TableSort) -> String {
     let desc = if sort.desc { " DESC" } else { "" };
     let clause = match sort.key {
         TableSortKey::Rows => {
@@ -157,7 +162,38 @@ pub fn pg_list_tables_sql(sort: TableSort) -> String {
         }
         TableSortKey::Name => format!("n.nspname, lower(c.relname){desc}"),
     };
-    LIST_TABLES_SQL.replacen("ORDER BY 1, 2", &format!("ORDER BY {clause}"), 1)
+    sql.replacen("ORDER BY 1, 2", &format!("ORDER BY {clause}"), 1)
+}
+
+/// The grammar-grep twin (docs/22 W1.6): the const SQL has ONE grep placeholder, but a grammar
+/// grep expands to any number of patterns, so the same query text is assembled here with the
+/// predicate grep_where built inline and the LIMIT/OFFSET placeholders renumbered past it.
+/// `pred` arrives as " AND (...)" from grep_where — the leading AND is the one the replaced
+/// line carried. A plain substring grep never reaches here; pg_list_tables_sql keeps its SQL
+/// byte-for-byte.
+pub fn pg_list_tables_grammar_sql(sort: TableSort, pred: &str, patterns: usize) -> (String, String) {
+    // The single $2 grep bind becomes N patterns, so LIMIT/OFFSET shift by N-1: $3/$4 →
+    // $(N+2)/$(N+3).
+    let limit_n = patterns + 2;
+    let offset_n = patterns + 3;
+    let inline = pred.trim_start();
+    let list = LIST_TABLES_SQL
+        .replacen(
+            "AND ($2::text IS NULL OR c.relname ILIKE $2 ESCAPE '!')",
+            inline,
+            1,
+        )
+        .replacen(
+            "LIMIT $3 OFFSET $4",
+            &format!("LIMIT ${limit_n} OFFSET ${offset_n}"),
+            1,
+        );
+    let count = COUNT_TABLES_SQL.replacen(
+        "AND ($2::text IS NULL OR c.relname ILIKE $2 ESCAPE '!')",
+        inline,
+        1,
+    );
+    (with_pg_list_order(list, sort), count)
 }
 pub const DESCRIBE_SQL: &str = "
   SELECT column_name, data_type, is_nullable, column_default,
@@ -888,6 +924,33 @@ impl Engine for PgEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grammar_grep_sql_renumbers_the_paging_binds() {
+        // docs/22 W1.6: two patterns push LIMIT/OFFSET from $3/$4 to $4/$5, the schema keeps $1,
+        // and the count shares the predicate without the paging pair.
+        let w = swiss_host::dbbrowser::grep_where(
+            swiss_host::dbbrowser::DbDialect::Pg,
+            "c.relname",
+            "user*|account",
+            1,
+        )
+        .unwrap()
+        .expect("grammar");
+        let (list, count) =
+            pg_list_tables_grammar_sql(TableSort { key: TableSortKey::Name, desc: false }, &w.frag, w.params.len());
+        assert!(
+            list.contains("AND (c.relname ILIKE $2 ESCAPE '!' OR c.relname ILIKE $3 ESCAPE '!')"),
+            "{list}"
+        );
+        assert!(list.contains("LIMIT $4 OFFSET $5"), "{list}");
+        assert!(list.contains("ORDER BY n.nspname, lower(c.relname)"), "{list}");
+        assert!(
+            count.contains("AND (c.relname ILIKE $2 ESCAPE '!' OR c.relname ILIKE $3 ESCAPE '!')"),
+            "{count}"
+        );
+        assert!(!count.contains("LIMIT"), "{count}");
+    }
 
     #[test]
     fn url_parsing_matches_new_url() {

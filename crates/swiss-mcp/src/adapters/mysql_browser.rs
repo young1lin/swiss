@@ -79,12 +79,29 @@ impl DbBrowser for MysqlBrowser {
             o.get("sort").and_then(Value::as_str),
             o.get("dir").and_then(Value::as_str),
         )?;
-        let ((ls, lp), (cs, cp)) = super::mysql::mysql_list_tables_sql(
-            &self.database,
-            grep,
-            (page, limit, page.saturating_mul(limit)),
-            Some(sort),
-        );
+        // docs/22 W1.6: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
+        // SQL; a plain substring keeps the single-LIKE statement byte-for-byte.
+        let grammar = grep
+            .map(|g| {
+                swiss_host::dbbrowser::grep_where(DbDialect::Mysql, "table_name", g, 0)
+            })
+            .transpose()?
+            .flatten();
+        let ((ls, lp), (cs, cp)) = match grammar {
+            Some(w) => super::mysql::mysql_list_tables_grammar_sql(
+                &self.database,
+                &w.frag,
+                &w.params,
+                (page, limit, page.saturating_mul(limit)),
+                Some(sort),
+            ),
+            None => super::mysql::mysql_list_tables_sql(
+                &self.database,
+                grep,
+                (page, limit, page.saturating_mul(limit)),
+                Some(sort),
+            ),
+        };
         let (list, count) = tokio::join!(self.query(&ls, &lp), self.query(&cs, &cp));
         let list = list?;
         let total = super::mysql::num_or_zero(count?.first().and_then(|r| r.get("total")));
