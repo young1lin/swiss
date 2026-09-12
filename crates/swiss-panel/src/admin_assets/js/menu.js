@@ -1,6 +1,7 @@
-import { $, dotTitle, el, state } from "./util.js";
+import { $, dotTitle, state } from "./util.js";
 import { closeMenu } from "./pane.js";
-import { assignGroup, groupNode, groupOf, groupedMcps, moveRow, rowOf, visibleMcps } from "./sidebar.js";
+import { groupOf, groupedMcps, rowOf, sideCfg, visibleMcps } from "./sidebar.js";
+import { mountGroup } from "./groups.js";
 
 /* --- a menu anchored to a button ---------------------------------------------------------------
    The pane's overflow menu anchors to .pane-actions; menus raised from the sidebar have no such
@@ -8,13 +9,16 @@ import { assignGroup, groupNode, groupOf, groupedMcps, moveRow, rowOf, visibleMc
    { label, fn, danger, sep }. */
 function popupMenu(anchor, items) {
   closeMenu();
-  var node = el("div", "menu float");
+  var node = document.createElement("div");
+  node.className = "menu float";
   node.id = "menu";
   items.forEach(function (it) {
     if (it.sep) { node.appendChild(document.createElement("hr")); return; }
     var cls = (it.pick ? "pick" : "") + (it.on ? " on" : "") + (it.danger ? " danger" : "");
-    var b = el("button", cls.trim(), it.label);
+    var b = document.createElement("button");
     b.type = "button";
+    b.className = cls.trim();
+    b.textContent = it.label;
     b.onclick = function (ev) { ev.stopPropagation(); closeMenu(); it.fn(); };
     node.appendChild(b);
   });
@@ -29,46 +33,6 @@ function popupMenu(anchor, items) {
   state.menuOpen = true;
 }
 
-/** Drag handlers for one sidebar row. The insertion point is the hovered row's half (top half =
- *  before it, bottom half = after it), shown as an accent edge. Dropping on a row in another group
- *  both moves the MCP there and places it at that spot. */
-function wireDrag(row) {
-  row.addEventListener("dragstart", function (e) {
-    state.dragging = row.dataset.name;
-    row.classList.add("dragging");
-    try { e.dataTransfer.setData("text/plain", row.dataset.name); } catch (err) { /* old IE */ }
-    e.dataTransfer.effectAllowed = "move";
-  });
-  row.addEventListener("dragover", function (e) {
-    if (!state.dragging || state.dragging === row.dataset.name) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    var before = e.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
-    row.classList.toggle("drop-before", before);
-    row.classList.toggle("drop-after", !before);
-  });
-  row.addEventListener("dragleave", function () {
-    row.classList.remove("drop-before", "drop-after");
-  });
-  row.addEventListener("drop", function (e) {
-    e.preventDefault();
-    var before = e.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
-    var dragged = state.dragging;
-    var target = rowOf(row.dataset.name);
-    // Order first, then membership: moveRow re-renders from the flat list, and doing it after the
-    // reassignment would drop the row into the new group at whatever slot it happened to hold.
-    moveRow(dragged, row.dataset.name, before);
-    if (target) assignGroup(dragged, groupOf(target)); // a live group name, sent as-is
-  });
-  row.addEventListener("dragend", function () {
-    state.dragging = null; // lets the deferred rebuild run — see patchSidebar
-    row.classList.remove("dragging");
-    document.querySelectorAll(".drop-before, .drop-after").forEach(function (r) {
-      r.classList.remove("drop-before", "drop-after");
-    });
-    patchSidebar();
-  });
-}
 /** A sidebar row is one line, so everything that used to be crammed onto a second one — the
  *  description, the source, the latency, the reason a row is red — lives here, and in the pane
  *  header for the selected MCP. */
@@ -98,13 +62,14 @@ function patchSidebar() {
   // The rebuild key covers everything structural: which groups exist, what is in each, and which are
   // folded shut. Dot colour, latency and selection are patched below and stay out of it on purpose.
   var sig = groups.map(function (g) {
-    return g.name + "\u0001" + (state.collapsed[g.name] ? "c" : "o") + "\u0001" +
+    return g.name + "\u0001" + (state.collapsed[g.name] && !state.filter.trim() ? "c" : "o") + "\u0001" +
       g.rows.map(function (m) { return m.name; }).join("\u0000");
   }).join("\u0002");
 
   if (list.dataset.sig !== sig && !state.dragging && !state.draggingGroup) {
     list.innerHTML = "";
-    groups.forEach(function (g) { list.appendChild(groupNode(g)); });
+    var cfg = sideCfg();
+    groups.forEach(function (g) { list.appendChild(mountGroup(cfg, g)); });
     list.dataset.sig = sig;
   }
   rows.forEach(function (m) {
@@ -148,4 +113,4 @@ function patchSidebar() {
   cap.hidden = !state.filter;
 }
 
-export { patchSidebar, popupMenu, tooltipOf, wireDrag };
+export { patchSidebar, popupMenu, tooltipOf };

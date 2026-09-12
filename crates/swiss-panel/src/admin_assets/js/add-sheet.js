@@ -114,7 +114,7 @@ async function submitAdd() {
   // group once, rather than hopping a moment later. `default` is a real group name now: joining it
   // is an explicit assignment like any other.
   if (state.addGroup) {
-    await apiJson("/api/mcps/" + encodeURIComponent(body.name) + "/group",
+    await apiJson("/api/groups/mcps/members/" + encodeURIComponent(body.name),
       { method: "PUT", body: JSON.stringify({ group: state.addGroup }) });
   }
   await loadList();

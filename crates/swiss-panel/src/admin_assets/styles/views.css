@@ -305,21 +305,8 @@
     .tun-foot { font-size: var(--f-label); color: var(--text-3); padding: var(--s3) var(--s1) 0; display: flex; justify-content: space-between; gap: var(--s3); }
     /* The right-hand slot: a value you would copy (the inventory revision), so it earns mono. */
     .tun-foot-rev { font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); }
-    /* Grouped tunnel lists speak the pane's own section idiom — .sec-head caption over a .group
-       card, exactly like the Traffic view's sections — not the sidebar's tree headers. Only the
-       collapse behaviour, the section spacing and the drag affordances are new. */
-    .tun-group + .tun-group .tun-sec { margin-top: var(--s5); }
-    .tun-group.collapsed .group { display: none; }
-    .tun-sec { padding: 0 0 var(--s2); cursor: pointer; user-select: none; border-radius: 8px; }
-    .tun-sec-cap { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
-    .tun-sec-cap .sec-cap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* The chevron is a state indicator, not the only click target — the whole header toggles. */
-    .tun-chev { flex: none; display: grid; place-items: center; width: 18px; height: 18px; color: var(--text-3); font-size: 11px; transition: transform .15s ease; }
-    .tun-group:not(.collapsed) .tun-chev { transform: rotate(90deg); }
-    @media (prefers-reduced-motion: reduce) { .tun-chev { transition: none; } }
-    /* Dropping onto a section header appends to that group — the only way into an empty one. The
-       accent tint is the panel's existing "selected" fill, so a drop target reads as a target. */
-    .tun-sec.drop-into { background: color-mix(in srgb, var(--accent) 9%, transparent); border-radius: 8px; }
+    /* Grouped tunnel lists are the groups component at page density now (base.css .grp--page):
+       a 36px band over an indented .group card. Only the row layout is tunnel-specific. */
     .tun-row[draggable="true"] { cursor: grab; }
     .tun-row.dragging { opacity: 0.55; }
     .tun-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }

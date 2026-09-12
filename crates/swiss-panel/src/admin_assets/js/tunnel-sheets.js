@@ -1,7 +1,7 @@
 import { $, apiJson, el, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { loadTunnels, tunData } from "./polling.js";
-import { assignTunGroup } from "./tunnels.js";
+import { assignTunScoped } from "./tunnels.js";
 
 /* --- connection sheet -------------------------------------------------------------------------- */
 
@@ -140,7 +140,7 @@ async function saveConn(existing) {
   await loadTunnels();
   var pg = state.tun.pendingGroup;
   state.tun.pendingGroup = null;
-  if (!existing && pg && j.connection && j.connection.id) await assignTunGroup("connections", j.connection.id, pg);
+  if (!existing && pg && j.connection && j.connection.id) await assignTunScoped("conns", j.connection.id, pg);
   toast((existing ? "Saved " : "Added ") + body.name);
 }
 
@@ -245,7 +245,7 @@ async function saveRule(existing) {
   // A create launched from a group header's + lands in that group, not in default.
   var pg = state.tun.pendingGroup;
   state.tun.pendingGroup = null;
-  if (!existing && pg && row.id) await assignTunGroup("rules", row.id, pg);
+  if (!existing && pg && row.id) await assignTunScoped("rules", row.id, pg);
   toast((existing ? "Saved " : "Added ") + body.name + (row.state && row.state !== "stopped" ? " (" + row.state + ")" : ""));
 }
 

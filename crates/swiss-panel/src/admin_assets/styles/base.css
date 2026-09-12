@@ -176,7 +176,7 @@
     /* Inline icons (docs/18 V2): one sprite in the shell, stroke=currentColor, sized here. */
     .ic { width: 16px; height: 16px; flex: none; }
     /* Disclosure chevrons read better a step smaller than action icons. */
-    .chev .ic, .grp-chev .ic, .tun-chev .ic { width: 12px; height: 12px; }
+    .chev .ic, .grp-chev .ic { width: 12px; height: 12px; }
 
     /* Fields sit on --field, not --card: inside a white card or a white sheet a white input has no
        edge but its hairline, and on the dark side a field one step darker than its card is what
@@ -331,49 +331,72 @@
       color: var(--text-3); background: color-mix(in srgb, var(--text) 5%, transparent);
     }
 
-    /* --- sidebar groups -------------------------------------------------------------------------
-       A disclosure header per group, in the source-list idiom: the header is a caption, not a row, so
-       it never competes with the MCPs under it. `default` is always first and always present — it is
-       where an MCP lives until you move it, and where the members of a deleted group land. */
-    .side-group + .side-group { margin-top: var(--s2); }
-    .grp-head { display: flex; align-items: center; border-radius: var(--r-row); }
+    /* --- groups (docs/20 §4.1) -------------------------------------------------------------------
+       One component, two densities: the sidebar tree and the page card list. Hierarchy is
+       carried by structure alone — a 28px/36px band on --sep-soft, a 20px indent behind a 1px
+       guide line — never by case or weight tricks: the group name is body-size, mixed case,
+       weight 600. The band is what makes the header read as a section of the list rather than
+       a row of it, and it is why the grip can stay hover-only. */
+    .grp--side + .grp--side { margin-top: var(--s2); }
+    .grp--page + .grp--page { margin-top: var(--s5); }
+    .grp-head {
+      display: flex; align-items: center; gap: var(--s1);
+      background: var(--sep-soft);
+    }
     .grp-head:hover { background: var(--hover); }
-    /* The group's drag handle: the ONLY draggable thing on a header, so + and ⋯ keep every
-       click. Whisper-quiet until pointed at — like ⋯, one persistent glyph per group is a
-       hierarchy — but the grab cursor is what teaches "this row reorders". */
+    .grp--side .grp-head { height: 28px; padding: 0 var(--s1); }
+    .grp--page .grp-head { height: 36px; padding: 0 var(--s2); }
+    /* The group's drag handle: the ONLY draggable thing on a header, so + and the ellipsis keep
+       every click (a hand that moves a pixel while pressing one must not cancel a click into a
+       drag). Whisper-quiet until pointed at — the band carries the hierarchy now — but the grab
+       cursor is what teaches "this row reorders". */
     .grp-grip {
       flex: none; width: 14px; height: 24px; display: inline-flex; align-items: center;
       justify-content: center; color: var(--text-3); opacity: 0; cursor: grab;
     }
-    .grp-head:hover .grp-grip { opacity: .7; }
+    .grp-head:hover .grp-grip, .grp-grip:focus-visible { opacity: .7; }
     .grp-grip:active { cursor: grabbing; }
     .grp-toggle {
       flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s1);
-      height: 24px; padding: 0 var(--s1); text-align: left;
-      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
-      color: var(--text-3);
+      text-align: left; color: var(--text-2);
+      font-size: var(--f-body); font-weight: 600;
     }
-    .grp-chev { flex: none; width: 12px; transition: transform .15s ease; }
-    .side-group:not(.collapsed) .grp-chev { transform: rotate(90deg); }
+    .grp-chev { flex: none; width: 12px; color: var(--text-3); transition: transform .15s ease; }
+    .grp:not(.collapsed) .grp-chev { transform: rotate(90deg); }
     @media (prefers-reduced-motion: reduce) { .grp-chev { transition: none; } }
     .grp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .grp-n { flex: none; font-variant-numeric: tabular-nums; font-weight: 500; opacity: .8; }
+    /* Tabular so a count change does not wiggle the name beside it; dimmed because it is
+       metadata, kept visible folded because 0 versus 3 is how a folded group explains itself. */
+    .grp-n { flex: none; font-size: var(--f-caption); font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text-3); }
     .grp-add, .grp-more {
       flex: none; padding: 2px 6px; border-radius: 4px; line-height: 1;
       font-size: 13px; color: var(--text-3);
     }
-    /* Adding an MCP is the common act and it is always "into this group", so + stays visible — dimmed
-       until you point at the header. The rename/delete ⋯ is rare, and appears only on hover: one
-       persistent glyph per group is a hierarchy, two would be a toolbar. */
+    /* Adding is the common act and it is always "into this group", so + stays visible — dimmed
+       until you point at the header. The rename/delete ellipsis is rare, and appears only on
+       hover: one persistent glyph per group is a hierarchy, two would be a toolbar. */
     .grp-add { opacity: .55; }
     .grp-more { opacity: 0; }
     .grp-head:hover .grp-add, .grp-head:hover .grp-more,
     .grp-add:focus-visible, .grp-more:focus-visible { opacity: 1; }
     .grp-add:hover, .grp-more:hover { color: var(--text); background: var(--sep-soft); }
-    .side-group.collapsed .grp-rows { display: none; }
-    /* The indent is what makes this read as a tree: a row's content starts under its group's NAME,
-       past the disclosure triangle, and its hover/selection fill indents with it. */
-    .grp-rows { padding-left: 12px; }
+    .grp.collapsed .grp-body { display: none; }
+    /* The indent is what makes this read as a tree: members start 20px under the band, and a
+       1px guide line in the gutter ties them to their header. It stops at the last row's
+       midline (half a row height) so an empty group draws no orphan line. */
+    .grp-body { position: relative; padding-left: 20px; }
+    .grp-body::before {
+      content: ""; position: absolute; left: -14px; top: 0;
+      border-left: 1px solid var(--sep);
+    }
+    .grp--side .grp-body::before { bottom: 15px; }
+    .grp--page .grp-body::before { bottom: 21px; }
+    /* An empty group is a place, not an empty state: one quiet line keeps the container a
+       visible drop target (the only way in) and explains the + beside it. */
+    .grp-empty {
+      height: 28px; display: flex; align-items: center;
+      font-size: var(--f-caption); color: var(--text-3);
+    }
     /* Dropping onto the header itself appends to that group, which is the only way to reach an
        empty one. Dropping another GROUP header on it reorders — the same before/after edge the
        rows use, on the header that owns the slot. */

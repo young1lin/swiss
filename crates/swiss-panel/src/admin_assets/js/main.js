@@ -11,7 +11,8 @@
    lives in its own module next to this one; /admin/js/* is served with no-store, so editing any of
    them reaches the browser on the next reload — no build, no gateway restart.
    ================================================================================================ */
-import { $, THEME_KEY, api, loadCollapsed, loadTunCollapsed, state, toast } from "./util.js";
+import { $, THEME_KEY, api, state, toast } from "./util.js";
+import { loadCollapsed } from "./groups.js";
 import { closeSheet } from "./add-sheet.js";
 import { initSelects } from "./dropdown.js";
 import { initPages, pageHasPendingChanges, pageUsesSidebar, pollPage } from "./page-registry.js";
@@ -180,8 +181,8 @@ document.addEventListener("keydown", function (e) {
   openDetail(rows[nextIndex].name);
 });
 
-state.collapsed = loadCollapsed(); // before the first paint, so folded groups never flash open
-state.tun.collapsed = loadTunCollapsed(); // same for the tunnel groups
+state.collapsed = loadCollapsed("mcps"); // before the first paint, so folded groups never flash open
+state.tun.collapsed = { conns: loadCollapsed("conns"), rules: loadCollapsed("rules") }; // same, per tab
 showApp();
 // Ask for the child walk on the very first paint too, so the chip never shows a gateway-only total
 // that a poll silently corrects 6s later.

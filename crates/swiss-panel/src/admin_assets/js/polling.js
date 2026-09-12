@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, api, apiJson, dotTitle, esc, icon, state, toast, whenLabel } from "./util.js";
+import { $, api, apiJson, dotTitle, esc, icon, state, toast, whenLabel } from "./util.js";
 import { currentPageCount, navigatePage, refreshPage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
@@ -68,24 +68,12 @@ function tunData() {
   return state.tun.data || { connections: [], rules: [], ruleGroups: [], connGroups: [], mcps: [] };
 }
 
-/** Which tunnel list is on screen — the group/order APIs take this same word. */
-function tunKind() { return state.tun.tab === "conns" ? "connections" : "rules"; }
+/** Which tunnel scope is on screen — the /api/groups/{scope} family's own word. The wire keys
+ *  stay ruleGroups/connGroups (docs/20 §3); this maps the tab to its scope. */
+function tunScope() { return state.tun.tab === "conns" ? "conns" : "rules"; }
 function tunRows() { return state.tun.tab === "conns" ? tunData().connections : tunData().rules; }
 function tunGroupsList() {
   return state.tun.tab === "conns" ? tunData().connGroups || [] : tunData().ruleGroups || [];
-}
-function tunGroupOf(r) { return r.group || DEFAULT_GROUP; }
-
-/** The list's shape: the implicit default group first, then the stored groups in their order. */
-function tunGrouped() {
-  var byGroup = {};
-  tunRows().forEach(function (r) {
-    var g = tunGroupOf(r);
-    (byGroup[g] = byGroup[g] || []).push(r);
-  });
-  var out = [{ name: DEFAULT_GROUP, rows: byGroup[DEFAULT_GROUP] || [] }];
-  tunGroupsList().forEach(function (g) { out.push({ name: g, rows: byGroup[g] || [] }); });
-  return out;
 }
 
 function setView(v) { return navigatePage(v); }
@@ -258,4 +246,4 @@ function connRowHtml(c) {
     "</div>";
 }
 
-export { connRowHtml, jobDotClass, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab, updateCountChip };
+export { connRowHtml, jobDotClass, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupsList, tunRows, tunScope, tunTab, updateCountChip };

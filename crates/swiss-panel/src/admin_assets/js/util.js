@@ -1,5 +1,3 @@
-var COLLAPSE_KEY = "mcp_gateway_collapsed";
-var TUN_COLLAPSE_KEY = "mcp_gateway_tun_collapsed";
 var TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
 var THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
 var KINDS = ["tools", "resources", "prompts"];
@@ -10,8 +8,8 @@ var DEFAULT_GROUP = "default";
 
 var state = {
   mcps: [],          // rows from /api/mcps (each carries .group)
-  groups: [],        // custom group names, in sidebar order; `default` is implicit and comes first
-  collapsed: {},     // group name -> true. Panel-only, so it lives in localStorage, not managed.json
+  groups: [],        // group names in sidebar order — the FIRST entry is the sink slot for unassigned rows
+  collapsed: {},     // mcps fold map; group name -> true. Panel-only, so it lives in localStorage (groups.js)
   selected: null,    // selected MCP name
   filter: "",
   detail: null,      // { name, tab, config, source, editing, editType, tools:{...}, calls, ... }
@@ -44,7 +42,8 @@ var state = {
     busy: {},        // id -> verb in flight
     keys: null,      // cached /api/tunnels/keys
     dragging: null,  // id of the row being dragged — polls must not rebuild under it
-    collapsed: {},   // group name -> true, per tab view preference (localStorage, like the sidebar)
+    draggingGroup: null, // name of the group header being dragged — same rebuild freeze as a row drag
+    collapsed: { conns: {}, rules: {} }, // fold maps per tab; keys swiss.groups.<scope>.collapsed (groups.js)
     pendingGroup: null, // group chosen via a header "+", applied to the row the next create lands in
   },
   jobs: {             // jobs view state (jobs.js renders it; polling.js loads it)
@@ -119,21 +118,9 @@ function whenLabel(iso) {
     : d.toLocaleTimeString();
 }
 
-/** Which groups are folded shut. A view preference, not gateway state — it belongs to this browser. */
-function loadCollapsed() {
-  try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY)) || {}; } catch (e) { return {}; }
-}
-/** The tunnel groups fold independently of the sidebar's — same mechanism, its own keys, because a
- *  group named "prod" in each list folding together would be a coincidence, not a feature. */
-function loadTunCollapsed() {
-  try { return JSON.parse(localStorage.getItem(TUN_COLLAPSE_KEY)) || {}; } catch (e) { return {}; }
-}
-function saveTunCollapsed() {
-  try { localStorage.setItem(TUN_COLLAPSE_KEY, JSON.stringify(state.tun.collapsed)); } catch (e) { /* full or blocked */ }
-}
-function saveCollapsed() {
-  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(state.collapsed)); } catch (e) { /* full or blocked */ }
-}
+// Fold state for every scope lives in groups.js now — keyed swiss.groups.<scope>.collapsed, one
+// key per scope, because a group named "prod" in two lists folding together would be a
+// coincidence, not a feature.
 
 function toast(msg, isErr) {
   var t = $("toast");
@@ -168,4 +155,4 @@ async function apiJson(path, opts) {
   }
 }
 
-export { $, COLLAPSE_KEY, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, TUN_COLLAPSE_KEY, api, apiJson, dotTitle, el, emptyHtml, esc, icon, loadCollapsed, loadTunCollapsed, now, saveCollapsed, saveTunCollapsed, state, toast, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dotTitle, el, emptyHtml, esc, icon, now, state, toast, whenLabel };

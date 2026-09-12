@@ -1,4 +1,4 @@
-import { $, DEFAULT_GROUP, apiJson, esc, icon, state, whenLabel } from "./util.js";
+import { $, apiJson, esc, icon, state, whenLabel } from "./util.js";
 import { fmtJson } from "./logs.js";
 
 /* --- traffic: who (token + self-reported client) asked what, across every MCP -----------------
@@ -222,25 +222,4 @@ function renderTraffic() {
   };
 }
 
-/** A group header: the sidebar's disclosure vocabulary applied to a full-width card. Built as a
- *  string like the rows beside it; wiring happens in wireTunnels off the data-tg attribute. */
-function tunGroupHeadHtml(name, n) {
-  var isDefault = name === DEFAULT_GROUP;
-  return '<div class="sec-head tun-sec" data-tg="' + esc(name) + '" data-tgt role="button" tabindex="0" ' +
-      'title="Collapse or expand this group">' +
-      '<span class="tun-sec-cap">' +
-        '<span class="tun-chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
-        '<span class="sec-cap">' + esc(name) + "</span>" +
-        '<span class="seg-n tun-count">' + n + "</span>" +
-      "</span>" +
-      '<span style="display:flex;gap:var(--s2)" data-tgnoclick>' +
-        '<button class="btn icon" type="button" data-tgadd title="Add to ' + esc(name) +
-          '" aria-label="Add to ' + esc(name) + '">' + icon("plus") + "</button>" +
-        (isDefault
-          ? "" // the default group cannot be renamed or deleted — no menu, no phantom spacer to hold
-          : '<button class="btn icon" type="button" data-tgmore title="Rename or delete this group" aria-label="Group actions">' + icon("ellipsis") + "</button>") +
-      "</span>" +
-    "</div>";
-}
-
-export { ago, loadTraffic, loadTrafficBody, renderTraffic, toggleTraffic, trafficBodyHtml, trafficPageStep, trafficReload, trafficRow, tunGroupHeadHtml };
+export { ago, loadTraffic, loadTrafficBody, renderTraffic, toggleTraffic, trafficBodyHtml, trafficPageStep, trafficReload, trafficRow };

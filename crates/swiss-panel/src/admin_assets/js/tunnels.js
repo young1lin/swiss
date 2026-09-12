@@ -1,24 +1,26 @@
-import { $, DEFAULT_GROUP, api, apiJson, dotTitle, emptyHtml, esc, saveTunCollapsed, state, toast } from "./util.js";
+import { $, api, apiJson, dotTitle, emptyHtml, esc, state, toast } from "./util.js";
 import { copyText } from "./connect.js";
-import { act } from "./detail.js";
 import { popupMenu } from "./menu.js";
-import { connRowHtml, loadTunnels, ruleRowHtml, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab } from "./polling.js";
-import { tunGroupHeadHtml } from "./traffic.js";
-import { openGroupSheet } from "./add-sheet.js";
+import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
+import { connRowHtml, loadTunnels, ruleRowHtml, tunData, tunGroupsList, tunRows, tunScope, tunTab } from "./polling.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
-   The MCP sidebar's model, ported: one flat order per list (array order in tunnels.json), a group
-   name on each row, and a stored list of group names. Dragging onto a row re-orders and re-homes in
-   one gesture; dropping on a header appends to that group — the only way into an empty one. */
+   The sidebar's model, shared through the groups component (docs/20 §4): one flat order per
+   list (array order in tunnels.json), a group name on each row, and a stored list of group
+   names — default included, as an ordinary name now. Dragging onto a row re-orders and re-homes
+   in one gesture; dropping on a header appends to that group — the only way into an empty one. */
 
-/** Persist the current order of both lists. The server ranks /api/tunnels by it. */
+/** The rendering group of a tunnel row: same one rule as everywhere else — the stored group
+ *  while it exists, else the first group. */
+function tunGroupOfRow(r) {
+  return makeGroupOf(tunGroupsList())(r);
+}
+
+/** Persist the current order of the list on screen. The family's order route is per-scope,
+ *  so only the tab being dragged over is sent. */
 function saveTunOrder() {
-  var d = tunData();
-  api("/api/tunnels/order", { method: "PUT", body: JSON.stringify({
-    connections: d.connections.map(function (c) { return c.id; }),
-    rules: d.rules.map(function (r) { return r.id; }),
-  }) }).catch(function () { /* the next reorder retries; the list is already right locally */ });
+  void saveOrder(tunScope(), tunRows().map(function (r) { return r.id; }));
 }
 
 /** Move one row to just before/after another in its list, re-render, persist. */
@@ -35,124 +37,23 @@ function moveTunRow(id, target, before) {
   saveTunOrder();
 }
 
-/** Put one row in a group (kind is "rules" | "connections"). Applied locally first so the row jumps
- *  immediately, then persisted — a reject takes the server's word for it. */
-async function assignTunGroup(kind, id, group) {
-  var rows = kind === "rules" ? tunData().rules : tunData().connections;
+/** Put one row in a group. Applied locally first so the row jumps immediately, then persisted
+ *  — a reject takes the server's word for it. Scope is the family's own word ("conns"|"rules"). */
+async function assignTunScoped(scope, id, group) {
+  var rows = scope === "rules" ? tunData().rules : tunData().connections;
   var row = rows.filter(function (r) { return r.id === id; })[0];
   if (!row) return;
-  var want = group || DEFAULT_GROUP;
-  if (tunGroupOf(row) === want) return;
-  row.group = want === DEFAULT_GROUP ? null : want;
+  var names = scope === "rules" ? tunData().ruleGroups : tunData().connGroups;
+  if (makeGroupOf(names || [])(row) === (group || (names || [])[0])) return;
+  row.group = group;
   renderTunnels();
-  var j = await apiJson("/api/tunnels/groups/" + kind + "/" + encodeURIComponent(id),
-    { method: "PUT", body: JSON.stringify({ group: group }) });
+  var j = await assignMember(scope, id, group);
   if (!j) { await loadTunnels(); return; }
-  row.group = j.group === DEFAULT_GROUP ? null : j.group;
+  row.group = j.group; // the canonical name the server stored
   renderTunnels();
 }
 
-/** Land a dragged row at the end of a group: slot it after the group's last member so the flat order
- *  agrees with what the cards now show, then reassign. */
-function dropTunInto(id, group) {
-  var members = tunRows().filter(function (r) { return tunGroupOf(r) === group && r.id !== id; });
-  if (members.length) moveTunRow(id, members[members.length - 1].id, false);
-  void assignTunGroup(tunKind(), id, group);
-}
-
-/** Send the whole group list. Create, reorder and delete are all "here is the new list". */
-async function saveTunGroups(next) {
-  var j = await apiJson("/api/tunnels/groups/" + tunKind(), { method: "PUT", body: JSON.stringify({ groups: next }) });
-  if (!j) return false;
-  await loadTunnels();
-  return true;
-}
-
-function tunNewGroup() {
-  openGroupSheet(null, async function (name) {
-    if (!await saveTunGroups(tunGroupsList().concat([name]))) return false;
-    toast("Group " + name + " created");
-    return true;
-  });
-}
-
-function tunRenameGroup(from) {
-  openGroupSheet(from, async function (to) {
-    var j = await apiJson("/api/tunnels/groups/" + tunKind() + "/rename",
-      { method: "POST", body: JSON.stringify({ from: from, to: to }) });
-    if (!j) return false;
-    // The fold state is keyed by name; carry it across or a renamed group springs open.
-    if (state.tun.collapsed[from]) { delete state.tun.collapsed[from]; state.tun.collapsed[to] = true; saveTunCollapsed(); }
-    await loadTunnels();
-    toast("Renamed " + from + " → " + to + " (" + j.moved + " moved)");
-    return true;
-  });
-}
-
-async function tunDeleteGroup(name) {
-  var n = tunRows().filter(function (r) { return tunGroupOf(r) === name; }).length;
-  if (n && !confirm("Delete group '" + name + "'?\n\nIts " + n + " row" + (n === 1 ? "" : "s") +
-      " move to '" + DEFAULT_GROUP + "'. Nothing is removed.")) return;
-  if (await saveTunGroups(tunGroupsList().filter(function (g) { return g !== name; }))) toast("Deleted group " + name);
-}
-
-/** Drag handlers for one tunnel row — the sidebar's wireDrag, adapted to the pane's wider rows. */
-function wireTunDrag(row) {
-  var idOf = function () { return row.dataset.rule || row.dataset.conn; };
-  row.addEventListener("dragstart", function (e) {
-    state.tun.dragging = idOf();
-    row.classList.add("dragging");
-    try { e.dataTransfer.setData("text/plain", state.tun.dragging); } catch (err) { /* old IE */ }
-    e.dataTransfer.effectAllowed = "move";
-  });
-  row.addEventListener("dragover", function (e) {
-    if (!state.tun.dragging || state.tun.dragging === idOf()) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    var before = e.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
-    row.classList.toggle("drop-before", before);
-    row.classList.toggle("drop-after", !before);
-  });
-  row.addEventListener("dragleave", function () {
-    row.classList.remove("drop-before", "drop-after");
-  });
-  row.addEventListener("drop", function (e) {
-    e.preventDefault();
-    var before = e.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2;
-    var dragged = state.tun.dragging;
-    var target = tunRows().filter(function (r) { return r.id === row.dataset.rule || r.id === row.dataset.conn; })[0];
-    // Order first, then membership: moveTunRow re-renders from the flat list, and doing it after the
-    // reassignment would drop the row into the new group at whatever slot it happened to hold.
-    moveTunRow(dragged, idOf(), before);
-    if (target) void assignTunGroup(tunKind(), dragged, tunGroupOf(target) === DEFAULT_GROUP ? null : tunGroupOf(target));
-  });
-  row.addEventListener("dragend", function () {
-    state.tun.dragging = null; // lets a deferred rebuild run again
-    row.classList.remove("dragging");
-    document.querySelectorAll(".drop-before, .drop-after").forEach(function (r) {
-      r.classList.remove("drop-before", "drop-after");
-    });
-  });
-}
-
-/** A group header is a drop target too: the only way into a group with no rows yet. */
-function wireTunGroupHead(head) {
-  var group = head.dataset.tg;
-  head.addEventListener("dragover", function (e) {
-    if (!state.tun.dragging) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    head.classList.add("drop-into");
-  });
-  head.addEventListener("dragleave", function () { head.classList.remove("drop-into"); });
-  head.addEventListener("drop", function (e) {
-    e.preventDefault();
-    head.classList.remove("drop-into");
-    var id = state.tun.dragging;
-    state.tun.dragging = null;
-    if (id) dropTunInto(id, group);
-  });
-}
+/* --- the page ----------------------------------------------------------------------------------- */
 
 function renderTunnels() {
   var d = tunData();
@@ -172,27 +73,17 @@ function renderTunnels() {
       '<button role="tab" data-tab="rules" aria-selected="' + !isConns + '">Port Forwards</button>' +
     "</div>" + acts + "</div>";
 
-  // One section per group — a .sec-head caption over a .group card, the pane's own idiom. Empty
-  // groups keep their caption: that is how you drag the first row into one (or use its +).
-  var grouped = tunGrouped();
-  var rowHtml = isConns ? connRowHtml : ruleRowHtml;
-  function groupHtml(g) {
-    return '<div class="tun-group' + (state.tun.collapsed[g.name] ? " collapsed" : "") +
-      '" data-tgroup="' + esc(g.name) + '">' + tunGroupHeadHtml(g.name, g.rows.length) +
-      (g.rows.length ? '<div class="group">' + g.rows.map(rowHtml).join("") + "</div>" : "") +
-      "</div>";
-  }
-  var body, foot;
+  // One group per slice — the component owns the header band, the indent and the empty line
+  // now (docs/20 §4.1). Empty groups keep their place: that is how you drag the first row into
+  // one (or use its +).
+  var cfg = tunCfg();
+  var grouped = slice(tunRows(), tunGroupsList(), tunGroupOfRow);
+  var list = isConns ? d.connections : d.rules;
+  var foot;
   if (isConns) {
-    body = d.connections.length
-      ? grouped.map(groupHtml).join("")
-      : emptyHtml({ icon: "plug", title: "No SSH connections", hint: "Add one with New, then point a forwarding rule at it." });
     var connected = d.connections.filter(function (c) { return c.state === "connected"; }).length;
     foot = d.connections.length + " connection" + (d.connections.length === 1 ? "" : "s") + ", " + connected + " connected";
   } else {
-    body = d.rules.length
-      ? grouped.map(groupHtml).join("")
-      : emptyHtml({ icon: "plug", title: "No forwarding rules", hint: "Add one with New. Each rule binds a local port and forwards it over SSH." });
     var active = d.rules.filter(function (r) { return r.state === "up"; }).length;
     foot = d.rules.length + " rule" + (d.rules.length === 1 ? "" : "s") + ", " + active + " active";
   }
@@ -202,9 +93,57 @@ function renderTunnels() {
   $("pane").innerHTML = '<div class="wide">' +
     '<div class="pane-head"><div><h1 class="pane-title">Tunnels</h1>' +
       '<div class="pane-desc">SSH connections and the local ports forwarded over them. A local port stays bound only while its tunnel can carry traffic.</div>' +
-    "</div></div>" + ctrl + body + '<div class="tun-foot">' + esc(foot) + "</div>" +
+    "</div></div>" + ctrl + '<div id="tunGroups"></div>' +
+    '<div class="tun-foot">' + esc(foot) + "</div>" +
   "</div>";
+  var host = $("tunGroups");
+  if (list.length) grouped.forEach(function (g) { host.appendChild(mountGroup(cfg, g)); });
+  else host.innerHTML = isConns
+    ? emptyHtml({ icon: "plug", title: "No SSH connections", hint: "Add one with New, then point a forwarding rule at it." })
+    : emptyHtml({ icon: "plug", title: "No forwarding rules", hint: "Add one with New. Each rule binds a local port and forwards it over SSH." });
   wireTunnels();
+}
+
+/** The conns/rules scope's cfg for mountGroup (see groups.js for the full contract). Built
+ *  fresh each render so names and the tab's fold map are always the live objects. */
+function tunCfg() {
+  return {
+    scope: tunScope(),
+    density: "page",
+    names: tunGroupsList(),
+    collapsed: state.tun.collapsed[state.tun.tab] || {},
+    noun: "row",
+    addTitle: function (g) {
+      return (state.tun.tab === "conns" ? "Add an SSH connection to " : "Add a forwarding rule to ") + g;
+    },
+    onAdd: function (g) {
+      state.tun.pendingGroup = g; // a real name now — the sheet's save lands the row in it
+      if (state.tun.tab === "conns") openConnSheet(null); else openRuleSheet(null);
+    },
+    reload: function () { return loadTunnels(); },
+    render: renderTunnels,
+    afterDrag: function () { renderTunnels(); }, // the catch-up rebuild a deferred poll owes
+    drag: {
+      get: function () { return state.tun.dragging; },
+      set: function (v) { state.tun.dragging = v; },
+    },
+    dragGroup: {
+      get: function () { return state.tun.draggingGroup; },
+      set: function (v) { state.tun.draggingGroup = v; },
+    },
+    rowId: function (r) { return r.id; },
+    rowSel: function (r) {
+      var v = window.CSS && CSS.escape ? CSS.escape(r.id) : r.id;
+      return state.tun.tab === "conns" ? '[data-conn="' + v + '"]' : '[data-rule="' + v + '"]';
+    },
+    rowsById: tunRows,
+    groupOfRow: tunGroupOfRow,
+    rowsHtml: function (g) {
+      return g.rows.map(state.tun.tab === "conns" ? connRowHtml : ruleRowHtml).join("");
+    },
+    onMoveRow: moveTunRow,
+    onAssign: function (id, g) { void assignTunScoped(tunScope(), id, g); },
+  };
 }
 
 /** Poll-safe update: dots, reasons, button labels and the footer. Never structure. */
@@ -216,11 +155,14 @@ function patchTunnels() {
   var nodes = $("pane").querySelectorAll("[" + attr + "]");
   // A row appeared or vanished (another tab, or a reconnect that deleted nothing) — structure
   // changed, so a patch cannot express it. Never mid-drag: a rebuild there cancels the gesture.
-  if (nodes.length !== rows.length) { if (!state.tun.dragging) renderTunnels(); return; }
+  if (nodes.length !== rows.length) {
+    if (!state.tun.dragging && !state.tun.draggingGroup) renderTunnels();
+    return;
+  }
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
     var node = $("pane").querySelector("[" + attr + '="' + (window.CSS && CSS.escape ? CSS.escape(row.id) : row.id) + '"]');
-    if (!node) { if (!state.tun.dragging) renderTunnels(); return; }
+    if (!node) { if (!state.tun.dragging && !state.tun.draggingGroup) renderTunnels(); return; }
     var busy = state.tun.busy[row.id];
     var dot = node.querySelector("[data-dot]");
     var live = state.tun.tab === "conns" ? (row.state === "connected" ? "up" : row.state) : row.state;
@@ -241,9 +183,11 @@ function patchTunnels() {
       act.disabled = !!busy;
     }
   }
-  Array.prototype.forEach.call($("pane").querySelectorAll("[data-tgroup]"), function (card) {
-    var n = rows.filter(function (r) { return tunGroupOf(r) === card.dataset.tgroup; }).length;
-    var badge = card.querySelector(".tun-count");
+  // Group counts move with rows: a count that only refreshed on rebuild would disagree with
+  // the patched dots beside it for the rest of the poll.
+  Array.prototype.forEach.call($("pane").querySelectorAll("[data-group]"), function (grp) {
+    var n = rows.filter(function (r) { return tunGroupOfRow(r) === grp.dataset.group; }).length;
+    var badge = grp.querySelector(".grp-n");
     if (badge) badge.textContent = String(n);
   });
   var foot = $("pane").querySelector(".tun-foot");
@@ -265,42 +209,9 @@ function wireTunnels() {
   });
   if ($("tNewConn")) $("tNewConn").onclick = function () { state.tun.pendingGroup = null; openConnSheet(null); };
   if ($("tNewRule")) $("tNewRule").onclick = function () { state.tun.pendingGroup = null; openRuleSheet(null); };
-  if ($("tNewGroup")) $("tNewGroup").onclick = tunNewGroup;
-
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-tg]"), function (head) {
-    var name = head.dataset.tg;
-    // The whole header toggles the fold; the + and ⋯ on its right are actions, not toggles, so
-    // clicks that bubble out of them are stopped in their own handlers below.
-    var toggle = function () {
-      if (state.tun.collapsed[name]) delete state.tun.collapsed[name];
-      else state.tun.collapsed[name] = true;
-      saveTunCollapsed();
-      renderTunnels();
-    };
-    head.onclick = function (ev) {
-      if (ev.target.closest("[data-tgnoclick]")) return;
-      toggle();
-    };
-    head.onkeydown = function (ev) {
-      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
-    };
-    head.querySelector("[data-tgadd]").onclick = function (ev) {
-      ev.stopPropagation();
-      state.tun.pendingGroup = name === DEFAULT_GROUP ? null : name;
-      if (state.tun.tab === "conns") openConnSheet(null); else openRuleSheet(null);
-    };
-    var more = head.querySelector("[data-tgmore]");
-    if (more) more.onclick = function (ev) {
-      ev.stopPropagation();
-      popupMenu(more.getBoundingClientRect(), [
-        { label: "Rename…", fn: function () { tunRenameGroup(name); } },
-        { sep: true },
-        { label: "Delete group", danger: true, fn: function () { tunDeleteGroup(name); } },
-      ]);
-    };
-    wireTunGroupHead(head);
-  });
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-rule], [data-conn]"), wireTunDrag);
+  if ($("tNewGroup")) $("tNewGroup").onclick = function () {
+    newGroupFlow(tunScope(), tunGroupsList(), function () { return loadTunnels(); });
+  };
   if ($("tStartAll")) $("tStartAll").onclick = startAllRules;
   if ($("tStopAll")) $("tStopAll").onclick = function () { stopAllRules(false); };
 
@@ -450,4 +361,4 @@ async function deleteConn(conn) {
   if (j) toast("Deleted " + conn.name);
 }
 
-export { assignTunGroup, deleteConn, deleteRule, dropTunInto, forceFreePort, moveTunRow, patchTunnels, renderTunnels, ruleAct, saveTunGroups, saveTunOrder, startAllRules, stopAllRules, testConn, tunDeleteGroup, tunNewGroup, tunRenameGroup, wireTunDrag, wireTunGroupHead, wireTunnels, withTunBusy };
+export { assignTunScoped, deleteConn, deleteRule, forceFreePort, moveTunRow, patchTunnels, renderTunnels, ruleAct, saveTunOrder, startAllRules, stopAllRules, testConn, tunCfg, wireTunnels, withTunBusy };
