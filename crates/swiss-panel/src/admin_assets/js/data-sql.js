@@ -183,14 +183,15 @@ function dbHistoryRender() {
   });
 }
 
-/* --- read-only SQL console ----------------------------------------------------------------------- */
+/* --- SQL console --------------------------------------------------------------------------------- */
 
 async function dbRunSql(explain) {
   var d = state.db;
   if (!d.conn) { toast("No database connection", true); return; }
   var sql = (d.sqlText || "").trim();
   if (!sql) { toast("Type a command first", true); return; }
-  // The redis console: one command per run, read-only by the server-side guard.
+  // The redis console: one command per run; the server-side guard still refuses what would
+  // break the shared connection or the server. Writes (SET, DEL, EXPIRE…) run.
   if (dbIsRedis()) {
     d.sqlBusy = true;
     renderDbToolbar();

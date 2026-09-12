@@ -47,7 +47,7 @@ function renderDbToolbar() {
   } else if (d.data) {
     left.appendChild(el("h2", "db-title pane-title", (d.data.schema ? d.data.schema + "." : "") + d.data.table));
     var bits = [d.data.total.toLocaleString() + " rows"];
-    bits.push(d.data.editable ? "editable — changes buffer until Commit" : "read-only · " + (d.data.editNote || "not editable"));
+    bits.push(d.data.editable ? "editable — changes buffer until Commit" : (d.data.editNote || "browsing only"));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (dbIsRedis()) {
     left.appendChild(el("h2", "db-title pane-title", d.redisKey ? d.redisKey : "Keys"));
@@ -55,7 +55,7 @@ function renderDbToolbar() {
     left.appendChild(el("div", "db-meta",
       (conn2 ? conn2.label : "") +
       (d.redis && d.redis.total != null ? " · " + Number(d.redis.total).toLocaleString() + " keys" : "") +
-      " · read-only view · Command for queries"));
+      " · browsing · Command for writes and queries"));
   } else {
     left.appendChild(el("h2", "db-title pane-title", "Data"));
     left.appendChild(el("div", "db-meta", d.conn ? (d.table ? "Loading…" : "Select a table on the left") : "No database MCP registered"));
@@ -189,7 +189,7 @@ function renderDbToolbar() {
     ctl.appendChild(dataCtl);
   }
   var sql = el("button", "btn", d.sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL"));
-  sql.title = nosql ? "Run a read-only command (GET, HGETALL, LRANGE, TTL, TYPE…)" : "Read-only SQL console";
+  sql.title = nosql ? "Run one command (SET, GET, DEL, HGETALL, TTL, TYPE…)" : "SQL console — one statement per run";
   sql.onclick = function () {
     d.sqlOpen = !d.sqlOpen;
     var con = $("dbConsole");

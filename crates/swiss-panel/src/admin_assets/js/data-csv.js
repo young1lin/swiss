@@ -27,7 +27,7 @@ function dbParseCsvLine(line) {
 function dbOpenImport() {
   var d = state.db;
   if (!d.conn || !d.table || !d.data) { toast("Open a table first", true); return; }
-  if (!d.data.editable) { toast("This table is not editable (" + (d.data.editNote || "read-only") + ")", true); return; }
+  if (!d.data.editable) { toast("This table is not editable (" + (d.data.editNote || "no primary key") + ")", true); return; }
   if (dbPending() && !dbOkToDrop()) return;
   var header = [], lines = [], mapping = [];
   $("sheet").innerHTML =

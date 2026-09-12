@@ -143,12 +143,12 @@ function renderDbView() {
       '<div class="db-console" id="dbConsole" hidden>' +
         '<div class="db-sql-wrap">' +
           '<pre class="db-sql-hl db-sql-face" id="dbSqlHl" aria-hidden="true"></pre>' +
-          '<textarea class="db-sql-face" id="dbSql" placeholder="SELECT … — read-only, results capped at the page size" spellcheck="false"></textarea>' +
+          '<textarea class="db-sql-face" id="dbSql" placeholder="SELECT / UPDATE / DELETE … — one statement per run" spellcheck="false"></textarea>' +
         '</div>' +
         '<div class="db-console-row"><button class="btn" id="dbSqlRun">Run</button>' +
         '<button class="btn" id="dbSqlExplain">Explain</button>' +
         '<select id="dbSqlHistory" title="Query history"><option value="">History</option></select>' +
-        '<span class="hint" id="dbSqlHint">read-only · Ctrl+Enter runs</span></div>' +
+        '<span class="hint" id="dbSqlHint">one statement per run · Ctrl+Enter runs</span></div>' +
       '</div>' +
       '<div class="db-grid-wrap" id="dbGridWrap"></div>' +
       '<div class="db-bar" id="dbBar" hidden></div>' +
@@ -288,14 +288,14 @@ function dbSyncKind() {
   dbPaintSort();
   if (dbIsRedis()) {
     grep.placeholder = "Filter keys"; grep.setAttribute("aria-label", "Filter keys");
-    sql.placeholder = "GET mykey · HGETALL myhash · LRANGE mylist 0 -1 · TTL mykey — read-only";
+    sql.placeholder = "SET k v · GET k · DEL k · HGETALL h · TTL k — one command per run";
     explain.hidden = true;
-    hint.textContent = "read-only · KEYS is refused, use the key list · Ctrl+Enter runs";
+    hint.textContent = "writes run · KEYS is refused, use the key list · Ctrl+Enter runs";
   } else {
     grep.placeholder = "Filter tables"; grep.setAttribute("aria-label", "Filter tables");
-    sql.placeholder = "SELECT … — read-only, results capped at the page size";
+    sql.placeholder = "SELECT / UPDATE / DELETE … — one statement per run";
     explain.hidden = false;
-    hint.textContent = "read-only · Ctrl+Enter runs";
+    hint.textContent = "one statement per run · Ctrl+Enter runs";
   }
 }
 
@@ -304,7 +304,7 @@ function dbSyncKind() {
  *  that changes it can never disagree; two builders is how the bar ended up saying "Data"
  *  twice while the dropdown said "shop-redis · redis". */
 function dbConnLabel(c) {
-  return c.name + " · " + c.dialect + (c.readonly ? " · read-only" : "");
+  return c.name + " · " + c.dialect;
 }
 
 function renderDbSide() {

@@ -39,14 +39,12 @@ var TYPE_FIELDS = {
     { k: "user", label: "User", half: true }, { k: "password", label: "Password", half: true },
     { k: "database", label: "Database", half: true }, { k: "timezone", label: "Timezone", half: true, ph: "Z" },
     { k: "maxRows", label: "Default row limit", num: true, half: true, ph: "200" },
-    { k: "readonly", label: "Read-only", bool: true, hint: "Refuses writes, and sets the session read-only server-side." },
     AUTOSTART_EAGER,
   ],
   redis: [
     DESC_FIELD,
     { k: "host", label: "Host", half: true }, { k: "port", label: "Port", num: true, half: true },
     { k: "password", label: "Password", half: true }, { k: "db", label: "DB index", num: true, half: true },
-    { k: "readonly", label: "Read-only", bool: true, hint: "Only read commands are accepted." },
     { k: "allowDestructive", label: "Allow FLUSHALL / FLUSHDB", bool: true },
     { k: "allowEval", label: "Allow Lua (EVAL / FCALL)", bool: true, hint: "A script is opaque to every other rule here — it can reach anything they refuse." },
     AUTOSTART_EAGER,
@@ -55,7 +53,6 @@ var TYPE_FIELDS = {
     DESC_FIELD,
     { k: "url", label: "Connection URL", area: true, ph: "postgresql://user:pass@127.0.0.1:5432/db?sslmode=disable" },
     { k: "maxRows", label: "Default row limit", num: true, half: true, ph: "200" },
-    { k: "readonly", label: "Read-only", bool: true, hint: "Sets default_transaction_read_only on the session." },
     AUTOSTART_EAGER,
   ],
   http: [
