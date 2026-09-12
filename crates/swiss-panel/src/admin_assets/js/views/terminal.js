@@ -283,6 +283,7 @@ function startRename(id) {
   if (!labelEl || btn.querySelector(".term-rename")) return;
   var input = document.createElement("input");
   input.className = "term-rename";
+  input.id = "term-rename";   // the a11y auditor wants a name on every form field
   input.maxLength = 40;
   input.value = m.customTitle || m.shellTitle || "";
   input.setAttribute("aria-label", "Rename tab");
@@ -507,20 +508,18 @@ function wireTerminal(m) {
         term.focus();
       });
     });
-    /* Pin-to-bottom (docs/22 §2.10, Tabby's machinery): xterm's built-in auto-follow is
-       REPLACED — its scrollToBottom becomes a no-op that only records "jump me to the
-       bottom", and m.toBottom() carries the real scroll. Pin state otherwise comes only
-       from the wheel (capture phase, decided immediately, re-read in rAF): during fast
-       output viewportY transiently equals baseY, so xterm's onScroll — which fires for
-       content scroll, never user scroll — must not decide this. Pinned against the
-       vendored xterm 5.5.0 internals this tree ships. */
-    var core = term._core;
-    var realToBottom = core && core.scrollToBottom;
-    if (typeof realToBottom === "function") core.scrollToBottom = function () { m.pinned = true; };
+    /* Pin-to-bottom (docs/22 §2.10). Deliberately NO patch of xterm internals: live
+       verification on the 19996 instance proved xterm 5.5's output auto-follow is the
+       buffer natively tracking the bottom while ydisp rides it — scrollToBottom is not
+       the path, so patching it disables nothing. Worse, the write path CALLS it
+       mid-frame, and a patch that flips m.pinned there poisons the very next write's
+       captured state (view yanked, chip never shown). The whole mechanism therefore
+       rides the PUBLIC API: writeTerm captures the viewport before each write and
+       restores it after (bottom when pinned, the saved line when not), and pin state
+       comes only from the wheel — capture phase, decided immediately, re-read in rAF. */
     m.toBottom = function () {
       m.pinned = true;
-      if (typeof realToBottom === "function") realToBottom.call(core);
-      else if (m.term) m.term.scrollToBottom();
+      if (m.term) m.term.scrollToBottom();
     };
     holder.addEventListener("wheel", function (ev) {
       if (ev.deltaY < 0) m.pinned = false;   // leaving the bottom is a decision, made now
