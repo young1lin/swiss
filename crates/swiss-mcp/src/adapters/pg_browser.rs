@@ -7,8 +7,8 @@
 use super::direct::Lazy;
 use super::pg::{
     pg_browse_table_params, pg_grammar_params, pg_list_tables_grammar_sql, pg_list_tables_sql,
-pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL,
-    PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL, PK_SQL,
+    pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL, PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL,
+    PK_SQL,
 };
 use super::sql::{clamp_row_limit, limit_report, with_row_limit};
 use async_trait::async_trait;
