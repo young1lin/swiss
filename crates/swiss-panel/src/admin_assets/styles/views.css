@@ -622,6 +622,58 @@
     .term-dot.warn { background: var(--t-warn); }
     .term-dot.bad { background: var(--t-bad); }
     .term-zoom { margin-left: auto; }   /* the zoom note sits at the right edge, away from the status */
+    /* --- docs/22 P0: bell dot, rename input, jump chip, overlay pill ------------------- */
+    /* A bell is state, so the tab carries it as a mark beside the label, not a color
+       swap of the whole tab — the active tab must stay identifiable while ringing. */
+    .term-tab-bell { flex: none; color: var(--t-warn); font-size: 9px; line-height: 1; }
+    /* The inline rename input replaces the label span; it wears the surface dark. */
+    .term-rename {
+      font: inherit; font-size: var(--f-label);
+      color: var(--t-fg); background: var(--t-bg);
+      border: 1px solid var(--t-accent); border-radius: 4px;
+      padding: 1px 4px; width: 9em; height: 19px; outline: none;
+    }
+    /* The "N new \u2193" chip rides the holder's bottom-right corner, one hop from the
+       scrollbar thumb it answers to. */
+    .term-jump {
+      position: absolute; right: var(--s3); bottom: var(--s2);
+      font-size: var(--f-label); color: var(--t-fg);
+      background: var(--t-bar); border: 1px solid var(--t-edge); border-radius: var(--r-pill);
+      padding: 3px 10px; cursor: pointer; box-shadow: none;
+    }
+    .term-jump:hover { border-color: var(--t-accent); }
+    .term-jump[hidden] { display: none; }
+    /* The centered toast pill: resize geometry, the copy scissors, attach states. */
+    .term-overlay {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      font-size: var(--f-label); color: var(--t-fg);
+      background: color-mix(in srgb, var(--t-bar) 92%, transparent);
+      border: 1px solid var(--t-edge); border-radius: var(--r-pill);
+      padding: 4px 12px; opacity: 0; transition: opacity .18s ease;
+      pointer-events: none; user-select: none;
+    }
+    .term-overlay.on { opacity: 1; }
+    /* --- docs/22 P1: the find bar ------------------------------------------------------ */
+    /* One thin row between the tab bar and the surface, wearing the same dark chrome:
+    "the terminal grew a find field" rather than "a dialog appeared". */
+    .term-find {
+      display: flex; align-items: center; gap: var(--s2);
+      background: var(--t-bar); border: 1px solid var(--t-edge); border-top: none;
+      padding: 4px 10px;
+    }
+    .term-find[hidden] { display: none; }
+    .term-find input {
+      font-family: var(--mono); font-size: var(--f-label); color: var(--t-fg);
+      background: var(--t-bg); border: 1px solid var(--t-edge); border-radius: 6px;
+      padding: 3px 8px; width: 22em; outline: none;
+    }
+    .term-find input:focus { border-color: var(--t-accent); }
+    .term-find-count { font-size: var(--f-caption); color: var(--t-dim); min-width: 4.5em; }
+    .term-find button {
+      background: transparent; color: var(--t-dim); border: none; box-shadow: none;
+      border-radius: 5px; padding: 2px 8px; cursor: pointer; font-size: var(--f-label);
+    }
+    .term-find button:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 8%, transparent); }
     .db-hint { color: var(--text-3); font-size: var(--f-body); padding: var(--s4); }
 
     /* --- Jobs schedule builder ------------------------------------------------------------------- */

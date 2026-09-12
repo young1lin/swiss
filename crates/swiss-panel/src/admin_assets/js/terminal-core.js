@@ -1,6 +1,8 @@
 /* The terminal view's pure half (docs/14 §8): URL building, reconnect pacing, the
    close-frame stories, geometry clamping, the target-picker rows, the Windows-Terminal
-   key/mouse actions (docs/15 §1) and the font-size zoom steps. Plain data in,
+   key/mouse actions (docs/15 §1), the font-size zoom steps, the tab-label precedence
+   (rename > shell title > target), scroll pinning, paste risk and the bell/copy prefs.
+   Plain data in,
    plain data out — the contract with the gateway's Rust side is pinned by the tests in
    test/admin-terminal.test.ts, not by clicking. The DOM/xterm/WS wiring stays in
    views/terminal.js; everything a test needs to trust lives here. */
@@ -174,9 +176,23 @@ export function sessionLabel(session) {
  *  one it stays the interrupt a flooding program is counting on. */
 export function keyAction(ev, hasSelection) {
   if (!ev || ev.type !== "keydown") return null;
-  if (ev.metaKey || ev.altKey) return null;   // mac paste and the browser's own menu combos
   var key = String(ev.key || "").toLowerCase();
+  /* Alt-combos the terminal page owns while a terminal holds focus (Windows Terminal's
+     tab jumps). Judged BEFORE the blanket Alt pass-through below so Alt+V and friends
+     stay untouched: only digits, the horizontal arrows and Alt+W are ours. The
+     browser's own Ctrl+Shift+W / Ctrl+Tab / Ctrl+Shift+T cannot be intercepted from a
+     page, so close/cycle/new ride Alt instead — the web-panel reality desktop
+     terminals do not face. */
+  if (ev.altKey && !ev.metaKey && !ev.ctrlKey) {
+    if (/^[1-9]$/.test(key)) return "tab-" + key;
+    if (key === "arrowleft") return "tab-prev";
+    if (key === "arrowright") return "tab-next";
+    if (key === "w") return "tab-close";
+    return null;
+  }
+  if (ev.metaKey || ev.altKey) return null;   // mac paste and the browser's own menu combos
   if (ev.ctrlKey) {
+    if (key === "f" && ev.shiftKey) return "search";                // Ctrl+Shift+F, the web-terminal classic
     if (key === "v") return "paste";                                // Ctrl+V, Ctrl+Shift+V
     if (key === "c") {
       if (ev.shiftKey) return hasSelection ? "copy" : null;         // Ctrl+Shift+C
@@ -235,4 +251,57 @@ export function mouseAction(ev, hasSelection) {
   if (!ev || ev.button !== 2) return null;
   if (ev.shiftKey) return "menu";
   return hasSelection ? "copy" : "paste";
+}
+
+/** The label one tab shows, in the precedence every native terminal uses: a manual
+ *  rename wins, then the shell's own OSC 0/2 title, then the target the session was
+ *  opened on. An EMPTY shell title is the shell resetting its title, not a label —
+ *  fall through. Seven of nine explored reference terminals converged on exactly
+ *  this order (docs/22 consensus 1). */
+export function tabLabel(session, shellTitle, customTitle) {
+  var custom = customTitle == null ? "" : String(customTitle).trim();
+  if (custom) return custom;
+  var shell = shellTitle == null ? "" : String(shellTitle).trim();
+  if (shell) return shell;
+  return sessionLabel(session);
+}
+
+/** Pinned-to-bottom judgment while output streams in (Tabby's rule, docs/22 §2.10):
+ *  within one line of the base means the user is riding the bottom. Unknown values
+ *  count as pinned — a wrongly-pinned terminal merely scrolls; a wrongly-unpinned
+ *  one yanks the user's scrollback, which is the failure this exists to prevent. */
+export function isPinned(viewportY, baseY) {
+  var v = Number(viewportY), b = Number(baseY);
+  if (!isFinite(v) || !isFinite(b)) return true;
+  return v >= b - 1;
+}
+
+/** How many newlines a paste would type BEYOND the one trailing Enter that ends a
+ *  normal paste. CRLF and lone CR both count as one. One trailing newline is stripped
+ *  first: pasting "ls\n" is how every paste ends and is not a second command. The
+ *  caller gates on the alternate screen (vim) where multiline is the norm. */
+export function embeddedNewlines(text) {
+  var s = String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\n$/, "");
+  var n = 0;
+  for (var i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
+}
+
+/** A stored bell mode back into a usable one: "badge" (default — a bell must be
+ *  VISIBLE by default, the repo's defaults-on rule), "badge-sound", or "off". */
+export var BELL_BADGE = "badge", BELL_BADGE_SOUND = "badge-sound", BELL_OFF = "off";
+export function readBellMode(raw) {
+  return raw === BELL_BADGE_SOUND || raw === BELL_OFF ? raw : BELL_BADGE;
+}
+
+/** Copy-on-select preference. Defaults ON (iTerm2's stance; the ✂ overlay makes the
+ *  copy visible so it is not a surprise) — "off" is the escape hatch. */
+export function readCopyOnSelect(raw) {
+  return raw === "off" ? false : true;
+}
+
+/** Trailing whitespace trimmed from a selection before it hits the clipboard: spaces
+ *  and tabs at line ends, plus the final newline a rectangular drag usually grabs. */
+export function trimSelection(text) {
+  return String(text == null ? "" : text).replace(/[ \t]+(?=\n)/g, "").replace(/\s+$/, "");
 }

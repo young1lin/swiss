@@ -2,23 +2,29 @@ import { $, DEFAULT_GROUP, apiJson, esc, state, toast } from "./util.js";
 import { openDetail, runConnTest } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsHtml, readFields } from "./fields.js";
 import { loadList } from "./polling.js";
+import { addTitle, groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { newGroup } from "./sidebar.js";
 
 /* --- Add sheet -------------------------------------------------------------------------------- */
-/** `group` is the group the new MCP joins — the header + that opened this sheet. */
+/** `group` is the group the new MCP joins — the header + that opened this sheet. A null
+ * `group` (the pane's empty-state button) resolves to the last group used in this scope
+ * while it still exists. Either way the select is the truth: the title retitles with it, and
+ * submit joins whatever it says, so a changed pick wins over the promise that opened it. */
 function openSheet(group) {
-  state.addGroup = group || state.groups[0] || DEFAULT_GROUP;
-  var into = " to " + state.addGroup; // every group names itself, `default` included
+  var names = state.groups && state.groups.length ? state.groups : [DEFAULT_GROUP];
+  var initial = group || resolveDefaultGroup(names, lastGroup("mcps"));
+  state.addGroup = initial;
   var types = Object.keys(TYPE_FIELDS);
   var opts = types.map(function (t) { return '<option value="' + t + '">' + esc(TYPE_LABELS[t] || t) + "</option>"; }).join("");
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="Add an MCP">' +
-      '<div class="sheet-head"><h2>Add an MCP' + esc(into) + "</h2></div>" +
+      '<div class="sheet-head"><h2 id="a-title">' + esc(addTitle("Add an", "MCP", initial)) + "</h2></div>" +
       '<div class="sheet-body">' +
         '<div class="two">' +
           '<label class="field"><span>Name</span><input id="a-name" placeholder="git-mcp" autocomplete="off"></label>' +
           '<label class="field"><span>Type</span><select id="a-type">' + opts + "</select></label>" +
         "</div>" +
+        groupFieldHtml(names, initial) +
         '<div id="a-fields"></div>' +
         '<label class="check"><input type="checkbox" id="a-start" checked>Start it now</label>' +
         '<div class="hint" id="a-test-out" hidden></div>' +
@@ -39,6 +45,9 @@ function openSheet(group) {
   };
   paint();
   $("a-type").onchange = paint;
+  $("g-sel").onchange = function () {
+    $("a-title").textContent = addTitle("Add an", "MCP", $("g-sel").value);
+  };
   $("a-cancel").onclick = closeSheet;
   $("a-test").onclick = function () { void runConnTest("a-"); };
   $("a-save").onclick = submitAdd;
@@ -105,8 +114,11 @@ async function submitAdd() {
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   if (!body.name) { toast("Name is required", true); return; }
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
+  // The select wins over the + that opened the sheet — a changed pick is the pick.
+  if ($("g-sel")) state.addGroup = $("g-sel").value;
   var j = await apiJson("/api/mcps", { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
+  rememberGroup("mcps", state.addGroup);
   closeSheet();
   toast("Added " + body.name + " (" + (j.lifecycle || "stopped") + ")");
   state.selected = body.name;

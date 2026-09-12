@@ -20,48 +20,16 @@
    The caller keeps what is genuinely its own: the row markup, what a row does when opened,
    the flat order it stores, and the noun the delete confirm names.
    ================================================================================================ */
-import { apiJson, el, icon, toast } from "./util.js";
+import { apiJson, el, esc, icon, toast } from "./util.js";
+import { addTitle, deleteConfirmMsg, groupOf, lastGroupKey, resolveDefaultGroup, slice } from "./group-logic.js";
 import { openGroupSheet } from "./add-sheet.js";
 import { popupMenu } from "./menu.js";
 
-/* --- pure -------------------------------------------------------------------------------------- */
-
-/** The group a row renders under: its stored group while that group still exists, else the
- *  FIRST group - that slot is the sink for unassigned rows, whatever it is called (mirrors
- *  the server's one rule, docs/20 §2.1). */
-function groupOf(names) {
-  var first = names[0] || "default";
-  return function (row) {
-    return row && row.group && names.indexOf(row.group) >= 0 ? row.group : first;
-  };
-}
-
-/** The list's shape: the groups in their stored order, each holding its members in the flat
- *  order the caller already sorted by. Empty groups keep their slot - you have to be able to
- *  see a group you just made in order to drag anything into it. */
-function slice(rows, names, groupOfFn) {
-  var byGroup = {};
-  rows.forEach(function (row) {
-    var g = groupOfFn(row);
-    (byGroup[g] = byGroup[g] || []).push(row);
-  });
-  return names.map(function (g) { return { name: g, rows: byGroup[g] || [] }; });
-}
-
-/** The delete confirm names where the members go: the FIRST group that remains - that slot is
- *  the server's sink. Tunnels once hard-coded 'default' here, which stayed wrong after the
- *  first group was renamed. Pure so the wording is pinned by tests, not by typing. */
-function deleteConfirmMsg(name, names, count, noun) {
-  var sink = names.filter(function (g) { return g !== name; })[0];
-  return "Delete group '" + name + "'?\n\nIts " + count + " " + noun + (count === 1 ? "" : "s") +
-    " move to '" + sink + "'. Nothing is removed.";
-}
-
-/** A create title that says where the new thing goes ("Add an MCP to learn"). The group is
- *  part of the promise the + made; a sheet that opens unnamed breaks it. */
-function addTitle(verb, noun, group) {
-  return verb + " " + noun + " to " + group;
-}
+/* --- pure --------------------------------------------------------------------------------------
+   groupOf / slice / deleteConfirmMsg / addTitle / resolveDefaultGroup / lastGroupKey live in
+   group-logic.js - imported above and re-exported below so every caller keeps one import -
+   because the pure half is what test/admin-groups.test.ts pins, and groups.js's own module
+   graph (add-sheet, menu) cannot load under a node test. */
 
 /* --- collapse state (per scope, localStorage) ---------------------------------------------------- */
 
@@ -75,6 +43,15 @@ function loadCollapsed(scope) {
 }
 function saveCollapsed(scope, map) {
   try { localStorage.setItem(collapseKey(scope), JSON.stringify(map)); } catch (e) { /* full or blocked */ }
+}
+
+/** The group picked the last time something was created in this scope - read raw (null when
+ *  never set); resolveDefaultGroup decides whether it still means anything. */
+function lastGroup(scope) {
+  try { return localStorage.getItem(lastGroupKey(scope)); } catch (e) { return null; }
+}
+function rememberGroup(scope, name) {
+  try { localStorage.setItem(lastGroupKey(scope), name); } catch (e) { /* full or blocked */ }
 }
 
 /* --- the /api/groups/{scope} family (docs/20 §3) -------------------------------------------------- */
@@ -113,6 +90,16 @@ function newGroupFlow(scope, names, reload) {
     return true;
   });
 }
+/** The Group field of a create sheet: every live group, `sel` selected. The select - not a
+ *  hidden promise made by whichever + opened the sheet - is where the row lands, so a value
+ *  the user changed wins. #g-sel is the one id every create sheet shares. */
+function groupFieldHtml(names, sel) {
+  var opts = names.map(function (n) {
+    return '<option value="' + esc(n) + '"' + (n === sel ? " selected" : "") + ">" + esc(n) + "</option>";
+  }).join("");
+  return '<label class="field"><span>Group</span><select id="g-sel">' + opts + "</select></label>";
+}
+
 /* --- the component ------------------------------------------------------------------------------- */
 
 /** Build one group container: the header band (grip, disclosure, name, count, +, ellipsis)
@@ -404,4 +391,8 @@ function deleteFlow(cfg, name) {
   });
 }
 
-export { addTitle, assignMember, deleteConfirmMsg, groupOf, loadCollapsed, mountGroup, newGroupFlow, renameGroupApi, saveCollapsed, saveGroupNames, saveOrder, slice };
+export {
+  addTitle, assignMember, deleteConfirmMsg, groupFieldHtml, groupOf, lastGroup, lastGroupKey,
+  loadCollapsed, mountGroup, newGroupFlow, rememberGroup, renameGroupApi, resolveDefaultGroup,
+  saveCollapsed, saveGroupNames, saveOrder, slice,
+};
