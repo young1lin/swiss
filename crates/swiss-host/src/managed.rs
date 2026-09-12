@@ -168,6 +168,47 @@ pub fn load_groups(path: &Path) -> Vec<String> {
     }
 }
 
+/// The tokens' group list (docs/20 G7). A file from before groups names no `tokenGroups` and
+/// reads as the single default group; a list someone emptied by hand recovers the same way —
+/// something must catch unassigned tokens.
+pub fn load_token_groups(path: &Path) -> Vec<String> {
+    let list = match read_managed_raw(path).and_then(|raw| {
+        raw.get("tokenGroups").cloned()
+    }) {
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    if list.is_empty() {
+        vec![DEFAULT_GROUP.to_string()]
+    } else {
+        list
+    }
+}
+
+/// Which group each token is in — sparse, keyed by token id (docs/20 G7). An absent id
+/// renders in the first group; rotate keeps the id, so an assignment survives a rotate.
+pub fn load_token_members(path: &Path) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(raw) = read_managed_raw(path) else {
+        return out;
+    };
+    if let Some(Value::Object(m)) = raw.get("tokenMembers") {
+        for (k, v) in m {
+            if let Some(s) = v.as_str() {
+                if !s.trim().is_empty() {
+                    out.insert(k.clone(), s.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Which group each MCP is in — sparse: an absent name is in `default`.
 pub fn load_mcp_groups(path: &Path) -> HashMap<String, String> {
     let mut out = HashMap::new();
@@ -233,6 +274,9 @@ struct StoreState {
     /// The one grouping model (docs/20): this store owns only the managed.json key names it
     /// serializes under (`groups` + `mcpGroups`); every rule lives in swiss_host::groups.
     groups: Groups,
+    /// The second grouping model (docs/20 G7): the same rules, keyed by token id under
+    /// `tokenGroups` + `tokenMembers`.
+    token_groups: Groups,
     mcp_enabled: HashMap<String, bool>,
 }
 
@@ -253,6 +297,10 @@ impl ManagedStore {
             groups: Groups::from_parts(
                 load_groups(&path),
                 load_mcp_groups(&path).into_iter().collect(),
+            ),
+            token_groups: Groups::from_parts(
+                load_token_groups(&path),
+                load_token_members(&path).into_iter().collect(),
             ),
             mcp_enabled: load_bool_map(&path, "mcpEnabled"),
         };
@@ -416,9 +464,21 @@ impl ManagedStore {
             .unwrap_or_default()
     }
 
-    /// Replace the whole token set (create / rotate / revoke all persist through here).
+    /// Replace the whole token set (create / rotate / revoke all persist through here). A
+    /// token that left the set forgets its group entry: a revoked id must not keep a ghost
+    /// assignment (docs/20 G7) — the group model never names a token that is not there.
     pub fn save_tokens(&self, next: Vec<TokenRec>) {
         if let Ok(mut s) = self.state.lock() {
+            for gone in s
+                .tokens
+                .iter()
+                .map(|t| t.id.clone())
+                .collect::<Vec<_>>()
+            {
+                if !next.iter().any(|t| t.id == gone) {
+                    s.token_groups.forget_member(&gone);
+                }
+            }
             s.tokens = next;
             let _ = self.persist(&s);
         }
@@ -514,6 +574,61 @@ impl ManagedStore {
         self.persist(&s)
     }
 
+    // --- the tokens' groups (docs/20 G7): the same five verbs the MCPs have, over the second
+    // model — `token_groups`. Rotation never passes through here (same id, same entry); a
+    // revoke drops the member so no ghost entry outlives its token.
+
+    pub fn has_token(&self, id: &str) -> bool {
+        self.state
+            .lock()
+            .map(|s| s.tokens.iter().any(|t| t.id == id))
+            .unwrap_or(false)
+    }
+
+    pub fn get_token_groups(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .map(|s| s.token_groups.names())
+            .unwrap_or_default()
+    }
+
+    /// The group this token is in — unassigned or orphaned sinks into the first group.
+    pub fn token_group_of(&self, id: &str) -> String {
+        self.state
+            .lock()
+            .ok()
+            .map(|s| s.token_groups.group_of(id))
+            .unwrap_or_else(|| DEFAULT_GROUP.into())
+    }
+
+    pub fn get_token_members(&self) -> BTreeMap<String, String> {
+        self.state
+            .lock()
+            .map(|s| s.token_groups.members().clone())
+            .unwrap_or_default()
+    }
+
+    /// Replace the whole token group list (create / delete / reorder in one call); deleting a
+    /// group by omission sinks its tokens into the first remaining one, untouched and usable.
+    pub fn set_token_groups(&self, names: Vec<String>) -> Result<(), String> {
+        let mut s = self.state.lock().map_err(|_| "store poisoned")?;
+        s.token_groups.set_names(names)?;
+        self.persist(&s)
+    }
+
+    pub fn rename_token_group(&self, from: &str, to: &str) -> Result<(), String> {
+        let mut s = self.state.lock().map_err(|_| "store poisoned")?;
+        s.token_groups.rename(from, to)?;
+        self.persist(&s)
+    }
+
+    /// Put a token in a group; `None` drops the explicit entry (renders in the first group).
+    pub fn set_token_group(&self, id: &str, group: Option<&str>) -> Result<(), String> {
+        let mut s = self.state.lock().map_err(|_| "store poisoned")?;
+        s.token_groups.assign(id, group)?;
+        self.persist(&s)
+    }
+
     /// Write the file atomically, and tell the caller when it could not be written. Both halves
     /// matter: a torn managed.json makes loadManaged answer empty, silently discarding every
     /// managed MCP and every config override, and a save that only logged let the admin API
@@ -576,6 +691,21 @@ impl ManagedStore {
                 "mcpGroups".into(),
                 Value::Object(
                     s.groups
+                        .members()
+                        .iter()
+                        .map(|(k, v)| (k.clone(), json!(v)))
+                        .collect(),
+                ),
+            );
+        }
+        if !s.token_groups.names().is_empty() {
+            root.insert("tokenGroups".into(), json!(s.token_groups.names()));
+        }
+        if !s.token_groups.members().is_empty() {
+            root.insert(
+                "tokenMembers".into(),
+                Value::Object(
+                    s.token_groups
                         .members()
                         .iter()
                         .map(|(k, v)| (k.clone(), json!(v)))

@@ -408,7 +408,19 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 .iter()
                 .map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
                 .collect();
-            admin_json(StatusCode::OK, json!({ "tokens": tokens, "tokenEnv": ctx.token_env }))
+            // The tokens' two lists (docs/20 G7) join the answer: a group is a folder a token
+            // sits in; it is not the "in use" marker and never affects whether a token
+            // authenticates. An older gateway answered neither field — the panel renders the
+            // single default group then.
+            admin_json(
+                StatusCode::OK,
+                json!({
+                    "tokens": tokens,
+                    "tokenEnv": ctx.token_env,
+                    "groups": ctx.store.get_token_groups(),
+                    "tokenGroups": ctx.store.get_token_members(),
+                }),
+            )
         })
         .post(
             |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
