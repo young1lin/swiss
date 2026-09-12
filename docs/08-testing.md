@@ -151,10 +151,12 @@ cargo test --workspace
                   theirs, since the 848 this file once recorded)
 ```
 
-**Drop `--workspace` and this shrinks to 187.** Cargo then selects the root package alone —
-its 67 unit tests plus the integration suite — and the seven member crates, which hold 78% of
-the tests and most of the code, are never built. The run still says ok. Every gate command in
-this repository therefore carries `--workspace`; a green run that omitted it means nothing.
+**Drop `--workspace` and this shrinks to a fraction.** Cargo then selects the root package
+alone — its unit tests plus the integration suite — and the eight member crates, which hold
+the large majority of the tests and most of the code, are never built. The run still says ok.
+Every gate command in this repository therefore carries `--workspace`; a green run that
+omitted it means nothing. (Counts are deliberately not quoted here — they rot; the shape
+does not.)
 
 On a unix host add 6 more: `platform/unix.rs` compiles only there.
 

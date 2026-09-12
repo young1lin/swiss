@@ -23,10 +23,10 @@ The build has since become the plugin toolbox `docs/09`–`12` describe: a plugi
 Action / Run / process services, configuration-driven Jobs, a connection catalog that keeps Data
 independent of MCP, and eight crates that still link into one `swiss.exe`.
 
-Validation passes with default features — **941 tests** (810 unit across the eight
-packages, 131 integration) plus Clippy with `-D warnings`. Run the gates with
-`--workspace`: without it cargo selects the root package alone, checks 199 of those tests, and
-still reports ok.
+Validation passes with default features — the full test suite across the whole workspace
+plus Clippy with `-D warnings`. Run the gates with `--workspace`: without it cargo selects
+the root package alone, runs only a small minority of the suite, and still reports ok.
+Exact counts rot; `cargo test --workspace` is the only run that means "the suite passed".
 
 `docs/01`–`08` describe the original compatibility port; `09`–`12` describe the toolbox it became;
 `13`–`14` (panel navigation, the web terminal) are shipped.

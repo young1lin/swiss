@@ -11,9 +11,10 @@ port of `local-mcp-gateway` (the Node original lives at `../local-mcp-gateway` a
 One local process, every MCP server on an HTTP path under `127.0.0.1:19999`, shipped as a single
 static `.exe`. The port exists for one reason: memory. See `docs/01-goals-and-memory-budget.md`.
 
-While the port is in progress, the Node build is the living spec. Read the original module before
-porting it — its comments carry the *reasons*, and most of them record a bug that was paid for
-once already. Port the reason, not just the code.
+The port is complete; the Node build remains the reference implementation. When changing
+behavior that exists there, read the original module first — its comments carry the
+*reasons*, and most of them record a bug that was paid for once already. Port the reason,
+not just the code.
 
 ## The product: a developer's Swiss Army knife
 
@@ -128,9 +129,10 @@ with fat LTO by construction) and a thin-LTO/CGU-16 fast-lane profile (full buil
 opt-level z, not linking). Keep `target` warm; a 4-minute full build
 means fingerprints were invalidated, not that everyday work costs 4 minutes.
 
-**`--workspace` is not optional.** Without it cargo selects the root package alone — 199 of the
-suite's 941 tests — and the seven member crates, most of the tests, are never even built. The run
-still reports ok. The same applies to clippy. `swiss start` / `stop` / `status` / `logs` / `token`
+**`--workspace` is not optional.** Without it cargo selects the root package alone — a small
+minority of the suite — and the eight member crates, where most of the tests live, are never
+even built. The run still reports ok. Exact counts rot; the shape does not: only a green
+`--workspace` run means "the suite passed". The same applies to clippy. `swiss start` / `stop` / `status` / `logs` / `token`
 are the CLI; `swiss token` manages the bearer token; `SWISS_TOKEN` pins it, and the Node-era
 `MCP_GATEWAY_TOKEN` is still honored. A pin must use the name the config's `tokenEnv` carries:
 the named variable resolves first, so on a home upgraded from the Node era (whose config says
@@ -167,8 +169,10 @@ scripts/test-instance.ps1 -Stop      # kill by the port's owning PID, never by p
 - Kill 19998 **by the port's owning PID** (`Get-NetTCPConnection -LocalPort 19998`), never by
   process name (`Get-Process swiss` kills the user's instance too). `-Stop` does exactly this.
 - **Deploying to 19999 is the last step, done once**: only after every gate passes AND live
-  verification on 19998 succeeds, stop 19999, rebuild the main target, start it again — and
-treat that as a deployment, not a test.
+  verification on 19998 succeeds, run `scripts/deploy.ps1` — it owns the entire order (gates
+  while production is still up → stop-before-build → build the main target → start → prove
+  the served `/health` build hash equals the freshly built exe). Never improvise a
+  stop/build/start sequence beside it. Treat a deploy as a deployment, not a test.
 
 On Windows, note two environment traps that are not this repo's doing. Windows **Smart App
 Control**, if enabled, blocks freshly linked unsigned executables — cargo's build scripts and test
