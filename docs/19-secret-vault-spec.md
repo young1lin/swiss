@@ -199,6 +199,20 @@ Node 没有路由等于破了它自己的面板。
 
 19999 全程不动；部署照旧是最后一步、且只在用户看过 19998 之后。
 
+**实施备注（与文本的偏差，均已随提交落地）**：
+
+- D2 说"平得跟 env store 一样"——rev 需要一个计数器，所以信封是
+  `{"rev": N, "secrets": {…}}`，值在 rev 下平铺一层（随 Phase 1 提交记录）。
+- import 是合并不是镜像：bundle 里没提到的名字保留原值（与 env 段语义一致），合并
+  读的是文件而非内存 vault——`swiss import` 跑在没注入过 vault 的新 CLI 进程里。
+  面板/进程内 vault 在重启后才看到导入结果，与 env 段的既有行为相同。
+- 面板编辑表单显示引用串：**整值恰为一个引用**时放行（`secret://name`、`${VAR}`
+  同规则，沿用 mask.ts 既有契约）；`Bearer secret://x` 这类混合值仍打码——它和
+  `Bearer ${X}` 的既有行为一致，混合值本身可能就是机密。验收第 1 条的引用串以
+  精确引用头（`X-Api-Key=secret://context7`）为准。
+- `swiss import`（CLI 进程）写盘后，正在运行的 daemon 不热重载 vault；重启生效。
+  验收第 6 条按"export → 删 → import → 重启 → 引用照常解析"执行。
+
 ## 4. 验收清单（19998，全部要过）
 
 1. Gateway 页保存 `context7` 的 key → managed.json 里 http header 写
