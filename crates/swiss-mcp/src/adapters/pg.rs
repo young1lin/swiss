@@ -257,6 +257,28 @@ pub fn pg_browse_table_params(schema: Option<&str>, grep: Option<&str>) -> Vec<V
     ]
 }
 
+/// The bind pair for the grammar list/count statements (docs/22 W1.6): schema first (the $1
+/// slot every one of these statements carries), then the grammar patterns; the list appends the
+/// paging pair, the count shares exactly the head. Extracted because the inline version once
+/// sent the count without its schema bind and Postgres answered "bind message supplies 2
+/// parameters, but prepared statement requires 3".
+pub fn pg_grammar_params(
+    schema: Option<&str>,
+    patterns: &[Value],
+    limit: i64,
+    offset: i64,
+) -> (Vec<Value>, Vec<Value>) {
+    let mut head: Vec<Value> = vec![schema
+        .filter(|s| !s.is_empty())
+        .map(|s| Value::String(s.to_string()))
+        .unwrap_or(Value::Null)];
+    head.extend(patterns.iter().cloned());
+    let mut list = head.clone();
+    list.push(json!(limit));
+    list.push(json!(offset));
+    (list, head)
+}
+
 /// `(host, port, database)` out of a postgres:// URL — `new URL()` + pathname in the Node build.
 /// None when the URL is unusable, exactly where Node's try/catch returned "".
 pub fn parse_pg_url(url: &str) -> Option<(String, u16, String)> {
@@ -951,6 +973,22 @@ mod tests {
             pg_browse_table_params(Some(""), None),
             vec![Value::Null, Value::Null]
         );
+    }
+
+    #[test]
+    fn grammar_params_give_the_count_its_schema_bind() {
+        // Regression: the inline assembly sent the count with the patterns alone, and Postgres
+        // refused it with "bind message supplies 2 parameters, but prepared statement
+        // requires 3" — the schema slot is a placeholder whether or not a schema was picked.
+        let (list, count) =
+            pg_grammar_params(None, &[json!("user%"), json!("%account%")], 200, 0);
+        assert_eq!(list.len(), 5); // schema, two patterns, limit, offset
+        assert_eq!(count.len(), 3);
+        assert_eq!(count[0], Value::Null);
+        let (list, count) =
+            pg_grammar_params(Some("app"), &[json!("user%")], 200, 0);
+        assert_eq!(list, vec![json!("app"), json!("user%"), json!(200), json!(0)]);
+        assert_eq!(count, vec![json!("app"), json!("user%")]);
     }
 
     #[test]
