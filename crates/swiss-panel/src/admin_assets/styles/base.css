@@ -338,6 +338,16 @@
     .side-group + .side-group { margin-top: var(--s2); }
     .grp-head { display: flex; align-items: center; border-radius: var(--r-row); }
     .grp-head:hover { background: var(--hover); }
+    /* The group's drag handle: the ONLY draggable thing on a header, so + and ⋯ keep every
+       click. Whisper-quiet until pointed at — like ⋯, one persistent glyph per group is a
+       hierarchy — but the grab cursor is what teaches "this row reorders". */
+    .grp-grip {
+      flex: none; width: 14px; height: 24px; display: inline-flex; align-items: center;
+      justify-content: center; color: var(--text-3); opacity: 0; cursor: grab;
+    }
+    .grp-head:hover .grp-grip { opacity: .7; }
+    .grp-grip:active { cursor: grabbing; }
+    .grp-grip.spacer { visibility: hidden; pointer-events: none; }
     .grp-toggle {
       flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s1);
       height: 24px; padding: 0 var(--s1); text-align: left;
@@ -367,8 +377,12 @@
        past the disclosure triangle, and its hover/selection fill indents with it. */
     .grp-rows { padding-left: 12px; }
     /* Dropping onto the header itself appends to that group, which is the only way to reach an
-       empty one. */
+       empty one. Dropping another GROUP header on it reorders — the same before/after edge the
+       rows use, on the header that owns the slot. */
     .grp-head.drop-into { box-shadow: inset 0 0 0 1.5px var(--accent); }
+    .grp-head.dragging { opacity: 0.55; }
+    .grp-head.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+    .grp-head.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 
     /* Status is a dot plus neutral text — color is reserved for interaction, not for body copy. */
     .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--text-3); }

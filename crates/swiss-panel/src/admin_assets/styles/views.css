@@ -361,6 +361,12 @@
     .db-root { display: flex; height: 100%; min-height: 420px; background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
     .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
     .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s1); }
+    /* Sort controls for whatever the list holds (tables or keys): the key picker takes the
+       remaining width, the direction toggle is a fixed square beside it. Named db-sortROW —
+       .db-sort is the grid header's little arrowhead below and would crush this row to 7px. */
+    .db-sortrow { display: flex; gap: var(--s1); align-items: center; }
+    .db-sortrow select { flex: 1; min-width: 0; padding-top: 2px; padding-bottom: 2px; }
+    .db-sortrow .btn.icon { flex: none; width: 26px; height: 26px; }
     .db-table { display: block; width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-table:hover { background: var(--hover); }
     .db-table.sel { background: color-mix(in srgb, var(--accent) 11%, transparent); }

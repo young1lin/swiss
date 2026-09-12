@@ -102,7 +102,7 @@ function patchSidebar() {
       g.rows.map(function (m) { return m.name; }).join("\u0000");
   }).join("\u0002");
 
-  if (list.dataset.sig !== sig && !state.dragging) {
+  if (list.dataset.sig !== sig && !state.dragging && !state.draggingGroup) {
     list.innerHTML = "";
     groups.forEach(function (g) { list.appendChild(groupNode(g)); });
     list.dataset.sig = sig;

@@ -35,6 +35,7 @@ var state = {
   view: "mcps",      // "mcps" | "tunnels" | "traffic" | "data" | "jobs" — the toolbar switcher
   panelVersion: null, // admin.html mtime stamp from /api/info; a change means a new build landed
   addGroup: null,     // sidebar group a header "+" targets for the next created MCP (add-sheet.js)
+  draggingGroup: null, // name of the GROUP HEADER being dragged — polls must not rebuild under it either
   db: null,           // the whole Data view state (data-view.js builds/owns it; redisValue rides on it)
   tun: {             // tunnel view state; `data` is the last /api/tunnels response
     tab: "conns",    // "conns" | "rules"

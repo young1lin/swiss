@@ -1,5 +1,5 @@
 import { $, DEFAULT_GROUP, KINDS, emptyHtml, esc, icon, state } from "./util.js";
-import { openSheet } from "./add-sheet.js";
+import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
 import { act, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
 import { wireTabBody } from "./run-history.js";
@@ -189,11 +189,11 @@ function wireMenu(d, m) {
       if (a === "new-group") {
         // Make the group, then put this MCP straight into it — otherwise "New group…" from an MCP's
         // own menu would create an empty group and leave the MCP where it was.
-        (async function () {
-          var name = prompt("New group name:", "");
-          if (name === null || !name.trim()) return;
-          if (await saveGroups(state.groups.concat([name.trim()]))) assignGroup(d.name, name.trim());
-        })();
+        openGroupSheet(null, async function (name) {
+          if (!await saveGroups(state.groups.concat([name]))) return false;
+          assignGroup(d.name, name);
+          return true;
+        });
         return;
       }
       if (a === "restart") act(d.name, "restart");

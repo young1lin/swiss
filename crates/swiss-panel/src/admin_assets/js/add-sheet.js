@@ -49,6 +49,38 @@ function openSheet(group) {
 }
 function closeSheet() { $("sheet").hidden = true; $("sheet").innerHTML = ""; }
 
+/** A one-field sheet for group names, so creating a group is the same surface as creating
+ *  everything else — not a browser prompt(). `def` is the current name when renaming, null when
+ *  creating. `submit` gets the typed name and resolves true on success; the sheet closes on
+ *  true and stays open on false, so a server refusal (a duplicate name) is readable next to
+ *  what was typed instead of dismissing the work. */
+function openGroupSheet(def, submit) {
+  var editing = !!def;
+  $("sheet").innerHTML =
+    '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Rename group" : "New group") + '">' +
+      '<div class="sheet-head"><h2>' + (editing ? "Rename group" : "New group") + "</h2></div>" +
+      '<div class="sheet-body">' +
+        '<label class="field"><span>Name</span><input id="g-name" value="' + esc(def || "") + '" placeholder="prod" autocomplete="off"></label>' +
+      "</div>" +
+      '<div class="sheet-foot"><span class="grow"></span>' +
+        '<button class="btn" id="g-cancel">Cancel</button>' +
+        '<button class="btn primary" id="g-save">' + (editing ? "Rename" : "Create") + "</button></div>" +
+    "</div>";
+  $("sheet").hidden = false;
+  var save = async function () {
+    var name = $("g-name").value.trim();
+    if (!name) { toast("Name is required", true); return; }
+    if (name === def) { closeSheet(); return; } // a rename that changed nothing is a cancel
+    if (await submit(name)) closeSheet();
+  };
+  $("g-cancel").onclick = closeSheet;
+  $("g-save").onclick = function () { void save(); };
+  $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
+  $("g-name").onkeydown = function (ev) { if (ev.key === "Enter") { ev.preventDefault(); void save(); } };
+  $("g-name").focus();
+  if (editing) $("g-name").select();
+}
+
 async function submitImport(input) {
   var f = input && input.files && input.files[0];
   if (!f) return;
@@ -91,4 +123,4 @@ async function submitAdd() {
 // whole. Adding an MCP belongs to a group, so it lives on each group's own + instead.
 $("addBtn").onclick = newGroup;
 
-export { closeSheet, openSheet, submitAdd, submitImport };
+export { closeSheet, openGroupSheet, openSheet, submitAdd, submitImport };

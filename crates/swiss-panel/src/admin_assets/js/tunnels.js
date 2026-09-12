@@ -4,6 +4,7 @@ import { act } from "./detail.js";
 import { popupMenu } from "./menu.js";
 import { connRowHtml, loadTunnels, ruleRowHtml, tunData, tunGroupOf, tunGrouped, tunGroupsList, tunKind, tunRows, tunTab } from "./polling.js";
 import { tunGroupHeadHtml } from "./traffic.js";
+import { openGroupSheet } from "./add-sheet.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
@@ -67,24 +68,25 @@ async function saveTunGroups(next) {
   return true;
 }
 
-async function tunNewGroup() {
-  var name = prompt("New group name:", "");
-  if (name === null) return;
-  name = name.trim();
-  if (!name) return;
-  if (await saveTunGroups(tunGroupsList().concat([name]))) toast("Group " + name + " created");
+function tunNewGroup() {
+  openGroupSheet(null, async function (name) {
+    if (!await saveTunGroups(tunGroupsList().concat([name]))) return false;
+    toast("Group " + name + " created");
+    return true;
+  });
 }
 
-async function tunRenameGroup(from) {
-  var to = prompt("Rename group '" + from + "' to:", from);
-  if (to === null || to.trim() === from) return;
-  var j = await apiJson("/api/tunnels/groups/" + tunKind() + "/rename",
-    { method: "POST", body: JSON.stringify({ from: from, to: to.trim() }) });
-  if (!j) return;
-  // The fold state is keyed by name; carry it across or a renamed group springs open.
-  if (state.tun.collapsed[from]) { delete state.tun.collapsed[from]; state.tun.collapsed[to.trim()] = true; saveTunCollapsed(); }
-  await loadTunnels();
-  toast("Renamed " + from + " → " + to.trim() + " (" + j.moved + " moved)");
+function tunRenameGroup(from) {
+  openGroupSheet(from, async function (to) {
+    var j = await apiJson("/api/tunnels/groups/" + tunKind() + "/rename",
+      { method: "POST", body: JSON.stringify({ from: from, to: to }) });
+    if (!j) return false;
+    // The fold state is keyed by name; carry it across or a renamed group springs open.
+    if (state.tun.collapsed[from]) { delete state.tun.collapsed[from]; state.tun.collapsed[to] = true; saveTunCollapsed(); }
+    await loadTunnels();
+    toast("Renamed " + from + " → " + to + " (" + j.moved + " moved)");
+    return true;
+  });
 }
 
 async function tunDeleteGroup(name) {

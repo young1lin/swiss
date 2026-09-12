@@ -29,6 +29,7 @@ function dbFreshState() {
     conn: null,           // selected connection (MCP name)
     tables: [],           // ONE page of the table list
     tablesTotal: 0, tablesPage: 0, tablesLimit: 200, more: false, grep: "",
+    sort: "name", sortDir: "asc", // the list's sort key/dir — SQL sorts server-side, redis client-side
     table: null, schema: null,
     data: null,           // last /api/db/:name/data page
     filters: [],          // [{ column, op, value }] — server-side WHERE terms (AND-ed)
@@ -129,6 +130,10 @@ function renderDbView() {
     '<div class="db-side">' +
       '<select id="dbConn" aria-label="Connection"></select>' +
       '<input id="dbGrep" type="search" placeholder="Filter tables" aria-label="Filter tables">' +
+      '<div class="db-sortrow">' +
+        '<select id="dbSort" aria-label="Sort by"></select>' +
+        '<button class="btn icon" id="dbSortDir" type="button" title="Sort direction"></button>' +
+      '</div>' +
       '<div class="db-tables" id="dbTables"><div class="db-hint">Loading…</div></div>' +
       '<div class="db-side-foot" id="dbTablesPager"></div>' +
     '</div>' +
@@ -157,6 +162,7 @@ function renderDbView() {
     d.tables = []; d.tablesPage = 0; d.order = null; d.sqlResult = null;
     d.redis = null; d.redisKey = null; d.redisValue = null;
     d.filters = [];
+    d.sort = "name"; d.sortDir = "asc"; // the new connection's kind may not have the chosen key
     // A sidebar search is table-list-scoped: carrying "tsys_" from one connection into the next
     // silently filters the new list down to nothing. Reset it and the box that shows it.
     d.grep = "";
@@ -185,6 +191,21 @@ function renderDbView() {
       if (dbIsRedis()) dbLoadKeys(true);
       else dbLoadTables();
     }, 300);
+  };
+  $("dbSort").onchange = function () {
+    var d = state.db;
+    d.sort = this.value;
+    d.tablesPage = 0;
+    if (dbIsRedis()) renderDbTables(); // keys sort in place over what has been scanned
+    else dbLoadTables();
+  };
+  $("dbSortDir").onclick = function () {
+    var d = state.db;
+    d.sortDir = d.sortDir === "asc" ? "desc" : "asc";
+    dbPaintSort();
+    d.tablesPage = 0;
+    if (dbIsRedis()) renderDbTables();
+    else dbLoadTables();
   };
   $("dbSql").value = state.db.sqlText;
   $("dbSql").oninput = function () { state.db.sqlText = this.value; dbSqlPaint(); };
@@ -215,6 +236,47 @@ function renderDbView() {
   renderDbToolbar(); renderDbGrid(); renderDbBar();
 }
 
+/* The list's sort row. SQL connections sort server-side (name/rows/size against the catalog);
+ * redis sorts client-side over the keys SCAN has already handed over (key/TTL). One control,
+ * one direction button; the option set repaints when the connection kind changes. */
+function dbSortOptions() {
+  return dbIsRedis()
+    ? [{ v: "name", t: "Key" }, { v: "ttl", t: "TTL" }]
+    : [{ v: "name", t: "Name" }, { v: "rows", t: "Rows" }, { v: "size", t: "Size" }];
+}
+
+function dbPaintSort() {
+  var d = state.db;
+  var sel = $("dbSort"), dir = $("dbSortDir");
+  if (!sel || !dir) return;
+  var opts = dbSortOptions();
+  if (!opts.some(function (o) { return o.v === d.sort; })) d.sort = opts[0].v; // kind switched
+  sel.innerHTML = "";
+  opts.forEach(function (o) {
+    var op = el("option", "", o.t);
+    op.value = o.v;
+    op.selected = o.v === d.sort;
+    sel.appendChild(op);
+  });
+  dir.textContent = d.sortDir === "asc" ? "\u2191" : "\u2193";
+  dir.setAttribute("aria-label", d.sortDir === "asc" ? "Sort ascending" : "Sort descending");
+}
+
+/** Redis keys arrive in SCAN (hash-slot) order; the list sorts what has been loaded. Key names
+ *  compare naturally — numeric runs by value, case folded (t2 < t10, foo == FOO) — because the
+ *  raw byte order is exactly the ASCII sort nobody asked for. TTL puts expiring keys first; no
+ *  expiry (-1) reads as forever. */
+function dbRedisCompare(a, b) {
+  var d = state.db;
+  if (d.sort === "ttl") {
+    var ta = a.ttl < 0 ? Infinity : a.ttl;
+    var tb = b.ttl < 0 ? Infinity : b.ttl;
+    if (ta !== tb) return d.sortDir === "asc" ? ta - tb : tb - ta;
+  }
+  var c = String(a.key).localeCompare(String(b.key), undefined, { numeric: true, sensitivity: "base" });
+  return d.sortDir === "asc" ? c : -c;
+}
+
 /* Everything in the skeleton that reads differently per connection KIND: the sidebar filter's
    placeholder, the console's placeholder and hint, and whether Explain exists (EXPLAIN is SQL; a
    redis command has no plan). Called on mount once the connections are known, and again on every
@@ -223,6 +285,7 @@ function renderDbView() {
 function dbSyncKind() {
   var grep = $("dbGrep"), sql = $("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
   if (!grep || !sql || !explain || !hint) return;
+  dbPaintSort();
   if (dbIsRedis()) {
     grep.placeholder = "Filter keys"; grep.setAttribute("aria-label", "Filter keys");
     sql.placeholder = "GET mykey · HGETALL myhash · LRANGE mylist 0 -1 · TTL mykey — read-only";
@@ -274,6 +337,7 @@ async function dbLoadTables() {
   if (box) { box.innerHTML = ""; box.appendChild(el("div", "db-hint", "Loading…")); }
   var q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?page=" + d.tablesPage;
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
+  if (d.sort) q += "&sort=" + encodeURIComponent(d.sort) + "&dir=" + encodeURIComponent(d.sortDir || "asc");
   var j = await apiJson(q);
   if (!j) { if ($("dbTables")) $("dbTables").innerHTML = ""; return; }
   d.tables = j.tables || [];
@@ -297,7 +361,8 @@ function renderDbTables() {
     if (!rr || !rr.keys.length) {
       box.appendChild(el("div", "db-hint", d.grep ? 'No keys match "' + d.grep + '"' : "No keys yet — scan returned none."));
     }
-    (rr ? rr.keys : []).forEach(function (k) {
+    var sortedKeys = (rr ? rr.keys : []).slice().sort(dbRedisCompare);
+    sortedKeys.forEach(function (k) {
       var b = el("button", "db-table" + (k.key === d.redisKey ? " sel" : ""));
       b.title = k.key; // the row truncates with an ellipsis; the full key is one hover away
       b.appendChild(el("div", "db-table-name", k.key));
