@@ -522,6 +522,13 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
                         visual_order(&ctx.store, &mut names)
                     })
                 },
+                // The row's group label (docs/20 G5): the same store answer visual_order
+                // slices by, read live per request - ManagedStore::group_of already sinks an
+                // unassigned name into the first group, which is the rendering rule too.
+                {
+                    let ctx = ctx.clone();
+                    Arc::new(move |n: &str| ctx.store.group_of(n))
+                },
             ),
         )
         .merge(crate::adminapi::mount(ctx.clone()))

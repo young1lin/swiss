@@ -45,6 +45,10 @@ use swiss_host::services::catalog::{
 /// The sidebar's manual order, read live per request — the same list PUT /api/order stores.
 /// A closure (not a snapshot) so a drag in the panel reorders the picker on the next poll.
 pub type OrderSource = std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+/// The name -> group label source (docs/20 G5): the composition reads the sidebar's group
+/// assignment live, so a regroup shows in the picker without a restart. Unassigned names
+/// answer whatever the caller's sink rule gives - in practice the first group.
+pub type GroupSource = std::sync::Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 /// One browsable-connection row: everything the panel's picker needs, nothing secret. The
 /// redis flavour rides the same list with the same shape; its key grid is browsing only and
@@ -55,7 +59,11 @@ pub type OrderSource = std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>;
 /// MCPs everywhere, so dragging a row in the sidebar reorders the Data dropdown too. Names
 /// the order never covers — a freshly added MCP, or the whole list until the first drag —
 /// fall back to name order, exactly like GET /api/mcps.
-pub fn browsable_connections(catalog: &CatalogRegistry, order: &[String]) -> Vec<Value> {
+pub fn browsable_connections(
+    catalog: &CatalogRegistry,
+    order: &[String],
+    group_of: &dyn Fn(&str) -> String,
+) -> Vec<Value> {
     let rank: std::collections::HashMap<&str, usize> =
         order.iter().enumerate().map(|(i, n)| (n.as_str(), i)).collect();
     let mut rows: Vec<(String, Value)> = catalog
@@ -72,6 +80,9 @@ pub fn browsable_connections(catalog: &CatalogRegistry, order: &[String]) -> Vec
                 "dialect": c.dialect,
                 "label": c.label,
                 "state": c.state,
+                // The sidebar group the connection renders under (docs/20 G5): a label the
+                // picker's optgroups read - never a sort key, the order is already visual.
+                "group": group_of(&c.id),
             });
             Some((c.id, row))
         })
@@ -596,15 +607,17 @@ async fn key(
 async fn connections(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Extension(order): Extension<OrderSource>,
+    Extension(groups): Extension<GroupSource>,
 ) -> Response {
     // The honest 503 first (docs/12 W3): with no provider, an empty list would read as
     // "you have no connections" — the message names who is missing instead.
     if let Err(f) = catalog_guard(&catalog) {
         return admin_error(f.status, &f.message);
     }
+    let order = order();
     admin_json(
         StatusCode::OK,
-        json!({ "connections": browsable_connections(&catalog, &order()) }),
+        json!({ "connections": browsable_connections(&catalog, &order, &*groups) }),
     )
 }
 
@@ -702,7 +715,11 @@ async fn edits_route(
 /// Mount the /api/db routes — the port of Node's `mountDbBrowseApi`. Generic over the state so
 /// app.rs can merge it into the gateway router unchanged (no handler here reads the state; the
 /// connection catalog and the sidebar-order source arrive as [`Extension`] layers).
-pub fn dbbrowser_router<S>(catalog: Arc<CatalogRegistry>, order: OrderSource) -> Router<S>
+pub fn dbbrowser_router<S>(
+    catalog: Arc<CatalogRegistry>,
+    order: OrderSource,
+    groups: GroupSource,
+) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
@@ -726,6 +743,7 @@ where
         .route("/api/db/{name}/edits", post(edits_route))
         .layer(Extension(catalog))
         .layer(Extension(order))
+        .layer(Extension(groups))
 }
 
 #[cfg(test)]
@@ -1034,11 +1052,30 @@ mod tests {
         provider: impl FnOnce(Arc<LeaseTracker>) -> StubProvider + 'static,
         order: Vec<String>,
     ) -> Router<()> {
+        catalog_grouped_router_of(provider, order, Vec::new())
+    }
+
+    /// Same, with the name -> group labels the composition reads from the store (docs/20 G5).
+    fn catalog_grouped_router_of(
+        provider: impl FnOnce(Arc<LeaseTracker>) -> StubProvider + 'static,
+        order: Vec<String>,
+        groups: Vec<(String, String)>,
+    ) -> Router<()> {
         let catalog = Arc::new(CatalogRegistry::new());
         catalog
             .register(Arc::new(provider(LeaseTracker::new())), "mcp")
             .expect("test provider registers");
-        dbbrowser_router(catalog, Arc::new(move || order.clone()))
+        dbbrowser_router(
+            catalog,
+            Arc::new(move || order.clone()),
+            Arc::new(move |n: &str| {
+                groups
+                    .iter()
+                    .find(|(name, _)| name == n)
+                    .map(|(_, g)| g.clone())
+                    .unwrap_or_else(|| "default".to_string())
+            }),
+        )
     }
 
     /// The catalog WITHOUT a provider — the MCP-disabled composition.
@@ -1056,7 +1093,11 @@ mod tests {
         // The provider's stop choreography: withdraw, drain (nothing out), clear.
         catalog.begin_withdraw();
         catalog.clear();
-        let router = dbbrowser_router(catalog.clone(), Arc::new(Vec::new));
+        let router = dbbrowser_router(
+            catalog.clone(),
+            Arc::new(Vec::new),
+            Arc::new(|_| "default".to_string()),
+        );
         (router, catalog)
     }
 
@@ -1127,6 +1168,49 @@ mod tests {
         assert_eq!(names, vec!["db-one"]);
         assert_eq!(body["connections"][0]["dialect"], "mysql");
         assert_eq!(body["connections"][0]["label"], "stub @ localhost");
+    }
+
+    #[tokio::test]
+    async fn rows_carry_their_group_in_visual_order() {
+        // docs/20 G5: /api/db rows label each connection with the sidebar group it renders
+        // under, and the picker's order stays the VISUAL order the composition passes (groups
+        // in stored order, members by flat rank inside them) - the label rides the row, it
+        // never re-sorts anything.
+        let stub = || {
+            Arc::new(StubDb { seen: Arc::new(Mutex::new(Seen::default())) }) as Arc<dyn DbBrowser>
+        };
+        let rows = vec![db_entry("alpha-conn", stub()), db_entry("beta-conn", stub())];
+        // The visual order the composition computes: beta's group is stored first.
+        let order = vec!["beta-conn".into(), "alpha-conn".into()];
+        let groups = vec![
+            ("alpha-conn".to_string(), "Alpha".to_string()),
+            ("beta-conn".to_string(), "Beta".to_string()),
+        ];
+        let app = catalog_grouped_router_of(
+            |tracker| StubProvider { rows, tracker },
+            order,
+            groups,
+        );
+        let (_, _, body, _) = call(app, "GET", "/api/db", None).await;
+        let body = body.expect("json");
+        let conns = body["connections"].as_array().expect("connections");
+        let seen: Vec<(String, String)> = conns
+            .iter()
+            .map(|c| {
+                (
+                    c["name"].as_str().expect("name").to_string(),
+                    c["group"].as_str().expect("the row carries its group").to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            vec![
+                ("beta-conn".to_string(), "Beta".to_string()),
+                ("alpha-conn".to_string(), "Alpha".to_string()),
+            ],
+            "visual order first, the group labelling it"
+        );
     }
 
     #[tokio::test]
@@ -1716,7 +1800,11 @@ mod tests {
     #[tokio::test]
     async fn a_provider_that_never_registered_is_a_generic_503() {
         let catalog = Arc::new(CatalogRegistry::new());
-        let app = dbbrowser_router(catalog, Arc::new(Vec::new));
+        let app = dbbrowser_router(
+            catalog,
+            Arc::new(Vec::new),
+            Arc::new(|_| "default".to_string()),
+        );
         let (status, _, body, _) = call(app, "GET", "/api/db", None).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
@@ -1745,7 +1833,11 @@ mod tests {
             )
             .expect("registers");
         catalog.begin_withdraw();
-        let app = dbbrowser_router(catalog, Arc::new(Vec::new));
+        let app = dbbrowser_router(
+            catalog,
+            Arc::new(Vec::new),
+            Arc::new(|_| "default".to_string()),
+        );
         let (status, _, body, _) = call(app, "GET", "/api/db/db/tables", None).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
@@ -1778,7 +1870,11 @@ mod tests {
                 "mcp",
             )
             .expect("registers");
-        let app = dbbrowser_router(catalog.clone(), Arc::new(Vec::new));
+        let app = dbbrowser_router(
+            catalog.clone(),
+            Arc::new(Vec::new),
+            Arc::new(|_| "default".to_string()),
+        );
         for uri in [
             "/api/db",
             "/api/db/db/tables",
