@@ -12,7 +12,7 @@
 use serde_json::Value;
 
 use super::types::value_number;
-use swiss_host::config::{resolve_def, ServerDef};
+use swiss_host::config::{resolve_def_checked, ServerDef};
 
 fn is_loopback(host: &str) -> bool {
     let lower = host.trim().to_ascii_lowercase();
@@ -70,10 +70,12 @@ fn pg_host_port(url: &str) -> Option<(String, u16)> {
 /// very probably served by the rule that binds 5433. `proc` and `echo` are never matched,
 /// because guessing a port out of a command line would be a guess.
 ///
-/// `resolve_def` runs first so a `${PG_WEK_URL}` reference is compared by value; the resolution
-/// stays server-side and only the match result is ever sent to the browser.
+/// `resolve_def_checked` runs first so a `${PG_WEK_URL}` reference is compared by value; the
+/// resolution stays server-side and only the match result is ever sent to the browser. A
+/// definition that cannot resolve (a vault reference this machine does not hold, docs/19 D4)
+/// is simply unmatchable — None — never compared half-resolved.
 pub fn mcp_loopback_port(def: &ServerDef) -> Option<u16> {
-    let d = resolve_def(def);
+    let d = resolve_def_checked(def).ok()?;
     let type_ = d.type_();
     if type_ == "mysql" || type_ == "redis" {
         let host = d.get_str("host").unwrap_or("localhost");
@@ -117,6 +119,19 @@ mod tests {
             }
         }
         ServerDef(v.as_object().cloned().unwrap())
+    }
+
+    #[test]
+    fn an_unresolvable_definition_is_unmatchable() {
+        // docs/19 D4: a definition holding a vault reference this machine does not hold can
+        // never be compared half-resolved — it answers None, same as "no loopback port".
+        assert_eq!(
+            mcp_loopback_port(&def(
+                "mysql",
+                json!({ "host": "127.0.0.1", "port": 3307, "password": "secret://gone" })
+            )),
+            None
+        );
     }
 
     #[test]

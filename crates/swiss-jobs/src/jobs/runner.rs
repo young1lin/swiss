@@ -11,8 +11,9 @@
 //! What DID move is only the machinery. The legacy behaviour a saved job depends on is
 //! unchanged and still tested at its new home: the old argv tokenizer (quoting rules and all),
 //! PATH+PATHEXT resolution, lenient `${ENV_VAR}` expansion at RUN time so the file keeps the
-//! reference rather than the secret, GBK/lossy decoding, CREATE_NO_WINDOW, and subtree
-//! teardown on both platforms.
+//! reference rather than the secret (vault `secret://` references resolve at the same point,
+//! strictly — a missing one fails the run, docs/19 D4), GBK/lossy decoding, CREATE_NO_WINDOW,
+//! and subtree teardown on both platforms.
 //!
 //! What stays here is the outcome type the run log and the /api/jobs reply are written
 //! against, so those shapes cannot drift with the executor underneath them.

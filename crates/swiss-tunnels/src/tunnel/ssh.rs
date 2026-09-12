@@ -25,7 +25,7 @@ use super::forward::ByteStream;
 use super::types::{ConnState, FailureKind, SshConnDef, TunnelError};
 use swiss_core::log;
 use swiss_core::paths::home_dir;
-use swiss_host::config::resolve_env_refs;
+use swiss_core::secure::refs;
 use swiss_host::services::shell::{PtyEndpoint, PtyEvent, PtyIn, PtyInput, PtyOut, PtySize};
 
 /// ssh2's readyTimeout: TCP + kex + auth inside one 15s budget.
@@ -390,7 +390,10 @@ impl SshConnection {
     ) -> Result<(), TunnelError> {
         let result = match def.auth_type {
             super::types::AuthType::Password => {
-                let password = resolve_env_refs(def.password.as_deref().unwrap_or(""));
+                // Vault refs are strict at the connect boundary (docs/19 D4): a missing
+                // secret refuses the connection with a reason, never an empty password.
+                let password = refs::resolve(def.password.as_deref().unwrap_or(""))
+                    .map_err(|e| TunnelError::new(format!("password: {e}"), FailureKind::Config))?;
                 handle
                     .authenticate_password(def.username.clone(), password)
                     .await
@@ -636,7 +639,9 @@ fn read_key(def: &SshConnDef) -> Result<PrivateKey, TunnelError> {
         )
     })?;
     let text = String::from_utf8_lossy(&bytes);
-    let passphrase = resolve_env_refs(def.passphrase.as_deref().unwrap_or(""));
+    // Same strict connect-time contract as the password (docs/19 D4).
+    let passphrase = refs::resolve(def.passphrase.as_deref().unwrap_or(""))
+        .map_err(|e| TunnelError::new(format!("passphrase: {e}"), FailureKind::Config))?;
     russh::keys::decode_secret_key(&text, Some(&passphrase)).map_err(|err| {
         TunnelError::new(
             format!("cannot parse private key: {err}"),
@@ -876,5 +881,38 @@ mod tests {
         let err = read_key(&def).unwrap_err();
         assert_eq!(err.kind, FailureKind::Config);
         assert!(err.message.starts_with("cannot read private key"));
+    }
+
+    #[test]
+    fn a_missing_vault_passphrase_reference_refuses_before_the_dial() {
+        // docs/19 D4 at the tunnel surface: a passphrase reference this machine does not hold
+        // is a Config failure naming the reference — before any network attempt, and never an
+        // empty passphrase sent to a key parser.
+        let key =
+            std::env::temp_dir().join(format!("swiss-key-{}.pem", swiss_core::util::random_hex(6)));
+        std::fs::write(&key, b"not really a key, just bytes").expect("write the key file");
+        let def = SshConnDef {
+            id: "c".into(),
+            name: "c".into(),
+            host: "h".into(),
+            port: 22,
+            username: "u".into(),
+            auth_type: super::super::types::AuthType::Key,
+            group: None,
+            key_path: Some(key.to_string_lossy().into_owned()),
+            passphrase: Some("secret://ssh-test-missing".into()),
+            password: None,
+            host_key: None,
+        };
+        let err = read_key(&def).unwrap_err();
+        assert_eq!(err.kind, FailureKind::Config);
+        assert!(
+            err.message.contains("passphrase")
+                && err.message.contains("secret://ssh-test-missing")
+                && err.message.contains("not in the vault"),
+            "names the field and the reference: {}",
+            err.message
+        );
+        let _ = std::fs::remove_file(&key);
     }
 }
