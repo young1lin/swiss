@@ -70,7 +70,9 @@ function dbRenderRedisValue(wrap) {
   more.type = "button";
   more.innerHTML = icon("ellipsis");
   more.title = "Rename, set TTL or delete this key";
-  more.onclick = function () { dbRedisKeyMenu(more); };
+  // stopPropagation or the document-level click closer (connect.js) eats the menu the same
+  // click opened — every other popupMenu trigger does the same.
+  more.onclick = function (e) { e.stopPropagation(); dbRedisKeyMenu(more); };
   meta.appendChild(more);
   wrap.appendChild(meta);
   var pre = el("pre", "db-ddl");
