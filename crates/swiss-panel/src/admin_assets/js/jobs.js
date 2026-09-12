@@ -105,8 +105,11 @@ function wireJobs() {
     if (!job) return;
     row.querySelector("[data-run]").onclick = function () { void runJob(job.name); };
     var more = row.querySelector("[data-more]");
-    if (more) more.onclick = function () {
+    if (more) more.onclick = function (ev) {
       // The overflow half of the row (docs/18 V5): the rare verbs and the destructive one.
+      // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
+      // and without this the very click that opens the menu also tears it down.
+      ev.stopPropagation();
       popupMenu(more.getBoundingClientRect(), [
         { label: "Edit", fn: function () {
             // A definition the v1 shape cannot spell (docs/11 §7.1: editableInV1 false) goes
@@ -757,4 +760,4 @@ function renderRunsSheet(nextBefore) {
   });
 }
 
-export { openRunsSheet, probeJobs, renderJobs, patchJobs };
+export { openRunsSheet, probeJobs, renderJobs, patchJobs, wireJobs };

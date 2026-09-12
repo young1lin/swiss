@@ -306,9 +306,12 @@ function wireTunnels() {
     var act = node.querySelector("[data-act]");
     if (act) act.onclick = function () { ruleAct(id, act.dataset.act); };
     var ruleMore = node.querySelector("[data-more]");
-    if (ruleMore) ruleMore.onclick = function () {
+    if (ruleMore) ruleMore.onclick = function (ev) {
       // The overflow half of the row (docs/18 V5). Force free appears only when a port is
-      // actually held — it is a remedy, not a standing action.
+      // actually held — it is a remedy, not a standing action. stopPropagation first:
+      // connect.js closes open menus on clicks that reach document (the group-head menu
+      // above does the same).
+      ev.stopPropagation();
       var items = [
         { label: "Edit", fn: function () { openRuleSheet(rule); } },
         { label: "Copy local port", fn: function () { copyText(String(rule.localPort), "Local port"); } },
@@ -323,7 +326,9 @@ function wireTunnels() {
     var conn = tunData().connections.filter(function (c) { return c.id === id; })[0];
     node.querySelector("[data-test]").onclick = function () { testConn(id); };
     var connMore = node.querySelector("[data-more]");
-    if (connMore) connMore.onclick = function () {
+    if (connMore) connMore.onclick = function (ev) {
+      // Same as the rule rows above: the opening click must not reach document.
+      ev.stopPropagation();
       popupMenu(connMore.getBoundingClientRect(), [
         { label: "Edit", fn: function () { openConnSheet(conn); } },
         { label: "Copy host", fn: function () { copyText(conn.host + ":" + conn.port, "Host"); } },
