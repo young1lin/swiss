@@ -12,11 +12,15 @@ use serde_json::{json, Value};
 use super::types::{
     fmt_number, is_port_f, new_id, opt_str, value_number, AuthType, GroupKind, RuleDef, SshConnDef,
 };
+use std::collections::BTreeMap;
+
 use swiss_core::log;
 use swiss_core::secure::statefile::{read_secure_json, write_secure_json};
+use swiss_host::groups::Groups;
 
-/// The group name every ungrouped row belongs to. Reserved: a stored group may not use it.
-pub const DEFAULT_GROUP: &str = "default";
+/// The one grouping vocabulary (docs/20 §2): the FIRST group is the sink slot for unassigned
+/// rows; `default` is just the name a fresh list starts from - an ordinary group.
+pub use swiss_host::groups::DEFAULT_GROUP;
 
 /// Input shape for a connection save: the API layer has already applied JS coercions (String /
 /// Number), so numeric fields arrive as f64 (NaN where JS would have NaN) and the validation
@@ -84,8 +88,8 @@ pub struct TunnelStore {
     conns: Vec<SshConnDef>,
     rules: Vec<RuleDef>,
     /// Custom group names per list, in panel order. The default group is implicit, never stored.
-    rule_groups: Vec<String>,
-    conn_groups: Vec<String>,
+    rule_groups: Groups,
+    conn_groups: Groups,
     path: PathBuf,
     /// Rejected as a local port, since binding it could never work.
     gateway_port: u16,
@@ -97,8 +101,8 @@ impl TunnelStore {
         let mut store = TunnelStore {
             conns: Vec::new(),
             rules: Vec::new(),
-            rule_groups: Vec::new(),
-            conn_groups: Vec::new(),
+            rule_groups: Groups::new(),
+            conn_groups: Groups::new(),
             path: path.into(),
             gateway_port,
         };
@@ -224,22 +228,47 @@ impl TunnelStore {
                     list.iter()
                         .filter_map(Value::as_str)
                         .map(str::trim)
-                        .filter(|n| !n.is_empty() && *n != DEFAULT_GROUP)
+                        .filter(|n| !n.is_empty())
                         .map(str::to_string)
                         .collect()
                 })
                 .unwrap_or_default()
         };
-        self.rule_groups = group_list(&raw, "ruleGroups");
-        self.conn_groups = group_list(&raw, "connGroups");
+        // A v1 file never stored "default" - it was the implicit first group the loader
+        // invented on the fly. The one model stores it like any other name (docs/20 §2.1),
+        // so a v1 list gains it at the HEAD, where the sink slot lives. The marker written
+        // on every save since means verbatim from then on: a default the user deleted must
+        // not resurrect on the next load, the same contract managed.json's groupsV2 has.
+        let marked = raw.get("tunnelGroupsV2") == Some(&Value::Bool(true));
+        let migrated = |names: Vec<String>| -> Vec<String> {
+            if marked || names.iter().any(|n| n.eq_ignore_ascii_case(DEFAULT_GROUP)) {
+                return names;
+            }
+            let mut out = vec![DEFAULT_GROUP.to_string()];
+            out.extend(names);
+            out
+        };
+        // Members live on the rows themselves (tunnels.json's shape), so the Groups here hold
+        // the names and the ordering; from_parts still normalizes them - dedupe, trim, drop
+        // over-long names - exactly the way every other scope's list loads.
+        self.rule_groups = Groups::from_parts(
+            migrated(group_list(&raw, "ruleGroups")),
+            BTreeMap::new(),
+        );
+        self.conn_groups = Groups::from_parts(
+            migrated(group_list(&raw, "connGroups")),
+            BTreeMap::new(),
+        );
     }
 
     fn persist(&self) -> Result<(), String> {
         let body = json!({
             "connections": self.conns.iter().map(SshConnDef::to_json).collect::<Vec<_>>(),
             "rules": self.rules.iter().map(RuleDef::to_json).collect::<Vec<_>>(),
-            "ruleGroups": self.rule_groups,
-            "connGroups": self.conn_groups,
+            "ruleGroups": self.rule_groups.names(),
+            "connGroups": self.conn_groups.names(),
+            // "the list is verbatim" - see the loader. Every save writes it.
+            "tunnelGroupsV2": true,
         });
         write_secure_json(&self.path, &body)
     }
@@ -563,15 +592,14 @@ impl TunnelStore {
     }
 
     // --- groups and order -------------------------------------------------------------------------
-
-    fn groups_of_kind(&self, kind: GroupKind) -> &Vec<String> {
+    fn groups_of_kind(&self, kind: GroupKind) -> &Groups {
         match kind {
             GroupKind::Rules => &self.rule_groups,
             GroupKind::Connections => &self.conn_groups,
         }
     }
 
-    fn groups_of_kind_mut(&mut self, kind: GroupKind) -> &mut Vec<String> {
+    fn groups_of_kind_mut(&mut self, kind: GroupKind) -> &mut Groups {
         match kind {
             GroupKind::Rules => &mut self.rule_groups,
             GroupKind::Connections => &mut self.conn_groups,
@@ -579,35 +607,24 @@ impl TunnelStore {
     }
 
     pub fn groups_of(&self, kind: GroupKind) -> Vec<String> {
-        self.groups_of_kind(kind).clone()
+        self.groups_of_kind(kind).names()
     }
 
     /// Replace the whole group-name list: create, reorder and delete are all "here is the new
-    /// list". Deleting a group strands its members in the implicit default rather than pointing
-    /// at nothing.
+    /// list" (docs/20 §2.1). Validation and ordering live in the one Groups model; this store
+    /// adds the row-side bookkeeping - a group dropped by omission loses its rows' explicit
+    /// entries, so they render in the new first group.
     pub fn set_groups(
         &mut self,
         kind: GroupKind,
-        names: Option<&Vec<Value>>,
+        names: &[String],
     ) -> Result<Vec<String>, String> {
-        let Some(names) = names else {
-            return Err("groups must be an array".into());
-        };
-        // [...new Set(...)]: dedupe preserving first occurrence, dropping empty and "default".
-        let mut clean: Vec<String> = Vec::new();
-        for n in names {
-            let s = n.as_str().unwrap_or("").trim();
-            if s.is_empty() || s == DEFAULT_GROUP || clean.iter().any(|c| c == s) {
-                continue;
-            }
-            clean.push(s.to_string());
-        }
-        *self.groups_of_kind_mut(kind) = clean.clone();
+        let clean = self.groups_of_kind_mut(kind).set_names(names.to_vec())?;
         match kind {
             GroupKind::Rules => {
                 for row in &mut self.rules {
                     if let Some(g) = &row.group {
-                        if !clean.contains(g) {
+                        if !clean.iter().any(|n| n.eq_ignore_ascii_case(g)) {
                             row.group = None;
                         }
                     }
@@ -616,7 +633,7 @@ impl TunnelStore {
             GroupKind::Connections => {
                 for row in &mut self.conns {
                     if let Some(g) = &row.group {
-                        if !clean.contains(g) {
+                        if !clean.iter().any(|n| n.eq_ignore_ascii_case(g)) {
                             row.group = None;
                         }
                     }
@@ -627,78 +644,65 @@ impl TunnelStore {
         Ok(self.groups_of(kind))
     }
 
+    /// Rename in place: the slot is kept and the rows' explicit entries ride along (the count
+    /// is what a rename toast and a delete-confirm report). Rows with no explicit group need
+    /// no rewrite - the sink slot keeps its place, so they follow the new name on their own.
     pub fn rename_group(
         &mut self,
         kind: GroupKind,
         from: &str,
         to: &str,
     ) -> Result<(Vec<String>, usize), String> {
-        let src = from.trim();
-        let dst = to.trim();
-        if src.is_empty() || dst.is_empty() {
-            return Err("from and to are required".into());
-        }
-        if dst == DEFAULT_GROUP {
-            return Err("the default group cannot be recreated under a new name".into());
-        }
-        if !self.groups_of_kind(kind).iter().any(|n| n == src) {
-            return Err(format!("unknown group: {src}"));
-        }
-        if src != dst && self.groups_of_kind(kind).iter().any(|n| n == dst) {
-            return Err(format!("group already exists: {dst}"));
-        }
-        let names = self.groups_of_kind_mut(kind);
-        for n in names.iter_mut() {
-            if n == src {
-                *n = dst.to_string();
-            }
-        }
+        let (names, _) = self.groups_of_kind_mut(kind).rename(from, to)?;
+        let old_name = from.trim();
+        let new_name = to.trim();
         let mut moved = 0usize;
+        let mut walk = |group: &mut Option<String>| {
+            if group
+                .as_deref()
+                .is_some_and(|g| g.eq_ignore_ascii_case(old_name))
+            {
+                *group = Some(new_name.to_string());
+                moved += 1;
+            }
+        };
         match kind {
             GroupKind::Rules => {
                 for row in &mut self.rules {
-                    if row.group.as_deref() == Some(src) {
-                        row.group = Some(dst.to_string());
-                        moved += 1;
-                    }
+                    walk(&mut row.group);
                 }
             }
             GroupKind::Connections => {
                 for row in &mut self.conns {
-                    if row.group.as_deref() == Some(src) {
-                        row.group = Some(dst.to_string());
-                        moved += 1;
-                    }
+                    walk(&mut row.group);
                 }
             }
         }
         self.persist()?;
-        Ok((self.groups_of(kind), moved))
+        Ok((names, moved))
     }
 
-    /// Put one row in a group. An empty name (or the reserved default) means the implicit
-    /// default. `group: None` from the caller means "not sent", which is also the default.
+    /// Put one row in a group. None means "no explicit group" - the row renders in the first
+    /// group, whatever that is called. A name must exist in the list (case-insensitively);
+    /// the canonical casing is stored, and answered.
     pub fn set_group(
         &mut self,
         kind: GroupKind,
         id: &str,
-        group: Option<&Value>,
+        group: Option<&str>,
     ) -> Result<String, String> {
-        let name = group.and_then(Value::as_str).map(str::trim).unwrap_or("");
-        if !name.is_empty()
-            && name != DEFAULT_GROUP
-            && !self.groups_of_kind(kind).iter().any(|n| name == n.as_str())
-        {
-            return Err(format!("unknown group: {name}"));
-        }
+        let model = self.groups_of_kind_mut(kind);
         let label = match kind {
             GroupKind::Rules => "rule",
             GroupKind::Connections => "SSH connection",
         };
-        let new_group = if name.is_empty() || name == DEFAULT_GROUP {
-            None
-        } else {
-            Some(name.to_string())
+        let new_group = match group.map(str::trim) {
+            None | Some("") => None,
+            Some(name) => Some(
+                model
+                    .canonical(name)
+                    .ok_or_else(|| format!("unknown group: {name}"))?,
+            ),
         };
         let changed = match kind {
             GroupKind::Rules => self
@@ -722,26 +726,18 @@ impl TunnelStore {
             return Err(format!("unknown {label}: {id}"));
         };
         self.persist()?;
-        Ok(new_group.unwrap_or_else(|| DEFAULT_GROUP.to_string()))
+        Ok(new_group.unwrap_or_else(|| self.groups_of(kind)[0].clone()))
     }
 
     /// Impose a full order on one list. Rows the caller omitted keep their relative order after
     /// the mentioned ones, so a stale panel reorder cannot drop or duplicate anything.
-    pub fn reorder(&mut self, kind: GroupKind, ids: Option<&Vec<Value>>) -> Result<(), String> {
-        let Some(ids) = ids else {
-            return Err("ids must be an array".into());
-        };
-        let order: Vec<String> = ids
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect();
+    pub fn reorder(&mut self, kind: GroupKind, ids: &[String]) -> Result<(), String> {
         let rank = |id: &str| -> usize {
-            match order.iter().position(|x| x == id) {
+            match ids.iter().position(|x| x == id) {
                 Some(i) => i,
                 // Unmentioned rows rank after every mentioned one (order.length in the Node
                 // build); the sort below is stable, so they keep their relative order.
-                None => order.len(),
+                None => ids.len(),
             }
         };
         match kind {
@@ -962,34 +958,45 @@ mod tests {
     }
 
     #[test]
-    fn groups_rename_reorder_and_default_group_rules() {
+    fn groups_follow_the_one_model_default_is_ordinary() {
         let (_dir, mut s) = temp_store("groups");
         let c = s.add_connection(&conn_input("b")).unwrap();
         s.add_rule(&rule_input("a", &c.id, 5433.0)).unwrap();
         s.add_rule(&rule_input("z", &c.id, 5434.0)).unwrap();
 
+        // A fresh store starts from the one default group (docs/20 §2.1): an ordinary name,
+        // whose only privilege is being the FIRST entry - the sink slot.
+        assert_eq!(s.groups_of(GroupKind::Rules), vec!["default".to_string()]);
         assert_eq!(
-            s.set_groups(GroupKind::Rules, Some(&vec![json!("G1")]))
-                .unwrap(),
-            vec!["G1"]
+            s.set_groups(
+                GroupKind::Rules,
+                &[
+                    "default".to_string(),
+                    "G1".to_string(),
+                    "G1".to_string(),
+                    String::new()
+                ],
+            )
+            .unwrap_err(),
+            "duplicate group name: G1",
+            "the whole-list mutation validates: duplicates are rejected, not silently deduped"
+        );
+        assert_eq!(
+            s.set_groups(GroupKind::Rules, &[]).unwrap_err(),
+            "at least one group must remain"
         );
         assert_eq!(
             s.set_groups(
                 GroupKind::Rules,
-                Some(&vec![json!("G1"), json!("G1"), json!("default"), json!("")])
+                &["default".to_string(), "G1".to_string()],
             )
             .unwrap(),
-            vec!["G1"],
-            "dedupe, and the reserved default never becomes a stored group"
+            vec!["default".to_string(), "G1".to_string()],
+            "default is a stored name now, kept like any other"
         );
         let (groups, moved) = s.rename_group(GroupKind::Rules, "G1", "G2").unwrap();
-        assert_eq!(groups, vec!["G2".to_string()]);
+        assert_eq!(groups, vec!["default".to_string(), "G2".to_string()]);
         assert_eq!(moved, 0);
-        assert_eq!(
-            s.rename_group(GroupKind::Rules, "G2", "default")
-                .unwrap_err(),
-            "the default group cannot be recreated under a new name"
-        );
         assert_eq!(
             s.rename_group(GroupKind::Rules, "nope", "x").unwrap_err(),
             "unknown group: nope"
@@ -998,21 +1005,100 @@ mod tests {
         let rules = s.rules();
         let a_id = &rules[0].id;
         let z_id = &rules[1].id;
-        s.set_group(GroupKind::Rules, a_id, Some(&json!("G2")))
-            .unwrap();
+        assert_eq!(
+            s.set_group(GroupKind::Rules, a_id, Some("g2")).unwrap(),
+            "G2",
+            "assignment stores the canonical casing"
+        );
         assert_eq!(
             s.set_group(GroupKind::Rules, a_id, None).unwrap(),
-            DEFAULT_GROUP,
-            "an absent group field means the implicit default"
+            "default",
+            "an absent/null group means the first group, whatever it is called"
         );
-        s.reorder(GroupKind::Rules, Some(&vec![json!(z_id)]))
-            .unwrap();
+        assert_eq!(
+            s.set_group(GroupKind::Rules, a_id, Some("Nope")).unwrap_err(),
+            "unknown group: Nope"
+        );
+        s.reorder(GroupKind::Rules, std::slice::from_ref(z_id)).unwrap();
         assert_eq!(
             s.rules()[0].id,
             *z_id,
             "mentioned rows move up, the rest keep order"
         );
-        assert!(s.reorder(GroupKind::Rules, None).is_err());
+    }
+
+    #[test]
+    fn old_group_files_gain_a_stored_default_once() {
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-tunnel-migrate-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tunnels.json");
+        // A v1 file: no marker, no "default" in either list, a row with no group.
+        std::fs::write(
+            &path,
+            r#"{
+  "connections": [
+    { "id": "c1", "name": "b", "host": "bastion", "port": 22, "username": "u", "authType": "key", "keyPath": "~/.ssh/id_rsa" }
+  ],
+  "rules": [
+    { "id": "r1", "name": "pg", "connectionId": "c1", "localPort": 5433, "group": null }
+  ],
+  "ruleGroups": ["A"],
+  "connGroups": ["Prod"]
+}"#,
+        )
+        .unwrap();
+        let s = TunnelStore::new(&path, 19999);
+        assert_eq!(
+            s.groups_of(GroupKind::Rules),
+            vec!["default".to_string(), "A".to_string()],
+            "default is materialized at the HEAD of the list - that slot is the sink"
+        );
+        assert_eq!(
+            s.groups_of(GroupKind::Connections),
+            vec!["default".to_string(), "Prod".to_string()]
+        );
+        // The marker means the list is verbatim from here on: reloading must not insert
+        // default a second time.
+        let s2 = TunnelStore::new(&path, 19999);
+        assert_eq!(s2.groups_of(GroupKind::Rules).len(), 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn saved_files_carry_the_v2_marker_and_default_never_resurrects() {
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-tunnel-v2-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tunnels.json");
+        std::fs::write(
+            &path,
+            r#"{ "connections": [], "rules": [], "ruleGroups": ["A"], "connGroups": [] }"#,
+        )
+        .unwrap();
+        let mut s = TunnelStore::new(&path, 19999);
+        // Deleting the default group is ordinary now; the remaining group takes the sink slot.
+        s.set_groups(GroupKind::Rules, &["G1".to_string()])
+            .unwrap();
+        let raw = swiss_core::secure::statefile::read_secure_json(&path)
+            .expect("the saved file reads back")
+            .expect("the file exists");
+        assert_eq!(
+            raw.get("tunnelGroupsV2"),
+            Some(&Value::Bool(true)),
+            "the marker says the list is verbatim; without it every load would re-insert default"
+        );
+        let re = TunnelStore::new(&path, 19999);
+        assert_eq!(
+            re.groups_of(GroupKind::Rules),
+            vec!["G1".to_string()],
+            "a saved v2 list loads verbatim - default stays deleted"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -1055,7 +1141,11 @@ mod tests {
             "an unknown connectionId is kept, not dropped"
         );
         assert_eq!(r2.target_port, 6379, "targetPort defaults to localPort");
-        assert_eq!(s.groups_of(GroupKind::Rules), vec!["A".to_string()]);
+        assert_eq!(
+            s.groups_of(GroupKind::Rules),
+            vec!["A".to_string(), "default".to_string()],
+            "a v1 list that already carries default keeps it verbatim (the same rule as             managed.json's loader); empty entries drop"
+        );
         assert!(!s.is_fresh());
         std::fs::remove_dir_all(&dir).ok();
     }

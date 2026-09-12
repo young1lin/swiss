@@ -342,14 +342,6 @@ fn parse_port(seg: &str) -> Option<u16> {
     seg.parse::<u16>().ok().filter(|p| *p >= 1)
 }
 
-fn group_kind(seg: &str) -> Option<GroupKind> {
-    GroupKind::from_segment(seg)
-}
-
-fn unknown_list(seg: &str) -> Response {
-    admin_error(StatusCode::NOT_FOUND, &format!("unknown list: {seg}"))
-}
-
 // --- mounting ---------------------------------------------------------------------------------------
 
 /// Mount the tunnel API under /api/tunnels. The returned router is state-resolved (Router<()>),
@@ -372,108 +364,15 @@ pub fn mount(tunnels: Arc<Tunnels>) -> Router {
         }),
     );
 
-    // --- groups and order -----------------------------------------------------------------------------
-
-    // The whole order of one or both lists at once: the panel drags a row, then sends the ids
-    // it now sees. Order is array order in tunnels.json — no separate rank field to keep in step.
-    r = r.route(
-        "/api/tunnels/order",
-        put(|State(t): State<Arc<Tunnels>>, body: swiss_host::reply::NodeBody| async move {
-            let body = body.0;
-            let result = with_store(&t, |s| {
-                // `body.connections != null` — null and absent both skip, an array (even empty)
-                // reorders.
-                if body.get("connections").is_some_and(|v| !v.is_null()) {
-                    let ids = body["connections"].as_array().cloned();
-                    s.reorder(GroupKind::Connections, ids.as_ref())?;
-                }
-                if body.get("rules").is_some_and(|v| !v.is_null()) {
-                    let ids = body["rules"].as_array().cloned();
-                    s.reorder(GroupKind::Rules, ids.as_ref())?;
-                }
-                Ok::<(), String>(())
-            });
-            if let Err(err) = result {
-                return fail_str(&err);
-            }
-            admin_json(
-                StatusCode::OK,
-                json!({
-                    "connections": with_store(&t, |s| s.connections().iter().map(|c| c.id.clone()).collect::<Vec<_>>()),
-                    "rules": with_store(&t, |s| s.rules().iter().map(|x| x.id.clone()).collect::<Vec<_>>()),
-                }),
-            )
-        }),
-    );
-
-    r = r.route(
-        "/api/tunnels/groups/{kind}",
-        put(
-            |State(t): State<Arc<Tunnels>>,
-             Path(kind): Path<String>,
-             body: swiss_host::reply::NodeBody| async move {
-                let Some(kind) = group_kind(&kind) else {
-                    return unknown_list(&kind);
-                };
-                let body = body.0;
-                match with_store(&t, |s| {
-                    s.set_groups(kind, body.get("groups").and_then(Value::as_array))
-                }) {
-                    Ok(groups) => admin_json(StatusCode::OK, json!({ "groups": groups })),
-                    Err(err) => fail_str(&err),
-                }
-            },
-        ),
-    );
-
-    r = r.route(
-        "/api/tunnels/groups/{kind}/rename",
-        post(
-            |State(t): State<Arc<Tunnels>>,
-             Path(kind): Path<String>,
-             body: swiss_host::reply::NodeBody| async move {
-                let Some(kind) = group_kind(&kind) else {
-                    return unknown_list(&kind);
-                };
-                let body = body.0;
-                let from = body
-                    .get("from")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                let to = body
-                    .get("to")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
-                match with_store(&t, |s| s.rename_group(kind, &from, &to)) {
-                    Ok((groups, moved)) => {
-                        admin_json(StatusCode::OK, json!({ "groups": groups, "moved": moved }))
-                    }
-                    Err(err) => fail_str(&err),
-                }
-            },
-        ),
-    );
-
-    r = r.route(
-        "/api/tunnels/groups/{kind}/{id}",
-        put(
-            |State(t): State<Arc<Tunnels>>,
-             Path((kind, id)): Path<(String, String)>,
-             body: swiss_host::reply::NodeBody| async move {
-                let Some(kind) = group_kind(&kind) else {
-                    return unknown_list(&kind);
-                };
-                let body = body.0;
-                match with_store(&t, |s| s.set_group(kind, &id, body.get("group"))) {
-                    Ok(group) => admin_json(StatusCode::OK, json!({ "group": group })),
-                    Err(err) => fail_str(&err),
-                }
-            },
-        ),
-    );
-
+    // --- groups and order ---------------------------------------------------------------------------
+    //
+    // Retired (docs/20 §3): /api/tunnels/order, /api/tunnels/groups/{kind},
+    // /api/tunnels/groups/{kind}/rename and /api/tunnels/groups/{kind}/{id} answered the
+    // same store the /api/groups/{scope} family does, with a second set of grouping rules
+    // that had already forked from managed.json's once. The family owns it now - conns and
+    // rules register as scopes over this store (groups.rs) - and one protocol is what the
+    // panel implements. Reading stays here: /api/tunnels above still answers ruleGroups/
+    // connGroups so the poll keeps one round trip.
     // Private keys under ~/.ssh. A browser cannot hand a real path to the page, so Browse is
     // served from here instead of a file picker that would only ever return a bare filename.
     r = r.route(
@@ -947,5 +846,69 @@ mod tests {
         assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
         let bad = fail(&OpError::msg("local port 5433 is already used by 'pg'"));
         assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// docs/20 §3: the four tunnel group/order routes are retired in favour of the
+    /// /api/groups/{scope} family (the host owns them; conns and rules register as scopes).
+    /// What this pins is that they are GONE, not merely unused - two doors into one store is
+    /// how the two copies of the grouping rules forked in the first place.
+    #[tokio::test]
+    async fn the_group_and_order_routes_are_retired_to_the_family() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        swiss_core::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-tapi-retired-{}",
+            swiss_core::util::random_hex(8),
+        ));
+        std::fs::create_dir_all(&dir).expect("create the scratch dir");
+        let store = Arc::new(Mutex::new(TunnelStore::new(dir.join("tunnels.json"), 19999)));
+        let manager = TunnelManager::new(store.clone(), None);
+        let app = mount(Arc::new(Tunnels {
+            store,
+            manager,
+            mcp_display: None,
+        }));
+
+        let send = |uri: String, method: &'static str, body: String| {
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .expect("request literal")
+        };
+        for (uri, method, body) in [
+            (
+                "/api/tunnels/order".to_string(),
+                "PUT",
+                r#"{"connections":[],"rules":[]}"#.to_string(),
+            ),
+            (
+                "/api/tunnels/groups/rules".to_string(),
+                "PUT",
+                r#"{"groups":["default"]}"#.to_string(),
+            ),
+            (
+                "/api/tunnels/groups/rules/rename".to_string(),
+                "POST",
+                r#"{"from":"a","to":"b"}"#.to_string(),
+            ),
+            (
+                "/api/tunnels/groups/rules/xyz".to_string(),
+                "PUT",
+                r#"{"group":null}"#.to_string(),
+            ),
+        ] {
+            let res = app
+                .clone()
+                .oneshot(send(uri.clone(), method, body))
+                .await
+                .expect("infallible router");
+            assert_eq!(res.status(), StatusCode::NOT_FOUND, "retired: {uri}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

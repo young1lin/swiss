@@ -207,6 +207,11 @@ pub async fn run_gateway() -> Result<(), String> {
     if let Ok(mut links) = ctx.tunnel_links.write() {
         *links = Some(tunnel_manager.clone());
     }
+    // The two tunnel scopes join the family table (docs/20 §2.2): conns and rules over the
+    // one tunnels.json, siblings of the mcps scope AppContext registers natively. Registered
+    // here - the composition point - because the host carries no per-scope arm, and a
+    // disabled tunnels plugin must not take the family's other scopes down with it.
+    swiss_tunnels::tunnel::register_tunnel_scopes(&ctx.group_scopes, &tunnels.store);
     // The /api/db routes lease through the SAME catalog instance the MCP plugin will
     // register into — set before build_app mounts the router (docs/12 W3).
     let _ = ctx.catalog.set(services.catalog.clone());

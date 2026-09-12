@@ -33,6 +33,7 @@
 
 pub mod api;
 pub mod forward;
+pub mod groups;
 pub mod import;
 pub mod manager;
 pub mod mcpmatch;
@@ -43,6 +44,7 @@ pub mod store;
 pub mod types;
 
 pub use api::{McpDisplay, Tunnels};
+pub use groups::register_tunnel_scopes;
 pub use manager::{McpView, OpError, OpResult, ShellSessionGuard, TunnelManager};
 pub use shell::TunnelShells;
 pub use store::TunnelStore;

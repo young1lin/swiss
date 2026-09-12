@@ -326,7 +326,7 @@ async fn appends_mcps_the_user_has_never_positioned_in_name_order() {
     for n in ["a", "zeta", "mid", "alpha"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    h.put("/api/order", json!({ "order": ["zeta", "a"] })).await;
+    h.put("/api/groups/mcps/order", json!({ "order": ["zeta", "a"] })).await;
     // The arrangement wins for the two it names; the rest sort among themselves rather than
     // landing wherever the registry happened to start them.
     assert_eq!(h.names().await, ["zeta", "a", "alpha", "mid"]);
@@ -338,9 +338,9 @@ async fn goes_back_to_name_order_when_the_arrangement_is_cleared() {
     for n in ["b", "c", "a"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    h.put("/api/order", json!({ "order": ["c", "b", "a"] }))
+    h.put("/api/groups/mcps/order", json!({ "order": ["c", "b", "a"] }))
         .await;
-    h.put("/api/order", json!({ "order": [] })).await;
+    h.put("/api/groups/mcps/order", json!({ "order": [] })).await;
     assert_eq!(h.names().await, ["a", "b", "c"]);
 }
 
@@ -350,7 +350,7 @@ async fn persists_a_panel_order_and_lists_by_it_appending_unknown_names() {
     for n in ["a", "b", "c"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    let (status, _) = h.put("/api/order", json!({ "order": ["c", "a"] })).await;
+    let (status, _) = h.put("/api/groups/mcps/order", json!({ "order": ["c", "a"] })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(h.names().await, ["c", "a", "b"], "b is not in the order");
     // It survives a restart of the store, because it is on disk and not in the registry.
@@ -363,7 +363,7 @@ async fn persists_a_panel_order_and_lists_by_it_appending_unknown_names() {
 #[tokio::test]
 async fn rejects_a_malformed_order_payload() {
     let h = setup();
-    let (status, _) = h.put("/api/order", json!({ "order": "c,a" })).await;
+    let (status, _) = h.put("/api/groups/mcps/order", json!({ "order": "c,a" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -373,7 +373,7 @@ async fn keeps_a_renamed_mcps_position_and_prunes_a_deleted_one_from_the_order()
     for n in ["a", "b", "c"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    h.put("/api/order", json!({ "order": ["a", "b", "c"] }))
+    h.put("/api/groups/mcps/order", json!({ "order": ["a", "b", "c"] }))
         .await;
     let (status, _) = h.post("/api/mcps/a/rename", json!({ "name": "z" })).await;
     assert_eq!(status, StatusCode::OK);
@@ -1727,7 +1727,7 @@ async fn starts_with_the_default_group_and_every_mcp_in_it() {
 async fn creates_groups_and_reports_them_on_the_list() {
     let h = with_mcps();
     let (status, put) = h
-        .put("/api/groups", json!({ "groups": ["Docs", "Search"] }))
+        .put("/api/groups/mcps", json!({ "groups": ["Docs", "Search"] }))
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(put["groups"], json!(["Docs", "Search"]));
@@ -1739,7 +1739,7 @@ async fn creates_groups_and_reports_them_on_the_list() {
 #[tokio::test]
 async fn rejects_a_malformed_duplicate_empty_or_last_group_destroying_list() {
     let h = with_mcps();
-    let (status, _) = h.put("/api/groups", json!({ "groups": "Docs" })).await;
+    let (status, _) = h.put("/api/groups/mcps", json!({ "groups": "Docs" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     for groups in [
@@ -1747,11 +1747,11 @@ async fn rejects_a_malformed_duplicate_empty_or_last_group_destroying_list() {
         json!([" "]),
         json!([]),
     ] {
-        let (status, _) = h.put("/api/groups", json!({ "groups": groups })).await;
+        let (status, _) = h.put("/api/groups/mcps", json!({ "groups": groups })).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{groups}");
     }
     // `default` is an ordinary name now — a list of just it is fine.
-    let (status, _) = h.put("/api/groups", json!({ "groups": ["default"] })).await;
+    let (status, _) = h.put("/api/groups/mcps", json!({ "groups": ["default"] })).await;
     assert_eq!(status, StatusCode::OK);
     // A rejected call must not have half-applied.
     let (_, list) = h.get("/api/mcps").await;
@@ -1761,21 +1761,21 @@ async fn rejects_a_malformed_duplicate_empty_or_last_group_destroying_list() {
 #[tokio::test]
 async fn assigns_a_config_sourced_mcp_to_a_group_and_back_to_default() {
     let h = with_mcps();
-    h.put("/api/groups", json!({ "groups": ["default", "Docs"] }))
+    h.put("/api/groups/mcps", json!({ "groups": ["default", "Docs"] }))
         .await;
 
     let (status, put) = h
-        .put("/api/mcps/context7/group", json!({ "group": "Docs" }))
+        .put("/api/groups/mcps/members/context7", json!({ "group": "Docs" }))
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(put, json!({ "name": "context7", "group": "Docs" }));
+    assert_eq!(put, json!({ "group": "Docs" }), "the family answers the canonical group");
 
     let (_, list) = h.get("/api/mcps").await;
     assert_eq!(row_named(&list, "context7")["group"], json!("Docs"));
     assert_eq!(row_named(&list, "deepwiki")["group"], json!("default"));
 
     let (status, _) = h
-        .put("/api/mcps/context7/group", json!({ "group": null }))
+        .put("/api/groups/mcps/members/context7", json!({ "group": null }))
         .await;
     assert_eq!(status, StatusCode::OK);
     let (_, list) = h.get("/api/mcps").await;
@@ -1785,8 +1785,8 @@ async fn assigns_a_config_sourced_mcp_to_a_group_and_back_to_default() {
 #[tokio::test]
 async fn survives_a_restart_because_the_assignment_is_on_disk_not_in_the_registry() {
     let h = with_mcps();
-    h.put("/api/groups", json!({ "groups": ["Docs"] })).await;
-    h.put("/api/mcps/context7/group", json!({ "group": "Docs" }))
+    h.put("/api/groups/mcps", json!({ "groups": ["Docs"] })).await;
+    h.put("/api/groups/mcps/members/context7", json!({ "group": "Docs" }))
         .await;
 
     let reloaded = ManagedStore::open_at(h.path.clone());
@@ -1798,13 +1798,13 @@ async fn survives_a_restart_because_the_assignment_is_on_disk_not_in_the_registr
 async fn answers_404_for_an_unknown_mcp_and_400_for_an_unknown_group() {
     let h = with_mcps();
     assert_eq!(
-        h.put("/api/mcps/ghost/group", json!({ "group": null }))
+        h.put("/api/groups/mcps/members/ghost", json!({ "group": null }))
             .await
             .0,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        h.put("/api/mcps/context7/group", json!({ "group": "Nope" }))
+        h.put("/api/groups/mcps/members/context7", json!({ "group": "Nope" }))
             .await
             .0,
         StatusCode::BAD_REQUEST
@@ -1814,11 +1814,11 @@ async fn answers_404_for_an_unknown_mcp_and_400_for_an_unknown_group() {
 #[tokio::test]
 async fn renames_a_group_and_carries_its_members() {
     let h = with_mcps();
-    h.put("/api/groups", json!({ "groups": ["Docs", "Search"] }))
+    h.put("/api/groups/mcps", json!({ "groups": ["Docs", "Search"] }))
         .await;
     for name in ["context7", "deepwiki"] {
         h.put(
-            &format!("/api/mcps/{name}/group"),
+            &format!("/api/groups/mcps/members/{name}"),
             json!({ "group": "Docs" }),
         )
         .await;
@@ -1841,7 +1841,7 @@ async fn renames_a_group_and_carries_its_members() {
 async fn refuses_a_rename_onto_an_existing_group_or_a_missing_one() {
     let h = with_mcps();
     h.put(
-        "/api/groups",
+        "/api/groups/mcps",
         json!({ "groups": ["default", "Docs", "Search"] }),
     )
     .await;
@@ -1864,11 +1864,11 @@ async fn refuses_a_rename_onto_an_existing_group_or_a_missing_one() {
 async fn renames_default_like_any_other_group_carrying_the_first_slot_with_it() {
     let h = with_mcps();
     h.put(
-        "/api/groups",
+        "/api/groups/mcps",
         json!({ "groups": ["default", "Docs", "Search"] }),
     )
     .await;
-    h.put("/api/mcps/context7/group", json!({ "group": "default" }))
+    h.put("/api/groups/mcps/members/context7", json!({ "group": "default" }))
         .await;
 
     let (status, _) = h
@@ -1886,14 +1886,14 @@ async fn renames_default_like_any_other_group_carrying_the_first_slot_with_it() 
 #[tokio::test]
 async fn deleting_a_group_by_omission_moves_its_mcps_to_the_first_remaining_group() {
     let h = with_mcps();
-    h.put("/api/groups", json!({ "groups": ["Docs", "Search"] }))
+    h.put("/api/groups/mcps", json!({ "groups": ["Docs", "Search"] }))
         .await;
-    h.put("/api/mcps/context7/group", json!({ "group": "Docs" }))
+    h.put("/api/groups/mcps/members/context7", json!({ "group": "Docs" }))
         .await;
-    h.put("/api/mcps/github/group", json!({ "group": "Search" }))
+    h.put("/api/groups/mcps/members/github", json!({ "group": "Search" }))
         .await;
 
-    h.put("/api/groups", json!({ "groups": ["Search"] })).await;
+    h.put("/api/groups/mcps", json!({ "groups": ["Search"] })).await;
 
     let (_, list) = h.get("/api/mcps").await;
     assert_eq!(list["groups"], json!(["Search"]));
@@ -1913,8 +1913,8 @@ async fn carries_an_mcps_group_through_a_rename_and_drops_it_on_delete() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED);
-    h.put("/api/groups", json!({ "groups": ["Docs"] })).await;
-    h.put("/api/mcps/a/group", json!({ "group": "Docs" })).await;
+    h.put("/api/groups/mcps", json!({ "groups": ["Docs"] })).await;
+    h.put("/api/groups/mcps/members/a", json!({ "group": "Docs" })).await;
 
     h.post("/api/mcps/a/rename", json!({ "name": "b" })).await;
     assert_eq!(h.store.group_of("b"), "Docs");
@@ -2037,6 +2037,162 @@ async fn the_family_rename_body_is_from_to_and_missing_fields_are_400() {
         .post("/api/groups/mcps/rename", json!({ "name": "X" }))
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// setup(), plus the two tunnel scopes registered over a scratch tunnels.json — the way
+/// server.rs composes them after building the store. What comes back is the store handle,
+/// for asserting what actually landed on disk.
+fn setup_with_tunnels() -> (
+    Harness,
+    Arc<std::sync::Mutex<swiss_tunnels::tunnel::TunnelStore>>,
+) {
+    sandbox();
+    let dir = std::env::temp_dir().join(format!(
+        "swiss-adminapi-tunnels-{}",
+        swiss_core::util::random_hex(8)
+    ));
+    std::fs::create_dir_all(&dir).expect("create the scratch directory");
+    let tun = Arc::new(std::sync::Mutex::new(
+        swiss_tunnels::tunnel::TunnelStore::new(dir.join("tunnels.json"), 19999),
+    ));
+    let calls = Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls")));
+    let registry = Registry::new(60_000, calls.clone());
+    let store = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
+    let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
+    let ctx = AppContext::new(
+        registry.clone(),
+        tokens,
+        store.clone(),
+        calls.clone(),
+        "MCP_GATEWAY_TOKEN",
+        19999,
+    );
+    swiss_tunnels::tunnel::register_tunnel_scopes(&ctx.group_scopes, &tun);
+    (
+        Harness {
+            app: build_app(ctx, None),
+            registry,
+            store,
+            calls,
+            path: dir.join("managed.json"),
+        },
+        tun,
+    )
+}
+
+/// Seed one connection + two rules; the ids are what the family's member routes take.
+fn seed_tunnels(
+    tun: &Arc<std::sync::Mutex<swiss_tunnels::tunnel::TunnelStore>>,
+) -> (String, String, String) {
+    let mut s = tun.lock().unwrap();
+    let c = s
+        .add_connection(&swiss_tunnels::tunnel::store::ConnInput {
+            name: "bastion".into(),
+            host: "127.0.0.1".into(),
+            port: 22.0,
+            username: "u".into(),
+            auth_type: swiss_tunnels::tunnel::types::AuthType::Password,
+            password: Some("p".into()),
+            ..Default::default()
+        })
+        .expect("a connection");
+    let r1 = s
+        .add_rule(&swiss_tunnels::tunnel::store::RuleInput {
+            name: "pg".into(),
+            connection_id: c.id.clone(),
+            local_port: 5433.0,
+            target_host: "127.0.0.1".into(),
+            target_port: 5432.0,
+            ..Default::default()
+        })
+        .expect("a rule");
+    let r2 = s
+        .add_rule(&swiss_tunnels::tunnel::store::RuleInput {
+            name: "redis".into(),
+            connection_id: c.id.clone(),
+            local_port: 6379.0,
+            target_host: "127.0.0.1".into(),
+            target_port: 6379.0,
+            ..Default::default()
+        })
+        .expect("a rule");
+    (c.id, r1.id, r2.id)
+}
+
+#[tokio::test]
+async fn the_family_serves_the_tunnel_scopes() {
+    let (h, tun) = setup_with_tunnels();
+    let (c, r1, r2) = seed_tunnels(&tun);
+
+    // The whole-list mutation, on the scope word the family owns (conns, not connections).
+    let (status, body) = h
+        .put("/api/groups/conns", json!({ "groups": ["default", "prod"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["groups"], json!(["default", "prod"]));
+
+    // Assignment is by tunnel id, answers the canonical casing, and lands in tunnels.json.
+    let (status, body) = h
+        .put(&format!("/api/groups/conns/members/{c}"), json!({ "group": "PROD" }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "group": "prod" }));
+    assert_eq!(
+        tun.lock().unwrap().connection(&c).unwrap().group,
+        Some("prod".to_string())
+    );
+
+    // Rename keeps the slot and counts the members that rode along explicitly.
+    h.put("/api/groups/rules", json!({ "groups": ["default", "Learning"] }))
+        .await;
+    h.put(&format!("/api/groups/rules/members/{r2}"), json!({ "group": "default" }))
+        .await;
+    let (status, body) = h
+        .post("/api/groups/rules/rename", json!({ "from": "default", "to": "Basics" }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["groups"], json!(["Basics", "Learning"]));
+    assert_eq!(body["moved"], 1, "r2 was an explicit member of default");
+    assert_eq!(
+        tun.lock().unwrap().rule(&r2).unwrap().group,
+        Some("Basics".to_string())
+    );
+    // An implicit member needs no rewrite: the sink slot kept its place, so it follows.
+    assert_eq!(tun.lock().unwrap().rule(&r1).unwrap().group, None);
+
+    // The scope's flat order: one list per call now, not both at once.
+    let (status, body) = h
+        .put("/api/groups/rules/order", json!({ "order": [r2.clone(), r1.clone()] }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["order"], json!([r2, r1]));
+    assert_eq!(tun.lock().unwrap().rules()[0].name, "redis");
+
+    // Unknown member is the family's 404, with the family's wording.
+    let (status, body) = h
+        .put("/api/groups/rules/members/nope", json!({ "group": null }))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], json!("unknown member: nope"));
+}
+
+#[tokio::test]
+async fn the_retired_mcp_group_and_order_routes_are_gone() {
+    let (h, _) = setup_with_tunnels();
+    // docs/20 §3: one family, one door. The per-mcp group route, the bare /api/groups and the
+    // unscoped /api/order all answered the same store the family does - keeping them is how
+    // two copies of one protocol drift apart.
+    for (method, path, body) in [
+        ("PUT", "/api/order", json!({ "order": [] })),
+        ("PUT", "/api/groups", json!({ "groups": ["default"] })),
+        ("PUT", "/api/groups/mcps/members/ghost", json!({ "group": null })),
+    ] {
+        let (status, _) = match method {
+            "PUT" => h.put(path, body).await,
+            _ => h.post(path, body).await,
+        };
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
+    }
 }
 
 // --- request parsing -------------------------------------------------------------------------

@@ -606,72 +606,10 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         }),
     );
 
-    // The panel's sidebar order. Names the panel sends back verbatim; registered MCPs missing
-    // from the list are appended by GET /api/mcps in name order, so a fresh MCP never vanishes.
-    r = r.route(
-        "/api/order",
-        put(
-            |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
-                let body = body.0;
-                let Some(order) = body.get("order").and_then(Value::as_array) else {
-                    return admin_error(
-                        StatusCode::BAD_REQUEST,
-                        "order must be an array of MCP names",
-                    );
-                };
-                if !order.iter().all(|n| n.as_str().is_some()) {
-                    return admin_error(
-                        StatusCode::BAD_REQUEST,
-                        "order must be an array of MCP names",
-                    );
-                }
-                let names: Vec<String> = order
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect();
-                match ctx.store.set_order(names) {
-                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
-                    Ok(()) => admin_json(StatusCode::OK, json!({ "order": ctx.store.get_order() })),
-                }
-            },
-        ),
-    );
-
-    // The panel's custom sidebar groups, sent as one whole ordered list: creating, reordering
-    // and deleting are all "here is the new list". A group dropped by omission is deleted, and
-    // the store returns its MCPs to the default group.
-    r = r.route(
-        "/api/groups",
-        put(
-            |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
-                let body = body.0;
-                let Some(groups) = body.get("groups").and_then(Value::as_array) else {
-                    return admin_error(
-                        StatusCode::BAD_REQUEST,
-                        "groups must be an array of group names",
-                    );
-                };
-                if !groups.iter().all(|n| n.as_str().is_some()) {
-                    return admin_error(
-                        StatusCode::BAD_REQUEST,
-                        "groups must be an array of group names",
-                    );
-                }
-                let names: Vec<String> = groups
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect();
-                match ctx.store.set_groups(names) {
-                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
-                    Ok(()) => {
-                        admin_json(StatusCode::OK, json!({ "groups": ctx.store.get_groups() }))
-                    }
-                }
-            },
-        ),
-    );
+    // /api/order and /api/groups are retired (docs/20 §3): the group-scope family below
+    // answers both through the mcps scope - PUT /api/groups/mcps and PUT /api/groups/mcps/order -
+    // with the store behind it unchanged. One protocol is what the panel implements; two doors
+    // into one store is how the shapes forked in the first place.
 
     // --- the group-scope family (docs/20 §3) ---------------------------------------------------------
     //
@@ -814,40 +752,9 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         ),
     );
 
-    // Put one MCP in a group. `null` (or "default") returns it to the default group. Works for
-    // config-sourced MCPs because membership is keyed by name in managed.json, not on the def.
-    r = r.route(
-        "/api/mcps/{name}/group",
-        put(
-            |State(ctx): State<Arc<AppContext>>,
-             Path(name): Path<String>,
-             body: crate::reply::NodeBody| async move {
-                if !ctx.registry.has(&name) {
-                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
-                }
-                let body = body.0;
-                let raw = body.get("group");
-                match raw {
-                    None | Some(Value::Null) => {}
-                    Some(Value::String(_)) => {}
-                    Some(_) => {
-                        return admin_error(
-                            StatusCode::BAD_REQUEST,
-                            "group must be a group name or null",
-                        )
-                    }
-                }
-                let group = raw.and_then(Value::as_str);
-                match ctx.store.set_mcp_group(&name, group) {
-                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
-                    Ok(()) => admin_json(
-                        StatusCode::OK,
-                        json!({ "name": name, "group": ctx.store.group_of(&name) }),
-                    ),
-                }
-            },
-        ),
-    );
+    // /api/mcps/{name}/group is retired with the other two (docs/20 §3): the family's member
+    // route - PUT /api/groups/mcps/members/{name} - answers the same store, keyed by name, so
+    // config-sourced MCPs work exactly as before.
 
     // List every MCP — status only (light, safe to poll). Tools/resources load on demand.
     r = r.route(
