@@ -509,9 +509,27 @@ async fn query(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
     if sql.trim().is_empty() {
         return Err(Fail::bad("sql is required"));
     }
-    b.run_query(&sql, body.get("limit"))
+    // The elapsed clock wraps the browser call: what the user waited on is the driver round
+    // trip, not the JSON hop around it (docs/22 W0.4).
+    let started = std::time::Instant::now();
+    let out = b
+        .run_query(&sql, body.get("limit"))
         .await
-        .map_err(Fail::bad)
+        .map_err(Fail::bad)?;
+    Ok(with_elapsed_ms(out, started))
+}
+
+/// Attach `elapsedMs` (whole milliseconds, a JS-friendly integer) to a console reply. A
+/// browser answer that is somehow not an object passes through untouched rather than being
+/// reshaped around the one field that was added for it.
+fn with_elapsed_ms(mut v: Value, started: std::time::Instant) -> Value {
+    if let Value::Object(map) = &mut v {
+        map.insert(
+            "elapsedMs".into(),
+            json!(started.elapsed().as_millis() as u64),
+        );
+    }
+    v
 }
 
 /// Commit a buffered edit list. ALL statements run in one transaction on one connection —
@@ -578,8 +596,10 @@ async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<
     if line.trim().is_empty() {
         return Err(Fail::bad("command is required"));
     }
+    // Same elapsed contract as the SQL console (docs/22 W0.4): the clock wraps the call.
+    let started = std::time::Instant::now();
     let reply = rb.run_command(&line).await.map_err(Fail::bad)?;
-    Ok(json!({ "reply": reply }))
+    Ok(with_elapsed_ms(json!({ "reply": reply }), started))
 }
 
 /// One key, read type-aware (the shape redis_read returns).
@@ -1685,6 +1705,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_query_answer_carries_how_long_it_took() {
+        // docs/22 W0.4: the console's meta line shows server-measured elapsed time. The clock
+        // wraps the browser call itself, so the number is the driver round trip the user
+        // actually waited on, not the JSON hop around it.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/query",
+            Some(json!({ "sql": "SELECT 1" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body = body.expect("json");
+        let ms = body["elapsedMs"].as_u64().expect("elapsedMs is an integer");
+        assert!(ms < 60_000, "{ms} — a stub call cannot take a minute");
+        // The reply itself passes through untouched.
+        assert_eq!(body["rowCount"], json!(1));
+        assert!(body["columns"].is_array());
+    }
+
+    #[tokio::test]
+    async fn a_redis_command_answer_carries_how_long_it_took() {
+        // Same contract on the redis console: {"reply": ..., "elapsedMs": N}.
+        let app = router_of(vec![redis_entry("rdb")]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/rdb/command",
+            Some(json!({ "command": "GET mykey" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body = body.expect("json");
+        assert_eq!(body["reply"], json!("value"));
+        let ms = body["elapsedMs"].as_u64().expect("elapsedMs is an integer");
+        assert!(ms < 60_000, "{ms}");
+    }
+
+    #[tokio::test]
     async fn runs_a_redis_command_reads_and_writes_alike() {
         let app = router_of(vec![redis_entry("rdb")]);
         let (status, _, body, _) = call(
@@ -1695,7 +1760,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body.as_ref().expect("json"), &json!({ "reply": "value" }));
+        // docs/22 W0.4 grew the answer by one field; the reply itself is unchanged.
+        let body = body.expect("json");
+        assert_eq!(body["reply"], json!("value"));
+        assert!(body["elapsedMs"].is_u64());
 
         let app = router_of(vec![redis_entry("rdb")]);
         let (_status, _, body, _) = call(

@@ -204,6 +204,7 @@ async function dbRunSql(explain) {
     if (!cj) { d.sqlResult = null; renderDbToolbar(); renderDbGrid(); return; }
     dbClearSel(); // a new result grid starts unselected
     d.sqlResult = { columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false,
+      elapsedMs: cj.elapsedMs,
       note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null ? cj.reply.length + " items" : undefined };
     dbHistoryPush(sql);
     renderDbToolbar();

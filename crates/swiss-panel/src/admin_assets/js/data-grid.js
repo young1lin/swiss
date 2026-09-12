@@ -83,7 +83,8 @@ function renderDbToolbar() {
   if (d.sqlResult) {
     left.appendChild(el("h2", "db-title pane-title", d.sqlResult.explained ? "Execution plan" : (dbIsRedis() ? "Command reply" : "SQL results")));
     left.appendChild(el("div", "db-meta", d.sqlResult.rowCount + " row" + (d.sqlResult.rowCount === 1 ? "" : "s") +
-      (d.sqlResult.note ? " · " + d.sqlResult.note : "")));
+      (d.sqlResult.note ? " · " + d.sqlResult.note : "") +
+      (d.sqlResult.elapsedMs != null ? " · " + d.sqlResult.elapsedMs + " ms" : "")));
   } else if (d.data) {
     left.appendChild(el("h2", "db-title pane-title", (d.data.schema ? d.data.schema + "." : "") + d.data.table));
     var bits = [d.data.total.toLocaleString() + " rows"];
