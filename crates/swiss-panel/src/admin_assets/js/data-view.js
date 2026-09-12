@@ -4,6 +4,7 @@ import { dbIsRedis, dbLoadKeys, dbLoadRedisValue } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
+import { popupMenu } from "./menu.js";
 
 /* ================================================================================================
    Data view — a DBeaver-style browser over the mysql/pg MCPs.
@@ -223,7 +224,15 @@ function renderDbView() {
   // wrapped: onclick hands the handler the click EVENT, and dbRunSql's first parameter is
   // `explain` — an event object is truthy, so a plain Run has been quietly running EXPLAIN.
   $("dbSqlRun").onclick = function () { dbRunSql(false); };
-  $("dbSqlExplain").onclick = function () { dbRunSql(true); };
+  $("dbSqlExplain").onclick = function (ev) {
+    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
+    // without it the click that opens the menu also tears it down (same as the Export menu).
+    ev.stopPropagation();
+    popupMenu(this.getBoundingClientRect(), [
+      { label: "Explain", fn: function () { dbRunSql("plan"); } },
+      { label: "Explain ANALYZE", fn: function () { dbRunSql("analyze"); } },
+    ]);
+  };
   $("dbSqlHistory").onchange = function () {
     if (this.value === "") return;
     var sql = state.db.history[Number(this.value)];

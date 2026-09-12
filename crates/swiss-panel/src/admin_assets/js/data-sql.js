@@ -138,11 +138,16 @@ async function dbCommit() {
   dbLoadData(true);
 }
 
-/** EXPLAIN-prefix a console statement — same rules as withExplain on the server: idempotent,
-    one trailing terminator stripped. Mirrored here because the server helper is TypeScript. */
-function dbWithExplain(sql) {
-  var s = sql.replace(/\s+$/, "").replace(/;\s+$/, "").replace(/\s+$/, "");
-  return /^explain\b/i.test(s) ? s : "EXPLAIN " + s;
+/** EXPLAIN-prefix a console statement — mode "analyze" spells EXPLAIN ANALYZE, which runs
+    the statement and times every plan node. Same rules as withExplain on the server:
+    idempotent, one trailing terminator stripped. Mirrored here because the server helper is
+    TypeScript. */
+function dbWithExplain(sql, mode) {
+  // ;\s*$ is the server's (and the Rust port's) chain: the old ;\s+$ here could never match
+  // once the trailing whitespace had already been stripped, so the terminator survived.
+  var s = sql.replace(/\s+$/, "").replace(/;\s*$/, "").replace(/\s+$/, "");
+  if (/^explain\b/i.test(s)) return s;
+  return mode === "analyze" ? "EXPLAIN ANALYZE " + s : "EXPLAIN " + s;
 }
 
 /* --- query history (per-browser) ---------------------------------------------------------------- */
@@ -185,7 +190,7 @@ function dbHistoryRender() {
 
 /* --- SQL console --------------------------------------------------------------------------------- */
 
-async function dbRunSql(explain) {
+async function dbRunSql(explain) { // falsy runs the statement; "plan"|"analyze" prefix EXPLAIN
   var d = state.db;
   if (!d.conn) { toast("No database connection", true); return; }
   var sql = (d.sqlText || "").trim();
@@ -211,9 +216,9 @@ async function dbRunSql(explain) {
     renderDbGrid();
     return;
   }
-  // The plan view runs EXPLAIN on the same statement; withExplain is idempotent, so a query
-  // that already explains itself is sent as-is.
-  var toSend = explain ? dbWithExplain(sql) : sql;
+  // The plan view runs EXPLAIN (or EXPLAIN ANALYZE) on the same statement; dbWithExplain is
+  // idempotent, so a query that already explains itself is sent as-is.
+  var toSend = explain ? dbWithExplain(sql, explain) : sql;
   d.sqlBusy = true;
   renderDbToolbar();
   renderDbGrid();
