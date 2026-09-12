@@ -490,11 +490,22 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
                 ctx.catalog.get().cloned().unwrap_or_else(|| {
                     Arc::new(swiss_host::services::catalog::CatalogRegistry::new())
                 }),
-                // The picker ranks by the sidebar's manual order (PUT /api/order), read live
-                // per request — one manual order for the same MCPs everywhere.
+                // The picker ranks by the sidebar's VISUAL order — groups in their stored
+                // order (the first is the fallback home), members in the flat manual order
+                // (PUT /api/order) within each group — read live per request. Ranked by the raw
+                // flat order instead, a connection would jump its group neighbours the moment
+                // members of two groups interleave, which any cross-group drag produces.
                 {
                     let ctx = ctx.clone();
-                    Arc::new(move || ctx.store.get_order())
+                    Arc::new(move || {
+                        let mut names: Vec<String> = ctx
+                            .registry
+                            .all()
+                            .iter()
+                            .filter_map(|entry| entry.data.read().ok().map(|d| d.name.clone()))
+                            .collect();
+                        visual_order(&ctx.store, &mut names)
+                    })
                 },
             ),
         )
@@ -529,5 +540,104 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
                 .layer(axum::extract::DefaultBodyLimit::max(BODY_LIMIT)),
         ),
         (None, _) => app,
+    }
+}
+
+/// The Data picker's ranking: the sidebar's VISUAL order, not the flat one. `names` arrives in
+/// whatever order the registry happened to start things in; it leaves ranked by the manual flat
+/// order (PUT /api/order, unranked names last in name order — exactly like /api/mcps) and then
+/// sliced by group: groups in their stored order, members keeping their flat rank inside their
+/// group. Ranked flat alone, a connection would jump its group neighbours the moment members of
+/// two groups interleave — which any cross-group drag produces. Unassigned names land in the
+/// FIRST group (the sink slot), mirroring `ManagedStore::group_of`.
+fn visual_order(store: &ManagedStore, names: &mut [String]) -> Vec<String> {
+    let rank: HashMap<String, usize> = store
+        .get_order()
+        .into_iter()
+        .enumerate()
+        .map(|(i, n)| (n, i))
+        .collect();
+    names.sort_by(|a, b| {
+        let ra = rank.get(a).copied().unwrap_or(usize::MAX);
+        let rb = rank.get(b).copied().unwrap_or(usize::MAX);
+        // Compare ranks only when they actually differ; names decide otherwise.
+        if ra != rb {
+            ra.cmp(&rb)
+        } else {
+            a.cmp(b)
+        }
+    });
+    let groups = store.get_groups();
+    let mut by_group: HashMap<String, Vec<String>> = HashMap::new();
+    for n in names.iter() {
+        by_group.entry(store.group_of(n)).or_default().push(n.clone());
+    }
+    let mut out = Vec::new();
+    for g in &groups {
+        out.extend(by_group.remove(g).unwrap_or_default());
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_store() -> ManagedStore {
+        // A unique scratch path per call; the test never needs to clean up, only to not collide.
+        let dir = std::env::temp_dir().join(format!("swiss-visual-order-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
+        std::fs::create_dir_all(&dir).expect("scratch dir");
+        ManagedStore::open_at(dir.join("managed.json"))
+    }
+
+    #[test]
+    fn visual_order_slices_the_flat_rank_by_group() {
+        let store = scratch_store();
+        // Two groups whose flat order interleaves members — exactly what a cross-group drag
+        // makes. Both memberships are explicit: redis-gang is FIRST, so an unassigned name
+        // would render in it, which is not what this test is about.
+        store
+            .set_groups(vec!["redis-gang".into(), "default".into()])
+            .unwrap();
+        for (n, g) in [
+            ("redis-a", "redis-gang"),
+            ("redis-b", "redis-gang"),
+            ("mysql-a", "default"),
+            ("mysql-b", "default"),
+        ] {
+            store.set_mcp_group(n, Some(g)).unwrap();
+        }
+        store
+            .set_order(vec![
+                "mysql-a".into(),
+                "redis-a".into(),
+                "mysql-b".into(),
+                "redis-b".into(),
+            ])
+            .unwrap();
+        // Registry order is deliberately unrelated; unranked names would fall to name order.
+        let mut names: Vec<String> = ["redis-b", "mysql-b", "redis-a", "mysql-a"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            visual_order(&store, &mut names),
+            ["redis-a", "redis-b", "mysql-a", "mysql-b"]
+        );
+    }
+
+    #[test]
+    fn visual_order_keeps_unranked_names_last_in_name_order_inside_their_group() {
+        let store = scratch_store();
+        store.set_groups(vec!["default".into(), "new".into()]).unwrap();
+        store.set_mcp_group("zebra", Some("new")).unwrap();
+        store.set_mcp_group("alpha", Some("new")).unwrap();
+        // No manual order at all: every name is unranked, so plain name order inside each group;
+        // unassigned names render in the first group, like the sidebar draws them.
+        let mut names: Vec<String> = ["zeta", "zebra", "alpha"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(visual_order(&store, &mut names), ["zeta", "alpha", "zebra"]);
     }
 }

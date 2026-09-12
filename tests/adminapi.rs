@@ -1714,11 +1714,12 @@ async fn groups_of(h: &Harness) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn starts_with_no_groups_and_every_mcp_in_default() {
+async fn starts_with_the_default_group_and_every_mcp_in_it() {
     let h = with_mcps();
     let (status, body) = h.get("/api/mcps").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["groups"], json!([]));
+    // The list is never empty: `default` is materialized, ordinary, first.
+    assert_eq!(body["groups"], json!(["default"]));
     assert_eq!(groups_of(&h).await, ["default", "default", "default"]);
 }
 
@@ -1736,29 +1737,32 @@ async fn creates_groups_and_reports_them_on_the_list() {
 }
 
 #[tokio::test]
-async fn rejects_a_malformed_reserved_duplicate_or_empty_group_name() {
+async fn rejects_a_malformed_duplicate_empty_or_last_group_destroying_list() {
     let h = with_mcps();
     let (status, _) = h.put("/api/groups", json!({ "groups": "Docs" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     for groups in [
-        json!(["default"]),
-        json!(["DEFAULT"]),
         json!(["Docs", "docs"]),
         json!([" "]),
+        json!([]),
     ] {
         let (status, _) = h.put("/api/groups", json!({ "groups": groups })).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{groups}");
     }
+    // `default` is an ordinary name now — a list of just it is fine.
+    let (status, _) = h.put("/api/groups", json!({ "groups": ["default"] })).await;
+    assert_eq!(status, StatusCode::OK);
     // A rejected call must not have half-applied.
     let (_, list) = h.get("/api/mcps").await;
-    assert_eq!(list["groups"], json!([]));
+    assert_eq!(list["groups"], json!(["default"]));
 }
 
 #[tokio::test]
 async fn assigns_a_config_sourced_mcp_to_a_group_and_back_to_default() {
     let h = with_mcps();
-    h.put("/api/groups", json!({ "groups": ["Docs"] })).await;
+    h.put("/api/groups", json!({ "groups": ["default", "Docs"] }))
+        .await;
 
     let (status, put) = h
         .put("/api/mcps/context7/group", json!({ "group": "Docs" }))
@@ -1832,13 +1836,15 @@ async fn renames_a_group_and_carries_its_members() {
 }
 
 #[tokio::test]
-async fn refuses_a_rename_onto_the_reserved_name_an_existing_group_or_a_missing_one() {
+async fn refuses_a_rename_onto_an_existing_group_or_a_missing_one() {
     let h = with_mcps();
-    h.put("/api/groups", json!({ "groups": ["Docs", "Search"] }))
-        .await;
+    h.put(
+        "/api/groups",
+        json!({ "groups": ["default", "Docs", "Search"] }),
+    )
+    .await;
 
     for (from, name, expected) in [
-        ("Docs", "default", StatusCode::BAD_REQUEST),
         ("Docs", "Search", StatusCode::BAD_REQUEST),
         ("Ghost", "X", StatusCode::NOT_FOUND),
     ] {
@@ -1853,7 +1859,30 @@ async fn refuses_a_rename_onto_the_reserved_name_an_existing_group_or_a_missing_
 }
 
 #[tokio::test]
-async fn deleting_a_group_by_omission_returns_its_mcps_to_default_without_deleting_them() {
+async fn renames_default_like_any_other_group_carrying_the_first_slot_with_it() {
+    let h = with_mcps();
+    h.put(
+        "/api/groups",
+        json!({ "groups": ["default", "Docs", "Search"] }),
+    )
+    .await;
+    h.put("/api/mcps/context7/group", json!({ "group": "default" }))
+        .await;
+
+    let (status, _) = h
+        .post("/api/groups/default/rename", json!({ "name": "主力" }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, list) = h.get("/api/mcps").await;
+    assert_eq!(list["groups"], json!(["主力", "Docs", "Search"]));
+    assert_eq!(row_named(&list, "context7")["group"], json!("主力"));
+    // An unassigned MCP followed the renamed slot on its own.
+    assert_eq!(row_named(&list, "deepwiki")["group"], json!("主力"));
+}
+
+#[tokio::test]
+async fn deleting_a_group_by_omission_moves_its_mcps_to_the_first_remaining_group() {
     let h = with_mcps();
     h.put("/api/groups", json!({ "groups": ["Docs", "Search"] }))
         .await;
@@ -1867,7 +1896,8 @@ async fn deleting_a_group_by_omission_returns_its_mcps_to_default_without_deleti
     let (_, list) = h.get("/api/mcps").await;
     assert_eq!(list["groups"], json!(["Search"]));
     assert_eq!(list["mcps"].as_array().map(Vec::len), Some(3)); // nothing was deleted
-    assert_eq!(row_named(&list, "context7")["group"], json!("default"));
+    // Members of the dropped group land in the FIRST remaining group — Search, the only one.
+    assert_eq!(row_named(&list, "context7")["group"], json!("Search"));
     assert_eq!(row_named(&list, "github")["group"], json!("Search"));
 }
 

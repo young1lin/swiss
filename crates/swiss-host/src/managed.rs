@@ -24,9 +24,10 @@ pub struct ManagedEntry {
 }
 
 /// The group every MCP belongs to until it is put somewhere else. Deliberately NOT stored: an
-/// MCP in the default group has no entry in `mcpGroups`, so a file written before groups existed
-/// already means "everything is in default". The name is reserved — a custom group may not take
-/// it, because it is the sink a deleted group's members fall back into.
+/// The name a group list starts from. It is an ordinary group the user can rename, delete and
+/// reorder; its only privilege is being the initial FIRST entry — that slot (never the name) is
+/// where unassigned MCPs and the members of a deleted group land. An MCP in the first group with
+/// no explicit assignment has no entry in `mcpGroups`.
 pub const DEFAULT_GROUP: &str = "default";
 
 fn managed_path() -> PathBuf {
@@ -134,19 +135,35 @@ pub fn load_order(path: &Path) -> Vec<String> {
     }
 }
 
-/// The user's custom sidebar groups, in display order. `default` is never in here.
+/// Every sidebar group in display order — `default` included when it exists. The list is never
+/// empty: a missing or invalid file starts from `[default]`, and a pre-v2 file (which never stored
+/// `default`, because the old model rendered it implicitly) gets it materialized at the front so
+/// the first load after the upgrade looks exactly like the last load before it. A v2 file is the
+/// list verbatim — an absent `default` there means the user deleted it, and resurrecting it
+/// would undo the edit.
 pub fn load_groups(path: &Path) -> Vec<String> {
+    let start = || vec![DEFAULT_GROUP.to_string()];
     let Some(raw) = read_managed_raw(path) else {
-        return Vec::new();
+        return start();
     };
-    match raw.get("groups") {
+    let list = match raw.get("groups") {
         Some(Value::Array(a)) => a
             .iter()
             .filter_map(Value::as_str)
             .filter(|s| !s.trim().is_empty())
             .map(str::to_string)
-            .collect(),
+            .collect::<Vec<_>>(),
         _ => Vec::new(),
+    };
+    if raw.get("groupsV2") == Some(&Value::Bool(true)) {
+        return if list.is_empty() { start() } else { list };
+    }
+    if list.iter().any(|n| same_name(n, DEFAULT_GROUP)) {
+        list
+    } else {
+        let mut out = start();
+        out.extend(list);
+        out
     }
 }
 
@@ -431,8 +448,8 @@ impl ManagedStore {
             .unwrap_or_default()
     }
 
-    /// The group this MCP is in. Unassigned — or assigned to a group since deleted — means
-    /// default.
+    /// The group this MCP is in. Unassigned — or assigned to a group since deleted — lands in
+    /// the FIRST group, whatever it is called: that slot is the sink, not the name `default`.
     pub fn group_of(&self, name: &str) -> String {
         self.state
             .lock()
@@ -442,6 +459,7 @@ impl ManagedStore {
                     .get(name)
                     .filter(|g| s.groups.iter().any(|x| x == *g))
                     .cloned()
+                    .or_else(|| s.groups.first().cloned())
             })
             .unwrap_or_else(|| DEFAULT_GROUP.into())
     }
@@ -453,8 +471,10 @@ impl ManagedStore {
             .unwrap_or_default()
     }
 
-    /// Replace the whole custom-group list: create, delete and reorder in one call. A group
-    /// dropped by omission is deleted, and its members fall back to the default group.
+    /// Replace the whole group list: create, delete and reorder in one call — `default` rides in
+    /// it like any other name. A group dropped by omission is deleted and its members fall into
+    /// the FIRST group of the new list. The list may never be empty: something must catch
+    /// unassigned MCPs, and deleting the last group is the one move this refuses.
     pub fn set_groups(&self, names: Vec<String>) -> Result<(), String> {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
         let mut next = Vec::new();
@@ -463,13 +483,13 @@ impl ManagedStore {
             if name.is_empty() {
                 return Err("a group name cannot be empty".into());
             }
-            if same_name(name, DEFAULT_GROUP) {
-                return Err(format!("\"{DEFAULT_GROUP}\" is a reserved group name"));
-            }
             if next.iter().any(|n: &String| same_name(n, name)) {
                 return Err(format!("duplicate group name: {name}"));
             }
             next.push(name.to_string());
+        }
+        if next.is_empty() {
+            return Err("at least one group must remain".into());
         }
         s.groups = next;
         let live = s.groups.clone();
@@ -477,14 +497,13 @@ impl ManagedStore {
         self.persist(&s)
     }
 
-    /// Put an MCP in a group, or back into the default group with None.
+    /// Put an MCP in a group. `None` means "no explicit group" — it renders in the first group,
+    /// whatever that is called, and follows it if the first group is renamed (rename keeps the
+    /// slot).
     pub fn set_mcp_group(&self, name: &str, group: Option<&str>) -> Result<(), String> {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
         match group {
             None => {
-                s.mcp_groups.remove(name);
-            }
-            Some(g) if same_name(g, DEFAULT_GROUP) => {
                 s.mcp_groups.remove(name);
             }
             Some(g) => {
@@ -501,14 +520,13 @@ impl ManagedStore {
         self.persist(&s)
     }
 
-    /// Rename a group in place, carrying its members with it and keeping its slot.
+    /// Rename a group in place — any group, `default` included — carrying its members with it and
+    /// keeping its slot. Members with no explicit group need no rewrite: they render in the first
+    /// group, and a rename keeps the slot, so they follow the new name on their own.
     pub fn rename_group(&self, from: &str, to: &str) -> Result<(), String> {
         let next = to.trim();
         if next.is_empty() {
             return Err("a group name cannot be empty".into());
-        }
-        if same_name(next, DEFAULT_GROUP) {
-            return Err(format!("\"{DEFAULT_GROUP}\" is a reserved group name"));
         }
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
         let i = s
@@ -533,12 +551,16 @@ impl ManagedStore {
         self.persist(&s)
     }
 
-    /// Delete a group. Its MCPs are not touched — they fall back into the default group.
+    /// Delete a group. Its MCPs are not touched — they fall into the first remaining group.
+    /// Refused when it is the last one: something must catch unassigned MCPs.
     pub fn remove_group(&self, name: &str) -> Result<(), String> {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
         let Some(match_) = s.groups.iter().find(|n| same_name(n, name)).cloned() else {
             return Ok(());
         };
+        if s.groups.len() <= 1 {
+            return Err("at least one group must remain".into());
+        }
         s.groups.retain(|n| *n != match_);
         s.mcp_groups.retain(|_, g| *g != match_);
         self.persist(&s)
@@ -595,7 +617,11 @@ impl ManagedStore {
             root.insert("order".into(), json!(s.order));
         }
         if !s.groups.is_empty() {
+            // The v2 marker rides with any group write: it says "this list is complete, `default`
+            // included or deleted on purpose" — the loader stops prepending `default` to marked
+            // files.
             root.insert("groups".into(), json!(s.groups));
+            root.insert("groupsV2".into(), json!(true));
         }
         if !s.mcp_groups.is_empty() {
             root.insert(
@@ -788,7 +814,8 @@ mod tests {
         assert!(!path.exists());
         let store = ManagedStore::open_at(path.clone());
         assert!(store.all().is_empty());
-        assert!(store.get_groups().is_empty());
+        // The group list is never empty anymore — a missing file starts from the default group.
+        assert_eq!(store.get_groups(), vec![DEFAULT_GROUP]);
         assert!(store.get_order().is_empty());
         assert!(store.get_tokens().is_empty());
         assert!(load_managed(&path).is_empty());
@@ -958,18 +985,21 @@ mod tests {
     // ---- groups -----------------------------------------------------------------------
 
     #[test]
-    fn puts_every_mcp_in_the_default_group_until_one_is_assigned_storing_nothing() {
+    fn starts_every_list_with_the_default_group_storing_nothing_until_a_save() {
         let path = scratch();
         let store = ManagedStore::open_at(path.clone());
-        assert!(store.get_groups().is_empty());
+        // `default` is an ordinary group the loader materializes at the front of an empty list.
+        assert_eq!(store.get_groups(), vec![DEFAULT_GROUP]);
         assert_eq!(store.group_of("anything"), DEFAULT_GROUP);
         store
             .add(entry("a", json!({ "type": "echo" }), true))
             .unwrap();
 
-        // A file with no groups at all is exactly "everything is in default" — no migration.
+        // Any persist carries the in-memory list — it is never empty now — but no membership
+        // was made. The v2 marker rode along, so a reload of this file will not re-prepend.
         let raw = raw_of(&path);
-        assert!(raw.get("groups").is_none());
+        assert_eq!(raw.get("groups"), Some(&json!([DEFAULT_GROUP])));
+        assert_eq!(raw.get("groupsV2"), Some(&json!(true)));
         assert!(raw.get("mcpGroups").is_none());
     }
 
@@ -978,20 +1008,38 @@ mod tests {
         let path = scratch();
         let store = ManagedStore::open_at(path.clone());
         store
-            .set_groups(vec!["Search".into(), "Docs".into()])
+            .set_groups(vec!["default".into(), "Search".into(), "Docs".into()])
             .unwrap();
         assert_eq!(
             ManagedStore::open_at(path.clone()).get_groups(),
+            vec!["default", "Search", "Docs"]
+        );
+        assert_eq!(load_groups(&path), vec!["default", "Search", "Docs"]);
+        // The v2 marker rode along: a reload of a DELETED default must not resurrect it.
+        store.set_groups(vec!["Search".into(), "Docs".into()]).unwrap();
+        assert_eq!(
+            ManagedStore::open_at(path).get_groups(),
             vec!["Search", "Docs"]
         );
-        assert_eq!(load_groups(&path), vec!["Search", "Docs"]);
+    }
+
+    #[test]
+    fn materializes_default_at_the_front_of_an_unmarked_pre_v2_file() {
+        let path = scratch();
+        write_plain(
+            &path,
+            json!({ "mcps": [], "groups": ["learn", "ForTest"] }),
+        );
+        assert_eq!(load_groups(&path), vec!["default", "learn", "ForTest"]);
     }
 
     #[test]
     fn assigns_an_mcp_to_a_group_and_back_to_default_keeping_the_map_sparse() {
         let path = scratch();
         let store = ManagedStore::open_at(path.clone());
-        store.set_groups(vec!["Docs".into()]).unwrap();
+        store
+            .set_groups(vec!["default".into(), "Docs".into()])
+            .unwrap();
         store.set_mcp_group("context7", Some("Docs")).unwrap();
         assert_eq!(store.group_of("context7"), "Docs");
         assert_eq!(
@@ -1000,20 +1048,26 @@ mod tests {
         );
 
         store.set_mcp_group("context7", None).unwrap();
+        // None = "no explicit group": it renders under the FIRST group — default, still the front.
         assert_eq!(store.group_of("context7"), DEFAULT_GROUP);
-        // Back in default means "no entry", not an entry saying "default".
+        // "No explicit group" means "no entry", never an entry naming the first group.
         assert!(load_mcp_groups(&path).is_empty());
     }
 
     #[test]
-    fn naming_the_default_group_explicitly_is_the_same_as_clearing_it() {
+    fn assigning_the_default_group_explicitly_stores_the_canonical_name() {
         let path = scratch();
         let store = ManagedStore::open_at(path.clone());
-        store.set_groups(vec!["Docs".into()]).unwrap();
-        store.set_mcp_group("a", Some("Docs")).unwrap();
+        store
+            .set_groups(vec!["default".into(), "Docs".into()])
+            .unwrap();
         store.set_mcp_group("a", Some("DeFaUlT")).unwrap();
+        // An explicit assignment to default is a real entry now — the canonical casing is stored.
         assert_eq!(store.group_of("a"), DEFAULT_GROUP);
-        assert!(load_mcp_groups(&path).is_empty());
+        assert_eq!(
+            load_mcp_groups(&path).get("a").map(String::as_str),
+            Some("default")
+        );
     }
 
     #[test]
@@ -1050,17 +1104,10 @@ mod tests {
     }
 
     #[test]
-    fn reserves_the_default_name_and_rejects_duplicates_case_insensitively() {
+    fn treats_default_as_an_ordinary_name_rejecting_only_real_conflicts() {
         let path = scratch();
         let store = ManagedStore::open_at(path);
-        assert!(store
-            .set_groups(vec!["default".into()])
-            .unwrap_err()
-            .contains("reserved"));
-        assert!(store
-            .set_groups(vec!["DEFAULT".into()])
-            .unwrap_err()
-            .contains("reserved"));
+        store.set_groups(vec!["default".into(), "Docs".into()]).unwrap();
         assert!(store
             .set_groups(vec!["Docs".into(), "docs".into()])
             .unwrap_err()
@@ -1069,8 +1116,13 @@ mod tests {
             .set_groups(vec![" ".into()])
             .unwrap_err()
             .contains("empty"));
+        // The list may never be empty: something must catch unassigned MCPs.
+        assert!(store
+            .set_groups(vec![])
+            .unwrap_err()
+            .contains("at least one group"));
         // A refused call leaves the previous list alone.
-        assert!(store.get_groups().is_empty());
+        assert_eq!(store.get_groups(), vec!["default", "Docs"]);
     }
 
     #[test]
@@ -1103,16 +1155,12 @@ mod tests {
     }
 
     #[test]
-    fn refuses_to_rename_onto_the_reserved_name_or_an_existing_group() {
+    fn refuses_to_rename_onto_an_existing_group_or_an_unknown_one() {
         let path = scratch();
         let store = ManagedStore::open_at(path);
         store
-            .set_groups(vec!["Docs".into(), "Search".into()])
+            .set_groups(vec!["default".into(), "Docs".into(), "Search".into()])
             .unwrap();
-        assert!(store
-            .rename_group("Docs", "default")
-            .unwrap_err()
-            .contains("reserved"));
         assert!(store
             .rename_group("Docs", "Search")
             .unwrap_err()
@@ -1126,7 +1174,24 @@ mod tests {
             .rename_group("Docs", "  ")
             .unwrap_err()
             .contains("empty"));
-        assert_eq!(store.get_groups(), vec!["Docs", "Search"]);
+        assert_eq!(store.get_groups(), vec!["default", "Docs", "Search"]);
+    }
+
+    #[test]
+    fn renames_default_like_any_other_group_carrying_the_first_slot_with_it() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store
+            .set_groups(vec!["default".into(), "Docs".into()])
+            .unwrap();
+        store.set_mcp_group("context7", Some("default")).unwrap();
+        store.rename_group("default", "主力").unwrap();
+
+        let reloaded = ManagedStore::open_at(path);
+        assert_eq!(reloaded.get_groups(), vec!["主力", "Docs"]);
+        // An explicit member is rewritten; an unassigned one follows the slot on its own.
+        assert_eq!(reloaded.group_of("context7"), "主力");
+        assert_eq!(reloaded.group_of("deepwiki"), "主力");
     }
 
     #[test]
@@ -1146,14 +1211,42 @@ mod tests {
     fn drops_a_group_without_deleting_its_mcps() {
         let path = scratch();
         let store = ManagedStore::open_at(path.clone());
-        store.set_groups(vec!["Docs".into()]).unwrap();
+        store
+            .set_groups(vec!["default".into(), "Docs".into()])
+            .unwrap();
         store.set_mcp_group("context7", Some("Docs")).unwrap();
         store.remove_group("Docs").unwrap();
 
         let reloaded = ManagedStore::open_at(path.clone());
-        assert!(reloaded.get_groups().is_empty());
+        assert_eq!(reloaded.get_groups(), vec![DEFAULT_GROUP]);
         assert_eq!(reloaded.group_of("context7"), DEFAULT_GROUP);
         assert!(load_mcp_groups(&path).is_empty());
+    }
+
+    #[test]
+    fn deleting_the_group_that_owns_the_first_slot_moves_the_sink() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store
+            .set_groups(vec!["default".into(), "Docs".into(), "Extra".into()])
+            .unwrap();
+        store.set_mcp_group("context7", Some("default")).unwrap();
+        store.remove_group("default").unwrap();
+
+        // The first remaining group catches both the explicit member and the unassigned ones.
+        assert_eq!(store.get_groups(), vec!["Docs", "Extra"]);
+        assert_eq!(store.group_of("context7"), "Docs");
+        assert_eq!(store.group_of("deepwiki"), "Docs");
+    }
+
+    #[test]
+    fn refuses_to_delete_the_last_remaining_group() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store.set_groups(vec!["Docs".into()]).unwrap();
+        let err = store.remove_group("Docs").unwrap_err();
+        assert!(err.contains("at least one group"), "{err}");
+        assert_eq!(store.get_groups(), vec!["Docs"]);
     }
 
     #[test]
@@ -1170,11 +1263,13 @@ mod tests {
         let path = scratch();
         let store = ManagedStore::open_at(path.clone());
         store
-            .set_groups(vec!["Docs".into(), "Search".into()])
+            .set_groups(vec!["default".into(), "Docs".into(), "Search".into()])
             .unwrap();
         store.set_mcp_group("context7", Some("Docs")).unwrap();
         store.set_mcp_group("github", Some("Search")).unwrap();
-        store.set_groups(vec!["Search".into()]).unwrap(); // Docs deleted by omission
+        store
+            .set_groups(vec!["default".into(), "Search".into()])
+            .unwrap(); // Docs deleted by omission
 
         assert_eq!(store.group_of("context7"), DEFAULT_GROUP);
         assert_eq!(store.group_of("github"), "Search");
@@ -1196,7 +1291,8 @@ mod tests {
 
         store.rename("a", "b").unwrap();
         assert_eq!(store.group_of("b"), "Docs");
-        assert_eq!(store.group_of("a"), DEFAULT_GROUP);
+        // The old name answers via the first group: the only group here is Docs.
+        assert_eq!(store.group_of("a"), "Docs");
         assert_eq!(
             store.get_order(),
             vec!["b"],
@@ -1216,6 +1312,8 @@ mod tests {
             json!({ "mcps": [], "groups": ["Docs"], "mcpGroups": { "a": "Docs", "b": "Ghost" } }),
         );
         let store = ManagedStore::open_at(path);
+        // Unmarked file: default is prepended and owns the first slot.
+        assert_eq!(store.get_groups(), vec!["default", "Docs"]);
         assert_eq!(store.group_of("a"), "Docs");
         assert_eq!(store.group_of("b"), DEFAULT_GROUP);
     }
@@ -1228,9 +1326,9 @@ mod tests {
             json!({ "mcps": [], "groups": "nope", "mcpGroups": { "a": 5, "b": "Docs" } }),
         );
         let store = ManagedStore::open_at(path);
-        assert!(store.get_groups().is_empty());
+        assert_eq!(store.get_groups(), vec![DEFAULT_GROUP]);
         assert_eq!(store.group_of("a"), DEFAULT_GROUP); // non-string value dropped
-        assert_eq!(store.group_of("b"), DEFAULT_GROUP); // the group list is empty, so Docs is dead
+        assert_eq!(store.group_of("b"), DEFAULT_GROUP); // the list is default-only, so Docs is dead
     }
 
     #[test]
