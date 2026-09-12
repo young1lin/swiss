@@ -36,6 +36,7 @@ function dbFreshState() {
     data: null,           // last /api/db/:name/data page
     filters: [],          // [{ column, op, value }] — server-side WHERE terms (AND-ed)
     pageSize: 50, offset: 0, order: null, dir: "asc", loading: false,
+    gridCfg: { widths: {}, hidden: [] }, // per-connection column widths/hides (docs/22 W2.1), reloaded per page
     sqlPreview: false,    // pending bar: show the SQL Commit will run
     updates: {},          // pkKey -> { pk, changes: { col: value-or-null } }
     deletes: {},          // pkKey -> pk object

@@ -437,6 +437,14 @@
       border-right: 1.5px solid var(--accent); border-bottom: 1.5px solid var(--accent);
       transform: rotate(225deg); }
     .db-sorted-desc .db-sort { transform: rotate(45deg); }
+    /* The column resize grip (docs/22 W2.1): 4px of the header's right edge, quiet until the
+       pointer is on it, then the accent a drag is about to move. The header is already
+       position:sticky (a positioned box), so the absolute grip anchors to it without help. */
+    .db-col-grip { position: absolute; top: 0; right: 0; bottom: 0; width: 4px; cursor: col-resize; }
+    .db-col-grip:hover { background: var(--accent); }
+    /* The all-columns-hidden row: a place, not a collapsed table (docs/22 W2.1). */
+    .db-grid td.db-grid-hiddenall { padding: var(--s3); }
+    .db-grid td.db-grid-hiddenall > div { display: flex; align-items: center; gap: var(--s2); color: var(--text-3); }
     /* The column-header hover card: the panel's own chrome instead of the OS tooltip. */
     .db-tip { position: fixed; z-index: 60; max-width: 340px; padding: 7px 10px 8px;
       background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-row);

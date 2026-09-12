@@ -12,6 +12,117 @@ import { act } from "./detail.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
 
+/* --- grid config: per-connection column widths and hidden columns (docs/22 W2.1) ---------------- */
+/* dbgate keeps one GridConfig object per grid (GridConfig.ts + useGridConfig.ts); the equivalent
+   here is ONE localStorage object per connection+table holding the widths the user dragged and
+   the columns they hid. The helpers are pure (or storage-only) so the key format, the parse's
+   tolerance of a corrupt entry and the clamp pin without a DOM. The grid reloads the config on
+   every page load — a rename or a second tab's change is picked up, never cached stale. */
+var DB_GRID_PREFIX = "mcp_gateway_db_grid_";
+var DB_COL_MIN = 48;  // narrower than the header's own name line and nothing reads
+var DB_COL_MAX = 1200; // wider than the grid itself — a runaway drag helps nobody
+
+function dbGridConfigKey(conn, schema, table) {
+  return DB_GRID_PREFIX + conn + "_" + (schema ? schema + "." : "") + table;
+}
+
+/** Parse one stored config. A missing, corrupt or wrongly-typed entry is a fresh config:
+ *  storage is the only writer and quota errors can leave anything behind, but a broken grid
+ *  is never an acceptable consequence. Widths outside the clamp are dropped, not clamped —
+ *  a hand-edited 0 was never a width the user dragged. */
+function dbGridConfigParse(raw) {
+  var out = { widths: {}, hidden: [] };
+  if (!raw) return out;
+  try {
+    var j = JSON.parse(raw);
+    if (!j || typeof j !== "object") return out;
+    if (j.widths && typeof j.widths === "object") {
+      Object.keys(j.widths).forEach(function (k) {
+        var n = Number(j.widths[k]);
+        if (isFinite(n) && n >= DB_COL_MIN && n <= DB_COL_MAX) out.widths[k] = Math.round(n);
+      });
+    }
+    if (Array.isArray(j.hidden)) {
+      out.hidden = j.hidden.filter(function (h) { return typeof h === "string" && h; });
+    }
+  } catch (e) { /* fresh config, see above */ }
+  return out;
+}
+
+function dbGridConfigLoad(key) {
+  var raw = null;
+  try { raw = localStorage.getItem(key); } catch (e) { /* private mode: defaults */ }
+  return dbGridConfigParse(raw);
+}
+
+function dbGridConfigSave(key, cfg) {
+  try { localStorage.setItem(key, JSON.stringify(cfg)); } catch (e) { /* quota/private mode: this session only */ }
+}
+
+/** The columns the grid shows after the config's hidden list. Pure. */
+function dbGridVisibleColumns(columns, hidden) {
+  if (!hidden || !hidden.length) return columns.slice();
+  var drop = {};
+  hidden.forEach(function (h) { drop[h] = true; });
+  return columns.filter(function (c) { return !drop[c.name]; });
+}
+
+/** The config's key for the table currently open (null when nothing is open). */
+function dbGridKeyNow() {
+  var d = state.db;
+  return d.conn && d.table ? dbGridConfigKey(d.conn, d.schema, d.table) : null;
+}
+
+/** Hide one column (the header menu) / bring every hidden column back, writing through to
+ *  storage so the choice survives a reload. */
+function dbHideColumn(name) {
+  var d = state.db;
+  if (d.gridCfg.hidden.indexOf(name) < 0) d.gridCfg.hidden.push(name);
+  var key = dbGridKeyNow();
+  if (key) dbGridConfigSave(key, d.gridCfg);
+  renderDbGrid();
+}
+
+function dbShowAllColumns() {
+  var d = state.db;
+  d.gridCfg.hidden = [];
+  var key = dbGridKeyNow();
+  if (key) dbGridConfigSave(key, d.gridCfg);
+  renderDbGrid();
+}
+
+/** Drag the column's right edge: width follows the pointer live across every cell of the
+ *  column (cells captured at drag start — no repaint per mousemove), and the config is
+ *  written once on release. The handle owns mousedown/click (stopPropagation) so a drag never
+ *  sorts the column it is resizing. Each cell gets width AND maxWidth — under
+ *  table-layout: auto a width alone is only a hint the nowrap content outvotes. */
+function dbColResizeStart(e, name, th, cells) {
+  e.preventDefault();
+  e.stopPropagation();
+  var d = state.db;
+  var startX = e.clientX;
+  var startW = th.getBoundingClientRect().width;
+  var lastW = startW;
+  function move(ev) {
+    lastW = Math.max(DB_COL_MIN, Math.min(DB_COL_MAX, Math.round(startW + ev.clientX - startX)));
+    for (var i = 0; i < cells.length; i++) {
+      cells[i].style.width = lastW + "px";
+      cells[i].style.maxWidth = lastW + "px";
+    }
+  }
+  function up() {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    if (lastW !== Math.round(startW)) {
+      d.gridCfg.widths[name] = lastW;
+      var key = dbGridKeyNow();
+      if (key) dbGridConfigSave(key, d.gridCfg);
+    }
+  }
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
+}
+
 async function dbLoadData(keepOffset) {
   var d = state.db;
   if (!d.conn || !d.table) return;
@@ -28,6 +139,9 @@ async function dbLoadData(keepOffset) {
   if (!j) { renderDbToolbar(); renderDbGrid(); return; }
   d.data = j;
   d.schema = j.schema;
+  // The grid config reloads with every page: a rename (new key) or a second tab's hide lands
+  // on the next paint instead of a cached opinion (docs/22 W2.1).
+  d.gridCfg = dbGridConfigLoad(dbGridKeyNow());
   dbDropEdits(); // a fresh page is a fresh baseline — buffered edits never survive a reload
   // A filter naming a column that no longer exists would 400 on every reload — drop it instead.
   var names = d.data.columns.map(function (c) { return c.name; });
@@ -309,6 +423,16 @@ function renderDbGrid() {
 
   var pkCols = d.data.primaryKey || [];
   var editable = d.data.editable;
+  // docs/22 W2.1: the per-connection grid config picks the columns the table shows and the
+  // width each dragged column keeps. A config older than a column set (columns added since)
+  // simply misses those names — an unknown width is no width, an unknown hidden name hides
+  // nothing.
+  var cfg = d.gridCfg || { widths: {}, hidden: [] };
+  var cols = dbGridVisibleColumns(d.data.columns, cfg.hidden);
+  var widthOf = function (c, cell) {
+    var w = cfg.widths[c.name];
+    if (w) { cell.style.width = w + "px"; cell.style.maxWidth = w + "px"; }
+  };
 
   var tbl = el("table", "db-grid");
   var thead = el("thead");
@@ -328,8 +452,8 @@ function renderDbGrid() {
   // One caption line under every column name when ANY column carries a comment: the meaning is
   // then ON the grid instead of hidden behind a hover, and giving every header the line (empty
   // where there is nothing to say) keeps the header row one even height.
-  var hasComments = d.data.columns.some(function (c) { return !!c.comment; });
-  d.data.columns.forEach(function (c) {
+  var hasComments = cols.some(function (c) { return !!c.comment; });
+  cols.forEach(function (c) {
     var sorted = c.name === d.order;
     var th = el("th", "db-col" + (sorted ? " db-sorted" + (d.dir === "desc" ? " db-sorted-desc" : "") : ""));
     var main = el("div", "db-col-main");
@@ -339,6 +463,20 @@ function renderDbGrid() {
     if (sorted) main.appendChild(el("span", "db-sort"));
     th.appendChild(main);
     if (hasComments) th.appendChild(el("div", "db-col-comment", c.comment || ""));
+    // docs/22 W2.1: the resize grip hugs the header's right edge. It owns mousedown and click
+    // so a drag neither sorts the column nor fights the hover card for the pointer.
+    var grip = el("span", "db-col-grip");
+    grip.title = "Drag to resize";
+    grip.onmousedown = function (ev) {
+      var idx = Array.prototype.indexOf.call(hr.children, th);
+      var cells = [th];
+      var trs = tbl.querySelectorAll("tbody tr");
+      for (var r = 0; r < trs.length; r++) if (trs[r].children[idx]) cells.push(trs[r].children[idx]);
+      dbColResizeStart(ev, c.name, th, cells);
+    };
+    grip.onclick = function (ev) { ev.stopPropagation(); };
+    th.appendChild(grip);
+    widthOf(c, th);
     th.onmouseenter = function () {
       clearTimeout(dbTip.timer);
       dbTip.timer = setTimeout(function () { dbTipShow(th, c); }, 260);
@@ -360,10 +498,19 @@ function renderDbGrid() {
     th.oncontextmenu = function (e) {
       e.preventDefault();
       dbTipHide();
-      popupMenu(this.getBoundingClientRect(), [
+      // docs/22 W2.1: hiding lives in the same menu, one separator down, and the recovery
+      // entry ("Show all columns") appears exactly while something is hidden — one place for
+      // both directions.
+      var items = [
         { label: "Value distribution\u2026", fn: function () { dbRunColumnStats(c.name, "dist"); } },
         { label: "Numeric stats\u2026", fn: function () { dbRunColumnStats(c.name, "num"); } },
-      ]);
+        { sep: true },
+        { label: "Hide column", fn: function () { dbHideColumn(c.name); } },
+      ];
+      if (d.gridCfg && d.gridCfg.hidden.length) {
+        items.push({ label: "Show all columns", fn: dbShowAllColumns });
+      }
+      popupMenu(this.getBoundingClientRect(), items);
     };
     hr.appendChild(th);
   });
@@ -371,6 +518,27 @@ function renderDbGrid() {
   tbl.appendChild(thead);
 
   var tbody = el("tbody");
+
+  // docs/22 W2.1: a table with every column hidden still has to read as a place, not a
+  // collapsed box — one quiet row says what happened and carries the way back. Rows and
+  // buffered inserts are not drawn under it: with no visible column there is nothing to show
+  // or edit. (The header keeps the select-all corner for shape.)
+  if (!cols.length) {
+    var trh = el("tr");
+    var tdh = el("td", "db-grid-hiddenall");
+    var inner = el("div");
+    inner.appendChild(el("span", "", "Every column of " +
+      (d.schema ? d.schema + "." : "") + d.table + " is hidden."));
+    var showAll = el("button", "btn", "Show all columns");
+    showAll.onclick = dbShowAllColumns;
+    inner.appendChild(showAll);
+    tdh.appendChild(inner);
+    trh.appendChild(tdh);
+    tbody.appendChild(trh);
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    return;
+  }
 
   // Buffered inserts first, so they read as "the row you are about to add".
   d.inserts.forEach(function (ins, i) {
@@ -384,9 +552,10 @@ function renderDbGrid() {
     };
     rc.appendChild(rm);
     tr.appendChild(rc);
-    d.data.columns.forEach(function (c) {
+    cols.forEach(function (c) {
       var has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
       var td = el("td", "db-cell");
+      widthOf(c, td);
       var long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
       if (editable) {
         td.classList.add("db-cell-edit");
@@ -441,11 +610,12 @@ function renderDbGrid() {
       rc.appendChild(b);
     }
     tr.appendChild(rc);
-    d.data.columns.forEach(function (c) {
+    cols.forEach(function (c) {
       var orig = row[c.name];
       var pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
       var v = pending ? upd.changes[c.name] : orig;
       var td = el("td", "db-cell" + (pending ? " db-dirty" : ""));
+      widthOf(c, td);
       var long = dbPaintCell(td, v, true, c.dataType);
       if (editable && !deleted) {
         td.classList.add("db-cell-edit");
@@ -540,4 +710,4 @@ function dbNextSort(order, dir, name) {
   return { order: name, dir: "desc" };
 }
 
-export { dbLoadData, dbNextSort, dbPaintCell, renderDbGrid, renderDbResultGrid, renderDbToolbar };
+export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridVisibleColumns, dbHideColumn, dbLoadData, dbNextSort, dbPaintCell, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns };
