@@ -240,8 +240,15 @@ function mountGroup(cfg, g) {
     });
   }
   // An empty group is not an empty state - it is a place. One quiet line keeps the container
-  // visible as a drop target (the only way in) and explains the + beside it.
-  if (!g.rows.length && !cfg.filtered) body.appendChild(el("div", "grp-empty", "Empty — drop rows here or press +"));
+  // visible as a drop target (the only way in) and explains the + beside it. A scope whose
+  // rows cannot drag (secrets) says the honest half of that sentence only.
+  if (!g.rows.length && !cfg.filtered) {
+    body.appendChild(el(
+      "div",
+      "grp-empty",
+      cfg.draggable === false ? "Empty — press + to add one here" : "Empty — drop rows here or press +",
+    ));
+  }
   wrap.appendChild(body);
   return wrap;
 }
