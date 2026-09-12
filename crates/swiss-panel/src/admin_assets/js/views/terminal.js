@@ -20,10 +20,13 @@ import { loadUnicode11Addon } from "../vendor/xterm/addon-unicode11-0.8.0/index.
 import { loadWebLinksAddon } from "../vendor/xterm/addon-web-links-0.11.0/index.js";
 import { loadWebglAddon } from "../vendor/xterm/addon-webgl-0.18.0/index.js";
 import {
-  FONT_DEFAULT, clampGeometry, frameStatus, keyAction, mouseAction, nextFontSize,
-  nextReconnectDelay, readFontSize, resizeFrame, resizeUrl, sessionAlive, sessionLabel,
-  sessionsUrl, streamUrl, targetRows, targetsUrl, ticketUrl, wheelAction,
+  FONT_DEFAULT, clampGeometry, embeddedNewlines, frameStatus, isPinned, keyAction, mouseAction,
+  nextFontSize, nextReconnectDelay, readBellMode, readCopyOnSelect, readFontSize, resizeFrame,
+  resizeUrl, sessionAlive, sessionLabel, sessionsUrl, streamUrl, tabLabel, targetRows,
+  targetsUrl, ticketUrl, trimSelection, wheelAction,
 } from "../terminal-core.js";
+import { createOverlay } from "../term-overlay.js";
+import { loadSearchAddon } from "../vendor/xterm/addon-search-0.16.0/index.js";
 import { openLocalSheet } from "./terminal-settings.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
@@ -48,6 +51,15 @@ var fontSize = readFontSize(readStoredFontSize());
    has already closed, and dismissing would look decorative. Cleared of ids the listing
    no longer carries so it cannot grow without bound. */
 var dismissed = new Set();
+/* P0 preferences (docs/22 §2.3/§2.4): a bell must be VISIBLE by default and a
+   selection must reach the clipboard by default — both remember their mode per
+   browser, like the font size, because they are preferences about this screen. */
+var BELL_KEY = "swiss.terminal.bell";
+var COPYSEL_KEY = "swiss.terminal.copyOnSelect";
+function storedPref(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+var bellMode = readBellMode(storedPref(BELL_KEY));
+var copyOnSelect = readCopyOnSelect(storedPref(COPYSEL_KEY));
+var bellAudio = null;   // the AudioContext, created by the first audible bell
 
 function load() {
   if (!packages) {
@@ -107,20 +119,15 @@ function paintStatus() {
 function paintTabs() {
   var bar = $("term-tabs");
   if (!bar) return;
-  var known = models.map(function (m) { return m.id; });
-  var extra = sessions.filter(function (s) {
-    return s && s.id && known.indexOf(s.id) < 0 && !dismissed.has(s.id);
-  });
-  var all = models.concat(extra.map(function (s) {
-    return { id: s.id, target: s.target, label: s.label, status: "", gone: false };
-  }));
+  var all = tabList();
   var any = all.length > 0;
   bar.hidden = !any;
   bar.innerHTML = all.map(function (m) {
-    var label = esc(sessionLabel(m)) + (m.gone ? " · closed" : "");
+    var label = esc(tabLabel(m, m.shellTitle, m.customTitle)) + (m.gone ? " · closed" : "");
     return '<button role="tab" data-act="select" data-id="' + esc(m.id) + '"' +
       ' aria-selected="' + String(m.id === active) + '" title="' + label + '">' +
       '<span class="term-tab-label">' + label + "</span>" +
+      (m.bell && !m.gone ? '<span class="term-tab-bell" aria-label="bell">\u25cf</span>' : "") +
       ' <span class="term-tab-x" data-act="close" data-id="' + esc(m.id) + '" title="Close session" role="button">\u00d7</span>' +
       "</button>";
   }).join("");
@@ -151,7 +158,11 @@ function setFontSize(size) {
   fontSize = size;
   try { localStorage.setItem(FONT_SIZE_KEY, String(size)); } catch (e) { /* per-tab only */ }
   models.forEach(function (m) {
-    if (m.term) m.term.options.fontSize = size;
+    if (!m.term) return;
+    m.term.options.fontSize = size;
+    /* A zoom across odd sizes can leave the WebGL glyph atlas half-rasterized; one
+       clear rebuilds it on demand (the addon's own advice, docs/22 §4). */
+    if (m.gl && m.gl.clearTextureAtlas) m.gl.clearTextureAtlas();
   });
   scheduleFit();
   paintStatus();
@@ -171,6 +182,216 @@ function copySelection(term) {
 /* Create the terminal for one session and append its holder. The holder stays hidden
    until the session is selected - xterm keeps its buffer offscreen, fit measures only
    what is visible. */
+/* --- P0 native-feel machinery (docs/22) ------------------------------------------------ */
+
+/* A short generated beep: no asset file can enter the panel (docs/14 §2), and xterm
+   5.5 ships no sound of its own (verified, docs/22 §3). The context is created on the
+   first audible bell and left alone afterwards — an idle one costs nothing. */
+function beep() {
+  try {
+    bellAudio = bellAudio || new (window.AudioContext || window.webkitAudioContext)();
+    var osc = bellAudio.createOscillator();
+    var gain = bellAudio.createGain();
+    osc.frequency.value = 880;
+    gain.gain.value = 0.05;
+    osc.connect(gain);
+    gain.connect(bellAudio.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.0001, bellAudio.currentTime + 0.18);
+    osc.stop(bellAudio.currentTime + 0.2);
+  } catch (e) { /* autoplay policy: the badge already spoke */ }
+}
+
+/* Every byte that reaches a screen goes through here so pin state survives it: the
+   viewport is captured BEFORE the write and restored after it — the bottom when
+   pinned, the saved line when not. Capture-before-write matters because an rAF can
+   flip the pin mid-write (Tabby's rule, docs/22 §2.10). */
+function writeTerm(m, bytes) {
+  var term = m.term;
+  if (!term) return;
+  var b = term.buffer.active;
+  var was = m.pinned;
+  var y = b.viewportY;
+  term.write(bytes, function () {
+    if (!m.term) return;
+    if (was && m.toBottom) m.toBottom();
+    else if (!was) term.scrollToLine(Math.min(y, term.buffer.active.baseY));
+  });
+}
+
+/* The "N new \u2193" chip over a terminal the user has scrolled away from (docs/22
+   §2.10): one button, absolutely positioned, honest about how far behind they are. */
+function paintJump(m) {
+  if (!m.holder) return;
+  if (!m.jump) {
+    var chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "term-jump";
+    chip.addEventListener("click", function () {
+      m.unseen = 0;
+      if (m.toBottom) m.toBottom();
+      paintJump(m);
+    });
+    m.holder.appendChild(chip);
+    m.jump = chip;
+  }
+  m.jump.hidden = m.pinned || !m.unseen;
+  m.jump.textContent = m.unseen + " new \u2193";
+}
+
+/* The tab inventory paintTabs and the Alt-shortcuts agree on: wired models first
+   (their order IS the tab order), then live listing rows not opened yet. */
+function tabList() {
+  var known = models.map(function (m) { return m.id; });
+  var extra = sessions.filter(function (s) {
+    return s && s.id && known.indexOf(s.id) < 0 && !dismissed.has(s.id);
+  });
+  return models.concat(extra.map(function (s) {
+    return { id: s.id, target: s.target, label: s.label, status: "", gone: false };
+  }));
+}
+
+/* Alt+1..9 / Alt+arrows out of a focused terminal (docs/22 §2.5). The browser keeps
+   Ctrl+Tab and Ctrl+Shift+W for itself — no page can have them — so Alt carries the
+   set; the web-panel reality desktop terminals do not face. */
+function jumpTab(at) {
+  var all = tabList();
+  if (at < 0 || at >= all.length) return;
+  select(all[at].id);
+}
+
+function cycleTab(dir) {
+  var all = tabList();
+  if (all.length < 2) return;
+  var at = -1;
+  for (var i = 0; i < all.length; i++) if (all[i].id === active) { at = i; break; }
+  if (at < 0) return;
+  select(all[(at + dir + all.length) % all.length].id);
+}
+
+/* Double-click renames a tab: one inline input replaces the label; Enter commits,
+   Escape cancels, blur commits (docs/22 consensus 1 + §2.5). A custom title outranks
+   the shell's OSC title until it is emptied. */
+function startRename(id) {
+  var m = model(id);
+  var bar = $("term-tabs");
+  if (!m || !bar) return;
+  var btn = Array.prototype.find.call(bar.children, function (c) {
+    return c.getAttribute("data-id") === id;
+  });
+  var labelEl = btn && btn.querySelector(".term-tab-label");
+  if (!labelEl || btn.querySelector(".term-rename")) return;
+  var input = document.createElement("input");
+  input.className = "term-rename";
+  input.id = "term-rename";   // the a11y auditor wants a name on every form field
+  input.maxLength = 40;
+  input.value = m.customTitle || m.shellTitle || "";
+  input.setAttribute("aria-label", "Rename tab");
+  labelEl.parentNode.replaceChild(input, labelEl);
+  input.focus();
+  input.select();
+  var settled = false;
+  var done = function (commit) {
+    if (settled) return;
+    settled = true;
+    if (commit) m.customTitle = input.value.trim() || null;
+    paintTabs();   // the repaint removes the input; the tab keeps the focus
+  };
+  input.addEventListener("keydown", function (ev) {
+    ev.stopPropagation();   // the terminal's key gate must not see rename typing
+    if (ev.key === "Enter") done(true);
+    else if (ev.key === "Escape") done(false);
+  });
+  input.addEventListener("blur", function () { done(true); });
+}
+
+/* --- Ctrl+Shift+F find bar (docs/22 P1) ------------------------------------------------ */
+/* The addon CLASS loads on first ask — an idle terminal never pays the ~78 KB — and one
+   SearchAddon instance attaches per terminal, because a match set belongs to a buffer.
+   The addon re-searches internally as the buffer changes under it and reports counts
+   through onDidChangeResults, async and ~200 ms debounced INSIDE it; adding another
+   debounce on top is the classic integrator mistake — don't. Plain substring search
+   only (regex off): a pasted "[" stays a "[" and never throws. */
+var FIND_DECOR = {
+  matchOverviewRuler: "#427ab3",
+  matchBackground: "rgba(66,122,179,0.35)",
+  activeMatchBackground: "#cfae00",
+  activeMatchOverviewRuler: "#cfae00",
+};
+
+function findBar() { return $("term-find"); }
+function findInput() { return $("term-find-q"); }
+
+function paintFindCount(res) {
+  var el = $("term-find-count");
+  if (!el) return;
+  el.textContent = !res ? "" : res.resultCount ? (res.resultIndex + 1) + "/" + res.resultCount : "no results";
+}
+
+function runFind(back) {
+  var m = model(active);
+  if (!m || !m.search) return;
+  var input = findInput();
+  var q = input ? input.value : "";
+  if (!q) { m.search.clearDecorations(); paintFindCount(null); return; }
+  try {
+    var moved = back ? m.search.findPrevious(q, { decorations: FIND_DECOR })
+                     : m.search.findNext(q, { decorations: FIND_DECOR });
+    if (!moved) paintFindCount(null);
+  } catch (e) { /* only reachable with regex on; the guard stays because search must never kill the page */ }
+}
+
+function closeFind() {
+  var bar = findBar();
+  if (bar) bar.hidden = true;
+  var m = model(active);
+  if (m && m.search) m.search.clearDecorations();
+  paintFindCount(null);
+  if (m && m.term) m.term.focus();
+}
+
+function wireFindBar() {
+  var bar = findBar();
+  var input = findInput();
+  if (!bar || !input) return;
+  input.addEventListener("keydown", function (ev) {
+    ev.stopPropagation();   // typing a query is not terminal input
+    if (ev.key === "Enter") { ev.preventDefault(); runFind(ev.shiftKey); }
+    else if (ev.key === "Escape") { ev.preventDefault(); closeFind(); }
+  });
+  /* Typing searches immediately (VS Code's behavior) — Enter then WALKS the matches. */
+  input.addEventListener("input", function () { runFind(false); });
+  $("term-find-prev").addEventListener("click", function () { runFind(true); });
+  $("term-find-next").addEventListener("click", function () { runFind(false); });
+  $("term-find-x").addEventListener("click", closeFind);
+}
+
+async function openFind() {
+  var m = model(active);
+  if (!m || !m.term) return;
+  var bar = findBar();
+  if (!bar) return;
+  if (!bar.hidden && document.activeElement === findInput()) { closeFind(); return; }   // toggle
+  bar.hidden = false;
+  if (!m.search) {
+    try {
+      var cls = await loadSearchAddon();
+      if (!m.term || m.gone) { closeFind(); return; }   // closed while the class loaded
+      m.search = new cls();
+      m.search.onDidChangeResults(function (res) { paintFindCount(res); });
+      m.term.loadAddon(m.search);
+    } catch (e) {
+      toast("could not load the search addon: " + String(e && e.message || e), true);
+      closeFind();
+      return;
+    }
+  }
+  var input = findInput();
+  input.focus();
+  input.select();
+  runFind(false);   // searching on open makes "open, type" work with zero extra keys
+}
+
 function wireTerminal(m) {
   if (m.term) return Promise.resolve();
   // The promise is module-cached, so a rejected load retries naturally on the next wire.
@@ -199,8 +420,34 @@ function wireTerminal(m) {
       var gl = new got.WebglAddon();
       gl.onContextLoss(function () { gl.dispose(); });
       term.loadAddon(gl);
+      m.gl = gl;   // kept for clearTextureAtlas() after a font zoom
     } catch (e) { /* the DOM renderer stays */ }
     term.onData(function (text) { sendInput(m, text); });
+    /* OSC 0/2 from the shell (vim, ssh, pwsh prompts) drives this tab's label unless the
+       user renamed it (docs/22 consensus 1). ConPTY forwards the sequence; a shell that
+       never emits one simply keeps its session label. */
+    term.onTitleChange(function (title) {
+      m.shellTitle = title == null ? null : String(title);
+      paintTabs();
+    });
+    /* BEL: a badge on the tab, cleared by selecting it; an optional oscillator beep —
+       xterm 5.5 has no bell sound of its own (verified, docs/22 §3). */
+    term.onBell(function () {
+      if (m.gone) return;
+      m.bell = true;
+      paintTabs();
+      if (bellMode === "badge-sound") beep();
+    });
+    /* Copy-on-select rides the same clipboard path as Ctrl+C; the \u2702 overlay is the
+       feedback that keeps the copy from being a surprise (ttyd's lesson). suppressSelect
+       is set while search navigation moves the selection programmatically. */
+    term.onSelectionChange(function () {
+      if (!copyOnSelect || m.suppressSelect) return;
+      var text = term.getSelection();
+      if (!text) return;
+      navigator.clipboard.writeText(trimSelection(text)).catch(function () { /* gesture context missing: keep silent */ });
+      if (m.overlay) m.overlay.show("\u2702", 500);
+    });
     /* Windows Terminal's key story, not xterm's Linux default (docs/15 §1): without this
        handler xterm turns Ctrl+V into the ^V control byte and the shell sees nothing
        pasted. Returning false skips xterm's own handling — and nothing else: the browser
@@ -215,6 +462,22 @@ function wireTerminal(m) {
       if (action === "zoom-in" || action === "zoom-out" || action === "zoom-reset") {
         ev.preventDefault();   // or the browser zooms the whole page on the same keys
         setFontSize(nextFontSize(fontSize, action));
+        return false;
+      }
+      if (action === "search") { ev.preventDefault(); void openFind(); return false; }
+      if (action === "tab-close") {
+        ev.preventDefault();
+        void closeSession(active);
+        return false;
+      }
+      if (action === "tab-prev" || action === "tab-next") {
+        ev.preventDefault();
+        cycleTab(action === "tab-next" ? 1 : -1);
+        return false;
+      }
+      if (action && action.indexOf("tab-") === 0) {
+        ev.preventDefault();
+        jumpTab(parseInt(action.slice(4), 10) - 1);
         return false;
       }
       return true;   // "sigint" and everything else stay xterm's business
@@ -245,9 +508,72 @@ function wireTerminal(m) {
         term.focus();
       });
     });
+    /* Pin-to-bottom (docs/22 §2.10). Deliberately NO patch of xterm internals: live
+       verification on the 19996 instance proved xterm 5.5's output auto-follow is the
+       buffer natively tracking the bottom while ydisp rides it — scrollToBottom is not
+       the path, so patching it disables nothing. Worse, the write path CALLS it
+       mid-frame, and a patch that flips m.pinned there poisons the very next write's
+       captured state (view yanked, chip never shown). The whole mechanism therefore
+       rides the PUBLIC API: writeTerm captures the viewport before each write and
+       restores it after (bottom when pinned, the saved line when not), and pin state
+       comes only from the wheel — capture phase, decided immediately, re-read in rAF. */
+    m.toBottom = function () {
+      m.pinned = true;
+      if (m.term) m.term.scrollToBottom();
+    };
+    holder.addEventListener("wheel", function (ev) {
+      if (ev.deltaY < 0) m.pinned = false;   // leaving the bottom is a decision, made now
+      requestAnimationFrame(function () {
+        if (!m.term) return;
+        var b = m.term.buffer.active;
+        m.pinned = isPinned(b.viewportY, b.baseY);
+      });
+    }, { capture: true, passive: true });
+    term.onLineFeed(function () {
+      if (m.pinned) return;
+      m.unseen += 1;   // the chip is for the reader who scrolled away, not the rider
+      paintJump(m);
+    });
+    /* CSI 2026 (synchronized output) h...l paired with CSI 3 J is a full-screen repaint
+       — the moment right after quitting vim where the reader must land on the bottom
+       again (Wave's trick, docs/22 §2.10). Both handlers only observe; false lets xterm
+       keep processing. */
+    term.parser.registerCsiHandler({ prefix: "?", params: [2026], final: "h" }, function () {
+      m.sync2026 = Date.now();
+      return false;
+    });
+    term.parser.registerCsiHandler({ prefix: "?", params: [2026], final: "l" }, function () {
+      if (Date.now() - m.sync2026 < 2000) m.repaint2026 = true;
+      return false;
+    });
+    term.parser.registerCsiHandler({ params: [3], final: "J" }, function () {
+      if (m.repaint2026) {
+        m.repaint2026 = false;
+        if (m.toBottom) m.toBottom();
+      }
+      return false;
+    });
+    /* Multiline paste confirmation (docs/22 consensus 8): a capture listener on the
+       holder sees the paste BEFORE xterm's textarea listener, and stopPropagation keeps
+       xterm out of it entirely. Only a paste that would type Enter mid-text asks; the
+       alternate screen (vim) never does — multiline is the norm there. */
+    holder.addEventListener("paste", function (ev) {
+      var text = ev.clipboardData && ev.clipboardData.getData("text/plain");
+      if (typeof text !== "string" || !text) return;
+      var lines = embeddedNewlines(text);
+      if (!lines) return;
+      if (term.buffer.active.type === "alternate") return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      var preview = text.length > 1000 ? text.slice(0, 1000) + "\u2026" : text;
+      if (window.confirm("Paste " + (lines + 1) + " lines into the shell?\n\n" + preview)) {
+        term.paste(text);
+      }
+    }, true);
     m.term = term;
     m.fit = fit;
     m.holder = holder;
+    m.overlay = createOverlay(holder);   // resize geometry, copy feedback, attach states
   });
 }
 
@@ -268,9 +594,16 @@ function termTheme() {
 
 var encoder = null;
 function sendInput(m, text) {
-  if (!m.ws || m.ws.readyState !== 1) return;   // keys typed into a reconnect gap are dropped
+  if (!m.ws || m.ws.readyState !== 1) {
+    /* Keystrokes typed while the FIRST socket is still coming up ride exactly once
+       (VS Code's pre-launch queue, docs/22 §2.8); a reconnect gap still drops them —
+       replaying keys into a shell that may have moved on is worse than losing them. */
+    if (m.buffered && m.buffered.length < 64) m.buffered.push(text);
+    return;
+  }
   encoder = encoder || new TextEncoder();
   m.ws.send(encoder.encode(text));
+  if (m.toBottom) m.toBottom();   // typing puts the reader back on the bottom
 }
 
 /* Connect one session with a ticket. The ticket is spent by the gateway BEFORE the 101,
@@ -288,6 +621,19 @@ function connect(m, ticket) {
     m.attempt = 0;
     m.status = "attached";
     paintStatus();
+    if (m.buffered && m.buffered.length) {
+      encoder = encoder || new TextEncoder();
+      var queued = m.buffered;
+      m.buffered = null;   // the pre-launch queue rides once, then never again
+      queued.forEach(function (t) { ws.send(encoder.encode(t)); });
+    }
+    if (m.term) {
+      /* A re-attach must not leak the previous attach's mouse-tracking or
+         bracketed-paste modes into the catch-up replay as visible escape text
+         (docs/22 §2.11 — Tabby's reconnect reset, adapted to swiss's grace window). */
+      m.term.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l");
+      if (m.overlay) m.overlay.show("attached", 700);
+    }
     scheduleFit();
   };
   ws.onmessage = function (event) {
@@ -298,7 +644,7 @@ function connect(m, ticket) {
       var story = frameStatus(frame);
       if (story) { m.status = story; paintStatus(); }
     } else if (m.term) {
-      m.term.write(new Uint8Array(event.data));
+      writeTerm(m, new Uint8Array(event.data));
     }
   };
   ws.onclose = function () {
@@ -362,6 +708,7 @@ function fitNow() {
   m.fit.fit();
   if (m.gone || !m.id || m.id.indexOf("pending-") === 0) return;
   if (g.cols === m.sentCols && g.rows === m.sentRows) return;
+  if (m.overlay) m.overlay.show(g.cols + "\u00d7" + g.rows, 700);   // ttyd's resize toast
   m.sentCols = g.cols;
   m.sentRows = g.rows;
   if (m.ws && m.ws.readyState === 1) {
@@ -380,6 +727,8 @@ function scheduleFit() {
    the container was hidden or absent when the terminal was created. */
 function select(id) {
   active = id;
+  var seen = model(id);
+  if (seen && seen.bell) seen.bell = false;   // selecting a tab answers its bell
   paintTabs();
   paintStage();
   var m = model(id);
@@ -388,7 +737,12 @@ function select(id) {
     if (!row) return;
     // label from the listing row: without it the tab falls back to the raw target
     // UUID - exactly what a second page adopting this session used to show.
-    m = { id: id, target: row.target, label: row.label, status: "connecting\u2026", attempt: 0, userClosed: false, gone: false, sentCols: 0, sentRows: 0 };
+    m = {
+      id: id, target: row.target, label: row.label, status: "connecting\u2026", attempt: 0,
+      userClosed: false, gone: false, sentCols: 0, sentRows: 0,
+      shellTitle: null, customTitle: null, bell: false, pinned: true, unseen: 0,
+      buffered: [], sync2026: 0, repaint2026: false, suppressSelect: false, search: null,
+    };
     models.push(m);
     paintTabs();
   }
@@ -398,6 +752,8 @@ function select(id) {
     if (!m.ws && !m.gone && !m.userClosed) void resume(m);
     scheduleFit();
     if (m.term) m.term.focus(); // switching tabs types into the one you switched to
+    var fb = findBar();   // an open find bar follows the tab: its matches belong to a buffer
+    if (fb && !fb.hidden) { if (m.search) runFind(false); else paintFindCount(null); }
   }).catch(function (error) {
     toast(String(error && error.message || error), true);
   });
@@ -428,6 +784,8 @@ async function openSession() {
     id: "pending-" + (++seq), target: pick.value, label: row ? String(row.label).split(" \u00b7 ")[0] : "",
     status: "opening\u2026",
     attempt: 0, userClosed: false, gone: false, sentCols: 0, sentRows: 0,
+    shellTitle: null, customTitle: null, bell: false, pinned: true, unseen: 0,
+    buffered: [], sync2026: 0, repaint2026: false, suppressSelect: false, search: null,
   };
   models.push(m);
   active = m.id;
@@ -539,6 +897,13 @@ function render() {
                 (pick.reason ? '<span class="term-none">' + esc(pick.reason) + "</span>" : "")
               : '<span class="term-none">' + esc(pick.note) + "</span>")) +
       "</div></div>" +
+    '<div class="term-find" id="term-find" hidden>' +
+      '<input id="term-find-q" type="text" placeholder="Find" aria-label="Find in terminal" spellcheck="false" />' +
+      '<span class="term-find-count" id="term-find-count"></span>' +
+      '<button type="button" id="term-find-prev" title="Previous match (Shift+Enter)">\u2191</button>' +
+      '<button type="button" id="term-find-next" title="Next match (Enter)">\u2193</button>' +
+      '<button type="button" id="term-find-x" title="Close (Esc)">\u00d7</button>' +
+    "</div>" +
     '<div class="term-stage" id="term-stage">' +
       '<div class="term-empty" id="term-empty" hidden>' +
         '<div class="term-ghost" aria-hidden="true"><span class="term-ghost-dollar">$</span><span class="term-ghost-cursor"></span></div>' +
@@ -550,6 +915,7 @@ function render() {
     '<div class="term-foot" id="term-status"></div>' +
     "</div>";
 
+  wireFindBar();
   var button = $("term-new");
   if (button) button.onclick = function () { void openSession(); };
   var gear = $("term-set");
@@ -563,6 +929,15 @@ function render() {
       if (closer) { void closeSession(closer.getAttribute("data-id")); return; }
       var tab = event.target.closest('[data-act="select"]');
       if (tab) select(tab.getAttribute("data-id"));
+    };
+    tabs.ondblclick = function (event) {
+      var tab = event.target.closest('[data-act="select"]');
+      if (tab) startRename(tab.getAttribute("data-id"));
+    };
+    tabs.onauxclick = function (event) {
+      if (event.button !== 1) return;   // middle-click closes (Tabby / native terminals)
+      var tab = event.target.closest('[data-act="select"]');
+      if (tab) void closeSession(tab.getAttribute("data-id"));
     };
   }
   window.addEventListener("resize", scheduleFit);
@@ -640,7 +1015,8 @@ export function unmount() {
   window.removeEventListener("resize", scheduleFit);
   models.forEach(function (m) {
     if (m.ws) { try { m.ws.close(); } catch (e) { /* already gone */ } }
-    if (m.term) { try { m.term.dispose(); } catch (e) { /* already gone */ } }
+    if (m.term) { try { m.term.dispose(); } catch (e) { /* already gone */ } }   // disposes attached addons, search included
+    if (m.overlay) m.overlay.dispose();
   });
   models = [];
   active = null;

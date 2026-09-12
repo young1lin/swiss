@@ -4,6 +4,7 @@ import { dbIsRedis, dbLoadKeys, dbLoadRedisValue } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
+import { popupMenu } from "./menu.js";
 
 /* ================================================================================================
    Data view — a DBeaver-style browser over the mysql/pg MCPs.
@@ -29,6 +30,7 @@ function dbFreshState() {
     conn: null,           // selected connection (MCP name)
     tables: [],           // ONE page of the table list
     tablesTotal: 0, tablesPage: 0, tablesLimit: 200, more: false, grep: "",
+    schemaFilter: "",     // pg only: "" = every schema; the /tables schema param (docs/22 W1.1)
     sort: "name", sortDir: "asc", // the list's sort key/dir — SQL sorts server-side, redis client-side
     table: null, schema: null,
     data: null,           // last /api/db/:name/data page
@@ -45,6 +47,7 @@ function dbFreshState() {
     tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisKey: null,      // the key whose value is shown in the pane
+    redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
     detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
     detailBusy: false,
   };
@@ -129,6 +132,7 @@ function renderDbView() {
   root.innerHTML =
     '<div class="db-side">' +
       '<select id="dbConn" aria-label="Connection"></select>' +
+      '<select id="dbSchema" aria-label="Schema" hidden></select>' +
       '<input id="dbGrep" type="search" placeholder="Filter tables" aria-label="Filter tables">' +
       '<div class="db-sortrow">' +
         '<select id="dbSort" aria-label="Sort by"></select>' +
@@ -160,12 +164,14 @@ function renderDbView() {
     var d = state.db;
     d.conn = this.value; d.table = null; d.schema = null; d.data = null;
     d.tables = []; d.tablesPage = 0; d.order = null; d.sqlResult = null;
+    d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
     d.redis = null; d.redisKey = null; d.redisValue = null;
     d.filters = [];
     d.sort = "name"; d.sortDir = "asc"; // the new connection's kind may not have the chosen key
     // A sidebar search is table-list-scoped: carrying "tsys_" from one connection into the next
     // silently filters the new list down to nothing. Reset it and the box that shows it.
     d.grep = "";
+    d.redisType = ""; // same reasoning: a type filter is chosen against a key list, not inherited
     var gb = $("dbGrep");
     if (gb) gb.value = "";
     dbDropEdits();
@@ -207,6 +213,15 @@ function renderDbView() {
     if (dbIsRedis()) renderDbTables();
     else dbLoadTables();
   };
+  // The schema picker (pg only): picking one re-requests the table list inside that schema.
+  var schemaSel = $("dbSchema");
+  if (schemaSel) schemaSel.onchange = function () {
+    var d = state.db;
+    if (this.value === d.schemaFilter) return;
+    d.schemaFilter = this.value;
+    d.tablesPage = 0;
+    dbLoadTables();
+  };
   $("dbSql").value = state.db.sqlText;
   $("dbSql").oninput = function () { state.db.sqlText = this.value; dbSqlPaint(); };
   $("dbSql").onscroll = function () {
@@ -221,7 +236,15 @@ function renderDbView() {
   // wrapped: onclick hands the handler the click EVENT, and dbRunSql's first parameter is
   // `explain` — an event object is truthy, so a plain Run has been quietly running EXPLAIN.
   $("dbSqlRun").onclick = function () { dbRunSql(false); };
-  $("dbSqlExplain").onclick = function () { dbRunSql(true); };
+  $("dbSqlExplain").onclick = function (ev) {
+    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
+    // without it the click that opens the menu also tears it down (same as the Export menu).
+    ev.stopPropagation();
+    popupMenu(this.getBoundingClientRect(), [
+      { label: "Explain", fn: function () { dbRunSql("plan"); } },
+      { label: "Explain ANALYZE", fn: function () { dbRunSql("analyze"); } },
+    ]);
+  };
   $("dbSqlHistory").onchange = function () {
     if (this.value === "") return;
     var sql = state.db.history[Number(this.value)];
@@ -320,11 +343,33 @@ function renderDbSide() {
     return;
   }
   sel.disabled = false;
+  // docs/20 G5: each row carries the group its connection lists under. With more than one,
+  // the options fold into one optgroup per group — groups in first-appearance order over the
+  // flat list, members in the list's own order inside. A single group stays flat: an
+  // optgroup around everything is noise that says nothing. An older gateway answers no
+  // group at all, which reads as the one flat list it always drew.
+  var order = [];
+  var buckets = {};
   d.conns.forEach(function (c) {
+    var g = c.group || "default";
+    if (!buckets[g]) { buckets[g] = []; order.push(g); }
+    buckets[g].push(c);
+  });
+  var addOption = function (parent, c) {
     var o = el("option", "", dbConnLabel(c));
     o.value = c.name;
     o.selected = c.name === d.conn;
-    sel.appendChild(o);
+    parent.appendChild(o);
+  };
+  if (order.length < 2) {
+    d.conns.forEach(function (c) { addOption(sel, c); });
+    return;
+  }
+  order.forEach(function (g) {
+    var og = el("optgroup");
+    og.label = g;
+    buckets[g].forEach(function (c) { addOption(og, c); });
+    sel.appendChild(og);
   });
 }
 
