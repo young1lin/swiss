@@ -235,6 +235,11 @@ pub const IMPORT_ROW_CAP: usize = 10_000;
 pub const EXPORT_ROW_CAP: i64 = 100_000;
 /// Rows fetched per chunk while paging through an export.
 pub const EXPORT_CHUNK: i64 = 5_000;
+/// The flush threshold of a streaming SQL dump (docs/22 W4.4) — adminer's max_packet number
+/// (`adminer.inc.php:982`): rows accumulate into one multi-value INSERT until the statement
+/// would cross this size, then the statement ships whole and a fresh one opens. A single row
+/// larger than the threshold is never split — it ships alone, exactly as adminer let it.
+pub const EXPORT_SQL_MAX_PACKET: usize = 1_048_576;
 
 // --- JS value coercion ---------------------------------------------------------------------------
 
@@ -452,6 +457,24 @@ pub struct ExportResult {
     pub body: String,
 }
 
+/// One piece of a streaming export body: UTF-8 bytes ready for the socket, or the error that
+/// ended the dump early. Metadata failures happen before any piece exists and answer as a
+/// plain Err from export_sql_dump; a failure mid-stream aborts the download, which is the
+/// honest behavior of a body whose headers were already sent.
+pub type DumpPiece = Result<Vec<u8>, String>;
+
+/// The streaming form of format=sql (docs/22 W4.4): response-header facts up front — rows and
+/// capped come from a COUNT over the same WHERE the grid, the CSV and the NDJSON exports use —
+/// and the body arriving as pieces on a bounded channel. The producer holds one chunk of
+/// source rows and one statement under construction, never the table: a dump of any capped
+/// size costs O(chunk), where the folded formats cost O(table) for their body string.
+pub struct SqlDump {
+    pub columns: Vec<String>,
+    pub rows: i64,
+    pub capped: bool,
+    pub body: tokio::sync::mpsc::Receiver<DumpPiece>,
+}
+
 /// One redis key as the key list shows it. ttl is seconds; -1 = no expiry.
 #[derive(Clone, Debug, Serialize)]
 pub struct RedisKeyInfo {
@@ -560,6 +583,11 @@ pub trait DbBrowser: Send + Sync {
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String>;
     /// Stream a whole table (capped at EXPORT_ROW_CAP) out as CSV or newline JSON.
     async fn export_table(&self, o: &Value) -> Result<Value, String>;
+    /// Stream the same table out as a SQL dump — the format=sql arm of the export (docs/22
+    /// W4.4): the CREATE TABLE head (the same DDL path describe_table uses), then the rows as
+    /// ~1 MB multi-value INSERTs. The head facts come back before the first byte ships; the
+    /// body arrives as channel pieces so the dump never materializes whole.
+    async fn export_sql_dump(&self, o: &Value) -> Result<SqlDump, String>;
     /// Insert mapped CSV rows in ONE transaction (all-or-nothing), via the same statement
     /// builders the edit grid uses. Returns rows written.
     async fn import_table(&self, o: &Value) -> Result<Value, String>;
@@ -1767,6 +1795,115 @@ pub fn to_insert_statement(
     ))
 }
 
+// --- streaming SQL dump (docs/22 W4.4) ------------------------------------------------------------
+
+/// Accumulates multi-value INSERT rows for a streaming SQL dump, adminer's dumpData shape
+/// (`adminer.inc.php:1007-1070`): one `INSERT INTO … VALUES` prefix, each row appended behind
+/// a newline, the statement flushed whole the moment one more row would cross
+/// [`EXPORT_SQL_MAX_PACKET`]. Nothing but the statement under construction is held, so a dump
+/// of any capped size costs O(chunk), never O(table).
+pub struct SqlInsertBatch {
+    prefix: String,
+    buffer: String,
+    /// prefix + buffer — adminer's strlen($buffer), which always carried its own prefix.
+    used: usize,
+}
+
+impl SqlInsertBatch {
+    /// The prefix vets and quotes every identifier the way the edit grid's statements do, so
+    /// what the dump replays is what Commit would have run.
+    pub fn new(
+        dialect: DbDialect,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<Self, String> {
+        let names = columns
+            .iter()
+            .map(|c| quote_ident(dialect, c))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        Ok(Self {
+            prefix: format!(
+                "INSERT INTO {} ({names}) VALUES",
+                qualified(dialect, schema, table)?
+            ),
+            buffer: String::new(),
+            used: 0,
+        })
+    }
+
+    /// Add one row's value literals ("(1, 'a')", no leading newline). Some(statement) when
+    /// the row did not fit and the statement so far must ship before this row opens the next
+    /// one; a row larger than the threshold alone still joins — rows are never split.
+    pub fn push(&mut self, row_sql: &str) -> Option<String> {
+        // The fit check is adminer's (`adminer.inc.php:1058`): used + 4 (length-spec
+        // headroom) + the row with its leading newline + the ";\n" every statement ends with.
+        let piece = row_sql.len() + 1 + ";\n".len();
+        if self.used != 0 && self.used + 4 + piece >= EXPORT_SQL_MAX_PACKET {
+            let out = format!("{}{};\n", self.prefix, self.buffer);
+            self.buffer = format!("\n{row_sql}");
+            self.used = self.prefix.len() + self.buffer.len();
+            return Some(out);
+        }
+        if self.buffer.is_empty() {
+            self.buffer.push('\n');
+        } else {
+            self.buffer.push_str(",\n");
+        }
+        self.buffer.push_str(row_sql);
+        self.used = self.prefix.len() + self.buffer.len();
+        None
+    }
+
+    /// The last, not-yet-full statement — the dump's closing INSERT when any rows remain.
+    pub fn finish(self) -> Option<String> {
+        if self.buffer.is_empty() {
+            None
+        } else {
+            Some(format!("{}{};\n", self.prefix, self.buffer))
+        }
+    }
+}
+
+/// The preamble of a streaming SQL dump (docs/22 W4.4): a provenance comment, the dialect's
+/// foreign-key stance, and the CREATE TABLE from the same DDL path the Structure tab uses.
+/// MySQL's `SET FOREIGN_KEY_CHECKS=0` lets the replay session load rows before any referenced
+/// table exists (the footer restores it); Postgres has no session switch, so a comment states
+/// the ordering contract instead. `ddl` arrives exactly as describe_table served it.
+pub fn sql_dump_head(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    ddl: &str,
+) -> Result<String, String> {
+    let target = qualified(dialect, schema, table)?;
+    // SHOW CREATE TABLE carries no terminator; build_pg_ddl already ends with ';'.
+    let mut ddl = ddl.trim_end().to_string();
+    if !ddl.is_empty() && !ddl.ends_with(';') {
+        ddl.push(';');
+    }
+    let stance = if dialect == DbDialect::Mysql {
+        format!(
+            "-- {target}: foreign-key checks are off for the replay session\n\
+             SET FOREIGN_KEY_CHECKS=0;\n"
+        )
+    } else {
+        format!("-- {target}: Postgres has no session FK switch - replay in dependency order\n")
+    };
+    Ok(format!("-- swiss SQL dump\n{stance}\n{ddl}\n"))
+}
+
+/// The closing statement of a dump: MySQL restores the FK checks the head disabled; Postgres
+/// needs nothing.
+pub fn sql_dump_foot(dialect: DbDialect) -> &'static str {
+    if dialect == DbDialect::Mysql {
+        "SET FOREIGN_KEY_CHECKS=1;\n"
+    } else {
+        ""
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::approx_constant)]
 mod tests {
@@ -2858,5 +2995,83 @@ mod tests {
             "delete"
         );
         assert!(browse_edit_of(&json!({ "op": "explode" })).is_err());
+    }
+
+    // --- streaming SQL dump (docs/22 W4.4) ------------------------------------------------------------
+
+    #[test]
+    fn sql_dump_head_and_foot_snapshots() {
+        // MySQL: the FK switch brackets the dump so a replay session can load rows before
+        // referenced tables exist; the DDL arrives from SHOW CREATE TABLE with no ';'.
+        let head = sql_dump_head(
+            DbDialect::Mysql,
+            Some("app"),
+            "users",
+            "CREATE TABLE `users` (\n  `id` int\n)",
+        )
+        .unwrap();
+        assert_eq!(
+            head,
+            "-- swiss SQL dump\n\
+             -- `app`.`users`: foreign-key checks are off for the replay session\n\
+             SET FOREIGN_KEY_CHECKS=0;\n\
+             \n\
+             CREATE TABLE `users` (\n  `id` int\n);\n"
+        );
+        // Postgres: no session switch exists, so the comment says the ordering contract; the
+        // catalog-sketch DDL already ends with ';' and must not gain a second one.
+        let pg = sql_dump_head(
+            DbDialect::Pg,
+            Some("public"),
+            "t",
+            "CREATE TABLE \"public\".\"t\" (\n    \"id\" integer NOT NULL\n);",
+        )
+        .unwrap();
+        assert_eq!(
+            pg,
+            "-- swiss SQL dump\n\
+             -- \"public\".\"t\": Postgres has no session FK switch - replay in dependency order\n\
+             \n\
+             CREATE TABLE \"public\".\"t\" (\n    \"id\" integer NOT NULL\n);\n"
+        );
+        assert_eq!(sql_dump_foot(DbDialect::Mysql), "SET FOREIGN_KEY_CHECKS=1;\n");
+        assert_eq!(sql_dump_foot(DbDialect::Pg), "");
+    }
+
+    #[test]
+    fn sql_insert_batches_rows_into_multi_value_statements() {
+        let mut batch =
+            SqlInsertBatch::new(DbDialect::Mysql, Some("app"), "users", &["id".into(), "name".into()])
+                .unwrap();
+        assert_eq!(batch.push("(1, 'a')"), None);
+        assert_eq!(batch.push("(2, NULL)"), None);
+        assert_eq!(
+            batch.finish().unwrap(),
+            "INSERT INTO `app`.`users` (`id`, `name`) VALUES\n(1, 'a'),\n(2, NULL);\n"
+        );
+    }
+
+    #[test]
+    fn a_sql_insert_batch_flushes_when_the_next_row_would_cross_the_cap() {
+        // adminer's threshold at work: two ~700 KB rows cannot share one statement under a
+        // 1 MB cap — the first ships whole, the second opens the next statement, and neither
+        // statement is ever split mid-row.
+        let big = format!("('{}')", "x".repeat(700_000));
+        let mut batch = SqlInsertBatch::new(DbDialect::Pg, None, "t", &["pad".into()]).unwrap();
+        assert_eq!(batch.push(&big), None);
+        let shipped = batch.push(&big).expect("second ~700 KB row must flush the first");
+        assert!(shipped.starts_with("INSERT INTO \"t\" (\"pad\") VALUES\n('"));
+        assert!(shipped.ends_with(";\n"));
+        assert!(shipped.len() < EXPORT_SQL_MAX_PACKET + big.len());
+        let tail = batch.finish().unwrap();
+        assert!(tail.starts_with("INSERT INTO \"t\" (\"pad\") VALUES\n('"));
+        // Neither statement crossed the cap by more than the one row that always fits.
+        assert!(tail.len() < EXPORT_SQL_MAX_PACKET + big.len());
+    }
+
+    #[test]
+    fn an_empty_sql_insert_batch_finishes_into_nothing() {
+        let batch = SqlInsertBatch::new(DbDialect::Mysql, None, "t", &["a".to_string()]).unwrap();
+        assert_eq!(batch.finish(), None);
     }
 }

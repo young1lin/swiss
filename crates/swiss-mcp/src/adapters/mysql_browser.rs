@@ -8,9 +8,10 @@ use super::mysql::{
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
     browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    build_ddl_op_sql, build_edit_statements, export_row_limit, map_import_rows, readback_plan,
-    to_browse_columns, to_csv, to_json_lines, BrowseColumn, DbBrowser, DbDialect, ReadBack,
-    EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    build_ddl_op_sql, build_edit_statements, export_row_limit, js_to_string, map_import_rows,
+    readback_plan, sql_dump_foot, sql_dump_head, sql_literal, to_browse_columns, to_csv,
+    to_json_lines, BrowseColumn, DbBrowser, DbDialect, DumpPiece, ReadBack, SqlDump,
+    SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
 use sqlx::mysql::MySqlPool;
@@ -55,6 +56,27 @@ impl MysqlBrowser {
             })
             .collect();
         Ok((to_browse_columns(&columns, &primary), primary))
+    }
+    /// SHOW CREATE TABLE folded to its statement text — the DDL the Structure tab serves and
+    /// the SQL dump's head opens with (docs/22 W4.4), read through one helper so the two
+    /// cannot drift apart.
+    async fn show_create(&self, table: &str) -> Result<String, String> {
+        let ddl_sql = format!(
+            "SHOW CREATE TABLE {}.{}",
+            swiss_host::dbbrowser::quote_ident(DbDialect::Mysql, &self.database)?,
+            swiss_host::dbbrowser::quote_ident(DbDialect::Mysql, table)?
+        );
+        let row = self
+            .query(&ddl_sql, &[])
+            .await?
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        Ok(row
+            .iter()
+            .find(|(k, _)| k.to_ascii_lowercase().starts_with("create "))
+            .map(|(_, v)| js_to_string(Some(v)))
+            .unwrap_or_default())
     }
 }
 #[async_trait]
@@ -167,15 +189,10 @@ impl DbBrowser for MysqlBrowser {
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         let (columns, primary) = self.metadata(table).await?;
         let params = vec![json!(self.database), json!(table)];
-        let ddl_sql = format!(
-            "SHOW CREATE TABLE {}.{}",
-            swiss_host::dbbrowser::quote_ident(DbDialect::Mysql, &self.database)?,
-            swiss_host::dbbrowser::quote_ident(DbDialect::Mysql, table)?
-        );
         let (indexes, fks, ddl) = tokio::join!(
             self.query(MYSQL_BROWSE_INDEXES_SQL, &params),
             self.query(MYSQL_BROWSE_FK_SQL, &params),
-            self.query(&ddl_sql, &[])
+            self.show_create(table)
         );
         // Map the SQL's aliases onto the fold's (Node's adapter did this inline): unique0 is
         // non_unique inverted by the fold's `!== 1`, PRIMARY is the PK index's actual name in
@@ -199,14 +216,8 @@ impl DbBrowser for MysqlBrowser {
             .collect();
         let indexes = swiss_host::dbbrowser::to_browse_indexes(&index_rows);
         let foreign_keys: Vec<Value> = fks?.into_iter().map(|r| json!({"name":r.get("name"),"column":r.get("col"),"refSchema":r.get("ref_schema"),"refTable":r.get("ref_table"),"refColumn":r.get("ref_column")})).collect();
-        let ddl_row = ddl?.into_iter().next().unwrap_or_default();
-        let ddl = ddl_row
-            .iter()
-            .find(|(k, _)| k.to_ascii_lowercase().starts_with("create "))
-            .map(|(_, v)| v.clone())
-            .unwrap_or(Value::String(String::new()));
         Ok(
-            json!({"schema":self.database,"table":table,"columns":columns,"primaryKey":primary,"indexes":indexes,"foreignKeys":foreign_keys,"ddl":ddl}),
+            json!({"schema":self.database,"table":table,"columns":columns,"primaryKey":primary,"indexes":indexes,"foreignKeys":foreign_keys,"ddl":ddl?}),
         )
     }
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
@@ -349,6 +360,128 @@ impl DbBrowser for MysqlBrowser {
             "capped": capped,
             "body": if json_form { to_json_lines(&all) } else { to_csv(&names, &all) },
         }))
+    }
+
+    async fn export_sql_dump(&self, o: &Value) -> Result<SqlDump, String> {
+        let table = o.get("table").and_then(Value::as_str).unwrap_or("");
+        if table.is_empty() {
+            return Err("table is required".into());
+        }
+        let (columns, _) = self.metadata(table).await?;
+        let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+        let cap = export_row_limit(o.get("limit"));
+        // The dump exports the FILTERED set: the same browse_where the page, the COUNT and the
+        // folded exports use (docs/22 W0.2), values bound, never inlined.
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
+        // Header facts come from that same WHERE's COUNT, so rows and capped are true before
+        // the first byte ships (the folded formats learn their row count only after fetching;
+        // a writer racing the stream can still move the table under a taken count — inherent).
+        let count_stmt = browse_count_sql(
+            DbDialect::Mysql,
+            Some(&self.database),
+            table,
+            &where_.frag,
+            &where_.params,
+        )?;
+        let count = super::mysql::num_or_zero(
+            self.query(&count_stmt.sql, &count_stmt.params)
+                .await?
+                .first()
+                .and_then(|r| r.get("total")),
+        ) as i64;
+        let rows = count.min(cap);
+        let capped = count > rows;
+        let head = sql_dump_head(
+            DbDialect::Mysql,
+            Some(&self.database),
+            table,
+            &self.show_create(table).await?,
+        )?;
+        let exprs = swiss_host::dbbrowser::quoted_exprs(DbDialect::Mysql, &names)?;
+        // The producer task holds one chunk of source rows and one statement under
+        // construction — never the table. The bounded channel (2 pieces) hands each finished
+        // statement to the route as the socket takes it, so a slow client throttles the dump
+        // instead of growing it.
+        let (tx, rx) = tokio::sync::mpsc::channel::<DumpPiece>(2);
+        let dump_columns = names.clone();
+        let conn = self.conn.clone();
+        let database = self.database.clone();
+        let table = table.to_string();
+        tokio::spawn(async move {
+            if tx.send(Ok(head.into_bytes())).await.is_err() {
+                return; // the consumer is gone; stop fetching
+            }
+            let mut batch =
+                match SqlInsertBatch::new(DbDialect::Mysql, Some(&database), &table, &names) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+            // Offset paging in chunks, the folded export's loop shape: the cap keeps the
+            // O(offset) tail-walk bounded and each page is released before the next is read.
+            let mut offset = 0i64;
+            while offset < rows {
+                let chunk = EXPORT_CHUNK.min(rows - offset);
+                let stmt = match browse_rows_sql(
+                    DbDialect::Mysql,
+                    Some(&database),
+                    &table,
+                    &exprs,
+                    None,
+                    offset,
+                    chunk,
+                    &where_.frag,
+                    &where_.params,
+                ) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+                let page = match async {
+                    let pool = conn.get().await?;
+                    run_query(&pool, &stmt.sql, &stmt.params)
+                        .await
+                        .map(|r| r.rows)
+                }
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+                let fetched = page.len() as i64;
+                for row in &page {
+                    let literals: Vec<String> =
+                        names.iter().map(|c| sql_literal(row.get(c))).collect();
+                    if let Some(stmt) = batch.push(&format!("({})", literals.join(", "))) {
+                        if tx.send(Ok(stmt.into_bytes())).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                if fetched < chunk {
+                    break; // the table ran out before the count (a delete raced the COUNT)
+                }
+                offset += chunk;
+            }
+            if let Some(tail) = batch.finish() {
+                let _ = tx.send(Ok(tail.into_bytes())).await;
+            }
+            let _ = tx.send(Ok(sql_dump_foot(DbDialect::Mysql).as_bytes().to_vec())).await;
+        });
+        Ok(SqlDump {
+            columns: dump_columns,
+            rows,
+            capped,
+            body: rx,
+        })
     }
 
     async fn import_table(&self, o: &Value) -> Result<Value, String> {
