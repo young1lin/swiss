@@ -673,34 +673,142 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         ),
     );
 
-    // Rename in place: the group keeps its slot in the order and takes its members with it,
-    // which a delete-then-create could not do.
+    // --- the group-scope family (docs/20 §3) ---------------------------------------------------------
+    //
+    // One family over every grouped list the panel shows: the scope segment names the list
+    // (mcps, conns, rules, jobs, secrets, tokens), the handlers are generic, and each scope
+    // registers itself in ctx.group_scopes - the host carries no per-scope match arm. The
+    // body and response shapes are identical across scopes, so the panel learns one protocol.
+    // Host-owned for the same reason /api/tokens is: groups are cross-cutting mechanism, not
+    // any plugin's business, and a disabled plugin must not take another scope's grouping off
+    // the air.
+
+    // Replace the whole group list: creating, reordering and deleting are all "here is the
+    // new list"; a group dropped by omission is deleted and its members fall into the first
+    // remaining group.
     r = r.route(
-        "/api/groups/{name}/rename",
+        "/api/groups/{scope}",
+        put(
+            |State(ctx): State<Arc<AppContext>>,
+             Path(scope): Path<String>,
+             body: crate::reply::NodeBody| async move {
+                let Some(impl_) = ctx.group_scopes.get(&scope) else {
+                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown scope: {scope}"));
+                };
+                let Some(groups) = body.0.get("groups").and_then(Value::as_array) else {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "groups must be an array of group names",
+                    );
+                };
+                if !groups.iter().all(|n| n.as_str().is_some()) {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "groups must be an array of group names",
+                    );
+                }
+                let names: Vec<String> = groups
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect();
+                match impl_.set_names(names) {
+                    Ok(groups) => admin_json(StatusCode::OK, json!({ "groups": groups })),
+                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
+                }
+            },
+        ),
+    );
+
+    // Rename in place: the group keeps its slot in the order and takes its members with it,
+    // which a delete-then-create could not do. `moved` says how many explicit members rode
+    // along - the number a delete-confirm ("its N items move") needs as well.
+    r = r.route(
+        "/api/groups/{scope}/rename",
         post(
             |State(ctx): State<Arc<AppContext>>,
-             Path(name): Path<String>,
+             Path(scope): Path<String>,
              body: crate::reply::NodeBody| async move {
+                let Some(impl_) = ctx.group_scopes.get(&scope) else {
+                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown scope: {scope}"));
+                };
                 let body = body.0;
-                let to = body
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                let known = ctx
-                    .store
-                    .get_groups()
-                    .iter()
-                    .any(|g| g.eq_ignore_ascii_case(&name));
-                if !known {
-                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown group: {name}"));
+                let (Some(from), Some(to)) = (
+                    body.get("from").and_then(Value::as_str),
+                    body.get("to").and_then(Value::as_str),
+                ) else {
+                    return admin_error(StatusCode::BAD_REQUEST, "rename needs { from, to }");
+                };
+                // The unknown-group 404 stays distinguishable from the collision 400, so a
+                // stale panel can tell "someone else renamed it first" from "bad target".
+                if !impl_.names().iter().any(|g| g.eq_ignore_ascii_case(from)) {
+                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown group: {from}"));
                 }
-                match ctx.store.rename_group(&name, &to) {
-                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
-                    Ok(()) => {
-                        admin_json(StatusCode::OK, json!({ "groups": ctx.store.get_groups() }))
+                match impl_.rename(from, to) {
+                    Ok((groups, moved)) => {
+                        admin_json(StatusCode::OK, json!({ "groups": groups, "moved": moved }))
                     }
+                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
+                }
+            },
+        ),
+    );
+
+    // Put one member in a group. `null` removes the explicit entry: the member renders in
+    // the first group, whatever that is called, and follows it through renames on its own.
+    r = r.route(
+        "/api/groups/{scope}/members/{id}",
+        put(
+            |State(ctx): State<Arc<AppContext>>,
+             Path((scope, id)): Path<(String, String)>,
+             body: crate::reply::NodeBody| async move {
+                let Some(impl_) = ctx.group_scopes.get(&scope) else {
+                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown scope: {scope}"));
+                };
+                if !impl_.has_member(&id) {
+                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown member: {id}"));
+                }
+                let raw = body.0.get("group");
+                if !matches!(raw, None | Some(Value::Null) | Some(Value::String(_))) {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "group must be a group name or null",
+                    );
+                }
+                match impl_.assign(&id, raw.and_then(Value::as_str)) {
+                    Ok(group) => admin_json(StatusCode::OK, json!({ "group": group })),
+                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
+                }
+            },
+        ),
+    );
+
+    // The scope's own flat order (the sidebar arrangement, the list order): ids in the
+    // order the panel now sees. Group membership is untouched - one flat order sliced by
+    // group is the whole design (docs/20 §2.1).
+    r = r.route(
+        "/api/groups/{scope}/order",
+        put(
+            |State(ctx): State<Arc<AppContext>>,
+             Path(scope): Path<String>,
+             body: crate::reply::NodeBody| async move {
+                let Some(impl_) = ctx.group_scopes.get(&scope) else {
+                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown scope: {scope}"));
+                };
+                let Some(order) = body.0.get("order").and_then(Value::as_array) else {
+                    return admin_error(StatusCode::BAD_REQUEST, "order must be an array of ids");
+                };
+                if !order.iter().all(|n| n.as_str().is_some()) {
+                    return admin_error(StatusCode::BAD_REQUEST, "order must be an array of ids");
+                }
+                let ids: Vec<String> = order
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect();
+                match impl_.set_order(ids) {
+                    Ok(order) => admin_json(StatusCode::OK, json!({ "order": order })),
+                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
                 }
             },
         ),

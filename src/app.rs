@@ -85,6 +85,11 @@ pub struct AppContext {
     /// registers into — before the listener accepts requests. Absent in compositions that
     /// mount no Data plugin: /api/db then answers an honest 503 rather than pretending.
     pub catalog: std::sync::OnceLock<Arc<swiss_host::services::catalog::CatalogRegistry>>,
+    /// The group-scope table behind /api/groups/{scope} (docs/20 §2.2). The scopes AppContext
+    /// owns natively (mcps) register in new(); the subsystem scopes (conns/rules/jobs/secrets)
+    /// register from the boot sequence as their objects come up. A scope that never registered
+    /// answers 404 "unknown scope", which is the honest state on a composition without it.
+    pub group_scopes: swiss_host::groups::GroupScopes,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -109,8 +114,18 @@ impl AppContext {
             shutdown,
             plugin_host: std::sync::OnceLock::new(),
             catalog: std::sync::OnceLock::new(),
+            group_scopes: swiss_host::groups::GroupScopes::new(),
             handlers: Mutex::new(HashMap::new()),
         });
+        // The scopes this context owns natively (docs/20 §2.2): the managed store holds the
+        // groups, the registry answers "is this a real MCP". Subsystem scopes join from
+        // server.rs. Registered here so the admin API tests serve the same family the gateway
+        // does, without each harness repeating the wiring.
+        crate::subsystems::register_host_scopes(
+            &ctx.group_scopes,
+            ctx.registry.clone(),
+            ctx.store.clone(),
+        );
         // Rename/delete abandon an entry's name; the endpoint cached under it would then leak,
         // because the POST path that normally evicts a stale handler (generation mismatch, or a
         // stopped entry) never runs for a name that no longer resolves. The registry calls this

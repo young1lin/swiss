@@ -1824,10 +1824,12 @@ async fn renames_a_group_and_carries_its_members() {
         .await;
     }
 
-    let (status, _) = h
-        .post("/api/groups/Docs/rename", json!({ "name": "Reference" }))
+    let (status, put) = h
+        .post("/api/groups/mcps/rename", json!({ "from": "Docs", "to": "Reference" }))
         .await;
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(put["groups"], json!(["Reference", "Search"]));
+    assert_eq!(put["moved"], json!(2)); // context7 and deepwiki rode along explicitly
 
     let (_, list) = h.get("/api/mcps").await;
     assert_eq!(list["groups"], json!(["Reference", "Search"])); // keeps its slot
@@ -1844,17 +1846,17 @@ async fn refuses_a_rename_onto_an_existing_group_or_a_missing_one() {
     )
     .await;
 
-    for (from, name, expected) in [
+    for (from, to, expected) in [
         ("Docs", "Search", StatusCode::BAD_REQUEST),
         ("Ghost", "X", StatusCode::NOT_FOUND),
     ] {
         let (status, _) = h
             .post(
-                &format!("/api/groups/{from}/rename"),
-                json!({ "name": name }),
+                "/api/groups/mcps/rename",
+                json!({ "from": from, "to": to }),
             )
             .await;
-        assert_eq!(status, expected, "renaming {from} to {name}");
+        assert_eq!(status, expected, "renaming {from} to {to}");
     }
 }
 
@@ -1870,7 +1872,7 @@ async fn renames_default_like_any_other_group_carrying_the_first_slot_with_it() 
         .await;
 
     let (status, _) = h
-        .post("/api/groups/default/rename", json!({ "name": "主力" }))
+        .post("/api/groups/mcps/rename", json!({ "from": "default", "to": "主力" }))
         .await;
     assert_eq!(status, StatusCode::OK);
 
@@ -1919,6 +1921,122 @@ async fn carries_an_mcps_group_through_a_rename_and_drops_it_on_delete() {
 
     h.delete("/api/mcps/b").await;
     assert!(h.store.get_mcp_groups().is_empty());
+}
+
+// --- the group-scope route family (docs/20 §3) ---------------------------------------------------
+//
+// One family over every scope; mcps is the one this harness wires, and its behavior pins the
+// shape every other scope answers with.
+
+#[tokio::test]
+async fn the_family_replaces_the_whole_group_list_per_scope() {
+    let h = with_mcps();
+    let (status, body) = h
+        .put("/api/groups/mcps", json!({ "groups": ["default", "Docs"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["groups"], json!(["default", "Docs"]));
+    // The old shape and the new reach the same store — the family is the panel's one door.
+    let (_, list) = h.get("/api/mcps").await;
+    assert_eq!(list["groups"], json!(["default", "Docs"]));
+    // Malformed bodies, duplicates and the last-group deletion are 400s.
+    for groups in [json!("Docs"), json!(["a", "a"]), json!([])] {
+        let (status, _) = h.put("/api/groups/mcps", json!({ "groups": groups })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{groups}");
+    }
+}
+
+#[tokio::test]
+async fn the_family_assigns_a_member_and_answers_the_canonical_group() {
+    let h = with_mcps();
+    h.put("/api/groups/mcps", json!({ "groups": ["default", "Docs"] })).await;
+
+    let (status, body) = h
+        .put("/api/groups/mcps/members/context7", json!({ "group": "docs" }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "group": "Docs" })); // canonical casing, not what was typed
+
+    let (status, _) = h
+        .put("/api/groups/mcps/members/context7", json!({ "group": null }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = h.get("/api/mcps").await;
+    assert_eq!(row_named(&list, "context7")["group"], json!("default"));
+
+    // 404 for a member nothing serves; 400 for a group nothing holds.
+    assert_eq!(
+        h.put("/api/groups/mcps/members/ghost", json!({ "group": null })).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        h.put("/api/groups/mcps/members/context7", json!({ "group": "Nope" })).await.0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        h.put("/api/groups/mcps/members/context7", json!({ "group": 3 })).await.0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn the_family_persists_the_scope_order() {
+    let h = with_mcps();
+    let (status, body) = h
+        .put("/api/groups/mcps/order", json!({ "order": ["deepwiki", "context7", "github"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["order"], json!(["deepwiki", "context7", "github"]));
+    let (_, list) = h.get("/api/mcps").await;
+    assert_eq!(
+        field_of(&list["mcps"], "name"),
+        ["deepwiki", "context7", "github"]
+    );
+    let (status, _) = h
+        .put("/api/groups/mcps/order", json!({ "order": "context7" }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = h
+        .put("/api/groups/mcps/order", json!({ "order": [1, 2] }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn an_unknown_scope_is_a_named_404_on_every_family_route() {
+    let h = with_mcps();
+    for (method, path, body) in [
+        ("PUT", "/api/groups/nope", json!({ "groups": ["default"] })),
+        ("POST", "/api/groups/nope/rename", json!({ "from": "a", "to": "b" })),
+        ("PUT", "/api/groups/nope/members/x", json!({ "group": null })),
+        ("PUT", "/api/groups/nope/order", json!({ "order": [] })),
+    ] {
+        let (status, resp) = match method {
+            "PUT" => h.put(path, body).await,
+            _ => h.post(path, body).await,
+        };
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
+        assert_eq!(resp["error"], json!("unknown scope: nope"), "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn the_family_rename_body_is_from_to_and_missing_fields_are_400() {
+    let h = with_mcps();
+    h.put("/api/groups/mcps", json!({ "groups": ["default", "Docs"] })).await;
+    let (status, _) = h
+        .post("/api/groups/mcps/rename", json!({ "to": "X" })) // no from
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = h
+        .post("/api/groups/mcps/rename", json!({ "from": "Docs" })) // no to
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // The old body shape ({name}) is gone with the old route: it no longer parses as a rename.
+    let (status, _) = h
+        .post("/api/groups/mcps/rename", json!({ "name": "X" }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 // --- request parsing -------------------------------------------------------------------------

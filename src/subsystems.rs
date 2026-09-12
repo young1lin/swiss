@@ -27,6 +27,8 @@
 //! and the MCP hosting core is a plugin now too (row "mcp"), while per-MCP disable remains
 //! the panel's per-entry toggle in managed.json.
 
+use std::sync::Arc;
+
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::any;
@@ -34,6 +36,9 @@ use axum::Router;
 use serde_json::Value;
 
 use crate::reply::admin_error;
+use swiss_host::groups::{GroupScope, GroupScopes};
+use swiss_host::managed::ManagedStore;
+use swiss_mcp::registry::Registry;
 
 /// Whether a subsystem's config row disables it. Strict boolean: anything but literal
 /// `true` (absent row, absent flag, false, "yes", 1) reads as ENABLED — the fail-direction
@@ -79,6 +84,58 @@ pub fn log_disabled(subsystem: &str) {
             "note": "state files untouched; remove the row to re-enable",
         })),
     );
+}
+
+// --- group scopes (docs/20 §2.2) -----------------------------------------------------------------
+//
+// The /api/groups/{scope} family dispatches through a table, not a match arm: each scope
+// registers an implementation, and the host stays mechanism. The scopes whose owners live
+// inside AppContext itself (the managed store, the registry) register here; the subsystem
+// scopes (conns/rules from the tunnel store, jobs, secrets) register from server.rs, where
+// their objects are constructed.
+
+/// The `mcps` scope: group membership is keyed by name in managed.json, but "is this a real
+/// MCP" is a registry question — a config-sourced MCP has no managed entry, so the store
+/// alone cannot answer has_member, and the route family must not silently persist a group
+/// for a name nothing serves.
+struct McpGroups {
+    registry: Arc<Registry>,
+    store: Arc<ManagedStore>,
+}
+
+impl GroupScope for McpGroups {
+    fn names(&self) -> Vec<String> {
+        self.store.get_groups()
+    }
+    fn set_names(&self, next: Vec<String>) -> Result<Vec<String>, String> {
+        self.store.set_groups(next)?;
+        Ok(self.store.get_groups())
+    }
+    fn rename(&self, from: &str, to: &str) -> Result<(Vec<String>, usize), String> {
+        // "moved" counts the explicit members the rename carried; the implicit ones (no
+        // entry) follow the first slot on their own and are honestly not counted.
+        let before = self.store.get_mcp_groups();
+        self.store.rename_group(from, to)?;
+        let moved = before.values().filter(|g| g.eq_ignore_ascii_case(from)).count();
+        Ok((self.store.get_groups(), moved))
+    }
+    fn assign(&self, id: &str, group: Option<&str>) -> Result<String, String> {
+        self.store.set_mcp_group(id, group)?;
+        Ok(self.store.group_of(id))
+    }
+    fn set_order(&self, ids: Vec<String>) -> Result<Vec<String>, String> {
+        self.store.set_order(ids)?;
+        Ok(self.store.get_order())
+    }
+    fn has_member(&self, id: &str) -> bool {
+        self.registry.has(id)
+    }
+}
+
+/// Register the scopes AppContext owns natively. Called from AppContext::new so every
+/// composition — the gateway, the admin API tests — serves the same family.
+pub fn register_host_scopes(scopes: &GroupScopes, registry: Arc<Registry>, store: Arc<ManagedStore>) {
+    scopes.register("mcps", Arc::new(McpGroups { registry, store }));
 }
 
 #[cfg(test)]

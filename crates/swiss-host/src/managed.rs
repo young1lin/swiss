@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use serde_json::{json, Map, Value};
 
 use crate::config::ServerDef;
+use crate::groups::Groups;
 use crate::token::TokenRec;
 use swiss_core::log;
 use swiss_core::paths::data_path;
@@ -229,8 +230,9 @@ struct StoreState {
     resource_toggles: HashMap<String, bool>,
     tokens: Vec<TokenRec>,
     order: Vec<String>,
-    groups: Vec<String>,
-    mcp_groups: HashMap<String, String>,
+    /// The one grouping model (docs/20): this store owns only the managed.json key names it
+    /// serializes under (`groups` + `mcpGroups`); every rule lives in swiss_host::groups.
+    groups: Groups,
     mcp_enabled: HashMap<String, bool>,
 }
 
@@ -248,8 +250,10 @@ impl ManagedStore {
             resource_toggles: load_bool_map(&path, "resourceToggles"),
             tokens: load_tokens(&path),
             order: load_order(&path),
-            groups: load_groups(&path),
-            mcp_groups: load_mcp_groups(&path),
+            groups: Groups::from_parts(
+                load_groups(&path),
+                load_mcp_groups(&path).into_iter().collect(),
+            ),
             mcp_enabled: load_bool_map(&path, "mcpEnabled"),
         };
         Self {
@@ -307,7 +311,7 @@ impl ManagedStore {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
         s.entries.retain(|e| e.name != name);
         s.order.retain(|n| n != name); // a deleted MCP holds no sidebar slot
-        s.mcp_groups.remove(name); // ...nor a group membership
+        s.groups.forget_member(name); // ...nor a group membership
         s.mcp_enabled.remove(name); // ...nor a run/stop state
         self.persist(&s)
     }
@@ -333,9 +337,7 @@ impl ManagedStore {
                 })
                 .collect();
         }
-        if let Some(g) = s.mcp_groups.remove(old_name) {
-            s.mcp_groups.insert(new_name.into(), g);
-        }
+        s.groups.rename_member(old_name, new_name);
         if let Some(v) = s.mcp_enabled.remove(old_name) {
             s.mcp_enabled.insert(new_name.into(), v);
         }
@@ -444,7 +446,7 @@ impl ManagedStore {
     pub fn get_groups(&self) -> Vec<String> {
         self.state
             .lock()
-            .map(|s| s.groups.clone())
+            .map(|s| s.groups.names())
             .unwrap_or_default()
     }
 
@@ -454,20 +456,14 @@ impl ManagedStore {
         self.state
             .lock()
             .ok()
-            .and_then(|s| {
-                s.mcp_groups
-                    .get(name)
-                    .filter(|g| s.groups.iter().any(|x| x == *g))
-                    .cloned()
-                    .or_else(|| s.groups.first().cloned())
-            })
+            .map(|s| s.groups.group_of(name))
             .unwrap_or_else(|| DEFAULT_GROUP.into())
     }
 
     pub fn get_mcp_groups(&self) -> BTreeMap<String, String> {
         self.state
             .lock()
-            .map(|s| s.mcp_groups.clone().into_iter().collect())
+            .map(|s| s.groups.members().clone())
             .unwrap_or_default()
     }
 
@@ -477,23 +473,7 @@ impl ManagedStore {
     /// unassigned MCPs, and deleting the last group is the one move this refuses.
     pub fn set_groups(&self, names: Vec<String>) -> Result<(), String> {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
-        let mut next = Vec::new();
-        for raw in names {
-            let name = raw.trim();
-            if name.is_empty() {
-                return Err("a group name cannot be empty".into());
-            }
-            if next.iter().any(|n: &String| same_name(n, name)) {
-                return Err(format!("duplicate group name: {name}"));
-            }
-            next.push(name.to_string());
-        }
-        if next.is_empty() {
-            return Err("at least one group must remain".into());
-        }
-        s.groups = next;
-        let live = s.groups.clone();
-        s.mcp_groups.retain(|_, g| live.iter().any(|n| n == g));
+        s.groups.set_names(names)?;
         self.persist(&s)
     }
 
@@ -502,21 +482,7 @@ impl ManagedStore {
     /// slot).
     pub fn set_mcp_group(&self, name: &str, group: Option<&str>) -> Result<(), String> {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
-        match group {
-            None => {
-                s.mcp_groups.remove(name);
-            }
-            Some(g) => {
-                let match_ = s
-                    .groups
-                    .iter()
-                    .find(|n| same_name(n, g))
-                    .cloned()
-                    .ok_or_else(|| format!("unknown group: {g}"))?;
-                // Store the canonical casing, not what the caller typed.
-                s.mcp_groups.insert(name.into(), match_);
-            }
-        }
+        s.groups.assign(name, group)?;
         self.persist(&s)
     }
 
@@ -524,30 +490,8 @@ impl ManagedStore {
     /// keeping its slot. Members with no explicit group need no rewrite: they render in the first
     /// group, and a rename keeps the slot, so they follow the new name on their own.
     pub fn rename_group(&self, from: &str, to: &str) -> Result<(), String> {
-        let next = to.trim();
-        if next.is_empty() {
-            return Err("a group name cannot be empty".into());
-        }
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
-        let i = s
-            .groups
-            .iter()
-            .position(|n| same_name(n, from))
-            .ok_or_else(|| format!("unknown group: {from}"))?;
-        if s.groups
-            .iter()
-            .enumerate()
-            .any(|(j, n)| j != i && same_name(n, next))
-        {
-            return Err(format!("duplicate group name: {next}"));
-        }
-        let old = s.groups[i].clone();
-        s.groups[i] = next.to_string();
-        for g in s.mcp_groups.values_mut() {
-            if *g == old {
-                *g = next.to_string();
-            }
-        }
+        s.groups.rename(from, to)?;
         self.persist(&s)
     }
 
@@ -555,14 +499,18 @@ impl ManagedStore {
     /// Refused when it is the last one: something must catch unassigned MCPs.
     pub fn remove_group(&self, name: &str) -> Result<(), String> {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
-        let Some(match_) = s.groups.iter().find(|n| same_name(n, name)).cloned() else {
+        // An unknown name is a no-op, not an error: deleting something that is already gone
+        // must not fail a whole-list save the panel built from a stale read.
+        let Some(match_) = s.groups.canonical(name) else {
             return Ok(());
         };
-        if s.groups.len() <= 1 {
-            return Err("at least one group must remain".into());
-        }
-        s.groups.retain(|n| *n != match_);
-        s.mcp_groups.retain(|_, g| *g != match_);
+        let next: Vec<String> = s
+            .groups
+            .names()
+            .into_iter()
+            .filter(|n| *n != match_)
+            .collect();
+        s.groups.set_names(next)?;
         self.persist(&s)
     }
 
@@ -616,18 +564,19 @@ impl ManagedStore {
         if !s.order.is_empty() {
             root.insert("order".into(), json!(s.order));
         }
-        if !s.groups.is_empty() {
+        if !s.groups.names().is_empty() {
             // The v2 marker rides with any group write: it says "this list is complete, `default`
             // included or deleted on purpose" — the loader stops prepending `default` to marked
             // files.
-            root.insert("groups".into(), json!(s.groups));
+            root.insert("groups".into(), json!(s.groups.names()));
             root.insert("groupsV2".into(), json!(true));
         }
-        if !s.mcp_groups.is_empty() {
+        if !s.groups.members().is_empty() {
             root.insert(
                 "mcpGroups".into(),
                 Value::Object(
-                    s.mcp_groups
+                    s.groups
+                        .members()
                         .iter()
                         .map(|(k, v)| (k.clone(), json!(v)))
                         .collect(),
