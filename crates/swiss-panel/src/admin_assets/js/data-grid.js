@@ -7,6 +7,7 @@ import { renderDbFilters } from "./data-filters.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbOkToDrop, dbPkKey, dbPkVals } from "./data-view.js";
+import { popupMenu } from "./menu.js";
 import { act } from "./detail.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
@@ -32,6 +33,45 @@ async function dbLoadData(keepOffset) {
   var names = d.data.columns.map(function (c) { return c.name; });
   d.filters = d.filters.filter(function (f) { return names.indexOf(f.column) >= 0; });
   renderDbToolbar(); renderDbGrid(); renderDbBar(); renderDbFilters();
+}
+
+/* Whole-table export in the chosen format (CSV or NDJSON). The toolbar button carries the
+   busy state: the format menu is gone by the time the download starts, so the button is the
+   only place left on screen that can say "working". */
+async function dbExportTable(btn, fmt) {
+  var d2 = state.db;
+  var name = fmt === "json" ? "NDJSON" : "CSV";
+  if (!confirm("Export " + (d2.schema ? d2.schema + "." : "") + d2.table + " as " + name +
+      "?\nCapped at 100,000 rows — filter first if you need less.")) return;
+  var q = "/api/db/" + encodeURIComponent(d2.conn) + "/export?table=" + encodeURIComponent(d2.table) +
+    "&format=" + fmt;
+  if (d2.schema) q += "&schema=" + encodeURIComponent(d2.schema);
+  // The grid's filters ride along: the download and the grid describe the same filtered
+  // set, and the exported row count is the filtered total.
+  if (d2.filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d2.filters));
+  btn.disabled = true;
+  btn.textContent = "Exporting\u2026";
+  try {
+    var resp = await fetch(q);
+    if (!resp.ok) { toast("Export failed: HTTP " + resp.status, true); return; }
+    var blob = await resp.blob();
+    var disp = resp.headers.get("Content-Disposition") || "";
+    var m = /filename="([^"]+)"/.exec(disp);
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : "export." + fmt;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    var rows = resp.headers.get("X-Export-Rows");
+    toast("Exported " + (rows != null ? Number(rows).toLocaleString() + " rows" : ""));
+  } catch (e) {
+    toast("Export failed", true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Export\u2026";
+  }
 }
 
 function renderDbToolbar() {
@@ -147,39 +187,15 @@ function renderDbToolbar() {
     dataCtl.appendChild(csv);
 
     var exp = el("button", "btn", "Export…");
-    exp.title = "Export the whole table (capped at 100k rows)";
-    exp.onclick = async function () {
-      var d2 = state.db;
-      var fmt = "csv";
-      if (!confirm("Export " + (d2.schema ? d2.schema + "." : "") + d2.table + " as " + fmt.toUpperCase() +
-          "?\nCapped at 100,000 rows — filter first if you need less.")) return;
-      var q = "/api/db/" + encodeURIComponent(d2.conn) + "/export?table=" + encodeURIComponent(d2.table) +
-        "&format=" + fmt;
-      if (d2.schema) q += "&schema=" + encodeURIComponent(d2.schema);
-      // The grid's filters ride along: the download and the grid describe the same filtered
-      // set, and the exported row count is the filtered total.
-      if (d2.filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d2.filters));
-      this.textContent = "Exporting\u2026";
-      try {
-        var resp = await fetch(q);
-        if (!resp.ok) { toast("Export failed: HTTP " + resp.status, true); return; }
-        var blob = await resp.blob();
-        var disp = resp.headers.get("Content-Disposition") || "";
-        var m = /filename="([^"]+)"/.exec(disp);
-        var a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = m ? m[1] : "export.csv";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-        var rows = resp.headers.get("X-Export-Rows");
-        toast("Exported " + (rows != null ? Number(rows).toLocaleString() + " rows" : ""));
-      } catch (e) {
-        toast("Export failed", true);
-      } finally {
-        this.textContent = "Export\u2026";
-      }
+    exp.title = "Export the whole table as CSV or NDJSON (capped at 100k rows)";
+    exp.onclick = function (ev) {
+      // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
+      // and without this the very click that opens the menu also tears it down.
+      ev.stopPropagation();
+      popupMenu(this.getBoundingClientRect(), [
+        { label: "Export CSV…", fn: function () { dbExportTable(exp, "csv"); } },
+        { label: "Export NDJSON…", fn: function () { dbExportTable(exp, "json"); } },
+      ]);
     };
     dataCtl.appendChild(exp);
 
