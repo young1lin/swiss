@@ -19,6 +19,7 @@ async function dbLoadKeys(reset) {
   if (reset) { d.redis = null; d.redisKey = null; }
   var q = "/api/db/" + encodeURIComponent(d.conn) + "/keys?count=200";
   if (d.grep) q += "&pattern=" + encodeURIComponent(d.grep);
+  if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
   if (d.redis && d.redis.cursor && d.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d.redis.cursor);
   var j = await apiJson(q);
   if (!j) return;

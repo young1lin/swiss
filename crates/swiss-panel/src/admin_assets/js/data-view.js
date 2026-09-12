@@ -45,6 +45,7 @@ function dbFreshState() {
     tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisKey: null,      // the key whose value is shown in the pane
+    redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
     detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
     detailBusy: false,
   };
@@ -166,6 +167,7 @@ function renderDbView() {
     // A sidebar search is table-list-scoped: carrying "tsys_" from one connection into the next
     // silently filters the new list down to nothing. Reset it and the box that shows it.
     d.grep = "";
+    d.redisType = ""; // same reasoning: a type filter is chosen against a key list, not inherited
     var gb = $("dbGrep");
     if (gb) gb.value = "";
     dbDropEdits();
