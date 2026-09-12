@@ -846,6 +846,9 @@ mod tests {
                 "total": 2,
                 "offset": offset,
                 "limit": limit,
+                // docs/22 W1.9: the adapter fetched limit+1 and truncated; the flag is what the
+                // panel's next-page arrow listens to.
+                "nextPage": false,
                 "primaryKey": ["id"],
                 "editable": true,
             }))
@@ -1245,6 +1248,8 @@ mod tests {
         let body = body.expect("json");
         assert_eq!(body["table"], "users");
         assert_eq!(body["total"], 2);
+        // docs/22 W1.9: the page reply carries the nextPage probe alongside the COUNT total.
+        assert_eq!(body["nextPage"], false);
         assert_eq!(body["primaryKey"], json!(["id"]));
         assert_eq!(body["editable"], true);
         let names: Vec<&str> = body["columns"]

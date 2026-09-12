@@ -186,6 +186,8 @@ impl DbBrowser for PgBrowser {
         // (browse_where) so the three can never drift (docs/22 W0.2).
         let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::pg_typed_exprs(&columns)?;
+        // docs/22 W1.9: fetch one row past the page — its presence answers "is there a next
+        // page" without trusting COUNT arithmetic under concurrent writes.
         let rows_stmt = browse_rows_sql(
             DbDialect::Pg,
             Some(&schema),
@@ -193,7 +195,7 @@ impl DbBrowser for PgBrowser {
             &exprs,
             order.as_deref(),
             offset,
-            limit,
+            limit + 1,
             &where_.frag,
             &where_.params,
         )?;
@@ -208,7 +210,7 @@ impl DbBrowser for PgBrowser {
             self.query(&rows_stmt.sql, &rows_stmt.params),
             self.query(&count_stmt.sql, &count_stmt.params)
         );
-        let rows = rows?;
+        let (rows, next_page) = swiss_host::dbbrowser::page_and_next(rows?, limit);
         let total = total_of(&count?);
         let editable = !primary.is_empty();
         // Node's editNote: the pk-less explanation is the only one left (pg.ts).
@@ -219,7 +221,7 @@ impl DbBrowser for PgBrowser {
         };
         Ok(json!({
             "schema": schema, "table": table, "columns": columns, "rows": rows,
-            "total": total, "offset": offset, "limit": limit,
+            "total": total, "offset": offset, "limit": limit, "nextPage": next_page,
             "primaryKey": primary, "editable": editable, "editNote": edit_note,
         }))
     }

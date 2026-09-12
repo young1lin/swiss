@@ -1115,6 +1115,21 @@ fn typed_ph(dialect: DbDialect, params: &[Value], data_type: Option<&str>) -> St
 /// dropped from SET/INSERT (a stale page may reference a dropped column); an edit that ends up
 /// with nothing to do is an error, because "commit 3 changes" that silently did 2 is a lie.
 ///
+/// docs/22 W1.9: the fetch-one-more paging probe. The adapter asks for `limit + 1` rows; a
+/// full page plus a spare row means another page exists, and the spare is dropped before the
+/// reply. Cheaper and more truthful than offset arithmetic against a COUNT that concurrent
+/// writes may have already moved — the count stays in the reply for the "x–y of z" line only.
+pub fn page_and_next(
+    mut rows: Vec<Map<String, Value>>,
+    limit: i64,
+) -> (Vec<Map<String, Value>>, bool) {
+    let next = rows.len() as i64 > limit;
+    if next {
+        rows.truncate(limit.max(0) as usize);
+    }
+    (rows, next)
+}
+
 /// How one edit's committed row comes home with the batch reply (docs/22 W1.7). The point is
 /// showing what the SERVER kept — silent truncation, column DEFAULTs, trigger rewrites —
 /// instead of the value the panel sent. Three shapes:
@@ -2109,6 +2124,23 @@ mod tests {
         .unwrap();
         // A literal % stays literal (escaped); only * translates.
         assert_eq!(out.params, vec![json!("%100!%%")]);
+    }
+
+    #[test]
+    fn page_and_next_truncates_the_probe_row() {
+        // docs/22 W1.9: limit+1 fetched, the spare row reported as nextPage and dropped.
+        let row = || -> Map<String, Value> {
+            [("id", 1)].iter().map(|(k, v)| (k.to_string(), json!(v))).collect()
+        };
+        let (page, next) = page_and_next(vec![row(), row(), row()], 2);
+        assert!(next);
+        assert_eq!(page.len(), 2);
+        let (page, next) = page_and_next(vec![row(), row()], 2);
+        assert!(!next);
+        assert_eq!(page.len(), 2);
+        let (page, next) = page_and_next(vec![row()], 2);
+        assert!(!next);
+        assert_eq!(page.len(), 1);
     }
 
     #[test]

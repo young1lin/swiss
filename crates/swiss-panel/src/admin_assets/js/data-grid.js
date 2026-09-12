@@ -3,8 +3,8 @@ import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
 import { dbCellMenu, dbExportCsv, dbOpenImport, dbResultCellMenu, dbSelAll } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText } from "./data-cell.js";
 import { dbEditCellEnter } from "./data-edit.js";
-import { renderDbFilters } from "./data-filters.js";
-import { dbRunSql, dbSqlPaint, dbStatsSql, renderDbBar } from "./data-sql.js";
+import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
+import { dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbOkToDrop, dbPkKey, dbPkVals } from "./data-view.js";
 import { popupMenu } from "./menu.js";
@@ -153,7 +153,9 @@ function renderDbToolbar() {
     var next = el("button", "btn icon");
     next.innerHTML = icon("chevron-right");
     next.title = "Next page";
-    next.disabled = to >= d.data.total;
+    // docs/22 W1.9: the limit+1 probe answers "is there another page" from the rows actually
+    // fetched; the old offset-vs-total arithmetic stays as the fallback when the flag is absent.
+    next.disabled = d.data.nextPage != null ? !d.data.nextPage : to >= d.data.total;
     next.onclick = function () {
       if (!dbOkToDrop()) return;
       d.offset += d.pageSize;
@@ -230,13 +232,7 @@ function dbRunColumnStats(column, kind) {
   try {
     sql = dbStatsSql(dialect, d.schema, d.table, column, kind);
   } catch (err) { toast(String(err), true); return; }
-  d.sqlText = sql;
-  d.sqlOpen = true;
-  var con = $("dbConsole");
-  if (con) con.hidden = false;
-  var ta = $("dbSql");
-  if (ta) ta.value = sql;
-  dbSqlPaint();
+  dbFillConsole(sql);
   void dbRunSql();
 }
 

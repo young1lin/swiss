@@ -126,6 +126,8 @@ impl DbBrowser for MysqlBrowser {
         let where_ =
             swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::quoted_exprs(DbDialect::Mysql, &names)?;
+        // docs/22 W1.9: fetch one row past the page — its presence answers "is there a next
+        // page" without trusting COUNT arithmetic under concurrent writes.
         let rows_stmt = browse_rows_sql(
             DbDialect::Mysql,
             Some(&self.database),
@@ -133,7 +135,7 @@ impl DbBrowser for MysqlBrowser {
             &exprs,
             order.as_deref(),
             offset,
-            limit,
+            limit + 1,
             &where_.frag,
             &where_.params,
         )?;
@@ -148,7 +150,7 @@ impl DbBrowser for MysqlBrowser {
             self.query(&rows_stmt.sql, &rows_stmt.params),
             self.query(&count_stmt.sql, &count_stmt.params)
         );
-        let rows = rows?;
+        let (rows, next_page) = swiss_host::dbbrowser::page_and_next(rows?, limit);
         let total = super::mysql::num_or_zero(count?.first().and_then(|r| r.get("total")));
         let editable = !primary.is_empty();
         // Node's editNote: the pk-less explanation is the only one left (mysql.ts).
@@ -158,7 +160,7 @@ impl DbBrowser for MysqlBrowser {
             None
         };
         Ok(
-            json!({"schema":self.database,"table":table,"columns":columns,"rows":rows,"total":total,"offset":offset,"limit":limit,"primaryKey":primary,"editable":editable,"editNote":edit_note}),
+            json!({"schema":self.database,"table":table,"columns":columns,"rows":rows,"total":total,"offset":offset,"limit":limit,"nextPage":next_page,"primaryKey":primary,"editable":editable,"editNote":edit_note}),
         )
     }
     async fn describe_table(&self, o: &Value) -> Result<Value, String> {
