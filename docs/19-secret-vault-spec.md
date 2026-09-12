@@ -1,9 +1,12 @@
 # 19 — 密钥库（Secret Vault）：保存一次，处处引用，设备绑定
 
 > 需求原文（用户，2026-09-12）："保存密钥，后续其他服务只需要引用密钥即可，运行时会自动替换成
-> 保存的密钥，然后密钥只和设备绑定也就是那个 DPAPI。"
+> 保存的密钥，然后密钥只和设备绑定也就是那个 DPAPI。" 追加确认（同日）：值只进不出（忘了只能
+> 重存）；引用缺失硬失败；Node 侧同款实现留在 scope；**任何地方**使用新语法的字符串都会在运行
+> 时被替换成真值——这是基础层，其他插件都依赖它，每个使用面都要有单元与集成测试，不能等跑
+> 起来才知道坏没坏。
 > 本 spec 把它落成一件小而完整的东西：一个名字空间隔离的密钥库 `secrets.json`——同封印格式、
-> 只经 `${secret:NAME}` 引用展开输出、面板可管理、永不进子进程环境。
+> 只经 `secret://name` 引用展开输出、面板可管理、永不进子进程环境。
 
 ## 0. 现状与缺口（为什么是它、为什么是现在）
 
@@ -35,7 +38,8 @@
 **目标**
 
 - 面板可保存 / 覆盖 / 删除 / 列出密钥（列出=只列名字与更新时间，值永不回传浏览器）。
-- 四个既有展开边界全部识别 `${secret:NAME}`，运行时自动替换——引用者无需任何新配置面。
+- 通用替换：任何使用面（MCP http/rest/proc、隧道、job、Test 端点、匹配）里的
+  `secret://name` 字符串在运行时自动替换成真值——引用者无需任何新配置面。
 - 设备绑定：存储沿用 master.key 的 DPAPI（Windows，per-user）保护链，文件复制离机即废。
 - 子进程隔离：密钥库的值不进 env overlay、不进任何子进程环境、不进日志与 API 响应。
 - `swiss export`/`import` 打通（换机是封印绑定的唯一官方逃生口，密钥不能缺席）。
@@ -51,15 +55,35 @@
 
 ## 2. 设计
 
-### D1 引用语法：`${secret:NAME}`
+**定位先说清：基础层，不是可停用的插件。** 密钥库落在 swiss-core / swiss-host——所有插件
+crate 本来就依赖的那一层，"其他插件都依赖这个 core"在 crate 图上早已成立。它不能注册成一个
+普通插件：docs/09 的插件三态（enabled/running/visible）允许停用，而被全家依赖的东西没有"停用"
+态——同一个理由决定了 Plugins 页必须是宿主资产（"被禁用的插件无法服务把它切回来的页面"）。
+面板呈现走宿主常驻面（Gateway 页），API 走宿主路由；对 docs/09 的合同修订只有一条：
+**插件的配置字符串若含凭证，到达使用点前必须过共享解析器**（见 D4）。
 
-- `NAME` 文法：`[a-z][a-z0-9-]{0,63}`（小写 kebab）。为什么小写：与 `${UPPER_ENV}` 在肉眼
-  与文法两层都不可混淆——大写名字直接拒绝，错误信息说明"这是密钥引用，名字用小写 kebab"。
-- 前进兼容是免费的：现行扫描器只认 `[A-Z0-9_]+`（config.rs:79 起，ADR-007 手写），旧构建把
-  `${secret:x}` 当字面文本留在原处——可见的坏（header 里出现明文引用、API 401），而不是
-  静默泄密。
-- **扫描器收敛到 swiss-core**：新模块 `crates/swiss-core/src/secure/refs.rs`，一个函数同时认
-  两种引用（env 查 overlay+进程环境，secret 查密钥库）。jobs runner 的宽松副本换掉，
+### D1 引用语法：`secret://name`（URI scheme 型）
+
+语法选型survey过业界现状：1Password `op://vault/item/field`、Doppler `doppler://…`、
+Infisical `infisical://…`——新一代密钥平台清一色 **URI scheme 型**；AWS 用
+`{{resolve:secretsmanager:…}}`（动词开头、冗长）；GitHub Actions 用 `${{ secrets.X }}`
+（那是模板表达式，与 Helm/Go 模板同形易混）；Docker Compose 的 `${VAR}` 是纯 env 插值，
+根本没有密钥概念。scheme 型胜出的理由在这里全部成立：
+
+- **自描述**：字符串自己说"值在哪"，日志与错误读起来是自然语言
+  （`references secret://stripe-key which is not in the vault`）；
+- **全局可 grep**：`secret://` 是唯一的 9 字符 token，CI 与审计能一次扫出所有引用位；
+- **可扩展不换语法**：将来要字段/版本，`secret://name#field`、`?version=2` 都是合法 URI
+  延伸，今天不用预留；
+- **与 `${ENV}` 不同字符类**：env 插值是花括号族，密钥引用是 URI 族，肉眼与文法双重不可混。
+
+- `name` 文法：`[a-z][a-z0-9-]{0,63}`（小写 kebab）。大写名字直接拒绝，错误说明"这是
+  密钥引用，名字用小写 kebab"。
+- 前进兼容是免费的：现行扫描器只认 `${[A-Z0-9_]+}`（config.rs，ADR-007 手写），
+  `secret://x` 不含 `${`，旧构建把它当字面文本留在原处——可见的坏（header 里出现明文
+  引用、API 401），而不是静默泄密。
+- **扫描器收敛到 swiss-core**：新模块 `crates/swiss-core/src/secure/refs.rs`，一个函数
+  同时认两种引用（env 查 overlay+进程环境，secret 查密钥库）。jobs runner 的宽松副本换掉，
   tunnels 不再从 swiss-host 导入——按 AGENTS 的 crate 图原则，跨子系统共享的东西本来就该
   放 core/host 合同里，这次补上（记 ADR-014）。
 
@@ -78,17 +102,31 @@
 - 诚实的内存注记：不引入 zeroize（ADR-007 的依赖纪律），String 移动后擦除不可保证。接受，
   理由：值本就必须驻留以供连接/运行时展开；攻击面在文件与子进程侧，不在 Rust 堆。
 
-### D4 展开与失败语义：env 宽松、secret 硬失败
+### D4 展开规则：通用替换合同 + 失败语义（env 宽松、secret 硬失败）
 
-- `${ENV}` 缺失 → 空串（不变）。
-- `${secret:NAME}` 缺失 → **硬失败**，错误点名使用处与名字，值永不进错误文本：
-  - MCP 适配器构建：启动被拒，reason 形如 `mysql: headers.Authorization references secret
-    'x' which is not in the vault`（与"端口缺失不得进监听器"同一哲学：宁可不启，不静默空串）；
+**通用合同**：任何来自状态文件的字符串，在到达实际使用点（发起请求 / 建连接 / 起进程 /
+跑脚本）之前，必须经过 `swiss_core::secure::refs::resolve`——含 `secret://` 就替换成真值，
+含 `${ENV}` 照旧展开。不是"四个白名单边界"，是一条合同；现有使用面全部遵守，未来的插件
+用同一个函数就自动继承（docs/09 合同修订，见 §2 定位）。当前使用面清单（测试按此逐面覆盖）：
+
+1. MCP http/rest：header、url、body 模板（config.rs `resolve_def`，整树递归）；
+2. MCP proc：args、env（同一 `resolve_def` 路径）；
+3. 隧道：connection 的 password / keyPassphrase、rule 的字段（ssh.rs 连接时）；
+4. job：command、env 值（runner.rs 运行时）；
+5. 面板的 MCP Test 端点（/api/mcps/test，服务端展开后真连一次）；
+6. mcpmatch：匹配前按值比较（resolve 失败按不匹配处理）。
+
+**失败语义**：
+
+- `${ENV}` 缺失 → 空串（不变；环境是机器现状，缺席是常态）。
+- `secret://name` 缺失 → **硬失败**，错误点名使用面与名字，值永不进错误文本：
+  - MCP 适配器构建：启动被拒，reason 形如 `mysql: headers.Authorization references
+    secret://stripe-key which is not in the vault`（与"端口缺失不得进监听器"同一哲学：
+    宁可不启，不静默空串）；
   - 隧道：连接失败 reason 同款措辞（进既有 FailureKind 文案）；
   - job：该次 run 记录失败，原因同款（不弹进程）；
   - mcpmatch：解析失败的候选按不匹配处理，warn 一次。
-- 为什么不对称：env 是机器现状，缺席正常；vault 引用是操作者的显式声明，缺席是配置错误，
-  面板上一眼可修。
+- 为什么不对称：env 是机器现状；vault 引用是操作者的显式声明，缺席是配置错误，面板上一眼可修。
 
 ### D5 API（挂 src/app.rs，与既有 /api 同款 loopback 边界）
 
@@ -104,9 +142,9 @@
 - 位置：宿主页（plugins 视图，`pluginId: "host"`）列表下方——密钥是宿主机制，不注册新页面，
   不动 docs/13 的导航合同。
 - 形态：名字列表 + 新增/覆盖表单（write-only 输入，不回显）+ 删除（确认文案风格同 job 删除）。
-- 编辑表单里已是 `${secret:NAME}` 的字段照旧显示引用串：`is_env_ref`（config.rs）的掩码
+- 编辑表单里已是 `secret://name` 的字段照旧显示引用串：`is_env_ref`（config.rs）的掩码
   判定扩展到 secret 引用，面板侧无需新逻辑。
-- add-sheet 两处 hint 文案改为指向密钥库（"`${secret:context7}` —— 在 Gateway 页的 Secrets
+- add-sheet 两处 hint 文案改为指向密钥库（"`secret://context7` —— 在 Gateway 页的 Secrets
   里保存一次"）。
 
 ### D7 export / import
@@ -134,15 +172,28 @@
 **Node 服务端同步实现同款路由与存储**（它的 secure/envstore.ts 同款封印）——面板字节同源，
 Node 没有路由等于破了它自己的面板。
 
-- **Phase 1（core+host）**：refs.rs 双引用扫描器（单测：混合串、`[A-Z0-9_]+` env、kebab
-  secret、非法名报错、旧文法不受扰）；secretstore.rs（封印读写 + 文法校验单测）；
-  config/actions 接新解析器 + 失败语义；/api/secrets 三条路由（oneshot 集成测：CRUD、
-  GET 全文无值、rev 409）。
+- **Phase 1（core+host）**：refs.rs 双引用扫描器（单测：混合串、`[A-Z0-9_]+` env、
+  `secret://kebab-name`、非法名报错、旧文法不受扰、`secret://` 不被 env 扫描器误食）；
+  secretstore.rs（封印读写 + 文法校验单测）；config/actions 接新解析器 + 失败语义；
+  /api/secrets 三条路由（oneshot 集成测：CRUD、GET 全文无值、rev 409）。
 - **Phase 2（tunnels+jobs）**：换共享解析器（ssh.rs 去掉对 swiss-host 的导入；runner.rs
   副本退役）；隧道连接失败 reason 单测；job run 失败记录单测；**子进程隔离集成测**——
   库里存一个密钥，job 跑 `cmd /c set`，断言输出含 job 自带 env 变量、不含密钥。
+
+**每个使用面一张测试表（D4 清单逐面覆盖，缺一不发货）**——使用面的行为 = 单元测试锁解析
+结果与错误措辞，集成测试锁真跑起来的端到端：
+
+| 使用面 | 单元测试 | 集成测试 |
+|---|---|---|
+| http/rest header、url、body | resolve 结果串、缺失报错措辞 | echo 探针断言收到的 header 是真值 |
+| proc args、env | 同上（resolve_def 树递归含数组/嵌套） | 子进程把收到的 env 回显，断言含真值 |
+| 隧道 password / keyPassphrase | 缺失 reason 措辞 | 连接路径展开（既有假 SSH 测试架） |
+| job command、env 值 | 缺失 run 失败记录 | job 输出含替换后真值；隔离测见上 |
+| 面板 Test 端点 | — | PUT 密钥 → Test 200；删密钥 → Test 失败且不泄值 |
+| mcpmatch | 解析失败=不匹配 | 匹配到引用同一密钥的两条定义 |
+| 通用回归 | 表驱动：六面 × {命中、缺失、混合 env+secret} | — |
 - **Phase 3（面板）**：Gateway 页 Secrets 区（vitest：渲染只含名字、表单 write-only、
-  删除确认、掩码显示 `${secret:…}` 引用）；hint 文案；复制回 Rust。
+  删除确认、掩码显示 `secret://…` 引用）；hint 文案；复制回 Rust。
 - **Phase 4（收尾）**：export/import 段 + 回归测试；test-instance.ps1 清单；19998 实测
   （保存 → 引用 → 隔离 → export）；ADR-014 入 docs/07。
 
@@ -151,7 +202,7 @@ Node 没有路由等于破了它自己的面板。
 ## 4. 验收清单（19998，全部要过）
 
 1. Gateway 页保存 `context7` 的 key → managed.json 里 http header 写
-   `${secret:context7}` → MCP Test 通过，面板编辑表单显示引用串。
+   `secret://context7` → MCP Test 通过，面板编辑表单显示引用串。
 2. 删除该密钥 → MCP 启动被拒，错误点名 `context7`；值不出现在任何输出。
 3. job `cmd /c set` 的输出不含库内任何密钥（用 job 自带 env 变量作对照阳性）。
 4. secrets.json 原始字节里搜不到明文 key。
@@ -166,7 +217,10 @@ Node 没有路由等于破了它自己的面板。
 
 ## 6. 交给实施模型的 Prompt
 
-按 docs/19 实施。先读锚点：`crates/swiss-core/src/secure/envstore.rs`（overlay 模式与封印
+按 docs/19 实施。语法是 `secret://name`（URI scheme 型，选型依据见 D1）；替换是**通用
+合同**（D4）：任何使用面的字符串到达实际使用点前必过共享解析器，§3 的使用面测试表逐面覆盖、
+缺一不发货。密钥库是 swiss-core 基础层（§2 定位），不是可停用插件。
+先读锚点：`crates/swiss-core/src/secure/envstore.rs`（overlay 模式与封印
 读写的样板）、`crates/swiss-host/src/config.rs`（`resolve_env_refs`/`is_env_ref`）、
 `crates/swiss-tunnels/src/tunnel/ssh.rs` 与 `crates/swiss-jobs/src/jobs/runner.rs`（两个
 使用边界）、`src/daemon.rs`（export_state）、`src/app.rs`（路由挂载）、Node 侧
