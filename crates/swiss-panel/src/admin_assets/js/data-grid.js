@@ -1,7 +1,7 @@
 import { $, apiJson, el, emptyHtml, icon, state, toast } from "./util.js";
 import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
 import { dbCellMenu, dbExportCsv, dbOpenImport, dbResultCellMenu, dbSelAll } from "./data-csv.js";
-import { dbOpenCellEditor, dbCellText } from "./data-cell.js";
+import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
 import { dbEditCellEnter } from "./data-edit.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
@@ -236,10 +236,23 @@ function dbRunColumnStats(column, kind) {
   void dbRunSql();
 }
 
-function dbPaintCell(td, v, has) {
-  if (!has || v === undefined) return; // nothing set yet (an insert stub cell)
-  if (v === null) { td.appendChild(el("span", "db-null", "NULL")); return; }
-  td.textContent = dbCellText(v);
+/** Paint one cell from its typed view (docs/22 W2.3). Returns the value's long-text title
+ *  (the folded JSON's full text; null when the value needs none) so callers can merge it with
+ *  their own hint instead of clobbering it. */
+function dbPaintCell(td, v, has, colType) {
+  if (!has || v === undefined) return null; // nothing set yet (an insert stub cell)
+  if (v === null) { td.appendChild(el("span", "db-null", "NULL")); return null; }
+  var view = dbCellView(v, colType);
+  if (view.href) {
+    var a = el("a", "db-link", view.text);
+    a.href = view.href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer"; // a data grid can point anywhere; the panel vouches for none of it
+    td.appendChild(a);
+  } else td.textContent = view.text;
+  if (view.cls) td.classList.add(view.cls);
+  if (view.title) td.title = view.title;
+  return view.title || null;
 }
 
 /* --- column header hover card -------------------------------------------------------------------- */
@@ -374,10 +387,10 @@ function renderDbGrid() {
     d.data.columns.forEach(function (c) {
       var has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
       var td = el("td", "db-cell");
-      dbPaintCell(td, has ? ins.values[c.name] : undefined, has);
+      var long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
       if (editable) {
         td.classList.add("db-cell-edit");
-        td.title = "Double-click to edit · right-click for dialog/copy";
+        td.title = long || "Double-click to edit · right-click for dialog/copy";
         (function (col, present) {
           td.ondblclick = function () {
             var cur = present ? dbCellText(ins.values[col]) : "";
@@ -433,10 +446,10 @@ function renderDbGrid() {
       var pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
       var v = pending ? upd.changes[c.name] : orig;
       var td = el("td", "db-cell" + (pending ? " db-dirty" : ""));
-      dbPaintCell(td, v, true);
+      var long = dbPaintCell(td, v, true, c.dataType);
       if (editable && !deleted) {
         td.classList.add("db-cell-edit");
-        td.title = "Double-click to edit · right-click for dialog/copy";
+        td.title = long || "Double-click to edit · right-click for dialog/copy";
         (function (col, orig) {
           var meta = { pk: dbPkVals(pkCols, row), orig: orig };
           td.ondblclick = function () {
@@ -506,9 +519,10 @@ function renderDbResultGrid(wrap) {
     res.columns.forEach(function (c) {
       var td = el("td", "db-cell");
       td.oncontextmenu = function (e) { dbResultCellMenu(e, row, c); };
+      // No column types on a result grid: dbCellView still words booleans, folds long JSON,
+      // links URLs and right-aligns JS numbers off the value alone.
       var v = row[c];
-      if (v === null || v === undefined) td.appendChild(el("span", "db-null", "NULL"));
-      else td.textContent = dbCellText(v);
+      dbPaintCell(td, v === undefined ? null : v, true);
       tr.appendChild(td);
     });
     tbody.appendChild(tr);

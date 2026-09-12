@@ -449,6 +449,15 @@
     .db-tip .t-hint { margin-top: 5px; font-size: var(--f-caption); color: var(--text-3); }
     .db-null { color: var(--text-3); font-style: italic; }
     .db-cell { font-family: var(--mono); }
+    /* docs/22 W2.3 — typed cells. Numbers right-align in tabular figures so a column of ids
+       and amounts compares by digit (the mono face already draws them one glyph wide, but the
+       alignment is the readable half). A folded value — "(JSON)", "binary, N bytes" — is a
+       summary standing in for content that lives one hover/open away, so it sits in the quiet
+       tone like NULL does, minus the italics (it is data, not the absence of it). */
+    .db-cell.db-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .db-cell.db-fold { color: var(--text-3); }
+    .db-cell a.db-link { color: var(--accent); text-decoration: none; }
+    .db-cell a.db-link:hover, .db-cell a.db-link:focus-visible { text-decoration: underline; }
     /* The Columns tab's Comment column joins the header caption's green, so "what this field
        means" reads in one hue everywhere the panel shows it. The "—" placeholder stays un-tinted. */
     .db-cell.db-det-comment { color: var(--green); }
