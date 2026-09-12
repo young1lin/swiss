@@ -378,3 +378,34 @@ Plugins page.
 
 Node-parity rule held throughout: the resolver, the store, the API contract and the export
 section are shape-identical in both builds, and the panel is written once in the Node tree.
+
+## ADR-015 — Groups are host mechanism: one model, one scope table, one route family
+
+**Status: Accepted (2026-09-13).** Spec: docs/20.
+
+Six panels grew six ways to group a list, and the seventh (Jobs) would have copied the worst
+of them. The decision: grouping is not any subsystem's business. `swiss-host` owns one
+`Groups` type with the rules (canonical casing, the first-group sink, rename keeping its
+slot), a `GroupScope` registry each scope registers into, and ONE route family —
+`/api/groups/{scope}` plus `rename`/`members/{id}`/`order` — mounted beside `/api/tokens`,
+the other host-owned mechanism. The panel owns one `groups.js` component every list renders
+through.
+
+The alternatives, priced:
+
+- **A. every plugin implements its own grouping and routes** (the status quo's trajectory):
+  the third copy already diverged; six code paths, six test suites, six panel adapters.
+- **B. the host type + registry + family (chosen):** each scope implements a 6-method trait
+  (~40 lines); the host gains one module; the old per-scope routes retire.
+- **C. unify only the panel, keep both server sides:** cheap, but even the rename bodies
+  differed — the adapters would carry the difference forever, and Jobs/Secrets/Tokens still
+  needed writing from scratch.
+
+Retired with the family (docs/20 §3): `PUT /api/order`, `PUT /api/groups`,
+`POST /api/groups/{name}/rename`, `PUT /api/mcps/{name}/group`, `PUT /api/tunnels/groups/{kind}`,
+`POST /api/tunnels/groups/{kind}/rename`, `PUT /api/tunnels/groups/{kind}/{id}`,
+`PUT /api/tunnels/order`. Nothing in-repo called them but the panel and its tests.
+
+Two scopes refuse the family's `order` verb on purpose: secrets and tokens list in name and
+creation order respectively (docs/20 §2.1), so their `set_order` answers the same 400 the
+family serves for any other refusal.
