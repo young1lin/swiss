@@ -1,7 +1,8 @@
 import { $, apiJson, el, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
-import { loadTunnels, tunData } from "./polling.js";
+import { loadTunnels, tunData, tunGroupsList } from "./polling.js";
 import { assignTunScoped } from "./tunnels.js";
+import { groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 
 /* --- connection sheet -------------------------------------------------------------------------- */
 
@@ -15,11 +16,19 @@ async function loadKeys() {
 function openConnSheet(def) {
   var editing = !!def;
   var d = def || { name: "", host: "", port: 22, username: "", authType: "key", keyPath: "", passphrase: "", password: "" };
+  // Creating: a Group select names where the row lands (the header +'s group preselected, the
+  // last-used one when the top New opened this). Editing: no field - moving a connection is
+  // the list's gesture (drag / row menu), not a property of its definition.
+  var names = tunGroupsList();
+  var initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("conns"));
+  state.tun.pendingGroup = null; // consumed: the select is the truth from here
+  var groupField = editing ? "" : groupFieldHtml(names, initial);
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit connection" : "New connection") + '">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Edit connection" : "New SSH connection") + "</h2></div>" +
+      '<div class="sheet-head"><h2 id="t-title">' + (editing ? "Edit connection" : "New SSH connection in " + esc(initial)) + "</h2></div>" +
       '<div class="sheet-body">' +
         '<label class="field"><span>Name</span><input id="c-name" value="' + esc(d.name) + '" placeholder="Test server" autocomplete="off"></label>' +
+        groupField +
         '<div class="two">' +
           '<label class="field"><span>Host</span><input id="c-host" value="' + esc(d.host) + '" placeholder="e.g. 192.168.1.100" autocomplete="off"></label>' +
           '<label class="field"><span>Port</span><input id="c-port" value="' + esc(String(d.port || 22)) + '" autocomplete="off"></label>' +
@@ -54,6 +63,9 @@ function openConnSheet(def) {
   };
   void paint();
   $("c-auth").onchange = function () { void paint(); };
+  if ($("g-sel")) $("g-sel").onchange = function () {
+    $("t-title").textContent = "New SSH connection in " + $("g-sel").value;
+  };
   $("c-cancel").onclick = closeSheet;
   $("c-save").onclick = function () { void saveConn(def); };
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
@@ -132,15 +144,17 @@ async function saveConn(existing) {
   } else {
     body.password = $("c-pass").value;
   }
+  // Read the sheet's Group before closeSheet wipes it: a create lands in the picked group
+  // (remembered as this scope's last-used), the same pre-join the MCP sheet does.
+  var picked = $("g-sel") ? $("g-sel").value : null;
   var j = existing
     ? await apiJson("/api/tunnels/connections/" + encodeURIComponent(existing.id), { method: "PUT", body: JSON.stringify(body) })
     : await apiJson("/api/tunnels/connections", { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
+  if (picked) rememberGroup("conns", picked);
   closeSheet();
   await loadTunnels();
-  var pg = state.tun.pendingGroup;
-  state.tun.pendingGroup = null;
-  if (!existing && pg && j.connection && j.connection.id) await assignTunScoped("conns", j.connection.id, pg);
+  if (!existing && picked && j.connection && j.connection.id) await assignTunScoped("conns", j.connection.id, picked);
   toast((existing ? "Saved " : "Added ") + body.name);
 }
 
@@ -154,14 +168,21 @@ function openRuleSheet(def) {
     name: "", connectionId: d.connections[0].id, localPort: "", targetHost: "127.0.0.1", targetPort: "",
     remark: "", autoReconnect: false, reconnectInterval: 10, mcps: [],
   };
+  // Same contract as the connection sheet: a Group select on create only, preselected from
+  // the header + that opened this, else the scope's last-used group.
+  var names = tunGroupsList();
+  var initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("rules"));
+  state.tun.pendingGroup = null;
+  var groupField = editing ? "" : groupFieldHtml(names, initial);
   var opts = d.connections.map(function (c) {
     return '<option value="' + esc(c.id) + '"' + (c.id === r.connectionId ? " selected" : "") + ">" + esc(c.name) + "</option>";
   }).join("");
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit rule" : "New rule") + '">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Edit forwarding rule" : "New forwarding rule") + "</h2></div>" +
+      '<div class="sheet-head"><h2 id="t-title">' + (editing ? "Edit forwarding rule" : "New forwarding rule in " + esc(initial)) + "</h2></div>" +
       '<div class="sheet-body">' +
         '<label class="field"><span>Name</span><input id="r-name" value="' + esc(r.name) + '" placeholder="Test server PostgreSQL" autocomplete="off"></label>' +
+        groupField +
         '<label class="field"><span>SSH connection</span><select id="r-conn">' + opts + "</select></label>" +
         '<label class="field"><span>Local port</span><input id="r-lport" value="' + esc(String(r.localPort)) + '" placeholder="5433" autocomplete="off"></label>' +
         '<div class="two">' +
@@ -194,6 +215,9 @@ function openRuleSheet(def) {
   };
   if (!editing) $("r-lport").onchange = suggest;
   else void suggest(); // editing: keep the stored choice, but label what matches
+  if ($("g-sel")) $("g-sel").onchange = function () {
+    $("t-title").textContent = "New forwarding rule in " + $("g-sel").value;
+  };
   $("r-cancel").onclick = closeSheet;
   $("r-save").onclick = function () { void saveRule(def); };
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
@@ -235,17 +259,17 @@ async function saveRule(existing) {
     mcps: readMcpPicks(),
   };
   if (!body.targetPort) body.targetPort = body.localPort;
+  var picked = $("g-sel") ? $("g-sel").value : null;
   var j = existing
     ? await apiJson("/api/tunnels/rules/" + encodeURIComponent(existing.id), { method: "PUT", body: JSON.stringify(body) })
     : await apiJson("/api/tunnels/rules", { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
+  if (picked) rememberGroup("rules", picked);
   closeSheet();
   await loadTunnels();
   var row = j.rule || {};
-  // A create launched from a group header's + lands in that group, not in default.
-  var pg = state.tun.pendingGroup;
-  state.tun.pendingGroup = null;
-  if (!existing && pg && row.id) await assignTunScoped("rules", row.id, pg);
+  // A create lands in the picked group, not wherever the header + promised.
+  if (!existing && picked && row.id) await assignTunScoped("rules", row.id, picked);
   toast((existing ? "Saved " : "Added ") + body.name + (row.state && row.state !== "stopped" ? " (" + row.state + ")" : ""));
 }
 

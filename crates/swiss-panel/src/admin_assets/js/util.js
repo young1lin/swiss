@@ -43,8 +43,8 @@ var state = {
     keys: null,      // cached /api/tunnels/keys
     dragging: null,  // id of the row being dragged — polls must not rebuild under it
     draggingGroup: null, // name of the group header being dragged — same rebuild freeze as a row drag
-    collapsed: { conns: {}, rules: {} }, // fold maps per tab; keys swiss.groups.<scope>.collapsed (groups.js)
-    pendingGroup: null, // group chosen via a header "+", applied to the row the next create lands in
+  pendingGroup: null, // group chosen via a header "+", preselected in the sheet it opens
+    pendingGroup: null, // group chosen via a header "+", preselected in the sheet it opensands in
   },
   jobs: {             // jobs view state (jobs.js renders it; polling.js loads it)
     data: [],        // rows from /api/jobs

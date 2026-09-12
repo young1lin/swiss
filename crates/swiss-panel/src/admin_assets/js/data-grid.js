@@ -156,6 +156,9 @@ function renderDbToolbar() {
       var q = "/api/db/" + encodeURIComponent(d2.conn) + "/export?table=" + encodeURIComponent(d2.table) +
         "&format=" + fmt;
       if (d2.schema) q += "&schema=" + encodeURIComponent(d2.schema);
+      // The grid's filters ride along: the download and the grid describe the same filtered
+      // set, and the exported row count is the filtered total.
+      if (d2.filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d2.filters));
       this.textContent = "Exporting\u2026";
       try {
         var resp = await fetch(q);
