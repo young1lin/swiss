@@ -1,6 +1,6 @@
 # 22 — Data 视图全量对齐:六个批次(W0–W5)
 
-> **状态:Spec + hand-off prompt([docs/22-data-parity-prompt.md](docs/22-data-parity-prompt.md))— 未实施。**
+> **状态:实施中 — W0 已落(分支 `data-parity-w0`:`6685d93..477aab3`,Node 面板侧 `23a5de8`,审计 PASS);W1 进行中。Hand-off prompt:[docs/22-data-parity-prompt.md](docs/22-data-parity-prompt.md)。**
 > 基线:`3d5f42e`(docs/21 落库,master,2026-09-13)。
 >
 > 需求原话(2026-09-13):"/swiss-spec 我需要所有的功能,开始写 spec 吧,注意,需要和 /swiss-design 保持风格一致,然后 EnterWorktree 单独开个 worktree 进去,开始写这部分内容。有一点我需要你注意,vendor 被忽略了,worktree 里面可能引用的 js 没了,我的建议是把 clone 的项目,挪到其他项目下……"(参照库问题同日由用户归位:`../terminals-ref/`。)
