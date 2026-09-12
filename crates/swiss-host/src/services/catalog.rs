@@ -35,7 +35,6 @@ pub struct ConnectionInfo {
     /// The browser dialect ("mysql", "pg", "redis") — or "none" for a registered
     /// entry with nothing to browse, kept in the list so lookup errors can name its type.
     pub dialect: String,
-    pub readonly: bool,
     pub state: String,
 }
 
@@ -341,14 +340,12 @@ mod tests {
                     id: "db-one".into(),
                     label: "db one".into(),
                     dialect: "mysql".into(),
-                    readonly: false,
                     state: "ready".into(),
                 },
                 ConnectionInfo {
                     id: "plain".into(),
                     label: "plain".into(),
                     dialect: "none".into(),
-                    readonly: true,
                     state: "stopped".into(),
                 },
             ]

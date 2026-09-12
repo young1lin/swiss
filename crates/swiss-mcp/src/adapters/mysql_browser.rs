@@ -19,20 +19,13 @@ use std::sync::Arc;
 pub struct MysqlBrowser {
     database: String,
     label: String,
-    readonly: bool,
     conn: Arc<Lazy<MySqlPool>>,
 }
 impl MysqlBrowser {
-    pub fn new(
-        database: String,
-        label: String,
-        readonly: bool,
-        conn: Arc<Lazy<MySqlPool>>,
-    ) -> Self {
+    pub fn new(database: String, label: String, conn: Arc<Lazy<MySqlPool>>) -> Self {
         Self {
             database,
             label,
-            readonly,
             conn,
         }
     }
@@ -68,9 +61,6 @@ impl MysqlBrowser {
 impl DbBrowser for MysqlBrowser {
     fn dialect(&self) -> DbDialect {
         DbDialect::Mysql
-    }
-    fn readonly(&self) -> bool {
-        self.readonly
     }
     fn label(&self) -> String {
         self.label.clone()
@@ -149,11 +139,9 @@ impl DbBrowser for MysqlBrowser {
         );
         let rows = rows?;
         let total = super::mysql::num_or_zero(count?.first().and_then(|r| r.get("total")));
-        let editable = !self.readonly && !primary.is_empty();
-        // Node's editNote: readonly first, then the pk-less explanation (mysql.ts:425-427).
-        let edit_note = if self.readonly {
-            Some("this MCP is configured readonly")
-        } else if primary.is_empty() {
+        let editable = !primary.is_empty();
+        // Node's editNote: the pk-less explanation is the only one left (mysql.ts).
+        let edit_note = if primary.is_empty() {
             Some("table has no primary key, so a row cannot be addressed for edits")
         } else {
             None
@@ -209,16 +197,8 @@ impl DbBrowser for MysqlBrowser {
         )
     }
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
-        // Node's own message: the console is read-only by contract, not by the engine's readonly
-        // flag — the shape check inside assert_read_only is the verdict, the message is the
-        // panel's (pg_browser does the same for its dialect).
-        if crate::adapters::sql::assert_read_only(sql, "MySQL").is_err() {
-            return Err(
-                "the Data view console is read-only — edit rows in the grid instead (edits commit \
-                 as one transaction)"
-                    .into(),
-            );
-        }
+        // The console's one rule: a single statement per run. Reads and writes alike go through —
+        // this console belongs to the panel on the operator's own machine.
         let sql = crate::adapters::sql::assert_single_statement(sql)?;
         let prepared = crate::adapters::sql::with_row_limit(
             &sql,
@@ -255,11 +235,6 @@ impl DbBrowser for MysqlBrowser {
         Ok(Value::Object(out))
     }
     async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
-        if self.readonly {
-            return Err(
-                "refused: this MySQL MCP is configured readonly — editing is disabled".into(),
-            );
-        }
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         let edits = o.get("edits").and_then(Value::as_array);
         if table.is_empty() {
@@ -341,11 +316,6 @@ impl DbBrowser for MysqlBrowser {
     }
 
     async fn import_table(&self, o: &Value) -> Result<Value, String> {
-        if self.readonly {
-            return Err(
-                "refused: this MySQL MCP is configured readonly — import is disabled".into(),
-            );
-        }
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         if table.is_empty() {
             return Err("table is required".into());
@@ -409,12 +379,6 @@ impl DbBrowser for MysqlBrowser {
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
-        if self.readonly {
-            return Err(
-                "refused: this MySQL MCP is configured readonly — structure operations are disabled"
-                    .into(),
-            );
-        }
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         if table.is_empty() {
             return Err("table is required".into());

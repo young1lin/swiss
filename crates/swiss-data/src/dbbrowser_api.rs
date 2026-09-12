@@ -1,6 +1,6 @@
 //! The /api/db routes behind the panel's Data view — port of `dbbrowser-api.ts`: which
 //! connections can be browsed, their (paged, greppable) table lists, one bounded page of rows per
-//! table, the read-only SQL console, and the transactional edit commit.
+//! table, the SQL console, and the transactional edit commit.
 //!
 //! Same boundary as the rest of /api: the router's loopback guard is the only gate. Errors from
 //! the database are handed back verbatim (driver messages never embed credentials) with a 400,
@@ -47,8 +47,9 @@ use swiss_host::services::catalog::{
 pub type OrderSource = std::sync::Arc<dyn Fn() -> Vec<String> + Send + Sync>;
 
 /// One browsable-connection row: everything the panel's picker needs, nothing secret. The
-/// redis flavour rides the same list with editable false (the key browser is read-only by
-/// design; writes go through the MCP's own tools).
+/// redis flavour rides the same list with the same shape; its key grid is browsing only and
+/// writes go through the console — there is no readonly flag anywhere: the operator's
+/// databases are the operator's to change.
 ///
 /// The picker follows the sidebar's manual order (`order`): one manual order for the same
 /// MCPs everywhere, so dragging a row in the sidebar reorders the Data dropdown too. Names
@@ -66,14 +67,11 @@ pub fn browsable_connections(catalog: &CatalogRegistry, order: &[String]) -> Vec
             if c.dialect == "none" {
                 return None;
             }
-            let editable = c.dialect.as_str() != "redis";
             let row = json!({
                 "name": c.id,
                 "dialect": c.dialect,
                 "label": c.label,
-                "readonly": c.readonly,
                 "state": c.state,
-                "editable": editable,
             });
             Some((c.id, row))
         })
@@ -466,9 +464,8 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
     b.import_table(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
-/// Structure operations: rename / truncate / drop. Destructive by nature — the readonly
-/// refusal happens inside the adapter, and the panel additionally demands a typed
-/// confirmation before it ever posts here.
+/// Structure operations: rename / truncate / drop. Destructive by nature — the panel demands
+/// a typed confirmation before it ever posts here.
 async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
     let (_lease, b) = lease_db(catalog, name)?;
     let op = body.get("op").and_then(Value::as_str);
@@ -499,8 +496,8 @@ async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Valu
     b.ddl_op(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
-/// The read-only SQL console. The browser itself enforces read-only-ness; the route just
-/// forwards, so the rule cannot drift between transport and model.
+/// The SQL console. The browser itself enforces the one-statement-per-run rule; the route
+/// just forwards, so the rule cannot drift between transport and model. Writes run.
 async fn query(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
     let (_lease, b) = lease_db(catalog, name)?;
     let sql = coerced_str(body, "sql");
@@ -568,8 +565,8 @@ async fn keys(
     rb.list_keys(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
-/// The redis command console: ONE command per call, validated by the adapter guard
-/// (readonly, no KEYS, no connection/server-breaking commands) before the socket is touched.
+/// The redis command console: ONE command per call, validated by the adapter guard (no KEYS,
+/// no connection/server-breaking commands) before the socket is touched. Writes run.
 async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
     let (_lease, rb) = lease_redis(catalog, name)?;
     let line = coerced_str(body, "command");
@@ -780,9 +777,6 @@ mod tests {
         fn dialect(&self) -> swiss_host::dbbrowser::DbDialect {
             swiss_host::dbbrowser::DbDialect::Mysql
         }
-        fn readonly(&self) -> bool {
-            false
-        }
         fn label(&self) -> String {
             "stub @ localhost".into()
         }
@@ -920,9 +914,6 @@ mod tests {
 
     #[async_trait]
     impl RedisBrowser for StubRedis {
-        fn readonly(&self) -> bool {
-            false
-        }
         fn label(&self) -> String {
             "cache @ localhost:6379 db 0".into()
         }
@@ -965,11 +956,11 @@ mod tests {
         }
     }
 
-    fn row_facts(row: &StubRow) -> (String, String, bool) {
+    fn row_facts(row: &StubRow) -> (String, String) {
         match &row.browser {
-            BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label(), db.readonly()),
-            BrowserFlavor::Redis(rb) => ("redis".into(), rb.label(), rb.readonly()),
-            BrowserFlavor::None => ("none".into(), row.name.clone(), true),
+            BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label()),
+            BrowserFlavor::Redis(rb) => ("redis".into(), rb.label()),
+            BrowserFlavor::None => ("none".into(), row.name.clone()),
         }
     }
 
@@ -986,12 +977,11 @@ mod tests {
             self.rows
                 .iter()
                 .map(|row| {
-                    let (dialect, label, readonly) = row_facts(row);
+                    let (dialect, label) = row_facts(row);
                     ConnectionInfo {
                         id: row.name.clone(),
                         label,
                         dialect,
-                        readonly,
                         state: row.state.clone(),
                     }
                 })
@@ -1013,7 +1003,7 @@ mod tests {
                     id, row.adapter_type
                 )));
             }
-            let (dialect, _, _) = row_facts(row);
+            let (dialect, _) = row_facts(row);
             Ok(self
                 .tracker
                 .grant(id, holder, &dialect, flavor_clone(&row.browser)))
@@ -1523,7 +1513,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runs_the_read_only_console() {
+    async fn runs_the_console_reads_and_writes_alike() {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
@@ -1541,6 +1531,26 @@ mod tests {
         assert_eq!(
             seen.lock().expect("seen").query.take(),
             Some("SELECT 1".to_string())
+        );
+
+        // A write runs too: the console's only rule is one statement per run, and the route
+        // forwards whatever the browser accepts.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/query",
+            Some(json!({ "sql": "UPDATE t SET x = 1", "limit": 10 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json")["rowCount"], 1);
+        assert_eq!(
+            seen.lock().expect("seen").query.take(),
+            Some("UPDATE t SET x = 1".to_string())
         );
 
         let app = router_of(vec![db_entry(
@@ -1576,7 +1586,6 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let row = body.expect("json")["connections"][0].clone();
         assert_eq!(row["dialect"], "redis");
-        assert_eq!(row["editable"], false);
         assert_eq!(row["label"], "cache @ localhost:6379 db 0");
 
         let app = router_of(vec![redis_entry("cache")]);
@@ -1615,7 +1624,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runs_a_read_only_redis_command() {
+    async fn runs_a_redis_command_reads_and_writes_alike() {
         let app = router_of(vec![redis_entry("rdb")]);
         let (status, _, body, _) = call(
             app,
@@ -1636,6 +1645,17 @@ mod tests {
         )
         .await;
         assert_eq!(body.expect("json")["reply"], json!(["a", "b"]));
+
+        // A write runs too: there is no readonly gate anywhere in the console.
+        let app = router_of(vec![redis_entry("rdb")]);
+        let (status, _, _, _) = call(
+            app,
+            "POST",
+            "/api/db/rdb/command",
+            Some(json!({ "command": "SET k v" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
 
         let app = router_of(vec![redis_entry("rdb")]);
         let (status, _, _, _) = call(

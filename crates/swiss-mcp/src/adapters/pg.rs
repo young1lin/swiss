@@ -14,10 +14,10 @@ use sqlx::{Column, Either, Row};
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{TableSort, TableSortKey};
 
-use super::direct::{def_bool, BoxFut, Lazy};
+use super::direct::{BoxFut, Lazy};
 use super::pg_resources::PgResources;
 use super::sql::{
-    assert_read_only, clamp_row_limit, drop_null_columns, like_contains, limit_report,
+    clamp_row_limit, drop_null_columns, like_contains, limit_report,
     table_page_args, with_row_limit, DEFAULT_ROW_LIMIT, DEFAULT_TABLE_LIMIT, MAX_ROW_LIMIT,
     MAX_TABLE_LIMIT,
 };
@@ -263,15 +263,12 @@ pub fn parse_pg_url(url: &str) -> Option<(String, u16, String)> {
 }
 
 /// The connect options — port of `createPool`'s knobs. `max: 4`, `connectionTimeoutMillis:
-/// 5000` and `idleTimeoutMillis: 60000` map onto pool options; `statement_timeout: 15000` and
-/// the read-only session default ride the startup `options` parameter the same way Node sent
-/// `-c default_transaction_read_only=on`.
-pub fn pg_connect_options(url: &str, readonly: bool) -> Result<PgConnectOptions, String> {
-    let mut opts = PgConnectOptions::from_str(url).map_err(|e| e.to_string())?;
-    opts = opts.options([("statement_timeout", "15000")]);
-    if readonly {
-        opts = opts.options([("default_transaction_read_only", "on")]);
-    }
+/// 5000` and `idleTimeoutMillis: 60000` map onto pool options; `statement_timeout: 15000` rides
+/// the startup `options` parameter. Nothing here makes the session read-only: the console and
+/// the grid are the operator's own tools on the operator's own databases.
+pub fn pg_connect_options(url: &str) -> Result<PgConnectOptions, String> {
+    let opts = PgConnectOptions::from_str(url).map_err(|e| e.to_string())?;
+    let opts = opts.options([("statement_timeout", "15000")]);
     Ok(opts)
 }
 
@@ -659,10 +656,9 @@ impl PgEngine {
             .map(|(_, _, db)| db)
             .filter(|db| !db.is_empty());
         let def = def.clone();
-        let readonly = def_bool(&def, "readonly");
         let connect_url = url.clone();
         let conn = Lazy::new(move || {
-            let opts = pg_connect_options(&connect_url, readonly);
+            let opts = pg_connect_options(&connect_url);
             Box::pin(async move {
                 let opts = opts?;
                 // max 4, connectionTimeoutMillis 5000, idleTimeoutMillis 60000 — idle longer
@@ -701,10 +697,6 @@ impl PgEngine {
         }
     }
 
-    fn readonly(&self) -> bool {
-        def_bool(&self.def, "readonly")
-    }
-
     fn max_rows(&self) -> i64 {
         clamp_row_limit(self.def.get("maxRows"), DEFAULT_ROW_LIMIT)
     }
@@ -718,9 +710,6 @@ impl PgEngine {
             .to_string();
         if sql.is_empty() {
             return Err("sql is required".into());
-        }
-        if self.readonly() {
-            assert_read_only(&sql, "Postgres")?;
         }
         let prepared = with_row_limit(&sql, clamp_row_limit(args.get("limit"), self.max_rows()));
         let pool = self.conn.get().await?;
@@ -861,10 +850,7 @@ impl Engine for PgEngine {
 
     fn browser(&self) -> Option<swiss_host::dbbrowser::BrowserFlavor> {
         Some(swiss_host::dbbrowser::BrowserFlavor::Db(Arc::new(
-            super::pg_browser::PgBrowser::new(
-                self.target(),
-                def_bool(&self.def, "readonly"),
-                self.conn.clone(),
+            super::pg_browser::PgBrowser::new(self.target(), self.conn.clone(),
             ),
         )))
     }

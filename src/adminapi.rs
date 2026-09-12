@@ -105,7 +105,6 @@ const DIRECT_FIELDS: [(&str, &[&str]); 3] = [
             "password",
             "database",
             "timezone",
-            "readonly",
             "maxRows",
         ],
     ),
@@ -117,12 +116,11 @@ const DIRECT_FIELDS: [(&str, &[&str]); 3] = [
             "port",
             "password",
             "db",
-            "readonly",
             "allowDestructive",
             "allowEval",
         ],
     ),
-    ("pg", &["description", "url", "readonly", "maxRows"]),
+    ("pg", &["description", "url", "maxRows"]),
 ];
 const BOOL_FIELDS: [&str; 5] = [
     "readonly",

@@ -18,7 +18,7 @@ use super::{rmcp_endpoint, Adapter, McpEndpoint, ResourceToggle, ToolToggle};
 pub type BoxFut<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'static>>;
 
 /// A flag that may arrive as a JSON boolean or as a string: the panel posts form values, so
-/// `"readonly": "true"` and `"readonly": true` both have to mean the same thing.
+/// `"allowEval": "true"` and `"allowEval": true` both have to mean the same thing.
 pub fn def_bool(def: &ServerDef, key: &str) -> bool {
     match def.get(key) {
         Some(Value::Bool(true)) => true,

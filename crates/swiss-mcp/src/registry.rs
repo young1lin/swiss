@@ -867,17 +867,17 @@ impl RegistryCatalog {
         ))
     }
 
-    /// The browser-level facts of one flavor: dialect, label, readonly — the tuple
-    /// browsable_connections' rows and every lease's mismatch message are built from.
-    fn facts_of(flavor: &swiss_host::dbbrowser::BrowserFlavor) -> (String, String, bool) {
+    /// The browser-level facts of one flavor: dialect, label — the pair browsable_connections'
+    /// rows and every lease's mismatch message are built from.
+    fn facts_of(flavor: &swiss_host::dbbrowser::BrowserFlavor) -> (String, String) {
         use swiss_host::dbbrowser::BrowserFlavor;
         match flavor {
-            BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label(), db.readonly()),
-            BrowserFlavor::Redis(rb) => ("redis".to_string(), rb.label(), rb.readonly()),
+            BrowserFlavor::Db(db) => (db.dialect().as_str().to_string(), db.label()),
+            BrowserFlavor::Redis(rb) => ("redis".to_string(), rb.label()),
             // Nothing to browse: dialect "none", no label (the caller falls back to the
-            // entry's name), readonly — kept in the list so lease() can NAME the adapter
-            // type in its refusal, exactly as the old resolver's 404s did.
-            BrowserFlavor::None => ("none".to_string(), String::new(), true),
+            // entry's name) — kept in the list so lease() can NAME the adapter type in its
+            // refusal, exactly as the old resolver's 404s did.
+            BrowserFlavor::None => ("none".to_string(), String::new()),
         }
     }
 }
@@ -889,7 +889,7 @@ impl swiss_host::services::catalog::ConnectionCatalog for RegistryCatalog {
             .into_iter()
             .filter_map(|entry| {
                 let (flavor, name, _adapter_type, state) = self.row_of(&entry)?;
-                let (dialect, label, readonly) = Self::facts_of(&flavor);
+                let (dialect, label) = Self::facts_of(&flavor);
                 // A browser-less entry has no browser to ask for a label: its name is it.
                 let label = if label.is_empty() {
                     name.clone()
@@ -900,7 +900,6 @@ impl swiss_host::services::catalog::ConnectionCatalog for RegistryCatalog {
                     id: name,
                     label,
                     dialect,
-                    readonly,
                     state,
                 })
             })
@@ -928,7 +927,7 @@ impl swiss_host::services::catalog::ConnectionCatalog for RegistryCatalog {
                 name, adapter_type
             )));
         }
-        let (dialect, _label, _readonly) = Self::facts_of(&flavor);
+        let (dialect, _label) = Self::facts_of(&flavor);
         Ok(self.tracker.grant(id, holder, &dialect, flavor))
     }
 }

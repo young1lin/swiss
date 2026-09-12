@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 pub struct RedisDataBrowser {
     label: String,
-    readonly: bool,
     allow_destructive: bool,
     allow_eval: bool,
     conn: Arc<Lazy<RedisHandle>>,
@@ -78,14 +77,12 @@ fn scan_args(o: &Value) -> Result<Vec<String>, String> {
 impl RedisDataBrowser {
     pub fn new(
         label: String,
-        readonly: bool,
         allow_destructive: bool,
         allow_eval: bool,
         conn: Arc<Lazy<RedisHandle>>,
     ) -> Self {
         Self {
             label,
-            readonly,
             allow_destructive,
             allow_eval,
             conn,
@@ -95,9 +92,6 @@ impl RedisDataBrowser {
 
 #[async_trait]
 impl RedisBrowser for RedisDataBrowser {
-    fn readonly(&self) -> bool {
-        self.readonly
-    }
     fn label(&self) -> String {
         self.label.clone()
     }
@@ -169,21 +163,16 @@ impl RedisBrowser for RedisDataBrowser {
 
     async fn run_command(&self, line: &str) -> Result<Value, String> {
         // Split on whitespace (quoted args not offered — redis args are rarely spaced; the MCP
-        // redis_command tool remains the full-featured path). The adapter's own guard rejects
-        // writes, KEYS, blocking and server-breaking commands before anything reaches the socket.
+        // redis_command tool remains the full-featured path). The adapter's own guard still
+        // refuses KEYS, blocking and server-breaking commands before anything reaches the
+        // socket; writes run.
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.is_empty() {
             return Err("type a command, e.g. GET mykey".into());
         }
         let command = parts[0];
         let args = &parts[1..];
-        assert_command_allowed(
-            command,
-            args,
-            self.readonly,
-            self.allow_destructive,
-            self.allow_eval,
-        )?;
+        assert_command_allowed(command, args, self.allow_destructive, self.allow_eval)?;
         let handle = self.conn.get().await?;
         let reply = handle.call(command, args).await?;
         if let Value::Array(items) = &reply {

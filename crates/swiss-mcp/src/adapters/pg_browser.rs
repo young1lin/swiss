@@ -1,8 +1,8 @@
 //! Postgres Data-view browser backed by the adapter's shared sqlx pool — the port of the
 //! `dbBrowser()` object Node's pg adapter returned. Same capability set as the MySQL browser in
-//! this build: list/read/describe plus the read-only console; the buffered-edit grid, CSV
-//! export/import and DDL ops answer "not available in this build" (they are ported per dialect
-//! from dbbrowser.ts in one go, not piecemeal).
+//! this build: list/read/describe plus the console; the buffered-edit grid, CSV export/import
+//! and DDL ops answer "not available in this build" (they are ported per dialect from
+//! dbbrowser.ts in one go, not piecemeal).
 
 use super::direct::Lazy;
 use super::pg::{
@@ -23,17 +23,12 @@ use std::sync::Arc;
 
 pub struct PgBrowser {
     label: String,
-    readonly: bool,
     conn: Arc<Lazy<PgPool>>,
 }
 
 impl PgBrowser {
-    pub fn new(label: String, readonly: bool, conn: Arc<Lazy<PgPool>>) -> Self {
-        Self {
-            label,
-            readonly,
-            conn,
-        }
+    pub fn new(label: String, conn: Arc<Lazy<PgPool>>) -> Self {
+        Self { label, conn }
     }
 
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Map<String, Value>>, String> {
@@ -84,9 +79,6 @@ fn total_of(rows: &[Map<String, Value>]) -> i64 {
 impl DbBrowser for PgBrowser {
     fn dialect(&self) -> DbDialect {
         DbDialect::Pg
-    }
-    fn readonly(&self) -> bool {
-        self.readonly
     }
     fn label(&self) -> String {
         self.label.clone()
@@ -194,10 +186,9 @@ impl DbBrowser for PgBrowser {
         );
         let rows = rows?;
         let total = total_of(&count?);
-        let editable = !self.readonly && !primary.is_empty();
-        let edit_note = if self.readonly {
-            Some("this MCP is configured readonly")
-        } else if primary.is_empty() {
+        let editable = !primary.is_empty();
+        // Node's editNote: the pk-less explanation is the only one left (pg.ts).
+        let edit_note = if primary.is_empty() {
             Some("table has no primary key, so a row cannot be addressed for edits")
         } else {
             None
@@ -294,17 +285,10 @@ impl DbBrowser for PgBrowser {
         if s.is_empty() {
             return Err("sql is required".into());
         }
-        // Node's own message: the console is read-only by contract, not by the engine's readonly
-        // refusal — the shape check inside assert_read_only is the verdict, the message is the
-        // panel's.
-        if super::sql::assert_read_only(s, "Postgres").is_err() {
-            return Err(
-                "the Data view console is read-only — edit rows in the grid instead (edits commit \
-                 as one transaction)"
-                    .into(),
-            );
-        }
-        let prepared = with_row_limit(s, clamp_row_limit(limit, 50));
+        // The console's one rule: a single statement per run. Reads and writes alike go through —
+        // this console belongs to the panel on the operator's own machine.
+        let sql = super::sql::assert_single_statement(s)?;
+        let prepared = with_row_limit(&sql, clamp_row_limit(limit, 50));
         // Object form on purpose (Node sent { text, values: [] }): the extended protocol refuses
         // a stacked second statement server-side even if a masked-literal trick ever slips one
         // past the shape check. pg_query (the MCP tool) keeps the string form — multi-statement
@@ -336,11 +320,6 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
-        if self.readonly {
-            return Err(
-                "refused: this Postgres MCP is configured readonly — editing is disabled".into(),
-            );
-        }
         let schema = o
             .get("schema")
             .and_then(Value::as_str)
@@ -432,11 +411,6 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn import_table(&self, o: &Value) -> Result<Value, String> {
-        if self.readonly {
-            return Err(
-                "refused: this Postgres MCP is configured readonly — import is disabled".into(),
-            );
-        }
         let schema = o
             .get("schema")
             .and_then(Value::as_str)
@@ -499,12 +473,6 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
-        if self.readonly {
-            return Err(
-                "refused: this Postgres MCP is configured readonly — structure operations are disabled"
-                    .into(),
-            );
-        }
         let schema = o
             .get("schema")
             .and_then(Value::as_str)

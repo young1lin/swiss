@@ -192,8 +192,8 @@ const REJECTED: &[(&[&str], &str)] = &[
 
 /// Commands whose first argument decides, because one name covers both a harmless read and real
 /// damage: `CONFIG GET` reports, `CONFIG SET dir` is the first half of the classic Redis
-/// takeover. `read` subcommands survive readonly, `write` ones do not, and anything unlisted is
-/// refused — a new Redis release cannot quietly add a subcommand that slips through.
+/// takeover. Subcommands outside the two lists are refused — a new Redis release cannot quietly
+/// add a subcommand that slips through.
 const CONTAINERS: &[(&str, &[&str], &[&str])] = &[
     ("CONFIG", &["GET"], &[]),
     (
@@ -222,62 +222,6 @@ const CONTAINERS: &[(&str, &[&str], &[&str])] = &[
         &["USAGE", "STATS", "DOCTOR", "MALLOC-STATS"],
         &["PURGE"],
     ),
-];
-
-/// Read-only commands permitted through redis_command when the MCP is marked readonly. Both
-/// dedicated tools (redis_scan, redis_read) are pure reads, so this is the only place a write
-/// can enter. Container commands are absent on purpose: their own policy above decides, per
-/// subcommand.
-const READ_COMMANDS: &[&str] = &[
-    "GET",
-    "MGET",
-    "GETRANGE",
-    "STRLEN",
-    "EXISTS",
-    "TTL",
-    "PTTL",
-    "TYPE",
-    "SCAN",
-    "RANDOMKEY",
-    "HGET",
-    "HGETALL",
-    "HKEYS",
-    "HVALS",
-    "HLEN",
-    "HMGET",
-    "HEXISTS",
-    "HSCAN",
-    "LRANGE",
-    "LLEN",
-    "LINDEX",
-    "SMEMBERS",
-    "SCARD",
-    "SISMEMBER",
-    "SSCAN",
-    "SRANDMEMBER",
-    "ZRANGE",
-    "ZREVRANGE",
-    "ZRANGEBYSCORE",
-    "ZCARD",
-    "ZSCORE",
-    "ZCOUNT",
-    "ZSCAN",
-    "ZRANK",
-    "XRANGE",
-    "XREVRANGE",
-    "XLEN",
-    "XINFO",
-    "GETBIT",
-    "BITCOUNT",
-    "OBJECT",
-    "INFO",
-    "DBSIZE",
-    "PING",
-    "TIME",
-    "LOLWUT",
-    "COMMAND",
-    "LASTSAVE",
-    "DUMP",
 ];
 
 /// Ceiling for the ordered reads' window — mirrors the output budget's per-reply item cap.
@@ -628,7 +572,6 @@ pub async fn type_aware_read(
 pub fn assert_command_allowed(
     command: &str,
     args: &[&str],
-    readonly: bool,
     allow_destructive: bool,
     allow_eval: bool,
 ) -> Result<(), String> {
@@ -643,20 +586,12 @@ pub fn assert_command_allowed(
              blocked waiting for it."
         ));
     }
-    if set_has(SCRIPTING, &upper) {
-        if !allow_eval {
-            return Err(format!(
-                "{upper} is rejected: the gateway cannot see inside a script, so none of its other rules apply to \
-                 one — a single line of Lua can flush the keyspace, block the server in a loop, or run any command \
-                 this MCP refuses. Set \"allowEval\": true on this MCP if you accept that."
-            ));
-        }
-        if readonly {
-            return Err(format!(
-                "{upper} is rejected: \"allowEval\" and \"readonly\" contradict each other on this MCP — a script \
-                 the gateway cannot read cannot be held to readonly. Clear one of the two."
-            ));
-        }
+    if set_has(SCRIPTING, &upper) && !allow_eval {
+        return Err(format!(
+            "{upper} is rejected: the gateway cannot see inside a script, so none of its other rules apply to \
+             one — a single line of Lua can flush the keyspace, block the server in a loop, or run any command \
+             this MCP refuses. Set \"allowEval\": true on this MCP if you accept that."
+        ));
     }
     for (commands, why) in REJECTED {
         if commands.contains(&upper.as_str()) {
@@ -692,15 +627,7 @@ pub fn assert_command_allowed(
                     permitted.join(", ")
                 ));
             }
-            if read.contains(&sub.as_str()) {
-                return Ok(()); // a read, so readonly does not apply
-            }
-            if write.contains(&sub.as_str()) {
-                if readonly {
-                    return Err(format!(
-                        "{upper} {sub} is rejected: this Redis MCP is configured readonly"
-                    ));
-                }
+            if read.contains(&sub.as_str()) || write.contains(&sub.as_str()) {
                 return Ok(());
             }
             return Err(format!(
@@ -708,11 +635,6 @@ pub fn assert_command_allowed(
                 permitted.join(", ")
             ));
         }
-    }
-    if readonly && !set_has(READ_COMMANDS, &upper) {
-        return Err(format!(
-            "{upper} is rejected: this Redis MCP is configured readonly"
-        ));
     }
     Ok(())
 }
@@ -859,9 +781,6 @@ impl RedisEngine {
         }
     }
 
-    fn readonly(&self) -> bool {
-        def_bool(&self.def, "readonly")
-    }
     fn allow_destructive(&self) -> bool {
         def_bool(&self.def, "allowDestructive")
     }
@@ -972,7 +891,6 @@ impl RedisEngine {
         assert_command_allowed(
             &command,
             &rest_refs,
-            self.readonly(),
             self.allow_destructive(),
             self.allow_eval(),
         )?;
@@ -1031,7 +949,6 @@ impl Engine for RedisEngine {
         Some(swiss_host::dbbrowser::BrowserFlavor::Redis(Arc::new(
             super::redis_browser::RedisDataBrowser::new(
                 self.where_(),
-                self.readonly(),
                 self.allow_destructive(),
                 self.allow_eval(),
                 self.conn.clone(),
@@ -1079,70 +996,61 @@ impl Engine for RedisEngine {
 mod tests {
     use super::*;
 
-    fn def_bools(readonly: bool, allow_destructive: bool, allow_eval: bool) -> (bool, bool, bool) {
-        (readonly, allow_destructive, allow_eval)
-    }
-
     #[test]
     fn policy_rejects_the_named_harms() {
-        let (ro, ad, ae) = def_bools(false, false, false);
+        let (ad, ae) = (false, false);
         // KEYS points at the alternative.
-        let err = assert_command_allowed("keys", &[], ro, ad, ae).unwrap_err();
+        let err = assert_command_allowed("keys", &[], ad, ae).unwrap_err();
         assert!(err.contains("redis_scan"), "{err}");
-        assert!(assert_command_allowed("SUBSCRIBE", &[], ro, ad, ae)
+        assert!(assert_command_allowed("SUBSCRIBE", &[], ad, ae)
             .unwrap_err()
             .contains("shares one connection"));
-        assert!(assert_command_allowed("SHUTDOWN", &[], ro, ad, ae)
+        assert!(assert_command_allowed("SHUTDOWN", &[], ad, ae)
             .unwrap_err()
             .contains("server itself"));
-        assert!(assert_command_allowed("FLUSHALL", &[], ro, ad, ae)
+        assert!(assert_command_allowed("FLUSHALL", &[], ad, ae)
             .unwrap_err()
             .contains("allowDestructive"));
-        assert!(assert_command_allowed("EVAL", &["..."], ro, ad, ae)
+        assert!(assert_command_allowed("EVAL", &["..."], ad, ae)
             .unwrap_err()
             .contains("cannot see inside a script"));
-        assert!(assert_command_allowed("", &[], ro, ad, ae)
+        assert!(assert_command_allowed("", &[], ad, ae)
             .unwrap_err()
             .contains("required"));
     }
 
     #[test]
     fn policy_lets_the_opt_ins_through() {
-        let (_, ad, ae) = def_bools(false, true, true);
-        assert!(assert_command_allowed("FLUSHALL", &[], false, ad, ae).is_ok());
-        assert!(assert_command_allowed("EVAL", &["return 1", "0"], false, ad, ae).is_ok());
-        // allowEval + readonly still contradict.
-        assert!(
-            assert_command_allowed("EVAL", &["return 1", "0"], true, ad, ae)
-                .unwrap_err()
-                .contains("contradict")
-        );
+        let (ad, ae) = (true, true);
+        assert!(assert_command_allowed("FLUSHALL", &[], ad, ae).is_ok());
+        assert!(assert_command_allowed("EVAL", &["return 1", "0"], ad, ae).is_ok());
     }
 
     #[test]
-    fn readonly_permits_reads_only() {
-        let (ro, ad, ae) = def_bools(true, false, false);
-        assert!(assert_command_allowed("GET", &["k"], ro, ad, ae).is_ok());
-        assert!(assert_command_allowed("SET", &["k", "v"], ro, ad, ae)
-            .unwrap_err()
-            .contains("readonly"));
-        // Container reads survive; CONFIG has no write list at all, so CONFIG SET hits the
-        // permitted-list error (Node behavior), while CLIENT's write subcommand hits readonly.
-        assert!(assert_command_allowed("CONFIG", &["GET", "maxmemory"], ro, ad, ae).is_ok());
+    fn ordinary_writes_run_there_is_no_readonly_gate() {
+        // SET/DEL/EXPIRE pass with no opt-in: there is no readonly flag anymore, the operator's
+        // data is the operator's to change.
+        assert!(assert_command_allowed("SET", &["k", "v"], false, false).is_ok());
+        assert!(assert_command_allowed("DEL", &["k"], false, false).is_ok());
+        assert!(assert_command_allowed("EXPIRE", &["k", "60"], false, false).is_ok());
+    }
+
+    #[test]
+    fn container_policy_still_decides_per_subcommand() {
+        // CONFIG has no write list at all, so CONFIG SET hits the permitted-list error (Node
+        // behavior), while CLIENT's listed write subcommands pass without any opt-in.
+        let (ad, ae) = (false, false);
+        assert!(assert_command_allowed("CONFIG", &["GET", "maxmemory"], ad, ae).is_ok());
         assert!(
-            assert_command_allowed("CONFIG", &["SET", "dir", "/x"], ro, ad, ae)
+            assert_command_allowed("CONFIG", &["SET", "dir", "/x"], ad, ae)
                 .unwrap_err()
                 .contains("only these subcommands")
         );
-        assert!(
-            assert_command_allowed("CLIENT", &["SETNAME", "x"], ro, ad, ae)
-                .unwrap_err()
-                .contains("readonly")
-        );
-        assert!(assert_command_allowed("CONFIG", &["RESETSTAT"], ro, ad, ae)
+        assert!(assert_command_allowed("CLIENT", &["SETNAME", "x"], ad, ae).is_ok());
+        assert!(assert_command_allowed("CONFIG", &["RESETSTAT"], ad, ae)
             .unwrap_err()
             .contains("only these subcommands"));
-        assert!(assert_command_allowed("CONFIG", &[], ro, ad, ae)
+        assert!(assert_command_allowed("CONFIG", &[], ad, ae)
             .unwrap_err()
             .contains("requires a subcommand"));
     }

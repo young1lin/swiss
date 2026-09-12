@@ -12,12 +12,12 @@ use sqlx::{Column, Either, Executor, Row};
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{TableSort, TableSortKey};
 
-use super::direct::{def_bool, BoxFut, Lazy};
+use super::direct::{BoxFut, Lazy};
 use super::mysql_browser::MysqlBrowser;
 use super::mysql_resources::MysqlResources;
 use super::resources::human_bytes;
 use super::sql::{
-    assert_read_only, assert_single_statement, clamp_row_limit, drop_null_columns, like_contains,
+    assert_single_statement, clamp_row_limit, drop_null_columns, like_contains,
     limit_report, table_page_args, with_row_limit, DEFAULT_ROW_LIMIT, DEFAULT_TABLE_LIMIT,
     MAX_ROW_LIMIT, MAX_TABLE_LIMIT,
 };
@@ -221,14 +221,11 @@ pub fn mysql_connect_options(def: &ServerDef) -> MySqlConnectOptions {
 }
 
 /// The per-connection session statements the pool hands every new connection.
-pub fn mysql_session_sql(readonly: bool) -> Vec<&'static str> {
-    // `max_execution_time` caps runaway SELECTs server-side, and the read-only session default
-    // is the real guard behind the statement-shape check — MySQL refuses writes outright.
-    let mut session = vec!["SET SESSION max_execution_time = 15000"];
-    if readonly {
-        session.push("SET SESSION TRANSACTION READ ONLY");
-    }
-    session
+pub fn mysql_session_sql() -> Vec<&'static str> {
+    // `max_execution_time` caps runaway SELECTs server-side. Nothing here makes the session
+    // read-only: the console and the grid are the operator's own tools on the operator's own
+    // databases.
+    vec!["SET SESSION max_execution_time = 15000"]
 }
 
 // --- rows → JSON ----------------------------------------------------------------------------------
@@ -559,11 +556,9 @@ impl MysqlEngine {
             super::resources::assert_ident(db, "database name").map_err(|f| f.0)?;
         }
         let def = def.clone();
-        let readonly = def_bool(&def, "readonly");
         let connect = mysql_connect_options(&def);
         let conn = Lazy::new(move || {
             let connect = connect.clone();
-            let readonly = readonly;
             Box::pin(async move {
                 // connectionLimit 5 — a handful of local clients, not a web app. Node's
                 // queueLimit 20 / connectTimeout 5000 map onto one acquire timeout that bounds
@@ -572,7 +567,7 @@ impl MysqlEngine {
                     .max_connections(5)
                     .acquire_timeout(std::time::Duration::from_secs(5))
                     .after_connect(move |conn, _| {
-                        let session = mysql_session_sql(readonly);
+                        let session = mysql_session_sql();
                         Box::pin(async move {
                             // The Node build swallowed a session statement an older server did
                             // not know; a failed SET must not fail the whole connection.
@@ -612,10 +607,6 @@ impl MysqlEngine {
         }
     }
 
-    fn readonly(&self) -> bool {
-        def_bool(&self.def, "readonly")
-    }
-
     fn max_rows(&self) -> i64 {
         clamp_row_limit(self.def.get("maxRows"), DEFAULT_ROW_LIMIT)
     }
@@ -629,9 +620,6 @@ impl MysqlEngine {
             .to_string();
         if sql.is_empty() {
             return Err("sql is required".into());
-        }
-        if self.readonly() {
-            assert_read_only(&sql, "MySQL")?;
         }
         // sqlx negotiates MULTI_STATEMENTS where mysql2 did not — refuse the smuggled second
         // statement before it ever reaches the wire (sql.rs owns the why).
@@ -748,7 +736,7 @@ impl Engine for MysqlEngine {
     fn browser(&self) -> Option<swiss_host::dbbrowser::BrowserFlavor> {
         let database = self.database.clone()?;
         Some(swiss_host::dbbrowser::BrowserFlavor::Db(Arc::new(
-            MysqlBrowser::new(database, self.target(), self.readonly(), self.conn.clone()),
+            MysqlBrowser::new(database, self.target(), self.conn.clone()),
         )))
     }
 
@@ -791,18 +779,9 @@ mod tests {
     }
 
     #[test]
-    fn session_sql_gains_read_only_only_when_asked() {
-        assert_eq!(
-            mysql_session_sql(false),
-            vec!["SET SESSION max_execution_time = 15000"]
-        );
-        assert_eq!(
-            mysql_session_sql(true),
-            vec![
-                "SET SESSION max_execution_time = 15000",
-                "SET SESSION TRANSACTION READ ONLY"
-            ]
-        );
+    fn session_sql_has_no_read_only_statement() {
+        // The pool only caps runaway SELECTs; nothing makes the session read-only.
+        assert_eq!(mysql_session_sql(), vec!["SET SESSION max_execution_time = 15000"]);
     }
 
     #[test]

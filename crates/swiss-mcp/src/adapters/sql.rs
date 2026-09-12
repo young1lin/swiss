@@ -1,19 +1,6 @@
 //! SQL guards shared by the mysql/pg adapters — port of `adapters/sql.ts`. Every matcher is a
 //! hand-written scanner (ADR-007 keeps the regex engine out of the binary).
 
-/// Statement keywords that write, in any dialect we speak here (the Node build's WRITE_RE).
-const WRITE_WORDS: [&str; 21] = [
-    "insert", "update", "delete", "truncate", "drop", "alter", "create", "rename", "replace",
-    "grant", "revoke", "copy", "vacuum", "analyze", "merge", "call", "do", "refresh", "lock",
-    "set", "reset",
-];
-const WRITE_WORDS_MORE: [&str; 5] = ["comment", "cluster", "reindex", "import", "load"];
-
-/// Statement shapes that only read.
-const READ_FIRST: [&str; 8] = [
-    "select", "with", "show", "explain", "describe", "desc", "table", "values",
-];
-
 /// Word-boundary, case-insensitive contains: does `haystack` contain `word` as a whole ASCII word?
 /// A word starts at a non-alphanumeric-underscore boundary on each side — the `\b` of the regexes
 /// this replaces.
@@ -50,58 +37,6 @@ fn first_word(s: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Best-effort check that a statement only reads — port of `isReadOnlySql`.
-///
-/// This is a guard that produces a clear error message, NOT a security boundary — the real
-/// boundary is the database session itself (Postgres `default_transaction_read_only`, or a user
-/// granted only SELECT). Use both.
-///
-/// Every decision here is made on MASKED text (string literals, quoted identifiers and comments
-/// blanked out, leading comments among them), so neither `WHERE note = 'delete me'` nor a
-/// keyword in a comment can change the answer.
-pub fn is_read_only_sql(sql: &str) -> bool {
-    // Drop a trailing terminator first: `SELECT 1;` is one statement, not two.
-    let masked = mask_literals(sql);
-    let s = trim_trailing(&masked);
-    let s = strip_trailing_semicolon(s).trim();
-    if s.is_empty() {
-        return false;
-    }
-    // Leading "("s are layout, not a keyword: "((select 1) union (select 2))" is a plain read.
-    let body = s.trim_start_matches(['(', ' ', '\t', '\n', '\r']);
-    let first = first_word(body);
-    if !READ_FIRST.contains(&first.as_str()) {
-        return false;
-    }
-    // A second statement rides along for free on the simple query protocol — refuse anything
-    // that still holds a separator once literals and comments are out of the way.
-    if s.contains(';') {
-        return false;
-    }
-    let rest = &body[first.len()..];
-    // `SELECT ... INTO` writes behind a read-looking verb: INTO newtable creates one, OUTFILE/
-    // DUMPFILE write files, INTO @var assigns. Runs on masked text, so an INTO inside a literal
-    // or identifier is safe.
-    if has_word(rest, "into") {
-        return false;
-    }
-    // `WITH x AS (...) DELETE ...` and `EXPLAIN ANALYZE INSERT ...` read like reads but are not.
-    if first == "with" || first == "explain" {
-        return !has_any_word(rest, &WRITE_WORDS) && !has_any_word(rest, &WRITE_WORDS_MORE);
-    }
-    true
-}
-
-/// Reject a statement that writes when the MCP is marked readonly.
-pub fn assert_read_only(sql: &str, label: &str) -> Result<(), String> {
-    if is_read_only_sql(sql) {
-        return Ok(());
-    }
-    Err(format!(
-        "refused: this {label} MCP is configured readonly, and the statement is not a plain read"
-    ))
-}
-
 /// Reject a statement that smuggles a second one past the driver, returning the single trimmed
 /// statement. mysql2 parity: the Node build never sent two (multipleStatements stays false
 /// there), while sqlx negotiates MULTI_STATEMENTS unconditionally — so this port draws the same
@@ -112,9 +47,7 @@ pub fn assert_single_statement(sql: &str) -> Result<String, String> {
         .trim()
         .to_string();
     if mask_literals(&trimmed).contains(';') {
-        return Err(
-            "multiple statements in one call are not allowed — send them one at a time".into(),
-        );
+        return Err("one statement per run — send each further statement on its own.".into());
     }
     Ok(trimmed)
 }
@@ -568,29 +501,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_pass() {
-        assert!(is_read_only_sql("SELECT 1"));
-        assert!(is_read_only_sql("select * from t where note = 'delete me'"));
-        assert!(is_read_only_sql("  ((select 1) union (select 2))  "));
-        assert!(is_read_only_sql("WITH x AS (SELECT 1) SELECT * FROM x"));
-        assert!(is_read_only_sql("EXPLAIN SELECT 1"));
-        assert!(is_read_only_sql("SHOW TABLES"));
-        assert!(is_read_only_sql("select 1;")); // one trailing terminator is one statement
+    fn any_single_statement_passes_reads_and_writes_alike() {
+        for sql in [
+            "SELECT 1",
+            "select * from t where note = 'delete me'",
+            "  ((select 1) union (select 2))  ",
+            "UPDATE t SET x = 1",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "SELECT * INTO newtable FROM t",
+            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x",
+            "-- select\nUPDATE t SET x = 1",
+        ] {
+            assert!(assert_single_statement(sql).is_ok(), "{sql}");
+        }
     }
 
     #[test]
-    fn writes_and_tricks_fail() {
-        assert!(!is_read_only_sql("DELETE FROM t"));
-        assert!(!is_read_only_sql("SELECT 1; DROP TABLE t"));
-        assert!(!is_read_only_sql("SELECT * INTO newtable FROM t"));
-        assert!(!is_read_only_sql(
-            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x"
-        ));
-        assert!(!is_read_only_sql(
-            "EXPLAIN ANALYZE INSERT INTO t VALUES (1)"
-        ));
-        assert!(!is_read_only_sql("-- select\nUPDATE t SET x = 1"));
-        assert!(!is_read_only_sql("select 'a'; drop table t'"));
+    fn stacked_statements_fail() {
+        for sql in [
+            "SELECT 1; DROP TABLE t",
+            "UPDATE t SET x = 1; SELECT 1",
+            "select 'a'; drop table t'",
+        ] {
+            assert!(assert_single_statement(sql).is_err(), "{sql}");
+        }
+        // One trailing terminator is one statement.
+        assert!(assert_single_statement("select 1;").is_ok());
+        // A semicolon inside a literal or a comment is not a separator.
+        assert!(assert_single_statement("SELECT * FROM t WHERE note = 'a;b'").is_ok());
+        assert!(assert_single_statement("SELECT 1 -- ; DROP TABLE t\n").is_ok());
     }
 
     #[test]

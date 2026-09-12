@@ -333,6 +333,13 @@ fn record_matcher(key: &str) -> Option<fn(&str) -> bool> {
 pub fn mask_def(def: &ServerDef) -> ServerDef {
     let mut out = Map::new();
     for (k, v) in &def.0 {
+        // "readonly" is a dead key: nothing reads it anymore (the Data view is editable,
+        // period), and an old def still carrying it must not surface the word in the panel's
+        // Config tab. It stays in stored state untouched and disappears for good on the next
+        // edit-save.
+        if k == "readonly" {
+            continue;
+        }
         if is_env_ref(v) {
             out.insert(k.clone(), v.clone());
             continue;
@@ -468,6 +475,15 @@ mod tests {
 
     fn mask(v: Value) -> Value {
         serde_json::to_value(mask_def(&ServerDef(v.as_object().cloned().unwrap()))).unwrap()
+    }
+
+    #[test]
+    fn drops_the_dead_readonly_key() {
+        // Ported from test/mask.test.ts: nothing reads "readonly" anymore; the panel must
+        // never see the word again.
+        let out = mask(json!({ "type": "mysql", "host": "127.0.0.1", "readonly": true }));
+        assert!(out.get("readonly").is_none());
+        assert_eq!(out, json!({ "type": "mysql", "host": "127.0.0.1" }));
     }
 
     #[test]

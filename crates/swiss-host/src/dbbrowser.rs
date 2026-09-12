@@ -436,8 +436,6 @@ impl FilterColumn {
 #[async_trait]
 pub trait DbBrowser: Send + Sync {
     fn dialect(&self) -> DbDialect;
-    /// True when the underlying MCP def is readonly — the panel shows a read-only banner.
-    fn readonly(&self) -> bool;
     /// Where this connection points ("app @ localhost:3306"). Never a password.
     fn label(&self) -> String;
     async fn list_tables(&self, o: &Value) -> Result<Value, String>;
@@ -446,26 +444,26 @@ pub trait DbBrowser: Send + Sync {
     async fn describe_table(&self, o: &Value) -> Result<Value, String>;
     /// Apply a buffered edit list in ONE transaction: all of it, or none of it.
     async fn apply_edits(&self, o: &Value) -> Result<Value, String>;
-    /// The SQL console: read-only by construction, so a paste can never write.
+    /// The SQL console: one statement per run, reads and writes alike — this console belongs
+    /// to the panel on the operator's own machine.
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String>;
     /// Stream a whole table (capped at EXPORT_ROW_CAP) out as CSV or newline JSON.
     async fn export_table(&self, o: &Value) -> Result<Value, String>;
     /// Insert mapped CSV rows in ONE transaction (all-or-nothing), via the same statement
     /// builders the edit grid uses. Returns rows written.
     async fn import_table(&self, o: &Value) -> Result<Value, String>;
-    /// Rename / truncate / drop a table. Refused outright on a readonly connection.
+    /// Rename / truncate / drop a table.
     async fn ddl_op(&self, o: &Value) -> Result<Value, String>;
 }
 
 /// The redis flavour of the Data view: page keys by SCAN, read one key type-aware.
 #[async_trait]
 pub trait RedisBrowser: Send + Sync {
-    fn readonly(&self) -> bool;
     fn label(&self) -> String;
     async fn list_keys(&self, o: &Value) -> Result<Value, String>;
     async fn read_key(&self, key: &str) -> Result<Value, String>;
-    /// Run ONE command from the console: GET, HGETALL, LRANGE, TTL, TYPE, SCAN… Read-only
-    /// enforced by the adapter's own command guard (assert_command_allowed + READ_COMMANDS).
+    /// Run ONE command from the console: reads AND writes (SET, DEL, EXPIRE…). The adapter's
+    /// own command guard still refuses what would break the shared connection or the server.
     async fn run_command(&self, line: &str) -> Result<Value, String>;
 }
 
