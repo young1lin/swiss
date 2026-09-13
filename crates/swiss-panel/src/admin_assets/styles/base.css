@@ -242,11 +242,12 @@
       border-bottom: 1px solid var(--sep);
       min-width: 0; /* lets the level-one seg scroll instead of pushing the right side off */
     }
-    /* The toolbar's right-hand button (docs/18 V3): appearance only. Refresh moved to the
-       memory chip; token management lives in the MCP group's Token page. */
+    /* The toolbar's right-hand button (docs/18 V3): appearance only. Refresh is a keyboard
+       affair (the r key; the memory chip's click re-reads memory only); token management
+       lives in the MCP group's Token page. */
     .tool-acts { display: inline-flex; gap: 2px; }
-    /* The memory chip IS the refresh control (renderMemory wires the click): mono because the
-       value is a copyable number, .chip.button for the hover affordance. */
+    /* The memory chip is a control (renderMemory wires a memory-only click): mono because
+       the value is a copyable number, .chip.button for the hover affordance. */
     #memChip { font-family: var(--mono); }
     @media (max-width: 960px) { #memChip { display: none; } /* 960px is the support floor */ }
     /* The brand carries a mark: the swiss logo (logo.svg), a red shield with a white cross -

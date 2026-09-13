@@ -2,6 +2,7 @@ import { $, apiJson, el, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
+import { dbOpenValueSheet } from "./data-value.js";
 import { dbClearSel, dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
@@ -235,6 +236,13 @@ function dbCellMenu(e, row, key, column, editInDialog) {
     menu.appendChild(b);
   }
   item("Copy value", function () { dbCopyText(value === null || value === undefined ? "NULL" : String(value)); });
+  // docs/22 W5.3: the read-only viewer — full text, a JSON tree, hex or the link. NULL has
+  // no content to view, so it gets no item (same rule as the filter items below).
+  if (value !== null && value !== undefined) {
+    item("View value\u2026", function () {
+      dbOpenValueSheet(column, value, (d.schema ? d.schema + "." : "") + d.table);
+    });
+  }
   if (editInDialog) {
     item("Edit in dialog\u2026", editInDialog); // long text / JSON: the user-chosen dialog path
   }
@@ -391,6 +399,11 @@ function dbResultCellMenu(e, row, column) {
   }
   var v = row ? row[column] : undefined;
   item("Copy value", function () { dbCopyText(v === null || v === undefined ? "NULL" : String(v)); });
+  // docs/22 W5.3: the same read-only viewer on a console-result cell (no column types there —
+  // the value alone picks the presentation, and the \\x wire form still says hex).
+  if (v !== null && v !== undefined) {
+    item("View value\u2026", function () { dbOpenValueSheet(column, v, "SQL result"); });
+  }
   if (i >= 0) {
     var rk = dbResultKey(d.sqlTab || 0, i);
     var on = !!d.sel[rk];

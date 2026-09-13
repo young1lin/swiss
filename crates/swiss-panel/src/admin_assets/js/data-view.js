@@ -3,8 +3,13 @@ import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisPendingCount } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
+import { dbFavLoad, dbFavPush, dbFormatSql, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbActivityPane, dbActivityPollStop } from "./data-activity.js";
+// dbLoadDetail (the Structure tabs' loader) is needed at the table-open path now: the FK
+// jump (docs/22 W5.2) reads the detail's foreignKeys. The cycle data-view <-> data-structure
+// is the same accepted shape as data-grid <-> data-cell — both sides only call across it
+// inside functions, never at module scope.
+import { dbLoadDetail } from "./data-structure.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
@@ -51,7 +56,8 @@ function dbFreshState() {
                          // ^ W4.3: sqlResult is the ACTIVE tab's reply; sqlResults holds every
                          // statement's reply and sqlTab which one is showing
     history: [],         // last-run console queries, newest first (per-browser, localStorage)
-    tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
+    tab: "data",        // data | form | columns | indexes | ddl | fks — Form is the data page's own second view (W5.1)
+    formIdx: 0,         // the Form tab's record — grid row space (inserts first), shared with the keyboard focus
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisKey: null,      // the key whose value is shown in the pane
     redisEdits: null,    // buffered typed-value edits for that key (docs/22 W3.3)
@@ -291,14 +297,33 @@ function renderDbView() {
   };
   $("dbSqlHistory").onchange = function () {
     if (this.value === "") return;
-    var sql = state.db.history[Number(this.value)];
+    // docs/22 W5.4: "f"+i is a favorite, a plain index history — both land in the console.
+    var fav = this.value.charAt(0) === "f";
+    var sql = fav ? state.db.favorites[Number(this.value.slice(1))]
+      : state.db.history[Number(this.value)];
     this.value = ""; // back to the label, so the same entry can be picked again
     if (sql == null) return;
     state.db.sqlText = sql;
     var ta = $("dbSql");
     if (ta) { ta.value = sql; dbSqlPaint(); ta.focus(); }
   };
+  // docs/22 W5.4: the star saves the console text to the favorites group; Format re-indents
+  // it in place (whitespace only — the run result cannot change).
+  var favBtn = $("dbSqlFav");
+  if (favBtn) {
+    favBtn.innerHTML = icon("star");
+    favBtn.title = "Save the console text to favorites";
+    favBtn.onclick = function () { dbFavPush(state.db.sqlText); };
+  }
+  $("dbSqlFormat").onclick = function () {
+    var d = state.db;
+    if (!d.sqlText || !d.sqlText.trim()) return;
+    d.sqlText = dbFormatSql(d.sqlText);
+    var ta = $("dbSql");
+    if (ta) { ta.value = d.sqlText; dbSqlPaint(); ta.focus(); }
+  };
   dbHistoryLoad();
+  dbFavLoad();
   dbHistoryRender();
   renderDbToolbar(); renderDbGrid(); renderDbBar();
   // docs/22 W4.6: the list band's + opens the New table sheet — SQL connections only (the
@@ -399,12 +424,14 @@ function dbRedisCompare(a, b) {
 function dbSyncKind() {
   var grep = $("dbGrep"), sql = $("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
   if (!grep || !sql || !explain || !hint) return;
+  var fmt = $("dbSqlFormat");
   dbPaintSort();
   if (dbIsRedis()) {
     grep.placeholder = "Filter keys"; grep.setAttribute("aria-label", "Filter keys");
     grep.title = "Filter keys (a SCAN MATCH pattern)";
     sql.placeholder = "SET k v · GET k · DEL k · HGETALL h · TTL k — one command per run";
     explain.hidden = true;
+    if (fmt) fmt.hidden = true; // docs/22 W5.4: SQL formatting has nothing to say about a command
     hint.textContent = "writes run · KEYS is refused, use the key list · Ctrl+Enter runs";
   } else {
     // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
@@ -412,6 +439,7 @@ function dbSyncKind() {
     grep.title = "Filter tables: comma-separated terms AND together, | is OR, * is a wildcard";
     sql.placeholder = "SELECT / UPDATE / DELETE … — statements split on ;";
     explain.hidden = false;
+    if (fmt) fmt.hidden = false;
     // docs/22 W4.3: the ; split answers one result tab per statement; the blank-line block
     // rule (W1.8) still decides what a single Run covers.
     hint.textContent = "a blank line starts a new block · Ctrl+Enter runs the caret's block · ; splits it into one result tab per statement";
@@ -691,6 +719,48 @@ function dbOpenTable(t) {
   dbDropEdits();
   renderDbTables();
   dbLoadData();
+  // docs/22 W5.2: the detail rides along with every open — the FK columns' header arrows
+  // read it, and the Structure tabs were going to ask for it on their first click anyway.
+  dbLoadDetail();
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };
+/** docs/22 W5.2: the FK jump's payload — one describe_table FK row plus the focused row's
+ *  value become exactly the open-table state a typed filter would have built (the W1.5
+ *  channel's shape), or nothing at all: col = NULL matches nothing, so a NULL has no jump.
+ *  Pure. */
+function dbFkJump(fk, value) {
+  if (!fk || value === null || value === undefined) return null;
+  return {
+    schema: fk.refSchema || null,
+    table: fk.refTable,
+    filters: [{ column: fk.refColumn, op: "eq", value: value }],
+  };
+}
+
+/** The focused row's value of one column — the header arrow's "current value". Buffered
+ *  inserts sit in front of the page's rows exactly as the grid draws them. undefined means
+ *  nothing is focused; null IS a value (a NULL cell) — the caller tells them apart. Pure. */
+function dbFocusedColumnValue(d, column) {
+  if (!d || !d.focus || !d.data) return undefined;
+  if (d.focus.r < d.inserts.length) return d.inserts[d.focus.r].values[column];
+  var row = d.data.rows[d.focus.r - d.inserts.length];
+  return row ? row[column] : undefined;
+}
+
+/** Open the referenced table with the filter preset (adminer's select-link, dbgate's
+ *  openReferenceForm — both land on the target table already filtered to one row). */
+function dbFkOpen(fk, value) {
+  var j = dbFkJump(fk, value);
+  if (!j || !dbOkToDrop()) return;
+  var d = state.db;
+  d.table = j.table; d.schema = j.schema;
+  d.offset = 0; d.order = null; d.dir = "asc"; d.filters = j.filters;
+  d.tab = "data"; d.detail = null;
+  d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0;
+  dbDropEdits();
+  renderDbTables();
+  dbLoadData();
+  dbLoadDetail(); // the target table's own FK arrows arrive with its detail
+}
+
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };

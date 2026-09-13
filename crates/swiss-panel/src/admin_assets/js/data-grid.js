@@ -6,7 +6,8 @@ import { dbEditCellEnter } from "./data-edit.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
-import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbOkToDrop, dbPkKey, dbPkVals, dbResultKey } from "./data-view.js";
+import { renderDbFormView } from "./data-form.js";
+import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbPkVals, dbResultKey } from "./data-view.js";
 import { popupMenu } from "./menu.js";
 import { act } from "./detail.js";
 
@@ -669,6 +670,8 @@ function renderDbGrid() {
 
   if (d.sqlResult || d.sqlBusy) { renderDbResultGrid(wrap); return; }
   if (dbIsRedis()) { dbRenderRedisValue(wrap); return; }
+  // docs/22 W5.1: the Form tab paints the same rows as the grid, one record at a time.
+  if (d.tab === "form") { renderDbFormView(wrap); return; }
   if (d.tab !== "data") { renderDbDetailGrid(wrap); return; }
   if (!d.conn) { wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first.")); return; }
   if (!d.table || !d.data) {
@@ -718,6 +721,34 @@ function renderDbGrid() {
     main.appendChild(el("span", "db-col-name", c.name));
     if (c.isPrimaryKey) main.appendChild(el("span", "db-key", "⚿"));
     main.appendChild(el("span", "db-col-type", c.dataType));
+    // docs/22 W5.2: the FK column's jump — one small straight arrow (the chevron belongs to
+    // pagination) that opens the referenced table with the FOCUSED row's value as an eq
+    // filter, the same channel a typed filter or W1.5's cell menu uses. The detail (and its
+    // foreignKeys) loads with the table; until it answers there is no arrow, which is the
+    // honest state — and a table with no FKs never draws one.
+    var fk = ((d.detail && d.detail.foreignKeys) || []).filter(function (f) { return f.column === c.name; })[0];
+    if (fk) {
+      var jump = el("button", "db-col-fk");
+      jump.type = "button";
+      jump.setAttribute("aria-label", "Jump to referenced row");
+      jump.title = "Open " + (fk.refSchema ? fk.refSchema + "." : "") + fk.refTable +
+        " filtered to this column's value in the focused row";
+      jump.innerHTML = icon("arrow-right");
+      jump.onclick = function (ev) {
+        ev.stopPropagation(); // the header click sorts; this click jumps
+        var v = dbFocusedColumnValue(state.db, c.name);
+        if (v === undefined) {
+          toast("Click a cell in " + c.name + " first — the jump uses that row's value", true);
+          return;
+        }
+        if (v === null) {
+          toast("The focused row's " + c.name + " is NULL — nothing to jump to", true);
+          return;
+        }
+        dbFkOpen(fk, v);
+      };
+      main.appendChild(jump);
+    }
     if (sorted) main.appendChild(el("span", "db-sort"));
     th.appendChild(main);
     if (hasComments) th.appendChild(el("div", "db-col-comment", c.comment || ""));
@@ -1055,4 +1086,4 @@ function dbNextSort(order, dir, name) {
   return { order: name, dir: "desc" };
 }
 
-export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns, dbTsvRows };
+export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, dbRowAddr, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns, dbTsvRows };
