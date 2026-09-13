@@ -493,6 +493,11 @@ pub enum BrowseEdit {
     Update {
         pk: Map<String, Value>,
         changes: Map<String, Value>,
+        /// docs/22 W4.2: the row's original values, against which every CHANGED column is
+        /// compared in the WHERE (the optimistic lock — cloudbeaver sends the same shape in
+        /// ResultSetEditAction.ts:112-127). The panel instead packs the whole row into pk;
+        /// either map feeds the lock, whichever carries the column.
+        source: Option<Map<String, Value>>,
     },
     Insert {
         values: Map<String, Value>,
@@ -508,6 +513,120 @@ impl BrowseEdit {
             BrowseEdit::Update { .. } => "update",
             BrowseEdit::Insert { .. } => "insert",
             BrowseEdit::Delete { .. } => "delete",
+        }
+    }
+}
+
+/// docs/22 W4.2: the CHANGED columns an update compares against the buffered originals —
+/// the optimistic lock's column list, which is also the 409 body's answer. Empty when the
+/// edit carries no originals to compare with (a pk-only update keeps today's semantics:
+/// zero affected rows stays a quiet result, not a conflict — the request never claimed to
+/// know the row). A keyless table's lock is its every-column address, so every changed
+/// column rides it by construction.
+pub fn optimistic_lock_columns(primary_key: &[String], edit: &BrowseEdit) -> Vec<String> {
+    match edit {
+        BrowseEdit::Update {
+            pk,
+            changes,
+            source,
+        } => {
+            let mut cols: Vec<String> = if primary_key.is_empty() {
+                changes.keys().cloned().collect()
+            } else {
+                let origin = source.as_ref().unwrap_or(pk);
+                changes
+                    .keys()
+                    .filter(|c| origin.contains_key(*c) && !primary_key.contains(*c))
+                    .cloned()
+                    .collect()
+            };
+            cols.sort();
+            cols
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// A lost optimistic-lock race (docs/22 W4.2): another writer moved the row between the
+/// read and the commit. The columns are the ones whose buffered originals no longer match,
+/// so the panel can paint exactly those cells red; an empty list means the mismatch sat in
+/// the addressing itself (the row exists but nothing we meant to change differs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditConflict {
+    pub message: String,
+    pub columns: Vec<String>,
+    /// The buffered row the race was over, as the caller addressed it (the pk map the
+    /// panel posted) — echoed so the grid can find the exact buffered entry among many,
+    /// instead of guessing by column names alone.
+    pub row: Option<Map<String, Value>>,
+}
+
+/// apply_edits' failure vocabulary: Bad is the caller's fault (a 400 — an unaddressable
+/// row, an ambiguous twin), Conflict is another writer's (a 409 — the optimistic lock
+/// lost, and the whole batch rolled back).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditError {
+    Bad(String),
+    Conflict(EditConflict),
+}
+
+impl From<String> for EditError {
+    fn from(m: String) -> Self {
+        EditError::Bad(m)
+    }
+}
+
+impl From<&str> for EditError {
+    fn from(m: &str) -> Self {
+        EditError::Bad(m.to_string())
+    }
+}
+
+impl std::fmt::Display for EditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditError::Bad(m) => f.write_str(m),
+            EditError::Conflict(c) => f.write_str(&c.message),
+        }
+    }
+}
+
+/// Diff the buffered originals against the row the database shows right now: every changed
+/// column whose current value differs from its original names the conflict. A missing probe
+/// row means deleted-or-rewritten — a keyless address cannot tell the two apart (there is
+/// no key to re-find it by) — and the changed columns are still the honest answer.
+pub fn conflict_of(
+    changed: &[String],
+    source: &Map<String, Value>,
+    current: Option<&Map<String, Value>>,
+) -> EditConflict {
+    match current {
+        None => EditConflict {
+            message: format!(
+                "row was changed or deleted by another writer — columns: {} (re-check the grid and resubmit)",
+                changed.join(", ")
+            ),
+            columns: changed.to_vec(),
+            row: None,
+        },
+        Some(row) => {
+            let moved: Vec<&String> = changed
+                .iter()
+                .filter(|c| row.get(*c) != source.get(*c))
+                .collect();
+            let columns: Vec<String> = moved.iter().map(|c| (*c).clone()).collect();
+            EditConflict {
+                message: format!(
+                    "row was changed by another writer{} — re-check the grid and resubmit",
+                    if columns.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — columns: {}", columns.join(", "))
+                    }
+                ),
+                columns,
+                row: None,
+            }
         }
     }
 }
@@ -578,8 +697,10 @@ pub trait DbBrowser: Send + Sync {
     async fn read_table(&self, o: &Value) -> Result<Value, String>;
     /// Columns, indexes, foreign keys and DDL for one table — the Structure tabs.
     async fn describe_table(&self, o: &Value) -> Result<Value, String>;
-    /// Apply a buffered edit list in ONE transaction: all of it, or none of it.
-    async fn apply_edits(&self, o: &Value) -> Result<Value, String>;
+    /// Apply a buffered edit list in ONE transaction: all of it, or none of it. The
+    /// error says whose fault it is (docs/22 W4.2): Bad is the caller's request, Conflict
+    /// is another writer having moved a row the buffer claimed to still see.
+    async fn apply_edits(&self, o: &Value) -> Result<Value, EditError>;
     /// The SQL console: one statement per run, reads and writes alike — this console belongs
     /// to the panel on the operator's own machine.
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String>;
@@ -1152,6 +1273,7 @@ pub fn browse_edit_of(v: &Value) -> Result<BrowseEdit, String> {
         "update" => Ok(BrowseEdit::Update {
             pk: obj("pk"),
             changes: obj("changes"),
+            source: v.get("source").and_then(Value::as_object).cloned(),
         }),
         "delete" => Ok(BrowseEdit::Delete { pk: obj("pk") }),
         // Garbage input: Node let an unknown op fall through to a TypeError deeper in; this port
@@ -1234,6 +1356,199 @@ fn typed_ph(dialect: DbDialect, params: &[Value], data_type: Option<&str>) -> St
     }
 }
 
+// --- addressing a row without a key (docs/22 W4.1) ------------------------------------------------
+
+/// The length past which a text or binary value addresses its row through md5() instead of
+/// itself. Adminer's own line (select.inc.php:458 — there "the value is too long for the
+/// URL"; here it keeps the WHERE, and the W1.7 read-back SELECT that shares it, from
+/// carrying whole paragraphs as bound parameters).
+pub const EDIT_ADDR_MD5_MIN: usize = 64;
+
+/// The information_schema data_types whose values are addressable text or bytes: adminer's
+/// text_type() (functions.inc.php:84 — char|text, plus enum/set on MySQL) and the blob and
+/// bytea kinds is_blob() adds. Substring match because the catalog spells full names
+/// ("character varying", "mediumtext", "varbinary"); no numeric or temporal type contains
+/// any of these fragments.
+fn is_text_or_binary(data_type: &str) -> bool {
+    let t = data_type.to_ascii_lowercase();
+    ["char", "text", "blob", "binary", "bytea", "enum", "set", "json", "xml"]
+        .iter()
+        .any(|frag| t.contains(frag))
+}
+
+/// MD5 over the bytes, lowercase hex — the spelling both dialects' own md5() produce.
+pub fn md5_hex(input: &[u8]) -> String {
+    md5_digest(input)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// MD5 (RFC 1321), hand-rolled exactly the way swiss-panel's sha1 is: the digest only
+/// ADDRESSES rows here (docs/22 W4.1), it guards nothing, and a crypto crate pulled into
+/// the host for seventy lines of fixed arithmetic would be the heavier dependency, not the
+/// lighter one. md-5 already sits in the lock file behind sqlx, but reaching into another
+/// crate's transitive pocket is not a dependency policy either. Verified against the RFC's
+/// own test vectors in the tests below.
+fn md5_digest(msg: &[u8]) -> [u8; 16] {
+    // Round constants: abs(sin(i + 1)) * 2^32, i = 0..64 — RFC 1321 §3.4.
+    const K: [u32; 64] = [
+        3614090360, 3905402710, 606105819, 3250441966, 4118548399, 1200080426, 2821735955,
+        4249261313, 1770035416, 2336552879, 4294925233, 2304563134, 1804603682, 4254626195,
+        2792965006, 1236535329, 4129170786, 3225465664, 643717713, 3921069994, 3593408605,
+        38016083, 3634488961, 3889429448, 568446438, 3275163606, 4107603335, 1163531501,
+        2850285829, 4243563512, 1735328473, 2368359562, 4294588738, 2272392833, 1839030562,
+        4259657740, 2763975236, 1272893353, 4139469664, 3200236656, 681279174, 3936430074,
+        3572445317, 76029189, 3654602809, 3873151461, 530742520, 3299628645, 4096336452,
+        1126891415, 2878612391, 4237533241, 1700485571, 2399980690, 4293915773, 2240044497,
+        1873313359, 4264355552, 2734768916, 1309151649, 4149444226, 3174756917, 718787259,
+        3951481745,
+    ];
+    // Per-round shift amounts, RFC 1321 §3.4.
+    const S: [u32; 64] = [
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20,
+        5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+    ];
+    let mut a0: u32 = 0x6745_2301;
+    let mut b0: u32 = 0xefcd_ab89;
+    let mut c0: u32 = 0x98ba_dcfe;
+    let mut d0: u32 = 0x1032_5476;
+    // Padding: 0x80, zeros to 56 mod 64, then the bit length little-endian.
+    let mut data = Vec::with_capacity(msg.len() + 72);
+    data.extend_from_slice(msg);
+    data.push(0x80);
+    while data.len() % 64 != 56 {
+        data.push(0);
+    }
+    data.extend_from_slice(&((msg.len() as u64).wrapping_mul(8)).to_le_bytes());
+    for block in data.chunks(64) {
+        let mut m = [0u32; 16];
+        for (i, word) in block.chunks(4).enumerate() {
+            m[i] = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+        }
+        let (mut a, mut b, mut c, mut d) = (a0, b0, c0, d0);
+        for i in 0..64 {
+            let (f, g) = match i / 16 {
+                0 => ((b & c) | (!b & d), i),
+                1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
+                2 => (b ^ c ^ d, (3 * i + 5) % 16),
+                _ => (c ^ (b | !d), (7 * i) % 16),
+            };
+            let temp = d;
+            d = c;
+            c = b;
+            let sum = a
+                .wrapping_add(f)
+                .wrapping_add(K[i])
+                .wrapping_add(m[g]);
+            b = b.wrapping_add(sum.rotate_left(S[i]));
+            a = temp;
+        }
+        a0 = a0.wrapping_add(a);
+        b0 = b0.wrapping_add(b);
+        c0 = c0.wrapping_add(c);
+        d0 = d0.wrapping_add(d);
+    }
+    let mut out = [0u8; 16];
+    out[0..4].copy_from_slice(&a0.to_le_bytes());
+    out[4..8].copy_from_slice(&b0.to_le_bytes());
+    out[8..12].copy_from_slice(&c0.to_le_bytes());
+    out[12..16].copy_from_slice(&d0.to_le_bytes());
+    out
+}
+
+/// One md5-addressed comparison — md5(col) = ? — for a text or binary value past
+/// EDIT_ADDR_MD5_MIN bytes. The placeholder stays bare on purpose: the bound value is the
+/// 32-char digest (text on both dialects), never the column's own type.
+fn md5_address(
+    dialect: DbDialect,
+    quoted: &str,
+    value: &Value,
+    params: &mut Vec<Value>,
+) -> String {
+    let bytes = match value {
+        Value::String(s) => s.as_bytes().to_vec(),
+        other => other.to_string().into_bytes(),
+    };
+    params.push(json!(md5_hex(&bytes)));
+    format!("md5({quoted}) = {}", ph(dialect, params))
+}
+
+/// Why a row cannot be addressed by its values: a NULL ("NULL is ambiguous" — adminer's
+/// unique_array comment, functions.inc.php:331 — col = NULL matches nothing) or a column
+/// the row map does not carry at all.
+enum AddressGap {
+    Null(String),
+    Missing(String),
+}
+
+impl AddressGap {
+    fn message(&self, op: &str) -> String {
+        match self {
+            AddressGap::Null(c) => format!(
+                "{op} needs a non-NULL value for every column (no primary key): {c} is NULL"
+            ),
+            AddressGap::Missing(c) => format!(
+                "{op} needs a value for every column (no primary key): {c} is missing"
+            ),
+        }
+    }
+}
+
+/// The every-column address of one row (docs/22 W4.1): `col = value` per table column,
+/// typed placeholders as everywhere else, md5(col) for long text/binary values. Values come
+/// from the row map the panel buffered (the pk map, which carries the whole original row on
+/// a keyless table). Appends the bound parameters in comparison order.
+fn address_where(
+    dialect: DbDialect,
+    columns: &[BrowseColumn],
+    row: &Map<String, Value>,
+    params: &mut Vec<Value>,
+) -> Result<String, AddressGap> {
+    let mut parts: Vec<String> = Vec::with_capacity(columns.len());
+    for c in columns {
+        let quoted = quote_ident(dialect, &c.name).map_err(|_| AddressGap::Missing(c.name.clone()))?;
+        let Some(v) = row.get(&c.name) else {
+            return Err(AddressGap::Missing(c.name.clone()));
+        };
+        if v.is_null() {
+            return Err(AddressGap::Null(c.name.clone()));
+        }
+        if is_text_or_binary(&c.data_type) && value_len(v) > EDIT_ADDR_MD5_MIN {
+            parts.push(md5_address(dialect, &quoted, v, params));
+        } else {
+            params.push(v.clone());
+            parts.push(format!(
+                "{quoted} = {}",
+                typed_ph(dialect, params, Some(c.data_type.as_str()))
+            ));
+        }
+    }
+    Ok(parts.join(" AND "))
+}
+
+/// A value's length in bytes — the >64 test of EDIT_ADDR_MD5_MIN is about payload size, not
+/// character count (adminer's strlen is bytes too).
+fn value_len(v: &Value) -> usize {
+    match v {
+        Value::String(s) => s.len(),
+        Value::Array(a) => a.iter().map(value_len).sum::<usize>() + 2,
+        Value::Object(o) => o.iter().map(|(k, v)| k.len() + value_len(v) + 4).sum(),
+        other => other.to_string().len(),
+    }
+}
+
+/// The ambiguous-row refusal (docs/22 W4.1): Postgres has no UPDATE … LIMIT, so an
+/// every-column address matching more than one row fails the whole batch instead of
+/// quietly picking a winner. MySQL clips with LIMIT 1 and reports 1, so the check there
+/// never fires — kept dialect-blind because the verdict is the adapter's, not the builder's.
+pub fn ambiguous_row_error(op: &str, affected: u64) -> String {
+    format!(
+        "ambiguous row: the {op} matched {affected} rows — refusing to pick one; the batch was rolled back"
+    )
+}
+
 /// Turn a buffered edit list into executable statements: one statement per edit, in order, with
 /// every value bound and every identifier pre-vetted. Column names the table does not have are
 /// dropped from SET/INSERT (a stale page may reference a dropped column); an edit that ends up
@@ -1262,8 +1577,8 @@ pub fn page_and_next(
 /// - an insert on MySQL reads back by LAST_INSERT_ID() in the same transaction;
 /// - an update selects its row by primary key (the edit already carries those values).
 ///
-/// Deletes read nothing back — the row is gone by design — and a table without a usable key
-/// reads nothing back either (W4.1 makes those editable later).
+/// Deletes read nothing back — the row is gone by design — and neither does a row whose
+/// values cannot address itself (a NULL among them on a keyless table, W4.1).
 #[derive(Clone, Debug)]
 pub enum ReadBack {
     /// The suffix to append to the edit's own INSERT; its parameters are unchanged.
@@ -1322,6 +1637,38 @@ pub fn readback_plan(
             ReadBack::Select(BuiltStatement {
                 sql: format!("SELECT {list} FROM {target} WHERE {k} = LAST_INSERT_ID()"),
                 params: Vec::new(),
+            })
+        }
+        BrowseEdit::Update {
+            pk: values,
+            changes,
+            ..
+        } if pk.is_empty() => {
+            // docs/22 W4.1: a keyless table reads its row back by the same every-column
+            // address the update itself used — the read-back is the same truth, and twins
+            // (identical on every column) come back identical, which is exactly the one
+            // case where a LIMIT-less SELECT still tells it. A row the values cannot
+            // address (a NULL among them — the update refused it; a quote-hostile name)
+            // reads nothing back rather than failing the commit it only decorates.
+            //
+            // The address is the row AS THE COMMIT LEFT IT (originals overlaid with the
+            // changes): every column is addressing here, so probing by the untouched
+            // originals would re-find nothing the moment any value moved. Caught live in
+            // the W4.2 verify — the edit landed and the read-back said null.
+            let (Some(list), Some(target)) = (cols(), target()) else {
+                return ReadBack::None;
+            };
+            let mut after: Map<String, Value> = values.clone();
+            for (c, v) in changes {
+                after.insert(c.clone(), v.clone());
+            }
+            let mut params: Vec<Value> = Vec::new();
+            let Ok(where_sql) = address_where(dialect, columns, &after, &mut params) else {
+                return ReadBack::None;
+            };
+            ReadBack::Select(BuiltStatement {
+                sql: format!("SELECT {list} FROM {target} WHERE {where_sql}"),
+                params,
             })
         }
         BrowseEdit::Update { pk: values, .. } => {
@@ -1536,8 +1883,13 @@ pub fn build_import_statements(
     Ok((out, degraded))
 }
 
-/// Updates and deletes address rows by the FULL primary key only — the DBeaver default — so an
-/// edit can never fan out over more rows than the cell you changed.
+/// Updates and deletes address rows by the FULL primary key when there is one — the DBeaver
+/// default, so an edit can never fan out over more rows than the cell you changed — and by
+/// EVERY column when there is not (docs/22 W4.1, adminer's unique_idf): the row map then
+/// carries the whole original row, a NULL in any column makes the row unaddressable ("NULL
+/// is ambiguous"), text/binary values past EDIT_ADDR_MD5_MIN bytes compare through md5(),
+/// and MySQL clips the statement with LIMIT 1 while Postgres' affected-rows check in the
+/// adapter refuses twins outright.
 pub fn build_edit_statements(
     dialect: DbDialect,
     schema: Option<&str>,
@@ -1552,6 +1904,7 @@ pub fn build_edit_statements(
         .iter()
         .map(|c| (c.name.as_str(), c.data_type.as_str()))
         .collect();
+    let keyless = primary_key.is_empty();
     let mut out: Vec<BuiltStatement> = Vec::new();
     for edit in edits {
         let mut params: Vec<Value> = Vec::new();
@@ -1569,6 +1922,20 @@ pub fn build_edit_statements(
                 }
                 Ok(where_sql.join(" AND "))
             };
+        // The every-column twin of pk_where (docs/22 W4.1): the trailing LIMIT 1 MySQL alone
+        // accepts — Postgres' ambiguity guard is the affected-rows check in the adapter.
+        let row_where = |pk: &Map<String, Value>,
+                         params: &mut Vec<Value>|
+         -> Result<String, String> {
+            address_where(dialect, columns, pk, params).map_err(|gap| gap.message(edit.op()))
+        };
+        let mysql_limit = |stmt: String| -> String {
+            if keyless && dialect == DbDialect::Mysql {
+                format!("{stmt} LIMIT 1")
+            } else {
+                stmt
+            }
+        };
         match edit {
             BrowseEdit::Insert { values } => {
                 let (_, sql, insert_params) =
@@ -1579,43 +1946,41 @@ pub fn build_edit_statements(
                 });
             }
             BrowseEdit::Delete { pk } => {
-                // update / delete: the WHERE needs a value for every PK column, or the edit is
-                // unaddressable.
-                if primary_key.is_empty() {
-                    return Err(format!(
-                        "table has no primary key — {} is not possible",
-                        edit.op()
-                    ));
-                }
-                for c in primary_key {
-                    if !pk.contains_key(c) {
-                        return Err(format!(
-                            "{} needs a value for primary-key column {}",
-                            edit.op(),
-                            c
-                        ));
+                // update / delete: the WHERE needs a value for every addressing column — the
+                // PK columns on a keyed table, every column on a keyless one (W4.1).
+                let where_sql = if keyless {
+                    row_where(pk, &mut params)?
+                } else {
+                    for c in primary_key {
+                        if !pk.contains_key(c) {
+                            return Err(format!(
+                                "{} needs a value for primary-key column {}",
+                                edit.op(),
+                                c
+                            ));
+                        }
                     }
-                }
-                let where_sql = pk_where(pk, &mut params)?;
+                    pk_where(pk, &mut params)?
+                };
                 out.push(BuiltStatement {
-                    sql: format!("DELETE FROM {table_ref} WHERE {where_sql}"),
+                    sql: mysql_limit(format!("DELETE FROM {table_ref} WHERE {where_sql}")),
                     params,
                 });
             }
-            BrowseEdit::Update { pk, changes } => {
-                if primary_key.is_empty() {
-                    return Err(format!(
-                        "table has no primary key — {} is not possible",
-                        edit.op()
-                    ));
-                }
-                for c in primary_key {
-                    if !pk.contains_key(c) {
-                        return Err(format!(
-                            "{} needs a value for primary-key column {}",
-                            edit.op(),
-                            c
-                        ));
+            BrowseEdit::Update {
+                pk,
+                changes,
+                source,
+            } => {
+                if !keyless {
+                    for c in primary_key {
+                        if !pk.contains_key(c) {
+                            return Err(format!(
+                                "{} needs a value for primary-key column {}",
+                                edit.op(),
+                                c
+                            ));
+                        }
                     }
                 }
                 // Bind in SQL order — SET placeholders appear before the WHERE's, and a positional
@@ -1636,13 +2001,62 @@ pub fn build_edit_statements(
                         typed_ph(dialect, &params, type_of.get(c.as_str()).copied())
                     ));
                 }
-                let where_sql = pk_where(pk, &mut params)?;
+                let origin = source.as_ref().unwrap_or(pk);
+                let where_sql = if keyless {
+                    // The every-column address IS the optimistic lock here (W4.1 + W4.2
+                    // merge on their own): the row the panel buffered is the row asked for.
+                    row_where(pk, &mut params)?
+                } else {
+                    // docs/22 W4.2: the optimistic lock — every CHANGED column whose
+                    // original the row map carries is compared in the WHERE, so a row that
+                    // moved underneath matches zero rows instead of silently overwriting.
+                    // Only columns the map actually carries are compared: a pk-only payload
+                    // (an API caller that never saw the row) keeps today's SQL byte for
+                    // byte. NULL originals need the NULL-safe forms — col = NULL matches
+                    // nothing and would false-conflict every commit of a NULL cell; long
+                    // text rides the md5 address like W4.1's keyless WHERE.
+                    let mut w = pk_where(pk, &mut params)?;
+                    for (c, _) in &sets {
+                        if primary_key.contains(*c) {
+                            continue; // the pk arm of the WHERE already pins the original key
+                        }
+                        let Some(orig) = origin.get(*c) else {
+                            continue;
+                        };
+                        let quoted = quote_ident(dialect, c)?;
+                        let dt = type_of.get(c.as_str()).copied();
+                        let frag = if orig.is_null() {
+                            params.push(Value::Null);
+                            if dialect == DbDialect::Mysql {
+                                format!("{quoted} <=> {}", ph(dialect, &params))
+                            } else {
+                                format!(
+                                    "{quoted} IS NOT DISTINCT FROM {}",
+                                    typed_ph(dialect, &params, dt)
+                                )
+                            }
+                        } else if is_text_or_binary(dt.unwrap_or(""))
+                            && value_len(orig) > EDIT_ADDR_MD5_MIN
+                        {
+                            md5_address(dialect, &quoted, orig, &mut params)
+                        } else {
+                            params.push(orig.clone());
+                            format!(
+                                "{quoted} = {}",
+                                typed_ph(dialect, &params, dt)
+                            )
+                        };
+                        w.push_str(" AND ");
+                        w.push_str(&frag);
+                    }
+                    w
+                };
                 out.push(BuiltStatement {
-                    sql: format!(
+                    sql: mysql_limit(format!(
                         "UPDATE {table_ref} SET {} WHERE {}",
                         set_sql.join(", "),
                         where_sql
-                    ),
+                    )),
                     params,
                 });
             }
@@ -3259,6 +3673,7 @@ mod tests {
         let upd = BrowseEdit::Update {
             pk: vmap(&[("id", 7)]),
             changes: vmap(&[("name", 0)]),
+            source: None,
         };
         match readback_plan(DbDialect::Mysql, None, "users", &columns, &pk, &upd) {
             ReadBack::Select(s) => {
@@ -3308,10 +3723,13 @@ mod tests {
             readback_plan(DbDialect::Mysql, None, "users", &columns, &pk, &del),
             ReadBack::None
         ));
-        // No key to address the row by: nothing comes back, the commit itself is unaffected.
+        // W4.1 replaced the old "no key, nothing back": a keyless table reads back by
+        // its every-column address (no_pk_readback_selects_by_the_same_all_column_address
+        // pins it), and the address carries the changes the commit just wrote — the probe
+        // re-finds the row the update moved.
         assert!(matches!(
             readback_plan(DbDialect::Mysql, None, "users", &columns, &[], &upd),
-            ReadBack::None
+            ReadBack::Select(_)
         ));
     }
 
@@ -3659,6 +4077,9 @@ mod tests {
     #[test]
     fn edit_statements_refuse_unaddressable_rows() {
         let cols = stub_columns();
+        // docs/22 W4.1: a table with no primary key is no longer refused outright — its rows
+        // are addressed by every column — but the row map still has to carry those values.
+        // An empty map names the first missing column instead of the old blanket refusal.
         let err = build_edit_statements(
             DbDialect::Mysql,
             None,
@@ -3668,7 +4089,8 @@ mod tests {
             &[],
         )
         .unwrap_err();
-        assert!(err.contains("no primary key"), "{err}");
+        assert!(err.contains("every column"), "{err}");
+        assert!(err.contains("id"), "{err}");
         let err = build_edit_statements(
             DbDialect::Mysql,
             None,
@@ -3679,6 +4101,324 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("primary-key column id"), "{err}");
+    }
+
+    #[test]
+    fn md5_matches_the_rfc1321_vectors() {
+        // The RFC's own suite plus block-boundary padding cases (55 bytes pads inside one
+        // block, 56 needs a second, 64 forces a whole extra one) — the same discipline
+        // swiss-panel's hand-rolled sha1 follows.
+        assert_eq!(md5_hex(b""), "d41d8cd98f00b204e9800998ecf8427e");
+        assert_eq!(md5_hex(b"a"), "0cc175b9c0f1b6a831c399e269772661");
+        assert_eq!(md5_hex(b"abc"), "900150983cd24fb0d6963f7d28e17f72");
+        assert_eq!(
+            md5_hex(b"message digest"),
+            "f96b697d7cb7938d525a2f31aaf161d0"
+        );
+        assert_eq!(
+            md5_hex(b"abcdefghijklmnopqrstuvwxyz"),
+            "c3fcd3d76192e4007dfb496cca67e13b"
+        );
+        assert_eq!(md5_hex(&[b'x'; 100]), "aed563ecafb4bcc5654c597a421547b2");
+        assert_eq!(md5_hex(&[b'a'; 55]), "ef1772b6dff9a122358552954ad0df65");
+        assert_eq!(md5_hex(&[b'a'; 56]), "3b0c8ac703f828b04c6c197006d17218");
+        assert_eq!(md5_hex(&[b'a'; 64]), "014842d480b571495a4a0363793f7367");
+    }
+
+    #[test]
+    fn ambiguous_row_error_names_the_count() {
+        let err = ambiguous_row_error("update", 2);
+        assert!(err.contains("ambiguous"), "{err}");
+        assert!(err.contains("2 rows"), "{err}");
+    }
+
+    #[test]
+    fn no_pk_edits_address_every_column() {
+        // docs/22 W4.1 (adminer select.inc.php:440-472): without a primary key a row is
+        // addressed by ALL its columns — the panel carries the buffered row's original
+        // values in the pk map, so the same map that holds key values on a keyed table
+        // holds the whole row here. MySQL clips the statement with LIMIT 1; Postgres has
+        // no such syntax and the adapter's affected-rows check guards twins instead.
+        let cols = vec![
+            col("id", "int", false, false),
+            col("name", "varchar", true, false),
+        ];
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "alice" },
+            "changes": { "name": "ann" },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &[])
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE `users` SET `name` = ? WHERE `id` = ? AND `name` = ? LIMIT 1"
+        );
+        assert_eq!(out[0].params, vec![json!("ann"), json!(7), json!("alice")]);
+        let out = build_edit_statements(DbDialect::Pg, None, "users", &edits, &cols, &[]).unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE \"users\" SET \"name\" = CAST($1 AS varchar) WHERE \"id\" = CAST($2 AS int) AND \"name\" = CAST($3 AS varchar)"
+        );
+        let edits = vec![edit(json!({ "op": "delete", "pk": { "id": 7, "name": "alice" } }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &[])
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "DELETE FROM `users` WHERE `id` = ? AND `name` = ? LIMIT 1"
+        );
+        assert_eq!(out[0].params, vec![json!(7), json!("alice")]);
+        let out = build_edit_statements(DbDialect::Pg, None, "users", &edits, &cols, &[]).unwrap();
+        assert_eq!(
+            out[0].sql,
+            "DELETE FROM \"users\" WHERE \"id\" = CAST($1 AS int) AND \"name\" = CAST($2 AS varchar)"
+        );
+    }
+
+    #[test]
+    fn no_pk_address_hashes_long_text_with_md5() {
+        // adminer select.inc.php:458: a text or binary value longer than 64 bytes addresses
+        // the row as md5(col) = ? — the digest keeps the WHERE (and the W1.7 read-back
+        // SELECT, which shares this addressing) from carrying whole paragraphs. Both
+        // dialects have md5() built in, so the one spelling serves both.
+        let long = "x".repeat(100);
+        let cols = vec![col("id", "int", false, false), col("note", "text", true, false)];
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "note": long },
+            "changes": { "note": "short now" },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "t", &edits, &cols, &[]).unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE `t` SET `note` = ? WHERE `id` = ? AND md5(`note`) = ? LIMIT 1"
+        );
+        assert_eq!(
+            out[0].params,
+            vec![json!("short now"), json!(7), json!("aed563ecafb4bcc5654c597a421547b2")]
+        );
+        let out = build_edit_statements(DbDialect::Pg, None, "t", &edits, &cols, &[]).unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE \"t\" SET \"note\" = CAST($1 AS text) WHERE \"id\" = CAST($2 AS int) AND md5(\"note\") = $3"
+        );
+        // Short values compare directly: 64 bytes is adminer's own line.
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "note": "x".repeat(64) },
+            "changes": { "note": "short now" },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "t", &edits, &cols, &[]).unwrap();
+        assert!(out[0].sql.contains("`note` = ? LIMIT 1"), "{}", out[0].sql);
+    }
+
+    #[test]
+    fn no_pk_edits_refuse_null_and_missing_addressing_values() {
+        // "NULL is ambiguous" — adminer's own unique_array comment (functions.inc.php:331):
+        // col = NULL never matches, so a row with a NULL column cannot be addressed at all.
+        let cols = vec![
+            col("id", "int", false, false),
+            col("name", "varchar", true, false),
+        ];
+        let err = build_edit_statements(
+            DbDialect::Mysql,
+            None,
+            "u",
+            &[edit(json!({ "op": "update", "pk": { "id": 7, "name": null },
+                           "changes": { "name": "x" } }))],
+            &cols,
+            &[],
+        )
+        .unwrap_err();
+        assert!(err.contains("name"), "{err}");
+        assert!(err.contains("NULL"), "{err}");
+        let err = build_edit_statements(
+            DbDialect::Pg,
+            None,
+            "u",
+            &[edit(json!({ "op": "delete", "pk": { "name": "x" } }))],
+            &cols,
+            &[],
+        )
+        .unwrap_err();
+        assert!(err.contains("id"), "{err}");
+        assert!(err.contains("every column"), "{err}");
+    }
+
+    #[test]
+    fn update_source_compares_each_changed_columns_original() {
+        // docs/22 W4.2 (cloudbeaver ResultSetEditAction.ts:112-127): an update that carries
+        // its row's original values — the source field, or the pk map holding the whole row,
+        // which is what the panel posts — compares every CHANGED column against that
+        // original in the WHERE. Zero affected rows means another writer moved the row
+        // underneath: the adapter refuses the whole batch (409) instead of overwriting.
+        let cols = vec![
+            col("id", "int", false, true),
+            col("name", "varchar", true, false),
+            col("city", "varchar", true, false),
+        ];
+        let pk = vec!["id".to_string()];
+        // The full row in the pk map: id addresses, name's original guards the change, city
+        // is untouched so it is not compared (only CHANGED columns ride the optimistic lock).
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "old", "city": "la" },
+            "changes": { "name": "new" },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE `users` SET `name` = ? WHERE `id` = ? AND `name` = ?"
+        );
+        assert_eq!(out[0].params, vec![json!("new"), json!(7), json!("old")]);
+        let out = build_edit_statements(DbDialect::Pg, None, "users", &edits, &cols, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE \"users\" SET \"name\" = CAST($1 AS varchar) WHERE \"id\" = CAST($2 AS int) AND \"name\" = CAST($3 AS varchar)"
+        );
+        // An explicit source field says the same thing (API callers' spelling); a NULL
+        // original needs the NULL-safe form — col = NULL matches nothing, and the lock
+        // would false-conflict on every commit of a cell that started NULL.
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7 },
+            "source": { "id": 7, "note": null },
+            "changes": { "note": "written" },
+        }))];
+        let cols2 = vec![col("id", "int", false, true), col("note", "text", true, false)];
+        let out = build_edit_statements(DbDialect::Mysql, None, "u", &edits, &cols2, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE `u` SET `note` = ? WHERE `id` = ? AND `note` <=> ?"
+        );
+        let out = build_edit_statements(DbDialect::Pg, None, "u", &edits, &cols2, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE \"u\" SET \"note\" = CAST($1 AS text) WHERE \"id\" = CAST($2 AS int) AND \"note\" IS NOT DISTINCT FROM CAST($3 AS text)"
+        );
+        // A key column change is not compared twice: the pk arm of the WHERE already holds
+        // the original key value.
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "x" },
+            "changes": { "id": 8, "name": "y" },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "u", &edits, &cols, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE `u` SET `id` = ?, `name` = ? WHERE `id` = ? AND `name` = ?"
+        );
+    }
+
+    #[test]
+    fn optimistic_lock_columns_follow_the_carried_originals() {
+        // docs/22 W4.2: what rides the optimistic lock. A keyed update that carries the
+        // row compares every changed non-key column; the bare pk-only payload an API
+        // caller might post compares nothing (old semantics, byte-identical SQL); a
+        // keyless update compares all changed columns through its every-column address.
+        let pk = vec!["id".to_string()];
+        let full = edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "old", "city": "la" },
+            "changes": { "name": "new", "city": "sf" },
+        }));
+        assert_eq!(
+            optimistic_lock_columns(&pk, &full),
+            vec!["city".to_string(), "name".to_string()]
+        );
+        let bare = edit(json!({
+            "op": "update",
+            "pk": { "id": 7 },
+            "changes": { "name": "new" },
+        }));
+        assert!(optimistic_lock_columns(&pk, &bare).is_empty());
+        let keyless = edit(json!({
+            "op": "update",
+            "pk": { "name": "old", "city": "la" },
+            "changes": { "name": "new" },
+        }));
+        assert_eq!(
+            optimistic_lock_columns(&[], &keyless),
+            vec!["name".to_string()]
+        );
+    }
+
+    #[test]
+    fn conflict_of_names_the_moved_columns() {
+        // The probe row the adapter reads inside the doomed transaction decides the body:
+        // a differing column is named, a missing row names the changed set (deleted or
+        // rewritten — a keyless address cannot tell), and a matching row means only the
+        // addressing moved, so the column list is empty and the message says so.
+        let changed = vec!["name".to_string(), "city".to_string()];
+        let jmap = |v: Value| -> Map<String, Value> { v.as_object().cloned().unwrap_or_default() };
+        let source = jmap(json!({ "name": "old", "city": "la" }));
+        let now = jmap(json!({ "name": "theirs", "city": "la" }));
+        let c = conflict_of(&changed, &source, Some(&now));
+        assert_eq!(c.columns, vec!["name".to_string()]);
+        assert!(c.message.contains("name"), "{}", c.message);
+
+        let gone = conflict_of(&changed, &source, None);
+        assert_eq!(gone.columns, changed.clone());
+        assert!(gone.message.contains("deleted"), "{}", gone.message);
+
+        let same = jmap(json!({ "name": "old", "city": "la" }));
+        let c = conflict_of(&changed, &source, Some(&same));
+        assert!(c.columns.is_empty());
+        assert!(c.message.contains("another writer"), "{}", c.message);
+    }
+
+    #[test]
+    fn no_pk_readback_selects_by_the_same_all_column_address() {
+        // docs/22 W4.1: the W1.7 read-back shares the update's addressing, so a no-PK row
+        // reads back by the same every-column WHERE — twins come back identical, which is
+        // the one case where LIMIT-less SELECT still tells the truth. A row whose values
+        // cannot address anything (a NULL among them) reads nothing back rather than
+        // failing the commit it is only decorating.
+        let cols = vec![
+            col("id", "int", false, false),
+            col("name", "varchar", true, false),
+        ];
+        let upd = edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "alice" },
+            "changes": { "name": "ann" },
+        }));
+        match readback_plan(DbDialect::Mysql, None, "users", &cols, &[], &upd) {
+            ReadBack::Select(s) => {
+                assert_eq!(
+                    s.sql,
+                    "SELECT `id`, `name` FROM `users` WHERE `id` = ? AND `name` = ?"
+                );
+                assert_eq!(s.params, vec![json!(7), json!("ann")]);
+            }
+            other => panic!("no-PK update selects its row back: {other:?}"),
+        }
+        // The overlay is the whole point: a NULL ORIGINAL whose commit sets a value reads
+        // back fine (the post-commit row addresses), while a value changed TO NULL cannot
+        // be addressed by any WHERE (col = NULL matches nothing) and reads nothing back.
+        let was_null = edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": null },
+            "changes": { "name": "ann" },
+        }));
+        assert!(matches!(
+            readback_plan(DbDialect::Mysql, None, "users", &cols, &[], &was_null),
+            ReadBack::Select(_)
+        ));
+        let to_null = edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "alice" },
+            "changes": { "name": null },
+        }));
+        assert!(matches!(
+            readback_plan(DbDialect::Mysql, None, "users", &cols, &[], &to_null),
+            ReadBack::None
+        ));
     }
 
     fn row(pairs: &[(&str, Value)]) -> Map<String, Value> {

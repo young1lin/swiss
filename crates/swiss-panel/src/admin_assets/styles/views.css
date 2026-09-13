@@ -557,6 +557,11 @@
     /* Checked rows tint blue — but a pending cell edit keeps its amber tint so both states read. */
     tr.db-sel td { background: color-mix(in srgb, var(--accent) 13%, transparent); }
     tr.db-sel td.db-dirty { background: color-mix(in srgb, var(--amber) 26%, transparent); }
+    /* docs/22 W4.2: a cell whose commit lost the optimistic-lock race — the same tint trick
+       as db-dirty but in --red: the change is still buffered (still dirty), but the server
+       refused it because the row moved under it. */
+    .db-dirty.db-conflict { background: color-mix(in srgb, var(--red) 16%, transparent); }
+    tr.db-sel td.db-conflict { background: color-mix(in srgb, var(--red) 26%, transparent); }
     .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 4px; border-radius: 4px; }
     .db-act:hover { color: var(--red); background: var(--hover); }
 

@@ -7,13 +7,13 @@ use super::mysql::{
 };
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
-    browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    build_ddl_create, build_ddl_op_sql, build_edit_statements, build_import_statements,
-    ddl_script, export_row_limit,
-    js_to_string, map_import_rows,
+    ambiguous_row_error, browse_count_sql, browse_offset, browse_order, browse_page_size,
+    browse_rows_sql, build_ddl_create, build_ddl_op_sql, build_edit_statements,
+    build_import_statements, conflict_of, ddl_script, export_row_limit, js_to_string,
+    map_import_rows, optimistic_lock_columns,
     readback_plan, sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns, to_csv,
-    to_json_lines, BrowseColumn, DbBrowser, DbDialect, DumpPiece, ReadBack, SqlDump,
-    SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    to_json_lines, BrowseColumn, DbBrowser, DbDialect, DumpPiece, EditConflict, EditError,
+    ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
 use sqlx::mysql::MySqlPool;
@@ -182,10 +182,12 @@ impl DbBrowser for MysqlBrowser {
         );
         let (rows, next_page) = swiss_host::dbbrowser::page_and_next(rows?, limit);
         let total = super::mysql::num_or_zero(count?.first().and_then(|r| r.get("total")));
-        let editable = !primary.is_empty();
-        // Node's editNote: the pk-less explanation is the only one left (mysql.ts).
+        // docs/22 W4.1: every table is editable — a keyless one addresses rows by every
+        // column (NULL makes a row unaddressable, twins are refused), so the old pk-less
+        // refusal becomes the note that says how the addressing works instead.
+        let editable = true;
         let edit_note = if primary.is_empty() {
-            Some("table has no primary key, so a row cannot be addressed for edits")
+            Some("rows are addressed by all columns; ambiguous rows are refused")
         } else {
             None
         };
@@ -274,7 +276,7 @@ impl DbBrowser for MysqlBrowser {
         }
         Ok(Value::Object(out))
     }
-    async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
+    async fn apply_edits(&self, o: &Value) -> Result<Value, EditError> {
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         let edits = o.get("edits").and_then(Value::as_array);
         if table.is_empty() {
@@ -312,6 +314,16 @@ impl DbBrowser for MysqlBrowser {
                 &typed[i],
             );
             let affected = super::mysql::run_query_tx(&mut tx, &stmt.sql, &stmt.params).await?;
+            // docs/22 W4.1: a keyless table addresses rows by every column, and the builder
+            // clips MySQL's statements with LIMIT 1 — an UPDATE can never fan out. The guard
+            // stays so the dialects carry the same verdict (Postgres has no LIMIT form and
+            // genuinely needs it); an insert is single-row by construction and cannot trip.
+            if primary.is_empty() && affected > 1 {
+                return Err(EditError::Bad(ambiguous_row_error(typed[i].op(), affected)));
+            }
+            // The read-back runs before any verdict, so an optimistic update that matched
+            // nothing probes with the same SELECT: the row the database shows RIGHT NOW
+            // (inside this still-open transaction) is what names the conflicting columns.
             let row = match plan {
                 ReadBack::Select(s) => super::mysql::run_query_tx_rows(&mut tx, &s.sql, &s.params)
                     .await?
@@ -319,6 +331,28 @@ impl DbBrowser for MysqlBrowser {
                     .next(),
                 _ => None,
             };
+            // docs/22 W4.2: an update whose optimistic lock matched zero rows lost the race
+            // — another writer moved the row between the read and this commit. Refuse the
+            // whole batch (the dropped transaction rolls back what already ran) instead of
+            // overwriting. A bare pk-only update never claimed to know the row, so for it
+            // zero affected stays the quiet idempotent result it always was.
+            if affected == 0 {
+                if let swiss_host::dbbrowser::BrowseEdit::Update { .. } = &typed[i] {
+                    let lock = optimistic_lock_columns(&primary, &typed[i]);
+                    if !lock.is_empty() {
+                        let origin = match &typed[i] {
+                            swiss_host::dbbrowser::BrowseEdit::Update { pk, source, .. } => {
+                                source.clone().unwrap_or_else(|| pk.clone())
+                            }
+                            _ => Map::new(),
+                        };
+                        return Err(EditError::Conflict(EditConflict {
+                            row: Some(origin.clone()),
+                            ..conflict_of(&lock, &origin, row.as_ref())
+                        }));
+                    }
+                }
+            }
             results.push(json!({"op": typed[i].op(), "affected": affected, "row": row}));
         }
         tx.commit().await.map_err(|e| e.to_string())?;
