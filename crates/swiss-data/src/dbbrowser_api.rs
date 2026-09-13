@@ -714,6 +714,78 @@ async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<
     Ok(with_elapsed_ms(json!({ "reply": reply }), started))
 }
 
+/// Server-side completion for the console (docs/22 W3.1): candidates for the word ending at
+/// the caret. The body carries the WHOLE console text and the caret as a byte offset (the
+/// panel converts its UTF-16 selection index); the browser folds keywords, table names and
+/// the FROM-nearest table's columns into the reply.
+async fn completion(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    let sql = body
+        .get("sql")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Fail::bad("sql is required"))?;
+    let caret = body
+        .get("caret")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .clamp(0, sql.len() as i64) as usize;
+    b.completion(sql, caret).await.map_err(Fail::bad)
+}
+
+/// Live sessions on the connection's server (docs/22 W3.2) — the Activity page, polled
+/// while it is open. The reply shape is shared by both dialects (dbbrowser.rs).
+async fn activity(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    b.activity().await.map_err(Fail::bad)
+}
+
+/// Cancel (pg_cancel_backend / KILL QUERY) or terminate (pg_terminate_backend / KILL) one
+/// session (docs/22 W3.2). The mode word and the pid are validated here — a kill is the one
+/// route in this router that interrupts someone else's work, so it logs what it did.
+async fn activity_kill(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    let pid = body
+        .get("pid")
+        .and_then(Value::as_i64)
+        .filter(|p| *p > 0)
+        .ok_or_else(|| Fail::bad("pid must be a session id (positive integer)"))?;
+    let terminate = match body.get("mode").and_then(Value::as_str) {
+        Some("cancel") => false,
+        Some("terminate") => true,
+        _ => return Err(Fail::bad("mode must be cancel or terminate")),
+    };
+    log::log(
+        "warn",
+        "data view activity kill",
+        Some(json!({
+            "name": name,
+            "pid": pid,
+            "mode": if terminate { "terminate" } else { "cancel" },
+        })),
+    );
+    b.activity_kill(pid, terminate).await.map_err(Fail::bad)
+}
+
+/// Commit a buffered redis structured-edit batch (docs/22 W3.3): the typed value view's
+/// whole buffer as ONE pipelined round trip. Shape is checked here; WHICH commands may run
+/// stays with the adapter's console guard, applied per command before the socket is touched —
+/// the first refusal rejects the batch whole, so a buffered edit never half-applies.
+async fn redis_pipeline(
+    catalog: &CatalogRegistry,
+    name: &str,
+    body: &Value,
+) -> Result<Value, Fail> {
+    let (_lease, rb) = lease_redis(catalog, name)?;
+    let commands = swiss_host::dbbrowser::redis_pipeline_commands(body).map_err(Fail::bad)?;
+    log::log(
+        "info",
+        "data view redis commit",
+        Some(json!({ "name": name, "commands": commands.len() })),
+    );
+    rb.run_pipeline(&commands).await.map_err(Fail::bad)
+}
+
 /// One key, read type-aware (the shape redis_read returns).
 async fn key(
     catalog: &CatalogRegistry,
@@ -804,6 +876,37 @@ async fn command_route(
     reply(command(&catalog, &name, &body.0).await)
 }
 
+async fn completion_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(completion(&catalog, &name, &body.0).await)
+}
+
+async fn activity_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+) -> Response {
+    reply(activity(&catalog, &name).await)
+}
+
+async fn activity_kill_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(activity_kill(&catalog, &name, &body.0).await)
+}
+
+async fn redis_pipeline_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(redis_pipeline(&catalog, &name, &body.0).await)
+}
+
 async fn key_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -857,6 +960,13 @@ where
         // --- redis key browser (same /api/db namespace; dialect "redis") ---
         .route("/api/db/{name}/keys", get(keys_route))
         .route("/api/db/{name}/command", post(command_route))
+        // The buffered structured-edit commit (docs/22 W3.3): one pipeline, one round trip.
+        .route("/api/db/{name}/redis-pipeline", post(redis_pipeline_route))
+        // Live sessions and the cancel/terminate pair (docs/22 W3.2).
+        .route("/api/db/{name}/activity", get(activity_route))
+        .route("/api/db/{name}/activity-kill", post(activity_kill_route))
+        // The console's completion (docs/22 W3.1) — server-side, on the leased connection.
+        .route("/api/db/{name}/completion", post(completion_route))
         .route("/api/db/{name}/key", get(key_route))
         .route("/api/db/{name}/ddl", post(ddl_route))
         .route("/api/db/{name}/query", post(query_route))
@@ -897,6 +1007,12 @@ mod tests {
         imported: Option<Value>,
         ddl: Option<Value>,
         tables_opts: Option<Value>,
+        /// The command list the redis pipeline route forwarded (docs/22 W3.3).
+        pipeline: Option<Vec<Vec<String>>>,
+        /// The (pid, terminate) the activity-kill route forwarded (docs/22 W3.2).
+        activity_kill: Option<(i64, bool)>,
+        /// The (sql, caret) the completion route forwarded (docs/22 W3.1).
+        completion: Option<(String, usize)>,
     }
 
     type SeenRef = Arc<Mutex<Seen>>;
@@ -1151,10 +1267,33 @@ mod tests {
                 json!({ "ran": format!("stub {}", o.get("op").and_then(Value::as_str).unwrap_or("")) }),
             )
         }
+        async fn activity(&self) -> Result<Value, String> {
+            Ok(json!({ "rows": [
+                { "pid": 101, "user": "app", "state": "active", "wait": "", "seconds": 4, "query": "SELECT pg_sleep(60)", "own": false, "blockedBy": null },
+                { "pid": 102, "user": "root", "state": "idle", "wait": "", "seconds": 0, "query": "", "own": true, "blockedBy": null },
+            ] }))
+        }
+        async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.activity_kill = Some((pid, terminate));
+            }
+            Ok(json!({ "ok": true }))
+        }
+        async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.completion = Some((sql.to_string(), caret));
+            }
+            Ok(json!({ "items": [
+                { "label": "users", "kind": "table", "detail": "table" },
+                { "label": "UNION", "kind": "keyword", "detail": "keyword" },
+            ] }))
+        }
     }
 
     /// The Node suite's fake redis browser.
-    struct StubRedis;
+    struct StubRedis {
+        seen: SeenRef,
+    }
 
     #[async_trait]
     impl RedisBrowser for StubRedis {
@@ -1181,6 +1320,15 @@ mod tests {
             } else {
                 Ok(json!(["a", "b"]))
             }
+        }
+        async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String> {
+            // The adapter vets every command through the console guard BEFORE the socket; the
+            // stub stands for the far side of that and answers one reply per command.
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.pipeline = Some(commands.to_vec());
+            }
+            let replies: Vec<Value> = commands.iter().map(|c| json!(c.len())).collect();
+            Ok(json!({ "replies": replies }))
         }
     }
 
@@ -2079,12 +2227,239 @@ mod tests {
     }
 
     fn redis_entry(name: &str) -> Arc<StubRow> {
+        redis_entry_with(name, SeenRef::default())
+    }
+
+    /// redis_entry over a shared seen, so a test can read back what the pipeline route
+    /// forwarded (docs/22 W3.3).
+    fn redis_entry_with(name: &str, seen: SeenRef) -> Arc<StubRow> {
         Arc::new(StubRow {
             name: name.into(),
             adapter_type: "redis".into(),
             state: "stopped".into(),
-            browser: BrowserFlavor::Redis(Arc::new(StubRedis)),
+            browser: BrowserFlavor::Redis(Arc::new(StubRedis { seen })),
         })
+    }
+
+    #[tokio::test]
+    async fn a_redis_structured_edit_commit_rides_one_pipeline() {
+        // docs/22 W3.3: the typed value view's whole buffer posts as ONE round trip; args stay
+        // separate strings (a value with spaces is one argument, never re-split), and the
+        // replies come back in order.
+        let seen = SeenRef::default();
+        let app = router_of(vec![redis_entry_with("cache", seen.clone())]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/cache/redis-pipeline",
+            Some(json!({ "commands": [["HSET", "h:1", "f", "v"], ["HDEL", "h:1", "gone"]] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json")["replies"], json!([4, 3]));
+        assert_eq!(
+            seen.lock().expect("seen").pipeline.take(),
+            Some(vec![
+                vec!["HSET".into(), "h:1".into(), "f".into(), "v".into()],
+                vec!["HDEL".into(), "h:1".into(), "gone".into()],
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_redis_pipeline_body_is_shape_checked_at_the_route() {
+        // A bare number stays a VALID argument (a score, a list index) — only values that
+        // are neither string nor number are the caller's mistake.
+        for bad in [
+            json!({}),
+            json!({ "commands": [] }),
+            json!({ "commands": [[]] }),
+            json!({ "commands": [["HSET", true]] }),
+        ] {
+            let app = router_of(vec![redis_entry("cache")]);
+            let (status, _, body, _) = call(
+                app,
+                "POST",
+                "/api/db/cache/redis-pipeline",
+                Some(bad.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            let err = body.expect("json")["error"]
+                .as_str()
+                .expect("error text")
+                .to_string();
+            assert!(
+                err.starts_with("commands must be") || err.starts_with("each command must be"),
+                "{bad} -> {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn completion_forwards_the_console_text_and_caret() {
+        // docs/22 W3.1: the caret is a byte offset; the panel converts its UTF-16 index.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/completion",
+            Some(json!({ "sql": "SELECT * FROM users WHERE u", "caret": 28 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let items = body.expect("json")["items"].as_array().expect("items").clone();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["kind"], "table");
+        assert_eq!(items[1]["kind"], "keyword");
+        // The caret sent (28) sits one past the text's end — the route clamps it to the
+        // text's own length rather than passing a pointer at nothing.
+        assert_eq!(
+            seen.lock().expect("seen").completion,
+            Some(("SELECT * FROM users WHERE u".to_string(), 27))
+        );
+    }
+
+    #[tokio::test]
+    async fn completion_validates_the_body_before_touching_the_browser() {
+        let seen = SeenRef::default();
+        let make = || {
+            router_of(vec![db_entry(
+                "db",
+                Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+            )])
+        };
+        for bad in [json!({ "caret": 3 }), json!({ "sql": 5, "caret": 3 }), json!(null)] {
+            let (status, _, body, _) =
+                call(make(), "POST", "/api/db/db/completion", Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            assert_eq!(body.expect("json")["error"], "sql is required");
+        }
+        assert!(seen.lock().expect("seen").completion.is_none());
+    }
+
+    #[tokio::test]
+    async fn completion_is_sql_only() {
+        let app = router_of(vec![redis_entry("cache")]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/cache/completion",
+            Some(json!({ "sql": "GE", "caret": 2 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'cache' (redis) has no database to browse"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_activity_page_lists_sessions_in_the_shared_shape() {
+        // docs/22 W3.2: one reply shape for both dialects — the panel renders one table.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/activity", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let rows = body.expect("json")["rows"].as_array().expect("rows").clone();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["pid"], json!(101));
+        assert_eq!(rows[0]["query"], "SELECT pg_sleep(60)");
+        assert_eq!(rows[1]["own"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn an_activity_kill_validates_mode_and_pid_before_touching_the_browser() {
+        let seen = SeenRef::default();
+        let make = || {
+            router_of(vec![db_entry(
+                "db",
+                Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+            )])
+        };
+        for bad in [
+            json!({ "pid": 5 }),
+            json!({ "pid": 5, "mode": "kill" }),
+            json!({ "pid": 5, "mode": "CANCEL" }),
+            json!({ "mode": "cancel" }),
+            json!({ "pid": 0, "mode": "cancel" }),
+            json!({ "pid": -3, "mode": "terminate" }),
+            json!({ "pid": "7", "mode": "cancel" }),
+        ] {
+            let (status, _, body, _) = call(make(), "POST", "/api/db/db/activity-kill", Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            let err = body.expect("json")["error"].as_str().expect("error").to_string();
+            assert!(
+                err == "mode must be cancel or terminate"
+                    || err == "pid must be a session id (positive integer)",
+                "{bad} -> {err}"
+            );
+        }
+        assert!(seen.lock().expect("seen").activity_kill.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_activity_kill_forwards_the_mode_word_to_the_browser() {
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/activity-kill",
+            Some(json!({ "pid": 4242, "mode": "terminate" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json")["ok"], json!(true));
+        assert_eq!(seen.lock().expect("seen").activity_kill, Some((4242, true)));
+    }
+
+    #[tokio::test]
+    async fn the_activity_page_is_sql_only() {
+        // A redis connection has no sessions page: the 404 names what it is, as ever.
+        let app = router_of(vec![redis_entry("cache")]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/cache/activity", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'cache' (redis) has no database to browse"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_redis_pipeline_is_redis_only() {
+        // A SQL connection answers the redis 404 with the adapter type named, exactly as the
+        // key routes do — no half-work on the wrong flavour.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/redis-pipeline",
+            Some(json!({ "commands": [["SET", "k", "v"]] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'db' (mysql) is not a redis connection"
+        );
     }
 
     #[tokio::test]

@@ -386,6 +386,35 @@
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
     .db-keytype { font-size: var(--f-caption); padding: 1px 6px; border-radius: 980px; background: var(--sep-soft); color: var(--text-2); margin-left: var(--s2); }
+    /* docs/22 W3.3 — the typed redis value view. The meta line carries its own actions now, so
+       it flexes; the TTL chip is the one inline-editable readout; a string is a plain field
+       with the one primary action beside it. The typed table itself reuses .db-grid as-is. */
+    .db-detail-meta { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
+    .db-ttl { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; border-bottom: 1px dashed var(--sep); }
+    .db-ttl:hover { color: var(--text); border-bottom-color: var(--accent); }
+    .db-ttl-in { width: 72px; padding: 0 3px; font: inherit; font-variant-numeric: tabular-nums; }
+    .db-redis-str-row { display: flex; gap: var(--s2); align-items: flex-end; padding: var(--s2); }
+    .db-redis-str { flex: 1; min-height: 96px; resize: vertical; font-family: var(--mono); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row); color: var(--text); }
+    .db-redis-str:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    /* docs/22 W3.2 — the Activity page. The head sits in a row with the pane's ⋯; the sessions
+       table reuses .db-grid as-is. The panel's own row is marked, a blocked wait reads amber
+       (state, not danger), and the row ⋯ matches the rowctl control the grid already uses. */
+    .db-headrow { display: flex; align-items: flex-end; gap: var(--s2); }
+    .db-headrow .db-head { flex: 1; min-width: 0; }
+    .db-headrow .btn.icon { flex: none; }
+    .db-act-own > td:first-child { color: var(--accent); }
+    .db-act-blocked { color: var(--amber); }
+    .db-act-more { border: 0; background: none; padding: 2px var(--s1); cursor: pointer; color: var(--text-3); border-radius: var(--r-row); }
+    .db-act-more:hover { color: var(--text); background: var(--sep-soft); }
+    /* docs/22 W3.1 — the console's completion list. Same popup vocabulary as .menu (card,
+       shadow-pop, hover); labels are identifiers you would type, so they sit in mono. The
+       mirror borrows .db-sql-face above to inherit the textarea's exact metrics. */
+    .db-suggest { position: absolute; z-index: 35; min-width: 200px; max-width: 360px; background: var(--card); border-radius: var(--r-row); box-shadow: var(--shadow-pop); padding: 3px; }
+    .db-suggest-item { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); padding: 3px var(--s2); border-radius: 6px; cursor: pointer; }
+    .db-suggest-item:hover, .db-suggest-item.sel { background: var(--hover); }
+    .db-suggest-label { font-family: var(--mono); font-size: var(--f-label); color: var(--text); }
+    .db-suggest-kind { color: var(--text-3); font-size: var(--f-caption); flex: none; }
+    .db-sql-mirror { position: absolute; inset: 0; visibility: hidden; pointer-events: none; overflow: hidden; }
     .db-pagesize { width: auto; }
     .db-console-row .dd { width: auto; min-width: 110px; }
     /* The row-grid controls stay IN LAYOUT on every tab (visibility, not display): removing them

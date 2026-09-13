@@ -29,11 +29,20 @@ use std::sync::Arc;
 pub struct PgBrowser {
     label: String,
     conn: Arc<Lazy<PgPool>>,
+    /// Completion candidates cache (docs/22 W3.1): table names + column lists, TTL-bound.
+    /// Mutex (no await while held) — the browser is shared behind Arc for the lease's life.
+    completion_cache: std::sync::Mutex<swiss_host::dbbrowser::CompletionCache>,
 }
 
 impl PgBrowser {
     pub fn new(label: String, conn: Arc<Lazy<PgPool>>) -> Self {
-        Self { label, conn }
+        Self {
+            label,
+            conn,
+            completion_cache: std::sync::Mutex::new(
+                swiss_host::dbbrowser::CompletionCache::new(),
+            ),
+        }
     }
 
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Map<String, Value>>, String> {
@@ -329,6 +338,14 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
+        // A console DDL changes schema shape: the completion cache drops everything so the
+        // next keystroke re-reads the catalog it now describes (docs/22 W3.1).
+        if swiss_host::dbbrowser::sql_touches_schema(sql) {
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .invalidate();
+        }
         let s = sql.trim();
         if s.is_empty() {
             return Err("sql is required".into());
@@ -714,7 +731,123 @@ impl DbBrowser for PgBrowser {
         )?;
         let pool = self.conn.get().await?;
         super::pg::pg_query_rows(&pool, &sql, &[]).await?;
+        self.completion_cache
+            .lock()
+            .expect("completion cache")
+            .invalidate();
         Ok(json!({ "ran": sql }))
+    }
+
+    async fn activity(&self) -> Result<Value, String> {
+        // The statement already aliases to the shared reply keys (dbbrowser.rs), so the rows
+        // are the reply, verbatim.
+        let rows = self
+            .query(&swiss_host::dbbrowser::activity_sql(DbDialect::Pg), &[])
+            .await?;
+        Ok(json!({ "rows": rows }))
+    }
+
+    async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String> {
+        let sql = swiss_host::dbbrowser::activity_kill_sql(DbDialect::Pg, pid, terminate)?;
+        let rows = self.query(&sql, &[]).await?;
+        // pg_cancel_backend / pg_terminate_backend answer one boolean: false means the backend
+        // was already gone. Report it — the panel says so instead of promising a kill.
+        let result = rows
+            .first()
+            .and_then(|r| r.values().next())
+            .and_then(|v| match v {
+                Value::Bool(b) => Some(*b),
+                _ => None,
+            });
+        match result {
+            Some(b) => Ok(json!({ "ok": true, "result": b })),
+            None => Ok(json!({ "ok": true })),
+        }
+    }
+
+    async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
+        use swiss_host::dbbrowser::{
+            completion_from_table, completion_items, sql_word_ending_at,
+        };
+        let Some(prefix) = sql_word_ending_at(sql, caret) else {
+            return Ok(json!({ "items": [] }));
+        };
+        let now = std::time::Instant::now();
+        let plan = {
+            // Lock only to read the plan — the loads below await.
+            let cache = self.completion_cache.lock().expect("completion cache");
+            (
+                cache.tables(now).is_none(),
+                cache.is_degraded(),
+                completion_from_table(sql, caret).filter(|_| !cache.is_degraded()),
+            )
+        };
+        let (need_tables, degraded, from) = plan;
+        // Tables: one catalog query, cached for the TTL (and still served when degraded —
+        // the column budget does not poison the table list).
+        let tables = if need_tables || degraded {
+            let rows = self
+                .query(
+                    "SELECT table_schema || '.' || table_name AS name \
+                     FROM information_schema.tables \
+                     WHERE table_schema NOT IN ('pg_catalog', 'information_schema') \
+                     ORDER BY name",
+                    &[],
+                )
+                .await?;
+            let names: Vec<String> = rows
+                .iter()
+                .filter_map(|r| r.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .set_tables(names.clone(), now);
+            names
+        } else {
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .tables(now)
+                .unwrap_or_default()
+        };
+        // Columns of the FROM-nearest table, cached per table. Bare names resolve against
+        // public (the panel's list is schema-qualified; a bare FROM is the common case).
+        let mut columns: Option<(String, Vec<String>)> = None;
+        if let Some(word) = from {
+            let cached = {
+                let cache = self.completion_cache.lock().expect("completion cache");
+                cache.columns(&word, now)
+            };
+            if let Some(cols) = cached {
+                columns = Some((word, cols));
+            } else {
+                let (schema, table) = match word.split_once('.') {
+                    Some((s, t)) => (s.to_string(), t.to_string()),
+                    None => ("public".to_string(), word.clone()),
+                };
+                let rows = self
+                    .query(
+                        "SELECT column_name FROM information_schema.columns \
+                         WHERE table_schema = $1 AND table_name = $2 \
+                         ORDER BY ordinal_position",
+                        &[json!(schema), json!(table)],
+                    )
+                    .await?;
+                let cols: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| r.get("column_name").and_then(Value::as_str).map(str::to_string))
+                    .collect();
+                self.completion_cache
+                    .lock()
+                    .expect("completion cache")
+                    .set_columns(word.clone(), cols.clone(), now);
+                columns = Some((word, cols));
+            }
+        }
+        let columns = columns.as_ref().map(|(t, c)| (t.as_str(), c.as_slice()));
+        let items = completion_items(DbDialect::Pg, prefix, &tables, columns);
+        Ok(json!({ "items": items }))
     }
 }
 

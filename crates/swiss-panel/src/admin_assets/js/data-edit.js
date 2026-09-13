@@ -49,8 +49,12 @@ function dbTableMenu(anchorEl) {
     if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast("Not a valid table name", true); return; }
     dbRunDdl("rename", to);
   });
-  item("Truncate table\u2026", function () { dbTypedConfirm("TRUNCATE", function () { dbRunDdl("truncate"); }); });
-  item("Drop table\u2026", function () { dbTypedConfirm("DROP", function () { dbRunDdl("drop"); }); });
+  item("Truncate table\u2026", function () {
+    dbTypedConfirm({ what: "TRUNCATE (delete every row)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, function () { dbRunDdl("truncate"); });
+  });
+  item("Drop table\u2026", function () {
+    dbTypedConfirm({ what: "DROP (permanently delete)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, function () { dbRunDdl("drop"); });
+  });
   document.body.appendChild(menu);
   state.menuOpen = true;
   function closeMenu2() { menu.remove(); state.menuOpen = false; }
@@ -61,12 +65,19 @@ function dbTableMenu(anchorEl) {
   }, 0);
 }
 
-function dbTypedConfirm(word, fn) {
-  var d = state.db;
-  var what = word === "DROP" ? "DROP (permanently delete)" : "TRUNCATE (delete every row)";
-  var typed = prompt(what + " " + (d.schema ? d.schema + "." : "") + d.table + "\n" +
-    "This cannot be undone. Type the table name to confirm:", "");
-  if (typed !== d.table) { if (typed !== null) toast("Name did not match — nothing was done", true); return; }
+/* The typed-name confirm the destructive acts share (a W1 audit follow-up): the prompt
+   names the act and the exact target, the operator types the name back, and anything else
+   leaves the world untouched. Parameterized, not table-shaped — the redis key delete reuses
+   it word for word. `typed` is what must be typed and defaults to `name`: the table flavor
+   SHOWS a qualified name but demands the bare one; the key flavor's display name is the
+   thing itself. */
+function dbTypedConfirm(o, fn) {
+  var typed = prompt(o.what + " " + o.name + "\n" +
+    "This cannot be undone. Type the " + o.kind + " name to confirm:", "");
+  if (typed !== (o.typed != null ? o.typed : o.name)) {
+    if (typed !== null) toast("Name did not match — nothing was done", true);
+    return;
+  }
   fn();
 }
 

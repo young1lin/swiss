@@ -74,6 +74,30 @@ fn scan_args(o: &Value) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
+/// The console guard applied to every command of a structured-edit pipeline (docs/22
+/// W3.3), BEFORE any connection is opened: one bad command refuses the whole batch, so a
+/// buffered edit never half-applies. Split out from run_pipeline so the rule is testable
+/// without a server, exactly like assert_command_allowed itself.
+fn vet_pipeline(
+    commands: &[Vec<String>],
+    allow_destructive: bool,
+    allow_eval: bool,
+) -> Result<Vec<(&str, Vec<&str>)>, String> {
+    let mut vetted = Vec::with_capacity(commands.len());
+    for cmd in commands {
+        let (verb, args) = cmd
+            .split_first()
+            .ok_or_else(|| "each command must be an array: [verb, arg...]".to_string())?;
+        if verb.trim().is_empty() {
+            return Err("command is required".into());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert_command_allowed(verb, &arg_refs, allow_destructive, allow_eval)?;
+        vetted.push((verb.as_str(), arg_refs));
+    }
+    Ok(vetted)
+}
+
 impl RedisDataBrowser {
     pub fn new(
         label: String,
@@ -185,6 +209,24 @@ impl RedisBrowser for RedisDataBrowser {
             }
         }
         Ok(reply)
+    }
+
+    async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String> {
+        // Guarded whole, before the connection is opened: the refusal names the command, and
+        // a batch that cannot run in full does not run at all (docs/22 W3.3).
+        let vetted = vet_pipeline(commands, self.allow_destructive, self.allow_eval)?;
+        let handle = self.conn.get().await?;
+        let owned: Vec<(String, Vec<String>)> = vetted
+            .into_iter()
+            .map(|(verb, args)| {
+                (
+                    verb.to_string(),
+                    args.into_iter().map(str::to_string).collect(),
+                )
+            })
+            .collect();
+        let replies = handle.pipeline(&owned).await?;
+        Ok(json!({ "replies": replies }))
     }
 }
 
@@ -311,5 +353,54 @@ mod tests {
         for t in SCAN_TYPES {
             assert!(err.contains(t), "{err} should name {t}");
         }
+    }
+
+    fn batch(parts: &[&[&str]]) -> Vec<Vec<String>> {
+        parts
+            .iter()
+            .map(|c| c.iter().map(|p| p.to_string()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_structured_edit_batch_passes_the_same_guard_as_the_console() {
+        // Every verb the typed value editors can buffer (docs/22 W3.3), under the strictest
+        // flags a config can set — the panel's Commit must not depend on allow* to work.
+        let cmds = batch(&[
+            &["SET", "k", "v"],
+            &["HSET", "h", "field", "a value with spaces"],
+            &["HDEL", "h", "field"],
+            &["ZADD", "z", "1.5", "member"],
+            &["ZREM", "z", "member"],
+            &["LSET", "l", "0", "value"],
+            &["RPUSH", "l", "value"],
+            &["SADD", "s", "member"],
+            &["SREM", "s", "member"],
+            &["EXPIRE", "k", "60"],
+        ]);
+        let vetted = vet_pipeline(&cmds, false, false).expect("the edit vocabulary passes");
+        assert_eq!(vetted.len(), cmds.len());
+        // The vetted list borrows the batch: args survive untouched, spaces included.
+        assert_eq!(vetted[1].1, vec!["h", "field", "a value with spaces"]);
+    }
+
+    #[test]
+    fn a_pipeline_is_refused_whole_when_any_command_is_on_the_deny_list() {
+        // One KEYS buried mid-batch refuses everything before a socket is touched: a buffered
+        // edit must never half-apply (docs/22 W3.3).
+        let cmds = batch(&[
+            &["HSET", "h", "f", "v"],
+            &["KEYS", "*"] as &[&str],
+            &["HDEL", "h", "g"],
+        ]);
+        let err = vet_pipeline(&cmds, true, true).expect_err("refused whole");
+        assert!(err.contains("KEYS is rejected"), "{err}");
+    }
+
+    #[test]
+    fn a_destructive_pipeline_command_needs_the_same_flag_as_alone() {
+        let cmds = batch(&[&["FLUSHALL"] as &[&str]]);
+        assert!(vet_pipeline(&cmds, false, false).is_err());
+        assert!(vet_pipeline(&cmds, true, false).is_ok());
     }
 }
