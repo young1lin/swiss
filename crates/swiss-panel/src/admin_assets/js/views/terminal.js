@@ -634,7 +634,7 @@ var encoder = null;
 function sendInput(m, text) {
   if (!m.ws || m.ws.readyState !== 1) {
     /* Keystrokes typed while the FIRST socket is still coming up ride exactly once
-       (VS Code's pre-launch queue, docs/22 §2.8); a reconnect gap still drops them —
+       (VS Code's pre-launch queue, docs/22 §4 P0 item 8); a reconnect gap still drops them —
        replaying keys into a shell that may have moved on is worse than losing them. */
     if (m.buffered && m.buffered.length < 64) m.buffered.push(text);
     return;
@@ -668,7 +668,7 @@ function connect(m, ticket) {
     if (m.term) {
       /* A re-attach must not leak the previous attach's mouse-tracking or
          bracketed-paste modes into the catch-up replay as visible escape text
-         (docs/22 §2.11 — Tabby's reconnect reset, adapted to swiss's grace window). */
+         (docs/22 §4 P0 item 8 — Tabby's reconnect reset, adapted to swiss's grace window). */
       m.term.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l");
       if (m.overlay) m.overlay.show("attached", 700);
     }
