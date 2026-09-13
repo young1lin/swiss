@@ -1881,7 +1881,64 @@ pub fn csv_escape(v: Option<&Value>) -> String {
     out
 }
 
-/// One SQL literal for the clipboard — never executed, so inlining is safe here.
+/// One SQL literal for a DUMP BODY — the dump is EXECUTED on replay (docs/22 W4.4), so the
+/// escaping has to hold as real SQL, not just as display. The clipboard's sql_literal only
+/// doubles quotes and must never be used here: a trailing backslash in a MySQL value swallowed
+/// the closing quote and let an ordinary string break (or inject into) the replay — an audit
+/// blocker. MySQL escapes exactly what adminer's real_escape_string escapes
+/// ("drivers/mysql.inc.php" q(): backslash, single quote, double quote, LF, CR, NUL, Ctrl-Z);
+/// Postgres doubles single quotes (its text type holds every other byte raw) and REFUSES a
+/// NUL — emitting the raw byte would corrupt the dump, and a clear error lets the caller stop.
+pub fn sql_dump_literal(dialect: DbDialect, v: Option<&Value>) -> Result<String, String> {
+    let Some(v) = v else {
+        return Ok("NULL".into());
+    };
+    match v {
+        Value::Null => Ok("NULL".into()),
+        Value::Number(n) => Ok(number_to_js_string(n)),
+        Value::Bool(b) => Ok(if *b { "true".into() } else { "false".into() }),
+        other => {
+            let s = js_to_string(Some(other));
+            let mut out = String::with_capacity(s.len() + 2);
+            out.push('\'');
+            match dialect {
+                DbDialect::Mysql => {
+                    for c in s.chars() {
+                        match c {
+                            '\\' => out.push_str("\\\\"),
+                            '\'' => out.push_str("\\'"),
+                            '"' => out.push_str("\\\""),
+                            '\n' => out.push_str("\\n"),
+                            '\r' => out.push_str("\\r"),
+                            '\0' => out.push_str("\\0"),
+                            '\u{1a}' => out.push_str("\\Z"),
+                            _ => out.push(c),
+                        }
+                    }
+                }
+                DbDialect::Pg => {
+                    if s.contains('\0') {
+                        return Err(
+                            "a Postgres text value holds a NUL byte — the dump cannot express it"
+                                .into(),
+                        );
+                    }
+                    for c in s.chars() {
+                        if c == '\'' {
+                            out.push('\'');
+                        }
+                        out.push(c);
+                    }
+                }
+            }
+            out.push('\'');
+            Ok(out)
+        }
+    }
+}
+
+/// One SQL literal for the clipboard — never executed, so inlining is safe here. Text that
+/// WILL be executed (a dump body, a replayed statement) belongs to sql_dump_literal instead.
 pub fn sql_literal(v: Option<&Value>) -> String {
     let Some(v) = v else {
         return "NULL".into();
@@ -3308,6 +3365,59 @@ mod tests {
             out[0].sql,
             "INSERT INTO \"public\".\"users\" (\"id\", \"name\") VALUES (CAST($1 AS int), CAST($2 AS text)) ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\""
         );
+    }
+
+    // --- dump literal escaping (docs/22 W4.4 audit blocker) ---------------------------------------
+
+    #[test]
+    fn mysql_dump_literals_escape_everything_adminer_does() {
+        // THE audit blocker case: a trailing backslash swallowed the closing quote under the
+        // clipboard escaping, so an ordinary Windows path broke (or injected into) the replay.
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!("C:\\path\\"))).unwrap(),
+            "'C:\\\\path\\\\'"
+        );
+        // Quotes, newlines: every character real_escape_string would not let through raw.
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!("it's \"quoted\"\nline\r end"))).unwrap(),
+            "'it\\'s \\\"quoted\\\"\\nline\\r end'"
+        );
+        // NUL and Ctrl-Z (0x1A) — the two control bytes the Windows MySQL client chokes on.
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!("a\0b\u{1a}c"))).unwrap(),
+            "'a\\0b\\Zc'"
+        );
+        // Unicode passes through untouched — the bytes replay as themselves.
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!("\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}"))).unwrap(),
+            "'\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}'"
+        );
+        // Numbers, bools and nulls keep the plain shapes the dump always used.
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(7))).unwrap(), "7");
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(1.5))).unwrap(), "1.5");
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(true))).unwrap(), "true");
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, None).unwrap(), "NULL");
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&Value::Null)).unwrap(), "NULL");
+    }
+
+    #[test]
+    fn pg_dump_literals_double_quotes_and_refuse_nul() {
+        // Postgres text holds quotes, double quotes, newlines and backslashes raw — only the
+        // single quote doubles (the dump's head does not opt into escape-string syntax).
+        assert_eq!(
+            sql_dump_literal(DbDialect::Pg, Some(&json!("it's \"x\"\n\\ line"))).unwrap(),
+            "'it''s \"x\"\n\\ line'"
+        );
+        assert_eq!(
+            sql_dump_literal(DbDialect::Pg, Some(&json!("\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}"))).unwrap(),
+            "'\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}'"
+        );
+        // A NUL cannot live in a Postgres text value; refusing it beats emitting the raw byte
+        // into a dump that would then be corrupt from that row on.
+        let err = sql_dump_literal(DbDialect::Pg, Some(&json!("a\0b"))).unwrap_err();
+        assert!(err.contains("NUL"), "{err}");
+        assert_eq!(sql_dump_literal(DbDialect::Pg, Some(&json!(9))).unwrap(), "9");
+        assert_eq!(sql_dump_literal(DbDialect::Pg, None).unwrap(), "NULL");
     }
 
     #[test]

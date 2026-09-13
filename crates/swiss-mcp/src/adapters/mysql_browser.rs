@@ -10,7 +10,7 @@ use swiss_host::dbbrowser::{
     browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
     build_ddl_op_sql, build_edit_statements, build_import_statements, export_row_limit,
     js_to_string, map_import_rows,
-    readback_plan, sql_dump_foot, sql_dump_head, sql_literal, to_browse_columns, to_csv,
+    readback_plan, sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns, to_csv,
     to_json_lines, BrowseColumn, DbBrowser, DbDialect, DumpPiece, ReadBack, SqlDump,
     SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
@@ -459,8 +459,17 @@ impl DbBrowser for MysqlBrowser {
                 };
                 let fetched = page.len() as i64;
                 for row in &page {
-                    let literals: Vec<String> =
-                        names.iter().map(|c| sql_literal(row.get(c))).collect();
+                    // The dump body is EXECUTED on replay — sql_dump_literal, never the
+                    // clipboard's sql_literal (docs/22 W4.4 audit blocker).
+                    let literals: Result<Vec<String>, String> =
+                        names.iter().map(|c| sql_dump_literal(DbDialect::Mysql, row.get(c))).collect();
+                    let literals = match literals {
+                        Ok(l) => l,
+                        Err(e) => {
+                            let _ = tx.send(Err(e)).await;
+                            return;
+                        }
+                    };
                     if let Some(stmt) = batch.push(&format!("({})", literals.join(", "))) {
                         if tx.send(Ok(stmt.into_bytes())).await.is_err() {
                             return;
