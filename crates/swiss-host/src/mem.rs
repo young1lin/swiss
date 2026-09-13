@@ -49,8 +49,9 @@ pub fn invalidate_memory_cache() {
 ///
 /// The gateway's own numbers are read in-process — free and always current. Child subtrees are
 /// only walked when proc-type MCPs actually exist AND the caller asks for it (`measure_children`):
-/// the panel's poll passes false and gets `childrenPending: true`, and the memory chip's click
-/// (and `/api/mem?tree=1`) passes true. A walk that found nothing reports `childrenPending`
+/// every panel path asks with `?tree=1` (the 6 s poll, the memory chip's click, the r key) and
+/// leans on the cache below to bound the cost, while a tree-less call gets
+/// `childrenPending: true`. A walk that found nothing reports `childrenPending`
 /// rather than a confident-looking zero — "0 MB across 0 processes" reads exactly like "there
 /// are no children".
 pub fn get_memory_info(child_pids: &[u32], measure_children: bool) -> Value {
@@ -187,9 +188,10 @@ mod tests {
     }
 
     #[test]
-    fn the_panels_poll_never_pays_for_the_walk() {
-        // The list poll passes false and gets `childrenPending`; only the memory chip's click
-        // (and /api/mem?tree=1) asks for the walk.
+    fn a_tree_less_call_never_pays_for_the_walk() {
+        // A caller that does not ask for the tree gets `childrenPending` instead of a free
+        // walk. No panel path does this today — all of them pass ?tree=1 — but the API
+        // contract (a tree-less answer never pretends children were measured) stays pinned.
         let _lock = tree_cache();
         let info = get_memory_info(&[GHOST], false);
         assert_eq!(info["childrenPending"], json!(true));
