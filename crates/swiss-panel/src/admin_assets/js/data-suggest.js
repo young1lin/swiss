@@ -73,7 +73,11 @@ async function dbSuggestFetch(ta) {
 }
 
 function dbSuggestRender(ta) {
-  dbSuggestHide();
+  // Replace only the BOX ELEMENT here — dbSuggestHide() also clears the item list, and this
+  // function draws from that list: calling it first once rendered an empty, positioned box
+  // for every reply (caught live on 19998).
+  var old = $("dbSuggest");
+  if (old && old.parentNode) old.parentNode.removeChild(old);
   var wrap = ta.closest(".db-sql-wrap");
   if (!wrap) return;
   var box = el("div", "db-suggest");

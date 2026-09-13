@@ -2268,11 +2268,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_redis_pipeline_body_is_shape_checked_at_the_route() {
+        // A bare number stays a VALID argument (a score, a list index) — only values that
+        // are neither string nor number are the caller's mistake.
         for bad in [
             json!({}),
             json!({ "commands": [] }),
             json!({ "commands": [[]] }),
-            json!({ "commands": [["HSET", 7]] }),
+            json!({ "commands": [["HSET", true]] }),
         ] {
             let app = router_of(vec![redis_entry("cache")]);
             let (status, _, body, _) = call(

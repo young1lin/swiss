@@ -337,7 +337,9 @@ function dbRedisTypedTable(wrap, v, cfg) {
       td.title = td.textContent || ""; // long values truncate in the cell; the full text is one hover away
       if (editable) {
         td.ondblclick = function () {
-          dbRedisCellEdit(td, 0, entry.addr, c, String(entry.cells[c]));
+          // -1, never an insert index: save() reads >= 0 as "this is a buffered insert row",
+        // and a 0 here once made every existing-row edit vanish into inserts[0] (caught live).
+        dbRedisCellEdit(td, -1, entry.addr, c, String(entry.cells[c]));
         };
       }
       tr.appendChild(td);

@@ -654,10 +654,14 @@ pub fn redis_pipeline_commands(body: &Value) -> Result<Vec<Vec<String>>, String>
                 .ok_or_else(|| "each command must be an array: [verb, arg...]".to_string())?;
             parts
                 .iter()
-                .map(|p| {
-                    p.as_str()
-                        .map(str::to_string)
-                        .ok_or_else(|| "each command must be an array: [verb, arg...]".to_string())
+                .map(|p| match p {
+                    Value::String(s) => Ok(s.clone()),
+                    // Scores and list indexes cross the wire as JSON numbers — the panel's
+                    // typed editors emit the wire form redis itself takes (ZADD's score, LSET's
+                    // index). Every redis argument is a bulk string on the socket, so the number
+                    // renders as its JSON text: 9.75 stays "9.75", 9 stays "9".
+                    Value::Number(n) => Ok(n.to_string()),
+                    _ => Err("each command must be an array: [verb, arg...]".to_string()),
                 })
                 .collect()
         })
@@ -3929,24 +3933,28 @@ mod tests {
         // docs/22 W3.3: the panel's typed editors post [verb, arg...] arrays — a hash value
         // with spaces is ONE argument, never re-split, because the pipeline binds args as-is.
         let cmds = redis_pipeline_commands(&json!({
-            "commands": [["HSET", "h:1", "a field", "two words"], ["ZADD", "z", "1.5", "m"]]
+            "commands": [["HSET", "h:1", "a field", "two words"], ["ZADD", "z", 9.75, "m"], ["LSET", "l", 0, "v"]]
         }))
         .expect("valid body");
-        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds.len(), 3);
         assert_eq!(cmds[0], vec!["HSET", "h:1", "a field", "two words"]);
-        assert_eq!(cmds[1], vec!["ZADD", "z", "1.5", "m"]);
+        // A score and a list index arrive as JSON numbers and render as their exact text.
+        assert_eq!(cmds[1], vec!["ZADD", "z", "9.75", "m"]);
+        assert_eq!(cmds[2], vec!["LSET", "l", "0", "v"]);
     }
 
     #[test]
     fn a_redis_pipeline_body_with_a_bad_shape_is_refused_by_name() {
-        // Absent, empty, non-array, an empty inner command, a non-string part: each is the
-        // caller's whole mistake and answers the message the panel can act on.
+        // Absent, empty, non-array, an empty inner command, an argument that is neither
+        // string nor number: each is the caller's whole mistake and answers the message the
+        // panel can act on. A bare number IS an argument (a score, an index) and stays valid.
         for bad in [
             json!({}),
             json!({ "commands": [] }),
             json!({ "commands": "HSET k v" }),
             json!({ "commands": [[]] }),
-            json!({ "commands": [["HSET", 7]] }),
+            json!({ "commands": [["HSET", true]] }),
+            json!({ "commands": [["HSET", null]] }),
             json!({ "commands": ["HSET"] }),
         ] {
             let err = redis_pipeline_commands(&bad).expect_err("refused");
