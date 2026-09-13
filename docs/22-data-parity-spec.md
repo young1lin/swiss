@@ -1,6 +1,6 @@
 # 22 — Data 视图全量对齐:六个批次(W0–W5)
 
-> **状态:已交付(待 master 合并)— 全部六批 32 项落齐,集成分支 `data-parity` @ `6aa6761`(含全部外来面板对齐),每批独立审计 PASS。批账:W0 `6685d93..477aab3`、W1 `f072bc5..ed1dfae`、W2 `9206053..d8a3430`、W3 `6ed4c08..ed995b2`、W4.4/4.5 `48cbf4d..b731adc`、W4.1/4.2 `f9001b9..e8c09f3`、W4.6 `b8fcf8d..8d6a75c`、W4.3+minors `68b141c..a1c5e39`、W5 `a88d360..88fff4d`;Node 面板侧对应提交散于其 main(23a5de8 起)。已知不拦 minor:W4d hex 角落反例、超大 JSON 无截断、W4.6 comment 上限已修仅 PG 回滚无自动化测试(记 live 清单)。Hand-off prompt:[docs/22-data-parity-prompt.md](docs/22-data-parity-prompt.md)。**
+> **状态:已交付(待 master 合并)— 全部六批 32 项落齐,集成分支 `data-parity` @ `6aa6761`(含全部外来面板对齐),每批独立审计 PASS。批账:W0 `6685d93..477aab3`、W1 `f072bc5..ed1dfae`、W2 `9206053..d8a3430`、W3 `6ed4c08..ed995b2`、W4.4/4.5 `48cbf4d..b731adc`、W4.1/4.2 `f9001b9..e8c09f3`、W4.6 `b8fcf8d..8d6a75c`、W4.3+minors `68b141c..a1c5e39`、W5 `a88d360..88fff4d`;Node 面板侧对应提交散于其 main(23a5de8 起)。已知不拦 minor:W4d hex 角落反例、超大 JSON 无截断、PG 回滚无自动化测试(记 live 清单)。收尾加固(data-parity-w6,独立审计+集成测试驱动):滚动锚定/焦点抢占/双击失效三个 P0、redis 编辑器复活 blocker、5 处响应竞态、菜单贴边、redis<6.0 TYPE 本地过滤、More 丢页、Commit 滚动保持等 19 项修复,live 实证含 450/450 键完整性;集成测试通过场景 20+ 大项(独立会话,撤回 3 误报)。Hand-off prompt:[docs/22-data-parity-prompt.md](docs/22-data-parity-prompt.md)。**
 > 基线:`3d5f42e`(docs/21 落库,master,2026-09-13)。
 >
 > 需求原话(2026-09-13):"/swiss-spec 我需要所有的功能,开始写 spec 吧,注意,需要和 /swiss-design 保持风格一致,然后 EnterWorktree 单独开个 worktree 进去,开始写这部分内容。有一点我需要你注意,vendor 被忽略了,worktree 里面可能引用的 js 没了,我的建议是把 clone 的项目,挪到其他项目下……"(参照库问题同日由用户归位:`../terminals-ref/`。)
