@@ -13,14 +13,13 @@ use super::pg::{
 use super::sql::{clamp_row_limit, limit_report, with_row_limit};
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
-    browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    browse_table_sort, build_ddl_op_sql, build_edit_statements, build_import_statements,
-    build_pg_ddl, export_row_limit,
-    js_to_string, map_import_rows, readback_plan, sql_dump_foot, sql_dump_head,
-    sql_dump_literal,
-    to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
-    BrowseForeignKey, DbBrowser, DbDialect, DumpPiece, ReadBack, SqlDump, SqlInsertBatch,
-    EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    ambiguous_row_error, browse_count_sql, browse_offset, browse_order, browse_page_size,
+    browse_rows_sql, browse_table_sort, build_ddl_op_sql, build_edit_statements,
+    build_import_statements, build_pg_ddl, export_row_limit, js_to_string, map_import_rows,
+    readback_plan, sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns,
+    to_browse_indexes, to_csv, to_json_lines, BrowseColumn, BrowseForeignKey, DbBrowser,
+    DbDialect, DumpPiece, ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP,
+    IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
 use sqlx::PgPool;
@@ -267,10 +266,12 @@ impl DbBrowser for PgBrowser {
         );
         let (rows, next_page) = swiss_host::dbbrowser::page_and_next(rows?, limit);
         let total = total_of(&count?);
-        let editable = !primary.is_empty();
-        // Node's editNote: the pk-less explanation is the only one left (pg.ts).
+        // docs/22 W4.1: every table is editable — a keyless one addresses rows by every
+        // column (NULL makes a row unaddressable, twins are refused), so the old pk-less
+        // refusal becomes the note that says how the addressing works instead.
+        let editable = true;
         let edit_note = if primary.is_empty() {
-            Some("table has no primary key, so a row cannot be addressed for edits")
+            Some("rows are addressed by all columns; ambiguous rows are refused")
         } else {
             None
         };
@@ -423,6 +424,14 @@ impl DbBrowser for PgBrowser {
                 _ => {
                     let affected =
                         super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
+                    // docs/22 W4.1: Postgres has no UPDATE ... LIMIT, so a keyless table's
+                    // every-column address guards its own uniqueness here — twins fail the
+                    // whole batch (the dropped transaction rolls back what came before)
+                    // instead of silently picking the first row. An insert is single-row by
+                    // construction and cannot trip this.
+                    if primary.is_empty() && affected > 1 {
+                        return Err(ambiguous_row_error(typed[i].op(), affected));
+                    }
                     let row = match plan {
                         ReadBack::Select(s) => super::pg::run_pg_tx_rows(&mut tx, &s.sql, &s.params)
                             .await?

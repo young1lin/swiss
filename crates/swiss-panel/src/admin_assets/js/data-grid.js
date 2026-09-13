@@ -208,6 +208,19 @@ function dbPasteCell(kind, key, i, column, meta, raw) {
  *  columns left to right; paste rows past the page's last row grow NEW buffered inserts; a
  *  wider paste than the grid simply drops its extra cells. Every value lands in the local
  *  buffers exactly as if it had been typed — Commit is still the only write. */
+/** docs/22 W4.1: the values that address one buffered row. A keyed table addresses by
+ *  its primary key exactly as before; a keyless table addresses by EVERY column's original
+ *  value (a NULL in any column makes the row unaddressable — the server refuses those rows
+ *  at commit), so the pk map carries the whole row there. Every buffer writer (cell edit,
+ *  dialog, paste, delete button) goes through here so the commit payload and the SQL
+ *  preview keep one shape. */
+function dbRowAddr(pkCols, columns, row) {
+  if (pkCols.length) return dbPkVals(pkCols, row);
+  var out = {};
+  columns.forEach(function (c) { out[c.name] = row[c.name]; });
+  return out;
+}
+
 function dbPasteApply(text, r0, c0) {
   var d = state.db;
   if (!d.data || !d.data.editable) {
@@ -235,7 +248,7 @@ function dbPasteApply(text, r0, c0) {
         if (ri < d.data.rows.length) {
           var row = d.data.rows[ri];
           var key = keyOf(row, ri);
-          dbPasteCell("update", key, ri, col, { pk: dbPkVals(pkCols, row), orig: row[col] }, raw);
+          dbPasteCell("update", key, ri, col, { pk: dbRowAddr(pkCols, d.data.columns, row), orig: row[col] }, raw);
         } else {
           // Past the page: the paste row becomes a NEW buffered insert, values in column order.
           d.inserts.push({ values: {} });
@@ -353,7 +366,13 @@ function renderDbToolbar() {
   } else if (d.data) {
     left.appendChild(el("h2", "db-title pane-title", (d.data.schema ? d.data.schema + "." : "") + d.data.table));
     var bits = [d.data.total.toLocaleString() + " rows"];
-    bits.push(d.data.editable ? "editable — changes buffer until Commit" : (d.data.editNote || "browsing only"));
+    // docs/22 W4.1: a keyless table edits by every-column addressing — the server's note
+    // says how, and it belongs in the editable branch now (this same line used to explain
+    // why such a table could not be edited at all).
+    var pkCols0 = d.data.primaryKey || [];
+    bits.push(d.data.editable
+      ? (pkCols0.length ? "editable — changes buffer until Commit" : "editable — " + (d.data.editNote || "rows are addressed by all columns"))
+      : (d.data.editNote || "browsing only"));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (dbIsRedis()) {
     left.appendChild(el("h2", "db-title pane-title", d.redisKey ? d.redisKey : "Keys"));
@@ -761,7 +780,7 @@ function renderDbGrid() {
       b.onclick = function () {
         if (deleted) delete d.deletes[key];
         else {
-          d.deletes[key] = dbPkVals(pkCols, row);
+          d.deletes[key] = dbRowAddr(pkCols, d.data.columns, row);
           delete d.updates[key]; // a deleted row's cell edits are moot
         }
         renderDbGrid(); renderDbBar();
@@ -784,7 +803,7 @@ function renderDbGrid() {
         td.classList.add("db-cell-edit");
         td.title = long || "Double-click to edit · right-click for dialog/copy";
         (function (col, orig) {
-          var meta = { pk: dbPkVals(pkCols, row), orig: orig };
+          var meta = { pk: dbRowAddr(pkCols, d.data.columns, row), orig: orig };
           td.ondblclick = function () {
             var cur = dbCellText(orig);
             dbEditCellEnter("update", key, -1, col, meta, td, cur == null ? "" : cur);
