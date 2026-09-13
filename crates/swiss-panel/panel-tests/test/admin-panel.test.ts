@@ -443,3 +443,34 @@ describe("fullscreen - the sub-page takes over the page", () => {
     expect(resizeCount).toBe(0);
   });
 });
+
+/* Fullscreen keeps the page's own bars — the CSS contract, pinned end to end. Two
+   regressions were paid for on 2026-09-13: (1) fullscreen folded the SIDEBAR away too —
+   but on #mcps the sidebar IS the page (the MCP list itself), and with nothing selected
+   the pane is empty, so the page went blank; (2) the exit button vanished with the
+   toolbar, because it lives inside the toolbar and display:none takes the whole subtree
+   down — only Esc could leave. These read the shipped base.css the way the cascade test
+   above does and pin the shape: ONLY the toolbar folds, via visibility, so the corner
+   exit can escape. */
+describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
+  const base = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "styles", "base.css"), "utf8");
+
+  it("the toolbar folds through visibility, never display:none", () => {
+    expect(base).toMatch(/body.immersive .toolbar {[^}]*visibility: hidden/);
+    expect(base).not.toMatch(/body.immersive .toolbar {[^}]*display: none/); // display would take the exit button down too
+  });
+
+  it("the page's own bars never fold: no immersive rule hides the sidebar or the page bar", () => {
+    expect(base).not.toMatch(/body.immersive[^{]*.sidebar[^{]*{[^}]*display: none/);
+    expect(base).not.toMatch(/body.immersive[^{]*.subbar[^{]*{[^}]*display: none/);
+  });
+
+  it("the exit escapes: the corner button re-opens visibility over its hidden parent", () => {
+    expect(base).toMatch(/body.immersive #expandBtn {[^}]*visibility: visible/);
+    expect(base).toMatch(/body.immersive #expandBtn {[^}]*position: fixed/);
+  });
+
+  it("the page bar reserves room so its own actions never sit under the floating exit", () => {
+    expect(base).toMatch(/body.immersive .subbar {[^}]*padding-right: 52px/);
+  });
+});
