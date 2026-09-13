@@ -264,14 +264,10 @@ function renderDbView() {
     else dbLoadTables();
   };
   // The schema picker (pg only): picking one re-requests the table list inside that schema.
+  // The wiring itself lives in dbWireSchemaSelect so a RE-CREATED picker (dbPaintSchemaOptions
+  // removes the select for non-pg connections and brings it back for pg) gets it too.
   var schemaSel = $("dbSchema");
-  if (schemaSel) schemaSel.onchange = function () {
-    var d = state.db;
-    if (this.value === d.schemaFilter) return;
-    d.schemaFilter = this.value;
-    d.tablesPage = 0;
-    dbLoadTables();
-  };
+  if (schemaSel) dbWireSchemaSelect(schemaSel);
   $("dbSql").value = state.db.sqlText;
   $("dbSql").oninput = function () { state.db.sqlText = this.value; dbSqlPaint(); dbSuggestOnInput.call(this); };
   $("dbSql").onscroll = function () {
@@ -676,14 +672,41 @@ function dbTableRow(t) {
   return b;
 }
 
+/** The schema picker's one behavior: a pick re-requests the table list inside that schema. */
+function dbWireSchemaSelect(sel) {
+  sel.onchange = function () {
+    var d = state.db;
+    if (this.value === d.schemaFilter) return;
+    d.schemaFilter = this.value;
+    d.tablesPage = 0;
+    dbLoadTables();
+  };
+}
+
 /** The schema picker above the grep box (pg only): "All schemas" plus one option per schema
  *  on the current page, counts from the page the list is showing. A schema picked on an earlier
- *  page stays selectable even when this page does not carry it. */
+ *  page stays selectable even when this page does not carry it.
+ *  docs/22 closeout B7: a non-pg connection carries NO picker — the select leaves the DOM,
+ *  not hidden-with-options. A hidden native select still surfaces in automation accessibility
+ *  trees as a live "Schema" button holding the previous pg connection's pick, which read as a
+ *  redis page offering a schema dropdown; hidden options are state residue even unseen. */
 function dbPaintSchemaOptions() {
   var d = state.db;
   var sel = $("dbSchema");
-  if (!sel) return;
-  if (!d.conn || !dbIsPg()) { sel.hidden = true; return; }
+  if (!d.conn || !dbIsPg()) {
+    if (sel) sel.remove();
+    return;
+  }
+  if (!sel) {
+    // Coming back to pg after a non-pg connection removed it: re-create it in the sidebar,
+    // right after the connection picker, wired like the mount path wires it.
+    sel = el("select");
+    sel.id = "dbSchema";
+    sel.setAttribute("aria-label", "Schema");
+    var conn = $("dbConn");
+    if (conn && conn.parentNode) conn.parentNode.insertBefore(sel, conn.nextSibling);
+    dbWireSchemaSelect(sel);
+  }
   sel.hidden = false;
   var schemas = [];
   d.tables.forEach(function (t) {
