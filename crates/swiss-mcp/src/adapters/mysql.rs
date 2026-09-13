@@ -362,14 +362,25 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
             .ok()
             .flatten()
             .unwrap_or(Value::Null),
-        // Binary kinds ride the API as \x hex — the same wire form the pg adapter's BYTEA
-        // uses (bytea text format), so non-UTF-8 bytes survive the round trip and the keyless
-        // md5 address digests the decoded bytes. The old lossy string mangled them.
+        // Binary kinds split on the bytes themselves, not the type name: MariaDB reports
+        // its information_schema string columns (table_name, column_comment, ...) as
+        // BLOB/VARBINARY-typed but UTF-8, and sqlx 0.8.6 exposes no charset to tell them
+        // from a user's binary column (MySqlTypeInfo carries type + flags only), so a
+        // name-driven hex arm hexed every catalog identifier and broke the table list,
+        // completion and the structure views. Bytes that are valid UTF-8 ride as text —
+        // exactly what the Node build's driver returns for those catalog columns, and an
+        // exact round trip for a text-shaped user value. Anything else is real binary and
+        // rides as \x hex (the pg adapter's BYTEA wire form), so non-UTF-8 bytes survive
+        // and the keyless md5 address digests the decoded bytes instead of a mangled
+        // string.
         "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" | "GEOMETRY" => {
             row.try_get::<Option<Vec<u8>>, _>(i)
                 .ok()
                 .flatten()
-                .map(|b| json!(bytea_hex(&b)))
+                .map(|b| match String::from_utf8(b) {
+                    Ok(s) => json!(s),
+                    Err(e) => json!(bytea_hex(&e.into_bytes())),
+                })
                 .unwrap_or(Value::Null)
         }
         // CHAR / VARCHAR / TEXT family / ENUM / SET / anything not modeled.
