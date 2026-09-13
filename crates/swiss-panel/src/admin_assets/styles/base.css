@@ -285,18 +285,17 @@
     /* The single-page spelling of the page bar (docs/18 V3): the page's own name, body weight. */
     .subbar-name { font-size: var(--f-body); font-weight: 500; color: var(--text-2); }
 
-    /* Fullscreen (the toolbar's expand control, js/immersive.js): the sub-page takes over the
-       page area — the global toolbar AND the sidebar fold away, the pane gets their room; the
-       page bar stays, because it is the page's own header. The toolbar collapses through
-       visibility, not display, on purpose: the expand control lives inside it, and
-       display:none would take the exit button down with the bar, while a visibility:hidden
-       parent lets the control re-open itself and escape to the top-right corner (under menus
-       and sheets, above the page). The measure caps stay — readability is not a width
-       problem. */
+    /* Fullscreen (the toolbar's expand control, js/immersive.js): ONLY the global toolbar
+       folds — everything below it is the sub-page's own and stays: the page bar (its header),
+       the sidebar (on #mcps the sidebar IS the page — the MCP list itself, and with nothing
+       selected the pane is empty), and the content. The toolbar collapses through visibility,
+       not display, on purpose: the expand control lives inside it, and display:none would take
+       the exit button down with the bar, while a visibility:hidden parent lets the control
+       re-open itself and escape to the top-right corner (under menus and sheets, above the
+       page). The measure caps stay — readability is not a width problem. */
     body.immersive .toolbar {
       visibility: hidden; height: 0; min-height: 0; border-bottom: 0;
     }
-    body.immersive .sidebar { display: none; }
     /* The exit must be an OBVIOUS control on every page — the corner button rides the page
        bar's row; the page bar reserves right-side room so its own actions never sit under it. */
     body.immersive .subbar { padding-right: 52px; }
