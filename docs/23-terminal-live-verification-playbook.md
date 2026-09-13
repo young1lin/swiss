@@ -54,7 +54,7 @@ never valid (AGENTS.md "The panel's JavaScript is the spec"). One lap:
                test/admin-terminal-vendor.test.ts
 3. parse check node vm.SourceTextModule on views/terminal.js (syntax-only; the view
                cannot be imported — connect.js touches document at top level)
-4. mirror      robocopy ..\..src\admin  crates\swiss-panel\src\admin_assets /MIR
+4. mirror      robocopy <node-repo>\src\admin crates\swiss-panel\src\admin_assets /MIR
 5. byte guard  cargo test -p swiss-panel   (the_tree_is_byte_for_byte_the_node_builds)
 6. gates       cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings
 7. build       $env:CARGO_TARGET_DIR='target-test'; cargo build --release   (~2-3 min)
