@@ -10,7 +10,7 @@ use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions,
 use sqlx::{Column, Either, Executor, Row};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{TableSort, TableSortKey};
+use swiss_host::dbbrowser::{TableSort, TableSortKey, exact_int64, exact_uint64, finite_f64};
 
 use super::direct::{BoxFut, Lazy};
 use super::mysql_browser::MysqlBrowser;
@@ -295,11 +295,13 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
     match type_name.as_str() {
         "BIGINT" | "BIGINT UNSIGNED" => {
             // try_get::<i64> refuses an unsigned column (u64-only), so try both spellings.
+            // exact_* (docs/22 W2.4): the value crosses the wire as a string so JavaScript
+            // never rounds it through a double.
             if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(i) {
-                return json!(v.to_string());
+                return exact_int64(v);
             }
             if let Ok(Some(v)) = row.try_get::<Option<u64>, _>(i) {
-                return json!(v.to_string());
+                return exact_uint64(v);
             }
             Value::Null
         }
@@ -325,10 +327,7 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
             .try_get::<Option<f64>, _>(i)
             .ok()
             .flatten()
-            .map(|v| match v {
-                f if f.is_finite() => json!(f),
-                _ => Value::Null,
-            })
+            .map(finite_f64) // NaN/±Inf have no JSON spelling; they read as NULL (W2.4)
             .unwrap_or(Value::Null),
         "DATE" => row
             .try_get::<Option<chrono::NaiveDate>, _>(i)

@@ -12,7 +12,7 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Either, Row};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{TableSort, TableSortKey};
+use swiss_host::dbbrowser::{TableSort, TableSortKey, exact_int64, exact_int64_list, finite_f64};
 
 use super::direct::{BoxFut, Lazy};
 use super::pg_resources::PgResources;
@@ -364,13 +364,13 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
             .try_get::<Option<i64>, _>(i)
             .ok()
             .flatten()
-            .map(|v| json!(v.to_string()))
+            .map(exact_int64) // exact digits past the JS double boundary (docs/22 W2.4)
             .unwrap_or(Value::Null),
         "FLOAT4" | "FLOAT8" => row
             .try_get::<Option<f64>, _>(i)
             .ok()
             .flatten()
-            .map(|f| if f.is_finite() { json!(f) } else { Value::Null })
+            .map(finite_f64) // NaN/±Inf have no JSON spelling; they read as NULL (W2.4)
             .unwrap_or(Value::Null),
         "NUMERIC" => row
             .try_get::<Option<bigdecimal::BigDecimal>, _>(i)
@@ -429,7 +429,7 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
             .try_get::<Option<Vec<i64>>, _>(i)
             .ok()
             .flatten()
-            .map(|v| json!(v.into_iter().map(|x| x.to_string()).collect::<Vec<_>>()))
+            .map(exact_int64_list) // same exact-digits rule, per element (docs/22 W2.4)
             .unwrap_or(Value::Null),
         "FLOAT4[]" | "FLOAT8[]" => row
             .try_get::<Option<Vec<f64>>, _>(i)

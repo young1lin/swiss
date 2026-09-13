@@ -1093,6 +1093,41 @@ fn castable_data_type(data_type: Option<&str>) -> Option<&str> {
     })
 }
 
+
+// --- exact-precision serialization (docs/22 W2.4) ------------------------------------------------
+
+/// An i64 cell as an exact JSON string. The panel is JavaScript: JSON.parse turns any number
+/// beyond +/-2^53 into the nearest double and silently rounds the low digits away
+/// (9223372036854775807 reads back as 9223372036854776000), so 18-19 digit ids (snowflakes,
+/// PG bigserials) must cross the wire as STRINGS. Small values stringify too, so one column
+/// keeps one shape end to end; the grid right-aligns numeric strings (dbCellView) and the
+/// adapters bind them back with a typed/implicit cast. The Node build's mysql2
+/// `bigNumberStrings` + pgweb's int64 rule made the same call.
+pub fn exact_int64(v: i64) -> Value {
+    json!(v.to_string())
+}
+
+/// The u64 spelling of the same contract (MySQL BIGINT UNSIGNED decodes as u64 only).
+pub fn exact_uint64(v: u64) -> Value {
+    json!(v.to_string())
+}
+
+/// Every element of an INT8[] cell under the same rule — one array, one shape.
+pub fn exact_int64_list(v: Vec<i64>) -> Value {
+    json!(v.into_iter().map(|x| x.to_string()).collect::<Vec<_>>())
+}
+
+/// An f64 cell that JSON can actually carry: NaN and +/-Infinity have no JSON spelling and
+/// would abort serialization at write time, so those cells read as NULL — the same fallback
+/// the Node build chose for its JSON.stringify boundary.
+pub fn finite_f64(v: f64) -> Value {
+    if v.is_finite() {
+        json!(v)
+    } else {
+        Value::Null
+    }
+}
+
 /// A placeholder carrying the column's type on Postgres: node-pg bound parameters UNTYPED (OID
 /// 0) and the server inferred them from the statement, but sqlx declares every string/null
 /// bind as `text` — so `bigint = text` dies with 42883 (operator does not exist), and
@@ -2228,6 +2263,57 @@ mod tests {
             readback_plan(DbDialect::Mysql, None, "users", &columns, &[], &upd),
             ReadBack::None
         ));
+    }
+
+    #[test]
+    fn int64_precision_survives_the_json_boundary_as_a_string() {
+        // docs/22 W2.4: the panel is JavaScript; a JSON number beyond +/-2^53 is parsed by
+        // JSON.parse into the nearest double, silently rounding the low digits away
+        // (9223372036854775807 becomes 9223372036854776000). serde_json keeps the digits,
+        // but the value only stays exact if it crosses the wire as a STRING — which is what
+        // the adapters serialize BIGINT/INT8 as, small values included ("42"), so every value
+        // of the column takes the same shape. These helpers name that contract so a future
+        // adapter arm cannot regress to json!(v).
+        assert_eq!(exact_int64(42), json!("42"));
+        assert_eq!(exact_int64(9007199254740993), json!("9007199254740993")); // 2^53+1, first int a double cannot hold
+        assert_eq!(exact_int64(i64::MAX), json!("9223372036854775807"));
+        assert_eq!(exact_int64(i64::MIN), json!("-9223372036854775808"));
+        assert_eq!(exact_uint64(u64::MAX), json!("18446744073709551615"));
+        assert_eq!(
+            exact_int64_list(vec![i64::MAX, 7]),
+            json!(["9223372036854775807", "7"])
+        );
+    }
+
+    #[test]
+    fn non_finite_floats_never_reach_the_json_wire() {
+        // JSON has no NaN/Infinity spelling; json!(f64::NAN) would panic at serialization
+        // time. The adapters null those cells instead (the Node build did the same), and
+        // finite doubles pass through as numbers.
+        assert_eq!(finite_f64(f64::NAN), Value::Null);
+        assert_eq!(finite_f64(f64::INFINITY), Value::Null);
+        assert_eq!(finite_f64(f64::NEG_INFINITY), Value::Null);
+        assert_eq!(finite_f64(1.5), json!(1.5));
+        assert_eq!(finite_f64(0.0), json!(0.0));
+    }
+
+    #[test]
+    fn export_carries_the_exact_digits_verbatim() {
+        // docs/22 W2.4: rows/query/export all receive the SAME stringified cell, so the
+        // digits a bigint column holds are what every surface shows — CSV quotes it (it is
+        // a string cell), NDJSON re-quotes it as a JSON string, and neither re-parses it
+        // through a number.
+        let row: Map<String, Value> = [
+            ("id".to_string(), exact_int64(i64::MAX)),
+            ("n".to_string(), json!(1.5)),
+        ]
+        .into_iter()
+        .collect();
+        let cols = ["id".to_string(), "n".to_string()];
+        let csv = to_csv(&cols, std::slice::from_ref(&row));
+        assert_eq!(csv, "\"id\",\"n\"\r\n\"9223372036854775807\",\"1.5\"");
+        let ndjson = to_json_lines(&[row]);
+        assert_eq!(ndjson.trim(), "{\"id\":\"9223372036854775807\",\"n\":1.5}");
     }
 
     #[test]
