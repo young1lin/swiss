@@ -300,12 +300,12 @@ async function dbLoadData(keepOffset) {
   renderDbToolbar(); renderDbGrid(); renderDbBar(); renderDbFilters();
 }
 
-/* Whole-table export in the chosen format (CSV or NDJSON). The toolbar button carries the
+/* Whole-table export in the chosen format (CSV, NDJSON, or SQL dump). The toolbar button carries the
    busy state: the format menu is gone by the time the download starts, so the button is the
    only place left on screen that can say "working". */
 async function dbExportTable(btn, fmt) {
   var d2 = state.db;
-  var name = fmt === "json" ? "NDJSON" : "CSV";
+  var name = fmt === "json" ? "NDJSON" : fmt === "sql" ? "SQL dump" : "CSV";
   if (!confirm("Export " + (d2.schema ? d2.schema + "." : "") + d2.table + " as " + name +
       "?\nCapped at 100,000 rows — filter first if you need less.")) return;
   var q = "/api/db/" + encodeURIComponent(d2.conn) + "/export?table=" + encodeURIComponent(d2.table) +
@@ -361,7 +361,7 @@ function renderDbToolbar() {
     left.appendChild(el("div", "db-meta",
       (conn2 ? conn2.label : "") +
       (d.redis && d.redis.total != null ? " · " + Number(d.redis.total).toLocaleString() + " keys" : "") +
-      " · browsing · Command for writes and queries"));
+      " · browsing · edit values in place or run commands"));
   } else {
     left.appendChild(el("h2", "db-title pane-title", "Data"));
     left.appendChild(el("div", "db-meta", d.conn ? (d.table ? "Loading…" : "Select a table on the left") : "No database MCP registered"));
@@ -455,7 +455,7 @@ function renderDbToolbar() {
     dataCtl.appendChild(csv);
 
     var exp = el("button", "btn", "Export…");
-    exp.title = "Export the whole table as CSV or NDJSON (capped at 100k rows)";
+    exp.title = "Export the whole table as CSV, NDJSON, or SQL dump (capped at 100k rows)";
     exp.onclick = function (ev) {
       // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
       // and without this the very click that opens the menu also tears it down.
@@ -463,6 +463,7 @@ function renderDbToolbar() {
       popupMenu(this.getBoundingClientRect(), [
         { label: "Export CSV…", fn: function () { dbExportTable(exp, "csv"); } },
         { label: "Export NDJSON…", fn: function () { dbExportTable(exp, "json"); } },
+        { label: "Export SQL dump…", fn: function () { dbExportTable(exp, "sql"); } },
       ]);
     };
     dataCtl.appendChild(exp);
