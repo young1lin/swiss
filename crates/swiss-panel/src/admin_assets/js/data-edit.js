@@ -4,6 +4,7 @@ import { dbOpenCellEditor } from "./data-cell.js";
 import { dbLoadData, renderDbGrid } from "./data-grid.js";
 import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
+import { clampMenuPos } from "./menu.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user
@@ -28,9 +29,6 @@ function dbTableMenu(anchorEl) {
   var d = state.db;
   if (!d.conn || !d.table) return;
   var menu = el("div", "ctx-menu");
-  var r = anchorEl.getBoundingClientRect();
-  menu.style.left = r.left + "px";
-  menu.style.top = (r.bottom + 4) + "px";
   function item(label, fn) {
     var b = el("button", "", label);
     b.onclick = function () { closeMenu2(); fn(); };
@@ -56,6 +54,13 @@ function dbTableMenu(anchorEl) {
     dbTypedConfirm({ what: "DROP (permanently delete)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, function () { dbRunDdl("drop"); });
   });
   document.body.appendChild(menu);
+  // docs/22 closeout audit: the Table menu now clamps to the viewport like popupMenu — a
+  // button near the bottom edge used to drop its menu off-screen. Measured after the append.
+  var r = anchorEl.getBoundingClientRect();
+  var box = menu.getBoundingClientRect();
+  var pos = clampMenuPos(r, box.width, box.height, window.innerWidth, window.innerHeight);
+  menu.style.left = pos.left + "px";
+  menu.style.top = pos.top + "px";
   state.menuOpen = true;
   function closeMenu2() { menu.remove(); state.menuOpen = false; }
   setTimeout(function () {
