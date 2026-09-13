@@ -345,11 +345,12 @@ describe("the memory chip is a memory-only control", () => {
   });
 });
 
-/* Immersive mode: one control gives the page the whole window — the bars and sidebar fold
-   away, entering also asks the browser for real fullscreen, and the toggle ends with a
-   window resize so every view fits itself (the terminal refits and tells the gateway).
-   Nothing view-specific may hang off this mode: these tests pin the shell mechanics. */
-describe("immersive mode - the page can take the whole window", () => {
+/* Fullscreen: the sub-page takes over the whole page area — the global toolbar and the
+   sidebar fold away (body.immersive + base.css), the page bar stays, and the toggle ends
+   with a window resize so every view fits itself. The browser's own fullscreen is
+   deliberately NEVER requested: F11 is the user's keypress, the page is ours — the stub
+   below keeps a counting requestFullscreen precisely to pin that it stays uncalled. */
+describe("fullscreen - the sub-page takes over the page", () => {
   interface FakeBtn { title: string; innerHTML: string; onclick: unknown; setAttribute: (k: string, v: string) => void; }
   const els = new Map<string, FakeBtn>();
   let classes: Set<string>;
@@ -377,10 +378,9 @@ describe("immersive mode - the page can take the whole window", () => {
       addEventListener: () => {},
       removeEventListener: () => {},
       documentElement: {
+        // Counting on purpose: the module must NEVER call it — F11 is the user's, not ours.
         requestFullscreen: () => { fullscreenCalls.push("enter"); return Promise.resolve(); },
       },
-      // exitFullscreen lives on Document in the real DOM (requestFullscreen is the Element one)
-      exitFullscreen: () => { fullscreenCalls.push("exit"); return Promise.resolve(); },
       body: {
         classList: {
           contains: (c: string) => classes.has(c),
@@ -389,7 +389,6 @@ describe("immersive mode - the page can take the whole window", () => {
           toggle: (c: string, on?: boolean) => { if (on === undefined) { if (classes.has(c)) classes.delete(c); else classes.add(c); } else if (on) classes.add(c); else classes.delete(c); },
         },
       },
-      fullscreenElement: null,
     };
     Object.assign(globalThis, {
       document: fakeDocument,
@@ -404,14 +403,11 @@ describe("immersive mode - the page can take the whole window", () => {
     immersive = await import("../../src/admin_assets/js/immersive.js");
   });
 
-  // Each test is self-contained: the mode is shell state, so every case resets it rather
-  // than depending on the toggle history of the case before it.
+  // Each test is self-contained: the mode is shell state, so every case resets it.
   beforeEach(() => {
     classes.clear();
     fullscreenCalls.length = 0;
     resizeCount = 0;
-    fakeDocument.fullscreenElement = null;
-    fakeDocument.documentElement.requestFullscreen = () => { fullscreenCalls.push("enter"); return Promise.resolve(); };
   });
 
   it("init wires the control and paints the resting state", () => {
@@ -422,41 +418,28 @@ describe("immersive mode - the page can take the whole window", () => {
     expect(btn.title).toContain("Fullscreen");
   });
 
-  it("toggle: the page immerses, the browser is asked for fullscreen, views get one resize", async () => {
+  it("toggle: the class flips, the icon flips, views get one resize - and no document fullscreen is asked", () => {
     immersive.toggleImmersive();
     expect(immersive.immersiveOn()).toBe(true);
-    expect(fullscreenCalls).toEqual(["enter"]);
     expect(resizeCount).toBe(1);
     const btn = els.get("expandBtn")!;
-    expect(btn.innerHTML).toContain("#i-collapse"); // the control flips to its exit state
+    expect(btn.innerHTML).toContain("#i-collapse");
     expect(btn.title).toContain("Exit");
-    await Promise.resolve(); // a refused fullscreen must never surface
+    expect(fullscreenCalls).toEqual([]); // F11 is the user's keypress; the page is ours
   });
 
-  it("toggle back: the bars return and a live browser fullscreen is left too", () => {
-    immersive.toggleImmersive();               // in, with the browser fullscreen granted
-    fakeDocument.fullscreenElement = {};       // the browser says it IS fullscreen
-    immersive.toggleImmersive();               // out: the layout returns AND fullscreen is left
+  it("toggle back: the class returns and the views resize again", () => {
+    immersive.toggleImmersive();
+    immersive.toggleImmersive();
     expect(immersive.immersiveOn()).toBe(false);
-    expect(fullscreenCalls).toEqual(["enter", "exit"]);
     expect(resizeCount).toBe(2);
     expect(els.get("expandBtn")!.innerHTML).toContain("#i-expand");
-  });
-
-  it("a refused fullscreen still immerses: the rejection is swallowed, not surfaced", async () => {
-    fakeDocument.documentElement.requestFullscreen = () => Promise.reject(new Error("blocked"));
-    immersive.toggleImmersive();
-    expect(immersive.immersiveOn()).toBe(true);
-    await Promise.resolve();
-    await Promise.resolve();
-    immersive.exitImmersive();
-    expect(immersive.immersiveOn()).toBe(false);
-    expect(fullscreenCalls).toEqual([]);       // no enter ever landed, none to leave
+    expect(fullscreenCalls).toEqual([]); // leaving is as quiet as entering
   });
 
   it("exitImmersive is a no-op when the panel is not immersive", () => {
-    fullscreenCalls.length = 0;
     immersive.exitImmersive();
-    expect(fullscreenCalls).toEqual([]);
+    expect(immersive.immersiveOn()).toBe(false);
+    expect(resizeCount).toBe(0);
   });
 });
