@@ -272,7 +272,6 @@ impl DbBrowser for MysqlBrowser {
         // docs/22 W1.7: same read-back as Postgres, shaped for MySQL — an insert's row comes
         // back by LAST_INSERT_ID() on the same connection, an update's by its primary key;
         // both inside the same transaction so the reply is what the commit really kept.
-        let col_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         let mut results: Vec<Value> = Vec::with_capacity(stmts.len());
@@ -281,7 +280,7 @@ impl DbBrowser for MysqlBrowser {
                 DbDialect::Mysql,
                 Some(&self.database),
                 table,
-                &col_names,
+                &columns,
                 &primary,
                 &typed[i],
             );

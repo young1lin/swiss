@@ -376,7 +376,6 @@ impl DbBrowser for PgBrowser {
         // transaction — silent truncation, DEFAULTs and trigger rewrites land on screen instead
         // of the value that was typed. Deletes read nothing back; a plan that cannot address a
         // row comes home null and the commit itself is unaffected.
-        let col_names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         let mut results: Vec<Value> = Vec::with_capacity(stmts.len());
@@ -385,7 +384,7 @@ impl DbBrowser for PgBrowser {
                 DbDialect::Pg,
                 Some(&schema),
                 table,
-                &col_names,
+                &columns,
                 &primary,
                 &typed[i],
             );

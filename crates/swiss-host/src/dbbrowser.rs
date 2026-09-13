@@ -1159,14 +1159,14 @@ pub fn readback_plan(
     dialect: DbDialect,
     schema: Option<&str>,
     table: &str,
-    columns: &[String],
+    columns: &[BrowseColumn],
     pk: &[String],
     edit: &BrowseEdit,
 ) -> ReadBack {
     let cols = || -> Option<String> {
         columns
             .iter()
-            .map(|c| quote_ident(dialect, c))
+            .map(|c| quote_ident(dialect, &c.name))
             .collect::<Result<Vec<_>, _>>()
             .ok()
             .map(|v| v.join(", "))
@@ -1204,6 +1204,16 @@ pub fn readback_plan(
             let (Some(list), Some(target)) = (cols(), target()) else {
                 return ReadBack::None;
             };
+            // Same typed placeholder the update's own WHERE got (W1.2): pk values arrive
+            // from the panel as JSON strings, sqlx binds strings as text, and a bare $n
+            // against a non-text key column dies with 42883 -- taking the whole commit down
+            // with the read-back. Pre-existing, caught live in W2.2 verify on a real PG
+            // table; reproducible on the pure W1 dblclick edit path (MySQL coerces, so it
+            // hid there).
+            let type_of: HashMap<&str, &str> = columns
+                .iter()
+                .map(|c| (c.name.as_str(), c.data_type.as_str()))
+                .collect();
             let mut where_parts: Vec<String> = Vec::with_capacity(pk.len());
             let mut params: Vec<Value> = Vec::with_capacity(pk.len());
             for k in pk {
@@ -1214,11 +1224,10 @@ pub fn readback_plan(
                     return ReadBack::None;
                 };
                 params.push(v.clone());
-                where_parts.push(if dialect == DbDialect::Mysql {
-                    format!("{quoted} = ?")
-                } else {
-                    format!("{quoted} = ${}", params.len())
-                });
+                where_parts.push(format!(
+                    "{quoted} = {}",
+                    typed_ph(dialect, &params, type_of.get(k.as_str()).copied())
+                ));
             }
             if where_parts.is_empty() {
                 return ReadBack::None; // no key columns: nothing to select by
@@ -2152,7 +2161,15 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), json!(v)))
                 .collect()
         };
-        let columns = vec!["id".to_string(), "name".to_string()];
+        let col = |name: &str, data_type: &str| BrowseColumn {
+            name: name.to_string(),
+            data_type: data_type.to_string(),
+            nullable: true,
+            is_primary_key: name == "id",
+            default_value: None,
+            comment: None,
+        };
+        let columns = vec![col("id", "bigint"), col("name", "text")];
         let pk = vec!["id".to_string()];
         let upd = BrowseEdit::Update {
             pk: vmap(&[("id", 7)]),
@@ -2165,11 +2182,17 @@ mod tests {
             }
             other => panic!("mysql update selects its row back: {other:?}"),
         }
+        // The read-back SELECT addresses the row by the same TYPED placeholder the
+        // update's WHERE got in W1.2: the pk value arrives from the panel as a JSON
+        // string, and sqlx binds a string as text -- against a bigint column that dies
+        // with 42883 (operator does not exist) and rolls the whole commit back. Caught
+        // live in W2.2 verification on a real PG table; reproducible on the pure W1
+        // dblclick edit path.
         match readback_plan(DbDialect::Pg, Some("app"), "users", &columns, &pk, &upd) {
             ReadBack::Select(s) => {
                 assert_eq!(
                     s.sql,
-                    "SELECT \"id\", \"name\" FROM \"app\".\"users\" WHERE \"id\" = $1"
+                    "SELECT \"id\", \"name\" FROM \"app\".\"users\" WHERE \"id\" = CAST($1 AS bigint)"
                 );
             }
             other => panic!("pg update selects its row back: {other:?}"),
