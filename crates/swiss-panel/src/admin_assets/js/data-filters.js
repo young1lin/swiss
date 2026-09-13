@@ -54,6 +54,8 @@ var DB_FILTER_OPS = [
   { op: "eq", label: "=" }, { op: "ne", label: "≠" },
   { op: "gt", label: ">" }, { op: "gte", label: "≥" },
   { op: "lt", label: "<" }, { op: "lte", label: "≤" },
+  { op: "in", label: "in list" }, { op: "notIn", label: "not in list" },
+  { op: "between", label: "between" },
   { op: "like", label: "contains" }, { op: "notLike", label: "excludes" },
   { op: "isNull", label: "is NULL" }, { op: "isNotNull", label: "not NULL" },
 ];
@@ -146,7 +148,8 @@ function renderDbFilters() {
     if (!dbValueless(f.op)) {
       var vi = el("input");
       vi.type = "text";
-      vi.placeholder = "value";
+      // The list operators say what they want right in the box (docs/22 W1.2).
+      vi.placeholder = f.op === "in" || f.op === "notIn" ? "1,2,3" : (f.op === "between" ? "lo,hi" : "value");
       vi.title = "Enter applies";
       vi.value = f.value || "";
       vi.onkeydown = function (e) {

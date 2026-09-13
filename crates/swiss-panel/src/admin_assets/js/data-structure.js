@@ -1,5 +1,7 @@
 import { $, apiJson, el, state } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
+import { dbDialectOf } from "./data-view.js";
+import { openDbDdlSheet } from "./data-ddl.js";
 import { dbTableMenu } from "./data-edit.js";
 import { dbHighlightSql, renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -118,7 +120,27 @@ function renderDbDetailGrid(wrap) {
       meta: det.foreignKeys.length + " foreign keys",
     };
   }
-  wrap.appendChild(el("div", "db-detail-meta", spec.meta));
+  // docs/22 W4.6: the tab's own create action rides the meta line (the W3.3 idiom) —
+  // the same sheet family the table list's New table opens, prefilled with this table's
+  // old state so the commit diffs against what is already there.
+  var meta = el("div", "db-detail-meta");
+  meta.appendChild(el("span", "", spec.meta));
+  meta.appendChild(el("span", "grow"));
+  if (d.tab === "columns" || d.tab === "indexes") {
+    var add = el("button", "btn", d.tab === "columns" ? "Add column…" : "New index…");
+    add.type = "button";
+    add.onclick = function () {
+      openDbDdlSheet(d.tab === "columns" ? "column" : "index", {
+        dialect: dbDialectOf(),
+        conn: d.conn,
+        schema: det.schema || "",
+        table: det.table,
+        columns: det.columns,
+      });
+    };
+    meta.appendChild(add);
+  }
+  wrap.appendChild(meta);
   spec.head.forEach(function (h) { hr.appendChild(el("th", "db-col", h)); });
   thead.appendChild(hr);
   tbl.appendChild(thead);

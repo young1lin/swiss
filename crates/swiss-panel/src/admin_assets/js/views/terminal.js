@@ -122,7 +122,9 @@ function paintTabs() {
   var all = tabList();
   var any = all.length > 0;
   bar.hidden = !any;
-  bar.innerHTML = all.map(function (m) {
+  /* Rebuilding identical markup rips the nodes out mid-double-click (see select) and
+     would destroy an open rename input; same string in, same string out - skip. */
+  var html = all.map(function (m) {
     var label = esc(tabLabel(m, m.shellTitle, m.customTitle)) + (m.gone ? " · closed" : "");
     return '<button role="tab" data-act="select" data-id="' + esc(m.id) + '"' +
       ' aria-selected="' + String(m.id === active) + '" title="' + label + '">' +
@@ -131,6 +133,9 @@ function paintTabs() {
       ' <span class="term-tab-x" data-act="close" data-id="' + esc(m.id) + '" title="Close session" role="button">\u00d7</span>' +
       "</button>";
   }).join("");
+  if (html === paintTabs.last) return;
+  paintTabs.last = html;
+  bar.innerHTML = html;
 }
 
 function paintStage() {
@@ -348,6 +353,21 @@ function closeFind() {
   if (m && m.search) m.search.clearDecorations();
   paintFindCount(null);
   if (m && m.term) m.term.focus();
+}
+
+/* Ctrl+Shift+F while the terminal page is staged, even when the terminal itself does
+   not hold focus - xterm's own handler only sees keys that reach its textarea, and a
+   user who just clicked the tab bar or the page is left without a shortcut (VS Code
+   binds find at the view level for exactly this reason). Capture phase; real inputs
+   (rename, find) keep their keys. */
+function pageFindShortcut(ev) {
+  if (!ev.ctrlKey || !ev.shiftKey || ev.altKey || ev.metaKey) return;
+  if (String(ev.key || "").toLowerCase() !== "f") return;
+  var tag = ev.target && ev.target.tagName;
+  if (tag === "INPUT" || tag === "SELECT") return;
+  if (!$("term-find")) return;   // some other page is staged
+  ev.preventDefault();
+  void openFind();
 }
 
 function wireFindBar() {
@@ -726,6 +746,15 @@ function scheduleFit() {
 /* Selecting a tab: wire the terminal if it is the first look, stage it, and refit -
    the container was hidden or absent when the terminal was created. */
 function select(id) {
+  /* Re-clicking the ACTIVE tab is deliberately a no-op for painting: paintTabs
+     rebuilds the bar's innerHTML, and a rebuild between the two clicks of a
+     double-click makes the second land on a fresh node - no dblclick ever fires,
+     and rename lives on dblclick. Just take the focus back. */
+  if (id === active) {
+    var cur = model(id);
+    if (cur && cur.term) cur.term.focus();
+    return;
+  }
   active = id;
   var seen = model(id);
   if (seen && seen.bell) seen.bell = false;   // selecting a tab answers its bell
@@ -916,6 +945,7 @@ function render() {
     "</div>";
 
   wireFindBar();
+  document.addEventListener("keydown", pageFindShortcut, true);
   var button = $("term-new");
   if (button) button.onclick = function () { void openSession(); };
   var gear = $("term-set");
@@ -938,6 +968,12 @@ function render() {
       if (event.button !== 1) return;   // middle-click closes (Tabby / native terminals)
       var tab = event.target.closest('[data-act="select"]');
       if (tab) void closeSession(tab.getAttribute("data-id"));
+    };
+    tabs.oncontextmenu = function (event) {
+      var tab = event.target.closest('[data-act="select"]');
+      if (!tab) return;
+      event.preventDefault();   // the browser menu has nothing to say about a session tab
+      startRename(tab.getAttribute("data-id"));
     };
   }
   window.addEventListener("resize", scheduleFit);
@@ -1013,6 +1049,7 @@ export function unmount() {
   if (pane) pane.classList.remove("term-host");
   if (fitTimer) { clearTimeout(fitTimer); fitTimer = null; }
   window.removeEventListener("resize", scheduleFit);
+  document.removeEventListener("keydown", pageFindShortcut, true);
   models.forEach(function (m) {
     if (m.ws) { try { m.ws.close(); } catch (e) { /* already gone */ } }
     if (m.term) { try { m.term.dispose(); } catch (e) { /* already gone */ } }   // disposes attached addons, search included
