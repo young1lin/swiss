@@ -63,13 +63,16 @@ var DB_FILTER_OPS = [
 function dbValueless(op) { return op === "isNull" || op === "isNotNull"; }
 
 /** Apply the current filter set: back to page one (the filtered set is a different set) and
- *  reload. Buffered edits never survive a reload — the baseline rows change under them. */
+ *  reload. Buffered edits never survive a reload — the baseline rows change under them.
+ * Returns whether it ran: a REFUSED discard gate leaves everything untouched, and the row
+ * editors below restore their select from that answer (docs/22 closeout audit). */
 function dbApplyFilters() {
   var d = state.db;
-  if (!dbOkToDrop()) { renderDbFilters(); return; }
+  if (!dbOkToDrop()) { renderDbFilters(); return false; }
   d.offset = 0;
   dbDropEdits();
   dbLoadData(true);
+  return true;
 }
 
 function renderDbFilters() {
@@ -129,7 +132,14 @@ function renderDbFilters() {
       o.selected = c === f.column;
       cs.appendChild(o);
     });
-    cs.onchange = function () { f.column = this.value; dbApplyFilters(); };
+    // docs/22 closeout audit: a refused discard must leave the row as it was — assign, ask,
+    // and restore (plus one re-render, because the refused ask already repainted the mutated
+    // row) instead of keeping a column change the user just said no to.
+    cs.onchange = function () {
+      var from = f.column;
+      f.column = this.value;
+      if (!dbApplyFilters()) { f.column = from; renderDbFilters(); }
+    };
     var os = el("select");
     os.title = "Operator";
     DB_FILTER_OPS.forEach(function (op) {
@@ -139,9 +149,12 @@ function renderDbFilters() {
       os.appendChild(o);
     });
     os.onchange = function () {
+      var from = f.op;
       f.op = this.value;
-      if (dbValueless(f.op)) dbApplyFilters(); // nothing to type — apply at once
-      else renderDbFilters(); // re-render so the value input appears
+      if (dbValueless(f.op)) {
+        // nothing to type — apply at once, through the same restore-on-refusal gate
+        if (!dbApplyFilters()) { f.op = from; renderDbFilters(); }
+      } else renderDbFilters(); // re-render so the value input appears
     };
     row.appendChild(cs);
     row.appendChild(os);
