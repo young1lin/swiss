@@ -240,6 +240,10 @@ function dbSameJson(a, b) {
  *  names; what only the grid can do is remember WHICH buffered row and columns lost, so
  *  the next render paints those cells red until the buffer for them changes. */
 (function () {
+  // The module also loads where no DOM exists (the Node vitest suite imports the grid
+  // module for its state shape) — touching window at module level breaks that import
+  // with a ReferenceError, so the observer only arms where a window with fetch is real.
+  if (typeof window === "undefined" || !window.fetch) return;
   var orig = window.fetch;
   window.fetch = function (input, init) {
     return orig.apply(this, arguments).then(function (r) {

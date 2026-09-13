@@ -1578,18 +1578,31 @@ pub fn readback_plan(
                 params: Vec::new(),
             })
         }
-        BrowseEdit::Update { pk: values, .. } if pk.is_empty() => {
+        BrowseEdit::Update {
+            pk: values,
+            changes,
+            ..
+        } if pk.is_empty() => {
             // docs/22 W4.1: a keyless table reads its row back by the same every-column
             // address the update itself used — the read-back is the same truth, and twins
             // (identical on every column) come back identical, which is exactly the one
             // case where a LIMIT-less SELECT still tells it. A row the values cannot
             // address (a NULL among them — the update refused it; a quote-hostile name)
             // reads nothing back rather than failing the commit it only decorates.
+            //
+            // The address is the row AS THE COMMIT LEFT IT (originals overlaid with the
+            // changes): every column is addressing here, so probing by the untouched
+            // originals would re-find nothing the moment any value moved. Caught live in
+            // the W4.2 verify — the edit landed and the read-back said null.
             let (Some(list), Some(target)) = (cols(), target()) else {
                 return ReadBack::None;
             };
+            let mut after: Map<String, Value> = values.clone();
+            for (c, v) in changes {
+                after.insert(c.clone(), v.clone());
+            }
             let mut params: Vec<Value> = Vec::new();
-            let Ok(where_sql) = address_where(dialect, columns, values, &mut params) else {
+            let Ok(where_sql) = address_where(dialect, columns, &after, &mut params) else {
                 return ReadBack::None;
             };
             ReadBack::Select(BuiltStatement {
@@ -3004,10 +3017,13 @@ mod tests {
             readback_plan(DbDialect::Mysql, None, "users", &columns, &pk, &del),
             ReadBack::None
         ));
-        // No key to address the row by: nothing comes back, the commit itself is unaffected.
+        // W4.1 replaced the old "no key, nothing back": a keyless table reads back by
+        // its every-column address (no_pk_readback_selects_by_the_same_all_column_address
+        // pins it), and the address carries the changes the commit just wrote — the probe
+        // re-finds the row the update moved.
         assert!(matches!(
             readback_plan(DbDialect::Mysql, None, "users", &columns, &[], &upd),
-            ReadBack::None
+            ReadBack::Select(_)
         ));
     }
 
@@ -3672,17 +3688,29 @@ mod tests {
                     s.sql,
                     "SELECT `id`, `name` FROM `users` WHERE `id` = ? AND `name` = ?"
                 );
-                assert_eq!(s.params, vec![json!(7), json!("alice")]);
+                assert_eq!(s.params, vec![json!(7), json!("ann")]);
             }
             other => panic!("no-PK update selects its row back: {other:?}"),
         }
-        let nulls = edit(json!({
+        // The overlay is the whole point: a NULL ORIGINAL whose commit sets a value reads
+        // back fine (the post-commit row addresses), while a value changed TO NULL cannot
+        // be addressed by any WHERE (col = NULL matches nothing) and reads nothing back.
+        let was_null = edit(json!({
             "op": "update",
             "pk": { "id": 7, "name": null },
             "changes": { "name": "ann" },
         }));
         assert!(matches!(
-            readback_plan(DbDialect::Mysql, None, "users", &cols, &[], &nulls),
+            readback_plan(DbDialect::Mysql, None, "users", &cols, &[], &was_null),
+            ReadBack::Select(_)
+        ));
+        let to_null = edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "alice" },
+            "changes": { "name": null },
+        }));
+        assert!(matches!(
+            readback_plan(DbDialect::Mysql, None, "users", &cols, &[], &to_null),
             ReadBack::None
         ));
     }
