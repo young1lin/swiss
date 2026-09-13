@@ -300,7 +300,13 @@ function startRename(id) {
     if (settled) return;
     settled = true;
     if (commit) m.customTitle = input.value.trim() || null;
-    paintTabs();   // the repaint removes the input; the tab keeps the focus
+    /* The bar was mutated outside paintTabs (replaceChild above), so an unchanged
+       model - Escape, or a commit equal to the current label - would recompute the
+       identical string and the skip would strand this input inside the tab forever
+       (fresh-eyes audit B1b). Reset the memo; the repaint then always runs. */
+    paintTabs.last = null;
+    paintTabs();
+    if (m.term) m.term.focus();   // the repaint ate the input that held the focus
   };
   input.addEventListener("keydown", function (ev) {
     ev.stopPropagation();   // the terminal's key gate must not see rename typing
@@ -340,10 +346,17 @@ function runFind(back) {
   var q = input ? input.value : "";
   if (!q) { m.search.clearDecorations(); paintFindCount(null); return; }
   try {
+    /* findNext/findPrevious SELECT the match they move to, which fires
+       onSelectionChange - without this flag, copy-on-select would overwrite the
+       clipboard with the matched substring on every keystroke in the find input
+       (fresh-eyes audit B3). The selection change fires synchronously inside the
+       call, so a try/finally bracket is exactly the right width. */
+    m.suppressSelect = true;
     var moved = back ? m.search.findPrevious(q, { decorations: FIND_DECOR })
                      : m.search.findNext(q, { decorations: FIND_DECOR });
     if (!moved) paintFindCount(null);
   } catch (e) { /* only reachable with regex on; the guard stays because search must never kill the page */ }
+  finally { m.suppressSelect = false; }
 }
 
 function closeFind() {
@@ -358,13 +371,18 @@ function closeFind() {
 /* Ctrl+Shift+F while the terminal page is staged, even when the terminal itself does
    not hold focus - xterm's own handler only sees keys that reach its textarea, and a
    user who just clicked the tab bar or the page is left without a shortcut (VS Code
-   binds find at the view level for exactly this reason). Capture phase; real inputs
-   (rename, find) keep their keys. */
+   binds find at the view level for exactly this reason). Capture phase; real fields
+   keep their keys. The terminal is deliberately EXCLUDED: xterm's custom key handler
+   binds the same chord, and xterm's _keyDown consults that handler without ever
+   checking defaultPrevented - a document-capture call on top would double-fire
+   openFind, whose toggle then closes the bar again (fresh-eyes audit B2). */
 function pageFindShortcut(ev) {
   if (!ev.ctrlKey || !ev.shiftKey || ev.altKey || ev.metaKey) return;
   if (String(ev.key || "").toLowerCase() !== "f") return;
-  var tag = ev.target && ev.target.tagName;
-  if (tag === "INPUT" || tag === "SELECT") return;
+  var el = ev.target;
+  var tag = el && el.tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+  if (el && el.closest && el.closest(".term-holder")) return;   // xterm owns keys in here
   if (!$("term-find")) return;   // some other page is staged
   ev.preventDefault();
   void openFind();
@@ -752,6 +770,14 @@ function select(id) {
      and rename lives on dblclick. Just take the focus back. */
   if (id === active) {
     var cur = model(id);
+    /* Answering the bell must not repaint the bar either - same dblclick rule as
+       above - so the badge node is dropped surgically instead. */
+    if (cur && cur.bell) {
+      cur.bell = false;
+      var barEl = $("term-tabs");
+      var dot = barEl && barEl.querySelector('button[data-id="' + id + '"] .term-tab-bell');
+      if (dot) dot.remove();
+    }
     if (cur && cur.term) cur.term.focus();
     return;
   }
@@ -848,7 +874,7 @@ async function openSession() {
   });
   if (my !== epoch) return;
   if (!reply || !reply.id) {   // the toast said why; drop the shell we staged
-    if (m.term) m.term.dispose();
+    if (m.term) { m.term.dispose(); m.term = null; }   // in-flight write callbacks land on the guard, not a disposed terminal
     if (m.holder) m.holder.remove();
     models.splice(models.indexOf(m), 1);
     active = models.length ? models[models.length - 1].id : null;
@@ -881,7 +907,7 @@ async function openSession() {
 async function closeSession(id) {
   var m = model(id);
   dismissed.add(id);   // stays dismissed until the listing itself drops the row
-  if (m && m.term) { m.term.dispose(); }
+  if (m && m.term) { m.term.dispose(); m.term = null; }   // same guard as the open-failure path
   if (m && m.holder) { m.holder.remove(); }
   models = models.filter(function (x) { return x.id !== id; });
   if (active === id) active = models.length ? models[models.length - 1].id : null;
@@ -977,6 +1003,11 @@ function render() {
     };
   }
   window.addEventListener("resize", scheduleFit);
+  /* The innerHTML assignment above replaced the whole pane - a fresh, EMPTY tab bar -
+     so the memo from the previous paint is a lie here. Without this reset, a
+     settings save (reload -> render) with unchanged models skips the repaint and
+     blanks the bar (fresh-eyes audit B1a). */
+  paintTabs.last = null;
   paintTabs();
   paintStage();
   if (!active && sessions.length) select(sessions[0].id);
@@ -1052,7 +1083,7 @@ export function unmount() {
   document.removeEventListener("keydown", pageFindShortcut, true);
   models.forEach(function (m) {
     if (m.ws) { try { m.ws.close(); } catch (e) { /* already gone */ } }
-    if (m.term) { try { m.term.dispose(); } catch (e) { /* already gone */ } }   // disposes attached addons, search included
+    if (m.term) { try { m.term.dispose(); } catch (e) { /* already gone */ } m.term = null; }   // disposes attached addons, search included
     if (m.overlay) m.overlay.dispose();
   });
   models = [];
