@@ -48,6 +48,7 @@ async function dbLoadRedisValue(key) {
   // A fresh key selection is a navigation: drop the command result that owned the pane,
   // or the grid guard would keep rendering it and the value would never show.
   d.sqlResult = null;
+  d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: key navigation closes every result tab
   d.sqlBusy = false;
   d.redisKey = key;
   d.redisValue = null; // drop the previous key's value — never flash stale data

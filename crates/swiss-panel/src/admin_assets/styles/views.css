@@ -383,6 +383,12 @@
     .db-tabs button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; background: none; border: none; cursor: pointer; }
     .db-tabs button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--sep); }
     :root[data-theme="dark"] .db-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 7%); box-shadow: inset 0 0 0 1px var(--sep); }
+    /* docs/22 W4.3: the console's result tabs ride in the pane head under the meta line, above
+       the grid's own scroll. Eight fit; a longer script's ninth scrolls the strip sideways the
+       way .toolbar .seg does — scrollbar hidden, wheel still scrolls — instead of wrapping or
+       stretching the head. */
+    .db-head-left .db-tabs { margin-top: var(--s1); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+    .db-head-left .db-tabs::-webkit-scrollbar { display: none; }
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
     .db-keytype { font-size: var(--f-caption); padding: 1px 6px; border-radius: 980px; background: var(--sep-soft); color: var(--text-2); margin-left: var(--s2); }

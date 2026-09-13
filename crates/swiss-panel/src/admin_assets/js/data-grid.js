@@ -6,7 +6,7 @@ import { dbEditCellEnter } from "./data-edit.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
-import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbOkToDrop, dbPkKey, dbPkVals } from "./data-view.js";
+import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbOkToDrop, dbPkKey, dbPkVals, dbResultKey } from "./data-view.js";
 import { popupMenu } from "./menu.js";
 import { act } from "./detail.js";
 
@@ -414,6 +414,30 @@ function renderDbToolbar() {
     left.appendChild(el("div", "db-meta", d.sqlResult.rowCount + " row" + (d.sqlResult.rowCount === 1 ? "" : "s") +
       (d.sqlResult.note ? " · " + d.sqlResult.note : "") +
       (d.sqlResult.elapsedMs != null ? " · " + d.sqlResult.elapsedMs + " ms" : "")));
+    // docs/22 W4.3: one tab per statement reply, in the pane's segmented-control vocabulary
+    // (.db-tabs — the same strip the Structure tabs use). Eight fit the pane; past that the
+    // strip scrolls sideways instead of wrapping. Switching only repoints the active result;
+    // every tab keeps its own checked-row keys (dbResultKey namespaces d.sel by tab), so a
+    // Shift-range or a copy never crosses tabs.
+    if ((d.sqlResults || []).length > 1) {
+      var seg = el("div", "db-tabs");
+      seg.setAttribute("role", "tablist");
+      d.sqlResults.forEach(function (r, ti) {
+        var b = el("button", "", r.tabLabel || "Result " + (ti + 1));
+        b.setAttribute("role", "tab");
+        b.setAttribute("aria-selected", ti === d.sqlTab ? "true" : "false");
+        b.onclick = function () {
+          if (d.sqlTab === ti) return;
+          d.sqlTab = ti;
+          d.sqlResult = d.sqlResults[ti];
+          d.selAnchor = -1; // a Shift-range never spans tabs
+          renderDbToolbar();
+          renderDbGrid();
+        };
+        seg.appendChild(b);
+      });
+      left.appendChild(seg);
+    }
   } else if (d.data) {
     left.appendChild(el("h2", "db-title pane-title", (d.data.schema ? d.data.schema + "." : "") + d.data.table));
     var bits = [d.data.total.toLocaleString() + " rows"];
@@ -445,6 +469,7 @@ function renderDbToolbar() {
     var back = el("button", "btn", dbIsRedis() ? "Back to keys" : "Back to table");
     back.onclick = function () {
       d.sqlResult = null;
+      d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: leaving the results closes every tab
       dbClearSel(); // "q"-prefixed query keys must not leak into the table grid
       renderDbToolbar(); renderDbGrid();
     };
@@ -547,7 +572,7 @@ function renderDbToolbar() {
     ctl.appendChild(dataCtl);
   }
   var sql = el("button", "btn", d.sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL"));
-  sql.title = nosql ? "Run one command (SET, GET, DEL, HGETALL, TTL, TYPE…)" : "SQL console — one statement per run";
+  sql.title = nosql ? "Run one command (SET, GET, DEL, HGETALL, TTL, TYPE…)" : "SQL console — statements split on ; get a tab each";
   sql.onclick = function () {
     d.sqlOpen = !d.sqlOpen;
     var con = $("dbConsole");
@@ -964,11 +989,12 @@ function renderDbResultGrid(wrap) {
   if (d.sqlBusy) { wrap.appendChild(el("div", "db-hint", "Running…")); return; }
   var res = d.sqlResult;
   if (!res) { wrap.appendChild(el("div", "db-hint", "Run a query to see rows here.")); return; }
+  var tab = d.sqlTab || 0; // docs/22 W4.3: this grid is one tab of the strip — its selection keys are that tab's
   var tbl = el("table", "db-grid");
   var thead = el("thead");
   var hr = el("tr");
   var thAll2 = el("th", "db-rowctl");
-  var allOn2 = res.rows.length > 0 && res.rows.every(function (_, i) { return !!d.sel["q" + i]; });
+  var allOn2 = res.rows.length > 0 && res.rows.every(function (_, i) { return !!d.sel[dbResultKey(tab, i)]; });
   var cbAll2 = document.createElement("input");
   cbAll2.type = "checkbox";
   cbAll2.className = "db-selbox";
@@ -983,7 +1009,7 @@ function renderDbResultGrid(wrap) {
   tbl.appendChild(thead);
   var tbody = el("tbody");
   res.rows.forEach(function (row, i) {
-    var qkey = "q" + i;
+    var qkey = dbResultKey(tab, i);
     var tr = el("tr", d.sel[qkey] ? "db-sel" : "");
     var rc2 = el("td", "db-rowctl");
     var cb2 = document.createElement("input");
@@ -996,7 +1022,7 @@ function renderDbResultGrid(wrap) {
       if (ev.shiftKey && d.selAnchor >= 0 && d.selAnchor !== i) {
         var a2 = Math.min(d.selAnchor, i);
         var b3 = Math.max(d.selAnchor, i);
-        for (var k2 = a2; k2 <= b3; k2++) d.sel["q" + k2] = true;
+        for (var k2 = a2; k2 <= b3; k2++) d.sel[dbResultKey(tab, k2)] = true;
       } else if (this.checked) d.sel[qkey] = true;
       else delete d.sel[qkey];
       d.selAnchor = i;

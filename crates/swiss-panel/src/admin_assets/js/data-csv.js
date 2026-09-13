@@ -2,7 +2,7 @@ import { $, apiJson, el, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
-import { dbClearSel, dbDropEdits, dbOkToDrop, dbPending, dbPkKey } from "./data-view.js";
+import { dbClearSel, dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.
@@ -284,12 +284,14 @@ function dbCellMenu(e, row, key, column, editInDialog) {
 /* --- multi-row copy ------------------------------------------------------------------------------ */
 /* Checked rows (the rowctl checkboxes) copied to the clipboard in a paste-anywhere format.
    The row list mirrors what the grid SHOWS: pending buffered edits ride along, deleted-buffered
-   rows keep their original values. For a query-result grid the keys are "q" + row index. */
+   rows keep their original values. For a query-result grid the keys are dbResultKey(tab, index) —
+   the ACTIVE tab's namespace (docs/22 W4.3), so a copy never crosses tabs. */
 function dbSelectedForCopy() {
   var d = state.db;
   if (d.sqlResult) {
+    var tab = d.sqlTab || 0;
     var qrows = [];
-    d.sqlResult.rows.forEach(function (r, i) { if (d.sel["q" + i]) qrows.push(r); });
+    d.sqlResult.rows.forEach(function (r, i) { if (d.sel[dbResultKey(tab, i)]) qrows.push(r); });
     return { cols: d.sqlResult.columns, rows: qrows };
   }
   if (!d.data) return { cols: [], rows: [] };
@@ -341,8 +343,10 @@ function dbRowsJson(sel) { return JSON.stringify(sel.rows, null, 2); }
 function dbSelAll(on) {
   var d = state.db;
   if (d.sqlResult) {
+    var tab = d.sqlTab || 0;
     d.sqlResult.rows.forEach(function (r, i) {
-      if (on) d.sel["q" + i] = true; else delete d.sel["q" + i];
+      var k = dbResultKey(tab, i);
+      if (on) d.sel[k] = true; else delete d.sel[k];
     });
   } else if (d.data) {
     var pkCols = d.data.primaryKey || [];
@@ -388,9 +392,10 @@ function dbResultCellMenu(e, row, column) {
   var v = row ? row[column] : undefined;
   item("Copy value", function () { dbCopyText(v === null || v === undefined ? "NULL" : String(v)); });
   if (i >= 0) {
-    var on = !!d.sel["q" + i];
+    var rk = dbResultKey(d.sqlTab || 0, i);
+    var on = !!d.sel[rk];
     item(on ? "Uncheck this row" : "Check this row", function () {
-      if (on) delete d.sel["q" + i]; else d.sel["q" + i] = true;
+      if (on) delete d.sel[rk]; else d.sel[rk] = true;
       d.selAnchor = i;
       renderDbToolbar(); renderDbGrid();
     });

@@ -47,7 +47,9 @@ function dbFreshState() {
     sel: {},             // rowKey -> true — checked rows the next Copy pulls (grid or query result)
     selAnchor: -1,       // visible row index of the last checkbox click (Shift range start)
     focus: null,         // {r, c} — the keyboard's focus cell, inserts-first grid rows (docs/22 W2.2)
-    sqlOpen: false, sqlText: "", sqlResult: null, sqlBusy: false,
+    sqlOpen: false, sqlText: "", sqlResult: null, sqlResults: null, sqlTab: 0, sqlBusy: false,
+                         // ^ W4.3: sqlResult is the ACTIVE tab's reply; sqlResults holds every
+                         // statement's reply and sqlTab which one is showing
     history: [],         // last-run console queries, newest first (per-browser, localStorage)
     tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
@@ -100,6 +102,13 @@ function dbPkVals(pkCols, row) {
   return out;
 }
 
+/** docs/22 W4.3: a query-result row's selection key — the tab index namespaces it, so every
+ *  result tab owns an independent checked-row set the same way the table grid's keys live
+ *  apart from these under the "q" prefix. Pure. */
+function dbResultKey(tab, i) {
+  return "q" + tab + ":" + i;
+}
+
 /* --- view skeleton ------------------------------------------------------------------------------- */
 
 async function loadDbView() {
@@ -119,6 +128,8 @@ async function loadDbView() {
     d.redis = null; d.redisKey = null; d.redisValue = null;
     d.redisEdits = null;
     d.sqlResult = null;
+    d.sqlResults = null; // docs/22 W4.3: the tab strip goes with the result it named
+    d.sqlTab = 0;
     dbDropEdits();
   }
   renderDbSide();
@@ -169,12 +180,12 @@ function renderDbView() {
       '<div class="db-console" id="dbConsole" hidden>' +
         '<div class="db-sql-wrap">' +
           '<pre class="db-sql-hl db-sql-face" id="dbSqlHl" aria-hidden="true"></pre>' +
-          '<textarea class="db-sql-face" id="dbSql" placeholder="SELECT / UPDATE / DELETE … — one statement per run" spellcheck="false"></textarea>' +
+          '<textarea class="db-sql-face" id="dbSql" placeholder="SELECT / UPDATE / DELETE … — statements split on ;" spellcheck="false"></textarea>' +
         '</div>' +
         '<div class="db-console-row"><button class="btn" id="dbSqlRun">Run</button>' +
         '<button class="btn" id="dbSqlExplain">Explain</button>' +
         '<select id="dbSqlHistory" title="Query history"><option value="">History</option></select>' +
-        '<span class="hint" id="dbSqlHint">one statement per run · Ctrl+Enter runs</span></div>' +
+        '<span class="hint" id="dbSqlHint">statements split on ; · Ctrl+Enter runs</span></div>' +
       '</div>' +
       '<div class="db-grid-wrap" id="dbGridWrap"></div>' +
       '<div class="db-bar" id="dbBar" hidden></div>' +
@@ -189,6 +200,7 @@ function renderDbView() {
     var d = state.db;
     d.conn = this.value; d.table = null; d.schema = null; d.data = null;
     d.tables = []; d.tablesPage = 0; d.order = null; d.sqlResult = null;
+    d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: no stale tabs across a connection switch
     d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
     d.redis = null; d.redisKey = null; d.redisValue = null;
     d.redisEdits = null;
@@ -398,9 +410,11 @@ function dbSyncKind() {
     // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
     grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", "Filter tables");
     grep.title = "Filter tables: comma-separated terms AND together, | is OR, * is a wildcard";
-    sql.placeholder = "SELECT / UPDATE / DELETE … — one statement per run";
+    sql.placeholder = "SELECT / UPDATE / DELETE … — statements split on ;";
     explain.hidden = false;
-    hint.textContent = "one statement per run · a blank line starts a new block · Ctrl+Enter runs the caret's block";
+    // docs/22 W4.3: the ; split answers one result tab per statement; the blank-line block
+    // rule (W1.8) still decides what a single Run covers.
+    hint.textContent = "a blank line starts a new block · Ctrl+Enter runs the caret's block · ; splits it into one result tab per statement";
   }
   // The pane's ⋯ exists for the Activity page, which is a SQL-connection feature: a redis
   // connection (or none) hides the button rather than the menu hiding its one item. The
@@ -673,9 +687,10 @@ function dbOpenTable(t) {
   d.offset = 0; d.order = null; d.dir = "asc"; d.filters = [];
   d.tab = "data"; d.detail = null;
   d.sqlResult = null;
+  d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: opening a table closes every result tab
   dbDropEdits();
   renderDbTables();
   dbLoadData();
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };

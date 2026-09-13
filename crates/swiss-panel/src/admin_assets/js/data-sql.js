@@ -3,7 +3,7 @@ import {
   dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisPendingCount,
 } from "./data-browsers.js";
-import { dbHighlightSql, dbSqlPaint } from "./data-filters.js";
+import { SQL_TOKEN_RE, dbHighlightSql, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
 
@@ -355,14 +355,74 @@ function dbSubqueryAt(text, caret) {
   return t.slice(start, end);
 }
 
-async function dbRunSql(explain) { // falsy runs the statement; "plan"|"analyze" prefix EXPLAIN
+/** docs/22 W4.3: split a console block into statements at top-level semicolons — the
+ *  panel's half of multi-result tabs. A naive text.split(";") breaks on the first literal or
+ *  comment that carries one ('a;b', "-- note;", 'it''s;'), so this walks the SAME token stream
+ *  the syntax highlighter lexes (SQL_TOKEN_RE: quotes ', \" and ` with backslash and
+ *  doubled-quote escapes, -- and # line comments, slash-star block comments) — a semicolon the
+ *  tokenizer files under punctuation (group 6) is the only kind that ends a statement, because
+ *  the string and comment groups swallow theirs whole. Trimmed empties (a trailing ;, a
+ *  comment-only stretch) yield nothing. Pure. */
+function dbSplitStatements(text) {
+  var t = String(text);
+  var out = [];
+  var start = 0;
+  // A piece holding no token but comments is not a statement — "SELECT 1; -- note\n; SELECT 2"
+  // must run two statements, not three, and never ask the server to execute a note.
+  var hasCode = function (piece) {
+    // SQL_TOKEN_RE is shared with the outer scan and keeps ITS position in lastIndex —
+    // borrow it, then put the position back, or the outer loop restarts from the top of
+    // the text at every semicolon and never terminates.
+    var resume = SQL_TOKEN_RE.lastIndex;
+    SQL_TOKEN_RE.lastIndex = 0;
+    try {
+      var m;
+      while ((m = SQL_TOKEN_RE.exec(piece)) !== null) {
+        if (!m[1]) return true; // anything that is not a comment is code
+      }
+      return false;
+    } finally {
+      SQL_TOKEN_RE.lastIndex = resume;
+    }
+  };
+  var cut = function (at) {
+    var piece = t.slice(start, at).replace(/^\s+|\s+$/g, "");
+    if (piece && hasCode(piece)) out.push(piece);
+    start = at + 1;
+  };
+  var m;
+  SQL_TOKEN_RE.lastIndex = 0;
+  while ((m = SQL_TOKEN_RE.exec(t)) !== null) {
+    if (m[6]) {
+      for (var k = 0; k < m[0].length; k++) {
+        if (m[0].charAt(k) === ";") cut(m.index + k);
+      }
+    }
+  }
+  cut(t.length); // the tail after the last semicolon (cut ignores the separator itself here)
+  return out;
+}
+
+/** docs/22 W4.3: a result tab's name — the statement's first word plus its row count
+ *  ("SELECT · 42"), the shape dbgate's ResultTabs use. Leading comments are skipped (they are
+ *  not the word the user recognises); EXPLAIN answers name themselves because the prefix ran
+ *  too. A missing count renders the word alone; a statement with no word at all still gets a
+ *  name. Pure. */
+function dbResultTabLabel(stmt, rowCount) {
+  var s = String(stmt).replace(/^(\s|--[^\n]*\n|#[^\n]*\n|\/\*[\s\S]*?\*\/)+/, "");
+  var w = (/^([A-Za-z_][A-Za-z0-9_]*)/.exec(s) || [])[1] || "?";
+  w = w.toUpperCase();
+  return typeof rowCount === "number" ? w + " \u00b7 " + rowCount : w;
+}
+
+async function dbRunSql(explain) { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
   var d = state.db;
   if (!d.conn) { toast("No database connection", true); return; }
   // docs/22 W1.8: the run covers the block the caret is in — one block per run keeps the
   // single-statement guard honest on multi-part scripts.
   var ta = $("dbSql");
-  var sql = dbSubqueryAt(d.sqlText || "", ta ? ta.selectionStart : null).trim();
-  if (!sql) { toast("Type a command first", true); return; }
+  var block = dbSubqueryAt(d.sqlText || "", ta ? ta.selectionStart : null).trim();
+  if (!block) { toast("Type a command first", true); return; }
   // The redis console: one command per run; the server-side guard still refuses what would
   // break the shared connection or the server. Writes (SET, DEL, EXPIRE…) run.
   if (dbIsRedis()) {
@@ -371,37 +431,57 @@ async function dbRunSql(explain) { // falsy runs the statement; "plan"|"analyze"
     renderDbGrid();
     var cj = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/command", {
       method: "POST",
-      body: JSON.stringify({ command: sql }),
+      body: JSON.stringify({ command: block }),
     });
     d.sqlBusy = false;
-    if (!cj) { d.sqlResult = null; renderDbToolbar(); renderDbGrid(); return; }
+    if (!cj) { d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; renderDbToolbar(); renderDbGrid(); return; }
     dbClearSel(); // a new result grid starts unselected
     d.sqlResult = { columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false,
       elapsedMs: cj.elapsedMs,
       note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null ? cj.reply.length + " items" : undefined };
-    dbHistoryPush(sql);
+    d.sqlResults = [d.sqlResult]; // docs/22 W4.3: the tab strip reads the list — one reply, one tab
+    d.sqlTab = 0;
+    dbHistoryPush(block);
     renderDbToolbar();
     renderDbGrid();
     return;
   }
-  // The plan view runs EXPLAIN (or EXPLAIN ANALYZE) on the same statement; dbWithExplain is
-  // idempotent, so a query that already explains itself is sent as-is.
-  var toSend = explain ? dbWithExplain(sql, explain) : sql;
+  // docs/22 W4.3: the block is split on statement-level semicolons and sent ONE STATEMENT PER
+  // REQUEST — the server's single-statement contract is untouched, and every reply gets its
+  // own result tab. Empty stretches (a trailing ;, a comment-only piece) never run; the first
+  // failure stops the batch with the tabs that already answered kept on screen; history
+  // records the whole block, and only when every statement answered.
+  var stmts = dbSplitStatements(block);
+  if (!stmts.length) { toast("Type a command first", true); return; }
   d.sqlBusy = true;
+  d.sqlResult = null; // "Running…" paints in place of the previous grid
+  d.sqlResults = null;
   renderDbToolbar();
   renderDbGrid();
-  var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/query", {
-    method: "POST",
-    body: JSON.stringify({ sql: toSend, limit: d.pageSize }),
-  });
+  var results = [];
+  var ok = true;
+  for (var si = 0; si < stmts.length; si++) {
+    // The plan view runs EXPLAIN (or EXPLAIN ANALYZE) on each statement; dbWithExplain is
+    // idempotent, so a query that already explains itself is sent as-is.
+    var toSend = explain ? dbWithExplain(stmts[si], explain) : stmts[si];
+    var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/query", {
+      method: "POST",
+      body: JSON.stringify({ sql: toSend, limit: d.pageSize }),
+    });
+    if (!j) { ok = false; break; } // apiJson already showed the error; the answered tabs stay
+    j.explained = !!explain;
+    j.tabLabel = dbResultTabLabel(toSend, j.rowCount);
+    results.push(j);
+  }
   d.sqlBusy = false;
-  if (!j) { d.sqlResult = null; renderDbToolbar(); renderDbGrid(); return; }
   dbClearSel(); // a new result grid starts unselected
-  d.sqlResult = j;
-  d.sqlResult.explained = !!explain;
-  if (!explain) dbHistoryPush(sql); // the plan of a query is not a query — only runs are history
+  d.sqlResults = results;
+  d.sqlTab = 0;
+  d.sqlResult = results.length ? results[0] : null;
+  // The plan of a query is not a query — only whole, real runs are history.
+  if (ok && !explain) dbHistoryPush(block);
   renderDbToolbar();
   renderDbGrid();
 }
 
-export { dbApplyReadback, dbCommit, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbRunSql, dbSqlLiteral, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };
+export { dbApplyReadback, dbCommit, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRunSql, dbSqlLiteral, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };
