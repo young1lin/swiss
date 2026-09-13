@@ -239,6 +239,9 @@ function renderDbView() {
     var v = this.value;
     clearTimeout(t);
     t = setTimeout(function () {
+      // Leaving the view frees state.db (views/data.js unmount); a debounce pending across
+      // that boundary once threw here. The view is gone — the filter belongs to no one.
+      if (!state.db) return;
       state.db.grep = v; state.db.tablesPage = 0;
       if (dbIsRedis()) dbLoadKeys(true);
       else dbLoadTables();
