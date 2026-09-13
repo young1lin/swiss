@@ -557,6 +557,19 @@
     #dbCellText.json { min-height: 260px; }
     .db-cell-head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
     .db-cell-where { font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); }
+    /* docs/22 W5.3 — the value sheet's read-only body. The content sits on the quiet inset
+       ground (the same surface .db-ddl uses); values are values you would copy, so mono
+       (base rule 1), while the tree's keys are identity and keep the text face. Hierarchy is
+       indent plus the details marker and a hairline guide — no second chrome. */
+    .db-val-tree, .db-val-pre { margin: 0; padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-size: var(--f-label); max-height: 50vh; overflow: auto; }
+    .db-val-pre { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; }
+    .db-val-meta { font-size: var(--f-label); color: var(--text-3); font-variant-numeric: tnum; }
+    .db-val-node { margin: 2px 0 2px var(--s2); border-left: 1px solid var(--sep-soft); padding-left: var(--s2); }
+    .db-val-tree > .db-val-node { margin-left: 0; border-left: none; padding-left: 0; }
+    .db-val-node > summary { cursor: pointer; color: var(--text-2); font-family: var(--mono); }
+    .db-val-row { display: flex; gap: var(--s2); align-items: baseline; padding: 1px 0; flex-wrap: wrap; }
+    .db-val-k { color: var(--text-2); }
+    .db-val-v { font-family: var(--mono); }
     .db-dirty { background: color-mix(in srgb, var(--amber) 16%, transparent); }
     .db-del td { text-decoration: line-through; color: var(--text-3); background: color-mix(in srgb, var(--red) 7%, transparent); }
     .db-ins td { background: color-mix(in srgb, var(--green) 9%, transparent); }
