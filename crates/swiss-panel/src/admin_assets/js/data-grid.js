@@ -160,19 +160,28 @@ function dbGridRowsCount() {
   return (d.data ? d.inserts.length + d.data.rows.length : 0);
 }
 
-/** Focus (or move) the focus cell and repaint — a single selection the keyboard owns. */
+/** Focus (or move) the focus cell and paint the ring — a single selection the keyboard owns.
+ * Moving the ring must NOT rebuild the grid: the rebuild detached the cell mid-click, the
+ * browser then never fired the click/dblclick that followed the mousedown, and double-click
+ * editing could not open at all (docs/22 closeout audit P0-B). The ring moves between the
+ * LIVE cells by their data-r/data-c address; a full repaint happens only on data changes
+ * (edit, paste, commit, paging). */
 function dbFocusCell(r, c) {
   var d = state.db;
   var maxR = dbGridRowsCount() - 1;
   var maxC = dbGridVisibleColumns(d.data ? d.data.columns : [], (d.gridCfg || { hidden: [] }).hidden).length - 1;
   d.focus = { r: Math.max(0, Math.min(maxR, r)), c: Math.max(0, Math.min(maxC, c)) };
-  renderDbGrid();
+  var wrap = $("dbGridWrap");
+  if (!wrap) return;
+  var old = wrap.querySelector("td.db-focus");
+  if (old) old.classList.remove("db-focus");
+  var td = wrap.querySelector('td[data-r="' + d.focus.r + '"][data-c="' + d.focus.c + '"]');
+  if (td) td.classList.add("db-focus");
   var kbd = $("dbKbd");
   // preventScroll: the input sits at the end of the scrolled content, so a plain focus()
   // would drag the pane to the bottom and then scrollIntoView would snap the clicked
   // row to the top - the pane must stay where the user's click left it.
   if (kbd) kbd.focus({ preventScroll: true });
-  var td = document.querySelector("#dbGridWrap td.db-focus");
   if (td && td.scrollIntoView) td.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
@@ -857,6 +866,9 @@ function renderDbGrid() {
     cols.forEach(function (c, ci) {
       var has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
       var td = el("td", "db-cell");
+      // The cell's grid address: the focus ring moves between live cells by it (P0-B).
+      td.setAttribute("data-r", i);
+      td.setAttribute("data-c", ci);
       widthOf(c, td);
       var long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
       // docs/22 W2.2: one click puts the keyboard's focus cell here; the ring marks it.
@@ -928,10 +940,13 @@ function renderDbGrid() {
       // "the server refused this change; the row moved under it".
       var lost = pending && !!d.conflict && d.conflict.key === key && d.conflict.columns.indexOf(c.name) >= 0;
       var td = el("td", "db-cell" + (pending ? " db-dirty" : "") + (lost ? " db-conflict" : ""));
+      // docs/22 W2.2: same focus wiring as insert cells; the row index counts the inserts
+      // above. The address rides the cell so the ring can move without a rebuild (P0-B).
+      var gridRow = d.inserts.length + rowIdx;
+      td.setAttribute("data-r", gridRow);
+      td.setAttribute("data-c", ci);
       widthOf(c, td);
       var long = dbPaintCell(td, v, true, c.dataType);
-      // docs/22 W2.2: same focus wiring as insert cells; the row index counts the inserts above.
-      var gridRow = d.inserts.length + rowIdx;
       td.onmousedown = function () { dbFocusCell(gridRow, ci); };
       if (d.focus && d.focus.r === gridRow && d.focus.c === ci) td.classList.add("db-focus");
       if (editable && !deleted) {
@@ -986,12 +1001,7 @@ function renderDbGrid() {
       ev.key === "ArrowRight" || ev.key === "Home" || ev.key === "End") {
       ev.preventDefault();
       var m = dbKbdMove(d.focus.r, d.focus.c, ev.key, maxR, maxC);
-      d.focus = m;
-      renderDbGrid();
-      var k = $("dbKbd");
-      if (k) k.focus({ preventScroll: true });
-      var td = document.querySelector("#dbGridWrap td.db-focus");
-      if (td && td.scrollIntoView) td.scrollIntoView({ block: "nearest", inline: "nearest" });
+      dbFocusCell(m.r, m.c); // moves the ring on the live grid — no rebuild mid-navigation
       return;
     }
     if (ev.key === "Enter" || ev.key === "F2") {
@@ -1001,10 +1011,15 @@ function renderDbGrid() {
     }
     if (ev.key === "Escape") {
       // Esc's one meaning here is "put the keyboard down" — the cell keeps its value and its
-      // ring goes away. (The inline editor and the sheet handle their own Esc first.)
+      // ring goes away. (The inline editor and the sheet handle their own Esc first.) The
+      // ring leaves by class move, not a rebuild (P0-B); blur leaves the keyboard exactly
+      // where the rebuild used to drop it.
       ev.preventDefault();
       d.focus = null;
-      renderDbGrid();
+      var wrapEsc = $("dbGridWrap");
+      var ring = wrapEsc ? wrapEsc.querySelector("td.db-focus") : null;
+      if (ring) ring.classList.remove("db-focus");
+      if (this.blur) this.blur();
       return;
     }
     if ((ev.ctrlKey || ev.metaKey) && (ev.key === "c" || ev.key === "C")) {
