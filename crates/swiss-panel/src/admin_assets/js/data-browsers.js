@@ -1,4 +1,4 @@
-import { $, apiJson, el, emptyHtml, esc, icon, state, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyHtml, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -43,6 +43,10 @@ async function dbLoadKeys(reset) {
   renderDbFilters(); // the shown/keyspace readout rides on the pattern bar
 }
 
+// One /key request chain: a slow answer for the key the user just left must be dropped,
+// or it would flash the PREVIOUS key's value into the pane (docs/22 closeout audit).
+var dbValueReq = dbReqGuard();
+
 async function dbLoadRedisValue(key) {
   var d = state.db;
   // A fresh key selection is a navigation: drop the command result that owned the pane,
@@ -54,7 +58,9 @@ async function dbLoadRedisValue(key) {
   d.redisValue = null; // drop the previous key's value — never flash stale data
   d.redisEdits = null; // and its buffered edits — a different key cannot adopt them
   renderDbGrid();
+  var token = dbValueReq.issue();
   var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/key?key=" + encodeURIComponent(key));
+  if (!dbValueReq.accepts(token)) return; // superseded: a newer key owns the pane
   if (!j) { d.redisKey = null; renderDbGrid(); return; }
   d.redisValue = j;
   renderDbGrid();

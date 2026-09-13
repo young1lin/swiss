@@ -1,4 +1,4 @@
-import { $, apiJson, el, emptyHtml, icon, state, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyHtml, icon, state, toast } from "./util.js";
 import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
@@ -342,6 +342,11 @@ function dbCopyChecked() {
   dbCopyText(line);
 }
 
+// One /data request chain: a slow answer for the table (or page) the user just left must be
+// dropped, or it would repaint the grid — and rewrite d.schema — from the OLD table (docs/22
+// closeout audit).
+var dbDataReq = dbReqGuard();
+
 async function dbLoadData(keepOffset) {
   var d = state.db;
   if (!d.conn || !d.table) return;
@@ -353,7 +358,9 @@ async function dbLoadData(keepOffset) {
   if (d.schema) q += "&schema=" + encodeURIComponent(d.schema);
   if (d.order) q += "&order=" + encodeURIComponent(d.order) + "&dir=" + d.dir;
   if (d.filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d.filters));
+  var token = dbDataReq.issue();
   var j = await apiJson(q);
+  if (!dbDataReq.accepts(token)) return; // superseded: a newer load owns the pane and the flag
   d.loading = false;
   if (!j) { renderDbToolbar(); renderDbGrid(); return; }
   d.data = j;

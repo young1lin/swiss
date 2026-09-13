@@ -1,4 +1,4 @@
-import { $, apiJson, el, icon, state } from "./util.js";
+import { $, apiJson, dbReqGuard, el, icon, state } from "./util.js";
 import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisPendingCount } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
@@ -512,6 +512,10 @@ function renderDbSide() {
 
 /* --- lazy table list ---------------------------------------------------------------------------- */
 
+// One /tables request chain: a slow answer for a page or filter the user just left must be
+// dropped, or it would repopulate the sidebar with the stale page (docs/22 closeout audit).
+var dbTablesReq = dbReqGuard();
+
 async function dbLoadTables() {
   var d = state.db;
   if (!d.conn) return;
@@ -521,7 +525,9 @@ async function dbLoadTables() {
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
   if (d.schemaFilter) q += "&schema=" + encodeURIComponent(d.schemaFilter);
   if (d.sort) q += "&sort=" + encodeURIComponent(d.sort) + "&dir=" + encodeURIComponent(d.sortDir || "asc");
+  var token = dbTablesReq.issue();
   var j = await apiJson(q);
+  if (!dbTablesReq.accepts(token)) return; // superseded: a newer page/filter owns the list
   if (!j) { if ($("dbTables")) $("dbTables").innerHTML = ""; return; }
   d.tables = j.tables || [];
   d.tablesTotal = j.total || 0;
