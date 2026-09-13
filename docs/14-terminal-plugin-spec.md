@@ -432,7 +432,7 @@ is not running"，恢复后两台主机重新 `connected`；第 5 条 terminal �
 | 中键关签 | 鼠标中键点标签 | 原生终端惯例 |
 | 预启动输入队列 | 会话打开后立刻打字 | 键入缓存(上限 64 条),WS 一通即送达再回底——开场盲打不再丢 |
 | 重连模式复位 | WS 建立时 | 补发鼠标 1000/1002/1003/1006 与括号粘贴 2004 的 reset,残端不再收到幽灵事件 |
-| 交替屏退出回底 | `?1049l` / CSI 3 J | vim/htop 退出后视口回到底部 |
+| 交替屏退出回底 | CSI 2026 同步窗 + CSI 3 J | vim/htop 退出后视口回到底部 |
 | 提示层 | attach / resize / 缩放 | 短暂 toast(`term-overlay.js`);resize 显示 `cols×rows`;字号存 localStorage,Ctrl+0 复位,缩放后清 WebGL 字形图集 |
 
 实施中钉死的两条语义(完整推理在提交信息与 docs/23):
