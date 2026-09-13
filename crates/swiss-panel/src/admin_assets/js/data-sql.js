@@ -52,17 +52,32 @@ function dbPendingSql() {
   };
   var table = (d.schema ? q(d.schema) + "." : "") + q(d.table);
   var pkCols = d.data.primaryKey || [];
+  // docs/22 W4.1 (W4b follow-up): the preview sketches the address the server really builds —
+  // pk columns for a pk table, EVERY column for a keyless one (the row buffer carries whole
+  // rows there), with the md5 fold the server applies (EDIT_ADDR_MD5_MIN = 64). md5() here is
+  // a sketch of what gets digested, not the digest itself: the browser has no md5 and the
+  // server computes the real one. A NULL or missing column cannot address anything (col =
+  // NULL matches nothing) — the server refuses the row, so the preview says so instead of
+  // printing an empty or lying WHERE.
+  var addrCols = pkCols.length ? pkCols : (d.data.columns || []).map(function (c) { return c.name; });
+  var addrTerm = function (c, v) {
+    if (!pkCols.length && v === null) throw new Error("no primary key: " + c + " is NULL — a row needs a non-NULL value for every column");
+    if (!pkCols.length && v === undefined) throw new Error("no primary key: " + c + " is missing — a row needs a value for every column");
+    var s = typeof v === "string" ? v : String(v);
+    if (/^\\x[0-9a-fA-F]*$/.test(s) || s.length > 64) return "MD5(" + q(c) + ") = md5(" + dbSqlLiteral(s) + ")";
+    return q(c) + " = " + dbSqlLiteral(v);
+  };
+  var rowWhere = function (addr) {
+    return addrCols.map(function (c) { return addrTerm(c, addr[c]); }).join(" AND ");
+  };
   var out = [];
   Object.keys(d.deletes).forEach(function (k) {
-    var pk = d.deletes[k];
-    var where = pkCols.map(function (c) { return q(c) + " = " + dbSqlLiteral(pk[c]); }).join(" AND ");
-    out.push("DELETE FROM " + table + " WHERE " + where + ";");
+    out.push("DELETE FROM " + table + " WHERE " + rowWhere(d.deletes[k]) + ";");
   });
   Object.keys(d.updates).forEach(function (k) {
     var e = d.updates[k];
     var set = Object.keys(e.changes).map(function (c) { return q(c) + " = " + dbSqlLiteral(e.changes[c]); }).join(", ");
-    var where = pkCols.map(function (c) { return q(c) + " = " + dbSqlLiteral(e.pk[c]); }).join(" AND ");
-    out.push("UPDATE " + table + " SET " + set + " WHERE " + where + ";");
+    out.push("UPDATE " + table + " SET " + set + " WHERE " + rowWhere(e.pk) + ";");
   });
   d.inserts.forEach(function (ins) {
     var cols = Object.keys(ins.values);
@@ -142,7 +157,10 @@ function renderDbBar() {
   if (u) parts.push(u + " update" + (u > 1 ? "s" : ""));
   if (del) parts.push(del + " delete" + (del > 1 ? "s" : ""));
   if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
-  bar.appendChild(el("span", "", parts.join(", ") + " — LOCAL ONLY, not yet in the database. Commit sends them as ONE transaction (rows addressed by primary key); Discard deletes them without a single query."));
+  // Same addressing honesty as the Commit gate (docs/22 W4b follow-up): the bar names the
+  // WHERE the server will build, pk or whole-row.
+  var pkColsB = (d.data && d.data.primaryKey) || [];
+  bar.appendChild(el("span", "", parts.join(", ") + " — LOCAL ONLY, not yet in the database. Commit sends them as ONE transaction (rows addressed by " + (pkColsB.length ? "primary key" : "all columns — the table has no primary key") + "); Discard deletes them without a single query."));
   var sqlBtn = el("button", "btn", d.sqlPreview ? "Hide SQL" : "SQL");
   sqlBtn.title = "Show the exact statements Commit will run";
   sqlBtn.onclick = function () {
@@ -226,8 +244,14 @@ async function dbCommit() {
   if (dels) parts.push(dels + " delete" + (dels > 1 ? "s" : ""));
   if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
   var tableLabel = (d.schema ? d.schema + "." : "") + d.table;
+  // docs/22 W4.1 (W4b follow-up): the gate names the address the server will really use — a
+  // keyless table commits with whole-row WHEREs, and the user deserves that in the decision.
+  var pkColsC = (d.data && d.data.primaryKey) || [];
+  var addressed = pkColsC.length
+    ? "every row is addressed by its primary key"
+    : "the table has no primary key — every row is addressed by all its columns";
   if (!confirm("Commit " + parts.join(", ") + " to " + tableLabel + "?\n" +
-      "One transaction: every row is addressed by its primary key, and any failure rolls the whole batch back.")) {
+      "One transaction: " + addressed + ", and any failure rolls the whole batch back.")) {
     return; // cancelled — the buffer stays, nothing was sent
   }
   var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/edits", {
