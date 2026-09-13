@@ -441,6 +441,13 @@
        pointer is on it, then the accent a drag is about to move. The header is already
        position:sticky (a positioned box), so the absolute grip anchors to it without help. */
     .db-col-grip { position: absolute; top: 0; right: 0; bottom: 0; width: 4px; cursor: col-resize; }
+    /* The keyboard's focus carrier (docs/22 W2.2): zero size so it never paints, focusable so
+       keys land somewhere stable. It lives inside the wrap so focusing it cannot scroll the
+       pane away from the grid. */
+    .db-kbd { position: absolute; width: 0; height: 0; padding: 0; border: 0; opacity: 0; }
+    /* The focus cell: the panel's standing 2px accent selection edge (docs/18 V6), drawn
+       inside the cell so it never shifts the grid's hairlines. */
+    .db-grid td.db-focus { outline: 2px solid var(--accent); outline-offset: -2px; }
     .db-col-grip:hover { background: var(--accent); }
     /* The all-columns-hidden row: a place, not a collapsed table (docs/22 W2.1). */
     .db-grid td.db-grid-hiddenall { padding: var(--s3); }

@@ -1,6 +1,6 @@
 import { $, apiJson, el, emptyHtml, icon, state, toast } from "./util.js";
 import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
-import { dbCellMenu, dbExportCsv, dbOpenImport, dbResultCellMenu, dbSelAll } from "./data-csv.js";
+import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
 import { dbEditCellEnter } from "./data-edit.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
@@ -121,6 +121,157 @@ function dbColResizeStart(e, name, th, cells) {
   }
   document.addEventListener("mousemove", move);
   document.addEventListener("mouseup", up);
+}
+
+/* --- keyboard navigation + TSV paste (docs/22 W2.2) --------------------------------------------- */
+/* The grid owns a zero-size input that carries keyboard focus (dbgate's focus-field): the
+   panel's tables are not focusable themselves, and keys have to land somewhere that neither
+   scrolls the page nor starts a find. Clicking a cell, an arrow key or a typed character all
+   move one focus cell; Enter/F2/typing open the same editors a double-click does; Ctrl+C
+   copies the checked rows exactly like the row menu. Pasting TSV walks the edit buffers —
+   Commit stays the only door to the database. */
+
+/** Split clipboard text into a TSV grid. \r\n and lone \r both end a row (Excel and
+ *  Windows clipboards speak them); a trailing newline ends the last row rather than opening
+ *  an empty one. Pure. */
+function dbTsvRows(text) {
+  var t = String(text == null ? "" : text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!t) return [];
+  var rows = t.split("\n");
+  if (rows.length > 1 && rows[rows.length - 1] === "") rows.pop();
+  return rows.map(function (r) { return r.split("\t"); });
+}
+
+/** Move the focus cell one key at a time, clamped to the grid's bounds. Pure. */
+function dbKbdMove(r, c, key, maxR, maxC) {
+  if (key === "ArrowUp") return { r: Math.max(0, r - 1), c: c };
+  if (key === "ArrowDown") return { r: Math.min(maxR, r + 1), c: c };
+  if (key === "ArrowLeft") return { r: r, c: Math.max(0, c - 1) };
+  if (key === "ArrowRight") return { r: r, c: Math.min(maxC, c + 1) };
+  if (key === "Home") return { r: r, c: 0 };
+  if (key === "End") return { r: r, c: maxC };
+  return { r: r, c: c };
+}
+
+/** The grid row count the keyboard walks: buffered inserts first, then the page's rows. */
+function dbGridRowsCount() {
+  var d = state.db;
+  return (d.data ? d.inserts.length + d.data.rows.length : 0);
+}
+
+/** Focus (or move) the focus cell and repaint — a single selection the keyboard owns. */
+function dbFocusCell(r, c) {
+  var d = state.db;
+  var maxR = dbGridRowsCount() - 1;
+  var maxC = dbGridVisibleColumns(d.data ? d.data.columns : [], (d.gridCfg || { hidden: [] }).hidden).length - 1;
+  d.focus = { r: Math.max(0, Math.min(maxR, r)), c: Math.max(0, Math.min(maxC, c)) };
+  renderDbGrid();
+  var kbd = $("dbKbd");
+  if (kbd) kbd.focus();
+  var td = document.querySelector("#dbGridWrap td.db-focus");
+  if (td && td.scrollIntoView) td.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+/** Open the focused cell's editor the way a double-click does. seed (a typed character)
+ *  replaces the current text; without one the editor starts from the cell's value. */
+function dbFocusEdit(seed) {
+  var td = document.querySelector("#dbGridWrap td.db-focus");
+  if (!td || !td.dbKbdEdit) return;
+  td.dbKbdEdit(seed == null ? null : String(seed));
+}
+
+/** Write one pasted cell into the buffers with the same semantics a typed edit has:
+ *  an insert cell reverts to the column default on empty, an update collapses back when the
+ *  pasted text equals the original. */
+function dbPasteCell(kind, key, i, column, meta, raw) {
+  var d = state.db;
+  if (kind === "insert") {
+    var ins = d.inserts[i];
+    if (raw === "") delete ins.values[column];
+    else ins.values[column] = raw;
+    return;
+  }
+  var row = d.data.rows[i];
+  // meta.pk is already the pk VALUES map the caller built (same object dbSaveInlineEdit
+  // stores); running it through dbPkVals again would forEach over an object and throw.
+  var upd = d.updates[key] || (d.updates[key] = { pk: meta.pk, changes: {} });
+  var origTxt = meta.orig == null ? "" : String(meta.orig);
+  if (raw === origTxt) {
+    delete upd.changes[column];
+    if (!Object.keys(upd.changes).length) delete d.updates[key];
+  } else {
+    upd.changes[column] = raw;
+  }
+}
+
+/** Paste a TSV grid starting at the focused cell (docs/22 W2.2). Cells map onto the VISIBLE
+ *  columns left to right; paste rows past the page's last row grow NEW buffered inserts; a
+ *  wider paste than the grid simply drops its extra cells. Every value lands in the local
+ *  buffers exactly as if it had been typed — Commit is still the only write. */
+function dbPasteApply(text, r0, c0) {
+  var d = state.db;
+  if (!d.data || !d.data.editable) {
+    toast("This table is not editable (" + (d.data && d.data.editNote ? d.data.editNote : "no primary key") + ") — paste needs the edit buffer", true);
+    return;
+  }
+  var cfg = d.gridCfg || { widths: {}, hidden: [] };
+  var cols = dbGridVisibleColumns(d.data.columns, cfg.hidden);
+  var rows = dbTsvRows(text);
+  if (!rows.length || !cols.length) return;
+  var pkCols = d.data.primaryKey || [];
+  var keyOf = function (row, i) { return pkCols.length ? dbPkKey(pkCols, row) : String(i); };
+  for (var i = 0; i < rows.length; i++) {
+    var target = r0 + i;
+    for (var j = 0; j < rows[i].length; j++) {
+      var colIdx = c0 + j;
+      if (colIdx >= cols.length) break;
+      var col = cols[colIdx].name;
+      var raw = rows[i][j];
+      var insertsBefore = d.inserts.length;
+      if (target < insertsBefore) {
+        dbPasteCell("insert", null, target, col, null, raw);
+      } else {
+        var ri = target - d.inserts.length;
+        if (ri < d.data.rows.length) {
+          var row = d.data.rows[ri];
+          var key = keyOf(row, ri);
+          dbPasteCell("update", key, ri, col, { pk: dbPkVals(pkCols, row), orig: row[col] }, raw);
+        } else {
+          // Past the page: the paste row becomes a NEW buffered insert, values in column order.
+          d.inserts.push({ values: {} });
+          dbPasteCell("insert", null, d.inserts.length - 1, col, null, raw);
+        }
+      }
+    }
+  }
+  renderDbGrid();
+  renderDbBar();
+}
+
+/** Ctrl+C: the checked rows as CSV (the row menu's Copy), or — with nothing checked — the
+ *  focused row alone, which is what a grid hand expects Ctrl+C to grab. */
+function dbCopyChecked() {
+  var d = state.db;
+  var sel = dbSelectedForCopy();
+  if (sel && sel.rows && sel.rows.length) {
+    // Same shape the row menu's Copy-as-CSV builds (data-csv keeps dbRowsCsv private): a
+    // header line plus one quoted line per checked row.
+    var lines = [sel.cols.map(dbCopyCsvCell).join(",")];
+    sel.rows.forEach(function (r) { lines.push(sel.cols.map(function (cn) { return dbCopyCsvCell(r[cn]); }).join(",")); });
+    dbCopyText(lines.join("\n"));
+    return;
+  }
+  if (!d.focus || !d.data) return;
+  var nIns = d.inserts.length;
+  if (d.focus.r < nIns) return; // a buffered insert has no committed row to copy
+  var row = d.data.rows[d.focus.r - nIns];
+  var pkCols = d.data.primaryKey || [];
+  var key = pkCols.length ? dbPkKey(pkCols, row) : String(d.focus.r - nIns);
+  var full = dbRowForCopy(row, key);
+  var line = d.data.columns.map(function (c) {
+    return dbCopyCsvCell(full == null ? null : full[c.name]);
+  }).join(",");
+  dbCopyText(line);
 }
 
 async function dbLoadData(keepOffset) {
@@ -552,17 +703,24 @@ function renderDbGrid() {
     };
     rc.appendChild(rm);
     tr.appendChild(rc);
-    cols.forEach(function (c) {
+    cols.forEach(function (c, ci) {
       var has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
       var td = el("td", "db-cell");
       widthOf(c, td);
       var long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
+      // docs/22 W2.2: one click puts the keyboard's focus cell here; the ring marks it.
+      td.onmousedown = function () { dbFocusCell(i, ci); };
+      if (d.focus && d.focus.r === i && d.focus.c === ci) td.classList.add("db-focus");
       if (editable) {
         td.classList.add("db-cell-edit");
         td.title = long || "Double-click to edit · right-click for dialog/copy";
         (function (col, present) {
           td.ondblclick = function () {
             var cur = present ? dbCellText(ins.values[col]) : "";
+            dbEditCellEnter("insert", null, i, col, {}, td, cur == null ? "" : cur);
+          };
+          td.dbKbdEdit = function (seed) {
+            var cur = seed != null ? seed : present ? dbCellText(ins.values[col]) : "";
             dbEditCellEnter("insert", null, i, col, {}, td, cur == null ? "" : cur);
           };
           td.oncontextmenu = function (e) { dbCellMenu(e, null, null, col, null, function () { dbOpenCellEditor("insert", null, i, col, {}); }); };
@@ -610,13 +768,17 @@ function renderDbGrid() {
       rc.appendChild(b);
     }
     tr.appendChild(rc);
-    cols.forEach(function (c) {
+    cols.forEach(function (c, ci) {
       var orig = row[c.name];
       var pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
       var v = pending ? upd.changes[c.name] : orig;
       var td = el("td", "db-cell" + (pending ? " db-dirty" : ""));
       widthOf(c, td);
       var long = dbPaintCell(td, v, true, c.dataType);
+      // docs/22 W2.2: same focus wiring as insert cells; the row index counts the inserts above.
+      var gridRow = d.inserts.length + rowIdx;
+      td.onmousedown = function () { dbFocusCell(gridRow, ci); };
+      if (d.focus && d.focus.r === gridRow && d.focus.c === ci) td.classList.add("db-focus");
       if (editable && !deleted) {
         td.classList.add("db-cell-edit");
         td.title = long || "Double-click to edit · right-click for dialog/copy";
@@ -624,6 +786,10 @@ function renderDbGrid() {
           var meta = { pk: dbPkVals(pkCols, row), orig: orig };
           td.ondblclick = function () {
             var cur = dbCellText(orig);
+            dbEditCellEnter("update", key, -1, col, meta, td, cur == null ? "" : cur);
+          };
+          td.dbKbdEdit = function (seed) {
+            var cur = seed != null ? seed : dbCellText(orig);
             dbEditCellEnter("update", key, -1, col, meta, td, cur == null ? "" : cur);
           };
           td.oncontextmenu = function (e) {
@@ -638,6 +804,73 @@ function renderDbGrid() {
 
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+
+  // docs/22 W2.2: the zero-size input that carries the grid's keyboard focus. It sits inside
+  // the scrolling wrap (not above it) so focusing it never scrolls the pane away, and it owns
+  // keydown + paste — arrows/Enter/F2/Esc/Home/End/typing, Ctrl+C, and TSV paste.
+  var kbd = el("input", "db-kbd");
+  kbd.type = "text";
+  kbd.id = "dbKbd";
+  kbd.tabIndex = -1;
+  kbd.setAttribute("aria-label", "Data grid keyboard navigation");
+  kbd.onkeydown = function (ev) {
+    var d = state.db;
+    if (!d.data) return;
+    var maxR = dbGridRowsCount() - 1;
+    var maxC = cols.length - 1;
+    if (!d.focus) {
+      if (ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "ArrowLeft" ||
+        ev.key === "ArrowRight" || ev.key === "Home" || ev.key === "End") {
+        ev.preventDefault();
+        dbFocusCell(0, 0);
+      }
+      return;
+    }
+    if (ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "ArrowLeft" ||
+      ev.key === "ArrowRight" || ev.key === "Home" || ev.key === "End") {
+      ev.preventDefault();
+      var m = dbKbdMove(d.focus.r, d.focus.c, ev.key, maxR, maxC);
+      d.focus = m;
+      renderDbGrid();
+      var k = $("dbKbd");
+      if (k) k.focus();
+      var td = document.querySelector("#dbGridWrap td.db-focus");
+      if (td && td.scrollIntoView) td.scrollIntoView({ block: "nearest", inline: "nearest" });
+      return;
+    }
+    if (ev.key === "Enter" || ev.key === "F2") {
+      ev.preventDefault();
+      dbFocusEdit();
+      return;
+    }
+    if (ev.key === "Escape") {
+      // Esc's one meaning here is "put the keyboard down" — the cell keeps its value and its
+      // ring goes away. (The inline editor and the sheet handle their own Esc first.)
+      ev.preventDefault();
+      d.focus = null;
+      renderDbGrid();
+      return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === "c" || ev.key === "C")) {
+      dbCopyChecked();
+      return;
+    }
+    if (!ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key.length === 1) {
+      // Typing into a cell starts the edit seeded with the character, exactly the dblclick
+      // editor with a head start.
+      ev.preventDefault();
+      dbFocusEdit(ev.key);
+    }
+  };
+  kbd.onpaste = function (ev) {
+    var d = state.db;
+    if (!d.data) return;
+    var text = ev.clipboardData ? ev.clipboardData.getData("text/plain") : "";
+    if (!text) return;
+    ev.preventDefault();
+    dbPasteApply(text, d.focus ? d.focus.r : 0, d.focus ? d.focus.c : 0);
+  };
+  wrap.appendChild(kbd);
 }
 
 function renderDbResultGrid(wrap) {
@@ -710,4 +943,4 @@ function dbNextSort(order, dir, name) {
   return { order: name, dir: "desc" };
 }
 
-export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridVisibleColumns, dbHideColumn, dbLoadData, dbNextSort, dbPaintCell, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns };
+export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns, dbTsvRows };

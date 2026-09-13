@@ -43,6 +43,7 @@ function dbFreshState() {
     inserts: [],          // [{ values: { col: value-or-null } }]
     sel: {},             // rowKey -> true — checked rows the next Copy pulls (grid or query result)
     selAnchor: -1,       // visible row index of the last checkbox click (Shift range start)
+    focus: null,         // {r, c} — the keyboard's focus cell, inserts-first grid rows (docs/22 W2.2)
     sqlOpen: false, sqlText: "", sqlResult: null, sqlBusy: false,
     history: [],         // last-run console queries, newest first (per-browser, localStorage)
     tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
