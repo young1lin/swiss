@@ -521,10 +521,13 @@ async function dbRedisCommit() {
   toast("Committed " + cmds.length + " command" + (cmds.length > 1 ? "s" : ""));
   d.redisEdits = null;
   d.sqlPreview = false;
-  dbLoadRedisValue(d.redisKey);
-  // Deleting a hash's last field (or a set's last member) deletes the KEY — refresh the list
-  // so it does not offer a key that is gone.
-  if (d.redisValue && d.redisValue.type === "none") dbLoadKeys(true);
+  var key = d.redisKey;
+  // Awaited: deleting a hash's last field (or a set's last member) deletes the KEY, and the
+  // re-read's "type none" answer IS the signal — checking before it answered read null and
+  // the list refresh never ran, so the sidebar kept offering a key that is gone (docs/22
+  // closeout audit).
+  await dbLoadRedisValue(key);
+  if (d.redisKey === key && d.redisValue && d.redisValue.type === "none") dbLoadKeys(true);
 }
 
 /** Drop the buffer without a single command — the twin of the row grid's Discard. */
