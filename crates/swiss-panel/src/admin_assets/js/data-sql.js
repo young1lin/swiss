@@ -1,8 +1,11 @@
 import { $, apiJson, el, state, toast } from "./util.js";
-import { dbIsRedis } from "./data-browsers.js";
-import { dbHighlightSql } from "./data-filters.js";
+import {
+  dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
+  dbRedisPendingCount,
+} from "./data-browsers.js";
+import { SQL_TOKEN_RE, dbHighlightSql, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending } from "./data-view.js";
+import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
 
 /* --- pending-SQL preview ------------------------------------------------------------------------ */
 /* The exact statements the server will run on Commit, mirrored from buildEditStatements
@@ -17,6 +20,25 @@ function dbSqlLiteral(v) {
   if (v === null) return "NULL";
   if (typeof v === "number") return String(v);
   return "'" + String(v).replace(/'/g, "''") + "'";
+}
+
+/** docs/22 W1.4: the one-column stats statements the header's right-click menu runs. Built with
+ *  the same identifier gate as the Commit preview — a column name that is not a bare word is
+ *  refused, never bare-spliced into SQL. `kind` picks the shape:
+ *  "dist" -> value + frequency (top 50); "num" -> COUNT/MIN/MAX/AVG. */
+function dbStatsSql(dialect, schema, table, column, kind) {
+  var q = function (n) {
+    var safe = dbQuoteIdentSafe(n);
+    if (!safe) throw new Error("not a valid identifier: " + n);
+    return dialect === "mysql" ? "`" + safe + "`" : '"' + safe + '"';
+  };
+  var target = (schema ? q(schema) + "." : "") + q(table);
+  var c = q(column);
+  if (kind === "num") {
+    return "SELECT COUNT(" + c + ") AS count, MIN(" + c + ") AS min, MAX(" + c + ") AS max, " +
+      "AVG(" + c + ") AS avg\nFROM " + target;
+  }
+  return "SELECT " + c + ", COUNT(*) AS count\nFROM " + target + "\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 50";
 }
 
 function dbPendingSql() {
@@ -52,15 +74,67 @@ function dbPendingSql() {
 }
 /* --- buffered edits: the commit / discard bar ---------------------------------------------------- */
 
+/** The redis arm of the bar (docs/22 W3.3): same slot, same words, same Discard, with
+ *  "Commands" in place of "SQL" and one pipeline in place of the transaction. The command
+ *  list is the very list Commit posts — the preview is the payload, not a paraphrase. */
+function renderDbRedisBar(d, bar, n) {
+  var b = d.redisEdits;
+  var u = Object.keys(b.updates).length;
+  var del = Object.keys(b.deletes).length;
+  var ins = b.inserts.length;
+  var parts = [];
+  if (u) parts.push(u + " update" + (u > 1 ? "s" : ""));
+  if (del) parts.push(del + " delete" + (del > 1 ? "s" : ""));
+  if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
+  bar.appendChild(el("span", "", parts.join(", ") + " — LOCAL ONLY, not yet in redis. Commit sends them as ONE pipelined round trip (every command guard-checked); Discard deletes them without a single command."));
+  var cmdBtn = el("button", "btn", d.sqlPreview ? "Hide commands" : "Commands");
+  cmdBtn.title = "Show the exact commands Commit will run";
+  cmdBtn.onclick = function () {
+    d.sqlPreview = !d.sqlPreview;
+    renderDbBar();
+  };
+  var discard = el("button", "btn", "Discard");
+  discard.onclick = dbRedisDiscard;
+  var commitBtn = el("button", "btn commit", "Commit (1 pipeline)");
+  commitBtn.onclick = function () { void dbRedisCommit(); };
+  bar.appendChild(cmdBtn);
+  bar.appendChild(discard);
+  bar.appendChild(commitBtn);
+  if (d.sqlPreview) {
+    var pre = el("pre", "db-ddl");
+    pre.style.position = "static";
+    pre.style.margin = "0";
+    pre.style.marginTop = "var(--s2)";
+    pre.style.width = "100%";
+    try {
+      var cmds = dbRedisCommands(d.redisKey, b.type, b);
+      pre.textContent = "-- " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") +
+        ", one pipelined round trip — each guard-checked before the socket is touched\n" +
+        cmds.map(dbRedisCommandText).join("\n");
+    } catch (e) {
+      pre.textContent = String(e && e.message ? e.message : e);
+    }
+    bar.style.flexWrap = "wrap";
+    bar.appendChild(pre);
+  }
+}
+
 function renderDbBar() {
   var d = state.db;
   var bar = $("dbBar");
   if (!bar) return;
-  var n = dbPending();
-  if (!n || !d.data) { bar.hidden = true; return; }
+  var redis = dbIsRedis();
+  var n = redis ? dbRedisPendingCount() : dbPending();
+  // The redis bar owns the same slot (docs/22 W3.3): the typed value view buffers edits the
+  // way the row grid does, and its Commit is ONE guarded pipeline instead of a transaction.
+  if (!n || (redis ? !d.redisValue : !d.data)) { bar.hidden = true; return; }
   bar.hidden = false;
   bar.style.flexWrap = "nowrap";
   bar.innerHTML = "";
+  if (redis) {
+    renderDbRedisBar(d, bar, n);
+    return;
+  }
   var u = Object.keys(d.updates).length;
   var del = Object.keys(d.deletes).length;
   var ins = d.inserts.length;
@@ -104,6 +178,35 @@ function renderDbBar() {
   }
 }
 
+/** docs/22 W1.7: fold one committed row's read-back into the page's rows. The commit reply
+ *  carries what the SERVER kept — silent truncation, DEFAULTs, trigger rewrites — so patching it
+ *  in shows the truth immediately, whatever the reload race does next. Matching uses the same
+ *  pk key the grid's edit buffer uses. */
+function dbApplyReadback(rows, pkCols, pk, row) {
+  if (!rows || !pkCols || !pkCols.length || !row) return rows;
+  var want = dbPkKey(pkCols, pk);
+  rows.forEach(function (r) {
+    if (dbPkKey(pkCols, r) === want) {
+      Object.keys(row).forEach(function (c) { r[c] = row[c]; });
+    }
+  });
+  return rows;
+}
+
+/** docs/22 W1.4 / W1.10: put a generated statement into the console — visible, editable, and
+ *  in history once run, instead of hiding behind a one-off request. */
+function dbFillConsole(sql) {
+  var d = state.db;
+  d.sqlText = sql;
+  d.sqlOpen = true;
+  var con = $("dbConsole");
+  if (con) con.hidden = false;
+  var ta = $("dbSql");
+  if (ta) ta.value = sql;
+  dbSqlPaint();
+  if (ta) ta.focus();
+}
+
 async function dbCommit() {
   var d = state.db;
   if (!d.conn || !d.table || !d.data) return;
@@ -134,15 +237,28 @@ async function dbCommit() {
   if (!j) return; // the server rolled back; the buffer stays exactly as it was
   var affected = (j.results || []).reduce(function (a, r) { return a + (r.affected || 0); }, 0);
   toast("Committed " + edits.length + " change" + (edits.length > 1 ? "s" : "") + " · " + affected + " row" + (affected === 1 ? "" : "s") + " affected");
+  // docs/22 W1.7: each update's read-back row lands on the page before the reload, so the
+  // committed truth (truncated, defaulted, trigger-rewritten) is what the grid shows next.
+  var pkCols = (d.data && d.data.primaryKey) || [];
+  (j.results || []).forEach(function (r, i) {
+    if (r && r.row && edits[i] && edits[i].op === "update" && d.data && d.data.rows) {
+      dbApplyReadback(d.data.rows, pkCols, edits[i].pk, r.row);
+    }
+  });
   dbDropEdits();
   dbLoadData(true);
 }
 
-/** EXPLAIN-prefix a console statement — same rules as withExplain on the server: idempotent,
-    one trailing terminator stripped. Mirrored here because the server helper is TypeScript. */
-function dbWithExplain(sql) {
-  var s = sql.replace(/\s+$/, "").replace(/;\s+$/, "").replace(/\s+$/, "");
-  return /^explain\b/i.test(s) ? s : "EXPLAIN " + s;
+/** EXPLAIN-prefix a console statement — mode "analyze" spells EXPLAIN ANALYZE, which runs
+    the statement and times every plan node. Same rules as withExplain on the server:
+    idempotent, one trailing terminator stripped. Mirrored here because the server helper is
+    TypeScript. */
+function dbWithExplain(sql, mode) {
+  // ;\s*$ is the server's (and the Rust port's) chain: the old ;\s+$ here could never match
+  // once the trailing whitespace had already been stripped, so the terminator survived.
+  var s = sql.replace(/\s+$/, "").replace(/;\s*$/, "").replace(/\s+$/, "");
+  if (/^explain\b/i.test(s)) return s;
+  return mode === "analyze" ? "EXPLAIN ANALYZE " + s : "EXPLAIN " + s;
 }
 
 /* --- query history (per-browser) ---------------------------------------------------------------- */
@@ -185,11 +301,120 @@ function dbHistoryRender() {
 
 /* --- SQL console --------------------------------------------------------------------------------- */
 
-async function dbRunSql(explain) {
+/** docs/22 W1.10: the table menu's SQL templates. Column names pass the identifier whitelist
+ *  (never a bare splice), value positions are ? placeholders, and one comment line says what to
+ *  do with them — the template lands in the console runnable after the ?s are filled in. */
+function dbTemplateSql(kind, dialect, schema, table, columns, pk) {
+  var q = function (n) {
+    var safe = dbQuoteIdentSafe(n);
+    if (!safe) throw new Error("not a valid identifier: " + n);
+    return dialect === "mysql" ? "`" + safe + "`" : '"' + safe + '"';
+  };
+  var t = (schema ? q(schema) + "." : "") + q(table);
+  var cols = columns.map(q);
+  var key = pk.map(q);
+  var hint = "-- replace each ? with a value before running";
+  if (kind === "select") {
+    return hint + "\nSELECT " + cols.join(", ") + "\nFROM " + t +
+      (key.length ? "\nWHERE " + key.map(function (c) { return c + " = ?"; }).join(" AND ") : "") + ";";
+  }
+  if (kind === "insert") {
+    return hint + "\nINSERT INTO " + t + " (" + cols.join(", ") + ")\nVALUES (" +
+      cols.map(function () { return "?"; }).join(", ") + ");";
+  }
+  if (kind === "update") {
+    var keyNames = {};
+    pk.forEach(function (p) { keyNames[p] = true; });
+    var set = columns.filter(function (n) { return !keyNames[n]; }).map(q);
+    if (!set.length || !key.length) {
+      throw new Error("an UPDATE template needs a non-key column and a primary key");
+    }
+    return hint + "\nUPDATE " + t + "\nSET " + set.map(function (c) { return c + " = ?"; }).join(", ") +
+      "\nWHERE " + key.map(function (c) { return c + " = ?"; }).join(" AND ") + ";";
+  }
+  if (!key.length) throw new Error("a DELETE template needs a primary key");
+  return hint + "\nDELETE FROM " + t + "\nWHERE " + key.map(function (c) { return c + " = ?"; }).join(" AND ") + ";";
+}
+
+/** docs/22 W1.8: split SQL text into blank-line-separated blocks and return the one the caret
+ *  sits in — Ctrl+Enter on a three-block script runs only the second block. A caret inside a
+ *  blank gap belongs to the block AFTER it (that is where the cursor visually rests); a missing
+ *  caret means the end of the text. No blank lines means one block: exactly the whole box, the
+ *  behaviour the console always had. */
+function dbSubqueryAt(text, caret) {
+  var t = String(text);
+  var seps = [];
+  t.replace(/\n[ \t]*\n/g, function (m, i) { seps.push([i, i + m.length]); return m; });
+  if (!seps.length) return t;
+  var at = typeof caret === "number" && caret >= 0 && caret <= t.length ? caret : t.length;
+  var start = 0, end = t.length;
+  for (var i = 0; i < seps.length; i++) {
+    if (at < seps[i][0]) { end = seps[i][0]; break; }
+    start = seps[i][1];
+  }
+  return t.slice(start, end);
+}
+
+/** docs/22 W4.3: split a console block into statements at top-level semicolons — the
+ *  panel's half of multi-result tabs. A naive text.split(";") breaks on the first literal or
+ *  comment that carries one ('a;b', "-- note;", 'it''s;'), so this walks the SAME token stream
+ *  the syntax highlighter lexes (SQL_TOKEN_RE: quotes ', \" and ` with backslash and
+ *  doubled-quote escapes, -- and # line comments, slash-star block comments) — a semicolon the
+ *  tokenizer files under punctuation (group 6) is the only kind that ends a statement, because
+ *  the string and comment groups swallow theirs whole. Trimmed empties (a trailing ;, a
+ *  comment-only stretch) yield nothing. Pure. */
+function dbSplitStatements(text) {
+  var t = String(text);
+  var out = [];
+  var start = 0;
+  // A piece holding no token but comments is not a statement — "SELECT 1; -- note\n; SELECT 2"
+  // must run two statements, not three, and never ask the server to execute a note.
+  var hasCode = function (piece) {
+    var m;
+    SQL_TOKEN_RE.lastIndex = 0;
+    while ((m = SQL_TOKEN_RE.exec(piece)) !== null) {
+      if (!m[1]) return true; // anything that is not a comment is code
+    }
+    return false;
+  };
+  var cut = function (at) {
+    var piece = t.slice(start, at).replace(/^\s+|\s+$/g, "");
+    if (piece && hasCode(piece)) out.push(piece);
+    start = at + 1;
+  };
+  var m;
+  SQL_TOKEN_RE.lastIndex = 0;
+  while ((m = SQL_TOKEN_RE.exec(t)) !== null) {
+    if (m[6]) {
+      for (var k = 0; k < m[0].length; k++) {
+        if (m[0].charAt(k) === ";") cut(m.index + k);
+      }
+    }
+  }
+  cut(t.length); // the tail after the last semicolon (cut ignores the separator itself here)
+  return out;
+}
+
+/** docs/22 W4.3: a result tab's name — the statement's first word plus its row count
+ *  ("SELECT · 42"), the shape dbgate's ResultTabs use. Leading comments are skipped (they are
+ *  not the word the user recognises); EXPLAIN answers name themselves because the prefix ran
+ *  too. A missing count renders the word alone; a statement with no word at all still gets a
+ *  name. Pure. */
+function dbResultTabLabel(stmt, rowCount) {
+  var s = String(stmt).replace(/^(\s|--[^\n]*\n|#[^\n]*\n|\/\*[\s\S]*?\*\/)+/, "");
+  var w = (/^([A-Za-z_][A-Za-z0-9_]*)/.exec(s) || [])[1] || "?";
+  w = w.toUpperCase();
+  return typeof rowCount === "number" ? w + " \u00b7 " + rowCount : w;
+}
+
+async function dbRunSql(explain) { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
   var d = state.db;
   if (!d.conn) { toast("No database connection", true); return; }
-  var sql = (d.sqlText || "").trim();
-  if (!sql) { toast("Type a command first", true); return; }
+  // docs/22 W1.8: the run covers the block the caret is in — one block per run keeps the
+  // single-statement guard honest on multi-part scripts.
+  var ta = $("dbSql");
+  var block = dbSubqueryAt(d.sqlText || "", ta ? ta.selectionStart : null).trim();
+  if (!block) { toast("Type a command first", true); return; }
   // The redis console: one command per run; the server-side guard still refuses what would
   // break the shared connection or the server. Writes (SET, DEL, EXPIRE…) run.
   if (dbIsRedis()) {
@@ -198,36 +423,57 @@ async function dbRunSql(explain) {
     renderDbGrid();
     var cj = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/command", {
       method: "POST",
-      body: JSON.stringify({ command: sql }),
+      body: JSON.stringify({ command: block }),
     });
     d.sqlBusy = false;
-    if (!cj) { d.sqlResult = null; renderDbToolbar(); renderDbGrid(); return; }
+    if (!cj) { d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; renderDbToolbar(); renderDbGrid(); return; }
     dbClearSel(); // a new result grid starts unselected
     d.sqlResult = { columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false,
+      elapsedMs: cj.elapsedMs,
       note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null ? cj.reply.length + " items" : undefined };
-    dbHistoryPush(sql);
+    d.sqlResults = [d.sqlResult]; // docs/22 W4.3: the tab strip reads the list — one reply, one tab
+    d.sqlTab = 0;
+    dbHistoryPush(block);
     renderDbToolbar();
     renderDbGrid();
     return;
   }
-  // The plan view runs EXPLAIN on the same statement; withExplain is idempotent, so a query
-  // that already explains itself is sent as-is.
-  var toSend = explain ? dbWithExplain(sql) : sql;
+  // docs/22 W4.3: the block is split on statement-level semicolons and sent ONE STATEMENT PER
+  // REQUEST — the server's single-statement contract is untouched, and every reply gets its
+  // own result tab. Empty stretches (a trailing ;, a comment-only piece) never run; the first
+  // failure stops the batch with the tabs that already answered kept on screen; history
+  // records the whole block, and only when every statement answered.
+  var stmts = dbSplitStatements(block);
+  if (!stmts.length) { toast("Type a command first", true); return; }
   d.sqlBusy = true;
+  d.sqlResult = null; // "Running…" paints in place of the previous grid
+  d.sqlResults = null;
   renderDbToolbar();
   renderDbGrid();
-  var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/query", {
-    method: "POST",
-    body: JSON.stringify({ sql: toSend, limit: d.pageSize }),
-  });
+  var results = [];
+  var ok = true;
+  for (var si = 0; si < stmts.length; si++) {
+    // The plan view runs EXPLAIN (or EXPLAIN ANALYZE) on each statement; dbWithExplain is
+    // idempotent, so a query that already explains itself is sent as-is.
+    var toSend = explain ? dbWithExplain(stmts[si], explain) : stmts[si];
+    var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/query", {
+      method: "POST",
+      body: JSON.stringify({ sql: toSend, limit: d.pageSize }),
+    });
+    if (!j) { ok = false; break; } // apiJson already showed the error; the answered tabs stay
+    j.explained = !!explain;
+    j.tabLabel = dbResultTabLabel(toSend, j.rowCount);
+    results.push(j);
+  }
   d.sqlBusy = false;
-  if (!j) { d.sqlResult = null; renderDbToolbar(); renderDbGrid(); return; }
   dbClearSel(); // a new result grid starts unselected
-  d.sqlResult = j;
-  d.sqlResult.explained = !!explain;
-  if (!explain) dbHistoryPush(sql); // the plan of a query is not a query — only runs are history
+  d.sqlResults = results;
+  d.sqlTab = 0;
+  d.sqlResult = results.length ? results[0] : null;
+  // The plan of a query is not a query — only whole, real runs are history.
+  if (ok && !explain) dbHistoryPush(block);
   renderDbToolbar();
   renderDbGrid();
 }
 
-export { dbCommit, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbRunSql, dbSqlLiteral, dbWithExplain, renderDbBar };
+export { dbApplyReadback, dbCommit, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRunSql, dbSqlLiteral, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };

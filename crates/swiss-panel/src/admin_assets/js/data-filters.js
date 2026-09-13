@@ -54,6 +54,8 @@ var DB_FILTER_OPS = [
   { op: "eq", label: "=" }, { op: "ne", label: "≠" },
   { op: "gt", label: ">" }, { op: "gte", label: "≥" },
   { op: "lt", label: "<" }, { op: "lte", label: "≤" },
+  { op: "in", label: "in list" }, { op: "notIn", label: "not in list" },
+  { op: "between", label: "between" },
   { op: "like", label: "contains" }, { op: "notLike", label: "excludes" },
   { op: "isNull", label: "is NULL" }, { op: "isNotNull", label: "not NULL" },
 ];
@@ -95,6 +97,18 @@ function renderDbFilters() {
       if (e.key === "Enter") { e.preventDefault(); clearTimeout(t2); d.grep = this.value; dbLoadKeys(true); }
     };
     rf.appendChild(ri);
+    // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
+    // it, and "" keeps the request byte-identical to the unfiltered one.
+    var rt = el("select");
+    rt.title = "Key type";
+    [""].concat(["string", "hash", "list", "set", "zset", "stream"]).forEach(function (t) {
+      var o = el("option", "", t || "All types");
+      o.value = t;
+      o.selected = (d.redisType || "") === t;
+      rt.appendChild(o);
+    });
+    rt.onchange = function () { d.redisType = this.value; dbLoadKeys(true); };
+    rf.appendChild(rt);
     if (d.redis && d.redis.total != null) {
       rf.appendChild(el("span", "db-filter-hint",
         (d.redis.keys ? d.redis.keys.length.toLocaleString() : "0") + " shown · " +
@@ -134,7 +148,8 @@ function renderDbFilters() {
     if (!dbValueless(f.op)) {
       var vi = el("input");
       vi.type = "text";
-      vi.placeholder = "value";
+      // The list operators say what they want right in the box (docs/22 W1.2).
+      vi.placeholder = f.op === "in" || f.op === "notIn" ? "1,2,3" : (f.op === "between" ? "lo,hi" : "value");
       vi.title = "Enter applies";
       vi.value = f.value || "";
       vi.onkeydown = function (e) {
