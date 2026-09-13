@@ -436,3 +436,35 @@ unchanged in force:
 What is deliberately NOT scrubbed: the historical record. Docs that narrate the port
 (gap analyses, specs, the memory numbers in README) keep their references - they are
 provenance, not workflow. The sibling checkout itself is deleted by its owner when ready.
+
+## ADR-017 — SQL completion is computed server-side, on the leased connection
+
+**Status: Accepted (2026-09-14).** Spec: docs/22 W3.1.
+
+The Data view's console needed completion. The candidates are dialect keywords (~150 static
+words per dialect), the connection's table names, and the columns of the table the caret's
+statement reads FROM — and all three live on the other side of the lease. The anti-example is
+pgadmin's client-side dbinfo: it walks the whole database into the browser up front (every
+table, every column, every type) so the editor can complete offline, and on a real schema
+that is megabytes of catalog nobody asked to look at, fetched before the first keystroke, on
+every session, forever. Completion is a per-keystroke service, not a dataset.
+
+The decisions that shape the implementation:
+
+- **One route, one lease: `POST /api/db/{name}/completion {sql, caret}`** answers
+  `{items: [{label, kind, detail}]}`. The body carries the whole console text and the caret
+  as a byte offset (the panel converts its UTF-16 selection index); the reply is bounded by
+  construction — the panel shows at most 8.
+- **Candidates fold most-specific first**: the FROM-nearest table's columns, then table
+  names, then keywords. FROM-nearest is the nearest `FROM <ident>` before the caret — the
+  dbgate resolution, without pretending to resolve aliases.
+- **The cache lives with the connection, not the request.** Table names and column lists
+  load lazily on first use, serve for ten minutes, and drop whole the moment DDL runs
+  (console statement or the DDL route — `sql_touches_schema` decides by first word).
+- **A 64KB ceiling on cached column NAMES per connection.** Past it the cache degrades to
+  keywords + tables rather than growing without bound on a wide schema — a table list is one
+  bounded query; every column of every table is not.
+- **Redis is excluded**: it has no keywords to offer, and the 404 names what it is, as ever.
+- **The panel debounces 150ms** and only asks when the caret ends a word
+  (`[A-Za-z0-9_.$]+`); the list borrows the SQL overlay's mirror trick to sit at the caret
+  and owns only the keys it consumed — arrows, Tab/Enter, Esc — leaving Ctrl+Enter to Run.

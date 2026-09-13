@@ -26,6 +26,7 @@ interface FakeNode {
   onscroll: unknown;
   appendChild(c: unknown): unknown;
   removeChild(c: unknown): unknown;
+  remove(): void;
   classList: { add(): void; remove(): void; toggle(): void; contains(): boolean };
   addEventListener(): void;
   removeEventListener(): void;
@@ -45,6 +46,7 @@ function node(): FakeNode {
     onclick: null, oninput: null, onscroll: null,
     appendChild(c: unknown) { n.children.push(c); return c; },
     removeChild(c: unknown) { return c; },
+    remove() {},
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
     addEventListener() {}, removeEventListener() {},
     setAttribute() {}, getAttribute: () => null,

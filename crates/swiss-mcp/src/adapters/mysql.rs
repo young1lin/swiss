@@ -10,7 +10,7 @@ use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions,
 use sqlx::{Column, Either, Executor, Row};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{TableSort, TableSortKey};
+use swiss_host::dbbrowser::{TableSort, TableSortKey, bytea_hex, exact_int64, exact_uint64, finite_f64};
 
 use super::direct::{BoxFut, Lazy};
 use super::mysql_browser::MysqlBrowser;
@@ -114,19 +114,53 @@ pub fn mysql_list_tables_sql(
     sort: Option<TableSort>,
 ) -> ((String, Vec<Value>), (String, Vec<Value>)) {
     let pattern = grep.map(like_contains);
-    let where_clause = match &pattern {
-        Some(_) => "table_schema = ? AND table_name LIKE ? ESCAPE '!'",
-        None => "table_schema = ?",
+    let (where_clause, head): (&str, Vec<Value>) = match &pattern {
+        Some(p) => (
+            "table_schema = ? AND table_name LIKE ? ESCAPE '!'",
+            vec![json!(database), json!(p)],
+        ),
+        None => ("table_schema = ?", vec![json!(database)]),
     };
-    // Node's mysqlListOrder: the name sort keeps information_schema's own (case-insensitive)
-    // collation; rows/size sort by the statistics the SELECT already computes, with the name as
-    // an ascending tiebreaker — DESC applies to the chosen key only, never the tiebreaker.
-    let order = match sort {
+    mysql_tables_sql_pair(where_clause, &head, mysql_list_order(sort), paging)
+}
+
+/// The grammar-grep variant (docs/22 W1.6): `pred` is the multi-LIKE fragment grep_where built
+/// (" AND (table_name LIKE ? ESCAPE '!' OR ...)") and `patterns` its bound values, slotted after
+/// the database bind. A grep without the grammar characters never reaches here — it keeps
+/// mysql_list_tables_sql's single-LIKE SQL byte-for-byte.
+pub fn mysql_list_tables_grammar_sql(
+    database: &str,
+    pred: &str,
+    patterns: &[Value],
+    paging: (i64, i64, i64),
+    sort: Option<TableSort>,
+) -> ((String, Vec<Value>), (String, Vec<Value>)) {
+    let where_clause = format!("table_schema = ?{pred}");
+    let mut head = vec![json!(database)];
+    head.extend(patterns.iter().cloned());
+    mysql_tables_sql_pair(&where_clause, &head, mysql_list_order(sort), paging)
+}
+
+/// Node's mysqlListOrder: the name sort keeps information_schema's own (case-insensitive)
+/// collation; rows/size sort by the statistics the SELECT already computes, with the name as
+/// an ascending tiebreaker — DESC applies to the chosen key only, never the tiebreaker.
+fn mysql_list_order(sort: Option<TableSort>) -> String {
+    match sort {
         Some(TableSort { key: TableSortKey::Rows, desc }) => keyed_order("approx_rows", desc),
         Some(TableSort { key: TableSortKey::Size, desc }) => keyed_order("bytes", desc),
         Some(TableSort { key: TableSortKey::Name, desc: false }) | None => "table_name".into(),
         Some(TableSort { key: TableSortKey::Name, desc: true }) => "table_name DESC".into(),
-    };
+    }
+}
+
+/// The list/count pair around one WHERE: count shares the list's WHERE so a page can report
+/// the filtered total beside the rows; the paging pair binds last.
+fn mysql_tables_sql_pair(
+    where_clause: &str,
+    head: &[Value],
+    order: String,
+    paging: (i64, i64, i64),
+) -> ((String, Vec<Value>), (String, Vec<Value>)) {
     let list_sql = format!(
         "
       SELECT table_name AS name,
@@ -146,15 +180,10 @@ pub fn mysql_list_tables_sql(
        WHERE {where_clause}"
     );
     let (_, limit, offset) = paging;
-    let list_params = match &pattern {
-        Some(p) => vec![json!(database), json!(p), json!(limit), json!(offset)],
-        None => vec![json!(database), json!(limit), json!(offset)],
-    };
-    let count_params = match &pattern {
-        Some(p) => vec![json!(database), json!(p)],
-        None => vec![json!(database)],
-    };
-    ((list_sql, list_params), (count_sql, count_params))
+    let mut list_params = head.to_vec();
+    list_params.push(json!(limit));
+    list_params.push(json!(offset));
+    ((list_sql, list_params), (count_sql, head.to_vec()))
 }
 
 /// Columns of one table for the Data view — the shape toBrowseColumns reads. Every column is
@@ -266,11 +295,13 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
     match type_name.as_str() {
         "BIGINT" | "BIGINT UNSIGNED" => {
             // try_get::<i64> refuses an unsigned column (u64-only), so try both spellings.
+            // exact_* (docs/22 W2.4): the value crosses the wire as a string so JavaScript
+            // never rounds it through a double.
             if let Ok(Some(v)) = row.try_get::<Option<i64>, _>(i) {
-                return json!(v.to_string());
+                return exact_int64(v);
             }
             if let Ok(Some(v)) = row.try_get::<Option<u64>, _>(i) {
-                return json!(v.to_string());
+                return exact_uint64(v);
             }
             Value::Null
         }
@@ -296,10 +327,7 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
             .try_get::<Option<f64>, _>(i)
             .ok()
             .flatten()
-            .map(|v| match v {
-                f if f.is_finite() => json!(f),
-                _ => Value::Null,
-            })
+            .map(finite_f64) // NaN/±Inf have no JSON spelling; they read as NULL (W2.4)
             .unwrap_or(Value::Null),
         "DATE" => row
             .try_get::<Option<chrono::NaiveDate>, _>(i)
@@ -334,11 +362,25 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
             .ok()
             .flatten()
             .unwrap_or(Value::Null),
+        // Binary kinds split on the bytes themselves, not the type name: MariaDB reports
+        // its information_schema string columns (table_name, column_comment, ...) as
+        // BLOB/VARBINARY-typed but UTF-8, and sqlx 0.8.6 exposes no charset to tell them
+        // from a user's binary column (MySqlTypeInfo carries type + flags only), so a
+        // name-driven hex arm hexed every catalog identifier and broke the table list,
+        // completion and the structure views. Bytes that are valid UTF-8 ride as text —
+        // exactly what the Node build's driver returns for those catalog columns, and an
+        // exact round trip for a text-shaped user value. Anything else is real binary and
+        // rides as \x hex (the pg adapter's BYTEA wire form), so non-UTF-8 bytes survive
+        // and the keyless md5 address digests the decoded bytes instead of a mangled
+        // string.
         "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" | "GEOMETRY" => {
             row.try_get::<Option<Vec<u8>>, _>(i)
                 .ok()
                 .flatten()
-                .map(|b| json!(String::from_utf8_lossy(&b).into_owned()))
+                .map(|b| match String::from_utf8(b) {
+                    Ok(s) => json!(s),
+                    Err(e) => json!(bytea_hex(&e.into_bytes())),
+                })
                 .unwrap_or(Value::Null)
         }
         // CHAR / VARCHAR / TEXT family / ENUM / SET / anything not modeled.
@@ -492,6 +534,29 @@ pub async fn run_query_tx(
     }
     let result = query.execute(&mut **tx).await.map_err(|e| e.to_string())?;
     Ok(result.rows_affected())
+}
+
+/// docs/22 W1.7: the rows-returning sibling of run_query_tx — the same-transaction read-back
+/// SELECT (by primary key, or by LAST_INSERT_ID() right after an insert) needs the committed
+/// row itself, not a count.
+pub async fn run_query_tx_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Map<String, Value>>, String> {
+    let mut query = sqlx::query(sql);
+    for p in params {
+        query = bind_value(query, p);
+    }
+    let rows = query.fetch_all(&mut **tx).await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(mysql_row_to_value)
+        .filter_map(|v| match v {
+            Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .collect())
 }
 
 /// The health verdict on `SELECT 1 AS ok`. A bare integer literal is typed LONGLONG by the
@@ -801,6 +866,33 @@ mod tests {
         assert_eq!(count_params.len(), 2);
         assert_eq!(list_params[0], json!("mydb"));
         assert_eq!(list_params[1], json!("%users%"));
+    }
+
+    #[test]
+    fn grammar_greps_expand_to_multi_like_sql() {
+        // docs/22 W1.6: "user*|account" is one OR over two patterns; the database bind stays
+        // first and the paging pair binds last, exactly like the single-LIKE statement.
+        let w = swiss_host::dbbrowser::grep_where(
+            swiss_host::dbbrowser::DbDialect::Mysql,
+            "table_name",
+            "user*|account",
+            0,
+        )
+        .unwrap()
+        .expect("grammar");
+        let ((list_sql, list_params), (count_sql, count_params)) =
+            mysql_list_tables_grammar_sql("mydb", &w.frag, &w.params, (0, 200, 0), None);
+        assert!(
+            list_sql.contains(
+                "WHERE table_schema = ? AND (table_name LIKE ? ESCAPE '!' OR table_name LIKE ? ESCAPE '!')"
+            ),
+            "{list_sql}"
+        );
+        assert_eq!(list_params.len(), 5); // db, two patterns, limit, offset
+        assert_eq!(count_params.len(), 3);
+        assert_eq!(list_params[1], json!("user%"));
+        assert_eq!(list_params[2], json!("%account%"));
+        assert!(count_sql.contains("COUNT(*)"));
     }
 
     #[test]

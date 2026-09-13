@@ -127,6 +127,10 @@ impl LeaseTracker {
 /// How long a draining provider waits for in-flight leases before closing over them.
 /// Five seconds covers a bounded /api/db page or one SQL console round-trip; a lease held
 /// longer than that is a bug in its holder, and the warning names it.
+/// A streamed SQL dump (docs/22 W4.4) legitimately outlives this window on a big table — its
+/// lease travels inside the body stream — and that is the deliberate trade: the drain aborts
+/// honestly (the download ends early) rather than pinning pools open for a download nobody
+/// is reading. Raising this for dumps would stall every disable for one slow client.
 pub const DRAIN_TIMEOUT_MS: u64 = 5_000;
 
 /// The provider's stop choreography, in order and out loud: wait (logged when there is

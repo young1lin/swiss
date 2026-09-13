@@ -1029,10 +1029,14 @@ mod tests {
     #[test]
     fn ordinary_writes_run_there_is_no_readonly_gate() {
         // SET/DEL/EXPIRE pass with no opt-in: there is no readonly flag anymore, the operator's
-        // data is the operator's to change.
+        // data is the operator's to change. RENAME/PERSIST are the Data view's key-sheet ops
+        // (docs/22 W1.3) — pinned here so a future deny-list sweep cannot quietly break the
+        // panel's Rename / Set-TTL sheets.
         assert!(assert_command_allowed("SET", &["k", "v"], false, false).is_ok());
         assert!(assert_command_allowed("DEL", &["k"], false, false).is_ok());
         assert!(assert_command_allowed("EXPIRE", &["k", "60"], false, false).is_ok());
+        assert!(assert_command_allowed("RENAME", &["k", "k2"], false, false).is_ok());
+        assert!(assert_command_allowed("PERSIST", &["k"], false, false).is_ok());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { $, apiJson, el, emptyHtml, esc, icon, state, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyHtml, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -23,16 +23,44 @@ function dbIsRedis() {
   return !!c && c.dialect === "redis";
 }
 
+// One SCAN page in flight (docs/22 closeout audit): More re-entering while a page loads
+// re-sent the SAME cursor and appended that page twice. A reset (grep, type filter, refresh)
+// still goes through — it restarts the walk from cursor 0 and supersedes.
+var dbKeysLoading = false;
+
+// One /keys request chain (docs/22 closeout B3): a slow More answer landing after a reset
+// spliced its old-cursor page into the FRESH walk and dragged the cursor backward, so later
+// pages shifted under the user (a key quietly went missing from the list). Responses apply
+// only while their token is still the newest request.
+var dbKeysReq = dbReqGuard();
+
 async function dbLoadKeys(reset) {
   var d = state.db;
   if (!d.conn) return;
+  if (!reset && dbKeysLoading) return; // the More double-click: the page is already on its way
   if (reset) { d.redis = null; d.redisKey = null; }
   var q = "/api/db/" + encodeURIComponent(d.conn) + "/keys?count=200";
   if (d.grep) q += "&pattern=" + encodeURIComponent(d.grep);
   if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
   if (d.redis && d.redis.cursor && d.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d.redis.cursor);
-  var j = await apiJson(q);
-  if (!j) return;
+  var token = dbKeysReq.issue();
+  var j;
+  dbKeysLoading = true;
+  try {
+    j = await apiJson(q);
+  } finally {
+    dbKeysLoading = false;
+  }
+  if (!dbKeysReq.accepts(token)) return; // superseded: a newer walk owns the list
+  if (!j) {
+    // docs/22 closeout B1: apiJson already toasted the server's own text, but a transient
+    // toast over a list that still says "no keys" reads as an empty keyspace. Mark the
+    // failure so the list paints it (renderDbTables), keeping the last good page.
+    d.redisError = true;
+    renderDbTables();
+    return;
+  }
+  d.redisError = false;
   d.redis = {
     keys: (d.redis && !reset ? d.redis.keys : []).concat(j.keys || []),
     cursor: j.cursor,
@@ -42,6 +70,10 @@ async function dbLoadKeys(reset) {
   renderDbTables();
   renderDbFilters(); // the shown/keyspace readout rides on the pattern bar
 }
+
+// One /key request chain: a slow answer for the key the user just left must be dropped,
+// or it would flash the PREVIOUS key's value into the pane (docs/22 closeout audit).
+var dbValueReq = dbReqGuard();
 
 async function dbLoadRedisValue(key) {
   var d = state.db;
@@ -54,7 +86,9 @@ async function dbLoadRedisValue(key) {
   d.redisValue = null; // drop the previous key's value — never flash stale data
   d.redisEdits = null; // and its buffered edits — a different key cannot adopt them
   renderDbGrid();
+  var token = dbValueReq.issue();
   var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/key?key=" + encodeURIComponent(key));
+  if (!dbValueReq.accepts(token)) return; // superseded: a newer key owns the pane
   if (!j) { d.redisKey = null; renderDbGrid(); return; }
   d.redisValue = j;
   renderDbGrid();
@@ -381,7 +415,7 @@ function dbRedisToggleDelete(addr) {
 /* The one inline cell editor at a time — the row grid's db-inline-edit vocabulary (overlay
    sized to the cell, Enter saves, Esc cancels, an outside click commits) writing to the
    redis buffer. */
-var dbRedisEditor = null;
+var dbRedisEditor = null; // { ta, save } — close() must be able to unhook the dismiss too
 
 function dbRedisCellEdit(td, insertIdx, addr, col, current) {
   dbRedisEditorClose();
@@ -398,7 +432,7 @@ function dbRedisCellEdit(td, insertIdx, addr, col, current) {
   ta.style.width = Math.max(rect.width + 24, 96) + "px";
   ta.style.minHeight = Math.max(rect.height, 22) + "px";
   wrap.appendChild(ta);
-  dbRedisEditor = ta;
+  dbRedisEditor = { ta: ta, save: save };
   function autoSize() {
     ta.style.height = "auto";
     ta.style.height = Math.min(Math.max(ta.scrollHeight, 22), 320) + "px";
@@ -430,19 +464,30 @@ function dbRedisCellEdit(td, insertIdx, addr, col, current) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
     else if (e.key === "Escape") { e.preventDefault(); dbRedisEditorClose(); renderDbGrid(); }
   };
-  function dismiss(ev) {
-    if (ev.target === ta || ta.contains(ev.target)) return;
-    document.removeEventListener("mousedown", dismiss, true);
-    save();
-  }
-  document.addEventListener("mousedown", dismiss, true);
+  document.addEventListener("mousedown", dbRedisDismiss, true);
   autoSize();
   ta.focus();
   ta.select();
 }
 
+/* The outside-click half, named at module level so close() can unhook it — the same shape as
+   data-edit.js's dbInlineDismiss. Enter/Esc close the editor through dbRedisEditorClose; a
+   dismiss left registered after that ran a STALE save() on the next mousedown anywhere, and
+   the cancelled text came back as a buffered change Commit would have written (docs/22
+   closeout audit). */
+function dbRedisDismiss(ev) {
+  if (!dbRedisEditor) return;
+  var ta = dbRedisEditor.ta;
+  if (ev.target === ta || ta.contains(ev.target)) return;
+  dbRedisEditor.save();
+}
+
 function dbRedisEditorClose() {
-  if (dbRedisEditor) { dbRedisEditor.remove(); dbRedisEditor = null; }
+  if (dbRedisEditor) {
+    dbRedisEditor.ta.remove();
+    document.removeEventListener("mousedown", dbRedisDismiss, true);
+    dbRedisEditor = null;
+  }
 }
 
 /** docs/22 W3.3: a string edits in place — one textarea, one Set, one SET through the
@@ -504,10 +549,13 @@ async function dbRedisCommit() {
   toast("Committed " + cmds.length + " command" + (cmds.length > 1 ? "s" : ""));
   d.redisEdits = null;
   d.sqlPreview = false;
-  dbLoadRedisValue(d.redisKey);
-  // Deleting a hash's last field (or a set's last member) deletes the KEY — refresh the list
-  // so it does not offer a key that is gone.
-  if (d.redisValue && d.redisValue.type === "none") dbLoadKeys(true);
+  var key = d.redisKey;
+  // Awaited: deleting a hash's last field (or a set's last member) deletes the KEY, and the
+  // re-read's "type none" answer IS the signal — checking before it answered read null and
+  // the list refresh never ran, so the sidebar kept offering a key that is gone (docs/22
+  // closeout audit).
+  await dbLoadRedisValue(key);
+  if (d.redisKey === key && d.redisValue && d.redisValue.type === "none") dbLoadKeys(true);
 }
 
 /** Drop the buffer without a single command — the twin of the row grid's Discard. */

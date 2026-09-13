@@ -12,7 +12,7 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Either, Row};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{TableSort, TableSortKey};
+use swiss_host::dbbrowser::{TableSort, TableSortKey, bytea_hex, exact_int64, exact_int64_list, finite_f64};
 
 use super::direct::{BoxFut, Lazy};
 use super::pg_resources::PgResources;
@@ -147,6 +147,11 @@ pub const COUNT_TABLES_SQL: &str = "
 /// the bottom) and abandon the schema grouping on purpose, with (schema, name) as the
 /// tiebreaker. Node replaces the literal ORDER BY; so does this, one string swap.
 pub fn pg_list_tables_sql(sort: TableSort) -> String {
+    with_pg_list_order(LIST_TABLES_SQL.to_string(), sort)
+}
+
+/// Node replaces the literal ORDER BY; so does this, one string swap.
+fn with_pg_list_order(sql: String, sort: TableSort) -> String {
     let desc = if sort.desc { " DESC" } else { "" };
     let clause = match sort.key {
         TableSortKey::Rows => {
@@ -157,7 +162,38 @@ pub fn pg_list_tables_sql(sort: TableSort) -> String {
         }
         TableSortKey::Name => format!("n.nspname, lower(c.relname){desc}"),
     };
-    LIST_TABLES_SQL.replacen("ORDER BY 1, 2", &format!("ORDER BY {clause}"), 1)
+    sql.replacen("ORDER BY 1, 2", &format!("ORDER BY {clause}"), 1)
+}
+
+/// The grammar-grep twin (docs/22 W1.6): the const SQL has ONE grep placeholder, but a grammar
+/// grep expands to any number of patterns, so the same query text is assembled here with the
+/// predicate grep_where built inline and the LIMIT/OFFSET placeholders renumbered past it.
+/// `pred` arrives as " AND (...)" from grep_where — the leading AND is the one the replaced
+/// line carried. A plain substring grep never reaches here; pg_list_tables_sql keeps its SQL
+/// byte-for-byte.
+pub fn pg_list_tables_grammar_sql(sort: TableSort, pred: &str, patterns: usize) -> (String, String) {
+    // The single $2 grep bind becomes N patterns, so LIMIT/OFFSET shift by N-1: $3/$4 →
+    // $(N+2)/$(N+3).
+    let limit_n = patterns + 2;
+    let offset_n = patterns + 3;
+    let inline = pred.trim_start();
+    let list = LIST_TABLES_SQL
+        .replacen(
+            "AND ($2::text IS NULL OR c.relname ILIKE $2 ESCAPE '!')",
+            inline,
+            1,
+        )
+        .replacen(
+            "LIMIT $3 OFFSET $4",
+            &format!("LIMIT ${limit_n} OFFSET ${offset_n}"),
+            1,
+        );
+    let count = COUNT_TABLES_SQL.replacen(
+        "AND ($2::text IS NULL OR c.relname ILIKE $2 ESCAPE '!')",
+        inline,
+        1,
+    );
+    (with_pg_list_order(list, sort), count)
 }
 pub const DESCRIBE_SQL: &str = "
   SELECT column_name, data_type, is_nullable, column_default,
@@ -205,16 +241,42 @@ pub const PG_BROWSE_FK_SQL: &str = "
 
 /// The filter params LIST_TABLES_SQL / COUNT_TABLES_SQL expect: `[schema-or-null,
 /// grep-or-null]` (the LIMIT/OFFSET pair is appended by the caller). The Data view lists every
-/// non-system schema, so the schema slot is always null — but it must still BE there, or the
-/// bind message supplies one parameter fewer than the statement's placeholders and Postgres
-/// refuses the query.
-pub fn pg_browse_table_params(grep: Option<&str>) -> Vec<Value> {
+/// non-system schema by default (null), but the panel's schema picker (docs/22 W1.1) and the
+/// pg_list_tables tool both narrow the walk to one schema — and the slot must still BE there
+/// either way, or the bind message supplies one parameter fewer than the statement's
+/// placeholders and Postgres refuses the query.
+pub fn pg_browse_table_params(schema: Option<&str>, grep: Option<&str>) -> Vec<Value> {
     vec![
-        Value::Null,
+        schema
+            .filter(|s| !s.is_empty())
+            .map(|s| Value::String(s.to_string()))
+            .unwrap_or(Value::Null),
         grep.map(like_contains)
             .map(Value::String)
             .unwrap_or(Value::Null),
     ]
+}
+
+/// The bind pair for the grammar list/count statements (docs/22 W1.6): schema first (the $1
+/// slot every one of these statements carries), then the grammar patterns; the list appends the
+/// paging pair, the count shares exactly the head. Extracted because the inline version once
+/// sent the count without its schema bind and Postgres answered "bind message supplies 2
+/// parameters, but prepared statement requires 3".
+pub fn pg_grammar_params(
+    schema: Option<&str>,
+    patterns: &[Value],
+    limit: i64,
+    offset: i64,
+) -> (Vec<Value>, Vec<Value>) {
+    let mut head: Vec<Value> = vec![schema
+        .filter(|s| !s.is_empty())
+        .map(|s| Value::String(s.to_string()))
+        .unwrap_or(Value::Null)];
+    head.extend(patterns.iter().cloned());
+    let mut list = head.clone();
+    list.push(json!(limit));
+    list.push(json!(offset));
+    (list, head)
 }
 
 /// `(host, port, database)` out of a postgres:// URL — `new URL()` + pathname in the Node build.
@@ -302,13 +364,13 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
             .try_get::<Option<i64>, _>(i)
             .ok()
             .flatten()
-            .map(|v| json!(v.to_string()))
+            .map(exact_int64) // exact digits past the JS double boundary (docs/22 W2.4)
             .unwrap_or(Value::Null),
         "FLOAT4" | "FLOAT8" => row
             .try_get::<Option<f64>, _>(i)
             .ok()
             .flatten()
-            .map(|f| if f.is_finite() { json!(f) } else { Value::Null })
+            .map(finite_f64) // NaN/±Inf have no JSON spelling; they read as NULL (W2.4)
             .unwrap_or(Value::Null),
         "NUMERIC" => row
             .try_get::<Option<bigdecimal::BigDecimal>, _>(i)
@@ -321,11 +383,14 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
             .ok()
             .flatten()
             .unwrap_or(Value::Null),
+        // BYTEA rides the API as \x hex (bytea text format): non-UTF-8 bytes survive the
+        // round trip, and the keyless md5 address digests the decoded bytes. The old lossy
+        // string mangled every non-UTF-8 value and made such rows unaddressable.
         "BYTEA" => row
             .try_get::<Option<Vec<u8>>, _>(i)
             .ok()
             .flatten()
-            .map(|b| json!(String::from_utf8_lossy(&b).into_owned()))
+            .map(|b| json!(bytea_hex(&b)))
             .unwrap_or(Value::Null),
         "DATE" => row
             .try_get::<Option<chrono::NaiveDate>, _>(i)
@@ -367,7 +432,7 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
             .try_get::<Option<Vec<i64>>, _>(i)
             .ok()
             .flatten()
-            .map(|v| json!(v.into_iter().map(|x| x.to_string()).collect::<Vec<_>>()))
+            .map(exact_int64_list) // same exact-digits rule, per element (docs/22 W2.4)
             .unwrap_or(Value::Null),
         "FLOAT4[]" | "FLOAT8[]" => row
             .try_get::<Option<Vec<f64>>, _>(i)
@@ -617,6 +682,28 @@ pub async fn run_pg_tx(
     Ok(result.rows_affected())
 }
 
+/// docs/22 W1.7: the rows-returning sibling of run_pg_tx — an INSERT..RETURNING or the
+/// same-transaction read-back SELECT needs the committed row itself, not a count.
+pub async fn run_pg_tx_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    sql: &str,
+    params: &[Value],
+) -> Result<Vec<Map<String, Value>>, String> {
+    let mut query = sqlx::query(sql);
+    for p in params {
+        query = bind_value(query, p);
+    }
+    let rows = query.fetch_all(&mut **tx).await.map_err(|e| e.to_string())?;
+    Ok(rows
+        .iter()
+        .map(pg_row_to_value)
+        .filter_map(|v| match v {
+            Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .collect())
+}
+
 /// Run one PARAMETERIZED statement (extended protocol — Postgres itself refuses a second
 /// statement at Parse) and return its rows.
 pub async fn pg_query_rows(
@@ -739,7 +826,12 @@ impl PgEngine {
 
     async fn call_list_tables(&self, args: &Value) -> Result<Value, String> {
         let paging = table_page_args(args.get("limit"), args.get("page"));
-        let filters = pg_browse_table_params(args.get("grep").and_then(Value::as_str));
+        // The tool's schema argument narrows the walk (Node's pg.ts did the same — the port had
+        // silently dropped it); null lists every non-system schema.
+        let filters = pg_browse_table_params(
+            args.get("schema").and_then(Value::as_str),
+            args.get("grep").and_then(Value::as_str),
+        );
         let list_params = vec![
             filters[0].clone(),
             filters[1].clone(),
@@ -888,6 +980,68 @@ impl Engine for PgEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browse_table_params_carry_the_schema_pick() {
+        // docs/22 W1.1: the schema picker narrows the walk to one schema; the slot stays bound
+        // (null) when the panel asks for every schema, and an empty string means the same as
+        // absent — the panel never sends one, a hand-written URL might.
+        assert_eq!(
+            pg_browse_table_params(None, None),
+            vec![Value::Null, Value::Null]
+        );
+        assert_eq!(
+            pg_browse_table_params(Some("app"), Some("us")),
+            vec![json!("app"), json!("%us%")]
+        );
+        assert_eq!(
+            pg_browse_table_params(Some(""), None),
+            vec![Value::Null, Value::Null]
+        );
+    }
+
+    #[test]
+    fn grammar_params_give_the_count_its_schema_bind() {
+        // Regression: the inline assembly sent the count with the patterns alone, and Postgres
+        // refused it with "bind message supplies 2 parameters, but prepared statement
+        // requires 3" — the schema slot is a placeholder whether or not a schema was picked.
+        let (list, count) =
+            pg_grammar_params(None, &[json!("user%"), json!("%account%")], 200, 0);
+        assert_eq!(list.len(), 5); // schema, two patterns, limit, offset
+        assert_eq!(count.len(), 3);
+        assert_eq!(count[0], Value::Null);
+        let (list, count) =
+            pg_grammar_params(Some("app"), &[json!("user%")], 200, 0);
+        assert_eq!(list, vec![json!("app"), json!("user%"), json!(200), json!(0)]);
+        assert_eq!(count, vec![json!("app"), json!("user%")]);
+    }
+
+    #[test]
+    fn grammar_grep_sql_renumbers_the_paging_binds() {
+        // docs/22 W1.6: two patterns push LIMIT/OFFSET from $3/$4 to $4/$5, the schema keeps $1,
+        // and the count shares the predicate without the paging pair.
+        let w = swiss_host::dbbrowser::grep_where(
+            swiss_host::dbbrowser::DbDialect::Pg,
+            "c.relname",
+            "user*|account",
+            1,
+        )
+        .unwrap()
+        .expect("grammar");
+        let (list, count) =
+            pg_list_tables_grammar_sql(TableSort { key: TableSortKey::Name, desc: false }, &w.frag, w.params.len());
+        assert!(
+            list.contains("AND (c.relname ILIKE $2 ESCAPE '!' OR c.relname ILIKE $3 ESCAPE '!')"),
+            "{list}"
+        );
+        assert!(list.contains("LIMIT $4 OFFSET $5"), "{list}");
+        assert!(list.contains("ORDER BY n.nspname, lower(c.relname)"), "{list}");
+        assert!(
+            count.contains("AND (c.relname ILIKE $2 ESCAPE '!' OR c.relname ILIKE $3 ESCAPE '!')"),
+            "{count}"
+        );
+        assert!(!count.contains("LIMIT"), "{count}");
+    }
 
     #[test]
     fn url_parsing_matches_new_url() {

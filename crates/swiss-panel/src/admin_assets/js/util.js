@@ -142,6 +142,18 @@ async function api(path, opts) {
   return fetch(path, opts);
 }
 
+/** A response-race guard for the db loaders (the DDL sheet's S.seq pattern, factored out):
+ *  a request takes a token from issue() right before it fires, and its response may only
+ *  write state while accepts(token) holds — a slow answer that lands after a newer request
+ *  started is dropped silently instead of overwriting what the newer one painted. Pure. */
+function dbReqGuard() {
+  var seq = 0;
+  return {
+    issue: function () { return ++seq; },
+    accepts: function (token) { return token === seq; },
+  };
+}
+
 /** Call the API and hand back the parsed body, or null once the failure has been reported. Every
  *  mutation repeated the same fetch → parse → toast dance, so the dance lives here once. */
 async function apiJson(path, opts) {
@@ -159,4 +171,4 @@ async function apiJson(path, opts) {
   }
 }
 
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dotTitle, el, emptyHtml, esc, icon, now, state, toast, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, esc, icon, now, state, toast, whenLabel };

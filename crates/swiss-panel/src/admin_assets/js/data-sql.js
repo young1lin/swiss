@@ -1,4 +1,4 @@
-import { $, apiJson, el, state, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, state, toast } from "./util.js";
 import {
   dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisPendingCount,
@@ -270,7 +270,17 @@ async function dbCommit() {
     }
   });
   dbDropEdits();
-  dbLoadData(true);
+  // docs/22 closeout B4: the reload rebuilds the grid and scroll anchoring is OFF by design
+  // (docs/22 W2.2 — a repaint must never jump the pane), so the commit would otherwise snap
+  // the user back to the top, away from the row they just committed. Capture before the
+  // reload, restore after it lands; a superseding load owns the pane by then and a stale
+  // restore is a harmless scroll to where the user was anyway.
+  var wrap = $("dbGridWrap");
+  var scrollTop = wrap ? wrap.scrollTop : 0;
+  void dbLoadData(true).then(function () {
+    var w2 = $("dbGridWrap");
+    if (w2) w2.scrollTop = scrollTop;
+  });
 }
 
 /** EXPLAIN-prefix a console statement — mode "analyze" spells EXPLAIN ANALYZE, which runs
@@ -541,6 +551,12 @@ function dbResultTabLabel(stmt, rowCount) {
   return typeof rowCount === "number" ? w + " \u00b7 " + rowCount : w;
 }
 
+// One run at a time owns the results pane: a slow run's answer that lands after a newer Run
+// started must be dropped, or it would overwrite the newer run's tabs with the old ones
+// (docs/22 closeout audit). The token is issued only when a request is actually about to
+// fire — an early guard refusal (empty console) must not invalidate a run in flight.
+var dbRunReq = dbReqGuard();
+
 async function dbRunSql(explain) { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
   var d = state.db;
   if (!d.conn) { toast("No database connection", true); return; }
@@ -552,6 +568,7 @@ async function dbRunSql(explain) { // falsy runs the statement(s); "plan"|"analy
   // The redis console: one command per run; the server-side guard still refuses what would
   // break the shared connection or the server. Writes (SET, DEL, EXPIRE…) run.
   if (dbIsRedis()) {
+    var rtoken = dbRunReq.issue();
     d.sqlBusy = true;
     renderDbToolbar();
     renderDbGrid();
@@ -559,6 +576,7 @@ async function dbRunSql(explain) { // falsy runs the statement(s); "plan"|"analy
       method: "POST",
       body: JSON.stringify({ command: block }),
     });
+    if (!dbRunReq.accepts(rtoken)) return; // superseded: a newer run owns the pane and the flag
     d.sqlBusy = false;
     if (!cj) { d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; renderDbToolbar(); renderDbGrid(); return; }
     dbClearSel(); // a new result grid starts unselected
@@ -579,6 +597,7 @@ async function dbRunSql(explain) { // falsy runs the statement(s); "plan"|"analy
   // records the whole block, and only when every statement answered.
   var stmts = dbSplitStatements(block);
   if (!stmts.length) { toast("Type a command first", true); return; }
+  var token = dbRunReq.issue();
   d.sqlBusy = true;
   d.sqlResult = null; // "Running…" paints in place of the previous grid
   d.sqlResults = null;
@@ -594,6 +613,7 @@ async function dbRunSql(explain) { // falsy runs the statement(s); "plan"|"analy
       method: "POST",
       body: JSON.stringify({ sql: toSend, limit: d.pageSize }),
     });
+    if (!dbRunReq.accepts(token)) return; // superseded mid-batch: stop quietly, the newer run owns the pane
     if (!j) { ok = false; break; } // apiJson already showed the error; the answered tabs stay
     j.explained = !!explain;
     j.tabLabel = dbResultTabLabel(toSend, j.rowCount);

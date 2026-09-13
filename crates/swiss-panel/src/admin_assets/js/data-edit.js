@@ -1,9 +1,11 @@
 import { $, apiJson, el, state, toast } from "./util.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbOpenCellEditor } from "./data-cell.js";
-import { dbLoadData, renderDbGrid } from "./data-grid.js";
+import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
+import { clampMenuPos } from "./menu.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user
@@ -28,9 +30,6 @@ function dbTableMenu(anchorEl) {
   var d = state.db;
   if (!d.conn || !d.table) return;
   var menu = el("div", "ctx-menu");
-  var r = anchorEl.getBoundingClientRect();
-  menu.style.left = r.left + "px";
-  menu.style.top = (r.bottom + 4) + "px";
   function item(label, fn) {
     var b = el("button", "", label);
     b.onclick = function () { closeMenu2(); fn(); };
@@ -56,6 +55,13 @@ function dbTableMenu(anchorEl) {
     dbTypedConfirm({ what: "DROP (permanently delete)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, function () { dbRunDdl("drop"); });
   });
   document.body.appendChild(menu);
+  // docs/22 closeout audit: the Table menu now clamps to the viewport like popupMenu — a
+  // button near the bottom edge used to drop its menu off-screen. Measured after the append.
+  var r = anchorEl.getBoundingClientRect();
+  var box = menu.getBoundingClientRect();
+  var pos = clampMenuPos(r, box.width, box.height, window.innerWidth, window.innerHeight);
+  menu.style.left = pos.left + "px";
+  menu.style.top = pos.top + "px";
   state.menuOpen = true;
   function closeMenu2() { menu.remove(); state.menuOpen = false; }
   setTimeout(function () {
@@ -89,14 +95,27 @@ async function dbRunDdl(op, to) {
   });
   if (!j) return;
   toast("Ran: " + j.ran);
-  if (op === "drop") { d.table = null; d.data = null; d.detail = null; dbDropEdits(); }
+  if (op === "drop") {
+    // The table is gone: nothing of it may linger on the right pane. d.schema, the open
+    // result tabs and the view state (order, filters, focus) belong to the dropped table
+    // as much as d.data does, and the pane itself needs a repaint — renderDbTables
+    // refreshes only the LEFT list (docs/22 closeout audit).
+    d.table = null; d.schema = null; d.data = null; d.detail = null;
+    d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: every result tab closes
+    d.tab = "data"; d.order = null; d.dir = "asc"; d.filters = []; d.focus = null;
+    dbDropEdits();
+  }
   if (op === "rename" && to) { d.table = to; d.data = null; }
   if (op === "truncate") { dbDropEdits(); }
   d.tablesPage = 0;
   if (dbIsRedis()) dbLoadKeys(true);
   else dbLoadTables();
   if (d.table) dbLoadData(true);
-  else renderDbTables();
+  else {
+    renderDbTables();
+    // and the RIGHT pane, whose last paint still shows the dropped table's rows
+    renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
+  }
 }
 /* --- inline cell editor (the default path) ------------------------------------------------------- */
 /* A floating overlay sized to the cell: edits short values directly in place WITHOUT touching

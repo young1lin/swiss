@@ -25,12 +25,27 @@ function popupMenu(anchor, items) {
   document.body.appendChild(node);
   // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
   // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
+  // The clamp itself is clampMenuPos — shared with the ctx menus (docs/22 closeout audit).
   var r = node.getBoundingClientRect();
-  node.style.left = Math.max(8, Math.min(anchor.left, window.innerWidth - r.width - 8)) + "px";
+  var pos = clampMenuPos(anchor, r.width, r.height, window.innerWidth, window.innerHeight);
+  node.style.left = pos.left + "px";
   // Below the button, unless that would run off the bottom — then above it.
-  var below = anchor.bottom + 4;
-  node.style.top = (below + r.height > window.innerHeight - 8 ? Math.max(8, anchor.top - r.height - 4) : below) + "px";
+  node.style.top = pos.top + "px";
   state.menuOpen = true;
+}
+
+/** Where an anchored menu lands, clamped to the viewport: growing right from the anchor's
+ *  left edge and down from 4px below its bottom, flipping above the anchor when the box
+ *  would run off the bottom, never closer than 8px to an edge. A right-click passes the
+ *  cursor POINT as the anchor ({left, top, bottom} all the cursor). popupMenu's arithmetic,
+ *  factored out so the ctx menus (data-csv.js) and the Table menu (data-edit.js) clamp the
+ *  same way instead of landing off-screen at an edge. Pure. */
+function clampMenuPos(anchor, w, h, vw, vh) {
+  var below = anchor.bottom + 4;
+  return {
+    left: Math.max(8, Math.min(anchor.left, vw - w - 8)),
+    top: below + h > vh - 8 ? Math.max(8, anchor.top - h - 4) : below,
+  };
 }
 
 /** A sidebar row is one line, so everything that used to be crammed onto a second one — the
@@ -113,4 +128,4 @@ function patchSidebar() {
   cap.hidden = !state.filter;
 }
 
-export { patchSidebar, popupMenu, tooltipOf };
+export { clampMenuPos, patchSidebar, popupMenu, tooltipOf };

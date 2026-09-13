@@ -4,6 +4,7 @@ import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
 import { dbOpenValueSheet } from "./data-value.js";
 import { dbClearSel, dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
+import { clampMenuPos } from "./menu.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.
@@ -208,12 +209,14 @@ function dbCopyCsvCell(v) {
   return String.fromCharCode(34) + s.split(String.fromCharCode(34)).join(String.fromCharCode(34) + String.fromCharCode(34)) + String.fromCharCode(34);
 }
 
-/** docs/22 W1.5: one filter straight from a cell value — push it, paint the row, apply. */
+/** docs/22 W1.5: one filter straight from a cell value — push it, paint the row, apply.
+ * docs/22 closeout B6: a REFUSED discard takes the pushed row back — a filter the user just
+ * said no to must not stay on screen as if it had been accepted. */
 function dbPushCellFilter(column, op, value) {
   var d = state.db;
   d.filters.push({ column: column, op: op, value: value });
   renderDbFilters();
-  dbApplyFilters();
+  if (!dbApplyFilters()) { d.filters.pop(); renderDbFilters(); }
 }
 
 function dbCellMenu(e, row, key, column, editInDialog) {
@@ -228,8 +231,6 @@ function dbCellMenu(e, row, key, column, editInDialog) {
   var dialect = (d.conns.find(function (c) { return c.name === d.conn; }) || {}).dialect || "mysql";
 
   var menu = el("div", "ctx-menu");
-  menu.style.left = e.clientX + "px";
-  menu.style.top = e.clientY + "px";
   function item(label, fn) {
     var b = el("button", "", label);
     b.onclick = function () { closeMenu2(); fn(); };
@@ -280,6 +281,13 @@ function dbCellMenu(e, row, key, column, editInDialog) {
     });
   }
   document.body.appendChild(menu);
+  // The cursor point is the anchor, clamped to the viewport (docs/22 closeout audit): a
+  // right-click at the right or bottom edge used to strand the menu off-screen. Measured
+  // AFTER the append — offsetWidth is zero until the menu is in the document.
+  var box1 = menu.getBoundingClientRect();
+  var pos1 = clampMenuPos({ left: e.clientX, top: e.clientY, bottom: e.clientY }, box1.width, box1.height, window.innerWidth, window.innerHeight);
+  menu.style.left = pos1.left + "px";
+  menu.style.top = pos1.top + "px";
   state.menuOpen = true;
   function closeMenu2() { menu.remove(); state.menuOpen = false; }
   setTimeout(function () {
@@ -390,8 +398,6 @@ function dbResultCellMenu(e, row, column) {
   var d = state.db;
   var i = d.sqlResult ? d.sqlResult.rows.indexOf(row) : -1;
   var menu = el("div", "ctx-menu");
-  menu.style.left = e.clientX + "px";
-  menu.style.top = e.clientY + "px";
   function item(label, fn) {
     var b = el("button", "", label);
     b.onclick = function () { closeMenu(); fn(); };
@@ -418,6 +424,11 @@ function dbResultCellMenu(e, row, column) {
   item("Select all on page", function () { dbSelAll(true); });
   if (Object.keys(d.sel).length) item("Clear selection", function () { dbSelAll(false); });
   document.body.appendChild(menu);
+  // Same clamp as dbCellMenu (docs/22 closeout audit) — measured after the append.
+  var box2 = menu.getBoundingClientRect();
+  var pos2 = clampMenuPos({ left: e.clientX, top: e.clientY, bottom: e.clientY }, box2.width, box2.height, window.innerWidth, window.innerHeight);
+  menu.style.left = pos2.left + "px";
+  menu.style.top = pos2.top + "px";
   state.menuOpen = true;
   function closeMenu() { menu.remove(); state.menuOpen = false; }
   setTimeout(function () {
@@ -460,4 +471,4 @@ function dbExportCsv() {
   setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
 }
 
-export { dbCellMenu, dbCopyCsvCell, dbCopyFallback, dbCopyText, dbExportCsv, dbOpenImport, dbParseCsvLine, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy };
+export { dbCellMenu, dbCopyCsvCell, dbCopyFallback, dbCopyText, dbExportCsv, dbOpenImport, dbParseCsvLine, dbPushCellFilter, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy };

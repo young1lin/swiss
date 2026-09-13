@@ -1,4 +1,4 @@
-import { $, apiJson, el, icon, state } from "./util.js";
+import { $, apiJson, dbReqGuard, el, icon, state } from "./util.js";
 import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisPendingCount } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
@@ -64,6 +64,7 @@ function dbFreshState() {
     activity: false,     // the Activity section page is open (docs/22 W3.2) — SQL connections only
     activityRows: null,  // last /activity answer, re-rendered by the 5s poll while open
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
+    redisError: false,  // the last /keys fetch FAILED (docs/22 closeout B1) — the list must say so, not "no keys"
     detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
     detailBusy: false,
   };
@@ -239,6 +240,9 @@ function renderDbView() {
     var v = this.value;
     clearTimeout(t);
     t = setTimeout(function () {
+      // Leaving the view frees state.db (views/data.js unmount); a debounce pending across
+      // that boundary once threw here. The view is gone — the filter belongs to no one.
+      if (!state.db) return;
       state.db.grep = v; state.db.tablesPage = 0;
       if (dbIsRedis()) dbLoadKeys(true);
       else dbLoadTables();
@@ -260,14 +264,10 @@ function renderDbView() {
     else dbLoadTables();
   };
   // The schema picker (pg only): picking one re-requests the table list inside that schema.
+  // The wiring itself lives in dbWireSchemaSelect so a RE-CREATED picker (dbPaintSchemaOptions
+  // removes the select for non-pg connections and brings it back for pg) gets it too.
   var schemaSel = $("dbSchema");
-  if (schemaSel) schemaSel.onchange = function () {
-    var d = state.db;
-    if (this.value === d.schemaFilter) return;
-    d.schemaFilter = this.value;
-    d.tablesPage = 0;
-    dbLoadTables();
-  };
+  if (schemaSel) dbWireSchemaSelect(schemaSel);
   $("dbSql").value = state.db.sqlText;
   $("dbSql").oninput = function () { state.db.sqlText = this.value; dbSqlPaint(); dbSuggestOnInput.call(this); };
   $("dbSql").onscroll = function () {
@@ -512,6 +512,10 @@ function renderDbSide() {
 
 /* --- lazy table list ---------------------------------------------------------------------------- */
 
+// One /tables request chain: a slow answer for a page or filter the user just left must be
+// dropped, or it would repopulate the sidebar with the stale page (docs/22 closeout audit).
+var dbTablesReq = dbReqGuard();
+
 async function dbLoadTables() {
   var d = state.db;
   if (!d.conn) return;
@@ -521,7 +525,9 @@ async function dbLoadTables() {
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
   if (d.schemaFilter) q += "&schema=" + encodeURIComponent(d.schemaFilter);
   if (d.sort) q += "&sort=" + encodeURIComponent(d.sort) + "&dir=" + encodeURIComponent(d.sortDir || "asc");
+  var token = dbTablesReq.issue();
   var j = await apiJson(q);
+  if (!dbTablesReq.accepts(token)) return; // superseded: a newer page/filter owns the list
   if (!j) { if ($("dbTables")) $("dbTables").innerHTML = ""; return; }
   d.tables = j.tables || [];
   d.tablesTotal = j.total || 0;
@@ -572,7 +578,11 @@ function renderDbTables() {
   if (dbIsRedis()) {
     var rr = d.redis;
     if (!rr || !rr.keys.length) {
-      box.appendChild(el("div", "db-hint", d.grep ? 'No keys match "' + d.grep + '"' : "No keys yet — scan returned none."));
+      // docs/22 closeout B1: a failed scan is a FAILURE, not an empty keyspace — the toast
+      // carries the server's own text; this row keeps the list from pretending otherwise.
+      box.appendChild(el("div", "db-hint", d.redisError
+        ? "Scan failed — the toast carries the server's error; this list is the last good page."
+        : d.grep ? 'No keys match "' + d.grep + '"' : "No keys yet — scan returned none."));
     }
     var sortedKeys = (rr ? rr.keys : []).slice().sort(dbRedisCompare);
     sortedKeys.forEach(function (k) {
@@ -662,14 +672,41 @@ function dbTableRow(t) {
   return b;
 }
 
+/** The schema picker's one behavior: a pick re-requests the table list inside that schema. */
+function dbWireSchemaSelect(sel) {
+  sel.onchange = function () {
+    var d = state.db;
+    if (this.value === d.schemaFilter) return;
+    d.schemaFilter = this.value;
+    d.tablesPage = 0;
+    dbLoadTables();
+  };
+}
+
 /** The schema picker above the grep box (pg only): "All schemas" plus one option per schema
  *  on the current page, counts from the page the list is showing. A schema picked on an earlier
- *  page stays selectable even when this page does not carry it. */
+ *  page stays selectable even when this page does not carry it.
+ *  docs/22 closeout B7: a non-pg connection carries NO picker — the select leaves the DOM,
+ *  not hidden-with-options. A hidden native select still surfaces in automation accessibility
+ *  trees as a live "Schema" button holding the previous pg connection's pick, which read as a
+ *  redis page offering a schema dropdown; hidden options are state residue even unseen. */
 function dbPaintSchemaOptions() {
   var d = state.db;
   var sel = $("dbSchema");
-  if (!sel) return;
-  if (!d.conn || !dbIsPg()) { sel.hidden = true; return; }
+  if (!d.conn || !dbIsPg()) {
+    if (sel) sel.remove();
+    return;
+  }
+  if (!sel) {
+    // Coming back to pg after a non-pg connection removed it: re-create it in the sidebar,
+    // right after the connection picker, wired like the mount path wires it.
+    sel = el("select");
+    sel.id = "dbSchema";
+    sel.setAttribute("aria-label", "Schema");
+    var conn = $("dbConn");
+    if (conn && conn.parentNode) conn.parentNode.insertBefore(sel, conn.nextSibling);
+    dbWireSchemaSelect(sel);
+  }
   sel.hidden = false;
   var schemas = [];
   d.tables.forEach(function (t) {
