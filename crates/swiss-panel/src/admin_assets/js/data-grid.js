@@ -872,7 +872,11 @@ function renderDbGrid() {
       widthOf(c, td);
       var long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
       // docs/22 W2.2: one click puts the keyboard's focus cell here; the ring marks it.
-      td.onmousedown = function () { dbFocusCell(i, ci); };
+      // preventDefault (P0-A): the mousedown's default focus move lands on <body> AFTER
+      // dbFocusCell focused #dbKbd, and arrows/Enter/F2/typing/Esc/Ctrl+C/paste would all
+      // go nowhere. Click and dblclick still fire — preventing the default does not
+      // suppress them.
+      td.onmousedown = function (ev) { ev.preventDefault(); dbFocusCell(i, ci); };
       if (d.focus && d.focus.r === i && d.focus.c === ci) td.classList.add("db-focus");
       if (editable) {
         td.classList.add("db-cell-edit");
@@ -947,7 +951,7 @@ function renderDbGrid() {
       td.setAttribute("data-c", ci);
       widthOf(c, td);
       var long = dbPaintCell(td, v, true, c.dataType);
-      td.onmousedown = function () { dbFocusCell(gridRow, ci); };
+      td.onmousedown = function (ev) { ev.preventDefault(); dbFocusCell(gridRow, ci); }; // P0-A: see the insert cells
       if (d.focus && d.focus.r === gridRow && d.focus.c === ci) td.classList.add("db-focus");
       if (editable && !deleted) {
         td.classList.add("db-cell-edit");
