@@ -491,6 +491,11 @@ pub enum BrowseEdit {
     Update {
         pk: Map<String, Value>,
         changes: Map<String, Value>,
+        /// docs/22 W4.2: the row's original values, against which every CHANGED column is
+        /// compared in the WHERE (the optimistic lock — cloudbeaver sends the same shape in
+        /// ResultSetEditAction.ts:112-127). The panel instead packs the whole row into pk;
+        /// either map feeds the lock, whichever carries the column.
+        source: Option<Map<String, Value>>,
     },
     Insert {
         values: Map<String, Value>,
@@ -506,6 +511,120 @@ impl BrowseEdit {
             BrowseEdit::Update { .. } => "update",
             BrowseEdit::Insert { .. } => "insert",
             BrowseEdit::Delete { .. } => "delete",
+        }
+    }
+}
+
+/// docs/22 W4.2: the CHANGED columns an update compares against the buffered originals —
+/// the optimistic lock's column list, which is also the 409 body's answer. Empty when the
+/// edit carries no originals to compare with (a pk-only update keeps today's semantics:
+/// zero affected rows stays a quiet result, not a conflict — the request never claimed to
+/// know the row). A keyless table's lock is its every-column address, so every changed
+/// column rides it by construction.
+pub fn optimistic_lock_columns(primary_key: &[String], edit: &BrowseEdit) -> Vec<String> {
+    match edit {
+        BrowseEdit::Update {
+            pk,
+            changes,
+            source,
+        } => {
+            let mut cols: Vec<String> = if primary_key.is_empty() {
+                changes.keys().cloned().collect()
+            } else {
+                let origin = source.as_ref().unwrap_or(pk);
+                changes
+                    .keys()
+                    .filter(|c| origin.contains_key(*c) && !primary_key.contains(*c))
+                    .cloned()
+                    .collect()
+            };
+            cols.sort();
+            cols
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// A lost optimistic-lock race (docs/22 W4.2): another writer moved the row between the
+/// read and the commit. The columns are the ones whose buffered originals no longer match,
+/// so the panel can paint exactly those cells red; an empty list means the mismatch sat in
+/// the addressing itself (the row exists but nothing we meant to change differs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditConflict {
+    pub message: String,
+    pub columns: Vec<String>,
+    /// The buffered row the race was over, as the caller addressed it (the pk map the
+    /// panel posted) — echoed so the grid can find the exact buffered entry among many,
+    /// instead of guessing by column names alone.
+    pub row: Option<Map<String, Value>>,
+}
+
+/// apply_edits' failure vocabulary: Bad is the caller's fault (a 400 — an unaddressable
+/// row, an ambiguous twin), Conflict is another writer's (a 409 — the optimistic lock
+/// lost, and the whole batch rolled back).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditError {
+    Bad(String),
+    Conflict(EditConflict),
+}
+
+impl From<String> for EditError {
+    fn from(m: String) -> Self {
+        EditError::Bad(m)
+    }
+}
+
+impl From<&str> for EditError {
+    fn from(m: &str) -> Self {
+        EditError::Bad(m.to_string())
+    }
+}
+
+impl std::fmt::Display for EditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditError::Bad(m) => f.write_str(m),
+            EditError::Conflict(c) => f.write_str(&c.message),
+        }
+    }
+}
+
+/// Diff the buffered originals against the row the database shows right now: every changed
+/// column whose current value differs from its original names the conflict. A missing probe
+/// row means deleted-or-rewritten — a keyless address cannot tell the two apart (there is
+/// no key to re-find it by) — and the changed columns are still the honest answer.
+pub fn conflict_of(
+    changed: &[String],
+    source: &Map<String, Value>,
+    current: Option<&Map<String, Value>>,
+) -> EditConflict {
+    match current {
+        None => EditConflict {
+            message: format!(
+                "row was changed or deleted by another writer — columns: {} (re-check the grid and resubmit)",
+                changed.join(", ")
+            ),
+            columns: changed.to_vec(),
+            row: None,
+        },
+        Some(row) => {
+            let moved: Vec<&String> = changed
+                .iter()
+                .filter(|c| row.get(*c) != source.get(*c))
+                .collect();
+            let columns: Vec<String> = moved.iter().map(|c| (*c).clone()).collect();
+            EditConflict {
+                message: format!(
+                    "row was changed by another writer{} — re-check the grid and resubmit",
+                    if columns.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — columns: {}", columns.join(", "))
+                    }
+                ),
+                columns,
+                row: None,
+            }
         }
     }
 }
@@ -576,8 +695,10 @@ pub trait DbBrowser: Send + Sync {
     async fn read_table(&self, o: &Value) -> Result<Value, String>;
     /// Columns, indexes, foreign keys and DDL for one table — the Structure tabs.
     async fn describe_table(&self, o: &Value) -> Result<Value, String>;
-    /// Apply a buffered edit list in ONE transaction: all of it, or none of it.
-    async fn apply_edits(&self, o: &Value) -> Result<Value, String>;
+    /// Apply a buffered edit list in ONE transaction: all of it, or none of it. The
+    /// error says whose fault it is (docs/22 W4.2): Bad is the caller's request, Conflict
+    /// is another writer having moved a row the buffer claimed to still see.
+    async fn apply_edits(&self, o: &Value) -> Result<Value, EditError>;
     /// The SQL console: one statement per run, reads and writes alike — this console belongs
     /// to the panel on the operator's own machine.
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String>;
@@ -1091,6 +1212,7 @@ pub fn browse_edit_of(v: &Value) -> Result<BrowseEdit, String> {
         "update" => Ok(BrowseEdit::Update {
             pk: obj("pk"),
             changes: obj("changes"),
+            source: v.get("source").and_then(Value::as_object).cloned(),
         }),
         "delete" => Ok(BrowseEdit::Delete { pk: obj("pk") }),
         // Garbage input: Node let an unknown op fall through to a TypeError deeper in; this port
@@ -1771,7 +1893,11 @@ pub fn build_edit_statements(
                     params,
                 });
             }
-            BrowseEdit::Update { pk, changes } => {
+            BrowseEdit::Update {
+                pk,
+                changes,
+                source,
+            } => {
                 if !keyless {
                     for c in primary_key {
                         if !pk.contains_key(c) {
@@ -1801,10 +1927,55 @@ pub fn build_edit_statements(
                         typed_ph(dialect, &params, type_of.get(c.as_str()).copied())
                     ));
                 }
+                let origin = source.as_ref().unwrap_or(pk);
                 let where_sql = if keyless {
+                    // The every-column address IS the optimistic lock here (W4.1 + W4.2
+                    // merge on their own): the row the panel buffered is the row asked for.
                     row_where(pk, &mut params)?
                 } else {
-                    pk_where(pk, &mut params)?
+                    // docs/22 W4.2: the optimistic lock — every CHANGED column whose
+                    // original the row map carries is compared in the WHERE, so a row that
+                    // moved underneath matches zero rows instead of silently overwriting.
+                    // Only columns the map actually carries are compared: a pk-only payload
+                    // (an API caller that never saw the row) keeps today's SQL byte for
+                    // byte. NULL originals need the NULL-safe forms — col = NULL matches
+                    // nothing and would false-conflict every commit of a NULL cell; long
+                    // text rides the md5 address like W4.1's keyless WHERE.
+                    let mut w = pk_where(pk, &mut params)?;
+                    for (c, _) in &sets {
+                        if primary_key.contains(*c) {
+                            continue; // the pk arm of the WHERE already pins the original key
+                        }
+                        let Some(orig) = origin.get(*c) else {
+                            continue;
+                        };
+                        let quoted = quote_ident(dialect, c)?;
+                        let dt = type_of.get(c.as_str()).copied();
+                        let frag = if orig.is_null() {
+                            params.push(Value::Null);
+                            if dialect == DbDialect::Mysql {
+                                format!("{quoted} <=> {}", ph(dialect, &params))
+                            } else {
+                                format!(
+                                    "{quoted} IS NOT DISTINCT FROM {}",
+                                    typed_ph(dialect, &params, dt)
+                                )
+                            }
+                        } else if is_text_or_binary(dt.unwrap_or(""))
+                            && value_len(orig) > EDIT_ADDR_MD5_MIN
+                        {
+                            md5_address(dialect, &quoted, orig, &mut params)
+                        } else {
+                            params.push(orig.clone());
+                            format!(
+                                "{quoted} = {}",
+                                typed_ph(dialect, &params, dt)
+                            )
+                        };
+                        w.push_str(" AND ");
+                        w.push_str(&frag);
+                    }
+                    w
                 };
                 out.push(BuiltStatement {
                     sql: mysql_limit(format!(
@@ -2783,6 +2954,7 @@ mod tests {
         let upd = BrowseEdit::Update {
             pk: vmap(&[("id", 7)]),
             changes: vmap(&[("name", 0)]),
+            source: None,
         };
         match readback_plan(DbDialect::Mysql, None, "users", &columns, &pk, &upd) {
             ReadBack::Select(s) => {
@@ -3349,6 +3521,133 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("id"), "{err}");
         assert!(err.contains("every column"), "{err}");
+    }
+
+    #[test]
+    fn update_source_compares_each_changed_columns_original() {
+        // docs/22 W4.2 (cloudbeaver ResultSetEditAction.ts:112-127): an update that carries
+        // its row's original values — the source field, or the pk map holding the whole row,
+        // which is what the panel posts — compares every CHANGED column against that
+        // original in the WHERE. Zero affected rows means another writer moved the row
+        // underneath: the adapter refuses the whole batch (409) instead of overwriting.
+        let cols = vec![
+            col("id", "int", false, true),
+            col("name", "varchar", true, false),
+            col("city", "varchar", true, false),
+        ];
+        let pk = vec!["id".to_string()];
+        // The full row in the pk map: id addresses, name's original guards the change, city
+        // is untouched so it is not compared (only CHANGED columns ride the optimistic lock).
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "old", "city": "la" },
+            "changes": { "name": "new" },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE `users` SET `name` = ? WHERE `id` = ? AND `name` = ?"
+        );
+        assert_eq!(out[0].params, vec![json!("new"), json!(7), json!("old")]);
+        let out = build_edit_statements(DbDialect::Pg, None, "users", &edits, &cols, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE \"users\" SET \"name\" = CAST($1 AS varchar) WHERE \"id\" = CAST($2 AS int) AND \"name\" = CAST($3 AS varchar)"
+        );
+        // An explicit source field says the same thing (API callers' spelling); a NULL
+        // original needs the NULL-safe form — col = NULL matches nothing, and the lock
+        // would false-conflict on every commit of a cell that started NULL.
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7 },
+            "source": { "id": 7, "note": null },
+            "changes": { "note": "written" },
+        }))];
+        let cols2 = vec![col("id", "int", false, true), col("note", "text", true, false)];
+        let out = build_edit_statements(DbDialect::Mysql, None, "u", &edits, &cols2, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE `u` SET `note` = ? WHERE `id` = ? AND `note` <=> ?"
+        );
+        let out = build_edit_statements(DbDialect::Pg, None, "u", &edits, &cols2, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE \"u\" SET \"note\" = CAST($1 AS text) WHERE \"id\" = CAST($2 AS int) AND \"note\" IS NOT DISTINCT FROM CAST($3 AS text)"
+        );
+        // A key column change is not compared twice: the pk arm of the WHERE already holds
+        // the original key value.
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "x" },
+            "changes": { "id": 8, "name": "y" },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "u", &edits, &cols, &pk)
+            .unwrap();
+        assert_eq!(
+            out[0].sql,
+            "UPDATE `u` SET `id` = ?, `name` = ? WHERE `id` = ? AND `name` = ?"
+        );
+    }
+
+    #[test]
+    fn optimistic_lock_columns_follow_the_carried_originals() {
+        // docs/22 W4.2: what rides the optimistic lock. A keyed update that carries the
+        // row compares every changed non-key column; the bare pk-only payload an API
+        // caller might post compares nothing (old semantics, byte-identical SQL); a
+        // keyless update compares all changed columns through its every-column address.
+        let pk = vec!["id".to_string()];
+        let full = edit(json!({
+            "op": "update",
+            "pk": { "id": 7, "name": "old", "city": "la" },
+            "changes": { "name": "new", "city": "sf" },
+        }));
+        assert_eq!(
+            optimistic_lock_columns(&pk, &full),
+            vec!["city".to_string(), "name".to_string()]
+        );
+        let bare = edit(json!({
+            "op": "update",
+            "pk": { "id": 7 },
+            "changes": { "name": "new" },
+        }));
+        assert!(optimistic_lock_columns(&pk, &bare).is_empty());
+        let keyless = edit(json!({
+            "op": "update",
+            "pk": { "name": "old", "city": "la" },
+            "changes": { "name": "new" },
+        }));
+        assert_eq!(
+            optimistic_lock_columns(&[], &keyless),
+            vec!["name".to_string()]
+        );
+    }
+
+    #[test]
+    fn conflict_of_names_the_moved_columns() {
+        // The probe row the adapter reads inside the doomed transaction decides the body:
+        // a differing column is named, a missing row names the changed set (deleted or
+        // rewritten — a keyless address cannot tell), and a matching row means only the
+        // addressing moved, so the column list is empty and the message says so.
+        let changed = vec!["name".to_string(), "city".to_string()];
+        let jmap = |v: Value| -> Map<String, Value> { v.as_object().cloned().unwrap_or_default() };
+        let source = jmap(json!({ "name": "old", "city": "la" }));
+        let now = jmap(json!({ "name": "theirs", "city": "la" }));
+        let c = conflict_of(&changed, &source, Some(&now));
+        assert_eq!(c.columns, vec!["name".to_string()]);
+        assert!(c.message.contains("name"), "{}", c.message);
+
+        let gone = conflict_of(&changed, &source, None);
+        assert_eq!(gone.columns, changed.clone());
+        assert!(gone.message.contains("deleted"), "{}", gone.message);
+
+        let same = jmap(json!({ "name": "old", "city": "la" }));
+        let c = conflict_of(&changed, &source, Some(&same));
+        assert!(c.columns.is_empty());
+        assert!(c.message.contains("another writer"), "{}", c.message);
     }
 
     #[test]

@@ -95,6 +95,18 @@ pub fn browsable_connections(catalog: &CatalogRegistry, order: &[String]) -> Vec
 struct Fail {
     status: StatusCode,
     message: String,
+    /// docs/22 W4.2: a lost optimistic-lock race's 409 extras — present only there. The
+    /// body adds `conflictColumns` and the buffered `row` beside `error`, so the grid
+    /// knows exactly which cells to paint red. Boxed: Fail crosses a dozen small helpers
+    /// and stays one pointer wide beyond its status and message.
+    conflict: Option<Box<FailConflict>>,
+}
+
+/// The 409's extra body fields: the moved columns, and the row the race was over.
+#[derive(Clone)]
+struct FailConflict {
+    columns: Vec<String>,
+    row: Map<String, Value>,
 }
 
 impl Fail {
@@ -102,6 +114,16 @@ impl Fail {
         Fail {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
+            conflict: None,
+        }
+    }
+
+    /// A lost edit race answers 409, the moved columns and the row named in the body.
+    fn conflict(message: impl Into<String>, columns: Vec<String>, row: Map<String, Value>) -> Self {
+        Fail {
+            status: StatusCode::CONFLICT,
+            message: message.into(),
+            conflict: Some(Box::new(FailConflict { columns, row })),
         }
     }
 }
@@ -173,10 +195,12 @@ fn lease_fail(err: CatalogError) -> Fail {
         CatalogError::Unknown(m) | CatalogError::NotBrowsable(m) => Fail {
             status: StatusCode::NOT_FOUND,
             message: m,
+            conflict: None,
         },
         CatalogError::Withdrawing(m) => Fail {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: m,
+            conflict: None,
         },
     }
 }
@@ -192,17 +216,20 @@ fn catalog_guard(catalog: &CatalogRegistry) -> Result<(), Fail> {
             message: format!(
                 "the {id} plugin is stopping; database browsing is momentarily unavailable"
             ),
+            conflict: None,
         }),
         CatalogPresence::Absent(Some(id)) => Err(Fail {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: format!(
                 "the {id} plugin provides database connections and is currently disabled"
             ),
+            conflict: None,
         }),
         CatalogPresence::Absent(None) => Err(Fail {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: "no plugin provides the connection catalog; database browsing is unavailable"
                 .to_string(),
+            conflict: None,
         }),
     }
 }
@@ -228,6 +255,7 @@ fn lease_db(
                     name,
                     lease.dialect()
                 ),
+                conflict: None,
             })
         }
     };
@@ -250,6 +278,7 @@ fn lease_redis(
                     name,
                     lease.dialect()
                 ),
+                conflict: None,
             })
         }
     };
@@ -259,7 +288,15 @@ fn lease_redis(
 fn reply(out: Result<Value, Fail>) -> Response {
     match out {
         Ok(body) => admin_json(StatusCode::OK, body),
-        Err(f) => admin_error(f.status, &f.message),
+        Err(f) => match f.conflict {
+            // The 409 body names the moved columns and the row — the cells to paint red
+            // (W4.2).
+            Some(c) => admin_json(
+                f.status,
+                json!({ "error": f.message, "conflictColumns": c.columns, "row": c.row }),
+            ),
+            None => admin_error(f.status, &f.message),
+        },
     }
 }
 
@@ -673,7 +710,14 @@ async fn edits(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
         o.insert("schema".into(), json!(schema));
     }
     o.insert("edits".into(), Value::Array(edit_list.clone()));
-    b.apply_edits(&Value::Object(o)).await.map_err(Fail::bad)
+    b.apply_edits(&Value::Object(o)).await.map_err(|e| match e {
+        // Whose fault the failure is decides the status (docs/22 W4.2): a refused request
+        // is 400, a lost race against another writer is 409 with the moved columns.
+        swiss_host::dbbrowser::EditError::Bad(m) => Fail::bad(m),
+        swiss_host::dbbrowser::EditError::Conflict(c) => {
+            Fail::conflict(c.message, c.columns, c.row.unwrap_or_default())
+        }
+    })
 }
 
 // --- the redis key browser (same /api/db namespace; dialect "redis") ------------------------------
@@ -976,10 +1020,35 @@ mod tests {
                 "ddl": "CREATE TABLE stub",
             }))
         }
-        async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
+        async fn apply_edits(&self, o: &Value) -> Result<Value, swiss_host::dbbrowser::EditError> {
             let edits = o.get("edits").cloned().unwrap_or(Value::Array(vec![]));
             if let Ok(mut seen) = self.seen.lock() {
                 seen.edits = Some(edits.clone());
+            }
+            // docs/22 W4.2: the optimistic lock needs a stand-in answer too — an update
+            // that carries a "__conflict__" change (an array of column names) plays the
+            // loser of the race, so the route test can pin the 409 shape the panel paints
+            // red cells from.
+            for e in edits.as_array().unwrap_or(&vec![]) {
+                if e.get("op").and_then(Value::as_str) == Some("update") {
+                    if let Some(cols) = e.pointer("/changes/__conflict__").and_then(Value::as_array) {
+                        return Err(swiss_host::dbbrowser::EditError::Conflict(
+                            swiss_host::dbbrowser::EditConflict {
+                                message: "row was changed by another writer — columns: ".to_string()
+                                    + &cols
+                                        .iter()
+                                        .map(|c| c.as_str().unwrap_or_default())
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                columns: cols
+                                    .iter()
+                                    .map(|c| c.as_str().unwrap_or_default().to_string())
+                                    .collect(),
+                                row: e.get("pk").and_then(Value::as_object).cloned(),
+                            },
+                        ));
+                    }
+                }
             }
             let results: Vec<Value> = edits
                 .as_array()
@@ -2018,6 +2087,42 @@ mod tests {
             seen.lock().expect("seen").edits.take(),
             Some(json!([{ "op": "update", "pk": { "id": 1 }, "changes": { "name": "x" } }]))
         );
+    }
+
+    #[tokio::test]
+    async fn a_lost_optimistic_lock_answers_409_with_the_column_names() {
+        // docs/22 W4.2: the loser of the edit race answers 409 — not 400, the request was
+        // well-formed and the row was real; another writer moved it. The body names the
+        // columns whose buffered originals no longer match, which is what the grid paints
+        // red while keeping the whole buffer for a retry.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/edits",
+            Some(json!({
+                "table": "users",
+                "edits": [{
+                    "op": "update",
+                    "pk": { "id": 1, "name": "old", "city": "la" },
+                    "changes": { "name": "new", "city": "sf", "__conflict__": ["name", "city"] }
+                }]
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let b = body.expect("json");
+        let err = b["error"].as_str().unwrap().to_string();
+        assert!(err.contains("name") && err.contains("city"), "{err}");
+        assert_eq!(b["conflictColumns"], json!(["name", "city"]));
+        // The buffered row the race was over rides along, so the grid finds the exact
+        // entry to paint without guessing by column names.
+        assert_eq!(b["row"], json!({ "id": 1, "name": "old", "city": "la" }));
     }
 
     #[tokio::test]

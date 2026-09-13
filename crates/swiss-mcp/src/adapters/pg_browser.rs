@@ -15,10 +15,11 @@ use async_trait::async_trait;
 use swiss_host::dbbrowser::{
     ambiguous_row_error, browse_count_sql, browse_offset, browse_order, browse_page_size,
     browse_rows_sql, browse_table_sort, build_ddl_op_sql, build_edit_statements,
-    build_import_statements, build_pg_ddl, export_row_limit, js_to_string, map_import_rows,
-    readback_plan, sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns,
-    to_browse_indexes, to_csv, to_json_lines, BrowseColumn, BrowseForeignKey, DbBrowser,
-    DbDialect, DumpPiece, ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP,
+    build_import_statements, build_pg_ddl, conflict_of, export_row_limit, js_to_string,
+    map_import_rows, optimistic_lock_columns, readback_plan, sql_dump_foot, sql_dump_head,
+    sql_dump_literal, to_browse_columns, to_browse_indexes, to_csv, to_json_lines,
+    BrowseColumn, BrowseForeignKey, DbBrowser, DbDialect, DumpPiece, EditConflict,
+    EditError, ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP,
     IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
@@ -368,7 +369,7 @@ impl DbBrowser for PgBrowser {
         Ok(Value::Object(out))
     }
 
-    async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
+    async fn apply_edits(&self, o: &Value) -> Result<Value, EditError> {
         let schema = o
             .get("schema")
             .and_then(Value::as_str)
@@ -424,14 +425,6 @@ impl DbBrowser for PgBrowser {
                 _ => {
                     let affected =
                         super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
-                    // docs/22 W4.1: Postgres has no UPDATE ... LIMIT, so a keyless table's
-                    // every-column address guards its own uniqueness here — twins fail the
-                    // whole batch (the dropped transaction rolls back what came before)
-                    // instead of silently picking the first row. An insert is single-row by
-                    // construction and cannot trip this.
-                    if primary.is_empty() && affected > 1 {
-                        return Err(ambiguous_row_error(typed[i].op(), affected));
-                    }
                     let row = match plan {
                         ReadBack::Select(s) => super::pg::run_pg_tx_rows(&mut tx, &s.sql, &s.params)
                             .await?
@@ -443,6 +436,36 @@ impl DbBrowser for PgBrowser {
                     (affected, row)
                 }
             };
+            // docs/22 W4.1: Postgres has no UPDATE ... LIMIT, so a keyless table's
+            // every-column address guards its own uniqueness here — twins fail the whole
+            // batch (the dropped transaction rolls back what came before) instead of
+            // silently picking the first row. An insert is single-row by construction and
+            // cannot trip this.
+            if primary.is_empty() && affected > 1 {
+                return Err(EditError::Bad(ambiguous_row_error(typed[i].op(), affected)));
+            }
+            // docs/22 W4.2: an update whose optimistic lock matched zero rows lost the
+            // race. The read-back SELECT just probed the row as it stands inside this
+            // still-open transaction, so its values name the conflicting columns; the
+            // dropped transaction rolls the batch back. A bare pk-only update never
+            // claimed to know the row — zero affected stays the quiet result it was.
+            if affected == 0 {
+                if let swiss_host::dbbrowser::BrowseEdit::Update { .. } = &typed[i] {
+                    let lock = optimistic_lock_columns(&primary, &typed[i]);
+                    if !lock.is_empty() {
+                        let origin = match &typed[i] {
+                            swiss_host::dbbrowser::BrowseEdit::Update { pk, source, .. } => {
+                                source.clone().unwrap_or_else(|| pk.clone())
+                            }
+                            _ => Map::new(),
+                        };
+                        return Err(EditError::Conflict(EditConflict {
+                            row: Some(origin.clone()),
+                            ..conflict_of(&lock, &origin, row.as_ref())
+                        }));
+                    }
+                }
+            }
             results.push(json!({"op": typed[i].op(), "affected": affected, "row": row}));
         }
         tx.commit().await.map_err(|e| e.to_string())?;

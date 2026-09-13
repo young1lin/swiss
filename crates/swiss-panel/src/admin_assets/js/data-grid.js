@@ -208,18 +208,65 @@ function dbPasteCell(kind, key, i, column, meta, raw) {
  *  columns left to right; paste rows past the page's last row grow NEW buffered inserts; a
  *  wider paste than the grid simply drops its extra cells. Every value lands in the local
  *  buffers exactly as if it had been typed — Commit is still the only write. */
-/** docs/22 W4.1: the values that address one buffered row. A keyed table addresses by
- *  its primary key exactly as before; a keyless table addresses by EVERY column's original
- *  value (a NULL in any column makes the row unaddressable — the server refuses those rows
- *  at commit), so the pk map carries the whole row there. Every buffer writer (cell edit,
- *  dialog, paste, delete button) goes through here so the commit payload and the SQL
- *  preview keep one shape. */
+/** docs/22 W4.1 + W4.2: the values one buffered row ships to the commit. The pk map
+ *  carries the WHOLE original row for every table now: a keyless table addresses by every
+ *  column (a NULL in any column makes the row unaddressable — the server refuses those
+ *  rows at commit), and a keyed table's server reads the key columns for addressing and
+ *  the SAME map's other entries as the row's originals — the optimistic lock that a lost
+ *  commit race reports as 409 with the moved column names. Every buffer writer (cell
+ *  edit, dialog, paste, delete button) goes through here so the commit payload and the
+ *  SQL preview keep one shape. */
 function dbRowAddr(pkCols, columns, row) {
-  if (pkCols.length) return dbPkVals(pkCols, row);
   var out = {};
   columns.forEach(function (c) { out[c.name] = row[c.name]; });
   return out;
 }
+
+/** Structural equality for two JSON values — the 409 body's row map against a buffered
+ *  entry's pk, so the conflict lands on the exact buffered row (docs/22 W4.2). */
+function dbSameJson(a, b) {
+  if (a === b) return true;
+  if (a == null || b == null || typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  var ka = Object.keys(a), kb = Object.keys(b);
+  return ka.length === kb.length && ka.every(function (k) { return dbSameJson(a[k], b[k]); });
+}
+
+/** docs/22 W4.2: a lost edit race answers 409 naming the moved columns — but the POST
+ *  itself lives in data-sql.js's dbCommit, which this module cannot call back into. The
+ *  narrowest honest seam: watch our own /edits responses at the fetch level (path match
+ *  plus status; every other request passes through untouched). The failing commit already
+ *  keeps the buffer and apiJson already toasts the body's error text with the column
+ *  names; what only the grid can do is remember WHICH buffered row and columns lost, so
+ *  the next render paints those cells red until the buffer for them changes. */
+(function () {
+  var orig = window.fetch;
+  window.fetch = function (input, init) {
+    return orig.apply(this, arguments).then(function (r) {
+      try {
+        var path = typeof input === "string" ? input : (input && input.url) || "";
+        if (/\/edits(\?|$)/.test(path)) {
+          var d = state.db;
+          if (r.status === 409) {
+            r.clone().json().then(function (j) {
+              d = state.db;
+              var cols = (j && j.conflictColumns) || [];
+              if (!d || !d.updates || !cols.length || !j || !j.row) return;
+              var hit = Object.keys(d.updates).filter(function (k) {
+                return dbSameJson(d.updates[k].pk, j.row);
+              })[0];
+              if (hit) { d.conflict = { key: hit, columns: cols }; renderDbGrid(); }
+            }).catch(function () { /* an observation never breaks the panel */ });
+          } else if (d && d.conflict) {
+            d.conflict = null; // a clean answer (or a different failure) clears the marks
+            renderDbGrid();
+          }
+        }
+      } catch (e) { /* never */ }
+      return r;
+    });
+  };
+})();
 
 function dbPasteApply(text, r0, c0) {
   var d = state.db;
@@ -580,6 +627,17 @@ function renderDbGrid() {
   wrap.innerHTML = "";
   dbTipHide(); // a rebuilt grid invalidates any header card still open
 
+  // docs/22 W4.2: conflict marks live exactly as long as the buffered change they name —
+  // reverting the cell, dropping the buffer or reloading the table clears them (a new
+  // commit answer re-sets or clears them in the fetch observer above).
+  if (d.conflict) {
+    var cu = d.updates && d.updates[d.conflict.key];
+    var live = !!cu && d.conflict.columns.some(function (c) {
+      return Object.prototype.hasOwnProperty.call(cu.changes, c);
+    });
+    if (!live) d.conflict = null;
+  }
+
   if (d.sqlResult || d.sqlBusy) { renderDbResultGrid(wrap); return; }
   if (dbIsRedis()) { dbRenderRedisValue(wrap); return; }
   if (d.tab !== "data") { renderDbDetailGrid(wrap); return; }
@@ -792,7 +850,11 @@ function renderDbGrid() {
       var orig = row[c.name];
       var pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
       var v = pending ? upd.changes[c.name] : orig;
-      var td = el("td", "db-cell" + (pending ? " db-dirty" : ""));
+      // docs/22 W4.2: the cells a lost commit race named stay red while their buffered
+      // change is still pending — amber says "differs from the loaded row", red says
+      // "the server refused this change; the row moved under it".
+      var lost = pending && !!d.conflict && d.conflict.key === key && d.conflict.columns.indexOf(c.name) >= 0;
+      var td = el("td", "db-cell" + (pending ? " db-dirty" : "") + (lost ? " db-conflict" : ""));
       widthOf(c, td);
       var long = dbPaintCell(td, v, true, c.dataType);
       // docs/22 W2.2: same focus wiring as insert cells; the row index counts the inserts above.
