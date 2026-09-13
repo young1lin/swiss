@@ -3,7 +3,7 @@
 The steps that verified the P0/P1 terminal work (docs/22) on a real gateway and a real
 browser. Every rule here was paid for once: most entries record a trap that produced a
 wrong conclusion or a silently broken verification during the 2026-09-12/13 sessions
-(Node commits e3d7d9a..8aa6bbc, worktree b4c1900..f029f02).
+(Node commits e3d7d9a..a750b20, worktree b4c1900..6fda158).
 
 Scope: the terminal page specifically. The generic loop (state snapshot, test home,
 health probe) lives in the `swiss-live-verify` skill and AGENTS.md "Live testing ports";
@@ -86,13 +86,16 @@ a slow PTY child). Then:
 | 3 | Rename precedence | after #2, emit OSC 0 with a different title | label unchanged (manual name wins) |
 | 4 | Rename, double-click | two REAL clicks on the tab (see trap T1) + one node-survival check | rename input appears |
 | 5 | Bell | \`Write-Host "\`a"\` | `.term-tab-bell` dot in the tab |
-| 6 | Find bar | Ctrl+Shift+F with focus on BODY (not the terminal) | bar visible, \`#term-find-q\` focused |
+| 6 | Find bar, BODY focus | Ctrl+Shift+F with focus on BODY (not the terminal) | bar visible, `#term-find-q` focused |
+| 6b | Find bar, TERMINAL focus | focus the xterm textarea first, then Ctrl+Shift+F | bar STAYS open — a flicker-open-shut is the double-fire regression (xterm consults its custom key handler without checking defaultPrevented, so the page-level listener must yield the whole .term-holder subtree) |
 | 7 | Find live count | type a string that exists twice | counter `1/2`-style, updates per keystroke debounce |
+| 7b | Find does not copy | with copy-on-select on, navigate matches | NO scissors pill — the addon selects each match it moves to; an unguarded onSelectionChange would overwrite the clipboard per keystroke |
 | 8 | Find close | Esc | bar hidden, decorations cleared |
 | 9 | Pin + chip | see §4 — the delayed-output pattern | view holds line N, chip "N new ↓", click → bottom + chip hidden |
 | 10 | Multiline paste | clipboard 2 lines + Ctrl+V | native confirm; Enter accepts; both lines execute (find proves output) |
 | 11 | Alt tab jump | 2 sessions, Alt+1 / Alt+2 from terminal focus | active tab switches |
-| 12 | Console sweep | `list_console_messages` at the end | no errors (an a11y form-field notice about missing ids is a fix-me, not a pass-blocker) |
+| 12 | Tab-bar repaint | open rename → Esc; then navigate #jobs → #terminal (a settings save hits the same reload path) | input gone after Esc and rename reopens; the bar is PAINTED after remount — an empty bar is the memo-skip regression |
+| 13 | Console sweep | `list_console_messages` at the end | no errors (an a11y notice about a missing id is a fix-me, not a pass-blocker) |
 
 ## 4 · The pin/chip test — the one that needs choreography
 
@@ -126,6 +129,11 @@ clicking it returns `scrollTop` to max and hides the chip.
 - **Target the visible terminal explicitly**: `.term-holder:not([hidden])`. A page that
   adopted old sessions carries several holders, and a bare `.term-holder` selector hands
   you a hidden one with zero size (`scrollHeight 0`) — every assertion on it is vacuous.
+- **A memo that skips repaints must reset wherever the DOM changed outside it.** The
+  identical-markup skip stranded a rename input forever on Escape and left a fresh
+  remount's tab bar empty — both shipped green through automation because the paths
+  (settings save, page remount, Escape-commit) were never walked. When a cache guards
+  DOM writes, audit every writer that bypasses it.
 - **A native `confirm()` blocks the renderer.** Symptom: `evaluate_script` and even
   `handle_dialog` time out. Answer it with a raw key dispatch (`press_key` Enter /
   Escape) — keys reach the dialog layer even while JS is parked.
