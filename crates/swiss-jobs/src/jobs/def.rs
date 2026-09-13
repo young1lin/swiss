@@ -34,6 +34,11 @@ const ONE_DAY_MS: u64 = 86_400_000;
 /// At most this many definitions in one config row. The cap keeps a hand-grown config
 /// file from becoming a table the per-second tick has to scan on a slow machine.
 const MAX_DEFINITIONS: usize = 512;
+/// The one model's name cap (docs/20 2.1), mirrored so the config row's own validator
+/// and the family's mutations refuse the same names for the same reason.
+const MAX_GROUP_NAME: usize = 64;
+/// The one model's default name (docs/20 2.1) - the host's own constant, not a second copy.
+use swiss_host::groups::DEFAULT_GROUP;
 
 /// A config rejection that knows WHICH field it is about. The panel's editor points its
 /// controls at the dotted path; a bare string cannot do that (docs/11 §3.5).
@@ -69,6 +74,10 @@ pub struct JobsConfig {
     pub max_concurrent_runs: usize,
     pub max_queued_runs: usize,
     pub retention: Retention,
+    /// The job groups (docs/20 G4): one ordered list of names, `default` included as an
+    /// ordinary entry. Absent from an old row means `["default"]` - the list before the
+    /// feature existed, materialized exactly once at read time.
+    pub groups: Vec<String>,
     /// Definitions in configuration order (serde_json keeps insertion order); the key is
     /// the job id, which is also the run-log file name.
     pub definitions: Vec<JobDefinition>,
@@ -100,6 +109,9 @@ pub struct JobDefinition {
     pub title: String,
     pub labels: Vec<String>,
     pub disabled: bool,
+    /// The group this job renders under (docs/20 G4): None means the first group - the
+    /// sink slot, whatever it is called - and follows it through renames on its own.
+    pub group: Option<String>,
     pub trigger: Trigger,
     pub action: ActionRef,
     pub timeout_ms: u64,
@@ -451,6 +463,7 @@ fn parse_at(config: &Value, boot: bool) -> Result<BootParsed, ConfigError> {
             "maxConcurrentRuns",
             "maxQueuedRuns",
             "retention",
+            "groups",
             "definitions",
         ],
     )?;
@@ -485,16 +498,60 @@ fn parse_at(config: &Value, boot: bool) -> Result<BootParsed, ConfigError> {
         1024,
     )? as usize;
     let retention = parse_retention(obj.get("retention"))?;
-    let (definitions, dropped) = parse_definitions(obj.get("definitions"), boot)?;
+    let groups = parse_groups(obj.get("groups"))?;
+    let (definitions, dropped) = parse_definitions(obj.get("definitions"), boot, &groups)?;
     Ok(BootParsed {
         config: JobsConfig {
             max_concurrent_runs,
             max_queued_runs,
             retention,
+            groups,
             definitions,
         },
         dropped,
     })
+}
+
+/// The groups list (docs/20 G4). The one model's read-side rules, so a hand-edited row
+/// cannot smuggle past what every family mutation already refuses: names trim to something
+/// non-empty, cap at 64 characters, are unique case-insensitively, and the list is never
+/// empty - absent or empty means the one default group an ungrouped row always had.
+fn parse_groups(v: Option<&Value>) -> Result<Vec<String>, ConfigError> {
+    let items = match v {
+        None | Some(Value::Null) => return Ok(vec![DEFAULT_GROUP.to_string()]),
+        Some(Value::Array(items)) => items,
+        Some(_) => return Err(type_err("groups", "an array of group names")),
+    };
+    if items.is_empty() {
+        return Ok(vec![DEFAULT_GROUP.to_string()]);
+    }
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let raw = item
+            .as_str()
+            .ok_or_else(|| type_err("groups", "an array of group names"))?
+            .trim();
+        if raw.is_empty() {
+            return Err(ConfigError::new(
+                "groups",
+                "a group name cannot be empty".to_string(),
+            ));
+        }
+        if raw.len() > MAX_GROUP_NAME {
+            return Err(ConfigError::new(
+                "groups",
+                format!("a group name is at most {MAX_GROUP_NAME} characters"),
+            ));
+        }
+        if out.iter().any(|n: &String| n.eq_ignore_ascii_case(raw)) {
+            return Err(ConfigError::new(
+                "groups",
+                format!("duplicate group name: {raw}"),
+            ));
+        }
+        out.push(raw.to_string());
+    }
+    Ok(out)
 }
 
 fn parse_retention(v: Option<&Value>) -> Result<Retention, ConfigError> {
@@ -541,6 +598,7 @@ pub type Dropped = (String, String);
 fn parse_definitions(
     v: Option<&Value>,
     boot: bool,
+    groups: &[String],
 ) -> Result<(Vec<JobDefinition>, Vec<Dropped>), ConfigError> {
     let map = match v {
         None | Some(Value::Null) => return Ok((Vec::new(), Vec::new())),
@@ -577,7 +635,7 @@ fn parse_definitions(
                 "job id must be 1-64 chars of letters, digits, . _ - (it is also the run-log file name)",
             ));
         }
-        match parse_definition(id, body, &format!("definitions.{id}")) {
+        match parse_definition(id, body, &format!("definitions.{id}"), groups) {
             Ok(def) => definitions.push(def),
             Err(err) => {
                 if placeholder {
@@ -591,7 +649,12 @@ fn parse_definitions(
     Ok((definitions, dropped))
 }
 
-fn parse_definition(id: &str, body: &Value, parent: &str) -> Result<JobDefinition, ConfigError> {
+fn parse_definition(
+    id: &str,
+    body: &Value,
+    parent: &str,
+    groups: &[String],
+) -> Result<JobDefinition, ConfigError> {
     let obj = body
         .as_object()
         .ok_or_else(|| type_err(parent, "an object"))?;
@@ -602,6 +665,7 @@ fn parse_definition(id: &str, body: &Value, parent: &str) -> Result<JobDefinitio
             "title",
             "labels",
             "disabled",
+            "group",
             "trigger",
             "action",
             "timeoutMs",
@@ -629,6 +693,25 @@ fn parse_definition(id: &str, body: &Value, parent: &str) -> Result<JobDefinitio
         None | Some(Value::Null) => false,
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err(type_err(field_path(parent, "disabled"), "a boolean")),
+    };
+    // The group entry is sparse like every scope's: absent/null means the first group (the
+    // sink). A name must match the row's list case-insensitively; the CANONICAL spelling is
+    // kept, so a hand-typed "ops" reads back as the "Ops" the row lists.
+    let group = match obj.get("group") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => {
+            let canonical = groups
+                .iter()
+                .find(|n| n.eq_ignore_ascii_case(s.trim()))
+                .ok_or_else(|| {
+                    ConfigError::new(
+                        field_path(parent, "group"),
+                        format!("unknown group: {}", s.trim()),
+                    )
+                })?;
+            Some(canonical.clone())
+        }
+        Some(_) => return Err(type_err(field_path(parent, "group"), "a group name or null")),
     };
     let trigger = parse_trigger(obj.get("trigger"), &field_path(parent, "trigger"))?;
     let action = parse_action(obj.get("action"), &field_path(parent, "action"))?;
@@ -676,6 +759,7 @@ fn parse_definition(id: &str, body: &Value, parent: &str) -> Result<JobDefinitio
         title,
         labels,
         disabled,
+        group,
         trigger,
         action,
         timeout_ms,
@@ -969,6 +1053,9 @@ impl JobDefinition {
             title: def.name.clone(),
             labels: Vec::new(),
             disabled: !def.enabled,
+            // v1 had no groups; the migrated job lands in the first group like every
+            // unassigned member (docs/20 G4).
+            group: None,
             trigger,
             action: ActionRef {
                 type_: JOBS_ACTION.to_string(),
@@ -1095,7 +1182,7 @@ impl JobDefinition {
     /// [JobsConfig::parse] reads back. The v1 edit path writes rows through this, so a
     /// folded edit can never smuggle in a shape the strict validator would refuse.
     pub fn to_config_json(&self) -> Value {
-        json!({
+        let mut v = json!({
             "title": self.title,
             "labels": self.labels,
             "disabled": self.disabled,
@@ -1106,7 +1193,13 @@ impl JobDefinition {
             "misfire": self.misfire.as_str(),
             "retry": self.retry_json(),
             "output": self.output_json(),
-        })
+        });
+        // Sparse like every scope: an unassigned job carries no group key, so the row it
+        // came from round-trips byte-stable (docs/20 G4).
+        if let Some(g) = &self.group {
+            v["group"] = json!(g);
+        }
+        v
     }
 
     /// The definition-level v2 fields, as the /api/jobs row carries them.
@@ -1485,6 +1578,15 @@ mod tests {
         refused(&one_def(body))
     }
 
+    /// The smallest definition body the v2 row accepts - a manual trigger and an exec
+    /// action with empty input - for tests that only care about the surrounding row.
+    fn minimal_manual_body() -> Value {
+        json!({
+            "trigger": { "kind": "manual" },
+            "action": { "type": "process.exec", "input": {} }
+        })
+    }
+
     fn parse_one(body: Value) -> JobDefinition {
         let parsed = JobsConfig::parse(&one_def(body)).expect("a valid definition");
         parsed
@@ -1565,6 +1667,70 @@ mod tests {
             json!("${APP_DB_PASSWORD}")
         );
         assert!(matches!(def.trigger, Trigger::Cron { .. }));
+    }
+
+    #[test]
+    fn an_old_row_without_groups_parses_to_the_one_default_group() {
+        // docs/20 G4: a pre-groups plugins.jobs.config row never named a group, so its list
+        // is the one default group and every definition is implicitly in it (group: None).
+        let config = one_def(minimal_manual_body());
+        let parsed = JobsConfig::parse(&config).expect("an old row is valid");
+        assert_eq!(parsed.groups, vec!["default".to_string()]);
+        assert_eq!(parsed.definitions[0].group, None);
+    }
+
+    #[test]
+    fn a_row_may_name_its_groups_and_the_definitions_must_live_in_them() {
+        let config = json!({
+            "groups": ["default", "Ops"],
+            "definitions": {
+                "nightly": {
+                    "trigger": { "kind": "manual" },
+                    "action": { "type": "process.exec", "input": {} },
+                    "group": "Ops"
+                }
+            }
+        });
+        let parsed = JobsConfig::parse(&config).expect("a grouped row is valid");
+        assert_eq!(
+            parsed.groups,
+            vec!["default".to_string(), "Ops".to_string()]
+        );
+        assert_eq!(parsed.definitions[0].group.as_deref(), Some("Ops"));
+
+        // The invariant a hand edit can break: a definition naming a group the row does
+        // not list is refused, not silently re-homed - the family's set_names owns that
+        // move (dropped groups' members fall to the first slot).
+        let mut ghost = config.clone();
+        ghost["definitions"]["nightly"]["group"] = json!("Ghost");
+        let err = match JobsConfig::parse(&ghost) {
+            Ok(_) => panic!("a ghost group must be refused"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("unknown group: Ghost"), "{err}");
+    }
+
+    #[test]
+    fn a_group_list_itself_follows_the_one_model() {
+        // The invariants every scope enforces (docs/20 2.1), read at parse time so a
+        // hand-edited row cannot smuggle a broken list past the family's mutations.
+        for bad in [
+            json!(["  "]),
+            json!(["Ops", "ops"]),
+            json!({"x": 1}),
+        ] {
+            let config = json!({ "groups": bad, "definitions": {} });
+            assert!(
+                JobsConfig::parse(&config).is_err(),
+                "the list {bad} must be refused"
+            );
+        }
+        // An explicitly empty list materializes the default group like an absent one - the
+        // read-side convention every scope shares (docs/20 2.1); refusing it would make a
+        // hand edit of "groups": [] unrecoverable without deleting the key.
+        let parsed = JobsConfig::parse(&json!({ "groups": [], "definitions": {} }))
+            .expect("an empty list reads as the one default group");
+        assert_eq!(parsed.groups, vec!["default".to_string()]);
     }
 
     #[test]

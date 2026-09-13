@@ -38,6 +38,28 @@ shared PID ledger let one instance's reap kill the other instance's live childre
 > now read as `SWISS_HOME` / `SWISS_PORT` / `SWISS_TOKEN` / `SWISS_MASTER_KEY` first, with the
 > `MCP_GATEWAY_*` names still honored, so state and shells written before the rename keep working.
 
+### The group keys (docs/20)
+
+Every list the panel groups carries its one model as **additive** keys beside the data itself —
+a file that predates groups names none of them and reads as the single `default` group with
+every member unassigned:
+
+| File | Keys | Notes |
+| --- | --- | --- |
+| `managed.json` | `groups` + `mcpGroups`; `tokenGroups` + `tokenMembers` | the MCP pair predates docs/20; the token pair is docs/20 G7, keyed by token id |
+| `tunnels.json` | `connGroups` + `ruleGroups` | docs/20 lists `default` explicitly, marked by `tunnelGroupsV2: true` (the `groupsV2` maneuver: after the marker the list is literal, a deleted `default` stays deleted) |
+| `secrets.json` | `groups` + `secretGroups` | values stay write-only — a group label is a folder name, not a credential |
+| `gateway.config.json` | the jobs row's `groups` + each definition's sparse `group` | sparse: an absent `group` renders in the first group |
+
+Because every key is additive, the Node-sealed fixtures keep passing unchanged — a Rust build
+opens a file the Node build sealed before groups existed and answers `default` for every
+member. No fixture needs regenerating, and the frozen-envelope assertion in this document is
+unaffected.
+
+The reverse direction is out of scope (docs/20 §1): a Node build reading a `tunnels.json` a
+Rust build wrote will see `default` listed in `connGroups`. The two binaries already could not
+share one home across a groups-era boundary, and narrowing that is not what docs/20 bought.
+
 ## 1. The sealed envelope — FROZEN
 
 Every state file is AES-256-GCM under a machine-bound master key. The on-disk shape, confirmed

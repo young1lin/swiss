@@ -212,6 +212,10 @@ pub async fn run_gateway() -> Result<(), String> {
     // here - the composition point - because the host carries no per-scope arm, and a
     // disabled tunnels plugin must not take the family's other scopes down with it.
     swiss_tunnels::tunnel::register_tunnel_scopes(&ctx.group_scopes, &tunnels.store);
+    // Jobs join the same table (docs/20 G4): one scope over the plugins.jobs.config row.
+    // Every mutation lands through apply-in-place like any other config edit - never a
+    // restart - which is what keeps moving a job between groups side-effect free.
+    swiss_jobs::jobs::groups::register_job_scopes(&ctx.group_scopes, &jobs);
     // The /api/db routes lease through the SAME catalog instance the MCP plugin will
     // register into — set before build_app mounts the router (docs/12 W3).
     let _ = ctx.catalog.set(services.catalog.clone());

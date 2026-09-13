@@ -140,7 +140,10 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
     r = r.route(
         "/api/jobs",
         get(|State(jobs): State<Arc<JobSystem>>| async move {
-            admin_json(StatusCode::OK, json!({ "jobs": jobs.all_views() }))
+            admin_json(
+            StatusCode::OK,
+            json!({ "jobs": jobs.all_views(), "groups": jobs.groups() }),
+        )
         }),
     );
 

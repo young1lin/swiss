@@ -380,6 +380,11 @@ async fn add_managed(
 pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     let mut r = Router::new();
 
+    // The secrets scope joins the family table (docs/20 G6) right where the vault's own
+    // routes live below: the scope wraps the same write-only store, and co-locating the
+    // registration with the routes keeps the two from drifting apart.
+    swiss_host::secret_groups::register_secret_scopes(&_ctx.group_scopes);
+
     // The env var the seed token came from — metadata for the panel, never a secret. The panel
     // stamp summarizes the whole admin tree; the page polls it and reloads ITSELF when a new
     // build lands — one edited module counts as much as the shell — so an update never costs the
@@ -403,7 +408,19 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 .iter()
                 .map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
                 .collect();
-            admin_json(StatusCode::OK, json!({ "tokens": tokens, "tokenEnv": ctx.token_env }))
+            // The tokens' two lists (docs/20 G7) join the answer: a group is a folder a token
+            // sits in; it is not the "in use" marker and never affects whether a token
+            // authenticates. An older gateway answered neither field — the panel renders the
+            // single default group then.
+            admin_json(
+                StatusCode::OK,
+                json!({
+                    "tokens": tokens,
+                    "tokenEnv": ctx.token_env,
+                    "groups": ctx.store.get_token_groups(),
+                    "tokenGroups": ctx.store.get_token_members(),
+                }),
+            )
         })
         .post(
             |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
@@ -485,6 +502,18 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 json!({
                     "secrets": swiss_core::secure::secretstore::list_secrets(),
                     "rev": swiss_core::secure::secretstore::vault_rev(),
+                    // The one model's two lists (docs/20 G6), labels only: group names and
+                    // each stored name's sink-resolved group. A label names a folder, never a
+                    // credential - the write-only rule (docs/19 D5) is about values, and no
+                    // value crosses here.
+                    "groups": swiss_core::secure::secretstore::vault_groups(),
+                    "secretGroups": swiss_core::secure::secretstore::list_secrets()
+                        .into_iter()
+                        .map(|n| {
+                            let g = swiss_core::secure::secretstore::vault_group_of(&n);
+                            (n, g)
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>(),
                 }),
             )
         }),

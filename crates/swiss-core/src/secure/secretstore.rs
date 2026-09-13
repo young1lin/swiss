@@ -51,23 +51,67 @@ pub fn valid_name(name: &str) -> bool {
 pub struct Vault {
     pub rev: u64,
     pub secrets: HashMap<String, String>,
+    /// The one model's group list (docs/20 G6) - never empty; an old file reads as the
+    /// single default group. Group labels are not values: they name a folder, not a
+    /// credential, so they may appear in listings where a value never may.
+    pub groups: Vec<String>,
+    /// member name -> its group. Absent = unassigned = renders in the first group.
+    pub member_groups: HashMap<String, String>,
 }
 
 static VAULT: OnceLock<RwLock<Vault>> = OnceLock::new();
 
 fn vault() -> &'static RwLock<Vault> {
-    VAULT.get_or_init(|| RwLock::new(Vault { rev: 0, secrets: HashMap::new() }))
+    VAULT.get_or_init(|| {
+        RwLock::new(Vault {
+            rev: 0,
+            secrets: HashMap::new(),
+            groups: vec!["default".to_string()],
+            member_groups: HashMap::new(),
+        })
+    })
 }
 
 /// Read the sealed file into a Vault. An absent file is an empty vault at rev 0 — first run.
 fn read_file(path: &Path) -> Vault {
-    let Ok(Some(raw)) = read_secure_json(path) else {
-        return Vault { rev: 0, secrets: HashMap::new() };
+    let empty = || Vault {
+        rev: 0,
+        secrets: HashMap::new(),
+        groups: vec!["default".to_string()],
+        member_groups: HashMap::new(),
     };
+    let Ok(Some(raw)) = read_secure_json(path) else {
+        return empty();
+    };
+    let groups = raw
+        .get("groups")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     Vault {
         rev: raw.get("rev").and_then(|v| v.as_u64()).unwrap_or(0),
         secrets: raw
             .get("secrets")
+            .and_then(|v| v.as_object())
+            .map(|o| {
+                o.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        // The one model's invariant (docs/20 2.1): never an empty list. A file whose list
+        // reads empty (hand-edited) materializes the default, so it stays recoverable.
+        groups: if groups.is_empty() {
+            vec!["default".to_string()]
+        } else {
+            groups
+        },
+        member_groups: raw
+            .get("secretGroups")
             .and_then(|v| v.as_object())
             .map(|o| {
                 o.iter()
@@ -109,6 +153,73 @@ pub fn vault_rev() -> u64 {
     vault().read().map(|v| v.rev).unwrap_or(0)
 }
 
+/// Is this name stored? The family's member check (docs/20 G6) - presence, never the value.
+pub fn vault_has(name: &str) -> bool {
+    vault().read().map(|v| v.secrets.contains_key(name)).unwrap_or(false)
+}
+
+/// The group list (docs/20 G6) - names only, never a value. Never empty.
+pub fn vault_groups() -> Vec<String> {
+    vault()
+        .read()
+        .map(|v| {
+            if v.groups.is_empty() {
+                vec!["default".to_string()]
+            } else {
+                v.groups.clone()
+            }
+        })
+        .unwrap_or_else(|_| vec!["default".to_string()])
+}
+
+/// The group one secret renders under (docs/20 G6): its stored assignment while that group
+/// still exists, else the first group - the sink rule every scope shares. Works for names
+/// that are not stored: a listing asks before it filters.
+pub fn vault_group_of(name: &str) -> String {
+    let v = vault().read();
+    let Ok(v) = v else { return "default".to_string() };
+    let first = v.groups.first().cloned().unwrap_or_else(|| "default".to_string());
+    v.member_groups
+        .get(name)
+        .filter(|g| v.groups.iter().any(|n| n == *g))
+        .cloned()
+        .unwrap_or(first)
+}
+
+/// Replace the whole group model in ONE rev-checked write (docs/20 G6): the family's four
+/// verbs all reduce to a new list plus a new member map, computed by the caller against the
+/// one model, and land here as a single mutation - the same discipline a value write has.
+/// The map's keys are NOT validated against stored names: callers keep it honest, and a
+/// stale entry is harmless (it renders nothing and the next delete drops it).
+pub fn set_vault_groups(
+    path: &Path,
+    expect_rev: u64,
+    groups: Vec<String>,
+    member_groups: HashMap<String, String>,
+) -> Result<u64, MutateError> {
+    if groups.is_empty() {
+        return Err(MutateError::InvalidName(
+            "at least one group must remain".to_string(),
+        ));
+    }
+    let current = vault().read().map(|v| (v.rev, v.secrets.clone())).ok();
+    let Some((rev, secrets)) = current else {
+        return Err(MutateError::Seal("vault lock poisoned".into()));
+    };
+    if rev != expect_rev {
+        return Err(MutateError::RevMismatch { have: rev, saw: expect_rev });
+    }
+    persist_then_commit(
+        path,
+        Vault {
+            rev: rev + 1,
+            secrets,
+            groups,
+            member_groups,
+        },
+    )
+}
+
 /// What a mutation can fail with; the API layer maps these to 400 / 404 / 409 / 500.
 #[derive(Debug)]
 pub enum MutateError {
@@ -140,7 +251,12 @@ impl MutateError {
 /// Persist a candidate vault, then commit it to the static on success — a failed seal leaves
 /// the in-process vault exactly as it was, so a later PUT built on the old rev still matches.
 fn persist_then_commit(path: &Path, candidate: Vault) -> Result<u64, MutateError> {
-    let value = serde_json::json!({ "rev": candidate.rev, "secrets": candidate.secrets });
+    let value = serde_json::json!({
+        "rev": candidate.rev,
+        "secrets": candidate.secrets,
+        "groups": candidate.groups,
+        "secretGroups": candidate.member_groups,
+    });
     write_secure_json(path, &value).map_err(MutateError::Seal)?;
     let rev = candidate.rev;
     if let Ok(mut v) = vault().write() {
@@ -154,15 +270,29 @@ pub fn put_secret(path: &Path, name: &str, value: &str, expect_rev: u64) -> Resu
     if !valid_name(name) {
         return Err(MutateError::InvalidName(name.to_string()));
     }
-    let current = vault().read().map(|v| (v.rev, v.secrets.clone())).ok();
-    let Some((rev, mut secrets)) = current else {
+    // A value write must not touch the group model (docs/20 G6): the groups and the
+    // member map ride along untouched - a new name carries no assignment and renders in
+    // the first group, exactly like an old file's secrets.
+    let current = vault()
+        .read()
+        .map(|v| (v.rev, v.secrets.clone(), v.groups.clone(), v.member_groups.clone()))
+        .ok();
+    let Some((rev, mut secrets, groups, member_groups)) = current else {
         return Err(MutateError::Seal("vault lock poisoned".into()));
     };
     if rev != expect_rev {
         return Err(MutateError::RevMismatch { have: rev, saw: expect_rev });
     }
     secrets.insert(name.to_string(), value.to_string());
-    persist_then_commit(path, Vault { rev: rev + 1, secrets })
+    persist_then_commit(
+        path,
+        Vault {
+            rev: rev + 1,
+            secrets,
+            groups,
+            member_groups,
+        },
+    )
 }
 
 /// Bulk restore for 'swiss import' (docs/19 D7): merge imported entries into the vault,
@@ -178,7 +308,9 @@ pub fn import_secrets(
     // Merge against the FILE, not the in-process vault: 'swiss import' runs in a fresh CLI
     // process where nothing has injected the vault yet, and the merge promise (a name the
     // bundle does not mention keeps its value) is about what is stored on disk.
-    let Vault { rev, mut secrets } = read_file(path);
+    // The bundle restores VALUES; the group model on disk rides along untouched - the
+    // same keep-what-is-there promise a name the bundle does not mention already has.
+    let Vault { rev, mut secrets, groups, member_groups } = read_file(path);
     for (name, value) in entries {
         if !valid_name(name) {
             continue;
@@ -187,7 +319,15 @@ pub fn import_secrets(
             secrets.insert(name.clone(), s.to_string());
         }
     }
-    persist_then_commit(path, Vault { rev: rev + 1, secrets })
+    persist_then_commit(
+        path,
+        Vault {
+            rev: rev + 1,
+            secrets,
+            groups,
+            member_groups,
+        },
+    )
 }
 
 /// Remove one secret. Absent names answer NotFound rather than quietly bumping the rev.
@@ -202,7 +342,35 @@ pub fn delete_secret(path: &Path, name: &str, expect_rev: u64) -> Result<u64, Mu
     if secrets.remove(name).is_none() {
         return Err(MutateError::NotFound);
     }
-    persist_then_commit(path, Vault { rev: rev + 1, secrets })
+    // The assignment must not outlive its name (docs/20 G6): a ghost member would ride
+    // along into the next family mutation's set_names answer.
+    let member_groups = vault()
+        .read()
+        .map(|v| {
+            let mut m = v.member_groups.clone();
+            m.remove(name);
+            m
+        })
+        .unwrap_or_default();
+    let groups = vault()
+        .read()
+        .map(|v| {
+            if v.groups.is_empty() {
+                vec!["default".to_string()]
+            } else {
+                v.groups.clone()
+            }
+        })
+        .unwrap_or_else(|_| vec!["default".to_string()]);
+    persist_then_commit(
+        path,
+        Vault {
+            rev: rev + 1,
+            secrets,
+            groups,
+            member_groups,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -302,5 +470,48 @@ mod tests {
         assert_eq!(vault_rev(), rev);
         assert_eq!(vault_lookup("reload-me").as_deref(), Some("v1"));
         let _ = delete_secret(&path, "reload-me", vault_rev());
+    }
+    #[test]
+    fn vault_groups_default_and_round_trip() {
+        // docs/20 G6: the vault carries the one model - a group list plus a member map -
+        // beside the values. An old file names neither, so it reads as the single default
+        // group with every secret unassigned (they render in the first group).
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        let home = crate::paths::test_home();
+        let path = home.join("secrets.json");
+        inject_vault(&path);
+        assert_eq!(vault_groups(), vec!["default".to_string()]);
+
+        // One write moves a secret and renames the list - the rev advances once, exactly
+        // like a value write (docs/20 G6: a regroup is one mutation).
+        let rev0 = vault_rev();
+        put_secret(&path, "g6-key", "v", rev0).expect("put");
+        let rev1 = vault_rev();
+        let mut members = std::collections::HashMap::new();
+        members.insert("g6-key".to_string(), "Ops".to_string());
+        let rev2 = set_vault_groups(
+            &path,
+            rev1,
+            vec!["default".to_string(), "Ops".to_string()],
+            members,
+        )
+        .expect("regroup");
+        assert_eq!(rev2, rev1 + 1, "a regroup is one rev bump");
+        assert_eq!(vault_groups(), vec!["default".to_string(), "Ops".to_string()]);
+        assert_eq!(vault_group_of("g6-key"), "Ops");
+        // An unassigned or unknown name answers the first group - the sink rule.
+        assert_eq!(vault_group_of("never-stored"), "default");
+
+        // A reload from the sealed file keeps the assignment: groups persist like values.
+        inject_vault(&path);
+        assert_eq!(vault_group_of("g6-key"), "Ops");
+
+        // Deleting the secret drops its assignment - no ghost member in a later set_names.
+        let _ = delete_secret(&path, "g6-key", vault_rev());
+        assert_eq!(vault_group_of("g6-key"), "default", "no assignment outlives the name");
+
+        // The sealed file carries the group labels but never the value.
+        let raw = String::from_utf8_lossy(&std::fs::read(&path).expect("file")).to_string();
+        assert!(!raw.contains("\"v\""), "the value never lands in the clear");
     }
 }

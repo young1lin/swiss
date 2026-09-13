@@ -2484,3 +2484,364 @@ async fn a_vault_reference_masks_like_an_env_ref() {
     assert!(!is_env_ref(&json!("secret://BadName")));
     assert!(!is_env_ref(&json!("plain text")));
 }
+// --- the secrets scope over the family (docs/20 G6) ----------------------------------------------
+
+#[tokio::test]
+async fn the_family_serves_the_secrets_scope() {
+    let _guard = VAULT_LOCK.lock().await;
+    let h = setup();
+
+    // Two secrets to move around.
+    let rev = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    h.put("/api/secrets/panel-g6-a", json!({ "value": "v-one", "rev": rev })).await;
+    let rev = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    h.put("/api/secrets/panel-g6-b", json!({ "value": "v-two", "rev": rev })).await;
+
+    // The whole list, then a member assign that keeps the canonical casing.
+    let (status, body) = h
+        .put("/api/groups/secrets", json!({ "groups": ["default", "Ops"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["groups"], json!(["default", "Ops"]));
+    let (status, body) = h
+        .put("/api/groups/secrets/members/panel-g6-a", json!({ "group": "ops" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["group"], json!("Ops"));
+
+    // The listing answers the labels and NEVER a value: the write-only rule (docs/19 D5)
+    // is about values, and a group label is a folder name.
+    let (status, body) = h.get("/api/secrets").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["groups"], json!(["default", "Ops"]));
+    assert_eq!(body["secretGroups"]["panel-g6-a"], json!("Ops"));
+    assert_eq!(body["secretGroups"]["panel-g6-b"], json!("default"), "unassigned sinks");
+    let text = body.to_string();
+    assert!(!text.contains("v-one"), "no value ever crosses: {text}");
+
+    // A rename carries the members and answers how many moved. The vault is one shared
+    // table across this binary's tests, so the honest expectation is the count the LISTING
+    // reports under "default" right before the rename - unassigned secrets render there
+    // (the sink), and the slot carries them with it.
+    let before = h.get("/api/secrets").await.1;
+    let in_default = before["secretGroups"]
+        .as_object()
+        .map(|m| m.values().filter(|g| g.as_str() == Some("default")).count())
+        .unwrap_or(0);
+    assert!(in_default >= 1, "panel-g6-b at least renders under default: {before}");
+    let (status, body) = h
+        .post("/api/groups/secrets/rename", json!({ "from": "default", "to": "Basics" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["groups"], json!(["Basics", "Ops"]));
+    assert_eq!(body["moved"], json!(in_default), "the whole first slot moved");
+
+    // The one verb this scope refuses (docs/20 G6): name order IS the order.
+    let (status, body) = h
+        .put("/api/groups/secrets/order", json!({ "order": ["panel-g6-a"] }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], json!("secrets have no manual order"));
+
+    // Unknown member: the family's one 404.
+    let (status, body) = h
+        .put("/api/groups/secrets/members/ghost", json!({ "group": null }))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
+async fn a_secrets_regroup_is_one_rev_bump_and_values_survive() {
+    let _guard = VAULT_LOCK.lock().await;
+    let h = setup();
+    let rev0 = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    h.put("/api/secrets/panel-g6-rev", json!({ "value": "keep-me", "rev": rev0 })).await;
+    h.put("/api/groups/secrets", json!({ "groups": ["default", "Ops"] })).await;
+    let before = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    let (status, body) = h
+        .put(
+            "/api/groups/secrets/members/panel-g6-rev",
+            json!({ "group": "Ops" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let after = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    assert_eq!(after, before + 1, "a regroup is ONE rev bump, like a value write");
+    // The value the regroup rode along with is intact - the file still seals it.
+    assert_eq!(
+        swiss_core::secure::secretstore::vault_lookup("panel-g6-rev").as_deref(),
+        Some("keep-me"),
+        "the group move never touches values"
+    );
+}
+// --- the tokens scope over the family (docs/20 G7) ----------------------------------------------
+
+#[tokio::test]
+async fn the_family_serves_the_tokens_scope() {
+    let h = setup();
+    let (status, body) = h.post("/api/tokens", json!({ "label": "g7-probe" })).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = body["id"].as_str().expect("the id").to_string();
+
+    let (status, body) = h
+        .put("/api/groups/tokens", json!({ "groups": ["default", "Lab"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["groups"], json!(["default", "Lab"]));
+
+    let (status, body) = h
+        .put(
+            &format!("/api/groups/tokens/members/{id}"),
+            json!({ "group": "lab" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["group"], json!("Lab"), "canonical casing comes back");
+
+    // The listing answers the two lists beside the tokens (docs/20 §2.3): a group is a
+    // folder a token sits in; it says nothing about whether the token is in use.
+    let (status, body) = h.get("/api/tokens").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["groups"], json!(["default", "Lab"]));
+    assert_eq!(body["tokenGroups"][&id], json!("Lab"));
+
+    let (status, body) = h
+        .post("/api/groups/tokens/rename", json!({ "from": "Lab", "to": "Ops" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["groups"], json!(["default", "Ops"]));
+    assert_eq!(body["moved"], json!(1), "the one assigned member moved");
+
+    // Creation time is the order (docs/20 §2.1): like secrets, no manual order exists.
+    let (status, body) = h
+        .put("/api/groups/tokens/order", json!({ "order": [id] }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], json!("tokens have no manual order"));
+
+    let (status, _) = h
+        .put("/api/groups/tokens/members/nope", json!({ "group": null }))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "unknown member");
+}
+
+#[tokio::test]
+async fn token_lifecycle_never_touches_the_groups() {
+    let h = setup();
+    let id = h
+        .post("/api/tokens", json!({ "label": "g7-life" }))
+        .await
+        .1["id"]
+        .as_str()
+        .expect("the id")
+        .to_string();
+    h.put("/api/groups/tokens", json!({ "groups": ["default", "Ops"] })).await;
+    h.put(&format!("/api/groups/tokens/members/{id}"), json!({ "group": "Ops" })).await;
+
+    // A rotate keeps the id, so the assignment rides along untouched.
+    let (status, body) = h.post(&format!("/api/tokens/{id}/rotate"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let body = h.get("/api/tokens").await.1;
+    assert_eq!(body["tokenGroups"][&id], json!("Ops"), "a rotate keeps the group");
+
+    // Deleting the group sinks its tokens into the first one - the token itself is
+    // untouched, still listed, still authenticating (docs/20 G7).
+    let (status, body) = h.put("/api/groups/tokens", json!({ "groups": ["default"] })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let body = h.get("/api/tokens").await.1;
+    assert_eq!(body["groups"], json!(["default"]), "the whole list, Ops omitted");
+    assert!(
+        body["tokenGroups"].get(&id).is_none(),
+        "the sunk token carries no explicit entry: {body}"
+    );
+    assert!(
+        body["tokens"]
+            .as_array()
+            .map(|a| a.iter().any(|t| t["id"] == json!(id)))
+            .unwrap_or(false),
+        "the token still exists"
+    );
+
+    // A revoke forgets the member: no ghost entry outlives its token.
+    h.put("/api/groups/tokens", json!({ "groups": ["default", "Ops"] })).await;
+    h.put(&format!("/api/groups/tokens/members/{id}"), json!({ "group": "Ops" })).await;
+    let (status, _) = h.delete(&format!("/api/tokens/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let body = h.get("/api/tokens").await.1;
+    assert!(body["tokenGroups"].get(&id).is_none(), "no ghost member: {body}");
+}
+
+// --- the jobs scope over the family (docs/20 G4) --------------------------------------------------
+/// The jobs-scope harness: a real JobSystem over a real config store, its row seeded with
+/// two manual jobs, registered into the family the way server.rs composes it. What comes
+/// back is the system handle, for asserting the applied table directly.
+fn setup_with_jobs() -> (Harness, Arc<swiss_jobs::jobs::JobSystem>) {
+    sandbox();
+    let dir = std::env::temp_dir().join(format!(
+        "swiss-adminapi-jobs-{}",
+        swiss_core::util::random_hex(8),
+    ));
+    std::fs::create_dir_all(&dir).expect("create the scratch directory");
+    let calls = Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls")));
+    let registry = Registry::new(60_000, calls.clone());
+    let store = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
+    let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
+    let config_store = swiss_host::config_store::ConfigStore::from_loaded(
+        dir.join("gateway.config.json"),
+        json!({}),
+    );
+    let services = swiss_host::services::RuntimeServices::new();
+    // The one capability a definition can lean on in a test: the built-in legacy command
+    // action, registered the way the jobs plugin's own tests do it.
+    services
+        .actions
+        .register(Arc::new(swiss_host::services::actions::LegacyCommandAction::new(
+            services.supervisor.clone(),
+        )))
+        .expect("the legacy command capability registers once");
+    let jobs = swiss_jobs::jobs::JobSystem::open(
+        dir.join("jobs.json"),
+        services,
+        config_store.clone(),
+    );
+    config_store
+        .update_plugin(
+            "jobs",
+            config_store.snapshot().revision,
+            json!({
+                "definitions": {
+                    "vacuum": {
+                        "trigger": { "kind": "manual" },
+                        "action": { "type": "process.legacy-command", "input": { "command": "echo v" } },
+                    },
+                    "report": {
+                        "trigger": { "kind": "manual" },
+                        "action": { "type": "process.legacy-command", "input": { "command": "echo r" } },
+                    },
+                },
+            }),
+        )
+        .expect("seed the jobs row");
+    jobs.apply_config(&config_store.plugin_config("jobs"))
+        .expect("apply the seed");
+    let ctx = AppContext::new(
+        registry.clone(),
+        tokens,
+        store.clone(),
+        calls.clone(),
+        "MCP_GATEWAY_TOKEN",
+        19999,
+    );
+    swiss_jobs::jobs::groups::register_job_scopes(&ctx.group_scopes, &jobs);
+    // The jobs routes are the plugin's, merged the way server.rs merges them - the family
+    // alone is not enough to prove /api/jobs rows carry the group.
+    let app = build_app(ctx, None).merge(swiss_jobs::jobs::api::mount(jobs.clone()));
+    (
+        Harness {
+            app,
+            registry,
+            store,
+            calls,
+            path: dir.join("managed.json"),
+        },
+        jobs,
+    )
+}
+
+#[tokio::test]
+async fn the_family_serves_the_jobs_scope() {
+    let (h, jobs) = setup_with_jobs();
+
+    // The whole list, one request shape like every scope.
+    let (status, body) = h
+        .put("/api/groups/jobs", json!({ "groups": ["default", "Ops"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["groups"], json!(["default", "Ops"]));
+
+    // Assign keeps the canonical casing and lands in the row the scheduler reads.
+    let (status, body) = h
+        .put(
+            "/api/groups/jobs/members/vacuum",
+            json!({ "group": "ops" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["group"], json!("Ops"));
+
+    // The list answers the applied table: rows carry their group, the top level the names.
+    let (status, list) = h.get("/api/jobs").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["groups"], json!(["default", "Ops"]));
+    let row = list["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|j| j["name"] == json!("vacuum"))
+        .expect("the vacuum row");
+    assert_eq!(row["group"], json!("Ops"));
+
+    // A rename carries the members and answers how many moved.
+    let (status, body) = h
+        .post(
+            "/api/groups/jobs/rename",
+            json!({ "from": "default", "to": "Basics" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["groups"], json!(["Basics", "Ops"]));
+
+    // The flat order rewrites the definition order in the row.
+    let before: Vec<String> = jobs.job_ids();
+    let (status, body) = h
+        .put(
+            "/api/groups/jobs/order",
+            json!({ "order": [before[1].clone(), before[0].clone()] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["order"],
+        json!([before[1].clone(), before[0].clone()]),
+        "the persisted order is the answer"
+    );
+    assert_eq!(jobs.job_ids(), vec![before[1].clone(), before[0].clone()]);
+
+    // Unknown member: the family's one 404.
+    let (status, body) = h
+        .put(
+            "/api/groups/jobs/members/ghost",
+            json!({ "group": null }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(
+        body["error"], json!("unknown member: ghost"),
+        "the family words it, not the scope"
+    );
+}
+
+#[tokio::test]
+async fn moving_a_job_between_groups_advances_the_config_revision_in_place() {
+    // docs/11 8's guarantee, restated for groups (docs/20 G4): a group mutation is a config
+    // edit, so the running table moves without a restart - configRevision advances and the
+    // definitions all survive the apply.
+    let (h, jobs) = setup_with_jobs();
+    h.put("/api/groups/jobs", json!({ "groups": ["default", "Ops"] }))
+        .await;
+    let before = jobs.applied_revision();
+    let (status, body) = h
+        .put(
+            "/api/groups/jobs/members/report",
+            json!({ "group": "Ops" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["group"], json!("Ops"));
+    let after = jobs.applied_revision();
+    assert!(
+        after != before,
+        "revision {before} -> {after}: the row is content-revised, so a change means the\n        new row was written AND applied, not parked"
+    );
+    assert_eq!(jobs.job_ids().len(), 2, "the table survived the apply");
+}
