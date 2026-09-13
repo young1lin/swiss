@@ -370,12 +370,20 @@ function dbSplitStatements(text) {
   // A piece holding no token but comments is not a statement — "SELECT 1; -- note\n; SELECT 2"
   // must run two statements, not three, and never ask the server to execute a note.
   var hasCode = function (piece) {
-    var m;
+    // SQL_TOKEN_RE is shared with the outer scan and keeps ITS position in lastIndex —
+    // borrow it, then put the position back, or the outer loop restarts from the top of
+    // the text at every semicolon and never terminates.
+    var resume = SQL_TOKEN_RE.lastIndex;
     SQL_TOKEN_RE.lastIndex = 0;
-    while ((m = SQL_TOKEN_RE.exec(piece)) !== null) {
-      if (!m[1]) return true; // anything that is not a comment is code
+    try {
+      var m;
+      while ((m = SQL_TOKEN_RE.exec(piece)) !== null) {
+        if (!m[1]) return true; // anything that is not a comment is code
+      }
+      return false;
+    } finally {
+      SQL_TOKEN_RE.lastIndex = resume;
     }
-    return false;
   };
   var cut = function (at) {
     var piece = t.slice(start, at).replace(/^\s+|\s+$/g, "");

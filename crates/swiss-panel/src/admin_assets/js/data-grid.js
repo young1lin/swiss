@@ -572,7 +572,7 @@ function renderDbToolbar() {
     ctl.appendChild(dataCtl);
   }
   var sql = el("button", "btn", d.sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL"));
-  sql.title = nosql ? "Run one command (SET, GET, DEL, HGETALL, TTL, TYPE…)" : "SQL console — one statement per run";
+  sql.title = nosql ? "Run one command (SET, GET, DEL, HGETALL, TTL, TYPE…)" : "SQL console — statements split on ; get a tab each";
   sql.onclick = function () {
     d.sqlOpen = !d.sqlOpen;
     var con = $("dbConsole");
