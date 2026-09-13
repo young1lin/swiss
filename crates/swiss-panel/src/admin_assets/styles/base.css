@@ -285,14 +285,18 @@
     /* The single-page spelling of the page bar (docs/18 V3): the page's own name, body weight. */
     .subbar-name { font-size: var(--f-body); font-weight: 500; color: var(--text-2); }
 
-    /* Immersive mode (the toolbar's expand control, js/immersive.js): the bars and the sidebar
-       fold away and the page alone fills the window. The measure caps stay — readability is not
-       a width problem — and the terminal keeps its full-bleed exception; the expand control
-       detaches to the top-right corner so the exit stays one quiet click away, under menus and
-       sheets but above everything else on the page. */
-    body.immersive .toolbar, body.immersive .subbar, body.immersive .sidebar { display: none; }
+    /* Immersive mode (the toolbar's expand control, js/immersive.js): ONLY the global top bar
+       folds away — the page bar, the sidebar and the content are the page's own and stay. The
+       bar collapses through visibility, not display, on purpose: the expand control lives
+       inside it, and display:none would take the exit button down with the bar, while a
+       visibility:hidden parent lets the control re-open itself and escape to the top-right
+       corner (under menus and sheets, above the page). The measure caps stay — readability is
+       not a width problem. */
+    body.immersive .toolbar {
+      visibility: hidden; height: 0; min-height: 0; border-bottom: 0;
+    }
     body.immersive #expandBtn {
-      position: fixed; top: var(--s2); right: var(--s2); z-index: 25;
+      visibility: visible; position: fixed; top: var(--s2); right: var(--s2); z-index: 25;
       background: var(--bar); border: 1px solid var(--sep); opacity: 0.45;
     }
     body.immersive #expandBtn:hover { opacity: 1; }
