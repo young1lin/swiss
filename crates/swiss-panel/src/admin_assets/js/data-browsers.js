@@ -3,6 +3,9 @@ import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
+// Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
+// runtime-only use — the same shape as the data-sql import above.
+import { dbTypedConfirm } from "./data-edit.js";
 import { renderDbTables } from "./data-view.js";
 import { popupMenu } from "./menu.js";
 
@@ -579,20 +582,21 @@ function dbRedisRenameSheet(key) {
   });
 }
 
+/* Deleting a key is the one destructive act the redis side has — the same typed-name confirm
+   the table DROP/TRUNCATE use (a W1 audit follow-up), with the key's own words. */
 function dbRedisDeleteKey() {
   var d = state.db;
   var key = d.redisKey;
-  var typed = prompt("DELETE (permanently) " + key + "\n" +
-    "This cannot be undone. Type the key name to confirm:", "");
-  if (typed !== key) { if (typed !== null) toast("Name did not match — nothing was done", true); return; }
-  void dbRedisCommand("DEL " + key).then(async function (j) {
-    if (!j) return;
-    toast("Deleted " + key);
-    d.redisKey = null;
-    d.redisValue = null;
-    d.redisEdits = null;
-    await dbLoadKeys(true);
-    renderDbGrid();
+  dbTypedConfirm({ what: "DELETE (permanently)", name: key, kind: "key" }, function () {
+    void dbRedisCommand("DEL " + key).then(async function (j) {
+      if (!j) return;
+      toast("Deleted " + key);
+      d.redisKey = null;
+      d.redisValue = null;
+      d.redisEdits = null;
+      await dbLoadKeys(true);
+      renderDbGrid();
+    });
   });
 }
 
