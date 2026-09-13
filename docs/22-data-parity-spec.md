@@ -1,6 +1,6 @@
 # 22 — Data 视图全量对齐:六个批次(W0–W5)
 
-> **状态:实施中 — W0 已落(分支 `data-parity-w0`:`6685d93..477aab3`,Node 面板侧 `23a5de8`,审计 PASS);W1 进行中。Hand-off prompt:[docs/22-data-parity-prompt.md](docs/22-data-parity-prompt.md)。**
+> **状态:实施中 — W0(`6685d93..477aab3`)/ W1(`f072bc5..ed1dfae` + 同步)/ W2(`9206053..d8a3430`,含 readback 类型化修复)均落并审计 PASS;W4.4+W4.5 落于 `data-parity-w4a`(48cbf4d..2cf0e76,dump 转义 blocker 修复中);集成分支 `data-parity`。Hand-off prompt:[docs/22-data-parity-prompt.md](docs/22-data-parity-prompt.md)。**
 > 基线:`3d5f42e`(docs/21 落库,master,2026-09-13)。
 >
 > 需求原话(2026-09-13):"/swiss-spec 我需要所有的功能,开始写 spec 吧,注意,需要和 /swiss-design 保持风格一致,然后 EnterWorktree 单独开个 worktree 进去,开始写这部分内容。有一点我需要你注意,vendor 被忽略了,worktree 里面可能引用的 js 没了,我的建议是把 clone 的项目,挪到其他项目下……"(参照库问题同日由用户归位:`../terminals-ref/`。)
@@ -184,7 +184,7 @@ docs/21 用五个成熟参照逐条核对了 swiss Data 模块,35 条差距定�
 
 ### W4.4 流式 SQL dump 导出格式
 参照:adminer `adminer/adminer.inc.php:980-1078`(1MB 攒批多值 INSERT)。
-改动:export_table 增 `format=sql`:头部 `CREATE TABLE`(复用 describe_table 的 DDL)+ 会话级关闭外键检查(MySQL `SET FOREIGN_KEY_CHECKS=0`;PG 以注释说明顺序),正文逐行 fetch + 攒批多值 INSERT(满 1 MB flush),axum `Body::from_stream` 分块产出;`EXPORT_ROW_CAP` 不变,`x-export-format` 头;面板 W0.1 菜单加第三项 "Export SQL dump…"。顺带复核现有 csv/json 路径确无整表物化。
+改动:export_table 增 `format=sql`:头部 `CREATE TABLE`(复用 describe_table 的 DDL)+ 会话级关闭外键检查(MySQL `SET FOREIGN_KEY_CHECKS=0`;PG 以注释说明顺序),正文逐行 fetch + 攒批多值 INSERT(满 1 MB flush),axum `Body::from_stream` 分块产出;`EXPORT_ROW_CAP` 不变,`x-export-format` 头;面板 W0.1 菜单加第三项 "Export SQL dump…"。顺带复核现有 csv/json 路径确无整表物化。(实测更正:csv 路径仍为 O(table) 整表物化,属存量行为,本轮未改动,以 docs/01 的 2026-09-13 对照读数留档;json 路径已分页。)
 验收:Rust:伪连接断言多次 flush(峰值内存 < 2×chunk);19998:导出 .sql 可重放进临时表;`x-export-rows` 正确;完成后按 swiss-memory-record 记录一次内存读数。
 
 ### W4.5 CSV 导入 upsert
