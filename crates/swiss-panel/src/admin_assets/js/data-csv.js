@@ -6,7 +6,9 @@ import { dbClearSel, dbDropEdits, dbOkToDrop, dbPending, dbPkKey } from "./data-
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.
-   The INSERT batch runs server-side in ONE transaction; a failure rolls the whole file back. */
+   The batch runs server-side in ONE transaction; a failure rolls the whole file back. The
+   Insert/Upsert segmented control picks the statement form (docs/22 W4.5): Insert keeps the
+   plain INSERT (a duplicate key aborts the file), Upsert maps conflicts onto existing rows. */
 function dbParseCsvLine(line) {
   var out = [], cur = "", inQ = false;
   for (var i = 0; i < line.length; i++) {
@@ -31,10 +33,18 @@ function dbOpenImport() {
   if (!d.data.editable) { toast("This table is not editable (" + (d.data.editNote || "no primary key") + ")", true); return; }
   if (dbPending() && !dbOkToDrop()) return;
   var header = [], lines = [], mapping = [];
+  var mode = "insert"; // docs/22 W4.5: "insert" | "upsert" — the statement form the commit uses
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="Import CSV">' +
       '<div class="sheet-head"><h2>Import CSV into ' + esc((d.schema ? d.schema + "." : "") + d.table) + "</h2></div>" +
       '<div class="sheet-body">' +
+        '<div class="db-console-row" style="margin-bottom:var(--s2)">' +
+          '<div class="seg" role="tablist" id="dbImpMode" style="margin-bottom:0">' +
+            '<button type="button" role="tab" data-mode="insert" aria-selected="true">Insert</button>' +
+            '<button type="button" role="tab" data-mode="upsert" aria-selected="false">Upsert</button>' +
+          "</div>" +
+          '<span class="hint" id="dbImpModeSay">Every row inserts \u2014 a duplicate key aborts the whole file.</span>' +
+        "</div>" +
         '<div class="db-console-row" style="margin-bottom:var(--s2)">' +
           '<input type="file" id="dbImpFile" accept=".csv,text/csv" style="width:auto">' +
           '<span class="hint">…or paste below (first row = header)</span>' +
@@ -110,6 +120,20 @@ function dbOpenImport() {
   }
 
   $("dbImpText").oninput = parse;
+  function setMode(m) {
+    mode = m;
+    $("dbImpMode").querySelectorAll("button").forEach(function (b) {
+      b.setAttribute("aria-selected", String(b.dataset.mode === m));
+    });
+    // One sentence beside the control names the cost of the picked mode (docs/22 W4.5).
+    $("dbImpModeSay").textContent = m === "upsert"
+      ? "Rows that match an existing key update it; the rest insert \u2014 still one transaction."
+      : "Every row inserts \u2014 a duplicate key aborts the whole file.";
+  }
+  $("dbImpMode").onclick = function (e) {
+    var b = e.target && e.target.closest ? e.target.closest("button[data-mode]") : null;
+    if (b) setMode(b.dataset.mode);
+  };
   $("dbImpFile").onchange = function () {
     var f = this.files && this.files[0];
     if (!f) return;
@@ -121,18 +145,26 @@ function dbOpenImport() {
   $("dbImpRun").onclick = async function () {
     if (!header.length || !lines.length) { toast("Paste or upload a CSV first", true); return; }
     if (!mapping.some(Boolean)) { toast("Map at least one column", true); return; }
-    if (!confirm("Insert " + lines.length.toLocaleString() + " rows into " +
+    var upsert = mode === "upsert";
+    if (!confirm((upsert ? "Upsert " : "Insert ") + lines.length.toLocaleString() + " rows into " +
         (d.schema ? d.schema + "." : "") + d.table + " in ONE transaction? A failure rolls the whole file back.")) return;
     this.disabled = true;
     this.textContent = "Importing\u2026";
     var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/import", {
       method: "POST",
-      body: JSON.stringify({ table: d.table, schema: d.schema, header: header, lines: lines, mapping: mapping }),
+      // mode rides the payload only when upsert — a default import stays byte-identical to
+      // what a pre-W4.5 panel sent (docs/22 W4.5).
+      body: JSON.stringify(Object.assign(
+        { table: d.table, schema: d.schema, header: header, lines: lines, mapping: mapping },
+        upsert ? { mode: "upsert" } : {}
+      )),
     });
     var btn = $("dbImpRun");
     if (btn) { btn.disabled = false; btn.textContent = "Import (one transaction)"; }
     if (!j) return; // server rolled back; the sheet stays for fixing
-    toast("Imported " + j.inserted + " row" + (j.inserted > 1 ? "s" : ""));
+    // j.note is the server's degrade explanation (a Postgres table with no primary key); the
+    // count is still the truth, the sentence beside it says what actually ran.
+    toast("Imported " + j.inserted + " row" + (j.inserted > 1 ? "s" : "") + (j.note ? " \u2014 " + j.note : ""));
     closeSheet();
     dbDropEdits();
     dbLoadData(true);

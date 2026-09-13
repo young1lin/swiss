@@ -36,7 +36,7 @@ use axum::Router;
 use serde_json::{json, Map, Value};
 
 use swiss_core::log;
-use swiss_host::dbbrowser::{js_to_string, BrowserFlavor, DbBrowser, RedisBrowser};
+use swiss_host::dbbrowser::{js_to_string, BrowserFlavor, DbBrowser, DumpPiece, RedisBrowser};
 use swiss_host::reply::{admin_error, admin_json};
 use swiss_host::services::catalog::{
     CatalogError, CatalogPresence, CatalogRegistry, ConnectionLease,
@@ -338,13 +338,18 @@ async fn schema(
     b.describe_table(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
-/// Whole-table export as a download (CSV or newline-JSON), capped at EXPORT_ROW_CAP rows. The
-/// capped flag rides along as a header so the panel can warn without parsing the body.
+/// Whole-table export as a download (CSV, newline-JSON or a streaming SQL dump), capped at
+/// EXPORT_ROW_CAP rows. The capped flag rides along as a header so the panel can warn without
+/// parsing the body; x-export-format names the shape the panel saved.
 async fn export(
     catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Response, Fail> {
+    // format=sql streams its body in pieces (docs/22 W4.4) — it cannot ride the folded path.
+    if q.get("format").map(String::as_str) == Some("sql") {
+        return export_sql(catalog, name, q).await;
+    }
     let (_lease, b) = lease_db(catalog, name)?;
     let format = if q.get("format").map(String::as_str) == Some("json") {
         "json"
@@ -407,8 +412,106 @@ async fn export(
                     "0".into()
                 },
             ),
+            (
+                header::HeaderName::from_static("x-export-format"),
+                out_format.to_string(),
+            ),
         ],
         body,
+    )
+        .into_response())
+}
+
+/// The dump body as a Stream: each channel piece becomes one body chunk, and the connection
+/// lease rides along inside it. The handler returns while the dump is still being produced —
+/// holding the lease in the body (not the handler's frame) is what keeps a draining provider
+/// from closing the pool under the last pieces (docs/12 W3, docs/22 W4.4).
+struct LeaseBody {
+    rx: tokio::sync::mpsc::Receiver<DumpPiece>,
+    lease: Option<ConnectionLease>,
+}
+
+impl futures_core::Stream for LeaseBody {
+    type Item = Result<axum::body::Bytes, axum::Error>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        match this.rx.poll_recv(cx) {
+            std::task::Poll::Ready(Some(Ok(bytes))) => {
+                std::task::Poll::Ready(Some(Ok(axum::body::Bytes::from(bytes))))
+            }
+            std::task::Poll::Ready(Some(Err(message))) => {
+                std::task::Poll::Ready(Some(Err(axum::Error::new(message))))
+            }
+            // The producer closed the channel: the dump is done, the lease may go.
+            std::task::Poll::Ready(None) => {
+                this.lease = None;
+                std::task::Poll::Ready(None)
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+/// The format=sql arm of /export (docs/22 W4.4): the dump's metadata comes back before the
+/// body starts — a bad table still answers its usual 400 — then the body streams through
+/// [`axum::body::Body::from_stream`] as the producer finishes each ~1 MB statement.
+async fn export_sql(
+    catalog: &CatalogRegistry,
+    name: &str,
+    q: &HashMap<String, String>,
+) -> Result<Response, Fail> {
+    let (lease, b) = lease_db(catalog, name)?;
+    let mut o = Map::new();
+    o.insert("table".into(), json!(q_or_empty(q, "table")));
+    if let Some(schema) = q_non_empty(q, "schema") {
+        o.insert("schema".into(), schema);
+    }
+    o.insert("format".into(), json!("sql"));
+    if let Some(limit) = q_raw(q, "limit") {
+        o.insert("limit".into(), limit);
+    }
+    // The grid's filters ride /export exactly as they ride /data (docs/22 W0.2).
+    if let Some(filters) = parse_filters(q.get("filters"))? {
+        o.insert("filters".into(), filters);
+    }
+    let dump = b
+        .export_sql_dump(&Value::Object(o))
+        .await
+        .map_err(Fail::bad)?;
+    let file = format!(
+        "sql-{}",
+        q.get("table").cloned().unwrap_or_else(|| "table".into())
+    );
+    let body = LeaseBody {
+        rx: dump.body,
+        lease: Some(lease),
+    };
+    Ok((
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/sql; charset=utf-8".to_string(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{file}\""),
+            ),
+            (
+                header::HeaderName::from_static("x-export-rows"),
+                dump.rows.to_string(),
+            ),
+            (
+                header::HeaderName::from_static("x-export-capped"),
+                if dump.capped { "1".into() } else { "0".into() },
+            ),
+            (header::HeaderName::from_static("x-export-format"), "sql".to_string()),
+        ],
+        axum::body::Body::from_stream(body),
     )
         .into_response())
 }
@@ -453,11 +556,14 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
             "mapping must be an array (one per CSV column) of column names or null",
         ));
     }
-    log::log(
-        "info",
-        "data view import",
-        Some(json!({ "name": name, "table": coerced_str(body, "table"), "rows": lines.len() })),
-    );
+    // docs/22 W4.5: the panel picks the statement form — insert stays the default, and a
+    // payload without the field rides exactly as it did before the mode existed.
+    let mode = swiss_host::dbbrowser::parse_import_mode(body.get("mode")).map_err(Fail::bad)?;
+    let mut logged = json!({ "name": name, "table": coerced_str(body, "table"), "rows": lines.len() });
+    if mode == swiss_host::dbbrowser::ImportMode::Upsert {
+        logged["mode"] = json!("upsert");
+    }
+    log::log("info", "data view import", Some(logged));
     let mut o = Map::new();
     o.insert("table".into(), json!(coerced_str(body, "table")));
     if let Some(schema) = nonempty_str_field(body, "schema") {
@@ -469,6 +575,9 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
         "mapping".into(),
         body.get("mapping").cloned().unwrap_or(Value::Null),
     );
+    if mode == swiss_host::dbbrowser::ImportMode::Upsert {
+        o.insert("mode".into(), json!("upsert"));
+    }
     b.import_table(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
@@ -782,6 +891,9 @@ mod tests {
         query: Option<String>,
         filters: Option<Value>,
         export_opts: Option<Value>,
+        /// Body pieces the SQL dump's producer handed to the channel (docs/22 W4.4) — the
+        /// route test's proof that the dump streamed instead of folding one string.
+        dump_pieces: usize,
         imported: Option<Value>,
         ddl: Option<Value>,
         tables_opts: Option<Value>,
@@ -910,12 +1022,95 @@ mod tests {
                 "body": if json_out { "{\"id\":1}\n{\"id\":2}" } else { "id,name\r\n1,a" },
             }))
         }
+        async fn export_sql_dump(
+            &self,
+            o: &Value,
+        ) -> Result<swiss_host::dbbrowser::SqlDump, String> {
+            use swiss_host::dbbrowser::{
+                export_row_limit, sql_dump_foot, sql_dump_head, sql_literal, SqlInsertBatch,
+            };
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.export_opts = Some(o.clone());
+            }
+            // A wide synthetic table driven through the REAL batching logic: 400 rows of
+            // ~6 KB literals force the 1 MB threshold several times, so the route test can
+            // prove the body arrived as multiple pieces (and multiple statements) instead of
+            // one folded string. The peak the producer holds is one statement, never the 2.4 MB
+            // the whole table would cost folded.
+            const TOTAL: i64 = 400;
+            let cap = export_row_limit(o.get("limit"));
+            let rows = TOTAL.min(cap);
+            let capped = TOTAL > rows;
+            let head = sql_dump_head(
+                swiss_host::dbbrowser::DbDialect::Mysql,
+                Some("app"),
+                "stub",
+                "CREATE TABLE `stub` (\n  `id` int NOT NULL,\n  `pad` text\n)",
+            )?;
+            let columns = vec!["id".to_string(), "pad".to_string()];
+            let dump_columns = columns.clone();
+            let (tx, rx) = tokio::sync::mpsc::channel::<DumpPiece>(2);
+            let seen_ref = self.seen.clone();
+            tokio::spawn(async move {
+                let mut pieces = 0usize;
+                let mut batch =
+                    SqlInsertBatch::new(swiss_host::dbbrowser::DbDialect::Mysql, Some("app"), "stub", &columns)
+                        .expect("stub identifiers are legal");
+                if tx.send(Ok(head.into_bytes())).await.is_err() {
+                    return;
+                }
+                pieces += 1;
+                for i in 0..rows {
+                    let row = json!({ "id": i, "pad": "x".repeat(6_000) });
+                    let literals: Vec<String> = columns
+                        .iter()
+                        .map(|c| sql_literal(row.get(c.as_str())))
+                        .collect();
+                    if let Some(stmt) = batch.push(&format!("({})", literals.join(", "))) {
+                        if tx.send(Ok(stmt.into_bytes())).await.is_err() {
+                            return;
+                        }
+                        pieces += 1;
+                    }
+                }
+                if let Some(tail) = batch.finish() {
+                    if tx.send(Ok(tail.into_bytes())).await.is_err() {
+                        return;
+                    }
+                    pieces += 1;
+                }
+                if tx
+                    .send(Ok(
+                        sql_dump_foot(swiss_host::dbbrowser::DbDialect::Mysql)
+                            .as_bytes()
+                            .to_vec(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                pieces += 1;
+                // Written before the sender drops (the receiver's None), so a consumer that
+                // drained the body always sees the final count.
+                if let Ok(mut seen) = seen_ref.lock() {
+                    seen.dump_pieces = pieces;
+                }
+            });
+            Ok(swiss_host::dbbrowser::SqlDump {
+                columns: dump_columns,
+                rows,
+                capped,
+                body: rx,
+            })
+        }
         async fn import_table(&self, o: &Value) -> Result<Value, String> {
             if let Ok(mut seen) = self.seen.lock() {
                 seen.imported = Some(json!({
                     "header": o.get("header"),
                     "lines": o.get("lines"),
                     "mapping": o.get("mapping"),
+                    "mode": o.get("mode"),
                 }));
             }
             let header: Vec<String> = o
@@ -1424,6 +1619,7 @@ mod tests {
             .unwrap()
             .contains("filename=\"csv-users\""));
         assert_eq!(headers["x-export-rows"].to_str().unwrap(), "2");
+        assert_eq!(headers["x-export-format"].to_str().unwrap(), "csv");
         assert!(text.contains("id,name"));
 
         let app = router_of(vec![db_entry(
@@ -1500,6 +1696,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_sql_export_streams_a_replayable_dump_in_pieces() {
+        // docs/22 W4.4: format=sql answers a dump — CREATE TABLE head, the dialect's FK
+        // stance, then the rows as ~1 MB multi-value INSERTs — streamed as several body
+        // pieces instead of one folded string, so the producer never holds the whole table.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, headers, _, text) =
+            call(app, "GET", "/api/db/db/export?table=users&format=sql", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["x-export-format"].to_str().unwrap(), "sql");
+        assert_eq!(headers["content-type"], "application/sql; charset=utf-8");
+        assert!(headers["content-disposition"]
+            .to_str()
+            .unwrap()
+            .contains("filename=\"sql-users\""));
+        assert_eq!(headers["x-export-rows"].to_str().unwrap(), "400");
+        assert_eq!(headers["x-export-capped"].to_str().unwrap(), "0");
+        assert!(text.starts_with("-- swiss SQL dump\n"), "{text:.120}");
+        assert!(text.contains("SET FOREIGN_KEY_CHECKS=0;\n"));
+        assert!(text.contains("CREATE TABLE `stub`"));
+        assert!(text.ends_with("SET FOREIGN_KEY_CHECKS=1;\n"));
+        // 400 rows of ~6 KB cannot ride one statement under the 1 MB threshold: the dump
+        // folds them into several INSERTs, and the channel carried them as several pieces
+        // (head, each statement, foot) — the streaming the folded formats cannot offer.
+        assert!(text.len() > 2 * swiss_host::dbbrowser::EXPORT_SQL_MAX_PACKET);
+        let statements = text.matches("INSERT INTO `app`.`stub`").count();
+        assert!(
+            statements >= 2,
+            "{statements} statements — the 1 MB threshold should have split them"
+        );
+        for stmt in text.split("INSERT INTO `app`.`stub`").skip(1) {
+            assert!(
+                stmt.len() <= swiss_host::dbbrowser::EXPORT_SQL_MAX_PACKET + 10,
+                "a statement crossed the flush threshold"
+            );
+        }
+        assert_eq!(text.matches("\n(").count(), 400);
+        let pieces = seen.lock().expect("seen").dump_pieces;
+        assert!(pieces >= statements + 2, "head and foot ship as pieces too: {pieces}");
+        let opts = seen
+            .lock()
+            .expect("seen")
+            .export_opts
+            .clone()
+            .expect("export opts recorded");
+        assert_eq!(opts["format"], json!("sql"));
+        assert_eq!(opts["table"], "users");
+
+        // The grid's filters ride the sql arm exactly as they ride csv (docs/22 W0.2): the
+        // WHERE the dump streams is the WHERE the page counted.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let terms = json!([{ "column": "pad", "op": "like", "value": "x" }]).to_string();
+        let (status, _, _, _) = call(
+            app,
+            "GET",
+            &format!(
+                "/api/db/db/export?table=users&format=sql&filters={}",
+                urlencode(&terms)
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            seen.lock()
+                .expect("seen")
+                .export_opts
+                .as_ref()
+                .expect("export opts recorded")["filters"],
+            json!([{ "column": "pad", "op": "like", "value": "x" }])
+        );
+
+        // The row cap (docs/22 W4.4): EXPORT_ROW_CAP stays the ceiling; a lower limit
+        // truncates the dump and flags it, exactly as the folded formats do.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, headers, _, text) = call(
+            app,
+            "GET",
+            "/api/db/db/export?table=users&format=sql&limit=50",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["x-export-rows"].to_str().unwrap(), "50");
+        assert_eq!(headers["x-export-capped"].to_str().unwrap(), "1");
+        assert_eq!(text.matches("\n(").count(), 50);
+    }
+
+    #[tokio::test]
     async fn imports_csv_rows_and_rejects_malformed_payloads() {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
@@ -1555,6 +1852,91 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let err = body.expect("json")["error"].as_str().unwrap().to_string();
         assert!(err.contains("mapping"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_import_can_ask_for_upsert_and_refuses_unknown_modes() {
+        // docs/22 W4.5: mode "upsert" rides the payload to the browser; anything but the two
+        // known spellings is the route's own 400, the same rule ddl's op follows.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id", "name"],
+                "lines": ["1,alice", "2,bob"],
+                "mapping": ["id", "name"],
+                "mode": "upsert"
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json"), json!({ "inserted": 2 }));
+        assert_eq!(
+            seen.lock()
+                .expect("seen")
+                .imported
+                .take()
+                .expect("imported")["mode"],
+            json!("upsert")
+        );
+
+        // The default stays the default: no mode field reaches the browser at all, so an
+        // old panel riding a new backend keeps byte-identical import requests.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, _, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id"],
+                "lines": ["1"],
+                "mapping": ["id"]
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(seen
+            .lock()
+            .expect("seen")
+            .imported
+            .take()
+            .expect("imported")["mode"]
+            .is_null());
+
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id"],
+                "lines": ["1"],
+                "mapping": ["id"],
+                "mode": "merge"
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("mode must be insert or upsert"), "{err}");
     }
 
     #[tokio::test]

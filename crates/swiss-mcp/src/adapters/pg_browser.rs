@@ -7,17 +7,20 @@
 use super::direct::Lazy;
 use super::pg::{
     pg_browse_table_params, pg_grammar_params, pg_list_tables_grammar_sql, pg_list_tables_sql,
-pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL,
-    PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL, PK_SQL,
+    pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL, PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL,
+    PK_SQL,
 };
 use super::sql::{clamp_row_limit, limit_report, with_row_limit};
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
-    browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql, browse_table_sort,
-    build_ddl_op_sql, build_edit_statements, build_pg_ddl, export_row_limit, js_to_string,
-    map_import_rows, readback_plan, to_browse_columns, to_browse_indexes, to_csv, to_json_lines,
-    BrowseColumn, BrowseForeignKey, DbBrowser, DbDialect, ReadBack, EXPORT_CHUNK, EXPORT_ROW_CAP,
-    IMPORT_ROW_CAP,
+    browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
+    browse_table_sort, build_ddl_op_sql, build_edit_statements, build_import_statements,
+    build_pg_ddl, export_row_limit,
+    js_to_string, map_import_rows, readback_plan, sql_dump_foot, sql_dump_head,
+    sql_dump_literal,
+    to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
+    BrowseForeignKey, DbBrowser, DbDialect, DumpPiece, ReadBack, SqlDump, SqlInsertBatch,
+    EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
 use sqlx::PgPool;
@@ -64,6 +67,58 @@ impl PgBrowser {
             .filter_map(|r| r.get("column").and_then(Value::as_str).map(str::to_string))
             .collect();
         Ok((to_browse_columns(&columns, &primary), primary))
+    }
+
+    /// The catalog-sketch CREATE TABLE and the FK rows it folds in — the shared tail of
+    /// describe_table and the SQL dump's head (docs/22 W4.4), built through one helper so the
+    /// dump's DDL is by construction the DDL the Structure tab shows.
+    async fn ddl_of(
+        &self,
+        schema: &str,
+        table: &str,
+        columns: &[BrowseColumn],
+        primary: &[String],
+    ) -> Result<(String, Vec<BrowseForeignKey>), String> {
+        // The FK query needs permission on pg_constraint — a refusal answers [] (Node caught it).
+        let fks = self
+            .query(PG_BROWSE_FK_SQL, &[json!(schema), json!(table)])
+            .await
+            .unwrap_or_default();
+        let foreign_keys: Vec<BrowseForeignKey> = fks
+            .into_iter()
+            .map(|r| BrowseForeignKey {
+                name: r
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                column: r
+                    .get("column")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                ref_schema: r
+                    .get("ref_schema")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                ref_table: r
+                    .get("ref_table")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                ref_column: r
+                    .get("ref_column")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            })
+            .collect();
+        // Postgres has no SHOW CREATE TABLE — a faithful sketch from the catalog (dbbrowser.rs).
+        Ok((
+            build_pg_ddl(schema, table, columns, primary, &foreign_keys)?,
+            foreign_keys,
+        ))
     }
 }
 
@@ -235,12 +290,11 @@ impl DbBrowser for PgBrowser {
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         let (columns, primary) = self.metadata(&schema, table).await?;
         let params = vec![json!(schema), json!(table)];
-        let (indexes, fks) = tokio::join!(
+        let (indexes, ddl) = tokio::join!(
             self.query(PG_BROWSE_INDEXES_SQL, &params),
-            self.query(PG_BROWSE_FK_SQL, &params)
+            self.ddl_of(&schema, table, &columns, &primary)
         );
-        // The FK query needs permission on pg_constraint — a refusal answers [] (Node caught it).
-        let fks = fks.unwrap_or_default();
+        let (ddl, foreign_keys) = ddl?;
         // Fold rows into toBrowseIndexes shape first, exactly where Node's adapter mapped them:
         // a CREATE UNIQUE INDEX says so in its definition; the PK index is flagged by
         // indisprimary itself, not by a <table>_pkey name guess.
@@ -268,38 +322,6 @@ impl DbBrowser for PgBrowser {
             })
             .collect();
         let indexes = to_browse_indexes(&index_rows);
-        let foreign_keys: Vec<BrowseForeignKey> = fks
-            .into_iter()
-            .map(|r| BrowseForeignKey {
-                name: r
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                column: r
-                    .get("column")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                ref_schema: r
-                    .get("ref_schema")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                ref_table: r
-                    .get("ref_table")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                ref_column: r
-                    .get("ref_column")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            })
-            .collect();
-        // Postgres has no SHOW CREATE TABLE — a faithful sketch from the catalog (dbbrowser.rs).
-        let ddl = build_pg_ddl(&schema, table, &columns, &primary, &foreign_keys)?;
         Ok(json!({
             "schema": schema, "table": table, "columns": columns, "primaryKey": primary,
             "indexes": indexes, "foreignKeys": foreign_keys, "ddl": ddl,
@@ -474,6 +496,128 @@ impl DbBrowser for PgBrowser {
         }))
     }
 
+    async fn export_sql_dump(&self, o: &Value) -> Result<SqlDump, String> {
+        let schema = o
+            .get("schema")
+            .and_then(Value::as_str)
+            .unwrap_or("public")
+            .to_string();
+        let table = o.get("table").and_then(Value::as_str).unwrap_or("");
+        if table.is_empty() {
+            return Err("table is required".into());
+        }
+        let (columns, primary) = self.metadata(&schema, table).await?;
+        let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+        let cap = export_row_limit(o.get("limit"));
+        // The dump exports the FILTERED set: the same browse_where the page, the COUNT and the
+        // folded exports use (docs/22 W0.2), values bound, never inlined.
+        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
+        // Header facts come from that same WHERE's COUNT, so rows and capped are true before
+        // the first byte ships (the folded formats learn their row count only after fetching;
+        // a writer racing the stream can still move the table under a taken count — inherent).
+        let count_stmt = browse_count_sql(
+            DbDialect::Pg,
+            Some(&schema),
+            table,
+            &where_.frag,
+            &where_.params,
+        )?;
+        let count = total_of(&self.query(&count_stmt.sql, &count_stmt.params).await?);
+        let rows = count.min(cap);
+        let capped = count > rows;
+        let (ddl, _) = self.ddl_of(&schema, table, &columns, &primary).await?;
+        let head = sql_dump_head(DbDialect::Pg, Some(&schema), table, &ddl)?;
+        let exprs = swiss_host::dbbrowser::pg_typed_exprs(&columns)?;
+        // The producer task holds one chunk of source rows and one statement under
+        // construction — never the table. The bounded channel (2 pieces) hands each finished
+        // statement to the route as the socket takes it, so a slow client throttles the dump
+        // instead of growing it.
+        let (tx, rx) = tokio::sync::mpsc::channel::<DumpPiece>(2);
+        let dump_columns = names.clone();
+        let conn = self.conn.clone();
+        let table = table.to_string();
+        tokio::spawn(async move {
+            if tx.send(Ok(head.into_bytes())).await.is_err() {
+                return; // the consumer is gone; stop fetching
+            }
+            let mut batch = match SqlInsertBatch::new(DbDialect::Pg, Some(&schema), &table, &names) {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            };
+            // Offset paging in chunks, the folded export's loop shape: the cap keeps the
+            // O(offset) tail-walk bounded and each page is released before the next is read.
+            let mut offset = 0i64;
+            while offset < rows {
+                let chunk = EXPORT_CHUNK.min(rows - offset);
+                let stmt = match browse_rows_sql(
+                    DbDialect::Pg,
+                    Some(&schema),
+                    &table,
+                    &exprs,
+                    None,
+                    offset,
+                    chunk,
+                    &where_.frag,
+                    &where_.params,
+                ) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+                let page = match async {
+                    let pool = conn.get().await?;
+                    super::pg::pg_query_rows(&pool, &stmt.sql, &stmt.params).await
+                }
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+                let fetched = page.len() as i64;
+                for row in &page {
+                    // The dump body is EXECUTED on replay — sql_dump_literal, never the
+                    // clipboard's sql_literal (docs/22 W4.4 audit blocker).
+                    let literals: Result<Vec<String>, String> =
+                        names.iter().map(|c| sql_dump_literal(DbDialect::Pg, row.get(c))).collect();
+                    let literals = match literals {
+                        Ok(l) => l,
+                        Err(e) => {
+                            let _ = tx.send(Err(e)).await;
+                            return;
+                        }
+                    };
+                    if let Some(stmt) = batch.push(&format!("({})", literals.join(", "))) {
+                        if tx.send(Ok(stmt.into_bytes())).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                if fetched < chunk {
+                    break; // the table ran out before the count (a delete raced the COUNT)
+                }
+                offset += chunk;
+            }
+            if let Some(tail) = batch.finish() {
+                let _ = tx.send(Ok(tail.into_bytes())).await;
+            }
+            let _ = tx.send(Ok(sql_dump_foot(DbDialect::Pg).as_bytes().to_vec())).await;
+        });
+        Ok(SqlDump {
+            columns: dump_columns,
+            rows,
+            capped,
+            body: rx,
+        })
+    }
+
     async fn import_table(&self, o: &Value) -> Result<Value, String> {
         let schema = o
             .get("schema")
@@ -520,20 +664,31 @@ impl DbBrowser for PgBrowser {
         if rows.is_empty() {
             return Err("nothing to import after mapping — every row was empty or skipped".into());
         }
-        let typed: Vec<swiss_host::dbbrowser::BrowseEdit> = rows
-            .into_iter()
-            .map(|values| swiss_host::dbbrowser::BrowseEdit::Insert { values })
-            .collect();
-        let (columns, _) = self.metadata(&schema, table).await?;
-        let stmts =
-            build_edit_statements(DbDialect::Pg, Some(&schema), table, &typed, &columns, &[])?;
+        // docs/22 W4.5: upsert appends ON CONFLICT (pk) DO UPDATE per row — a table without
+        // a primary key cannot target a conflict on Postgres, so the builder degrades to the
+        // plain insert statements and says so in the reply; insert mode stays byte-identical
+        // to the edit grid's insert arm. One transaction either way.
+        let mode = swiss_host::dbbrowser::parse_import_mode(o.get("mode"))?;
+        let (columns, primary) = self.metadata(&schema, table).await?;
+        let (stmts, degraded) = build_import_statements(
+            DbDialect::Pg,
+            Some(&schema),
+            table,
+            &rows,
+            &columns,
+            &primary,
+            mode,
+        )?;
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         for stmt in &stmts {
             super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
         }
         tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(json!({ "inserted": typed.len() }))
+        if let Some(note) = degraded {
+            return Ok(json!({ "inserted": rows.len(), "mode": "insert", "note": note }));
+        }
+        Ok(json!({ "inserted": rows.len() }))
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {

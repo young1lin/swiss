@@ -235,6 +235,11 @@ pub const IMPORT_ROW_CAP: usize = 10_000;
 pub const EXPORT_ROW_CAP: i64 = 100_000;
 /// Rows fetched per chunk while paging through an export.
 pub const EXPORT_CHUNK: i64 = 5_000;
+/// The flush threshold of a streaming SQL dump (docs/22 W4.4) — adminer's max_packet number
+/// (`adminer.inc.php:982`): rows accumulate into one multi-value INSERT until the statement
+/// would cross this size, then the statement ships whole and a fresh one opens. A single row
+/// larger than the threshold is never split — it ships alone, exactly as adminer let it.
+pub const EXPORT_SQL_MAX_PACKET: usize = 1_048_576;
 
 // --- JS value coercion ---------------------------------------------------------------------------
 
@@ -452,6 +457,24 @@ pub struct ExportResult {
     pub body: String,
 }
 
+/// One piece of a streaming export body: UTF-8 bytes ready for the socket, or the error that
+/// ended the dump early. Metadata failures happen before any piece exists and answer as a
+/// plain Err from export_sql_dump; a failure mid-stream aborts the download, which is the
+/// honest behavior of a body whose headers were already sent.
+pub type DumpPiece = Result<Vec<u8>, String>;
+
+/// The streaming form of format=sql (docs/22 W4.4): response-header facts up front — rows and
+/// capped come from a COUNT over the same WHERE the grid, the CSV and the NDJSON exports use —
+/// and the body arriving as pieces on a bounded channel. The producer holds one chunk of
+/// source rows and one statement under construction, never the table: a dump of any capped
+/// size costs O(chunk), where the folded formats cost O(table) for their body string.
+pub struct SqlDump {
+    pub columns: Vec<String>,
+    pub rows: i64,
+    pub capped: bool,
+    pub body: tokio::sync::mpsc::Receiver<DumpPiece>,
+}
+
 /// One redis key as the key list shows it. ttl is seconds; -1 = no expiry.
 #[derive(Clone, Debug, Serialize)]
 pub struct RedisKeyInfo {
@@ -498,7 +521,7 @@ pub struct BrowseFilter {
 }
 
 /// A statement plus its bound parameters.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BuiltStatement {
     pub sql: String,
     pub params: Vec<Value>,
@@ -560,6 +583,11 @@ pub trait DbBrowser: Send + Sync {
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String>;
     /// Stream a whole table (capped at EXPORT_ROW_CAP) out as CSV or newline JSON.
     async fn export_table(&self, o: &Value) -> Result<Value, String>;
+    /// Stream the same table out as a SQL dump — the format=sql arm of the export (docs/22
+    /// W4.4): the CREATE TABLE head (the same DDL path describe_table uses), then the rows as
+    /// ~1 MB multi-value INSERTs. The head facts come back before the first byte ships; the
+    /// body arrives as channel pieces so the dump never materializes whole.
+    async fn export_sql_dump(&self, o: &Value) -> Result<SqlDump, String>;
     /// Insert mapped CSV rows in ONE transaction (all-or-nothing), via the same statement
     /// builders the edit grid uses. Returns rows written.
     async fn import_table(&self, o: &Value) -> Result<Value, String>;
@@ -1280,6 +1308,173 @@ pub fn readback_plan(
 /// dropped from SET/INSERT (a stale page may reference a dropped column); an edit that ends up
 /// with nothing to do is an error, because "commit 3 changes" that silently did 2 is a lie.
 ///
+/// The INSERT for one map of values — the shared body of the edit grid's insert arm and both
+/// import modes (docs/22 W4.5): the same known-column filter, the same placeholder typing, the
+/// same column order (the map's own), so a row commits as the same statement wherever it came
+/// from. Returns the columns it mapped (an upsert tail addresses them), the SQL without any
+/// suffix, and the bound parameters in SQL order.
+fn insert_half(
+    dialect: DbDialect,
+    table_ref: &str,
+    values: &Map<String, Value>,
+    known: &HashSet<&str>,
+    type_of: &HashMap<&str, &str>,
+) -> Result<(Vec<String>, String, Vec<Value>), String> {
+    // Object.keys order — the panel's own insertion order.
+    let cols: Vec<&String> = values
+        .keys()
+        .filter(|c| known.contains(c.as_str()))
+        .collect();
+    if cols.is_empty() {
+        return Err("insert names no column of this table".into());
+    }
+    let mut params: Vec<Value> = Vec::new();
+    let mut value_sql: Vec<String> = Vec::new();
+    for c in &cols {
+        params.push(values[*c].clone());
+        value_sql.push(typed_ph(dialect, &params, type_of.get(c.as_str()).copied()));
+    }
+    let names = cols
+        .iter()
+        .map(|c| quote_ident(dialect, c))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    Ok((
+        cols.into_iter().cloned().collect(),
+        format!(
+            "INSERT INTO {table_ref} ({names}) VALUES ({})",
+            value_sql.join(", ")
+        ),
+        params,
+    ))
+}
+
+/// The import modes (docs/22 W4.5): insert keeps today's behavior; upsert turns every row's
+/// INSERT into a conflict-aware statement so re-importing a file lands instead of key-clashing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImportMode {
+    Insert,
+    Upsert,
+}
+
+/// Read the `mode` option: absent, null and empty stay the insert default; anything but the two
+/// known spellings is the caller's whole mistake.
+pub fn parse_import_mode(v: Option<&Value>) -> Result<ImportMode, String> {
+    let empty = matches!(v, None | Some(Value::Null))
+        || matches!(v, Some(Value::String(s)) if s.is_empty());
+    if empty {
+        return Ok(ImportMode::Insert);
+    }
+    match v {
+        Some(Value::String(s)) if s == "insert" => Ok(ImportMode::Insert),
+        Some(Value::String(s)) if s == "upsert" => Ok(ImportMode::Upsert),
+        Some(other) => Err(format!(
+            "mode must be insert or upsert, not {}",
+            js_to_string(Some(other))
+        )),
+        None => Ok(ImportMode::Insert),
+    }
+}
+
+/// The conflict tail of an upsert import (docs/22 W4.5), adminer's insertUpdate per dialect
+/// (`drivers/mysql.inc.php:292`, `drivers/pgsql.inc.php:340`): MySQL maps every column the row
+/// carries (`col` = VALUES(col)) — a table without any unique key simply never conflicts;
+/// Postgres targets the table's primary key and updates the non-key columns from EXCLUDED,
+/// DO NOTHING when the row carries nothing but key columns. An Err is Postgres without a
+/// primary key — ON CONFLICT has no target there, and the caller degrades to plain inserts
+/// with a note instead of failing the whole file.
+pub fn upsert_suffix(
+    dialect: DbDialect,
+    row_columns: &[String],
+    primary_key: &[String],
+) -> Result<String, String> {
+    match dialect {
+        DbDialect::Mysql => {
+            let sets: Result<Vec<String>, String> = row_columns
+                .iter()
+                .map(|c| {
+                    let q = quote_ident(dialect, c)?;
+                    Ok(format!("{q} = VALUES({q})"))
+                })
+                .collect();
+            Ok(format!(" ON DUPLICATE KEY UPDATE {}", sets?.join(", ")))
+        }
+        DbDialect::Pg => {
+            if primary_key.is_empty() {
+                return Err(
+                    "table has no primary key — Postgres has no ON CONFLICT target".into(),
+                );
+            }
+            let conflict = primary_key
+                .iter()
+                .map(|c| quote_ident(dialect, c))
+                .collect::<Result<Vec<_>, _>>()?;
+            let key: HashSet<&str> = primary_key.iter().map(String::as_str).collect();
+            let updates: Result<Vec<String>, String> = row_columns
+                .iter()
+                .filter(|c| !key.contains(c.as_str()))
+                .map(|c| {
+                    let q = quote_ident(dialect, c)?;
+                    Ok(format!("{q} = EXCLUDED.{q}"))
+                })
+                .collect();
+            let updates = updates?;
+            Ok(if updates.is_empty() {
+                format!(" ON CONFLICT ({}) DO NOTHING", conflict.join(", "))
+            } else {
+                format!(
+                    " ON CONFLICT ({}) DO UPDATE SET {}",
+                    conflict.join(", "),
+                    updates.join(", ")
+                )
+            })
+        }
+    }
+}
+
+/// Import rows → statements (docs/22 W4.5). Insert mode produces exactly the statements the
+/// edit grid's insert arm builds, one per row, by construction. Upsert appends the conflict
+/// tail per row (the columns a row carries vary — empty CSV cells drop). A table that cannot
+/// upsert (Postgres without a primary key) comes back in INSERT form plus the note that says
+/// why, so the file still lands in one transaction instead of failing on statement one.
+pub fn build_import_statements(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    rows: &[Map<String, Value>],
+    columns: &[BrowseColumn],
+    primary_key: &[String],
+    mode: ImportMode,
+) -> Result<(Vec<BuiltStatement>, Option<&'static str>), String> {
+    let table_ref = qualified(dialect, schema, table)?;
+    let known: HashSet<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+    let type_of: HashMap<&str, &str> = columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
+        .collect();
+    let degraded =
+        if mode == ImportMode::Upsert && dialect == DbDialect::Pg && primary_key.is_empty() {
+            Some("table has no primary key — upsert is not possible on Postgres, rows were inserted instead")
+        } else {
+            None
+        };
+    let upsert = mode == ImportMode::Upsert && degraded.is_none();
+    let mut out: Vec<BuiltStatement> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let (cols, sql, params) = insert_half(dialect, &table_ref, row, &known, &type_of)?;
+        let suffix = if upsert {
+            upsert_suffix(dialect, &cols, primary_key)?
+        } else {
+            String::new()
+        };
+        out.push(BuiltStatement {
+            sql: format!("{sql}{suffix}"),
+            params,
+        });
+    }
+    Ok((out, degraded))
+}
+
 /// Updates and deletes address rows by the FULL primary key only — the DBeaver default — so an
 /// edit can never fan out over more rows than the cell you changed.
 pub fn build_edit_statements(
@@ -1315,30 +1510,11 @@ pub fn build_edit_statements(
             };
         match edit {
             BrowseEdit::Insert { values } => {
-                // Object.keys order — the panel's own insertion order.
-                let cols: Vec<&String> = values
-                    .keys()
-                    .filter(|c| known.contains(c.as_str()))
-                    .collect();
-                if cols.is_empty() {
-                    return Err("insert names no column of this table".into());
-                }
-                let mut value_sql: Vec<String> = Vec::new();
-                for c in &cols {
-                    params.push(values[*c].clone());
-                    value_sql.push(typed_ph(dialect, &params, type_of.get(c.as_str()).copied()));
-                }
-                let names = cols
-                    .iter()
-                    .map(|c| quote_ident(dialect, c))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(", ");
+                let (_, sql, insert_params) =
+                    insert_half(dialect, &table_ref, values, &known, &type_of)?;
                 out.push(BuiltStatement {
-                    sql: format!(
-                        "INSERT INTO {table_ref} ({names}) VALUES ({})",
-                        value_sql.join(", ")
-                    ),
-                    params,
+                    sql,
+                    params: insert_params,
                 });
             }
             BrowseEdit::Delete { pk } => {
@@ -1507,28 +1683,30 @@ pub fn build_pg_ddl(
                 line.push_str(&format!(" DEFAULT {d}"));
             }
         }
-        lines.push(line + ",");
+        lines.push(line);
     }
     if !primary_key.is_empty() {
         let cols = primary_key
             .iter()
             .map(|c| quote_ident(DbDialect::Pg, c))
             .collect::<Result<Vec<_>, _>>()?;
-        lines.push(format!("    PRIMARY KEY ({}),", cols.join(", ")));
+        lines.push(format!("    PRIMARY KEY ({})", cols.join(", ")));
     }
     for fk in foreign_keys {
         lines.push(format!(
-            "    FOREIGN KEY ({}) REFERENCES {}.{} ({}),",
+            "    FOREIGN KEY ({}) REFERENCES {}.{} ({})",
             quote_ident(DbDialect::Pg, &fk.column)?,
             quote_ident(DbDialect::Pg, &fk.ref_schema)?,
             quote_ident(DbDialect::Pg, &fk.ref_table)?,
             quote_ident(DbDialect::Pg, &fk.ref_column)?
         ));
     }
+    // Lines join with their own commas — the last one must not carry one into the closing
+    // paren, or the sketch (and any SQL dump that replays it, docs/22 W4.4) is invalid SQL.
     let body = if lines.is_empty() {
         String::new()
     } else {
-        format!("\n{}\n", lines.join("\n"))
+        format!("\n{}\n", lines.join(",\n"))
     };
     Ok(format!(
         "CREATE TABLE {}.{} ({body});",
@@ -1747,7 +1925,64 @@ pub fn csv_escape(v: Option<&Value>) -> String {
     out
 }
 
-/// One SQL literal for the clipboard — never executed, so inlining is safe here.
+/// One SQL literal for a DUMP BODY — the dump is EXECUTED on replay (docs/22 W4.4), so the
+/// escaping has to hold as real SQL, not just as display. The clipboard's sql_literal only
+/// doubles quotes and must never be used here: a trailing backslash in a MySQL value swallowed
+/// the closing quote and let an ordinary string break (or inject into) the replay — an audit
+/// blocker. MySQL escapes exactly what adminer's real_escape_string escapes
+/// ("drivers/mysql.inc.php" q(): backslash, single quote, double quote, LF, CR, NUL, Ctrl-Z);
+/// Postgres doubles single quotes (its text type holds every other byte raw) and REFUSES a
+/// NUL — emitting the raw byte would corrupt the dump, and a clear error lets the caller stop.
+pub fn sql_dump_literal(dialect: DbDialect, v: Option<&Value>) -> Result<String, String> {
+    let Some(v) = v else {
+        return Ok("NULL".into());
+    };
+    match v {
+        Value::Null => Ok("NULL".into()),
+        Value::Number(n) => Ok(number_to_js_string(n)),
+        Value::Bool(b) => Ok(if *b { "true".into() } else { "false".into() }),
+        other => {
+            let s = js_to_string(Some(other));
+            let mut out = String::with_capacity(s.len() + 2);
+            out.push('\'');
+            match dialect {
+                DbDialect::Mysql => {
+                    for c in s.chars() {
+                        match c {
+                            '\\' => out.push_str("\\\\"),
+                            '\'' => out.push_str("\\'"),
+                            '"' => out.push_str("\\\""),
+                            '\n' => out.push_str("\\n"),
+                            '\r' => out.push_str("\\r"),
+                            '\0' => out.push_str("\\0"),
+                            '\u{1a}' => out.push_str("\\Z"),
+                            _ => out.push(c),
+                        }
+                    }
+                }
+                DbDialect::Pg => {
+                    if s.contains('\0') {
+                        return Err(
+                            "a Postgres text value holds a NUL byte — the dump cannot express it"
+                                .into(),
+                        );
+                    }
+                    for c in s.chars() {
+                        if c == '\'' {
+                            out.push('\'');
+                        }
+                        out.push(c);
+                    }
+                }
+            }
+            out.push('\'');
+            Ok(out)
+        }
+    }
+}
+
+/// One SQL literal for the clipboard — never executed, so inlining is safe here. Text that
+/// WILL be executed (a dump body, a replayed statement) belongs to sql_dump_literal instead.
 pub fn sql_literal(v: Option<&Value>) -> String {
     let Some(v) = v else {
         return "NULL".into();
@@ -1809,6 +2044,115 @@ pub fn to_insert_statement(
         "INSERT INTO {} ({names}) VALUES ({values});",
         qualified(dialect, schema, table)?
     ))
+}
+
+// --- streaming SQL dump (docs/22 W4.4) ------------------------------------------------------------
+
+/// Accumulates multi-value INSERT rows for a streaming SQL dump, adminer's dumpData shape
+/// (`adminer.inc.php:1007-1070`): one `INSERT INTO … VALUES` prefix, each row appended behind
+/// a newline, the statement flushed whole the moment one more row would cross
+/// [`EXPORT_SQL_MAX_PACKET`]. Nothing but the statement under construction is held, so a dump
+/// of any capped size costs O(chunk), never O(table).
+pub struct SqlInsertBatch {
+    prefix: String,
+    buffer: String,
+    /// prefix + buffer — adminer's strlen($buffer), which always carried its own prefix.
+    used: usize,
+}
+
+impl SqlInsertBatch {
+    /// The prefix vets and quotes every identifier the way the edit grid's statements do, so
+    /// what the dump replays is what Commit would have run.
+    pub fn new(
+        dialect: DbDialect,
+        schema: Option<&str>,
+        table: &str,
+        columns: &[String],
+    ) -> Result<Self, String> {
+        let names = columns
+            .iter()
+            .map(|c| quote_ident(dialect, c))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        Ok(Self {
+            prefix: format!(
+                "INSERT INTO {} ({names}) VALUES",
+                qualified(dialect, schema, table)?
+            ),
+            buffer: String::new(),
+            used: 0,
+        })
+    }
+
+    /// Add one row's value literals ("(1, 'a')", no leading newline). Some(statement) when
+    /// the row did not fit and the statement so far must ship before this row opens the next
+    /// one; a row larger than the threshold alone still joins — rows are never split.
+    pub fn push(&mut self, row_sql: &str) -> Option<String> {
+        // The fit check is adminer's (`adminer.inc.php:1058`): used + 4 (length-spec
+        // headroom) + the row with its leading newline + the ";\n" every statement ends with.
+        let piece = row_sql.len() + 1 + ";\n".len();
+        if self.used != 0 && self.used + 4 + piece >= EXPORT_SQL_MAX_PACKET {
+            let out = format!("{}{};\n", self.prefix, self.buffer);
+            self.buffer = format!("\n{row_sql}");
+            self.used = self.prefix.len() + self.buffer.len();
+            return Some(out);
+        }
+        if self.buffer.is_empty() {
+            self.buffer.push('\n');
+        } else {
+            self.buffer.push_str(",\n");
+        }
+        self.buffer.push_str(row_sql);
+        self.used = self.prefix.len() + self.buffer.len();
+        None
+    }
+
+    /// The last, not-yet-full statement — the dump's closing INSERT when any rows remain.
+    pub fn finish(self) -> Option<String> {
+        if self.buffer.is_empty() {
+            None
+        } else {
+            Some(format!("{}{};\n", self.prefix, self.buffer))
+        }
+    }
+}
+
+/// The preamble of a streaming SQL dump (docs/22 W4.4): a provenance comment, the dialect's
+/// foreign-key stance, and the CREATE TABLE from the same DDL path the Structure tab uses.
+/// MySQL's `SET FOREIGN_KEY_CHECKS=0` lets the replay session load rows before any referenced
+/// table exists (the footer restores it); Postgres has no session switch, so a comment states
+/// the ordering contract instead. `ddl` arrives exactly as describe_table served it.
+pub fn sql_dump_head(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    ddl: &str,
+) -> Result<String, String> {
+    let target = qualified(dialect, schema, table)?;
+    // SHOW CREATE TABLE carries no terminator; build_pg_ddl already ends with ';'.
+    let mut ddl = ddl.trim_end().to_string();
+    if !ddl.is_empty() && !ddl.ends_with(';') {
+        ddl.push(';');
+    }
+    let stance = if dialect == DbDialect::Mysql {
+        format!(
+            "-- {target}: foreign-key checks are off for the replay session\n\
+             SET FOREIGN_KEY_CHECKS=0;\n"
+        )
+    } else {
+        format!("-- {target}: Postgres has no session FK switch - replay in dependency order\n")
+    };
+    Ok(format!("-- swiss SQL dump\n{stance}\n{ddl}\n"))
+}
+
+/// The closing statement of a dump: MySQL restores the FK checks the head disabled; Postgres
+/// needs nothing.
+pub fn sql_dump_foot(dialect: DbDialect) -> &'static str {
+    if dialect == DbDialect::Mysql {
+        "SET FOREIGN_KEY_CHECKS=1;\n"
+    } else {
+        ""
+    }
 }
 
 #[cfg(test)]
@@ -2753,6 +3097,10 @@ mod tests {
         assert!(ddl.contains("\"note\" text"));
         assert!(ddl.contains("PRIMARY KEY (\"id\")"));
         assert!(ddl.contains("FOREIGN KEY (\"id\") REFERENCES \"public\".\"users\" (\"id\")"));
+        // docs/22 W4.4 live-verify caught this once: a trailing comma after the last clause
+        // made the sketch (and any SQL dump that replays it) invalid SQL. The tail must be
+        // the clause, then the paren — never a comma between them.
+        assert!(ddl.ends_with("    FOREIGN KEY (\"id\") REFERENCES \"public\".\"users\" (\"id\")\n);"));
     }
 
     #[test]
@@ -2967,5 +3315,241 @@ mod tests {
             "delete"
         );
         assert!(browse_edit_of(&json!({ "op": "explode" })).is_err());
+    }
+
+    // --- streaming SQL dump (docs/22 W4.4) ------------------------------------------------------------
+
+    #[test]
+    fn sql_dump_head_and_foot_snapshots() {
+        // MySQL: the FK switch brackets the dump so a replay session can load rows before
+        // referenced tables exist; the DDL arrives from SHOW CREATE TABLE with no ';'.
+        let head = sql_dump_head(
+            DbDialect::Mysql,
+            Some("app"),
+            "users",
+            "CREATE TABLE `users` (\n  `id` int\n)",
+        )
+        .unwrap();
+        assert_eq!(
+            head,
+            "-- swiss SQL dump\n\
+             -- `app`.`users`: foreign-key checks are off for the replay session\n\
+             SET FOREIGN_KEY_CHECKS=0;\n\
+             \n\
+             CREATE TABLE `users` (\n  `id` int\n);\n"
+        );
+        // Postgres: no session switch exists, so the comment says the ordering contract; the
+        // catalog-sketch DDL already ends with ';' and must not gain a second one.
+        let pg = sql_dump_head(
+            DbDialect::Pg,
+            Some("public"),
+            "t",
+            "CREATE TABLE \"public\".\"t\" (\n    \"id\" integer NOT NULL\n);",
+        )
+        .unwrap();
+        assert_eq!(
+            pg,
+            "-- swiss SQL dump\n\
+             -- \"public\".\"t\": Postgres has no session FK switch - replay in dependency order\n\
+             \n\
+             CREATE TABLE \"public\".\"t\" (\n    \"id\" integer NOT NULL\n);\n"
+        );
+        assert_eq!(sql_dump_foot(DbDialect::Mysql), "SET FOREIGN_KEY_CHECKS=1;\n");
+        assert_eq!(sql_dump_foot(DbDialect::Pg), "");
+    }
+
+    #[test]
+    fn sql_insert_batches_rows_into_multi_value_statements() {
+        let mut batch =
+            SqlInsertBatch::new(DbDialect::Mysql, Some("app"), "users", &["id".into(), "name".into()])
+                .unwrap();
+        assert_eq!(batch.push("(1, 'a')"), None);
+        assert_eq!(batch.push("(2, NULL)"), None);
+        assert_eq!(
+            batch.finish().unwrap(),
+            "INSERT INTO `app`.`users` (`id`, `name`) VALUES\n(1, 'a'),\n(2, NULL);\n"
+        );
+    }
+
+    #[test]
+    fn a_sql_insert_batch_flushes_when_the_next_row_would_cross_the_cap() {
+        // adminer's threshold at work: two ~700 KB rows cannot share one statement under a
+        // 1 MB cap — the first ships whole, the second opens the next statement, and neither
+        // statement is ever split mid-row.
+        let big = format!("('{}')", "x".repeat(700_000));
+        let mut batch = SqlInsertBatch::new(DbDialect::Pg, None, "t", &["pad".into()]).unwrap();
+        assert_eq!(batch.push(&big), None);
+        let shipped = batch.push(&big).expect("second ~700 KB row must flush the first");
+        assert!(shipped.starts_with("INSERT INTO \"t\" (\"pad\") VALUES\n('"));
+        assert!(shipped.ends_with(";\n"));
+        assert!(shipped.len() < EXPORT_SQL_MAX_PACKET + big.len());
+        let tail = batch.finish().unwrap();
+        assert!(tail.starts_with("INSERT INTO \"t\" (\"pad\") VALUES\n('"));
+        // Neither statement crossed the cap by more than the one row that always fits.
+        assert!(tail.len() < EXPORT_SQL_MAX_PACKET + big.len());
+    }
+
+    #[test]
+    fn an_empty_sql_insert_batch_finishes_into_nothing() {
+        let batch = SqlInsertBatch::new(DbDialect::Mysql, None, "t", &["a".to_string()]).unwrap();
+        assert_eq!(batch.finish(), None);
+    }
+
+    // --- import upsert (docs/22 W4.5) ----------------------------------------------------------------
+
+    #[test]
+    fn upsert_tails_match_adminer_per_dialect() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        // MySQL maps every column the row carries — adminer's ON DUPLICATE KEY UPDATE.
+        assert_eq!(
+            upsert_suffix(DbDialect::Mysql, &cols, &["id".to_string()]).unwrap(),
+            " ON DUPLICATE KEY UPDATE `id` = VALUES(`id`), `name` = VALUES(`name`)"
+        );
+        // MySQL needs no primary key: ON DUPLICATE KEY UPDATE rides any unique key.
+        assert!(upsert_suffix(DbDialect::Mysql, &cols, &[]).is_ok());
+        // Postgres targets the primary key and updates the rest from EXCLUDED.
+        assert_eq!(
+            upsert_suffix(DbDialect::Pg, &cols, &["id".to_string()]).unwrap(),
+            " ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\""
+        );
+        // A row that carries nothing but key columns has nothing to update — DO NOTHING.
+        assert_eq!(
+            upsert_suffix(DbDialect::Pg, &["id".to_string()], &["id".to_string()]).unwrap(),
+            " ON CONFLICT (\"id\") DO NOTHING"
+        );
+        // A composite key targets every key column, in table order; mapped non-key columns
+        // all update.
+        assert_eq!(
+            upsert_suffix(DbDialect::Pg, &cols, &["a".to_string(), "b".to_string()]).unwrap(),
+            " ON CONFLICT (\"a\", \"b\") DO UPDATE SET \"id\" = EXCLUDED.\"id\", \"name\" = EXCLUDED.\"name\""
+        );
+        // Postgres without a primary key has no conflict target at all.
+        assert!(upsert_suffix(DbDialect::Pg, &cols, &[]).is_err());
+    }
+
+    #[test]
+    fn import_insert_mode_is_the_edit_grids_insert_arm_byte_for_byte() {
+        let rows = vec![
+            row(&[("id", json!(1)), ("name", json!("alice"))]),
+            row(&[("id", json!(2)), ("name", json!("bob"))]),
+        ];
+        let edits = rows
+            .iter()
+            .cloned()
+            .map(|values| BrowseEdit::Insert { values })
+            .collect::<Vec<_>>();
+        let cols = stub_columns();
+        let pk = vec!["id".to_string()];
+        for dialect in [DbDialect::Mysql, DbDialect::Pg] {
+            let via_import =
+                build_import_statements(dialect, Some("app"), "users", &rows, &cols, &pk, ImportMode::Insert)
+                    .unwrap();
+            let via_grid = build_edit_statements(dialect, Some("app"), "users", &edits, &cols, &pk)
+                .unwrap();
+            assert_eq!(via_import.0, via_grid, "{dialect:?}");
+            assert_eq!(via_import.1, None);
+        }
+    }
+
+    #[test]
+    fn upsert_imports_carry_the_conflict_tail() {
+        let rows = vec![row(&[("id", json!(1)), ("name", json!("alice"))])];
+        let cols = stub_columns();
+        let pk = vec!["id".to_string()];
+        let (out, degraded) =
+            build_import_statements(DbDialect::Mysql, Some("app"), "users", &rows, &cols, &pk, ImportMode::Upsert)
+                .unwrap();
+        assert_eq!(degraded, None);
+        assert_eq!(
+            out[0].sql,
+            "INSERT INTO `app`.`users` (`id`, `name`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `id` = VALUES(`id`), `name` = VALUES(`name`)"
+        );
+        assert_eq!(out[0].params, vec![json!(1), json!("alice")]);
+
+        let (out, degraded) =
+            build_import_statements(DbDialect::Pg, Some("public"), "users", &rows, &cols, &pk, ImportMode::Upsert)
+                .unwrap();
+        assert_eq!(degraded, None);
+        assert_eq!(
+            out[0].sql,
+            "INSERT INTO \"public\".\"users\" (\"id\", \"name\") VALUES (CAST($1 AS int), CAST($2 AS text)) ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\""
+        );
+    }
+
+    // --- dump literal escaping (docs/22 W4.4 audit blocker) ---------------------------------------
+
+    #[test]
+    fn mysql_dump_literals_escape_everything_adminer_does() {
+        // THE audit blocker case: a trailing backslash swallowed the closing quote under the
+        // clipboard escaping, so an ordinary Windows path broke (or injected into) the replay.
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!("C:\\path\\"))).unwrap(),
+            "'C:\\\\path\\\\'"
+        );
+        // Quotes, newlines: every character real_escape_string would not let through raw.
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!("it's \"quoted\"\nline\r end"))).unwrap(),
+            "'it\\'s \\\"quoted\\\"\\nline\\r end'"
+        );
+        // NUL and Ctrl-Z (0x1A) — the two control bytes the Windows MySQL client chokes on.
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!("a\0b\u{1a}c"))).unwrap(),
+            "'a\\0b\\Zc'"
+        );
+        // Unicode passes through untouched — the bytes replay as themselves.
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!("\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}"))).unwrap(),
+            "'\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}'"
+        );
+        // Numbers, bools and nulls keep the plain shapes the dump always used.
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(7))).unwrap(), "7");
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(1.5))).unwrap(), "1.5");
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(true))).unwrap(), "true");
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, None).unwrap(), "NULL");
+        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&Value::Null)).unwrap(), "NULL");
+    }
+
+    #[test]
+    fn pg_dump_literals_double_quotes_and_refuse_nul() {
+        // Postgres text holds quotes, double quotes, newlines and backslashes raw — only the
+        // single quote doubles (the dump's head does not opt into escape-string syntax).
+        assert_eq!(
+            sql_dump_literal(DbDialect::Pg, Some(&json!("it's \"x\"\n\\ line"))).unwrap(),
+            "'it''s \"x\"\n\\ line'"
+        );
+        assert_eq!(
+            sql_dump_literal(DbDialect::Pg, Some(&json!("\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}"))).unwrap(),
+            "'\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}'"
+        );
+        // A NUL cannot live in a Postgres text value; refusing it beats emitting the raw byte
+        // into a dump that would then be corrupt from that row on.
+        let err = sql_dump_literal(DbDialect::Pg, Some(&json!("a\0b"))).unwrap_err();
+        assert!(err.contains("NUL"), "{err}");
+        assert_eq!(sql_dump_literal(DbDialect::Pg, Some(&json!(9))).unwrap(), "9");
+        assert_eq!(sql_dump_literal(DbDialect::Pg, None).unwrap(), "NULL");
+    }
+
+    #[test]
+    fn a_postgres_upsert_without_a_pk_degrades_to_insert_with_a_note() {
+        let rows = vec![row(&[("id", json!(1)), ("name", json!("alice"))])];
+        let cols = stub_columns();
+        let (out, degraded) = build_import_statements(
+            DbDialect::Pg,
+            Some("public"),
+            "users",
+            &rows,
+            &cols,
+            &[],
+            ImportMode::Upsert,
+        )
+        .unwrap();
+        let note = degraded.expect("Postgres without a pk must say why it degraded");
+        assert!(note.contains("no primary key"), "{note}");
+        assert!(note.contains("inserted instead"), "{note}");
+        // The statements are plain inserts — the file still lands, in the same transaction.
+        assert_eq!(
+            out[0].sql,
+            "INSERT INTO \"public\".\"users\" (\"id\", \"name\") VALUES (CAST($1 AS int), CAST($2 AS text))"
+        );
     }
 }
