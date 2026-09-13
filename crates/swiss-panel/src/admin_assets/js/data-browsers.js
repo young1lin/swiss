@@ -23,15 +23,27 @@ function dbIsRedis() {
   return !!c && c.dialect === "redis";
 }
 
+// One SCAN page in flight (docs/22 closeout audit): More re-entering while a page loads
+// re-sent the SAME cursor and appended that page twice. A reset (grep, type filter, refresh)
+// still goes through — it restarts the walk from cursor 0 and supersedes.
+var dbKeysLoading = false;
+
 async function dbLoadKeys(reset) {
   var d = state.db;
   if (!d.conn) return;
+  if (!reset && dbKeysLoading) return; // the More double-click: the page is already on its way
   if (reset) { d.redis = null; d.redisKey = null; }
   var q = "/api/db/" + encodeURIComponent(d.conn) + "/keys?count=200";
   if (d.grep) q += "&pattern=" + encodeURIComponent(d.grep);
   if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
   if (d.redis && d.redis.cursor && d.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d.redis.cursor);
-  var j = await apiJson(q);
+  var j;
+  dbKeysLoading = true;
+  try {
+    j = await apiJson(q);
+  } finally {
+    dbKeysLoading = false;
+  }
   if (!j) return;
   d.redis = {
     keys: (d.redis && !reset ? d.redis.keys : []).concat(j.keys || []),
