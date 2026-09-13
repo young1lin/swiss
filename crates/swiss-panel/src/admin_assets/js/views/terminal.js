@@ -13,7 +13,7 @@
    rows) lives in ../terminal-core.js and is pinned by test/admin-terminal.test.ts;
    the Local shell settings sheet lives in ./terminal-settings.js.
    ================================================================================================ */
-import { $, api, apiJson, esc, toast } from "../util.js";
+import { $, api, apiJson, esc, icon, toast } from "../util.js";
 import { loadXterm } from "../vendor/xterm/xterm-5.5.0/index.js";
 import { loadFitAddon } from "../vendor/xterm/addon-fit-0.10.0/index.js";
 import { loadUnicode11Addon } from "../vendor/xterm/addon-unicode11-0.8.0/index.js";
@@ -28,6 +28,7 @@ import {
 import { createOverlay } from "../term-overlay.js";
 import { loadSearchAddon } from "../vendor/xterm/addon-search-0.16.0/index.js";
 import { openLocalSheet } from "./terminal-settings.js";
+import { closeSheet } from "../add-sheet.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
@@ -57,6 +58,11 @@ var dismissed = new Set();
 var BELL_KEY = "swiss.terminal.bell";
 var COPYSEL_KEY = "swiss.terminal.copyOnSelect";
 function storedPref(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+
+/* One-shot guidance (docs/22 P0 guidance layer): the first attach is the one moment a
+   newcomer is guaranteed to be looking at the terminal, so it carries one sentence of
+   orientation and never appears again. */
+var HINT_KEY = "swiss.terminal.hint";
 var bellMode = readBellMode(storedPref(BELL_KEY));
 var copyOnSelect = readCopyOnSelect(storedPref(COPYSEL_KEY));
 var bellAudio = null;   // the AudioContext, created by the first audible bell
@@ -368,6 +374,52 @@ function closeFind() {
   if (m && m.term) m.term.focus();
 }
 
+/* The ? reference sheet: the guidance layer's third tier (docs/22 P0). Keys and mouse
+   gestures in the panel's own sheet component - read-only, Esc or backdrop closes, no
+   new surfaces invented. kbd is monospace because a key is a value you would copy
+   (design rule 1). */
+function openHelpSheet() {
+  var row = function (keys, what) {
+    return '<div class="term-key-row"><span class="term-key-k">' + keys + "</span><span>" + what + "</span></div>";
+  };
+  var cap = function (title) { return '<div class="term-key-cap">' + title + "</div>"; };
+  var k = function (t) { return "<kbd>" + t + "</kbd>"; };
+  $("sheet").innerHTML =
+    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Terminal shortcuts">' +
+      '<div class="sheet-head"><h2>Terminal shortcuts</h2></div>' +
+      '<div class="sheet-body term-key-body">' +
+        cap("Keys") +
+        row(k("Ctrl+Shift+F"), "find in this session\u2019s buffer") +
+        row(k("Enter") + k("Shift+Enter"), "next / previous match") +
+        row(k("Esc"), "close the find bar") +
+        row(k("Alt+1..9"), "switch to tab 1..9") +
+        row(k("Alt+\u2190") + k("Alt+\u2192"), "previous / next tab") +
+        row(k("Alt+W"), "close the tab") +
+        row(k("Ctrl+0"), "reset the font size (Ctrl+wheel zooms)") +
+        row(k("?"), "this sheet, anywhere on the page") +
+        cap("Mouse") +
+        row("double-click / right-click a tab", "rename it (the name outranks the shell\u2019s title)") +
+        row("middle-click a tab", "close it") +
+        row("drag a selection", "copied on release; Ctrl+C stays the interrupt") +
+        row("scroll up", "stop following output \u2014 a chip counts what you missed") +
+        cap("On by default") +
+        row("bell", "a dot on the tab until you read it") +
+        row("copy-on-select", "a scissors pill confirms each copy") +
+        row("multiline paste", "asks first \u2014 paste whole or not at all") +
+      "</div>" +
+      '<div class="sheet-foot"><span class="grow"></span><button class="btn" id="th-close">Close</button></div>' +
+    "</div>";
+  $("sheet").hidden = false;
+  var onKey = function (ev) { if (ev.key === "Escape") close(); };
+  var close = function () {
+    document.removeEventListener("keydown", onKey, true);
+    closeSheet();
+  };
+  document.addEventListener("keydown", onKey, true);
+  $("th-close").onclick = close;
+  $("sheet").onclick = function (ev) { if (ev.target === $("sheet")) close(); };
+}
+
 /* Ctrl+Shift+F while the terminal page is staged, even when the terminal itself does
    not hold focus - xterm's own handler only sees keys that reach its textarea, and a
    user who just clicked the tab bar or the page is left without a shortcut (VS Code
@@ -377,13 +429,18 @@ function closeFind() {
    checking defaultPrevented - a document-capture call on top would double-fire
    openFind, whose toggle then closes the bar again (fresh-eyes audit B2). */
 function pageFindShortcut(ev) {
-  if (!ev.ctrlKey || !ev.shiftKey || ev.altKey || ev.metaKey) return;
-  if (String(ev.key || "").toLowerCase() !== "f") return;
   var el = ev.target;
   var tag = el && el.tagName;
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
   if (el && el.closest && el.closest(".term-holder")) return;   // xterm owns keys in here
   if (!$("term-find")) return;   // some other page is staged
+  if (ev.key === "?") {          // the reference sheet - "?" asks a question
+    ev.preventDefault();
+    openHelpSheet();
+    return;
+  }
+  if (!ev.ctrlKey || !ev.shiftKey || ev.altKey || ev.metaKey) return;
+  if (String(ev.key || "").toLowerCase() !== "f") return;
   ev.preventDefault();
   void openFind();
 }
@@ -671,6 +728,14 @@ function connect(m, ticket) {
          (docs/22 §4 P0 item 8 — Tabby's reconnect reset, adapted to swiss's grace window). */
       m.term.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l");
       if (m.overlay) m.overlay.show("attached", 700);
+    /* Guidance tier 2: once per browser, three seconds after the first attach, one
+       sentence of orientation. The attached pill has cleared by then. */
+    if (!storedPref(HINT_KEY)) {
+      try { localStorage.setItem(HINT_KEY, "1"); } catch (e) { /* per-tab only */ }
+      setTimeout(function () {
+        if (m.overlay) m.overlay.show("double-click a tab to rename · ? lists everything", 6000);
+      }, 900);
+    }
     }
     scheduleFit();
   };
@@ -940,8 +1005,9 @@ function render() {
               return '<option value="' + esc(r.id) + '">' + esc(r.label) + (r.state ? " (" + esc(r.state) + ")" : "") + "</option>";
             }).join("") + "</select>" +
             /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
-               picker, not a second loud button — Open session stays the bar's one accent. */
-            '<button class="term-gear" id="term-set" title="Local shell settings" aria-label="Local shell settings">⚙</button>' +
+               picker, not a second loud button — Open session stays the bar's one accent.
+               The gear is the sprite (i-gear), never a Unicode glyph (design rule 9). */
+            '<button class="term-gear" id="term-set" title="Local shell settings" aria-label="Local shell settings">' + icon("gear") + "</button>" +
             '<button class="btn term-new" id="term-new">Open session</button>'
           /* Local off and nothing to pick: the line itself is the way in (docs/15
              §2.1) — a dead-end note that names a setting nobody can reach is how the
@@ -951,6 +1017,10 @@ function render() {
               ? '<button class="term-off" id="term-off">Local shell is off — turn it on</button>' +
                 (pick.reason ? '<span class="term-none">' + esc(pick.reason) + "</span>" : "")
               : '<span class="term-none">' + esc(pick.note) + "</span>")) +
+        /* The ? reference button (guidance tier 3): same quiet box as the gear, the
+           bar's last control in every branch - including the empty ones, where it
+           matters most. */
+        '<button class="term-gear" id="term-help" title="Shortcuts and gestures" aria-label="Shortcuts and gestures">' + icon("help") + "</button>" +
       "</div></div>" +
     '<div class="term-find" id="term-find" hidden>' +
       '<input id="term-find-q" type="text" placeholder="Find" aria-label="Find in terminal" spellcheck="false" />' +
@@ -964,6 +1034,8 @@ function render() {
         '<div class="term-ghost" aria-hidden="true"><span class="term-ghost-dollar">$</span><span class="term-ghost-cursor"></span></div>' +
         '<h2>No session yet</h2>' +
         "<p>Pick a host in the bar above and open one.</p>" +
+        /* The one teaching moment every newcomer sees: three facts, one line, quiet. */
+        '<p class="term-keys-hint"><kbd>Ctrl+Shift+F</kbd> find · <kbd>Alt+1..9</kbd> switch · <kbd>?</kbd> everything</p>' +
         "<p>A dropped socket does not end a session \u2014 it waits out the grace window and catches up.</p>" +
       "</div>" +
     "</div>" +
@@ -976,6 +1048,8 @@ function render() {
   if (button) button.onclick = function () { void openSession(); };
   var gear = $("term-set");
   if (gear) gear.onclick = function () { void openLocalSheet(); };
+  var help = $("term-help");
+  if (help) help.onclick = openHelpSheet;
   var off = $("term-off");
   if (off) off.onclick = function () { void openLocalSheet(); };
   var tabs = $("term-tabs");

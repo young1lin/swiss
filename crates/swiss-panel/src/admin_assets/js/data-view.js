@@ -190,7 +190,9 @@ function renderDbView() {
         '</div>' +
         '<div class="db-console-row"><button class="btn" id="dbSqlRun">Run</button>' +
         '<button class="btn" id="dbSqlExplain">Explain</button>' +
+        '<button class="btn" id="dbSqlFormat">Format</button>' +
         '<select id="dbSqlHistory" title="Query history"><option value="">History</option></select>' +
+        '<button class="btn icon" id="dbSqlFav" type="button" aria-label="Save to favorites"></button>' +
         '<span class="hint" id="dbSqlHint">statements split on ; · Ctrl+Enter runs</span></div>' +
       '</div>' +
       '<div class="db-grid-wrap" id="dbGridWrap"></div>' +
@@ -315,13 +317,16 @@ function renderDbView() {
     favBtn.title = "Save the console text to favorites";
     favBtn.onclick = function () { dbFavPush(state.db.sqlText); };
   }
-  $("dbSqlFormat").onclick = function () {
-    var d = state.db;
-    if (!d.sqlText || !d.sqlText.trim()) return;
-    d.sqlText = dbFormatSql(d.sqlText);
-    var ta = $("dbSql");
-    if (ta) { ta.value = d.sqlText; dbSqlPaint(); ta.focus(); }
-  };
+  var fmtBtn = $("dbSqlFormat");
+  if (fmtBtn) {
+    fmtBtn.onclick = function () {
+      var d = state.db;
+      if (!d.sqlText || !d.sqlText.trim()) return;
+      d.sqlText = dbFormatSql(d.sqlText);
+      var ta = $("dbSql");
+      if (ta) { ta.value = d.sqlText; dbSqlPaint(); ta.focus(); }
+    };
+  }
   dbHistoryLoad();
   dbFavLoad();
   dbHistoryRender();
