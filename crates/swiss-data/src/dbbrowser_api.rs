@@ -714,6 +714,25 @@ async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<
     Ok(with_elapsed_ms(json!({ "reply": reply }), started))
 }
 
+/// Commit a buffered redis structured-edit batch (docs/22 W3.3): the typed value view's
+/// whole buffer as ONE pipelined round trip. Shape is checked here; WHICH commands may run
+/// stays with the adapter's console guard, applied per command before the socket is touched —
+/// the first refusal rejects the batch whole, so a buffered edit never half-applies.
+async fn redis_pipeline(
+    catalog: &CatalogRegistry,
+    name: &str,
+    body: &Value,
+) -> Result<Value, Fail> {
+    let (_lease, rb) = lease_redis(catalog, name)?;
+    let commands = swiss_host::dbbrowser::redis_pipeline_commands(body).map_err(Fail::bad)?;
+    log::log(
+        "info",
+        "data view redis commit",
+        Some(json!({ "name": name, "commands": commands.len() })),
+    );
+    rb.run_pipeline(&commands).await.map_err(Fail::bad)
+}
+
 /// One key, read type-aware (the shape redis_read returns).
 async fn key(
     catalog: &CatalogRegistry,
@@ -804,6 +823,14 @@ async fn command_route(
     reply(command(&catalog, &name, &body.0).await)
 }
 
+async fn redis_pipeline_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(redis_pipeline(&catalog, &name, &body.0).await)
+}
+
 async fn key_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -857,6 +884,8 @@ where
         // --- redis key browser (same /api/db namespace; dialect "redis") ---
         .route("/api/db/{name}/keys", get(keys_route))
         .route("/api/db/{name}/command", post(command_route))
+        // The buffered structured-edit commit (docs/22 W3.3): one pipeline, one round trip.
+        .route("/api/db/{name}/redis-pipeline", post(redis_pipeline_route))
         .route("/api/db/{name}/key", get(key_route))
         .route("/api/db/{name}/ddl", post(ddl_route))
         .route("/api/db/{name}/query", post(query_route))
@@ -897,6 +926,8 @@ mod tests {
         imported: Option<Value>,
         ddl: Option<Value>,
         tables_opts: Option<Value>,
+        /// The command list the redis pipeline route forwarded (docs/22 W3.3).
+        pipeline: Option<Vec<Vec<String>>>,
     }
 
     type SeenRef = Arc<Mutex<Seen>>;
@@ -1154,7 +1185,9 @@ mod tests {
     }
 
     /// The Node suite's fake redis browser.
-    struct StubRedis;
+    struct StubRedis {
+        seen: SeenRef,
+    }
 
     #[async_trait]
     impl RedisBrowser for StubRedis {
@@ -1181,6 +1214,15 @@ mod tests {
             } else {
                 Ok(json!(["a", "b"]))
             }
+        }
+        async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String> {
+            // The adapter vets every command through the console guard BEFORE the socket; the
+            // stub stands for the far side of that and answers one reply per command.
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.pipeline = Some(commands.to_vec());
+            }
+            let replies: Vec<Value> = commands.iter().map(|c| json!(c.len())).collect();
+            Ok(json!({ "replies": replies }))
         }
     }
 
@@ -2079,12 +2121,95 @@ mod tests {
     }
 
     fn redis_entry(name: &str) -> Arc<StubRow> {
+        redis_entry_with(name, SeenRef::default())
+    }
+
+    /// redis_entry over a shared seen, so a test can read back what the pipeline route
+    /// forwarded (docs/22 W3.3).
+    fn redis_entry_with(name: &str, seen: SeenRef) -> Arc<StubRow> {
         Arc::new(StubRow {
             name: name.into(),
             adapter_type: "redis".into(),
             state: "stopped".into(),
-            browser: BrowserFlavor::Redis(Arc::new(StubRedis)),
+            browser: BrowserFlavor::Redis(Arc::new(StubRedis { seen })),
         })
+    }
+
+    #[tokio::test]
+    async fn a_redis_structured_edit_commit_rides_one_pipeline() {
+        // docs/22 W3.3: the typed value view's whole buffer posts as ONE round trip; args stay
+        // separate strings (a value with spaces is one argument, never re-split), and the
+        // replies come back in order.
+        let seen = SeenRef::default();
+        let app = router_of(vec![redis_entry_with("cache", seen.clone())]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/cache/redis-pipeline",
+            Some(json!({ "commands": [["HSET", "h:1", "f", "v"], ["HDEL", "h:1", "gone"]] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json")["replies"], json!([4, 3]));
+        assert_eq!(
+            seen.lock().expect("seen").pipeline.take(),
+            Some(vec![
+                vec!["HSET".into(), "h:1".into(), "f".into(), "v".into()],
+                vec!["HDEL".into(), "h:1".into(), "gone".into()],
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_redis_pipeline_body_is_shape_checked_at_the_route() {
+        for bad in [
+            json!({}),
+            json!({ "commands": [] }),
+            json!({ "commands": [[]] }),
+            json!({ "commands": [["HSET", 7]] }),
+        ] {
+            let app = router_of(vec![redis_entry("cache")]);
+            let (status, _, body, _) = call(
+                app,
+                "POST",
+                "/api/db/cache/redis-pipeline",
+                Some(bad.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            let err = body.expect("json")["error"]
+                .as_str()
+                .expect("error text")
+                .to_string();
+            assert!(
+                err.starts_with("commands must be") || err.starts_with("each command must be"),
+                "{bad} -> {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_redis_pipeline_is_redis_only() {
+        // A SQL connection answers the redis 404 with the adapter type named, exactly as the
+        // key routes do — no half-work on the wrong flavour.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/redis-pipeline",
+            Some(json!({ "commands": [["SET", "k", "v"]] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'db' (mysql) is not a redis connection"
+        );
     }
 
     #[tokio::test]

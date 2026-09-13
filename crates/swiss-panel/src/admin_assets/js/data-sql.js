@@ -1,5 +1,8 @@
 import { $, apiJson, el, state, toast } from "./util.js";
-import { dbIsRedis } from "./data-browsers.js";
+import {
+  dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
+  dbRedisPendingCount,
+} from "./data-browsers.js";
 import { dbHighlightSql, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
@@ -71,15 +74,67 @@ function dbPendingSql() {
 }
 /* --- buffered edits: the commit / discard bar ---------------------------------------------------- */
 
+/** The redis arm of the bar (docs/22 W3.3): same slot, same words, same Discard, with
+ *  "Commands" in place of "SQL" and one pipeline in place of the transaction. The command
+ *  list is the very list Commit posts — the preview is the payload, not a paraphrase. */
+function renderDbRedisBar(d, bar, n) {
+  var b = d.redisEdits;
+  var u = Object.keys(b.updates).length;
+  var del = Object.keys(b.deletes).length;
+  var ins = b.inserts.length;
+  var parts = [];
+  if (u) parts.push(u + " update" + (u > 1 ? "s" : ""));
+  if (del) parts.push(del + " delete" + (del > 1 ? "s" : ""));
+  if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
+  bar.appendChild(el("span", "", parts.join(", ") + " — LOCAL ONLY, not yet in redis. Commit sends them as ONE pipelined round trip (every command guard-checked); Discard deletes them without a single command."));
+  var cmdBtn = el("button", "btn", d.sqlPreview ? "Hide commands" : "Commands");
+  cmdBtn.title = "Show the exact commands Commit will run";
+  cmdBtn.onclick = function () {
+    d.sqlPreview = !d.sqlPreview;
+    renderDbBar();
+  };
+  var discard = el("button", "btn", "Discard");
+  discard.onclick = dbRedisDiscard;
+  var commitBtn = el("button", "btn commit", "Commit (1 pipeline)");
+  commitBtn.onclick = function () { void dbRedisCommit(); };
+  bar.appendChild(cmdBtn);
+  bar.appendChild(discard);
+  bar.appendChild(commitBtn);
+  if (d.sqlPreview) {
+    var pre = el("pre", "db-ddl");
+    pre.style.position = "static";
+    pre.style.margin = "0";
+    pre.style.marginTop = "var(--s2)";
+    pre.style.width = "100%";
+    try {
+      var cmds = dbRedisCommands(d.redisKey, b.type, b);
+      pre.textContent = "-- " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") +
+        ", one pipelined round trip — each guard-checked before the socket is touched\n" +
+        cmds.map(dbRedisCommandText).join("\n");
+    } catch (e) {
+      pre.textContent = String(e && e.message ? e.message : e);
+    }
+    bar.style.flexWrap = "wrap";
+    bar.appendChild(pre);
+  }
+}
+
 function renderDbBar() {
   var d = state.db;
   var bar = $("dbBar");
   if (!bar) return;
-  var n = dbPending();
-  if (!n || !d.data) { bar.hidden = true; return; }
+  var redis = dbIsRedis();
+  var n = redis ? dbRedisPendingCount() : dbPending();
+  // The redis bar owns the same slot (docs/22 W3.3): the typed value view buffers edits the
+  // way the row grid does, and its Commit is ONE guarded pipeline instead of a transaction.
+  if (!n || (redis ? !d.redisValue : !d.data)) { bar.hidden = true; return; }
   bar.hidden = false;
   bar.style.flexWrap = "nowrap";
   bar.innerHTML = "";
+  if (redis) {
+    renderDbRedisBar(d, bar, n);
+    return;
+  }
   var u = Object.keys(d.updates).length;
   var del = Object.keys(d.deletes).length;
   var ins = d.inserts.length;

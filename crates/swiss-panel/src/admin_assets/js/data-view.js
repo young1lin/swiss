@@ -1,6 +1,6 @@
 import { $, apiJson, el, icon, state } from "./util.js";
 import { currentPageCount } from "./page-registry.js";
-import { dbIsRedis, dbLoadKeys, dbLoadRedisValue } from "./data-browsers.js";
+import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisPendingCount } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
@@ -49,6 +49,7 @@ function dbFreshState() {
     tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisKey: null,      // the key whose value is shown in the pane
+    redisEdits: null,    // buffered typed-value edits for that key (docs/22 W3.3)
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
     detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
     detailBusy: false,
@@ -62,9 +63,11 @@ function dbPending() {
   return Object.keys(d.updates).length + Object.keys(d.deletes).length + d.inserts.length;
 }
 
-/** Ask before an action would drop buffered edits; false when the user said no. */
+/** Ask before an action would drop buffered edits; false when the user said no. The redis
+ *  value buffer counts too (docs/22 W3.3) — a key switch that ate buffered fields silently
+ *  would break the same rule the row grid's guard exists for. */
 function dbOkToDrop() {
-  var n = dbPending();
+  var n = dbPending() + dbRedisPendingCount();
   return !n || confirm("Discard " + n + " uncommitted change" + (n > 1 ? "s" : "") + "? Nothing has been written yet.");
 }
 
@@ -109,6 +112,7 @@ async function loadDbView() {
     d.conn = d.conns.length ? d.conns[0].name : null;
     d.table = null; d.schema = null; d.data = null; d.tables = [];
     d.redis = null; d.redisKey = null; d.redisValue = null;
+    d.redisEdits = null;
     d.sqlResult = null;
     dbDropEdits();
   }
@@ -168,6 +172,7 @@ function renderDbView() {
     d.tables = []; d.tablesPage = 0; d.order = null; d.sqlResult = null;
     d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
     d.redis = null; d.redisKey = null; d.redisValue = null;
+    d.redisEdits = null;
     d.filters = [];
     d.sort = "name"; d.sortDir = "asc"; // the new connection's kind may not have the chosen key
     // A sidebar search is table-list-scoped: carrying "tsys_" from one connection into the next
@@ -450,7 +455,11 @@ function renderDbTables() {
       var meta = k.type;
       if (k.ttl >= 0) meta += " · ttl " + k.ttl + "s";
       b.appendChild(el("div", "db-table-meta", meta));
-      b.onclick = function () { dbLoadRedisValue(k.key); };
+      // Switching keys drops the typed-value buffer (docs/22 W3.3): a different key cannot
+      // adopt another key's fields, so the same guard the table switch uses asks first.
+      b.onclick = function () {
+        if (k.key === d.redisKey || dbOkToDrop()) dbLoadRedisValue(k.key);
+      };
       box.appendChild(b);
     });
     var foot2 = $("dbTablesPager");

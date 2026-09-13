@@ -604,7 +604,51 @@ pub trait RedisBrowser: Send + Sync {
     /// Run ONE command from the console: reads AND writes (SET, DEL, EXPIRE…). The adapter's
     /// own command guard still refuses what would break the shared connection or the server.
     async fn run_command(&self, line: &str) -> Result<Value, String>;
+    /// Run a buffered structured-edit batch as ONE pipelined round trip (docs/22 W3.3). Every
+    /// command passes the SAME guard the one-command console applies — checked per command,
+    /// before the socket is touched — and the first refusal rejects the whole batch, so a
+    /// buffered edit never half-applies. No MULTI: the panel's edits are field-addressed and
+    /// safe to re-run, and a plain pipeline keeps every reply individual and honest.
+    async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String>;
 }
+
+/// Cap on one buffered redis commit (docs/22 W3.3): one pipeline is one bounded round trip,
+/// the redis twin of the edit route's MAX_EDITS.
+pub const REDIS_PIPELINE_MAX: usize = 1000;
+
+/// The body of POST /api/db/{name}/redis-pipeline — {commands: [[verb, arg...], ...]} — into
+/// the typed command list run_pipeline takes. Shape only: WHICH commands may run stays with
+/// the adapter's guard, exactly as the console's single command does, so the rule cannot drift
+/// between transport and model. Args stay separate strings on purpose — a hash value with
+/// spaces is one argument, not five.
+pub fn redis_pipeline_commands(body: &Value) -> Result<Vec<Vec<String>>, String> {
+    let bad_shape = || "commands must be a non-empty array of redis commands".to_string();
+    let list = body
+        .get("commands")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+        .ok_or_else(bad_shape)?;
+    if list.len() > REDIS_PIPELINE_MAX {
+        return Err(format!(
+            "too many commands in one pipeline (max {REDIS_PIPELINE_MAX})"
+        ));
+    }
+    list.iter()
+        .map(|cmd| {
+            let parts = cmd
+                .as_array()
+                .filter(|a| !a.is_empty())
+                .ok_or_else(|| "each command must be an array: [verb, arg...]".to_string())?;
+            parts
+                .iter()
+                .map(|p| {
+                    p.as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| "each command must be an array: [verb, arg...]".to_string())
+                })
+                .collect()
+        })
+        .collect()}
 
 // --- identifier quoting --------------------------------------------------------------------------
 
@@ -3551,5 +3595,48 @@ mod tests {
             out[0].sql,
             "INSERT INTO \"public\".\"users\" (\"id\", \"name\") VALUES (CAST($1 AS int), CAST($2 AS text))"
         );
+    }
+
+    #[test]
+    fn a_redis_pipeline_body_parses_into_separate_string_args() {
+        // docs/22 W3.3: the panel's typed editors post [verb, arg...] arrays — a hash value
+        // with spaces is ONE argument, never re-split, because the pipeline binds args as-is.
+        let cmds = redis_pipeline_commands(&json!({
+            "commands": [["HSET", "h:1", "a field", "two words"], ["ZADD", "z", "1.5", "m"]]
+        }))
+        .expect("valid body");
+        assert_eq!(cmds.len(), 2);
+        assert_eq!(cmds[0], vec!["HSET", "h:1", "a field", "two words"]);
+        assert_eq!(cmds[1], vec!["ZADD", "z", "1.5", "m"]);
+    }
+
+    #[test]
+    fn a_redis_pipeline_body_with_a_bad_shape_is_refused_by_name() {
+        // Absent, empty, non-array, an empty inner command, a non-string part: each is the
+        // caller's whole mistake and answers the message the panel can act on.
+        for bad in [
+            json!({}),
+            json!({ "commands": [] }),
+            json!({ "commands": "HSET k v" }),
+            json!({ "commands": [[]] }),
+            json!({ "commands": [["HSET", 7]] }),
+            json!({ "commands": ["HSET"] }),
+        ] {
+            let err = redis_pipeline_commands(&bad).expect_err("refused");
+            assert!(
+                err.starts_with("commands must be") || err.starts_with("each command must be"),
+                "{bad} -> {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_redis_pipeline_is_capped_like_an_edit_batch() {
+        let one = json!(["HSET", "k", "f", "v"]);
+        let cmds = vec![one.clone(); REDIS_PIPELINE_MAX];
+        assert!(redis_pipeline_commands(&json!({ "commands": cmds })).is_ok());
+        let cmds = vec![one; REDIS_PIPELINE_MAX + 1];
+        let err = redis_pipeline_commands(&json!({ "commands": cmds })).expect_err("refused");
+        assert!(err.contains("too many commands"), "{err}");
     }
 }
