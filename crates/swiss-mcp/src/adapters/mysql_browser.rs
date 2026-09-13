@@ -8,7 +8,8 @@ use super::mysql::{
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
     browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    build_ddl_op_sql, build_edit_statements, build_import_statements, export_row_limit,
+    build_ddl_create, build_ddl_op_sql, build_edit_statements, build_import_statements,
+    ddl_script, export_row_limit,
     js_to_string, map_import_rows,
     readback_plan, sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns, to_csv,
     to_json_lines, BrowseColumn, DbBrowser, DbDialect, DumpPiece, ReadBack, SqlDump,
@@ -574,6 +575,23 @@ impl DbBrowser for MysqlBrowser {
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
+        // docs/22 W4.6: the create ops share ONE builder with /ddl-preview — the sheet showed
+        // these exact statements before Commit posted. Each op is a single statement here
+        // (MySQL embeds comments inline), so there is nothing to wrap: MySQL DDL commits
+        // itself, atomically per statement.
+        let op = o.get("op").and_then(Value::as_str).unwrap_or("");
+        if matches!(op, "create_table" | "add_column" | "create_index") {
+            let stmts = build_ddl_create(DbDialect::Mysql, op, o)?;
+            let pool = self.conn.get().await?;
+            for s in &stmts {
+                run_query(&pool, s, &[]).await?;
+            }
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .invalidate();
+            return Ok(json!({ "ran": ddl_script(&stmts) }));
+        }
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         if table.is_empty() {
             return Err("table is required".into());

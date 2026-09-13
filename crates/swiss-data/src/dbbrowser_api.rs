@@ -586,6 +586,28 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
 async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
     let (_lease, b) = lease_db(catalog, name)?;
     let op = body.get("op").and_then(Value::as_str);
+    // docs/22 W4.6: the create ops carry their facts in a payload object; /ddl-preview showed
+    // the exact statements this runs (same builder, same input), so Commit is the preview.
+    if op.is_some_and(|op| matches!(op, "create_table" | "add_column" | "create_index")) {
+        let op = op.unwrap_or_default();
+        let Some(Value::Object(payload)) = body.get("payload") else {
+            return Err(Fail::bad("payload must be an object"));
+        };
+        log::log(
+            "warn",
+            "data view ddl",
+            Some(json!({
+                "name": name,
+                "op": op,
+                "table": payload.get("table").and_then(Value::as_str).unwrap_or(""),
+            })),
+        );
+        // Flatten (op, payload) into the one flat object the browser contract speaks.
+        let mut o = Map::new();
+        o.insert("op".into(), json!(op));
+        o.extend(payload.iter().map(|(k, v)| (k.clone(), v.clone())));
+        return b.ddl_op(&Value::Object(o)).await.map_err(Fail::bad);
+    }
     let op_ok = op.is_some_and(|op| op == "rename" || op == "truncate" || op == "drop");
     if !op_ok {
         return Err(Fail::bad("op must be rename, truncate or drop"));
@@ -611,6 +633,23 @@ async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Valu
         o.insert("to".into(), json!(to));
     }
     b.ddl_op(&Value::Object(o)).await.map_err(Fail::bad)
+}
+
+/// The form-to-SQL preview behind the New table / Add column / New index sheets (docs/22
+/// W4.6). The SAME build_ddl_create the commit path runs, on the leased connection's own
+/// dialect — pgAdmin's msql flow: one SQL producer serves preview and save, so the text the
+/// sheet shows is byte-for-byte the text /ddl executes on Commit.
+async fn ddl_preview(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    let op = body
+        .get("op")
+        .and_then(Value::as_str)
+        .filter(|op| matches!(*op, "create_table" | "add_column" | "create_index"))
+        .ok_or_else(|| Fail::bad("op must be create_table, add_column or create_index"))?;
+    let payload = body.get("payload").cloned().unwrap_or(Value::Null);
+    let stmts =
+        swiss_host::dbbrowser::build_ddl_create(b.dialect(), op, &payload).map_err(Fail::bad)?;
+    Ok(json!({ "sql": swiss_host::dbbrowser::ddl_script(&stmts) }))
 }
 
 /// The SQL console. The browser itself enforces the one-statement-per-run rule; the route
@@ -923,6 +962,14 @@ async fn ddl_route(
     reply(ddl(&catalog, &name, &body.0).await)
 }
 
+async fn ddl_preview_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(ddl_preview(&catalog, &name, &body.0).await)
+}
+
 async fn query_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -969,6 +1016,8 @@ where
         .route("/api/db/{name}/completion", post(completion_route))
         .route("/api/db/{name}/key", get(key_route))
         .route("/api/db/{name}/ddl", post(ddl_route))
+        // The W4.6 sheets' live preview: the statements /ddl would run for this (op, payload).
+        .route("/api/db/{name}/ddl-preview", post(ddl_preview_route))
         .route("/api/db/{name}/query", post(query_route))
         .route("/api/db/{name}/edits", post(edits_route))
         .layer(Extension(catalog))
@@ -1258,6 +1307,17 @@ mod tests {
         async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
             if let Ok(mut seen) = self.seen.lock() {
                 seen.ddl = Some(o.clone());
+            }
+            // docs/22 W4.6: the stub mirrors the real adapters — the create ops build through
+            // the shared builder, so the route test can pin preview == commit byte-for-byte.
+            let op = o.get("op").and_then(Value::as_str).unwrap_or("");
+            if matches!(op, "create_table" | "add_column" | "create_index") {
+                let stmts = swiss_host::dbbrowser::build_ddl_create(
+                    swiss_host::dbbrowser::DbDialect::Mysql,
+                    op,
+                    o,
+                )?;
+                return Ok(json!({ "ran": swiss_host::dbbrowser::ddl_script(&stmts) }));
             }
             let to = o.get("to").and_then(Value::as_str).unwrap_or("");
             if o.get("op") == Some(&json!("rename")) && to.is_empty() {
@@ -2124,6 +2184,102 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let err = body.expect("json")["error"].as_str().unwrap().to_string();
         assert!(err.contains("rename, truncate or drop"), "{err}");
+    }
+
+
+    // --- docs/22 W4.6: preview and commit share one builder -------------------------------------------
+
+    /// The body both W4.6 endpoints take: (op, payload). The stub browser builds the create
+    /// ops the way the real adapters do (the shared builder), so this pins the contract the
+    /// sheet relies on: /ddl's "ran" is byte-for-byte /ddl-preview's "sql".
+    #[tokio::test]
+    async fn ddl_preview_and_ddl_run_the_same_text() {
+        let payload = json!({
+            "schema": "app",
+            "table": "cfg",
+            "columns": [
+                { "name": "order", "type": "int", "nullable": false, "comment": "序号" }
+            ]
+        });
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: seen.clone() }))]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/ddl-preview",
+            Some(json!({ "op": "create_table", "payload": payload.clone() })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let sql = body.expect("json")["sql"].as_str().unwrap().to_string();
+        assert_eq!(sql, "CREATE TABLE `app`.`cfg` (\n    `order` int NOT NULL COMMENT '序号'\n);");
+
+        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: seen.clone() }))]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/ddl",
+            Some(json!({ "op": "create_table", "payload": payload })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // The commit echoes the exact text the preview showed — same builder, same input.
+        assert_eq!(body.expect("json")["ran"].as_str().unwrap(), sql);
+        // The route flattened (op, payload) into the browser contract's one flat object.
+        assert_eq!(
+            seen.lock().expect("seen").ddl.take(),
+            Some(json!({
+                "op": "create_table",
+                "schema": "app",
+                "table": "cfg",
+                "columns": [
+                    { "name": "order", "type": "int", "nullable": false, "comment": "序号" }
+                ]
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn ddl_preview_validates_op_and_identifiers() {
+        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: SeenRef::default() }))]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/ddl-preview",
+            Some(json!({ "op": "truncate", "payload": { "table": "users" } })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("op must be create_table, add_column or create_index"), "{err}");
+
+        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: SeenRef::default() }))]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/ddl-preview",
+            Some(json!({ "op": "create_index", "payload": { "table": "t", "index": "x y", "columns": ["a"] } })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("not a valid MySQL identifier"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn ddl_preview_is_sql_only() {
+        // redis connections have no W4.6 entry: the preview leases a Db browser and refuses.
+        let app = router_of(vec![redis_entry("cache")]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/cache/ddl-preview",
+            Some(json!({ "op": "create_table", "payload": { "table": "t", "columns": [{ "name": "a", "type": "int" }] } })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("has no database to browse"), "{err}");
     }
 
     #[tokio::test]

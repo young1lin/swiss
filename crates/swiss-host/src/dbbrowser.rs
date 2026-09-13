@@ -1818,6 +1818,337 @@ pub fn build_ddl_op_sql(
     }
 }
 
+// --- the W4.6 minimal DDL set -----------------------------------------------------------------------
+//
+// Exactly three operations: CREATE TABLE, ADD COLUMN, CREATE INDEX (docs/22 W4.6; the visual
+// designer stays out on purpose, §9). One builder serves BOTH the panel's live preview
+// (POST /api/db/:name/ddl-preview) and the commit (POST /api/db/:name/ddl) — pgAdmin's msql
+// flow: preview and save share one SQL producer, so what the sheet showed is byte-for-byte
+// what Commit runs. Identifiers ride the same assert_ident + quote_ident gate every other
+// interpolated name uses. Types and defaults are the operator's own SQL text: the preview
+// shows them verbatim, and vet_ddl_type / vet_ddl_default only refuse what could break the
+// statement out of its one line — the console exists for the exotic DDL.
+
+/// One column of a W4.6 form. The five facts the Columns tab already shows; `default` is raw
+/// SQL text (`0`, `''`, `now()`) and `comment` free text, quoted as a literal here.
+pub struct DdlColumn {
+    pub name: String,
+    pub type_: String,
+    pub nullable: bool,
+    pub default: Option<String>,
+    pub comment: Option<String>,
+}
+
+/// Columns one form may carry — a bound on a hand-written request, in MAX_EDITS' spirit.
+const MAX_DDL_COLUMNS: usize = 128;
+
+/// Key parts an index (or primary key) may name — MySQL's own ceiling, so one builder fits
+/// both dialects.
+const MAX_DDL_KEY_PARTS: usize = 16;
+
+/// A type spelling the forms accept: letters, digits, spaces and the punctuation real types
+/// need (`varchar(100)`, `numeric(10,2)`, `enum('a','b')`, `int[]`, `double precision`).
+/// Anything that could break out of the column definition is refused.
+fn vet_ddl_type(t: &str) -> Result<&str, String> {
+    let t = t.trim();
+    let ok = !t.is_empty()
+        && t.len() <= 128
+        && t.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, ' ' | '_' | '(' | ')' | ',' | '\'' | '"' | '[' | ']')
+        });
+    if ok {
+        Ok(t)
+    } else {
+        Err(format!("not a valid column type: {t}"))
+    }
+}
+
+/// A DEFAULT expression the forms accept: any printable one-line SQL expression. Statement
+/// breaks (`;`), comment starters (`--`, `#`, `/*`) and MySQL's identifier quote are
+/// refused so every generated statement stays exactly one line — what the preview shows is
+/// what runs.
+fn vet_ddl_default(d: &str) -> Result<&str, String> {
+    let d = d.trim();
+    let ok = d.len() <= 256
+        && !d.contains(';')
+        && !d.contains('\x60')
+        && !d.contains("--")
+        && !d.contains('#')
+        && !d.contains("/*")
+        && !d.chars().any(|c| c.is_ascii_control());
+    if ok {
+        Ok(d)
+    } else {
+        Err(format!("not a valid default: {d}"))
+    }
+}
+
+/// `name type [NOT NULL] [DEFAULT x] [COMMENT 'y']` — MySQL carries the comment inline, so
+/// this is the whole column clause there; Postgres gets its COMMENT ON statements separately.
+fn ddl_column_clause(dialect: DbDialect, c: &DdlColumn) -> Result<String, String> {
+    let mut s = format!("{} {}", quote_ident(dialect, &c.name)?, c.type_);
+    if !c.nullable {
+        s.push_str(" NOT NULL");
+    }
+    if let Some(d) = &c.default {
+        s.push_str(&format!(" DEFAULT {d}"));
+    }
+    if dialect == DbDialect::Mysql {
+        if let Some(cm) = c.comment.as_deref().filter(|s| !s.is_empty()) {
+            s.push_str(&format!(" COMMENT {}", sql_dump_literal(dialect, Some(&json!(cm)))?));
+        }
+    }
+    Ok(s)
+}
+
+/// Postgres keeps comments outside the definition (COMMENT ON), so the create gains follow-up
+/// statements; MySQL already embedded them and gets none.
+fn ddl_comment_statements(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    columns: &[DdlColumn],
+    table_comment: Option<&str>,
+    out: &mut Vec<String>,
+) -> Result<(), String> {
+    if dialect != DbDialect::Pg {
+        return Ok(());
+    }
+    let target = qualified(dialect, schema, table)?;
+    if let Some(cm) = table_comment.filter(|s| !s.is_empty()) {
+        out.push(format!(
+            "COMMENT ON TABLE {target} IS {}",
+            sql_dump_literal(dialect, Some(&json!(cm)))?
+        ));
+    }
+    for c in columns {
+        if let Some(cm) = c.comment.as_deref().filter(|s| !s.is_empty()) {
+            out.push(format!(
+                "COMMENT ON COLUMN {target}.{} IS {}",
+                quote_ident(dialect, &c.name)?,
+                sql_dump_literal(dialect, Some(&json!(cm)))?
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// CREATE TABLE (plus Postgres COMMENT ON statements). The body follows build_pg_ddl's shape:
+/// one clause per line, four-space indented, so the DDL tab's alignment sees what it knows.
+pub fn table_ddl(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    columns: &[DdlColumn],
+    primary: &[String],
+    comment: Option<&str>,
+) -> Result<Vec<String>, String> {
+    if columns.is_empty() {
+        return Err("a table needs at least one column".into());
+    }
+    let schema = schema.filter(|s| !s.is_empty());
+    let target = qualified(dialect, schema, table)?;
+    let mut lines: Vec<String> = Vec::with_capacity(columns.len() + 1);
+    for c in columns {
+        lines.push(format!("    {}", ddl_column_clause(dialect, c)?));
+    }
+    if !primary.is_empty() {
+        if primary.len() > MAX_DDL_KEY_PARTS {
+            return Err(format!(
+                "a primary key may name at most {MAX_DDL_KEY_PARTS} columns"
+            ));
+        }
+        let cols = primary
+            .iter()
+            .map(|c| quote_ident(dialect, c))
+            .collect::<Result<Vec<_>, _>>()?;
+        lines.push(format!("    PRIMARY KEY ({})", cols.join(", ")));
+    }
+    let mut stmt = format!("CREATE TABLE {target} (\n{}\n)", lines.join(",\n"));
+    if dialect == DbDialect::Mysql {
+        if let Some(cm) = comment.filter(|s| !s.is_empty()) {
+            stmt.push_str(&format!(
+                " COMMENT={}",
+                sql_dump_literal(dialect, Some(&json!(cm)))?
+            ));
+        }
+    }
+    let mut out = vec![stmt];
+    ddl_comment_statements(dialect, schema, table, columns, comment, &mut out)?;
+    Ok(out)
+}
+
+/// ALTER TABLE ... ADD COLUMN — one statement however many columns the form added (both
+/// dialects accept a comma-joined action list, and one ALTER is atomic on MySQL).
+pub fn column_ddl(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    columns: &[DdlColumn],
+) -> Result<Vec<String>, String> {
+    if columns.is_empty() {
+        return Err("no columns to add".into());
+    }
+    let schema = schema.filter(|s| !s.is_empty());
+    let target = qualified(dialect, schema, table)?;
+    let adds = columns
+        .iter()
+        .map(|c| Ok(format!("ADD COLUMN {}", ddl_column_clause(dialect, c)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut out = vec![format!("ALTER TABLE {target} {}", adds.join(", "))];
+    ddl_comment_statements(dialect, schema, table, columns, None, &mut out)?;
+    Ok(out)
+}
+
+/// CREATE [UNIQUE] INDEX over the table's existing columns.
+pub fn index_ddl(
+    dialect: DbDialect,
+    schema: Option<&str>,
+    table: &str,
+    index: &str,
+    columns: &[String],
+    unique: bool,
+) -> Result<Vec<String>, String> {
+    if columns.is_empty() {
+        return Err("an index needs at least one column".into());
+    }
+    if columns.len() > MAX_DDL_KEY_PARTS {
+        return Err(format!("an index may name at most {MAX_DDL_KEY_PARTS} columns"));
+    }
+    let schema = schema.filter(|s| !s.is_empty());
+    let target = qualified(dialect, schema, table)?;
+    let cols = columns
+        .iter()
+        .map(|c| quote_ident(dialect, c))
+        .collect::<Result<Vec<_>, _>>()?;
+    let unique = if unique { "UNIQUE " } else { "" };
+    Ok(vec![format!(
+        "CREATE {unique}INDEX {} ON {target} ({})",
+        quote_ident(dialect, index)?,
+        cols.join(", ")
+    )])
+}
+
+/// The mini-grid's rows: name/type/nullable/default/comment, duplicates refused.
+fn parse_ddl_columns(o: &Value) -> Result<Vec<DdlColumn>, String> {
+    let arr = o
+        .get("columns")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "columns must be an array".to_string())?;
+    if arr.is_empty() {
+        return Err("a form needs at least one column".into());
+    }
+    if arr.len() > MAX_DDL_COLUMNS {
+        return Err(format!("at most {MAX_DDL_COLUMNS} columns per form"));
+    }
+    let mut out = Vec::with_capacity(arr.len());
+    let mut seen: Vec<&str> = Vec::with_capacity(arr.len());
+    for c in arr {
+        let name = c
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "each column needs a name".to_string())?;
+        if seen.contains(&name) {
+            return Err(format!("duplicate column name: {name}"));
+        }
+        seen.push(name);
+        let type_ = vet_ddl_type(c.get("type").and_then(Value::as_str).unwrap_or(""))?.to_string();
+        let nullable = c.get("nullable").and_then(Value::as_bool).unwrap_or(true);
+        let default = match c.get("default").and_then(Value::as_str) {
+            Some(d) if !d.trim().is_empty() => Some(vet_ddl_default(d)?.to_string()),
+            _ => None,
+        };
+        let comment = c
+            .get("comment")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string);
+        out.push(DdlColumn {
+            name: name.to_string(),
+            type_,
+            nullable,
+            default,
+            comment,
+        });
+    }
+    Ok(out)
+}
+
+fn parse_str_list(o: &Value, k: &str) -> Result<Vec<String>, String> {
+    let arr = o
+        .get(k)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{k} must be an array"))?;
+    arr.iter()
+        .map(|v| {
+            v.as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("{k} must hold strings"))
+        })
+        .collect()
+}
+
+/// Parse one W4.6 form payload into its statements. `o` is the flattened browser object the
+/// /ddl route forwards ({op, table, schema?, ...}); /ddl-preview calls this same function,
+/// which is what makes preview and commit one code path.
+pub fn build_ddl_create(dialect: DbDialect, op: &str, o: &Value) -> Result<Vec<String>, String> {
+    let table = o
+        .get("table")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "table is required".to_string())?;
+    let schema = o
+        .get("schema")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    match op {
+        "create_table" => table_ddl(
+            dialect,
+            schema,
+            table,
+            &parse_ddl_columns(o)?,
+            &if o.get("primary").is_some() {
+                parse_str_list(o, "primary")?
+            } else {
+                Vec::new()
+            },
+            o.get("comment").and_then(Value::as_str),
+        ),
+        "add_column" => column_ddl(dialect, schema, table, &parse_ddl_columns(o)?),
+        "create_index" => {
+            let index = o
+                .get("index")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "index is required".to_string())?;
+            index_ddl(
+                dialect,
+                schema,
+                table,
+                index,
+                &parse_str_list(o, "columns")?,
+                o.get("unique").and_then(Value::as_bool).unwrap_or(false),
+            )
+        }
+        other => Err(format!("unknown ddl operation: {other}")),
+    }
+}
+
+/// The script form the preview shows and /ddl echoes back: every statement on its own line,
+/// terminated — the display IS the payload, like the edit bar's SQL preview.
+pub fn ddl_script(statements: &[String]) -> String {
+    statements
+        .iter()
+        .map(|s| format!("{s};"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 // --- the read-only console -----------------------------------------------------------------------
 
 /// Prefix a statement with EXPLAIN for the console's plan view — idempotent, so a query that
@@ -3530,6 +3861,221 @@ mod tests {
         assert!(err.contains("new table name"), "{err}");
         let err = build_ddl_op_sql(DbDialect::Mysql, "explode", None, "a", None).unwrap_err();
         assert!(err.contains("unknown structure operation"), "{err}");
+    }
+
+
+    // --- docs/22 W4.6: the minimal DDL set (form -> one builder -> SQL; preview = commit) -------------
+
+    /// The W4.6 tests' plain column: name/type/nullability only.
+    fn ddl_col(name: &str, type_: &str, nullable: bool) -> DdlColumn {
+        DdlColumn {
+            name: name.into(),
+            type_: type_.into(),
+            nullable,
+            default: None,
+            comment: None,
+        }
+    }
+
+    #[test]
+    fn w46_table_ddl_snapshots_both_dialects() {
+        let columns = vec![
+            DdlColumn {
+                name: "id".into(),
+                type_: "int".into(),
+                nullable: false,
+                default: Some("0".into()),
+                comment: None,
+            },
+            DdlColumn {
+                name: "name".into(),
+                type_: "varchar(100)".into(),
+                nullable: true,
+                default: None,
+                comment: Some("名称".into()),
+            },
+            // A reserved word rides the same identifier gate as any other name — quoted, not
+            // refused, because quoting is what makes it legal.
+            DdlColumn {
+                name: "order".into(),
+                type_: "int".into(),
+                nullable: false,
+                default: None,
+                comment: None,
+            },
+        ];
+        // MySQL: comments ride inline, one statement total.
+        assert_eq!(
+            table_ddl(
+                DbDialect::Mysql,
+                Some("app"),
+                "cfg",
+                &columns,
+                &["id".to_string()],
+                Some("配置表")
+            )
+            .unwrap(),
+            vec![
+                "CREATE TABLE `app`.`cfg` (\n    `id` int NOT NULL DEFAULT 0,\n    `name` varchar(100) COMMENT '名称',\n    `order` int NOT NULL,\n    PRIMARY KEY (`id`)\n) COMMENT='配置表'".to_string()
+            ]
+        );
+        // Postgres: comments are their own statements after the CREATE.
+        assert_eq!(
+            table_ddl(
+                DbDialect::Pg,
+                Some("public"),
+                "cfg",
+                &columns,
+                &["id".to_string()],
+                Some("配置表")
+            )
+            .unwrap(),
+            vec![
+                "CREATE TABLE \"public\".\"cfg\" (\n    \"id\" int NOT NULL DEFAULT 0,\n    \"name\" varchar(100),\n    \"order\" int NOT NULL,\n    PRIMARY KEY (\"id\")\n)".to_string(),
+                "COMMENT ON TABLE \"public\".\"cfg\" IS '配置表'".to_string(),
+                "COMMENT ON COLUMN \"public\".\"cfg\".\"name\" IS '名称'".to_string()
+            ]
+        );
+        // No schema, no pk, no comments: the bare create, one column.
+        assert_eq!(
+            table_ddl(DbDialect::Mysql, None, "t", &[ddl_col("a", "int", true)], &[], None)
+                .unwrap(),
+            vec!["CREATE TABLE `t` (\n    `a` int\n)".to_string()]
+        );
+    }
+
+    #[test]
+    fn w46_column_ddl_snapshots_both_dialects() {
+        let adds = vec![
+            DdlColumn {
+                name: "email".into(),
+                type_: "varchar(255)".into(),
+                nullable: false,
+                default: Some("''".into()),
+                comment: Some("联系".into()),
+            },
+            ddl_col("created_at", "timestamp", true),
+        ];
+        assert_eq!(
+            column_ddl(DbDialect::Mysql, Some("app"), "users", &adds).unwrap(),
+            vec![
+                "ALTER TABLE `app`.`users` ADD COLUMN `email` varchar(255) NOT NULL DEFAULT '' COMMENT '联系', ADD COLUMN `created_at` timestamp".to_string()
+            ]
+        );
+        assert_eq!(
+            column_ddl(DbDialect::Pg, None, "users", &adds).unwrap(),
+            vec![
+                "ALTER TABLE \"users\" ADD COLUMN \"email\" varchar(255) NOT NULL DEFAULT '', ADD COLUMN \"created_at\" timestamp".to_string(),
+                "COMMENT ON COLUMN \"users\".\"email\" IS '联系'".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn w46_index_ddl_snapshots_both_dialects() {
+        assert_eq!(
+            index_ddl(
+                DbDialect::Mysql,
+                Some("app"),
+                "users",
+                "users_name_idx",
+                &["name".to_string(), "order".to_string()],
+                false
+            )
+            .unwrap(),
+            vec!["CREATE INDEX `users_name_idx` ON `app`.`users` (`name`, `order`)".to_string()]
+        );
+        assert_eq!(
+            index_ddl(DbDialect::Pg, None, "users", "users_email_key", &["email".to_string()], true)
+                .unwrap(),
+            vec!["CREATE UNIQUE INDEX \"users_email_key\" ON \"users\" (\"email\")".to_string()]
+        );
+    }
+
+    #[test]
+    fn w46_build_ddl_create_dispatches_the_panel_payload() {
+        let o = json!({
+            "table": "cfg",
+            "schema": "public",
+            "comment": "配置",
+            "columns": [
+                { "name": "id", "type": "bigint", "nullable": false },
+                { "name": "label", "type": "varchar(40)", "default": "''", "comment": "标签" }
+            ],
+            "primary": ["id"]
+        });
+        let stmts = build_ddl_create(DbDialect::Pg, "create_table", &o).unwrap();
+        assert_eq!(
+            stmts[0],
+            "CREATE TABLE \"public\".\"cfg\" (\n    \"id\" bigint NOT NULL,\n    \"label\" varchar(40) DEFAULT '',\n    PRIMARY KEY (\"id\")\n)"
+        );
+        assert!(stmts.contains(&"COMMENT ON COLUMN \"public\".\"cfg\".\"label\" IS '标签'".to_string()));
+
+        let o = json!({ "table": "t", "columns": [{ "name": "a", "type": "int" }] });
+        assert_eq!(
+            build_ddl_create(DbDialect::Mysql, "add_column", &o).unwrap(),
+            vec!["ALTER TABLE `t` ADD COLUMN `a` int".to_string()]
+        );
+
+        let o = json!({ "table": "t", "index": "t_a_idx", "columns": ["a"], "unique": true });
+        assert_eq!(
+            build_ddl_create(DbDialect::Mysql, "create_index", &o).unwrap(),
+            vec!["CREATE UNIQUE INDEX `t_a_idx` ON `t` (`a`)".to_string()]
+        );
+    }
+
+    #[test]
+    fn w46_ddl_refuses_illegal_identifiers_and_payloads() {
+        // The identifier whitelist: table, column and index names that are not bare words.
+        let bad_col = json!({ "table": "t", "columns": [{ "name": "a; DROP TABLE users", "type": "int" }] });
+        let err = build_ddl_create(DbDialect::Mysql, "create_table", &bad_col).unwrap_err();
+        assert!(err.contains("not a valid MySQL identifier"), "{err}");
+        let bad_table = json!({ "table": "drop table; --", "columns": [{ "name": "a", "type": "int" }] });
+        assert!(build_ddl_create(DbDialect::Pg, "create_table", &bad_table).is_err());
+        let bad_index = json!({ "table": "t", "index": "x y", "columns": ["a"] });
+        assert!(build_ddl_create(DbDialect::Mysql, "create_index", &bad_index).is_err());
+        // A type or default that could break the statement out of its one line.
+        let bad_type = json!({ "table": "t", "columns": [{ "name": "a", "type": "int; DROP TABLE x" }] });
+        let err = build_ddl_create(DbDialect::Pg, "create_table", &bad_type).unwrap_err();
+        assert!(err.contains("not a valid column type"), "{err}");
+        let bad_default = json!({ "table": "t", "columns": [{ "name": "a", "type": "int", "default": "0; -- done" }] });
+        let err = build_ddl_create(DbDialect::Mysql, "create_table", &bad_default).unwrap_err();
+        assert!(err.contains("not a valid default"), "{err}");
+        // Structural refusals.
+        let no_cols = json!({ "table": "t", "columns": [] });
+        let err = build_ddl_create(DbDialect::Mysql, "create_table", &no_cols).unwrap_err();
+        assert!(err.contains("at least one column"), "{err}");
+        let dupes = json!({ "table": "t", "columns": [{ "name": "a", "type": "int" }, { "name": "a", "type": "int" }] });
+        let err = build_ddl_create(DbDialect::Pg, "create_table", &dupes).unwrap_err();
+        assert!(err.contains("duplicate column"), "{err}");
+        let no_index_cols = json!({ "table": "t", "index": "i", "columns": [] });
+        let err = build_ddl_create(DbDialect::Mysql, "create_index", &no_index_cols).unwrap_err();
+        assert!(err.contains("at least one column"), "{err}");
+        let missing = json!({});
+        let err = build_ddl_create(DbDialect::Mysql, "add_column", &missing).unwrap_err();
+        assert!(err.contains("table is required"), "{err}");
+        let unknown = build_ddl_create(DbDialect::Mysql, "drop_database", &json!({ "table": "t" })).unwrap_err();
+        assert!(unknown.contains("unknown ddl operation"), "{unknown}");
+    }
+
+    #[test]
+    fn w46_ddl_script_and_comment_escaping() {
+        // The script is what /ddl-preview shows and /ddl echoes back: one statement per
+        // line, terminated — the preview IS the payload.
+        assert_eq!(ddl_script(&["A".to_string(), "B".to_string()]), "A;\nB;");
+        // Comment literals escape the way the dump literal already does (W4.4): MySQL
+        // backslash-escapes, Postgres doubles quotes.
+        let c = vec![DdlColumn {
+            name: "a".into(),
+            type_: "int".into(),
+            nullable: true,
+            default: None,
+            comment: Some("it's \\ kept".into()),
+        }];
+        let my = table_ddl(DbDialect::Mysql, None, "t", &c, &[], None).unwrap();
+        assert_eq!(my[0], "CREATE TABLE `t` (\n    `a` int COMMENT 'it\\'s \\\\ kept'\n)");
+        let pg = table_ddl(DbDialect::Pg, None, "t", &c, &[], None).unwrap();
+        assert_eq!(pg[1], "COMMENT ON COLUMN \"t\".\"a\" IS 'it''s \\ kept'");
     }
 
     #[test]
