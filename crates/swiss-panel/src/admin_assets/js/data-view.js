@@ -5,6 +5,7 @@ import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbActivityPane, dbActivityPollStop } from "./data-activity.js";
+import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
 
@@ -148,6 +149,12 @@ function renderDbView() {
         '<select id="dbSort" aria-label="Sort by"></select>' +
         '<button class="btn icon" id="dbSortDir" type="button" title="Sort direction"></button>' +
       '</div>' +
+      // docs/22 W4.6: the table list's own header band — the list names itself and carries
+      // one persistent dimmed + (the docs/20 §4 container-header glyph) for New table….
+      '<div class="db-list-head" id="dbListHead" hidden>' +
+        '<span class="db-list-title">Tables</span>' +
+        '<button class="btn icon grp-add" id="dbNewTable" type="button" aria-label="New table" title="New table…"></button>' +
+      '</div>' +
       '<div class="db-tables" id="dbTables"><div class="db-hint">Loading…</div></div>' +
       '<div class="db-side-foot" id="dbTablesPager"></div>' +
     '</div>' +
@@ -282,6 +289,22 @@ function renderDbView() {
   dbHistoryLoad();
   dbHistoryRender();
   renderDbToolbar(); renderDbGrid(); renderDbBar();
+  // docs/22 W4.6: the list band's + opens the New table sheet — SQL connections only (the
+  // band itself is hidden for redis and for no-connection in dbSyncKind, with dbMore).
+  var dbNewTable = $("dbNewTable");
+  if (dbNewTable) {
+    dbNewTable.innerHTML = icon("plus");
+    dbNewTable.onclick = function () {
+      var d = state.db;
+      if (!d.conn || dbIsRedis()) return;
+      openDbDdlSheet("table", {
+        dialect: dbDialectOf(),
+        conn: d.conn,
+        schema: dbIsPg() ? (d.schemaFilter || "public") : "",
+        schemas: dbIsPg() ? dbKnownSchemas() : [],
+      });
+    };
+  }
   var dbMore = $("dbMore");
   dbMore.innerHTML = icon("ellipsis");
   dbMore.onclick = function (e) {
@@ -380,9 +403,13 @@ function dbSyncKind() {
     hint.textContent = "one statement per run · a blank line starts a new block · Ctrl+Enter runs the caret's block";
   }
   // The pane's ⋯ exists for the Activity page, which is a SQL-connection feature: a redis
-  // connection (or none) hides the button rather than the menu hiding its one item.
+  // connection (or none) hides the button rather than the menu hiding its one item. The
+  // list band rides the same condition — redis keys are not tables, and there is nothing to
+  // create without a connection.
   var more = $("dbMore");
   if (more) more.hidden = !state.db.conn || dbIsRedis();
+  var listHead = $("dbListHead");
+  if (listHead) listHead.hidden = !state.db.conn || dbIsRedis();
 }
 
 /** The one label a connection goes by — the sidebar dropdown's option text. The page-bar
@@ -618,6 +645,26 @@ function dbPaintSchemaOptions() {
   });
 }
 
+/** The selected connection's dialect word ("mysql" | "pg") — the DDL sheets build their
+ *  type suggestions and titles on it (docs/22 W4.6). */
+function dbDialectOf() {
+  var c = state.db.conns.find(function (x) { return x.name === state.db.conn; });
+  return (c && c.dialect) || "mysql";
+}
+
+/** Every schema the loaded pages have shown, "public" always among them — the New table
+ *  sheet's where-it-goes select (docs/22 W4.6; swiss-design rule 6). */
+function dbKnownSchemas() {
+  var d = state.db;
+  var out = [];
+  d.tables.forEach(function (t) {
+    if (t.schema && out.indexOf(t.schema) < 0) out.push(t.schema);
+  });
+  if (out.indexOf("public") < 0) out.unshift("public");
+  out.sort();
+  return out;
+}
+
 function dbOpenTable(t) {
   var d = state.db;
   if (t.name === d.table && t.schema === d.schema) return;
@@ -631,4 +678,4 @@ function dbOpenTable(t) {
   dbLoadData();
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDropEdits, dbFilterMatches, dbIsPg, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, loadDbView, renderDbSide, renderDbTables, renderDbView };

@@ -386,6 +386,28 @@
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
     .db-keytype { font-size: var(--f-caption); padding: 1px 6px; border-radius: 980px; background: var(--sep-soft); color: var(--text-2); margin-left: var(--s2); }
+    /* docs/22 W4.6 — the table list's own header band: the list gains a create action, so it
+       names itself and holds one persistent dimmed + the way every container header does
+       (docs/20 §4 sidebar density — the same 28px band on --sep-soft; the glyph reuses the
+       groups' grp-add styling, so every "+" in the panel reads as one glyph). */
+    .db-list-head { display: flex; align-items: center; gap: var(--s1); height: 28px; padding: 0 var(--s1); background: var(--sep-soft); border-radius: var(--r-row); }
+    .db-list-title { flex: 1; min-width: 0; font-size: var(--f-body); font-weight: 600; color: var(--text-2); }
+    /* docs/22 W4.6 — the DDL sheet's column mini-grid: caption header row, one line per
+       column on the field surface. Existing columns render disabled (only ADD is in the
+       minimal set), so the sheet reads as the table's shape with new rows at its end; fixed
+       layout keeps the five inputs column-aligned whatever a name carries. */
+    .db-ddl-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .db-ddl-grid th { text-align: left; font-size: var(--f-label); font-weight: 500; color: var(--text-3); padding: 0 0 var(--s1); }
+    .db-ddl-grid td { padding: 0 0 var(--s1); vertical-align: top; }
+    .db-ddl-grid .btn.icon { width: 26px; height: 26px; padding: 0; color: var(--text-3); }
+    .db-ddl-grid input[type="checkbox"] { width: auto; accent-color: var(--accent); }
+    /* The index picker's checks wrap beside each other — a wide table should not stack into
+       a tower of one-word lines. */
+    .db-ddl-colpick { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); }
+    .db-ddl-colpick .check { gap: var(--s1); }
+    /* The preview's quiet placeholder is the same block in a whisper, so "nothing yet" and
+       the real script read as one surface. */
+    .db-ddl.db-ddl-quiet { color: var(--text-3); }
     /* docs/22 W3.3 — the typed redis value view. The meta line carries its own actions now, so
        it flexes; the TTL chip is the one inline-editable readout; a string is a plain field
        with the one primary action beside it. The typed table itself reuses .db-grid as-is. */
