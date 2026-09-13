@@ -4,6 +4,7 @@ import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisPendingCount } from "./
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
+import { dbActivityPane, dbActivityPollStop } from "./data-activity.js";
 import { popupMenu } from "./menu.js";
 
 /* ================================================================================================
@@ -50,6 +51,8 @@ function dbFreshState() {
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisKey: null,      // the key whose value is shown in the pane
     redisEdits: null,    // buffered typed-value edits for that key (docs/22 W3.3)
+    activity: false,     // the Activity section page is open (docs/22 W3.2) — SQL connections only
+    activityRows: null,  // last /activity answer, re-rendered by the 5s poll while open
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
     detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
     detailBusy: false,
@@ -148,7 +151,12 @@ function renderDbView() {
       '<div class="db-side-foot" id="dbTablesPager"></div>' +
     '</div>' +
     '<div class="db-main">' +
-      '<div class="db-head" id="dbHead"></div>' +
+      '<div class="db-headrow">' +
+        '<div class="db-head" id="dbHead"></div>' +
+        // Pane-level actions live behind one ⋯ next to the head (docs/22 W3.2); the Activity
+        // monitor is the first. Hidden until a SQL connection exists — redis has no sessions.
+        '<button class="btn icon" id="dbMore" type="button" title="More pane actions" hidden></button>' +
+      '</div>' +
       '<div class="db-filters" id="dbFilters"></div>' +
       '<div class="db-console" id="dbConsole" hidden>' +
         '<div class="db-sql-wrap">' +
@@ -167,6 +175,9 @@ function renderDbView() {
   $("dbConn").onchange = function () {
     if (this.value === state.db.conn) return;
     if (!dbOkToDrop()) { this.value = state.db.conn; return; }
+    // The Activity page belongs to ONE connection's server; the switch leaves it behind —
+    // restore the normal pane (and stop its poll) before the state it reads changes.
+    if (state.db.activity) dbActivityClose();
     var d = state.db;
     d.conn = this.value; d.table = null; d.schema = null; d.data = null;
     d.tables = []; d.tablesPage = 0; d.order = null; d.sqlResult = null;
@@ -264,6 +275,37 @@ function renderDbView() {
   dbHistoryLoad();
   dbHistoryRender();
   renderDbToolbar(); renderDbGrid(); renderDbBar();
+  var dbMore = $("dbMore");
+  dbMore.innerHTML = icon("ellipsis");
+  dbMore.onclick = function (e) {
+    // stopPropagation: the document click closes popup menus — the opening click must not.
+    e.stopPropagation();
+    var d = state.db;
+    popupMenu(this.getBoundingClientRect(), [
+      { label: d.activity ? "Close activity" : "Activity…", fn: dbActivityToggle },
+    ]);
+  };
+  // The section page replaces the pane's content when (re)entered with it open — closing is
+  // just another rebuild with the flag down, so nothing here needs a special restore path.
+  if (state.db.activity && state.db.conn && !dbIsRedis()) dbActivityPane(dbActivityClose);
+}
+
+/* The Activity monitor (docs/22 W3.2): one flag drives it. Opening rebuilds the pane with the
+   section in place; closing rebuilds it back — the same renderDbView that drew it. */
+function dbActivityToggle() {
+  var d = state.db;
+  if (d.activity) { dbActivityClose(); return; }
+  if (!d.conn || dbIsRedis()) return;
+  d.activity = true;
+  renderDbView();
+}
+
+function dbActivityClose() {
+  var d = state.db;
+  d.activity = false;
+  d.activityRows = null;
+  dbActivityPollStop();
+  renderDbView();
 }
 
 /* The list's sort row. SQL connections sort server-side (name/rows/size against the catalog);
@@ -330,6 +372,10 @@ function dbSyncKind() {
     explain.hidden = false;
     hint.textContent = "one statement per run · a blank line starts a new block · Ctrl+Enter runs the caret's block";
   }
+  // The pane's ⋯ exists for the Activity page, which is a SQL-connection feature: a redis
+  // connection (or none) hides the button rather than the menu hiding its one item.
+  var more = $("dbMore");
+  if (more) more.hidden = !state.db.conn || dbIsRedis();
 }
 
 /** The one label a connection goes by — the sidebar dropdown's option text. The page-bar

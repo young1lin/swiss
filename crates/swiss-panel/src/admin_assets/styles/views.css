@@ -396,6 +396,16 @@
     .db-redis-str-row { display: flex; gap: var(--s2); align-items: flex-end; padding: var(--s2); }
     .db-redis-str { flex: 1; min-height: 96px; resize: vertical; font-family: var(--mono); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row); color: var(--text); }
     .db-redis-str:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    /* docs/22 W3.2 — the Activity page. The head sits in a row with the pane's ⋯; the sessions
+       table reuses .db-grid as-is. The panel's own row is marked, a blocked wait reads amber
+       (state, not danger), and the row ⋯ matches the rowctl control the grid already uses. */
+    .db-headrow { display: flex; align-items: flex-end; gap: var(--s2); }
+    .db-headrow .db-head { flex: 1; min-width: 0; }
+    .db-headrow .btn.icon { flex: none; }
+    .db-act-own > td:first-child { color: var(--accent); }
+    .db-act-blocked { color: var(--amber); }
+    .db-act-more { border: 0; background: none; padding: 2px var(--s1); cursor: pointer; color: var(--text-3); border-radius: var(--r-row); }
+    .db-act-more:hover { color: var(--text); background: var(--sep-soft); }
     .db-pagesize { width: auto; }
     .db-console-row .dd { width: auto; min-width: 110px; }
     /* The row-grid controls stay IN LAYOUT on every tab (visibility, not display): removing them

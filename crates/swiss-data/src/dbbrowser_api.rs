@@ -714,6 +714,40 @@ async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<
     Ok(with_elapsed_ms(json!({ "reply": reply }), started))
 }
 
+/// Live sessions on the connection's server (docs/22 W3.2) — the Activity page, polled
+/// while it is open. The reply shape is shared by both dialects (dbbrowser.rs).
+async fn activity(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    b.activity().await.map_err(Fail::bad)
+}
+
+/// Cancel (pg_cancel_backend / KILL QUERY) or terminate (pg_terminate_backend / KILL) one
+/// session (docs/22 W3.2). The mode word and the pid are validated here — a kill is the one
+/// route in this router that interrupts someone else's work, so it logs what it did.
+async fn activity_kill(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    let pid = body
+        .get("pid")
+        .and_then(Value::as_i64)
+        .filter(|p| *p > 0)
+        .ok_or_else(|| Fail::bad("pid must be a session id (positive integer)"))?;
+    let terminate = match body.get("mode").and_then(Value::as_str) {
+        Some("cancel") => false,
+        Some("terminate") => true,
+        _ => return Err(Fail::bad("mode must be cancel or terminate")),
+    };
+    log::log(
+        "warn",
+        "data view activity kill",
+        Some(json!({
+            "name": name,
+            "pid": pid,
+            "mode": if terminate { "terminate" } else { "cancel" },
+        })),
+    );
+    b.activity_kill(pid, terminate).await.map_err(Fail::bad)
+}
+
 /// Commit a buffered redis structured-edit batch (docs/22 W3.3): the typed value view's
 /// whole buffer as ONE pipelined round trip. Shape is checked here; WHICH commands may run
 /// stays with the adapter's console guard, applied per command before the socket is touched —
@@ -823,6 +857,21 @@ async fn command_route(
     reply(command(&catalog, &name, &body.0).await)
 }
 
+async fn activity_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+) -> Response {
+    reply(activity(&catalog, &name).await)
+}
+
+async fn activity_kill_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(activity_kill(&catalog, &name, &body.0).await)
+}
+
 async fn redis_pipeline_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -886,6 +935,9 @@ where
         .route("/api/db/{name}/command", post(command_route))
         // The buffered structured-edit commit (docs/22 W3.3): one pipeline, one round trip.
         .route("/api/db/{name}/redis-pipeline", post(redis_pipeline_route))
+        // Live sessions and the cancel/terminate pair (docs/22 W3.2).
+        .route("/api/db/{name}/activity", get(activity_route))
+        .route("/api/db/{name}/activity-kill", post(activity_kill_route))
         .route("/api/db/{name}/key", get(key_route))
         .route("/api/db/{name}/ddl", post(ddl_route))
         .route("/api/db/{name}/query", post(query_route))
@@ -928,6 +980,8 @@ mod tests {
         tables_opts: Option<Value>,
         /// The command list the redis pipeline route forwarded (docs/22 W3.3).
         pipeline: Option<Vec<Vec<String>>>,
+        /// The (pid, terminate) the activity-kill route forwarded (docs/22 W3.2).
+        activity_kill: Option<(i64, bool)>,
     }
 
     type SeenRef = Arc<Mutex<Seen>>;
@@ -1181,6 +1235,18 @@ mod tests {
             Ok(
                 json!({ "ran": format!("stub {}", o.get("op").and_then(Value::as_str).unwrap_or("")) }),
             )
+        }
+        async fn activity(&self) -> Result<Value, String> {
+            Ok(json!({ "rows": [
+                { "pid": 101, "user": "app", "state": "active", "wait": "", "seconds": 4, "query": "SELECT pg_sleep(60)", "own": false, "blockedBy": null },
+                { "pid": 102, "user": "root", "state": "idle", "wait": "", "seconds": 0, "query": "", "own": true, "blockedBy": null },
+            ] }))
+        }
+        async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.activity_kill = Some((pid, terminate));
+            }
+            Ok(json!({ "ok": true }))
         }
     }
 
@@ -2186,6 +2252,85 @@ mod tests {
                 "{bad} -> {err}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn the_activity_page_lists_sessions_in_the_shared_shape() {
+        // docs/22 W3.2: one reply shape for both dialects — the panel renders one table.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/activity", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let rows = body.expect("json")["rows"].as_array().expect("rows").clone();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["pid"], json!(101));
+        assert_eq!(rows[0]["query"], "SELECT pg_sleep(60)");
+        assert_eq!(rows[1]["own"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn an_activity_kill_validates_mode_and_pid_before_touching_the_browser() {
+        let seen = SeenRef::default();
+        let make = || {
+            router_of(vec![db_entry(
+                "db",
+                Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+            )])
+        };
+        for bad in [
+            json!({ "pid": 5 }),
+            json!({ "pid": 5, "mode": "kill" }),
+            json!({ "pid": 5, "mode": "CANCEL" }),
+            json!({ "mode": "cancel" }),
+            json!({ "pid": 0, "mode": "cancel" }),
+            json!({ "pid": -3, "mode": "terminate" }),
+            json!({ "pid": "7", "mode": "cancel" }),
+        ] {
+            let (status, _, body, _) = call(make(), "POST", "/api/db/db/activity-kill", Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            let err = body.expect("json")["error"].as_str().expect("error").to_string();
+            assert!(
+                err == "mode must be cancel or terminate"
+                    || err == "pid must be a session id (positive integer)",
+                "{bad} -> {err}"
+            );
+        }
+        assert!(seen.lock().expect("seen").activity_kill.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_activity_kill_forwards_the_mode_word_to_the_browser() {
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/activity-kill",
+            Some(json!({ "pid": 4242, "mode": "terminate" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json")["ok"], json!(true));
+        assert_eq!(seen.lock().expect("seen").activity_kill, Some((4242, true)));
+    }
+
+    #[tokio::test]
+    async fn the_activity_page_is_sql_only() {
+        // A redis connection has no sessions page: the 404 names what it is, as ever.
+        let app = router_of(vec![redis_entry("cache")]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/cache/activity", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'cache' (redis) has no database to browse"
+        );
     }
 
     #[tokio::test]

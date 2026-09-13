@@ -579,4 +579,20 @@ impl DbBrowser for MysqlBrowser {
         run_query(&pool, &sql, &[]).await?;
         Ok(json!({ "ran": sql }))
     }
+
+    async fn activity(&self) -> Result<Value, String> {
+        // The statement already aliases to the shared reply keys (dbbrowser.rs), so the rows
+        // are the reply, verbatim.
+        let rows = self
+            .query(&swiss_host::dbbrowser::activity_sql(DbDialect::Mysql), &[])
+            .await?;
+        Ok(json!({ "rows": rows }))
+    }
+
+    async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String> {
+        let sql = swiss_host::dbbrowser::activity_kill_sql(DbDialect::Mysql, pid, terminate)?;
+        self.query(&sql, &[]).await?;
+        // KILL / KILL QUERY answer an OK packet — no result row to read a truth from.
+        Ok(json!({ "ok": true }))
+    }
 }

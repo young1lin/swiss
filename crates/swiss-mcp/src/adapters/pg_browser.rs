@@ -716,6 +716,33 @@ impl DbBrowser for PgBrowser {
         super::pg::pg_query_rows(&pool, &sql, &[]).await?;
         Ok(json!({ "ran": sql }))
     }
+
+    async fn activity(&self) -> Result<Value, String> {
+        // The statement already aliases to the shared reply keys (dbbrowser.rs), so the rows
+        // are the reply, verbatim.
+        let rows = self
+            .query(&swiss_host::dbbrowser::activity_sql(DbDialect::Pg), &[])
+            .await?;
+        Ok(json!({ "rows": rows }))
+    }
+
+    async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String> {
+        let sql = swiss_host::dbbrowser::activity_kill_sql(DbDialect::Pg, pid, terminate)?;
+        let rows = self.query(&sql, &[]).await?;
+        // pg_cancel_backend / pg_terminate_backend answer one boolean: false means the backend
+        // was already gone. Report it — the panel says so instead of promising a kill.
+        let result = rows
+            .first()
+            .and_then(|r| r.values().next())
+            .and_then(|v| match v {
+                Value::Bool(b) => Some(*b),
+                _ => None,
+            });
+        match result {
+            Some(b) => Ok(json!({ "ok": true, "result": b })),
+            None => Ok(json!({ "ok": true })),
+        }
+    }
 }
 
 #[cfg(test)]

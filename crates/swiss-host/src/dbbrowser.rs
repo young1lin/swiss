@@ -593,6 +593,13 @@ pub trait DbBrowser: Send + Sync {
     async fn import_table(&self, o: &Value) -> Result<Value, String>;
     /// Rename / truncate / drop a table.
     async fn ddl_op(&self, o: &Value) -> Result<Value, String>;
+    /// Live sessions on this connection's server (docs/22 W3.2) — the Activity page, polled
+    /// while open. Rows speak the shared shape {pid, user, state, wait, seconds, query, own,
+    /// blockedBy?} so one panel table fits both dialects.
+    async fn activity(&self) -> Result<Value, String>;
+    /// Cancel (mode "cancel") or terminate one session by pid. The route validated the mode;
+    /// the browser still refuses a pid that cannot name a session.
+    async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String>;
 }
 
 /// The redis flavour of the Data view: page keys by SCAN, read one key type-aware.
@@ -2199,6 +2206,55 @@ pub fn sql_dump_foot(dialect: DbDialect) -> &'static str {
     }
 }
 
+// --- activity monitoring (docs/22 W3.2) -----------------------------------------------------------
+
+/// The sessions query for the Activity page. Postgres reads pg_stat_activity with
+/// pgadmin's dashboard columns — the wait_event pair, pg_blocking_pids flattened to a comma
+/// string, and the querying session itself marked via pg_backend_pid so the panel can chip
+/// it; MySQL reads information_schema.processlist, adminer's source, with COMMAND as the
+/// state word and STATE as the wait detail. Both alias to the SAME reply keys: one table,
+/// both dialects. The query text is capped server-side (LEFT 2000) so a runaway statement
+/// cannot balloon the poll's payload; the panel truncates visually regardless.
+/// `seconds` follows pgadmin: elapsed only while the state is active, 0 otherwise.
+pub fn activity_sql(dialect: DbDialect) -> String {
+    match dialect {
+        DbDialect::Pg => "SELECT pid, \
+             usename AS \"user\", \
+             COALESCE(state, '') AS state, \
+             CASE WHEN wait_event IS NULL THEN '' ELSE wait_event_type || ': ' || wait_event END AS wait, \
+             CASE WHEN state = 'active' THEN COALESCE(EXTRACT(EPOCH FROM (now() - query_start))::bigint, 0) ELSE 0 END AS seconds, \
+             LEFT(query, 2000) AS query, \
+             (pid = pg_backend_pid()) AS own, \
+             array_to_string(pg_blocking_pids(pid), ',') AS \"blockedBy\" \
+             FROM pg_stat_activity ORDER BY pid"
+            .to_string(),
+        DbDialect::Mysql => "SELECT ID AS pid, \
+             USER AS `user`, \
+             COALESCE(COMMAND, '') AS state, \
+             COALESCE(STATE, '') AS wait, \
+             COALESCE(TIME, 0) AS seconds, \
+             LEFT(COALESCE(INFO, ''), 2000) AS query, \
+             (ID = CONNECTION_ID()) AS own \
+             FROM information_schema.processlist ORDER BY ID"
+            .to_string(),
+    }
+}
+
+/// Cancel vs terminate for one session: Postgres runs pg_cancel_backend /
+/// pg_terminate_backend (pgadmin's pair); MySQL runs KILL QUERY / KILL. The pid is an i64 the
+/// route already coerced, so the digit string cannot carry anything but a number.
+pub fn activity_kill_sql(dialect: DbDialect, pid: i64, terminate: bool) -> Result<String, String> {
+    if pid <= 0 {
+        return Err("pid must be a session id (positive integer)".into());
+    }
+    Ok(match (dialect, terminate) {
+        (DbDialect::Pg, false) => format!("SELECT pg_cancel_backend({pid})"),
+        (DbDialect::Pg, true) => format!("SELECT pg_terminate_backend({pid})"),
+        (DbDialect::Mysql, false) => format!("KILL QUERY {pid}"),
+        (DbDialect::Mysql, true) => format!("KILL {pid}"),
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::approx_constant)]
 mod tests {
@@ -3638,5 +3694,50 @@ mod tests {
         let cmds = vec![one; REDIS_PIPELINE_MAX + 1];
         let err = redis_pipeline_commands(&json!({ "commands": cmds })).expect_err("refused");
         assert!(err.contains("too many commands"), "{err}");
+    }
+
+    #[test]
+    fn activity_sql_names_each_dialects_session_source() {
+        // docs/22 W3.2: Postgres reads pg_stat_activity with the blocking-pid expansion
+        // (pgadmin's dashboard shape); MySQL reads information_schema.processlist (adminer's).
+        let pg = activity_sql(DbDialect::Pg);
+        assert!(pg.contains("pg_stat_activity"), "{pg}");
+        assert!(pg.contains("pg_blocking_pids"), "{pg}");
+        // The querying session itself must be visible AND marked, or the chip has no row.
+        assert!(pg.contains("pg_backend_pid"), "{pg}");
+        let my = activity_sql(DbDialect::Mysql);
+        assert!(my.contains("information_schema.processlist"), "{my}");
+        assert!(my.contains("CONNECTION_ID()"), "{my}");
+        // Both speak the SAME reply keys, or the panel would need two tables.
+        for key in ["pid", "user", "state", "wait", "seconds", "query", "own"] {
+            assert!(pg.contains(key), "pg misses {key}");
+            assert!(my.contains(key), "mysql misses {key}");
+        }
+    }
+
+    #[test]
+    fn activity_kill_sql_picks_cancel_and_terminate_per_dialect() {
+        assert_eq!(
+            activity_kill_sql(DbDialect::Pg, 42, false).unwrap(),
+            "SELECT pg_cancel_backend(42)"
+        );
+        assert_eq!(
+            activity_kill_sql(DbDialect::Pg, 42, true).unwrap(),
+            "SELECT pg_terminate_backend(42)"
+        );
+        assert_eq!(
+            activity_kill_sql(DbDialect::Mysql, 42, false).unwrap(),
+            "KILL QUERY 42"
+        );
+        assert_eq!(
+            activity_kill_sql(DbDialect::Mysql, 42, true).unwrap(),
+            "KILL 42"
+        );
+        // A pid that is not a session id is the caller's whole mistake — refuse, never run
+        // something surprising against pid 0 or a negative.
+        for bad in [0i64, -1] {
+            assert!(activity_kill_sql(DbDialect::Pg, bad, false).is_err());
+            assert!(activity_kill_sql(DbDialect::Mysql, bad, true).is_err());
+        }
     }
 }
