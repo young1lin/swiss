@@ -168,7 +168,10 @@ function dbFocusCell(r, c) {
   d.focus = { r: Math.max(0, Math.min(maxR, r)), c: Math.max(0, Math.min(maxC, c)) };
   renderDbGrid();
   var kbd = $("dbKbd");
-  if (kbd) kbd.focus();
+  // preventScroll: the input sits at the end of the scrolled content, so a plain focus()
+  // would drag the pane to the bottom and then scrollIntoView would snap the clicked
+  // row to the top - the pane must stay where the user's click left it.
+  if (kbd) kbd.focus({ preventScroll: true });
   var td = document.querySelector("#dbGridWrap td.db-focus");
   if (td && td.scrollIntoView) td.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
@@ -948,8 +951,9 @@ function renderDbGrid() {
   wrap.appendChild(tbl);
 
   // docs/22 W2.2: the zero-size input that carries the grid's keyboard focus. It sits inside
-  // the scrolling wrap (not above it) so focusing it never scrolls the pane away, and it owns
-  // keydown + paste — arrows/Enter/F2/Esc/Home/End/typing, Ctrl+C, and TSV paste.
+  // the scrolling wrap and owns keydown + paste — arrows/Enter/F2/Esc/Home/End/typing,
+  // Ctrl+C, and TSV paste. Every focus() call on it must pass preventScroll: it lives at
+  // the end of the scrolled content, and a plain focus() drags the pane to the bottom.
   var kbd = el("input", "db-kbd");
   kbd.type = "text";
   kbd.id = "dbKbd";
@@ -975,7 +979,7 @@ function renderDbGrid() {
       d.focus = m;
       renderDbGrid();
       var k = $("dbKbd");
-      if (k) k.focus();
+      if (k) k.focus({ preventScroll: true });
       var td = document.querySelector("#dbGridWrap td.db-focus");
       if (td && td.scrollIntoView) td.scrollIntoView({ block: "nearest", inline: "nearest" });
       return;
