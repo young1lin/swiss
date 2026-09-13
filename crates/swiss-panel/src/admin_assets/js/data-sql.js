@@ -270,7 +270,17 @@ async function dbCommit() {
     }
   });
   dbDropEdits();
-  dbLoadData(true);
+  // docs/22 closeout B4: the reload rebuilds the grid and scroll anchoring is OFF by design
+  // (docs/22 W2.2 — a repaint must never jump the pane), so the commit would otherwise snap
+  // the user back to the top, away from the row they just committed. Capture before the
+  // reload, restore after it lands; a superseding load owns the pane by then and a stale
+  // restore is a harmless scroll to where the user was anyway.
+  var wrap = $("dbGridWrap");
+  var scrollTop = wrap ? wrap.scrollTop : 0;
+  void dbLoadData(true).then(function () {
+    var w2 = $("dbGridWrap");
+    if (w2) w2.scrollTop = scrollTop;
+  });
 }
 
 /** EXPLAIN-prefix a console statement — mode "analyze" spells EXPLAIN ANALYZE, which runs
