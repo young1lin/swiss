@@ -1,7 +1,8 @@
 import { $, apiJson, el, state, toast } from "./util.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbOpenCellEditor } from "./data-cell.js";
-import { dbLoadData, renderDbGrid } from "./data-grid.js";
+import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
 import { clampMenuPos } from "./menu.js";
@@ -94,14 +95,27 @@ async function dbRunDdl(op, to) {
   });
   if (!j) return;
   toast("Ran: " + j.ran);
-  if (op === "drop") { d.table = null; d.data = null; d.detail = null; dbDropEdits(); }
+  if (op === "drop") {
+    // The table is gone: nothing of it may linger on the right pane. d.schema, the open
+    // result tabs and the view state (order, filters, focus) belong to the dropped table
+    // as much as d.data does, and the pane itself needs a repaint — renderDbTables
+    // refreshes only the LEFT list (docs/22 closeout audit).
+    d.table = null; d.schema = null; d.data = null; d.detail = null;
+    d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: every result tab closes
+    d.tab = "data"; d.order = null; d.dir = "asc"; d.filters = []; d.focus = null;
+    dbDropEdits();
+  }
   if (op === "rename" && to) { d.table = to; d.data = null; }
   if (op === "truncate") { dbDropEdits(); }
   d.tablesPage = 0;
   if (dbIsRedis()) dbLoadKeys(true);
   else dbLoadTables();
   if (d.table) dbLoadData(true);
-  else renderDbTables();
+  else {
+    renderDbTables();
+    // and the RIGHT pane, whose last paint still shows the dropped table's rows
+    renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
+  }
 }
 /* --- inline cell editor (the default path) ------------------------------------------------------- */
 /* A floating overlay sized to the cell: edits short values directly in place WITHOUT touching
