@@ -243,12 +243,17 @@ function wireDbDdlSheet() {
       $("ddl-title").textContent = "New table in " + $("ddl-schema").value;
     }
   };
-  if (kind === "table" && S.dialect === "pg") {
-    $("ddl-schema").onchange = function () {
-      S.schema = this.value;
-      retitle();
-      scheduleDbDdlPreview();
-    };
+  if (kind === "table") {
+    if (S.dialect === "pg") {
+      $("ddl-schema").onchange = function () {
+        S.schema = this.value;
+        retitle();
+        scheduleDbDdlPreview();
+      };
+    }
+    // The name and comment wire for EVERY dialect — mysql tables need the model write just
+    // as much as pg ones (caught live: the handlers once sat in the pg-only branch and a
+    // mysql sheet never left its quiet hint).
     $("ddl-table").oninput = function () { S.table = this.value; scheduleDbDdlPreview(); };
     $("ddl-table").value = S.table;
     $("ddl-comment").oninput = function () { S.comment = this.value; scheduleDbDdlPreview(); };
