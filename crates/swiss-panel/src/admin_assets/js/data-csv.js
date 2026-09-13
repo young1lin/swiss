@@ -209,12 +209,14 @@ function dbCopyCsvCell(v) {
   return String.fromCharCode(34) + s.split(String.fromCharCode(34)).join(String.fromCharCode(34) + String.fromCharCode(34)) + String.fromCharCode(34);
 }
 
-/** docs/22 W1.5: one filter straight from a cell value — push it, paint the row, apply. */
+/** docs/22 W1.5: one filter straight from a cell value — push it, paint the row, apply.
+ * docs/22 closeout B6: a REFUSED discard takes the pushed row back — a filter the user just
+ * said no to must not stay on screen as if it had been accepted. */
 function dbPushCellFilter(column, op, value) {
   var d = state.db;
   d.filters.push({ column: column, op: op, value: value });
   renderDbFilters();
-  dbApplyFilters();
+  if (!dbApplyFilters()) { d.filters.pop(); renderDbFilters(); }
 }
 
 function dbCellMenu(e, row, key, column, editInDialog) {
@@ -469,4 +471,4 @@ function dbExportCsv() {
   setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
 }
 
-export { dbCellMenu, dbCopyCsvCell, dbCopyFallback, dbCopyText, dbExportCsv, dbOpenImport, dbParseCsvLine, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy };
+export { dbCellMenu, dbCopyCsvCell, dbCopyFallback, dbCopyText, dbExportCsv, dbOpenImport, dbParseCsvLine, dbPushCellFilter, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy };

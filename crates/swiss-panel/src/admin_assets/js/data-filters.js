@@ -175,8 +175,10 @@ function renderDbFilters() {
     var rm = el("button", "db-act", "✕");
     rm.title = "Remove this filter";
     rm.onclick = function () {
+      // docs/22 closeout B6: remove goes through the same gate as every other row change —
+      // a REFUSED discard must leave the row on screen, not silently swallow it.
       d.filters.splice(i, 1);
-      dbApplyFilters();
+      if (!dbApplyFilters()) { d.filters.splice(i, 0, f); renderDbFilters(); }
     };
     row.appendChild(rm);
     box.appendChild(row);
