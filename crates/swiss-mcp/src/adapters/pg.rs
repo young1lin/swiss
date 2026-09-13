@@ -12,7 +12,7 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Either, Row};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{TableSort, TableSortKey, exact_int64, exact_int64_list, finite_f64};
+use swiss_host::dbbrowser::{TableSort, TableSortKey, bytea_hex, exact_int64, exact_int64_list, finite_f64};
 
 use super::direct::{BoxFut, Lazy};
 use super::pg_resources::PgResources;
@@ -383,11 +383,14 @@ fn column_to_value(row: &PgRow, col: &PgColumn, i: usize) -> Value {
             .ok()
             .flatten()
             .unwrap_or(Value::Null),
+        // BYTEA rides the API as \x hex (bytea text format): non-UTF-8 bytes survive the
+        // round trip, and the keyless md5 address digests the decoded bytes. The old lossy
+        // string mangled every non-UTF-8 value and made such rows unaddressable.
         "BYTEA" => row
             .try_get::<Option<Vec<u8>>, _>(i)
             .ok()
             .flatten()
-            .map(|b| json!(String::from_utf8_lossy(&b).into_owned()))
+            .map(|b| json!(bytea_hex(&b)))
             .unwrap_or(Value::Null),
         "DATE" => row
             .try_get::<Option<chrono::NaiveDate>, _>(i)

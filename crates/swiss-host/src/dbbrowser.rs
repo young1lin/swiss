@@ -1376,6 +1376,34 @@ fn is_text_or_binary(data_type: &str) -> bool {
         .any(|frag| t.contains(frag))
 }
 
+/// The byte kinds of is_text_or_binary: values whose WIRE form is \\x hex (the adapters render
+/// them so, PG bytea text format), whose bytes never round-trip a `col = ?` text bind, and
+/// whose md5 address must digest the DECODED bytes — never the hex ride, never a lossy
+/// string (a digest of mangled text matches nothing and the edit reads back as a false 409).
+pub fn is_binary_type(data_type: &str) -> bool {
+    let t = data_type.to_ascii_lowercase();
+    ["blob", "binary", "bytea"].iter().any(|frag| t.contains(frag))
+}
+
+/// The \\x + lowercase-hex wire form of raw bytes — the string a binary column's value rides
+/// the JSON API as, both dialects (PG bytea text format; MySQL rendered the same way so the
+/// panel and the readback side see one spelling).
+pub fn bytea_hex(bytes: &[u8]) -> String {
+    format!("\\x{}", swiss_core::util::to_hex(bytes))
+}
+
+/// Decode the \\x wire form back to bytes; None when the string is not that form (then the
+/// caller digests the string's own bytes — a hand-typed plain value addresses as itself).
+pub fn bytea_unhex(s: &str) -> Option<Vec<u8>> {
+    let hex = s.strip_prefix("\\x")?;
+    if hex.len() % 2 != 0 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect()}
+
 /// MD5 over the bytes, lowercase hex — the spelling both dialects' own md5() produce.
 pub fn md5_hex(input: &[u8]) -> String {
     md5_digest(input)
@@ -1464,15 +1492,28 @@ fn md5_digest(msg: &[u8]) -> [u8; 16] {
 fn md5_address(
     dialect: DbDialect,
     quoted: &str,
-    value: &Value,
+    bytes: &[u8],
     params: &mut Vec<Value>,
 ) -> String {
-    let bytes = match value {
+    params.push(json!(md5_hex(bytes)));
+    format!("md5({quoted}) = {}", ph(dialect, params))
+}
+
+/// The bytes a TEXT value addresses by (its own utf-8 form) — the W4.1 fold, unchanged.
+fn text_bytes(value: &Value) -> Vec<u8> {
+    match value {
         Value::String(s) => s.as_bytes().to_vec(),
         other => other.to_string().into_bytes(),
-    };
-    params.push(json!(md5_hex(&bytes)));
-    format!("md5({quoted}) = {}", ph(dialect, params))
+    }
+}
+
+/// The bytes a BINARY column's wire value stands for: \\x hex decodes to the raw bytes;
+/// anything else (a hand-typed plain string) addresses as its own bytes.
+fn binary_wire_bytes(value: &Value) -> Vec<u8> {
+    match value {
+        Value::String(s) => bytea_unhex(s).unwrap_or_else(|| s.as_bytes().to_vec()),
+        other => other.to_string().into_bytes(),
+    }
 }
 
 /// Why a row cannot be addressed by its values: a NULL ("NULL is ambiguous" — adminer's
@@ -1515,8 +1556,18 @@ fn address_where(
         if v.is_null() {
             return Err(AddressGap::Null(c.name.clone()));
         }
-        if is_text_or_binary(&c.data_type) && value_len(v) > EDIT_ADDR_MD5_MIN {
-            parts.push(md5_address(dialect, &quoted, v, params));
+        if is_binary_type(&c.data_type) {
+            // Binary columns fold at ANY length: `col = ?` would bind the \\x hex text,
+            // which can never equal the column's bytes. The digest runs over the decoded
+            // bytes (binary_wire_bytes) — md5(col) in SQL sees the raw column bytes.
+            parts.push(md5_address(
+                dialect,
+                &quoted,
+                &binary_wire_bytes(v),
+                params,
+            ));
+        } else if is_text_or_binary(&c.data_type) && value_len(v) > EDIT_ADDR_MD5_MIN {
+            parts.push(md5_address(dialect, &quoted, &text_bytes(v), params));
         } else {
             params.push(v.clone());
             parts.push(format!(
@@ -2035,10 +2086,14 @@ pub fn build_edit_statements(
                                     typed_ph(dialect, &params, dt)
                                 )
                             }
+                        } else if dt.map(is_binary_type).unwrap_or(false) {
+                            // A binary original folds at any length, digesting the decoded
+                            // wire bytes — same reasoning as the keyless address.
+                            md5_address(dialect, &quoted, &binary_wire_bytes(orig), &mut params)
                         } else if is_text_or_binary(dt.unwrap_or(""))
                             && value_len(orig) > EDIT_ADDR_MD5_MIN
                         {
-                            md5_address(dialect, &quoted, orig, &mut params)
+                            md5_address(dialect, &quoted, &text_bytes(orig), &mut params)
                         } else {
                             params.push(orig.clone());
                             format!(
@@ -4101,6 +4156,113 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("primary-key column id"), "{err}");
+    }
+
+    /// The wire form of a binary column value: \x + lowercase hex, the shape both adapters
+    /// emit and the panel echoes back (PG bytea text format).
+    fn wire(bytes: &[u8]) -> String {
+        format!("\\x{}", swiss_core::util::to_hex(bytes))
+    }
+
+    #[test]
+    fn keyless_binary_address_digests_the_original_bytes() {
+        // W4b audit: a non-UTF-8 binary past 64 bytes used to arrive as a from_utf8_lossy
+        // STRING and the md5 fold digested that mangled text — md5(col) in the database
+        // runs over the column's raw bytes, so the address matched nothing and the edit
+        // read back as another writer's change (a false 409). The fold must digest the
+        // DECODED bytes the \x wire form stands for.
+        let payload: Vec<u8> = std::iter::once(0xFFu8)
+            .chain(std::iter::repeat_n(b'x', 99))
+            .collect();
+        let cols = vec![
+            col("name", "varchar(80)", false, false),
+            col("payload", "varbinary(200)", false, false),
+        ];
+        let edits = vec![edit(json!({
+            "op": "delete",
+            "pk": { "name": "row-1", "payload": wire(&payload) },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "t", &edits, &cols, &[])
+            .unwrap();
+        assert!(
+            out[0].sql.contains("md5(`payload`) = ?"),
+            "{}",
+            out[0].sql
+        );
+        assert_eq!(out[0].params.last().unwrap(), &json!(md5_hex(&payload)));
+    }
+
+    #[test]
+    fn short_binary_columns_fold_too_hex_text_never_equals_bytes() {
+        // `payload` = ? with the \\x STRING bound can never equal the column's bytes at ANY
+        // length — a binary column addresses through md5() from its first byte, and an
+        // ASCII-only binary is covered by the same arm (its bytes digest fine).
+        let payload = vec![0xFFu8, 0x00, 0x41];
+        let cols = vec![
+            col("name", "varchar(80)", false, false),
+            col("payload", "varbinary(16)", false, false),
+        ];
+        let edits = vec![edit(json!({
+            "op": "delete",
+            "pk": { "name": "row-1", "payload": wire(&payload) },
+        }))];
+        let out = build_edit_statements(DbDialect::Mysql, None, "t", &edits, &cols, &[])
+            .unwrap();
+        assert!(
+            out[0].sql.contains("md5(`payload`) = ?"),
+            "{}",
+            out[0].sql
+        );
+        assert_eq!(out[0].params.last().unwrap(), &json!(md5_hex(&payload)));
+    }
+
+    #[test]
+    fn optimistic_lock_digests_a_binary_original_over_raw_bytes() {
+        // W4.2's lock compares every CHANGED column's original; a binary original rides
+        // the \\x wire form, and its fold digests the decoded bytes — same reasoning as
+        // the keyless address, same false-409 if it does not.
+        let payload = vec![0xFFu8; 80];
+        let cols = vec![
+            col("id", "int", false, true),
+            col("payload", "bytea", false, false),
+        ];
+        let edits = vec![edit(json!({
+            "op": "update",
+            "pk": { "id": 5 },
+            "source": { "id": 5, "payload": wire(&payload) },
+            "changes": { "payload": wire(&[0x01, 0x02]) },
+        }))];
+        let out = build_edit_statements(
+            DbDialect::Pg,
+            None,
+            "t",
+            &edits,
+            &cols,
+            &["id".to_string()],
+        )
+        .unwrap();
+        assert!(
+            out[0].sql.contains("md5(\"payload\") = $"),
+            "{}",
+            out[0].sql
+        );
+        assert_eq!(out[0].params.last().unwrap(), &json!(md5_hex(&payload)));
+    }
+
+    #[test]
+    fn bytea_wire_form_round_trips_and_refuses_malformed_hex() {
+        let bytes = vec![0x00u8, 0xFF, b'x', 0x10];
+        assert_eq!(bytea_hex(&bytes), "\\x00ff7810");
+        assert_eq!(bytea_unhex(&bytea_hex(&bytes)), Some(bytes));
+        assert_eq!(bytea_unhex("\\x"), Some(Vec::new()));
+        assert_eq!(bytea_unhex("\\x0"), None); // odd digit count
+        assert_eq!(bytea_unhex("\\xzz"), None); // not hex
+        assert_eq!(bytea_unhex("plain"), None); // not the wire form
+        assert!(is_binary_type("bytea"));
+        assert!(is_binary_type("VARBINARY(16)"));
+        assert!(is_binary_type("mediumblob"));
+        assert!(!is_binary_type("varchar(80)"));
+        assert!(!is_binary_type("text"));
     }
 
     #[test]

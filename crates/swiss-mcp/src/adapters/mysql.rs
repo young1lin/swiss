@@ -10,7 +10,7 @@ use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions,
 use sqlx::{Column, Either, Executor, Row};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{TableSort, TableSortKey, exact_int64, exact_uint64, finite_f64};
+use swiss_host::dbbrowser::{TableSort, TableSortKey, bytea_hex, exact_int64, exact_uint64, finite_f64};
 
 use super::direct::{BoxFut, Lazy};
 use super::mysql_browser::MysqlBrowser;
@@ -362,11 +362,14 @@ fn column_to_value(row: &MySqlRow, col: &MySqlColumn, i: usize) -> Value {
             .ok()
             .flatten()
             .unwrap_or(Value::Null),
+        // Binary kinds ride the API as \x hex — the same wire form the pg adapter's BYTEA
+        // uses (bytea text format), so non-UTF-8 bytes survive the round trip and the keyless
+        // md5 address digests the decoded bytes. The old lossy string mangled them.
         "BINARY" | "VARBINARY" | "TINYBLOB" | "BLOB" | "MEDIUMBLOB" | "LONGBLOB" | "GEOMETRY" => {
             row.try_get::<Option<Vec<u8>>, _>(i)
                 .ok()
                 .flatten()
-                .map(|b| json!(String::from_utf8_lossy(&b).into_owned()))
+                .map(|b| json!(bytea_hex(&b)))
                 .unwrap_or(Value::Null)
         }
         // CHAR / VARCHAR / TEXT family / ENUM / SET / anything not modeled.
