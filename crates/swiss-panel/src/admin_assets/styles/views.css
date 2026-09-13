@@ -485,6 +485,16 @@
     .db-col-comment { font-size: var(--f-caption); font-weight: 450; color: var(--green); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
     .db-key { color: var(--amber); margin-left: 4px; }
     .db-col-type { color: var(--text-3); font-size: var(--f-caption); margin-left: 6px; font-family: var(--mono); }
+    /* docs/22 W5.2 — the FK column's jump arrow: a quiet straight arrow after the type (the
+       chevron shape belongs to pagination), accent only under the pointer. Its click stops
+       propagation — the header around it still sorts. */
+    .db-col-fk { border: 0; background: none; padding: 0; margin-left: 5px; color: var(--text-3); cursor: pointer; border-radius: 4px; display: inline-flex; align-items: center; }
+    .db-col-fk .ic { width: 13px; height: 13px; }
+    .db-col-fk:hover { color: var(--accent); }
+    /* The FK tab's referenced-table name: a link in the table's mono face (a name you would
+       type), underlined on hover like every link the panel draws. */
+    .db-fk-ref { border: 0; background: none; padding: 0; font: inherit; font-family: var(--mono); color: var(--accent); cursor: pointer; text-align: left; }
+    .db-fk-ref:hover { text-decoration: underline; }
     /* The sorted column reads at a glance: a whisper of accent behind the whole header (mixed
        OPAQUE over the card — a translucent sticky header would let scrolled rows bleed through)
        and a hairline chevron, the same arrow the panel's dropdown triggers use. */

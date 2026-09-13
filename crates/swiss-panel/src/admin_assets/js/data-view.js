@@ -5,6 +5,11 @@ import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbActivityPane, dbActivityPollStop } from "./data-activity.js";
+// dbLoadDetail (the Structure tabs' loader) is needed at the table-open path now: the FK
+// jump (docs/22 W5.2) reads the detail's foreignKeys. The cycle data-view <-> data-structure
+// is the same accepted shape as data-grid <-> data-cell — both sides only call across it
+// inside functions, never at module scope.
+import { dbLoadDetail } from "./data-structure.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
@@ -691,6 +696,48 @@ function dbOpenTable(t) {
   dbDropEdits();
   renderDbTables();
   dbLoadData();
+  // docs/22 W5.2: the detail rides along with every open — the FK columns' header arrows
+  // read it, and the Structure tabs were going to ask for it on their first click anyway.
+  dbLoadDetail();
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };
+/** docs/22 W5.2: the FK jump's payload — one describe_table FK row plus the focused row's
+ *  value become exactly the open-table state a typed filter would have built (the W1.5
+ *  channel's shape), or nothing at all: col = NULL matches nothing, so a NULL has no jump.
+ *  Pure. */
+function dbFkJump(fk, value) {
+  if (!fk || value === null || value === undefined) return null;
+  return {
+    schema: fk.refSchema || null,
+    table: fk.refTable,
+    filters: [{ column: fk.refColumn, op: "eq", value: value }],
+  };
+}
+
+/** The focused row's value of one column — the header arrow's "current value". Buffered
+ *  inserts sit in front of the page's rows exactly as the grid draws them. undefined means
+ *  nothing is focused; null IS a value (a NULL cell) — the caller tells them apart. Pure. */
+function dbFocusedColumnValue(d, column) {
+  if (!d || !d.focus || !d.data) return undefined;
+  if (d.focus.r < d.inserts.length) return d.inserts[d.focus.r].values[column];
+  var row = d.data.rows[d.focus.r - d.inserts.length];
+  return row ? row[column] : undefined;
+}
+
+/** Open the referenced table with the filter preset (adminer's select-link, dbgate's
+ *  openReferenceForm — both land on the target table already filtered to one row). */
+function dbFkOpen(fk, value) {
+  var j = dbFkJump(fk, value);
+  if (!j || !dbOkToDrop()) return;
+  var d = state.db;
+  d.table = j.table; d.schema = j.schema;
+  d.offset = 0; d.order = null; d.dir = "asc"; d.filters = j.filters;
+  d.tab = "data"; d.detail = null;
+  d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0;
+  dbDropEdits();
+  renderDbTables();
+  dbLoadData();
+  dbLoadDetail(); // the target table's own FK arrows arrive with its detail
+}
+
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };

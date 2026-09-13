@@ -1,6 +1,6 @@
 import { $, apiJson, el, state } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
-import { dbDialectOf } from "./data-view.js";
+import { dbDialectOf, dbOkToDrop, dbOpenTable } from "./data-view.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbTableMenu } from "./data-edit.js";
 import { dbHighlightSql, renderDbFilters } from "./data-filters.js";
@@ -114,7 +114,9 @@ function renderDbDetailGrid(wrap) {
     spec = {
       head: ["Constraint", "Column", "References"],
       row: function (f) {
-        return [f.name, f.column, f.refSchema + "." + f.refTable + " (" + f.refColumn + ")"];
+        // docs/22 W5.2: the target name carries its fk — the renderer draws it as a link
+        // (read-only navigation; the grid header's arrow is the filtered jump).
+        return [f.name, f.column, { text: f.refSchema + "." + f.refTable + " (" + f.refColumn + ")", fk: f }];
       },
       rows: det.foreignKeys,
       meta: det.foreignKeys.length + " foreign keys",
@@ -150,7 +152,19 @@ function renderDbDetailGrid(wrap) {
     spec.row(r).forEach(function (v) {
       var cell = v && typeof v === "object" ? v : { text: v, cls: "" };
       var td = el("td", "db-cell" + (cell.cls ? " " + cell.cls : ""));
-      td.textContent = String(cell.text);
+      if (cell.fk) {
+        // docs/22 W5.2: the referenced table opens on click — no filter here, just the
+        // navigation (the arrow in the grid header owns the filtered jump).
+        var ref = el("button", "db-fk-ref");
+        ref.type = "button";
+        ref.textContent = String(cell.text);
+        ref.title = "Open " + (cell.fk.refSchema ? cell.fk.refSchema + "." : "") + cell.fk.refTable;
+        ref.onclick = function () {
+          if (!dbOkToDrop()) return;
+          dbOpenTable({ name: cell.fk.refTable, schema: cell.fk.refSchema || null });
+        };
+        td.appendChild(ref);
+      } else td.textContent = String(cell.text);
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
