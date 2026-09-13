@@ -383,9 +383,66 @@
     .db-tabs button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; background: none; border: none; cursor: pointer; }
     .db-tabs button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--sep); }
     :root[data-theme="dark"] .db-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 7%); box-shadow: inset 0 0 0 1px var(--sep); }
+    /* docs/22 W4.3: the console's result tabs ride in the pane head under the meta line, above
+       the grid's own scroll. Eight fit; a longer script's ninth scrolls the strip sideways the
+       way .toolbar .seg does — scrollbar hidden, wheel still scrolls — instead of wrapping or
+       stretching the head. */
+    .db-head-left .db-tabs { margin-top: var(--s1); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+    .db-head-left .db-tabs::-webkit-scrollbar { display: none; }
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
     .db-keytype { font-size: var(--f-caption); padding: 1px 6px; border-radius: 980px; background: var(--sep-soft); color: var(--text-2); margin-left: var(--s2); }
+    /* docs/22 W4.6 — the table list's own header band: the list gains a create action, so it
+       names itself and holds one persistent dimmed + the way every container header does
+       (docs/20 §4 sidebar density — the same 28px band on --sep-soft; the glyph reuses the
+       groups' grp-add styling, so every "+" in the panel reads as one glyph). */
+    .db-list-head { display: flex; align-items: center; gap: var(--s1); height: 28px; padding: 0 var(--s1); background: var(--sep-soft); border-radius: var(--r-row); }
+    .db-list-title { flex: 1; min-width: 0; font-size: var(--f-body); font-weight: 600; color: var(--text-2); }
+    /* docs/22 W4.6 — the DDL sheet's column mini-grid: caption header row, one line per
+       column on the field surface. Existing columns render disabled (only ADD is in the
+       minimal set), so the sheet reads as the table's shape with new rows at its end; fixed
+       layout keeps the five inputs column-aligned whatever a name carries. */
+    .db-ddl-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .db-ddl-grid th { text-align: left; font-size: var(--f-label); font-weight: 500; color: var(--text-3); padding: 0 0 var(--s1); }
+    .db-ddl-grid td { padding: 0 0 var(--s1); vertical-align: top; }
+    .db-ddl-grid .btn.icon { width: 26px; height: 26px; padding: 0; color: var(--text-3); }
+    .db-ddl-grid input[type="checkbox"] { width: auto; accent-color: var(--accent); }
+    /* The index picker's checks wrap beside each other — a wide table should not stack into
+       a tower of one-word lines. */
+    .db-ddl-colpick { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); }
+    .db-ddl-colpick .check { gap: var(--s1); }
+    /* The preview's quiet placeholder is the same block in a whisper, so "nothing yet" and
+       the real script read as one surface. */
+    .db-ddl.db-ddl-quiet { color: var(--text-3); }
+    /* docs/22 W3.3 — the typed redis value view. The meta line carries its own actions now, so
+       it flexes; the TTL chip is the one inline-editable readout; a string is a plain field
+       with the one primary action beside it. The typed table itself reuses .db-grid as-is. */
+    .db-detail-meta { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
+    .db-ttl { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; border-bottom: 1px dashed var(--sep); }
+    .db-ttl:hover { color: var(--text); border-bottom-color: var(--accent); }
+    .db-ttl-in { width: 72px; padding: 0 3px; font: inherit; font-variant-numeric: tabular-nums; }
+    .db-redis-str-row { display: flex; gap: var(--s2); align-items: flex-end; padding: var(--s2); }
+    .db-redis-str { flex: 1; min-height: 96px; resize: vertical; font-family: var(--mono); font-size: var(--f-label); line-height: 1.55; padding: 6px var(--s2); background: var(--field); border: 1px solid var(--sep); border-radius: var(--r-row); color: var(--text); }
+    .db-redis-str:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+    /* docs/22 W3.2 — the Activity page. The head sits in a row with the pane's ⋯; the sessions
+       table reuses .db-grid as-is. The panel's own row is marked, a blocked wait reads amber
+       (state, not danger), and the row ⋯ matches the rowctl control the grid already uses. */
+    .db-headrow { display: flex; align-items: flex-end; gap: var(--s2); }
+    .db-headrow .db-head { flex: 1; min-width: 0; }
+    .db-headrow .btn.icon { flex: none; }
+    .db-act-own > td:first-child { color: var(--accent); }
+    .db-act-blocked { color: var(--amber); }
+    .db-act-more { border: 0; background: none; padding: 2px var(--s1); cursor: pointer; color: var(--text-3); border-radius: var(--r-row); }
+    .db-act-more:hover { color: var(--text); background: var(--sep-soft); }
+    /* docs/22 W3.1 — the console's completion list. Same popup vocabulary as .menu (card,
+       shadow-pop, hover); labels are identifiers you would type, so they sit in mono. The
+       mirror borrows .db-sql-face above to inherit the textarea's exact metrics. */
+    .db-suggest { position: absolute; z-index: 35; min-width: 200px; max-width: 360px; background: var(--card); border-radius: var(--r-row); box-shadow: var(--shadow-pop); padding: 3px; }
+    .db-suggest-item { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); padding: 3px var(--s2); border-radius: 6px; cursor: pointer; }
+    .db-suggest-item:hover, .db-suggest-item.sel { background: var(--hover); }
+    .db-suggest-label { font-family: var(--mono); font-size: var(--f-label); color: var(--text); }
+    .db-suggest-kind { color: var(--text-3); font-size: var(--f-caption); flex: none; }
+    .db-sql-mirror { position: absolute; inset: 0; visibility: hidden; pointer-events: none; overflow: hidden; }
     .db-pagesize { width: auto; }
     .db-console-row .dd { width: auto; min-width: 110px; }
     /* The row-grid controls stay IN LAYOUT on every tab (visibility, not display): removing them
@@ -437,6 +494,21 @@
       border-right: 1.5px solid var(--accent); border-bottom: 1.5px solid var(--accent);
       transform: rotate(225deg); }
     .db-sorted-desc .db-sort { transform: rotate(45deg); }
+    /* The column resize grip (docs/22 W2.1): 4px of the header's right edge, quiet until the
+       pointer is on it, then the accent a drag is about to move. The header is already
+       position:sticky (a positioned box), so the absolute grip anchors to it without help. */
+    .db-col-grip { position: absolute; top: 0; right: 0; bottom: 0; width: 4px; cursor: col-resize; }
+    /* The keyboard's focus carrier (docs/22 W2.2): zero size so it never paints, focusable so
+       keys land somewhere stable. It lives inside the wrap so focusing it cannot scroll the
+       pane away from the grid. */
+    .db-kbd { position: absolute; width: 0; height: 0; padding: 0; border: 0; opacity: 0; }
+    /* The focus cell: the panel's standing 2px accent selection edge (docs/18 V6), drawn
+       inside the cell so it never shifts the grid's hairlines. */
+    .db-grid td.db-focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .db-col-grip:hover { background: var(--accent); }
+    /* The all-columns-hidden row: a place, not a collapsed table (docs/22 W2.1). */
+    .db-grid td.db-grid-hiddenall { padding: var(--s3); }
+    .db-grid td.db-grid-hiddenall > div { display: flex; align-items: center; gap: var(--s2); color: var(--text-3); }
     /* The column-header hover card: the panel's own chrome instead of the OS tooltip. */
     .db-tip { position: fixed; z-index: 60; max-width: 340px; padding: 7px 10px 8px;
       background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-row);
@@ -449,6 +521,15 @@
     .db-tip .t-hint { margin-top: 5px; font-size: var(--f-caption); color: var(--text-3); }
     .db-null { color: var(--text-3); font-style: italic; }
     .db-cell { font-family: var(--mono); }
+    /* docs/22 W2.3 — typed cells. Numbers right-align in tabular figures so a column of ids
+       and amounts compares by digit (the mono face already draws them one glyph wide, but the
+       alignment is the readable half). A folded value — "(JSON)", "binary, N bytes" — is a
+       summary standing in for content that lives one hover/open away, so it sits in the quiet
+       tone like NULL does, minus the italics (it is data, not the absence of it). */
+    .db-cell.db-num { text-align: right; font-variant-numeric: tabular-nums; }
+    .db-cell.db-fold { color: var(--text-3); }
+    .db-cell a.db-link { color: var(--accent); text-decoration: none; }
+    .db-cell a.db-link:hover, .db-cell a.db-link:focus-visible { text-decoration: underline; }
     /* The Columns tab's Comment column joins the header caption's green, so "what this field
        means" reads in one hue everywhere the panel shows it. The "—" placeholder stays un-tinted. */
     .db-cell.db-det-comment { color: var(--green); }
@@ -482,6 +563,11 @@
     /* Checked rows tint blue — but a pending cell edit keeps its amber tint so both states read. */
     tr.db-sel td { background: color-mix(in srgb, var(--accent) 13%, transparent); }
     tr.db-sel td.db-dirty { background: color-mix(in srgb, var(--amber) 26%, transparent); }
+    /* docs/22 W4.2: a cell whose commit lost the optimistic-lock race — the same tint trick
+       as db-dirty but in --red: the change is still buffered (still dirty), but the server
+       refused it because the row moved under it. */
+    .db-dirty.db-conflict { background: color-mix(in srgb, var(--red) 16%, transparent); }
+    tr.db-sel td.db-conflict { background: color-mix(in srgb, var(--red) 26%, transparent); }
     .db-act { border: none; background: none; cursor: pointer; font-size: var(--f-label); color: var(--text-3); padding: 0 4px; border-radius: 4px; }
     .db-act:hover { color: var(--red); background: var(--hover); }
 

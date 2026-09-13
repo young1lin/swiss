@@ -155,4 +155,50 @@ function dbCellText(v) {
   return String(v);
 }
 
-export { dbCellEdit, dbCellJsonLike, dbCellPretty, dbCellText, dbCloseCellEditor, dbOpenCellEditor, dbSaveCellEdit };
+/* The fold width (docs/22 W2.3): JSON longer than this collapses to "(JSON)" with the full
+   text one hover away. dbgate picked 100 for the same affordance — enough for a small object
+   to stay readable in place, short enough that a document does not blow out the row. */
+var DB_CELL_FOLD = 100;
+
+/** docs/22 W2.3: the typed view of one cell value — {text, cls, title, href}. The grid painter
+ *  is a thin wrapper over this; every decision here is value- and column-type-driven, never
+ *  DOM-dependent, so the intents pin without a browser:
+ *  - NULL hands back text null and the painter keeps its italic NULL span (the style it
+ *    already had; the editor's NULL toggle rides on the same null-ness).
+ *  - numbers right-align (cls db-num): a JS number by itself, or a numeric COLUMN even when
+ *    the driver delivered its value as a string — BIGINT arrives as an exact string on
+ *    purpose (a JS double silently rounds 18-digit ids; mysql.rs / pg.rs stringify int64),
+ *    and an exact string still deserves to sit in the number column it belongs to.
+ *  - booleans word themselves TRUE/FALSE (information_schema only says "boolean" for real
+ *    boolean columns — MySQL's tinyint(1) keeps its 0/1, matching the edit dialog's rule).
+ *  - an http(s) value becomes a link (href set) opened with the noopener guard.
+ *  - JSON past the fold width collapses to "(JSON)" with the full text as the title.
+ *  - a binary column shows a byte count instead of its lossy text rendering; the value
+ *    sheet (docs/22 W5.3) owns the content itself.
+ */
+function dbCellView(value, colType) {
+  if (value === null || value === undefined) return { text: null, cls: null, title: null, href: null };
+  var type = String(colType == null ? "" : colType).toLowerCase();
+  if (/binary|blob|bytea/.test(type)) {
+    // The adapters decode BLOB bytes as UTF-8 (mysql.rs / pg.rs, mirroring the Node build's
+    // Buffers-to-string pass), so the panel never sees the raw bytes — count what it did get,
+    // in UTF-8 bytes (exact for ASCII payloads, honest about the delivery for the rest).
+    var bytes = new TextEncoder().encode(String(value)).length;
+    return { text: "binary, " + bytes + " bytes", cls: "db-fold", title: null, href: null };
+  }
+  if (/bool/.test(type) || typeof value === "boolean") {
+    var on = value === true || value === 1 || String(value).toLowerCase() === "true" || value === "1";
+    return { text: on ? "TRUE" : "FALSE", cls: null, title: null, href: null };
+  }
+  var text = dbCellText(value);
+  if (/^https?:\/\//i.test(text)) return { text: text, cls: null, title: text, href: text };
+  var jsonLike = typeof value === "object" || dbCellJsonLike(text);
+  if (jsonLike && text.length > DB_CELL_FOLD) {
+    return { text: "(JSON)", cls: "db-fold", title: text, href: null };
+  }
+  var numeric = typeof value === "number" ||
+    /int|decimal|numeric|float|double|real|money|year|bit/.test(type);
+  return { text: text, cls: numeric ? "db-num" : null, title: null, href: null };
+}
+
+export { DB_CELL_FOLD, dbCellEdit, dbCellJsonLike, dbCellPretty, dbCellText, dbCellView, dbCloseCellEditor, dbOpenCellEditor, dbSaveCellEdit };
