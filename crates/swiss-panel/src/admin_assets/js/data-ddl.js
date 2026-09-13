@@ -390,7 +390,7 @@ function paintDbDdlPreviewSql(sql) {
 function paintDbDdlPreviewError(message) {
   var pre = $("ddl-pre");
   pre.classList.remove("db-ddl-quiet");
-  // The server's own refusal, unpainted: it names the field and the rule (错误驱动原文).
+  // The server's own refusal, unpainted: it names the field and the rule (kept verbatim from the error text).
   pre.textContent = message;
   $("ddl-commit").disabled = true;
   S.lastSql = null;
