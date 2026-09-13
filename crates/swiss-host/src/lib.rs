@@ -15,5 +15,6 @@ pub mod mem;
 pub mod pathenv;
 pub mod proc_pids;
 pub mod reply;
+pub mod secret_groups;
 pub mod services;
 pub mod token;

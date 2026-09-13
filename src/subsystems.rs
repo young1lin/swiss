@@ -132,10 +132,45 @@ impl GroupScope for McpGroups {
     }
 }
 
+/// The `tokens` scope (docs/20 G7): both halves live in the managed store, so this is a thin
+/// translation — the only judgment call is `has_member`, which the store answers from the
+/// token set itself. Creation time is the tokens' order, so `set_order` is refused: the same
+/// stance the secrets scope takes.
+struct TokenGroups {
+    store: Arc<ManagedStore>,
+}
+
+impl GroupScope for TokenGroups {
+    fn names(&self) -> Vec<String> {
+        self.store.get_token_groups()
+    }
+    fn set_names(&self, next: Vec<String>) -> Result<Vec<String>, String> {
+        self.store.set_token_groups(next)?;
+        Ok(self.store.get_token_groups())
+    }
+    fn rename(&self, from: &str, to: &str) -> Result<(Vec<String>, usize), String> {
+        let before = self.store.get_token_members();
+        self.store.rename_token_group(from, to)?;
+        let moved = before.values().filter(|g| g.eq_ignore_ascii_case(from)).count();
+        Ok((self.store.get_token_groups(), moved))
+    }
+    fn assign(&self, id: &str, group: Option<&str>) -> Result<String, String> {
+        self.store.set_token_group(id, group)?;
+        Ok(self.store.token_group_of(id))
+    }
+    fn set_order(&self, _ids: Vec<String>) -> Result<Vec<String>, String> {
+        Err("tokens have no manual order".to_string())
+    }
+    fn has_member(&self, id: &str) -> bool {
+        self.store.has_token(id)
+    }
+}
+
 /// Register the scopes AppContext owns natively. Called from AppContext::new so every
 /// composition — the gateway, the admin API tests — serves the same family.
 pub fn register_host_scopes(scopes: &GroupScopes, registry: Arc<Registry>, store: Arc<ManagedStore>) {
-    scopes.register("mcps", Arc::new(McpGroups { registry, store }));
+    scopes.register("mcps", Arc::new(McpGroups { registry, store: store.clone() }));
+    scopes.register("tokens", Arc::new(TokenGroups { store }));
 }
 
 #[cfg(test)]
