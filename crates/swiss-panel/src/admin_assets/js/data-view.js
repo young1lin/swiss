@@ -64,6 +64,7 @@ function dbFreshState() {
     activity: false,     // the Activity section page is open (docs/22 W3.2) — SQL connections only
     activityRows: null,  // last /activity answer, re-rendered by the 5s poll while open
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
+    redisError: false,  // the last /keys fetch FAILED (docs/22 closeout B1) — the list must say so, not "no keys"
     detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
     detailBusy: false,
   };
@@ -581,7 +582,11 @@ function renderDbTables() {
   if (dbIsRedis()) {
     var rr = d.redis;
     if (!rr || !rr.keys.length) {
-      box.appendChild(el("div", "db-hint", d.grep ? 'No keys match "' + d.grep + '"' : "No keys yet — scan returned none."));
+      // docs/22 closeout B1: a failed scan is a FAILURE, not an empty keyspace — the toast
+      // carries the server's own text; this row keeps the list from pretending otherwise.
+      box.appendChild(el("div", "db-hint", d.redisError
+        ? "Scan failed — the toast carries the server's error; this list is the last good page."
+        : d.grep ? 'No keys match "' + d.grep + '"' : "No keys yet — scan returned none."));
     }
     var sortedKeys = (rr ? rr.keys : []).slice().sort(dbRedisCompare);
     sortedKeys.forEach(function (k) {

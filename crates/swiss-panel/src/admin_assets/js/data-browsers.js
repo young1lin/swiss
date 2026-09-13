@@ -44,7 +44,15 @@ async function dbLoadKeys(reset) {
   } finally {
     dbKeysLoading = false;
   }
-  if (!j) return;
+  if (!j) {
+    // docs/22 closeout B1: apiJson already toasted the server's own text, but a transient
+    // toast over a list that still says "no keys" reads as an empty keyspace. Mark the
+    // failure so the list paints it (renderDbTables), keeping the last good page.
+    d.redisError = true;
+    renderDbTables();
+    return;
+  }
+  d.redisError = false;
   d.redis = {
     keys: (d.redis && !reset ? d.redis.keys : []).concat(j.keys || []),
     cursor: j.cursor,
