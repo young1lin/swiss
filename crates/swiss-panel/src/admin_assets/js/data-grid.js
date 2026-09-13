@@ -657,6 +657,9 @@ function renderDbGrid() {
   if (!wrap) return;
   var con = $("dbConsole");
   if (con) con.hidden = !d.sqlOpen;
+  // Full rebuild inside a scrolled pane. The wrap carries overflow-anchor:none (views.css):
+  // Chrome's scroll anchoring otherwise re-picks its anchor when this wipe destroys the old
+  // one and compensates by scrolling, which snaps the row the user just clicked to the top.
   wrap.innerHTML = "";
   dbTipHide(); // a rebuilt grid invalidates any header card still open
 

@@ -467,7 +467,7 @@
     .db-console-row { display: flex; align-items: center; gap: var(--s2); }
     .db-console-row .hint { color: var(--text-3); font-size: var(--f-label); }
     #dbSql { min-height: 84px; }
-    .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; }
+    .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; overflow-anchor: none; }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
     .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); border-right: 1px solid var(--sep-soft); padding: 4px var(--s2); white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
     .db-grid thead th { position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 55%, var(--card)); z-index: 1; font-weight: 600; cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }
