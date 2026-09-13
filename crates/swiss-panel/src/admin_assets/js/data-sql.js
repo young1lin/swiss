@@ -315,12 +315,114 @@ function dbHistoryRender() {
   var head = el("option", "", "History");
   head.value = "";
   sel.appendChild(head);
-  state.db.history.forEach(function (sql, i) {
-    var o = el("option", "", sql.replace(/\s+/g, " ").slice(0, 80));
-    o.value = String(i);
-    o.title = sql;
-    sel.appendChild(o);
-  });
+  var d = state.db;
+  // docs/22 W5.4: one dropdown, two groups — what ran (history) and what was starred
+  // (favorites). The value carries the group: a plain index is history, "f"+i a favorite.
+  if (d.history && d.history.length) {
+    var og = el("optgroup");
+    og.label = "History";
+    d.history.forEach(function (sql, i) {
+      var o = el("option", "", sql.replace(/\s+/g, " ").slice(0, 80));
+      o.value = String(i);
+      o.title = sql;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  }
+  if (d.favorites && d.favorites.length) {
+    var fg = el("optgroup");
+    fg.label = "Favorites";
+    d.favorites.forEach(function (sql, i) {
+      var o = el("option", "", dbFavoriteName(sql));
+      o.value = "f" + i;
+      o.title = sql;
+      fg.appendChild(o);
+    });
+    sel.appendChild(fg);
+  }
+}
+
+/* --- favorites (docs/22 W5.4) -------------------------------------------------------------------- */
+/* The starred list beside the history: same localStorage-per-browser treatment, same
+   bounded list, the history's own rules (newest first, a repeat save moves to the top
+   rather than duplicating). */
+
+var DB_FAV_KEY = "mcp_gateway_db_favorites";
+var DB_FAV_MAX = 50;
+
+function dbFavLoad() {
+  try { state.db.favorites = JSON.parse(localStorage.getItem(DB_FAV_KEY)) || []; }
+  catch (e) { state.db.favorites = []; }
+}
+
+function dbFavSave() {
+  try { localStorage.setItem(DB_FAV_KEY, JSON.stringify(state.db.favorites.slice(0, DB_FAV_MAX))); }
+  catch (e) { /* full or blocked — favorites are a convenience, not state */ }
+}
+
+/** The option's name: the query's FIRST line, whitespace-folded, cut at the history's 80. */
+function dbFavoriteName(sql) {
+  var first = String(sql).split("\n")[0].replace(/\s+/g, " ").trim();
+  return first.slice(0, 80);
+}
+
+function dbFavPush(sql) {
+  var d = state.db;
+  var s = String(sql == null ? "" : sql);
+  if (!s.trim()) { toast("Nothing to save \u2014 the console is empty", true); return; }
+  d.favorites = (d.favorites || []).filter(function (f) { return f !== s; });
+  d.favorites.unshift(s);
+  d.favorites = d.favorites.slice(0, DB_FAV_MAX);
+  dbFavSave();
+  dbHistoryRender();
+  toast("Saved to favorites");
+}
+
+/* --- the lightweight SQL formatter (docs/22 W5.4) ------------------------------------------------ */
+/* Lexical only — the console's own SQL_TOKEN_RE stream, never a parse: top-level clause
+   keywords break onto their own lines (a join lead breaks with its join), AND/OR continue
+   two spaces under their clause, statements split at the top-level semicolon, a line
+   comment ends its line, and punctuation spacing is normalized (no space before , ) ; .,
+   none after ( .). Case, tokens, strings and comments ride byte-identical, so a formatted
+   statement runs exactly as it did — the whitespace-equivalence the round-trip test pins. */
+
+var DB_FORMAT_CLAUSES = "select from where group order having limit offset fetch union except intersect values set insert update delete with join".split(" ");
+var DB_FORMAT_JOIN_LEADS = "left right inner outer full cross natural".split(" ");
+
+function dbFormatSql(text) {
+  var tokens = [];
+  var m;
+  SQL_TOKEN_RE.lastIndex = 0;
+  while ((m = SQL_TOKEN_RE.exec(String(text == null ? "" : text))) !== null) {
+    if (m[5]) continue; // whitespace is rebuilt, never carried
+    // Punctuation runs split into characters: "((" and ")," are two spacing decisions each.
+    if (m[6]) { for (var ci = 0; ci < m[0].length; ci++) tokens.push(m[0][ci]); }
+    else tokens.push(m[0]);
+  }
+  var out = "";
+  var depth = 0;
+  var prev = null; // the last token on the CURRENT line; null = a fresh line start
+  for (var i = 0; i < tokens.length; i++) {
+    var tok = tokens[i];
+    var low = tok.toLowerCase();
+    if (depth === 0 && prev !== null && out !== "" && /^[A-Za-z_]/.test(tok)) {
+      var nxt = tokens[i + 1];
+      // "join" does not break again when its lead (left/right/inner/...) just broke.
+      var joinAgain = low === "join" && DB_FORMAT_JOIN_LEADS.indexOf(prev.toLowerCase()) >= 0;
+      var clause = !joinAgain && (DB_FORMAT_CLAUSES.indexOf(low) >= 0 ||
+        (DB_FORMAT_JOIN_LEADS.indexOf(low) >= 0 && nxt && nxt.toLowerCase() === "join"));
+      var cont = low === "and" || low === "or";
+      if (clause || cont) { out += "\n" + (cont ? "  " : ""); prev = null; }
+    }
+    if (prev && !(prev === "(" || tok === ")" || tok === "," || tok === ";" || tok === "." || prev === "." || prev === ";")) out += " ";
+    out += tok;
+    prev = tok;
+    if (tok === "(") depth++;
+    else if (tok === ")") depth = depth > 0 ? depth - 1 : 0;
+    else if (tok === ";" && depth === 0) { out += "\n"; prev = null; }
+    else if (tok.charAt(0) === "-" && tok.charAt(1) === "-" || tok.charAt(0) === "#") { out += "\n"; prev = null; }
+  }
+  return out.replace(/\s+$/, "");
 }
 
 /* --- SQL console --------------------------------------------------------------------------------- */
@@ -508,4 +610,4 @@ async function dbRunSql(explain) { // falsy runs the statement(s); "plan"|"analy
   renderDbGrid();
 }
 
-export { dbApplyReadback, dbCommit, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRunSql, dbSqlLiteral, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };
+export { dbApplyReadback, dbCommit, dbFavoriteName, dbFavLoad, dbFavPush, dbFormatSql, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRunSql, dbSqlLiteral, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };

@@ -145,8 +145,9 @@ window.addEventListener("beforeunload", function (e) {
 });
 
 // The toolbar refresh button is gone: every view already reloads on the 6s poll, so the
-// button duplicated it. The one explicit refresh left is the memory chip's click (and the r
-// key below) — both land in polling.js refreshNow, which keeps Data's manual reload alive.
+// button duplicated it. The memory chip's click re-reads memory only (polling.js
+// refreshMemoryNow — a reading is not a reload button); the ONE explicit view refresh left
+// is the r key below, which keeps Data's manual reload alive.
 
 $("filter").oninput = function () { state.filter = this.value; patchSidebar(); };
 
