@@ -903,7 +903,10 @@ function renderDbGrid() {
             var cur = seed != null ? seed : present ? dbCellText(ins.values[col]) : "";
             dbEditCellEnter("insert", null, i, col, {}, td, cur == null ? "" : cur);
           };
-          td.oncontextmenu = function (e) { dbCellMenu(e, null, null, col, null, function () { dbOpenCellEditor("insert", null, i, col, {}); }); };
+          // docs/22 closeout B2: the editInDialog callback is dbCellMenu's FIFTH parameter —
+          // a stray null before it parked the callback in an unread sixth slot, so the insert
+          // row's menu never offered the dialog path a data row's menu always had.
+          td.oncontextmenu = function (e) { dbCellMenu(e, null, null, col, function () { dbOpenCellEditor("insert", null, i, col, {}); }); };
         })(c.name, has);
       }
       tr.appendChild(td);
