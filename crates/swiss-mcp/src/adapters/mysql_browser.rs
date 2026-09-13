@@ -678,15 +678,15 @@ impl DbBrowser for MysqlBrowser {
             // Lock only to read the plan — the loads below await.
             let cache = self.completion_cache.lock().expect("completion cache");
             (
-                cache.tables(now).is_none(),
-                cache.is_degraded(),
+                cache.needs_tables(now),
                 completion_from_table(sql, caret).filter(|_| !cache.is_degraded()),
             )
         };
-        let (need_tables, degraded, from) = plan;
-        // Tables: the one database this connection owns, cached for the TTL (and still served
-        // when degraded — the column budget does not poison the table list).
-        let tables = if need_tables || degraded {
+        let (need_tables, from) = plan;
+        // Tables: the one database this connection owns, cached for the TTL. needs_tables is
+        // TTL-only, so a degraded cache keeps serving its fresh list — the column budget does
+        // not poison the table names into a catalog query on every keystroke.
+        let tables = if need_tables {
             let rows = self
                 .query(
                     "SELECT table_name AS name FROM information_schema.tables \

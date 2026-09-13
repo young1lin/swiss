@@ -3309,16 +3309,31 @@ impl CompletionCache {
             return;
         }
         let cost: usize = names.iter().map(|n| n.len() + 1).sum();
-        if self.bytes + cost > COMPLETION_BUDGET_BYTES {
+        // A refresh of the same table RETIRES its predecessor's bytes first — the W3 audit's
+        // double-count let a TTL-refreshed schema blow the budget all by itself and degrade
+        // a cache whose real footprint never moved.
+        let retired: usize = self
+            .columns
+            .get(&table)
+            .map(|(old, _)| old.iter().map(|n| n.len() + 1).sum())
+            .unwrap_or(0);
+        if self.bytes - retired + cost > COMPLETION_BUDGET_BYTES {
             self.degraded = true;
             return;
         }
-        self.bytes += cost;
+        self.bytes = self.bytes - retired + cost;
         self.columns.insert(table, (names, now));
     }
 
     pub fn is_degraded(&self) -> bool {
         self.degraded
+    }
+
+    /// Whether the table-name query must run before serving this completion — TTL-only: a
+    /// degraded cache still serves its fresh table list (the budget caps column names, and
+    /// re-querying the catalog on every keystroke is exactly what the cache exists to avoid).
+    pub fn needs_tables(&self, now: Instant) -> bool {
+        self.tables(now).is_none()
     }
 
     /// DDL ran: forget everything, including the degradation (the schema changed shape).
@@ -5603,5 +5618,40 @@ mod tests {
         cache.invalidate();
         assert!(cache.tables(t0).is_none());
         assert!(!cache.is_degraded());
+    }
+
+    #[test]
+    fn a_ttl_refresh_of_the_same_table_replaces_its_own_bytes() {
+        // W3 audit: a TTL refresh used to add the new list's cost on top of the old entry's
+        // without retiring it, so bytes grew on every refresh and a schema far under the
+        // budget degraded the cache after a few minutes of typing.
+        let mut cache = CompletionCache::new();
+        let t0 = Instant::now();
+        let cols: Vec<String> = (0..200).map(|i| format!("column_with_a_long_name_{i:03}")).collect();
+        for round in 0..20u32 {
+            let at = t0 + COMPLETION_TTL * round + Duration::from_secs(1);
+            cache.set_columns("big".into(), cols.clone(), at);
+        }
+        assert!(
+            !cache.is_degraded(),
+            "20 refreshes of one ~5KB list must not blow the 64KB budget"
+        );
+        let served = t0 + COMPLETION_TTL * 19 + Duration::from_secs(2);
+        assert_eq!(cache.columns("big", served).unwrap().len(), 200);
+    }
+
+    #[test]
+    fn a_degraded_cache_does_not_requery_tables_within_the_ttl() {
+        // The adapters' comment says tables are "still served when degraded", but the plan
+        // re-queried them on every keystroke anyway. needs_tables is TTL-only: a fresh list
+        // serves, expired or missing re-queries, degraded alone changes nothing.
+        let mut cache = CompletionCache::new();
+        let t0 = Instant::now();
+        cache.set_tables(vec!["t1".into()], t0);
+        let huge: Vec<String> = (0..10_000).map(|i| format!("c{i:05}")).collect();
+        cache.set_columns("x".into(), huge, t0);
+        assert!(cache.is_degraded());
+        assert!(!cache.needs_tables(t0 + Duration::from_secs(1)));
+        assert!(cache.needs_tables(t0 + COMPLETION_TTL + Duration::from_millis(1)));
     }
 }
