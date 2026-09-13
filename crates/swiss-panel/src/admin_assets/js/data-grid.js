@@ -372,6 +372,15 @@ async function dbLoadData(keepOffset) {
   if (!dbDataReq.accepts(token)) return; // superseded: a newer load owns the pane and the flag
   d.loading = false;
   if (!j) { renderDbToolbar(); renderDbGrid(); return; }
+  // A Commit that emptied the last page (or a filter that shrank the set) can leave this
+  // offset past the end of what remains: an empty page with rows behind it is one page
+  // back — re-fetch there instead of painting an empty grid whose footer reads "51–50 of
+  // 50" (docs/22 closeout audit).
+  if (!j.rows.length && d.offset > 0) {
+    d.offset = Math.max(0, d.offset - d.pageSize);
+    dbLoadData(true);
+    return;
+  }
   d.data = j;
   d.schema = j.schema;
   // The grid config reloads with every page: a rename (new key) or a second tab's hide lands
