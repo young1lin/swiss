@@ -409,3 +409,30 @@ Retired with the family (docs/20 §3): `PUT /api/order`, `PUT /api/groups`,
 Two scopes refuse the family's `order` verb on purpose: secrets and tokens list in name and
 creation order respectively (docs/20 §2.1), so their `set_order` answers the same 400 the
 family serves for any other refusal.
+
+## ADR-016 — The Node reference build is retired; the panel is edited here
+
+**Status: Accepted (2026-09-13, by the repo owner's decision.)**
+
+The port is complete and has been production for weeks; the two-repo workflow (edit the panel
+in the Node sibling, recopy byte-for-byte, guard the copy) now costs more than it protects.
+The decision: `crates/swiss-panel/src/admin_assets/` becomes the panel's source of truth and
+is edited directly. `the_tree_is_byte_for_byte_the_node_builds` is deleted with it - a guard
+that compares against a tree nobody edits is a tripwire pointed at nothing. What survives,
+unchanged in force:
+
+- the panel stays plain ES modules served straight from disk - no bundler, no build step;
+- the panel's JavaScript stays the spec for the admin API: every `/api/*` shape change ships
+  on both sides in one commit;
+- the panel's vitest suite moves home: 35 files, 329 tests, now at
+  `crates/swiss-panel/panel-tests/` (node is a dev-only test dependency, never a build step).
+  The one server-coupled file (`admin-panel.test.ts`) shed its five HTTP tests - the Rust
+  crate's own suite pins serving, the path guard and the stamp - and its module-graph walk
+  was rewritten against the filesystem;
+- the sealed-envelope format stays frozen (docs/05) with its committed fixture;
+  `scripts/seal-fixture.mts` remains only as a record - the format must not change, so it
+  must never need to run.
+
+What is deliberately NOT scrubbed: the historical record. Docs that narrate the port
+(gap analyses, specs, the memory numbers in README) keep their references - they are
+provenance, not workflow. The sibling checkout itself is deleted by its owner when ready.

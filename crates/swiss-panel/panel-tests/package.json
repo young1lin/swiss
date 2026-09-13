@@ -1,0 +1,14 @@
+{
+  "name": "swiss-panel-tests",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only vitest suite for the admin panel tree under ../src/admin_assets — the panel's acceptance spec. Node/npm are a test dependency, never a build step: the panel itself stays unbundled ES modules served straight from disk.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "vitest": "^2.1.4"
+  }
+}

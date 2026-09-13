@@ -6,15 +6,15 @@ Guidance for AI coding agents working in this repo. Single source of truth for a
 ## What this is
 
 The project is named **swiss** — the developer's Swiss Army knife toolbox. It began as the Rust
-port of `local-mcp-gateway` (the Node original lives at `../local-mcp-gateway` and is the
-**reference implementation** — when this document and that code disagree, that code is right).
-One local process, every MCP server on an HTTP path under `127.0.0.1:19999`, shipped as a single
-static `.exe`. The port exists for one reason: memory. See `docs/01-goals-and-memory-budget.md`.
+port of `local-mcp-gateway` (the Node original — retired as the reference on 2026-09-13, see
+docs/07; the sibling checkout is no longer needed or consulted). One local process, every MCP
+server on an HTTP path under `127.0.0.1:19999`, shipped as a single static `.exe`. The port
+exists for one reason: memory. See `docs/01-goals-and-memory-budget.md`.
 
-The port is complete; the Node build remains the reference implementation. When changing
-behavior that exists there, read the original module first — its comments carry the
-*reasons*, and most of them record a bug that was paid for once already. Port the reason,
-not just the code.
+The port is complete and is the product itself: this repository owns every layer, the panel
+included. The reasons behind ported shapes live in `docs/` and in the code comments — when a
+piece of behavior looks odd, the module's comment usually records the bug that was paid for
+once already.
 
 ## The product: a developer's Swiss Army knife
 
@@ -84,12 +84,12 @@ correctness boundary.
 
 ## Rust-specific rules
 
-- **The panel's JavaScript is the spec for the admin API.** `crates/swiss-panel/src/admin_assets/`
-  is copied from `../local-mcp-gateway/src/admin` byte for byte and is not to be edited here.
-  Every `/api/*` response must therefore be shape-identical to what the Node build returns. If a
-  response shape feels wrong, fix it in the Node build first and copy the panel over again — never
-  fork the panel. `the_tree_is_byte_for_byte_the_node_builds` in `crates/swiss-panel/src/admin.rs`
-  enforces this whenever the sibling checkout is present, which on a developer's machine it is.
+- **The panel is edited here, directly.** `crates/swiss-panel/src/admin_assets/` is the panel's
+  source of truth — plain ES modules served straight from disk, still no bundler and no build
+  step. Its vitest acceptance suite lives in `crates/swiss-panel/panel-tests/` (node is a
+  dev-only test dependency there, never a build step). The panel's JavaScript remains the spec
+  for the admin API: every `/api/*` response must stay shape-identical to what the panel reads,
+  and a shape change ships on both sides in one commit.
 - **No `serde_json::Value` on a forwarding path.** The proxying adapters (`proc`, `http`, `rest`)
   must pass payloads through as `&RawValue`, parsing only the envelope fields they route on.
   Materialising a 2 MB body into a DOM is the single most expensive thing this process can do.
@@ -139,9 +139,9 @@ the named variable resolves first, so on a home upgraded from the Node era (whos
 `MCP_GATEWAY_TOKEN`) it is `MCP_GATEWAY_TOKEN` that pins — the pair partner is only consulted
 when the named variable holds nothing.
 
-The Node-sealed envelope fixture is regenerated with `cd ../local-mcp-gateway && npx tsx
-../local-mcp-gateway-rust/scripts/seal-fixture.mts` when the envelope format ever changes (it
-must not — docs/05).
+The sealed-envelope format is frozen (docs/05) and its fixture is committed under `tests/`.
+The Node-era regeneration script `scripts/seal-fixture.mts` needs the retired sibling checkout
+and is kept only as a record: the format must not change, so it must never need to run.
 
 ## Live testing ports — 19998 tests, 19999 is the user's
 
@@ -188,16 +188,15 @@ working tree, on every platform — CRLF never enters a commit.
 - New files are written with LF. Editors on Windows must not convert back — the attributes file
   covers a fresh checkout, but a misconfigured editor can still dirty an existing tree.
 - Binary types are marked binary in `.gitattributes`; never let git normalize them.
-- The panel tree `crates/swiss-panel/src/admin_assets` is a byte-for-byte copy of the Node
-  build's `src/admin`, which carries the same LF policy via a scoped attribute there — edit
-  the Node side, then copy.
+- The panel tree `crates/swiss-panel/src/admin_assets` is edited here directly; the repo-wide
+  LF policy above is the only one it needs.
 
 ## Making changes
 
 - **A behaviour change ships with a test** that fails before it and passes after. Integration
   tests drive the axum app through `tower::ServiceExt::oneshot` — no real port, no real sleep.
-- **Porting a module is not done until its Node test file is ported too.** The vitest suite is the
-  acceptance spec; see `docs/08-testing.md`.
+- **A panel change ships with its vitest case** in `crates/swiss-panel/panel-tests/` — that
+  suite is the panel's acceptance spec; see `docs/08-testing.md`.
 - **Write all code comments in English**, including in docs code samples.
 - **Never commit** `gateway.config.json`, `.env`, `managed.json`, `tunnels.json`, `master.key` or
   `*.log` — all gitignored, all carry real secrets locally. The same goes for

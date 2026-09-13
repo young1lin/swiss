@@ -24,6 +24,10 @@ master.key
 /.claude/worktrees/
 /.claude/settings.local.json
 
+# Dev-only vitest tooling for the panel suite (crates/swiss-panel/panel-tests) — node is a
+# test dependency, never a build step; its install tree stays untracked.
+/crates/swiss-panel/panel-tests/node_modules/
+
 # Local agent scratch that stays untracked on purpose (memory rule), and the
 # browser-verification screenshots a live check leaves at the repo root.
 /.agents/
