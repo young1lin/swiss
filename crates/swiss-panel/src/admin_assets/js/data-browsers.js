@@ -381,7 +381,7 @@ function dbRedisToggleDelete(addr) {
 /* The one inline cell editor at a time — the row grid's db-inline-edit vocabulary (overlay
    sized to the cell, Enter saves, Esc cancels, an outside click commits) writing to the
    redis buffer. */
-var dbRedisEditor = null;
+var dbRedisEditor = null; // { ta, save } — close() must be able to unhook the dismiss too
 
 function dbRedisCellEdit(td, insertIdx, addr, col, current) {
   dbRedisEditorClose();
@@ -398,7 +398,7 @@ function dbRedisCellEdit(td, insertIdx, addr, col, current) {
   ta.style.width = Math.max(rect.width + 24, 96) + "px";
   ta.style.minHeight = Math.max(rect.height, 22) + "px";
   wrap.appendChild(ta);
-  dbRedisEditor = ta;
+  dbRedisEditor = { ta: ta, save: save };
   function autoSize() {
     ta.style.height = "auto";
     ta.style.height = Math.min(Math.max(ta.scrollHeight, 22), 320) + "px";
@@ -430,19 +430,30 @@ function dbRedisCellEdit(td, insertIdx, addr, col, current) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
     else if (e.key === "Escape") { e.preventDefault(); dbRedisEditorClose(); renderDbGrid(); }
   };
-  function dismiss(ev) {
-    if (ev.target === ta || ta.contains(ev.target)) return;
-    document.removeEventListener("mousedown", dismiss, true);
-    save();
-  }
-  document.addEventListener("mousedown", dismiss, true);
+  document.addEventListener("mousedown", dbRedisDismiss, true);
   autoSize();
   ta.focus();
   ta.select();
 }
 
+/* The outside-click half, named at module level so close() can unhook it — the same shape as
+   data-edit.js's dbInlineDismiss. Enter/Esc close the editor through dbRedisEditorClose; a
+   dismiss left registered after that ran a STALE save() on the next mousedown anywhere, and
+   the cancelled text came back as a buffered change Commit would have written (docs/22
+   closeout audit). */
+function dbRedisDismiss(ev) {
+  if (!dbRedisEditor) return;
+  var ta = dbRedisEditor.ta;
+  if (ev.target === ta || ta.contains(ev.target)) return;
+  dbRedisEditor.save();
+}
+
 function dbRedisEditorClose() {
-  if (dbRedisEditor) { dbRedisEditor.remove(); dbRedisEditor = null; }
+  if (dbRedisEditor) {
+    dbRedisEditor.ta.remove();
+    document.removeEventListener("mousedown", dbRedisDismiss, true);
+    dbRedisEditor = null;
+  }
 }
 
 /** docs/22 W3.3: a string edits in place — one textarea, one Set, one SET through the
