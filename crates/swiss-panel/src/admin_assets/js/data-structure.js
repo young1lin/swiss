@@ -1,4 +1,4 @@
-import { $, apiJson, el, state } from "./util.js";
+import { $, apiJson, dbReqGuard, el, state } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbDialectOf, dbOkToDrop, dbOpenTable } from "./data-view.js";
 import { openDbDdlSheet } from "./data-ddl.js";
@@ -33,6 +33,11 @@ function dbSetTab(t) {
   if (t !== "data" && t !== "form" && d.conn && d.table) dbLoadDetail();
 }
 
+// One /schema request chain: a slow answer for the table the user just left must be
+// dropped, or it would paint the OLD table's structure (and rewrite d.schema) over the new
+// one's (docs/22 closeout audit).
+var dbDetailReq = dbReqGuard();
+
 async function dbLoadDetail() {
   var d = state.db;
   if (!d.conn || !d.table) return;
@@ -40,7 +45,9 @@ async function dbLoadDetail() {
   renderDbGrid();
   var q = "/api/db/" + encodeURIComponent(d.conn) + "/schema?table=" + encodeURIComponent(d.table);
   if (d.schema) q += "&schema=" + encodeURIComponent(d.schema);
+  var token = dbDetailReq.issue();
   var j = await apiJson(q);
+  if (!dbDetailReq.accepts(token)) return; // superseded: a newer table owns the detail
   d.detailBusy = false;
   if (!j) { d.detail = null; renderDbGrid(); return; }
   d.detail = j;

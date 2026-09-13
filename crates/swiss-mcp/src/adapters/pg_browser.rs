@@ -6,16 +6,21 @@
 
 use super::direct::Lazy;
 use super::pg::{
-    pg_browse_table_params, pg_list_tables_sql, pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL,
-    PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL, PK_SQL,
+    pg_browse_table_params, pg_grammar_params, pg_list_tables_grammar_sql, pg_list_tables_sql,
+    pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL, PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL,
+    PK_SQL,
 };
 use super::sql::{clamp_row_limit, limit_report, with_row_limit};
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
-    browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql, browse_table_sort,
-    build_ddl_op_sql, build_edit_statements, build_pg_ddl, export_row_limit, js_to_string,
-    map_import_rows, to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
-    BrowseForeignKey, DbBrowser, DbDialect, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    ambiguous_row_error, browse_count_sql, browse_offset, browse_order, browse_page_size,
+    browse_rows_sql, browse_table_sort, build_ddl_create, build_ddl_op_sql,
+    build_edit_statements, build_import_statements, build_pg_ddl, conflict_of, ddl_script,
+    export_row_limit, js_to_string, map_import_rows, optimistic_lock_columns, readback_plan,
+    sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns, to_browse_indexes,
+    to_csv, to_json_lines, BrowseColumn, BrowseForeignKey, DbBrowser, DbDialect, DumpPiece,
+    EditConflict, EditError, ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP,
+    IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
 use sqlx::PgPool;
@@ -24,11 +29,20 @@ use std::sync::Arc;
 pub struct PgBrowser {
     label: String,
     conn: Arc<Lazy<PgPool>>,
+    /// Completion candidates cache (docs/22 W3.1): table names + column lists, TTL-bound.
+    /// Mutex (no await while held) — the browser is shared behind Arc for the lease's life.
+    completion_cache: std::sync::Mutex<swiss_host::dbbrowser::CompletionCache>,
 }
 
 impl PgBrowser {
     pub fn new(label: String, conn: Arc<Lazy<PgPool>>) -> Self {
-        Self { label, conn }
+        Self {
+            label,
+            conn,
+            completion_cache: std::sync::Mutex::new(
+                swiss_host::dbbrowser::CompletionCache::new(),
+            ),
+        }
     }
 
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Map<String, Value>>, String> {
@@ -63,6 +77,58 @@ impl PgBrowser {
             .collect();
         Ok((to_browse_columns(&columns, &primary), primary))
     }
+
+    /// The catalog-sketch CREATE TABLE and the FK rows it folds in — the shared tail of
+    /// describe_table and the SQL dump's head (docs/22 W4.4), built through one helper so the
+    /// dump's DDL is by construction the DDL the Structure tab shows.
+    async fn ddl_of(
+        &self,
+        schema: &str,
+        table: &str,
+        columns: &[BrowseColumn],
+        primary: &[String],
+    ) -> Result<(String, Vec<BrowseForeignKey>), String> {
+        // The FK query needs permission on pg_constraint — a refusal answers [] (Node caught it).
+        let fks = self
+            .query(PG_BROWSE_FK_SQL, &[json!(schema), json!(table)])
+            .await
+            .unwrap_or_default();
+        let foreign_keys: Vec<BrowseForeignKey> = fks
+            .into_iter()
+            .map(|r| BrowseForeignKey {
+                name: r
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                column: r
+                    .get("column")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                ref_schema: r
+                    .get("ref_schema")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                ref_table: r
+                    .get("ref_table")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                ref_column: r
+                    .get("ref_column")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            })
+            .collect();
+        // Postgres has no SHOW CREATE TABLE — a faithful sketch from the catalog (dbbrowser.rs).
+        Ok((
+            build_pg_ddl(schema, table, columns, primary, &foreign_keys)?,
+            foreign_keys,
+        ))
+    }
 }
 
 /// `total` out of a COUNT row — node-pg answers int4 as a number, but the exact-string path
@@ -94,21 +160,50 @@ impl DbBrowser for PgBrowser {
             .max(0.0) as i64;
         let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
         let grep = o.get("grep").and_then(Value::as_str);
-        let filters = pg_browse_table_params(grep);
-        let list_params = vec![
-            filters[0].clone(),
-            filters[1].clone(),
-            json!(limit),
-            json!(page.saturating_mul(limit)),
-        ];
+        // docs/22 W1.1: the panel's schema picker narrows the catalog walk server-side; MySQL
+        // has no such parameter (one database per connection) and ignores it.
+        let schema = o.get("schema").and_then(Value::as_str).map(str::to_string);
         let sort = browse_table_sort(
             o.get("sort").and_then(Value::as_str),
             o.get("dir").and_then(Value::as_str),
         )?;
-        let list_sql = pg_list_tables_sql(sort);
+        // docs/22 W1.6: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
+        // SQL with the LIMIT/OFFSET binds renumbered past the patterns; a plain substring keeps
+        // the const statements byte-for-byte.
+        let grammar = grep
+            .map(|g| swiss_host::dbbrowser::grep_where(DbDialect::Pg, "c.relname", g, 1))
+            .transpose()?
+            .flatten();
+        let (list_sql, count_sql, list_params, count_params) = match grammar {
+            Some(w) => {
+                let (ls, cs) = pg_list_tables_grammar_sql(sort, &w.frag, w.params.len());
+                let (lp, cp) = pg_grammar_params(
+                    schema.as_deref(),
+                    &w.params,
+                    limit,
+                    page.saturating_mul(limit),
+                );
+                (ls, cs, lp, cp)
+            }
+            None => {
+                let filters = pg_browse_table_params(schema.as_deref(), grep);
+                let lp = vec![
+                    filters[0].clone(),
+                    filters[1].clone(),
+                    json!(limit),
+                    json!(page.saturating_mul(limit)),
+                ];
+                (
+                    pg_list_tables_sql(sort),
+                    COUNT_TABLES_SQL.to_string(),
+                    lp,
+                    filters,
+                )
+            }
+        };
         let (list, count) = tokio::join!(
             self.query(&list_sql, &list_params),
-            self.query(COUNT_TABLES_SQL, &filters)
+            self.query(&count_sql, &count_params)
         );
         let list = list?;
         let total = total_of(&count?);
@@ -151,17 +246,12 @@ impl DbBrowser for PgBrowser {
         )?;
         let offset = browse_offset(o.get("offset"));
         let limit = browse_page_size(o.get("limit"), 50);
-        // The grid's filters feed BOTH the page and the COUNT, on the same WHERE.
-        let filters = swiss_host::dbbrowser::browse_filters_of(o.get("filters"));
-        let where_ = swiss_host::dbbrowser::build_filter_where(
-            DbDialect::Pg,
-            &columns
-                .iter()
-                .map(|c| swiss_host::dbbrowser::FilterColumn::Column(c.clone()))
-                .collect::<Vec<_>>(),
-            &filters,
-        )?;
+        // The grid's filters feed the page, the COUNT and exports through one WHERE
+        // (browse_where) so the three can never drift (docs/22 W0.2).
+        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::pg_typed_exprs(&columns)?;
+        // docs/22 W1.9: fetch one row past the page — its presence answers "is there a next
+        // page" without trusting COUNT arithmetic under concurrent writes.
         let rows_stmt = browse_rows_sql(
             DbDialect::Pg,
             Some(&schema),
@@ -169,7 +259,7 @@ impl DbBrowser for PgBrowser {
             &exprs,
             order.as_deref(),
             offset,
-            limit,
+            limit + 1,
             &where_.frag,
             &where_.params,
         )?;
@@ -184,18 +274,20 @@ impl DbBrowser for PgBrowser {
             self.query(&rows_stmt.sql, &rows_stmt.params),
             self.query(&count_stmt.sql, &count_stmt.params)
         );
-        let rows = rows?;
+        let (rows, next_page) = swiss_host::dbbrowser::page_and_next(rows?, limit);
         let total = total_of(&count?);
-        let editable = !primary.is_empty();
-        // Node's editNote: the pk-less explanation is the only one left (pg.ts).
+        // docs/22 W4.1: every table is editable — a keyless one addresses rows by every
+        // column (NULL makes a row unaddressable, twins are refused), so the old pk-less
+        // refusal becomes the note that says how the addressing works instead.
+        let editable = true;
         let edit_note = if primary.is_empty() {
-            Some("table has no primary key, so a row cannot be addressed for edits")
+            Some("rows are addressed by all columns; ambiguous rows are refused")
         } else {
             None
         };
         Ok(json!({
             "schema": schema, "table": table, "columns": columns, "rows": rows,
-            "total": total, "offset": offset, "limit": limit,
+            "total": total, "offset": offset, "limit": limit, "nextPage": next_page,
             "primaryKey": primary, "editable": editable, "editNote": edit_note,
         }))
     }
@@ -209,12 +301,11 @@ impl DbBrowser for PgBrowser {
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         let (columns, primary) = self.metadata(&schema, table).await?;
         let params = vec![json!(schema), json!(table)];
-        let (indexes, fks) = tokio::join!(
+        let (indexes, ddl) = tokio::join!(
             self.query(PG_BROWSE_INDEXES_SQL, &params),
-            self.query(PG_BROWSE_FK_SQL, &params)
+            self.ddl_of(&schema, table, &columns, &primary)
         );
-        // The FK query needs permission on pg_constraint — a refusal answers [] (Node caught it).
-        let fks = fks.unwrap_or_default();
+        let (ddl, foreign_keys) = ddl?;
         // Fold rows into toBrowseIndexes shape first, exactly where Node's adapter mapped them:
         // a CREATE UNIQUE INDEX says so in its definition; the PK index is flagged by
         // indisprimary itself, not by a <table>_pkey name guess.
@@ -242,38 +333,6 @@ impl DbBrowser for PgBrowser {
             })
             .collect();
         let indexes = to_browse_indexes(&index_rows);
-        let foreign_keys: Vec<BrowseForeignKey> = fks
-            .into_iter()
-            .map(|r| BrowseForeignKey {
-                name: r
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                column: r
-                    .get("column")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                ref_schema: r
-                    .get("ref_schema")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                ref_table: r
-                    .get("ref_table")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                ref_column: r
-                    .get("ref_column")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            })
-            .collect();
-        // Postgres has no SHOW CREATE TABLE — a faithful sketch from the catalog (dbbrowser.rs).
-        let ddl = build_pg_ddl(&schema, table, &columns, &primary, &foreign_keys)?;
         Ok(json!({
             "schema": schema, "table": table, "columns": columns, "primaryKey": primary,
             "indexes": indexes, "foreignKeys": foreign_keys, "ddl": ddl,
@@ -281,6 +340,14 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
+        // A console DDL changes schema shape: the completion cache drops everything so the
+        // next keystroke re-reads the catalog it now describes (docs/22 W3.1).
+        if swiss_host::dbbrowser::sql_touches_schema(sql) {
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .invalidate();
+        }
         let s = sql.trim();
         if s.is_empty() {
             return Err("sql is required".into());
@@ -319,7 +386,7 @@ impl DbBrowser for PgBrowser {
         Ok(Value::Object(out))
     }
 
-    async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
+    async fn apply_edits(&self, o: &Value) -> Result<Value, EditError> {
         let schema = o
             .get("schema")
             .and_then(Value::as_str)
@@ -346,12 +413,77 @@ impl DbBrowser for PgBrowser {
             &columns,
             &primary,
         )?;
+        // docs/22 W1.7: every update/insert also reads its committed row back inside the same
+        // transaction — silent truncation, DEFAULTs and trigger rewrites land on screen instead
+        // of the value that was typed. Deletes read nothing back; a plan that cannot address a
+        // row comes home null and the commit itself is unaffected.
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         let mut results: Vec<Value> = Vec::with_capacity(stmts.len());
         for (i, stmt) in stmts.iter().enumerate() {
-            let affected = super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
-            results.push(json!({"op": typed[i].op(), "affected": affected}));
+            let plan = readback_plan(
+                DbDialect::Pg,
+                Some(&schema),
+                table,
+                &columns,
+                &primary,
+                &typed[i],
+            );
+            let (affected, row) = match &plan {
+                ReadBack::Returning(suffix) => {
+                    let rows = super::pg::run_pg_tx_rows(
+                        &mut tx,
+                        &format!("{}{}", stmt.sql, suffix),
+                        &stmt.params,
+                    )
+                    .await?;
+                    (rows.len() as u64, rows.into_iter().next())
+                }
+                _ => {
+                    let affected =
+                        super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
+                    let row = match plan {
+                        ReadBack::Select(s) => super::pg::run_pg_tx_rows(&mut tx, &s.sql, &s.params)
+                            .await?
+                            .into_iter()
+                            .next(),
+                        ReadBack::None => None,
+                        ReadBack::Returning(_) => unreachable!("matched above"),
+                    };
+                    (affected, row)
+                }
+            };
+            // docs/22 W4.1: Postgres has no UPDATE ... LIMIT, so a keyless table's
+            // every-column address guards its own uniqueness here — twins fail the whole
+            // batch (the dropped transaction rolls back what came before) instead of
+            // silently picking the first row. An insert is single-row by construction and
+            // cannot trip this.
+            if primary.is_empty() && affected > 1 {
+                return Err(EditError::Bad(ambiguous_row_error(typed[i].op(), affected)));
+            }
+            // docs/22 W4.2: an update whose optimistic lock matched zero rows lost the
+            // race. The read-back SELECT just probed the row as it stands inside this
+            // still-open transaction, so its values name the conflicting columns; the
+            // dropped transaction rolls the batch back. A bare pk-only update never
+            // claimed to know the row — zero affected stays the quiet result it was.
+            if affected == 0 {
+                if let swiss_host::dbbrowser::BrowseEdit::Update { .. } = &typed[i] {
+                    let lock = optimistic_lock_columns(&primary, &typed[i]);
+                    if !lock.is_empty() {
+                        let origin = match &typed[i] {
+                            swiss_host::dbbrowser::BrowseEdit::Update { pk, source, .. } => {
+                                source.clone().unwrap_or_else(|| pk.clone())
+                            }
+                            _ => Map::new(),
+                        };
+                        return Err(EditError::Conflict(EditConflict {
+                            row: Some(origin.clone()),
+                            ..conflict_of(&lock, &origin, row.as_ref())
+                        }));
+                    }
+                }
+            }
+            results.push(json!({"op": typed[i].op(), "affected": affected, "row": row}));
         }
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(json!({ "results": results }))
@@ -370,6 +502,9 @@ impl DbBrowser for PgBrowser {
         let (columns, _) = self.metadata(&schema, table).await?;
         let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let cap = export_row_limit(o.get("limit"));
+        // An export of a filtered grid exports the FILTERED set: the same browse_where the
+        // page and its COUNT use (docs/22 W0.2), values bound, never inlined.
+        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let mut all: Vec<Map<String, Value>> = Vec::new();
         let mut capped = false;
         // Offset paging in chunks: simple, and the cap keeps the O(offset) tail-walk bounded.
@@ -385,8 +520,8 @@ impl DbBrowser for PgBrowser {
                 None,
                 offset,
                 chunk,
-                "",
-                &[],
+                &where_.frag,
+                &where_.params,
             )?;
             let rows = self.query(&stmt.sql, &stmt.params).await?;
             let fetched = rows.len() as i64;
@@ -408,6 +543,128 @@ impl DbBrowser for PgBrowser {
             "capped": capped,
             "body": if json_form { to_json_lines(&all) } else { to_csv(&names, &all) },
         }))
+    }
+
+    async fn export_sql_dump(&self, o: &Value) -> Result<SqlDump, String> {
+        let schema = o
+            .get("schema")
+            .and_then(Value::as_str)
+            .unwrap_or("public")
+            .to_string();
+        let table = o.get("table").and_then(Value::as_str).unwrap_or("");
+        if table.is_empty() {
+            return Err("table is required".into());
+        }
+        let (columns, primary) = self.metadata(&schema, table).await?;
+        let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+        let cap = export_row_limit(o.get("limit"));
+        // The dump exports the FILTERED set: the same browse_where the page, the COUNT and the
+        // folded exports use (docs/22 W0.2), values bound, never inlined.
+        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
+        // Header facts come from that same WHERE's COUNT, so rows and capped are true before
+        // the first byte ships (the folded formats learn their row count only after fetching;
+        // a writer racing the stream can still move the table under a taken count — inherent).
+        let count_stmt = browse_count_sql(
+            DbDialect::Pg,
+            Some(&schema),
+            table,
+            &where_.frag,
+            &where_.params,
+        )?;
+        let count = total_of(&self.query(&count_stmt.sql, &count_stmt.params).await?);
+        let rows = count.min(cap);
+        let capped = count > rows;
+        let (ddl, _) = self.ddl_of(&schema, table, &columns, &primary).await?;
+        let head = sql_dump_head(DbDialect::Pg, Some(&schema), table, &ddl)?;
+        let exprs = swiss_host::dbbrowser::pg_typed_exprs(&columns)?;
+        // The producer task holds one chunk of source rows and one statement under
+        // construction — never the table. The bounded channel (2 pieces) hands each finished
+        // statement to the route as the socket takes it, so a slow client throttles the dump
+        // instead of growing it.
+        let (tx, rx) = tokio::sync::mpsc::channel::<DumpPiece>(2);
+        let dump_columns = names.clone();
+        let conn = self.conn.clone();
+        let table = table.to_string();
+        tokio::spawn(async move {
+            if tx.send(Ok(head.into_bytes())).await.is_err() {
+                return; // the consumer is gone; stop fetching
+            }
+            let mut batch = match SqlInsertBatch::new(DbDialect::Pg, Some(&schema), &table, &names) {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = tx.send(Err(e)).await;
+                    return;
+                }
+            };
+            // Offset paging in chunks, the folded export's loop shape: the cap keeps the
+            // O(offset) tail-walk bounded and each page is released before the next is read.
+            let mut offset = 0i64;
+            while offset < rows {
+                let chunk = EXPORT_CHUNK.min(rows - offset);
+                let stmt = match browse_rows_sql(
+                    DbDialect::Pg,
+                    Some(&schema),
+                    &table,
+                    &exprs,
+                    None,
+                    offset,
+                    chunk,
+                    &where_.frag,
+                    &where_.params,
+                ) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+                let page = match async {
+                    let pool = conn.get().await?;
+                    super::pg::pg_query_rows(&pool, &stmt.sql, &stmt.params).await
+                }
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+                let fetched = page.len() as i64;
+                for row in &page {
+                    // The dump body is EXECUTED on replay — sql_dump_literal, never the
+                    // clipboard's sql_literal (docs/22 W4.4 audit blocker).
+                    let literals: Result<Vec<String>, String> =
+                        names.iter().map(|c| sql_dump_literal(DbDialect::Pg, row.get(c))).collect();
+                    let literals = match literals {
+                        Ok(l) => l,
+                        Err(e) => {
+                            let _ = tx.send(Err(e)).await;
+                            return;
+                        }
+                    };
+                    if let Some(stmt) = batch.push(&format!("({})", literals.join(", "))) {
+                        if tx.send(Ok(stmt.into_bytes())).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                if fetched < chunk {
+                    break; // the table ran out before the count (a delete raced the COUNT)
+                }
+                offset += chunk;
+            }
+            if let Some(tail) = batch.finish() {
+                let _ = tx.send(Ok(tail.into_bytes())).await;
+            }
+            let _ = tx.send(Ok(sql_dump_foot(DbDialect::Pg).as_bytes().to_vec())).await;
+        });
+        Ok(SqlDump {
+            columns: dump_columns,
+            rows,
+            capped,
+            body: rx,
+        })
     }
 
     async fn import_table(&self, o: &Value) -> Result<Value, String> {
@@ -456,23 +713,52 @@ impl DbBrowser for PgBrowser {
         if rows.is_empty() {
             return Err("nothing to import after mapping — every row was empty or skipped".into());
         }
-        let typed: Vec<swiss_host::dbbrowser::BrowseEdit> = rows
-            .into_iter()
-            .map(|values| swiss_host::dbbrowser::BrowseEdit::Insert { values })
-            .collect();
-        let (columns, _) = self.metadata(&schema, table).await?;
-        let stmts =
-            build_edit_statements(DbDialect::Pg, Some(&schema), table, &typed, &columns, &[])?;
+        // docs/22 W4.5: upsert appends ON CONFLICT (pk) DO UPDATE per row — a table without
+        // a primary key cannot target a conflict on Postgres, so the builder degrades to the
+        // plain insert statements and says so in the reply; insert mode stays byte-identical
+        // to the edit grid's insert arm. One transaction either way.
+        let mode = swiss_host::dbbrowser::parse_import_mode(o.get("mode"))?;
+        let (columns, primary) = self.metadata(&schema, table).await?;
+        let (stmts, degraded) = build_import_statements(
+            DbDialect::Pg,
+            Some(&schema),
+            table,
+            &rows,
+            &columns,
+            &primary,
+            mode,
+        )?;
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         for stmt in &stmts {
             super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
         }
         tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(json!({ "inserted": typed.len() }))
+        if let Some(note) = degraded {
+            return Ok(json!({ "inserted": rows.len(), "mode": "insert", "note": note }));
+        }
+        Ok(json!({ "inserted": rows.len() }))
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
+        // docs/22 W4.6: the create ops share ONE builder with /ddl-preview — the sheet showed
+        // these exact statements before Commit posted. Postgres DDL is transactional, so the
+        // create plus its COMMENT ONs apply whole or not at all.
+        let op = o.get("op").and_then(Value::as_str).unwrap_or("");
+        if matches!(op, "create_table" | "add_column" | "create_index") {
+            let stmts = build_ddl_create(DbDialect::Pg, op, o)?;
+            let pool = self.conn.get().await?;
+            let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+            for s in &stmts {
+                super::pg::run_pg_tx(&mut tx, s, &[]).await?;
+            }
+            tx.commit().await.map_err(|e| e.to_string())?;
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .invalidate();
+            return Ok(json!({ "ran": ddl_script(&stmts) }));
+        }
         let schema = o
             .get("schema")
             .and_then(Value::as_str)
@@ -495,7 +781,123 @@ impl DbBrowser for PgBrowser {
         )?;
         let pool = self.conn.get().await?;
         super::pg::pg_query_rows(&pool, &sql, &[]).await?;
+        self.completion_cache
+            .lock()
+            .expect("completion cache")
+            .invalidate();
         Ok(json!({ "ran": sql }))
+    }
+
+    async fn activity(&self) -> Result<Value, String> {
+        // The statement already aliases to the shared reply keys (dbbrowser.rs), so the rows
+        // are the reply, verbatim.
+        let rows = self
+            .query(&swiss_host::dbbrowser::activity_sql(DbDialect::Pg), &[])
+            .await?;
+        Ok(json!({ "rows": rows }))
+    }
+
+    async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String> {
+        let sql = swiss_host::dbbrowser::activity_kill_sql(DbDialect::Pg, pid, terminate)?;
+        let rows = self.query(&sql, &[]).await?;
+        // pg_cancel_backend / pg_terminate_backend answer one boolean: false means the backend
+        // was already gone. Report it — the panel says so instead of promising a kill.
+        let result = rows
+            .first()
+            .and_then(|r| r.values().next())
+            .and_then(|v| match v {
+                Value::Bool(b) => Some(*b),
+                _ => None,
+            });
+        match result {
+            Some(b) => Ok(json!({ "ok": true, "result": b })),
+            None => Ok(json!({ "ok": true })),
+        }
+    }
+
+    async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
+        use swiss_host::dbbrowser::{
+            completion_from_table, completion_items, sql_word_ending_at,
+        };
+        let Some(prefix) = sql_word_ending_at(sql, caret) else {
+            return Ok(json!({ "items": [] }));
+        };
+        let now = std::time::Instant::now();
+        let plan = {
+            // Lock only to read the plan — the loads below await.
+            let cache = self.completion_cache.lock().expect("completion cache");
+            (
+                cache.needs_tables(now),
+                completion_from_table(sql, caret).filter(|_| !cache.is_degraded()),
+            )
+        };
+        let (need_tables, from) = plan;
+        // Tables: one catalog query, cached for the TTL. needs_tables is TTL-only, so a
+        // degraded cache keeps serving its fresh list — the column budget does not poison
+        // the table names into a catalog query on every keystroke.
+        let tables = if need_tables {
+            let rows = self
+                .query(
+                    "SELECT table_schema || '.' || table_name AS name \
+                     FROM information_schema.tables \
+                     WHERE table_schema NOT IN ('pg_catalog', 'information_schema') \
+                     ORDER BY name",
+                    &[],
+                )
+                .await?;
+            let names: Vec<String> = rows
+                .iter()
+                .filter_map(|r| r.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .set_tables(names.clone(), now);
+            names
+        } else {
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .tables(now)
+                .unwrap_or_default()
+        };
+        // Columns of the FROM-nearest table, cached per table. Bare names resolve against
+        // public (the panel's list is schema-qualified; a bare FROM is the common case).
+        let mut columns: Option<(String, Vec<String>)> = None;
+        if let Some(word) = from {
+            let cached = {
+                let cache = self.completion_cache.lock().expect("completion cache");
+                cache.columns(&word, now)
+            };
+            if let Some(cols) = cached {
+                columns = Some((word, cols));
+            } else {
+                let (schema, table) = match word.split_once('.') {
+                    Some((s, t)) => (s.to_string(), t.to_string()),
+                    None => ("public".to_string(), word.clone()),
+                };
+                let rows = self
+                    .query(
+                        "SELECT column_name FROM information_schema.columns \
+                         WHERE table_schema = $1 AND table_name = $2 \
+                         ORDER BY ordinal_position",
+                        &[json!(schema), json!(table)],
+                    )
+                    .await?;
+                let cols: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| r.get("column_name").and_then(Value::as_str).map(str::to_string))
+                    .collect();
+                self.completion_cache
+                    .lock()
+                    .expect("completion cache")
+                    .set_columns(word.clone(), cols.clone(), now);
+                columns = Some((word, cols));
+            }
+        }
+        let columns = columns.as_ref().map(|(t, c)| (t.as_str(), c.as_slice()));
+        let items = completion_items(DbDialect::Pg, prefix, &tables, columns);
+        Ok(json!({ "items": items }))
     }
 }
 

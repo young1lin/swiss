@@ -7,10 +7,13 @@ use super::mysql::{
 };
 use async_trait::async_trait;
 use swiss_host::dbbrowser::{
-    browse_count_sql, browse_offset, browse_order, browse_page_size, browse_rows_sql,
-    build_ddl_op_sql, build_edit_statements, export_row_limit, map_import_rows, to_browse_columns,
-    to_csv, to_json_lines, BrowseColumn, DbBrowser, DbDialect, EXPORT_CHUNK, EXPORT_ROW_CAP,
-    IMPORT_ROW_CAP,
+    ambiguous_row_error, browse_count_sql, browse_offset, browse_order, browse_page_size,
+    browse_rows_sql, build_ddl_create, build_ddl_op_sql, build_edit_statements,
+    build_import_statements, conflict_of, ddl_script, export_row_limit, js_to_string,
+    map_import_rows, optimistic_lock_columns,
+    readback_plan, sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns, to_csv,
+    to_json_lines, BrowseColumn, DbBrowser, DbDialect, DumpPiece, EditConflict, EditError,
+    ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
 use serde_json::{json, Map, Value};
 use sqlx::mysql::MySqlPool;
@@ -20,6 +23,9 @@ pub struct MysqlBrowser {
     database: String,
     label: String,
     conn: Arc<Lazy<MySqlPool>>,
+    /// Completion candidates cache (docs/22 W3.1): table names + column lists, TTL-bound.
+    /// Mutex (no await while held) — the browser is shared behind Arc for the lease's life.
+    completion_cache: std::sync::Mutex<swiss_host::dbbrowser::CompletionCache>,
 }
 impl MysqlBrowser {
     pub fn new(database: String, label: String, conn: Arc<Lazy<MySqlPool>>) -> Self {
@@ -27,6 +33,9 @@ impl MysqlBrowser {
             database,
             label,
             conn,
+            completion_cache: std::sync::Mutex::new(
+                swiss_host::dbbrowser::CompletionCache::new(),
+            ),
         }
     }
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Map<String, Value>>, String> {
@@ -56,6 +65,27 @@ impl MysqlBrowser {
             .collect();
         Ok((to_browse_columns(&columns, &primary), primary))
     }
+    /// SHOW CREATE TABLE folded to its statement text — the DDL the Structure tab serves and
+    /// the SQL dump's head opens with (docs/22 W4.4), read through one helper so the two
+    /// cannot drift apart.
+    async fn show_create(&self, table: &str) -> Result<String, String> {
+        let ddl_sql = format!(
+            "SHOW CREATE TABLE {}.{}",
+            swiss_host::dbbrowser::quote_ident(DbDialect::Mysql, &self.database)?,
+            swiss_host::dbbrowser::quote_ident(DbDialect::Mysql, table)?
+        );
+        let row = self
+            .query(&ddl_sql, &[])
+            .await?
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        Ok(row
+            .iter()
+            .find(|(k, _)| k.to_ascii_lowercase().starts_with("create "))
+            .map(|(_, v)| js_to_string(Some(v)))
+            .unwrap_or_default())
+    }
 }
 #[async_trait]
 impl DbBrowser for MysqlBrowser {
@@ -79,12 +109,29 @@ impl DbBrowser for MysqlBrowser {
             o.get("sort").and_then(Value::as_str),
             o.get("dir").and_then(Value::as_str),
         )?;
-        let ((ls, lp), (cs, cp)) = super::mysql::mysql_list_tables_sql(
-            &self.database,
-            grep,
-            (page, limit, page.saturating_mul(limit)),
-            Some(sort),
-        );
+        // docs/22 W1.6: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
+        // SQL; a plain substring keeps the single-LIKE statement byte-for-byte.
+        let grammar = grep
+            .map(|g| {
+                swiss_host::dbbrowser::grep_where(DbDialect::Mysql, "table_name", g, 0)
+            })
+            .transpose()?
+            .flatten();
+        let ((ls, lp), (cs, cp)) = match grammar {
+            Some(w) => super::mysql::mysql_list_tables_grammar_sql(
+                &self.database,
+                &w.frag,
+                &w.params,
+                (page, limit, page.saturating_mul(limit)),
+                Some(sort),
+            ),
+            None => super::mysql::mysql_list_tables_sql(
+                &self.database,
+                grep,
+                (page, limit, page.saturating_mul(limit)),
+                Some(sort),
+            ),
+        };
         let (list, count) = tokio::join!(self.query(&ls, &lp), self.query(&cs, &cp));
         let list = list?;
         let total = super::mysql::num_or_zero(count?.first().and_then(|r| r.get("total")));
@@ -104,17 +151,13 @@ impl DbBrowser for MysqlBrowser {
         )?;
         let offset = browse_offset(o.get("offset"));
         let limit = browse_page_size(o.get("limit"), 50);
-        // The grid's filters feed BOTH the page and the COUNT, on the same WHERE.
-        let filters = swiss_host::dbbrowser::browse_filters_of(o.get("filters"));
-        let where_ = swiss_host::dbbrowser::build_filter_where(
-            DbDialect::Mysql,
-            &columns
-                .iter()
-                .map(|c| swiss_host::dbbrowser::FilterColumn::Column(c.clone()))
-                .collect::<Vec<_>>(),
-            &filters,
-        )?;
+        // The grid's filters feed the page, the COUNT and exports through one WHERE
+        // (browse_where) so the three can never drift (docs/22 W0.2).
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::quoted_exprs(DbDialect::Mysql, &names)?;
+        // docs/22 W1.9: fetch one row past the page — its presence answers "is there a next
+        // page" without trusting COUNT arithmetic under concurrent writes.
         let rows_stmt = browse_rows_sql(
             DbDialect::Mysql,
             Some(&self.database),
@@ -122,7 +165,7 @@ impl DbBrowser for MysqlBrowser {
             &exprs,
             order.as_deref(),
             offset,
-            limit,
+            limit + 1,
             &where_.frag,
             &where_.params,
         )?;
@@ -137,32 +180,29 @@ impl DbBrowser for MysqlBrowser {
             self.query(&rows_stmt.sql, &rows_stmt.params),
             self.query(&count_stmt.sql, &count_stmt.params)
         );
-        let rows = rows?;
+        let (rows, next_page) = swiss_host::dbbrowser::page_and_next(rows?, limit);
         let total = super::mysql::num_or_zero(count?.first().and_then(|r| r.get("total")));
-        let editable = !primary.is_empty();
-        // Node's editNote: the pk-less explanation is the only one left (mysql.ts).
+        // docs/22 W4.1: every table is editable — a keyless one addresses rows by every
+        // column (NULL makes a row unaddressable, twins are refused), so the old pk-less
+        // refusal becomes the note that says how the addressing works instead.
+        let editable = true;
         let edit_note = if primary.is_empty() {
-            Some("table has no primary key, so a row cannot be addressed for edits")
+            Some("rows are addressed by all columns; ambiguous rows are refused")
         } else {
             None
         };
         Ok(
-            json!({"schema":self.database,"table":table,"columns":columns,"rows":rows,"total":total,"offset":offset,"limit":limit,"primaryKey":primary,"editable":editable,"editNote":edit_note}),
+            json!({"schema":self.database,"table":table,"columns":columns,"rows":rows,"total":total,"offset":offset,"limit":limit,"nextPage":next_page,"primaryKey":primary,"editable":editable,"editNote":edit_note}),
         )
     }
     async fn describe_table(&self, o: &Value) -> Result<Value, String> {
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         let (columns, primary) = self.metadata(table).await?;
         let params = vec![json!(self.database), json!(table)];
-        let ddl_sql = format!(
-            "SHOW CREATE TABLE {}.{}",
-            swiss_host::dbbrowser::quote_ident(DbDialect::Mysql, &self.database)?,
-            swiss_host::dbbrowser::quote_ident(DbDialect::Mysql, table)?
-        );
         let (indexes, fks, ddl) = tokio::join!(
             self.query(MYSQL_BROWSE_INDEXES_SQL, &params),
             self.query(MYSQL_BROWSE_FK_SQL, &params),
-            self.query(&ddl_sql, &[])
+            self.show_create(table)
         );
         // Map the SQL's aliases onto the fold's (Node's adapter did this inline): unique0 is
         // non_unique inverted by the fold's `!== 1`, PRIMARY is the PK index's actual name in
@@ -186,17 +226,19 @@ impl DbBrowser for MysqlBrowser {
             .collect();
         let indexes = swiss_host::dbbrowser::to_browse_indexes(&index_rows);
         let foreign_keys: Vec<Value> = fks?.into_iter().map(|r| json!({"name":r.get("name"),"column":r.get("col"),"refSchema":r.get("ref_schema"),"refTable":r.get("ref_table"),"refColumn":r.get("ref_column")})).collect();
-        let ddl_row = ddl?.into_iter().next().unwrap_or_default();
-        let ddl = ddl_row
-            .iter()
-            .find(|(k, _)| k.to_ascii_lowercase().starts_with("create "))
-            .map(|(_, v)| v.clone())
-            .unwrap_or(Value::String(String::new()));
         Ok(
-            json!({"schema":self.database,"table":table,"columns":columns,"primaryKey":primary,"indexes":indexes,"foreignKeys":foreign_keys,"ddl":ddl}),
+            json!({"schema":self.database,"table":table,"columns":columns,"primaryKey":primary,"indexes":indexes,"foreignKeys":foreign_keys,"ddl":ddl?}),
         )
     }
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
+        // A console DDL changes schema shape: the completion cache drops everything so the
+        // next keystroke re-reads the catalog it now describes (docs/22 W3.1).
+        if swiss_host::dbbrowser::sql_touches_schema(sql) {
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .invalidate();
+        }
         // The console's one rule: a single statement per run. Reads and writes alike go through —
         // this console belongs to the panel on the operator's own machine.
         let sql = crate::adapters::sql::assert_single_statement(sql)?;
@@ -234,7 +276,7 @@ impl DbBrowser for MysqlBrowser {
         }
         Ok(Value::Object(out))
     }
-    async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
+    async fn apply_edits(&self, o: &Value) -> Result<Value, EditError> {
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         let edits = o.get("edits").and_then(Value::as_array);
         if table.is_empty() {
@@ -256,12 +298,62 @@ impl DbBrowser for MysqlBrowser {
             &columns,
             &primary,
         )?;
+        // docs/22 W1.7: same read-back as Postgres, shaped for MySQL — an insert's row comes
+        // back by LAST_INSERT_ID() on the same connection, an update's by its primary key;
+        // both inside the same transaction so the reply is what the commit really kept.
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         let mut results: Vec<Value> = Vec::with_capacity(stmts.len());
         for (i, stmt) in stmts.iter().enumerate() {
+            let plan = readback_plan(
+                DbDialect::Mysql,
+                Some(&self.database),
+                table,
+                &columns,
+                &primary,
+                &typed[i],
+            );
             let affected = super::mysql::run_query_tx(&mut tx, &stmt.sql, &stmt.params).await?;
-            results.push(json!({"op": typed[i].op(), "affected": affected}));
+            // docs/22 W4.1: a keyless table addresses rows by every column, and the builder
+            // clips MySQL's statements with LIMIT 1 — an UPDATE can never fan out. The guard
+            // stays so the dialects carry the same verdict (Postgres has no LIMIT form and
+            // genuinely needs it); an insert is single-row by construction and cannot trip.
+            if primary.is_empty() && affected > 1 {
+                return Err(EditError::Bad(ambiguous_row_error(typed[i].op(), affected)));
+            }
+            // The read-back runs before any verdict, so an optimistic update that matched
+            // nothing probes with the same SELECT: the row the database shows RIGHT NOW
+            // (inside this still-open transaction) is what names the conflicting columns.
+            let row = match plan {
+                ReadBack::Select(s) => super::mysql::run_query_tx_rows(&mut tx, &s.sql, &s.params)
+                    .await?
+                    .into_iter()
+                    .next(),
+                _ => None,
+            };
+            // docs/22 W4.2: an update whose optimistic lock matched zero rows lost the race
+            // — another writer moved the row between the read and this commit. Refuse the
+            // whole batch (the dropped transaction rolls back what already ran) instead of
+            // overwriting. A bare pk-only update never claimed to know the row, so for it
+            // zero affected stays the quiet idempotent result it always was.
+            if affected == 0 {
+                if let swiss_host::dbbrowser::BrowseEdit::Update { .. } = &typed[i] {
+                    let lock = optimistic_lock_columns(&primary, &typed[i]);
+                    if !lock.is_empty() {
+                        let origin = match &typed[i] {
+                            swiss_host::dbbrowser::BrowseEdit::Update { pk, source, .. } => {
+                                source.clone().unwrap_or_else(|| pk.clone())
+                            }
+                            _ => Map::new(),
+                        };
+                        return Err(EditError::Conflict(EditConflict {
+                            row: Some(origin.clone()),
+                            ..conflict_of(&lock, &origin, row.as_ref())
+                        }));
+                    }
+                }
+            }
+            results.push(json!({"op": typed[i].op(), "affected": affected, "row": row}));
         }
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(json!({ "results": results }))
@@ -275,6 +367,10 @@ impl DbBrowser for MysqlBrowser {
         let (columns, _) = self.metadata(table).await?;
         let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
         let cap = export_row_limit(o.get("limit"));
+        // An export of a filtered grid exports the FILTERED set: the same browse_where the
+        // page and its COUNT use (docs/22 W0.2), values bound, never inlined.
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
         let mut all: Vec<Map<String, Value>> = Vec::new();
         let mut capped = false;
         // Offset paging in chunks: simple, and the cap keeps the O(offset) tail-walk bounded.
@@ -290,8 +386,8 @@ impl DbBrowser for MysqlBrowser {
                 None,
                 offset,
                 chunk,
-                "",
-                &[],
+                &where_.frag,
+                &where_.params,
             )?;
             let rows = self.query(&stmt.sql, &stmt.params).await?;
             let fetched = rows.len() as i64;
@@ -313,6 +409,137 @@ impl DbBrowser for MysqlBrowser {
             "capped": capped,
             "body": if json_form { to_json_lines(&all) } else { to_csv(&names, &all) },
         }))
+    }
+
+    async fn export_sql_dump(&self, o: &Value) -> Result<SqlDump, String> {
+        let table = o.get("table").and_then(Value::as_str).unwrap_or("");
+        if table.is_empty() {
+            return Err("table is required".into());
+        }
+        let (columns, _) = self.metadata(table).await?;
+        let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+        let cap = export_row_limit(o.get("limit"));
+        // The dump exports the FILTERED set: the same browse_where the page, the COUNT and the
+        // folded exports use (docs/22 W0.2), values bound, never inlined.
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Mysql, &columns, o.get("filters"))?;
+        // Header facts come from that same WHERE's COUNT, so rows and capped are true before
+        // the first byte ships (the folded formats learn their row count only after fetching;
+        // a writer racing the stream can still move the table under a taken count — inherent).
+        let count_stmt = browse_count_sql(
+            DbDialect::Mysql,
+            Some(&self.database),
+            table,
+            &where_.frag,
+            &where_.params,
+        )?;
+        let count = super::mysql::num_or_zero(
+            self.query(&count_stmt.sql, &count_stmt.params)
+                .await?
+                .first()
+                .and_then(|r| r.get("total")),
+        ) as i64;
+        let rows = count.min(cap);
+        let capped = count > rows;
+        let head = sql_dump_head(
+            DbDialect::Mysql,
+            Some(&self.database),
+            table,
+            &self.show_create(table).await?,
+        )?;
+        let exprs = swiss_host::dbbrowser::quoted_exprs(DbDialect::Mysql, &names)?;
+        // The producer task holds one chunk of source rows and one statement under
+        // construction — never the table. The bounded channel (2 pieces) hands each finished
+        // statement to the route as the socket takes it, so a slow client throttles the dump
+        // instead of growing it.
+        let (tx, rx) = tokio::sync::mpsc::channel::<DumpPiece>(2);
+        let dump_columns = names.clone();
+        let conn = self.conn.clone();
+        let database = self.database.clone();
+        let table = table.to_string();
+        tokio::spawn(async move {
+            if tx.send(Ok(head.into_bytes())).await.is_err() {
+                return; // the consumer is gone; stop fetching
+            }
+            let mut batch =
+                match SqlInsertBatch::new(DbDialect::Mysql, Some(&database), &table, &names) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+            // Offset paging in chunks, the folded export's loop shape: the cap keeps the
+            // O(offset) tail-walk bounded and each page is released before the next is read.
+            let mut offset = 0i64;
+            while offset < rows {
+                let chunk = EXPORT_CHUNK.min(rows - offset);
+                let stmt = match browse_rows_sql(
+                    DbDialect::Mysql,
+                    Some(&database),
+                    &table,
+                    &exprs,
+                    None,
+                    offset,
+                    chunk,
+                    &where_.frag,
+                    &where_.params,
+                ) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+                let page = match async {
+                    let pool = conn.get().await?;
+                    run_query(&pool, &stmt.sql, &stmt.params)
+                        .await
+                        .map(|r| r.rows)
+                }
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        let _ = tx.send(Err(e)).await;
+                        return;
+                    }
+                };
+                let fetched = page.len() as i64;
+                for row in &page {
+                    // The dump body is EXECUTED on replay — sql_dump_literal, never the
+                    // clipboard's sql_literal (docs/22 W4.4 audit blocker).
+                    let literals: Result<Vec<String>, String> =
+                        names.iter().map(|c| sql_dump_literal(DbDialect::Mysql, row.get(c))).collect();
+                    let literals = match literals {
+                        Ok(l) => l,
+                        Err(e) => {
+                            let _ = tx.send(Err(e)).await;
+                            return;
+                        }
+                    };
+                    if let Some(stmt) = batch.push(&format!("({})", literals.join(", "))) {
+                        if tx.send(Ok(stmt.into_bytes())).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                if fetched < chunk {
+                    break; // the table ran out before the count (a delete raced the COUNT)
+                }
+                offset += chunk;
+            }
+            if let Some(tail) = batch.finish() {
+                let _ = tx.send(Ok(tail.into_bytes())).await;
+            }
+            let _ = tx.send(Ok(sql_dump_foot(DbDialect::Mysql).as_bytes().to_vec())).await;
+        });
+        Ok(SqlDump {
+            columns: dump_columns,
+            rows,
+            capped,
+            body: rx,
+        })
     }
 
     async fn import_table(&self, o: &Value) -> Result<Value, String> {
@@ -356,18 +583,18 @@ impl DbBrowser for MysqlBrowser {
         if rows.is_empty() {
             return Err("nothing to import after mapping — every row was empty or skipped".into());
         }
-        let typed: Vec<swiss_host::dbbrowser::BrowseEdit> = rows
-            .into_iter()
-            .map(|values| swiss_host::dbbrowser::BrowseEdit::Insert { values })
-            .collect();
-        let (columns, _) = self.metadata(table).await?;
-        let stmts = build_edit_statements(
+        // docs/22 W4.5: upsert appends ON DUPLICATE KEY UPDATE per row; insert builds the
+        // exact statements the edit grid's insert arm builds. One transaction either way.
+        let mode = swiss_host::dbbrowser::parse_import_mode(o.get("mode"))?;
+        let (columns, primary) = self.metadata(table).await?;
+        let (stmts, degraded) = build_import_statements(
             DbDialect::Mysql,
             Some(&self.database),
             table,
-            &typed,
+            &rows,
             &columns,
-            &[],
+            &primary,
+            mode,
         )?;
         let pool = self.conn.get().await?;
         let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
@@ -375,10 +602,30 @@ impl DbBrowser for MysqlBrowser {
             super::mysql::run_query_tx(&mut tx, &stmt.sql, &stmt.params).await?;
         }
         tx.commit().await.map_err(|e| e.to_string())?;
-        Ok(json!({ "inserted": typed.len() }))
+        if let Some(note) = degraded {
+            return Ok(json!({ "inserted": rows.len(), "mode": "insert", "note": note }));
+        }
+        Ok(json!({ "inserted": rows.len() }))
     }
 
     async fn ddl_op(&self, o: &Value) -> Result<Value, String> {
+        // docs/22 W4.6: the create ops share ONE builder with /ddl-preview — the sheet showed
+        // these exact statements before Commit posted. Each op is a single statement here
+        // (MySQL embeds comments inline), so there is nothing to wrap: MySQL DDL commits
+        // itself, atomically per statement.
+        let op = o.get("op").and_then(Value::as_str).unwrap_or("");
+        if matches!(op, "create_table" | "add_column" | "create_index") {
+            let stmts = build_ddl_create(DbDialect::Mysql, op, o)?;
+            let pool = self.conn.get().await?;
+            for s in &stmts {
+                run_query(&pool, s, &[]).await?;
+            }
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .invalidate();
+            return Ok(json!({ "ran": ddl_script(&stmts) }));
+        }
         let table = o.get("table").and_then(Value::as_str).unwrap_or("");
         if table.is_empty() {
             return Err("table is required".into());
@@ -396,6 +643,104 @@ impl DbBrowser for MysqlBrowser {
         )?;
         let pool = self.conn.get().await?;
         run_query(&pool, &sql, &[]).await?;
+        self.completion_cache
+            .lock()
+            .expect("completion cache")
+            .invalidate();
         Ok(json!({ "ran": sql }))
+    }
+
+    async fn activity(&self) -> Result<Value, String> {
+        // The statement already aliases to the shared reply keys (dbbrowser.rs), so the rows
+        // are the reply, verbatim.
+        let rows = self
+            .query(&swiss_host::dbbrowser::activity_sql(DbDialect::Mysql), &[])
+            .await?;
+        Ok(json!({ "rows": rows }))
+    }
+
+    async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String> {
+        let sql = swiss_host::dbbrowser::activity_kill_sql(DbDialect::Mysql, pid, terminate)?;
+        self.query(&sql, &[]).await?;
+        // KILL / KILL QUERY answer an OK packet — no result row to read a truth from.
+        Ok(json!({ "ok": true }))
+    }
+
+    async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
+        use swiss_host::dbbrowser::{
+            completion_from_table, completion_items, sql_word_ending_at,
+        };
+        let Some(prefix) = sql_word_ending_at(sql, caret) else {
+            return Ok(json!({ "items": [] }));
+        };
+        let now = std::time::Instant::now();
+        let plan = {
+            // Lock only to read the plan — the loads below await.
+            let cache = self.completion_cache.lock().expect("completion cache");
+            (
+                cache.needs_tables(now),
+                completion_from_table(sql, caret).filter(|_| !cache.is_degraded()),
+            )
+        };
+        let (need_tables, from) = plan;
+        // Tables: the one database this connection owns, cached for the TTL. needs_tables is
+        // TTL-only, so a degraded cache keeps serving its fresh list — the column budget does
+        // not poison the table names into a catalog query on every keystroke.
+        let tables = if need_tables {
+            let rows = self
+                .query(
+                    "SELECT table_name AS name FROM information_schema.tables \
+                     WHERE table_schema = ? ORDER BY name",
+                    &[json!(self.database)],
+                )
+                .await?;
+            let names: Vec<String> = rows
+                .iter()
+                .filter_map(|r| r.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .set_tables(names.clone(), now);
+            names
+        } else {
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .tables(now)
+                .unwrap_or_default()
+        };
+        // Columns of the FROM-nearest table, cached per table.
+        let mut columns: Option<(String, Vec<String>)> = None;
+        if let Some(word) = from {
+            let cached = {
+                let cache = self.completion_cache.lock().expect("completion cache");
+                cache.columns(&word, now)
+            };
+            if let Some(cols) = cached {
+                columns = Some((word, cols));
+            } else {
+                let rows = self
+                    .query(
+                        "SELECT column_name FROM information_schema.columns \
+                         WHERE table_schema = ? AND table_name = ? \
+                         ORDER BY ordinal_position",
+                        &[json!(self.database), json!(word)],
+                    )
+                    .await?;
+                let cols: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| r.get("column_name").and_then(Value::as_str).map(str::to_string))
+                    .collect();
+                self.completion_cache
+                    .lock()
+                    .expect("completion cache")
+                    .set_columns(word.clone(), cols.clone(), now);
+                columns = Some((word, cols));
+            }
+        }
+        let columns = columns.as_ref().map(|(t, c)| (t.as_str(), c.as_slice()));
+        let items = completion_items(DbDialect::Mysql, prefix, &tables, columns);
+        Ok(json!({ "items": items }))
     }
 }

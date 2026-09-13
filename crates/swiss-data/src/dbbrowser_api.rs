@@ -36,7 +36,7 @@ use axum::Router;
 use serde_json::{json, Map, Value};
 
 use swiss_core::log;
-use swiss_host::dbbrowser::{js_to_string, BrowserFlavor, DbBrowser, RedisBrowser};
+use swiss_host::dbbrowser::{js_to_string, BrowserFlavor, DbBrowser, DumpPiece, RedisBrowser};
 use swiss_host::reply::{admin_error, admin_json};
 use swiss_host::services::catalog::{
     CatalogError, CatalogPresence, CatalogRegistry, ConnectionLease,
@@ -106,6 +106,18 @@ pub fn browsable_connections(
 struct Fail {
     status: StatusCode,
     message: String,
+    /// docs/22 W4.2: a lost optimistic-lock race's 409 extras — present only there. The
+    /// body adds `conflictColumns` and the buffered `row` beside `error`, so the grid
+    /// knows exactly which cells to paint red. Boxed: Fail crosses a dozen small helpers
+    /// and stays one pointer wide beyond its status and message.
+    conflict: Option<Box<FailConflict>>,
+}
+
+/// The 409's extra body fields: the moved columns, and the row the race was over.
+#[derive(Clone)]
+struct FailConflict {
+    columns: Vec<String>,
+    row: Map<String, Value>,
 }
 
 impl Fail {
@@ -113,6 +125,16 @@ impl Fail {
         Fail {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
+            conflict: None,
+        }
+    }
+
+    /// A lost edit race answers 409, the moved columns and the row named in the body.
+    fn conflict(message: impl Into<String>, columns: Vec<String>, row: Map<String, Value>) -> Self {
+        Fail {
+            status: StatusCode::CONFLICT,
+            message: message.into(),
+            conflict: Some(Box::new(FailConflict { columns, row })),
         }
     }
 }
@@ -184,10 +206,12 @@ fn lease_fail(err: CatalogError) -> Fail {
         CatalogError::Unknown(m) | CatalogError::NotBrowsable(m) => Fail {
             status: StatusCode::NOT_FOUND,
             message: m,
+            conflict: None,
         },
         CatalogError::Withdrawing(m) => Fail {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: m,
+            conflict: None,
         },
     }
 }
@@ -203,17 +227,20 @@ fn catalog_guard(catalog: &CatalogRegistry) -> Result<(), Fail> {
             message: format!(
                 "the {id} plugin is stopping; database browsing is momentarily unavailable"
             ),
+            conflict: None,
         }),
         CatalogPresence::Absent(Some(id)) => Err(Fail {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: format!(
                 "the {id} plugin provides database connections and is currently disabled"
             ),
+            conflict: None,
         }),
         CatalogPresence::Absent(None) => Err(Fail {
             status: StatusCode::SERVICE_UNAVAILABLE,
             message: "no plugin provides the connection catalog; database browsing is unavailable"
                 .to_string(),
+            conflict: None,
         }),
     }
 }
@@ -239,6 +266,7 @@ fn lease_db(
                     name,
                     lease.dialect()
                 ),
+                conflict: None,
             })
         }
     };
@@ -261,6 +289,7 @@ fn lease_redis(
                     name,
                     lease.dialect()
                 ),
+                conflict: None,
             })
         }
     };
@@ -270,7 +299,15 @@ fn lease_redis(
 fn reply(out: Result<Value, Fail>) -> Response {
     match out {
         Ok(body) => admin_json(StatusCode::OK, body),
-        Err(f) => admin_error(f.status, &f.message),
+        Err(f) => match f.conflict {
+            // The 409 body names the moved columns and the row — the cells to paint red
+            // (W4.2).
+            Some(c) => admin_json(
+                f.status,
+                json!({ "error": f.message, "conflictColumns": c.columns, "row": c.row }),
+            ),
+            None => admin_error(f.status, &f.message),
+        },
     }
 }
 
@@ -285,6 +322,9 @@ async fn tables(
     let mut o = Map::new();
     if let Some(grep) = q_non_empty(q, "grep") {
         o.insert("grep".into(), grep);
+    }
+    if let Some(schema) = q_non_empty(q, "schema") {
+        o.insert("schema".into(), schema);
     }
     if let Some(page) = q_raw(q, "page") {
         o.insert("page".into(), page);
@@ -346,13 +386,18 @@ async fn schema(
     b.describe_table(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
-/// Whole-table export as a download (CSV or newline-JSON), capped at EXPORT_ROW_CAP rows. The
-/// capped flag rides along as a header so the panel can warn without parsing the body.
+/// Whole-table export as a download (CSV, newline-JSON or a streaming SQL dump), capped at
+/// EXPORT_ROW_CAP rows. The capped flag rides along as a header so the panel can warn without
+/// parsing the body; x-export-format names the shape the panel saved.
 async fn export(
     catalog: &CatalogRegistry,
     name: &str,
     q: &HashMap<String, String>,
 ) -> Result<Response, Fail> {
+    // format=sql streams its body in pieces (docs/22 W4.4) — it cannot ride the folded path.
+    if q.get("format").map(String::as_str) == Some("sql") {
+        return export_sql(catalog, name, q).await;
+    }
     let (_lease, b) = lease_db(catalog, name)?;
     let format = if q.get("format").map(String::as_str) == Some("json") {
         "json"
@@ -367,6 +412,11 @@ async fn export(
     o.insert("format".into(), json!(format));
     if let Some(limit) = q_raw(q, "limit") {
         o.insert("limit".into(), limit);
+    }
+    // The grid's filters ride /export exactly as they ride /data (docs/22 W0.2): the download
+    // and the grid describe the same filtered set, and x-export-rows counts that set.
+    if let Some(filters) = parse_filters(q.get("filters"))? {
+        o.insert("filters".into(), filters);
     }
     let out = b.export_table(&Value::Object(o)).await.map_err(Fail::bad)?;
     // The reply's own format decides the download's shape, not the request's spelling.
@@ -410,8 +460,106 @@ async fn export(
                     "0".into()
                 },
             ),
+            (
+                header::HeaderName::from_static("x-export-format"),
+                out_format.to_string(),
+            ),
         ],
         body,
+    )
+        .into_response())
+}
+
+/// The dump body as a Stream: each channel piece becomes one body chunk, and the connection
+/// lease rides along inside it. The handler returns while the dump is still being produced —
+/// holding the lease in the body (not the handler's frame) is what keeps a draining provider
+/// from closing the pool under the last pieces (docs/12 W3, docs/22 W4.4).
+struct LeaseBody {
+    rx: tokio::sync::mpsc::Receiver<DumpPiece>,
+    lease: Option<ConnectionLease>,
+}
+
+impl futures_core::Stream for LeaseBody {
+    type Item = Result<axum::body::Bytes, axum::Error>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        match this.rx.poll_recv(cx) {
+            std::task::Poll::Ready(Some(Ok(bytes))) => {
+                std::task::Poll::Ready(Some(Ok(axum::body::Bytes::from(bytes))))
+            }
+            std::task::Poll::Ready(Some(Err(message))) => {
+                std::task::Poll::Ready(Some(Err(axum::Error::new(message))))
+            }
+            // The producer closed the channel: the dump is done, the lease may go.
+            std::task::Poll::Ready(None) => {
+                this.lease = None;
+                std::task::Poll::Ready(None)
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+/// The format=sql arm of /export (docs/22 W4.4): the dump's metadata comes back before the
+/// body starts — a bad table still answers its usual 400 — then the body streams through
+/// [`axum::body::Body::from_stream`] as the producer finishes each ~1 MB statement.
+async fn export_sql(
+    catalog: &CatalogRegistry,
+    name: &str,
+    q: &HashMap<String, String>,
+) -> Result<Response, Fail> {
+    let (lease, b) = lease_db(catalog, name)?;
+    let mut o = Map::new();
+    o.insert("table".into(), json!(q_or_empty(q, "table")));
+    if let Some(schema) = q_non_empty(q, "schema") {
+        o.insert("schema".into(), schema);
+    }
+    o.insert("format".into(), json!("sql"));
+    if let Some(limit) = q_raw(q, "limit") {
+        o.insert("limit".into(), limit);
+    }
+    // The grid's filters ride /export exactly as they ride /data (docs/22 W0.2).
+    if let Some(filters) = parse_filters(q.get("filters"))? {
+        o.insert("filters".into(), filters);
+    }
+    let dump = b
+        .export_sql_dump(&Value::Object(o))
+        .await
+        .map_err(Fail::bad)?;
+    let file = format!(
+        "sql-{}",
+        q.get("table").cloned().unwrap_or_else(|| "table".into())
+    );
+    let body = LeaseBody {
+        rx: dump.body,
+        lease: Some(lease),
+    };
+    Ok((
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/sql; charset=utf-8".to_string(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{file}\""),
+            ),
+            (
+                header::HeaderName::from_static("x-export-rows"),
+                dump.rows.to_string(),
+            ),
+            (
+                header::HeaderName::from_static("x-export-capped"),
+                if dump.capped { "1".into() } else { "0".into() },
+            ),
+            (header::HeaderName::from_static("x-export-format"), "sql".to_string()),
+        ],
+        axum::body::Body::from_stream(body),
     )
         .into_response())
 }
@@ -456,11 +604,14 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
             "mapping must be an array (one per CSV column) of column names or null",
         ));
     }
-    log::log(
-        "info",
-        "data view import",
-        Some(json!({ "name": name, "table": coerced_str(body, "table"), "rows": lines.len() })),
-    );
+    // docs/22 W4.5: the panel picks the statement form — insert stays the default, and a
+    // payload without the field rides exactly as it did before the mode existed.
+    let mode = swiss_host::dbbrowser::parse_import_mode(body.get("mode")).map_err(Fail::bad)?;
+    let mut logged = json!({ "name": name, "table": coerced_str(body, "table"), "rows": lines.len() });
+    if mode == swiss_host::dbbrowser::ImportMode::Upsert {
+        logged["mode"] = json!("upsert");
+    }
+    log::log("info", "data view import", Some(logged));
     let mut o = Map::new();
     o.insert("table".into(), json!(coerced_str(body, "table")));
     if let Some(schema) = nonempty_str_field(body, "schema") {
@@ -472,6 +623,9 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
         "mapping".into(),
         body.get("mapping").cloned().unwrap_or(Value::Null),
     );
+    if mode == swiss_host::dbbrowser::ImportMode::Upsert {
+        o.insert("mode".into(), json!("upsert"));
+    }
     b.import_table(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
@@ -480,6 +634,28 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
 async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
     let (_lease, b) = lease_db(catalog, name)?;
     let op = body.get("op").and_then(Value::as_str);
+    // docs/22 W4.6: the create ops carry their facts in a payload object; /ddl-preview showed
+    // the exact statements this runs (same builder, same input), so Commit is the preview.
+    if op.is_some_and(|op| matches!(op, "create_table" | "add_column" | "create_index")) {
+        let op = op.unwrap_or_default();
+        let Some(Value::Object(payload)) = body.get("payload") else {
+            return Err(Fail::bad("payload must be an object"));
+        };
+        log::log(
+            "warn",
+            "data view ddl",
+            Some(json!({
+                "name": name,
+                "op": op,
+                "table": payload.get("table").and_then(Value::as_str).unwrap_or(""),
+            })),
+        );
+        // Flatten (op, payload) into the one flat object the browser contract speaks.
+        let mut o = Map::new();
+        o.insert("op".into(), json!(op));
+        o.extend(payload.iter().map(|(k, v)| (k.clone(), v.clone())));
+        return b.ddl_op(&Value::Object(o)).await.map_err(Fail::bad);
+    }
     let op_ok = op.is_some_and(|op| op == "rename" || op == "truncate" || op == "drop");
     if !op_ok {
         return Err(Fail::bad("op must be rename, truncate or drop"));
@@ -507,6 +683,23 @@ async fn ddl(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Valu
     b.ddl_op(&Value::Object(o)).await.map_err(Fail::bad)
 }
 
+/// The form-to-SQL preview behind the New table / Add column / New index sheets (docs/22
+/// W4.6). The SAME build_ddl_create the commit path runs, on the leased connection's own
+/// dialect — pgAdmin's msql flow: one SQL producer serves preview and save, so the text the
+/// sheet shows is byte-for-byte the text /ddl executes on Commit.
+async fn ddl_preview(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    let op = body
+        .get("op")
+        .and_then(Value::as_str)
+        .filter(|op| matches!(*op, "create_table" | "add_column" | "create_index"))
+        .ok_or_else(|| Fail::bad("op must be create_table, add_column or create_index"))?;
+    let payload = body.get("payload").cloned().unwrap_or(Value::Null);
+    let stmts =
+        swiss_host::dbbrowser::build_ddl_create(b.dialect(), op, &payload).map_err(Fail::bad)?;
+    Ok(json!({ "sql": swiss_host::dbbrowser::ddl_script(&stmts) }))
+}
+
 /// The SQL console. The browser itself enforces the one-statement-per-run rule; the route
 /// just forwards, so the rule cannot drift between transport and model. Writes run.
 async fn query(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
@@ -515,9 +708,27 @@ async fn query(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
     if sql.trim().is_empty() {
         return Err(Fail::bad("sql is required"));
     }
-    b.run_query(&sql, body.get("limit"))
+    // The elapsed clock wraps the browser call: what the user waited on is the driver round
+    // trip, not the JSON hop around it (docs/22 W0.4).
+    let started = std::time::Instant::now();
+    let out = b
+        .run_query(&sql, body.get("limit"))
         .await
-        .map_err(Fail::bad)
+        .map_err(Fail::bad)?;
+    Ok(with_elapsed_ms(out, started))
+}
+
+/// Attach `elapsedMs` (whole milliseconds, a JS-friendly integer) to a console reply. A
+/// browser answer that is somehow not an object passes through untouched rather than being
+/// reshaped around the one field that was added for it.
+fn with_elapsed_ms(mut v: Value, started: std::time::Instant) -> Value {
+    if let Value::Object(map) = &mut v {
+        map.insert(
+            "elapsedMs".into(),
+            json!(started.elapsed().as_millis() as u64),
+        );
+    }
+    v
 }
 
 /// Commit a buffered edit list. ALL statements run in one transaction on one connection —
@@ -549,7 +760,14 @@ async fn edits(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Va
         o.insert("schema".into(), json!(schema));
     }
     o.insert("edits".into(), Value::Array(edit_list.clone()));
-    b.apply_edits(&Value::Object(o)).await.map_err(Fail::bad)
+    b.apply_edits(&Value::Object(o)).await.map_err(|e| match e {
+        // Whose fault the failure is decides the status (docs/22 W4.2): a refused request
+        // is 400, a lost race against another writer is 409 with the moved columns.
+        swiss_host::dbbrowser::EditError::Bad(m) => Fail::bad(m),
+        swiss_host::dbbrowser::EditError::Conflict(c) => {
+            Fail::conflict(c.message, c.columns, c.row.unwrap_or_default())
+        }
+    })
 }
 
 // --- the redis key browser (same /api/db namespace; dialect "redis") ------------------------------
@@ -584,8 +802,82 @@ async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<
     if line.trim().is_empty() {
         return Err(Fail::bad("command is required"));
     }
+    // Same elapsed contract as the SQL console (docs/22 W0.4): the clock wraps the call.
+    let started = std::time::Instant::now();
     let reply = rb.run_command(&line).await.map_err(Fail::bad)?;
-    Ok(json!({ "reply": reply }))
+    Ok(with_elapsed_ms(json!({ "reply": reply }), started))
+}
+
+/// Server-side completion for the console (docs/22 W3.1): candidates for the word ending at
+/// the caret. The body carries the WHOLE console text and the caret as a byte offset (the
+/// panel converts its UTF-16 selection index); the browser folds keywords, table names and
+/// the FROM-nearest table's columns into the reply.
+async fn completion(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    let sql = body
+        .get("sql")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Fail::bad("sql is required"))?;
+    let caret = body
+        .get("caret")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .clamp(0, sql.len() as i64) as usize;
+    b.completion(sql, caret).await.map_err(Fail::bad)
+}
+
+/// Live sessions on the connection's server (docs/22 W3.2) — the Activity page, polled
+/// while it is open. The reply shape is shared by both dialects (dbbrowser.rs).
+async fn activity(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    b.activity().await.map_err(Fail::bad)
+}
+
+/// Cancel (pg_cancel_backend / KILL QUERY) or terminate (pg_terminate_backend / KILL) one
+/// session (docs/22 W3.2). The mode word and the pid are validated here — a kill is the one
+/// route in this router that interrupts someone else's work, so it logs what it did.
+async fn activity_kill(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    let pid = body
+        .get("pid")
+        .and_then(Value::as_i64)
+        .filter(|p| *p > 0)
+        .ok_or_else(|| Fail::bad("pid must be a session id (positive integer)"))?;
+    let terminate = match body.get("mode").and_then(Value::as_str) {
+        Some("cancel") => false,
+        Some("terminate") => true,
+        _ => return Err(Fail::bad("mode must be cancel or terminate")),
+    };
+    log::log(
+        "warn",
+        "data view activity kill",
+        Some(json!({
+            "name": name,
+            "pid": pid,
+            "mode": if terminate { "terminate" } else { "cancel" },
+        })),
+    );
+    b.activity_kill(pid, terminate).await.map_err(Fail::bad)
+}
+
+/// Commit a buffered redis structured-edit batch (docs/22 W3.3): the typed value view's
+/// whole buffer as ONE pipelined round trip. Shape is checked here; WHICH commands may run
+/// stays with the adapter's console guard, applied per command before the socket is touched —
+/// the first refusal rejects the batch whole, so a buffered edit never half-applies.
+async fn redis_pipeline(
+    catalog: &CatalogRegistry,
+    name: &str,
+    body: &Value,
+) -> Result<Value, Fail> {
+    let (_lease, rb) = lease_redis(catalog, name)?;
+    let commands = swiss_host::dbbrowser::redis_pipeline_commands(body).map_err(Fail::bad)?;
+    log::log(
+        "info",
+        "data view redis commit",
+        Some(json!({ "name": name, "commands": commands.len() })),
+    );
+    rb.run_pipeline(&commands).await.map_err(Fail::bad)
 }
 
 /// One key, read type-aware (the shape redis_read returns).
@@ -680,6 +972,37 @@ async fn command_route(
     reply(command(&catalog, &name, &body.0).await)
 }
 
+async fn completion_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(completion(&catalog, &name, &body.0).await)
+}
+
+async fn activity_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+) -> Response {
+    reply(activity(&catalog, &name).await)
+}
+
+async fn activity_kill_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(activity_kill(&catalog, &name, &body.0).await)
+}
+
+async fn redis_pipeline_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(redis_pipeline(&catalog, &name, &body.0).await)
+}
+
 async fn key_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -694,6 +1017,14 @@ async fn ddl_route(
     body: swiss_host::reply::NodeBody,
 ) -> Response {
     reply(ddl(&catalog, &name, &body.0).await)
+}
+
+async fn ddl_preview_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(ddl_preview(&catalog, &name, &body.0).await)
 }
 
 async fn query_route(
@@ -737,8 +1068,17 @@ where
         // --- redis key browser (same /api/db namespace; dialect "redis") ---
         .route("/api/db/{name}/keys", get(keys_route))
         .route("/api/db/{name}/command", post(command_route))
+        // The buffered structured-edit commit (docs/22 W3.3): one pipeline, one round trip.
+        .route("/api/db/{name}/redis-pipeline", post(redis_pipeline_route))
+        // Live sessions and the cancel/terminate pair (docs/22 W3.2).
+        .route("/api/db/{name}/activity", get(activity_route))
+        .route("/api/db/{name}/activity-kill", post(activity_kill_route))
+        // The console's completion (docs/22 W3.1) — server-side, on the leased connection.
+        .route("/api/db/{name}/completion", post(completion_route))
         .route("/api/db/{name}/key", get(key_route))
         .route("/api/db/{name}/ddl", post(ddl_route))
+        // The W4.6 sheets' live preview: the statements /ddl would run for this (op, payload).
+        .route("/api/db/{name}/ddl-preview", post(ddl_preview_route))
         .route("/api/db/{name}/query", post(query_route))
         .route("/api/db/{name}/edits", post(edits_route))
         .layer(Extension(catalog))
@@ -771,9 +1111,19 @@ mod tests {
         edits: Option<Value>,
         query: Option<String>,
         filters: Option<Value>,
+        export_opts: Option<Value>,
+        /// Body pieces the SQL dump's producer handed to the channel (docs/22 W4.4) — the
+        /// route test's proof that the dump streamed instead of folding one string.
+        dump_pieces: usize,
         imported: Option<Value>,
         ddl: Option<Value>,
         tables_opts: Option<Value>,
+        /// The command list the redis pipeline route forwarded (docs/22 W3.3).
+        pipeline: Option<Vec<Vec<String>>>,
+        /// The (pid, terminate) the activity-kill route forwarded (docs/22 W3.2).
+        activity_kill: Option<(i64, bool)>,
+        /// The (sql, caret) the completion route forwarded (docs/22 W3.1).
+        completion: Option<(String, usize)>,
     }
 
     type SeenRef = Arc<Mutex<Seen>>;
@@ -835,6 +1185,9 @@ mod tests {
                 "total": 2,
                 "offset": offset,
                 "limit": limit,
+                // docs/22 W1.9: the adapter fetched limit+1 and truncated; the flag is what the
+                // panel's next-page arrow listens to.
+                "nextPage": false,
                 "primaryKey": ["id"],
                 "editable": true,
             }))
@@ -850,16 +1203,55 @@ mod tests {
                 "ddl": "CREATE TABLE stub",
             }))
         }
-        async fn apply_edits(&self, o: &Value) -> Result<Value, String> {
+        async fn apply_edits(&self, o: &Value) -> Result<Value, swiss_host::dbbrowser::EditError> {
             let edits = o.get("edits").cloned().unwrap_or(Value::Array(vec![]));
             if let Ok(mut seen) = self.seen.lock() {
                 seen.edits = Some(edits.clone());
+            }
+            // docs/22 W4.2: the optimistic lock needs a stand-in answer too — an update
+            // that carries a "__conflict__" change (an array of column names) plays the
+            // loser of the race, so the route test can pin the 409 shape the panel paints
+            // red cells from.
+            for e in edits.as_array().unwrap_or(&vec![]) {
+                if e.get("op").and_then(Value::as_str) == Some("update") {
+                    if let Some(cols) = e.pointer("/changes/__conflict__").and_then(Value::as_array) {
+                        return Err(swiss_host::dbbrowser::EditError::Conflict(
+                            swiss_host::dbbrowser::EditConflict {
+                                message: "row was changed by another writer — columns: ".to_string()
+                                    + &cols
+                                        .iter()
+                                        .map(|c| c.as_str().unwrap_or_default())
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                columns: cols
+                                    .iter()
+                                    .map(|c| c.as_str().unwrap_or_default().to_string())
+                                    .collect(),
+                                row: e.get("pk").and_then(Value::as_object).cloned(),
+                            },
+                        ));
+                    }
+                }
             }
             let results: Vec<Value> = edits
                 .as_array()
                 .unwrap_or(&vec![])
                 .iter()
-                .map(|e| json!({ "op": e.get("op").and_then(Value::as_str).unwrap_or(""), "affected": 1 }))
+                .map(|e| {
+                    // docs/22 W1.7: the adapter reads every committed update/insert back in the
+                    // same transaction and adds "row" — a delete stays null. The stub mirrors
+                    // that shape so the route test can pin that the field survives the route.
+                    let op = e.get("op").and_then(Value::as_str).unwrap_or("");
+                    json!({
+                        "op": op,
+                        "affected": 1,
+                        "row": if op == "delete" {
+                            Value::Null
+                        } else {
+                            json!({ "id": 1, "name": "tru" })
+                        },
+                    })
+                })
                 .collect();
             Ok(json!({ "results": results }))
         }
@@ -870,6 +1262,9 @@ mod tests {
             Ok(json!({ "columns": ["id"], "rows": [{ "id": 1 }], "rowCount": 1 }))
         }
         async fn export_table(&self, o: &Value) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.export_opts = Some(o.clone());
+            }
             let json_out = o.get("format") == Some(&json!("json"));
             Ok(json!({
                 "format": if json_out { "json" } else { "csv" },
@@ -879,12 +1274,95 @@ mod tests {
                 "body": if json_out { "{\"id\":1}\n{\"id\":2}" } else { "id,name\r\n1,a" },
             }))
         }
+        async fn export_sql_dump(
+            &self,
+            o: &Value,
+        ) -> Result<swiss_host::dbbrowser::SqlDump, String> {
+            use swiss_host::dbbrowser::{
+                export_row_limit, sql_dump_foot, sql_dump_head, sql_literal, SqlInsertBatch,
+            };
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.export_opts = Some(o.clone());
+            }
+            // A wide synthetic table driven through the REAL batching logic: 400 rows of
+            // ~6 KB literals force the 1 MB threshold several times, so the route test can
+            // prove the body arrived as multiple pieces (and multiple statements) instead of
+            // one folded string. The peak the producer holds is one statement, never the 2.4 MB
+            // the whole table would cost folded.
+            const TOTAL: i64 = 400;
+            let cap = export_row_limit(o.get("limit"));
+            let rows = TOTAL.min(cap);
+            let capped = TOTAL > rows;
+            let head = sql_dump_head(
+                swiss_host::dbbrowser::DbDialect::Mysql,
+                Some("app"),
+                "stub",
+                "CREATE TABLE `stub` (\n  `id` int NOT NULL,\n  `pad` text\n)",
+            )?;
+            let columns = vec!["id".to_string(), "pad".to_string()];
+            let dump_columns = columns.clone();
+            let (tx, rx) = tokio::sync::mpsc::channel::<DumpPiece>(2);
+            let seen_ref = self.seen.clone();
+            tokio::spawn(async move {
+                let mut pieces = 0usize;
+                let mut batch =
+                    SqlInsertBatch::new(swiss_host::dbbrowser::DbDialect::Mysql, Some("app"), "stub", &columns)
+                        .expect("stub identifiers are legal");
+                if tx.send(Ok(head.into_bytes())).await.is_err() {
+                    return;
+                }
+                pieces += 1;
+                for i in 0..rows {
+                    let row = json!({ "id": i, "pad": "x".repeat(6_000) });
+                    let literals: Vec<String> = columns
+                        .iter()
+                        .map(|c| sql_literal(row.get(c.as_str())))
+                        .collect();
+                    if let Some(stmt) = batch.push(&format!("({})", literals.join(", "))) {
+                        if tx.send(Ok(stmt.into_bytes())).await.is_err() {
+                            return;
+                        }
+                        pieces += 1;
+                    }
+                }
+                if let Some(tail) = batch.finish() {
+                    if tx.send(Ok(tail.into_bytes())).await.is_err() {
+                        return;
+                    }
+                    pieces += 1;
+                }
+                if tx
+                    .send(Ok(
+                        sql_dump_foot(swiss_host::dbbrowser::DbDialect::Mysql)
+                            .as_bytes()
+                            .to_vec(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                pieces += 1;
+                // Written before the sender drops (the receiver's None), so a consumer that
+                // drained the body always sees the final count.
+                if let Ok(mut seen) = seen_ref.lock() {
+                    seen.dump_pieces = pieces;
+                }
+            });
+            Ok(swiss_host::dbbrowser::SqlDump {
+                columns: dump_columns,
+                rows,
+                capped,
+                body: rx,
+            })
+        }
         async fn import_table(&self, o: &Value) -> Result<Value, String> {
             if let Ok(mut seen) = self.seen.lock() {
                 seen.imported = Some(json!({
                     "header": o.get("header"),
                     "lines": o.get("lines"),
                     "mapping": o.get("mapping"),
+                    "mode": o.get("mode"),
                 }));
             }
             let header: Vec<String> = o
@@ -917,6 +1395,17 @@ mod tests {
             if let Ok(mut seen) = self.seen.lock() {
                 seen.ddl = Some(o.clone());
             }
+            // docs/22 W4.6: the stub mirrors the real adapters — the create ops build through
+            // the shared builder, so the route test can pin preview == commit byte-for-byte.
+            let op = o.get("op").and_then(Value::as_str).unwrap_or("");
+            if matches!(op, "create_table" | "add_column" | "create_index") {
+                let stmts = swiss_host::dbbrowser::build_ddl_create(
+                    swiss_host::dbbrowser::DbDialect::Mysql,
+                    op,
+                    o,
+                )?;
+                return Ok(json!({ "ran": swiss_host::dbbrowser::ddl_script(&stmts) }));
+            }
             let to = o.get("to").and_then(Value::as_str).unwrap_or("");
             if o.get("op") == Some(&json!("rename")) && to.is_empty() {
                 return Err("rename needs the new table name".into());
@@ -925,10 +1414,33 @@ mod tests {
                 json!({ "ran": format!("stub {}", o.get("op").and_then(Value::as_str).unwrap_or("")) }),
             )
         }
+        async fn activity(&self) -> Result<Value, String> {
+            Ok(json!({ "rows": [
+                { "pid": 101, "user": "app", "state": "active", "wait": "", "seconds": 4, "query": "SELECT pg_sleep(60)", "own": false, "blockedBy": null },
+                { "pid": 102, "user": "root", "state": "idle", "wait": "", "seconds": 0, "query": "", "own": true, "blockedBy": null },
+            ] }))
+        }
+        async fn activity_kill(&self, pid: i64, terminate: bool) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.activity_kill = Some((pid, terminate));
+            }
+            Ok(json!({ "ok": true }))
+        }
+        async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.completion = Some((sql.to_string(), caret));
+            }
+            Ok(json!({ "items": [
+                { "label": "users", "kind": "table", "detail": "table" },
+                { "label": "UNION", "kind": "keyword", "detail": "keyword" },
+            ] }))
+        }
     }
 
     /// The Node suite's fake redis browser.
-    struct StubRedis;
+    struct StubRedis {
+        seen: SeenRef,
+    }
 
     #[async_trait]
     impl RedisBrowser for StubRedis {
@@ -955,6 +1467,15 @@ mod tests {
             } else {
                 Ok(json!(["a", "b"]))
             }
+        }
+        async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String> {
+            // The adapter vets every command through the console guard BEFORE the socket; the
+            // stub stands for the far side of that and answers one reply per command.
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.pipeline = Some(commands.to_vec());
+            }
+            let replies: Vec<Value> = commands.iter().map(|c| json!(c.len())).collect();
+            Ok(json!({ "replies": replies }))
         }
     }
 
@@ -1283,6 +1804,8 @@ mod tests {
         let body = body.expect("json");
         assert_eq!(body["table"], "users");
         assert_eq!(body["total"], 2);
+        // docs/22 W1.9: the page reply carries the nextPage probe alongside the COUNT total.
+        assert_eq!(body["nextPage"], false);
         assert_eq!(body["primaryKey"], json!(["id"]));
         assert_eq!(body["editable"], true);
         let names: Vec<&str> = body["columns"]
@@ -1326,6 +1849,27 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let err = body.expect("json")["error"].as_str().unwrap().to_string();
         assert!(err.contains("unknown key"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn forwards_the_schema_filter_to_the_table_list() {
+        // docs/22 W1.1: the schema picker rides the /tables request as a plain param; MySQL
+        // ignores it (one database), Postgres narrows the catalog walk to that schema.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, _, _) = call(
+            app,
+            "GET",
+            "/api/db/db/tables?page=0&schema=app",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let opts = seen.lock().expect("seen").tables_opts.take();
+        assert_eq!(opts, Some(json!({ "page": "0", "schema": "app" })));
     }
 
     #[tokio::test]
@@ -1436,6 +1980,7 @@ mod tests {
             .unwrap()
             .contains("filename=\"csv-users\""));
         assert_eq!(headers["x-export-rows"].to_str().unwrap(), "2");
+        assert_eq!(headers["x-export-format"].to_str().unwrap(), "csv");
         assert!(text.contains("id,name"));
 
         let app = router_of(vec![db_entry(
@@ -1457,6 +2002,159 @@ mod tests {
             .unwrap()
             .contains("application/x-ndjson"));
         assert_eq!(text.split('\n').count(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_export_carries_the_grids_filters_to_the_browser() {
+        // docs/22 W0.2: the grid's filters ride /export exactly as they ride /data, so the
+        // download and the grid describe the same filtered set (and x-export-rows counts it).
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let terms = json!([{ "column": "name", "op": "like", "value": "al" }]).to_string();
+        let (status, _, _, _) = call(
+            app,
+            "GET",
+            &format!(
+                "/api/db/db/export?table=users&format=csv&filters={}",
+                urlencode(&terms)
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let opts = seen
+            .lock()
+            .expect("seen")
+            .export_opts
+            .take()
+            .expect("export opts recorded");
+        assert_eq!(
+            opts["filters"],
+            json!([{ "column": "name", "op": "like", "value": "al" }])
+        );
+        assert_eq!(opts["table"], "users");
+
+        // Malformed filters are the route's own 400, same rule as /data.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "GET",
+            "/api/db/db/export?table=users&filters=not-json",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("JSON array"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_sql_export_streams_a_replayable_dump_in_pieces() {
+        // docs/22 W4.4: format=sql answers a dump — CREATE TABLE head, the dialect's FK
+        // stance, then the rows as ~1 MB multi-value INSERTs — streamed as several body
+        // pieces instead of one folded string, so the producer never holds the whole table.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, headers, _, text) =
+            call(app, "GET", "/api/db/db/export?table=users&format=sql", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["x-export-format"].to_str().unwrap(), "sql");
+        assert_eq!(headers["content-type"], "application/sql; charset=utf-8");
+        assert!(headers["content-disposition"]
+            .to_str()
+            .unwrap()
+            .contains("filename=\"sql-users\""));
+        assert_eq!(headers["x-export-rows"].to_str().unwrap(), "400");
+        assert_eq!(headers["x-export-capped"].to_str().unwrap(), "0");
+        assert!(text.starts_with("-- swiss SQL dump\n"), "{text:.120}");
+        assert!(text.contains("SET FOREIGN_KEY_CHECKS=0;\n"));
+        assert!(text.contains("CREATE TABLE `stub`"));
+        assert!(text.ends_with("SET FOREIGN_KEY_CHECKS=1;\n"));
+        // 400 rows of ~6 KB cannot ride one statement under the 1 MB threshold: the dump
+        // folds them into several INSERTs, and the channel carried them as several pieces
+        // (head, each statement, foot) — the streaming the folded formats cannot offer.
+        assert!(text.len() > 2 * swiss_host::dbbrowser::EXPORT_SQL_MAX_PACKET);
+        let statements = text.matches("INSERT INTO `app`.`stub`").count();
+        assert!(
+            statements >= 2,
+            "{statements} statements — the 1 MB threshold should have split them"
+        );
+        for stmt in text.split("INSERT INTO `app`.`stub`").skip(1) {
+            assert!(
+                stmt.len() <= swiss_host::dbbrowser::EXPORT_SQL_MAX_PACKET + 10,
+                "a statement crossed the flush threshold"
+            );
+        }
+        assert_eq!(text.matches("\n(").count(), 400);
+        let pieces = seen.lock().expect("seen").dump_pieces;
+        assert!(pieces >= statements + 2, "head and foot ship as pieces too: {pieces}");
+        let opts = seen
+            .lock()
+            .expect("seen")
+            .export_opts
+            .clone()
+            .expect("export opts recorded");
+        assert_eq!(opts["format"], json!("sql"));
+        assert_eq!(opts["table"], "users");
+
+        // The grid's filters ride the sql arm exactly as they ride csv (docs/22 W0.2): the
+        // WHERE the dump streams is the WHERE the page counted.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let terms = json!([{ "column": "pad", "op": "like", "value": "x" }]).to_string();
+        let (status, _, _, _) = call(
+            app,
+            "GET",
+            &format!(
+                "/api/db/db/export?table=users&format=sql&filters={}",
+                urlencode(&terms)
+            ),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            seen.lock()
+                .expect("seen")
+                .export_opts
+                .as_ref()
+                .expect("export opts recorded")["filters"],
+            json!([{ "column": "pad", "op": "like", "value": "x" }])
+        );
+
+        // The row cap (docs/22 W4.4): EXPORT_ROW_CAP stays the ceiling; a lower limit
+        // truncates the dump and flags it, exactly as the folded formats do.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, headers, _, text) = call(
+            app,
+            "GET",
+            "/api/db/db/export?table=users&format=sql&limit=50",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["x-export-rows"].to_str().unwrap(), "50");
+        assert_eq!(headers["x-export-capped"].to_str().unwrap(), "1");
+        assert_eq!(text.matches("\n(").count(), 50);
     }
 
     #[tokio::test]
@@ -1518,6 +2216,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_import_can_ask_for_upsert_and_refuses_unknown_modes() {
+        // docs/22 W4.5: mode "upsert" rides the payload to the browser; anything but the two
+        // known spellings is the route's own 400, the same rule ddl's op follows.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id", "name"],
+                "lines": ["1,alice", "2,bob"],
+                "mapping": ["id", "name"],
+                "mode": "upsert"
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json"), json!({ "inserted": 2 }));
+        assert_eq!(
+            seen.lock()
+                .expect("seen")
+                .imported
+                .take()
+                .expect("imported")["mode"],
+            json!("upsert")
+        );
+
+        // The default stays the default: no mode field reaches the browser at all, so an
+        // old panel riding a new backend keeps byte-identical import requests.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
+        let (status, _, _, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id"],
+                "lines": ["1"],
+                "mapping": ["id"]
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(seen
+            .lock()
+            .expect("seen")
+            .imported
+            .take()
+            .expect("imported")["mode"]
+            .is_null());
+
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/import",
+            Some(json!({
+                "table": "users",
+                "header": ["id"],
+                "lines": ["1"],
+                "mapping": ["id"],
+                "mode": "merge"
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("mode must be insert or upsert"), "{err}");
+    }
+
+    #[tokio::test]
     async fn runs_structure_operations_and_rejects_unknown_ops() {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
@@ -1556,6 +2339,102 @@ mod tests {
         assert!(err.contains("rename, truncate or drop"), "{err}");
     }
 
+
+    // --- docs/22 W4.6: preview and commit share one builder -------------------------------------------
+
+    /// The body both W4.6 endpoints take: (op, payload). The stub browser builds the create
+    /// ops the way the real adapters do (the shared builder), so this pins the contract the
+    /// sheet relies on: /ddl's "ran" is byte-for-byte /ddl-preview's "sql".
+    #[tokio::test]
+    async fn ddl_preview_and_ddl_run_the_same_text() {
+        let payload = json!({
+            "schema": "app",
+            "table": "cfg",
+            "columns": [
+                { "name": "order", "type": "int", "nullable": false, "comment": "序号" }
+            ]
+        });
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: seen.clone() }))]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/ddl-preview",
+            Some(json!({ "op": "create_table", "payload": payload.clone() })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let sql = body.expect("json")["sql"].as_str().unwrap().to_string();
+        assert_eq!(sql, "CREATE TABLE `app`.`cfg` (\n    `order` int NOT NULL COMMENT '序号'\n);");
+
+        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: seen.clone() }))]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/ddl",
+            Some(json!({ "op": "create_table", "payload": payload })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // The commit echoes the exact text the preview showed — same builder, same input.
+        assert_eq!(body.expect("json")["ran"].as_str().unwrap(), sql);
+        // The route flattened (op, payload) into the browser contract's one flat object.
+        assert_eq!(
+            seen.lock().expect("seen").ddl.take(),
+            Some(json!({
+                "op": "create_table",
+                "schema": "app",
+                "table": "cfg",
+                "columns": [
+                    { "name": "order", "type": "int", "nullable": false, "comment": "序号" }
+                ]
+            }))
+        );
+    }
+
+    #[tokio::test]
+    async fn ddl_preview_validates_op_and_identifiers() {
+        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: SeenRef::default() }))]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/ddl-preview",
+            Some(json!({ "op": "truncate", "payload": { "table": "users" } })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("op must be create_table, add_column or create_index"), "{err}");
+
+        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: SeenRef::default() }))]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/ddl-preview",
+            Some(json!({ "op": "create_index", "payload": { "table": "t", "index": "x y", "columns": ["a"] } })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("not a valid MySQL identifier"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn ddl_preview_is_sql_only() {
+        // redis connections have no W4.6 entry: the preview leases a Db browser and refuses.
+        let app = router_of(vec![redis_entry("cache")]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/cache/ddl-preview",
+            Some(json!({ "op": "create_table", "payload": { "table": "t", "columns": [{ "name": "a", "type": "int" }] } })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let err = body.expect("json")["error"].as_str().unwrap().to_string();
+        assert!(err.contains("has no database to browse"), "{err}");
+    }
+
     #[tokio::test]
     async fn forwards_edit_batches_and_rejects_empty_ones() {
         let app = router_of(vec![db_entry(
@@ -1586,14 +2465,52 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        // docs/22 W1.7: each result also carries the committed row as the adapter read it back
+        // (same transaction) — the route passes the field through untouched.
         assert_eq!(
             body.expect("json")["results"],
-            json!([{ "op": "update", "affected": 1 }])
+            json!([{ "op": "update", "affected": 1, "row": { "id": 1, "name": "tru" } }])
         );
         assert_eq!(
             seen.lock().expect("seen").edits.take(),
             Some(json!([{ "op": "update", "pk": { "id": 1 }, "changes": { "name": "x" } }]))
         );
+    }
+
+    #[tokio::test]
+    async fn a_lost_optimistic_lock_answers_409_with_the_column_names() {
+        // docs/22 W4.2: the loser of the edit race answers 409 — not 400, the request was
+        // well-formed and the row was real; another writer moved it. The body names the
+        // columns whose buffered originals no longer match, which is what the grid paints
+        // red while keeping the whole buffer for a retry.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/edits",
+            Some(json!({
+                "table": "users",
+                "edits": [{
+                    "op": "update",
+                    "pk": { "id": 1, "name": "old", "city": "la" },
+                    "changes": { "name": "new", "city": "sf", "__conflict__": ["name", "city"] }
+                }]
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let b = body.expect("json");
+        let err = b["error"].as_str().unwrap().to_string();
+        assert!(err.contains("name") && err.contains("city"), "{err}");
+        assert_eq!(b["conflictColumns"], json!(["name", "city"]));
+        // The buffered row the race was over rides along, so the grid finds the exact
+        // entry to paint without guessing by column names.
+        assert_eq!(b["row"], json!({ "id": 1, "name": "old", "city": "la" }));
     }
 
     #[tokio::test]
@@ -1655,12 +2572,239 @@ mod tests {
     }
 
     fn redis_entry(name: &str) -> Arc<StubRow> {
+        redis_entry_with(name, SeenRef::default())
+    }
+
+    /// redis_entry over a shared seen, so a test can read back what the pipeline route
+    /// forwarded (docs/22 W3.3).
+    fn redis_entry_with(name: &str, seen: SeenRef) -> Arc<StubRow> {
         Arc::new(StubRow {
             name: name.into(),
             adapter_type: "redis".into(),
             state: "stopped".into(),
-            browser: BrowserFlavor::Redis(Arc::new(StubRedis)),
+            browser: BrowserFlavor::Redis(Arc::new(StubRedis { seen })),
         })
+    }
+
+    #[tokio::test]
+    async fn a_redis_structured_edit_commit_rides_one_pipeline() {
+        // docs/22 W3.3: the typed value view's whole buffer posts as ONE round trip; args stay
+        // separate strings (a value with spaces is one argument, never re-split), and the
+        // replies come back in order.
+        let seen = SeenRef::default();
+        let app = router_of(vec![redis_entry_with("cache", seen.clone())]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/cache/redis-pipeline",
+            Some(json!({ "commands": [["HSET", "h:1", "f", "v"], ["HDEL", "h:1", "gone"]] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json")["replies"], json!([4, 3]));
+        assert_eq!(
+            seen.lock().expect("seen").pipeline.take(),
+            Some(vec![
+                vec!["HSET".into(), "h:1".into(), "f".into(), "v".into()],
+                vec!["HDEL".into(), "h:1".into(), "gone".into()],
+            ])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_redis_pipeline_body_is_shape_checked_at_the_route() {
+        // A bare number stays a VALID argument (a score, a list index) — only values that
+        // are neither string nor number are the caller's mistake.
+        for bad in [
+            json!({}),
+            json!({ "commands": [] }),
+            json!({ "commands": [[]] }),
+            json!({ "commands": [["HSET", true]] }),
+        ] {
+            let app = router_of(vec![redis_entry("cache")]);
+            let (status, _, body, _) = call(
+                app,
+                "POST",
+                "/api/db/cache/redis-pipeline",
+                Some(bad.clone()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            let err = body.expect("json")["error"]
+                .as_str()
+                .expect("error text")
+                .to_string();
+            assert!(
+                err.starts_with("commands must be") || err.starts_with("each command must be"),
+                "{bad} -> {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn completion_forwards_the_console_text_and_caret() {
+        // docs/22 W3.1: the caret is a byte offset; the panel converts its UTF-16 index.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/completion",
+            Some(json!({ "sql": "SELECT * FROM users WHERE u", "caret": 28 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let items = body.expect("json")["items"].as_array().expect("items").clone();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["kind"], "table");
+        assert_eq!(items[1]["kind"], "keyword");
+        // The caret sent (28) sits one past the text's end — the route clamps it to the
+        // text's own length rather than passing a pointer at nothing.
+        assert_eq!(
+            seen.lock().expect("seen").completion,
+            Some(("SELECT * FROM users WHERE u".to_string(), 27))
+        );
+    }
+
+    #[tokio::test]
+    async fn completion_validates_the_body_before_touching_the_browser() {
+        let seen = SeenRef::default();
+        let make = || {
+            router_of(vec![db_entry(
+                "db",
+                Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+            )])
+        };
+        for bad in [json!({ "caret": 3 }), json!({ "sql": 5, "caret": 3 }), json!(null)] {
+            let (status, _, body, _) =
+                call(make(), "POST", "/api/db/db/completion", Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            assert_eq!(body.expect("json")["error"], "sql is required");
+        }
+        assert!(seen.lock().expect("seen").completion.is_none());
+    }
+
+    #[tokio::test]
+    async fn completion_is_sql_only() {
+        let app = router_of(vec![redis_entry("cache")]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/cache/completion",
+            Some(json!({ "sql": "GE", "caret": 2 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'cache' (redis) has no database to browse"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_activity_page_lists_sessions_in_the_shared_shape() {
+        // docs/22 W3.2: one reply shape for both dialects — the panel renders one table.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/activity", None).await;
+        assert_eq!(status, StatusCode::OK);
+        let rows = body.expect("json")["rows"].as_array().expect("rows").clone();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["pid"], json!(101));
+        assert_eq!(rows[0]["query"], "SELECT pg_sleep(60)");
+        assert_eq!(rows[1]["own"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn an_activity_kill_validates_mode_and_pid_before_touching_the_browser() {
+        let seen = SeenRef::default();
+        let make = || {
+            router_of(vec![db_entry(
+                "db",
+                Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+            )])
+        };
+        for bad in [
+            json!({ "pid": 5 }),
+            json!({ "pid": 5, "mode": "kill" }),
+            json!({ "pid": 5, "mode": "CANCEL" }),
+            json!({ "mode": "cancel" }),
+            json!({ "pid": 0, "mode": "cancel" }),
+            json!({ "pid": -3, "mode": "terminate" }),
+            json!({ "pid": "7", "mode": "cancel" }),
+        ] {
+            let (status, _, body, _) = call(make(), "POST", "/api/db/db/activity-kill", Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            let err = body.expect("json")["error"].as_str().expect("error").to_string();
+            assert!(
+                err == "mode must be cancel or terminate"
+                    || err == "pid must be a session id (positive integer)",
+                "{bad} -> {err}"
+            );
+        }
+        assert!(seen.lock().expect("seen").activity_kill.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_activity_kill_forwards_the_mode_word_to_the_browser() {
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/activity-kill",
+            Some(json!({ "pid": 4242, "mode": "terminate" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json")["ok"], json!(true));
+        assert_eq!(seen.lock().expect("seen").activity_kill, Some((4242, true)));
+    }
+
+    #[tokio::test]
+    async fn the_activity_page_is_sql_only() {
+        // A redis connection has no sessions page: the 404 names what it is, as ever.
+        let app = router_of(vec![redis_entry("cache")]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/cache/activity", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'cache' (redis) has no database to browse"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_redis_pipeline_is_redis_only() {
+        // A SQL connection answers the redis 404 with the adapter type named, exactly as the
+        // key routes do — no half-work on the wrong flavour.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/redis-pipeline",
+            Some(json!({ "commands": [["SET", "k", "v"]] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'db' (mysql) is not a redis connection"
+        );
     }
 
     #[tokio::test]
@@ -1708,6 +2852,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_query_answer_carries_how_long_it_took() {
+        // docs/22 W0.4: the console's meta line shows server-measured elapsed time. The clock
+        // wraps the browser call itself, so the number is the driver round trip the user
+        // actually waited on, not the JSON hop around it.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/query",
+            Some(json!({ "sql": "SELECT 1" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body = body.expect("json");
+        let ms = body["elapsedMs"].as_u64().expect("elapsedMs is an integer");
+        assert!(ms < 60_000, "{ms} — a stub call cannot take a minute");
+        // The reply itself passes through untouched.
+        assert_eq!(body["rowCount"], json!(1));
+        assert!(body["columns"].is_array());
+    }
+
+    #[tokio::test]
+    async fn a_redis_command_answer_carries_how_long_it_took() {
+        // Same contract on the redis console: {"reply": ..., "elapsedMs": N}.
+        let app = router_of(vec![redis_entry("rdb")]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/rdb/command",
+            Some(json!({ "command": "GET mykey" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body = body.expect("json");
+        assert_eq!(body["reply"], json!("value"));
+        let ms = body["elapsedMs"].as_u64().expect("elapsedMs is an integer");
+        assert!(ms < 60_000, "{ms}");
+    }
+
+    #[tokio::test]
     async fn runs_a_redis_command_reads_and_writes_alike() {
         let app = router_of(vec![redis_entry("rdb")]);
         let (status, _, body, _) = call(
@@ -1718,7 +2907,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body.as_ref().expect("json"), &json!({ "reply": "value" }));
+        // docs/22 W0.4 grew the answer by one field; the reply itself is unchanged.
+        let body = body.expect("json");
+        assert_eq!(body["reply"], json!("value"));
+        assert!(body["elapsedMs"].is_u64());
 
         let app = router_of(vec![redis_entry("rdb")]);
         let (_status, _, body, _) = call(

@@ -27,6 +27,18 @@ function descs() {
 
 let openState = null; // { menu, trig, sel, items, active }
 
+// A styled select's face, by select: removal handling needs it (below).
+const trigs = new WeakMap();
+
+/** A styled select that leaves the DOM takes its face with it. The trigger sits BESIDE the
+ *  select ("afterend"), so removing the select alone orphans a live-looking dropdown —
+ *  docs/22 closeout B7 caught one on a redis page still showing the previous pg connection's
+ *  schema pick, because the view removes the select when the connection kind changes. */
+function dropTrig(sel) {
+  const t = trigs.get(sel);
+  if (t && t.parentNode) t.parentNode.removeChild(t);
+}
+
 function closeMenu() {
   if (!openState) return;
   openState.menu.remove();
@@ -153,6 +165,7 @@ function styleSelect(sel) {
   });
   const origAdd = sel.appendChild.bind(sel);
   sel.appendChild = function (node) { origAdd(node); paint(sel, trig); return node; };
+  trigs.set(sel, trig);
 }
 
 /** Style everything already in the DOM, then watch for selects the views create later. Every
@@ -166,6 +179,12 @@ function initSelects() {
         if (n.nodeType !== 1) continue;
         if (n.tagName === "SELECT") styleSelect(n);
         else if (n.querySelectorAll) Array.prototype.forEach.call(n.querySelectorAll("select"), styleSelect);
+      }
+      // docs/22 closeout B7: a removed styled select must not leave its trigger behind.
+      for (const n of m.removedNodes) {
+        if (n.nodeType !== 1) continue;
+        if (n.tagName === "SELECT") dropTrig(n);
+        else if (n.querySelectorAll) Array.prototype.forEach.call(n.querySelectorAll("select"), dropTrig);
       }
     }
     // A re-render can remove an open trigger's subtree; its menu would be left floating.

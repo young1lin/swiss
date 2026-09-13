@@ -212,6 +212,7 @@ the wrong way, is worth stopping for.
 | | Rust Phase 2 | mysql, pg, 2×redis | **21.8** | 2026-09-11, `3c3fd7f` release; all three DBs ride the gateway's own SSH tunnels; 40/40 calls ok; WS 21.8, private 8.2, 3 threads; 2×http started not driven, 2×proc asleep |
 | | Rust Phase 4 | full workload | **22.4** | 2026-09-11, `3c3fd7f` release; 60/60 calls ok incl. 12× web-reader (http); 9 tunnel rules over 2 SSH connections live; WS 22.4, private 8.6, 6 threads |
 | 2026-09-11 | Node (re-measure) | same set, same data dir, same 60-call traffic | **113.8** | fresh side-by-side: private 124.9 MB, 13 threads — consistent with the 117.5 baseline |
+| | Rust streaming SQL dump | mysql, pg (data view) | peak **32.5** | 2026-09-13, `9aee217` release; 100k-row/114 MB pg table exported whole-body: csv materialises it (peak WS 164.2, heap 157.9) while format=sql streams (docs/22 W4.4): peak WS 32.5, heap 22.9 at a 20.7 baseline — O(chunk) held; the gap grows with table size |
 
 Phase 1 reading: 14.0 MB with the whole gateway present — panel embedded, registry, both on-disk
 logs, the plugin host and every adapter family compiled in — against a 9.1 MB spike that had none
