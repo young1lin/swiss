@@ -221,7 +221,10 @@ function paintDbDdlSheet() {
   host.innerHTML = html;
   host.hidden = false;
   wireDbDdlSheet();
-  renderDbDdlRows();
+  // The mini-grid belongs to the table and column kinds only — the index sheet has no
+  // #ddl-grid, and rendering rows into it would throw before the picker and the quiet
+  // hint ever paint (caught live: the index sheet opened blank).
+  if (kind !== "index") renderDbDdlRows();
   if (kind === "index") renderDbDdlColPick();
   paintDbDdlPreviewQuiet();
 }
@@ -250,6 +253,7 @@ function wireDbDdlSheet() {
         retitle();
         scheduleDbDdlPreview();
       };
+      retitle(); // say where the table goes from the first paint, not only after a change
     }
     // The name and comment wire for EVERY dialect — mysql tables need the model write just
     // as much as pg ones (caught live: the handlers once sat in the pg-only branch and a
@@ -263,7 +267,10 @@ function wireDbDdlSheet() {
     $("ddl-unique").onchange = function () { S.unique = this.checked; scheduleDbDdlPreview(); };
     $("ddl-index").focus();
     $("ddl-index").select();
-  } else {
+  }
+  // Both grid kinds can grow a row — table and column alike (the wiring once sat in an
+  // else branch the table kind never reached, caught live on 19998).
+  if (kind !== "index") {
     $("ddl-add-row").onclick = function () {
       S.rows.push({ name: "", type: "", nullable: true, default: "", comment: "", isNew: true });
       renderDbDdlRows();
