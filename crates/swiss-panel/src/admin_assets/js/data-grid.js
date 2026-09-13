@@ -650,6 +650,10 @@ function dbPaintCell(td, v, has, colType) {
 var dbTip = { node: null, timer: 0 };
 
 function dbTipHide() {
+  // Cancel a pending show too (docs/22 closeout audit): dbTipHide is what a grid rebuild
+  // and the scroll-dismiss both run through, and a 260ms timer left alive fired dbTipShow
+  // for a header that was no longer in the document — a ghost card pointing nowhere.
+  clearTimeout(dbTip.timer);
   if (dbTip.node) { dbTip.node.remove(); dbTip.node = null; }
 }
 
