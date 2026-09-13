@@ -695,6 +695,25 @@
   background: transparent; color: var(--t-dim); cursor: pointer;
 }
 .term-gear:hover { color: var(--t-fg); border-color: var(--t-dim); }
+/* kbd: a key is a value you would copy - monospace, hairline, no colour of its own
+   (design rule 1). Global tokens: the ? sheet renders outside .term-host. */
+.term-key-body kbd, .term-keys-hint kbd {
+  font-family: var(--mono); font-size: var(--f-caption);
+  background: var(--field); border: 1px solid var(--sep); border-bottom-width: 2px;
+  border-radius: var(--r-btn); padding: 1px 5px; white-space: nowrap;
+}
+/* The ? sheet's rows: a two-column list, key column right-aligned mono, description
+   in body grey - an inset list without the inset, the sheet already is one. */
+.term-key-body { display: grid; gap: 2px; }
+.term-key-cap { font-size: var(--f-caption); font-weight: 600; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: 0.4px; margin: 10px 0 4px; }
+.term-key-cap:first-child { margin-top: 0; }
+.term-key-row { display: flex; align-items: baseline; gap: 12px; font-size: var(--f-label); }
+.term-key-k { flex: none; min-width: 150px; display: inline-flex; gap: 4px; justify-content: flex-end;
+  color: var(--text); }
+.term-key-row > span:last-child { color: var(--text-2); }
+/* The empty state's teaching line: quieter than the hint above it. */
+.term-keys-hint { margin-top: var(--s1) !important; color: var(--t-dim); }
 .term-gear:focus-visible { outline: none; border-color: var(--t-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 25%, transparent); }
 /* The clickable "Local shell is off" line in the empty bar (docs/15 §2.1): text that
    acts, not a button that shouts. */

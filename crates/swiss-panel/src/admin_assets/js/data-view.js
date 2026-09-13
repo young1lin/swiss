@@ -3,7 +3,7 @@ import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisPendingCount } from "./data-browsers.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
+import { dbFavLoad, dbFavPush, dbFormatSql, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbActivityPane, dbActivityPollStop } from "./data-activity.js";
 // dbLoadDetail (the Structure tabs' loader) is needed at the table-open path now: the FK
 // jump (docs/22 W5.2) reads the detail's foreignKeys. The cycle data-view <-> data-structure
@@ -190,7 +190,9 @@ function renderDbView() {
         '</div>' +
         '<div class="db-console-row"><button class="btn" id="dbSqlRun">Run</button>' +
         '<button class="btn" id="dbSqlExplain">Explain</button>' +
+        '<button class="btn" id="dbSqlFormat">Format</button>' +
         '<select id="dbSqlHistory" title="Query history"><option value="">History</option></select>' +
+        '<button class="btn icon" id="dbSqlFav" type="button" aria-label="Save to favorites"></button>' +
         '<span class="hint" id="dbSqlHint">statements split on ; · Ctrl+Enter runs</span></div>' +
       '</div>' +
       '<div class="db-grid-wrap" id="dbGridWrap"></div>' +
@@ -297,14 +299,36 @@ function renderDbView() {
   };
   $("dbSqlHistory").onchange = function () {
     if (this.value === "") return;
-    var sql = state.db.history[Number(this.value)];
+    // docs/22 W5.4: "f"+i is a favorite, a plain index history — both land in the console.
+    var fav = this.value.charAt(0) === "f";
+    var sql = fav ? state.db.favorites[Number(this.value.slice(1))]
+      : state.db.history[Number(this.value)];
     this.value = ""; // back to the label, so the same entry can be picked again
     if (sql == null) return;
     state.db.sqlText = sql;
     var ta = $("dbSql");
     if (ta) { ta.value = sql; dbSqlPaint(); ta.focus(); }
   };
+  // docs/22 W5.4: the star saves the console text to the favorites group; Format re-indents
+  // it in place (whitespace only — the run result cannot change).
+  var favBtn = $("dbSqlFav");
+  if (favBtn) {
+    favBtn.innerHTML = icon("star");
+    favBtn.title = "Save the console text to favorites";
+    favBtn.onclick = function () { dbFavPush(state.db.sqlText); };
+  }
+  var fmtBtn = $("dbSqlFormat");
+  if (fmtBtn) {
+    fmtBtn.onclick = function () {
+      var d = state.db;
+      if (!d.sqlText || !d.sqlText.trim()) return;
+      d.sqlText = dbFormatSql(d.sqlText);
+      var ta = $("dbSql");
+      if (ta) { ta.value = d.sqlText; dbSqlPaint(); ta.focus(); }
+    };
+  }
   dbHistoryLoad();
+  dbFavLoad();
   dbHistoryRender();
   renderDbToolbar(); renderDbGrid(); renderDbBar();
   // docs/22 W4.6: the list band's + opens the New table sheet — SQL connections only (the
@@ -405,12 +429,14 @@ function dbRedisCompare(a, b) {
 function dbSyncKind() {
   var grep = $("dbGrep"), sql = $("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
   if (!grep || !sql || !explain || !hint) return;
+  var fmt = $("dbSqlFormat");
   dbPaintSort();
   if (dbIsRedis()) {
     grep.placeholder = "Filter keys"; grep.setAttribute("aria-label", "Filter keys");
     grep.title = "Filter keys (a SCAN MATCH pattern)";
     sql.placeholder = "SET k v · GET k · DEL k · HGETALL h · TTL k — one command per run";
     explain.hidden = true;
+    if (fmt) fmt.hidden = true; // docs/22 W5.4: SQL formatting has nothing to say about a command
     hint.textContent = "writes run · KEYS is refused, use the key list · Ctrl+Enter runs";
   } else {
     // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
@@ -418,6 +444,7 @@ function dbSyncKind() {
     grep.title = "Filter tables: comma-separated terms AND together, | is OR, * is a wildcard";
     sql.placeholder = "SELECT / UPDATE / DELETE … — statements split on ;";
     explain.hidden = false;
+    if (fmt) fmt.hidden = false;
     // docs/22 W4.3: the ; split answers one result tab per statement; the blank-line block
     // rule (W1.8) still decides what a single Run covers.
     hint.textContent = "a blank line starts a new block · Ctrl+Enter runs the caret's block · ; splits it into one result tab per statement";
