@@ -4,8 +4,11 @@
 
 A developer's Swiss Army knife - one tiny local process, every tool behind one loopback port.
 
-A Rust port of [`local-mcp-gateway`](../local-mcp-gateway): one local process that hosts every MCP
-server an AI client needs, exposed on HTTP paths under `127.0.0.1:19999`.
+One local process that hosts every MCP server an AI client needs, exposed on HTTP paths under
+`127.0.0.1:19999`. It began as a Rust port of the Node `local-mcp-gateway` (retired as the
+reference on 2026-09-13, ADR-016 — this repository now owns every layer, the panel included:
+plain ES modules under `crates/swiss-panel/src/admin_assets/`, tested by the vitest suite in
+`crates/swiss-panel/panel-tests/`).
 
 **Why the port exists:** memory. The Node build measures **113.8 MB RSS** on a typical workload
 (re-measured 2026-09-11; the 2026-09-07 baseline read 117.5 MB) with 1×mysql, 1×pg, 2×redis,
