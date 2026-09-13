@@ -56,7 +56,8 @@ function dbFreshState() {
                          // ^ W4.3: sqlResult is the ACTIVE tab's reply; sqlResults holds every
                          // statement's reply and sqlTab which one is showing
     history: [],         // last-run console queries, newest first (per-browser, localStorage)
-    tab: "data",        // data | columns | indexes | ddl | fks — the Structure tabs
+    tab: "data",        // data | form | columns | indexes | ddl | fks — Form is the data page's own second view (W5.1)
+    formIdx: 0,         // the Form tab's record — grid row space (inserts first), shared with the keyboard focus
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisKey: null,      // the key whose value is shown in the pane
     redisEdits: null,    // buffered typed-value edits for that key (docs/22 W3.3)

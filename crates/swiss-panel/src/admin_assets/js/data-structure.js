@@ -11,6 +11,7 @@ import { renderDbBar } from "./data-sql.js";
 
 var DB_TABS = [
   { id: "data", label: "Data" },
+  { id: "form", label: "Form" },
   { id: "columns", label: "Columns" },
   { id: "indexes", label: "Indexes" },
   { id: "fks", label: "Foreign Keys" },
@@ -20,12 +21,16 @@ var DB_TABS = [
 function dbSetTab(t) {
   var d = state.db;
   if (d.tab === t) return;
+  // docs/22 W5.1: the form opens on the row the keyboard focused, and the grid's focus
+  // returns to the form's row — one cursor, two presentations of it.
+  if (t === "form" && d.focus) d.formIdx = d.focus.r;
+  if (t === "data" && d.formIdx != null) d.focus = { r: d.formIdx, c: d.focus ? d.focus.c : 0 };
   d.tab = t;
   renderDbToolbar();
   renderDbFilters();
   renderDbGrid();
   renderDbBar();
-  if (t !== "data" && d.conn && d.table) dbLoadDetail();
+  if (t !== "data" && t !== "form" && d.conn && d.table) dbLoadDetail();
 }
 
 async function dbLoadDetail() {

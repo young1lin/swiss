@@ -6,6 +6,7 @@ import { dbEditCellEnter } from "./data-edit.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
+import { renderDbFormView } from "./data-form.js";
 import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbPkVals, dbResultKey } from "./data-view.js";
 import { popupMenu } from "./menu.js";
 import { act } from "./detail.js";
@@ -669,6 +670,8 @@ function renderDbGrid() {
 
   if (d.sqlResult || d.sqlBusy) { renderDbResultGrid(wrap); return; }
   if (dbIsRedis()) { dbRenderRedisValue(wrap); return; }
+  // docs/22 W5.1: the Form tab paints the same rows as the grid, one record at a time.
+  if (d.tab === "form") { renderDbFormView(wrap); return; }
   if (d.tab !== "data") { renderDbDetailGrid(wrap); return; }
   if (!d.conn) { wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first.")); return; }
   if (!d.table || !d.data) {
@@ -1083,4 +1086,4 @@ function dbNextSort(order, dir, name) {
   return { order: name, dir: "desc" };
 }
 
-export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns, dbTsvRows };
+export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, dbRowAddr, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns, dbTsvRows };
