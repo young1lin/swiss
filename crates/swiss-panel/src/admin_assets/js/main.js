@@ -20,6 +20,7 @@ import { openDetail } from "./detail.js";
 import { patchSidebar } from "./menu.js";
 import { closeMenu } from "./pane.js";
 import { loadMemory, refreshNow } from "./polling.js";
+import { exitImmersive, immersiveOn, initImmersive } from "./immersive.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
 
@@ -150,14 +151,17 @@ window.addEventListener("beforeunload", function (e) {
 // is the r key below, which keeps Data's manual reload alive.
 
 $("filter").oninput = function () { state.filter = this.value; patchSidebar(); };
+initImmersive(); // the toolbar's expand control: the page can take the whole window
 
-/* Keyboard: arrows move through the sidebar, / focuses search, Escape closes the sheet/menu. */
+/* Keyboard: arrows move through the sidebar, / focuses search, Escape closes the sheet/menu,
+   then the history popover, and leaves immersive mode last — the outermost layer goes last. */
 document.addEventListener("keydown", function (e) {
   if (e.key === "Escape") {
     if (!$("sheet").hidden) { closeSheet(); return; }
     if (state.menuOpen) { closeMenu(); return; }
     var hd = state.detail;
     if (hd && hd.run && hd.run.histOpen) { histClose(); return; }
+    if (immersiveOn()) { exitImmersive(); return; }
   }
   var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
   if (typing) return;
