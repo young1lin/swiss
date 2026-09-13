@@ -28,6 +28,12 @@ function dbIsRedis() {
 // still goes through — it restarts the walk from cursor 0 and supersedes.
 var dbKeysLoading = false;
 
+// One /keys request chain (docs/22 closeout B3): a slow More answer landing after a reset
+// spliced its old-cursor page into the FRESH walk and dragged the cursor backward, so later
+// pages shifted under the user (a key quietly went missing from the list). Responses apply
+// only while their token is still the newest request.
+var dbKeysReq = dbReqGuard();
+
 async function dbLoadKeys(reset) {
   var d = state.db;
   if (!d.conn) return;
@@ -37,6 +43,7 @@ async function dbLoadKeys(reset) {
   if (d.grep) q += "&pattern=" + encodeURIComponent(d.grep);
   if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
   if (d.redis && d.redis.cursor && d.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d.redis.cursor);
+  var token = dbKeysReq.issue();
   var j;
   dbKeysLoading = true;
   try {
@@ -44,6 +51,7 @@ async function dbLoadKeys(reset) {
   } finally {
     dbKeysLoading = false;
   }
+  if (!dbKeysReq.accepts(token)) return; // superseded: a newer walk owns the list
   if (!j) {
     // docs/22 closeout B1: apiJson already toasted the server's own text, but a transient
     // toast over a list that still says "no keys" reads as an empty keyspace. Mark the
