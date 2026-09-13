@@ -406,6 +406,15 @@
     .db-act-blocked { color: var(--amber); }
     .db-act-more { border: 0; background: none; padding: 2px var(--s1); cursor: pointer; color: var(--text-3); border-radius: var(--r-row); }
     .db-act-more:hover { color: var(--text); background: var(--sep-soft); }
+    /* docs/22 W3.1 — the console's completion list. Same popup vocabulary as .menu (card,
+       shadow-pop, hover); labels are identifiers you would type, so they sit in mono. The
+       mirror borrows .db-sql-face above to inherit the textarea's exact metrics. */
+    .db-suggest { position: absolute; z-index: 35; min-width: 200px; max-width: 360px; background: var(--card); border-radius: var(--r-row); box-shadow: var(--shadow-pop); padding: 3px; }
+    .db-suggest-item { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); padding: 3px var(--s2); border-radius: 6px; cursor: pointer; }
+    .db-suggest-item:hover, .db-suggest-item.sel { background: var(--hover); }
+    .db-suggest-label { font-family: var(--mono); font-size: var(--f-label); color: var(--text); }
+    .db-suggest-kind { color: var(--text-3); font-size: var(--f-caption); flex: none; }
+    .db-sql-mirror { position: absolute; inset: 0; visibility: hidden; pointer-events: none; overflow: hidden; }
     .db-pagesize { width: auto; }
     .db-console-row .dd { width: auto; min-width: 110px; }
     /* The row-grid controls stay IN LAYOUT on every tab (visibility, not display): removing them

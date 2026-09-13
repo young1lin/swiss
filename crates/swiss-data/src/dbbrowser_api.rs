@@ -714,6 +714,25 @@ async fn command(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<
     Ok(with_elapsed_ms(json!({ "reply": reply }), started))
 }
 
+/// Server-side completion for the console (docs/22 W3.1): candidates for the word ending at
+/// the caret. The body carries the WHOLE console text and the caret as a byte offset (the
+/// panel converts its UTF-16 selection index); the browser folds keywords, table names and
+/// the FROM-nearest table's columns into the reply.
+async fn completion(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<Value, Fail> {
+    let (_lease, b) = lease_db(catalog, name)?;
+    let sql = body
+        .get("sql")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Fail::bad("sql is required"))?;
+    let caret = body
+        .get("caret")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .clamp(0, sql.len() as i64) as usize;
+    b.completion(sql, caret).await.map_err(Fail::bad)
+}
+
 /// Live sessions on the connection's server (docs/22 W3.2) — the Activity page, polled
 /// while it is open. The reply shape is shared by both dialects (dbbrowser.rs).
 async fn activity(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
@@ -857,6 +876,14 @@ async fn command_route(
     reply(command(&catalog, &name, &body.0).await)
 }
 
+async fn completion_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    body: swiss_host::reply::NodeBody,
+) -> Response {
+    reply(completion(&catalog, &name, &body.0).await)
+}
+
 async fn activity_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -938,6 +965,8 @@ where
         // Live sessions and the cancel/terminate pair (docs/22 W3.2).
         .route("/api/db/{name}/activity", get(activity_route))
         .route("/api/db/{name}/activity-kill", post(activity_kill_route))
+        // The console's completion (docs/22 W3.1) — server-side, on the leased connection.
+        .route("/api/db/{name}/completion", post(completion_route))
         .route("/api/db/{name}/key", get(key_route))
         .route("/api/db/{name}/ddl", post(ddl_route))
         .route("/api/db/{name}/query", post(query_route))
@@ -982,6 +1011,8 @@ mod tests {
         pipeline: Option<Vec<Vec<String>>>,
         /// The (pid, terminate) the activity-kill route forwarded (docs/22 W3.2).
         activity_kill: Option<(i64, bool)>,
+        /// The (sql, caret) the completion route forwarded (docs/22 W3.1).
+        completion: Option<(String, usize)>,
     }
 
     type SeenRef = Arc<Mutex<Seen>>;
@@ -1247,6 +1278,15 @@ mod tests {
                 seen.activity_kill = Some((pid, terminate));
             }
             Ok(json!({ "ok": true }))
+        }
+        async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.completion = Some((sql.to_string(), caret));
+            }
+            Ok(json!({ "items": [
+                { "label": "users", "kind": "table", "detail": "table" },
+                { "label": "UNION", "kind": "keyword", "detail": "keyword" },
+            ] }))
         }
     }
 
@@ -2252,6 +2292,69 @@ mod tests {
                 "{bad} -> {err}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn completion_forwards_the_console_text_and_caret() {
+        // docs/22 W3.1: the caret is a byte offset; the panel converts its UTF-16 index.
+        let seen = SeenRef::default();
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+        )]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/db/completion",
+            Some(json!({ "sql": "SELECT * FROM users WHERE u", "caret": 28 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let items = body.expect("json")["items"].as_array().expect("items").clone();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["kind"], "table");
+        assert_eq!(items[1]["kind"], "keyword");
+        // The caret sent (28) sits one past the text's end — the route clamps it to the
+        // text's own length rather than passing a pointer at nothing.
+        assert_eq!(
+            seen.lock().expect("seen").completion,
+            Some(("SELECT * FROM users WHERE u".to_string(), 27))
+        );
+    }
+
+    #[tokio::test]
+    async fn completion_validates_the_body_before_touching_the_browser() {
+        let seen = SeenRef::default();
+        let make = || {
+            router_of(vec![db_entry(
+                "db",
+                Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+            )])
+        };
+        for bad in [json!({ "caret": 3 }), json!({ "sql": 5, "caret": 3 }), json!(null)] {
+            let (status, _, body, _) =
+                call(make(), "POST", "/api/db/db/completion", Some(bad.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+            assert_eq!(body.expect("json")["error"], "sql is required");
+        }
+        assert!(seen.lock().expect("seen").completion.is_none());
+    }
+
+    #[tokio::test]
+    async fn completion_is_sql_only() {
+        let app = router_of(vec![redis_entry("cache")]);
+        let (status, _, body, _) = call(
+            app,
+            "POST",
+            "/api/db/cache/completion",
+            Some(json!({ "sql": "GE", "caret": 2 })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'cache' (redis) has no database to browse"
+        );
     }
 
     #[tokio::test]

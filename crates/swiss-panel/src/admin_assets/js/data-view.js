@@ -5,6 +5,7 @@ import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbActivityPane, dbActivityPollStop } from "./data-activity.js";
+import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
 
 /* ================================================================================================
@@ -241,11 +242,17 @@ function renderDbView() {
     dbLoadTables();
   };
   $("dbSql").value = state.db.sqlText;
-  $("dbSql").oninput = function () { state.db.sqlText = this.value; dbSqlPaint(); };
+  $("dbSql").oninput = function () { state.db.sqlText = this.value; dbSqlPaint(); dbSuggestOnInput.call(this); };
   $("dbSql").onscroll = function () {
     var hl = $("dbSqlHl");
     if (hl) { hl.scrollTop = this.scrollTop; hl.scrollLeft = this.scrollLeft; }
+    dbSuggestHide(); // the caret's point scrolled with the text; a list pinned to stale
+    // coordinates would point at the wrong word. The next keystroke reopens it in place.
   };
+  $("dbSql").addEventListener("blur", dbSuggestHide);
+  // The suggest hook runs beside the Run shortcut: it only ever consumes the keys the open
+  // list owns (arrows / Tab / Enter / Esc) and leaves Ctrl+Enter to run the block.
+  $("dbSql").addEventListener("keydown", dbSuggestKeys);
   $("dbSql").onkeydown = function (e) {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); dbRunSql(); }
   };

@@ -22,6 +22,9 @@ pub struct MysqlBrowser {
     database: String,
     label: String,
     conn: Arc<Lazy<MySqlPool>>,
+    /// Completion candidates cache (docs/22 W3.1): table names + column lists, TTL-bound.
+    /// Mutex (no await while held) — the browser is shared behind Arc for the lease's life.
+    completion_cache: std::sync::Mutex<swiss_host::dbbrowser::CompletionCache>,
 }
 impl MysqlBrowser {
     pub fn new(database: String, label: String, conn: Arc<Lazy<MySqlPool>>) -> Self {
@@ -29,6 +32,9 @@ impl MysqlBrowser {
             database,
             label,
             conn,
+            completion_cache: std::sync::Mutex::new(
+                swiss_host::dbbrowser::CompletionCache::new(),
+            ),
         }
     }
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Map<String, Value>>, String> {
@@ -222,6 +228,14 @@ impl DbBrowser for MysqlBrowser {
         )
     }
     async fn run_query(&self, sql: &str, limit: Option<&Value>) -> Result<Value, String> {
+        // A console DDL changes schema shape: the completion cache drops everything so the
+        // next keystroke re-reads the catalog it now describes (docs/22 W3.1).
+        if swiss_host::dbbrowser::sql_touches_schema(sql) {
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .invalidate();
+        }
         // The console's one rule: a single statement per run. Reads and writes alike go through —
         // this console belongs to the panel on the operator's own machine.
         let sql = crate::adapters::sql::assert_single_statement(sql)?;
@@ -577,6 +591,10 @@ impl DbBrowser for MysqlBrowser {
         )?;
         let pool = self.conn.get().await?;
         run_query(&pool, &sql, &[]).await?;
+        self.completion_cache
+            .lock()
+            .expect("completion cache")
+            .invalidate();
         Ok(json!({ "ran": sql }))
     }
 
@@ -594,5 +612,83 @@ impl DbBrowser for MysqlBrowser {
         self.query(&sql, &[]).await?;
         // KILL / KILL QUERY answer an OK packet — no result row to read a truth from.
         Ok(json!({ "ok": true }))
+    }
+
+    async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
+        use swiss_host::dbbrowser::{
+            completion_from_table, completion_items, sql_word_ending_at,
+        };
+        let Some(prefix) = sql_word_ending_at(sql, caret) else {
+            return Ok(json!({ "items": [] }));
+        };
+        let now = std::time::Instant::now();
+        let plan = {
+            // Lock only to read the plan — the loads below await.
+            let cache = self.completion_cache.lock().expect("completion cache");
+            (
+                cache.tables(now).is_none(),
+                cache.is_degraded(),
+                completion_from_table(sql, caret).filter(|_| !cache.is_degraded()),
+            )
+        };
+        let (need_tables, degraded, from) = plan;
+        // Tables: the one database this connection owns, cached for the TTL (and still served
+        // when degraded — the column budget does not poison the table list).
+        let tables = if need_tables || degraded {
+            let rows = self
+                .query(
+                    "SELECT table_name AS name FROM information_schema.tables \
+                     WHERE table_schema = ? ORDER BY name",
+                    &[json!(self.database)],
+                )
+                .await?;
+            let names: Vec<String> = rows
+                .iter()
+                .filter_map(|r| r.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect();
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .set_tables(names.clone(), now);
+            names
+        } else {
+            self.completion_cache
+                .lock()
+                .expect("completion cache")
+                .tables(now)
+                .unwrap_or_default()
+        };
+        // Columns of the FROM-nearest table, cached per table.
+        let mut columns: Option<(String, Vec<String>)> = None;
+        if let Some(word) = from {
+            let cached = {
+                let cache = self.completion_cache.lock().expect("completion cache");
+                cache.columns(&word, now)
+            };
+            if let Some(cols) = cached {
+                columns = Some((word, cols));
+            } else {
+                let rows = self
+                    .query(
+                        "SELECT column_name FROM information_schema.columns \
+                         WHERE table_schema = ? AND table_name = ? \
+                         ORDER BY ordinal_position",
+                        &[json!(self.database), json!(word)],
+                    )
+                    .await?;
+                let cols: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| r.get("column_name").and_then(Value::as_str).map(str::to_string))
+                    .collect();
+                self.completion_cache
+                    .lock()
+                    .expect("completion cache")
+                    .set_columns(word.clone(), cols.clone(), now);
+                columns = Some((word, cols));
+            }
+        }
+        let columns = columns.as_ref().map(|(t, c)| (t.as_str(), c.as_slice()));
+        let items = completion_items(DbDialect::Mysql, prefix, &tables, columns);
+        Ok(json!({ "items": items }))
     }
 }
