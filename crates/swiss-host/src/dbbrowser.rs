@@ -2311,6 +2311,12 @@ pub struct DdlColumn {
 /// Columns one form may carry — a bound on a hand-written request, in MAX_EDITS' spirit.
 const MAX_DDL_COLUMNS: usize = 128;
 
+/// One comment's ceiling, in BYTES — MySQL's own COMMENT cap is 1024 bytes and it rejects a
+/// longer one server-side, halfway through a CREATE. Refusing at the form's parse layer
+/// keeps the error in the form's language; Postgres's COMMENT ON is unbounded but one form
+/// serves both dialects, so the stricter cap wins.
+const MAX_DDL_COMMENT: usize = 1024;
+
 /// Key parts an index (or primary key) may name — MySQL's own ceiling, so one builder fits
 /// both dialects.
 const MAX_DDL_KEY_PARTS: usize = 16;
@@ -2337,6 +2343,16 @@ fn vet_ddl_type(t: &str) -> Result<&str, String> {
 /// breaks (`;`), comment starters (`--`, `#`, `/*`) and MySQL's identifier quote are
 /// refused so every generated statement stays exactly one line — what the preview shows is
 /// what runs.
+fn vet_ddl_comment(c: &str) -> Result<&str, String> {
+    if c.len() > MAX_DDL_COMMENT {
+        return Err(format!(
+            "a comment may hold at most {MAX_DDL_COMMENT} bytes (this one is {}) - trim it",
+            c.len()
+        ));
+    }
+    Ok(c)
+}
+
 fn vet_ddl_default(d: &str) -> Result<&str, String> {
     let d = d.trim();
     let ok = d.len() <= 256
@@ -2534,6 +2550,8 @@ fn parse_ddl_columns(o: &Value) -> Result<Vec<DdlColumn>, String> {
             .get("comment")
             .and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty())
+            .map(vet_ddl_comment)
+            .transpose()?
             .map(str::to_string);
         out.push(DdlColumn {
             name: name.to_string(),
@@ -2585,7 +2603,10 @@ pub fn build_ddl_create(dialect: DbDialect, op: &str, o: &Value) -> Result<Vec<S
             } else {
                 Vec::new()
             },
-            o.get("comment").and_then(Value::as_str),
+            o.get("comment")
+                .and_then(Value::as_str)
+                .map(vet_ddl_comment)
+                .transpose()?,
         ),
         "add_column" => column_ddl(dialect, schema, table, &parse_ddl_columns(o)?),
         "create_index" => {
@@ -4939,6 +4960,43 @@ mod tests {
             build_ddl_create(DbDialect::Mysql, "create_index", &o).unwrap(),
             vec!["CREATE UNIQUE INDEX `t_a_idx` ON `t` (`a`)".to_string()]
         );
+    }
+
+    #[test]
+    fn ddl_comments_cannot_exceed_1024_bytes() {
+        // W4.6 audit: nothing capped comment length — MySQL rejects >1024 bytes server-side,
+        // halfway through a CREATE. The cap belongs in the form's own vetting, counted in
+        // BYTES (that is what the server counts), with room for exactly 1024.
+        let long = "\u{e4}".repeat(513); // 513 chars, 1026 bytes
+        let form = json!({
+            "op": "create_table",
+            "table": "t",
+            "columns": [{ "name": "id", "type": "int", "comment": long }],
+            "comment": "fine",
+        });
+        let err = build_ddl_create(DbDialect::Mysql, "create_table", &form).unwrap_err();
+        assert!(err.contains("1024"), "{err}");
+        assert!(err.contains("1026"), "{err}");
+
+        // The table comment rides the same cap.
+        let form = json!({
+            "op": "create_table",
+            "table": "t",
+            "columns": [{ "name": "id", "type": "int" }],
+            "comment": "x".repeat(1025),
+        });
+        let err = build_ddl_create(DbDialect::Mysql, "create_table", &form).unwrap_err();
+        assert!(err.contains("1024"), "{err}");
+
+        // Exactly 1024 bytes passes on both spots — the boundary is inclusive.
+        let form = json!({
+            "op": "create_table",
+            "table": "t",
+            "columns": [{ "name": "id", "type": "int", "comment": "y".repeat(1024) }],
+            "comment": "z".repeat(1024),
+        });
+        assert!(build_ddl_create(DbDialect::Mysql, "create_table", &form).is_ok());
+        assert!(build_ddl_create(DbDialect::Pg, "create_table", &form).is_ok());
     }
 
     #[test]
