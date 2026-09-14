@@ -28,9 +28,12 @@ master.key
 # test dependency, never a build step; its install tree stays untracked.
 /crates/swiss-panel/panel-tests/node_modules/
 
-# Local agent scratch that stays untracked on purpose (memory rule), and the
-# browser-verification screenshots a live check leaves at the repo root.
-/.agents/
+# Agent-authored context under .agents is SOURCE now (docs/, skills/, skill-eval/,
+# .mcp.json) and ships with the repo. The worktrees/ subtree stays untracked on purpose:
+# each is a full checkout of THIS repo (git would nest the repo inside itself) plus its
+# own target*/ build trees - ~157 GB of mechanical copies. Their source state travels in
+# the diagnosis zip instead, not in git.
+/.agents/worktrees/
 /conpty_ref.rs
 /term-*.png
 /job-*.png
