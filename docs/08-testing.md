@@ -152,6 +152,13 @@ cargo test --workspace
                   split added its descriptor test, and the group-reorder pinning fix
                   added three adminapi cases, the groups e2e over a real socket and a
                   restart, and four unit tests)
+
+ cargo test --workspace
+            1151  (2026-10, after the /mcp/ path-domain move — docs/24: P1 added the
+                  new-path/old-shape pair to tests/app.rs, P2 one adminapi case and one
+                  import case, P4 the moved-hint pair; one swiss-mcp unit case was
+                  rewritten, net zero. The panel vitest suite stands at 407 tests in
+                  47 files, including admin-connect.test.ts for the /mcp/ URL builder)
 ```
 
 **Drop `--workspace` and this shrinks to a fraction.** Cargo then selects the root package

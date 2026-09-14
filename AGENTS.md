@@ -8,8 +8,10 @@ Guidance for AI coding agents working in this repo. Single source of truth for a
 The project is named **swiss** — the developer's Swiss Army knife toolbox. It began as the Rust
 port of `local-mcp-gateway` (the Node original — retired as the reference on 2026-09-13, see
 docs/07; the sibling checkout is no longer needed or consulted). One local process, every MCP
-server on an HTTP path under `127.0.0.1:19999`, shipped as a single static `.exe`. The port
-exists for one reason: memory. See `docs/01-goals-and-memory-budget.md`.
+server on an HTTP path under the `/mcp/` prefix on `127.0.0.1:19999` (docs/24, ADR-018 —
+the prefix is the MCP plugin's domain; the root belongs to host chrome and future plugins),
+shipped as a single static `.exe`. The port exists for one reason: memory. See
+`docs/01-goals-and-memory-budget.md`.
 
 The port is complete and is the product itself: this repository owns every layer, the panel
 included. The reasons behind ported shapes live in `docs/` and in the code comments — when a

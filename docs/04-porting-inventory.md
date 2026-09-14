@@ -37,7 +37,7 @@ process-tree walk is short and full of platform traps.
 | `token.ts` | 128 | `token.rs` | Low | Named per-client tokens |
 | `paging.ts` | 137 | `paging.rs` | Low | |
 | `http.ts` | 240 | *(deleted)* | — | axum replaces it. `BODY_LIMIT` (2 MB) and the refuse-before-body rule survive as middleware |
-| `router.ts` | 253 | `app.rs` | **High** | The per-generation service cache and the evictor are load-bearing — see docs/02 |
+| `router.ts` | 253 | `app.rs` | **High** | The per-generation service cache and the evictor are load-bearing — see docs/02. Node served MCP at `/{name}`; docs/24 moved the endpoint to `/mcp/{name}` |
 | `index.ts` | 194 | `lib.rs` | Med | Boot order: PATH fix, first-run, reap, tunnels, MCPs, listen |
 | `admin.ts` | 53 | `admin/mod.rs` | Low | `rust-embed`, served from `&'static [u8]` |
 | `adapters/types.ts` | 43 | `adapters/mod.rs` | Low | The trait |
