@@ -62,6 +62,7 @@ week (`docs/06` Phase 6), which is calendar, not code.
 | [`docs/20-groups-and-hierarchy-spec.md`](docs/20-groups-and-hierarchy-spec.md) | Groups everywhere: one `Groups` model in the host, one `/api/groups/{scope}` route family, one panel component with a visible hierarchy, and a Group field on every "new" — MCP, tunnels, jobs, secrets, tokens, the Data picker. **G1–G8 shipped** (`72dc010` on); ADR-015 |
 | [`docs/21-data-web-gap-analysis.md`](docs/21-data-web-gap-analysis.md) | Data view vs five mature web DB tools (Adminer, DbGate, CloudBeaver, pgAdmin4, pgweb): the 35-item gap table with file:line evidence, read out of the read-only `../terminals-ref` clones |
 | [`docs/22-data-parity-spec.md`](docs/22-data-parity-spec.md) | Data view full parity in six batches W0-W5: wiring-level exports/filters/timing, grid ergonomics, server-side completion, activity monitor, Redis structured editing, no-PK edits, streaming SQL dump, DDL minimal set. **All six batches W0-W5 shipped** (`6685d93` on, merged to master) |
+| [`docs/24-mcp-path-domain-spec.md`](docs/24-mcp-path-domain-spec.md) | MCP endpoints move to `/mcp/<name>`: the root becomes host chrome plus future-plugin territory, the two host RESERVED lists retire, one panel URL builder changes. **P1–P5 shipped** (`7defb84` on; hard cutover, no alias, old-shape 404 carries a moved hint); ADR-018 |
 
 Everything docs/09 and docs/10 designed is now code, and each document's status header names the
 commit that landed it. None of it changed the Node-panel source-of-truth, the sealed formats, or

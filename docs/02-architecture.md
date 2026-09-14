@@ -83,9 +83,11 @@ pub struct AppState {
 The Node build resolves MCP paths dynamically from the registry, so endpoints can appear and
 disappear at runtime. That rules out mounting each MCP as a static axum route. Instead, mirror
 `router.ts` exactly: one catch-all that resolves the entry and drives its service by hand.
+Since docs/24 (ADR-018) the catch-all sits under the `/mcp/` prefix — the MCP plugin's
+domain — leaving the root to host chrome and whatever a future plugin claims there.
 
 ```rust
-// POST /:name — the whole MCP surface. Mirrors router.ts's nodeHandlerFor + POST /:path.
+// POST /mcp/:name — the whole MCP surface. (Node served /:name at the root; docs/24 moved it.)
 async fn mcp_endpoint(
     State(st): State<AppState>,
     Path(name): Path<String>,

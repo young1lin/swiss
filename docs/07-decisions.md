@@ -468,3 +468,35 @@ The decisions that shape the implementation:
 - **The panel debounces 150ms** and only asks when the caret ends a word
   (`[A-Za-z0-9_.$]+`); the list borrows the SQL overlay's mirror trick to sit at the caret
   and owns only the keys it consumed — arrows, Tab/Enter, Esc — leaving Ctrl+Enter to Run.
+
+
+## ADR-018 — Path-space partition: the root is host chrome and future plugins; /mcp/* is the MCP plugin's domain
+
+**Status: Accepted (2026-10, by the repo owner's decision.)** Spec: docs/24.
+
+MCP endpoints lived at the root (`/{name}`), so every MCP name competed with every
+future root claim, and the host carried two hand-synced RESERVED lists
+(`["api","health","admin"]`, in adminapi.rs and mcp_import.rs) to keep names out of
+the root's way. The decision: partition the path space instead of policing names.
+
+- **`/mcp/<name>` is the one and only MCP endpoint shape.** POST and DELETE (session
+  delete), exactly as before, one route pattern in `build_app`.
+- **Hard cutover, no alias.** The owner's explicit choice: this is a single-user local
+  tool and stale client configs get re-pointed once, in exchange for never carrying a
+  legacy route. A root single-segment POST answers 404; the spec's P4 gives that 404 a
+  "moved to /mcp/<name>" hint when the name is a registered MCP.
+- **No host reserved words inside a plugin's domain.** `/mcp/health`, `/mcp/api`,
+  `/mcp/mcp` are reachable and legal — the owner's framing: whatever lives under
+  `/mcp/` is the MCP plugin's business, not the host's. Both RESERVED lists retire;
+  NAME_RE (charset/length) stays, that is path safety, not collision defence.
+- **The root belongs to host chrome (`/`, `/admin`, `/health`, `/api/*`) and to
+  whatever a future plugin claims there.** A new plugin no longer has to negotiate with
+  MCP names, and MCP URLs no longer shift when one arrives — the independence the
+  owner asked for.
+
+Alternatives priced: a permanent `/{name}` alias (zero client migration, but a
+promise that can never be withdrawn and re-couples root claims to MCP names); a
+deprecation-window alias (the same debt with a date on it); keeping RESERVED and
+merely adding "mcp" (one more hand-synced entry, still a root-policing mindset).
+Hard partition was chosen because it deletes a rule instead of growing one — and
+because the reserved lists were load-bearing only while MCP names lived at the root.
