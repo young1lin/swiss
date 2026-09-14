@@ -311,7 +311,58 @@ async fn old_root_path_is_no_longer_an_mcp_endpoint() {
         .unwrap();
     let (status, json, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(json.unwrap()["error"], "no route for POST /echo");
+    // P4 (docs/24) appends the migration hint when the name is registered (echo is), so pin
+    // the prefix: the plain "no route" 404, never an MCP answer.
+    assert!(
+        json.unwrap()["error"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("no route for POST /echo"),
+        "still the router's 404, not an MCP endpoint"
+    );
+}
+
+/// P4 (docs/24): a client still configured for the retired root shape gets a 404 that names
+/// the new home. The cutover stays hard — no alias, no serving — the hint just makes
+/// re-pointing the client a copy-paste instead of a reread of the docs.
+#[tokio::test]
+async fn old_root_post_of_a_registered_mcp_names_its_new_home() {
+    let app = app_with_echo().await;
+    let req = Request::post("/echo")
+        .header(header::HOST, "127.0.0.1:19999")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "jsonrpc": "2.0", "method": "tools/list", "id": 1 }).to_string(),
+        ))
+        .unwrap();
+    let (status, json, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let err = json.unwrap()["error"].as_str().unwrap().to_string();
+    assert!(err.contains("/mcp/echo"), "{err}");
+    assert!(err.contains("update the client URL"), "{err}");
+}
+
+/// P4 (docs/24): the hint names only real MCPs — an unknown name answers the plain 404
+/// shape unchanged, and so does every other unmatched path.
+#[tokio::test]
+async fn old_root_post_of_an_unknown_name_keeps_the_plain_404() {
+    let app = app_with_echo().await;
+    for method_path in [("POST", "/nope"), ("DELETE", "/nope")] {
+        let req = Request::builder()
+            .method(method_path.0)
+            .uri(method_path.1)
+            .header(header::HOST, "127.0.0.1:19999")
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .body(Body::empty())
+            .unwrap();
+        let (status, json, _) = send(&app, req).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            json.unwrap()["error"],
+            format!("no route for {} {}", method_path.0, method_path.1)
+        );
+    }
 }
 
 #[tokio::test]

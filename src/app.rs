@@ -452,6 +452,36 @@ pub(crate) async fn fallback_404(req: Request) -> Response {
     )
 }
 
+/// The terminal 404, with the migration hint (docs/24 P4): a POST or DELETE aimed at a
+/// single-segment root path that names a REGISTERED MCP is almost certainly a client still
+/// configured for the retired root-level endpoint shape. The cutover stays hard — this is
+/// still a 404, never an alias — but the body names the new home, so re-pointing the client
+/// is a copy-paste instead of a reread of the docs. Everything else keeps the plain shape
+/// (unknown names included: a hint about a name that does not exist would be noise).
+async fn moved_hint_404(State(ctx): State<Arc<AppContext>>, req: Request) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let root_name = path
+        .strip_prefix('/')
+        .filter(|rest| !rest.is_empty() && !rest.contains('/'));
+    if let Some(name) = root_name {
+        if matches!(method, axum::http::Method::POST | axum::http::Method::DELETE)
+            && ctx.registry.get(name).is_some()
+        {
+            return admin_error(
+                StatusCode::NOT_FOUND,
+                &format!(
+                    "no route for {method} {path} — moved to /mcp/{name}, update the client URL"
+                ),
+            );
+        }
+    }
+    admin_error(
+        StatusCode::NOT_FOUND,
+        &format!("no route for {method} {path}"),
+    )
+}
+
 /// The `/api/plugins` tree with this build's 404-for-a-wrong-method rule applied, so the
 /// management routes answer like every other admin route rather than axum's default 405.
 fn host_api_tree(host: Arc<swiss_host::host::PluginHost>) -> Router<()> {
@@ -538,7 +568,7 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
         // After the /api tree. The /mcp/ prefix already keeps the catch-all off /api/tunnels;
         // merge order stays host-first as belt and braces for whatever claims the root next.
         .merge(mcp_routes)
-        .fallback(fallback_404)
+        .fallback(moved_hint_404)
         // A path that exists under another method answers 404 in the Node build (its router
         // matched method+pattern together), not axum's default 405.
         .method_not_allowed_fallback(fallback_404);
