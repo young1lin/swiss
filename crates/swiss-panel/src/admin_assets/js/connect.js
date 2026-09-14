@@ -15,7 +15,9 @@ function tokenEnv() {
   return (state.info && state.info.tokenEnv) || "SWISS_TOKEN";
 }
 function endpointUrl(name) {
-  return location.origin + "/" + name;
+  // docs/24: /mcp/ is the MCP plugin's domain — every client URL this panel can produce
+  // goes through this one builder, so the prefix lives here and nowhere else.
+  return location.origin + "/mcp/" + name;
 }
 /**
  * The secret a copied connect command embeds.

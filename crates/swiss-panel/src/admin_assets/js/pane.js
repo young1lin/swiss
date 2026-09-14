@@ -73,7 +73,7 @@ function renderPane() {
         '<h1 class="pane-title">' + esc(d.name) + "</h1>" +
         (m.description ? '<div class="pane-desc">' + esc(m.description) + "</div>" : "") +
         '<div class="pane-sub"><span class="dot ' + esc(busyVerb ? "starting" : m.state) + '"></span>' +
-          '<span class="sub-path">/' + esc(d.name) + "</span>" +
+          '<span class="sub-path">/mcp/' + esc(d.name) + "</span>" +
           '<span class="sub-text">' + esc(headSubtitle(m)) + "</span></div>" +
       "</div>" +
       '<div class="pane-actions">' +

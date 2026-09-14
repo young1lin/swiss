@@ -81,7 +81,8 @@ function tooltipOf(m) {
   var stateWord = state.busy[m.name] ? state.busy[m.name] + "…"
     : m.state === "idle" ? "idle — lazy: no child yet, wakes on the first request"
     : m.state;
-  var bits = ["/" + m.name, m.type, m.source, stateWord];
+  // docs/24: the endpoint path shown to the operator carries the /mcp/ domain prefix.
+  var bits = ["/mcp/" + m.name, m.type, m.source, stateWord];
   if (m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.description) bits.unshift(m.description);
   if (m.reason) bits.push(m.reason);
