@@ -513,6 +513,12 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
     // "corner button" can stretch back into a full-width strip (the 2026-09-14 lesson).
     expect(base).toMatch(/body.immersive #expandBtn {[^}]*width: 28px/);
   });
+
+  it("the theme escapes with it - the app zone is always visible, full-screen included", () => {
+    expect(base).toMatch(/body.immersive #themeBtn {[^}]*visibility: visible/);
+    expect(base).toMatch(/body.immersive #themeBtn {[^}]*position: fixed/);
+    expect(base).toMatch(/body.immersive #themeBtn {[^}]*width: 28px/);
+  });
 });
 
 /* Focus mode is ONE shell-owned control (docs/13 D5, as revised). The entry lives at the
@@ -523,14 +529,20 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
 describe("focus mode - one shell-owned control", () => {
   const read = (rel: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", rel), "utf8");
 
-  it("the entry sits in the context bar's right-side control area, not in the rail foot", () => {
+  it("the app trio owns the bar's far right: count chip left, then mem, theme, focus", () => {
     const shell = read("index.html");
     const rail = shell.slice(shell.indexOf('class="rail"'), shell.indexOf('class="workbench"'));
     const ctx = shell.slice(shell.indexOf('class="ctxbar"'), shell.indexOf('class="shell"'));
+    // The rail is pure navigation now — no app controls, no rail foot.
     expect(rail).not.toContain('id="expandBtn"');
+    expect(rail).not.toContain('id="themeBtn"');
+    expect(rail).not.toContain("rail-foot");
+    // The reserved app zone is a fixed trio in a fixed order, right of every page chip.
     expect(ctx).toContain('id="expandBtn"');
-    // Far right of the bar: the control comes AFTER the count chip in the bar's flex row.
-    expect(ctx.indexOf('id="countChip"')).toBeLessThan(ctx.indexOf('id="expandBtn"'));
+    expect(ctx).toContain('id="themeBtn"');
+    expect(ctx.indexOf('id="countChip"')).toBeLessThan(ctx.indexOf('id="memChip"'));
+    expect(ctx.indexOf('id="memChip"')).toBeLessThan(ctx.indexOf('id="themeBtn"'));
+    expect(ctx.indexOf('id="themeBtn"')).toBeLessThan(ctx.indexOf('id="expandBtn"'));
   });
 
   it("the terminal has no page-local fullscreen control anymore", () => {

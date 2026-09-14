@@ -272,12 +272,7 @@
     }
     .rail-btn:hover { background: var(--hover); color: var(--text); }
     .rail-btn[aria-current="true"] { background: var(--hover); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
-    /* The rail's foot: appearance only — global chrome, not page controls. Focus mode's
-       entry lives in the context bar now (same corner it escapes to while immersive), so
-       the rail foot keeps just the theme. */
     .grow { flex: 1; }
-    .rail-foot { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 0 var(--s1); }
-    .rail-foot .btn.icon { width: 100%; padding: 5px 0; justify-content: center; }
     /* The memory chip is a control (renderMemory wires a memory-only click): mono because
        the value is a copyable number, .chip.button for the hover affordance. */
     #memChip { font-family: var(--mono); }
@@ -348,9 +343,11 @@
     /* The exit must be an OBVIOUS control on every page: the corner button is the way out
        that cannot be scrolled away. It is the SAME shell-owned button that sits at the
        bar's far right in normal mode — one control, one upper-right anchor for entering
-       and leaving. Fixed elements resolve percentage widths against the VIEWPORT, so an
-       explicit width keeps the escape a square corner button rather than a stretched bar
-       (the lesson of the 2026-09-14 full-width strip, found live on 19998). */
+       and leaving. The theme button sits beside it in the same reserved app zone and
+       escapes with it: "always visible" means full-screen too. Fixed elements resolve
+       percentage widths against the VIEWPORT, so an explicit width keeps the escape a
+       square corner button rather than a stretched bar (the lesson of the 2026-09-14
+       full-width strip, found live on 19998). */
     body.immersive #expandBtn {
       visibility: visible; position: fixed; top: var(--s2); right: var(--s2); z-index: 25;
       width: 28px; padding: 5px 0; justify-content: center;
@@ -358,6 +355,13 @@
       color: var(--text-2); box-shadow: var(--shadow-card);
     }
     body.immersive #expandBtn:hover { opacity: 1; color: var(--text); }
+    body.immersive #themeBtn {
+      visibility: visible; position: fixed; top: var(--s2); right: 44px; z-index: 25;
+      width: 28px; padding: 5px 0; justify-content: center;
+      background: var(--bar); border: 1px solid var(--sep); opacity: 0.95;
+      color: var(--text-2); box-shadow: var(--shadow-card);
+    }
+    body.immersive #themeBtn:hover { opacity: 1; color: var(--text); }
 
     /* --- sidebar ------------------------------------------------------------------------------- */
     .sidebar {

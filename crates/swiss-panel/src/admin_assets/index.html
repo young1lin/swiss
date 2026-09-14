@@ -58,34 +58,35 @@
 </svg>
 
 <div id="app">
-  <!-- The plugin rail (docs/13 D5, redrawn): global navigation, one seat per plugin. Narrow
-       by design — a plugin is a destination, not a label; the seat shows its glyph and the
-       palette (the ⋯ seat) scales to as many plugins as the host can hold. -->
+  <!-- The plugin rail (docs/13 D5, redrawn): global navigation, one seat per plugin — and
+       nothing else. Narrow by design — a plugin is a destination, not a label; the seat shows
+       its glyph and the palette (the ⋯ seat) scales to as many plugins as the host can hold.
+       App-level controls (memory, theme, focus) live in the context bar's reserved right
+       zone, so the rail foot was removed once the theme button moved there. -->
   <aside class="rail" aria-label="Plugins">
     <a class="rail-brand" href="#mcps" title="swiss" aria-label="swiss"><img class="brand-mark" src="/admin/logo.svg" alt=""></a>
     <nav class="rail-nav" id="railNav" aria-label="Plugins">
       <!-- Plugin seats populate this navigation slot at boot; the ⋯ seat opens the palette. -->
     </nav>
     <span class="grow"></span>
-    <span class="rail-foot">
-      <button class="btn ghost icon" id="themeBtn" title="Appearance" aria-label="Appearance"><svg class="ic" aria-hidden="true"><use href="#i-moon"></use></svg></button>
-    </span>
   </aside>
 
   <!-- The plugin context bar (docs/13 D5, as revised): ALWAYS drawn in normal mode —
        every plugin, single-page and workspace included, keeps the same bar height and the
-       same body origin. A plugin with >=2 pages gets the compact page switcher
-       ("MCP / Servers ▾"); a single-page plugin gets a static location label (#pageLoc —
-       no fake dropdown, no "Data / Data"). The shell's Focus control (#expandBtn) lives at
-       the bar's far right in normal mode and escapes to the same upper-right corner while
-       immersive (base.css), so entering and leaving Focus share one spatial anchor. -->
+       same body origin. Two zones that never mix: the LEFT belongs to the current page
+       (location switcher or static label, then the page's count chip), and the FAR RIGHT
+       is a reserved app zone, the same trio on every page in the same order — memory,
+       theme, focus. While immersive the two interactive app controls escape together to
+       the upper-right corner (base.css), so entering and leaving Focus share one anchor
+       and the theme stays reachable full-screen. -->
   <div class="workbench">
     <header class="ctxbar" id="ctxBar" hidden>
       <button class="ctx-switch" id="pageBtn" type="button" aria-haspopup="menu" aria-expanded="false" hidden><!-- Plugin / Page ▾ --></button>
       <span class="ctx-loc" id="pageLoc" hidden><!-- Single-page plugin: the location, as text --></span>
       <span class="grow"></span>
-      <span class="chip" id="memChip" title="Gateway resident set">mem …</span>
       <span class="chip" id="countChip"></span>
+      <span class="chip" id="memChip" title="Gateway resident set">mem …</span>
+      <button class="btn ghost icon" id="themeBtn" title="Appearance" aria-label="Appearance"><svg class="ic" aria-hidden="true"><use href="#i-moon"></use></svg></button>
       <button class="btn ghost icon" id="expandBtn" title="Fullscreen — the page takes over the window; F11 stays yours (Esc exits)" aria-label="Fullscreen"><svg class="ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>
     </header>
 
