@@ -41,7 +41,7 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
     expect(shell).toContain('id="memChip"');
     // Focus mode (js/immersive.js) is the page-sized answer: the context bar's far right
     // carries the expand control, painted with its own two-state sprite icons (docs/13 D5
-    // rev. — one shell-owned control, the same corner it escapes to while immersive).
+    // rev. — one shell-owned control, the same in-flow slot in normal and focus modes).
     expect(shell).toContain('id="expandBtn"');
   });
 

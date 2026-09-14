@@ -682,6 +682,21 @@
     /* The picker row. A native select, styled to belong to the dark bar; the panel's
        dependency-free rule keeps it a select rather than a custom dropdown. */
     .term-ctl { display: flex; align-items: center; gap: var(--s2); padding: 4px 2px 7px; flex: none; }
+    /* Focus docks the shell-owned app zone into this declared slot instead of stacking an
+       empty shell row above the terminal. The divider keeps app controls distinct from the
+       terminal's target/session actions while all of them share one physical toolbar. */
+    .term-shell-slot { display: none; }
+    .term-shell-slot:not(:empty) {
+      display: inline-flex; align-items: center; flex: none;
+      margin-left: auto; padding: 4px 2px 7px var(--s2); border-left: 1px solid var(--t-edge);
+    }
+    .term-shell-slot .app-zone { gap: var(--s1); }
+    .term-shell-slot .btn.icon { width: 28px; height: 28px; padding: 0; color: var(--t-dim); }
+    .term-shell-slot .btn.icon:hover { color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 8%, transparent); }
+    body.immersive .term-shell-slot #expandBtn {
+      color: var(--t-fg); background: color-mix(in srgb, var(--t-fg) 10%, transparent);
+      box-shadow: inset 0 0 0 1px var(--t-edge);
+    }
     .term-pick {
       font-size: var(--f-label); color: var(--t-fg);
       background: var(--t-bg); border: 1px solid var(--t-edge); border-radius: 7px;

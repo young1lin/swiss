@@ -132,11 +132,10 @@ function paintPluginContext() {
   var current = currentGroup();
   var page = registry.get(state.view);
   /* No page to name (an empty registry during boot) is the one case with nothing to draw;
-   * every real navigation lands in a group and keeps the bar. While immersive the bar is
-   * never hidden either: #expandBtn lives inside it and escapes the fold through
-   * visibility (base.css), and a hidden (display:none) parent would strand the exit with
-   * Esc as the only way out - "the exit must be obvious on every page" beats an empty bar
-   * flashing for one boot frame. */
+   * every real navigation lands in a group and keeps the bar. Focus mode keeps its minimal
+   * bar in normal flow because #expandBtn lives inside it; hiding the parent would strand
+   * the exit with Esc as the only way out. An obvious exit beats an empty bar flashing for
+   * one boot frame. */
   var show = !!(current && page);
   var immersive = document.body && document.body.classList && document.body.classList.contains("immersive");
   bar.hidden = !show && !immersive;

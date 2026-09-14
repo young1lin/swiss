@@ -76,9 +76,9 @@
        same body origin. Two zones that never mix: the LEFT belongs to the current page
        (location switcher or static label, then the page's count chip), and the FAR RIGHT
        is a reserved app zone, the same trio on every page in the same order — memory,
-       theme, focus. While immersive the two interactive app controls escape together to
-       the upper-right corner (base.css), so entering and leaving Focus share one anchor
-       and the theme stays reachable full-screen. -->
+       theme, focus. Ordinary Focus keeps a minimal in-flow bar. A workspace may declare
+       one shell dock: Terminal hosts this same app-zone in its own toolbar, so its full-page
+       mode has one row of chrome and no overlay or empty strip. -->
   <div class="workbench">
     <header class="ctxbar" id="ctxBar" hidden>
       <button class="ctx-switch" id="pageBtn" type="button" aria-haspopup="menu" aria-expanded="false" hidden><!-- Plugin / Page ▾ --></button>
@@ -86,8 +86,10 @@
       <span class="grow"></span>
       <span class="chip" id="countChip"></span>
       <span class="chip" id="memChip" title="Gateway resident set">mem …</span>
-      <button class="btn ghost icon" id="themeBtn" title="Appearance" aria-label="Appearance"><svg class="ic" aria-hidden="true"><use href="#i-moon"></use></svg></button>
-      <button class="btn ghost icon" id="expandBtn" title="Fullscreen — the page takes over the window; F11 stays yours (Esc exits)" aria-label="Fullscreen"><svg class="ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>
+      <span class="app-zone" id="appZone">
+        <button class="btn ghost icon" id="themeBtn" title="Appearance" aria-label="Appearance"><svg class="ic" aria-hidden="true"><use href="#i-moon"></use></svg></button>
+        <button class="btn ghost icon" id="expandBtn" title="Focus mode — hide app navigation (Esc exits)" aria-label="Focus mode"><svg class="ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>
+      </span>
     </header>
 
       <div class="shell">

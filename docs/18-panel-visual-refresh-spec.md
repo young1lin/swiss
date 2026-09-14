@@ -5,8 +5,9 @@
 > 为准，约束（§0、§3、§5）以本文为准**。
 > **V3 三修订（UI 统一，现行规则，2026-10）：页栏恢复常驻（见 [docs/13](13-panel-navigation-spec.md)
 > 文头「D5 三修订」）。多页插件在 Plugin Context Bar 用紧凑切换器；单页插件画静态位置标签（不画假
-> 下拉）；workspace 页（Terminal、Data）同样在栏下——workspace 只表示全幅身体，不再表示插件自带
-> 全部 chrome。Focus 控件（`#expandBtn`）在页栏最右，沉浸退出逃逸到同一右上角。**
+> 下拉）；workspace 页（Terminal、Data）普通模式同样在栏下——workspace 只表示全幅身体，不再表示插件
+> 自带全部 chrome。普通页面 Focus 保留 40px 流内页栏及最右侧应用控件；声明 shell control slot 的
+> workspace 可在全页模式把同一组控件停靠到自身工具条并将页栏归零，当前 Terminal 使用该能力。**
 > **V3 已再修订（自适应外壳，2026-09，~~单页插件不画页栏 / workspace 插件自带全部 chrome~~ 已被上条
 > 取代）：多页插件在 Plugin Context Bar 用紧凑切换器。为避免 36px 抖动而保留空/重复页栏的取舍正式
 > 作废——页面切换本来就是上下文切换。count chip 仍在 Context Bar 右侧（`#countChip` id 未变）。
