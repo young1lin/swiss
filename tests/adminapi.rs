@@ -1736,6 +1736,51 @@ async fn creates_groups_and_reports_them_on_the_list() {
     assert_eq!(list["groups"], json!(["Docs", "Search"]));
 }
 
+/// The panel's "Move up" sends the whole list back with the moved group first (groups.js
+/// moveGroupBy -> saveGroupNames). A reorder is order-only: members that rendered in the
+/// demoted first group by DEFAULT - no explicit entry, the sink slot was their only home -
+/// must not follow the slot to the new front. Regression shape: g1 held three, g2 held
+/// none, one Move up on g2 and all three answered g2.
+#[tokio::test]
+async fn reordering_groups_never_rehomes_the_first_groups_default_members() {
+    let h = with_mcps();
+    h.put("/api/groups/mcps", json!({ "groups": ["g1", "g2"] })).await;
+    assert_eq!(groups_of(&h).await, ["g1", "g1", "g1"]);
+
+    let (status, put) = h.put("/api/groups/mcps", json!({ "groups": ["g2", "g1"] })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(put["groups"], json!(["g2", "g1"]));
+
+    let (_, list) = h.get("/api/mcps").await;
+    assert_eq!(list["groups"], json!(["g2", "g1"]), "the order itself changed");
+    assert_eq!(groups_of(&h).await, ["g1", "g1", "g1"], "but nobody re-homed");
+}
+
+/// The same Move up shape through the tokens scope: this store owns its member set, so the
+/// pinning needs no outside help - a token that rendered in the demoted first group by
+/// default stays with the name.
+#[tokio::test]
+async fn reordering_token_groups_never_rehomes_the_first_groups_default_members() {
+    let h = setup();
+    let id = h
+        .post("/api/tokens", json!({ "label": "reorder-probe" }))
+        .await
+        .1["id"]
+        .as_str()
+        .expect("the id")
+        .to_string();
+    h.put("/api/groups/tokens", json!({ "groups": ["g1", "g2"] })).await;
+
+    let (status, put) = h
+        .put("/api/groups/tokens", json!({ "groups": ["g2", "g1"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{put}");
+    assert_eq!(put["groups"], json!(["g2", "g1"]));
+
+    let (_, list) = h.get("/api/tokens").await;
+    assert_eq!(list["tokenGroups"][&id], json!("g1"), "nobody re-homed");
+}
+
 #[tokio::test]
 async fn rejects_a_malformed_duplicate_empty_or_last_group_destroying_list() {
     let h = with_mcps();
@@ -2819,6 +2864,35 @@ async fn the_family_serves_the_jobs_scope() {
         body["error"], json!("unknown member: ghost"),
         "the family words it, not the scope"
     );
+}
+
+/// The same Move up shape through the jobs scope: definitions that render in the first
+/// group by default (no group key in the row) must stay there when the list reorders.
+#[tokio::test]
+async fn reordering_job_groups_never_rehomes_the_first_groups_default_members() {
+    let (h, _jobs) = setup_with_jobs();
+    h.put("/api/groups/jobs", json!({ "groups": ["g1", "g2"] })).await;
+    h.put("/api/groups/jobs/members/vacuum", json!({ "group": "g2" })).await;
+
+    let (status, put) = h
+        .put("/api/groups/jobs", json!({ "groups": ["g2", "g1"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{put}");
+    assert_eq!(put["groups"], json!(["g2", "g1"]));
+
+    let (_, list) = h.get("/api/jobs").await;
+    let group_of = |name: &str| {
+        list["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|j| j["name"] == json!(name))
+            .unwrap_or_else(|| panic!("no row for {name}"))
+            ["group"]
+            .clone()
+    };
+    assert_eq!(group_of("vacuum"), json!("g2"), "the explicit member never moves");
+    assert_eq!(group_of("report"), json!("g1"), "the default member stayed");
 }
 
 #[tokio::test]
