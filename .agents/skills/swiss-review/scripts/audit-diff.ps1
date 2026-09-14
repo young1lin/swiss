@@ -21,14 +21,13 @@ try {
 
 # Each rule: content pattern (regex over added lines), optional path filter, finding text.
 $Rules = @(
-    @{ Pat = 'admin_assets';                       Path = '';                                   Msg = 'panel tree is a byte-for-byte Node copy - hand edits forbidden; use the recopy procedure (swiss-node-reference/scripts/recopy-panel.ps1)' },
-    @{ Pat = 'Command::new(.powershell';          Path = '';                                   Msg = 'no subprocess where a syscall exists - a PowerShell spawn costs ~65 MB transient working set' },
+    @{ Pat = 'Command::new\(["'']powershell';     Path = '';                                   Msg = 'no subprocess where a syscall exists - a PowerShell spawn costs ~65 MB transient working set' },
     @{ Pat = 'multi_thread';                       Path = '';                                   Msg = 'runtime is current_thread by design - multi_thread needs a measured reason in the commit message' },
     @{ Pat = 'unsafe';                         Path = '^(?!.*platform).*.(rs|toml)$';     Msg = 'unsafe belongs at the Windows FFI boundary (platform/), nowhere else' },
     @{ Pat = 'serde_json::Value';                  Path = 'adapters|proc|http|rest';           Msg = 'forwarding paths pass payloads as &RawValue - no serde_json::Value materialisation' },
     @{ Pat = '.unwrap()';                       Path = 'secure|adapters';                    Msg = 'no .unwrap() on config/network/db/filesystem paths - one failing MCP must not take down the others' },
     @{ Pat = 'swiss-core/src/secure/envelope';     Path = '';                                   Msg = 'the sealed envelope format is FROZEN (docs/05) - envelope construction changes are stop-and-discuss' },
-    @{ Pat = '^+[a-zA-Z0-9_-]+s*=s*"[^"]*"s*$';Path = 'Cargo.toml$';                       Msg = 'new dependency? default-features = false first, justify weight in the commit message (swiss-dependency-review)' },
+    @{ Pat = '^[a-zA-Z0-9_-]+\s*=\s*"[^"]*"\s*$'; Path = 'Cargo.toml$';                    Msg = 'new dependency? default-features = false first, justify weight in the commit message (swiss-dependency-review)' },
     @{ Pat = '.';                                  Path = '(^|/)(master.key|gateway.config.json|managed.json|tunnels.json|jobs.json|.env|.log|.cast)$'; Msg = 'never-commit file in the diff - state files and recordings carry real secrets' }
 )
 

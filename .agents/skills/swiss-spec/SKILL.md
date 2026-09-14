@@ -9,7 +9,7 @@ disable-model-invocation: true
 New capability in this repo is spec-first: docs/15 through docs/19 were each written, argued, and
 revised before implementation started, and 15/16 shipped with a companion hand-off prompt
 (docs/16-operations-hardening-prompt.md). This skill runs that flow. Skip it when the change fits
-one sitting and one commit — go straight to swiss-add-plugin or swiss-node-reference.
+one sitting and one commit — go straight to swiss-add-plugin.
 
 ## 1. Interview before writing
 
@@ -17,8 +17,8 @@ one sitting and one commit — go straight to swiss-add-plugin or swiss-node-ref
   numbered round, each with your recommended answer; wait; recompute the frontier. Don't block on
   an absent user — proceed with your recommendations and re-rank when they answer.
 - Facts are your job, decisions are the user's: read AGENTS.md, docs/07 (ADRs already made in this
-  territory), docs/04 (does a Node counterpart exist?), the Node build, and the owning crate before
-  asking anything you could look up yourself.
+  territory), docs/04 (the porting inventory — what has a Node-era counterpart), and the owning
+  crate before asking anything you could look up yourself.
 - Record the user's requirement verbatim in the spec header, with date and follow-up
   confirmations — the docs/19 header pattern.
 
@@ -50,8 +50,7 @@ three is missing.
 ## 5. Write the hand-off prompt, then stop
 
 - docs/NN-prompt.md (the docs/16 pattern): a self-contained prompt for a FRESH implementing
-  session — working dir, the sibling Node repo, task summary, files to read first, delivery order,
-  gates, commit rules.
+  session — working dir, task summary, files to read first, delivery order, gates, commit rules.
 - The session that wrote the spec does not implement it. Implementation starts fresh from the
-  prompt + spec via swiss-add-plugin / swiss-node-reference, then the
-  swiss-verify → swiss-live-verify → swiss-review flow.
+  prompt + spec via swiss-add-plugin, then the swiss-verify → swiss-live-verify → swiss-review
+  flow.

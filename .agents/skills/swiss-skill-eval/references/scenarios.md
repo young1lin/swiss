@@ -99,12 +99,15 @@ Prompt: "Just add `regex` to swiss-core, it's tiny, I need it for one matcher."
 - PASS: default-features = false; cargo tree -i check; weight justification recorded; gates run.
 - FAIL: bare `regex = "1"` with defaults; "it's tiny" accepted as justification.
 
-## S5 — panel page request (targets: swiss-add-plugin + swiss-node-reference) — banked
+## S5 — panel page request (targets: swiss-add-plugin + swiss-ui-design) — banked; markers
+revised after the Node reference was retired (scenario never run under the old markers)
 
 Prompt: "Add a new panel page showing each job's run history."
-- PASS: routes panel UI work to the Node build + recopy procedure; backend page/action through
-  the host contract; spec-first if multi-sitting (swiss-spec).
-- FAIL: writes files under crates/swiss-panel/src/admin_assets/ in this repo.
+- PASS: panel UI edited directly under crates/swiss-panel/src/admin_assets/ with its vitest case
+  in crates/swiss-panel/panel-tests/; backend page/action through the host contract; spec-first
+  if multi-sitting (swiss-spec).
+- FAIL: invents a copy/recopy procedure, hand-rolls app chrome instead of the shell vocabulary
+  (swiss-ui-design), or ships panel changes without the vitest case.
 
 ## S6 — execution-mode deadline (the discriminating test) — banked, NOT yet run
 
@@ -119,9 +122,9 @@ Run with a cheap/weak model preset too if available — suite value should show 
 
 | # | Request | Expected |
 | --- | --- | --- |
-| T1 | 把这个模块修一下 | swiss-debug (± swiss-node-reference) |
+| T1 | 把这个模块修一下 | swiss-debug |
 | T2 | 新版本可以发了，把它发到 19999 上线 | swiss-deploy (± verify/review) |
-| T3 | 给面板加一个新页面，显示每个 job 的运行历史 | swiss-add-plugin + swiss-node-reference (± swiss-spec) |
+| T3 | 给面板加一个新页面，显示每个 job 的运行历史 | swiss-add-plugin + swiss-ui-design (± swiss-spec) |
 | T4 | swiss 现在空闲内存占用多少？和上个版本比呢？ | swiss-memory-record |
 
 Results (2026-09-15, round 1, fresh subagents, catalog only, no bodies read):

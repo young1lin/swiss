@@ -25,7 +25,6 @@ hit() {
 
 check() { # $1=file  $2=added-line
     file="$1"; line="$2"
-    case "$file" in *admin_assets*) hit 'panel tree is a byte-for-byte Node copy - hand edits forbidden; use the recopy procedure (swiss-node-reference scripts/recopy-panel)';; esac
     case "$line" in *"Command::new(\"powershell"*|*"Command::new('powershell"*) hit 'no subprocess where a syscall exists - a PowerShell spawn costs ~65 MB transient working set';; esac
     case "$line" in *multi_thread*) hit 'runtime is current_thread by design - multi_thread needs a measured reason in the commit message';; esac
     if { case "$file" in *.rs|*.toml) true;; *) false;; esac; } && case "$file" in *platform*) false;; *) true;; esac; then

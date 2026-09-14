@@ -42,13 +42,13 @@ Each rule is a security or correctness boundary, not style. Verify by reading, n
 | Credentials are references, never literals | Values enter as `${ENV_VAR}` or `secret://name` (vault, docs/19) refs; no literal secrets in `gateway.config.json`/`managed.json`/`tunnels.json` paths or code; panel still masks them back out |
 | No health ping on `http`/`rest` adapters | Registry reports them "unknown" on purpose; no ping added "for completeness" |
 | `proc` MCP stays lazy | Idle at boot, wake on first request, reap when idle — nothing new starts eagerly |
-| Sealed envelope frozen | Any diff under `crates/swiss-core/src/secure/` altering envelope construction is a stop-and-discuss (docs/05; [swiss-node-reference](../swiss-node-reference/SKILL.md)) |
+| Sealed envelope frozen | Any diff under `crates/swiss-core/src/secure/` altering envelope construction is a stop-and-discuss (docs/05; the committed fixture under `tests/`) |
 | `&RawValue` on forwarding paths | `proc`/`http`/`rest` adapters parse only envelope fields; no `serde_json::Value` materialisation of payloads |
 | Runtime stays `current_thread` | No `multi_thread` without a measured reason in the commit message |
 | No `unsafe` for memory numbers | `unsafe` belongs at the Windows FFI boundary (`platform/`), nowhere else |
 | No subprocess where a syscall exists | No new `Command::new("powershell")` (or equivalent) without a very good excuse |
 | No `.unwrap()` on config/net/db/fs | One failing MCP must never take down the other seven |
-| Panel is byte-for-byte | No edits under `crates/swiss-panel/src/admin_assets/`; panel changes arrived as a whole-tree recopy; `/api/*` shapes unchanged |
+| Panel change discipline | Panel edits happen directly in `crates/swiss-panel/src/admin_assets/`; every panel change ships its vitest case in `crates/swiss-panel/panel-tests/`; `/api/*` response shapes unchanged — a shape change ships on both sides in one commit |
 | Plugin contract respected | New capability contributed a descriptor/action/page; no new match arm in the host; no peer-to-peer crate edge ([swiss-add-plugin](../swiss-add-plugin/SKILL.md)) |
 | Dependency weight | Manifest changes carry the justification and minimal features; `cargo tree -d` judged per [swiss-dependency-review](../swiss-dependency-review/SKILL.md) |
 
