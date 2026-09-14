@@ -1,5 +1,6 @@
-import { $, api, esc, state, toast } from "./util.js";
+import { $, api, esc, icon, state, toast } from "./util.js";
 import { createPageRegistry } from "./page-core.js";
+import { glyphHtml, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
 var legacy = [
@@ -28,51 +29,135 @@ var polling = false;
 
 function pluginInventory() { return inventory; }
 function pageHasPendingChanges() { return !!(active && active.module.hasPendingChanges && active.module.hasPendingChanges()); }
-function pageUsesSidebar() { var p = registry.get(state.view); return !!(p && p.sidebar); }
+function pageUsesSidebar() { return layoutOf(registry.get(state.view)) === "resource"; }
 function currentPageCount() { return active && active.module.countText ? active.module.countText() : ""; }
 function pluginFor(page) { return inventory && (inventory.plugins || []).find(function (p) { return p.id === page.pluginId; }); }
 function unavailable(page) {
   var plugin = pluginFor(page);
   return plugin && (plugin.enabled === false || ["disabled", "failed", "waitingDependency", "not-built"].indexOf(plugin.state) >= 0) ? plugin : null;
 }
-/* Two-level navigation (docs/13): level one is one tab per plugin group, level two the current
-   group's pages. Both bars delegate clicks on [data-view], and a level-one button also carries
-   data-view (its group's default page) so the deep selector in jobs.js keeps matching. */
-function pageTab(p) {
-  var off = unavailable(p);
-  return '<button role="tab" data-view="' + esc(p.id) + '" aria-selected="' + String(p.id === state.view) + '"' +
-    (off ? ' title="' + esc(off.lastError || "Plugin disabled") + '"' : "") + ">" + esc(p.label) + (off ? " · off" : "") + "</button>";
+
+/* --- layouts (docs/13 D5, the adaptive shell) ----------------------------------------------------
+   How a page is framed, from the descriptor when the gateway states it and derived from
+   sidebar when it does not (an older gateway): resource = master-detail that owns the
+   panel's sidebar; page = a full-workspace page; workspace = the plugin supplies ALL of
+   its own chrome (the terminal), so the shell draws no context bar over it. Workspace is
+   never guessed - no plugin accidentally loses its bar to a fallback. */
+function layoutOf(page) {
+  if (page && (page.layout === "resource" || page.layout === "page" || page.layout === "workspace")) return page.layout;
+  return page && page.sidebar ? "resource" : "page";
 }
-function paintNavigation() {
-  var groups = registry.groups(inventory && inventory.plugins, GROUP_LABELS);
-  var current = groups.find(function (g) {
-    return g.pages.some(function (p) { return p.id === state.view; });
-  });
-  var seg = $("viewSeg");
-  seg.innerHTML = groups.map(function (g) {
-    var allOff = g.pages.every(function (p) { return !!unavailable(p); });
-    return '<button role="tab" data-group="' + esc(g.id) + '" data-view="' + esc(g.pages[0].id) +
-      '" aria-selected="' + String(!!current && current.id === g.id) + '">' + esc(g.label) + (allOff ? " · off" : "") + "</button>";
-  }).join("");
-  seg.onclick = function (event) {
-    var button = event.target.closest("[data-view]");
+
+function currentGroups() { return registry.groups(inventory && inventory.plugins, GROUP_LABELS); }
+function currentGroup() {
+  return currentGroups().find(function (g) { return g.pages.some(function (p) { return p.id === state.view; }); });
+}
+
+/* --- the plugin rail: global navigation (level one) ----------------------------------------------
+   One seat per PINNED plugin group, plus the "..." seat that opens the palette (the full,
+   searchable list - the rail is the shortlist, not the ceiling). A seat carries data-group
+   and data-view (the group's lowest-order page) so the deep selector in jobs.js keeps
+   matching, and clicks delegate on [data-view]. */
+function railSeat(g) {
+  var active = g.pages.some(function (p) { return p.id === state.view; });
+  var offPlugin = unavailable(g.pages[0]);
+  var allOff = g.pages.every(function (p) { return !!unavailable(p); });
+  var title = g.label + (allOff && offPlugin ? " — " + (offPlugin.lastError || "Plugin disabled") : "");
+  return '<button class="rail-btn" data-group="' + esc(g.id) + '" data-view="' + esc(g.pages[0].id) + '"' +
+    (active ? ' aria-current="true"' : "") + (allOff ? ' aria-disabled="true"' : "") +
+    ' title="' + esc(title) + '">' + glyphHtml(g) +
+    '<span class="rail-btn-label">' + esc(g.label) + "</span></button>";
+}
+
+function moreSeat() {
+  return '<button class="rail-btn rail-more" id="railMore" type="button" title="All plugins" aria-label="All plugins">' +
+    '<svg class="ic" aria-hidden="true"><use href="#i-ellipsis"></use></svg>' +
+    '<span class="rail-btn-label">More</span></button>';
+}
+
+function paintPluginRail() {
+  var nav = $("railNav");
+  nav.innerHTML = pinnedGroups(currentGroups()).map(railSeat).join("") + moreSeat();
+  nav.onclick = function (event) {
+    var target = event.target;
+    var more = target.closest ? target.closest(".rail-more") : null;
+    if (more) { openPluginPalette(decoratedGroups(), navigatePage, paintPluginRail); return; }
+    var button = target.closest ? target.closest("[data-view]") : null;
     if (button) void navigatePage(button.dataset.view);
   };
-  var subBar = $("subBar");
-  var subSeg = $("subSeg");
-  var subName = $("subName");
-  // D5 revised (docs/18 V3): the bar is always present — hiding it for single-page groups
-  // bounced the panel's layout ~40px on every level-one tab switch.
-  subBar.hidden = false;
-  if (current && current.pages.length >= 2) {
-    subSeg.innerHTML = current.pages.map(pageTab).join("");
-    subSeg.onclick = seg.onclick;
-    subName.textContent = "";
-  } else {
-    // A single-page group shows the page's name: the bar names where you are, never an empty stripe.
-    subSeg.innerHTML = "";
-    subName.textContent = current ? current.pages[0].label : "";
-  }
+}
+
+/* Groups carrying their availability, for the palette: it is navigation for EVERY plugin,
+ * including the ones the host currently refuses to serve - they stay reachable, marked. */
+function decoratedGroups() {
+  return currentGroups().map(function (g) {
+    var bad = unavailable(g.pages[0]);
+    return {
+      id: g.id, label: g.label, pages: g.pages,
+      off: g.pages.length > 0 && g.pages.every(function (p) { return !!unavailable(p); }),
+      offDetail: bad ? (bad.lastError || "Plugin disabled") : "",
+    };
+  });
+}
+
+/* --- the plugin context bar: page navigation (level two) ------------------------------------------
+   Drawn only when the plugin has pages to switch between AND the page is not a workspace
+   (a workspace supplies its own chrome; a single-page plugin's name is already in the pane
+   header it renders). The switcher is a compact "MCP / Servers" button with a menu, never a
+   full-width second tab row - level one and level two no longer share a control shape. */
+/** The switcher menu's items for one group: its pages in order, the current one picked,
+ *  unavailable ones marked. Factored out of the click handler so the contract (order, the
+ *  pick column, the · off marker) is testable without a menu. */
+function pageMenuItems(current) {
+  return current.pages.map(function (p) {
+    var po = unavailable(p);
+    return {
+      label: p.label + (po ? " · off" : ""),
+      title: po ? (po.lastError || "Plugin disabled") : undefined,
+      pick: true,
+      on: p.id === state.view,
+    };
+  });
+}
+
+function paintPluginContext() {
+  var bar = $("ctxBar");
+  var btn = $("pageBtn");
+  var current = currentGroup();
+  var page = registry.get(state.view);
+  var show = !!(current && current.pages.length >= 2 && page && layoutOf(page) !== "workspace");
+  bar.hidden = !show;
+  if (!show) { btn.onclick = null; return; }
+  var off = unavailable(page);
+  btn.innerHTML =
+    '<span class="ctx-plugin">' + esc(current.label) + "</span>" +
+    '<span class="ctx-sep">/</span>' +
+    '<span class="ctx-page">' + esc(page.label) + "</span>" +
+    icon("chevron-right");
+  btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current.label + " page";
+  btn.onclick = function (ev) {
+    ev.stopPropagation();
+    btn.setAttribute("aria-expanded", "true");
+    var items = pageMenuItems(current).map(function (it, i) {
+      var p = current.pages[i];
+      it.fn = function () { btn.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
+      return it;
+    });
+    /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
+     * top level), so it loads HERE, at interaction time - the shell's own module graph stays
+     * DOM-free at eval, which the pure-helper suites (plugins.js) import it under. */
+    import("./menu.js").then(function (menu) { menu.popupMenu(btn.getBoundingClientRect(), items); });
+    /* The menu also closes without an item click (document click, Escape); a one-shot
+     * listener puts the flag back whenever that lands. */
+    setTimeout(function () {
+      document.addEventListener("click", function () { btn.setAttribute("aria-expanded", "false"); }, { once: true });
+    });
+  };
+}
+
+function paintNavigation() {
+  paintPluginRail();
+  paintPluginContext();
 }
 
 async function reloadPluginInventory() {
@@ -127,12 +212,14 @@ async function navigatePage(id, force) {
   var controller = new AbortController();
   state.view = id;
   active = { id: id, module: module, controller: controller };
-  document.querySelector(".sidebar").hidden = !page.sidebar;
+  /* The resource sidebar belongs to the resource layout alone; every other layout gets the
+   * full workspace width (a "page" owns its pane, a "workspace" owns everything). */
+  document.querySelector(".sidebar").hidden = layoutOf(page) !== "resource";
   paintNavigation();
   history.replaceState(null, "", page.path || "#" + id);
   $("pane").innerHTML = off
     ? '<div class="empty"><div><h2>' + esc(page.label) + ' unavailable</h2><p class="hint">' + esc(off.lastError || "This plugin is disabled. Manage it in Plugins.") + '</p></div></div>'
-    : '<div class="empty">Loading ' + esc(page.label) + '…</div>';
+    : '<div class="empty">Loading ' + esc(page.label) + "…</div>";
   try { if (module.mount) await module.mount({ signal: controller.signal }); }
   catch (error) { if (ticket === sequence && error.name !== "AbortError") toast(error.message, true); }
   if (ticket === sequence) $("countChip").textContent = currentPageCount();
@@ -151,4 +238,4 @@ async function refreshPage() {
   catch (error) { toast(error.message, true); }
 }
 
-export { currentPageCount, initPages, navigatePage, pageHasPendingChanges, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };
+export { currentPageCount, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };

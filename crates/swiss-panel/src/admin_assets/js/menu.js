@@ -6,7 +6,9 @@ import { mountGroup } from "./groups.js";
 /* --- a menu anchored to a button ---------------------------------------------------------------
    The pane's overflow menu anchors to .pane-actions; menus raised from the sidebar have no such
    anchor, so they are positioned against the button that opened them. Items are
-   { label, fn, danger, sep }. */
+   { label, fn, danger, sep, pick, on }. Keyboard (docs/13 D5): the menu is a real menu —
+   first item focused on open, arrows walk the items, Escape closes — so a page switcher
+   built on it needs no second menu idiom. */
 function popupMenu(anchor, items) {
   closeMenu();
   var node = document.createElement("div");
@@ -19,6 +21,7 @@ function popupMenu(anchor, items) {
     b.type = "button";
     b.className = cls.trim();
     b.textContent = it.label;
+    if (it.title && b.title !== undefined) b.title = it.title;
     b.onclick = function (ev) { ev.stopPropagation(); closeMenu(); it.fn(); };
     node.appendChild(b);
   });
@@ -32,6 +35,27 @@ function popupMenu(anchor, items) {
   // Below the button, unless that would run off the bottom — then above it.
   node.style.top = pos.top + "px";
   state.menuOpen = true;
+  // Roles and keys (guarded: the vitest micro-DOM has neither querySelectorAll nor focus).
+  if (node.setAttribute) node.setAttribute("role", "menu");
+  var buttons = typeof node.querySelectorAll === "function"
+    ? Array.prototype.slice.call(node.querySelectorAll("button")) : [];
+  buttons.forEach(function (b) { if (b.setAttribute) b.setAttribute("role", "menuitem"); });
+  if (buttons[0] && typeof buttons[0].focus === "function") buttons[0].focus();
+  if (typeof node.addEventListener === "function") {
+    node.addEventListener("keydown", function (ev) {
+      var i = buttons.indexOf(document.activeElement);
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        var n = ev.key === "ArrowDown" ? i + 1 : i - 1;
+        if (n < 0) n = buttons.length - 1;
+        if (n >= buttons.length) n = 0;
+        if (buttons[n] && typeof buttons[n].focus === "function") buttons[n].focus();
+      } else if (ev.key === "Escape") {
+        ev.stopPropagation();
+        closeMenu();
+      }
+    });
+  }
 }
 
 /** Where an anchored menu lands, clamped to the viewport: growing right from the anchor's

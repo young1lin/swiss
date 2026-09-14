@@ -3,11 +3,11 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* Two-level navigation (docs/13, D5 revised by docs/18 V3): the primary bar shows one tab per
-   plugin group, the page bar is always present — the group's pages, or a single page's name. There is no bundler
-   and no browser in the test suite, so this suite drives the real page-registry module under a
-   hand-rolled DOM: fake elements that record what paintNavigation writes, and a fetch stub that
-   answers /api/plugins the way the plugin-aware gateway (full inventory) or an older gateway
+/* The adaptive shell (docs/13 D5, redrawn): a plugin RAIL for global navigation and a
+   compact page SWITCHER ("MCP / Servers" + menu) for page navigation. No bundler and no
+   browser in the suite, so this drives the real page-registry under a hand-rolled DOM:
+   fake elements that record what paintNavigation writes, and a fetch stub answering
+   /api/plugins the way the plugin-aware gateway (full inventory) or an older gateway
    (404) would. What is asserted is the generated markup and the hidden state — the exact
    contract the browser renders. */
 
@@ -37,21 +37,23 @@ const jsonResponse = (status: number, body?: unknown) => ({
   json: async () => body,
 });
 
-/* Shaped like the Rust gateway's /api/plugins: pages[] carries the pluginId that grouping keys
-   on, plugins[] carries the label the primary bar shows. Labels are the target shape (docs/13
-   N4): the plugin is "MCP", its list page is "Servers". */
+/* Shaped like the Rust gateway's /api/plugins: pages[] carries the pluginId grouping keys
+   on, plugins[] carries the label the rail seat shows, layout carries the adaptive-shell
+   framing (absent on older gateways — the panel must fall back to sidebar). */
 const inventory = {
   plugins: [
     { id: "mcp", label: "MCP", enabled: true, state: "running" },
     { id: "tunnels", label: "Tunnels", enabled: true, state: "running" },
     { id: "jobs", label: "Jobs", enabled: true, state: "running" },
+    { id: "terminal", label: "Terminal", enabled: true, state: "running" },
   ],
   pages: [
-    { id: "mcps", pluginId: "mcp", label: "Servers", order: 10, sidebar: true, path: "#mcps", entry: "/admin/js/views/mcps.js" },
-    { id: "traffic", pluginId: "mcp", label: "Traffic", order: 20, path: "#traffic", entry: "/admin/js/views/traffic.js" },
-    { id: "tokens", pluginId: "mcp", label: "Token", order: 30, path: "#tokens", entry: "/admin/js/views/tokens.js" },
-    { id: "tunnels", pluginId: "tunnels", label: "Tunnels", order: 30, sidebar: true, path: "#tunnels", entry: "/admin/js/views/tunnels.js" },
-    { id: "jobs", pluginId: "jobs", label: "Jobs", order: 50, path: "#jobs", entry: "/admin/js/views/jobs.js" },
+    { id: "mcps", pluginId: "mcp", label: "Servers", order: 10, sidebar: true, layout: "resource", path: "#mcps", entry: "/admin/js/views/mcps.js" },
+    { id: "traffic", pluginId: "mcp", label: "Traffic", order: 20, layout: "page", path: "#traffic", entry: "/admin/js/views/traffic.js" },
+    { id: "tokens", pluginId: "mcp", label: "Token", order: 30, layout: "page", path: "#tokens", entry: "/admin/js/views/tokens.js" },
+    { id: "tunnels", pluginId: "tunnels", label: "Tunnels", order: 30, layout: "page", path: "#tunnels", entry: "/admin/js/views/tunnels.js" },
+    { id: "jobs", pluginId: "jobs", label: "Jobs", order: 50, layout: "page", path: "#jobs", entry: "/admin/js/views/jobs.js" },
+    { id: "terminal", pluginId: "terminal", label: "Terminal", order: 70, layout: "workspace", path: "#terminal", entry: "/admin/js/views/terminal.js" },
   ],
 };
 
@@ -97,102 +99,137 @@ beforeAll(async () => {
 
 const byId = (id: string): FakeEl => els.get(id) as FakeEl;
 
-describe("two-level navigation painting", () => {
-  it("paints one primary tab per plugin group, carrying data-group and the default page's data-view", async () => {
+describe("the plugin rail (global navigation)", () => {
+  it("paints one seat per plugin group — never one per page", async () => {
     await paint("mcps", inventory);
-    const seg = byId("viewSeg").innerHTML;
-    // The first group: plugin label, default page as data-view, group selected.
-    expect(seg).toContain('<button role="tab" data-group="mcp" data-view="mcps" aria-selected="true">MCP</button>');
-    // Traffic is a page of the mcp group, not a level-one entry any more.
-    expect(seg).not.toContain('data-view="traffic"');
-    // Single-page groups stay level one, unselected.
-    expect(seg).toContain('data-group="tunnels" data-view="tunnels" aria-selected="false">Tunnels</button>');
-    expect(seg).toContain('data-group="jobs" data-view="jobs" aria-selected="false">Jobs</button>');
+    const rail = byId("railNav").innerHTML;
+    // One seat for the MCP plugin, landing on its first page; Traffic/Token are pages, not plugins.
+    expect(rail).toContain('data-group="mcp" data-view="mcps"');
+    expect(rail).not.toContain('data-view="traffic"');
+    expect(rail).not.toContain('data-view="tokens"');
+    // Single-page plugins keep their own seats.
+    expect(rail).toContain('data-group="tunnels" data-view="tunnels"');
+    expect(rail).toContain('data-group="jobs" data-view="jobs"');
+    // The workspace plugin rides the rail like any peer.
+    expect(rail).toContain('data-group="terminal" data-view="terminal"');
     // The synthesized management page has no inventory row: GROUP_LABELS names its group.
-    expect(seg).toContain('data-group="host" data-view="plugins" aria-selected="false">Gateway</button>');
-    // Both bars are click-delegated the same way.
-    expect(typeof byId("viewSeg").onclick).toBe("function");
-    expect(typeof byId("subSeg").onclick).toBe("function");
+    expect(rail).toContain('data-group="host" data-view="plugins"');
+    expect(rail).toContain(">Gateway</span>");
+    // The ... seat opens the palette; the rail is a shortlist, not the ceiling.
+    expect(rail).toContain('class="rail-btn rail-more" id="railMore"');
+    expect(typeof byId("railNav").onclick).toBe("function");
   });
 
-  it("paints the current group's pages into the secondary bar, in page order", async () => {
+  it("the active plugin is marked once, with aria-current on its seat", async () => {
     await paint("mcps", inventory);
-    expect(byId("subBar").hidden).toBe(false);
-    const sub = byId("subSeg").innerHTML;
-    expect(sub).toContain('data-view="mcps" aria-selected="true">Servers</button>');
-    expect(sub).toContain('data-view="traffic" aria-selected="false">Traffic</button>');
-    expect(sub).toContain('data-view="tokens" aria-selected="false">Token</button>');
-    // Page order decides inside the group: Servers (10), Traffic (20), Token (30).
-    expect(sub.indexOf("Servers")).toBeLessThan(sub.indexOf("Traffic"));
-    expect(sub.indexOf("Traffic")).toBeLessThan(sub.indexOf("Token"));
+    const rail = byId("railNav").innerHTML;
+    expect(rail).toContain('data-group="mcp" data-view="mcps" aria-current="true"');
+    expect(rail).not.toMatch(/data-group="tunnels"[^>]*aria-current/);
   });
 
-  it("deep-linking #tokens selects the MCP group on level one and Token on level two", async () => {
-    await paint("tokens", inventory);
-    expect(byId("viewSeg").innerHTML).toContain('data-group="mcp" data-view="mcps" aria-selected="true">MCP</button>');
-    expect(byId("subSeg").innerHTML).toContain('data-view="tokens" aria-selected="true">Token</button>');
-  });
-
-  it("deep-linking #traffic selects the MCP group on level one and Traffic on level two", async () => {
-    await paint("traffic", inventory);
-    expect(byId("viewSeg").innerHTML).toContain('data-group="mcp" data-view="mcps" aria-selected="true">MCP</button>');
-    expect(byId("subSeg").innerHTML).toContain('data-view="traffic" aria-selected="true">Traffic</button>');
-    expect(byId("subBar").hidden).toBe(false);
-  });
-
-  it("keeps the page bar for a single-page group: no tabs, the page's name (docs/18 V3, revising D5)", async () => {
-    await paint("tunnels", inventory);
-    expect(byId("subBar").hidden).toBe(false);
-    expect(byId("subSeg").innerHTML).toBe("");
-    expect(byId("subName").textContent).toBe("Tunnels");
-    expect(byId("viewSeg").innerHTML).toContain('data-group="tunnels" data-view="tunnels" aria-selected="true">Tunnels</button>');
-    // The emptied #subSeg must not PAINT: .seg's 3px padding over --sep-soft renders as a
-    // 6px grey square beside the page name — exactly what a review of 19998 saw. The CSS owns
-    // the fix (not subSeg.hidden) so every .seg that empties itself is covered.
-    const views = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "styles", "views.css"), "utf8");
-    expect(views).toContain(".seg:empty");
-  });
-
-  it("clears the page name when the group has real second-level tabs", async () => {
-    await paint("mcps", inventory);
-    expect(byId("subBar").hidden).toBe(false);
-    expect(byId("subName").textContent).toBe("");
-    expect(byId("subSeg").innerHTML).toContain(">Servers</button>");
-  });
-
-  it("the count chip lives in the page bar, not the toolbar (docs/18 V3)", () => {
-    const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
-    const toolbar = shell.slice(shell.indexOf("<header"), shell.indexOf("</header>"));
-    const subbar = shell.slice(shell.indexOf('id="subBar"'), shell.indexOf('<div class="shell">'));
-    expect(toolbar).not.toContain("countChip");
-    expect(subbar).toContain('id="countChip"');
-  });
-
-  it("groups the legacy manifest through GROUP_LABELS when an older gateway answers 404", async () => {
-    await paint("mcps", null, 404);
-    const seg = byId("viewSeg").innerHTML;
-    // Group label from GROUP_LABELS ("MCP"), page labels from the manifest ("MCPs" stays on the page tab).
-    expect(seg).toContain('data-group="mcp" data-view="mcps" aria-selected="true">MCP</button>');
-    expect(seg).not.toContain('data-view="traffic"');
-    expect(byId("subBar").hidden).toBe(false);
-    expect(byId("subSeg").innerHTML).toContain('data-view="mcps" aria-selected="true">MCPs</button>');
-    // The legacy manifest carries the Token page too, so an older gateway gets the same tab.
-    expect(byId("subSeg").innerHTML).toContain('data-view="tokens" aria-selected="false">Token</button>');
-  });
-
-  it("marks the primary tab · off only when every page of the group is unavailable", async () => {
+  it("marks an unavailable plugin's seat without removing it", async () => {
     const disabled: typeof inventory = {
       ...inventory,
       plugins: inventory.plugins.map((p) => (p.id === "mcp" ? { ...p, enabled: false } : p)),
     };
     await paint("mcps", disabled);
-    expect(byId("viewSeg").innerHTML).toContain('data-group="mcp" data-view="mcps" aria-selected="true">MCP · off</button>');
-    // The page tabs keep their own marker and the title hint.
-    const sub = byId("subSeg").innerHTML;
-    expect(sub).toContain('title="Plugin disabled"');
-    expect(sub).toContain('data-view="mcps" aria-selected="true" title="Plugin disabled">Servers · off</button>');
-    expect(sub).toContain('data-view="traffic" aria-selected="false" title="Plugin disabled">Traffic · off</button>');
+    const rail = byId("railNav").innerHTML;
+    expect(rail).toMatch(/data-group="mcp"[^>]*aria-disabled="true"/);
+    expect(rail).toContain('title="MCP — Plugin disabled"');
     // Other groups are untouched.
-    expect(byId("viewSeg").innerHTML).toContain(">Tunnels</button>");
+    expect(rail).not.toMatch(/data-group="tunnels"[^>]*aria-disabled/);
+  });
+});
+
+describe("the plugin context bar (page navigation)", () => {
+  it("MCP carries Servers / Traffic / Token in the switcher and its menu", async () => {
+    await paint("mcps", inventory);
+    expect(byId("ctxBar").hidden).toBe(false);
+    const btn = byId("pageBtn");
+    expect(btn.innerHTML).toContain('ctx-plugin">MCP</span>');
+    expect(btn.innerHTML).toContain('ctx-page">Servers</span>');
+    expect(typeof btn.onclick).toBe("function");
+    const mcpPages = inventory.pages
+      .filter((p) => p.pluginId === "mcp")
+      .sort((a, b) => a.order - b.order);
+    const items = registry.pageMenuItems({ id: "mcp", pages: mcpPages });
+    expect(items.map((i: { label: string }) => i.label)).toEqual(["Servers", "Traffic", "Token"]);
+    expect(items[0].on).toBe(true);
+    expect(items.every((i: { pick: boolean }) => i.pick)).toBe(true);
+  });
+
+  it("deep-linking #traffic selects MCP in the rail and Traffic in the switcher", async () => {
+    await paint("traffic", inventory);
+    expect(byId("railNav").innerHTML).toContain('data-group="mcp" data-view="mcps" aria-current="true"');
+    expect(byId("pageBtn").innerHTML).toContain('ctx-page">Traffic</span>');
+  });
+
+  it("deep-linking #tokens selects MCP in the rail and Token in the switcher", async () => {
+    await paint("tokens", inventory);
+    expect(byId("railNav").innerHTML).toContain('data-group="mcp" data-view="mcps" aria-current="true"');
+    expect(byId("pageBtn").innerHTML).toContain('ctx-page">Token</span>');
+  });
+
+  it("a single-page plugin draws no bar at all — its pane header already names it", async () => {
+    await paint("tunnels", inventory);
+    expect(byId("ctxBar").hidden).toBe(true);
+    // ...and the rail still seats and selects it.
+    expect(byId("railNav").innerHTML).toContain('data-group="tunnels" data-view="tunnels" aria-current="true"');
+  });
+
+  it("the terminal is a workspace: its own chrome replaces the context bar", async () => {
+    await paint("terminal", inventory);
+    expect(byId("ctxBar").hidden).toBe(true);
+    expect(byId("railNav").innerHTML).toContain('data-group="terminal" data-view="terminal" aria-current="true"');
+  });
+
+  it("the count chip and the memory reading live on the context bar, not the rail", () => {
+    const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
+    const rail = shell.slice(shell.indexOf('class="rail"'), shell.indexOf('class="workbench"'));
+    const ctx = shell.slice(shell.indexOf('class="ctxbar"'), shell.indexOf('class="shell"'));
+    expect(rail).not.toContain("countChip");
+    expect(ctx).toContain('id="countChip"');
+    expect(ctx).toContain('id="memChip"');
+    // The two-segment-control era is gone from the shell.
+    expect(shell).not.toContain('id="viewSeg"');
+    expect(shell).not.toContain('id="subBar"');
+    expect(shell).not.toContain('id="subSeg"');
+  });
+});
+
+describe("layouts (docs/13 D5)", () => {
+  it("the descriptor states the layout; sidebar derives it when a gateway is older", () => {
+    expect(registry.layoutOf({ layout: "workspace" })).toBe("workspace");
+    expect(registry.layoutOf({ layout: "resource" })).toBe("resource");
+    expect(registry.layoutOf({ layout: "page" })).toBe("page");
+    expect(registry.layoutOf({ sidebar: true })).toBe("resource");
+    expect(registry.layoutOf({ sidebar: false })).toBe("page");
+    expect(registry.layoutOf(undefined)).toBe("page");
+  });
+
+  it("an older gateway answering 404 falls back to the legacy manifest and its labels", async () => {
+    await paint("mcps", null, 404);
+    const rail = byId("railNav").innerHTML;
+    // Group label from GROUP_LABELS; the seat lands on the manifest's first page.
+    expect(rail).toContain('data-group="mcp" data-view="mcps"');
+    expect(rail).not.toContain('data-view="traffic"');
+    expect(rail).toContain(">MCP</span>");
+    // The switcher keeps working: the legacy manifest's MCP group has three pages.
+    expect(byId("ctxBar").hidden).toBe(false);
+    expect(byId("pageBtn").innerHTML).toContain('ctx-page">MCPs</span>');
+  });
+
+  it("a multi-page group whose pages cannot serve keeps its switcher, marked · off", async () => {
+    const disabled: typeof inventory = {
+      ...inventory,
+      plugins: inventory.plugins.map((p) => (p.id === "mcp" ? { ...p, enabled: false } : p)),
+    };
+    await paint("mcps", disabled);
+    const mcpPages = inventory.pages.filter((p) => p.pluginId === "mcp");
+    const items = registry.pageMenuItems({ id: "mcp", pages: mcpPages });
+    expect(items.map((i: { label: string }) => i.label)).toEqual(["Servers · off", "Traffic · off", "Token · off"]);
+    expect(items[0].title).toBe("Plugin disabled");
+    // The switcher itself stays reachable - an unavailable plugin is one click from Plugins.
+    expect(byId("ctxBar").hidden).toBe(false);
   });
 });

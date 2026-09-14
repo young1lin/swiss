@@ -2,9 +2,10 @@
    Groups - the one grouped-list component (docs/20 §4).
 
    Six scopes (mcps, conns, rules, jobs, secrets, tokens), two densities (the sidebar tree and
-   the page card list), one anatomy: a 28px/36px header band on --sep-soft - chevron, name in
-   mixed case, count - with + always visible and the ellipsis and the drag grip on hover, and a
-   body indented 20px behind a 1px guide line. Before this module the sidebar and the Tunnels
+   the page card list), one anatomy: a tree-node header - chevron, folder glyph, name in mixed
+   case, count - on a transparent ground (hover lifts it), with + always visible and the
+   ellipsis and the drag grip on hover, and members indented one full tree gutter (24-32px of
+   text) behind a 1px guide line that drops from the chevron column. Before this module the sidebar and the Tunnels
    page each carried a private copy of the whole idea (two drag implementations, two header
    anatomies, two delete-confirm wordings) and they had already forked; Jobs, Secrets and
    Tokens were about to grow three more. Everything a grouped list does lives here once:
@@ -21,7 +22,7 @@
    the flat order it stores, and the noun the delete confirm names.
    ================================================================================================ */
 import { apiJson, el, esc, icon, toast } from "./util.js";
-import { addTitle, deleteConfirmMsg, groupOf, lastGroupKey, resolveDefaultGroup, slice } from "./group-logic.js";
+import { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resolveDefaultGroup, slice } from "./group-logic.js";
 import { openGroupSheet } from "./add-sheet.js";
 import { popupMenu } from "./menu.js";
 
@@ -135,37 +136,25 @@ function mountGroup(cfg, g) {
 
   var head = el("div", "grp-head");
 
-  // A drag HANDLE, not a draggable header: the + and ellipsis buttons must never live inside
-  // a draggable element - a hand that moves a pixel while pressing one turns the click into a
-  // cancelled drag and the button silently does nothing. The grip is the only draggable thing
-  // on the head, so buttons keep every click. The hierarchy no longer leans on the grip being
-  // visible: the band and the guide line carry it, so the grip stays hover-only.
-  var grip = el("span", "grp-grip");
-  grip.innerHTML = icon("grip");
-  grip.title = "Drag to reorder this group";
-  grip.setAttribute("aria-label", "Reorder group " + g.name);
-  grip.draggable = true;
-  grip.addEventListener("dragstart", function (e) {
-    cfg.dragGroup.set(g.name);
-    head.classList.add("dragging");
-    try { e.dataTransfer.setData("text/plain", g.name); } catch (err) { /* old IE */ }
-    e.dataTransfer.effectAllowed = "move";
-  });
-  grip.addEventListener("dragend", function () {
-    cfg.dragGroup.set(null); // lets the deferred rebuild run - same contract as a row drag
-    head.classList.remove("dragging");
-    document.querySelectorAll(".grp-head.drop-before, .grp-head.drop-after").forEach(function (h) {
-      h.classList.remove("drop-before", "drop-after");
-    });
-    if (cfg.afterDrag) cfg.afterDrag();
-  });
-  head.appendChild(grip);
-
+  // The head is a TREE NODE, not a section band (the refresh of docs/20 §4.1): chevron,
+  // folder glyph, name, count - in that column order, on a transparent ground that only
+  // lifts on hover. The three leading columns are the contract base.css aligns to: the
+  // chevron column is where the guide line drops, the folder column ends where the name
+  // begins, and members sit one full gutter (24-32px of TEXT, not of padding) to the
+  // right of the name. aria-expanded says the fold state to assistive tech.
   var toggle = el("button", "grp-toggle");
   toggle.type = "button";
+  var folded = !!(cfg.collapsed[g.name] && !cfg.filtered);
+  toggle.setAttribute("aria-expanded", String(!folded));
   var chev = el("span", "grp-chev");
   chev.innerHTML = icon("chevron-right");
   toggle.appendChild(chev);
+  // The folder is the "this row is a container" hint a source list gives (Finder, VS Code):
+  // a member can never grow one, so the glyph alone separates parents from children even
+  // before the indent is seen.
+  var folder = el("span", "grp-folder");
+  folder.innerHTML = icon("folder");
+  toggle.appendChild(folder);
   toggle.appendChild(el("span", "grp-name", g.name));
   // The count stays visible when folded - 0 versus 3 is exactly how a folded empty group
   // tells itself apart from a folded full one.
@@ -215,6 +204,33 @@ function mountGroup(cfg, g) {
     popupMenu(more.getBoundingClientRect(), items);
   };
   head.appendChild(more);
+
+  // A drag HANDLE, not a draggable header: the + and ellipsis buttons must never live inside
+  // a draggable element - a hand that moves a pixel while pressing one turns the click into a
+  // cancelled drag and the button silently does nothing. The grip is the only draggable thing
+  // on the head, so buttons keep every click. It sits at the head's END, after the actions,
+  // so the leading columns (chevron, folder, name) keep one stable x for the tree alignment;
+  // it takes layout space but paints only on hover/focus.
+  var grip = el("span", "grp-grip");
+  grip.innerHTML = icon("grip");
+  grip.title = "Drag to reorder this group";
+  grip.setAttribute("aria-label", "Reorder group " + g.name);
+  grip.draggable = true;
+  grip.addEventListener("dragstart", function (e) {
+    cfg.dragGroup.set(g.name);
+    head.classList.add("dragging");
+    try { e.dataTransfer.setData("text/plain", g.name); } catch (err) { /* old IE */ }
+    e.dataTransfer.effectAllowed = "move";
+  });
+  grip.addEventListener("dragend", function () {
+    cfg.dragGroup.set(null); // lets the deferred rebuild run - same contract as a row drag
+    head.classList.remove("dragging");
+    document.querySelectorAll(".grp-head.drop-before, .grp-head.drop-after").forEach(function (h) {
+      h.classList.remove("drop-before", "drop-after");
+    });
+    if (cfg.afterDrag) cfg.afterDrag();
+  });
+  head.appendChild(grip);
   wireHeadDrop(cfg, head, g.name);
   wrap.appendChild(head);
 
@@ -239,15 +255,12 @@ function mountGroup(cfg, g) {
       body.appendChild(node);
     });
   }
-  // An empty group is not an empty state - it is a place. One quiet line keeps the container
-  // visible as a drop target (the only way in) and explains the + beside it. A scope whose
-  // rows cannot drag (secrets) says the honest half of that sentence only.
+  // An empty group is not an empty state - it is a place. One SHORT quiet line keeps the
+  // container visible as a drop target (the only way in); the head's + explains itself on
+  // hover, so the line does not have to repeat the instructions. A scope whose rows cannot
+  // drag (secrets) says the honest half only.
   if (!g.rows.length && !cfg.filtered) {
-    body.appendChild(el(
-      "div",
-      "grp-empty",
-      cfg.draggable === false ? "Empty — press + to add one here" : "Empty — drop rows here or press +",
-    ));
+    body.appendChild(el("div", "grp-empty", emptyLineText(cfg.draggable !== false)));
   }
   wrap.appendChild(body);
   return wrap;
@@ -399,7 +412,7 @@ function deleteFlow(cfg, name) {
 }
 
 export {
-  addTitle, assignMember, deleteConfirmMsg, groupFieldHtml, groupOf, lastGroup, lastGroupKey,
-  loadCollapsed, mountGroup, newGroupFlow, rememberGroup, renameGroupApi, resolveDefaultGroup,
-  saveCollapsed, saveGroupNames, saveOrder, slice,
+  addTitle, assignMember, deleteConfirmMsg, emptyLineText, groupFieldHtml, groupOf, lastGroup,
+  lastGroupKey, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, renameGroupApi,
+  resolveDefaultGroup, saveCollapsed, saveGroupNames, saveOrder, slice,
 };

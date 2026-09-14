@@ -28,6 +28,7 @@ import {
 import { createOverlay } from "../term-overlay.js";
 import { loadSearchAddon } from "../vendor/xterm/addon-search-0.16.0/index.js";
 import { openLocalSheet } from "./terminal-settings.js";
+import { paintImmersive, toggleImmersive } from "../immersive.js";
 import { closeSheet } from "../add-sheet.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
@@ -1017,10 +1018,14 @@ function render() {
               ? '<button class="term-off" id="term-off">Local shell is off — turn it on</button>' +
                 (pick.reason ? '<span class="term-none">' + esc(pick.reason) + "</span>" : "")
               : '<span class="term-none">' + esc(pick.note) + "</span>")) +
-        /* The ? reference button (guidance tier 3): same quiet box as the gear, the
-           bar's last control in every branch - including the empty ones, where it
-           matters most. */
+        /* The ? reference button (guidance tier 3): same quiet box as the gear - present
+           in every branch, including the empty ones, where it matters most. */
         '<button class="term-gear" id="term-help" title="Shortcuts and gestures" aria-label="Shortcuts and gestures">' + icon("help") + "</button>" +
+        /* The terminal is a workspace plugin (layout "workspace"): its bar IS the page's
+           chrome, so the fullscreen control belongs HERE, at the terminal's own right
+           edge - not only in the rail it is about to fold away. .imm-toggle lets
+           immersive.js repaint the icon on every toggle; Esc still exits. */
+        '<button class="term-gear imm-toggle" id="term-full" title="Fullscreen" aria-label="Fullscreen"></button>' +
       "</div></div>" +
     '<div class="term-find" id="term-find" hidden>' +
       '<input id="term-find-q" type="text" placeholder="Find" aria-label="Find in terminal" spellcheck="false" />' +
@@ -1050,6 +1055,8 @@ function render() {
   if (gear) gear.onclick = function () { void openLocalSheet(); };
   var help = $("term-help");
   if (help) help.onclick = openHelpSheet;
+  var full = $("term-full");
+  if (full) { full.onclick = toggleImmersive; paintImmersive(); }
   var off = $("term-off");
   if (off) off.onclick = function () { void openLocalSheet(); };
   var tabs = $("term-tabs");

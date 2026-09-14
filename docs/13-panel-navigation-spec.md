@@ -2,10 +2,16 @@
 
 > 状态：**已实施**。完成基线 `ce409be`（Rust 侧 N4；Node 侧 N1–N2 为 `4c2c964`、`9021853`，N3 为 `f88d7e2`）。原设计基线 `394bd44`。
 > **D5 已由 [docs/18](18-panel-visual-refresh-spec.md) V3 修订：页栏常驻 36px——单页组显示页名，不再整条隐藏。**
+> **D5 再修订（自适应外壳，2026-09）：一级导航改为左侧 Plugin Rail（图标座位 + "..." 打开可搜索的
+> Plugin Palette），二级导航改为 Plugin Context Bar 上的紧凑页切换器（"MCP / Servers ▾"，弹菜单，
+> 键盘可达）。单页插件不再绘制任何页栏；workspace 布局（Terminal）由插件自带全部 chrome，
+> Context Bar 与 PageDescriptor.layout（resource/page/workspace，wire 可选字段，旧网关按
+> sidebar 回退）一起声明。一级与二级永远不再共用 `.seg`。hash 路由、page id、entry、
+> data-view/data-group 深选择器与 `jobs.js` 的隐藏探针全部保持。**
 > 前置阅读：`AGENTS.md`（它的规则高于本文任何便利）、`docs/09-toolbox-plugin-architecture.md` §6
 > （页面契约）、`docs/07-decisions.md` ADR-009（面板只读）与 ADR-010（八个 crate）。
-> **本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。** 面板改动先落在
-> `../local-mcp-gateway/src/admin/`，跑完 Node 侧的 vitest，再整目录复制回来。
+> ~~本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。~~（两仓时代的规定，
+> 已随 Node 侧退役作废：面板在本仓库直接编辑。）
 > 新写的代码注释一律英文；文档散文中文。
 
 ## 0. 怎么用这份文档

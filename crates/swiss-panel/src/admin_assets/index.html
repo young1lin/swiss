@@ -29,6 +29,7 @@
     <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
     <symbol id="i-folder-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
     <symbol id="i-ellipsis" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
     <symbol id="i-grip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></symbol>
@@ -57,41 +58,44 @@
 </svg>
 
 <div id="app">
-  <header class="toolbar">
-    <span class="brand"><img class="brand-mark" src="/admin/logo.svg" alt="">swiss</span>
-    <div class="seg" id="viewSeg" role="tablist" aria-label="Section">
-      <!-- Page contributions populate this navigation slot at boot. -->
-    </div>
+  <!-- The plugin rail (docs/13 D5, redrawn): global navigation, one seat per plugin. Narrow
+       by design — a plugin is a destination, not a label; the seat shows its glyph and the
+       palette (the ⋯ seat) scales to as many plugins as the host can hold. -->
+  <aside class="rail" aria-label="Plugins">
+    <a class="rail-brand" href="#mcps" title="swiss" aria-label="swiss"><img class="brand-mark" src="/admin/logo.svg" alt=""></a>
+    <nav class="rail-nav" id="railNav" aria-label="Plugins">
+      <!-- Plugin seats populate this navigation slot at boot; the ⋯ seat opens the palette. -->
+    </nav>
     <span class="grow"></span>
-    <span class="chip" id="memChip" title="Gateway resident set">mem …</span>
-    <span class="tool-acts">
+    <span class="rail-foot">
       <button class="btn ghost icon" id="expandBtn" title="Fullscreen — the page takes over the window; F11 stays yours (Esc exits)" aria-label="Fullscreen"><svg class="ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>
       <button class="btn ghost icon" id="themeBtn" title="Appearance" aria-label="Appearance"><svg class="ic" aria-hidden="true"><use href="#i-moon"></use></svg></button>
     </span>
-  </header>
+  </aside>
 
-  <!-- The page bar (docs/18 V3, revising docs/13 D5): always present. A group with >=2 pages
-       paints its second-level tabs; a single-page group paints the page's name. The count chip
-       moved here from the toolbar — a count describes the page you are on, not the app. -->
-  <div class="subbar" id="subBar">
-    <div class="seg" id="subSeg" role="tablist" aria-label="Subsection">
-      <!-- The active plugin's page contributions land here. -->
+  <!-- The plugin context bar: drawn only when it has something to say. A plugin with >=2
+       pages gets the compact page switcher ("MCP / Servers ▾") and the page count; a
+       single-page plugin says its name in the pane header it already owns, and a workspace
+       plugin (the terminal) supplies all of its own chrome — neither draws this bar. -->
+  <div class="workbench">
+    <header class="ctxbar" id="ctxBar" hidden>
+      <button class="ctx-switch" id="pageBtn" type="button" aria-haspopup="menu" aria-expanded="false"><!-- Plugin / Page ▾ --></button>
+      <span class="grow"></span>
+      <span class="chip" id="memChip" title="Gateway resident set">mem …</span>
+      <span class="chip" id="countChip"></span>
+    </header>
+
+      <div class="shell">
+      <aside class="sidebar">
+        <div class="side-head">
+          <input id="filter" type="search" placeholder="Search" aria-label="Filter MCPs">
+          <button class="btn icon" id="addBtn" title="New group" aria-label="New group"><svg class="ic" aria-hidden="true"><use href="#i-folder-plus"></use></svg></button>
+        </div>
+        <div class="side-cap" id="sideCap">MCPs</div>
+        <nav class="side-list" id="list" role="listbox" aria-label="Hosted MCPs"></nav>
+      </aside>
+      <main class="pane" id="pane"></main>
     </div>
-    <span class="subbar-name" id="subName"></span>
-    <span class="grow"></span>
-    <span class="chip" id="countChip"></span>
-  </div>
-
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="side-head">
-        <input id="filter" type="search" placeholder="Search" aria-label="Filter MCPs">
-        <button class="btn icon" id="addBtn" title="New group" aria-label="New group"><svg class="ic" aria-hidden="true"><use href="#i-folder-plus"></use></svg></button>
-      </div>
-      <div class="side-cap" id="sideCap">MCPs</div>
-      <nav class="side-list" id="list" role="listbox" aria-label="Hosted MCPs"></nav>
-    </aside>
-    <main class="pane" id="pane"></main>
   </div>
 </div>
 
