@@ -613,13 +613,41 @@ impl TunnelStore {
     /// Replace the whole group-name list: create, reorder and delete are all "here is the new
     /// list" (docs/20 §2.1). Validation and ordering live in the one Groups model; this store
     /// adds the row-side bookkeeping - a group dropped by omission loses its rows' explicit
-    /// entries, so they render in the new first group.
+    /// entries, so they render in the new first group. A reorder pins the rows that render in
+    /// the first group by default (group: None) to the name, so demoting it re-homes nobody:
+    /// members live on the rows here, not in the model's sparse map.
     pub fn set_groups(
         &mut self,
         kind: GroupKind,
         names: &[String],
     ) -> Result<Vec<String>, String> {
+        let before = self.groups_of_kind(kind).names();
         let clean = self.groups_of_kind_mut(kind).set_names(names.to_vec())?;
+        if let Some(first) = swiss_host::groups::demoted_first(&before, &clean) {
+            // The NEW list's spelling, not the old one: a replace may respell the group
+            // while demoting it, and the panel buckets rows by exact string match.
+            let pinned = clean
+                .iter()
+                .find(|n| n.eq_ignore_ascii_case(&first))
+                .cloned()
+                .unwrap_or(first);
+            match kind {
+                GroupKind::Rules => {
+                    for row in &mut self.rules {
+                        if row.group.is_none() {
+                            row.group = Some(pinned.clone());
+                        }
+                    }
+                }
+                GroupKind::Connections => {
+                    for row in &mut self.conns {
+                        if row.group.is_none() {
+                            row.group = Some(pinned.clone());
+                        }
+                    }
+                }
+            }
+        }
         match kind {
             GroupKind::Rules => {
                 for row in &mut self.rules {
@@ -1024,6 +1052,54 @@ mod tests {
             s.rules()[0].id,
             *z_id,
             "mentioned rows move up, the rest keep order"
+        );
+    }
+
+    #[test]
+    fn a_reorder_pins_rows_that_rendered_in_the_demoted_first_group() {
+        // The panel's Move up: the whole list comes back with the moved group first. Rows
+        // whose group was None rendered in the first group by default - they must stay with
+        // the name, not follow the slot (their membership lives on the row, so the pin is a
+        // row write here, not a model entry).
+        let (_dir, mut s) = temp_store("groups-reorder");
+        let c = s.add_connection(&conn_input("b")).unwrap();
+        s.add_rule(&rule_input("a", &c.id, 5433.0)).unwrap();
+        let pinned_id = s.add_rule(&rule_input("z", &c.id, 5434.0)).unwrap().id;
+        s.set_groups(GroupKind::Rules, &["g1".to_string(), "g2".to_string()])
+            .unwrap();
+        s.set_group(GroupKind::Rules, &pinned_id, Some("g2")).unwrap();
+
+        s.set_groups(GroupKind::Rules, &["g2".to_string(), "g1".to_string()])
+            .unwrap();
+        assert_eq!(s.groups_of(GroupKind::Rules), vec!["g2".to_string(), "g1".to_string()]);
+        let row = s.rule(&pinned_id).unwrap();
+        assert_eq!(row.group.as_deref(), Some("g2"), "the explicit row never moves");
+        for r in s.rules() {
+            if r.id != pinned_id {
+                assert_eq!(
+                    r.group.as_deref(),
+                    Some("g1"),
+                    "the default row stayed with the name"
+                );
+            }
+        }
+        // The connections list reorders the same way over its own rows: create the two,
+        // then swap them.
+        s.set_groups(GroupKind::Connections, &["cg1".to_string(), "cg2".to_string()])
+            .unwrap();
+        s.set_groups(GroupKind::Connections, &["cg2".to_string(), "cg1".to_string()])
+            .unwrap();
+        assert_eq!(s.connection(&c.id).unwrap().group.as_deref(), Some("cg1"));
+        // A replace that respells the group while demoting it pins under the NEW spelling:
+        // the panel buckets rows by exact string match, so an old-spelling row.group
+        // would fall out of its own group.
+        s.set_group(GroupKind::Connections, &c.id, None).unwrap();
+        s.set_groups(GroupKind::Connections, &["cg1".to_string(), "CG2".to_string()])
+            .unwrap();
+        assert_eq!(
+            s.connection(&c.id).unwrap().group.as_deref(),
+            Some("CG2"),
+            "the pin rode the respell, not the slot"
         );
     }
 

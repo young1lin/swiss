@@ -108,7 +108,9 @@ impl GroupScope for McpGroups {
         self.store.get_groups()
     }
     fn set_names(&self, next: Vec<String>) -> Result<Vec<String>, String> {
-        self.store.set_groups(next)?;
+        // Pin before the replace: the registry, not the store, names the live members (a
+        // config-sourced MCP has no managed entry), and a reorder must not re-home them.
+        self.store.set_groups_pinning(next, self.registry.names())?;
         Ok(self.store.get_groups())
     }
     fn rename(&self, from: &str, to: &str) -> Result<(Vec<String>, usize), String> {

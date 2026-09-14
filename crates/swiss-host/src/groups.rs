@@ -29,6 +29,20 @@ fn same_name(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b)
 }
 
+/// The group a whole-list replace DEMOTES: it survives, but no longer first. That is the one
+/// case the sink slot must not carry its default members along - they render in the first
+/// group only because nothing ever pinned them to a name, so the slot moving on means they
+/// silently move with it. None when the first group keeps the front (nothing moves) or is
+/// dropped by omission (the delete contract sinks its members into the new front, which is
+/// what the delete-confirm promises). Shared by both member shapes: the sparse map the
+/// managed/jobs scopes hold, and the row field tunnels denormalize.
+pub fn demoted_first(before: &[String], after: &[String]) -> Option<String> {
+    let first = before.first()?;
+    let still_there = after.iter().any(|n| same_name(n, first));
+    let still_first = after.first().is_some_and(|n| same_name(n, first));
+    (still_there && !still_first).then(|| first.clone())
+}
+
 /// The one grouping model (docs/20 §2.1): ordered names, sparse member assignments.
 ///
 /// Embedders hold this behind their own lock and give it their persistence; it never touches
@@ -121,7 +135,50 @@ impl Groups {
     /// Replace the whole list: create, delete and reorder are all "here is the new list".
     /// A group dropped by omission is deleted and its members lose their explicit entry, so
     /// they render in the new first group. Atomic: a rejected list leaves `self` untouched.
+    ///
+    /// The gap: a member with no explicit entry renders in the first group by default, so a
+    /// replace that demotes the first group carries it to the new front. Scopes that can
+    /// name their members close it with [Groups::set_names_pinning] - a reorder must not
+    /// re-home anyone.
     pub fn set_names(&mut self, next: Vec<String>) -> Result<Vec<String>, String> {
+        self.set_names_pinning(next, std::iter::empty())
+    }
+
+    /// [Groups::set_names] with the reorder gap closed: when the replace demotes the first
+    /// group without deleting it, every id that renders there only by DEFAULT (no explicit
+    /// entry) is pinned to the name first, so the slot can move to the front without
+    /// carrying them along. Ids with an explicit entry are untouched; a first group that
+    /// stays first pins nothing (nothing would move), and a first group dropped by omission
+    /// sinks its default members to the new front - that is the delete contract, not a
+    /// reorder.
+    pub fn set_names_pinning(
+        &mut self,
+        next: Vec<String>,
+        ids: impl IntoIterator<Item = String>,
+    ) -> Result<Vec<String>, String> {
+        let clean = Self::validated(next)?;
+        if let Some(name) = demoted_first(&self.names, &clean) {
+            // Pin under the NEW list's spelling: a replace may respell the group while
+            // demoting it, and the retain below (and every loader's member filter) matches
+            // spellings exactly - a pin in the old spelling would be orphaned by the very
+            // call that inserted it.
+            let canonical = clean
+                .iter()
+                .find(|n| same_name(n, &name))
+                .cloned()
+                .unwrap_or(name);
+            for id in ids {
+                self.members.entry(id).or_insert_with(|| canonical.clone());
+            }
+        }
+        self.names = clean.clone();
+        self.members.retain(|_, g| self.names.iter().any(|n| n == g));
+        Ok(clean)
+    }
+
+    /// Validate a whole-list replace the way every mutation reports it, so a rejected list
+    /// pins nothing and leaves `self` untouched.
+    fn validated(next: Vec<String>) -> Result<Vec<String>, String> {
         let mut clean = Vec::new();
         for raw in next {
             let name = Self::checked(&raw)?;
@@ -133,8 +190,6 @@ impl Groups {
         if clean.is_empty() {
             return Err("at least one group must remain".into());
         }
-        self.names = clean.clone();
-        self.members.retain(|_, g| self.names.iter().any(|n| n == g));
         Ok(clean)
     }
 
@@ -358,6 +413,48 @@ mod tests {
         g.set_names(vec!["Docs".into(), "default".into()]).unwrap();
         assert_eq!(g.group_of("a"), "Docs");
         assert_eq!(g.group_of("b"), "Docs"); // the sink is the slot, now Docs
+    }
+
+    /// Invariant 9: a reorder must not re-home anyone - not even the members that render in
+    /// the first group by DEFAULT. set_names_pinning pins those to the name when the replace
+    /// demotes it; dropping the first group is still a delete, and its members still sink.
+    #[test]
+    fn a_demoted_first_group_leaves_its_default_members_behind() {
+        let mut g = groups(&["g1", "g2"]);
+        g.assign("b", Some("g2")).unwrap();
+        // "a" and "c" have no entry: they render in g1 because g1 is first - the exact shape
+        // the panel's Move up broke (three under g1, g2 empty, one Move up and all three
+        // answered g2).
+        g.set_names_pinning(vec!["g2".into(), "g1".into()], ["a", "b", "c"].map(String::from))
+            .unwrap();
+        assert_eq!(g.names(), ["g2", "g1"]);
+        assert_eq!(g.group_of("a"), "g1", "default members stay with the name");
+        assert_eq!(g.group_of("c"), "g1");
+        assert_eq!(g.group_of("b"), "g2", "explicit members never move");
+        // Dropping the first group is a delete, not a reorder: its members sink.
+        g.set_names_pinning(vec!["g2".into()], ["a", "b", "c"].map(String::from))
+            .unwrap();
+        assert_eq!(g.group_of("a"), "g2");
+        // A rejected list pins nothing and leaves state untouched.
+        let mut h = groups(&["g1", "g2"]);
+        assert!(
+            h.set_names_pinning(
+                vec!["g2".into(), "g2".into()],
+                ["a"].map(String::from)
+            )
+            .is_err()
+        );
+        assert_eq!(h.names(), ["g1", "g2"]);
+        assert!(h.members().is_empty(), "a rejected list pinned nothing");
+        // A replace that RESPELLS the first group while demoting it pins under the new
+        // spelling - the same call's retain (and every loader's member filter) matches
+        // spellings exactly, so an old-spelling pin would be orphaned on insert.
+        let mut r = groups(&["g1", "g2"]);
+        r.set_names_pinning(vec!["g2".into(), "G1".into()], ["x"].map(String::from))
+            .unwrap();
+        assert_eq!(r.names(), ["g2", "G1"]);
+        assert_eq!(r.group_of("x"), "G1", "the pin rides the respell");
+        assert_eq!(r.members().get("x").map(String::as_str), Some("G1"));
     }
 
     /// Invariant 8: the parts serialize under whatever keys the embedding store chooses; what
