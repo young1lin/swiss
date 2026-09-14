@@ -1,0 +1,238 @@
+# MCP Plugin Audit (swiss-mcp + root src/ wiring)
+
+> One-liner: the multi-protocol gateway plugin that hangs every MCP server (stdio child process, remote HTTP MCP, declarative REST API, in-process database driver, demo echo) on a single path segment at `127.0.0.1:19999/:name` — 8 adapter families, registry lifecycle, call logs, the traffic ring, and the panel's Servers/Traffic/Token views; the largest and most central plugin in swiss.
+
+## Feature Overview
+
+| Feature | Entry point (endpoint/CLI/action) | Panel entry | Notes |
+| --- | --- | --- | --- |
+| MCP client endpoint (bearer check, lazy wake, generation cache) | `POST /:name` (src/app.rs:315-425), `DELETE /:name` (src/app.rs:295-310) | — (clients connect directly) | The auth check precedes reading the body; unknown paths get a 503 JSON-RPC error; Idle entries wait in place for their wake; the response is captured back and then recorded into the traffic ring |
+| Registry (CRUD, start/stop/restart/rename) | crates/swiss-mcp/src/registry.rs | Servers page detail-header buttons and the “…” menu | A per-entry tokio mutex queue serializes the lifecycle; generation acts as the staleness fence for health probes; delete sets a tombstone first |
+| Adapter-family dispatch | `make_adapter` (crates/swiss-mcp/src/adapters/mod.rs:292-309) | Type dropdown in the Add MCP form | Dispatch on seven def keywords: echo / proc / http / rest / mysql / pg / redis |
+| proc adapter (lazy start + idle reaping + subtree kill) | def `{"type":"proc","command":...}` | proc type in the form | Lazy by default; Job Object kill-on-close; stderr kept in a ring; PID ledger as backstop |
+| http adapter (remote streamable HTTP MCP) | def `{"type":"http","url":...}` | http type in the form | The initialize handshake completes at build time; single-shot SSE/JSON dual-form parsing; one shared connection pool per proxy |
+| rest adapter (config-declarative REST→MCP) | def `{"type":"rest","baseUrl","tools":[...]}` | rest type in the form | `{{arg}}` template language; deliberately no health ping; timeout/proxy/selection fields |
+| mysql / pg / redis in-process drivers | def `{"type":"mysql|pg|redis",...}` | matching types in the form | Shared lazy connections; a deliberately tiny tool surface (2/3/3 tools); output-budget rendering |
+| echo demo adapter | def `{"type":"echo"}` | echo type in the form | A single echo tool, hand-written ServerHandler (no macros feature pulled in) |
+| Tool toggles / resources master toggle | `POST /api/mcps/{name}/tools/{tool}` (src/adminapi.rs:1537-1591), `POST /api/mcps/{name}/resources-toggle` (src/adminapi.rs:1495-1532) | Inline toggles on the Tools/Resources pages | Persist first, then mutate memory; disabled tools are absent from tools/list (“the broadcast list is the contract”) |
+| Panel tool trial runs / resource reading | `POST /api/mcps/{name}/call` (src/adminapi.rs:1361-1407), `POST /api/mcps/{name}/resource` (src/adminapi.rs:1411-1490) | Run page, Resources page | Goes through an in-memory session (introspect.rs) and never hands the gateway token to the browser; panel calls also note_activity |
+| Paged browsing (tools/resources/prompts) | `GET /api/mcps/{name}/{kind}` (src/adminapi.rs:1594-1672) | The three list tabs on the detail page | Server-side incremental page cache + base64url cursor, fill capped at 200 pages, cache expires after 60s |
+| MCP CRUD | `GET/POST /api/mcps` (src/adminapi.rs:748-844), `PUT/DELETE /api/mcps/{name}` (src/adminapi.rs:1153-1219) | Add form / Config tab / delete confirmation | Name validated against NAME_RE + reserved words; deleting a config-sourced MCP also edits gateway.config.json; edits go through an override entry |
+| Lifecycle actions | `POST /api/mcps/{name}/start|stop|restart` (src/adminapi.rs:1069-1111) | Detail-header Start/Stop and menu Restart | The action also writes managed.json's enabled/mcpEnabled, so the state survives restarts |
+| Rename | `POST /api/mcps/{name}/rename` (src/adminapi.rs:1113-1151) | Menu Rename… | Call history moves along, cached endpoints are evicted, tunnel links follow |
+| Client .mcp.json import | `POST /api/mcps/import` (src/adminapi.rs:849-889), `plan_mcp_import` (crates/swiss-mcp/src/mcp_import.rs) | Import .mcp.json button on the add form | stdio→proc, url→http; duplicates get -1/-2 suffixes; entries pointing back at this gateway are skipped |
+| Connection test | `POST /api/mcps/test` (src/adminapi.rs:900-1030) | Test connection on the add/edit forms | DB uses ping, http the handshake, rest one plain GET (no billed tools triggered); 5s timeout |
+| Call history (persisted per MCP) | `GET/DELETE /api/mcps/{name}/calls`, `GET /api/mcps/{name}/calls/{seq}` (src/adminapi.rs:1262-1321) | Logs page (paging, expand, Show full result) | Two-layer log: 2KB inline preview on the index row + full text in bodies; dual retention policy of bytes + age; sensitive arguments masked |
+| Tool run history (Run backfill) | `GET /api/mcps/{name}/tool-history` (src/adminapi.rs:1326-1355) | Backfill dropdown on the Run page | The latest 300 runs per tool, with q search over the full arguments |
+| Traffic ring (cross-MCP interaction log) | `GET/DELETE /api/traffic`, `GET /api/traffic/{seq}` (src/adminapi.rs:563-609) | Traffic page | A 500-entry in-memory ring + logs/traffic.jsonl on disk, restored on restart; attributed by token, clientInfo remembered; rows carry no body/response |
+| Client-folded summary | `traffic_clients()` (crates/swiss-mcp/src/traffic.rs:523-593) | Clients area of the Traffic page | Folds the whole ring (not just the current page); labels upgrade mid-stream (token X → Claude Code 1.x) |
+| Token management | `GET/POST /api/tokens` etc. (secret/rotate/delete, src/adminapi.rs:400-482) | Token page | A separate token per client; timing-safe comparison; routes are host-owned and survive the plugin being disabled |
+| Sidebar ordering and grouping | the family `PUT /api/groups/mcps`, `POST /api/groups/mcps/rename`, `PUT /api/groups/mcps/members/{name}`, `PUT /api/groups/mcps/order` (docs/20; the mcps scope registers from src/subsystems.rs) | Sidebar drag, group header + | Persisted in managed.json as order/groups/mcpGroups; `default` is an ordinary group — renameable, deletable, reorderable — riding in `groups` like any name, and the list is never empty (a missing file starts from `[default]`; emptying it is the one refusal, 400 "at least one group must remain"); the FIRST slot, never the name, is the sink where unassigned MCPs and a deleted group's members land (group_of/set_groups/rename_group/remove_group, crates/swiss-host/src/managed.rs:451-465,474-498,523-567); a `groupsV2: true` marker rides with any group write, so a reload treats the list as verbatim (a deliberately deleted `default` stays deleted) while pre-v2 files get `default` materialized at the front (load_groups/persist, managed.rs:138-168,619-625) |
+| Details (state/masked config/stderr/linked tunnels) | `GET /api/mcps/{name}/details` (src/adminapi.rs:1224-1256) | Detail page subtitle and Config page | Credential fields masked out with the `••••••••` sentinel; on health failure its dependent tunnels are listed on the same screen |
+| Client connection commands | — (assembled by the frontend) | Menu Copy Claude Code command / Codex / .mcp.json / URL | Copied by panel connect.js, embedding the selected token |
+| Database browsing (the Data backend in MCP form) | `Engine::browser()` → `BrowserFlavor` (crates/swiss-mcp/src/adapters/tool_server.rs:261-263) | Data page (via a connection-catalog lease) | Three DbBrowser sets — mysql_browser/pg_browser/redis_browser — reusing the adapters' shared connections |
+| Health probing / idle reaping / page-cache sweeping | `start_timer` (crates/swiss-mcp/src/registry.rs:586-624) | — (background) | Concurrent per-entry probing at 15s intervals; a 1s patrol for idle lazy entries; http/rest report unknown, having no ping |
+| Data connection picker ranking (visual order) | the order closure wired into the Data /api/db router (src/app.rs:493-509); `visual_order` (src/app.rs:546-580) | Data page connection dropdown | The picker ranks by the sidebar's VISUAL order, not the flat one: registry names sorted by the flat manual order (PUT /api/order, unranked last in name order — exactly like /api/mcps), then sliced by group — groups in stored order, members keeping their flat rank inside their group, unassigned names in the FIRST group (mirroring ManagedStore::group_of); read live per request so a drag reorders the picker on the next poll; ranked flat alone, a connection would jump its group neighbours the moment members of two groups interleave — which any cross-group drag produces |
+
+## HTTP API and Routes
+
+### Client surface (`/:name` catch-all, src/app.rs)
+
+- **Route shape**: `Router::new().route("/{path}", post(mcp_post).delete(mcp_delete).get(fallback_404))` (src/app.rs:458-464). Mount order: the panel routes, `/health`, `/api/db` (Data), and the whole adminapi tree are all merged before the MCP catch-all joins, so it cannot swallow the earlier-registered /api/tunnels (src/app.rs:480-501 comment Before the MCP catch-all). No GET handler: notifications in the modern protocol travel on the client's own POST stream, and GET falls into the same 404 as the other unhandled methods (src/app.rs:460-463).
+- **Bearer check before reading the body**: `verify_bearer` (src/app.rs:204-214) reads only the `Authorization` header; on failure `mcp_post` returns 401 `{error:"Unauthorized"}` at the very top (src/app.rs:321-325, the Node wrapped.refuse shape); the request-body cap is BODY_LIMIT (2MB, via the `DefaultBodyLimit` layer, src/app.rs:511), and a request that can be rejected without reading the body never has it read. The matched token record (TokenRec) is carried down for call/traffic attribution.
+- **Unknown entry → 503 JSON-RPC error**: `json_rpc_error` (src/app.rs:184-191) returns `{"jsonrpc":"2.0","error":{"code":-32603,"message":"Unknown MCP path: <name>"},"id":null}` + 503 (src/app.rs:334-339). MCP endpoints answer in JSON-RPC, admin routes answer `{error}`; the two error shapes are deliberately not unified (docs/05 §3, src/app.rs:181-183). Failed-to-start and not-started likewise get 503 + JSON-RPC (src/app.rs:344-364).
+- **Idle → ensure_started wake**: when the entry's lifecycle is Idle, `mcp_post` waits for `ensure_started` to finish — the waiting is the contract: AI clients do not gracefully retry a 503, so the request that wakes the child is the request that gets served, bounded by the adapter's own startup timeout; concurrent wakes coalesce into one spawn on the lifecycle queue (crates/swiss-mcp/src/registry.rs:275-292).
+- **note_activity defers idle reaping**: after every request, `note_activity` (src/app.rs:352) re-arms `idle_deadline` for entries that are running and lazy (crates/swiss-mcp/src/registry.rs:297-330); `idleMs: 0` opts out of reaping entirely, and the default is `DEFAULT_IDLE_MS = 600_000` (10 minutes, crates/swiss-mcp/src/registry.rs:95).
+- **StreamableHttpService cached by generation**: `CachedHandler{generation, http}` is cached by name (src/app.rs:52-55, 88); `handler_for` (src/app.rs:137-178) snapshots name/server/generation under the read lock: on a generation mismatch (it was restarted) the old service is `cancel()`ed before the new one is installed; a stopped entry gets its leftovers evicted in passing. Every start/stop does `generation.fetch_add(1)` (crates/swiss-mcp/src/registry.rs:351, 419).
+- **rename/delete eviction**: the registry holds an `evictor` callback (crates/swiss-mcp/src/registry.rs:142-156, 251-264); `rename`/`delete` fires `fire_evictor` (crates/swiss-mcp/src/registry.rs:544, 574); AppContext registers the callback as **Weak** at assembly time, avoiding the AppContext→Registry→evictor→AppContext strong cycle (src/app.rs:114-133). Eviction = `cancel()` (tearing down in-flight exchanges) + removal from the cache map (crates/swiss-mcp/src/adapters/mod.rs:105-110).
+- **record_traffic**: the body is read once (bounded by BODY_LIMIT), the parsed JSON-RPC envelope feeds the traffic record, and the original bytes are reassembled verbatim for forwarding (src/app.rs:366-374); the response is read back whole under a 16MB cap, the first `RESPONSE_CAPTURE = 16KB` serving as the preview, handed to `record_traffic` together with method/ok/duration/token label (src/app.rs:37, 384-416); a response body that cannot be read back honestly reports 502 instead of a 200 with an empty body (src/app.rs:391-399). Every request also writes one `request` log entry (src/app.rs:417-423).
+- **Call attribution**: `with_call_client_mcp(client.label, …)` scopes the token label into a tokio task-local, read back inside the rmcp handlers (src/app.rs:379-382; crates/swiss-mcp/src/calls.rs:332-389).
+- **Plugin gate**: `plugin_client_guard` consults the plugin host after auth and before ensure_started: with the MCP plugin disabled, all client endpoints answer the host's structured 503, and a lazy proc never gets spawned behind a disabled plugin; strangers still get a plain 401 (src/app.rs:196-202, 326-333).
+- **DELETE /:name**: the stateless protocol has no session to tear down; after the bearer check it is a straight 204 (src/app.rs:295-310).
+- **Boundary layers**: the `loopback_guard` middleware runs ahead of every route (a triple loopback check of peer address + Host + Origin, src/app.rs:218-252); the plugin boundary layer stacks **inside** the loopback guard (security precedes plugin state, src/app.rs:453-456, 502-505).
+
+### Admin surface (/api/*, src/adminapi.rs; the panel JS is the spec for response shapes)
+
+- **No login gate**: `/api/*` carries no auth — the loopback guard is the boundary, and there is exactly one operator on this machine; the token on the MCP endpoints is for AI clients, not a panel login (src/adminapi.rs:3-9).
+- `GET /api/info`: tokenEnv, panelVersion, build stamp (src/adminapi.rs:389-398).
+- `GET/POST /api/tokens`, `GET /api/tokens/{id}/secret`, `POST /api/tokens/{id}/rotate`, `DELETE /api/tokens/{id}` (src/adminapi.rs:400-482): the full named-token CRUD; secrets appear only on create/rotate/explicit query.
+- `GET/DELETE /api/traffic` (src/adminapi.rs:563-594): query parameters page/pageSize/mcp/client/method/actions; a DELETE with `?client=` clears only that client.
+- `GET /api/traffic/{seq}` (src/adminapi.rs:596-609): one entry's raw request+reply (fetched on demand when a row expands).
+- The groups family `PUT /api/groups/mcps` / `POST /api/groups/mcps/rename` / `PUT /api/groups/mcps/members/{name}` / `PUT /api/groups/mcps/order` (docs/20 G2 retired the four per-scope routes): the sidebar order; the groups table is written whole — an omission is a deletion whose members land in the FIRST group of the new list, `default` rides in it like any name, and the one refusal is an empty list (400 "at least one group must remain"); rename works on any group, `default` included, keeping its slot and carrying both explicit and unassigned members; group membership attaches by name, storing the canonical casing — `null` means no explicit entry, rendering in the first group (crates/swiss-host/src/managed.rs:474-567).
+- `GET /api/mcps` (src/adminapi.rs:748-817): lightweight status rows (name/source/type/tag/description/lifecycle/state/group + optional latencyMs/lastCheck/reason/startedAt, absent keys rather than null when missing); sorted in panel order, the unranked by name; the response also carries `groups` — the complete ordered group list, never empty (`default` materialized first until the user moves or deletes it, src/adminapi.rs:816).
+- `POST /api/mcps` (src/adminapi.rs:818-843): name validation (`is_valid_name`, a hand-written NAME_RE: alphanumeric first character + [A-Za-z0-9_-] up to 63 long, src/adminapi.rs:49-57; reserved words api/health/admin, src/adminapi.rs:60), `build_def` construction, register + persist + optional immediate start.
+- `POST /api/mcps/import` (src/adminapi.rs:849-889): the overall plan = skip list + per-entry `add_managed` (no immediate start); structurally abnormal input answers 500 per Node semantics.
+- `POST /api/mcps/test` (src/adminapi.rs:900-1030): see Feature Overview; rest goes through strict `resolve_def_checked` expansion (a missing vault reference fails, docs/19 D4).
+- `POST /api/mcps/{name}/start|stop|restart` (src/adminapi.rs:1069-1111): the action + `set_enabled` persistence.
+- `POST /api/mcps/{name}/rename` (src/adminapi.rs:1113-1151): registry rename (eviction + history moves along) → store rename → tunnel links follow.
+- `DELETE /api/mcps/{name}` (src/adminapi.rs:1153-1179): a config-sourced entry first goes through `remove_config_server` editing gateway.config.json (otherwise it resurrects on the next boot), then registry delete, store remove, `links.forget_mcp`.
+- `PUT /api/mcps/{name}` (src/adminapi.rs:1180-1219): `unmask_body` restores sentinels → `build_def` → `make_adapter` → config-sourced persists as an override, managed-sourced updates directly → `update_def` (a stopped entry stays stopped: editing is not starting).
+- `GET /api/mcps/{name}/details` (src/adminapi.rs:1224-1256): state/reason/logs (proc stderr)/config (masked)/tunnels (the tunnels this MCP depends on).
+- `GET/DELETE /api/mcps/{name}/calls`, `GET /api/mcps/{name}/calls/{seq}` (src/adminapi.rs:1262-1321): call-history paging (CALLS_PAGE_SIZE=20 per page) and one entry's full text.
+- `GET /api/mcps/{name}/tool-history` (src/adminapi.rs:1326-1355): a tool's recent runs, filterable by q (matched against the full recorded arguments, unaffected by the 96-character preview truncation).
+- `POST /api/mcps/{name}/call` / `POST /api/mcps/{name}/resource` (src/adminapi.rs:1361-1490): panel trial runs; errors are reported as results, not as transport failures.
+- `POST /api/mcps/{name}/resources-toggle` / `POST /api/mcps/{name}/tools/{tool}` (src/adminapi.rs:1495-1591).
+- `GET /api/mcps/{name}/{kind}` (src/adminapi.rs:1599-1672): kind ∈ tools|resources|prompts; carries disabledTools/resourceEnabled for the panel to draw its toggles.
+- `GET /api/memory?tree=1` (src/adminapi.rs:1034-1046), `POST /api/shutdown` (src/adminapi.rs:1051-1065): memory readings (optionally including the proc subtree) and the graceful-shutdown signal on Windows.
+- **Error shape**: `admin_error` (status, {error}) — uniform across all admin routes; a method mismatch answers 404 (Node router semantics), not axum's default 405 (src/app.rs:499-501).
+
+## Panel Pages and Interactions
+
+Panel assets live in `crates/swiss-panel/src/admin_assets/` (edited directly in this repo, ADR-016); the MCP plugin contributes three pages (builtin.rs:108-116): **Servers (mcps, order 10, sidebar), Traffic (order 20), Token (order 30)** — the latter two have no standalone sidebar entry and appear only as second-level bars inside the MCP group (docs/13 two-level navigation).
+
+### Servers page (#mcps, views/mcps.js + pane.js/detail.js/polling.js/add-sheet.js/sidebar.js)
+
+- **List and polling**: `mount/poll/refresh` runs `loadList()` → `GET /api/mcps` every 6s; after replacing `state.mcps` it patches only the sidebar and the detail header, never rebuilding a form mid-entry (views/mcps.js:6-14; `paneHasFocus`, pane.js:9-13). The top-bar chip carries the one-line tally N MCPs · N on · N failing (`mcpChipText` in polling.js).
+- **Sidebar grouping**: groups render in their stored order — `default` is an ordinary entry the server seeds at the front until the user moves it; a row renders under its stored group when that group still exists, else under the FIRST group (groupOf mirrors the server's sink, admin_assets/js/sidebar.js:22-27,44-49); every group header drags by its grip — `default` too, only the SERVER pins a role to the first slot, never a name (sidebar.js:116-118) — and the ⋯ menu offers move/rename/delete for every group, with the panel refusing the delete-last-group move locally ("At least one group must remain", sidebar.js:170,248); the group header + opens the add form with the group preset; clicking a row enters the detail pane.
+- **Detail header**: title + mount path `/<name>` + status dot (stopped/starting/error/up/down/unknown) + latency + since time; primary buttons Start/Stop (only Start is blue); the … menu (pane.js:154-178): Connect a client (copy Claude Code command / Codex command / .mcp.json entry / endpoint URL), the Group picker list (with New group…), Restart, Edit configuration…, Rename…, Delete (red, isolated at the bottom).
+- **Six tabs**: Tools / Resources / Prompts (the three KINDS, with count badges) + Run / Config / Logs (pane.js:88-94):
+  - List tabs: paged via `GET /api/mcps/{name}/{kind}`, cursor advancing; tool rows carry an enable/disable switch; resources have a master toggle.
+  - **Run page**: pick a tool, edit JSON arguments, run (`POST /api/mcps/{name}/call`); the backfill dropdown lists that tool's recent runs (`/tool-history`, searchable over the full arguments), and selecting one previews it, with the full text viewable (the run state structure in detail.js:74-90).
+  - **Config page**: the form renders fields by type; credential fields show the `••••••••` sentinel, and submitting it unchanged keeps the stored value server-side; a Test connection button (shown only for testable types).
+  - **Logs page**: paged call-history rows (tool, argument preview, result preview, via/client, duration); expanding a row shows the full request and reply (`/calls/{seq}`) plus the proc child's stderr (detail.js:87-90, 119-120).
+- **Add form** (add-sheet.js:9-49): Name + Type dropdown + per-type fields, a Start it now checkbox, an Import .mcp.json file button, Test connection; the group form / rename-group form is the same surface (`openGroupSheet`, add-sheet.js:57-80).
+- **Delete confirmation** states explicitly, for config-sourced entries, that gateway.config.json will be edited too (detail.js:52-58).
+
+### Traffic page (#traffic, views/traffic.js + traffic.js)
+
+- Two-area structure: the **Clients summary** (who is talking to the gateway: label, token set, MCPs visited, counts, last time; click to filter the log) and the **Activity log** (traffic.js:4-12).
+- The log defaults to the Actions filter (`actions=1`: keep only user actions such as tools/call and resources/read, so the protocol handshake does not flood the view, traffic.js:34-36); paging forward/back; `totalUnfiltered` shows the full count.
+- A collapsed row carries only method + a one-line argument preview + metadata; only on expand does it `GET /api/traffic/{seq}` for the raw request/reply JSON — the reason rows carry no 8KB body: 200 rows × 6s polling was once a megabyte-scale load (traffic.js:24-31); polling uses a signature to skip rebuilding when nothing changed, so collapses/scroll positions are not reset (traffic.js:44-51).
+- Clear button: with a client selected it clears only that one, otherwise everything (maps to DELETE /api/traffic; the server deliberately does not clear known_client — clearing the log does not clear the gateway's memory of the token, traffic.rs:598-602).
+- The ring has a tail on disk, restored by `init_traffic_log()` before listening, so a restart does not wipe it (traffic.rs:621-695; src/server.rs:195-197).
+
+### Token page (#tokens, views/tokens.js)
+
+- The named-token list (id/label/createdAt), create, rotate, revoke; Use remembers which token to copy (`pick_copy_token`: remembered id → the default label → the first row, crates/swiss-host/src/token.rs:66-81). The page belongs to the MCP plugin's group, but the `/api/tokens` routes are host-owned (pinned by the builtin.rs:777-798 test).
+
+## Configuration and Storage
+
+### gateway.config.json (sealed, crates/swiss-host/src/config.rs)
+
+- Sealed envelope (AES-256-GCM + HKDF per-file key, format frozen, docs/05 §1); top level `{"port","host","tokenEnv","servers":{name→def}}` (config.rs:57-74). Structural gating at load: the top level must be an object, servers must be an object, tokenEnv must be non-empty; host defaults to 127.0.0.1, and a non-loopback value is **refused at load** (config.rs:218-263).
+- `${ENV_VAR}` references are **not expanded at load**: the def held by the registry/panel/override persistence layers is always the reference verbatim; only `make_adapter` expands a copy through `resolve_def()` while building the adapter (config.rs:1-8, 84-126; crates/swiss-mcp/src/adapters/mod.rs:292-309). A test pins this down: an unset url reference expands to empty → the needs a url startup error, while the original def still reads `${...}` (adapters/mod.rs:452-464). The strict variant `resolve_def_checked` (covering `secret://` vault references, rejecting when missing) is used by the rest connection test and the like (docs/19 D1/D4, config.rs:128-138).
+- **Token system**: `TOKEN_ENV = "SWISS_TOKEN"`, `TOKEN_ENV_LEGACY = "MCP_GATEWAY_TOKEN"` (config.rs:141-145). Resolution order in `token_lookup` (config.rs:164-171): **read the variable named by the config's tokenEnv first (an empty value counts as missing); only when it is empty and that name belongs to this well-known pair is the pair partner consulted** (`token_pair_other`, config.rs:152-158). A custom variable name has no pairing and never falls back (config.rs:461-473). The multi-token era: TokenManager loads from managed.json `tokens`; first boot migrates the single secret into the default token (crates/swiss-host/src/token.rs:92-114); the legacy single-value `token` in managed.json takes precedence over the env seed (src/server.rs:185-193).
+- Deleting a config-sourced MCP runs `remove_config_server`, which rewrites the file atomically, touching only that key; every other `${ENV}` reference is preserved as-is (config.rs:296-313).
+
+### managed.json (sealed, crates/swiss-host/src/managed.rs)
+
+One file holds all panel-mutable state (managed.rs:1-2, 573-663):
+- `mcps: [{name, def, enabled, override}]` — user-added MCPs; an entry with `override: true` replaces the def of the same-named config entry (edits to a config MCP persist here, keeping gateway.config.json in its committed state);
+- `disabledTools: {mcp→[tool]}`, `resourceToggles: {mcp→bool}` — toggle persistence;
+- `tokens`, `order: [name]`, `groups: [name]` (the complete ordered list, `default` included when it exists; a `groupsV2: true` marker rides with any group write — the loader reads a marked list verbatim (a deliberately deleted `default` stays deleted) and materializes `default` at the front of unmarked pre-v2 files, managed.rs:138-168,619-625), `mcpGroups: {mcp→group}` (sparse, storing the canonical casing; absence means the FIRST group — the sink slot, whatever it is called, managed.rs:451-465,500-521);
+- `mcpEnabled: {mcp→bool}` — the panel Stop state of config-sourced MCPs (managed entries use their own enabled; without this table a config entry's Stop would live only until the next boot, managed.rs:95-111);
+- `token` — the legacy rotatable single token (takes precedence over the env seed).
+
+### Per-adapter config keys (the build_typed_def whitelist, src/adminapi.rs:97-318)
+
+| Type | Required | Keys | Notes |
+| --- | --- | --- | --- |
+| proc | command | description, env(map), cwd, exposeResources, exposePrompts, timeoutMs, lazy | expose* defaults to exposed (only an explicit false is persisted); timeoutMs overrides PROC_CALL_TIMEOUT_MS (proc.rs:59-68, 307-315) |
+| http | url | description, headers(map), exposeResources, exposePrompts, proxy | url must be http(s):// or an ${ENV} reference; proxy must be an explicit http(s):// (`assert_proxy_url`, crates/swiss-mcp/src/adapters/proxy.rs:111-121) |
+| rest | baseUrl, tools[] (non-empty) | description, headers, timeoutMs, proxy | the tools array is preserved as authored (not reshaped); the timeout defaults to 30s (rest.rs:36) |
+| mysql | — (host defaults to localhost) | description, host, port, user, password, database, timezone, readonly, maxRows | the database name is validated by `assert_ident` (it gets spliced into SHOW CREATE TABLE, mysql.rs:556-560) |
+| pg | **url** (the empty string is dangerous: libpq falls back to PGHOST/PGDATABASE, adminapi.rs:134-139) | description, url, readonly, maxRows | readonly also sets connection-level read-only (PgConnectOptions, pg.rs:660-676) |
+| redis | — (localhost:6379) | description, host, port, password, db, readonly, allowDestructive, allowEval | command policy covered in the Lifecycle section |
+| echo | — | — | empty def |
+
+- The `lazy` key hangs on every type: the panel's Start automatically checkbox writes its inverse; proc is lazy by default, the other types opt in explicitly (`is_lazy`, registry.rs:81-92).
+- **Credential expansion timing**: `make_adapter(def, …)` expands a `resolve_def(def)` clone internally — the def in the registry and on disk forever stays a `${ENV_VAR}`/`secret://` reference; on panel echo `mask_def` swaps credential fields for sentinels and passwords inside URLs for `••••••••@` (crates/swiss-host/src/mask.rs:16-150), and on the PUT back `unmask_body` restores unchanged sentinels to the stored values — the browser never receives credentials, and editing unrelated fields cannot break them either.
+
+### Runtime files (data directory = ~/.mcp-gateway, docs/05)
+
+- `logs/calls/<mcp>.jsonl` (index rows: metadata + 2KB preview) + `logs/calls/bodies/<mcp>/<seq>.txt` (full text beyond the preview, latest 50 kept per MCP, calls.rs:11-16, 74-92); CallLog is an instance (S2 instantiation, held by AppContext, src/server.rs:71-77).
+- `logs/traffic.jsonl` (the traffic tail, 2MB/1MB byte budgets, traffic.rs:623-630).
+- `.proc-pids-<port>.json` (the PID ledger of proc children, isolated by port, crates/swiss-host/src/proc_pids.rs:1-42).
+
+## Lifecycle and Background Behavior
+
+### Entry lifecycle (registry.rs)
+
+- **State machine**: `Starting/Started/Stopping/Stopped/Idle/Error` (registry.rs:41-62); the externally shown state takes health (up/down/unknown) when started, otherwise the lifecycle. On registration, lazy entries land in Idle, the rest in Stopped.
+- **Concurrency shape**: one tokio mutex `op` queue per entry (Node's promise chain) serializes all lifecycle operations; mutable state is snapshot-out-write-back inside short std locks, never held across an await (registry.rs:5-9, 266-273). Two concurrent starts build only once; a stop racing a start leaves no orphaned server (test registry.rs:1444-1493).
+- **Generation fence**: start/stop each +1; a health probe records the gen at probe time, and if the gen changed before the result lands (say the user stopped it mid-probe) the result is discarded — a late failure once permanently marked an already-stopped entry down (registry.rs:730-779, test :1409-1440).
+- **Tombstone**: `delete` sets `deleted` first, then waits for the stop: a queued start wakes, finds the tombstone, and refuses — nothing builds pools/children nobody will close on a detached entry already removed from the map (registry.rs:558-582).
+- **Where stop lands**: a lazy entry returns to Idle once stopped (welcome to be woken by the next request) — there is no true off for a lazy entry; that is called disable or delete; non-lazy lands in Stopped (registry.rs:433-440). stop also clears status/latency/last_error/the three page caches.
+- **update_def**: within one queue slot, stop → carry the old adapter's tool/resource toggles to the new adapter (otherwise a connection edit would silently re-enable every disabled tool) → swap def+adapter → start as needed (registry.rs:459-519).
+- **rename**: change the map key + `fire_evictor(old name)` + rename the call-log file (in-flight calls keep going through a bounded `current_name` alias, calls.rs:200-213) + the adapter's `rename()` syncs the name cell (registry.rs:528-552).
+
+### Background tasks (start_timer, registry.rs:586-624)
+
+- **Health probing**: every `interval_ms` (15_000 in production, src/server.rs:77) one `check_all` round: first `sweep_page_caches`, then **one probe task spawned per entry** (Promise.all semantics: one slow DB ping does not drag down the other entries, registry.rs:626-640). Probing targets only Started entries; types whose `adapter.ping()` returns None (http/rest) **report Unknown rather than Down** — a metered third-party endpoint should not spend a real request every 15s (registry.rs:738-746; rest.rs:712-714; AGENTS load-bearing rule: do not add a ping).
+- **Idle reaping**: every 1s a `reap_idle` round walks all entries; those whose `idle_deadline` has expired and that hold a server take the op queue for do_stop (registry.rs:601-610, 644-674). The is_lazy guard in `arm_idle` is the whole point: this timer once armed for every started entry and quietly stopped http MCPs and DB pools ten minutes later (registry.rs:309-313 comment).
+- **Page-cache sweeping**: every check_all also drops tools/resources/prompts page caches not paged through in 60s — a server that once dumped several thousand resources does not stay resident forever (registry.rs:676-703; paging.rs:22-25).
+- `close_all` (shutdown): stops the timer + stops every entry concurrently (registry.rs:804-817); on graceful shutdown `flush_calls` then flushes the last page (src/server.rs:359-360).
+
+### proc children (proc.rs)
+
+- Lazy start: see above; `PROC_HANDSHAKE_TIMEOUT_MS` (default 60s, npx/uvx cold downloads) bounds the initialize handshake; on timeout/failure the subtree is tree-killed before erroring (proc.rs:50-57, 672-696).
+- **Windows subtree teardown = Job Object** (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`), strictly better than Node's taskkill /T: when the gateway itself is hard-killed, the OS closing the handle still takes the subtree along (proc.rs:9-13, 636-646); all FFI is concentrated in the `win` module, the file's only unsafe. The PID ledger (`note_proc_pid`) backstops escapees; the next boot runs `reap_proc_pids` before registering any MCP (proc.rs:699-702; src/server.rs:68; proc_pids.rs:1-23).
+- stderr is kept in a 64KB ring (`STDERR_MAX`) for the panel Logs display (proc.rs:33-35, 655-660); one shared child carries all concurrent requests (JSON-RPC id reuse), with a fresh ProxyServer per request wrapping the same child client (proc.rs:711-738).
+- Per-call timeout: `PROC_CALL_TIMEOUT_MS` (default 180s; the SDK's 60s is not enough for vision/reasoning calls) or the per-MCP `timeoutMs` (proc.rs:59-68).
+
+### Connection and read-only policy of the three database engines
+
+- mysql: sqlx MySqlPool max 5, acquire 5s (a merge of Node's connectionLimit 5/queueLimit 20); under readonly the connection string opens a read-only session; ping = `SELECT 1 AS ok`; a result stream must see the EOF/OK terminator — an interrupted stream reports connection lost mid-query rather than passing partial rows off as a complete result (mysql.rs:458-478, a lesson paid for; test :850-863).
+- pg: PgPool max 4, idle 60s (longer than the 15s probe interval, otherwise every probe forks a backend); readonly via PgConnectOptions; multi-statement pg_query keeps Node's simple-protocol semantics (one summary group per statement); a group never completed = connection interrupted, reported the same way (pg.rs:553-568, 942-952).
+- redis: a single multiplexed auto-reconnecting ConnectionManager (ioredis's role), with a 10s command timeout that also bounds the offline queue; a pipeline is one round trip (the 200-key Data page drops from ~880ms to tens of ms); command policy: readonly admits only READ_COMMANDS plus a whitelist of container subcommands, FLUSHALL/MONITOR and the like require `allowDestructive`, EVAL requires `allowEval` (redis.rs:660-718, 722-768).
+
+### Boot order (src/server.rs:60-197)
+
+Orphan reaping → construct CallLog/Registry (15s)/ManagedStore → tunnels before MCP (SSH handshakes take seconds, and an MCP's database may need to travel the tunnel) → register config servers → managed overrides (`start: m.enabled`, no resurrection of what the user stopped) → new managed entries → TokenManager → `init_traffic_log()` (restore the traffic tail before listening) → AppContext/routes. Registration is done by boot; the **start decisions** live in the MCP plugin's `start_hosted_mcps` (builtin.rs:196-249): panel-Stopped (enabled=false) stays stopped, lazy stays Idle, the rest start; a single failure is isolated and does not affect the others.
+
+### Plugin start/stop (builtin.rs:88-190)
+
+- start: `start_timer` → `start_hosted_mcps` → register the connection catalog **last** (a failure leaves no stopped-but-still-listed state behind).
+- stop: withdraw (no new leases issued) → drain (wait for in-flight leases, an honest warn on timeout) → `close_all` (close pools + tree-kill children — the things in this process that truly cost memory) → clear the catalog seat. **No definitions are unregistered**: order/logs/managed.json all survive; re-enabling replays the start decisions (honesty rule docs/09 §4: the wrapper may do less than a full uninstall, but must never claim an uninstall it did not do).
+
+## Relationship to the Host and Other Plugins
+
+- **Dependency edges**: swiss-mcp imports only swiss-host (a peer of swiss-data/tunnels/jobs/terminal/panel, none depending on each other, docs/02). What it consumes from the host: config (ServerDef/resolve_def/resolve_def_checked/remove_config_server), managed (ManagedStore), token/auth (the bearer check), mask (mask_def/unmask_body/is_secret_arg_key), mem (invalidate_memory_cache/get_memory_info), dbbrowser (BrowserFlavor/TableSort/shared SQL folding functions), services::catalog (ConnectionCatalog/LeaseTracker), proc_pids, pathenv, and the service-process tokenize_command (proc.rs:70-75).
+- **Plugin descriptor**: id `mcp`, pages mcps/traffic/tokens, routes `[/api/mcps, /api/traffic]`, `restart_on_config_change: false` (MCP rows read no config lines today — restarting every managed MCP because one line moved is destruction disguised as application config, builtin.rs:100-123).
+- **Connection catalog (docs/12 W3)**: `RegistryCatalog` registers each registered entry's browsable half as a capability in the host catalog; the Data plugin's /api/db takes a lease per request (`lease`), and a non-browsable entry reports NotBrowsable and **names the adapter type** (MCP 'x' (fake) has no database to browse, registry.rs:848-934). When MCP stops it withdraws first, then drains, then closes pools — Data no longer has the floor pulled out from under it by an MCP disable while displaying normally. app.rs's `ctx.catalog` is the same instance the plugin registered; without Data installed, /api/db honestly 503s (src/app.rs:83-87, 485-494).
+- **Tunnels**: interop passes only through the `src/mcp_link.rs` assembly layer — the registry implements the tunnels-side read-only `McpView` (has/stateOf/isStarted/startedAt) and `McpDisplay` (names/suggestions by loopback port), so the tunnels crate does not depend on registry types (src/mcp_link.rs:1-95). The other direction: MCP's details/rename/delete consult `TunnelLinks` (read-only/follow semantics, src/adminapi.rs:33-43).
+- **Process/host services**: the action/run pools are shared via RuntimeServices; proc's command tokenization/output decoding reuses the service-process module.
+- **Panel**: pages are declared by the descriptor and rendered by the host's two-level navigation; the Traffic/Token pages belong to the MCP group, but the Token routes are host-owned.
+- **Hot-plug semantics**: MCP plugin disabled → the client catch-all and /api/mcps, /api/traffic all answer the host's 503 (builtin.rs:137-146); the panel's /api/tokens is unaffected.
+
+## Key Source Files
+
+| File | Responsibility |
+| --- | --- |
+| crates/swiss-mcp/src/registry.rs (1793 lines) | Entry state machine, lifecycle queue, health probing, idle reaping, page-cache sweeping, evictor, connection-catalog provider |
+| crates/swiss-mcp/src/calls.rs (1727 lines) | On-disk call log (two layers, index + bodies), task-local call attribution, masking, tail reading, retention policy |
+| crates/swiss-mcp/src/traffic.rs (1462 lines) | The 500-entry traffic ring, clientInfo memory, client folding, disk-tail restore |
+| crates/swiss-mcp/src/paging.rs | Incremental tools/resources/prompts page cache, base64url cursor, 200-page fill cap |
+| crates/swiss-mcp/src/mcp_import.rs | .mcp.json import plan (sanitization, deduplication, self-proxy skip) |
+| crates/swiss-mcp/src/introspect.rs | Throwaway in-memory MCP session (duplex + async-rw transport) |
+| crates/swiss-mcp/src/adapters/mod.rs | Adapter/HttpMcp/McpProbe/ToolToggle/ResourceToggle, rmcp_endpoint (sessionless StreamableHttpService), make_adapter dispatch |
+| crates/swiss-mcp/src/adapters/echo.rs | Demo echo (hand-written ServerHandler, avoiding the macros feature) |
+| crates/swiss-mcp/src/adapters/proc.rs | stdio child (lazy, Job Object, stderr ring, handshake/call timeouts) |
+| crates/swiss-mcp/src/adapters/http.rs | Remote streamable HTTP MCP (hand-written transport: JSON/SSE single-shot, session header, negotiated version) |
+| crates/swiss-mcp/src/adapters/rest.rs | Config-declarative REST→MCP (template language + engine, {{arg}} not ${arg}) |
+| crates/swiss-mcp/src/adapters/proxy.rs | Transport-agnostic proxy half (the RemoteMcp seam, paging aggregation, annotations stripping, shared proxy pool) |
+| crates/swiss-mcp/src/adapters/direct.rs | The direct shell (Lazy single-flight connection, toggle seeding) |
+| crates/swiss-mcp/src/adapters/sql.rs | SQL guard (read-only determination, single statement, row caps, an entirely hand-written scanner) |
+| crates/swiss-mcp/src/adapters/{mysql,pg,redis}.rs | The three in-process engines (tool surface + pool/connection + ping + read-only) |
+| crates/swiss-mcp/src/adapters/tool_server.rs | Engine/ToolServer/RenderLimits/render_result (output-budget rendering) |
+| crates/swiss-mcp/src/adapters/resources.rs | ResourceProvider contract, shard folding, URI splitting, the protocol's narrow 2024-11-05 field set |
+| crates/swiss-mcp/src/adapters/{mysql,pg,redis}_resources.rs | schema/keyspace as MCP resources (shard folding, bounded sampling) |
+| crates/swiss-mcp/src/adapters/{mysql,pg,redis}_browser.rs | The Data view's DbBrowser (list/read table/describe/read-only console/transactional editing/export-import/DDL) |
+| src/app.rs | Gateway route assembly, all /:name endpoint behavior, generation cache, evictor, loopback guard |
+| src/adminapi.rs | All /api/mcps*, /api/traffic, /api/tokens, and the order/groups admin endpoints |
+| src/mcp_link.rs | Read-only trait assembly glue between registry↔tunnels |
+| src/builtin.rs (MCP part) | Plugin descriptor and start/stop wrappers (start_hosted_mcps, catalog registration/withdrawal) |
+| src/server.rs (boot part) | Register/override/restore loops, the 15s interval, CallLog instantiation, init_traffic_log |
+
+## Style and Design Observations
+
+This plugin demonstrates nearly every project-wide pattern; the few exceptions likewise have documented reasons:
+
+- **Plugin descriptor registration**: the standard implementation — factory + `PluginDescriptor` (pages/routes/requires/restart_on_config_change), wired in by one `register_all` line, no host match arm (builtin.rs:63-86). Two disciplines stand out: `restart_on_config_change: false` carries a comment saying why; the Token page belongs to the MCP group but its routes are host-owned, pinned down by the test `mcp_descriptor_contributes_the_token_page_but_keeps_its_routes_host_owned` (builtin.rs:777-798).
+- **Route mounting**: the catch-all resolves dynamically (paths can be added/removed at runtime) rather than one static route per MCP (the sanctioned translation of docs/02); the admin tree and the MCP tree are separate, each wearing its own layers; the dual error-shape regime (JSON-RPC vs {error}) is stated in comments as deliberately not unified.
+- **Error handling**: one MCP failing must never take down the rest — the boot loop catches+logs entry by entry (src/server.rs:108-158), probe tasks spawn per entry, log-write failures warn at a 30s rate limit (calls.rs:178-191), a failed proxy list degrades to an empty list + warn (an empty list beats a bad one, but not silently, proxy.rs:231-256). Races always prefer refusal over orphans: a double start builds once, the tombstone, the generation fence, Lazy::dispose closing the race window — each carries a comment about the tuition paid in the Node era.
+- **Memory discipline**: near-zero at idle, throughout the plugin. proc lazy start is the product's biggest memory feature; page caches expire at 60s; the traffic ring holds 500 entries; the call log is two layers (small index rows + bodies on demand); rendering carries an output budget (1000 items/256KB, shed first then halve, and an explicit declaration that it is no longer valid JSON); traffic API rows carry no 8KB body; the forwarding path forwards whole bytes (body read once, original bytes reassembled, app.rs:366-374); disk over heap (logs live on DISK — right after a restart is exactly when you most want the last call).
+- **Naming and comments**: module-header comments uniformly declare Node lineage with port of `xxx.ts`; deviations are recorded explicitly (notifications missing under rmcp's stateless session, PowerShell→Win32 direct calls). Comments say why, not what, and several are post-mortems of bugs already paid for (a cut-off stream must not answer Ok (partial rows), arm_idle once armed every entry by mistake, panel focus protection).
+- **UI presentation**: the panel is the spec (ADR-009); every response is absent-not-null, aligned with JSON.stringify dropping undefined (a dedicated comment at src/adminapi.rs:772-793); polling only patches, never rebuilds, with focus protection and signature-based redraw skipping; dangerous actions (Delete) are isolated in red at the bottom of the menu; exactly one primary action is blue.
+- **Security boundary**: loopback is the security (load refuses a non-loopback host); credentials are stored only as references (one expansion point: make_adapter); sentinel round-tripping for masks; secret-looking argument keys are masked through the one `mask::is_secret_arg_key` vocabulary (shared by calls and traffic, mask.rs:46-49); identifier vetting (`assert_ident`); the SQL read-only guard states plainly that it is a guard for clear error messages, not a security boundary — the real boundary is the database session (sql.rs:53-57).
+- **Exceptions/inconsistencies**: (1) traffic.rs's ring state is a process-level OnceLock singleton, while CallLog has completed S2 instantiation (traffic.rs:77-88 vs calls.rs:98-117) — tests serialize with a serialized() lock; an intentional transitional state; (2) the rest connection test has moved to strict `resolve_def_checked`, while the make_adapter main path still uses lenient `resolve_def` (config.rs:80-86 comment callers that have not been moved); (3) proc's FFI unsafe is concentrated in the win module, the project's only sanctioned unsafe; (4) `/api/mcps/{name}/{kind}` is one wide route, manually 404ing through a kind whitelist instead of being split into three routes — a literal translation of the Node route shape.
