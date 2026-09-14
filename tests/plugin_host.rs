@@ -756,7 +756,7 @@ async fn boot_disabled_plugins_guard_every_route_they_own() {
         &app,
         json_body(
             "POST",
-            "/echo",
+            "/mcp/echo",
             json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }),
         ),
     )
@@ -1458,7 +1458,7 @@ async fn enabled_plugins_keep_every_api_shape_they_had() {
         &app,
         json_body(
             "POST",
-            "/echo",
+            "/mcp/echo",
             json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }),
         ),
     )

@@ -68,7 +68,7 @@ async fn remote_echo() -> Remote {
         let _ = axum::serve(listener, app).await;
     });
     Remote {
-        url: format!("http://127.0.0.1:{port}/echo"),
+        url: format!("http://127.0.0.1:{port}/mcp/echo"),
         registry,
         server,
     }

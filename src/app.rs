@@ -1,7 +1,8 @@
 //! The gateway HTTP server — port of `router.ts` (with `http.ts`'s routing contract carried by
-//! axum): the panel, health, the management API, and the MCP endpoints as a catch-all
-//! single-segment route resolved dynamically from the registry, so paths can be added and
-//! removed at runtime.
+//! axum): the panel, health, the management API, and the MCP endpoints under the `/mcp/` prefix
+//! as a catch-all single-segment route resolved dynamically from the registry, so paths can be
+//! added and removed at runtime. The prefix is the MCP plugin's domain (docs/24, ADR-018): the
+//! root stays free for host chrome and whatever a future plugin claims there.
 //!
 //! The boundary, installed ahead of every route (the port of the router guard): this gateway
 //! answers its own machine and nothing else — peer address, `Host` and `Origin` — and it covers
@@ -324,7 +325,9 @@ async fn mcp_delete(
     StatusCode::NO_CONTENT.into_response()
 }
 
-/// MCP endpoint: POST /<mcp-name>. Served through the per-generation cached StreamableHttpService
+/// MCP endpoint: POST /mcp/<name> (docs/24: the /mcp/ prefix is the MCP plugin's domain — the
+/// root belongs to host chrome and future plugins). Served through the per-generation cached
+/// StreamableHttpService
 /// so the endpoint answers BOTH protocol eras: the modern per-request-envelope path (native
 /// `server/discover`) and the legacy 2025-era initialize handshake.
 async fn mcp_post(
@@ -471,7 +474,7 @@ fn host_api_tree(host: Arc<swiss_host::host::PluginHost>) -> Router<()> {
 /// state does) and over every plugin-owned path — stable routes, live dispatch.
 pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
     let mcp_routes = Router::new().route(
-        "/{path}",
+        "/mcp/{path}",
         // No GET on an MCP path: the modern protocol serves notifications through the client's
         // own POST stream, so a GET is not a route — it falls to the same 404 every unhandled
         // method gets (the Node build had no GET handler either).
@@ -532,7 +535,8 @@ pub fn build_app(ctx: Arc<AppContext>, extra: Option<Router<()>>) -> Router {
             ),
         )
         .merge(crate::adminapi::mount(ctx.clone()))
-        // Before the MCP catch-all, which would otherwise swallow /api/tunnels.
+        // After the /api tree. The /mcp/ prefix already keeps the catch-all off /api/tunnels;
+        // merge order stays host-first as belt and braces for whatever claims the root next.
         .merge(mcp_routes)
         .fallback(fallback_404)
         // A path that exists under another method answers 404 in the Node build (its router
