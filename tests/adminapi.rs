@@ -671,6 +671,10 @@ async fn exposes_the_tokens_env_var_name_never_the_token() {
 
 #[tokio::test]
 async fn lists_creates_revokes_and_rotates_named_tokens() {
+    // The MCP posts below answer through the traffic ring; without the lock a parallel
+    // traffic-counting test can read one of this test's rows (seen once as 11-vs-10 in a
+    // full-parallel gate run). The lock is the file's rule for any MCP-driving test.
+    let _lock = traffic_lock().await;
     let h = setup();
     // The migrated seed is present as the "default" token, and the list carries no secrets.
     let (status, body) = h.get("/api/tokens").await;
