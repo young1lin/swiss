@@ -1412,6 +1412,31 @@ async fn persists_added_mcps_to_managed_json() {
 }
 
 #[tokio::test]
+async fn plugin_domain_names_need_no_host_reservation() {
+    // docs/24 P2: inside /mcp/* the host's root reserved words are gone — health/api/admin/
+    // mcp are ordinary MCP names there, creatable and reachable, while the host's own
+    // routes at the root keep answering untouched.
+    let h = setup();
+    for name in ["health", "api", "admin", "mcp"] {
+        let (status, body) = h
+            .post("/api/mcps", json!({ "name": name, "type": "echo" }))
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{name}: {body}");
+    }
+    // Reachable: /mcp/health is the MCP, /health is the host liveness route.
+    let (status, _) = h
+        .mcp(
+            "/mcp/health",
+            TOKEN,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = h.get("/health").await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn rejects_an_invalid_name_and_a_duplicate() {
     let h = setup();
     let (status, _) = h
@@ -2292,6 +2317,28 @@ async fn imports_stdio_and_http_entries_suffixes_collisions_and_skips_this_gatew
     );
     assert!(h.registry.has("redis-1"));
     assert!(h.registry.has("docs"));
+}
+
+#[tokio::test]
+async fn imports_a_name_the_root_once_reserved_without_renaming() {
+    // docs/24 P2: the RESERVED rename-on-import rule retired with the root-level route — an
+    // imported "health" keeps its name under the MCP plugin's /mcp/ domain.
+    let h = setup();
+    let (status, body) = h
+        .post(
+            "/api/mcps/import",
+            json!({
+                "mcpServers": {
+                    "health": { "type": "http", "url": "https://example.invalid/h" },
+                },
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    // "from" is the wanted name as it appeared in the file; it must equal the landed name.
+    assert_eq!(field_of(&body["imported"], "from"), ["health"]);
+    assert_eq!(field_of(&body["imported"], "name"), ["health"]);
+    assert!(h.registry.has("health"));
 }
 
 #[tokio::test]

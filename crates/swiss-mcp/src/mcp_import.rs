@@ -15,9 +15,6 @@ use serde_json::{json, Map, Value};
 use swiss_host::config::ServerDef;
 use swiss_host::local_only::is_loopback_bind_host;
 
-/// Route names the gateway itself answers on — an imported server may never take one.
-const RESERVED: [&str; 3] = ["api", "health", "admin"];
-
 /// Name as it appeared in the file, after sanitizing (before any collision suffix).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ImportAdd {
@@ -39,18 +36,19 @@ pub struct ImportPlan {
     pub skip: Vec<ImportSkip>,
 }
 
-/// A free name under the gateway's path rules. `health` / `api` / `admin` are reserved routes.
+/// A free name under the gateway's path rules: the wanted name, or wanted-N on collision.
+/// `taken` is the whole rule (docs/24 P2) — under the /mcp/ domain nothing is reserved, so a
+/// name is taken only when an existing MCP holds it.
 ///
 /// Node's version throws when 9999 suffixed names are all taken; here that surfaces as `Err`,
 /// which the admin route answers with instead of an unhandled 500.
 pub fn unique_name(base: &str, taken: &HashSet<String>) -> Result<String, String> {
-    let used = |n: &str| taken.contains(n) || RESERVED.iter().any(|r| r.eq_ignore_ascii_case(n));
-    if !used(base) {
+    if !taken.contains(base) {
         return Ok(base.to_string());
     }
     for i in 1..10000 {
         let n = format!("{base}-{i}");
-        if !used(&n) {
+        if !taken.contains(&n) {
             return Ok(n);
         }
     }
@@ -436,9 +434,12 @@ mod tests {
     }
 
     #[test]
-    fn treats_reserved_path_names_as_taken() {
-        assert_eq!(unique_name("health", &set(&[])).unwrap(), "health-1");
-        assert_eq!(unique_name("api", &set(&[])).unwrap(), "api-1");
+    fn plugin_domain_names_need_no_host_reservation() {
+        // docs/24 P2: the host's root reserved words retired with the root-level route. A
+        // name is taken only when it is actually taken; collisions still suffix.
+        assert_eq!(unique_name("health", &set(&[])).unwrap(), "health");
+        assert_eq!(unique_name("api", &set(&[])).unwrap(), "api");
+        assert_eq!(unique_name("admin", &set(&["admin"])).unwrap(), "admin-1");
     }
 
     // --- planMcpImport --------------------------------------------------------

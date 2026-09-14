@@ -56,11 +56,10 @@ fn is_valid_name(name: &str) -> bool {
         .all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
 }
 
-/// Names that would shadow built-in routes or be ambiguous as a path segment.
-const RESERVED: [&str; 3] = ["api", "health", "admin"];
-
 fn name_ok(name: &str) -> bool {
-    is_valid_name(name) && !RESERVED.contains(&name.to_ascii_lowercase().as_str())
+    // docs/24 P2: no reserved words. MCP names live under /mcp/, the plugin's own domain,
+    // where they cannot shadow a host route — NAME_RE (charset/length) is the whole rule.
+    is_valid_name(name)
 }
 
 /// How this MCP is launched, for the sidebar chip. The adapter type, except `proc`, which is
