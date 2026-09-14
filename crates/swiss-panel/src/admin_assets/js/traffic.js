@@ -136,7 +136,7 @@ function renderTraffic() {
       '<span>Last</span><span class="cli-n">Requests</span><span></span></div>';
     var rows = clients.map(function (c) {
       var isSel = sel === c.key;
-      var mcps = (c.mcps || []).map(function (m) { return "/" + m; }).join(" ");
+      var mcps = (c.mcps || []).map(function (m) { return "/mcp/" + m; }).join(" ");
       var tokens = c.tokens || [];
       var tokenLine = tokens.length ? tokens.join(", ") : "no token";
       return '<div class="cli-row' + (isSel ? " sel" : "") + '" data-ckey="' + esc(c.key) + '" role="button" tabindex="0">' +
