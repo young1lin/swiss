@@ -384,12 +384,11 @@ describe("the memory chip is a memory-only control", () => {
   });
 });
 
-/* Fullscreen: the sub-page takes over the whole page area — the global toolbar and the
-   sidebar fold away (body.immersive + base.css), the page bar stays, and the toggle ends
-   with a window resize so every view fits itself. The browser's own fullscreen is
-   deliberately NEVER requested: F11 is the user's keypress, the page is ours — the stub
-   below keeps a counting requestFullscreen precisely to pin that it stays uncalled. */
-describe("fullscreen - the sub-page takes over the page", () => {
+/* Focus mode gives the current page the rail's width while the minimal shell bar stays
+   above it (body.immersive + base.css), then dispatches resize so every view fits itself.
+   The browser's own fullscreen is deliberately NEVER requested: F11 is the user's keypress,
+   the app layout is ours — the stub below pins that it stays uncalled. */
+describe("focus mode - the page gains navigation space", () => {
   interface FakeBtn { title: string; innerHTML: string; onclick: unknown; setAttribute: (k: string, v: string) => void; }
   const els = new Map<string, FakeBtn>();
   let classes: Set<string>;
@@ -454,7 +453,7 @@ describe("fullscreen - the sub-page takes over the page", () => {
     const btn = els.get("expandBtn")!;
     expect(typeof btn.onclick).toBe("function");
     expect(btn.innerHTML).toContain("#i-expand");
-    expect(btn.title).toContain("Fullscreen");
+    expect(btn.title).toContain("Focus mode");
   });
 
   it("toggle: the class flips, the icon flips, views get one resize - and no document fullscreen is asked", () => {
@@ -483,22 +482,26 @@ describe("fullscreen - the sub-page takes over the page", () => {
   });
 });
 
-/* Fullscreen folds the APP chrome and keeps the page's own surfaces — the CSS contract,
-   pinned end to end. The 2026-09-13 regressions still shape it: (1) folding the SIDEBAR
-   blanked #mcps, where the sidebar IS the page; (2) display:none on the chrome took the
-   exit button down with it. The adaptive shell (docs/13 D5) widens the rule set: the RAIL
-   and the CONTEXT BAR are app chrome and fold; the resource sidebar and a workspace's own
-   body chrome (the terminal's bar and session tabs) never do. These read the shipped
-   base.css the way the cascade test above does and pin that shape. */
+/* Focus mode folds the plugin rail, but the shell's 40px app bar remains in flow. The
+   page body must never share pixels with shell controls: the old fixed corner escape covered
+   page-owned actions at the 900px support floor. Location and readouts fold inside the bar;
+   theme and exit keep their normal far-right slots. */
 describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
   const base = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "styles", "base.css"), "utf8");
 
-  it("the rail and the context bar fold through visibility, never display:none", () => {
+  it("ordinary pages keep an in-flow bar, while a docked workspace gives it no empty row", () => {
     expect(base).toMatch(/body.immersive .rail {[^}]*visibility: hidden/);
-    expect(base).toMatch(/body.immersive .ctxbar {[^}]*visibility: hidden/);
-    // display would take the exit button (inside the context bar) down with the chrome
     expect(base).not.toMatch(/body.immersive .rail {[^}]*display: none/);
-    expect(base).not.toMatch(/body.immersive .ctxbar {[^}]*display: none/);
+    expect(base).toMatch(/body.immersive .ctxbar {[^}]*height: 40px/);
+    expect(base).not.toMatch(/body.immersive .ctxbar {[^}]*(?:visibility: hidden|height: 0|position: fixed)/);
+    expect(base).toMatch(/body.immersive.immersive-docked .ctxbar {[^}]*height: 0/);
+  });
+
+  it("the minimal bar folds page context and passive readouts", () => {
+    expect(base).toMatch(/body.immersive #pageBtn,/);
+    expect(base).toMatch(/body.immersive #pageLoc,/);
+    expect(base).toMatch(/body.immersive #countChip,/);
+    expect(base).toMatch(/body.immersive #memChip {[^}]*display: none/);
   });
 
   it("the page's own surfaces never fold: no immersive rule hides the sidebar", () => {
@@ -506,26 +509,27 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
     expect(base).not.toMatch(/body.immersive[^{]*.sidebar[^{]*{[^}]*visibility: hidden/);
   });
 
-  it("the exit escapes: the corner button re-opens visibility over its hidden parent", () => {
-    expect(base).toMatch(/body.immersive #expandBtn {[^}]*visibility: visible/);
-    expect(base).toMatch(/body.immersive #expandBtn {[^}]*position: fixed/);
-    // A fixed element sizes percentages against the VIEWPORT: without an explicit width the
-    // "corner button" can stretch back into a full-width strip (the 2026-09-14 lesson).
-    expect(base).toMatch(/body.immersive #expandBtn {[^}]*width: 28px/);
+  it("theme and exit stay in layout flow instead of floating over page actions", () => {
+    expect(base).not.toMatch(/body.immersive #(?:expandBtn|themeBtn) {[^}]*position: fixed/);
+    expect(base).not.toMatch(/body.immersive #(?:expandBtn|themeBtn) {[^}]*(?:top:|right:|z-index:)/);
   });
 
-  it("the theme escapes with it - the app zone is always visible, full-screen included", () => {
-    expect(base).toMatch(/body.immersive #themeBtn {[^}]*visibility: visible/);
-    expect(base).toMatch(/body.immersive #themeBtn {[^}]*position: fixed/);
-    expect(base).toMatch(/body.immersive #themeBtn {[^}]*width: 28px/);
+  it("Terminal exposes one shell dock and immersive moves the app zone there", () => {
+    const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "index.html"), "utf8");
+    const terminal = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "js", "views", "terminal.js"), "utf8");
+    const immersive = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "js", "immersive.js"), "utf8");
+    expect(shell).toContain('id="appZone"');
+    expect(terminal).toContain('data-shell-focus-slot');
+    expect(immersive).toContain('"immersive-docked"');
+    expect(immersive).toContain("MutationObserver");
   });
 });
 
 /* Focus mode is ONE shell-owned control (docs/13 D5, as revised). The entry lives at the
-   context bar's far right in normal mode, the same button escapes to the upper-right while
-   immersive, and no page mounts a fullscreen control of its own — the terminal's old
-   .imm-toggle was exactly that debt. Pinned here as source contracts over the shipped
-   shell and modules, next to the behavioral suite above. */
+   context bar's far right in normal mode and remains there when the bar becomes minimal;
+   no page mounts a fullscreen control of its own — the terminal's old .imm-toggle was
+   exactly that debt. Pinned here as source contracts over the shipped shell and modules,
+   next to the behavioral suite above. */
 describe("focus mode - one shell-owned control", () => {
   const read = (rel: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", rel), "utf8");
 
@@ -564,10 +568,9 @@ describe("focus mode - one shell-owned control", () => {
     }
   });
 
-  it("the bar is never hidden while immersive - the corner exit must survive every paint", () => {
-    // paintPluginContext owns #ctxBar's hidden flag; #expandBtn lives inside the bar and
-    // escapes the immersive fold through visibility (base.css). A display:none parent
-    // would strand the exit with Esc as the only way out, so the guard is pinned here.
+  it("the bar is never hidden while immersive - its in-flow exit must survive every paint", () => {
+    // paintPluginContext owns #ctxBar's hidden flag; #expandBtn lives inside the minimal bar.
+    // A hidden parent would strand the exit with Esc as the only way out, so the guard stays.
     const registry = read("js/page-registry.js");
     expect(registry).toContain('contains("immersive")');
     expect(registry).toMatch(/bar.hidden = !show && !immersive/);

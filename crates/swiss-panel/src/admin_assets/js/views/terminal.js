@@ -1018,11 +1018,11 @@ function render() {
                 (pick.reason ? '<span class="term-none">' + esc(pick.reason) + "</span>" : "")
               : '<span class="term-none">' + esc(pick.note) + "</span>")) +
         /* The ? reference button (guidance tier 3): same quiet box as the gear - present
-           in every branch, including the empty ones, where it matters most. No fullscreen
-           button here: Focus mode is shell-owned and lives in the context bar above this
-           workspace body (immersive.js) - one control, one corner, every page. */
+           in every branch, including the empty ones, where it matters most. The empty slot
+           after it accepts the shell-owned app zone only during Terminal fullscreen; there
+           is no duplicate page-owned fullscreen control (immersive.js). */
         '<button class="term-gear" id="term-help" title="Shortcuts and gestures" aria-label="Shortcuts and gestures">' + icon("help") + "</button>" +
-      "</div></div>" +
+      '</div><span class="term-shell-slot" data-shell-focus-slot></span></div>' +
     '<div class="term-find" id="term-find" hidden>' +
       '<input id="term-find-q" type="text" placeholder="Find" aria-label="Find in terminal" spellcheck="false" />' +
       '<span class="term-find-count" id="term-find-count"></span>' +
