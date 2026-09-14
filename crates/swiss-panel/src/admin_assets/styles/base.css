@@ -310,17 +310,22 @@
       background: var(--bar); border-bottom: 1px solid var(--sep);
       min-width: 0;
     }
+    /* A control, and it must LOOK like one before it is discovered by hover: the switcher
+       carries its chip always (quiet tint + hairline), not only under the cursor - a plain
+       breadcrumb was read as text and the page menu went unfound (live feedback, 3ec7f4d). */
     .ctx-switch {
       display: inline-flex; align-items: center; gap: var(--s1);
       font-size: var(--f-body);
       padding: 4px var(--s2); margin-left: calc(-1 * var(--s2));
       border-radius: var(--r-btn); color: var(--text-2); max-width: 60%;
+      background: var(--hover); box-shadow: inset 0 0 0 1px var(--sep);
     }
-    .ctx-switch:hover { background: var(--hover); color: var(--text); }
+    .ctx-switch:hover { background: color-mix(in srgb, var(--hover), var(--card)); color: var(--text); }
     .ctx-plugin { color: var(--text-3); font-weight: 450; }
     .ctx-sep { color: var(--text-3); flex: none; }
     .ctx-page { color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ctx-switch .ic { width: 12px; height: 12px; color: var(--text-3); }
+    /* The caret points DOWN: the click opens a menu below, not a page to the right. */
+    .ctx-switch .ic { width: 13px; height: 13px; color: var(--text-2); transform: rotate(90deg); }
     /* The single-page location: text, not a control — same slot and weight as the page
        label a multi-page group shows, minus the disclosure a one-entry menu would fake. */
     .ctx-loc { min-width: 0; max-width: 60%; }
