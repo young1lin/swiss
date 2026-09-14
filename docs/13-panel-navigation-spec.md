@@ -6,8 +6,11 @@
 > 当前页选择器（"MCP / Servers ▾"）；单页插件渲染静态位置标签（`Data`），不画假下拉、
 > 不渲染 `Data / Data`。`workspace` 重新定义为「全幅、致密的 Page Body」——只改
 > 身体框定，外壳 chrome（Rail、Context Bar、Focus 控件）永远由 shell 绘制，任何插件不再替换应用
-> chrome；Terminal 与 Data 都是 workspace 页。Focus 模式收归外壳独有：入口在 Context Bar 最右，
-> 沉浸退出逃逸到同一右上角，Terminal 自己的 `.imm-toggle` 全屏按钮已删除。Tunnels 的页内
+> chrome；Terminal 与 Data 都是 workspace 页。Context Bar 分两个永不相混的区域：左侧属于
+> 当前页面（位置切换器/静态标签、计数芯片），最右侧是应用级保留区——每一页都固定为
+> 「内存 · 明暗 · 全屏」三控件、顺序不变（主题已从 Rail 底部迁入，Rail 成为纯导航）；
+> 沉浸模式下全屏与明暗两个可交互控件一同逃逸到右上角，内存读数随栏折叠。Focus 模式
+> 收归外壳独有：入口在保留区最右，沉浸退出逃逸到同一右上角，Terminal 自己的 `.imm-toggle` 全屏按钮已删除。Tunnels 的页内
 > SSH Connections / Port Forwards 分段控件升级为真正的两个 L2 页（`#tunnels` 保留为 SSH
 > Connections，`#tunnel-forwards` 为 Port Forwards，同组相邻 order，Rail 仍是一个座位）。
 > 各页正文不再重复位置大标题（Jobs/Plugins/Secrets/Token 的 h1 已去）；MCP 选中资源的头部

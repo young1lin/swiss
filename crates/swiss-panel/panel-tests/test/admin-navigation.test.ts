@@ -217,15 +217,17 @@ describe("the plugin context bar (page navigation)", () => {
     expect(byId("railNav").innerHTML).toContain('data-group="terminal" data-view="terminal" aria-current="true"');
   });
 
-  it("the count chip, the memory reading and the focus control live on the context bar, not the rail", () => {
+  it("page chips sit left, the app trio (mem, theme, focus) owns the far right of the bar", () => {
     const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
     const rail = shell.slice(shell.indexOf('class="rail"'), shell.indexOf('class="workbench"'));
     const ctx = shell.slice(shell.indexOf('class="ctxbar"'), shell.indexOf('class="shell"'));
     expect(rail).not.toContain("countChip");
     expect(ctx).toContain('id="countChip"');
     expect(ctx).toContain('id="memChip"');
-    // Focus mode is shell-owned and lives at the bar's far right — never in the rail foot.
+    // The reserved app zone: theme moved here from the rail foot, focus stays far right.
     expect(rail).not.toContain('id="expandBtn"');
+    expect(rail).not.toContain('id="themeBtn"');
+    expect(ctx).toContain('id="themeBtn"');
     expect(ctx).toContain('id="expandBtn"');
     // The two-segment-control era is gone from the shell.
     expect(shell).not.toContain('id="viewSeg"');
