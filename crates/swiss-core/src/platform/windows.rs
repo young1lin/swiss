@@ -17,6 +17,8 @@ use windows::Win32::System::Registry::{
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 
+use super::ParentProcess;
+
 /// An owned `CRYPT_INTEGER_BLOB`. Only ever wraps bytes this side allocated (a Vec that outlives
 /// the call), so DPAPI never sees a dangling pointer.
 struct EntropyBlob {
@@ -242,6 +244,69 @@ pub fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// The process that spawned THIS one: parent pid + image name, both from one Toolhelp
+/// snapshot pass (the snapshot carries th32ParentProcessID and szExeFile side by side, so
+/// attribution costs no extra walk and no subprocess). The parent of a detached `swiss
+/// start` child has usually exited by inspection time - the boot log reads this while the
+/// launcher is typically still alive, which is exactly when the answer matters.
+pub fn parent_process() -> Option<ParentProcess> {
+    // SAFETY: the snapshot handle is closed on every path; PROCESSENTRY32W is initialized
+    // with its own size as the API requires.
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return None; // no snapshot - callers log "parent unknown", never a guess
+        };
+        let own = std::process::id();
+        let mut parent: Option<u32> = None;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                if entry.th32ProcessID == own {
+                    parent = Some(entry.th32ParentProcessID);
+                    break; // one pass finds self; the parent entry comes from a second look
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        // Reset the walk and look the parent up by pid for its image name. A pid reused
+        // between the two passes can misname the parent - logged attribution is a hint,
+        // not an identity claim.
+        let mut name = None;
+        if let Some(parent_pid) = parent {
+            let mut entry = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            if Process32FirstW(snapshot, &mut entry).is_ok() {
+                loop {
+                    if entry.th32ProcessID == parent_pid {
+                        let end = entry
+                            .szExeFile
+                            .iter()
+                            .position(|c| *c == 0)
+                            .unwrap_or(entry.szExeFile.len());
+                        name = Some(String::from_utf16_lossy(&entry.szExeFile[..end]));
+                        break;
+                    }
+                    if Process32NextW(snapshot, &mut entry).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = windows::Win32::Foundation::CloseHandle(snapshot);
+        parent.map(|pid| ParentProcess {
+            pid,
+            name: name.unwrap_or_default(),
+        })
+    }
+}
+
 /// `own_pid` and every descendant (any process type), via the Toolhelp parent->child walk —
 /// the direct replacement for the Node build's PowerShell CIM query. A reaper uses it to refuse
 /// to touch a stale-ledger pid the OS has since handed to one of THIS instance's own children.
@@ -356,3 +421,20 @@ pub fn process_tree_working_set(roots: &[u32]) -> Option<(u64, usize)> {
         Some((total, count))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_process_names_the_test_runner_that_spawned_it() {
+        // Whatever runs this binary (cargo, a harness shell) is the parent: a real pid,
+        // never our own, with a resolvable image name. This is exactly the line the boot
+        // log prints as attribution - a daemon started by a launcher answers the same way.
+        let parent = parent_process().expect("snapshot walk finds our own entry");
+        assert_ne!(parent.pid, 0);
+        assert_ne!(parent.pid, std::process::id());
+        assert!(!parent.name.is_empty());
+    }
+}
+

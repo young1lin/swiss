@@ -14,6 +14,15 @@
 
 use std::process::Command;
 
+/// The env var swiss start uses to hand the detached serve child its launcher's
+/// attribution (pid + argv, as JSON). The launcher exits immediately after the spawn by
+/// design, so the environment - captured at spawn - is the only channel that outlives it;
+/// the serve path reads it at boot, logs the lineage, and removes the variable before any
+/// child of its own inherits it (same single-threaded-boot argument as the PATH repair).
+/// NOT part of LAUNCHER_NOISE: the blacklist runs first in main() and would delete it
+/// before the boot log could read it.
+pub const SPAWNER_ENV: &str = "SWISS_SPAWNER";
+
 /// Variables that describe the LAUNCHER, not the machine: an agent harness, a CI runner, or a
 /// terminal emulator marking its own session. Each one is a reason a child decided it should
 /// behave differently (skip colour, skip prompts) because of who started the gateway.

@@ -12,6 +12,8 @@
 
 use std::collections::HashMap;
 
+use super::ParentProcess;
+
 /// The machine id: `/etc/machine-id`, then `/var/lib/dbus/machine-id`. World-readable on Linux,
 /// so it binds to the MACHINE, not the user — still enough to make a copied data dir useless
 /// elsewhere. None when neither file exists.
@@ -147,6 +149,23 @@ fn signalable(pid: u32) -> Option<libc::pid_t> {
 }
 
 /// Whether a pid names a live process — the pid-file reader's existence probe.
+/// The process that spawned THIS one: parent pid + image name. Linux reads both from
+/// /proc (getppid + the parent's comm). On macOS there is no /proc and the seam
+/// degrades honestly to None - "parent unknown" in the boot log, never a guess.
+pub fn parent_process() -> Option<ParentProcess> {
+    let pid = unsafe { libc::getppid() } as u32;
+    if pid == 0 {
+        return None; // re-parented to init (launcher died): no name to attach
+    }
+    let name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .ok()
+        .map(|s| s.trim().trim_end_matches(char::from(0)).to_string());
+    Some(ParentProcess {
+        pid,
+        name: name.unwrap_or_default(),
+    })
+}
+
 pub fn pid_alive(pid: u32) -> bool {
     let Some(pid) = signalable(pid) else {
         return false;
@@ -209,6 +228,17 @@ mod tests {
         assert_eq!(ppid_from_stat("1 (systemd) S 0 1 1 0"), Some(0));
         assert_eq!(ppid_from_stat("garbage with no parens"), None);
         assert_eq!(ppid_from_stat("42 (node) S"), None); // truncated read
+    }
+
+    #[test]
+    fn parent_process_reports_a_real_pid_for_the_test_runner() {
+        // getppid always knows the launcher; the name is /proc-only, so macOS is allowed
+        // to answer empty - the boot log says "name unknown", not a guess.
+        let parent = parent_process().expect("getppid cannot fail");
+        assert_ne!(parent.pid, 0);
+        assert_ne!(parent.pid, std::process::id());
+        #[cfg(target_os = "linux")]
+        assert!(!parent.name.is_empty());
     }
 
     #[test]

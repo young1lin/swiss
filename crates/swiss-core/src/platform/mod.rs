@@ -22,7 +22,7 @@ pub use job::KillOnCloseJob;
 mod windows;
 #[cfg(windows)]
 pub use windows::{
-    descendant_pids, dpapi_protect, dpapi_unprotect, machine_id, pid_alive,
+    descendant_pids, dpapi_protect, dpapi_unprotect, machine_id, parent_process, pid_alive,
     process_tree_working_set, self_private_bytes, self_working_set, tree_kill,
 };
 
@@ -30,9 +30,19 @@ pub use windows::{
 mod unix;
 #[cfg(not(windows))]
 pub use unix::{
-    descendant_pids, dpapi_protect, dpapi_unprotect, machine_id, pid_alive,
+    descendant_pids, dpapi_protect, dpapi_unprotect, machine_id, parent_process, pid_alive,
     process_tree_working_set, self_private_bytes, self_working_set, tree_kill,
 };
+
+/// The process that spawned THIS one, as far as the platform can say without a subprocess:
+/// pid plus image name. The 2026-09-14 deploy incident spent an hour of archaeology on
+/// "who started this daemon" - the snapshot answer (a pid and an exe name, taken at boot
+/// while the launcher is usually still alive) would have settled it in one log line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParentProcess {
+    pub pid: u32,
+    pub name: String,
+}
 
 /// BFS from `roots` down a pid -> parent map, returning every pid in the subtrees.
 ///

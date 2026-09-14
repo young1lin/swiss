@@ -18,6 +18,29 @@ use swiss_mcp::registry::{Registry, Source};
 use serde_json::json;
 
 pub async fn run_gateway() -> Result<(), String> {
+    // Who started us - the attribution the 2026-09-14 deploy incident had to reconstruct
+    // from session transcripts by hand (two sessions started the same production four
+    // minutes apart, and neither daemon could say who had launched it). `swiss start`
+    // hands its launcher's pid+argv over in SWISS_SPAWNER at spawn - the launcher exits
+    // by design, so the environment is the only channel that outlives it. A foreground
+    // `serve` has no handoff and falls back to the platform snapshot: parent pid + image
+    // name, read while the starting shell is usually still alive.
+    let spawner = std::env::var(swiss_core::env::SPAWNER_ENV)
+        .ok()
+        .and_then(|value| serde_json::from_str(&value).ok());
+    // SAFETY: same argument as the PATH repair below - boot is single-threaded on the
+    // current_thread runtime, and the removal keeps launcher attribution out of every
+    // child this gateway will spawn.
+    unsafe { std::env::remove_var(swiss_core::env::SPAWNER_ENV) };
+    let mut lineage = json!({ "pid": std::process::id() });
+    if let Some(spawner) = spawner {
+        lineage["started_by"] = spawner;
+    }
+    if let Some(parent) = swiss_core::platform::parent_process() {
+        lineage["parent"] = json!({ "pid": parent.pid, "name": parent.name });
+    }
+    log::log("info", "gateway booted", Some(lineage));
+
     // A detached `swiss start` (and Cursor's agent shell) often inherit a PATH that is missing
     // user-level bins — uv/uvx live in ~/.local/bin. Put them back before any proc MCP spawns.
     // Safe to set here: boot is single-threaded on the current_thread runtime, before any task

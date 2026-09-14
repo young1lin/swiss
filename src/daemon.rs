@@ -145,6 +145,19 @@ pub fn server_entry() -> std::path::PathBuf {
     std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("swiss"))
 }
 
+/// The attribution a detached serve child logs at boot: THIS process's pid and argv, as
+/// JSON. The launcher exits right after the spawn by design, so the environment - captured
+/// at spawn - is the only channel that outlives it; today's dual-deploy incident (two
+/// sessions starting the same production four minutes apart) was diagnosed from session
+/// transcripts only because no daemon could say who had launched it.
+pub fn spawner_env_value() -> String {
+    serde_json::json!({
+        "pid": std::process::id(),
+        "argv": std::env::args().collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
 /// True for a path inside npm's npx cache, which is version-keyed and cleared on update — a
 /// daemon started from there stops being restartable the moment the cache turns over.
 pub fn is_npx_cache_path(path: &Path) -> bool {
@@ -425,6 +438,9 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
     // repeats the scrub in its own process, so this covers the spawn even where main() grew a
     // regression.
     swiss_core::env::scrub_command(&mut command);
+    // Launcher attribution for the boot log - set AFTER the scrub, like SWISS_PORT below,
+    // so the blacklist cannot strike what we just wrote.
+    command.env(swiss_core::env::SPAWNER_ENV, spawner_env_value());
     if let Some(port) = opts.port {
         // So the child listens where we asked, including a first run that has no config to
         // persist into. The serve child reads SWISS_PORT first.
@@ -649,6 +665,19 @@ mod tests {
     // that provably never signals (a refusal, an already-running report, a status read). The
     // `Forced` branch is therefore not exercised; nothing but a real daemon is safe to force-kill.
     use super::*;
+
+    #[test]
+    fn spawner_env_value_carries_this_process_pid_and_argv() {
+        // The value is JSON the serve path parses straight back out at boot: the round trip
+        // must yield exactly our pid and our argv, or the boot log would attribute the
+        // daemon to the wrong launcher.
+        let parsed: serde_json::Value = serde_json::from_str(&spawner_env_value()).unwrap();
+        assert_eq!(parsed["pid"].as_u64(), Some(u64::from(std::process::id())));
+        assert_eq!(
+            parsed["argv"].as_array().map(|a| a.len()),
+            Some(std::env::args().count())
+        );
+    }
 
     /// The state files and the pid files all live in the one scratch data dir the whole test
     /// binary shares, and the port/token env vars are process-wide, so every test that writes

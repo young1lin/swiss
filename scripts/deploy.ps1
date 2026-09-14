@@ -9,49 +9,71 @@
 # Run it from YOUR OWN terminal at the repo root, not from an agent tool shell: a deploy is
 # the operator's decision (H1 scrubs the daemon's environment anyway, but the habit stands).
 # -SkipGates jumps the test/clippy gates for a hotfix; the default is to run them.
-
+#
+# The single-deployer lock (deploy-lock.ps1) is taken FIRST and held for the whole run: the
+# 2026-09-14 incident was two sessions deploying the same production four minutes apart,
+# each unaware the other had already stopped it. Phase lines also land in the gateway home's
+# deploy.log as they happen, so a background deploy can be watched even when its stdout is
+# buffered away by a wrapper (that exact buffering made a healthy re-deploy look dead once).
 [CmdletBinding()]
 param(
     [switch]$SkipGates
 )
-
 $ErrorActionPreference = 'Stop'
 $Exe = 'target\release\swiss.exe'
-
+. "$PSScriptRoot\deploy-lock.ps1"
+$Home_ = if ($env:SWISS_HOME) { $env:SWISS_HOME } else { Join-Path $env:USERPROFILE '.mcp-gateway' }
+$DeployLog = Join-Path $Home_ 'deploy.log'
 function Fail($message) {
     Write-Host $message -ForegroundColor Red
+    Phase "FAILED: $message"
     exit 1
 }
-
+function Phase($message) {
+    # Timestamped everywhere, immediately: console (flushed, so a piped consumer sees
+    # progress as it happens) and the gateway home's deploy.log (survives wrappers that
+    # buffer stdout into silence).
+    Write-Host "== $message"
+    try {
+        Add-Content -Path $DeployLog -Value ("{0} deploy: {1}" -f (Get-Date).ToString('s'), $message)
+    } catch { }
+    [Console]::Out.Flush()
+}
+# Mutual exclusion before anything else - gates included: a 90-minute gate window is
+# exactly long enough for another session to start a deploy of its own.
+$lock = Acquire-DeployLock
+if (-not $lock.Acquired) {
+    $who = if ($lock.Holder) { "pid $($lock.Holder.pid) (started $($lock.Holder.started))" } else { "an unknown holder" }
+    Fail "another deploy holds the lock - $who; if that pid is dead it is stale, delete $($lock.LockPath) and re-run"
+}
+if ($lock.StaleTookOver) {
+    Phase "took over a STALE deploy lock (previous holder is gone)"
+}
+try {
 # Gates first, while production is still up: a failing gate must not take the daemon down.
 if (-not $SkipGates) {
-    Write-Host '== cargo test --workspace'
+    Phase 'cargo test --workspace'
     cargo test --workspace
     if ($LASTEXITCODE -ne 0) { Fail "tests failed - production left untouched" }
-    Write-Host '== cargo clippy --workspace --all-targets -- -D warnings'
+    Phase 'cargo clippy --workspace --all-targets -- -D warnings'
     cargo clippy --workspace --all-targets -- -D warnings
     if ($LASTEXITCODE -ne 0) { Fail "clippy failed - production left untouched" }
 } else {
-    Write-Host "== gates SKIPPED (-SkipGates)"
+    Phase "gates SKIPPED (-SkipGates)"
 }
-
 # Stop BEFORE building: the linker cannot overwrite the exe the running daemon holds
 # (os error 5). Exit 3 = nothing was running, which is fine to deploy over.
-Write-Host '== stopping the daemon'
+Phase 'stopping the daemon'
 & $Exe stop
 if ($LASTEXITCODE -eq 1) { Fail "stop was refused - resolve it by hand (see above), then re-run" }
-
-Write-Host '== cargo build --release'
+Phase 'cargo build --release'
 cargo build --release
 if ($LASTEXITCODE -ne 0) { Fail "build failed - start the old daemon again by hand: & $Exe start --no-open" }
-
-Write-Host '== starting the new daemon'
+Phase 'starting the new daemon'
 & $Exe start --no-open
 if ($LASTEXITCODE -ne 0) { Fail "start failed - log tail above" }
-
 & $Exe status
 if ($LASTEXITCODE -ne 0) { Fail "status says the daemon is not running" }
-
 # The proof: the daemon now serving is THIS build, not the previous one still holding the port.
 $version = (& $Exe --version) | Select-Object -First 1
 if (-not ($version -match '^swiss \S+ \((?<hash>[^,]+), ')) {
@@ -63,6 +85,10 @@ $running = ($health.Content | ConvertFrom-Json).build.hash
 if ($running -ne $built) {
     Fail "deploy did not take: running daemon is $running, freshly built is $built"
 }
-Write-Host "deployed: $running is serving on 19999"
+Phase "deployed: $running is serving on 19999"
+} finally {
+    # The lock MUST go even on failure - a failed deploy that keeps the lock blocks the
+    # retry that fixes it. Stale takeover inside the run is Release's problem, not ours.
+    [void](Release-DeployLock)
+}
 exit 0
-
