@@ -19,10 +19,11 @@ interface FakeEl {
   title: string;
   onclick: unknown;
   dataset: Record<string, string>;
+  setAttribute: (k: string, v: string) => void;
 }
 
 function fakeEl(): FakeEl {
-  return { innerHTML: "", hidden: false, textContent: "", className: "", title: "", onclick: null, dataset: {} };
+  return { innerHTML: "", hidden: false, textContent: "", className: "", title: "", onclick: null, dataset: {}, setAttribute: () => {} };
 }
 
 const els = new Map<string, FakeEl>();
@@ -51,7 +52,8 @@ const inventory = {
     { id: "mcps", pluginId: "mcp", label: "Servers", order: 10, sidebar: true, layout: "resource", path: "#mcps", entry: "/admin/js/views/mcps.js" },
     { id: "traffic", pluginId: "mcp", label: "Traffic", order: 20, layout: "page", path: "#traffic", entry: "/admin/js/views/traffic.js" },
     { id: "tokens", pluginId: "mcp", label: "Token", order: 30, layout: "page", path: "#tokens", entry: "/admin/js/views/tokens.js" },
-    { id: "tunnels", pluginId: "tunnels", label: "Tunnels", order: 30, layout: "page", path: "#tunnels", entry: "/admin/js/views/tunnels.js" },
+    { id: "tunnels", pluginId: "tunnels", label: "SSH Connections", order: 30, layout: "page", path: "#tunnels", entry: "/admin/js/views/tunnels.js" },
+    { id: "tunnel-forwards", pluginId: "tunnels", label: "Port Forwards", order: 35, layout: "page", path: "#tunnel-forwards", entry: "/admin/js/views/tunnel-forwards.js" },
     { id: "jobs", pluginId: "jobs", label: "Jobs", order: 50, layout: "page", path: "#jobs", entry: "/admin/js/views/jobs.js" },
     { id: "terminal", pluginId: "terminal", label: "Terminal", order: 70, layout: "workspace", path: "#terminal", entry: "/admin/js/views/terminal.js" },
   ],
@@ -107,8 +109,10 @@ describe("the plugin rail (global navigation)", () => {
     expect(rail).toContain('data-group="mcp" data-view="mcps"');
     expect(rail).not.toContain('data-view="traffic"');
     expect(rail).not.toContain('data-view="tokens"');
-    // Single-page plugins keep their own seats.
+    // Single-page plugins keep their own seats; a plugin's SECOND page never takes a rail
+    // seat of its own (the context bar switches pages, the rail switches plugins).
     expect(rail).toContain('data-group="tunnels" data-view="tunnels"');
+    expect(rail).not.toContain('data-view="tunnel-forwards"');
     expect(rail).toContain('data-group="jobs" data-view="jobs"');
     // The workspace plugin rides the rail like any peer.
     expect(rail).toContain('data-group="terminal" data-view="terminal"');
@@ -170,26 +174,59 @@ describe("the plugin context bar (page navigation)", () => {
     expect(byId("pageBtn").innerHTML).toContain('ctx-page">Token</span>');
   });
 
-  it("a single-page plugin draws no bar at all — its pane header already names it", async () => {
+  it("tunnels is a two-page group: #tunnels is SSH Connections, #tunnel-forwards is Port Forwards", async () => {
+    const tunnelsPages = inventory.pages.filter((p) => p.pluginId === "tunnels").sort((a, b) => a.order - b.order);
+    expect(tunnelsPages.map((p) => p.label)).toEqual(["SSH Connections", "Port Forwards"]);
+    const items = registry.pageMenuItems({ id: "tunnels", pages: tunnelsPages });
+    expect(items.map((i: { label: string }) => i.label)).toEqual(["SSH Connections", "Port Forwards"]);
+
+    // The legacy deep link keeps its meaning: rail selects Tunnels, bar says SSH Connections.
     await paint("tunnels", inventory);
-    expect(byId("ctxBar").hidden).toBe(true);
-    // ...and the rail still seats and selects it.
     expect(byId("railNav").innerHTML).toContain('data-group="tunnels" data-view="tunnels" aria-current="true"');
+    expect(byId("ctxBar").hidden).toBe(false);
+    expect(byId("pageBtn").hidden).toBe(false);
+    expect(byId("pageBtn").innerHTML).toContain('ctx-plugin">Tunnels</span>');
+    expect(byId("pageBtn").innerHTML).toContain('ctx-page">SSH Connections</span>');
+
+    // The new sibling lands in the SAME group, on its own page.
+    await paint("tunnel-forwards", inventory);
+    expect(byId("railNav").innerHTML).toContain('data-group="tunnels" data-view="tunnels" aria-current="true"');
+    expect(byId("pageBtn").innerHTML).toContain('ctx-page">Port Forwards</span>');
   });
 
-  it("the terminal is a workspace: its own chrome replaces the context bar", async () => {
+  it("a single-page plugin keeps the bar — a static location, not a fake dropdown", async () => {
+    await paint("jobs", inventory);
+    expect(byId("ctxBar").hidden).toBe(false);
+    // The location reads as text (same slot and weight), because a one-entry menu would lie.
+    expect(byId("pageBtn").hidden).toBe(true);
+    expect(byId("pageBtn").onclick).toBe(null);
+    expect(byId("pageLoc").hidden).toBe(false);
+    expect(byId("pageLoc").innerHTML).toContain('ctx-page">Jobs</span>');
+    // No redundant "Jobs / Jobs" breadcrumb either.
+    expect(byId("pageLoc").innerHTML).not.toContain("ctx-sep");
+    // ...and the rail still seats and selects it.
+    expect(byId("railNav").innerHTML).toContain('data-group="jobs" data-view="jobs" aria-current="true"');
+  });
+
+  it("the terminal is a workspace page and still lives under the same bar", async () => {
     await paint("terminal", inventory);
-    expect(byId("ctxBar").hidden).toBe(true);
+    // Workspace frames the BODY only; the shell keeps drawing its chrome (docs/13 D5 rev.).
+    expect(byId("ctxBar").hidden).toBe(false);
+    expect(byId("pageLoc").hidden).toBe(false);
+    expect(byId("pageLoc").innerHTML).toContain('ctx-page">Terminal</span>');
     expect(byId("railNav").innerHTML).toContain('data-group="terminal" data-view="terminal" aria-current="true"');
   });
 
-  it("the count chip and the memory reading live on the context bar, not the rail", () => {
+  it("the count chip, the memory reading and the focus control live on the context bar, not the rail", () => {
     const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
     const rail = shell.slice(shell.indexOf('class="rail"'), shell.indexOf('class="workbench"'));
     const ctx = shell.slice(shell.indexOf('class="ctxbar"'), shell.indexOf('class="shell"'));
     expect(rail).not.toContain("countChip");
     expect(ctx).toContain('id="countChip"');
     expect(ctx).toContain('id="memChip"');
+    // Focus mode is shell-owned and lives at the bar's far right — never in the rail foot.
+    expect(rail).not.toContain('id="expandBtn"');
+    expect(ctx).toContain('id="expandBtn"');
     // The two-segment-control era is gone from the shell.
     expect(shell).not.toContain('id="viewSeg"');
     expect(shell).not.toContain('id="subBar"');
@@ -217,6 +254,14 @@ describe("layouts (docs/13 D5)", () => {
     // The switcher keeps working: the legacy manifest's MCP group has three pages.
     expect(byId("ctxBar").hidden).toBe(false);
     expect(byId("pageBtn").innerHTML).toContain('ctx-page">MCPs</span>');
+  });
+
+  it("the legacy manifest grows the same two tunnels pages as the inventory", async () => {
+    await paint("tunnel-forwards", null, 404);
+    // One group, both pages, correct labels — the 404 path must not collapse back to one.
+    expect(byId("railNav").innerHTML).toContain('data-group="tunnels" data-view="tunnels" aria-current="true"');
+    expect(byId("pageBtn").innerHTML).toContain('ctx-plugin">Tunnels</span>');
+    expect(byId("pageBtn").innerHTML).toContain('ctx-page">Port Forwards</span>');
   });
 
   it("a multi-page group whose pages cannot serve keeps its switcher, marked · off", async () => {

@@ -2,7 +2,7 @@ import { $, api, apiJson, dotTitle, emptyHtml, esc, state, toast } from "./util.
 import { copyText } from "./connect.js";
 import { popupMenu } from "./menu.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
-import { connRowHtml, loadTunnels, ruleRowHtml, tunData, tunGroupsList, tunRows, tunScope, tunTab } from "./polling.js";
+import { connRowHtml, isTunnelsView, loadList, loadTunnels, ruleRowHtml, tunData, tunGroupsList, tunRows, tunScope } from "./polling.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
@@ -53,25 +53,47 @@ async function assignTunScoped(scope, id, group) {
   renderTunnels();
 }
 
-/* --- the page ----------------------------------------------------------------------------------- */
+/* --- the page -----------------------------------------------------------------------------------
+   The tunnels plugin contributes TWO L2 pages (docs/13 D5, as revised): the Context Bar's
+   "Tunnels / SSH Connections ▾" and "Tunnels / Port Forwards ▾" switch between them, and the
+   mounted page decides which scope this module renders (state.tun.tab, set by the page's
+   mount). The body header is the page's TASK, not its location: one line of scope prose and
+   the scope's actions on the right — no repeated "Tunnels" title, no second copy of the page
+   switcher. */
+
+/** The scope sentence under the bar: what THIS page operates on, never where we are (the
+ *  context bar owns location). */
+function tunDescHtml(isConns) {
+  return isConns
+    ? "SSH hosts this gateway can forward ports over. Test one before pointing a rule at it."
+    : "Local ports forwarded over an SSH connection. A local port stays bound only while its tunnel can carry traffic.";
+}
+
+/** The one count builder: the context bar's chip AND the page footer read the same words,
+ *  or the two would drift apart between polls (the mcpChipText lesson). */
+function tunnelsCountText(scope) {
+  var d = tunData();
+  if (scope === "rules") {
+    var active = d.rules.filter(function (r) { return r.state === "up"; }).length;
+    return d.rules.length + " rule" + (d.rules.length === 1 ? "" : "s") + ", " + active + " active";
+  }
+  var connected = d.connections.filter(function (c) { return c.state === "connected"; }).length;
+  return d.connections.length + " connection" + (d.connections.length === 1 ? "" : "s") + ", " + connected + " connected";
+}
 
 function renderTunnels() {
   var d = tunData();
   var isConns = state.tun.tab === "conns";
-  // One header row like the Traffic view's: tabs on the left, this tab's actions on the right.
-  var acts = '<span style="display:flex;gap:var(--s2)">' +
+  // The page's actions, right-aligned in the body header (pane-actions is the panel's own
+  // vocabulary for exactly this slot). Rules carry the bulk start/stop pair; connections
+  // carry only New — Test lives on each row.
+  var acts =
     '<button class="btn primary" id="' + (isConns ? "tNewConn" : "tNewRule") + '">New</button>' +
     '<button class="btn" id="tNewGroup">New group</button>';
   if (!isConns) {
     acts += '<button class="btn" id="tStartAll">Start all</button>' +
       '<button class="btn" id="tStopAll">Stop all</button>';
   }
-  acts += "</span>";
-  var ctrl =
-    '<div class="sec-head"><div class="seg" role="tablist">' +
-      '<button role="tab" data-tab="conns" aria-selected="' + isConns + '">SSH Connections</button>' +
-      '<button role="tab" data-tab="rules" aria-selected="' + !isConns + '">Port Forwards</button>' +
-    "</div>" + acts + "</div>";
 
   // One group per slice — the component owns the header band, the indent and the empty line
   // now (docs/20 §4.1). Empty groups keep their place: that is how you drag the first row into
@@ -79,21 +101,14 @@ function renderTunnels() {
   var cfg = tunCfg();
   var grouped = slice(tunRows(), tunGroupsList(), tunGroupOfRow);
   var list = isConns ? d.connections : d.rules;
-  var foot;
-  if (isConns) {
-    var connected = d.connections.filter(function (c) { return c.state === "connected"; }).length;
-    foot = d.connections.length + " connection" + (d.connections.length === 1 ? "" : "s") + ", " + connected + " connected";
-  } else {
-    var active = d.rules.filter(function (r) { return r.state === "up"; }).length;
-    foot = d.rules.length + " rule" + (d.rules.length === 1 ? "" : "s") + ", " + active + " active";
-  }
+  var foot = tunnelsCountText(isConns ? "conns" : "rules");
 
   // .wide for the same reason as the traffic log: a rule row is name + route + who it serves +
   // three buttons. .pane-desc keeps its own 60ch cap, so the prose does not stretch with it.
   $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div><h1 class="pane-title">Tunnels</h1>' +
-      '<div class="pane-desc">SSH connections and the local ports forwarded over them. A local port stays bound only while its tunnel can carry traffic.</div>' +
-    "</div></div>" + ctrl + '<div id="tunGroups"></div>' +
+    '<div class="pane-head"><div><div class="pane-desc">' + tunDescHtml(isConns) + "</div></div>" +
+      '<div class="pane-actions">' + acts + "</div></div>" +
+    '<div id="tunGroups"></div>' +
     '<div class="tun-foot">' + esc(foot) + "</div>" +
   "</div>";
   var host = $("tunGroups");
@@ -148,7 +163,7 @@ function tunCfg() {
 
 /** Poll-safe update: dots, reasons, button labels and the footer. Never structure. */
 function patchTunnels() {
-  if (state.view !== "tunnels") return;
+  if (!isTunnelsView(state.view)) return;
   var d = tunData();
   var rows = state.tun.tab === "conns" ? d.connections : d.rules;
   var attr = state.tun.tab === "conns" ? "data-conn" : "data-rule";
@@ -191,22 +206,11 @@ function patchTunnels() {
     if (badge) badge.textContent = String(n);
   });
   var foot = $("pane").querySelector(".tun-foot");
-  if (foot) {
-    if (state.tun.tab === "conns") {
-      var connected = d.connections.filter(function (c) { return c.state === "connected"; }).length;
-      foot.textContent = d.connections.length + " connection" + (d.connections.length === 1 ? "" : "s") + ", " + connected + " connected";
-    } else {
-      var active = d.rules.filter(function (r) { return r.state === "up"; }).length;
-      foot.textContent = d.rules.length + " rule" + (d.rules.length === 1 ? "" : "s") + ", " + active + " active";
-    }
-  }
+  if (foot) foot.textContent = tunnelsCountText(state.tun.tab === "conns" ? "conns" : "rules");
 }
 
 function wireTunnels() {
   var pane = $("pane");
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-tab]"), function (b) {
-    b.onclick = function () { tunTab(b.dataset.tab); };
-  });
   // The top New carries no group promise; the sheet falls back to the scope's last-used.
   if ($("tNewConn")) $("tNewConn").onclick = function () { openConnSheet(null); };
   if ($("tNewRule")) $("tNewRule").onclick = function () { openRuleSheet(null); };
@@ -362,4 +366,30 @@ async function deleteConn(conn) {
   if (j) toast("Deleted " + conn.name);
 }
 
-export { assignTunScoped, deleteConn, deleteRule, forceFreePort, moveTunRow, patchTunnels, renderTunnels, ruleAct, saveTunOrder, startAllRules, stopAllRules, testConn, tunCfg, wireTunnels, withTunBusy };
+/* --- the two L2 pages' shared lifecycle -----------------------------------------------------------
+   views/tunnels.js (#tunnels, SSH Connections) and views/tunnel-forwards.js
+   (#tunnel-forwards, Port Forwards) are thin modules over this one: same data, same
+   rendering, same polling — only the scope differs, and each mount states its own. No
+   business logic is duplicated on either side of the pair. */
+
+/** Mount one tunnels page: pin the scope, then load. Scope is the /api/groups family's own
+ *  word ("conns"|"rules"); everything in this module reads it through state.tun.tab. */
+async function mountTunnelsPage(scope) {
+  state.tun.tab = scope === "rules" ? "rules" : "conns";
+  return loadTunnels();
+}
+
+function refreshTunnelsPage() { return loadTunnels(); }
+
+async function pollTunnelsPage() {
+  await loadList();
+  await loadTunnels(true);
+}
+
+function unmountTunnelsPage() {
+  state.tun.data = null;
+  state.tun.keys = null;
+  state.tun.dragging = null;
+}
+
+export { assignTunScoped, deleteConn, deleteRule, forceFreePort, mountTunnelsPage, moveTunRow, patchTunnels, pollTunnelsPage, refreshTunnelsPage, renderTunnels, ruleAct, saveTunOrder, startAllRules, stopAllRules, testConn, tunCfg, tunnelsCountText, unmountTunnelsPage, wireTunnels, withTunBusy };

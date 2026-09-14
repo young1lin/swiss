@@ -488,15 +488,15 @@ describe("fullscreen - the sub-page takes over the page", () => {
    blanked #mcps, where the sidebar IS the page; (2) display:none on the chrome took the
    exit button down with it. The adaptive shell (docs/13 D5) widens the rule set: the RAIL
    and the CONTEXT BAR are app chrome and fold; the resource sidebar and a workspace's own
-   chrome (the terminal's bar and session tabs) never do. These read the shipped base.css
-   the way the cascade test above does and pin that shape. */
+   body chrome (the terminal's bar and session tabs) never do. These read the shipped
+   base.css the way the cascade test above does and pin that shape. */
 describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
   const base = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "styles", "base.css"), "utf8");
 
   it("the rail and the context bar fold through visibility, never display:none", () => {
     expect(base).toMatch(/body.immersive .rail {[^}]*visibility: hidden/);
     expect(base).toMatch(/body.immersive .ctxbar {[^}]*visibility: hidden/);
-    // display would take the exit button (inside the rail) down with the chrome
+    // display would take the exit button (inside the context bar) down with the chrome
     expect(base).not.toMatch(/body.immersive .rail {[^}]*display: none/);
     expect(base).not.toMatch(/body.immersive .ctxbar {[^}]*display: none/);
   });
@@ -509,8 +509,71 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
   it("the exit escapes: the corner button re-opens visibility over its hidden parent", () => {
     expect(base).toMatch(/body.immersive #expandBtn {[^}]*visibility: visible/);
     expect(base).toMatch(/body.immersive #expandBtn {[^}]*position: fixed/);
-    // A fixed element sizes percentages against the VIEWPORT: the rail-foot stretch rule
-    // (width:100%) turns the "corner button" into a full-width strip unless overridden.
+    // A fixed element sizes percentages against the VIEWPORT: without an explicit width the
+    // "corner button" can stretch back into a full-width strip (the 2026-09-14 lesson).
     expect(base).toMatch(/body.immersive #expandBtn {[^}]*width: 28px/);
+  });
+});
+
+/* Focus mode is ONE shell-owned control (docs/13 D5, as revised). The entry lives at the
+   context bar's far right in normal mode, the same button escapes to the upper-right while
+   immersive, and no page mounts a fullscreen control of its own — the terminal's old
+   .imm-toggle was exactly that debt. Pinned here as source contracts over the shipped
+   shell and modules, next to the behavioral suite above. */
+describe("focus mode - one shell-owned control", () => {
+  const read = (rel: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", rel), "utf8");
+
+  it("the entry sits in the context bar's right-side control area, not in the rail foot", () => {
+    const shell = read("index.html");
+    const rail = shell.slice(shell.indexOf('class="rail"'), shell.indexOf('class="workbench"'));
+    const ctx = shell.slice(shell.indexOf('class="ctxbar"'), shell.indexOf('class="shell"'));
+    expect(rail).not.toContain('id="expandBtn"');
+    expect(ctx).toContain('id="expandBtn"');
+    // Far right of the bar: the control comes AFTER the count chip in the bar's flex row.
+    expect(ctx.indexOf('id="countChip"')).toBeLessThan(ctx.indexOf('id="expandBtn"'));
+  });
+
+  it("the terminal has no page-local fullscreen control anymore", () => {
+    const terminal = read("js/views/terminal.js");
+    expect(terminal).not.toContain("imm-toggle");
+    expect(terminal).not.toContain("term-full");
+    expect(terminal).not.toContain("toggleImmersive");
+  });
+
+  it("immersive.js paints only the shell-owned control - no page-button repaint loop", () => {
+    const immersive = read("js/immersive.js");
+    expect(immersive).not.toContain(".imm-toggle");
+    expect(immersive).not.toContain("querySelectorAll");
+  });
+
+  it("no document Fullscreen API is requested anywhere in the panel tree", () => {
+    for (const rel of ["js/immersive.js", "js/main.js", "js/views/terminal.js"]) {
+      expect(read(rel), rel).not.toContain("requestFullscreen");
+    }
+  });
+
+  it("the bar is never hidden while immersive - the corner exit must survive every paint", () => {
+    // paintPluginContext owns #ctxBar's hidden flag; #expandBtn lives inside the bar and
+    // escapes the immersive fold through visibility (base.css). A display:none parent
+    // would strand the exit with Esc as the only way out, so the guard is pinned here.
+    const registry = read("js/page-registry.js");
+    expect(registry).toContain('contains("immersive")');
+    expect(registry).toMatch(/bar.hidden = !show && !immersive/);
+  });
+});
+
+/* Body-chrome dedup (docs/13 D5, as revised): the context bar says where the user is, so
+   single-page plugin bodies stop repeating the location as an h1. The workflow description
+   stays. Pinned as source contracts over the shipped modules (Tokens is pinned
+   behaviorally in admin-tokens-view.test.ts; the tunnels body in admin-tunnels-pages). */
+describe("body chrome dedup - no repeated location titles", () => {
+  const read = (rel: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", rel), "utf8");
+
+  it("Jobs, Plugins and Secrets describe the workflow, not the location", () => {
+    for (const rel of ["js/jobs.js", "js/views/plugins.js", "js/views/secrets.js"]) {
+      const src = read(rel);
+      expect(src, rel).not.toContain("pane-title");
+      expect(src, rel).toContain("pane-desc");
+    }
   });
 });

@@ -272,7 +272,9 @@
     }
     .rail-btn:hover { background: var(--hover); color: var(--text); }
     .rail-btn[aria-current="true"] { background: var(--hover); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
-    /* The rail's foot: appearance and fullscreen — global controls, not page controls. */
+    /* The rail's foot: appearance only — global chrome, not page controls. Focus mode's
+       entry lives in the context bar now (same corner it escapes to while immersive), so
+       the rail foot keeps just the theme. */
     .grow { flex: 1; }
     .rail-foot { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 0 var(--s1); }
     .rail-foot .btn.icon { width: 100%; padding: 5px 0; justify-content: center; }
@@ -287,18 +289,20 @@
     }
     .chip.button:hover { background: var(--hover); color: var(--text-2); cursor: pointer; }
 
-    /* The workbench: whatever the rail leaves, the plugin owns. The context bar is drawn by
-       page-registry only when the plugin has something to switch between; a workspace
-       plugin supplies all of its own chrome and sees neither. min-height:0 is what lets the
-       inner scrollers actually scroll inside a flex column. */
+    /* The workbench: whatever the rail leaves, the plugin owns. The context bar is ALWAYS
+       drawn (docs/13 D5, as revised) — multi-page, single-page and workspace plugins share
+       one bar height and one body origin; a workspace changes only how the BODY is framed.
+       min-height:0 is what lets the inner scrollers actually scroll inside a flex column. */
     #app { display: flex; height: 100vh; }
     .workbench { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .shell { display: flex; flex: 1; min-height: 0; }
 
     /* The plugin context bar: "MCP / Servers" with a disclosure — the compact page switcher
-       plus the page's count. One bar, dressed in the rail's vocabulary (borderless until
-       pointed at), so plugin navigation and page navigation never wear the same segmented
-       control twice. */
+       plus the page's count — or, for a single-page plugin, the plain location label and
+       nothing else. One bar, dressed in the rail's vocabulary (borderless until pointed
+       at), so plugin navigation and page navigation never wear the same segmented control
+       twice. Every plugin draws it (docs/13 D5, as revised): the page body below keeps one
+       vertical origin across the whole panel. */
     .ctxbar {
       display: flex; align-items: center; gap: var(--s2);
       height: 40px; flex: none;
@@ -317,15 +321,19 @@
     .ctx-sep { color: var(--text-3); flex: none; }
     .ctx-page { color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ctx-switch .ic { width: 12px; height: 12px; color: var(--text-3); }
+    /* The single-page location: text, not a control — same slot and weight as the page
+       label a multi-page group shows, minus the disclosure a one-entry menu would fake. */
+    .ctx-loc { min-width: 0; max-width: 60%; }
 
-    /* Fullscreen (the rail's expand control, js/immersive.js): the APP chrome folds — the
-       rail and, when drawn, the context bar. What stays is the page's own: the resource
-       sidebar on #mcps (the sidebar IS the page — the MCP list itself), the terminal's own
-       toolbar and session tabs on #terminal, and the content. Folding is visibility, not
-       display, on purpose: the expand control lives inside the rail, and display:none would
-       take the exit button down with it, while a visibility:hidden parent lets the control
-       re-open itself and escape to the top-right corner (under menus and sheets, above the
-       page). The measure caps stay — readability is not a width problem. */
+    /* Focus mode (the context bar's expand control, js/immersive.js): the APP chrome folds —
+       the rail and the context bar. What stays is the page's own: the resource sidebar on
+       #mcps (the sidebar IS the page — the MCP list itself), the terminal's own bar and
+       session tabs on #terminal (L3 chrome inside its workspace body), and the content.
+       Folding is visibility, not display, on purpose: the expand control lives inside the
+       context bar, and display:none would take the exit button down with it, while a
+       visibility:hidden parent lets the control re-open itself and escape to the top-right
+       corner (under menus and sheets, above the page). The measure caps stay — readability
+       is not a width problem. */
     body.immersive .rail {
       visibility: hidden; width: 0; min-width: 0; padding: 0; border-right: 0; overflow: hidden;
     }
@@ -333,10 +341,11 @@
       visibility: hidden; height: 0; min-height: 0; padding: 0; border-bottom: 0; overflow: hidden;
     }
     /* The exit must be an OBVIOUS control on every page: the corner button is the way out
-       that cannot be scrolled away. Fixed elements resolve percentage widths against the
-       VIEWPORT, so the rail-foot rule that stretches this button to the rail (width:100%)
-       must be overridden — without this the "corner button" is a 1440px strip across the
-       top of every immersive page (found live on 19998, 2026-09-14). */
+       that cannot be scrolled away. It is the SAME shell-owned button that sits at the
+       bar's far right in normal mode — one control, one upper-right anchor for entering
+       and leaving. Fixed elements resolve percentage widths against the VIEWPORT, so an
+       explicit width keeps the escape a square corner button rather than a stretched bar
+       (the lesson of the 2026-09-14 full-width strip, found live on 19998). */
     body.immersive #expandBtn {
       visibility: visible; position: fixed; top: var(--s2); right: var(--s2); z-index: 25;
       width: 28px; padding: 5px 0; justify-content: center;

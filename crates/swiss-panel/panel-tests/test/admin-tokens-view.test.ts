@@ -141,7 +141,10 @@ describe("the Token page (MCP group)", () => {
       { id: "t1", label: "claude-code", createdAt: 1700000001000 },
     ] };
     await view.mount();
-    expect(paneEl.innerHTML).toContain('<h1 class="pane-title">Tokens</h1>');
+    // No location title: the context bar already says "MCP / Token"; the body opens with
+    // its workflow description instead (docs/13 D5 rev., body-chrome dedup).
+    expect(paneEl.innerHTML).toContain("pane-desc");
+    expect(paneEl.innerHTML).not.toContain("pane-title");
     expect(drawnRows()).toContain("claude-code");
     expect(paneEl.innerHTML).toContain('id="tkLabel"');
     // The create form carries the Group select (docs/20 G7) — one option on a bare gateway.

@@ -68,21 +68,25 @@
     </nav>
     <span class="grow"></span>
     <span class="rail-foot">
-      <button class="btn ghost icon" id="expandBtn" title="Fullscreen — the page takes over the window; F11 stays yours (Esc exits)" aria-label="Fullscreen"><svg class="ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>
       <button class="btn ghost icon" id="themeBtn" title="Appearance" aria-label="Appearance"><svg class="ic" aria-hidden="true"><use href="#i-moon"></use></svg></button>
     </span>
   </aside>
 
-  <!-- The plugin context bar: drawn only when it has something to say. A plugin with >=2
-       pages gets the compact page switcher ("MCP / Servers ▾") and the page count; a
-       single-page plugin says its name in the pane header it already owns, and a workspace
-       plugin (the terminal) supplies all of its own chrome — neither draws this bar. -->
+  <!-- The plugin context bar (docs/13 D5, as revised): ALWAYS drawn in normal mode —
+       every plugin, single-page and workspace included, keeps the same bar height and the
+       same body origin. A plugin with >=2 pages gets the compact page switcher
+       ("MCP / Servers ▾"); a single-page plugin gets a static location label (#pageLoc —
+       no fake dropdown, no "Data / Data"). The shell's Focus control (#expandBtn) lives at
+       the bar's far right in normal mode and escapes to the same upper-right corner while
+       immersive (base.css), so entering and leaving Focus share one spatial anchor. -->
   <div class="workbench">
     <header class="ctxbar" id="ctxBar" hidden>
-      <button class="ctx-switch" id="pageBtn" type="button" aria-haspopup="menu" aria-expanded="false"><!-- Plugin / Page ▾ --></button>
+      <button class="ctx-switch" id="pageBtn" type="button" aria-haspopup="menu" aria-expanded="false" hidden><!-- Plugin / Page ▾ --></button>
+      <span class="ctx-loc" id="pageLoc" hidden><!-- Single-page plugin: the location, as text --></span>
       <span class="grow"></span>
       <span class="chip" id="memChip" title="Gateway resident set">mem …</span>
       <span class="chip" id="countChip"></span>
+      <button class="btn ghost icon" id="expandBtn" title="Fullscreen — the page takes over the window; F11 stays yours (Esc exits)" aria-label="Fullscreen"><svg class="ic" aria-hidden="true"><use href="#i-expand"></use></svg></button>
     </header>
 
       <div class="shell">

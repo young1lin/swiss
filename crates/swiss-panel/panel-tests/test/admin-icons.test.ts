@@ -39,8 +39,9 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
     expect(shell).not.toContain('id="refreshBtn"');
     expect(shell).not.toContain("i-refresh-cw"); // the sprite entry goes with the button
     expect(shell).toContain('id="memChip"');
-    // Immersive mode (js/immersive.js) is the page-sized answer: the toolbar carries the
-    // expand control next to Appearance, painted with its own two-state sprite icons.
+    // Focus mode (js/immersive.js) is the page-sized answer: the context bar's far right
+    // carries the expand control, painted with its own two-state sprite icons (docs/13 D5
+    // rev. — one shell-owned control, the same corner it escapes to while immersive).
     expect(shell).toContain('id="expandBtn"');
   });
 

@@ -340,10 +340,18 @@
 
     /* --- data view (the DBeaver-style browser) --------------------------------------------------- */
     .pane > .db-root { max-width: none; }
-    /* One surface (docs/18 V4): the key list and the value area are halves of a single card
-       split by a hairline — not two rounded cards floating side by side on the canvas. */
-    .db-root { display: flex; height: 100%; min-height: 420px; background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
-    .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
+    /* A workspace body (docs/13 D5 as revised): the pane drops its padding and measure so
+       the explorer consumes everything under the context bar — but the boundary it used to
+       draw as one giant enclosing rounded card is gone too. The shell already provides the
+       application boundary; the two halves now divide STRUCTURALLY — the browser column
+       wears the resource sidebar's own surface and hairline, the work area sits on the
+       canvas — the same vocabulary the shell's own sidebar uses, not a second application
+       embedded inside the panel. (docs/18 V4's "one surface" stays true at the row level:
+       list and value area are still halves of one plane, split by a hairline.) */
+    .pane.db-host { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+    .pane.db-host > .db-root { flex: 1; min-height: 0; }
+    .db-root { display: flex; height: 100%; min-height: 420px; }
+    .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
     .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s1); }
     /* Sort controls for whatever the list holds (tables or keys): the key picker takes the
        remaining width, the direction toggle is a fixed square beside it. Named db-sortROW —
@@ -624,8 +632,9 @@
        page fills EXACTLY what is left — the old calc(100vh - 100px) was a hand-measured
        constant that went stale the moment any bar or padding changed, and every miss by one
        pixel grew the pane's own scrollbar beside the terminal. */
-    /* A workspace plugin owns the whole workbench: no pane padding, no measure — the
-       dark surface runs edge to edge under the rail (and, immersive, to the window). */
+    /* A workspace page owns its whole BODY: no pane padding, no measure — the dark
+       surface runs edge to edge under the context bar (and, immersive, to the window).
+       The shell's chrome is still drawn above it (docs/13 D5, as revised). */
     .pane.term-host { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
     .pane.term-host > .term-page { flex: 1; }
     .term-page {

@@ -151,7 +151,7 @@ window.addEventListener("beforeunload", function (e) {
 // is the r key below, which keeps Data's manual reload alive.
 
 $("filter").oninput = function () { state.filter = this.value; patchSidebar(); };
-initImmersive(); // the toolbar's expand control: the page can take the whole window
+initImmersive(); // the context bar's focus control: the page body can take the whole window
 
 /* Keyboard: arrows move through the sidebar, / focuses search, Escape closes the sheet/menu,
    then the history popover, and leaves immersive mode last — the outermost layer goes last. */
@@ -187,7 +187,7 @@ document.addEventListener("keydown", function (e) {
 });
 
 state.collapsed = loadCollapsed("mcps"); // before the first paint, so folded groups never flash open
-state.tun.collapsed = { conns: loadCollapsed("conns"), rules: loadCollapsed("rules") }; // same, per tab
+state.tun.collapsed = { conns: loadCollapsed("conns"), rules: loadCollapsed("rules") }; // same, per tunnels page scope
 state.jobs.collapsed = loadCollapsed("jobs"); // the jobs scope's own fold map (docs/20 G4)
 showApp();
 // Ask for the child walk on the very first paint too, so the chip never shows a gateway-only total

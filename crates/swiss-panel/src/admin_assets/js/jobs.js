@@ -95,8 +95,10 @@ function renderJobs() {
     : emptyHtml({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands the gateway runs on this machine. Add one with New." });
   // .wide + .pane-head + .tun-foot: the Tunnels view's exact frame — the rows are the same
   // name-plus-subtext-plus-buttons shape, so they wear the same classes.
+  // No location title: the context bar already says "Jobs". The body header carries the
+  // workflow description and nothing else; the actions sit in the section head below.
   $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div><h1 class="pane-title">Jobs</h1>' +
+    '<div class="pane-head"><div>' +
       '<div class="pane-desc">Scheduled commands the gateway runs locally — an interval or a 5-field cron in local time. Overlap, misfire and retry policies per job; every outcome lands in the run history.</div>' +
     "</div></div>" +
     '<div class="sec-head"><span class="sec-cap">Scheduled commands</span>' +

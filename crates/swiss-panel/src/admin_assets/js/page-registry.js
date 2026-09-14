@@ -7,7 +7,8 @@ var legacy = [
   { id: "mcps", pluginId: "mcp", label: "MCPs", sidebar: true },
   { id: "traffic", pluginId: "mcp", label: "Traffic" },
   { id: "tokens", pluginId: "mcp", label: "Token" },
-  { id: "tunnels", pluginId: "tunnels", label: "Tunnels" },
+  { id: "tunnels", pluginId: "tunnels", label: "SSH Connections" },
+  { id: "tunnel-forwards", pluginId: "tunnels", label: "Port Forwards" },
   { id: "data", pluginId: "data", label: "Data" },
   { id: "jobs", pluginId: "jobs", label: "Jobs" },
 ].map(function (p, i) { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
@@ -37,12 +38,14 @@ function unavailable(page) {
   return plugin && (plugin.enabled === false || ["disabled", "failed", "waitingDependency", "not-built"].indexOf(plugin.state) >= 0) ? plugin : null;
 }
 
-/* --- layouts (docs/13 D5, the adaptive shell) ----------------------------------------------------
-   How a page is framed, from the descriptor when the gateway states it and derived from
-   sidebar when it does not (an older gateway): resource = master-detail that owns the
-   panel's sidebar; page = a full-workspace page; workspace = the plugin supplies ALL of
-   its own chrome (the terminal), so the shell draws no context bar over it. Workspace is
-   never guessed - no plugin accidentally loses its bar to a fallback. */
+/* --- layouts (docs/13 D5, as revised) -------------------------------------------------------------
+   How a page's BODY is framed, from the descriptor when the gateway states it and derived
+   from sidebar when it does not (an older gateway): resource = master-detail that owns the
+   panel's sidebar; page = an ordinary content body; workspace = a full-bleed, dense body
+   (the terminal, the data explorer). Workspace changes body framing ONLY - the shell
+   always draws its own chrome (rail and context bar) around every layout, so nothing here
+   decides who owns the chrome anymore. Workspace is never guessed - no plugin accidentally
+   loses the resource sidebar to a fallback. */
 function layoutOf(page) {
   if (page && (page.layout === "resource" || page.layout === "page" || page.layout === "workspace")) return page.layout;
   return page && page.sidebar ? "resource" : "page";
@@ -101,10 +104,12 @@ function decoratedGroups() {
 }
 
 /* --- the plugin context bar: page navigation (level two) ------------------------------------------
-   Drawn only when the plugin has pages to switch between AND the page is not a workspace
-   (a workspace supplies its own chrome; a single-page plugin's name is already in the pane
-   header it renders). The switcher is a compact "MCP / Servers" button with a menu, never a
-   full-width second tab row - level one and level two no longer share a control shape. */
+   ALWAYS drawn in normal mode (docs/13 D5, as revised): the same bar height and the same
+   body origin for every plugin - multi-page, single-page and workspace alike. A multi-page
+   plugin gets the compact "MCP / Servers" switcher with a menu, never a full-width second
+   tab row - level one and level two never share a control shape. A single-page plugin gets
+   a static location label instead (#pageLoc): no fake dropdown, no "Data / Data" - the
+   location reads as text because it is text. */
 /** The switcher menu's items for one group: its pages in order, the current one picked,
  *  unavailable ones marked. Factored out of the click handler so the contract (order, the
  *  pick column, the · off marker) is testable without a menu. */
@@ -123,36 +128,62 @@ function pageMenuItems(current) {
 function paintPluginContext() {
   var bar = $("ctxBar");
   var btn = $("pageBtn");
+  var loc = $("pageLoc");
   var current = currentGroup();
   var page = registry.get(state.view);
-  var show = !!(current && current.pages.length >= 2 && page && layoutOf(page) !== "workspace");
-  bar.hidden = !show;
-  if (!show) { btn.onclick = null; return; }
+  /* No page to name (an empty registry during boot) is the one case with nothing to draw;
+   * every real navigation lands in a group and keeps the bar. While immersive the bar is
+   * never hidden either: #expandBtn lives inside it and escapes the fold through
+   * visibility (base.css), and a hidden (display:none) parent would strand the exit with
+   * Esc as the only way out - "the exit must be obvious on every page" beats an empty bar
+   * flashing for one boot frame. */
+  var show = !!(current && page);
+  var immersive = document.body && document.body.classList && document.body.classList.contains("immersive");
+  bar.hidden = !show && !immersive;
+  if (!show) {
+    btn.hidden = true; btn.onclick = null;
+    loc.hidden = true;
+    return;
+  }
   var off = unavailable(page);
-  btn.innerHTML =
-    '<span class="ctx-plugin">' + esc(current.label) + "</span>" +
-    '<span class="ctx-sep">/</span>' +
-    '<span class="ctx-page">' + esc(page.label) + "</span>" +
-    icon("chevron-right");
-  btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current.label + " page";
-  btn.onclick = function (ev) {
-    ev.stopPropagation();
-    btn.setAttribute("aria-expanded", "true");
-    var items = pageMenuItems(current).map(function (it, i) {
-      var p = current.pages[i];
-      it.fn = function () { btn.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
-      return it;
-    });
-    /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
-     * top level), so it loads HERE, at interaction time - the shell's own module graph stays
-     * DOM-free at eval, which the pure-helper suites (plugins.js) import it under. */
-    import("./menu.js").then(function (menu) { menu.popupMenu(btn.getBoundingClientRect(), items); });
-    /* The menu also closes without an item click (document click, Escape); a one-shot
-     * listener puts the flag back whenever that lands. */
-    setTimeout(function () {
-      document.addEventListener("click", function () { btn.setAttribute("aria-expanded", "false"); }, { once: true });
-    });
-  };
+  if (current.pages.length >= 2) {
+    btn.hidden = false;
+    loc.hidden = true;
+    btn.innerHTML =
+      '<span class="ctx-plugin">' + esc(current.label) + "</span>" +
+      '<span class="ctx-sep">/</span>' +
+      '<span class="ctx-page">' + esc(page.label) + "</span>" +
+      icon("chevron-right");
+    btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current.label + " page";
+    btn.onclick = function (ev) {
+      ev.stopPropagation();
+      btn.setAttribute("aria-expanded", "true");
+      var items = pageMenuItems(current).map(function (it, i) {
+        var p = current.pages[i];
+        it.fn = function () { btn.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
+        return it;
+      });
+      /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
+       * top level), so it loads HERE, at interaction time - the shell's own module graph stays
+       * DOM-free at eval, which the pure-helper suites (plugins.js) import it under. */
+      import("./menu.js").then(function (menu) { menu.popupMenu(btn.getBoundingClientRect(), items); });
+      /* The menu also closes without an item click (document click, Escape); a one-shot
+       * listener puts the flag back whenever that lands. */
+      setTimeout(function () {
+        document.addEventListener("click", function () { btn.setAttribute("aria-expanded", "false"); }, { once: true });
+      });
+    };
+  } else {
+    /* One page: the plugin name IS the location. Same slot, same weight as the page label
+     * of a multi-page group, but plain text - a dropdown with one entry is a lie about
+     * what the control does. */
+    btn.hidden = true;
+    btn.onclick = null;
+    btn.setAttribute("aria-expanded", "false");
+    loc.hidden = false;
+    loc.innerHTML = '<span class="ctx-page">' + esc(current.label) + "</span>";
+    loc.title = off ? (off.lastError || "Plugin disabled") : "";
+  }
 }
 
 function paintNavigation() {
@@ -213,7 +244,8 @@ async function navigatePage(id, force) {
   state.view = id;
   active = { id: id, module: module, controller: controller };
   /* The resource sidebar belongs to the resource layout alone; every other layout gets the
-   * full workspace width (a "page" owns its pane, a "workspace" owns everything). */
+   * full body width (a "page" wraps its content in the pane's padding, a "workspace" is
+   * full-bleed - a framing difference only, the shell's chrome is drawn either way). */
   document.querySelector(".sidebar").hidden = layoutOf(page) !== "resource";
   paintNavigation();
   history.replaceState(null, "", page.path || "#" + id);

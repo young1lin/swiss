@@ -1,13 +1,25 @@
 # 13 — 面板导航二级化实施规范
 
 > 状态：**已实施**。完成基线 `ce409be`（Rust 侧 N4；Node 侧 N1–N2 为 `4c2c964`、`9021853`，N3 为 `f88d7e2`）。原设计基线 `394bd44`。
-> **D5 已由 [docs/18](18-panel-visual-refresh-spec.md) V3 修订：页栏常驻 36px——单页组显示页名，不再整条隐藏。**
-> **D5 再修订（自适应外壳，2026-09）：一级导航改为左侧 Plugin Rail（图标座位 + "..." 打开可搜索的
-> Plugin Palette），二级导航改为 Plugin Context Bar 上的紧凑页切换器（"MCP / Servers ▾"，弹菜单，
-> 键盘可达）。单页插件不再绘制任何页栏；workspace 布局（Terminal）由插件自带全部 chrome，
-> Context Bar 与 PageDescriptor.layout（resource/page/workspace，wire 可选字段，旧网关按
-> sidebar 回退）一起声明。一级与二级永远不再共用 `.seg`。hash 路由、page id、entry、
-> data-view/data-group 深选择器与 `jobs.js` 的隐藏探针全部保持。**
+> **D5 三修订（UI 统一，现行规则）：Context Bar 在普通模式常驻——多页插件、单页插件、workspace
+> 页共用同一条 40px 页栏，Page Body 的垂直原点跨插件不变。多页插件渲染静态插件名 + "/" + 可交互的
+> 当前页选择器（"MCP / Servers ▾"）；单页插件渲染静态位置标签（`Data`），不画假下拉、
+> 不渲染 `Data / Data`。`workspace` 重新定义为「全幅、致密的 Page Body」——只改
+> 身体框定，外壳 chrome（Rail、Context Bar、Focus 控件）永远由 shell 绘制，任何插件不再替换应用
+> chrome；Terminal 与 Data 都是 workspace 页。Focus 模式收归外壳独有：入口在 Context Bar 最右，
+> 沉浸退出逃逸到同一右上角，Terminal 自己的 `.imm-toggle` 全屏按钮已删除。Tunnels 的页内
+> SSH Connections / Port Forwards 分段控件升级为真正的两个 L2 页（`#tunnels` 保留为 SSH
+> Connections，`#tunnel-forwards` 为 Port Forwards，同组相邻 order，Rail 仍是一个座位）。
+> 各页正文不再重复位置大标题（Jobs/Plugins/Secrets/Token 的 h1 已去）；MCP 选中资源的头部
+> （如 `shop`）与页内 L3 资源 tab（Tools/Resources/Prompts/Run/Config/Logs）保持不变。**
+> **D5 二修订（自适应外壳，2026-09，已被上条部分取代）：一级导航改为左侧 Plugin Rail（图标座位 +
+> "..." 打开可搜索的 Plugin Palette），二级导航改为 Plugin Context Bar 上的紧凑页切换器
+> （"MCP / Servers ▾"，弹菜单，键盘可达）。~~单页插件不再绘制任何页栏；workspace 布局（Terminal）
+> 由插件自带全部 chrome~~（已由上条取代：页栏常驻，workspace 只管身体）。Context Bar 与
+> PageDescriptor.layout（resource/page/workspace，wire 可选字段，旧网关按 sidebar 回退）一起声明。
+> 一级与二级永远不再共用 `.seg`。hash 路由、page id、entry、data-view/data-group 深选择器
+> 与 `jobs.js` 的隐藏探针全部保持。**
+> **D5 已由 [docs/18](18-panel-visual-refresh-spec.md) V3 修订：页栏常驻 36px——单页组显示页名，不再整条隐藏。（其后被自适应外壳修订、再被 UI 统一修订取代，见上。）**
 > 前置阅读：`AGENTS.md`（它的规则高于本文任何便利）、`docs/09-toolbox-plugin-architecture.md` §6
 > （页面契约）、`docs/07-decisions.md` ADR-009（面板只读）与 ADR-010（八个 crate）。
 > ~~本仓库的 `crates/swiss-panel/src/admin_assets/` 一个字节都不能改。~~（两仓时代的规定，
@@ -177,13 +189,18 @@ if (b) b.hidden = true;   // 探测到 /api/jobs 不可用时，把 Jobs 这一�
 单页面的组（Tunnels / Data / Jobs / HTTP / Plugins）里，`data-group` 与 `data-view` 各自对应组 id
 与唯一页面 id，行为与今天完全相同。
 
-### D5 — 二级栏在只有一个页面时整条不渲染
+### D5 — 二级栏在只有一个页面时整条不渲染 ~~（已被「UI 统一」修订取代，见文头「D5 三修订」；本节保留为历史决策）~~
+
+> **现行规则（取代本节）**：Context Bar 在普通模式**常驻**。多页插件用紧凑页切换器；单页插件用
+> 静态位置标签——同一栏高、同一对齐、不画假下拉；workspace 页同样在栏下。切换插件时 Page Body
+> 的垂直原点不变，这正是常驻要买的东西。
 
 不是渲染一条只有一格的 seg，也不是渲染一条空的：**整个容器 `hidden`**。`base.css` 已有
 `[hidden]` 的处理，`jobs.js` 就是靠它藏 tab 的。
 
 判定写死一条：`current.pages.length < 2 → sub.hidden = true`。别加「配置项」或「总是显示以免跳动」的
-折中 —— 六个组里五个是单页，常显就是常年一条空条。
+折中 —— 六个组里五个是单页，常显就是常年一条空条。（这个折中在 UI 统一修订中被推翻：栏常驻、
+单页组显示位置标签而非空条，因为「身体原点跳动」比「一条有话说的话」更贵。）
 
 ### D6 — 二级栏是 `.shell` 之上的一条，不是 pane 里的一条
 

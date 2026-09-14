@@ -128,9 +128,10 @@ impl PluginFactory for TerminalPlugin {
                 // does (page-registry hides .sidebar for every page without it). docs/14's
                 // sketch said true; the browser said otherwise.
                 sidebar: false,
-                // workspace (docs/13 D5): the terminal supplies ALL of its own chrome -
-                // session tabs, target picker, open/expand controls, status footer - so the
-                // shell draws no context bar over it and immersive folds straight to it.
+                // workspace (docs/13 D5, as revised): a full-bleed, dense body. The
+                // terminal's session tabs, target picker and status footer are L3 page-
+                // local chrome INSIDE that body; the shell still draws the context bar
+                // above it, and immersive folds straight to the body.
                 layout: "workspace",
             }],
             routes: vec!["/api/terminal".into()],
