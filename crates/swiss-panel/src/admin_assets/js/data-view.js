@@ -741,7 +741,7 @@ function dbDialectOf() {
 }
 
 /** Every schema the loaded pages have shown, "public" always among them — the New table
- *  sheet's where-it-goes select (docs/22 W4.6; swiss-design rule 6). */
+ *  sheet's where-it-goes select (docs/22 W4.6; swiss-ui-design rule 6). */
 function dbKnownSchemas() {
   var d = state.db;
   var out = [];

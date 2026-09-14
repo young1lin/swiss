@@ -172,7 +172,7 @@ function paintDbDdlSheet() {
       '<div class="sheet-body">';
   if (kind === "table" && S.dialect === "pg") {
     // docs/22 W1.1: a Postgres catalog is many schemas, so the new table says where it goes
-    // (swiss-design rule 6) — a select, prefilled from the list's active schema filter.
+    // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
     var schemas = S.schemas.slice();
     if (schemas.indexOf(S.schema) < 0) schemas.unshift(S.schema);
     html += '<label class="field"><span>Schema</span><select id="ddl-schema">' +

@@ -13,10 +13,8 @@ missing something: add it to `swiss-host` instead.
 ## Before writing code
 
 Name the plan in three lines: which crate owns it, what it contributes (descriptor / action /
-page), what it costs at idle, and which host-contract seam it uses. If the capability exists in
-the Node build, say so and route through
-[swiss-node-reference](../swiss-node-reference/SKILL.md) first; if it won't fit one sitting and
-one commit, sharpen it into a docs/ spec first (the repo's spec-first convention —
+page), what it costs at idle, and which host-contract seam it uses. If it won't fit one sitting
+and one commit, sharpen it into a docs/ spec first (the repo's spec-first convention —
 docs/15 through 19). An explicit nod from the operator is required before anything that adds a
 dependency, a child process, or a new crate.
 
@@ -47,12 +45,12 @@ The load-bearing rules in AGENTS.md own the details; the ones a new capability m
 - No `serde_json::Value` on a forwarding path — route on envelope fields, pass payloads as
   `&RawValue`. The runtime is `current_thread`; no `unsafe`; no `.unwrap()` on anything
   touching config, network, database or filesystem.
-- **A panel page is never written here.** Panel JS/HTML/CSS is authored in the Node build at
-  `../local-mcp-gateway/src/admin` and reaches this repo only as the byte-for-byte copy at
-  `crates/swiss-panel/src/admin_assets/` — see
-  [swiss-node-reference](../swiss-node-reference/SKILL.md) for the edit-Node-side-then-copy
-  procedure before adding anything the panel renders. A plugin's own pages, routes, and
-  contributions are yours; the copied admin tree is not.
+- **The panel is edited here, directly.** Panel JS/HTML/CSS lives in
+  `crates/swiss-panel/src/admin_assets/` — plain ES modules, no bundler, no build step;
+  [swiss-ui-design](../swiss-ui-design/SKILL.md) owns its language and checklists. A panel
+  change ships with its vitest case in `crates/swiss-panel/panel-tests/`, and every `/api/*`
+  response stays shape-identical to what the panel reads — a shape change ships on both sides in
+  one commit.
 
 ## Evidence
 

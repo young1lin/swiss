@@ -17,13 +17,7 @@ that consumes the loop.
    real listen and no real sleep (docs/08). This is where new seams get created.
 3. **A curl/Invoke-RestMethod script against the 19998 instance** for anything that needs a real
    running gateway ([swiss-live-verify](../swiss-live-verify/SKILL.md) for the boot procedure).
-4. **A differential loop against the Node build** — often the fastest oracle in this repo: the same
-   request or input through `../local-mcp-gateway` and the Rust build, diff the outputs. The Node
-   build is the reference implementation
-   ([swiss-node-reference](../swiss-node-reference/SKILL.md)); if the two disagree, the Rust side is
-   the suspect by default. Boot the Node oracle on its own port (`lmg start -p 18000`, per the
-   user-level local-mcp-gateway skill) so it never collides with the 19999 daemon.
-5. **Replay a captured artifact** — a line from `logs/traffic.jsonl` or a
+4. **Replay a captured artifact** — a line from `logs/traffic.jsonl` or a
    `logs/calls/bodies/<mcp>/<seq>.txt` replayed through the code path in isolation.
 
 Tighten the loop until it is seconds, deterministic, and asserts the *user's exact symptom* (not
@@ -40,7 +34,8 @@ repro becomes the regression test.
 ## Phase 3 — hypothesise, ranked
 
 Write 3–5 falsifiable hypotheses before testing any ("if X is the cause, changing Y makes it
-disappear"). Check the Node original for ground truth on *intended* behavior before ranking.
+disappear"). For ported shapes, check docs/ and the owning module's comments for the intended
+behavior before ranking (AGENTS.md: that is where the ported reasons live).
 Present the list to the user — cheap checkpoint, frequent re-ranks — but don't block: proceed with
 your ranking if they are away, and re-rank when they answer.
 

@@ -61,9 +61,8 @@ Manually, the pieces:
    instance answered. `swiss creds` (with `SWISS_HOME`/`SWISS_PORT` pointed at the test home)
    prints the panel URL and token for browser work.
 
-   - The panel at `http://127.0.0.1:19998` is the spec for the admin API: responses must be
-     shape-identical to what the Node build returns (see
-     [swiss-node-reference](../swiss-node-reference/SKILL.md)).
+   - The panel's JavaScript is the spec for the admin API: every `/api/*` response must stay
+     shape-identical to what the panel reads (`crates/swiss-panel/src/admin_assets/`).
    - For the full boot/health/env-scrub sweep, `scripts/acceptance-16.ps1` drives H1/H2/H3
      against 19998 and never touches 19999 beyond a read-only health check.
 5. **Stop by the port's owning PID, never by process name** — `Get-Process swiss` kills the
