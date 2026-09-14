@@ -147,9 +147,11 @@ cargo test --workspace         848 = 725 unit + 123 integration
   swiss-panel     9 unit
 
 cargo test --workspace
-             942  (the terminal plugin added its own, the mongo/http-tools removals took
-                  theirs since the 848 this file once recorded, and the tunnels two-page
-                  split added its descriptor test)
+             950  (the terminal plugin added its own, the mongo/http-tools removals took
+                  theirs since the 848 this file once recorded, the tunnels two-page
+                  split added its descriptor test, and the group-reorder pinning fix
+                  added three adminapi cases, the groups e2e over a real socket and a
+                  restart, and four unit tests)
 ```
 
 **Drop `--workspace` and this shrinks to a fraction.** Cargo then selects the root package
@@ -167,7 +169,7 @@ Every module in the workspace carries an inline `#[cfg(test)] mod tests` **excep
 | --- | --- | --- |
 | `swiss-mcp` `adapters/mysql_browser.rs` | 401 | Orchestration only — every path is `async fn` over a live connection, and the SQL it builds is quoted by `dbbrowser::quote_ident`, which is tested there. It belongs with the self-skipping DB tests. |
 | `swiss-core` `platform/windows.rs` | 378 | Win32 FFI: DPAPI, Toolhelp, registry. Its process walk is covered — the BFS both platforms share now lives un-`cfg`'d in `swiss-core`'s `platform/mod.rs` and is tested on whatever host runs the suite. What is left is the FFI itself, which needs the OS to answer. |
-| `swiss` `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (65) and `tests/app.rs` (12), which is where a route contract belongs. |
+| `swiss` `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (68) and `tests/app.rs` (12), which is where a route contract belongs. |
 | `swiss` `lib.rs`/`main.rs`, `swiss-core` `secure/mod.rs`, `swiss-tunnels` `tunnel/mod.rs` | 109 | Re-export shells with no behaviour of their own. |
 
 The DB browsers are mostly I/O, but not entirely, and the difference is worth naming: their

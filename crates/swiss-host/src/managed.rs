@@ -531,9 +531,23 @@ impl ManagedStore {
     /// it like any other name. A group dropped by omission is deleted and its members fall into
     /// the FIRST group of the new list. The list may never be empty: something must catch
     /// unassigned MCPs, and deleting the last group is the one move this refuses.
+    ///
+    /// The gap [Groups::set_names] documents is real here: this store cannot enumerate the
+    /// members a reorder would re-home (a config-sourced MCP has no managed entry), so the
+    /// reorder path goes through [ManagedStore::set_groups_pinning] with the registry's names.
     pub fn set_groups(&self, names: Vec<String>) -> Result<(), String> {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
         s.groups.set_names(names)?;
+        self.persist(&s)
+    }
+
+    /// [ManagedStore::set_groups] with the reorder rule closed: when the new list demotes the
+    /// first group without deleting it, every id that renders there only by default is pinned
+    /// to the name, so the slot moves to the front without carrying them along. `ids` is
+    /// every MCP name the registry serves — the member set this store cannot see on its own.
+    pub fn set_groups_pinning(&self, names: Vec<String>, ids: Vec<String>) -> Result<(), String> {
+        let mut s = self.state.lock().map_err(|_| "store poisoned")?;
+        s.groups.set_names_pinning(names, ids)?;
         self.persist(&s)
     }
 
@@ -610,9 +624,12 @@ impl ManagedStore {
 
     /// Replace the whole token group list (create / delete / reorder in one call); deleting a
     /// group by omission sinks its tokens into the first remaining one, untouched and usable.
+    /// A reorder pins the tokens that render in the first group by default to the name: this
+    /// store owns the whole member set, so the ids need no caller to supply them.
     pub fn set_token_groups(&self, names: Vec<String>) -> Result<(), String> {
         let mut s = self.state.lock().map_err(|_| "store poisoned")?;
-        s.token_groups.set_names(names)?;
+        let ids = s.tokens.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+        s.token_groups.set_names_pinning(names, ids)?;
         self.persist(&s)
     }
 
@@ -1355,6 +1372,60 @@ mod tests {
         let on_disk = load_mcp_groups(&path);
         assert_eq!(on_disk.len(), 1);
         assert_eq!(on_disk.get("github").map(String::as_str), Some("Search"));
+    }
+
+    #[test]
+    fn a_reorder_pins_the_default_members_of_a_demoted_first_group() {
+        // The exact shape the panel's Move up broke: g1 first holding members that were
+        // never explicitly assigned, g2 empty; the whole list comes back g2-first.
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.set_groups(vec!["g1".into(), "g2".into()]).unwrap();
+        let ids = vec!["a".into(), "b".into(), "c".into()];
+        store.set_groups_pinning(vec!["g2".into(), "g1".into()], ids).unwrap();
+
+        assert_eq!(store.get_groups(), vec!["g2", "g1"], "the order changed");
+        assert_eq!(store.group_of("a"), "g1", "but nobody re-homed");
+        assert_eq!(store.group_of("c"), "g1");
+        // The pins are explicit now, so they survive a restart - and a later delete of g1
+        // still sinks them, which is the delete contract, not a reorder.
+        let reloaded = ManagedStore::open_at(path);
+        assert_eq!(reloaded.group_of("a"), "g1");
+        reloaded.set_groups(vec!["g2".into()]).unwrap();
+        assert_eq!(reloaded.group_of("a"), "g2");
+    }
+
+    #[test]
+    fn a_token_reorder_pins_the_default_members_of_a_demoted_first_group() {
+        // This store owns the whole token member set, so set_token_groups pins on its own.
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.save_tokens(vec![
+            TokenRec {
+                id: "t1".into(),
+                label: "one".into(),
+                secret: "s".into(),
+                created_at: "2026-01-01T00:00:00.000Z".into(),
+            },
+            TokenRec {
+                id: "t2".into(),
+                label: "two".into(),
+                secret: "s".into(),
+                created_at: "2026-01-01T00:00:00.000Z".into(),
+            },
+        ]);
+        store.set_token_groups(vec!["g1".into(), "g2".into()]).unwrap();
+        store.set_token_group("t2", Some("g2")).unwrap();
+
+        store.set_token_groups(vec!["g2".into(), "g1".into()]).unwrap();
+        assert_eq!(store.get_token_groups(), vec!["g2", "g1"]);
+        assert_eq!(store.token_group_of("t1"), "g1", "the default member stayed");
+        assert_eq!(store.token_group_of("t2"), "g2", "the explicit member never moves");
+        assert_eq!(
+            ManagedStore::open_at(path).token_group_of("t1"),
+            "g1",
+            "the pin is on disk"
+        );
     }
 
     #[test]
