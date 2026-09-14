@@ -647,7 +647,7 @@ async fn forwards_mcp_traffic_to_the_added_server() {
     assert_eq!(status, StatusCode::CREATED);
     let (status, _) = h
         .mcp(
-            "/e2",
+            "/mcp/e2",
             TOKEN,
             json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
         )
@@ -695,7 +695,7 @@ async fn lists_creates_revokes_and_rotates_named_tokens() {
     let id = made["id"].as_str().expect("an id").to_string();
     // 503, not 401: the token is good, the MCP name is not one this gateway serves.
     assert_eq!(
-        h.mcp("/anything", &secret, json!({})).await.0,
+        h.mcp("/mcp/anything", &secret, json!({})).await.0,
         StatusCode::SERVICE_UNAVAILABLE
     );
 
@@ -706,11 +706,11 @@ async fn lists_creates_revokes_and_rotates_named_tokens() {
     let next = rotated["secret"].as_str().expect("a secret").to_string();
     assert_ne!(next, secret);
     assert_eq!(
-        h.mcp("/anything", &secret, json!({})).await.0,
+        h.mcp("/mcp/anything", &secret, json!({})).await.0,
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(
-        h.mcp("/anything", &next, json!({})).await.0,
+        h.mcp("/mcp/anything", &next, json!({})).await.0,
         StatusCode::SERVICE_UNAVAILABLE
     );
 
@@ -720,7 +720,7 @@ async fn lists_creates_revokes_and_rotates_named_tokens() {
         StatusCode::OK
     );
     assert_eq!(
-        h.mcp("/anything", &next, json!({})).await.0,
+        h.mcp("/mcp/anything", &next, json!({})).await.0,
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(
@@ -830,7 +830,7 @@ fn entry_for(body: &Value, method: &str) -> Value {
         .unwrap_or_else(|| panic!("no {method} entry in {body}"))
 }
 
-/// One echo MCP, started and reachable at `/echo`.
+/// One echo MCP, started and reachable at `/mcp/echo`.
 async fn with_echo() -> Harness {
     let h = setup();
     let (status, _) = h
@@ -844,7 +844,7 @@ async fn with_echo() -> Harness {
 async fn records_mcp_traffic_attributed_to_the_token_and_the_self_reported_client() {
     let _lock = traffic_lock().await;
     let h = with_echo().await;
-    h.mcp("/echo", TOKEN, init_frame("claude-code", "1.2.3"))
+    h.mcp("/mcp/echo", TOKEN, init_frame("claude-code", "1.2.3"))
         .await;
 
     let (status, body) = h.get("/api/traffic").await;
@@ -862,7 +862,7 @@ async fn attributes_a_server_discover_frame_via_its_meta_client_info() {
     // server/discover (Claude Code's capability probe) carries clientInfo nested in _meta, not at
     // the top level like initialize — the split must lift it from there too.
     h.mcp(
-        "/echo",
+        "/mcp/echo",
         TOKEN,
         json!({
             "jsonrpc": "2.0", "id": 2, "method": "server/discover",
@@ -886,10 +886,10 @@ async fn attributes_a_tokens_later_frames_to_the_name_it_announced_at_initialize
     // initialize announces the client name once; the tools/list after it carries no clientInfo,
     // but it is the same token — so it inherits "claude-code" rather than appearing as a second,
     // unknown client.
-    h.mcp("/echo", TOKEN, init_frame("claude-code", "2.1.88"))
+    h.mcp("/mcp/echo", TOKEN, init_frame("claude-code", "2.1.88"))
         .await;
     h.mcp(
-        "/echo",
+        "/mcp/echo",
         TOKEN,
         json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
     )
@@ -907,7 +907,7 @@ async fn stores_the_full_redacted_request_body_for_the_expandable_raw_view() {
     let _lock = traffic_lock().await;
     let h = with_echo().await;
     h.mcp(
-        "/echo",
+        "/mcp/echo",
         TOKEN,
         json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -1153,7 +1153,7 @@ async fn records_every_tool_call_with_its_source_and_clears_on_request() {
         .await;
     assert_eq!(run["text"], json!("from-panel"));
     h.mcp(
-        "/cl",
+        "/mcp/cl",
         TOKEN,
         json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -1201,7 +1201,7 @@ async fn serves_one_tools_recent_runs_for_the_run_tab_dropdown() {
     )
     .await;
     h.mcp(
-        "/hist",
+        "/mcp/hist",
         TOKEN,
         json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",

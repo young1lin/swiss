@@ -271,10 +271,53 @@ async fn panel_call_runs_a_tool_and_logs_it() {
 
 // --- the MCP endpoint through the real router ---------------------------------------------------
 
+/// P1 (docs/24): `/mcp/{name}` is the one MCP endpoint shape. A POST with a valid bearer
+/// reaches the same handler the old root-level shape did — the prefix is the only change.
+#[tokio::test]
+async fn new_path_serves_the_endpoint() {
+    let app = app_with_echo().await;
+    let req = Request::post("/mcp/echo")
+        .header(header::HOST, "127.0.0.1:19999")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        // Both reply media types, as every MCP client negotiates.
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .body(Body::from(
+            json!({ "jsonrpc": "2.0", "method": "tools/list", "id": 1 }).to_string(),
+        ))
+        .unwrap();
+    let (status, json, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::OK);
+    // The reply may be JSON or SSE depending on content negotiation; what THIS test pins is
+    // the route: the request reached the real MCP handler and was served. A JSON-RPC error
+    // body would still surface here — json is Some for a JSON reply.
+    if let Some(body) = json {
+        assert!(body.get("error").is_none(), "{body}");
+    }
+}
+
+/// P1 (docs/24): the hard cutover — the root single-segment shape is gone, with no alias. An
+/// authenticated POST to the old shape answers the plain 404 every unknown route gets.
+#[tokio::test]
+async fn old_root_path_is_no_longer_an_mcp_endpoint() {
+    let app = app_with_echo().await;
+    let req = Request::post("/echo")
+        .header(header::HOST, "127.0.0.1:19999")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "jsonrpc": "2.0", "method": "tools/list", "id": 1 }).to_string(),
+        ))
+        .unwrap();
+    let (status, json, _) = send(&app, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(json.unwrap()["error"], "no route for POST /echo");
+}
+
 #[tokio::test]
 async fn mcp_endpoint_rejects_missing_bearer_in_jsonrpc_shape() {
     let app = app_with_echo().await;
-    let req = Request::post("/echo")
+    let req = Request::post("/mcp/echo")
         .header(header::HOST, "127.0.0.1:19999")
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(
@@ -293,7 +336,7 @@ async fn mcp_endpoint_rejects_missing_bearer_in_jsonrpc_shape() {
 #[tokio::test]
 async fn mcp_delete_acknowledges_204() {
     let app = app_with_echo().await;
-    let req = Request::delete("/echo")
+    let req = Request::delete("/mcp/echo")
         .header(header::HOST, "127.0.0.1:19999")
         .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
         .body(Body::empty())
@@ -305,7 +348,7 @@ async fn mcp_delete_acknowledges_204() {
 #[tokio::test]
 async fn unknown_mcp_path_answers_503_jsonrpc() {
     let app = app_with_echo().await;
-    let req = Request::post("/nope")
+    let req = Request::post("/mcp/nope")
         .header(header::HOST, "127.0.0.1:19999")
         .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
         .header(header::CONTENT_TYPE, "application/json")
@@ -315,6 +358,7 @@ async fn unknown_mcp_path_answers_503_jsonrpc() {
         .unwrap();
     let (status, json, _) = send(&app, req).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    // The bare name, not the /mcp/-prefixed path — the name is what the user registered.
     assert_eq!(json.unwrap()["error"]["message"], "Unknown MCP path: nope");
 }
 
@@ -343,7 +387,7 @@ async fn mcp_endpoint_serves_a_real_client() {
     });
 
     let config = StreamableHttpClientTransportConfig::with_uri(format!(
-        "http://127.0.0.1:{}/echo",
+        "http://127.0.0.1:{}/mcp/echo",
         addr.port()
     ))
     .auth_header(TOKEN);
@@ -385,7 +429,7 @@ async fn mcp_endpoint_serves_a_real_client() {
 async fn oversized_mcp_body_is_refused() {
     let app = app_with_echo().await;
     let big = "x".repeat(BODY_LIMIT + 1);
-    let req = Request::post("/echo")
+    let req = Request::post("/mcp/echo")
         .header(header::HOST, "127.0.0.1:19999")
         .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
         .header(header::CONTENT_TYPE, "application/json")
