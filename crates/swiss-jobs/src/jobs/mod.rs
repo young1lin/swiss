@@ -515,11 +515,18 @@ impl JobSystem {
     }
 
     /// The family's set_names: replace the whole list; members of dropped groups lose
-    /// their entry and render in the new first group.
+    /// their entry and render in the new first group. A reorder pins the definitions that
+    /// render in the first group by default to the name, so demoting it re-homes nobody —
+    /// the pinned entries land on the definitions through the same commit.
     pub fn set_groups(&self, next: &[String]) -> Result<Vec<String>, String> {
         let row = self.current_config();
         let mut groups = Self::row_groups(&row);
-        groups.set_names(next.to_vec())?;
+        let ids = row
+            .get("definitions")
+            .and_then(Value::as_object)
+            .map(|defs| defs.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        groups.set_names_pinning(next.to_vec(), ids)?;
         self.commit_groups(row, &groups)?;
         Ok(groups.names())
     }
