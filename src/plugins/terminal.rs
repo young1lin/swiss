@@ -128,6 +128,10 @@ impl PluginFactory for TerminalPlugin {
                 // does (page-registry hides .sidebar for every page without it). docs/14's
                 // sketch said true; the browser said otherwise.
                 sidebar: false,
+                // workspace (docs/13 D5): the terminal supplies ALL of its own chrome -
+                // session tabs, target picker, open/expand controls, status footer - so the
+                // shell draws no context bar over it and immersive folds straight to it.
+                layout: "workspace",
             }],
             routes: vec!["/api/terminal".into()],
             // The allowlist and the local switch are read at start; a config PUT

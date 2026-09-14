@@ -23,6 +23,13 @@ pub struct PageDescriptor {
     pub entry: String,
     /// Whether the page appears in the sidebar (vs. a secondary view).
     pub sidebar: bool,
+    /// How the shell lays the page out (docs/13 D5, the adaptive shell): "resource" (a
+    /// master-detail page that owns the panel's sidebar), "page" (a full-workspace page)
+    /// or "workspace" (the plugin supplies ALL of its own chrome - the terminal). Additive
+    /// wire metadata: an older panel ignores it, and a newer panel reading an older
+    /// gateway falls back to deriving it from sidebar (true = resource, false = page),
+    /// so sidebar stays the compatibility contract.
+    pub layout: &'static str,
 }
 
 impl PageDescriptor {
@@ -36,6 +43,7 @@ impl PageDescriptor {
             "path": self.path,
             "entry": self.entry,
             "sidebar": self.sidebar,
+            "layout": self.layout,
         })
     }
 }

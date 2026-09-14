@@ -233,34 +233,53 @@
     label.check input { width: auto; accent-color: var(--accent); }
 
     /* --- shell --------------------------------------------------------------------------------- */
-    /* A macOS toolbar has no row of outlined pills. Its items are borderless until you point at them,
-       and its readouts are plain text — so .btn and .chip both shed their chrome in here. */
-    .toolbar {
-      height: 48px; display: flex; align-items: center; gap: var(--s3);
-      padding: 0 var(--s3) 0 var(--s4);
-      background: var(--bar);
-      border-bottom: 1px solid var(--sep);
-      min-width: 0; /* lets the level-one seg scroll instead of pushing the right side off */
+    /* The adaptive shell (docs/13 D5, redrawn): a left plugin RAIL for global navigation and
+       the plugin's workspace to its right. A plugin is a destination, not a label competing
+       with its pages, so the rail is narrow — glyph seats over 9px captions, never a row of
+       pills. Seats are borderless until pointed at (the macOS toolbar vocabulary); readouts
+       stay plain text. */
+    .rail {
+      width: 56px; flex: none;
+      display: flex; flex-direction: column;
+      background: var(--sidebar); border-right: 1px solid var(--sep);
+      padding: var(--s2) 0;
     }
-    /* The toolbar's right-hand button (docs/18 V3): appearance only. Refresh is a keyboard
-       affair (the r key; the memory chip's click re-reads memory only); token management
-       lives in the MCP group's Token page. */
-    .tool-acts { display: inline-flex; gap: 2px; }
+    /* The brand carries a mark: the swiss logo (logo.svg), a red shield with a white cross -
+       the pocket-knife emblem, distinct from the flag's plain field. In the rail it is the
+       one saturated thing, which is what keeps the rail reading as the panel's spine. */
+    .rail-brand { display: flex; align-items: center; justify-content: center; padding: var(--s1) 0 var(--s2); }
+    .brand-mark { width: 20px; height: 20px; border-radius: 5px; flex: 0 0 auto; }
+    .rail-nav {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 0 var(--s1); min-height: 0; overflow-y: auto;
+    }
+    /* One seat per plugin: a 17px glyph (icon or initial) over a truncated caption. The
+       active seat is the only place the accent appears in the chrome — a 2px notch on the
+       seat's left edge, in the rail's own hairline idiom. An unavailable plugin keeps its
+       seat (the panel must stay one click from a plugin it can no longer reach) and says
+       so in the seat's title. */
+    .rail-btn {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+      height: 48px; border-radius: var(--r-btn);
+      color: var(--text-2);
+    }
+    .rail-btn .ic { width: 17px; height: 17px; }
+    /* Unknown third-party plugins have no glyph in the sprite; their initial stands in. */
+    .rail-glyph { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; font-size: 12px; font-weight: 650; line-height: 1; }
+    .rail-btn-label {
+      font-size: 9px; letter-spacing: .01em; max-width: 52px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .rail-btn:hover { background: var(--hover); color: var(--text); }
+    .rail-btn[aria-current="true"] { background: var(--hover); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+    /* The rail's foot: appearance and fullscreen — global controls, not page controls. */
+    .grow { flex: 1; }
+    .rail-foot { display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 0 var(--s1); }
+    .rail-foot .btn.icon { width: 100%; padding: 5px 0; justify-content: center; }
     /* The memory chip is a control (renderMemory wires a memory-only click): mono because
        the value is a copyable number, .chip.button for the hover affordance. */
     #memChip { font-family: var(--mono); }
     @media (max-width: 960px) { #memChip { display: none; } /* 960px is the support floor */ }
-    /* The brand carries a mark: the swiss logo (logo.svg), a red shield with a white cross -
-       the pocket-knife emblem, distinct from the flag's plain field. It is the one saturated
-       thing on the bar, which is what makes the bar read as a header and not as a second
-       sidebar laid on its side. */
-    .brand { display: inline-flex; align-items: center; gap: var(--s2); font-size: var(--f-body); font-weight: 650; letter-spacing: -0.01em; margin-right: var(--s1); }
-    .brand-mark { width: 18px; height: 18px; border-radius: 5px; flex: 0 0 auto; }
-    .grow { flex: 1; }
-    .toolbar .btn {
-      background: none; box-shadow: none; color: var(--text-2); font-weight: 450;
-    }
-    .toolbar .btn:hover { background: var(--hover); color: var(--text); }
     .chip {
       font-size: var(--f-label); font-variant-numeric: tabular-nums;
       color: var(--text-3); background: none;
@@ -268,39 +287,59 @@
     }
     .chip.button:hover { background: var(--hover); color: var(--text-2); cursor: pointer; }
 
-    /* The shell fills whatever the bars leave. Previously this subtracted a hand-copied 44px, which
-       was a second source of truth for the toolbar's height; a second bar would have made it three.
-       min-height:0 is what lets the inner scrollers actually scroll inside a flex column. */
-    #app { display: flex; flex-direction: column; height: 100vh; }
+    /* The workbench: whatever the rail leaves, the plugin owns. The context bar is drawn by
+       page-registry only when the plugin has something to switch between; a workspace
+       plugin supplies all of its own chrome and sees neither. min-height:0 is what lets the
+       inner scrollers actually scroll inside a flex column. */
+    #app { display: flex; height: 100vh; }
+    .workbench { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .shell { display: flex; flex: 1; min-height: 0; }
 
-    /* The subsection bar (docs/13 D6/D7): one full-width row between the toolbar and the shell,
-       dressed in the toolbar's own vocabulary so no new colour enters the panel. */
-    .subbar {
-      display: flex; align-items: center; gap: var(--s3);
-      min-height: 36px;
-      padding: 4px var(--s4);
+    /* The plugin context bar: "MCP / Servers" with a disclosure — the compact page switcher
+       plus the page's count. One bar, dressed in the rail's vocabulary (borderless until
+       pointed at), so plugin navigation and page navigation never wear the same segmented
+       control twice. */
+    .ctxbar {
+      display: flex; align-items: center; gap: var(--s2);
+      height: 40px; flex: none;
+      padding: 0 var(--s4);
       background: var(--bar); border-bottom: 1px solid var(--sep);
+      min-width: 0;
     }
-    /* The single-page spelling of the page bar (docs/18 V3): the page's own name, body weight. */
-    .subbar-name { font-size: var(--f-body); font-weight: 500; color: var(--text-2); }
+    .ctx-switch {
+      display: inline-flex; align-items: center; gap: var(--s1);
+      font-size: var(--f-body);
+      padding: 4px var(--s2); margin-left: calc(-1 * var(--s2));
+      border-radius: var(--r-btn); color: var(--text-2); max-width: 60%;
+    }
+    .ctx-switch:hover { background: var(--hover); color: var(--text); }
+    .ctx-plugin { color: var(--text-3); font-weight: 450; }
+    .ctx-sep { color: var(--text-3); flex: none; }
+    .ctx-page { color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ctx-switch .ic { width: 12px; height: 12px; color: var(--text-3); }
 
-    /* Fullscreen (the toolbar's expand control, js/immersive.js): ONLY the global toolbar
-       folds — everything below it is the sub-page's own and stays: the page bar (its header),
-       the sidebar (on #mcps the sidebar IS the page — the MCP list itself, and with nothing
-       selected the pane is empty), and the content. The toolbar collapses through visibility,
-       not display, on purpose: the expand control lives inside it, and display:none would take
-       the exit button down with the bar, while a visibility:hidden parent lets the control
+    /* Fullscreen (the rail's expand control, js/immersive.js): the APP chrome folds — the
+       rail and, when drawn, the context bar. What stays is the page's own: the resource
+       sidebar on #mcps (the sidebar IS the page — the MCP list itself), the terminal's own
+       toolbar and session tabs on #terminal, and the content. Folding is visibility, not
+       display, on purpose: the expand control lives inside the rail, and display:none would
+       take the exit button down with it, while a visibility:hidden parent lets the control
        re-open itself and escape to the top-right corner (under menus and sheets, above the
        page). The measure caps stay — readability is not a width problem. */
-    body.immersive .toolbar {
-      visibility: hidden; height: 0; min-height: 0; border-bottom: 0;
+    body.immersive .rail {
+      visibility: hidden; width: 0; min-width: 0; padding: 0; border-right: 0; overflow: hidden;
     }
-    /* The exit must be an OBVIOUS control on every page — the corner button rides the page
-       bar's row; the page bar reserves right-side room so its own actions never sit under it. */
-    body.immersive .subbar { padding-right: 52px; }
+    body.immersive .ctxbar {
+      visibility: hidden; height: 0; min-height: 0; padding: 0; border-bottom: 0; overflow: hidden;
+    }
+    /* The exit must be an OBVIOUS control on every page: the corner button is the way out
+       that cannot be scrolled away. Fixed elements resolve percentage widths against the
+       VIEWPORT, so the rail-foot rule that stretches this button to the rail (width:100%)
+       must be overridden — without this the "corner button" is a 1440px strip across the
+       top of every immersive page (found live on 19998, 2026-09-14). */
     body.immersive #expandBtn {
       visibility: visible; position: fixed; top: var(--s2); right: var(--s2); z-index: 25;
+      width: 28px; padding: 5px 0; justify-content: center;
       background: var(--bar); border: 1px solid var(--sep); opacity: 0.95;
       color: var(--text-2); box-shadow: var(--shadow-card);
     }
@@ -353,25 +392,34 @@
       color: var(--text-3); background: color-mix(in srgb, var(--text) 5%, transparent);
     }
 
-    /* --- groups (docs/20 §4.1) -------------------------------------------------------------------
-       One component, two densities: the sidebar tree and the page card list. Hierarchy is
-       carried by structure alone — a 28px/36px band on --sep-soft, a 20px indent behind a 1px
-       guide line — never by case or weight tricks: the group name is body-size, mixed case,
-       weight 600. The band is what makes the header read as a section of the list rather than
-       a row of it, and it is why the grip can stay hover-only. */
-    .grp--side + .grp--side { margin-top: var(--s2); }
+    /* --- groups (docs/20 §4.1, the tree model) ----------------------------------------------------
+       One component, two densities: the sidebar tree and the page card list. The group is a
+       tree NODE, not a section band: transparent ground (hover lifts it), chevron + folder +
+       name + count. The leading columns' x positions are a CONTRACT with the head's markup
+       (toggle first, actions after — groups.js), and the indent is measured on the LAID-OUT
+       LABEL, not on padding arithmetic:
+         side:  head pad 4 + chev 12 + gap 4 + folder 14 + gap 4  → name x 38;
+                body 42 + row pad 8 + dot 6 + gap 8              → member text x 64 (Δ 26)
+         page:  head pad 8 + chev 12 + gap 4 + folder 14 + gap 4  → name x 42;
+                body 54 + card row pad 16                        → member text x 70 (Δ 28)
+       The guide line drops through the CHEVRON column (the disclosure's own x) to the last
+       member's midline — the classic source-list rail, so a child sits visibly inside its
+       parent's gutter. The folder glyph is worn by parents only; weight stays 600 mixed-case
+       for the name, and the grip/ellipsis stay hover-only. */
+    .grp { position: relative; }
+    .grp--side + .grp--side { margin-top: var(--s1); }
     .grp--page + .grp--page { margin-top: var(--s5); }
     .grp-head {
       display: flex; align-items: center; gap: var(--s1);
-      background: var(--sep-soft);
+      background: none; border-radius: var(--r-row);
     }
     .grp-head:hover { background: var(--hover); }
     .grp--side .grp-head { height: 28px; padding: 0 var(--s1); }
     .grp--page .grp-head { height: 36px; padding: 0 var(--s2); }
     /* The group's drag handle: the ONLY draggable thing on a header, so + and the ellipsis keep
        every click (a hand that moves a pixel while pressing one must not cancel a click into a
-       drag). Whisper-quiet until pointed at — the band carries the hierarchy now — but the grab
-       cursor is what teaches "this row reorders". */
+       drag). Whisper-quiet until pointed at — the tree columns carry the hierarchy now — but the
+       grab cursor is what teaches "this row reorders". */
     .grp-grip {
       flex: none; width: 14px; height: 24px; display: inline-flex; align-items: center;
       justify-content: center; color: var(--text-3); opacity: 0; cursor: grab;
@@ -386,6 +434,10 @@
     .grp-chev { flex: none; width: 12px; color: var(--text-3); transition: transform .15s ease; }
     .grp:not(.collapsed) .grp-chev { transform: rotate(90deg); }
     @media (prefers-reduced-motion: reduce) { .grp-chev { transition: none; } }
+    /* The container glyph (i-folder): a visual privilege of parenthood — members never wear
+       one, so the silhouette alone separates the two levels before the indent is read. */
+    .grp-folder { flex: none; width: 14px; height: 14px; display: inline-flex; color: var(--text-3); }
+    .grp-folder .ic { width: 14px; height: 14px; }
     .grp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* Tabular so a count change does not wiggle the name beside it; dimmed because it is
        metadata, kept visible folded because 0 versus 3 is how a folded group explains itself. */
@@ -403,16 +455,19 @@
     .grp-add:focus-visible, .grp-more:focus-visible { opacity: 1; }
     .grp-add:hover, .grp-more:hover { color: var(--text); background: var(--sep-soft); }
     .grp.collapsed .grp-body { display: none; }
-    /* The indent is what makes this read as a tree: members start 20px under the band, and a
-       1px guide line in the gutter ties them to their header. It stops at the last row's
-       midline (half a row height) so an empty group draws no orphan line. */
-    .grp-body { position: relative; padding-left: 20px; }
-    .grp-body::before {
-      content: ""; position: absolute; left: -14px; top: 0;
+    /* The rail: a 1px guide from under the head's chevron to the last member's midline
+       (half a row height). It hangs on .grp, not on .grp-body, so it can keep the chevron's
+       x whatever the body's indent is; a collapsed group draws nothing. */
+    .grp::before {
+      content: ""; position: absolute; left: 10px; top: 28px; bottom: 15px;
       border-left: 1px solid var(--sep);
     }
-    .grp--side .grp-body::before { bottom: 15px; }
-    .grp--page .grp-body::before { bottom: 21px; }
+    .grp--page::before { left: 14px; top: 36px; bottom: 21px; }
+    .grp.collapsed::before { display: none; }
+    /* The members' gutter: one full tree step right of the parent's LABEL (the numbers in
+       the section comment above), not a cosmetic 20px nudge. */
+    .grp-body { padding-left: 42px; }
+    .grp--page .grp-body { padding-left: 54px; }
     /* An empty group is a place, not an empty state: one quiet line keeps the container a
        visible drop target (the only way in) and explains the + beside it. */
     .grp-empty {

@@ -37,10 +37,10 @@
     /* Segmented control. */
     .seg { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: var(--s4); background: var(--sep-soft); border-radius: 8px; }
     /* An emptied .seg is not a control: the padding over --sep-soft is the control's well, so
-       with nothing inside it the well itself paints — a 6px grey square. The page bar showed
-       exactly that beside a single-page group's name (page-registry clears #subSeg instead of
-       hiding it). :empty, not a hidden flag, so every .seg that empties itself is covered;
-       paintNavigation empties via innerHTML = "", with no whitespace left behind. */
+       with nothing inside it the well itself paints — a 6px grey square. The shell no longer
+       empties a .seg (page navigation left the segmented control entirely), but a page-local
+       .seg may still empty itself after a poll. :empty, not a hidden flag, so every .seg
+       that empties itself is covered — empties happen via innerHTML = "", no whitespace. */
     .seg:empty { display: none; }
     .seg button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; transition: color .12s ease; }
     .seg button:hover { color: var(--text); }
@@ -283,14 +283,11 @@
     /* --- tunnels ------------------------------------------------------------------------------- */
     /* The list rows reuse .group/.dot/.btn; only the row layout is new. Deliberately not a table:
        the MCP side already establishes inset grouped lists as this panel's list idiom. */
-    /* .seg's default bottom margin spaces it off the tab body. Where it sits inline beside other
-       controls instead — the toolbar, a section header, the subsection bar — that margin shifts it
-       off their centre. */
-    .toolbar .seg, .sec-head .seg, .subbar .seg { margin-bottom: 0; }
-    /* 960px is the support floor (docs/18 V3): the level-one tabs scroll inside the bar rather
-       than clip or push the right-hand controls off screen. */
-    .toolbar .seg { overflow-x: auto; scrollbar-width: none; }
-    .toolbar .seg::-webkit-scrollbar { display: none; }
+    /* .seg's default bottom margin spaces it off the tab body. Where it sits inline beside
+       other controls instead — a section header like this page's own tab row — that margin
+       shifts it off their centre. (The shell's navigation left .seg behind entirely: plugins
+       live in the rail, pages in the context bar's switcher.) */
+    .sec-head .seg { margin-bottom: 0; }
     /* 42px rows (docs/18 V4): two lines of text still clear it, and a list of nine stops
        reading as nine cards. */
     .tun-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s4); min-height: 42px; }
@@ -627,7 +624,9 @@
        page fills EXACTLY what is left — the old calc(100vh - 100px) was a hand-measured
        constant that went stale the moment any bar or padding changed, and every miss by one
        pixel grew the pane's own scrollbar beside the terminal. */
-    .pane.term-host { display: flex; flex-direction: column; overflow: hidden; }
+    /* A workspace plugin owns the whole workbench: no pane padding, no measure — the
+       dark surface runs edge to edge under the rail (and, immersive, to the window). */
+    .pane.term-host { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
     .pane.term-host > .term-page { flex: 1; }
     .term-page {
       display: flex; flex-direction: column;
@@ -855,3 +854,40 @@
       font-size: var(--f-caption); font-weight: 600; text-transform: uppercase;
       letter-spacing: .04em; color: var(--text-3); margin-top: var(--s2);
     }
+
+    /* --- plugin palette (the rail's "..." seat, js/plugin-palette.js) -----------------------------
+       The rail is the shortlist; this is the whole list. A command-palette shape - one
+       card, one input, sections - because searching beats scrolling at any plugin count.
+       z-index above floating menus: navigation outranks any menu it might replace. */
+    .palette-back { position: fixed; inset: 0; z-index: 46; background: color-mix(in srgb, var(--bg) 45%, transparent); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+    .palette {
+      width: min(440px, calc(100vw - 32px));
+      background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-card);
+      box-shadow: var(--shadow-sheet);
+      max-height: 64vh; display: flex; flex-direction: column; overflow: hidden;
+    }
+    .palette input { margin: var(--s3); font-size: var(--f-body); flex: none; }
+    .palette-list { overflow-y: auto; padding: 0 var(--s2) var(--s3); }
+    .pal-section {
+      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--text-3); padding: var(--s2) var(--s2) var(--s1);
+    }
+    .pal-item { display: flex; align-items: center; gap: var(--s1); }
+    .pal-row {
+      flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s2);
+      padding: 7px var(--s2); border-radius: var(--r-row); text-align: left;
+      font-size: var(--f-body); color: var(--text);
+    }
+    .pal-row .ic { width: 15px; height: 15px; color: var(--text-2); }
+    .pal-row .rail-glyph { width: 15px; height: 15px; font-size: 11px; }
+    .pal-row:hover { background: var(--hover); }
+    .pal-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pal-off { color: var(--text-3); }
+    .pal-row.off .pal-name { color: var(--text-3); }
+    .pal-pin { flex: none; padding: 6px; border-radius: var(--r-btn); color: var(--text-3); display: inline-flex; }
+    .pal-pin .ic { width: 13px; height: 13px; }
+    .pal-pin:hover { background: var(--hover); color: var(--text-2); }
+    /* Pinned is accent, not filled: saturation stays for state (design rule 2). */
+    .pal-pin.on { color: var(--accent); }
+    .pal-none { padding: var(--s2) var(--s3); font-size: var(--f-label); color: var(--text-3); }
+

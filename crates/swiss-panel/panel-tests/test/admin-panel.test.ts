@@ -36,20 +36,59 @@ describe("admin panel assets", () => {
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {
+    /* Why this walk is the strict link check, not the boot test below: vitest evaluates modules
+       through its SSR transform, where a missing export resolves to undefined with at most a
+       warning — the browser's native linker rejects the whole MODULE. The 2026-09 shell
+       refactor shipped `export { paintImmersive as paint }` with no `paintImmersive` declared
+       and every Node-side gate stayed green; only the browser went blank. So this test owns
+       link-correctness and must be stricter than Node: it walks EVERY module on disk (page
+       entries load lazily via dynamic import and would otherwise never be visited), and it
+       reads export specs with real alias semantics — in `export { a as b }` the name importers
+       must ask for is b. */
     const bodies = new Map<string, string>(); // path -> body
-    const queue = ["main.js"];
+    const queue: string[] = [];
+    const walkDir = (rel: string) => {
+      for (const f of readdirSync(join(jsDir, rel), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const p = rel ? rel + "/" + f.name : f.name;
+        if (f.isDirectory()) walkDir(p);
+        else if (f.name.endsWith(".js")) queue.push(p);
+      }
+    };
+    walkDir("");
     while (queue.length) {
       const path = queue.shift()!;
       if (bodies.has(path)) continue;
       bodies.set(path, readFileSync(join(jsDir, path), "utf8")); // a missing file throws here
-      for (const m of bodies.get(path)!.matchAll(/import\s*\{([^}]*)\}\s*from\s*"\.\/([\w.-]+)"/g)) {
-        const target = path.slice(0, path.lastIndexOf("/") + 1) + m[2];
+      for (const m of bodies.get(path)!.matchAll(/import\s*\{([^}]*)\}\s*from\s*"((?:\.{1,2})(?:\/[\w.-]+)+)"/g)) {
+        // Resolve the specifier like the browser would: "." stays in the importing
+        // module's directory, ".." climbs one level, and intermediate segments are KEPT
+        // ("./views/tokens.js" is views/tokens.js, not tokens.js).
+        const parts = path.split("/").slice(0, -1); // the importing module's directory
+        for (const seg of m[2].split("/").slice(0, -1)) {
+          if (seg === "..") parts.pop();
+          else if (seg !== ".") parts.push(seg);
+        }
+        const target = [...parts, m[2].split("/").pop()!].join("/");
         queue.push(target);
         // The imported names must appear in the target's export list — the check that catches a
-        // rename applied on one side of an import and forgotten on the other.
+        // rename applied on one side of an import and forgotten on the other. Vendored files
+        // are exempt from the NAME check (they ship verbatim in whatever export dialect they
+        // came in — cronstrue is not ours to restyle), but not from the existence check above.
         const tbody = readFileSync(join(jsDir, target), "utf8");
-        const exportMatch = tbody.match(/export\s*\{([^}]*)\}/);
-        const exported = new Set((exportMatch?.[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+        const exported = new Set<string>();
+        if (!target.startsWith("vendor/")) {
+          const exportMatch = tbody.match(/export\s*\{([^}]*)\}/);
+          for (const spec of (exportMatch?.[1] ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
+            // `export { a as b }`: the importable name is the alias, b.
+            exported.add(spec.split(/\s+as\s+/).pop()!.trim());
+          }
+          // Inline declarations are the other export dialect the tree actually uses
+          // (terminal-core.js ships `export function configPutBody(...)` with no clause).
+          for (const d of tbody.matchAll(/export\s+(?:async\s+)?(?:function\*?|const|let|var|class)\s+([\w$]+)/g)) {
+            exported.add(d[1]);
+          }
+        }
+        if (target.startsWith("vendor/")) continue; // vendored: presence checked, names not ours
         for (let sym of m[1].split(",")) {
           sym = sym.trim();
           if (!sym) continue;
@@ -444,33 +483,34 @@ describe("fullscreen - the sub-page takes over the page", () => {
   });
 });
 
-/* Fullscreen keeps the page's own bars — the CSS contract, pinned end to end. Two
-   regressions were paid for on 2026-09-13: (1) fullscreen folded the SIDEBAR away too —
-   but on #mcps the sidebar IS the page (the MCP list itself), and with nothing selected
-   the pane is empty, so the page went blank; (2) the exit button vanished with the
-   toolbar, because it lives inside the toolbar and display:none takes the whole subtree
-   down — only Esc could leave. These read the shipped base.css the way the cascade test
-   above does and pin the shape: ONLY the toolbar folds, via visibility, so the corner
-   exit can escape. */
+/* Fullscreen folds the APP chrome and keeps the page's own surfaces — the CSS contract,
+   pinned end to end. The 2026-09-13 regressions still shape it: (1) folding the SIDEBAR
+   blanked #mcps, where the sidebar IS the page; (2) display:none on the chrome took the
+   exit button down with it. The adaptive shell (docs/13 D5) widens the rule set: the RAIL
+   and the CONTEXT BAR are app chrome and fold; the resource sidebar and a workspace's own
+   chrome (the terminal's bar and session tabs) never do. These read the shipped base.css
+   the way the cascade test above does and pin that shape. */
 describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
   const base = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "styles", "base.css"), "utf8");
 
-  it("the toolbar folds through visibility, never display:none", () => {
-    expect(base).toMatch(/body.immersive .toolbar {[^}]*visibility: hidden/);
-    expect(base).not.toMatch(/body.immersive .toolbar {[^}]*display: none/); // display would take the exit button down too
+  it("the rail and the context bar fold through visibility, never display:none", () => {
+    expect(base).toMatch(/body.immersive .rail {[^}]*visibility: hidden/);
+    expect(base).toMatch(/body.immersive .ctxbar {[^}]*visibility: hidden/);
+    // display would take the exit button (inside the rail) down with the chrome
+    expect(base).not.toMatch(/body.immersive .rail {[^}]*display: none/);
+    expect(base).not.toMatch(/body.immersive .ctxbar {[^}]*display: none/);
   });
 
-  it("the page's own bars never fold: no immersive rule hides the sidebar or the page bar", () => {
+  it("the page's own surfaces never fold: no immersive rule hides the sidebar", () => {
     expect(base).not.toMatch(/body.immersive[^{]*.sidebar[^{]*{[^}]*display: none/);
-    expect(base).not.toMatch(/body.immersive[^{]*.subbar[^{]*{[^}]*display: none/);
+    expect(base).not.toMatch(/body.immersive[^{]*.sidebar[^{]*{[^}]*visibility: hidden/);
   });
 
   it("the exit escapes: the corner button re-opens visibility over its hidden parent", () => {
     expect(base).toMatch(/body.immersive #expandBtn {[^}]*visibility: visible/);
     expect(base).toMatch(/body.immersive #expandBtn {[^}]*position: fixed/);
-  });
-
-  it("the page bar reserves room so its own actions never sit under the floating exit", () => {
-    expect(base).toMatch(/body.immersive .subbar {[^}]*padding-right: 52px/);
+    // A fixed element sizes percentages against the VIEWPORT: the rail-foot stretch rule
+    // (width:100%) turns the "corner button" into a full-width strip unless overridden.
+    expect(base).toMatch(/body.immersive #expandBtn {[^}]*width: 28px/);
   });
 });

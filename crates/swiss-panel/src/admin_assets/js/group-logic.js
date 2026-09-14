@@ -47,6 +47,16 @@ function addTitle(verb, noun, group) {
   return verb + " " + noun + " to " + group;
 }
 
+/* --- the empty line ------------------------------------------------------------------------------ */
+
+/** What an empty group's one quiet line says. The line exists to keep the container visible
+ *  as a drop target, not to teach the whole flow - the head's + already does that - so it
+ *  stays two words plus at most the drop affordance. Pure so the wording is pinned by tests
+ *  like the delete confirm's is. */
+function emptyLineText(canDrop) {
+  return canDrop ? "No items — drop here or press +" : "No items";
+}
+
 /* --- the last-used group ------------------------------------------------------------------------- */
 
 /** The localStorage key for a scope's last-used group ("the one I picked last time I added
@@ -64,4 +74,4 @@ function resolveDefaultGroup(names, lastUsed) {
   return lastUsed && names.indexOf(lastUsed) >= 0 ? lastUsed : names[0] || DEFAULT_GROUP;
 }
 
-export { addTitle, deleteConfirmMsg, groupOf, lastGroupKey, resolveDefaultGroup, slice };
+export { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resolveDefaultGroup, slice };

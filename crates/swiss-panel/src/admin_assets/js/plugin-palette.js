@@ -1,0 +1,184 @@
+/* ================================================================================================
+   The plugin palette - the rail's "..." seat (docs/13 D5, the adaptive shell).
+
+   The rail holds the pinned few; this holds EVERY plugin the host serves, searchable, with
+   pinning per browser. Pin state is a preference about this screen, not gateway state, so it
+   lives in localStorage like the theme - no server persistence for a UI choice.
+
+   The pure half (pin slice, palette rows, the glyph map) is exported for the vitest suite;
+   openPluginPalette builds the one overlay. The caller passes the "go" callback (navigatePage)
+   and an "onchange" repaint callback, so this module never imports the shell back.
+   ================================================================================================ */
+import { el, esc, icon } from "./util.js";
+
+var PIN_KEY = "swiss.rail.pinned";
+/* How many seats the rail shows before the "..." seat. The palette is the real list; the
+ * rail is the shortlist, so the limit is about the rail's height, not the host's capacity. */
+var RAIL_LIMIT = 7;
+
+/* Built-in plugins get the sprite glyph they already own. A third-party plugin the sprite has
+ * never heard of falls back to its INITIAL - identity by name, not a mystery box icon. This is
+ * panel-side chrome data, deliberately NOT a descriptor field: adding icon metadata to the
+ * wire would tax every plugin author for a panel nicety. */
+var GLYPHS = { mcp: "server", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", host: "gear" };
+
+function pluginGlyph(group) { return GLYPHS[group.id] || null; }
+
+function glyphHtml(group) {
+  var name = pluginGlyph(group);
+  return name
+    ? '<svg class="ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>'
+    : '<span class="rail-glyph" aria-hidden="true">' + esc((group.label || group.id || "?").trim().charAt(0).toUpperCase()) + "</span>";
+}
+
+/* --- pin state (localStorage) ------------------------------------------------------------------- */
+
+function loadPins() {
+  try {
+    var v = JSON.parse(localStorage.getItem(PIN_KEY));
+    return Array.isArray(v) ? v.filter(function (x) { return typeof x === "string"; }) : null;
+  } catch (e) { return null; }
+}
+function savePins(ids) {
+  try { localStorage.setItem(PIN_KEY, JSON.stringify(ids)); } catch (e) { /* full or blocked */ }
+}
+
+/* --- the pure half ------------------------------------------------------------------------------- */
+
+/** The default shortlist: the first RAIL_LIMIT groups, in group order - the order the host
+ *  already decided. Pure so the default is pinnable by a test. */
+function defaultPinIds(groups) {
+  return groups.slice(0, RAIL_LIMIT).map(function (g) { return g.id; });
+}
+
+/** The rail's slice of the groups: the pinned ones, in GROUP order (pinning picks a seat,
+ *  it does not reorder the rail). `pins` is optional so tests can pass an explicit list;
+ *  without it the store is read - null (never set / unreadable) means the default. */
+function pinnedGroups(groups, pins) {
+  var p = pins === undefined ? loadPins() : pins;
+  if (!p) return groups.slice(0, RAIL_LIMIT);
+  return groups.filter(function (g) { return p.indexOf(g.id) >= 0; });
+}
+
+/** The palette's sections given a query: Pinned first, then All plugins, each filtered by
+ *  the query against label and id. Empty sections drop out. Pure: groups + pins + query in,
+ *  sections out. */
+function paletteRows(groups, pins, query) {
+  var q = String(query || "").trim().toLowerCase();
+  var match = function (g) {
+    return !q || String(g.label).toLowerCase().indexOf(q) >= 0 || String(g.id).toLowerCase().indexOf(q) >= 0;
+  };
+  var pinned = [];
+  var rest = [];
+  groups.forEach(function (g) { (pins.indexOf(g.id) >= 0 ? pinned : rest).push(g); });
+  return [
+    { section: "Pinned", groups: pinned.filter(match) },
+    { section: "All plugins", groups: rest.filter(match) },
+  ].filter(function (s) { return s.groups.length; });
+}
+
+/* --- the overlay -------------------------------------------------------------------------------- */
+
+/** Open the palette over everything (z-index above menus: it is the navigation itself).
+ *  groups: registry groups (each may carry .off - every page unavailable). go(id) navigates;
+ *  onchange() repaints the rail after a pin toggle. Escape or a click on the backdrop closes,
+ *  and focus returns to the "..." seat so the keyboard path does not dead-end. */
+function openPluginPalette(groups, go, onchange) {
+  closePluginPalette();
+  var pins = loadPins() || defaultPinIds(groups);
+
+  var back = el("div", "palette-back");
+  var card = el("div", "palette");
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", "Plugins");
+  back.appendChild(card);
+
+  var input = el("input");
+  input.type = "search";
+  input.placeholder = "Search plugins…";
+  input.setAttribute("aria-label", "Search plugins");
+  card.appendChild(input);
+
+  var list = el("div", "palette-list");
+  card.appendChild(list);
+
+  function rowButton(g) {
+    var b = el("button", "pal-row" + (g.off ? " off" : ""));
+    b.type = "button";
+    b.innerHTML = glyphHtml(g) +
+      '<span class="pal-name">' + esc(g.label) + (g.off ? ' <span class="pal-off">· off</span>' : "") + "</span>";
+    b.title = g.off ? (g.offDetail || "Plugin disabled") : "Open " + g.label;
+    b.onclick = function (ev) { ev.stopPropagation(); closePluginPalette(); go(g.pages[0].id); };
+    return b;
+  }
+
+  function pinButton(g) {
+    var pinned = pins.indexOf(g.id) >= 0;
+    var p = el("button", "pal-pin");
+    p.type = "button";
+    p.innerHTML = icon("star", (pinned ? "Unpin " : "Pin ") + g.label);
+    p.className = "pal-pin" + (pinned ? " on" : "");
+    p.setAttribute("aria-pressed", String(pinned));
+    p.title = pinned ? "Remove from the rail" : "Pin to the rail";
+    p.onclick = function (ev) {
+      ev.stopPropagation();
+      pins = pins.indexOf(g.id) >= 0 ? pins.filter(function (x) { return x !== g.id; }) : pins.concat([g.id]);
+      savePins(pins);
+      render();
+      if (onchange) onchange();
+    };
+    return p;
+  }
+
+  function render() {
+    list.innerHTML = "";
+    paletteRows(groups, pins, input.value).forEach(function (section) {
+      list.appendChild(el("div", "pal-section", section.section));
+      section.groups.forEach(function (g) {
+        var holder = el("div", "pal-item");
+        holder.appendChild(rowButton(g));
+        holder.appendChild(pinButton(g));
+        list.appendChild(holder);
+      });
+    });
+    if (!list.children.length) list.appendChild(el("div", "pal-none", "No plugins match."));
+  }
+
+  input.oninput = render;
+  input.onkeydown = function (ev) {
+    var rows = Array.prototype.slice.call(list.querySelectorAll(".pal-row"));
+    var i = rows.indexOf(document.activeElement);
+    if (ev.key === "Escape") { ev.preventDefault(); closePluginPalette(); return; }
+    if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      ev.preventDefault();
+      var n = ev.key === "ArrowDown" ? i + 1 : i - 1;
+      if (i < 0) n = ev.key === "ArrowDown" ? 0 : rows.length - 1; /* from the input */
+      if (n < 0) n = 0;
+      if (n >= rows.length) n = rows.length - 1;
+      if (rows[n]) rows[n].focus();
+    } else if (ev.key === "Enter" && i < 0) {
+      ev.preventDefault();
+      var first = list.querySelector(".pal-row");
+      if (first) first.click();
+    }
+  };
+  list.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault();
+    closePluginPalette();
+  });
+
+  back.onclick = function (ev) { if (ev.target === back) closePluginPalette(); };
+  document.body.appendChild(back);
+  render();
+  input.focus();
+}
+
+function closePluginPalette() {
+  var back = document.querySelector(".palette-back");
+  if (back) back.remove();
+  var more = document.getElementById("railMore");
+  if (more && typeof more.focus === "function") more.focus();
+}
+
+export { closePluginPalette, defaultPinIds, glyphHtml, openPluginPalette, paletteRows, pinnedGroups, pluginGlyph, RAIL_LIMIT };

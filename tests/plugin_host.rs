@@ -626,8 +626,10 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
         );
     }
 
-    // Pages in registration order; the fixed view table of this build.
-    let pages: Vec<(String, String, String, bool, i64)> = body["pages"]
+    // Pages in registration order; the fixed view table of this build. The layout column
+    // pins the adaptive-shell contract (docs/13 D5): resource = master-detail with the
+    // panel sidebar, page = full workspace, workspace = the plugin draws all its own chrome.
+    let pages: Vec<(String, String, String, bool, i64, String)> = body["pages"]
         .as_array()
         .unwrap()
         .iter()
@@ -638,24 +640,26 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
                 p["path"].as_str().unwrap().to_string(),
                 p["sidebar"].as_bool().unwrap(),
                 p["order"].as_i64().unwrap(),
+                p["layout"].as_str().unwrap().to_string(),
             )
         })
         .collect();
     assert_eq!(
         pages,
         vec![
-            ("mcps".into(), "mcp".into(), "#mcps".into(), true, 10),
-            ("traffic".into(), "mcp".into(), "#traffic".into(), false, 20),
-            ("tokens".into(), "mcp".into(), "#tokens".into(), false, 30),
+            ("mcps".into(), "mcp".into(), "#mcps".into(), true, 10, "resource".into()),
+            ("traffic".into(), "mcp".into(), "#traffic".into(), false, 20, "page".into()),
+            ("tokens".into(), "mcp".into(), "#tokens".into(), false, 30, "page".into()),
             (
                 "tunnels".into(),
                 "tunnels".into(),
                 "#tunnels".into(),
                 false,
-                30
+                30,
+                "page".into()
             ),
-            ("data".into(), "data".into(), "#data".into(), false, 40),
-            ("jobs".into(), "jobs".into(), "#jobs".into(), false, 50),
+            ("data".into(), "data".into(), "#data".into(), false, 40, "page".into()),
+            ("jobs".into(), "jobs".into(), "#jobs".into(), false, 50, "page".into()),
         ],
     );
     let entries: Vec<String> = body["pages"]

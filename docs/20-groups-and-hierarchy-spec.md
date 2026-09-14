@@ -1,6 +1,13 @@
 # 20 — 分组与层级：一个模型、一族 API、一个组件
 
 > 状态：**已实施（G1–G8，`72dc010` 起，完成于本提交）**。基线 `109397e`（2026-09-13）。配套交接提示词：[20-groups-and-hierarchy-prompt.md](20-groups-and-hierarchy-prompt.md)。
+> **§4 视觉模型修订（tree 模型，2026-09）：分组头不再是 `--sep-soft` 色带，而是树节点——
+> chevron、folder 图标（新 sprite `i-folder`）、名称、计数，透明底、hover 才有轻背景；grip 与 ⋯
+> hover/focus 才显现，且 grip 移到头部末尾以稳定树列的 x 坐标。缩进按「最终排版的文字 x 坐标」计量：
+> side 密度子行文本比父名右移 26px（body 缩进 42px），page 密度右移 28px（body 缩进 54px）；
+> 竖向 guide 改挂在 `.grp::before`，从 chevron 列降到最后一行的中线，折叠即消失。
+> 空组文案缩短为 "No items — drop here or press +"（不可拖的 scope 只说 "No items"）。
+> 组件、API、localStorage 键、拖拽语义全部不变；`aria-expanded` 补上。**
 > 设计语言的总纲从本文起由 `.claude/skills/swiss-design/SKILL.md` 承载：本文 §4 是那份语言在「分组列表」
 > 上的展开，两者冲突时以 skill 为准（skill 改了要回来改这里）。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/18-panel-visual-refresh-spec.md`（本文沿用它的 token、

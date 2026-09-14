@@ -32,8 +32,17 @@ pub const JOBS_ID: &str = "jobs";
 pub const PROCESS_ID: &str = "process";
 
 /// One built-in page: id-derived hash path (`#mcps`) and entry (`/admin/js/views/<id>.js`),
-/// sidebar only for the primary MCPs view — the built-in view table of this build.
-fn page(id: &str, plugin_id: &str, label: &str, order: i64, sidebar: bool) -> PageDescriptor {
+/// sidebar only for the primary MCPs view — the built-in view table of this build. The
+/// layout names how the shell frames the page (resource/page/workspace, docs/13 D5); every
+/// built-in states it so the wire never has to guess from sidebar alone.
+fn page(
+    id: &str,
+    plugin_id: &str,
+    label: &str,
+    order: i64,
+    sidebar: bool,
+    layout: &'static str,
+) -> PageDescriptor {
     PageDescriptor {
         id: id.to_string(),
         plugin_id: plugin_id.to_string(),
@@ -42,6 +51,7 @@ fn page(id: &str, plugin_id: &str, label: &str, order: i64, sidebar: bool) -> Pa
         path: format!("#{id}"),
         entry: format!("/admin/js/views/{id}.js"),
         sidebar,
+        layout,
     }
 }
 
@@ -106,13 +116,13 @@ impl PluginFactory for McpPlugin {
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
             pages: vec![
-                page("mcps", MCP_ID, "Servers", 10, true),
-                page("traffic", MCP_ID, "Traffic", 20, false),
+                page("mcps", MCP_ID, "Servers", 10, true, "resource"),
+                page("traffic", MCP_ID, "Traffic", 20, false, "page"),
                 // Token management sits beside Servers and Traffic because the token exists
                 // FOR MCP clients — every connect command embeds one, Traffic attributes by
                 // it. The PAGE belongs to the MCP group; the /api/tokens routes stay HOST-
                 // owned (below), so the credential keeps working whatever a plugin does.
-                page("tokens", MCP_ID, "Token", 30, false),
+                page("tokens", MCP_ID, "Token", 30, false, "page"),
             ],
             routes: vec!["/api/mcps".into(), "/api/traffic".into()],
             // The plugin reads nothing from a config row today; restarting every hosted MCP
@@ -266,7 +276,7 @@ impl PluginFactory for TunnelsPlugin {
             version: "0.1".into(),
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
-            pages: vec![page("tunnels", TUNNELS_ID, "Tunnels", 30, false)],
+            pages: vec![page("tunnels", TUNNELS_ID, "Tunnels", 30, false, "page")],
             routes: vec!["/api/tunnels".into()],
             restart_on_config_change: true,
             requires: Vec::new(),
@@ -375,7 +385,7 @@ impl PluginFactory for DataPlugin {
             version: "0.1".into(),
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
-            pages: vec![page("data", DATA_ID, "Data", 40, false)],
+            pages: vec![page("data", DATA_ID, "Data", 40, false, "page")],
             routes: vec!["/api/db".into()],
             restart_on_config_change: false,
             // The honest dependency, stated as data (docs/12 W3): Data browses through the
@@ -541,7 +551,7 @@ impl PluginFactory for JobsPlugin {
                     }
                 }
             }),
-            pages: vec![page("jobs", JOBS_ID, "Jobs", 50, false)],
+            pages: vec![page("jobs", JOBS_ID, "Jobs", 50, false, "page")],
             routes: vec!["/api/jobs".into()],
             // FALSE from S3 (docs/11 §8): the row is applied in place through
             // [JobsInstance::apply_config]. A restart here would run

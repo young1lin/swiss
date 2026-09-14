@@ -35,7 +35,7 @@ async function probeJobs() {
   try { probed = (await api("/api/jobs")).ok; }
   catch (e) { probed = true; }
   if (!probed) {
-    var b = document.querySelector('#viewSeg [data-view="jobs"]');
+    var b = document.querySelector('#railNav [data-view="jobs"]');
     if (b) b.hidden = true; // base.css [hidden]: the tab leaves the seg, and the hash gate in
   }                          // main.js waits for this probe before entering the view
   return probed;

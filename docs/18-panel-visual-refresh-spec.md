@@ -3,6 +3,11 @@
 > 状态：**已实施（V1–V7，`810623a` 起）**。前置：[17](17-panel-design-canvas-spec.md) 的画布经用户确认（URL 记在 17 的
 > 状态行）。画布没确认也能开工——本文 §2 的决定已经足够具体；画布确认后若与 §2 冲突，**视觉以画布
 > 为准，约束（§0、§3、§5）以本文为准**。
+> **V3 已再修订（自适应外壳，2026-09）：页栏不再常驻。多页插件在 Plugin Context Bar 用紧凑切换器，
+> 单页插件不画页栏（页面自带 pane header 说明了它自己），workspace 插件（Terminal）自带全部 chrome。
+> 为避免 36px 抖动而保留空/重复页栏的取舍正式作废——页面切换本来就是上下文切换。count chip 仍在
+> Context Bar 右侧（`#countChip` id 未变）。沉浸模式同批重定义：折叠整个应用 chrome（Rail + Context Bar，
+> visibility 而非 display，角落退出按钮仍逃逸），资源侧栏与 workspace 自有 chrome 永不折叠。**
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/13-panel-navigation-spec.md`（两级导航；本文 V3 修订它的
 > D5）、`crates/swiss-panel/src/admin_assets/styles/base.css` 开头 100 行（现有 token 及其理由——本文
 > 改的是值和几条规则，不是推翻那段注释的思路）。
