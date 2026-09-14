@@ -69,14 +69,21 @@ function refreshNow() { loadMemory(true); void refreshPage(); }
    the footer. Every editable field lives in a sheet (#sheet, a separate subtree), so a poll can
    never wipe something being typed — but a poll that rebuilt the list would still steal focus from
    a keyboard user mid-tab, which is why patching exists at all.
+
+   The plugin owns TWO L2 pages now (docs/13 D5, as revised): #tunnels (SSH Connections,
+   scope "conns") and #tunnel-forwards (Port Forwards, scope "rules"). The page mount sets
+   state.tun.tab to its scope; there is no page-local tab control anymore.
    ================================================================================================ */
 
 function tunData() {
   return state.tun.data || { connections: [], rules: [], ruleGroups: [], connGroups: [], mcps: [] };
 }
 
+/** Either tunnels page id — the render/patch guards and nothing else. */
+function isTunnelsView(v) { return v === "tunnels" || v === "tunnel-forwards"; }
+
 /** Which tunnel scope is on screen — the /api/groups/{scope} family's own word. The wire keys
- *  stay ruleGroups/connGroups (docs/20 §3); this maps the tab to its scope. */
+ *  stay ruleGroups/connGroups (docs/20 §3); this maps the mounted page to its scope. */
 function tunScope() { return state.tun.tab === "conns" ? "conns" : "rules"; }
 function tunRows() { return state.tun.tab === "conns" ? tunData().connections : tunData().rules; }
 function tunGroupsList() {
@@ -107,19 +114,13 @@ async function loadTunnels(patchOnly) {
   var j = await apiJson("/api/tunnels");
   if (!j) return;
   state.tun.data = j;
-  if (state.view === "tunnels") {
+  if (isTunnelsView(state.view)) {
     var { patchTunnels, renderTunnels } = await import("./tunnels.js");
     if (state.tun.dragging) return; // a rebuild under the pointer would cancel the drag; patch later
     if (patchOnly && $("pane").querySelector(".tun-foot")) patchTunnels();
     else renderTunnels();
   }
   updateCountChip();
-}
-
-async function tunTab(t) {
-  state.tun.tab = t;
-  var { renderTunnels } = await import("./tunnels.js");
-  if (state.view === "tunnels") renderTunnels();
 }
 
 /* ================================================================================================
@@ -257,4 +258,4 @@ function connRowHtml(c) {
     "</div>";
 }
 
-export { connRowHtml, jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupsList, tunRows, tunScope, tunTab, updateCountChip };
+export { connRowHtml, isTunnelsView, jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };

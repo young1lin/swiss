@@ -156,6 +156,10 @@ async function loadDbView() {
 
 function renderDbView() {
   var pane = $("pane");
+  // db-host turns the pane into a full-bleed workspace body (layout "workspace", docs/13
+  // D5 as revised): no pane padding, no measure — the explorer divides its own space.
+  // views/data.js takes the class back off on unmount so no other page inherits it.
+  pane.classList.add("db-host");
   pane.innerHTML = "";
   var root = el("div", "db-root");
   root.innerHTML =

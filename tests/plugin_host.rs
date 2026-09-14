@@ -627,8 +627,10 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
     }
 
     // Pages in registration order; the fixed view table of this build. The layout column
-    // pins the adaptive-shell contract (docs/13 D5): resource = master-detail with the
-    // panel sidebar, page = full workspace, workspace = the plugin draws all its own chrome.
+    // pins the adaptive-shell contract (docs/13 D5, as revised): resource = master-detail
+    // with the panel sidebar, page = ordinary content body, workspace = full-bleed body
+    // (the shell still draws its chrome around it). Tunnels contributes two sibling L2
+    // pages; #tunnels keeps its saved-link meaning (SSH Connections).
     let pages: Vec<(String, String, String, bool, i64, String)> = body["pages"]
         .as_array()
         .unwrap()
@@ -658,7 +660,22 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
                 30,
                 "page".into()
             ),
-            ("data".into(), "data".into(), "#data".into(), false, 40, "page".into()),
+            (
+                "tunnel-forwards".into(),
+                "tunnels".into(),
+                "#tunnel-forwards".into(),
+                false,
+                35,
+                "page".into()
+            ),
+            (
+                "data".into(),
+                "data".into(),
+                "#data".into(),
+                false,
+                40,
+                "workspace".into()
+            ),
             ("jobs".into(), "jobs".into(), "#jobs".into(), false, 50, "page".into()),
         ],
     );
@@ -675,6 +692,7 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
             "/admin/js/views/traffic.js",
             "/admin/js/views/tokens.js",
             "/admin/js/views/tunnels.js",
+            "/admin/js/views/tunnel-forwards.js",
             "/admin/js/views/data.js",
             "/admin/js/views/jobs.js",
         ]

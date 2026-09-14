@@ -184,8 +184,9 @@ function secretHtml() {
 
 function render() {
   painted = signature();
+  // No location title: the context bar already says "MCP / Token".
   $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div><h1 class="pane-title">Tokens</h1>' +
+    '<div class="pane-head"><div>' +
       '<div class="pane-desc">One token per client. Copied connect commands use the <code>default</code> token unless you click Use. The Traffic tab attributes every request to its token, and to the name the client announces during initialize. A secret is shown once — on create or rotate.</div>' +
     "</div></div>" +
     '<div class="two"><input id="tkLabel" placeholder="label, e.g. claude-code">' +

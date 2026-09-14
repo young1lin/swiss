@@ -148,8 +148,9 @@ function groupSelectHtml() {
 
 function render() {
   painted = signature();
+  // No location title: the context bar already says "Gateway / Secrets".
   $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div><h1 class="pane-title">Secrets</h1>' +
+    '<div class="pane-head"><div>' +
       '<div class="pane-desc">Device-bound vault (docs/19). A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: <code>secret://name</code> in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed.</div>' +
     "</div></div>" +
     '<div class="vault-store">' +

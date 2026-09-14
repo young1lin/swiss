@@ -85,8 +85,9 @@ function render() {
   var body = all.length
     ? '<div class="group">' + all.map(rowHtml).join("") + "</div>"
     : emptyHtml({ icon: "power", title: "No plugins", hint: "This gateway reports an empty inventory." });
+  // No location title: the context bar already says "Gateway / Plugins".
   $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div><h1 class="pane-title">Plugins</h1>' +
+    '<div class="pane-head"><div>' +
       '<div class="pane-desc">What this build is composed of. Disabling one stops its subsystem and takes its pages and API routes off the air until it is enabled again; definitions, logs and state files are left alone.</div>' +
     "</div></div>" +
     '<div class="sec-head"><span class="sec-cap">Installed</span></div>' +

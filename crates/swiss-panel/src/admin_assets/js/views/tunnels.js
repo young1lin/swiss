@@ -1,7 +1,11 @@
-import { state } from "../util.js";
-import { loadList, loadTunnels, tunData } from "../polling.js";
-export function mount() { return loadTunnels(); }
-export function refresh() { return loadTunnels(); }
-export async function poll() { await loadList(); await loadTunnels(true); }
-export function countText() { var d = tunData(); return d.rules.length + " rules · " + d.rules.filter(function (r) { return r.state === "up"; }).length + " active"; }
-export function unmount() { state.tun.data = null; state.tun.keys = null; state.tun.dragging = null; }
+/* The SSH Connections page (#tunnels): one of the tunnels plugin's two L2 pages. A thin
+   module by design — all data, rendering and actions live in ../tunnels.js and ../polling.js;
+   this file only states which scope the page mounts, so the Context Bar's page switcher and
+   the deep link #tunnels (kept for saved links) land on connections. */
+import { mountTunnelsPage, pollTunnelsPage, refreshTunnelsPage, tunnelsCountText, unmountTunnelsPage } from "../tunnels.js";
+
+export function mount() { return mountTunnelsPage("conns"); }
+export function refresh() { return refreshTunnelsPage(); }
+export function poll() { return pollTunnelsPage(); }
+export function countText() { return tunnelsCountText("conns"); }
+export function unmount() { unmountTunnelsPage(); }

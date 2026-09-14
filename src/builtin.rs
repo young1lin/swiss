@@ -33,8 +33,10 @@ pub const PROCESS_ID: &str = "process";
 
 /// One built-in page: id-derived hash path (`#mcps`) and entry (`/admin/js/views/<id>.js`),
 /// sidebar only for the primary MCPs view — the built-in view table of this build. The
-/// layout names how the shell frames the page (resource/page/workspace, docs/13 D5); every
-/// built-in states it so the wire never has to guess from sidebar alone.
+/// layout names how the shell frames the PAGE BODY (resource/page/workspace, docs/13 D5 as
+/// revised): resource = master-detail owning the shell sidebar, page = ordinary content
+/// body, workspace = full-bleed body. The shell always draws its own chrome either way;
+/// every built-in states the layout so the wire never has to guess from sidebar alone.
 fn page(
     id: &str,
     plugin_id: &str,
@@ -276,7 +278,15 @@ impl PluginFactory for TunnelsPlugin {
             version: "0.1".into(),
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
-            pages: vec![page("tunnels", TUNNELS_ID, "Tunnels", 30, false, "page")],
+            // Two L2 pages, one group (docs/13 D5 as revised): the old page-local
+            // SSH Connections / Port Forwards segmented control became real sibling
+            // pages. `#tunnels` keeps its saved links as SSH Connections;
+            // `#tunnel-forwards` is the new sibling at the adjacent order, and
+            // the rail still holds ONE tunnels seat.
+            pages: vec![
+                page("tunnels", TUNNELS_ID, "SSH Connections", 30, false, "page"),
+                page("tunnel-forwards", TUNNELS_ID, "Port Forwards", 35, false, "page"),
+            ],
             routes: vec!["/api/tunnels".into()],
             restart_on_config_change: true,
             requires: Vec::new(),
@@ -385,7 +395,10 @@ impl PluginFactory for DataPlugin {
             version: "0.1".into(),
             config_schema_version: 1,
             config_schema: json!({ "type": "object", "properties": {} }),
-            pages: vec![page("data", DATA_ID, "Data", 40, false, "page")],
+            // workspace (docs/13 D5 as revised): a full-bleed page BODY — the dense
+            // explorer consumes everything under the context bar. The shell still draws
+            // its own chrome; this only frames the body.
+            pages: vec![page("data", DATA_ID, "Data", 40, false, "workspace")],
             routes: vec!["/api/db".into()],
             restart_on_config_change: false,
             // The honest dependency, stated as data (docs/12 W3): Data browses through the
@@ -776,7 +789,7 @@ mod tests {
     /// render the same word twice in one bar - "MCPs" over "MCPs", which is exactly what the
     /// MCPs to MCP / MCPs to Servers rename fixed. Should the duplication ever come back, it
     /// comes back as this failure. (Single-page plugins are fine either way: their level-two
-    /// bar never renders, so this pins the contract only where it bites.)
+    /// location label is the plugin name itself, so the duplication cannot bite there.)
     /// The MCP group's third page (panel: the toolbar token button is gone). Pinned here
     /// because the entry path is a contract with the panel: the shell dynamic-imports
     /// exactly `/admin/js/views/<id>.js`, so a renamed id strands the page. The routes
@@ -809,6 +822,46 @@ mod tests {
             "host-owned /api/tokens must not become a plugin route: {:?}",
             descriptor.routes
         );
+    }
+
+    #[test]
+    fn tunnels_contributes_two_sibling_pages_sharing_one_group() {
+        let dir = scratch_dir("tunnels-pages");
+        let tunnel_store = Arc::new(std::sync::Mutex::new(
+            swiss_tunnels::tunnel::TunnelStore::new(dir.join("tunnels.json"), 19997),
+        ));
+        let manager = TunnelManager::new(tunnel_store.clone(), None);
+        let factory = TunnelsPlugin {
+            tunnels: Arc::new(swiss_tunnels::tunnel::api::Tunnels {
+                store: tunnel_store,
+                manager: manager.clone(),
+                mcp_display: None,
+            }),
+            manager,
+            services: swiss_host::services::RuntimeServices::new(),
+        };
+        let descriptor = factory.descriptor();
+        // The group label stays the plugin's own name; the two PAGE labels name their scope.
+        assert_eq!(descriptor.label, "Tunnels");
+        let pages: Vec<(&str, &str, i64)> = descriptor
+            .pages
+            .iter()
+            .map(|p| (p.id.as_str(), p.label.as_str(), p.order))
+            .collect();
+        assert_eq!(
+            pages,
+            vec![("tunnels", "SSH Connections", 30), ("tunnel-forwards", "Port Forwards", 35)],
+            "adjacent orders, connections first — the deep link #tunnels keeps its meaning"
+        );
+        // The entry contract: the shell dynamic-imports exactly this path per page id.
+        assert_eq!(descriptor.pages[1].entry, "/admin/js/views/tunnel-forwards.js");
+        assert_eq!(descriptor.pages[1].path, "#tunnel-forwards");
+        for page in &descriptor.pages {
+            assert_ne!(
+                descriptor.label, page.label,
+                "level-one duplicates level-two; navigation labels must differ"
+            );
+        }
     }
 
     #[test]

@@ -147,8 +147,9 @@ cargo test --workspace         848 = 725 unit + 123 integration
   swiss-panel     9 unit
 
 cargo test --workspace
-             941  (the terminal plugin added its own, and the mongo/http-tools removals took
-                  theirs, since the 848 this file once recorded)
+             942  (the terminal plugin added its own, the mongo/http-tools removals took
+                  theirs since the 848 this file once recorded, and the tunnels two-page
+                  split added its descriptor test)
 ```
 
 **Drop `--workspace` and this shrinks to a fraction.** Cargo then selects the root package
