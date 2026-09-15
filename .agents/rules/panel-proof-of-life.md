@@ -55,5 +55,10 @@ visible control was clicked with real pointer events and answered. vitest green 
   programmatically.
 - PowerShell `cd` inside a chained command breaks every later relative path. Run build and
   instance scripts from the repo root in their own call.
+- `rust_embed` fingerprints do not include asset content: editing `admin_assets` does NOT
+  recompile swiss-panel, so a release build says "Finished" while the binary still embeds
+  the OLD panel (found live during docs/27 C4, 2026-09-15). Before every release rebuild on
+  19998, `touch crates/swiss-panel/src/lib.rs` — then verify the served bytes, not just the
+  build status.
 - A "successful" UI assertion that only checks existence is worse than no assertion: it
   manufactures false confidence. Assert state changes the user can see.
