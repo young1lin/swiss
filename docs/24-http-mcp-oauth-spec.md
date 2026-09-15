@@ -45,7 +45,8 @@
 **非目标**
 
 - 不做 device flow、client_credentials、jwt-bearer grant（mcp-remote 都有；本仓库用不上）。
-- 不做通用 provider 配置 UI：默认值表在代码里，今天只有 Figma 一行。
+- 不做通用 provider 配置 UI：默认值表在代码里，今天只有 Figma 一行。但 Figma 本身有
+  独立类型（D1 的 `type: "figma"`，见 ADR-021）——“通用 UI 不做”不等于“简单入口不做”。
 - 不做 PAT 版 figma REST 适配器——那是另一条路线（官方 REST API + personal access token），
   需要时另开 spec，不与 OAuth 混在一个 def 类型里。
 - 不做多账号：每个 MCP 注册名一份凭据。
@@ -57,8 +58,14 @@
 
 ### D1 配置面与状态文件
 
-- def：`{"type":"http","url":"https://mcp.figma.com/mcp","auth":"oauth"}`；可选 `oauthClientName`
-  覆盖 provider 默认 client_name（值必须是目标 AS 放行的名字，如 `"Codex"`）。
+- def（手写路径）：`{"type":"http","url":"https://mcp.figma.com/mcp","auth":"oauth"}`；可选
+  `oauthClientName` 覆盖 provider 默认 client_name（值必须是目标 AS 放行的名字，如 `"Codex"`）。
+- def（Figma 的正路，ADR-021）：`{"type":"figma"}` ——独立类型，只要一个名字。`make_adapter`
+  在构建时展开成上面的完整 http def（端点是 `FIGMA_MCP_URL` 常量、auth 固定 oauth），存储的 def
+  永远不长出 url/auth 字段；`build_def` 拒绝 figma def 上的 `url`/`auth`/`oauthClientName`/
+  `headers`/`proxy`。判定走共享谓词 `is_oauth(def)`（http def 声明 oauth，或 figma 类型），徽章、
+  authorize 路由、面板按钮同读它。面板表单只有一个 Description，无 Test 按钮；行 `type`/`tag`
+  报 def 类型（figma），不是适配器 kind（http）。
 - 密封状态文件 `mcp-oauth.json`（`statefile.rs` 同款封印，docs/05 格式不动），按 MCP 注册名键控：
 ```json
 { "figma": { "client_id": "…", "client_secret": "…", "access_token": "…",
@@ -190,15 +197,17 @@
 
 ## 5. 不做什么（重申）
 
-device flow、client_credentials、通用 provider UI、PAT REST 适配器、token reveal、自动重授权、
-多账号、非 loopback 回调、gateway 侧开浏览器、新依赖。
+device flow、client_credentials、通用 provider UI（figma 独立类型不算——它是定死一条路的糖，
+不是可配置的表）、PAT REST 适配器、token reveal、自动重授权、多账号、非 loopback 回调、
+gateway 侧开浏览器、新依赖。
 
 ## 6. 交给实施模型的 Prompt
 
 按 docs/24 实施。核心事实：Figma 远程 MCP（`https://mcp.figma.com/mcp`）的 DCR 按**精确
 client_name 白名单**放行（"Claude Code"/"Codex" 200，其余 403），DCR 响应带 client_secret 而
 token 交换必须 `client_secret_post`；端点一律经 RFC 9728/8414 发现取得，不硬编码。配置面是
-http def 的 `auth: "oauth"` + 可选 `oauthClientName`；凭据存密封文件 `mcp-oauth.json`（按 MCP
+Figma 走 `type: "figma"`（构建时展开为 http+oauth，ADR-021），其余 http def 手写
+`auth: "oauth"` + 可选 `oauthClientName`；凭据存密封文件 `mcp-oauth.json`（按 MCP
 名键控，与 docs/19 vault 分立）；"随时授权" = `POST/GET /api/mcps/:name/authorize` + 面板 Authorize
 按钮 + flow 状态轮询。
 先读锚点：`crates/swiss-mcp/src/adapters/http.rs`（RemoteMcpClient/apply_headers/connect 的接缝）、
