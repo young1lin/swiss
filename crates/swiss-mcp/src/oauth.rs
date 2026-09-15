@@ -50,6 +50,18 @@ const EXPIRY_MARGIN_SECS: u64 = 60;
 
 // --- provider defaults (docs/24 D3) -------------------------------------------------------------
 
+/// The one endpoint the `figma` adapter type connects to (docs/24 rev). That type exists so
+/// the panel asks for a name and nothing else — the URL is not the operator's decision.
+pub const FIGMA_MCP_URL: &str = "https://mcp.figma.com/mcp";
+
+/// True when this def authenticates through the gateway's OAuth flow: either its http def
+/// says so (`auth: "oauth"`) or it is the `figma` type, which implies it. One predicate for
+/// the badge, the authorize routes and the panel note — a future OAuth provider type only
+/// has to be added here.
+pub fn is_oauth(def: &swiss_host::config::ServerDef) -> bool {
+    def.type_() == "figma" || def.get_str("auth") == Some("oauth")
+}
+
 /// Per-provider OAuth registration defaults. Only what a provider's DCR allowlist or scope
 /// demands; everything else is standard flow.
 pub struct ProviderDefaults {
@@ -966,6 +978,34 @@ mod tests {
         // ...but the name never drags in a different host.
         assert!(!is_figma_remote("https://api.example.com/mcp", "figma-export"));
         assert!(!is_figma_remote("https://api.example.com/mcp", "design"));
+    }
+
+    #[test]
+    fn is_oauth_reads_both_spellings() {
+        // The predicate behind the badge, the authorize guard and the panel note: a def is
+        // OAuth when its http def says so, or when it is the figma type that implies it.
+        let http_oauth = swiss_host::config::ServerDef(serde_json::json!({
+            "type": "http",
+            "url": "https://mcp.example.com/mcp",
+            "auth": "oauth",
+        })
+        .as_object()
+        .expect("object")
+        .clone());
+        assert!(is_oauth(&http_oauth));
+        let figma = swiss_host::config::ServerDef(serde_json::json!({ "type": "figma" })
+            .as_object()
+            .expect("object")
+            .clone());
+        assert!(is_oauth(&figma));
+        let plain = swiss_host::config::ServerDef(serde_json::json!({
+            "type": "http",
+            "url": "https://mcp.example.com/mcp",
+        })
+        .as_object()
+        .expect("object")
+        .clone());
+        assert!(!is_oauth(&plain));
     }
 
     #[test]

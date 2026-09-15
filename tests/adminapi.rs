@@ -3317,3 +3317,53 @@ async fn polling_without_a_flow_is_a_404() {
     let (status, _) = h.get("/api/mcps/nobody/authorize").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn the_figma_type_adds_with_nothing_but_a_name() {
+    // docs/24 rev: figma is its own type — the panel asks for a name, the type decides the
+    // endpoint and the OAuth mode. What this pins is the SHAPE: the row tags figma even though
+    // the adapter it builds is http, the badge rides the shared OAuth predicate, and the
+    // stored def stays one field long. (The authorize flow itself is not driven here: the
+    // figma endpoint is the real Figma one, and the flow against a fake remote is already
+    // covered by the http+oauth end-to-end test above — the same code path.)
+    let h = setup();
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({ "name": "fig-type", "type": "figma", "description": "design files" }),
+        )
+        .await;
+    // CREATED with lifecycle error: the add succeeded, the auto-start answers needs-auth
+    // — exactly the http+oauth behavior, reached with none of the fields.
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["lifecycle"], json!("error"), "{body}");
+
+    let (_, rows) = h.get("/api/mcps").await;
+    let row = row_named(&rows, "fig-type");
+    assert_eq!(row["type"], json!("figma"), "{row}");
+    assert_eq!(row["tag"], json!("figma"), "{row}");
+    assert_eq!(row["oauth"], json!("needs-auth"), "{row}");
+
+    // The stored def keeps its one-field shape — no url, no auth key the user never wrote.
+    let (_, d) = h.get("/api/mcps/fig-type/details").await;
+    assert_eq!(d["config"]["type"], json!("figma"), "{d}");
+    assert_eq!(d["config"].get("url"), None, "{d}");
+    assert_eq!(d["config"].get("auth"), None, "{d}");
+
+    // A url on a figma def is a second way to say what the type already says — refused,
+    // so the def cannot be configured wrong.
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({ "name": "fig-two", "type": "figma", "url": "https://example.com/mcp" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("decided by the figma type"),
+        "{body}"
+    );
+}
