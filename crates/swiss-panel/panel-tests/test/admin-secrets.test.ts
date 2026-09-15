@@ -142,7 +142,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     mods.__setVaultForTest(["stripe-key", "zz-last"], 5);
     const html = mods.rowsHtml();
     expect(html).toContain("stripe-key");
-    expect(html).toContain("<code>secret://stripe-key</code>");
+    expect(html).toContain("<code>${secret://stripe-key}</code>");
     expect(html).toContain("Copy ref");
     expect(html).toContain("Delete");
     // The page never even holds a value to leak: the state is names + rev only.
@@ -154,7 +154,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     await mods.mount();
     // The empty state renders into the groups container (docs/20 G6).
     expect(planted.skGroups.innerHTML).toContain("No secrets yet");
-    expect(planted.skGroups.innerHTML).toContain("secret://name");
+    expect(planted.skGroups.innerHTML).toContain("${secret://name}");
     // The store form carries the Group select - the one option is the default group.
     expect(pane.innerHTML).toContain('id="skGroup"');
   });
