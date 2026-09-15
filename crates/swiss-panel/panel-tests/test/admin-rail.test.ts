@@ -52,8 +52,8 @@ describe("the palette rows", () => {
 
 describe("seat glyphs", () => {
   it("built-ins use the sprite; unknown plugins fall back to their initial", () => {
-    expect(pluginGlyph({ id: "mcp", label: "MCP" })).toBe("server");
-    expect(glyphHtml({ id: "mcp", label: "MCP" })).toContain("#i-server");
+    expect(pluginGlyph({ id: "mcp", label: "MCP" })).toBe("mcp");
+    expect(glyphHtml({ id: "mcp", label: "MCP" })).toContain("#i-mcp");
     expect(pluginGlyph({ id: "kubernetes", label: "Kubernetes" })).toBe(null);
     expect(glyphHtml({ id: "kubernetes", label: "Kubernetes" })).toContain('class="rail-glyph"');
     expect(glyphHtml({ id: "kubernetes", label: "Kubernetes" })).toContain(">K</span>");
