@@ -2571,13 +2571,19 @@ async fn the_rest_connection_test_fails_honestly_on_a_missing_vault_reference() 
 
 #[tokio::test]
 async fn a_vault_reference_masks_like_an_env_ref() {
-    // is_env_ref is what the whole masking stack keys off; a secret:// value must read as a
-    // reference so the panel edit forms show it as authored, never hold the value.
+    // is_env_ref is what the whole masking stack keys off; a vault reference must read as a
+    // reference so the panel edit forms show it as authored, never hold the value. Both the
+    // envelope form (docs/25 E1) and the legacy whole-value bare form (still on disks the
+    // loaders have not re-saved, docs/25 E2) pass; anything mixed or malformed must not.
     use swiss_host::config::is_env_ref;
     assert!(is_env_ref(&json!("secret://stripe-key")));
+    assert!(is_env_ref(&json!("${secret://stripe-key}")));
     assert!(is_env_ref(&json!("${STRIPE_KEY}")));
     assert!(!is_env_ref(&json!("secret://")));
     assert!(!is_env_ref(&json!("secret://BadName")));
+    assert!(!is_env_ref(&json!("${secret://}")));
+    assert!(!is_env_ref(&json!("${secret://BadName}")));
+    assert!(!is_env_ref(&json!("Bearer ${secret://stripe-key}")));
     assert!(!is_env_ref(&json!("plain text")));
 }
 // --- the secrets scope over the family (docs/20 G6) ----------------------------------------------

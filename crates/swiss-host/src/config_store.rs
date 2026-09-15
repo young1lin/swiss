@@ -88,8 +88,23 @@ pub fn plugin_disabled(raw: &Value, id: &str) -> bool {
         == Some(true)
 }
 
+/// Legacy whole-value bare vault refs become envelope refs before any snapshot is published
+/// (docs/25 E2). In memory only: the file keeps its spelling until the next save rewrites
+/// it, so a boot never rewrites state just to re-spell a reference.
+fn normalize_legacy_refs(path: &std::path::Path, mut raw: Value) -> Value {
+    let n = swiss_core::secure::refs::migrate_legacy(&mut raw);
+    if n > 0 {
+        swiss_core::log::info(&format!(
+            "{}: {n} legacy secret:// reference(s) migrated to ${{secret://...}}",
+            path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()
+        ));
+    }
+    raw
+}
+
 impl ConfigStore {
     pub fn from_loaded(path: PathBuf, raw: Value) -> Arc<Self> {
+        let raw = normalize_legacy_refs(&path, raw);
         let existed = path.exists();
         Arc::new(Self {
             path: Some(path),
@@ -104,6 +119,10 @@ impl ConfigStore {
     }
 
     pub fn memory(raw: Value) -> Arc<Self> {
+        // Same normalization as from_loaded: every snapshot the process can see speaks the
+        // envelope grammar, whatever its caller handed in.
+        let mut raw = raw;
+        swiss_core::secure::refs::migrate_legacy(&mut raw);
         Arc::new(Self {
             path: None,
             state: Mutex::new(State {
@@ -349,6 +368,39 @@ mod tests {
             ConfigStoreError::Conflict
         );
         assert!(store.plugin_disabled("jobs"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_bare_vault_refs_load_as_envelope_refs() {
+        // docs/25 E2 at the config surface: whole-value bare refs migrate in memory at
+        // load; mixed strings stay byte-identical; the disk file is untouched by the load
+        // and catches up only when a later save rewrites it.
+        swiss_core::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-config-refs-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).expect("fixture");
+        let path = dir.join("gateway.config.json");
+        let seeded = json!({
+            "servers": { "echo": { "headers": {
+                "X-Key": "secret://legacy-a",
+                "Mix": "Bearer secret://legacy-b"
+            }}}
+        });
+        write_secure_json(&path, &seeded).expect("seed");
+        let raw = read_secure_json(&path).expect("read").expect("present");
+        let store = ConfigStore::from_loaded(path.clone(), raw);
+        let snap = store.snapshot();
+        assert_eq!(snap.raw["servers"]["echo"]["headers"]["X-Key"], "${secret://legacy-a}");
+        assert_eq!(
+            snap.raw["servers"]["echo"]["headers"]["Mix"],
+            "Bearer secret://legacy-b"
+        );
+        // The disk keeps its legacy spelling until the next save.
+        let disk = read_secure_json(&path).expect("re-read").expect("present");
+        assert_eq!(disk["servers"]["echo"]["headers"]["X-Key"], "secret://legacy-a");
         let _ = std::fs::remove_dir_all(dir);
     }
 
