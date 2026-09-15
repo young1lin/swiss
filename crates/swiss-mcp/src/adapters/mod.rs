@@ -26,6 +26,8 @@ pub mod resources;
 pub mod rest;
 pub mod sql;
 pub mod tool_server;
+pub mod zai;
+mod zai_prompts;
 
 use std::sync::Arc;
 
@@ -306,6 +308,14 @@ pub fn make_adapter(
         "redis" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, redis::RedisEngine::new(&def, name), log.clone()))),
         "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?, log.clone()))),
         "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name, log.clone()))),
+        // The zai-vision type: the @z_ai/mcp-server GLM vision tools compiled in natively
+        // (replacing the Node child a proc def used to spawn) - see zai.rs for the port map.
+        "zai-vision" => Ok(Arc::new(direct::DirectAdapter::new(
+            &def,
+            name,
+            zai::ZaiEngine::new(&def, name)?,
+            log.clone(),
+        ))),
         // The figma type is an http+oauth def with every choice already made (docs/24 rev):
         // expand to the full http def, then build exactly the adapter a hand-written def
         // would get — refresh, badge and authorize flows need no case of their own.
@@ -318,7 +328,7 @@ pub fn make_adapter(
         }
         "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name, log.clone())?)),
         other => Err(format!(
-            "Unknown adapter type: {other} (built-in: echo | mysql | pg | redis | proc | http | rest | figma)"
+            "Unknown adapter type: {other} (built-in: echo | mysql | pg | redis | proc | http | rest | figma | zai-vision)"
         )),
     }
 }

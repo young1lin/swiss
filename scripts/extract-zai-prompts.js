@@ -1,0 +1,66 @@
+const fs = require('fs');
+const path = require('path');
+const SRC = '<vendor>/zai-mcp-server/build/prompts';
+const OUT = '<repo>/.agents/worktrees/mcp/crates/swiss-mcp/src/adapters/zai_prompts.rs';
+// Unescape a JS template literal body: \` -> `, \${ -> ${, \\ -> \
+function unescapeTpl(s) {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && i + 1 < s.length) { const n = s[i+1];
+      if (n === '`' || n === '$' || n === '\\') { out += n; i++; continue; } }
+    out += s[i];
+  }
+  return out;
+}
+function rawDelim(text) {
+  let n = 1;
+  while (text.includes('"' + '#'.repeat(n))) n++;
+  return n;
+}
+const MAP = {
+  'data-viz.js': [['DATA_VIZ_ANALYSIS_PROMPT','DATA_VIZ']],
+  'diagram-analysis.js': [['DIAGRAM_UNDERSTANDING_PROMPT','DIAGRAM']],
+  'error-diagnosis.js': [['ERROR_DIAGNOSIS_PROMPT','ERROR_DIAGNOSIS']],
+  'general-image.js': [['GENERAL_IMAGE_ANALYSIS_PROMPT','GENERAL_IMAGE']],
+  'text-extraction.js': [['TEXT_EXTRACTION_PROMPT','TEXT_EXTRACTION']],
+  'ui-diff.js': [['UI_DIFF_CHECK_PROMPT','UI_DIFF']],
+};
+let consts = [];
+const manifest = [];
+for (const [file, pairs] of Object.entries(MAP)) {
+  const t = fs.readFileSync(path.join(SRC, file), 'utf8');
+  for (const [jsName, rsName] of pairs) {
+    const start = t.indexOf('const ' + jsName + ' = `');
+    if (start < 0) throw new Error('no ' + jsName + ' in ' + file);
+    const body0 = t.indexOf('`', start) + 1;
+    const end = t.indexOf('`;', body0);
+    const body = unescapeTpl(t.slice(body0, end));
+    consts.push({ name: rsName, text: body });
+    manifest.push({ src: jsName, rs: rsName, bytes: body.length, head: body.slice(0, 60).replace(/\n/g, ' ') });
+  }
+}
+// ui-to-artifact: one object with four template keys
+const t = fs.readFileSync(path.join(SRC, 'ui-to-artifact.js'), 'utf8');
+for (const key of ['code','prompt','spec','description']) {
+  const needle = key + ': `';
+  const start = t.indexOf(needle);
+  if (start < 0) throw new Error('no ' + key + ' in ui-to-artifact.js');
+  const body0 = start + needle.length;
+  const end = t.indexOf('`,', body0);
+  const body = unescapeTpl(t.slice(body0, end));
+  const rsName = 'UI_TO_ARTIFACT_' + key.toUpperCase();
+  consts.push({ name: rsName, text: body });
+  manifest.push({ src: 'UI_TO_ARTIFACT_PROMPTS.' + key, rs: rsName, bytes: body.length, head: body.slice(0, 60).replace(/\n/g, ' ') });
+}
+let rs = '//! System prompts for the zai-vision adapter, ported VERBATIM from @z_ai/mcp-server\n';
+rs += '//! 0.1.5 (build/prompts/*.js). The text is the product — every prompt survived the move\n';
+rs += '//! byte for byte, extracted by a one-shot script rather than retyped. Do not edit by hand;\n';
+rs += '//! re-extract from the vendored package at <vendor>/zai-mcp-server if upstream moves.\n\n';
+for (const c of consts) {
+  const d = rawDelim(c.text);
+  const open = 'r' + '#'.repeat(d) + '"';
+  const close = '"' + '#'.repeat(d);
+  rs += 'pub(crate) const ' + c.name + ' : &str = ' + open + c.text + close + ';\n\n';
+}
+fs.writeFileSync(OUT, rs.replace(/\r\n/g, '\n'));
+console.log(JSON.stringify(manifest, null, 1));
