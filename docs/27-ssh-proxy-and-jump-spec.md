@@ -106,9 +106,12 @@ Round-1 六问按推荐执行,其中两处在讨论中被用户收紧后定稿:�
 
 ### 1.4 API 回显
 
-`mask_conn`/`unmask_conn` 不改:proxyPassword 命中 `is_secret_key` 的 "password" 子串 → 密钥哨兵往返;
-`proxy` 命中 `is_url_key` → `mask_url` 只糊 URL 内密码段,而保存期已禁 userinfo,实际原样往返;
-proxyUsername、jump 明文往返。
+> **勘误(C1 实施发现,2026-09-15)**:原稿称 proxyPassword 命中 "password" 子串免费被糊 —— 错。
+> `mask.rs` 的 `SECRET_KEYS` 是整键精确表(["password","pass","passphrase","secret","token"],
+> `contains(&lower.as_str())`),不含子串匹配。哨兵往返因此实现在 `api.rs` 的 `mask_conn`/`unmask_conn` 内
+> (出向先对 proxyPassword 置 MASK 再过 mask_def;入向先还原再过 unmask_body;游离哨兵仍由既有 drop 兜底),
+> `mask.rs` 不动。`proxy` 命中 `is_url_key` → `mask_url` 只糊 URL 内密码段,而保存期已禁 userinfo,实际原样往返;
+> proxyUsername、jump 明文往返。
 
 ### 1.5 验收测试(先红后绿;store/api 层,无网络)
 
@@ -161,8 +164,10 @@ pub async fn dial(p: &ResolvedProxy, host: &str, port: u16) -> Result<TcpStream,
 任何代码路径不得物化"含密码的完整 URL 字符串"(无 `format!("{}://{}:{}@…", …)`)。
 本拨号器是凭证的唯一潜在消费者、而它不吃 URL,所以该中间物在构造上不存在。
 若未来出现只吃 URL 的库:拼装时 percent-encode,且永不进日志/错误信息。
-既有 `classify_message` 靠子串扫 "auth"/"host key" —— §2.2/§2.3 的固定文案不含这些词,
-代理失败不会被误分类为不可重试(测试钉死)。
+既有 `classify_message` 靠子串扫 "auth"/"host key"。不变量是:代理失败**一律以显式 `FailureKind::Network`
+构造,从不流经 `classify_message`** —— §2.3 的固定串 "…socks5 auth method" 确实含 "auth",这不构成问题,
+因为拨号器错误从不走字符串分类;kind 由拨号器测试的 `kind == network` 断言钉死(§2.6)。
+(**勘误**:C2 实施发现,2026-09-15 修订;原稿"固定文案不含这些词"与 §2.3 自相矛盾。)
 
 ### 2.5 其余语义
 
