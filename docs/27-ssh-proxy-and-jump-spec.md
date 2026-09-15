@@ -242,6 +242,18 @@ transport(conn) = 若 conn.jump = Some(j):
 
 ## 4. Item 4 — 面板(提交 C4)
 
+> **增补(C4 实施发现,2026-09-15)**:面板唯一读取面是 GET /api/tunnels 的 connections 行
+> (`manager.rs` 的 `rows()`),而 §1.4 的哨兵回显只在 POST/PUT 响应里、面板读后即弃 —— 四个新字段
+> 必须上**行**才能被渲染,否则编辑已存 proxyPassword 的连接再保存会**静默清空它**(unmask 只还原
+> 哨兵,请求体重建 def 的语义把缺省当 None 落盘)。因此本项含一个后端 wire 增补,与面板**同提交**
+> (AGENTS:shape change ships on both sides in one commit):`rows()` 连接行追加 absent-when-unset 的
+> `proxy`/`proxyUsername`/`jump`(明文;jump 是 id,名由面板按连接表解析)与 `proxyPassword`
+> (已设时置 MASK 哨兵,同 mask_conn 型;行依旧不带任何真秘密),并配 rows 层测试(行不含明文
+> proxyPassword、哨兵在、明文字段 absent-when-unset、既有键形状不变)。另记两事实:连接 sheet 现有
+> password 字段今天本就不做哨兵往返(编辑需重输,valid_conn 对 password 强制非空)—— 那是既有行为,
+> 不在本项修;release 下面板资产是 rust_embed 编译期嵌入(仅 debug 读盘),19998 迭代循环是
+> target-test 重建 + -Stop/-Fresh 重启,不是刷新页面。
+
 `tunnel-sheets.js` 的 `openConnSheet` + `views/tunnels.js`(徽标),全部沿用 house 惯例
 (add-sheet/closeSheet、`$("sheet").hidden = false` 先于 innerHTML、monochrome tags、util.js esc)。
 
@@ -272,6 +284,7 @@ transport(conn) = 若 conn.jump = Some(j):
    `sheet.hidden === false` + computed display 断言;空状态渲染。无法验证的条目
    (无真代理/真跳板环境)如实标注 NOT verified 及原因 —— 不许打勾。
    有 clash/v2ray 或真堡垒机时补真实成功路径;没有就标注。
+   (嵌入事实见 §4 开头增补:release 下 rust_embed,每轮面板改动都要 target-test 重建 + -Stop/-Fresh。)
 
 ## 5. 交付顺序与门禁
 
