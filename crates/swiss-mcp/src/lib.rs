@@ -6,6 +6,7 @@ pub mod adapters;
 pub mod calls;
 pub mod introspect;
 pub mod mcp_import;
+pub mod oauth;
 pub mod paging;
 pub mod registry;
 pub mod traffic;
