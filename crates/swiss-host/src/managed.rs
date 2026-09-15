@@ -54,9 +54,21 @@ pub fn load_managed(path: &Path) -> Vec<ManagedEntry> {
     let Some(raw) = read_managed_raw(path) else {
         return Vec::new();
     };
-    let arr = match raw.get("mcps") {
+    // docs/25 E2: whole-value bare vault refs become envelope refs in memory here — the
+    // file keeps its spelling until the next save rewrites it. Mixed strings stay as
+    // authored (a mid-string rewrite would need the ambiguous scan the envelope replaced).
+    let mut mcps = Value::Array(match raw.get("mcps") {
         Some(Value::Array(a)) => a.clone(),
         _ => Vec::new(),
+    });
+    let migrated = swiss_core::secure::refs::migrate_legacy(&mut mcps);
+    if migrated > 0 {
+        log::info(&format!(
+            "managed.json: {migrated} legacy secret:// reference(s) migrated to ${{secret://...}}"
+        ));
+    }
+    let Value::Array(arr) = &mcps else {
+        return Vec::new();
     };
     arr.iter()
         .filter_map(|e| {
@@ -812,6 +824,34 @@ mod tests {
     fn sorted(mut v: Vec<String>) -> Vec<String> {
         v.sort();
         v
+    }
+
+    // ---- docs/25 E2: legacy ref migration ---------------------------------------------
+
+    #[test]
+    fn legacy_bare_refs_load_as_envelope_refs() {
+        let path = scratch();
+        write_plain(
+            &path,
+            json!({
+                "mcps": [
+                    { "name": "a", "enabled": true, "def": {
+                        "type": "http",
+                        "url": "https://example.test",
+                        "headers": {
+                            "Authorization": "secret://legacy-managed",
+                            "Mix": "Bearer secret://legacy-mixed"
+                        }
+                    }}
+                ]
+            }),
+        );
+        let list = load_managed(&path);
+        assert_eq!(names(&list), vec!["a"]);
+        let d = &list[0].def.0;
+        assert_eq!(d["headers"]["Authorization"], "${secret://legacy-managed}");
+        assert_eq!(d["headers"]["Mix"], "Bearer secret://legacy-mixed");
+        let _ = std::fs::remove_file(&path);
     }
 
     // ---- persistence ------------------------------------------------------------------

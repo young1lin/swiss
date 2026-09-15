@@ -77,8 +77,8 @@ pub struct GatewayConfig {
 /// shared with the tunnel connections so tunnels.json can hold refs exactly like the config
 /// files do.
 ///
-/// Now a thin wrapper over the ONE shared resolver (docs/19 D1/D4, swiss-core refs.rs), which
-/// also speaks `secret://name`. This wrapper stays LENIENT on vault errors for the callers that
+/// Now a thin wrapper over the ONE shared resolver (docs/19 D1/D4 + docs/25 E1, swiss-core
+/// refs.rs), which also speaks `${secret://name}`. This wrapper stays LENIENT on vault errors for the callers that
 /// have not been moved to the strict contract yet: a string it cannot fully resolve comes back
 /// exactly as authored, the pre-vault behaviour, rather than half-expanded.
 pub fn resolve_env_refs(value: &str) -> String {
@@ -101,11 +101,21 @@ fn resolve_obj(o: &Map<String, Value>) -> Map<String, Value> {
 }
 
 /// True for a value that is exactly one credential reference — `${ENV_VAR}` (held in the
-/// sealed env store) or `secret://name` (held in the vault, docs/19 D1) — i.e. a secret held
-/// outside the file, not inline. The masking stack keys off this to show the reference instead
-/// of ever holding the value.
+/// sealed env store) or `${secret://name}` (held in the vault, docs/25 E1) — i.e. a secret
+/// held outside the file, not inline. The masking stack keys off this to show the reference
+/// instead of ever holding the value.
 pub fn is_env_ref(v: &Value) -> bool {
     let Some(s) = v.as_str() else { return false };
+    if let Some(name) = s
+        .strip_prefix("${")
+        .and_then(|inner| inner.strip_suffix("}"))
+        .and_then(|inner| inner.strip_prefix("secret://"))
+    {
+        return swiss_core::secure::secretstore::valid_name(name);
+    }
+    // A legacy whole-value bare ref (docs/19 D1) still reads as a reference: loaders
+    // migrate these to the envelope in memory (docs/25 E2), so this branch serves the
+    // not-yet-re-saved files and fades out as they are rewritten.
     if let Some(name) = s.strip_prefix("secret://") {
         return swiss_core::secure::secretstore::valid_name(name);
     }

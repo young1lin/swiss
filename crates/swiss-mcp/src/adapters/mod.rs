@@ -283,7 +283,7 @@ pub trait Adapter: Send + Sync {
 
 /// Map a config/managed ServerDef to its Adapter — port of `factory.ts` minus the
 /// third-party module door (ADR-001: an external adapter becomes a proc or http MCP).
-/// `${ENV_VAR}` and `secret://name` refs are expanded HERE, never at load, so persisted defs
+/// `${ENV_VAR}` and `${secret://name}` refs are expanded HERE, never at load, so persisted defs
 /// keep the reference. A vault reference that names a secret this machine does not hold REFUSES
 /// the build (docs/19 D4): an absent credential is a configuration error the operator can fix
 /// in one panel visit, not an empty password to debug on someone else's server.
