@@ -9,7 +9,14 @@
 //! tunnels.json keeps the reference on disk, and only the live connection ever sees the secret;
 //! a literal password keeps working exactly as before. A ref whose env var is unset resolves to
 //! "" and fails as `auth` on the first try — visible, never retried.
+//!
+//! A jump reference (docs/27 §3) rides the jump's live session instead of a socket: the
+//! transport is a direct-tcpip channel opened on it and the handshake runs over that stream
+//! (SSH-over-SSH, OpenSSH -J's model). Each hop's client is an ordinary client — the chain
+//! assembles recursively through the manager's connection table, one hold per hop.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -103,6 +110,34 @@ pub fn as_tunnel_error(message: impl std::fmt::Display, prefix: Option<&str>) ->
 /// Shared callback invoked when a server presents a host key.
 pub type HostKeyCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// docs/27 §3.1: resolve one jump hop. Given the jump connection's id and this
+/// connection's host:port, produce the byte stream the caller's SSH handshake rides on
+/// (a direct-tcpip channel through the jump's live session), together with the hold that
+/// keeps the jump's client alive for exactly as long as the caller's session lives.
+pub type JumpDialer = Arc<
+    dyn Fn(
+            &str,
+            &str,
+            u16,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<(ByteStream, Box<dyn Send + 'static>), TunnelError>,
+                    > + Send,
+            >,
+        > + Send
+        + Sync,
+>;
+
+/// Resolves a jump id to its stored definition — the read-only slice of the store the
+/// throwaway Test chain needs (docs/27 §3.2).
+pub type JumpDefs = Arc<dyn Fn(&str) -> Option<SshConnDef> + Send + Sync>;
+
+/// One jump dial's boxed future: the channel stream the caller's handshake rides on,
+/// plus the hold keeping the hop alive for the session's lifetime.
+type JumpResolved =
+    Pin<Box<dyn Future<Output = Result<(ByteStream, Box<dyn Send + 'static>), TunnelError>> + Send>>;
+
 /// Callbacks the manager registers on a live connection.
 #[derive(Default)]
 pub struct SshHooks {
@@ -110,6 +145,9 @@ pub struct SshHooks {
     pub on_host_key: Option<HostKeyCallback>,
     /// The transport died while connected. The manager releases ports and decides about retrying.
     pub on_lost: Option<Arc<dyn Fn(TunnelError) + Send + Sync>>,
+    /// docs/27 §3.1: dial through a jump. Attached by the manager (the shared chain) or
+    /// by the Test path (a throwaway chain); absent on direct and proxied connections.
+    pub jump: Option<JumpDialer>,
 }
 
 /// What the host-key check decided, shared between the russh Handler (where the key arrives)
@@ -188,6 +226,11 @@ struct Live {
     intentional: Arc<AtomicBool>,
     /// Signalled when the transport future completes (any reason).
     closed: tokio::sync::watch::Receiver<bool>,
+    /// docs/27 §3.2: this session's hold on its jump hop, taken when the transport was
+    /// dialed. Dropping it together with the Live — a deliberate end or the transport
+    /// watcher — releases the hop. One hold per connection covers every intermediate hop
+    /// of a chain, because each hop's own client holds the hop below it.
+    jump_hold: Option<Box<dyn Send + 'static>>,
 }
 
 pub struct SshConnection {
@@ -304,33 +347,59 @@ impl SshConnection {
         let def_host = def.host.clone();
         let def_port = def.port;
         let result = tokio::time::timeout(READY_TIMEOUT, async {
-            // docs/27 §2.5: a proxied connection dials its own transport (CONNECT or
-            // socks5) and hands the stream to connect_stream; the direct path stays
-            // exactly the russh sugar it always was — no behavior change without a proxy.
-            let mut handle = match def.proxy.clone() {
-                None => {
-                    russh::client::connect(config, (def_host.as_str(), def_port), handler)
-                        .await
-                        .map_err(|err| as_tunnel_error(err, None))?
-                }
-                Some(url) => {
-                    let mut proxy = super::proxy::parse(&url)
-                        .map_err(|e| TunnelError::new(e, FailureKind::Config))?;
-                    proxy.username = def.proxy_username.clone();
-                    proxy.password = def.proxy_password.clone();
-                    let stream = super::proxy::dial(&proxy, &def_host, def_port).await?;
-                    russh::client::connect_stream(config, stream, handler)
-                        .await
-                        .map_err(|err| as_tunnel_error(err, None))?
+            // docs/27 §2.5/§3.1: a jump rides the hop's live session — the transport IS
+            // the direct-tcpip channel opened on it, and the SSH handshake runs on the
+            // channel stream (SSH-over-SSH, OpenSSH -J's model; each hop recursively
+            // resolves its own jump first, and the 15s budget here covers the whole
+            // chain). A proxied connection dials its own transport (CONNECT or socks5);
+            // the direct path stays exactly the russh sugar it always was. Save-time
+            // validation keeps proxy and jump mutually exclusive — jump wins if a
+            // hand-edited file ever carries both.
+            let mut jump_hold: Option<Box<dyn Send + 'static>> = None;
+            let mut handle = if let Some(jump_id) = def.jump.clone() {
+                let Some(dial) = self.hooks.jump.clone() else {
+                    return Err(TunnelError::new(
+                        "a jump connection is configured but no jump dialer is available",
+                        FailureKind::Config,
+                    ));
+                };
+                let (stream, hold) = dial(&jump_id, &def_host, def_port).await?;
+                jump_hold = Some(hold);
+                russh::client::connect_stream(config, stream, handler)
+                    .await
+                    .map_err(|err| as_tunnel_error(err, None))?
+            } else {
+                match def.proxy.clone() {
+                    None => {
+                        russh::client::connect(config, (def_host.as_str(), def_port), handler)
+                            .await
+                            .map_err(|err| as_tunnel_error(err, None))?
+                    }
+                    Some(url) => {
+                        let mut proxy = super::proxy::parse(&url)
+                            .map_err(|e| TunnelError::new(e, FailureKind::Config))?;
+                        proxy.username = def.proxy_username.clone();
+                        proxy.password = def.proxy_password.clone();
+                        let stream = super::proxy::dial(&proxy, &def_host, def_port).await?;
+                        russh::client::connect_stream(config, stream, handler)
+                            .await
+                            .map_err(|err| as_tunnel_error(err, None))?
+                    }
                 }
             };
             self.authenticate(&mut handle, &def, key).await?;
-            Ok::<Handle<ClientHandler>, TunnelError>(handle)
+            Ok::<
+                (
+                    Handle<ClientHandler>,
+                    Option<Box<dyn Send + 'static>>,
+                ),
+                TunnelError,
+            >((handle, jump_hold))
         })
         .await;
 
-        let handle = match result {
-            Ok(Ok(handle)) => handle,
+        let (handle, jump_hold) = match result {
+            Ok(Ok(pair)) => pair,
             Ok(Err(err)) => {
                 // A host-key mismatch carries the presented fingerprint as detail, so the panel
                 // can offer "trust this key".
@@ -394,6 +463,7 @@ impl SshConnection {
             handle,
             intentional,
             closed: closed_rx,
+            jump_hold,
         });
         self.set_state(ConnState::Connected, None);
         Ok(())
@@ -543,7 +613,7 @@ impl SshConnection {
         let live = self.live.lock().unwrap_or_else(|e| e.into_inner()).take();
         self.set_state(ConnState::Idle, None);
         *self.banner.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        let Some(live) = live else { return };
+        let Some(mut live) = live else { return };
         live.intentional.store(true, Ordering::SeqCst);
         let _ = live
             .handle
@@ -551,6 +621,10 @@ impl SshConnection {
             .await;
         let mut closed = live.closed;
         let _ = tokio::time::timeout(END_TIMEOUT, closed.changed()).await;
+        // Release the jump hold AFTER our own transport is down — the hop served its
+        // whole session, and releasing it first could yank the channel out from under
+        // the disconnect above.
+        drop(live.jump_hold.take());
     }
 
     /// Connect, authenticate and disconnect, on a THROWAWAY client.
@@ -559,9 +633,22 @@ impl SshConnection {
     /// is exactly what a probe on an already-authenticated session cannot do. Note the throwaway
     /// runs WITHOUT the persistence hook — a successful Test of a keyless connection stores
     /// nothing (the first real connect is what learns and persists the fingerprint).
-    pub async fn test(def: &SshConnDef) -> TestResult {
+    ///
+    /// docs/27 §3.2: a jump def rides a throwaway CHAIN — one one-off client per hop,
+    /// resolved through the defs argument at dial time. Nothing is shared with the
+    /// manager's connection table, and no hop learns a host key.
+    pub async fn test(def: &SshConnDef, defs: Option<JumpDefs>) -> TestResult {
         let t0 = std::time::Instant::now();
-        let probe = SshConnection::new(def.clone(), SshHooks::default());
+        // Without a resolver (no store at hand) a jump def cannot look its hop up — a
+        // config failure reported by the dial, not a silent direct connection.
+        let hooks = match (&def.jump, defs) {
+            (Some(_), Some(defs)) => SshHooks {
+                jump: Some(throwaway_dialer(defs)),
+                ..SshHooks::default()
+            },
+            _ => SshHooks::default(),
+        };
+        let probe = SshConnection::new(def.clone(), hooks);
         let result = probe.connect().await;
         let banner = probe.banner();
         if let Err(err) = result {
@@ -591,6 +678,55 @@ impl SshConnection {
             fingerprint: None,
         }
     }
+}
+
+/// The Test path's jump dialer (docs/27 §3.2): every hop is a one-off client with no
+/// persistence hook — a successful Test of a keyless hop stores nothing (the first real
+/// connect is what learns the fingerprint), and nothing in the manager's shared table is
+/// pinned by a probe.
+fn throwaway_dialer(defs: JumpDefs) -> JumpDialer {
+    Arc::new(move |jump_id: &str, host: &str, port: u16| {
+        let defs = defs.clone();
+        let jump_id = jump_id.to_string();
+        let host = host.to_string();
+        Box::pin(throwaway_jump(defs, jump_id, host, port))
+    })
+}
+
+/// One hop of the throwaway chain. The probe's Arc travels as the hold: the channel
+/// stream keeps the hop's session meaningful for exactly as long as the caller's
+/// handshake needs it, and the hop tears down with the probe.
+fn throwaway_jump(
+    defs: JumpDefs,
+    jump_id: String,
+    host: String,
+    port: u16,
+) -> JumpResolved {
+    Box::pin(async move {
+        let Some(def) = defs(&jump_id) else {
+            return Err(TunnelError::new(
+                format!("jump connection not found: {jump_id}"),
+                FailureKind::Config,
+            ));
+        };
+        let name = def.name.clone();
+        // Same discipline as the manager's live chain (§3.3): the hop's kind survives,
+        // the message gains the hop's name, and the pair is constructed directly — the
+        // prefix must never flow through classify_message, whose substring scan would
+        // wash the kind away.
+        let via =
+            |err: TunnelError| TunnelError::new(format!("via {name}: {}", err.message), err.kind);
+        let probe = SshConnection::new(
+            def,
+            SshHooks {
+                jump: Some(throwaway_dialer(defs.clone())),
+                ..SshHooks::default()
+            },
+        );
+        probe.connect().await.map_err(&via)?;
+        let stream = probe.open_channel(&host, port).await.map_err(&via)?;
+        Ok((stream, Box::new(probe) as Box<dyn Send + 'static>))
+    })
 }
 
 /// Everything the transport-watcher task needs once the session future resolves.

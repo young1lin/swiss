@@ -1013,4 +1013,73 @@ mod tests {
         }
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// docs/27 §3.2/§3.4.5: deleting a connection another one jumps through is a plain
+    /// 400 naming the dependent. Unlike the rules case there is no confirm/force path —
+    /// deleting would leave the dependent's chain pointing at nothing.
+    #[tokio::test]
+    async fn deleting_a_jump_connection_answers_400_naming_the_dependent() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        swiss_core::secure::key::use_test_master_key();
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-tapi-jump-{}",
+            swiss_core::util::random_hex(8),
+        ));
+        std::fs::create_dir_all(&dir).expect("create the scratch dir");
+        let store = Arc::new(Mutex::new(TunnelStore::new(dir.join("tunnels.json"), 19999)));
+        let jump_id = {
+            let mut s = store.lock().unwrap();
+            let a = s
+                .add_connection(&conn_input(
+                    json!({
+                        "name": "bastion", "host": "127.0.0.1", "port": 2222,
+                        "username": "u", "authType": "password", "password": "p"
+                    })
+                    .as_object()
+                    .unwrap(),
+                ))
+                .expect("the jump connection");
+            s.add_connection(&conn_input(
+                json!({
+                    "name": "db", "host": "10.0.0.9", "port": 22,
+                    "username": "u", "authType": "password", "password": "p",
+                    "jump": a.id
+                })
+                .as_object()
+                .unwrap(),
+            ))
+            .expect("the dependent connection");
+            a.id
+        };
+        let manager = TunnelManager::new(store.clone(), None);
+        let app = mount(Arc::new(Tunnels {
+            store,
+            manager,
+            mcp_display: None,
+        }));
+
+        let res = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/api/tunnels/connections/{jump_id}"))
+                    .body(Body::empty())
+                    .expect("request literal"),
+            )
+            .await
+            .expect("infallible router");
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("the body");
+        let body: Value = serde_json::from_slice(&bytes).expect("a json error body");
+        assert!(
+            body["error"].as_str().unwrap_or_default().contains("db"),
+            "names the dependent: {body}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
