@@ -210,7 +210,9 @@ transport(conn) = 若 conn.jump = Some(j):
 ### 3.2 生命周期(manager)
 
 - 活连接:目标 `dial()` 经 manager 的连接表取各跳的共享 `SshConnection`(refcount 复用,
-  "Start all" 的单飞语义照旧);目标的 `Live` 对**每个中间跳**持有一个 hold(同 `open_shell`
+  "Start all" 的单飞语义照旧);目标持有跳板 hold(**勘误(C3 实施发现)**:实现为每连接对**直接跳板**
+  一个 hold,递归沿链分布,而非目标 Live 集中持有每跳一个;被钉死的不变量相同 —— 目标停止后每跳
+  refs 归零,§3.4 第 2 组测试)(同 `open_shell`
   的 hold 模式),目标断开/失联时逐个释放 —— 跳板连接不会因目标消失而泄漏。
 - Test(`POST /connections/:id/test`):私有 throwaway 链 —— 每跳都是一次性客户端、
   不落 hostKey(沿用现有 TOFU 注记:对无指纹跳板的成功 Test 什么也不存)。
