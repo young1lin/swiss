@@ -1,7 +1,7 @@
 import { $, KINDS, emptyHtml, esc, icon, state } from "./util.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
-import { act, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
+import { act, authorizeMcp, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
 import { wireTabBody } from "./run-history.js";
 import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
 
@@ -39,6 +39,9 @@ function headSubtitle(m) {
   bits.push(m.source);
   if (m.state === "up" && m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.startedAt) bits.push("since " + new Date(m.startedAt).toLocaleTimeString());
+  // The OAuth badge (docs/24 D5): stored credentials read authorized; expiry is the
+  // gateway's to handle with a refresh, not the badge's to guess at.
+  if (m.oauth) bits.push("oauth: " + m.oauth);
   return bits.join("  ·  ");
 }
 
@@ -77,6 +80,14 @@ function renderPane() {
           '<span class="sub-text">' + esc(headSubtitle(m)) + "</span></div>" +
       "</div>" +
       '<div class="pane-actions">' +
+        // OAuth MCPs get their authorize action in the header (docs/24 D5) — it is the one
+        // action this MCP cannot live without until it runs, and Reauthorize is the anytime
+        // re-consent path after a revoked grant. Disabled while a flow this panel started is
+        // still polling.
+        (d.config && d.config.auth === "oauth"
+          ? '<button class="btn" id="oauthBtn"' + (d.oauthBusy ? " disabled" : "") + ">" +
+            (m.oauth === "authorized" ? "Reauthorize" : "Authorize") + "</button>"
+          : "") +
         // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
         // buttons on six healthy MCPs says nothing. Stop is a plain button with the same footprint.
         '<button class="btn' + (started ? "" : " primary") + '" id="primaryBtn"' + (busyVerb ? " disabled" : "") + ">" +
@@ -113,6 +124,8 @@ function renderPane() {
 
   // Wire up (no inline handlers — names can contain characters that break string-built onclicks).
   $("primaryBtn").onclick = function () { act(d.name, started ? "stop" : "start"); };
+  var oauthBtn = $("oauthBtn");
+  if (oauthBtn) oauthBtn.onclick = function () { void authorizeMcp(d.name); };
   $("menuBtn").onclick = function (ev) { ev.stopPropagation(); toggleMenu(d, m); };
   pane.querySelectorAll(".seg button").forEach(function (b) {
     b.onclick = function () { showTab(b.dataset.tab); };

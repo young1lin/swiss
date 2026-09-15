@@ -90,6 +90,12 @@ pub struct AppContext {
     /// register from the boot sequence as their objects come up. A scope that never registered
     /// answers 404 "unknown scope", which is the honest state on a composition without it.
     pub group_scopes: swiss_host::groups::GroupScopes,
+    /// OAuth authorize flows by MCP name (docs/24 D5): the authorize POST plants one
+    /// (single-flight per name — a live flow is returned, a terminal one replaced), the GET
+    /// polls it. Written by the flow task, read by the poll route; entries leave with their
+    /// MCP (delete) or its rename.
+    pub oauth_flows:
+        std::sync::RwLock<HashMap<String, std::sync::Arc<swiss_mcp::oauth::FlowHandle>>>,
     handlers: Mutex<HashMap<String, CachedHandler>>,
 }
 
@@ -115,6 +121,7 @@ impl AppContext {
             plugin_host: std::sync::OnceLock::new(),
             catalog: std::sync::OnceLock::new(),
             group_scopes: swiss_host::groups::GroupScopes::new(),
+            oauth_flows: std::sync::RwLock::new(HashMap::new()),
             handlers: Mutex::new(HashMap::new()),
         });
         // The scopes this context owns natively (docs/20 §2.2): the managed store holds the
