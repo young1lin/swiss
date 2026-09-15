@@ -31,6 +31,9 @@ bigdecimal = { version = "0.4", default-features = false }
 redis = { version = "0.27", default-features = false, features = ["tokio-comp", "aio", "connection-manager"] }
 encoding_rs = { version = "0.8", default-features = false }
 base64 = "0.23"
+# PKCE S256 challenges for MCP OAuth (docs/24) — the same sha2 the graph already carries
+# through swiss-core's HKDF, same version, so this adds zero new code units (cargo tree -d clean).
+sha2 = "0.11"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
 rand = "0.9"
 

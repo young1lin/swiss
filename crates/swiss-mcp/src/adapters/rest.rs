@@ -118,7 +118,10 @@ fn js_string(value: &Value) -> String {
 /// `encodeURIComponent` — the exact unreserved set JS leaves alone; everything else is
 /// percent-encoded as UTF-8 with uppercase hex, so a `/` in an argument stays inside its own
 /// path segment instead of inventing a new one.
-fn encode_uri_component(text: &str) -> String {
+///
+/// `pub(crate)`: oauth.rs builds authorization URLs and form bodies with the same two encoders
+/// — one definition of "how this gateway encodes" beats two that can drift.
+pub(crate) fn encode_uri_component(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.as_bytes() {
         let b = *byte;
@@ -321,7 +324,7 @@ pub fn render_path(path: &str, args: &Map<String, Value>) -> Result<String, Stri
 
 /// The application/x-www-form-urlencoded serializer set (what `URLSearchParams` emits): the URL
 /// code points plus `*` and `~`, with space as `+`, everything else percent-encoded uppercase.
-fn form_encode(text: &str) -> String {
+pub(crate) fn form_encode(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.as_bytes() {
         let b = *byte;
@@ -338,7 +341,7 @@ fn form_encode(text: &str) -> String {
 
 /// The matching decode, for folding a query string that came in on the config's path back
 /// into pairs before re-serializing — a round trip `searchParams` performs on every set().
-fn form_decode(text: &str) -> String {
+pub(crate) fn form_decode(text: &str) -> String {
     fn hex(b: u8) -> Option<u8> {
         match b {
             b'0'..=b'9' => Some(b - b'0'),
