@@ -92,6 +92,38 @@ var TYPE_FIELDS = {
     { k: "exposePrompts", label: "Expose prompts", bool: true, def: true },
     AUTOSTART_EAGER,
   ],
+  /* The zai-vision type: the GLM vision tools (@z_ai/mcp-server) compiled straight into the
+     binary — the port replaced the Node child a proc def used to spawn, so an idle instance
+     costs nothing. The key is ALWAYS a ${...} reference (the server refuses a literal); mode
+     picks the official endpoint, baseUrl overrides it for a self-hosted GLM. No Test
+     button: every call spends real tokens (see runConnTest). */
+  "zai-vision": [
+    DESC_FIELD,
+    {
+      k: "apiKey", label: "API key", ph: "${Z_AI_API_KEY}",
+      hint: "A ${ENV_VAR} or ${secret://name} reference — the server refuses a literal key. Store it once on the Plugins page or in the sealed env store.",
+    },
+    {
+      k: "mode", label: "Mode", half: true, ph: "ZHIPU",
+      hint: "ZHIPU = open.bigmodel.cn (default) · ZAI = api.z.ai international.",
+    },
+    {
+      k: "model", label: "Model", half: true, ph: "glm-5.3-flash",
+      hint: "Optional — the default is the model the deployed upstream used.",
+    },
+    {
+      k: "baseUrl", label: "Base URL override", ph: "optional — a self-hosted GLM endpoint",
+      hint: "Leave empty to use the mode's official endpoint.",
+    },
+    {
+      k: "proxy", label: "Proxy", ph: "http://127.0.0.1:7890 or ${MY_PROXY}",
+      hint: "Route THIS MCP's requests through an HTTP(S) proxy — for an endpoint this machine cannot reach directly.",
+    },
+    { k: "timeoutMs", label: "Timeout (ms)", num: true, half: true, ph: "300000", hint: "Vision generations are slow; the upstream default is 300 s." },
+    { k: "exposeResources", label: "Expose resources", bool: true, def: true },
+    { k: "exposePrompts", label: "Expose prompts", bool: true, def: true },
+    AUTOSTART_EAGER,
+  ],
   rest: [
     DESC_FIELD,
     { k: "baseUrl", label: "Base URL", ph: "https://api.github.com" },
@@ -120,6 +152,7 @@ var TYPE_LABELS = {
   pg: "postgres — in-process driver",
   http: "http — proxy a remote MCP endpoint",
   figma: "figma — Figma 官方远程 MCP（OAuth 全托管，只需授权一次）",
+  "zai-vision": "zai-vision — 智谱 GLM 视觉工具，原生内置（取代 Node 子进程）",
   rest: "rest — declare tools over a plain HTTP API",
 };
 
