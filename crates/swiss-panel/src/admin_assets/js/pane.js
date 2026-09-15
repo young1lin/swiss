@@ -25,7 +25,7 @@ function patchDetailHead() {
   txt.textContent = headSubtitle(m);
   if (primary) {
     var started = m.lifecycle === "started";
-    primary.textContent = busyVerb ? "…" : (started ? "Stop" : "Start");
+    primary.textContent = busyVerb ? "…" : (started ? "Disable" : "Enable");
     primary.disabled = !!busyVerb;
     primary.onclick = function () { act(d.name, started ? "stop" : "start"); };
   }
@@ -34,7 +34,7 @@ function patchDetailHead() {
 function headSubtitle(m) {
   var bits = [];
   if (state.busy[m.name]) bits.push(state.busy[m.name] + "…");
-  else bits.push(m.state);
+  else bits.push(m.state === "stopped" ? "disabled" : m.state); // docs/28 D2: the honest word
   bits.push(m.type);
   bits.push(m.source);
   if (m.state === "up" && m.latencyMs != null) bits.push(m.latencyMs + " ms");
@@ -89,9 +89,11 @@ function renderPane() {
             (m.oauth === "authorized" ? "Reauthorize" : "Authorize") + "</button>"
           : "") +
         // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
-        // buttons on six healthy MCPs says nothing. Stop is a plain button with the same footprint.
+        // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
+        // docs/28 D2: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
+        // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
         '<button class="btn' + (started ? "" : " primary") + '" id="primaryBtn"' + (busyVerb ? " disabled" : "") + ">" +
-          (busyVerb ? "…" : started ? "Stop" : "Start") + "</button>" +
+          (busyVerb ? "…" : started ? "Disable" : "Enable") + "</button>" +
         '<button class="btn icon" id="menuBtn" aria-label="More actions" title="More actions">' + icon("ellipsis") + "</button>" +
       "</div>" +
     "</div>";
@@ -184,6 +186,8 @@ function menuHtml(m) {
     picks +
     '<button data-act="new-group">New group…</button>' +
     "<hr>" +
+    '<button data-act="' + (m.lifecycle === "started" ? "stop" : "start") + '">' +
+      (m.lifecycle === "started" ? "Disable" : "Enable") + "</button>" +
     '<button data-act="restart">Restart</button>' +
     '<button data-act="edit">Edit configuration…</button>' +
     '<button data-act="rename">Rename…</button>' +
@@ -211,6 +215,7 @@ function wireMenu(d, m) {
         return;
       }
       if (a === "restart") act(d.name, "restart");
+      else if (a === "stop" || a === "start") act(d.name, a); // docs/28 D3: Disable/Enable beside Restart
       else if (a === "rename") renameMcp(d.name);
       else if (a === "delete") removeMcp(d.name);
       else if (a === "edit") { d.tab = "config"; startEdit(); }
