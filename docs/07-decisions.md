@@ -582,3 +582,37 @@ provider at the code level); the device flow (the loopback redirect is strictly 
 desktop with a browser); token reveal in the panel (D7 redaction — the grant is never shown);
 and auto-reauthorize (a grant that died needs a human consent click, by design).
 
+---
+
+## ADR-021 — The figma adapter type: sugar over http+oauth, one field long
+
+**Status: Accepted (2026-09-15).** Supersedes the "no provider type" line in docs/24 §5 —
+the operator asked for the simple thing the spec talked itself out of.
+
+ADR-020 shipped OAuth as two keys on the http def. For Figma — the provider this whole flow
+exists for — those keys are always the same values, and the URL is not the operator's
+decision either. So `type: "figma"` is its own adapter type whose def is a name and an
+optional description: `make_adapter` expands it into the full http def (the
+`FIGMA_MCP_URL` constant, `auth: "oauth"`) and builds exactly the adapter a hand-written
+def would get. Every OAuth behavior — refresh, badge, authorize route, 401-retry — runs the
+ADR-020 chain with no case of its own.
+
+The decisions that keep it honest:
+
+- **The stored def never grows the fields the type implies.** `build_def` refuses `url`,
+  `auth`, `oauthClientName`, `headers` and `proxy` on a figma def — a second way to say what
+  the type already says is a way to configure it wrong.
+- **One predicate answers "is this an OAuth MCP"** — `is_oauth(def)`: http defs that say so,
+  plus the figma type. The badge, the authorize guard and the panel note all read it, so the
+  next OAuth provider type touches one function.
+- **The row reports the def type, not the adapter kind.** A figma MCP builds an http adapter;
+  the sidebar row, the tag chip and the edit form all say `figma`. `tag_of` and the row's
+  `type` read `def.type_()`.
+- **The panel's figma form is a description and nothing else.** No Test button (a keyless
+  handshake is always 401); the detail view's Authorize button is the one step after Save.
+
+What was rejected: keeping Figma as an http preset the panel fills in (a saved def then
+carries a URL the operator never chose, and "add Figma" still meant five fields); and a
+generic per-provider type registry (one provider does not justify a table — the second one
+reopens this ADR).
+
