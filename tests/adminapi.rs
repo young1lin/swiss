@@ -3367,3 +3367,90 @@ async fn the_figma_type_adds_with_nothing_but_a_name() {
         "{body}"
     );
 }
+#[tokio::test]
+async fn the_zai_vision_type_adds_and_keeps_the_key_a_reference() {
+    // The zai-vision type is the @z_ai/mcp-server port compiled in: no child, no endpoint of
+    // its own. What this pins is the SHAPE - the row tags zai-vision, the def keeps the apiKey
+    // exactly as written (${...} reference stays a reference, docs/19), a literal key is
+    // refused at add, mode is validated, and a reference that cannot expand fails the build
+    // at the engine. Tool calls are not driven here: the engine's request shape is pinned in
+    // swiss-mcp's unit tests against a fake OpenAI-compatible server, and every call costs
+    // real tokens.
+    std::env::set_var("ZAI_E2E_KEY", "e2e-key");
+    let h = setup();
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({
+                "name": "zai-type",
+                "type": "zai-vision",
+                "apiKey": "${ZAI_E2E_KEY}",
+                "mode": "ZHIPU",
+                "description": "GLM vision tools"
+            }),
+        )
+        .await;
+    // CREATED: the engine builds without touching the network (the HTTP client is lazy and
+    // there is no ping - a metered API must not be probed), so the add lands started.
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["lifecycle"], json!("started"), "{body}");
+
+    let (_, rows) = h.get("/api/mcps").await;
+    let row = row_named(&rows, "zai-type");
+    assert_eq!(row["type"], json!("zai-vision"), "{row}");
+    assert_eq!(row["tag"], json!("zai-vision"), "{row}");
+
+    // The stored def keeps the ${...} reference verbatim - never the expanded literal.
+    let (_, d) = h.get("/api/mcps/zai-type/details").await;
+    assert_eq!(d["config"]["apiKey"], json!("${ZAI_E2E_KEY}"), "{d}");
+    assert_eq!(d["config"]["mode"], json!("ZHIPU"), "{d}");
+
+    // A literal key is refused: it would ride to the panel unmasked, and the sealed env
+    // store is where a credential belongs.
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({ "name": "zai-literal", "type": "zai-vision", "apiKey": "sk-live-123" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap_or_default().contains("must be a ${"),
+        "{body}"
+    );
+
+    // A reference that cannot expand (the variable is absent) builds an empty key, and the
+    // engine refuses it - the add fails with the engine's reason.
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({ "name": "zai-broken", "type": "zai-vision", "apiKey": "${ZAI_E2E_KEY_MISSING}" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap_or_default().contains("apiKey is required"),
+        "{body}"
+    );
+
+    // The validation edge: no key, or a mode that is not one of the two, is a 400 at add time.
+    let (status, body) = h
+        .post("/api/mcps", json!({ "name": "zai-nokey", "type": "zai-vision" }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap_or_default().contains("apiKey is required"),
+        "{body}"
+    );
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({ "name": "zai-badmode", "type": "zai-vision", "apiKey": "${ZAI_E2E_KEY}", "mode": "nope" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap_or_default().contains("unknown mode"),
+        "{body}"
+    );
+}
