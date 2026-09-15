@@ -69,9 +69,9 @@ revision 只是 def 快照,永远不运行。这样同名只有一个生效是�
 | 路由 | 行为 |
 | --- | --- |
 | `GET /api/mcps/{name}/revisions` | `{ revisions: [{ index, at, note, type }] }`,旧→新 |
-| `POST /api/mcps/{name}/replace` | body 同 Add(build_def 同一入口)。**先 build 后落盘**:make_adapter+resolve 失败 → 400,现状零改动;成功 → 当前 def 入栈 revisions、活动 def 换新、registry 重注册;原本 running 的重启一次,原本 stopped 的**保持 stopped**(沿用 adminapi.rs:1561 的编辑规则) |
+| `POST /api/mcps/{name}/replace` | body 同 Add(build_def 同一入口)。**先 build 后落盘**:make_adapter+resolve 失败 → 400,现状零改动;成功 → 当前 def 入栈 revisions、活动 def 换新、registry 重注册;原本 running 的重启一次,原本 stopped 的**保持 stopped**(沿用 adminapi.rs:1561 的编辑规则)。换定后启动失败 **不算失败**:200 + `restartError`(对齐 add 路由——回滚路径必须可达) |
 | `POST /api/mcps/{name}/revisions/{index}/restore` | 同一事务反向:当前 def 入栈,目标 revision 转正并按原状态启动/保持 |
-| `DELETE /api/mcps/{name}/revisions/{index}` | 丢弃一条,204 |
+| `DELETE /api/mcps/{name}/revisions/{index}` | 丢弃一条,200 `{deleted:true}`(house 风格 JSON;空表 404) |
 
 ### 2.3 面板
 
@@ -91,10 +91,10 @@ revision 只是 def 快照,永远不运行。这样同名只有一个生效是�
 
 ## 4. D3 发现性
 
-- MCP 侧边栏行加**省略号菜单**(复用 Jobs/Tunnels 行的 docs/18 V5 模式:menu.js popupMenu,
-  必须先 stopPropagation —— admin-row-menu.test.ts 钉过的气泡坑):Rename… /
-  Disable|Enable(按态)/ Delete。Rename 复用 renameMcp,不新写。
-- 详情 ⋯ 菜单在 Restart 旁加 Disable|Enable。
+- MCP 侧边栏行加**右键菜单**(实现期修正:行本身是 `<button>`,嵌省略号按钮非法 HTML;
+  右键锚点沿用 data-csv.js 的 ctx-menu 模式,tooltip 提示 "right-click for actions"),
+  菜单项:Rename… / Disable|Enable(按态,verb 读活态)/ Delete。Rename 复用 renameMcp,不新写。
+- 详情 ⋯ 菜单在 Restart 旁加 Disable|Enable;详情头主按钮 Stop→Disable、Start→Enable(即 D2)。
 
 ## 5. 验收(行为变化配测试,先红后绿)
 

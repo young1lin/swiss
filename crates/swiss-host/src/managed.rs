@@ -24,6 +24,30 @@ pub struct ManagedEntry {
     pub override_: bool,
 }
 
+/// One parked def snapshot for a name (docs/28 D1): what the MCP ran BEFORE a replace or a
+/// restore. A revision is inert data — never registered, never started, never resolved; the
+/// def keeps its `${...}` references verbatim, exactly as the live def does.
+#[derive(Debug, Clone)]
+pub struct RevisionRec {
+    pub def: ServerDef,
+    /// When it was parked, epoch millis.
+    pub at: i64,
+    /// Free-form operator note shown in the panel's revision list.
+    pub note: String,
+}
+
+/// Revisions kept per name. Five covers a repair session without turning managed.json into
+/// a history archive (k8s ships ten for clusters; this is one developer's toolbox).
+pub const REVISION_CAP: usize = 5;
+
+/// Now, epoch millis — the one timestamp shape revisions carry.
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// The group every MCP belongs to until it is put somewhere else. Deliberately NOT stored: an
 /// The name a group list starts from. It is an ordinary group the user can rename, delete and
 /// reorder; its only privilege is being the initial FIRST entry — that slot (never the name) is
@@ -119,6 +143,38 @@ fn load_bool_map(path: &Path, key: &str) -> HashMap<String, bool> {
             if let Value::Bool(b) = v {
                 out.insert(k.clone(), *b);
             }
+        }
+    }
+    out
+}
+
+/// The parked def snapshots per name (docs/28 D1). Malformed entries are dropped like the
+/// loaders above drop them: one bad revision must not cost the rest of the file.
+fn load_revisions(path: &Path) -> HashMap<String, Vec<RevisionRec>> {
+    let mut out = HashMap::new();
+    let Some(raw) = read_managed_raw(path) else {
+        return out;
+    };
+    let Some(Value::Object(m)) = raw.get("revisions") else {
+        return out;
+    };
+    for (name, list) in m {
+        let Value::Array(items) = list else { continue };
+        let recs: Vec<RevisionRec> = items
+            .iter()
+            .filter_map(|it| {
+                let o = it.as_object()?;
+                let def = o.get("def")?.as_object()?;
+                def.get("type")?.as_str()?;
+                Some(RevisionRec {
+                    def: ServerDef(def.clone()),
+                    at: o.get("at").and_then(Value::as_i64).unwrap_or(0),
+                    note: o.get("note").and_then(Value::as_str).unwrap_or("").to_string(),
+                })
+            })
+            .collect();
+        if !recs.is_empty() {
+            out.insert(name.clone(), recs);
         }
     }
     out
@@ -290,6 +346,9 @@ struct StoreState {
     /// `tokenGroups` + `tokenMembers`.
     token_groups: Groups,
     mcp_enabled: HashMap<String, bool>,
+    /// Parked def snapshots per name (docs/28 D1). Boot never reads them — only the
+    /// revisions routes do; the entry list above stays the single source of what runs.
+    revisions: HashMap<String, Vec<RevisionRec>>,
 }
 
 impl ManagedStore {
@@ -315,6 +374,7 @@ impl ManagedStore {
                 load_token_members(&path).into_iter().collect(),
             ),
             mcp_enabled: load_bool_map(&path, "mcpEnabled"),
+            revisions: load_revisions(&path),
         };
         Self {
             path,
@@ -373,6 +433,7 @@ impl ManagedStore {
         s.order.retain(|n| n != name); // a deleted MCP holds no sidebar slot
         s.groups.forget_member(name); // ...nor a group membership
         s.mcp_enabled.remove(name); // ...nor a run/stop state
+        s.revisions.remove(name); // ...nor parked def snapshots (docs/28 D1)
         self.persist(&s)
     }
 
@@ -400,6 +461,11 @@ impl ManagedStore {
         s.groups.rename_member(old_name, new_name);
         if let Some(v) = s.mcp_enabled.remove(old_name) {
             s.mcp_enabled.insert(new_name.into(), v);
+        }
+        // Parked def snapshots describe this logical service, so they follow the rename
+        // (docs/28 D1: the name is the identity, the def is a revision of it).
+        if let Some(list) = s.revisions.remove(old_name) {
+            s.revisions.insert(new_name.into(), list);
         }
         self.persist(&s)
     }
@@ -434,6 +500,48 @@ impl ManagedStore {
                 .map(|e| e.enabled)
                 .or_else(|| s.mcp_enabled.get(name).copied())
         })
+    }
+
+    // --- revisions (docs/28 D1): parked def snapshots, one list per name ----------------------------
+
+    /// The parked revisions for a name, oldest first. Empty when none were ever parked.
+    pub fn revisions_of(&self, name: &str) -> Vec<RevisionRec> {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|s| s.revisions.get(name).cloned())
+            .unwrap_or_default()
+    }
+
+    /// Park one more def snapshot under a name, evicting the oldest past the cap.
+    pub fn push_revision(&self, name: &str, rec: RevisionRec) -> Result<(), String> {
+        let mut s = self.state.lock().map_err(|_| "store poisoned")?;
+        let list = s.revisions.entry(name.to_string()).or_default();
+        list.push(rec);
+        if list.len() > REVISION_CAP {
+            let drop_n = list.len() - REVISION_CAP;
+            list.drain(0..drop_n);
+        }
+        self.persist(&s)
+    }
+
+    /// Remove and return the revision at `index` (oldest = 0). Ok(None) when the name has no
+    /// list; Err when the index is out of range — a restore must fail loudly, not silently
+    /// fall back to "whatever is first".
+    pub fn take_revision(&self, name: &str, index: usize) -> Result<Option<RevisionRec>, String> {
+        let mut s = self.state.lock().map_err(|_| "store poisoned")?;
+        let Some(list) = s.revisions.get_mut(name) else {
+            return Ok(None);
+        };
+        if index >= list.len() {
+            return Err(format!("no revision {index} for {name} (has {})", list.len()));
+        }
+        let rec = list.remove(index);
+        if list.is_empty() {
+            s.revisions.remove(name);
+        }
+        self.persist(&s)?;
+        Ok(Some(rec))
     }
 
     /// The tools a user has turned off for this MCP (empty when none / unknown).
@@ -753,6 +861,32 @@ impl ManagedStore {
                 ),
             );
         }
+        if !s.revisions.is_empty() {
+            root.insert(
+                "revisions".into(),
+                Value::Object(
+                    s.revisions
+                        .iter()
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                Value::Array(
+                                    v.iter()
+                                        .map(|r| {
+                                            json!({
+                                                "def": Value::Object(r.def.0.clone()),
+                                                "at": r.at,
+                                                "note": r.note,
+                                            })
+                                        })
+                                        .collect(),
+                                ),
+                            )
+                        })
+                        .collect(),
+                ),
+            );
+        }
         write_secure_json(&self.path, &Value::Object(root))
     }
 }
@@ -824,6 +958,78 @@ mod tests {
     fn sorted(mut v: Vec<String>) -> Vec<String> {
         v.sort();
         v
+    }
+
+    fn rev(def_type: &str, note: &str) -> RevisionRec {
+        RevisionRec {
+            def: def(json!({ "type": def_type, "command": "x" })),
+            at: now_ms(),
+            note: note.to_string(),
+        }
+    }
+
+    // ---- docs/28 D1: parked def revisions ---------------------------------------------
+
+    #[test]
+    fn revisions_round_trip_through_the_sealed_file() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("m", json!({ "type": "echo" }), true)).expect("add");
+        store
+            .push_revision("m", rev("proc", "before swap"))
+            .expect("park");
+        // A reload sees the same list — the snapshot survived the sealed round trip.
+        let again = ManagedStore::open_at(path);
+        let list = again.revisions_of("m");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].def.type_(), "proc");
+        assert_eq!(list[0].note, "before swap");
+    }
+
+    #[test]
+    fn revisions_are_capped_at_five_evicting_the_oldest() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store.add(entry("m", json!({ "type": "echo" }), true)).expect("add");
+        for i in 0..6 {
+            store
+                .push_revision("m", rev("proc", &format!("gen {i}")))
+                .expect("park");
+        }
+        let list = store.revisions_of("m");
+        assert_eq!(list.len(), REVISION_CAP);
+        assert_eq!(list[0].note, "gen 1", "the oldest was evicted");
+        assert_eq!(list.last().unwrap().note, "gen 5");
+    }
+
+    #[test]
+    fn take_revision_reports_out_of_range_instead_of_guessing() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path);
+        store
+            .push_revision("m", rev("proc", "only"))
+            .expect("park");
+        assert!(store.take_revision("m", 1).is_err());
+        let gone = store.take_revision("m", 0).expect("take in range").expect("present");
+        assert_eq!(gone.note, "only");
+        // The emptied list leaves no empty key behind — and an unknown name is Ok(None).
+        assert!(store.revisions_of("m").is_empty());
+        assert!(store.take_revision("ghost", 0).expect("unknown name").is_none());
+    }
+
+    #[test]
+    fn rename_carries_revisions_and_remove_clears_them() {
+        let path = scratch();
+        let store = ManagedStore::open_at(path.clone());
+        store.add(entry("old", json!({ "type": "echo" }), true)).expect("add");
+        store.push_revision("old", rev("proc", "rides along")).expect("park");
+        store.rename("old", "new").expect("rename");
+        assert_eq!(store.revisions_of("new")[0].note, "rides along");
+        assert!(store.revisions_of("old").is_empty());
+        // Remove clears the parked list with the entry — a future same-named MCP starts clean.
+        store.remove("new").expect("remove");
+        assert!(store.revisions_of("new").is_empty());
+        assert!(ManagedStore::open_at(path).revisions_of("new").is_empty());
     }
 
     // ---- docs/25 E2: legacy ref migration ---------------------------------------------
