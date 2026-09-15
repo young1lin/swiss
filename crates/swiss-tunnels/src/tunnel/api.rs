@@ -24,7 +24,7 @@ use super::store::{ConnInput, RuleInput, TunnelStore};
 use super::types::{value_number, AuthType, GroupKind, SshConnDef};
 use swiss_core::paths::home_dir;
 use swiss_host::config::ServerDef;
-use swiss_host::mask::{mask_def, unmask_body};
+use swiss_host::mask::{mask_def, unmask_body, MASK};
 use swiss_host::reply::{admin_error, admin_json};
 
 /// The read-only MCP world the tunnel API displays: the rows' MCP names and the rule editor's
@@ -56,7 +56,19 @@ fn with_store<T>(t: &Arc<Tunnels>, f: impl FnOnce(&mut TunnelStore) -> T) -> T {
 /// destroy one. mask_def/unmask_body work on ServerDef-shaped records, which a connection is.
 fn mask_conn(def: &SshConnDef) -> Value {
     let def_value = def.to_json();
-    let server_def = ServerDef(def_value.as_object().cloned().unwrap_or_default());
+    let mut server_def = ServerDef(def_value.as_object().cloned().unwrap_or_default());
+    // docs/27 §1.4: the host masker's secret-key list is an EXACT match ("password",
+    // "pass", …), so proxyPassword would ride out in the clear. The sentinel is applied
+    // here instead — mask.rs itself stays untouched, and a whole-value `${...}` reference
+    // still passes through (the reference is not the secret).
+    let pw = server_def.0.get("proxyPassword").cloned();
+    if let Some(pw) = pw {
+        if !swiss_host::config::is_env_ref(&pw) && pw.as_str().is_some_and(|s| !s.is_empty()) {
+            server_def
+                .0
+                .insert("proxyPassword".into(), Value::String(MASK.into()));
+        }
+    }
     serde_json::to_value(mask_def(&server_def)).unwrap_or(def_value)
 }
 
@@ -65,7 +77,18 @@ fn unmask_conn(body: &Map<String, Value>, current: Option<&SshConnDef>) -> Map<S
         let v = c.to_json();
         ServerDef(v.as_object().cloned().unwrap_or_default())
     });
-    unmask_body(body, current_def.as_ref())
+    // Restore a sentinel proxyPassword from the stored def before the generic pass; the
+    // pair of the masking above. An unrestorable sentinel is dropped by unmask_body's
+    // drop_sentinel, exactly like every other secret field.
+    let mut body = body.clone();
+    if let (Some(cur), Some(sent)) = (current_def.as_ref(), body.get("proxyPassword")) {
+        if sent.as_str() == Some(MASK) {
+            if let Some(stored) = cur.0.get("proxyPassword") {
+                body.insert("proxyPassword".into(), stored.clone());
+            }
+        }
+    }
+    unmask_body(&body, current_def.as_ref())
 }
 
 /// `?force=1` or a `{force: true}` body — both spellings, so no caller has to guess.
@@ -195,6 +218,23 @@ fn conn_input(body: &Map<String, Value>) -> ConnInput {
             .map(str::to_string),
         group: body
             .get("group")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        // docs/27 §1.1: the proxy/jump fields, absent when the panel did not send them.
+        proxy: body
+            .get("proxy")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        proxy_username: body
+            .get("proxyUsername")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        proxy_password: body
+            .get("proxyPassword")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        jump: body
+            .get("jump")
             .and_then(Value::as_str)
             .map(str::to_string),
     }
@@ -846,6 +886,68 @@ mod tests {
         assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
         let bad = fail(&OpError::msg("local port 5433 is already used by 'pg'"));
         assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// docs/27 §1.4/§1.5: proxyPassword rides the sentinel round-trip; proxy (no userinfo
+    /// possible after save-time validation), proxyUsername and jump are plaintext. The host
+    /// masker's secret-key list is exact-match, so the proxyPassword sentinel is applied
+    /// here rather than in mask.rs.
+    #[test]
+    fn conn_masking_round_trips_the_proxy_fields() {
+        let def = SshConnDef {
+            id: "c1".into(),
+            name: "box".into(),
+            host: "bastion".into(),
+            port: 22,
+            username: "root".into(),
+            auth_type: AuthType::Password,
+            group: None,
+            key_path: None,
+            passphrase: None,
+            password: Some("ssh-secret".into()),
+            host_key: None,
+            proxy: Some("socks5://127.0.0.1:7890".into()),
+            proxy_username: Some("pxuser".into()),
+            proxy_password: Some("px-pass".into()),
+            jump: Some("other".into()),
+        };
+        let masked = mask_conn(&def);
+        assert_eq!(masked["proxyPassword"], json!(swiss_host::mask::MASK));
+        assert_eq!(masked["proxy"], json!("socks5://127.0.0.1:7890"));
+        assert_eq!(masked["proxyUsername"], json!("pxuser"));
+        assert_eq!(masked["jump"], json!("other"));
+        assert_eq!(
+            masked["password"],
+            json!(swiss_host::mask::MASK),
+            "the pre-existing password field keeps its sentinel"
+        );
+
+        // An edit that sends the sentinel back keeps the stored secret; editing an
+        // unrelated field leaves it intact (the existing unmask semantics).
+        let mut body = mask_conn(&def).as_object().cloned().unwrap();
+        body.insert("name".into(), json!("renamed"));
+        let restored = unmask_conn(&body, Some(&def));
+        assert_eq!(restored["proxyPassword"], json!("px-pass"));
+        assert_eq!(restored["password"], json!("ssh-secret"));
+        assert_eq!(restored["name"], json!("renamed"));
+
+        // A whole-value credential reference is not a secret and passes through.
+        let as_ref = SshConnDef {
+            proxy_password: Some("${secret://some-proxy-secret}".into()),
+            ..def
+        };
+        assert_eq!(
+            mask_conn(&as_ref)["proxyPassword"],
+            json!("${secret://some-proxy-secret}"),
+            "the reference travels, not the value"
+        );
+
+        // A sentinel with nothing behind it (a create that echoes one) is dropped, not
+        // stored as dots.
+        let mut stray = Map::new();
+        stray.insert("proxyPassword".into(), json!(swiss_host::mask::MASK));
+        let dropped = unmask_conn(&stray, None);
+        assert!(dropped.get("proxyPassword").is_none());
     }
 
     /// docs/20 §3: the four tunnel group/order routes are retired in favour of the

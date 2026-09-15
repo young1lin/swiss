@@ -877,6 +877,10 @@ mod tests {
             passphrase: None,
             password: None,
             host_key: None,
+            proxy: None,
+            proxy_username: None,
+            proxy_password: None,
+            jump: None,
         };
         let err = read_key(&def).unwrap_err();
         assert_eq!(err.kind, FailureKind::Config);
@@ -903,6 +907,10 @@ mod tests {
             passphrase: Some("${secret://ssh-test-missing}".into()),
             password: None,
             host_key: None,
+            proxy: None,
+            proxy_username: None,
+            proxy_password: None,
+            jump: None,
         };
         let err = read_key(&def).unwrap_err();
         assert_eq!(err.kind, FailureKind::Config);

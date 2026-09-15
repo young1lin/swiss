@@ -38,6 +38,11 @@ pub struct ConnInput {
     pub password: Option<String>,
     pub host_key: Option<String>,
     pub group: Option<String>,
+    /// docs/27 §1.1: the four proxy/jump fields, absent when the caller did not send them.
+    pub proxy: Option<String>,
+    pub proxy_username: Option<String>,
+    pub proxy_password: Option<String>,
+    pub jump: Option<String>,
 }
 
 /// Input shape for a rule save. `mcps: None` means "not sent" (an update keeps the stored
@@ -170,6 +175,10 @@ impl TunnelStore {
                 password: c.get("password").and_then(opt_str),
                 host_key: nonempty(c.get("hostKey").and_then(Value::as_str).map(str::trim)),
                 group: nonempty(c.get("group").and_then(Value::as_str).map(str::trim)),
+                proxy: nonempty(c.get("proxy").and_then(Value::as_str).map(str::trim)),
+                proxy_username: nonempty(c.get("proxyUsername").and_then(opt_str_ref)),
+                proxy_password: nonempty(c.get("proxyPassword").and_then(opt_str_ref)),
+                jump: nonempty(c.get("jump").and_then(Value::as_str).map(str::trim)),
             });
         }
         for r in raw
@@ -345,6 +354,10 @@ impl TunnelStore {
             passphrase: None,
             password: None,
             host_key: None,
+            proxy: None,
+            proxy_username: None,
+            proxy_password: None,
+            jump: None,
         };
         match input.auth_type {
             AuthType::Key => {
@@ -375,6 +388,48 @@ impl TunnelStore {
             if !g.trim().is_empty() {
                 def.group = Some(g.trim().to_string());
             }
+        }
+        // docs/27 §1.1/§1.3: proxy and jump, validated in the spec's order — proxy syntax,
+        // then jump target, self, cycle, and the mutual exclusion last.
+        if let Some(url) = nonempty(input.proxy.as_deref()) {
+            def.proxy = Some(normalize_proxy(&url)?);
+        }
+        def.proxy_username = nonempty(input.proxy_username.as_deref());
+        def.proxy_password = nonempty(input.proxy_password.as_deref());
+        if let Some(jump) = nonempty(input.jump.as_deref()) {
+            def.jump = Some(jump);
+        }
+        if let Some(jump) = def.jump.clone() {
+            if jump == def.id {
+                return Err("a connection cannot jump through itself".into());
+            }
+            if !self.conns.iter().any(|c| c.id == jump) {
+                return Err(format!("jump connection not found: {jump}"));
+            }
+            // Walk the chain as it would exist after this save (the edited row overlaid on
+            // the stored ones); a revisit names the whole loop. A hop whose own jump points
+            // outside the store ends the walk — that row's problem is reported when THAT
+            // row is saved, not on every neighbour.
+            let jump_of = |id: &str| -> Option<String> {
+                if id == def.id {
+                    def.jump.clone()
+                } else {
+                    self.conns.iter().find(|c| c.id == id).and_then(|c| c.jump.clone())
+                }
+            };
+            let mut chain = vec![def.id.clone()];
+            let mut next = def.jump.clone();
+            while let Some(hop) = next {
+                if chain.iter().any(|id| id == &hop) {
+                    chain.push(hop);
+                    return Err(format!("jump cycle detected: {}", chain.join(" -> ")));
+                }
+                chain.push(hop.clone());
+                next = jump_of(&hop);
+            }
+        }
+        if def.proxy.is_some() && def.jump.is_some() {
+            return Err("a connection can have a proxy or a jump, not both; put the proxy on the jump connection if it needs one".into());
         }
         Ok(def)
     }
@@ -817,8 +872,112 @@ impl TunnelStore {
     }
 }
 
+/// `JSON.stringify(s)` for the assert-style messages — surrounding quotes, `\` and `"`
+/// escaped, control characters escaped the way JSON does it. Same shape as the MCP
+/// proxy adapter's helper; duplicated because two lines of escaping are not a shared
+/// crate's worth.
+fn json_quote(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn parse_proxy_port(raw: &str) -> Result<u16, String> {
+    raw.parse::<u16>()
+        .ok()
+        .filter(|p| *p >= 1)
+        .ok_or_else(|| format!("invalid proxy port: {raw}"))
+}
+
+/// docs/27 §1.3: save-time proxy validation and normalization. The grammar is deliberately
+/// tiny — `scheme://host[:port]` — because the dialer (§2) is a hand-written client, not a
+/// URL library; anything richer (userinfo, path, query) is refused by name so it cannot
+/// silently mean something else at connect time. Portless URLs store WITH their scheme's
+/// default port (http -> 80, socks5 -> 1080): what is on disk is what is dialed.
+fn normalize_proxy(input: &str) -> Result<String, String> {
+    let url = input.trim();
+    let scheme_msg =
+        || format!("proxy must be an http:// or socks5:// URL, got {}", json_quote(input));
+    let Some(sep) = url.find("://") else {
+        return Err(scheme_msg());
+    };
+    let scheme = url[..sep].to_ascii_lowercase();
+    let rest = &url[sep + 3..];
+    match scheme.as_str() {
+        "http" | "socks5" => {}
+        // swiss always hands the hostname to the proxy — that IS socks5h semantics — so
+        // the extra scheme buys nothing and gets its own explanation.
+        "socks5h" => {
+            return Err("socks5h:// is not needed: the hostname is always resolved by the proxy, write socks5:// instead".into());
+        }
+        // TLS to the proxy is deliberately out of scope (docs/27 §6).
+        "https" => {
+            return Err("https:// proxies are not supported, use http:// or socks5:// (TLS to the proxy is not implemented)".into());
+        }
+        _ => return Err(scheme_msg()),
+    }
+    if rest.contains('@') {
+        return Err(
+            "proxy URL must not carry credentials; use the proxy username and password fields"
+                .into(),
+        );
+    }
+    // Any tail (path, query, fragment) is refused before the port split, so "h:1080/x"
+    // reports the tail rather than an unparseable port.
+    if rest.contains(['/', '?', '#']) {
+        return Err("proxy URL must not carry a path or query".into());
+    }
+    let default_port = if scheme == "http" { 80 } else { 1080 };
+    // Bracketed IPv6 hosts keep their brackets; a bare unbracketed v6 literal would split
+    // wrong at the port colon, so it lands in the invalid-address refusal.
+    let (host, port) = if let Some(inner) = rest.strip_prefix('[') {
+        let Some((h, after)) = inner.split_once(']') else {
+            return Err(format!("proxy URL has an invalid IPv6 address: {rest}"));
+        };
+        let port = if after.is_empty() {
+            default_port
+        } else if let Some(p) = after.strip_prefix(':') {
+            parse_proxy_port(p)?
+        } else {
+            return Err("proxy URL must not carry a path or query".into());
+        };
+        (format!("[{h}]"), port)
+    } else {
+        match rest.rsplit_once(':') {
+            Some((h, p)) if !h.is_empty() && !h.contains(':') => {
+                (h.to_string(), parse_proxy_port(p)?)
+            }
+            None if !rest.is_empty() => (rest.to_string(), default_port),
+            None => return Err("proxy URL has no host".into()),
+            Some(("", _)) => return Err("proxy URL has no host".into()),
+            Some(_) => return Err(format!("proxy URL has an invalid address: {rest}")),
+        }
+    };
+    Ok(format!("{scheme}://{host}:{port}"))
+}
+
 fn nonempty(v: Option<&str>) -> Option<String> {
     v.filter(|s| !s.is_empty()).map(str::to_string)
+}
+
+/// `Value -> &str` for fields whose stored value may legitimately hold any bytes (no trim,
+/// like password/passphrase above).
+fn opt_str_ref(v: &Value) -> Option<&str> {
+    v.as_str()
 }
 
 #[cfg(test)]
@@ -1292,6 +1451,209 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    fn conn_input_with(name: &str) -> ConnInput {
+        ConnInput {
+            name: name.into(),
+            host: "bastion".into(),
+            port: 22.0,
+            username: "root".into(),
+            auth_type: AuthType::Key,
+            key_path: Some("~/.ssh/id_rsa".into()),
+            ..Default::default()
+        }
+    }
+
+    fn proxy_input(name: &str, proxy: Option<&str>) -> ConnInput {
+        ConnInput {
+            proxy: proxy.map(str::to_string),
+            ..conn_input_with(name)
+        }
+    }
+
+    /// docs/27 §1.5: a file from before the feature loads with every new field unset —
+    /// the def is exactly what the current construction would produce.
+    #[test]
+    fn old_conn_files_load_without_proxy_or_jump_fields() {
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-tunnel-oldproxy-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tunnels.json");
+        std::fs::write(
+            &path,
+            r#"{ "connections": [
+    { "id": "c1", "name": "b", "host": "bastion", "port": 22, "username": "u", "authType": "key", "keyPath": "~/.ssh/id_rsa" }
+  ], "rules": [] }"#,
+        )
+        .unwrap();
+        let s = TunnelStore::new(&path, 19999);
+        let c = s.connection("c1").expect("the old connection loads");
+        assert_eq!(
+            (c.proxy, c.proxy_username, c.proxy_password, c.jump),
+            (None, None, None, None)
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// docs/27 §1.3, one case per rule. Portless URLs store normalized (http -> 80,
+    /// socks5 -> 1080) and the normalized value is what lands in tunnels.json.
+    #[test]
+    fn proxy_validation_follows_the_spec_family() {
+        swiss_core::secure::key::use_test_master_key();
+        let (dir, mut s) = temp_store("proxy-rules");
+        // Legal, fully spelled out: stored verbatim.
+        let ok = s
+            .add_connection(&proxy_input("a", Some("socks5://127.0.0.1:7890")))
+            .unwrap();
+        assert_eq!(ok.proxy.as_deref(), Some("socks5://127.0.0.1:7890"));
+        // Portless URLs normalize per scheme and the normalized value persists.
+        let http = s
+            .add_connection(&proxy_input("b", Some(" http://proxy.lan ")))
+            .unwrap();
+        assert_eq!(http.proxy.as_deref(), Some("http://proxy.lan:80"));
+        let socks = s
+            .add_connection(&proxy_input("c", Some("socks5://proxy.lan")))
+            .unwrap();
+        assert_eq!(socks.proxy.as_deref(), Some("socks5://proxy.lan:1080"));
+        let disk = read_secure_json(&dir.join("tunnels.json"))
+            .expect("re-read")
+            .expect("present");
+        assert_eq!(
+            disk["connections"][1]["proxy"], "http://proxy.lan:80",
+            "the port-normalized spelling is what hits the file"
+        );
+
+        // Scheme family.
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("127.0.0.1:7890")))
+                .unwrap_err(),
+            "proxy must be an http:// or socks5:// URL, got \"127.0.0.1:7890\""
+        );
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("ftp://x")))
+                .unwrap_err(),
+            "proxy must be an http:// or socks5:// URL, got \"ftp://x\""
+        );
+        // socks5h is a separate refusal: swiss always hands the hostname to the proxy
+        // (the socks5h behavior), so socks5:// already means it.
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("socks5h://h")))
+                .unwrap_err(),
+            "socks5h:// is not needed: the hostname is always resolved by the proxy, write socks5:// instead"
+        );
+        // TLS to the proxy is out of scope by spec (§6).
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("https://h")))
+                .unwrap_err(),
+            "https:// proxies are not supported, use http:// or socks5:// (TLS to the proxy is not implemented)"
+        );
+        // Credentials never ride inside the URL.
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("socks5://u:p@h:1080")))
+                .unwrap_err(),
+            "proxy URL must not carry credentials; use the proxy username and password fields"
+        );
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("http://u@h")))
+                .unwrap_err(),
+            "proxy URL must not carry credentials; use the proxy username and password fields"
+        );
+        // Empty host / bad port / path or query each get their own refusal.
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("socks5://:1080")))
+                .unwrap_err(),
+            "proxy URL has no host"
+        );
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("socks5://h:notaport")))
+                .unwrap_err(),
+            "invalid proxy port: notaport"
+        );
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("socks5://h:70000")))
+                .unwrap_err(),
+            "invalid proxy port: 70000"
+        );
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("socks5://h:1080/path")))
+                .unwrap_err(),
+            "proxy URL must not carry a path or query"
+        );
+        assert_eq!(
+            s.add_connection(&proxy_input("d", Some("http://h?where=1")))
+                .unwrap_err(),
+            "proxy URL must not carry a path or query"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// docs/27 §1.3: jump targets must exist, must not be the connection itself, must not
+    /// close a cycle (the whole chain is named), and never coexist with a proxy.
+    #[test]
+    fn jump_validation_rejects_missing_self_cycles_and_coexistence() {
+        let (_dir, mut s) = temp_store("jump-rules");
+        let a = s.add_connection(&conn_input_with("A")).unwrap();
+        let mut via_a = conn_input_with("B");
+        via_a.jump = Some(a.id.clone());
+        let b = s.add_connection(&via_a).unwrap();
+        let mut via_b = conn_input_with("C");
+        via_b.jump = Some(b.id.clone());
+        let c = s.add_connection(&via_b).unwrap();
+
+        let mut missing = conn_input_with("M");
+        missing.jump = Some("nope".into());
+        assert_eq!(
+            s.add_connection(&missing).unwrap_err(),
+            "jump connection not found: nope"
+        );
+        assert_eq!(
+            s.update_connection(
+                &a.id,
+                &ConnInput {
+                    jump: Some(a.id.clone()),
+                    ..conn_input_with("A")
+                }
+            )
+            .unwrap_err(),
+            "a connection cannot jump through itself"
+        );
+        // Closing the two-hop loop names the whole chain, starting at the edited row.
+        assert_eq!(
+            s.update_connection(
+                &a.id,
+                &ConnInput {
+                    jump: Some(b.id.clone()),
+                    ..conn_input_with("A")
+                }
+            )
+            .unwrap_err(),
+            format!("jump cycle detected: {} -> {} -> {}", a.id, b.id, a.id)
+        );
+        // The three-hop chain: A -> C -> B -> A.
+        assert_eq!(
+            s.update_connection(
+                &a.id,
+                &ConnInput {
+                    jump: Some(c.id.clone()),
+                    ..conn_input_with("A")
+                }
+            )
+            .unwrap_err(),
+            format!(
+                "jump cycle detected: {} -> {} -> {} -> {}",
+                a.id, c.id, b.id, a.id
+            )
+        );
+        let mut both = proxy_input("P", Some("socks5://127.0.0.1:7890"));
+        both.jump = Some(a.id.clone());
+        assert_eq!(
+            s.add_connection(&both).unwrap_err(),
+            "a connection can have a proxy or a jump, not both; put the proxy on the jump connection if it needs one"
+        );
+        // The legal chain is untouched by all of the above refusals.
+        assert_eq!(s.connection(&c.id).unwrap().jump.as_deref(), Some(b.id.as_str()));
+    }
     #[test]
     fn mcp_link_maintenance() {
         let (_dir, mut s) = temp_store("mcp-links");
