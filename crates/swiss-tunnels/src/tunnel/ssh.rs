@@ -304,9 +304,26 @@ impl SshConnection {
         let def_host = def.host.clone();
         let def_port = def.port;
         let result = tokio::time::timeout(READY_TIMEOUT, async {
-            let mut handle = russh::client::connect(config, (def_host.as_str(), def_port), handler)
-                .await
-                .map_err(|err| as_tunnel_error(err, None))?;
+            // docs/27 §2.5: a proxied connection dials its own transport (CONNECT or
+            // socks5) and hands the stream to connect_stream; the direct path stays
+            // exactly the russh sugar it always was — no behavior change without a proxy.
+            let mut handle = match def.proxy.clone() {
+                None => {
+                    russh::client::connect(config, (def_host.as_str(), def_port), handler)
+                        .await
+                        .map_err(|err| as_tunnel_error(err, None))?
+                }
+                Some(url) => {
+                    let mut proxy = super::proxy::parse(&url)
+                        .map_err(|e| TunnelError::new(e, FailureKind::Config))?;
+                    proxy.username = def.proxy_username.clone();
+                    proxy.password = def.proxy_password.clone();
+                    let stream = super::proxy::dial(&proxy, &def_host, def_port).await?;
+                    russh::client::connect_stream(config, stream, handler)
+                        .await
+                        .map_err(|err| as_tunnel_error(err, None))?
+                }
+            };
             self.authenticate(&mut handle, &def, key).await?;
             Ok::<Handle<ClientHandler>, TunnelError>(handle)
         })
@@ -844,6 +861,30 @@ mod tests {
             classify_message("connection reset by peer"),
             FailureKind::Network
         );
+    }
+
+    /// docs/27 §2.4: classify_message scans for the substrings "auth" and "host key",
+    /// so a fixed proxy failure string that could ever flow through a classifier must
+    /// avoid both — a proxy outage is a network event and the retry policy may run.
+    /// (The spec's verbatim "...socks5 auth method" wording DOES contain "auth"; those
+    /// two strings are built with an explicit Network kind and never re-classified,
+    /// which the dialer tests' kind assertions pin — nothing routes them through here.)
+    #[test]
+    fn proxy_error_strings_stay_network_kind() {
+        for msg in [
+            "proxy 127.0.0.1:8080 refused CONNECT: HTTP 407",
+            "proxy 127.0.0.1:8080 rejected socks5 credentials",
+            "proxy 127.0.0.1:8080 socks5 reply 1",
+            "cannot reach proxy 127.0.0.1:8080: connection refused",
+            "proxy 127.0.0.1:8080 closed during CONNECT",
+            "proxy 127.0.0.1:8080 sent a malformed CONNECT response",
+        ] {
+            assert_eq!(
+                classify_message(msg),
+                FailureKind::Network,
+                "misclassified: {msg}"
+            );
+        }
     }
 
     #[test]
