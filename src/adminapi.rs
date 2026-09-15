@@ -506,6 +506,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     // credential - the write-only rule (docs/19 D5) is about values, and no
                     // value crosses here.
                     "groups": swiss_core::secure::secretstore::vault_groups(),
+                    // docs/26: the manual row order, raw - a stale name ranks nowhere.
+                    "order": swiss_core::secure::secretstore::vault_order(),
                     "secretGroups": swiss_core::secure::secretstore::list_secrets()
                         .into_iter()
                         .map(|n| {

@@ -258,7 +258,7 @@ function mountGroup(cfg, g) {
   // An empty group is not an empty state - it is a place. One SHORT quiet line keeps the
   // container visible as a drop target (the only way in); the head's + explains itself on
   // hover, so the line does not have to repeat the instructions. A scope whose rows cannot
-  // drag (secrets) says the honest half only.
+  // drag (tokens) says the honest half only.
   if (!g.rows.length && !cfg.filtered) {
     body.appendChild(el("div", "grp-empty", emptyLineText(cfg.draggable !== false)));
   }

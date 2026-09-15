@@ -149,6 +149,25 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect(mods.countText()).toBe("2 secrets");
   });
 
+  it("renders rows in the stored order, unranked names after in name order (docs/26)", () => {
+    mods.__setVaultForTest(["zz-last", "aa-unranked", "mm-mid"], 5, ["zz-last", "mm-mid"]);
+    const html = mods.rowsHtml();
+    expect(html.indexOf("zz-last")).toBeLessThan(html.indexOf("mm-mid"));
+    expect(html.indexOf("mm-mid")).toBeLessThan(html.indexOf("aa-unranked"));
+  });
+
+  it("a row drag PUTs the flat order, then reloads the rev the PUT bumped (docs/26)", async () => {
+    mods.__setVaultForTest(["aa", "bb", "cc"], 5);
+    replies["PUT /api/groups/secrets/order"] = { order: ["bb", "aa", "cc"] };
+    replies["/api/secrets"] = { secrets: ["aa", "bb", "cc"], rev: 6 };
+    mods.moveSecretRow("bb", "aa", true);
+    await new Promise((r) => setTimeout(r, 0));
+    const put = calls.find((c) => c.method === "PUT" && c.url === "/api/groups/secrets/order");
+    expect(put?.body && JSON.parse(put.body as string)).toEqual({ order: ["bb", "aa", "cc"] });
+    // The order PUT bumps the vault rev - the reload is mandatory, not polish.
+    expect(calls.some((c) => c.method === "GET" && c.url === "/api/secrets")).toBe(true);
+  });
+
   it("the empty page says what a secret is for", async () => {
     mods.__setVaultForTest([], 0);
     await mods.mount();

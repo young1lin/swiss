@@ -7,18 +7,21 @@
    credential field, not the credential. Writes carry the rev the list was drawn from, the
    same discipline Tokens and Plugins have.
 
-   Groups (docs/20 G6): the list renders through the groups component with dragging off —
-   secrets have no manual order, the name order IS the order (the scope's order route is a
-   400). The store form carries a Group select; the header + preselects it. Group labels are
+   Groups (docs/20 G6, docs/26): the list renders through the groups component under the
+   full family contract — rows drag within and across groups in one gesture, the grip
+   reorders groups. The stored order is the vault's third list; empty means name order.
+   The store form carries a Group select; the header + preselects it. Group labels are
    folder names, not credentials — they are the one thing about a secret a listing may say
    beyond its name.
    ================================================================================================ */
 import { $, apiJson, emptyHtml, esc, state, toast } from "../util.js";
 import { copyText } from "../connect.js";
-import { assignMember, groupOf as makeGroupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
+import { assignMember, groupOf as makeGroupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
 
 var painted = ""; // structural signature of the drawn list; a change means the rows move
 var collapsed = {}; // the secrets fold map, loaded once before the first paint
+var draggingRow = null; // the row name a gesture carries (the component reads it via cfg.drag)
+var draggingGroup = null; // the group name a header grip carries
 
 /** The rendering group of one name: the stored label while its group lives, else the first
  *  group — the sink rule. An older gateway answers no groups at all: everything reads as
@@ -44,7 +47,24 @@ async function loadSecrets() {
   secrets.rev = j.rev || 0;
   secrets.groups = j.groups && j.groups.length ? j.groups : ["default"];
   secrets.memberGroups = j.secretGroups || {};
+  secrets.order = j.order || []; // an older gateway answers without one: name order
   secrets.loaded = true;
+  applyOrder();
+}
+
+/** Rank by the stored order (docs/26): names the list mentions keep their slot, everything
+ *  else lands after them in name order — the same rule the tunnels store ranks by. */
+function applyOrder() {
+  var rank = {};
+  (secrets.order || []).forEach(function (n, i) {
+    if (!(n in rank)) rank[n] = i;
+  });
+  var unranked = secrets.order ? secrets.order.length : 0;
+  secrets.list.sort(function (a, b) {
+    var ra = a in rank ? rank[a] : unranked;
+    var rb = b in rank ? rank[b] : unranked;
+    return ra === rb ? a.localeCompare(b) : ra - rb;
+  });
 }
 
 /** One secret's row. The buttons stay delegated on #pane (wire), so the groups component
@@ -63,9 +83,9 @@ function rowsHtml() {
   return secrets.list.length ? secrets.list.map(rowHtml).join("") : "";
 }
 
-/** The secrets scope's cfg for mountGroup. No drag contract at all: rows sort by name, the
- *  order route is a 400 — the grip still reorders GROUPS (that is set_names, allowed), but
- *  nothing can drop a row anywhere. */
+/** The secrets scope's cfg for mountGroup (docs/26): the full family contract — rows drag
+ *  within and across groups in one gesture (a drop carries order + membership), the grip
+ *  reorders groups. Rows are plain names, so rowId is the identity. */
 function skCfg() {
   return {
     scope: "secrets",
@@ -83,15 +103,52 @@ function skCfg() {
     },
     reload: function () { return loadSecrets().then(paintGroups); },
     render: paintGroups,
-    draggable: false,
+    afterDrag: function () { paintGroups(); }, // the catch-up rebuild a deferred poll owes
+    drag: {
+      get: function () { return draggingRow; },
+      set: function (v) { draggingRow = v; },
+    },
+    dragGroup: {
+      get: function () { return draggingGroup; },
+      set: function (v) { draggingGroup = v; },
+    },
     rowsById: function () { return secrets.list; },
+    rowId: function (r) { return r; },
     groupOfRow: groupOfName,
     rowsHtml: function (g) { return g.rows.map(rowHtml).join(""); },
     rowSel: function (r) {
       var v = window.CSS && CSS.escape ? CSS.escape(r) : r;
       return '[data-secret="' + v + '"]';
     },
+    onMoveRow: moveSecretRow,
+    onAssign: function (id, g) { void moveSecretGroup(id, g); },
   };
+}
+
+/** Move one row to just before/after another (docs/26): re-render from the moved list, then
+ *  persist the flat order. The PUT bumps the rev the next value write must name, so the
+ *  reload that follows it is not optional polish. */
+function moveSecretRow(id, target, before) {
+  if (!id || !target || id === target) return;
+  var from = secrets.list.indexOf(id);
+  if (from < 0) return;
+  secrets.list.splice(from, 1);
+  var to = secrets.list.indexOf(target);
+  if (to < 0) return; // target vanished mid-drag — leave everything where it is
+  secrets.list.splice(before ? to : to + 1, 0, id);
+  paintGroups();
+  void saveOrder("secrets", secrets.list.slice()).then(function (j) {
+    if (j) loadSecrets().then(paintGroups); // the order PUT bumped the rev — resync it
+  });
+}
+
+/** Put one secret in a group (the cross-group half of a row drag, docs/26): the family's
+ *  member PUT bumps the rev too, so the reload resyncs both the list and the rev the next
+ *  value write needs. */
+async function moveSecretGroup(id, group) {
+  await assignMember("secrets", id, group);
+  await loadSecrets();
+  paintGroups();
 }
 
 /** (Re)build the groups region only — the store form lives outside it, so a repaint never
@@ -236,5 +293,8 @@ export function unmount() { painted = ""; }
 /* Exported for the suite (the requiresBadge precedent): the rows markup and the two mutations,
  * so the contract is testable without a DOM that parses HTML. __setVaultForTest restores the
  * pre-first-load state between cases. */
-export { rowsHtml, storeSecret, removeSecret };
-export function __setVaultForTest(list, rev) { secrets = { list: list || [], rev: rev || 0, loaded: true, groups: ["default"], memberGroups: {} }; }
+export { rowsHtml, storeSecret, removeSecret, moveSecretRow };
+export function __setVaultForTest(list, rev, order) {
+  secrets = { list: list || [], rev: rev || 0, loaded: true, groups: ["default"], memberGroups: {}, order: order || [] };
+  applyOrder();
+}

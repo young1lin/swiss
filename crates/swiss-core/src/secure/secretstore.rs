@@ -58,6 +58,10 @@ pub struct Vault {
     pub groups: Vec<String>,
     /// member name -> its group. Absent = unassigned = renders in the first group.
     pub member_groups: HashMap<String, String>,
+    /// The manual row order (docs/26): names in the order the panel shows them. Empty =
+    /// name order; names no longer stored are tolerated until their own delete prunes
+    /// them - the same leniency the member map has.
+    pub order: Vec<String>,
 }
 
 static VAULT: OnceLock<RwLock<Vault>> = OnceLock::new();
@@ -69,6 +73,7 @@ fn vault() -> &'static RwLock<Vault> {
             secrets: HashMap::new(),
             groups: vec!["default".to_string()],
             member_groups: HashMap::new(),
+            order: Vec::new(),
         })
     })
 }
@@ -80,6 +85,7 @@ fn read_file(path: &Path) -> Vault {
         secrets: HashMap::new(),
         groups: vec!["default".to_string()],
         member_groups: HashMap::new(),
+        order: Vec::new(),
     };
     let Ok(Some(raw)) = read_secure_json(path) else {
         return empty();
@@ -118,6 +124,16 @@ fn read_file(path: &Path) -> Vault {
                 o.iter()
                     .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                     .collect()
+            })
+            .unwrap_or_default(),
+        // docs/26: absent in every pre-26 file - name order, behavior unchanged.
+        order: raw
+            .get("order")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default(),
     }
@@ -187,16 +203,24 @@ pub fn vault_group_of(name: &str) -> String {
         .unwrap_or(first)
 }
 
-/// Replace the whole group model in ONE rev-checked write (docs/20 G6): the family's four
-/// verbs all reduce to a new list plus a new member map, computed by the caller against the
-/// one model, and land here as a single mutation - the same discipline a value write has.
-/// The map's keys are NOT validated against stored names: callers keep it honest, and a
-/// stale entry is harmless (it renders nothing and the next delete drops it).
+/// The stored row order (docs/26), raw: names no longer stored may ride along until their
+/// own delete prunes them - readers rank unknown names last anyway.
+pub fn vault_order() -> Vec<String> {
+    vault().read().map(|v| v.order.clone()).unwrap_or_default()
+}
+
+/// Replace the whole group model in ONE rev-checked write (docs/20 G6, docs/26): the
+/// family's five verbs all reduce to a new list, a new member map and a row order, computed
+/// by the caller against the one model, and land here as a single mutation - the same
+/// discipline a value write has. The map's keys are NOT validated against stored names:
+/// callers keep it honest, and a stale entry is harmless (it renders nothing and the next
+/// delete drops it). The order gets the same leniency.
 pub fn set_vault_groups(
     path: &Path,
     expect_rev: u64,
     groups: Vec<String>,
     member_groups: HashMap<String, String>,
+    order: Vec<String>,
 ) -> Result<u64, MutateError> {
     if groups.is_empty() {
         return Err(MutateError::InvalidName(
@@ -217,6 +241,7 @@ pub fn set_vault_groups(
             secrets,
             groups,
             member_groups,
+            order,
         },
     )
 }
@@ -257,6 +282,7 @@ fn persist_then_commit(path: &Path, candidate: Vault) -> Result<u64, MutateError
         "secrets": candidate.secrets,
         "groups": candidate.groups,
         "secretGroups": candidate.member_groups,
+        "order": candidate.order,
     });
     write_secure_json(path, &value).map_err(MutateError::Seal)?;
     let rev = candidate.rev;
@@ -271,14 +297,23 @@ pub fn put_secret(path: &Path, name: &str, value: &str, expect_rev: u64) -> Resu
     if !valid_name(name) {
         return Err(MutateError::InvalidName(name.to_string()));
     }
-    // A value write must not touch the group model (docs/20 G6): the groups and the
-    // member map ride along untouched - a new name carries no assignment and renders in
-    // the first group, exactly like an old file's secrets.
+    // A value write must not touch the group model (docs/20 G6) or the row order
+    // (docs/26): the groups, the member map and the order ride along untouched - a new
+    // name carries no assignment, renders in the first group and ranks after every
+    // mentioned name.
     let current = vault()
         .read()
-        .map(|v| (v.rev, v.secrets.clone(), v.groups.clone(), v.member_groups.clone()))
+        .map(|v| {
+            (
+                v.rev,
+                v.secrets.clone(),
+                v.groups.clone(),
+                v.member_groups.clone(),
+                v.order.clone(),
+            )
+        })
         .ok();
-    let Some((rev, mut secrets, groups, member_groups)) = current else {
+    let Some((rev, mut secrets, groups, member_groups, order)) = current else {
         return Err(MutateError::Seal("vault lock poisoned".into()));
     };
     if rev != expect_rev {
@@ -292,6 +327,7 @@ pub fn put_secret(path: &Path, name: &str, value: &str, expect_rev: u64) -> Resu
             secrets,
             groups,
             member_groups,
+            order,
         },
     )
 }
@@ -311,7 +347,7 @@ pub fn import_secrets(
     // bundle does not mention keeps its value) is about what is stored on disk.
     // The bundle restores VALUES; the group model on disk rides along untouched - the
     // same keep-what-is-there promise a name the bundle does not mention already has.
-    let Vault { rev, mut secrets, groups, member_groups } = read_file(path);
+    let Vault { rev, mut secrets, groups, member_groups, order } = read_file(path);
     for (name, value) in entries {
         if !valid_name(name) {
             continue;
@@ -327,6 +363,7 @@ pub fn import_secrets(
             secrets,
             groups,
             member_groups,
+            order,
         },
     )
 }
@@ -363,6 +400,12 @@ pub fn delete_secret(path: &Path, name: &str, expect_rev: u64) -> Result<u64, Mu
             }
         })
         .unwrap_or_else(|_| vec!["default".to_string()]);
+    // The row order must not outlive the name either (docs/26): a stale slot ranks
+    // nowhere, but the next set_order would have to carry it forever.
+    let order = vault()
+        .read()
+        .map(|v| v.order.iter().filter(|n| *n != name).cloned().collect())
+        .unwrap_or_default();
     persist_then_commit(
         path,
         Vault {
@@ -370,6 +413,7 @@ pub fn delete_secret(path: &Path, name: &str, expect_rev: u64) -> Result<u64, Mu
             secrets,
             groups,
             member_groups,
+            order,
         },
     )
 }
@@ -473,6 +517,47 @@ mod tests {
         let _ = delete_secret(&path, "reload-me", vault_rev());
     }
     #[test]
+    fn vault_order_round_trips_and_a_delete_prunes_it() {
+        // docs/26: the order is the model's third list. Empty means name order (every
+        // pre-26 file), a write lands it beside the groups, a reload keeps it, a value
+        // write carries it along, and a delete prunes its own slot - a name that was never
+        // stored is tolerated until then.
+        let _guard = crate::paths::DATA_DIR_LOCK.blocking_lock();
+        let home = crate::paths::test_home();
+        let path = home.join("secrets.json");
+        inject_vault(&path);
+        assert!(vault_order().is_empty(), "an old file reads as name order");
+
+        let rev0 = vault_rev();
+        put_secret(&path, "ord-a", "v", rev0).expect("put");
+        put_secret(&path, "ord-b", "v", vault_rev()).expect("put");
+        set_vault_groups(
+            &path,
+            vault_rev(),
+            vault_groups(),
+            std::collections::HashMap::new(),
+            vec!["ord-b".to_string(), "ghost".to_string()],
+        )
+        .expect("order write");
+        assert_eq!(vault_order(), vec!["ord-b".to_string(), "ghost".to_string()]);
+
+        inject_vault(&path);
+        assert_eq!(
+            vault_order(),
+            vec!["ord-b".to_string(), "ghost".to_string()],
+            "the order persists like the groups"
+        );
+
+        put_secret(&path, "ord-c", "v", vault_rev()).expect("put");
+        assert_eq!(vault_order(), vec!["ord-b".to_string(), "ghost".to_string()]);
+
+        let _ = delete_secret(&path, "ord-b", vault_rev());
+        assert_eq!(vault_order(), vec!["ghost".to_string()], "only its own slot goes");
+        let _ = delete_secret(&path, "ord-c", vault_rev());
+        let _ = delete_secret(&path, "ord-a", vault_rev());
+    }
+
+    #[test]
     fn vault_groups_default_and_round_trip() {
         // docs/20 G6: the vault carries the one model - a group list plus a member map -
         // beside the values. An old file names neither, so it reads as the single default
@@ -495,6 +580,7 @@ mod tests {
             rev1,
             vec!["default".to_string(), "Ops".to_string()],
             members,
+            vec![], // this write predates any manual order (docs/26)
         )
         .expect("regroup");
         assert_eq!(rev2, rev1 + 1, "a regroup is one rev bump");

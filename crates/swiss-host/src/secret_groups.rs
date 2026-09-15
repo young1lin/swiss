@@ -6,8 +6,9 @@
 //! ONE rev-checked vault write - the same discipline a value write has. Values never
 //! cross this boundary: a group label names a folder, not a credential.
 //!
-//! `set_order` is refused on purpose: secrets list in name order (docs/19), and a manual
-//! order would be a third list to keep honest for nothing the page can even show.
+//! The order is the model's third list (docs/26): `set_order` lands it in the same
+//! single rev-checked vault write, and an empty order keeps the name order every pre-26
+//! file had.
 
 use std::collections::BTreeMap;
 
@@ -32,12 +33,13 @@ fn model() -> Groups {
 /// Land a mutated model as one vault write, mapping the vault's errors to the family's
 /// strings. A regroup is one rev bump (docs/20 G6), so a concurrent value write fails
 /// here honestly - the message says reload, which is all a single panel ever needs.
-fn commit(groups: Groups) -> Result<(), String> {
+fn commit(groups: Groups, order: Vec<String>) -> Result<(), String> {
     vault::set_vault_groups(
         &vault::secret_store_path(),
         vault::vault_rev(),
         groups.names(),
         groups.members().clone().into_iter().collect(),
+        order,
     )
     .map(|_| ())
     .map_err(|e| match e {
@@ -56,28 +58,36 @@ impl GroupScope for SecretGroups {
     fn set_names(&self, next: Vec<String>) -> Result<Vec<String>, String> {
         let mut g = model();
         g.set_names(next)?;
-        commit(g)?;
+        commit(g, vault::vault_order())?;
         Ok(vault::vault_groups())
     }
 
     fn rename(&self, from: &str, to: &str) -> Result<(Vec<String>, usize), String> {
         let mut g = model();
         let answer = g.rename(from, to)?;
-        commit(g)?;
+        commit(g, vault::vault_order())?;
         Ok(answer)
     }
 
     fn assign(&self, id: &str, group: Option<&str>) -> Result<String, String> {
         let mut g = model();
         let answer = g.assign(id, group)?;
-        commit(g)?;
+        commit(g, vault::vault_order())?;
         Ok(answer)
     }
 
-    // The one verb this scope refuses (docs/20 G6): name order IS the order. The
-    // wording is the error the family serves as a 400.
-    fn set_order(&self, _ids: Vec<String>) -> Result<Vec<String>, String> {
-        Err("secrets have no manual order".to_string())
+    // docs/26: the order is the model's third list. Unknown names drop out and duplicates
+    // keep their first slot - the managed scope's discipline - so a stale panel cannot
+    // plant a ghost row.
+    fn set_order(&self, ids: Vec<String>) -> Result<Vec<String>, String> {
+        let g = model();
+        let mut seen = std::collections::HashSet::new();
+        let order: Vec<String> = ids
+            .into_iter()
+            .filter(|id| vault::vault_has(id) && seen.insert(id.clone()))
+            .collect();
+        commit(g, order)?;
+        Ok(vault::vault_order())
     }
 
     fn has_member(&self, id: &str) -> bool {

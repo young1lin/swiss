@@ -2638,12 +2638,21 @@ async fn the_family_serves_the_secrets_scope() {
     assert_eq!(body["groups"], json!(["Basics", "Ops"]));
     assert_eq!(body["moved"], json!(in_default), "the whole first slot moved");
 
-    // The one verb this scope refuses (docs/20 G6): name order IS the order.
+    // docs/26: the order is the model's third list. Unknown names drop out, so a stale
+    // panel cannot plant a ghost row; the landed order comes back.
     let (status, body) = h
-        .put("/api/groups/secrets/order", json!({ "order": ["panel-g6-a"] }))
+        .put(
+            "/api/groups/secrets/order",
+            json!({ "order": ["panel-g6-a", "ghost", "panel-g6-a"] }),
+        )
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"], json!("secrets have no manual order"));
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["order"], json!(["panel-g6-a"]));
+
+    // The listing carries the stored order raw (docs/26 E2).
+    let (status, body) = h.get("/api/secrets").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["order"], json!(["panel-g6-a"]));
 
     // Unknown member: the family's one 404.
     let (status, body) = h
@@ -2714,7 +2723,8 @@ async fn the_family_serves_the_tokens_scope() {
     assert_eq!(body["groups"], json!(["default", "Ops"]));
     assert_eq!(body["moved"], json!(1), "the one assigned member moved");
 
-    // Creation time is the order (docs/20 §2.1): like secrets, no manual order exists.
+    // Creation time is the order (docs/20 §2.1): like tokens, no manual order exists
+    // (secrets gained one - docs/26).
     let (status, body) = h
         .put("/api/groups/tokens/order", json!({ "order": [id] }))
         .await;
