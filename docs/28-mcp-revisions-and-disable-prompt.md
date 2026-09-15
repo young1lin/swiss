@@ -30,8 +30,9 @@
 
 - 英文代码注释;测试先红后绿;`cargo test --workspace` 与 clippy `-D warnings` 每步全绿;
   零新依赖。
-- 面板改动走 panel-proof-of-life 全清单(真 CDP 点击,19998,`CARGO_TARGET_DIR=target-test`,
-  绝对路径脚本;19999 是生产,只许读 /health)。
+- 面板改动走 panel-proof-of-life 全清单(真 CDP 点击;验证实例端口 **19997** ——
+  `scripts/test-instance.ps1 -Port 19997`,构建 `CARGO_TARGET_DIR=target-test`,绝对路径脚本;
+  19999 是生产,只许读 /health;19998 留给操作者,别占)。
 - revision 只是 def 快照,永不运行、boot 不注册 —— 这是 ADR-023 的判定,别把它做成第二套注册表。
 - 凭据仍走 `${...}` 引用;revisions 里的 def 快照原样存引用,不展开。
 

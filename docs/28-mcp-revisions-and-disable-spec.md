@@ -1,7 +1,10 @@
 # 28 · MCP 同名替换(revisions)与禁用正名 — spec
 
-**状态:Draft(2026-09-16),基线 `2683849`。** 本文件由 swiss-spec 流程产出;实现会话从
-配套的 `docs/28-mcp-revisions-and-disable-prompt.md` 起步,不读对话历史。
+**状态:Approved for implementation(2026-09-16),基线 `2683849`。** swiss-spec 流程产出;
+执行会话(同日)按 `docs/28-mcp-revisions-and-disable-prompt.md` 起跑。
+
+**验证端口:19997**(操作者指定,压缩也不许忘):agent 的实机验证实例一律 -Port 19997,
+脚本默认 19998 保持不动(repo 文档不受影响);19999 仍是生产,照旧只读。
 
 > 2026-09-16,操作者原话:
 > 「我想再创建个 zai-vision,不过这个是新的,不是原来的 proc,但是呢,我怕这个会失败,
@@ -111,7 +114,7 @@ vitest(crates/swiss-panel/panel-tests/):
 10. 行省略号菜单存在,点 Rename 调 renameMcp、点 Disable 调 act(name, stop)。
 11. 按钮/状态文案 Disable/Enable/disabled。
 
-CDP 实机(19998,全规矩):
+CDP 实机(19997,全规矩;脚本传 -Port 19997):
 12. 真 walk:行菜单 Rename 真改名;Disable 后 /mcp/<name> 503 含 disabled;Enable 恢复;
     Replace definition 全程(用 echo/mysql 假端口这类不花钱类型演),Restore 回滚成功。
 
@@ -123,6 +126,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo tree -d                 # 本 spec 零新依赖,任何重复栈即失败
 ```
 
+0. scripts/test-instance.ps1 参数化 -Port(默认 19998 不变;agent 验证传 19997)。
 1. D1 后端:存储 + 四条路由 + Rust 测试 1–8 + ADR-023(docs/07,核心判定见 §1)。
 2. D1 面板:Replace 表单 + revisions 列表 + vitest 9。
 3. D2 正名:文案 + 503 串 + vitest 11(一次提交两侧同改)。
