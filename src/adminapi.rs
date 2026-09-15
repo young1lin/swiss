@@ -207,6 +207,34 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         }
         return Ok(ServerDef(def));
     }
+    // The figma type (docs/24 rev): the panel asks for a name, the type decides the rest —
+    // endpoint, OAuth credential mode, client name. A url or auth key on a figma def would be
+    // a second way to say what the type already says, so refuse them: the def stays one field
+    // long and cannot be configured wrong.
+    if type_ == "figma" {
+        for conflicting in ["url", "auth", "oauthClientName", "headers", "proxy"] {
+            if let Some(v) = body.get(conflicting) {
+                if !v.is_null() && v.as_str() != Some("") {
+                    return Err(format!(
+                        "{conflicting} is decided by the figma type; remove it (endpoint and OAuth are built in)"
+                    ));
+                }
+            }
+        }
+        if let Some(description) = str_field(body, "description") {
+            if !description.trim().is_empty() {
+                def.insert("description".into(), json!(description.trim()));
+            }
+        }
+        for key in ["exposeResources", "exposePrompts"] {
+            if let Some(v) = body.get(key) {
+                if !v.is_null() && !as_bool(v) {
+                    def.insert(key.into(), json!(false));
+                }
+            }
+        }
+        return Ok(ServerDef(def));
+    }
     // A remote MCP is configured, not launched: where it is, and the headers its API key travels
     // in. Shaped by hand rather than DIRECT_FIELDS because `headers` is a map, and because an
     // http MCP with no url has nothing to connect to at all.
@@ -233,6 +261,23 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
             if let Some(v) = body.get(key) {
                 if !v.is_null() && !as_bool(v) {
                     def.insert(key.into(), json!(false));
+                }
+            }
+        }
+        // OAuth (docs/24 D1): "auth": "oauth" hands Authorization to the gateway's OAuth
+        // flow; "oauthClientName" overrides the client_name registered with the provider
+        // (Figma accepts only "Claude Code" or "Codex").
+        if let Some(auth) = str_field(body, "auth") {
+            let auth = auth.trim();
+            if !auth.is_empty() {
+                if auth != "oauth" {
+                    return Err(format!("unknown auth mode '{auth}' (supported: oauth)"));
+                }
+                def.insert("auth".into(), json!(auth));
+                if let Some(client_name) = str_field(body, "oauthClientName") {
+                    if !client_name.trim().is_empty() {
+                        def.insert("oauthClientName".into(), json!(client_name.trim()));
+                    }
                 }
             }
         }
@@ -292,7 +337,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         .map(|(_, f)| *f)
     else {
         return Err(format!(
-            "unknown type: {type_} (supported: mysql | redis | pg | proc | http | rest | echo)"
+            "unknown type: {type_} (supported: mysql | redis | pg | proc | http | rest | echo | figma)"
         ));
     };
     for k in allowed {
@@ -802,10 +847,11 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     let mut row = json!({
                         "name": d.name,
                         "source": d.source.as_str(),
-                        "type": d.adapter.kind(),
-                        // How this MCP is launched (http / rest / npx / uvx / ...), so the sidebar
-                        // can label every row without a per-row details fetch.
-                        "tag": tag_of(d.adapter.kind(), &d.def),
+                        // The DEF type, not the adapter kind: a figma MCP builds an http
+                        // adapter but is a figma MCP everywhere a user looks — the row, the
+                        // tag chip (http / rest / npx / uvx / ...), the edit form.
+                        "type": d.def.type_(),
+                        "tag": tag_of(d.def.type_(), &d.def),
                         "description": d.def.get_str("description").unwrap_or_default(),
                         "lifecycle": d.lifecycle.as_str(),
                         "state": if d.lifecycle == Lifecycle::Started { d.status.as_str() } else { d.lifecycle.as_str() },
@@ -832,6 +878,17 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                         }
                         if let Some(v) = d.started_at.clone() {
                             obj.insert("startedAt".into(), json!(v));
+                        }
+                        // OAuth MCPs carry their auth state for the sidebar badge (docs/24
+                        // D5): stored credentials read authorized — expiry is the adapter's
+                        // to handle with a refresh, not the badge's to guess at.
+                        if swiss_mcp::oauth::is_oauth(&d.def) {
+                            let state = if swiss_mcp::oauth::credentials(&d.name).is_some() {
+                                "authorized"
+                            } else {
+                                "needs-auth"
+                            };
+                            obj.insert("oauth".into(), json!(state));
                         }
                     }
                     Some(row)
@@ -1188,9 +1245,188 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 if let Some(links) = tunnel_links(&ctx) {
                     links.rename_mcp(&name, &new_name);
                 }
+                // OAuth credentials and any live flow are name-keyed (docs/24 D1); both must
+                // follow or the renamed MCP wakes up needing auth it already granted. A flow
+                // mid-flight keeps running under its old name and answers this name's polls
+                // never — the operator re-POSTs, which single-flight supersedes anyway.
+                if let Err(err) = swiss_mcp::oauth::rename_credentials(&name, &new_name) {
+                    log::log(
+                        "warn",
+                        "renaming oauth credentials failed",
+                        Some(json!({ "from": name, "to": new_name, "err": err })),
+                    );
+                }
+                if let Ok(mut flows) = ctx.oauth_flows.write() {
+                    if let Some(flow) = flows.remove(&name) {
+                        flows.insert(new_name.clone(), flow);
+                    }
+                }
                 admin_json(StatusCode::OK, json!({ "name": new_name }))
             },
         ),
+    );
+
+    // --- OAuth authorize (docs/24 D5) ---------------------------------------------------------------
+    //
+    // POST launches one flow per name (single-flight: a live flow is handed back, a terminal
+    // one is replaced) — loopback listener, discovery, dynamic registration, then the
+    // authorization URL for a REAL browser. GET polls. On approval the task stores the
+    // credentials atomically and starts the MCP, so the sidebar turns green without a second
+    // click.
+    r = r.route(
+        "/api/mcps/{name}/authorize",
+        post(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>| async move {
+            let Some(entry) = ctx.registry.get(&name) else {
+                return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
+            };
+            let target = entry.data.read().ok().and_then(|d| {
+                // The figma type expands to an http adapter whose OAuth is implied, so the
+                // predicate is the shared one and the URL falls back to the figma endpoint.
+                if d.adapter.kind() != "http" || !swiss_mcp::oauth::is_oauth(&d.def) {
+                    return None;
+                }
+                Some((
+                    d.def
+                        .get_str("url")
+                        .filter(|u| !u.is_empty())
+                        .unwrap_or(swiss_mcp::oauth::FIGMA_MCP_URL)
+                        .to_string(),
+                    d.def.get_str("oauthClientName").map(str::to_string),
+                ))
+            });
+            let Some((url, client_name)) = target else {
+                return admin_error(
+                    StatusCode::BAD_REQUEST,
+                    &format!("{name} is not an OAuth http MCP (set auth to oauth on its http def)"),
+                );
+            };
+            // Single-flight per name: while a flow is live (starting or waiting on the
+            // browser) the SAME flow is handed back — a second click must not register a
+            // second client or bind a second port.
+            if let Ok(flows) = ctx.oauth_flows.read() {
+                if let Some(existing) = flows.get(&name) {
+                    let live = existing
+                        .status
+                        .read()
+                        .ok()
+                        .map(|s| !s.is_terminal())
+                        .unwrap_or(false);
+                    if live {
+                        let mut body = existing
+                            .status
+                            .read()
+                            .ok()
+                            .map(|s| s.to_json())
+                            .unwrap_or(json!({ "status": "starting" }));
+                        if let Some(obj) = body.as_object_mut() {
+                            obj.insert("flowId".into(), json!(existing.flow_id));
+                        }
+                        return admin_json(StatusCode::OK, body);
+                    }
+                }
+            }
+            let handle = std::sync::Arc::new(swiss_mcp::oauth::FlowHandle {
+                flow_id: swiss_core::util::random_hex(8),
+                status: std::sync::RwLock::new(swiss_mcp::oauth::FlowStatus::Starting),
+            });
+            let flow_id = handle.flow_id.clone();
+            if let Ok(mut flows) = ctx.oauth_flows.write() {
+                flows.insert(name.clone(), handle.clone());
+            }
+            let task_ctx = ctx.clone();
+            let task_name = name.clone();
+            tokio::spawn(async move {
+                let fail = |handle: &std::sync::Arc<swiss_mcp::oauth::FlowHandle>, err: String| {
+                    if let Ok(mut status) = handle.status.write() {
+                        *status = swiss_mcp::oauth::FlowStatus::Error(err);
+                    }
+                };
+                let http = match reqwest::Client::builder().build() {
+                    Ok(http) => http,
+                    Err(err) => {
+                        fail(&handle, format!("http client build failed: {err}"));
+                        return;
+                    }
+                };
+                let flow = match swiss_mcp::oauth::start_flow(
+                    http,
+                    &task_name,
+                    &url,
+                    client_name.as_deref(),
+                )
+                .await
+                {
+                    Ok(flow) => flow,
+                    Err(err) => {
+                        fail(&handle, err);
+                        return;
+                    }
+                };
+                if let Ok(mut status) = handle.status.write() {
+                    *status = swiss_mcp::oauth::FlowStatus::AuthorizationRequired(
+                        flow.authorization_url.clone(),
+                    );
+                }
+                let creds = match flow.complete().await {
+                    Ok(creds) => creds,
+                    Err(err) => {
+                        fail(&handle, err);
+                        return;
+                    }
+                };
+                if let Err(err) = swiss_mcp::oauth::replace_credentials(&task_name, creds) {
+                    fail(&handle, err);
+                    return;
+                }
+                // Approval starts the MCP (docs/24 D5): the operator just proved intent. A
+                // failed start is still an APPROVED flow — the credentials are good, and the
+                // sidebar shows the MCP's own start error rather than a misleading auth one.
+                let mut tools = 0usize;
+                if let Err(err) = task_ctx.registry.start(&task_name).await {
+                    log::log(
+                        "warn",
+                        "auto-start after oauth approval failed",
+                        Some(json!({ "name": task_name, "err": err })),
+                    );
+                } else if let Some(entry) = task_ctx.registry.get(&task_name) {
+                    if let Some(server) = entry.data.read().ok().and_then(|d| d.server.clone()) {
+                        if let Ok((list, _)) = server.probe.list("tools", None).await {
+                            tools = list.len();
+                        }
+                    }
+                }
+                if let Ok(mut status) = handle.status.write() {
+                    *status = swiss_mcp::oauth::FlowStatus::Approved { tools };
+                }
+            });
+            admin_json(
+                StatusCode::ACCEPTED,
+                json!({ "flowId": flow_id, "status": "starting" }),
+            )
+        })
+        .get(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>| async move {
+            let handle = ctx
+                .oauth_flows
+                .read()
+                .ok()
+                .and_then(|flows| flows.get(&name).cloned());
+            let Some(handle) = handle else {
+                return admin_error(
+                    StatusCode::NOT_FOUND,
+                    &format!("no authorize flow for {name} (POST /api/mcps/{name}/authorize to start one)"),
+                );
+            };
+            let mut body = handle
+                .status
+                .read()
+                .ok()
+                .map(|s| s.to_json())
+                .unwrap_or(json!({ "status": "starting" }));
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("flowId".into(), json!(handle.flow_id));
+            }
+            admin_json(StatusCode::OK, body)
+        }),
     );
 
     r = r.route(
@@ -1213,6 +1449,19 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             }
             if let Err(err) = ctx.store.remove(&name) {
                 return admin_error(StatusCode::BAD_REQUEST, &err);
+            }
+            // The deleted MCP's OAuth credentials and any flow entry are name-keyed
+            // (docs/24 D1); leaving them behind would make a future same-named MCP silently
+            // inherit a grant it never asked for.
+            if let Err(err) = swiss_mcp::oauth::clear_credentials(&name) {
+                log::log(
+                    "warn",
+                    "clearing oauth credentials on delete failed",
+                    Some(json!({ "name": name, "err": err })),
+                );
+            }
+            if let Ok(mut flows) = ctx.oauth_flows.write() {
+                flows.remove(&name);
             }
             // No MCP by that name any more, so no rule may claim to serve it.
             if let Some(links) = tunnel_links(&ctx) {
@@ -1294,6 +1543,18 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             };
             if let (Some(obj), Some(reason)) = (body.as_object_mut(), reason) {
                 obj.insert("reason".into(), json!(reason));
+            }
+            // Same badge field as the list row (docs/24 D5) — the detail view lights the
+            // Authorize button on needs-auth.
+            if swiss_mcp::oauth::is_oauth(&d.def) {
+                let state = if swiss_mcp::oauth::credentials(&d.name).is_some() {
+                    "authorized"
+                } else {
+                    "needs-auth"
+                };
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("oauth".into(), json!(state));
+                }
             }
             admin_json(StatusCode::OK, body)
         }),

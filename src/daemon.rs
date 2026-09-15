@@ -223,6 +223,10 @@ pub fn export_state() -> Value {
         "config": read_secure_json(&data_path(&["gateway.config.json"])).ok().flatten(),
         "managed": read_secure_json(&data_path(&["managed.json"])).ok().flatten(),
         "tunnels": read_secure_json(&data_path(&["tunnels.json"])).ok().flatten(),
+        // OAuth grants ride too (docs/24 D6): values included for the same reason the vault
+        // is — this bundle is already the one plaintext escape, and without this section a
+        // machine move would silently drop every MCP grant.
+        "oauth": read_secure_json(&swiss_mcp::oauth::store_path()).ok().flatten(),
         "env": Value::Object(env_store()
             .into_iter()
             .map(|(k, v)| (k, Value::String(v)))
@@ -264,6 +268,9 @@ pub fn import_state(bundle: &Value) -> Result<Vec<String>, String> {
     seal("config", "gateway.config.json")?;
     seal("managed", "managed.json")?;
     seal("tunnels", "tunnels.json")?;
+    // A running gateway reads OAuth credentials from its in-memory map, so an import while
+    // it runs lands on restart — exactly the vault's behavior for the same shape.
+    seal("oauth", "mcp-oauth.json")?;
     if let Some(env) = obj.get("env").filter(|v| v.is_object()) {
         // Imported values win over whatever is already stored.
         let mut merged = env_store();
@@ -990,6 +997,10 @@ mod tests {
         seal("gateway.config.json", json!({ "port": 18084 }));
         seal("managed.json", json!({ "mcps": [] }));
         seal("tunnels.json", json!({ "connections": [] }));
+        seal(
+            "mcp-oauth.json",
+            json!({ "figma": { "client_id": "cid", "access_token": "at" } }),
+        );
         seal_env(&[("MCP_GATEWAY_TOKEN", "tok")]);
 
         let bundle = export_state();
@@ -997,6 +1008,9 @@ mod tests {
         assert_eq!(bundle["config"]["port"], json!(18084));
         assert_eq!(bundle["managed"], json!({ "mcps": [] }));
         assert_eq!(bundle["tunnels"], json!({ "connections": [] }));
+        // OAuth grants are state like any other (docs/24 D6): without this section a machine
+        // move would silently drop every grant the operator consented to.
+        assert_eq!(bundle["oauth"]["figma"]["client_id"], json!("cid"));
         assert_eq!(bundle["env"]["MCP_GATEWAY_TOKEN"], json!("tok"));
 
         // A machine with nothing on it takes the bundle and ends up with the same state — the
@@ -1009,6 +1023,7 @@ mod tests {
                 "gateway.config.json",
                 "managed.json",
                 "tunnels.json",
+                "mcp-oauth.json",
                 "env.json",
                 "secrets.json"
             ]
