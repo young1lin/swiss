@@ -1,5 +1,6 @@
 //! The secret vault (docs/19) — a namespace-isolated store for credential values that other
-//! services reference as `secret://name` strings.
+//! services reference as `${secret://name}` strings (docs/25 E1; whole-value bare refs
+//! from the shipped docs/19 grammar are migrated to the envelope at load, refs.rs).
 //!
 //! Why it is NOT the env store: the env store doubles as the environment every child process
 //! reads (envstore.rs merges its overlay into each spawn). A key saved for one http MCP has no

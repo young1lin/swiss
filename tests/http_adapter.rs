@@ -178,7 +178,7 @@ async fn close_drops_the_connection_so_the_next_build_reconnects() {
 #[tokio::test]
 async fn a_vault_header_reference_authenticates_the_proxy() {
     // docs/19 D4, the positive half at the http surface: the Authorization header holds a
-    // secret:// reference and the vault carries the remote's REAL bearer token — so the
+    // ${secret://} reference and the vault carries the remote's REAL bearer token — so the
     // handshake succeeding IS the proof the header carried the resolved value (the remote's
     // auth rejects anything else).
     let _guard = swiss_core::paths::DATA_DIR_LOCK.lock().await;
@@ -192,7 +192,7 @@ async fn a_vault_header_reference_authenticates_the_proxy() {
     let raw = def(json!({
         "type": "http",
         "url": remote.url,
-        "headers": { "Authorization": "Bearer secret://http-probe-token" },
+        "headers": { "Authorization": "Bearer ${secret://http-probe-token}" },
     }));
     // The production chain, exactly: make_adapter resolves the whole def, then builds.
     let adapter = swiss_mcp::adapters::make_adapter(&raw, "probe", &swiss_mcp::calls::test_log())

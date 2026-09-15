@@ -128,7 +128,7 @@ mod tests {
         assert_eq!(
             mcp_loopback_port(&def(
                 "mysql",
-                json!({ "host": "127.0.0.1", "port": 3307, "password": "secret://gone" })
+                json!({ "host": "127.0.0.1", "port": 3307, "password": "${secret://gone}" })
             )),
             None
         );

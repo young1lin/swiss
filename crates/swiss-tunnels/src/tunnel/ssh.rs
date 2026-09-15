@@ -900,7 +900,7 @@ mod tests {
             auth_type: super::super::types::AuthType::Key,
             group: None,
             key_path: Some(key.to_string_lossy().into_owned()),
-            passphrase: Some("secret://ssh-test-missing".into()),
+            passphrase: Some("${secret://ssh-test-missing}".into()),
             password: None,
             host_key: None,
         };
