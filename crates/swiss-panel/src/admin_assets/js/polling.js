@@ -239,6 +239,26 @@ function ruleRowHtml(r) {
     "</div>";
 }
 
+/** A jump id -> its connection's name (docs/27 §4). The row carries the id; the panel
+ *  resolves it because this list is the one place both ids and names live. Falls back to
+ *  the raw id when the target is missing — deleting a jump in use is refused, so this is a
+ *  stale-tab guard, and an id says more than an empty tag. */
+function tunConnName(id) {
+  var hit = tunData().connections.filter(function (c) { return c.id === id; })[0];
+  return hit ? hit.name : id;
+}
+
+/** docs/27 §4: the transport tags a connection row carries. Going through a proxy or a
+ *  jump is part of the row's identity ("this one dials through clash / through bastion"),
+ *  so it rides the sub-line as the monochrome tag — the same form the sheet's Advanced
+ *  summary uses, one word for the same fact in both places. */
+function connBadges(c) {
+  var out = "";
+  if (c.proxy) out += ' <span class="tag">proxy</span>';
+  if (c.jump) out += ' <span class="tag">via ' + esc(tunConnName(c.jump)) + "</span>";
+  return out;
+}
+
 function connRowHtml(c) {
   var busy = state.tun.busy[c.id];
   var word = busy ? "starting" : c.state === "connected" ? "up" : c.state;
@@ -248,7 +268,7 @@ function connRowHtml(c) {
         '<div class="tun-name">' + esc(c.name) + "</div>" +
         '<div class="tun-sub">' + esc(c.host + ":" + c.port) + ' <span class="via">· ' + esc(c.username) +
           " · " + esc(c.authType) + (c.ruleCount ? " · " + c.ruleCount + " rule" + (c.ruleCount === 1 ? "" : "s") : "") +
-          "</span></div>" +
+          "</span>" + connBadges(c) + "</div>" +
         (c.reason ? '<div class="tun-err" data-reason>' + esc(c.reason) + "</div>" : "") +
       "</div>" +
       '<div class="tun-acts">' +
@@ -258,4 +278,4 @@ function connRowHtml(c) {
     "</div>";
 }
 
-export { connRowHtml, isTunnelsView, jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };
+export { connRowHtml, isTunnelsView, jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };

@@ -1,6 +1,6 @@
-import { $, apiJson, el, esc, state, toast } from "./util.js";
+import { $, api, apiJson, el, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
-import { loadTunnels, tunData, tunGroupsList } from "./polling.js";
+import { loadTunnels, tunConnName, tunData, tunGroupsList } from "./polling.js";
 import { assignTunScoped } from "./tunnels.js";
 import { groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 
@@ -11,6 +11,44 @@ async function loadKeys() {
   var j = await apiJson("/api/tunnels/keys");
   state.tun.keys = j || { keys: [], defaultPath: "" };
   return state.tun.keys;
+}
+
+/** docs/27 §4: the Advanced fold — proxy and jump live here, collapsed by default. The
+ *  summary chips keep "goes through a proxy / via <jump>" visible without unfolding, so
+ *  collapsed never means hidden; with nothing configured the fold is the sheet's only new
+ *  line. Native details/summary is the house fold primitive (the data-value JSON tree) —
+ *  no open attribute, so the browser starts it folded. The jump dropdown lists every other
+ *  connection (this one excluded); the backend stays the single source of truth for cycles,
+ *  its 400 lands inline in the sheet, and the panel does not pre-walk chains. */
+function advancedConnHtml(d, editing) {
+  var chips = "";
+  if (d.proxy) chips += ' <span class="tag">proxy</span>';
+  if (d.jump) chips += ' <span class="tag">via ' + esc(tunConnName(d.jump)) + "</span>";
+  var opts = '<option value="">None</option>' + tunData().connections
+    .filter(function (c) { return !editing || c.id !== d.id; })
+    .map(function (c) {
+      return '<option value="' + esc(c.id) + '"' + (d.jump === c.id ? " selected" : "") + ">" + esc(c.name) + "</option>";
+    })
+    .join("");
+  return '<details class="fold" id="c-advanced">' +
+      "<summary>Advanced" + chips + "</summary>" +
+      '<div class="fold-body">' +
+        '<div class="cap">Proxy</div>' +
+        '<label class="field"><span>Proxy URL</span><input id="c-proxy" value="' + esc(d.proxy || "") +
+          '" placeholder="socks5://127.0.0.1:7890" autocomplete="off" spellcheck="false"></label>' +
+        '<div class="two">' +
+          '<label class="field"><span>Proxy username</span><input id="c-proxy-user" value="' + esc(d.proxyUsername || "") +
+            '" autocomplete="off"></label>' +
+          '<label class="field"><span>Proxy password</span><input id="c-proxy-pass" type="password" value="' +
+            esc(d.proxyPassword || "") + '" autocomplete="off"></label>' +
+        "</div>" +
+        '<div class="hint">Leave empty to connect directly. Credentials never go inside the URL — use the two fields above.</div>' +
+        '<div class="cap">Via connection (jump)</div>' +
+        '<label class="field"><span>Connection</span><select id="c-jump">' + opts + "</select></label>" +
+        '<div class="hint">Dials through the chosen connection before reaching this host (OpenSSH -J). A proxy or a jump, not both — cycles are refused on save.</div>' +
+      "</div>" +
+    "</details>" +
+    '<div class="hint" id="c-err" hidden></div>';
 }
 
 function openConnSheet(def) {
@@ -39,6 +77,7 @@ function openConnSheet(def) {
           '<option value="password"' + (d.authType === "password" ? " selected" : "") + ">password</option>" +
         "</select></label>" +
         '<div id="c-auth-fields"></div>' +
+        advancedConnHtml(d, editing) +
       "</div>" +
       '<div class="sheet-foot"><button class="btn" id="c-cancel">Cancel</button>' +
         '<button class="btn primary" id="c-save">Save</button></div>' +
@@ -144,13 +183,45 @@ async function saveConn(existing) {
   } else {
     body.password = $("c-pass").value;
   }
+  // docs/27 §4: the Advanced fields are optional — a key rides the payload only while the
+  // sheet holds a value; empty means unset, and clearing a stored value sends nothing (the
+  // server rebuilds the def from the request body, so an absent key and an empty string
+  // both land as "no value"). An untouched proxyPassword input still carries the mask
+  // sentinel the row brought in; echoing it back unchanged is what keeps the stored secret
+  // (unmask_conn restores it server-side), exactly the MCP sheet's sentinel habit.
+  var proxy = $("c-proxy").value.trim();
+  if (proxy) body.proxy = proxy;
+  var proxyUser = $("c-proxy-user").value.trim();
+  if (proxyUser) body.proxyUsername = proxyUser;
+  var proxyPass = $("c-proxy-pass").value;
+  if (proxyPass) body.proxyPassword = proxyPass;
+  var jump = $("c-jump").value;
+  if (jump) body.jump = jump;
   // Read the sheet's Group before closeSheet wipes it: a create lands in the picked group
   // (remembered as this scope's last-used), the same pre-join the MCP sheet does.
   var picked = $("g-sel") ? $("g-sel").value : null;
-  var j = existing
-    ? await apiJson("/api/tunnels/connections/" + encodeURIComponent(existing.id), { method: "PUT", body: JSON.stringify(body) })
-    : await apiJson("/api/tunnels/connections", { method: "POST", body: JSON.stringify(body) });
-  if (!j) return;
+  // api() rather than apiJson: a refused save (the §1.3 family — a bad proxy URL, a jump
+  // cycle, proxy and jump together) must land INLINE beside the fields that caused it, not
+  // only in a toast, and the sheet stays open so the fix is a keystroke away.
+  var j;
+  try {
+    var r = await api(existing
+      ? "/api/tunnels/connections/" + encodeURIComponent(existing.id)
+      : "/api/tunnels/connections", { method: existing ? "PUT" : "POST", body: JSON.stringify(body) });
+    j = await r.json().catch(function () { return {}; });
+    if (!r.ok) {
+      var err = $("c-err");
+      if (err) {
+        err.hidden = false;
+        err.textContent = j.error || "HTTP " + r.status;
+        err.style.color = "var(--red)";
+      }
+      return;
+    }
+  } catch (e) {
+    toast("request failed — is the gateway running?", true);
+    return;
+  }
   if (picked) rememberGroup("conns", picked);
   closeSheet();
   await loadTunnels();
