@@ -171,9 +171,10 @@ async function loadMeta(name) {
     d.tunnels = j.tunnels || [];
     d.oauth = j.oauth;
     if (d.editing) return; // never rebuild a form the user is filling in
-    // The pane header grows an Authorize button the moment the config says auth oauth, so
-    // the pane re-renders for oauth MCPs too — not only when the config tab is open.
-    if (d.tab === "config" || (d.config && d.config.auth === "oauth")) renderPane();
+    // The pane header grows an Authorize button the moment the config is an OAuth one (an
+    // http def that says so, or the figma type that implies it), so the pane re-renders for
+    // those MCPs too — not only when the config tab is open.
+    if (d.tab === "config" || (d.config && (d.config.auth === "oauth" || d.config.type === "figma"))) renderPane();
   } catch (e) { /* handled */ }
 }
 
@@ -344,7 +345,8 @@ async function runConnTest(p) {
   var type = p === "a-" ? $("a-type").value : (d && (d.editType || (d.config && d.config.type))) || "proc";
   var body = Object.assign({ type: type }, readFields(type, p));
   delete body.autostart; // a boot-time switch, not a credential — irrelevant to a connection test
-  var wantsOauth = type === "http" && body.auth === true;
+  // figma implies OAuth the way a checked auth box states it: no keyless test exists for either.
+  var wantsOauth = type === "figma" || (type === "http" && body.auth === true);
   delete body.auth; delete body.oauthClientName; // a credential question, not a connectivity one
   var btn = $(p + "test"), out = $(p + "test-out");
   if (!btn || !out) return;

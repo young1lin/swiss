@@ -84,7 +84,7 @@ function renderPane() {
         // action this MCP cannot live without until it runs, and Reauthorize is the anytime
         // re-consent path after a revoked grant. Disabled while a flow this panel started is
         // still polling.
-        (d.config && d.config.auth === "oauth"
+        (d.config && (d.config.auth === "oauth" || d.config.type === "figma")
           ? '<button class="btn" id="oauthBtn"' + (d.oauthBusy ? " disabled" : "") + ">" +
             (m.oauth === "authorized" ? "Reauthorize" : "Authorize") + "</button>"
           : "") +
