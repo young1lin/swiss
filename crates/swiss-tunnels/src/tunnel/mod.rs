@@ -9,6 +9,9 @@
 //!    connect time (`ssh.rs`).
 //!  - `port`    — local-port occupancy (probe / wait-for-release), the netstat+tasklist owner
 //!    lookup, and Force free.
+//!  - `proxy`  — the HTTP CONNECT / SOCKS5 dialer a proxied connection dials through
+//!    before its SSH handshake (docs/27 §2): credentials reach the handshake as
+//!    components, never as a URL string.
 //!  - `ssh`     — one refcounted russh client per SSH connection: TOFU host keys, the banner,
 //!    single-flight dial, channel opens, and the transport-death watcher.
 //!  - `forward` — one rule's local listener: accept, cap, pipe socket <-> SSH channel, and the
@@ -38,8 +41,12 @@ pub mod import;
 pub mod manager;
 pub mod mcpmatch;
 pub mod port;
+/// HTTP CONNECT / SOCKS5 dialing for proxied SSH connections (docs/27 §2).
+pub mod proxy;
 pub mod shell;
 pub mod ssh;
+#[cfg(test)]
+pub(crate) mod sshtest;
 pub mod store;
 pub mod types;
 

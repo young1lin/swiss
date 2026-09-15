@@ -1896,6 +1896,48 @@ mod tests {
         assert!(!stored_rule(&store, &r.id).enabled);
     }
 
+    /// docs/27 §2.6.6: a proxied connection through the REAL manager and the real russh
+    /// client — start, one byte round trip riding proxy -> ssh server -> direct-tcpip ->
+    /// echo, then stop releases the local port. The existing port-binding invariant,
+    /// exercised on the proxied path.
+    #[tokio::test]
+    async fn a_proxied_connection_forwards_through_the_manager_lifecycle() {
+        let ssh_port = crate::tunnel::sshtest::spawn_ssh_server().await;
+        let (proxy_port, mut obs) =
+            crate::tunnel::sshtest::spawn_socks5_proxy(crate::tunnel::sshtest::SocksAuth::None, 0).await;
+        let echo = echo_server().await;
+        let (dir, store) = scratch();
+        let mut input = ConnInput {
+            host: "localhost".into(),
+            port: ssh_port as f64,
+            auth_type: AuthType::Password,
+            password: Some("pw".into()),
+            proxy: Some(format!("socks5://127.0.0.1:{proxy_port}")),
+            ..conn_input()
+        };
+        input.key_path = None; // password auth has no key
+        let c = store
+            .lock()
+            .unwrap()
+            .add_connection(&input)
+            .expect("add the proxied connection");
+        let port = free_port().await;
+        let r = add_rule(&store, rule_input("via-proxy", &c.id, port, echo));
+        let m = TunnelManager::new(store.clone(), None);
+
+        m.start_rule(&r.id).await.expect("start through the proxy");
+        assert_eq!(state_of(&m, &r.id), "up");
+        // The SSH session itself must have gone through the proxy — without this, a dialer
+        // that silently ignored the proxy field would still pass on the direct route.
+        let o = obs.recv().await.expect("the proxy saw the ssh dial");
+        assert_eq!((o.atyp, o.host.as_slice(), o.port), (0x03, b"localhost".as_slice(), ssh_port));
+        assert_eq!(round_trip(port, "proxied").await, "PROXIED");
+
+        m.stop_rule(&r.id, true, false).await.expect("stop");
+        assert_eq!(state_of(&m, &r.id), "stopped");
+        assert!(port_is_free(port).await);
+        let _ = std::fs::remove_dir_all(dir);
+    }
     #[tokio::test]
     async fn reports_the_holder_when_the_local_port_is_taken_by_someone_else() {
         let (_dir, store) = scratch();
