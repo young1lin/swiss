@@ -54,8 +54,8 @@ function renderPane() {
     // The shared empty state (docs/18 V7), and the one place it carries an action: the pane's
     // own "add" answers the question the empty screen just asked.
     pane.innerHTML = state.mcps.length
-      ? emptyHtml({ icon: "server", title: "Select an MCP", hint: "Its tools, resources and configuration appear here." })
-      : emptyHtml({ icon: "server", title: "No MCPs registered", hint: "Add one with the + on a group header.", action: "Add an MCP" });
+      ? emptyHtml({ icon: "mcp", title: "Select an MCP", hint: "Its tools, resources and configuration appear here." })
+      : emptyHtml({ icon: "mcp", title: "No MCPs registered", hint: "Add one with the + on a group header.", action: "Add an MCP" });
     var addBtn = pane.querySelector("[data-empty-action]");
     if (addBtn) addBtn.onclick = function () { openSheet(null); };
     return;

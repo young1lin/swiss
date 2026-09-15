@@ -73,8 +73,8 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
    (it lives in the black frame with its own token system). */
 describe("visual refresh V7 — one empty-state template", () => {
   it("emptyHtml() points at the sprite and keeps the title an h2", () => {
-    const html = emptyHtml({ icon: "server", title: "Select an MCP" });
-    expect(html).toContain('href="#i-server"');
+    const html = emptyHtml({ icon: "mcp", title: "Select an MCP" });
+    expect(html).toContain('href="#i-mcp"');
     expect(html).toContain("<h2>Select an MCP</h2>");
   });
 
@@ -86,5 +86,15 @@ describe("visual refresh V7 — one empty-state template", () => {
 
   it("without an action there is no button", () => {
     expect(emptyHtml({ icon: "plug", title: "No SSH connections" })).not.toContain("data-empty-action");
+  });
+});
+
+/* The MCP plugin seat wears the official MCP mark (modelcontextprotocol.io): the site logo
+   mark — three interleaved hooks — mapped from the logo's own grid onto the 24-grid. The
+   generic i-server box it replaced left the sprite with its last consumer. */
+describe("the MCP glyph is the official mark", () => {
+  it("the sprite carries i-mcp; the retired server box is gone", () => {
+    expect(shell).toContain('<symbol id="i-mcp"');
+    expect(shell).not.toContain("i-server");
   });
 });

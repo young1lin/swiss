@@ -20,7 +20,7 @@ var RAIL_LIMIT = 7;
  * never heard of falls back to its INITIAL - identity by name, not a mystery box icon. This is
  * panel-side chrome data, deliberately NOT a descriptor field: adding icon metadata to the
  * wire would tax every plugin author for a panel nicety. */
-var GLYPHS = { mcp: "server", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", host: "gear" };
+var GLYPHS = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", host: "gear" };
 
 function pluginGlyph(group) { return GLYPHS[group.id] || null; }
 
