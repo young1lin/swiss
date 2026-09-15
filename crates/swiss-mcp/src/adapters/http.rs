@@ -34,6 +34,7 @@ use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
 
 use super::direct::{def_bool, BoxFut, Lazy};
+use crate::oauth::{self as oauth_flow, Discovered, NEEDS_AUTH};
 use super::proxy::{assert_proxy_url, proxied_client, ProxyOpts, ProxyServer, RemoteMcp};
 use super::{rmcp_endpoint, Adapter, McpEndpoint};
 
@@ -79,36 +80,173 @@ fn value_as_string(value: &Value) -> String {
     }
 }
 
+/// The OAuth half of a proxied remote (docs/24 D4): where the bearer comes from, and what to
+/// do when it stops working. Holds the registry name (followed across renames — credentials
+/// are keyed by it), the MCP URL, the outbound client (the same proxy the MCP traffic rides),
+/// a discovery cache, and the single-flight lock that makes concurrent 401s share one refresh.
+struct OauthHalf {
+    name: Arc<RwLock<String>>,
+    url: String,
+    http: reqwest::Client,
+    discovery: RwLock<Option<Discovered>>,
+    refresh_lock: tokio::sync::Mutex<()>,
+}
+
+impl OauthHalf {
+    fn new(name: Arc<RwLock<String>>, url: &str, http: reqwest::Client) -> Self {
+        Self {
+            name,
+            url: url.to_string(),
+            http,
+            discovery: RwLock::new(None),
+            refresh_lock: tokio::sync::Mutex::new(()),
+        }
+    }
+
+    fn current_name(&self) -> String {
+        self.name.read().ok().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// The endpoints, discovered once and cached — a failed attempt is never cached, so the
+    /// next 401 gets a fresh discovery (docs/24 D4).
+    async fn ensure_discovered(&self) -> Result<Discovered, String> {
+        if let Ok(cell) = self.discovery.read() {
+            if let Some(found) = cell.clone() {
+                return Ok(found);
+            }
+        }
+        let found = oauth_flow::discover(&self.http, &self.url).await?;
+        if let Ok(mut cell) = self.discovery.write() {
+            *cell = Some(found.clone());
+        }
+        Ok(found)
+    }
+
+    async fn refresh_from(
+        &self,
+        creds: &oauth_flow::StoredCredentials,
+    ) -> Result<oauth_flow::TokenSet, String> {
+        let refresh_token = creds.refresh_token.as_deref().ok_or_else(|| {
+            format!("{NEEDS_AUTH} — no refresh token stored; open the panel and click Authorize")
+        })?;
+        let found = self.ensure_discovered().await?;
+        let reg = oauth_flow::ClientReg {
+            client_id: creds.client_id.clone(),
+            client_secret: creds.client_secret.clone(),
+            token_auth: creds.token_auth.clone(),
+        };
+        oauth_flow::refresh(
+            &self.http,
+            &found.token_endpoint,
+            &reg,
+            refresh_token,
+            &found.resource,
+        )
+        .await
+    }
+
+    /// A token usable right now: the stored one when fresh, a refreshed one when not. No
+    /// credentials at all is the plain needs-auth start error.
+    async fn usable_token(&self) -> Result<String, String> {
+        let name = self.current_name();
+        match oauth_flow::credentials(&name) {
+            Some(creds) if creds.access_fresh() => creds.access_token.clone().ok_or_else(|| {
+                format!("{NEEDS_AUTH} — open the panel and click Authorize")
+            }),
+            Some(creds) => {
+                let tokens = match self.refresh_from(&creds).await {
+                    Ok(tokens) => tokens,
+                    Err(err) => {
+                        self.mark_needs_auth();
+                        return Err(err);
+                    }
+                };
+                oauth_flow::update_tokens(&name, &tokens)?;
+                Ok(tokens.access_token)
+            }
+            None => Err(format!("{NEEDS_AUTH} — open the panel and click Authorize")),
+        }
+    }
+
+    /// The 401 path, single-flown: concurrent refusals share one refresh, and a waiter that
+    /// finds the token already REPLACED (another request refreshed while this one queued)
+    /// takes the new one without spending the grant again (docs/24 D4). The dedup key is the
+    /// refused token, NOT freshness — a no-expiry token reads fresh right up to the 401 that
+    /// just proved it dead, and shortcutting on "fresh" would hand the corpse back.
+    async fn refresh_bearer(&self, refused: &str) -> Result<String, String> {
+        let _single = self.refresh_lock.lock().await;
+        let name = self.current_name();
+        match oauth_flow::credentials(&name) {
+            Some(creds)
+                if creds.access_fresh()
+                    && creds.access_token.as_deref() != Some(refused)
+                    && !refused.is_empty() =>
+            {
+                creds
+                    .access_token
+                    .clone()
+                    .ok_or_else(|| format!("{NEEDS_AUTH} — open the panel and click Authorize"))
+            }
+            Some(creds) => {
+                let tokens = self.refresh_from(&creds).await?;
+                oauth_flow::update_tokens(&name, &tokens)?;
+                Ok(tokens.access_token)
+            }
+            None => Err(format!("{NEEDS_AUTH} — open the panel and click Authorize")),
+        }
+    }
+
+    /// Drop the stored credentials — the needs-auth outcome (docs/24 D2.7): the old client_id
+    /// is worthless anyway (each flow re-registers on a fresh loopback port).
+    fn mark_needs_auth(&self) {
+        if let Err(err) = oauth_flow::clear_credentials(&self.current_name()) {
+            swiss_core::log::warn(
+                "clearing oauth credentials failed",
+                Some(json!({ "err": err })),
+            );
+        }
+    }
+}
+
 /// The connected remote: one reqwest client, the negotiated protocol version and session id,
 /// and the request-id counter that multiplexes concurrent POSTs.
 pub struct RemoteMcpClient {
     client: reqwest::Client,
     url: String,
     headers: RemoteHeaders,
+    /// The OAuth half, when this remote is an OAuth MCP — owns the bearer's source and its
+    /// refresh (docs/24 D4). None on a plain http MCP.
+    oauth: Option<Arc<OauthHalf>>,
+    /// The bearer currently in force; swapped on refresh, read on every request.
+    bearer: RwLock<Option<String>>,
     session_id: Mutex<Option<String>>,
     protocol_version: Mutex<String>,
     next_id: AtomicI64,
 }
 
 impl RemoteMcpClient {
-    /// Connect: build the client (proxied when the def names a proxy), run the initialize
-    /// handshake — this IS the reachability check, which is why it happens eagerly in build()
-    /// and not lazily on the first call — and capture what the remote negotiated.
+    /// Connect: run the initialize handshake — this IS the reachability check, which is why
+    /// it happens eagerly in build() and not lazily on the first call — and capture what the
+    /// remote negotiated. The client is built by the caller (proxied when the def names a
+    /// proxy) so the OAuth half can share the exact same outbound path (docs/24 D4).
     async fn connect(
+        client: reqwest::Client,
         url: &str,
         headers: RemoteHeaders,
-        proxy: Option<&str>,
+        auth: Option<Arc<OauthHalf>>,
     ) -> Result<(Arc<RemoteMcpClient>, Value), String> {
-        let client = match proxy {
-            Some(proxy) => proxied_client(proxy)?,
-            None => reqwest::Client::builder()
-                .build()
-                .map_err(|err| format!("http client build failed: {err}"))?,
-        };
+        // OAuth MCPs gate every request behind the bearer; an unusable one is a start error
+        // carrying the marker the panel lights up on (docs/24 D4).
+        let mut bearer = None;
+        if let Some(auth) = &auth {
+            bearer = Some(auth.usable_token().await?);
+        }
         let session = Arc::new(RemoteMcpClient {
             client,
             url: url.to_string(),
             headers,
+            oauth: auth,
+            bearer: RwLock::new(bearer),
             session_id: Mutex::new(None),
             protocol_version: Mutex::new(OFFERED_PROTOCOL_VERSION.to_string()),
             next_id: AtomicI64::new(1),
@@ -144,13 +282,21 @@ impl RemoteMcpClient {
 
     fn apply_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         // Order mirrors the Node transport: defaults first, then the def's headers (a def may
-        // override Accept or Content-Type), then the protocol-critical headers last so a bad
-        // def value can never break session routing or version negotiation.
+        // override Accept or Content-Type), then OAuth's bearer, then the protocol-critical
+        // headers last so a bad def value can never break session routing or version
+        // negotiation. The bearer sits AFTER the def headers on purpose: on an OAuth MCP the
+        // gateway owns Authorization (a def that hand-writes one is refused at construction),
+        // and before the protocol headers, which always win.
         let mut builder = builder
             .header("accept", "application/json, text/event-stream")
             .header("content-type", "application/json");
         for (name, value) in &self.headers.0 {
             builder = builder.header(name, value);
+        }
+        if let Ok(cell) = self.bearer.read() {
+            if let Some(bearer) = cell.as_ref() {
+                builder = builder.header("authorization", format!("Bearer {bearer}"));
+            }
         }
         if let Some(session) = self.session_header() {
             builder = builder.header("mcp-session-id", session);
@@ -176,60 +322,95 @@ impl RemoteMcpClient {
             "method": method,
             "params": params,
         });
-        let builder = self
-            .apply_headers(self.client.request(reqwest::Method::POST, &self.url))
-            .timeout(Duration::from_millis(
-                timeout_ms.unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS),
-            ))
-            .body(serde_json::to_string(&body).unwrap_or_default());
-        let response = builder
-            .send()
-            .await
-            .map_err(|err| format!("Error POSTing to endpoint ({}): {err}", self.url))?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            return Err(format!(
-                "Error POSTing to endpoint (HTTP {status}): {}",
-                preview(&text, 600)
-            ));
-        }
-        // A session is issued on initialize (and may rotate); any answer may carry the header.
-        if let Some(session) = response
-            .headers()
-            .get("mcp-session-id")
-            .and_then(|v| v.to_str().ok())
-            .filter(|s| !s.is_empty())
-        {
-            if let Ok(mut cell) = self.session_id.lock() {
-                *cell = Some(session.to_string());
+        // OAuth 401s get ONE refresh-retry, no more (docs/24 D4): a second refusal after a
+        // fresh token means the grant itself is dead, and the marker below sends the operator
+        // to the panel's Authorize button instead of into a refresh loop.
+        let mut refreshed = false;
+        loop {
+            let builder = self
+                .apply_headers(self.client.request(reqwest::Method::POST, &self.url))
+                .timeout(Duration::from_millis(
+                    timeout_ms.unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS),
+                ))
+                .body(serde_json::to_string(&body).unwrap_or_default());
+            let response = builder
+                .send()
+                .await
+                .map_err(|err| format!("Error POSTing to endpoint ({}): {err}", self.url))?;
+            let status = response.status();
+            if status.as_u16() == 401 && self.oauth.is_some() {
+                let auth = self.oauth.clone().expect("checked just above");
+                if !refreshed {
+                    refreshed = true;
+                    // What this request rode when it was refused — the dedup key below.
+                    let refused = self
+                        .bearer
+                        .read()
+                        .ok()
+                        .and_then(|cell| cell.clone())
+                        .unwrap_or_default();
+                    let token = match auth.refresh_bearer(&refused).await {
+                        Ok(token) => token,
+                        Err(err) => {
+                            auth.mark_needs_auth();
+                            return Err(err);
+                        }
+                    };
+                    if let Ok(mut cell) = self.bearer.write() {
+                        *cell = Some(token);
+                    }
+                    continue;
+                }
+                auth.mark_needs_auth();
+                return Err(format!(
+                    "{NEEDS_AUTH} — the remote keeps refusing the token; \
+                     open the panel and click Authorize"
+                ));
             }
-        }
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let text = response
-            .text()
-            .await
-            .map_err(|err| format!("reading {method} response: {err}"))?;
-        let message = if content_type.contains("text/event-stream") {
-            sse_message(&text, id)?
-        } else {
-            serde_json::from_str::<Value>(&text)
-                .map_err(|err| format!("{method} response is not JSON: {err}"))?
-        };
-        match message.get("error") {
-            Some(Value::Object(_)) => {
-                let message_text = message
-                    .pointer("/error/message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown remote error");
-                Err(message_text.to_string())
+            if !status.is_success() {
+                let text = response.text().await.unwrap_or_default();
+                return Err(format!(
+                    "Error POSTing to endpoint (HTTP {status}): {}",
+                    preview(&text, 600)
+                ));
             }
-            _ => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+            // A session is issued on initialize (and may rotate); any answer may carry it.
+            if let Some(session) = response
+                .headers()
+                .get("mcp-session-id")
+                .and_then(|v| v.to_str().ok())
+                .filter(|s| !s.is_empty())
+            {
+                if let Ok(mut cell) = self.session_id.lock() {
+                    *cell = Some(session.to_string());
+                }
+            }
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let text = response
+                .text()
+                .await
+                .map_err(|err| format!("reading {method} response: {err}"))?;
+            let message = if content_type.contains("text/event-stream") {
+                sse_message(&text, id)?
+            } else {
+                serde_json::from_str::<Value>(&text)
+                    .map_err(|err| format!("{method} response is not JSON: {err}"))?
+            };
+            match message.get("error") {
+                Some(Value::Object(_)) => {
+                    let message_text = message
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown remote error");
+                    return Err(message_text.to_string());
+                }
+                _ => return Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+            }
         }
     }
 
@@ -421,22 +602,51 @@ impl HttpAdapter {
             .map(assert_proxy_url)
             .transpose()?;
         let headers = RemoteHeaders::from_def(def)?;
+        // OAuth (docs/24 D1): "auth": "oauth" makes the gateway own the Authorization
+        // header — a def that also hand-writes one is a config error, refused here rather
+        // than silently stacked under the bearer.
+        let want_oauth = def.get_str("auth") == Some("oauth");
+        if want_oauth && headers.0.iter().any(|(n, _)| n.as_str() == "authorization") {
+            return Err(
+                "an http MCP with auth oauth manages Authorization itself — remove the header from the def"
+                    .to_string(),
+            );
+        }
         let description = def.get_str("description").map(str::to_string);
-        // `!== false` in the Node build; def_bool also folds the panel's "false" strings in.
+        // "!== false" in the Node build; def_bool also folds the panel's "false" strings in.
         let expose_resources = !def_bool(def, "exposeResources");
         let expose_prompts = !def_bool(def, "exposePrompts");
+        // One name cell, shared by the adapter (rename-following) and the OAuth half (the
+        // credential store is keyed by registry name).
+        let name_cell = Arc::new(RwLock::new(name.to_string()));
+        let conn_name = name_cell.clone();
         let conn = Arc::new(Lazy::new(move || {
             let url = url.clone();
             let headers = headers.clone();
             let proxy = proxy.clone();
+            let name_cell = conn_name.clone();
             Box::pin(async move {
-                let (client, caps) =
-                    RemoteMcpClient::connect(&url, headers, proxy.as_deref()).await?;
-                Ok(RemoteSession { client, caps })
+                let client = match &proxy {
+                    Some(proxy) => proxied_client(proxy)?,
+                    None => reqwest::Client::builder()
+                        .build()
+                        .map_err(|err| format!("http client build failed: {err}"))?,
+                };
+                let auth = if want_oauth {
+                    Some(Arc::new(OauthHalf::new(name_cell, &url, client.clone())))
+                } else {
+                    None
+                };
+                let (session, caps) =
+                    RemoteMcpClient::connect(client, &url, headers, auth).await?;
+                Ok(RemoteSession {
+                    client: session,
+                    caps,
+                })
             }) as BoxFut<Result<RemoteSession, String>>
         }));
-        // Persisted toggles ride the def (register_one/store seed `disabledTools`); seeded the
-        // same way DirectAdapter does it, so a toggle survives a restart.
+        // Persisted toggles ride the def (register_one/store seed "disabledTools"); seeded
+        // the same way DirectAdapter does it, so a toggle survives a restart.
         let disabled: std::collections::HashSet<String> = def
             .get("disabledTools")
             .and_then(Value::as_array)
@@ -451,7 +661,7 @@ impl HttpAdapter {
             expose_resources,
             expose_prompts,
             disabled: Arc::new(std::sync::RwLock::new(disabled)),
-            name: Arc::new(RwLock::new(name.to_string())),
+            name: name_cell,
             conn,
             log,
         })
@@ -726,5 +936,383 @@ mod tests {
         .expect("adapter");
         a.rename("renamed");
         assert_eq!(a.name.read().unwrap().as_str(), "renamed");
+    }
+
+    // ---- OAuth (docs/24 Phase 2) ----------------------------------------------------------------
+    //
+    // One loopback server plays all three roles a real OAuth MCP deployment spreads across
+    // hosts: the protected resource (/mcp, bearer-gated JSON-RPC), the authorization server
+    // (the two well-knowns + the refresh endpoint). "current" is the ONE bearer /mcp accepts
+    // — rotating it simulates token expiry server-side without waiting for expires_in.
+
+    use crate::oauth::{self, StoredCredentials};
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    #[derive(Default)]
+    struct FakeOauthState {
+        /// The one bearer /mcp accepts right now.
+        current: Option<String>,
+        /// The refresh token /token accepts; None refuses every refresh (invalid_grant).
+        refresh_ok: Option<String>,
+        /// /token hands back a token /mcp still rejects — the double-401 path.
+        wrong_refresh_reply: bool,
+        /// Every Authorization header /mcp actually received, in order.
+        seen: Vec<String>,
+    }
+
+    struct FakeOauthRemote {
+        base: String,
+        state: Arc<Mutex<FakeOauthState>>,
+    }
+
+    async fn fake_oauth_remote(state: FakeOauthState) -> FakeOauthRemote {
+        let state = Arc::new(Mutex::new(state));
+        let s_meta = state.clone();
+        let s_register = state.clone();
+        let s_token = state.clone();
+        let s_mcp = state.clone();
+        let counter = Arc::new(AtomicI64::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let base = format!("http://127.0.0.1:{port}");
+        let meta_a = base.clone();
+        let meta_b = base.clone();
+        let app = axum::Router::new()
+            .route(
+                "/.well-known/oauth-protected-resource",
+                axum::routing::get(move || {
+                    let base = meta_a;
+                    async move {
+                        axum::Json(json!({
+                            "resource": format!("{base}/mcp"),
+                            "authorization_servers": [base],
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/.well-known/oauth-authorization-server",
+                axum::routing::get(move || {
+                    let base = meta_b;
+                    async move {
+                        axum::Json(json!({
+                            "issuer": base,
+                            "authorization_endpoint": format!("{base}/oauth/authorize"),
+                            "token_endpoint": format!("{base}/token"),
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/token",
+                axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
+                    let s = s_token.clone();
+                    let counter = counter.clone();
+                    async move {
+                        let form: HashMap<String, String> = body
+                            .split('&')
+                            .filter_map(|p| p.split_once('='))
+                            .map(|(k, v)| (crate::adapters::rest::form_decode(k), crate::adapters::rest::form_decode(v)))
+                            .collect();
+                        let get = |k: &str| form.get(k).cloned().unwrap_or_default();
+                        let _ = headers; // the client posts its credentials in the body
+                        if get("client_id") != "cid-1" || get("client_secret") != "sec-1" {
+                            return (
+                                axum::http::StatusCode::BAD_REQUEST,
+                                axum::Json(json!({ "error": "invalid_client" })),
+                            );
+                        }
+                        let mut s = s.lock().unwrap();
+                        if get("grant_type") != "refresh_token"
+                            || Some(get("refresh_token")) != s.refresh_ok
+                        {
+                            return (
+                                axum::http::StatusCode::BAD_REQUEST,
+                                axum::Json(json!({ "error": "invalid_grant" })),
+                            );
+                        }
+                        if s.wrong_refresh_reply {
+                            return (
+                                axum::http::StatusCode::OK,
+                                axum::Json(json!({
+                                    "access_token": "a-token-mcp-still-rejects",
+                                    "refresh_token": "ref-next",
+                                    "expires_in": 3600,
+                                })),
+                            );
+                        }
+                        let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                        let access = format!("acc-rot-{n}");
+                        s.current = Some(access.clone());
+                        drop(s);
+                        (
+                            axum::http::StatusCode::OK,
+                            axum::Json(json!({
+                                "access_token": access,
+                                "refresh_token": "ref-next",
+                                "expires_in": 3600,
+                            })),
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/mcp",
+                axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
+                    let s = s_mcp.clone();
+                    async move {
+                        let expected = s.lock().unwrap().current.clone().unwrap_or_default();
+                        let got = headers
+                            .get("authorization")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or_default()
+                            .to_string();
+                        if got != format!("Bearer {expected}") {
+                            return (
+                                axum::http::StatusCode::UNAUTHORIZED,
+                                axum::Json(json!({ "error": "unauthorized" })),
+                            );
+                        }
+                        s.lock().unwrap().seen.push(got);
+                        let message: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                        if message.get("id").is_none() {
+                            // A notification: nothing meaningful to answer.
+                            return (axum::http::StatusCode::OK, axum::Json(Value::Null));
+                        }
+                        match message.get("method").and_then(Value::as_str) {
+                            Some("initialize") => (
+                                axum::http::StatusCode::OK,
+                                axum::Json(json!({
+                                    "jsonrpc": "2.0",
+                                    "id": message.get("id"),
+                                    "result": {
+                                        "protocolVersion": "2025-06-18",
+                                        "capabilities": {},
+                                    },
+                                })),
+                            ),
+                            Some("tools/call") => (
+                                axum::http::StatusCode::OK,
+                                axum::Json(json!({
+                                    "jsonrpc": "2.0",
+                                    "id": message.get("id"),
+                                    "result": { "content": [ { "type": "text", "text": "ok" } ] },
+                                })),
+                            ),
+                            _ => (
+                                axum::http::StatusCode::OK,
+                                axum::Json(json!({
+                                    "jsonrpc": "2.0",
+                                    "id": message.get("id"),
+                                    "result": { "tools": [] },
+                                })),
+                            ),
+                        }
+                    }
+                }),
+            );
+        drop((s_meta, s_register)); // captured-and-released: keep the clone list explicit
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        FakeOauthRemote { base, state }
+    }
+
+    /// Plant credentials under `name` — no expiry advertised, so they stay fresh until the
+    /// remote answers 401 (exactly what a token that dies server-side looks like).
+    fn plant(name: &str, access: &str, refresh: Option<&str>) {
+        oauth::replace_credentials(
+            name,
+            StoredCredentials {
+                client_id: "cid-1".into(),
+                client_secret: Some("sec-1".into()),
+                token_auth: "client_secret_post".into(),
+                access_token: Some(access.into()),
+                refresh_token: refresh.map(str::to_string),
+                expires_at: None,
+                scope: None,
+                at: 0,
+            },
+        )
+        .expect("plant");
+    }
+
+    /// The store preamble (scratch home, test key, data-dir lock) — same as oauth.rs's tests.
+    async fn store_preamble() -> tokio::sync::MutexGuard<'static, ()> {
+        swiss_core::paths::test_home();
+        swiss_core::secure::key::use_test_master_key();
+        swiss_core::paths::DATA_DIR_LOCK.lock().await
+    }
+
+    fn oauth_def(base: &str) -> ServerDef {
+        def(json!({ "type": "http", "url": format!("{base}/mcp"), "auth": "oauth" }))
+    }
+
+    #[test]
+    fn a_def_may_not_handwrite_authorization_on_an_oauth_mcp() {
+        let refused = match HttpAdapter::new(
+            &def(json!({
+                "type": "http", "url": "https://x.test/mcp", "auth": "oauth",
+                "headers": { "Authorization": "Bearer x" },
+            })),
+            "handwritten",
+            crate::calls::test_log(),
+        ) {
+            Err(err) => err,
+            Ok(_) => panic!("a hand-written Authorization must be refused on an oauth MCP"),
+        };
+        assert!(refused.contains("manages Authorization itself"), "{refused}");
+    }
+
+    #[tokio::test]
+    async fn an_oauth_mcp_without_credentials_fails_with_the_needs_auth_marker() {
+        let _guard = store_preamble().await;
+        let remote = fake_oauth_remote(FakeOauthState {
+            current: Some("whatever".into()),
+            ..FakeOauthState::default()
+        })
+        .await;
+        let a = HttpAdapter::new(&oauth_def(&remote.base), "http-oauth-none", crate::calls::test_log())
+            .expect("adapter builds");
+        let err = match a.build().await {
+            Err(err) => err,
+            Ok(_) => panic!("no stored credentials must be a start error"),
+        };
+        assert!(err.contains(crate::oauth::NEEDS_AUTH), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_oauth_mcp_connects_with_the_stored_bearer() {
+        let _guard = store_preamble().await;
+        let name = "http-oauth-fresh";
+        let remote = fake_oauth_remote(FakeOauthState {
+            current: Some("acc-good".into()),
+            ..FakeOauthState::default()
+        })
+        .await;
+        plant(name, "acc-good", Some("ref-1"));
+        let a = HttpAdapter::new(&oauth_def(&remote.base), name, crate::calls::test_log())
+            .expect("adapter");
+        let endpoint = a.build().await.expect("the stored bearer connects");
+        let (tools, _) = endpoint.probe.list("tools", None).await.expect("tools/list");
+        assert!(tools.is_empty());
+        let seen = remote.state.lock().unwrap().seen.clone();
+        assert!(
+            seen.iter().all(|h| h == "Bearer acc-good"),
+            "every request rode the stored bearer: {seen:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stale_bearer_is_refreshed_once_before_connect() {
+        let _guard = store_preamble().await;
+        let name = "http-oauth-stale";
+        let remote = fake_oauth_remote(FakeOauthState {
+            current: Some("acc-rot-9".into()),
+            refresh_ok: Some("ref-1".into()),
+            ..FakeOauthState::default()
+        })
+        .await;
+        plant(name, "acc-long-dead", Some("ref-1"));
+        // Expired long ago: the 60s margin already counts it dead (docs/24 D4).
+        {
+            let mut creds = oauth::credentials(name).expect("planted");
+            creds.expires_at = Some(1);
+            oauth::replace_credentials(name, creds).expect("age it");
+        }
+        let a = HttpAdapter::new(&oauth_def(&remote.base), name, crate::calls::test_log())
+            .expect("adapter");
+        let endpoint = a.build().await.expect("the refresh happens before initialize");
+        endpoint.probe.list("tools", None).await.expect("tools work");
+        let stored = oauth::credentials(name).expect("credentials survive");
+        // What /token minted is what /mcp now accepts AND what is stored — one truth, read
+        // from the remote rather than hard-coded, so the fake's rotation stays free to vary.
+        let accepted = remote.state.lock().unwrap().current.clone().expect("rotated");
+        assert_eq!(stored.access_token.as_deref(), Some(accepted.as_str()));
+        assert_eq!(stored.refresh_token.as_deref(), Some("ref-next"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_refresh_clears_credentials_and_reports_needs_auth() {
+        let _guard = store_preamble().await;
+        let name = "http-oauth-refused";
+        let remote = fake_oauth_remote(FakeOauthState {
+            current: Some("acc-2".into()),
+            refresh_ok: None, // every refresh is an invalid_grant
+            ..FakeOauthState::default()
+        })
+        .await;
+        plant(name, "acc-expired", Some("ref-dead"));
+        let mut creds = oauth::credentials(name).expect("planted");
+        creds.expires_at = Some(1);
+        oauth::replace_credentials(name, creds).expect("age it");
+        let a = HttpAdapter::new(&oauth_def(&remote.base), name, crate::calls::test_log())
+            .expect("adapter");
+        let err = match a.build().await {
+            Err(err) => err,
+            Ok(_) => panic!("a dead grant must be a start error"),
+        };
+        assert!(err.contains(crate::oauth::NEEDS_AUTH), "{err}");
+        assert!(
+            oauth::credentials(name).is_none(),
+            "the dead credentials are cleared, not left to rot"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_time_401_refreshes_and_retries_once() {
+        let _guard = store_preamble().await;
+        let name = "http-oauth-401";
+        let remote = fake_oauth_remote(FakeOauthState {
+            current: Some("acc-first".into()),
+            refresh_ok: Some("ref-1".into()),
+            ..FakeOauthState::default()
+        })
+        .await;
+        plant(name, "acc-first", Some("ref-1"));
+        let a = HttpAdapter::new(&oauth_def(&remote.base), name, crate::calls::test_log())
+            .expect("adapter");
+        let endpoint = a.build().await.expect("connects while fresh");
+        endpoint.probe.list("tools", None).await.expect("fresh works");
+
+        // The remote rotates under us: no expiry on our side, the 401 is the first notice.
+        // A tool CALL is the observable (a failed tools/list degrades to empty by design).
+        remote.state.lock().unwrap().current = Some("acc-rot-5".into());
+        endpoint
+            .probe
+            .call_tool("anything", json!({}))
+            .await
+            .expect("the 401 refreshed and retried");
+        let stored = oauth::credentials(name).expect("still stored");
+        let accepted = remote.state.lock().unwrap().current.clone().expect("rotated");
+        assert_eq!(stored.access_token.as_deref(), Some(accepted.as_str()));
+    }
+
+    #[tokio::test]
+    async fn a_second_401_after_the_refresh_marks_needs_auth() {
+        let _guard = store_preamble().await;
+        let name = "http-oauth-double401";
+        let remote = fake_oauth_remote(FakeOauthState {
+            current: Some("acc-live".into()),
+            refresh_ok: Some("ref-1".into()),
+            wrong_refresh_reply: true,
+            ..FakeOauthState::default()
+        })
+        .await;
+        plant(name, "acc-live", Some("ref-1"));
+        let a = HttpAdapter::new(&oauth_def(&remote.base), name, crate::calls::test_log())
+            .expect("adapter");
+        let endpoint = a.build().await.expect("connects");
+        // Rotate: the old token 401s, the refresh "succeeds" with a token /mcp still rejects.
+        remote.state.lock().unwrap().current = Some("acc-rotated".into());
+        let err = match endpoint.probe.call_tool("anything", json!({})).await {
+            Err(err) => err,
+            Ok(_) => panic!("a rejected post-refresh token must surface needs-auth"),
+        };
+        assert!(err.contains(crate::oauth::NEEDS_AUTH), "{err}");
+        assert!(oauth::credentials(name).is_none(), "credentials dropped");
     }
 }
