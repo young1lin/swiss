@@ -1047,6 +1047,10 @@ impl JobDefinition {
         if let Some(env) = &def.env {
             input.insert("env".into(), json!(env));
         }
+        // docs/25 E2 rides the mapping: a whole-value bare vault ref in a legacy row
+        // lands in the config row already speaking the envelope grammar.
+        let mut input_value = Value::Object(input);
+        swiss_core::secure::refs::migrate_legacy(&mut input_value);
         JobDefinition {
             id: def.name.clone(),
             // v1 had no separate title; the name is the honest one (docs/11 §5.2).
@@ -1059,7 +1063,7 @@ impl JobDefinition {
             trigger,
             action: ActionRef {
                 type_: JOBS_ACTION.to_string(),
-                input: Value::Object(input),
+                input: input_value,
                 schema_version: 1,
             },
             timeout_ms: def.timeout_ms,
@@ -1548,6 +1552,30 @@ mod tests {
             parsed.labels,
             parsed.overlap.as_str()
         );
+    }
+
+    #[test]
+    fn from_v1_migrates_whole_value_bare_vault_refs() {
+        // docs/25 E2 rides the v1→v2 mapping: a whole-value bare ref (the env row) lands
+        // in the config row speaking the envelope grammar; a mixed string (the command)
+        // stays as authored — rewriting it would need the ambiguous scan the envelope
+        // exists to replace.
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("MODE".to_string(), "secret://legacy-job-env".to_string());
+        let def = JobDef {
+            name: "legacy".into(),
+            command: "run secret://legacy-job-cmd".into(),
+            every_sec: Some(60),
+            cron: None,
+            enabled: true,
+            timeout_ms: 600_000,
+            cwd: None,
+            env: Some(env),
+        };
+        let v2 = JobDefinition::from_v1(&def);
+        let input = &v2.action.input;
+        assert_eq!(input["command"], "run secret://legacy-job-cmd");
+        assert_eq!(input["env"]["MODE"], "${secret://legacy-job-env}");
     }
 
     /// A minimal valid definition body, mutated per case.
