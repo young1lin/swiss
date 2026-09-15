@@ -1,6 +1,6 @@
 import { $, api, apiJson, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
-import { callsPageStep, cancelEdit, changeEditType, clearCalls, loadPage, pageNext, pagePrev, runConnTest, saveEdit, showFullResult, showTab, startEdit } from "./detail.js";
+import { callsPageStep, cancelEdit, changeEditType, clearCalls, deleteRevision, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml } from "./fields.js";
 import { fmtChars, fmtJson, logsBody, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
@@ -372,10 +372,16 @@ function configBody(d) {
     var opts = Object.keys(TYPE_FIELDS).map(function (t) {
       return '<option value="' + t + '"' + (t === type ? " selected" : "") + ">" + esc(TYPE_LABELS[t] || t) + "</option>";
     }).join("");
+    var replacing = d.editMode === "replace";
     return '<div class="group"><div class="form">' +
       '<label class="field"><span>Type</span><select id="e-type">' + opts + "</select></label>" +
       fieldsHtml(type, vals, "e-") +
-      '<div class="form-actions"><button class="btn primary" id="e-save">Save &amp; Restart</button>' +
+      (replacing
+        ? '<label class="field"><span>Note (kept with the parked revision)</span>' +
+          '<input id="e-note" placeholder="optional — e.g. proc version, before the swap"></label>'
+        : "") +
+      '<div class="form-actions"><button class="btn primary" id="e-save">' +
+        (replacing ? "Replace definition" : "Save &amp; Restart") + "</button>" +
       (TESTABLE_TYPES.indexOf(type) >= 0
         ? '<button class="btn" id="e-test">Test connection</button>'
         : "") +
@@ -397,8 +403,29 @@ function configBody(d) {
     ? '<div class="note">Defined in gateway.config.json. Edits are saved as an override in managed.json; ' +
       "<code>${ENV}</code> references are kept as references, so no credential is written to disk.</div>"
     : "";
+  var revs = d.revisions || [];
+  // docs/28 D1: parked def snapshots under this name — the rollback shelf. One line each,
+  // Restore swaps it back (parking the live def first), Delete drops the snapshot only.
+  var revBlock =
+    '<div class="cap">Saved revisions (' + revs.length + ")</div>" +
+    '<div class="group">' +
+    (revs.length
+      ? revs
+          .map(function (r, i) {
+            var when = r.at ? new Date(r.at).toLocaleString() : "";
+            return '<div class="row"><span class="k">' + esc(TYPE_LABELS[r.type] || r.type || "?") + "</span>" +
+              '<span class="v wrap">' + esc((r.note || "(no note)") + (when ? " · " + when : "")) +
+              ' <button class="btn" data-restore="' + i + '">Restore</button>' +
+              ' <button class="btn danger" data-revdel="' + i + '">Delete</button></span></div>';
+          })
+          .join("")
+      : '<div class="row"><span class="v">None yet — Replace definition… parks the outgoing def here.</span></div>') +
+    "</div>";
   return tunnelDepsHtml(d) + '<div class="group">' + rows + "</div>" + note +
-    '<div class="form-actions" style="padding-top:var(--s4)"><button class="btn" id="c-edit">Edit configuration…</button></div>';
+    '<div class="form-actions" style="padding-top:var(--s4)">' +
+    '<button class="btn" id="c-edit">Edit configuration…</button>' +
+    '<button class="btn" id="c-replace">Replace definition…</button></div>' +
+    '<div style="height:var(--s5)"></div>' + revBlock;
 }
 
 /**
@@ -431,7 +458,14 @@ function wireTabBody(d, m) {
   var prev = $("pgPrev"); if (prev) prev.onclick = pagePrev;
   var next = $("pgNext"); if (next) next.onclick = pageNext;
   var edit = $("c-edit"); if (edit) edit.onclick = startEdit;
-  var save = $("e-save"); if (save) save.onclick = saveEdit;
+  var replaceBtn = $("c-replace"); if (replaceBtn) replaceBtn.onclick = startReplace;
+  var save = $("e-save"); if (save) save.onclick = d.editMode === "replace" ? saveReplace : saveEdit;
+  document.querySelectorAll("#tabbody [data-restore]").forEach(function (b) {
+    b.onclick = function () { void restoreRevision(Number(b.dataset.restore)); };
+  });
+  document.querySelectorAll("#tabbody [data-revdel]").forEach(function (b) {
+    b.onclick = function () { void deleteRevision(Number(b.dataset.revdel)); };
+  });
   var cancel = $("e-cancel"); if (cancel) cancel.onclick = cancelEdit;
   var testBtn = $("e-test"); if (testBtn) testBtn.onclick = function () { void runConnTest("e-"); };
   var type = $("e-type"); if (type) type.onchange = function () { changeEditType(type.value); };

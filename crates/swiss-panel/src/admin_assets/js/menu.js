@@ -80,12 +80,14 @@ function tooltipOf(m) {
   // has no child yet and wakes on the first request — say that, so a hollow ring explains itself.
   var stateWord = state.busy[m.name] ? state.busy[m.name] + "…"
     : m.state === "idle" ? "idle — lazy: no child yet, wakes on the first request"
+    : m.state === "stopped" ? "disabled"
     : m.state;
   // docs/24: the endpoint path shown to the operator carries the /mcp/ domain prefix.
   var bits = ["/mcp/" + m.name, m.type, m.source, stateWord];
   if (m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.description) bits.unshift(m.description);
   if (m.reason) bits.push(m.reason);
+  bits.push("right-click for actions"); // docs/28 D3: the row menu has no button of its own
   return bits.join("  ·  ");
 }
 
