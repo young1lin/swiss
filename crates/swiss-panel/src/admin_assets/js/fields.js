@@ -63,10 +63,31 @@ var TYPE_FIELDS = {
       ph: "Authorization=Bearer ${CONTEXT7_API_KEY}",
       hint: "Where the remote's API key goes. Prefer a reference — ${secret://name} (store it once on the Plugins page) or ${ENV_VAR} — so neither this panel nor managed.json ever holds the value.",
     },
+    /* OAuth (docs/24): the checkbox is the def's auth string — checked sends "oauth", and the
+       gateway then owns Authorization end to end (register, consent, refresh). The headers
+       field above must not carry Authorization when this is on; the server refuses the pair. */
+    {
+      k: "auth", label: "OAuth authorization (the gateway owns the token)", bool: true, def: false,
+      hint: "For remote MCPs behind OAuth (Figma: https://mcp.figma.com/mcp). Save first, then Authorize once from the detail view — the gateway registers a client, opens the consent page and refreshes tokens itself.",
+    },
+    {
+      k: "oauthClientName", label: "OAuth client name", ph: "empty = Claude Code",
+      hint: "Figma's registration accepts only \"Claude Code\" or \"Codex\". Leave empty for the default.",
+    },
     {
       k: "proxy", label: "Proxy", ph: "http://127.0.0.1:7890 or ${MY_PROXY}",
       hint: "Route THIS MCP's requests through an HTTP(S) proxy — for an endpoint this machine cannot reach directly. Other MCPs are not affected; a ${ENV_VAR} reference works here too.",
     },
+    { k: "exposeResources", label: "Expose resources", bool: true, def: true },
+    { k: "exposePrompts", label: "Expose prompts", bool: true, def: true },
+    AUTOSTART_EAGER,
+  ],
+  /* The figma type (docs/24 rev): the form is a description and nothing else. The endpoint
+     and the OAuth mode are the type's to decide — the server refuses a url or auth key on a
+     figma def — and the detail view's Authorize button is the one step after Save. No Test
+     button: a keyless handshake is always 401 (see runConnTest). */
+  figma: [
+    DESC_FIELD,
     { k: "exposeResources", label: "Expose resources", bool: true, def: true },
     { k: "exposePrompts", label: "Expose prompts", bool: true, def: true },
     AUTOSTART_EAGER,
@@ -98,6 +119,7 @@ var TYPE_LABELS = {
   redis: "redis — in-process driver",
   pg: "postgres — in-process driver",
   http: "http — proxy a remote MCP endpoint",
+  figma: "figma — Figma 官方远程 MCP（OAuth 全托管，只需授权一次）",
   rest: "rest — declare tools over a plain HTTP API",
 };
 
@@ -155,6 +177,17 @@ function fieldsHtml(type, vals, p) {
   return out;
 }
 
+/** The form's auth checkbox is the def's auth string (docs/24 D1): checked sends "oauth",
+ *  unchecked removes the key — which is how OAuth is switched back off. An empty client name
+ *  never travels; the server applies its provider default. Both submit paths run the body
+ *  through this before the server sees it, exactly like autostart -> lazy. */
+function translateOauth(body) {
+  if (body.auth === true) body.auth = "oauth";
+  else delete body.auth;
+  if (!body.oauthClientName) delete body.oauthClientName;
+  return body;
+}
+
 function readFields(type, p) {
   var o = {};
   (TYPE_FIELDS[type] || []).forEach(function (f) {
@@ -172,4 +205,4 @@ function readFields(type, p) {
   return o;
 }
 
-export { AUTOSTART_EAGER, AUTOSTART_PROC, DESC_FIELD, TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToObj, envToText, fieldHtml, fieldsHtml, readFields };
+export { AUTOSTART_EAGER, AUTOSTART_PROC, DESC_FIELD, TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToObj, envToText, fieldHtml, fieldsHtml, readFields, translateOauth };

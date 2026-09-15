@@ -1,5 +1,5 @@
 import { $, KINDS, api, apiJson, now, state, toast } from "./util.js";
-import { readFields } from "./fields.js";
+import { readFields, translateOauth } from "./fields.js";
 import { fmtJson } from "./logs.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
@@ -63,6 +63,61 @@ async function removeMcp(name) {
   renderPane();
 }
 
+/* --- OAuth authorize (docs/24 D5) -------------------------------------------------------------- */
+/** One click, one flow: the POST plants it (or hands back the live one — the server
+ *  single-flights per name), this opens the provider's consent page in a real browser
+ *  window the moment its URL exists, and keeps polling every 3s until approval lands
+ *  (credentials stored, MCP auto-started) or the flow errors. Status rides the pane's
+ *  lastAction note; renderPane is skipped while a config edit is open, so a status update
+ *  never eats a form the user is filling in. */
+function pause(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+
+async function authorizeMcp(name) {
+  var d = state.detail;
+  if (!d || d.name !== name || d.oauthBusy) return;
+  d.oauthBusy = true;
+  var note = function (msg, err) {
+    state.lastAction[name] = { msg: msg, err: !!err, at: now() };
+    if (!state.detail || state.detail.editing) return;
+    renderPane();
+  };
+  try {
+    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/authorize", { method: "POST" });
+    var j = await r.json().catch(function () { return {}; });
+    if (!r.ok) { note("authorize failed: " + (j.error || "HTTP " + r.status), true); return; }
+    note("authorize: preparing the consent page…");
+    var opened = false;
+    // 100 polls x 3s = 5 min, the server flow's own callback cap.
+    for (var i = 0; i < 100; i++) {
+      if (i > 0) await pause(3000);
+      var p = await api("/api/mcps/" + encodeURIComponent(name) + "/authorize");
+      var s = await p.json().catch(function () { return {}; });
+      if (s.status === "authorization_required" && s.authorizationUrl && !opened) {
+        opened = true;
+        window.open(s.authorizationUrl, "_blank");
+        note("authorize: consent page opened — approve it in the browser…");
+      } else if (s.status === "approved") {
+        state.lastAction[name] = { msg: "authorized · " + (s.tools != null ? s.tools + " tools" : "MCP started"), err: false, at: now() };
+        toast(name + ": authorized");
+        await loadList();
+        loadMeta(name);
+        if (state.detail && !state.detail.editing) renderPane();
+        return;
+      } else if (s.status === "error") {
+        note("authorize failed: " + (s.error || "unknown error"), true);
+        await loadList();
+        return;
+      }
+      // starting, or the URL not yet in this answer: keep polling.
+    }
+    note("authorize: timed out waiting for approval", true);
+  } catch (e) {
+    note("authorize request failed", true);
+  } finally {
+    if (state.detail && state.detail.name === name) state.detail.oauthBusy = false;
+  }
+}
+
 /* --- detail data ------------------------------------------------------------------------------ */
 function pageState() {
   return { items: [], nextCursor: undefined, total: undefined, pageSize: 50, cursors: [""], loading: false, loaded: false, error: null };
@@ -73,6 +128,9 @@ function openDetail(name) {
   state.selected = name;
   var d = {
     name: name, tab: "tools", config: null, source: undefined, editing: false, editType: null, editVals: null,
+    // OAuth (docs/24 D5): the detail's auth state ("authorized" | "needs-auth" | undefined),
+    // and whether an authorize flow this panel started is still polling.
+    oauth: undefined, oauthBusy: false,
     run: {
       tool: null, result: null, running: false,
       // The refill control next to Run: one tool's newest recorded runs (hist), which tool they
@@ -111,8 +169,12 @@ async function loadMeta(name) {
     d.config = j.config || null;
     d.source = j.source;
     d.tunnels = j.tunnels || [];
+    d.oauth = j.oauth;
     if (d.editing) return; // never rebuild a form the user is filling in
-    if (d.tab === "config") renderPane();
+    // The pane header grows an Authorize button the moment the config is an OAuth one (an
+    // http def that says so, or the figma type that implies it), so the pane re-renders for
+    // those MCPs too — not only when the config tab is open.
+    if (d.tab === "config" || (d.config && (d.config.auth === "oauth" || d.config.type === "figma"))) renderPane();
   } catch (e) { /* handled */ }
 }
 
@@ -283,8 +345,19 @@ async function runConnTest(p) {
   var type = p === "a-" ? $("a-type").value : (d && (d.editType || (d.config && d.config.type))) || "proc";
   var body = Object.assign({ type: type }, readFields(type, p));
   delete body.autostart; // a boot-time switch, not a credential — irrelevant to a connection test
+  // figma implies OAuth the way a checked auth box states it: no keyless test exists for either.
+  var wantsOauth = type === "figma" || (type === "http" && body.auth === true);
+  delete body.auth; delete body.oauthClientName; // a credential question, not a connectivity one
   var btn = $(p + "test"), out = $(p + "test-out");
   if (!btn || !out) return;
+  // A keyless handshake cannot test an OAuth remote: its endpoint answers 401 until the flow
+  // runs, and the flow needs the MCP saved first (credentials are name-keyed). Say so rather
+  // than firing a request whose only possible answer is the 401.
+  if (wantsOauth) {
+    out.textContent = "OAuth remote: use Authorize on the detail view — a keyless handshake is always 401.";
+    out.style.color = "";
+    return;
+  }
   btn.disabled = true;
   btn.textContent = "Testing…";
   out.hidden = false;
@@ -318,6 +391,7 @@ async function saveEdit() {
   var fields = readFields(type, "e-");
   var body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
+  translateOauth(body); // the auth checkbox is the def auth string (docs/24 D1)
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
   var name = d.name;
   // Rendering the pane destroys the form, so hold on to what was typed: a save the server rejects
@@ -355,4 +429,4 @@ async function saveEdit() {
   renderPane();
 }
 
-export { act, callsPageStep, cancelEdit, changeEditType, clearCalls, loadCalls, loadMeta, loadPage, openDetail, pageNext, pagePrev, pageState, removeMcp, renameMcp, runConnTest, saveEdit, showFullResult, showTab, startEdit };
+export { act, authorizeMcp, callsPageStep, cancelEdit, changeEditType, clearCalls, loadCalls, loadMeta, loadPage, openDetail, pageNext, pagePrev, pageState, removeMcp, renameMcp, runConnTest, saveEdit, showFullResult, showTab, startEdit };

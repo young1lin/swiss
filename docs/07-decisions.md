@@ -469,7 +469,6 @@ The decisions that shape the implementation:
   (`[A-Za-z0-9_.$]+`); the list borrows the SQL overlay's mirror trick to sit at the caret
   and owns only the keys it consumed — arrows, Tab/Enter, Esc — leaving Ctrl+Enter to Run.
 
-
 ## ADR-018 — Path-space partition: the root is host chrome and future plugins; /mcp/* is the MCP plugin's domain
 
 **Status: Accepted (2026-10, by the repo owner's decision.)** Spec: docs/24.
@@ -536,3 +535,84 @@ The cost: every persisted bare ref rides a transition (whole-value ones invisibl
 ones by hand). Survey evidence in `<vendor>/model-apikey-config-survey.md`: no product
 scans a bare scheme in arbitrary strings, and the envelope-with-scheme form has direct
 precedents (MCPHost `${env://VAR}`, Cursor `${env:NAME}`, Continue `${{ secrets.X }}`).
+---
+
+## ADR-020 — HTTP MCP OAuth: impersonate the allowlisted client, own the token
+
+**Status: Accepted (2026-09-15).** Spec: docs/24 (in the main worktree).
+
+Remote MCPs behind OAuth — Figma being the one that started this — gate every request behind a
+provider bearer, and the provider's dynamic client registration (RFC 7591) admits only two
+exact `client_name` strings: `"Claude Code"` and `"Codex"`. Anything else registers 403. So the
+question was never "which OAuth library" — it was how a gateway whose whole identity is *not*
+being Claude Code gets through that door, and where the resulting tokens live.
+
+The decisions that shape the implementation:
+
+- **Impersonation is a default, not a disguise.** `oauthClientName` on the http def overrides
+  the provider default (`"Claude Code"` for Figma, per `provider_defaults`); nothing else about
+  the client lies. The allowlist is the provider's bug to carry, and the refusal a def-level
+  `oauthClientName` still gets is answered with the two accepted names spelled out.
+- **Endpoints are discovered, never hard-coded.** RFC 9728 → RFC 8414, every flow. Figma moved
+  its scopes to the protected-resource document; discovery reads them there first.
+- **Credentials are a sealed file of their own — `mcp-oauth.json`, keyed by MCP name — not the
+  vault (docs/19).** The vault is operator-typed values referenced from defs; OAuth grants are
+  machine-issued pairs the def never names. `swiss export/import` carries the section, so a
+  machine move keeps its grants (ADR-014's plaintext-escape reasoning applied twice).
+- **The def surface is two keys**: `auth: "oauth"` turns Authorization over to the gateway (a
+  hand-written Authorization header alongside is refused at construction), and the optional
+  `oauthClientName`. Everything else — discovery URLs, client registration, PKCE, refresh —
+  is the adapter's business, invisible in config.
+- **"Anytime auth" is one POST away.** `POST /api/mcps/{name}/authorize` single-flights a flow
+  per name (a live flow is handed back, a terminal one replaced); the panel's Authorize button
+  opens the consent URL in a real browser window once and polls to `approved`, which stores the
+  grant atomically and starts the MCP. A dead refresh token degrades to exactly this button —
+  the 401 path refreshes once, retries once, then clears the credentials and surfaces the
+  `needs authorization` marker instead of looping.
+- **The single-flight dedups on the refused token, not on freshness.** A no-expiry access token
+  reads "fresh" right up to the 401 that proves it dead; shortcutting on freshness hands the
+  corpse back to the retry. The check is "has the stored token *changed* since this one was
+  refused" — the bug class the integration suite pinned.
+- **No new dependency.** sha2 0.11 (PKCE S256) reuses the units swiss-core already links for
+  HKDF; `cargo tree -d` is byte-identical to the baseline. The flow's loopback callback is one
+  ephemeral axum listener per authorize click, gone when the flow ends — zero idle cost.
+
+What was rejected: a general provider-UI (this is one flow, Figma-shaped, with defaults per
+provider at the code level); the device flow (the loopback redirect is strictly better on a
+desktop with a browser); token reveal in the panel (D7 redaction — the grant is never shown);
+and auto-reauthorize (a grant that died needs a human consent click, by design).
+
+---
+
+## ADR-021 — The figma adapter type: sugar over http+oauth, one field long
+
+**Status: Accepted (2026-09-15).** Supersedes the "no provider type" line in docs/24 §5 —
+the operator asked for the simple thing the spec talked itself out of.
+
+ADR-020 shipped OAuth as two keys on the http def. For Figma — the provider this whole flow
+exists for — those keys are always the same values, and the URL is not the operator's
+decision either. So `type: "figma"` is its own adapter type whose def is a name and an
+optional description: `make_adapter` expands it into the full http def (the
+`FIGMA_MCP_URL` constant, `auth: "oauth"`) and builds exactly the adapter a hand-written
+def would get. Every OAuth behavior — refresh, badge, authorize route, 401-retry — runs the
+ADR-020 chain with no case of its own.
+
+The decisions that keep it honest:
+
+- **The stored def never grows the fields the type implies.** `build_def` refuses `url`,
+  `auth`, `oauthClientName`, `headers` and `proxy` on a figma def — a second way to say what
+  the type already says is a way to configure it wrong.
+- **One predicate answers "is this an OAuth MCP"** — `is_oauth(def)`: http defs that say so,
+  plus the figma type. The badge, the authorize guard and the panel note all read it, so the
+  next OAuth provider type touches one function.
+- **The row reports the def type, not the adapter kind.** A figma MCP builds an http adapter;
+  the sidebar row, the tag chip and the edit form all say `figma`. `tag_of` and the row's
+  `type` read `def.type_()`.
+- **The panel's figma form is a description and nothing else.** No Test button (a keyless
+  handshake is always 401); the detail view's Authorize button is the one step after Save.
+
+What was rejected: keeping Figma as an http preset the panel fills in (a saved def then
+carries a URL the operator never chose, and "add Figma" still meant five fields); and a
+generic per-provider type registry (one provider does not justify a table — the second one
+reopens this ADR).
+
