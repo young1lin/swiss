@@ -120,6 +120,17 @@ pub struct SshConnDef {
     pub password: Option<String>,
     /// `SHA256:…`, learned on first successful connect; a change refuses the connection.
     pub host_key: Option<String>,
+    /// docs/27 §1.1: `scheme://host[:port]`, scheme ∈ {http, socks5}. Stored port-normalized
+    /// (http -> 80, socks5 -> 1080) with no credentials inside — those are the two fields
+    /// below, resolved at connect time like every other credential.
+    pub proxy: Option<String>,
+    /// Whole-field `${...}` reference or literal; consumed by the proxy dialer (docs/27 §2).
+    pub proxy_username: Option<String>,
+    /// Same contract as proxy_username.
+    pub proxy_password: Option<String>,
+    /// Another connection's id (OpenSSH `-J`): this connection dials through that one's
+    /// live session. The jump is itself an ordinary connection with its own auth/TOFU row.
+    pub jump: Option<String>,
 }
 
 impl SshConnDef {
@@ -147,6 +158,20 @@ impl SshConnDef {
         }
         if let Some(v) = &self.group {
             m.insert("group".into(), json!(v));
+        }
+        // docs/27 §1.2: the new keys append AFTER the historical order, absent when unset —
+        // the stored prefix stays byte-identical, so old files and old readers are untouched.
+        if let Some(v) = &self.proxy {
+            m.insert("proxy".into(), json!(v));
+        }
+        if let Some(v) = &self.proxy_username {
+            m.insert("proxyUsername".into(), json!(v));
+        }
+        if let Some(v) = &self.proxy_password {
+            m.insert("proxyPassword".into(), json!(v));
+        }
+        if let Some(v) = &self.jump {
+            m.insert("jump".into(), json!(v));
         }
         Value::Object(m)
     }
@@ -396,6 +421,65 @@ mod tests {
         assert_eq!(fmt_number(f64::NAN), "NaN");
     }
 
+    fn conn_def(id: &str, with_proxy: bool) -> SshConnDef {
+        SshConnDef {
+            id: id.into(),
+            name: "box".into(),
+            host: "bastion".into(),
+            port: 22,
+            username: "root".into(),
+            auth_type: AuthType::Key,
+            group: Some("prod".into()),
+            key_path: Some("~/.ssh/id_rsa".into()),
+            passphrase: Some("pp".into()),
+            password: Some("pw".into()),
+            host_key: Some("SHA256:x".into()),
+            proxy: with_proxy.then(|| "socks5://127.0.0.1:7890".into()),
+            proxy_username: with_proxy.then(|| "pxuser".into()),
+            proxy_password: with_proxy.then(|| "pxpass".into()),
+            jump: with_proxy.then(|| "other-conn".into()),
+        }
+    }
+
+    /// docs/27 §1.2: unset proxy fields are ABSENT and the historical key order is unchanged —
+    /// an old reader sees byte-identical objects.
+    #[test]
+    fn conn_json_keeps_node_field_order_without_proxy_fields() {
+        let v = conn_def("c1", false).to_json();
+        let keys: Vec<&str> = v
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "id", "name", "host", "port", "username", "authType", "keyPath",
+                "passphrase", "password", "hostKey", "group"
+            ]
+        );
+    }
+
+    /// docs/27 §1.2: the four new keys append after the historical order, absent when unset.
+    #[test]
+    fn conn_json_appends_proxy_fields_in_spec_order() {
+        let v = conn_def("c1", true).to_json();
+        let keys: Vec<&str> = v
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "id", "name", "host", "port", "username", "authType", "keyPath",
+                "passphrase", "password", "hostKey", "group", "proxy", "proxyUsername",
+                "proxyPassword", "jump"
+            ]
+        );
+    }
     #[test]
     fn rule_json_keeps_node_field_order() {
         let def = RuleDef {
