@@ -269,6 +269,17 @@
        12px gutter between every run made a list of forty read as forty separate cards. */
     .sheet-body > .group > .call { margin: 0; }
     .hint { font-size: var(--f-label); color: var(--text-3); }
+    /* docs/27 §4: the connection sheet's Advanced fold. Native <details> is the house fold
+       primitive (the data-value JSON tree); this is its form instance — a quiet summary that
+       carries whatever proxy/jump is configured as monochrome tags, so collapsed never means
+       hidden: the row's transport stays visible without unfolding. The interior grid gives
+       the fold's content its own rhythm (the sheet-body gap stops at the <details> element),
+       a touch tighter than the form above because it is a sub-section; .two needs its pairing
+       rule repeated here because .sheet-body > .two only reaches direct children. */
+    .sheet-body > details.fold > summary { cursor: pointer; font-size: var(--f-label); color: var(--text-2); }
+    .sheet-body > details.fold > summary .tag { margin-left: var(--s1); }
+    .sheet-body > details.fold > .fold-body { display: grid; gap: var(--s2); padding-top: var(--s3); }
+    .sheet-body > details.fold > .fold-body > .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
 
     .toast {
       position: fixed; bottom: var(--s5); left: 50%; transform: translateX(-50%);
