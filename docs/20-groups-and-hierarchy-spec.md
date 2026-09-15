@@ -38,7 +38,7 @@
 | MCP 侧栏 | 有 | `managed.json` `groups`/`mcpGroups`/`order`；`default` 是**普通组、存在列表里**，第一个槽位是兜底 | `crates/swiss-host/src/managed.rs:138-168,444-567`；路由 `src/adminapi.rs:612-744`（`PUT /api/order`、`PUT /api/groups`、`POST /api/groups/{name}/rename`、`PUT /api/mcps/{name}/group`） | `js/sidebar.js`（树头 + 抓手 + 行拖拽）、`js/menu.js`（`wireDrag`/`patchSidebar`） |
 | Tunnels 连接 / 转发 | 有，两套 | `tunnels.json` `connGroups`/`ruleGroups`；`default` **隐式、保留字、不存**（`store.rs:18`） | `crates/swiss-tunnels/src/tunnel/store.rs:83-101,565-`；路由 `tunnel/api.rs:409-470`（`/api/tunnels/groups/{kind}`、`…/rename` 的 body 是 `{from,to}`，而 MCP 的是 `{name}`） | `js/tunnels.js:10-160`（第二份拖拽实现）、`js/polling.js:74-88`（第二份 `grouped()`）、`js/traffic.js` `tunGroupHeadHtml`（第二种组头） |
 | Jobs | **没有** | 定义在 `jobs` 插件配置行里（docs/11），`labels: string[]` 只做过滤 | — | `js/jobs.js:51-59` 单个 `.group` 卡 |
-| Secrets | 没有 | `secrets.json` `{rev, secrets:{name:value}}` | `src/adminapi.rs:481-` | `js/views/secrets.js` 内联表单 + 扁平列表 |
+| Secrets | 有（2026-09-15 修订：docs/26，用户要求行可拖） | `secrets.json` `{rev, secrets, groups, secretGroups, order}` | `src/adminapi.rs:481-` | `js/views/secrets.js` 内联表单 + 分组列表 |
 | Tokens | 没有 | `managed.json` `tokens:[{id,label,secret,createdAt}]` | `src/adminapi.rs:398-` | `js/views/tokens.js` |
 | Data 连接下拉 | 没有 | — | `/api/db` 已按侧栏**视觉顺序**排（`src/app.rs:546-580`） | `js/data-view.js:309-331` 一个扁平 `<select>` |
 
@@ -125,7 +125,7 @@ pub struct Groups {
 6. `assign(id, Some(g))`：`g` 必须存在（不区分大小写匹配，存规范大小写）；`assign(id, None)` = 删除
    显式项（渲染在第一组）。
 7. `order`（排序）不属于 `Groups`：每个作用域已各有一份平铺顺序（MCP `order`、tunnels 数组顺序、
-   jobs 数组顺序、secrets/tokens 按创建时间），`Groups` 只按组切片。这与 sidebar.js 注释里
+   jobs 数组顺序、tokens 按创建时间；secrets 于 docs/26 起为 vault 的 `order` 数组——用户要求行可拖），`Groups` 只按组切片。这与 sidebar.js 注释里
    "One flat order sliced by group is why moving an MCP between groups never has to rewrite the
    ordering" 的理由一致。
 8. 序列化形状固定为 `{ "groups": [names…], "<scope>Groups": { id: name } }`，键名由嵌入它的
