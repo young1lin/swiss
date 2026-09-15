@@ -64,6 +64,12 @@ crate 本来就依赖的那一层，"其他插件都依赖这个 core"在 crate 
 
 ### D1 引用语法：`secret://name`（URI scheme 型）
 
+> **修订（2026-09-15，docs/25 / ADR-019）**：引用语法改为 `${secret://name}`（`${...}` 信封 + 内部 scheme）。
+> 裸 scheme 嵌在任意字符串里没有 token 边界——URL 里的 `secret://aaa` 与引用不可区分，这是语法层不可判定的
+> 缺陷，不是实现 bug。名字文法（`[a-z][a-z0-9-]{0,63}`）与「使用点展开、缺失硬失败」不变；加载时整值自动迁移
+> （docs/25 E2）。下文的选型 survey 保留为历史记录——它 survey 的对象是「整字符串引用 + 专用客户端」，
+> 未覆盖「token 嵌在任意字符串里」的场景。
+
 语法选型survey过业界现状：1Password `op://vault/item/field`、Doppler `doppler://…`、
 Infisical `infisical://…`——新一代密钥平台清一色 **URI scheme 型**；AWS 用
 `{{resolve:secretsmanager:…}}`（动词开头、冗长）；GitHub Actions 用 `${{ secrets.X }}`

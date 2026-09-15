@@ -344,7 +344,7 @@ the TLS stack and async runtime stay single.
 
 ## ADR-014 — The secret vault is a sealed file of its own, referenced by `secret://name`
 
-**Status: Accepted (2026-09-14).** Spec: docs/19.
+**Status: Accepted (2026-09-14); the reference-syntax clause is superseded by ADR-019.** Spec: docs/19.
 
 Credentials needed one more home. The env store doubles as the environment every child
 process reads, so a key stored there for one http MCP is readable by every proc MCP, job
@@ -500,3 +500,39 @@ deprecation-window alias (the same debt with a date on it); keeping RESERVED and
 merely adding "mcp" (one more hand-synced entry, still a root-policing mindset).
 Hard partition was chosen because it deletes a rule instead of growing one — and
 because the reserved lists were load-bearing only while MCP names lived at the root.
+
+## ADR-019 — Vault references wear the `${...}` envelope: `${secret://name}`
+
+**Status: Accepted (2026-09-15).** Spec: docs/25; supersedes the reference-syntax clause of
+ADR-014 — its storage, rev, write-only and isolation clauses stand unchanged.
+
+ADR-014's D1 chose the bare scheme `secret://name`: self-describing, greppable, a different
+character class than `${ENV}`. What that survey missed is that those virtues belong to
+references occupying a whole dedicated field (1Password `op://`, LiteLLM `os.environ/`),
+not to tokens embedded in arbitrary strings. Our refs live inside headers (`Bearer ...`),
+URLs and command lines, and a scheme substring has no token boundary: the shipped scanner
+claimed `secret://aaa` inside `https://test.com/secret://aaa/test` — with the name in the
+vault the URL was silently rewritten and the secret landed in it; without it the whole
+config was refused. That URL is not a corner case; it is the shape these strings often are.
+
+| | Bare scheme (docs/19 D1) | `${secret://name}` envelope | Dual grammar forever |
+|---|---|---|---|
+| Token boundary | charset guess | the braces | both |
+| URL collision | unresolved | impossible — no `${`, no ref | unresolved |
+| Self-describing errors | yes | yes, the scheme stays inside | yes |
+| Cost | — | one-time migration | the ambiguity forever |
+
+What shipped (docs/25): one envelope, two families — `${UPPER_SNAKE}` lenient as ever,
+`${secret://kebab}` hard-failing as ever; outside `${...}` there are no references, only
+byte-identical passthrough whatever the vault holds. Inside the envelope the scheme is a
+declared intent: a malformed name refuses rather than guessing. `migrate_legacy` rewrites
+whole-value bare refs in memory at each loader (config store, managed, tunnels, jobs v1
+mapping) with one boot note per file; the disk spelling survives until the next save.
+Mixed strings (`Bearer secret://x`) are NOT auto-migrated — rewriting mid-string tokens
+would need exactly the ambiguous scan the envelope exists to replace; the panel's Copy-ref
+makes the manual re-save one paste.
+
+The cost: every persisted bare ref rides a transition (whole-value ones invisibly, mixed
+ones by hand). Survey evidence in `<vendor>/model-apikey-config-survey.md`: no product
+scans a bare scheme in arbitrary strings, and the envelope-with-scheme form has direct
+precedents (MCPHost `${env://VAR}`, Cursor `${env:NAME}`, Continue `${{ secrets.X }}`).

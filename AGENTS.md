@@ -71,9 +71,10 @@ correctness boundary.
   `Host`/origin is not a loopback address. Never weaken it or change the bind host to "reach it
   remotely" — forward the port over SSH instead. A non-loopback `host` in config is refused at
   load, not warned about.
-- **Credentials are `${ENV_VAR}` references, never literals.** They expand only at adapter build
-  time, so `gateway.config.json`, `managed.json` and `tunnels.json` hold the reference, not the
-  secret. The panel masks them back out. Keep it that way.
+- **Credentials are `${ENV_VAR}` or `${secret://name}` references, never literals.** They expand
+  only at use time — one `${...}` envelope, two families; a bare `secret://` outside the envelope
+  is literal text (docs/25) — so `gateway.config.json`, `managed.json`, `tunnels.json` and the
+  jobs config hold the reference, not the secret. The panel masks them back out. Keep it that way.
 - **`http` / `rest` adapters have no health `ping` on purpose.** They are metered third-party
   endpoints; the registry deliberately reports them "unknown" rather than spending real requests
   every 15 s. Don't add a ping.
