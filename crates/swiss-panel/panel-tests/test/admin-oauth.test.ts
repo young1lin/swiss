@@ -129,6 +129,36 @@ describe("oauth form fields (docs/24 D1)", () => {
   });
 });
 
+describe("the figma type (docs/24 rev): one field, everything implied", () => {
+  it("the figma form carries no url, no auth box — the type decides those", () => {
+    const keys = fields.TYPE_FIELDS.figma.map((f) => f.k);
+    expect(keys).toContain("description");
+    expect(keys).not.toContain("url");
+    expect(keys).not.toContain("auth");
+    expect(fields.TYPE_LABELS.figma).toContain("figma");
+    // No Test button: a keyless handshake is always 401 for an OAuth remote.
+    expect(fields.TESTABLE_TYPES).not.toContain("figma");
+  });
+
+  it("a figma detail renders the Authorize button with no auth key on the config", () => {
+    byId.clear(); freshState();
+    freshState({ mcps: [{ ...row(), name: "fig2", tag: "figma", oauth: "needs-auth" }] as never, detail: fakeDetail("fig2", { type: "figma" }) });
+    pane.renderPane();
+    expect(byId.get("pane")!.innerHTML).toContain('id="oauthBtn"');
+    expect(byId.get("pane")!.innerHTML).toContain("Authorize");
+  });
+
+  it("runConnTest answers the honest message for a figma MCP without firing a request", async () => {
+    byId.clear(); freshState();
+    freshState({ detail: { ...fakeDetail("fig2", { type: "figma" }), editing: true, editType: "figma" } as never });
+    let fired = 0;
+    (globalThis as unknown as Record<string, unknown>).fetch = async () => { fired++; return { ok: true, status: 200, json: async () => ({}) } as never; };
+    await detail.runConnTest("e-");
+    expect(fired).toBe(0);
+    expect(doc.getElementById("e-test-out").textContent).toContain("OAuth remote");
+  });
+});
+
 describe("both submit paths run the translation through the real modules (docs/24 D1)", () => {
   // The browser-only failure class this suite guards: an identifier used but never imported
   // (translateOauth) links fine in vitest's transform and passes every import-graph walk —

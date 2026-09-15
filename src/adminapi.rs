@@ -207,6 +207,34 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         }
         return Ok(ServerDef(def));
     }
+    // The figma type (docs/24 rev): the panel asks for a name, the type decides the rest —
+    // endpoint, OAuth credential mode, client name. A url or auth key on a figma def would be
+    // a second way to say what the type already says, so refuse them: the def stays one field
+    // long and cannot be configured wrong.
+    if type_ == "figma" {
+        for conflicting in ["url", "auth", "oauthClientName", "headers", "proxy"] {
+            if let Some(v) = body.get(conflicting) {
+                if !v.is_null() && v.as_str() != Some("") {
+                    return Err(format!(
+                        "{conflicting} is decided by the figma type; remove it (endpoint and OAuth are built in)"
+                    ));
+                }
+            }
+        }
+        if let Some(description) = str_field(body, "description") {
+            if !description.trim().is_empty() {
+                def.insert("description".into(), json!(description.trim()));
+            }
+        }
+        for key in ["exposeResources", "exposePrompts"] {
+            if let Some(v) = body.get(key) {
+                if !v.is_null() && !as_bool(v) {
+                    def.insert(key.into(), json!(false));
+                }
+            }
+        }
+        return Ok(ServerDef(def));
+    }
     // A remote MCP is configured, not launched: where it is, and the headers its API key travels
     // in. Shaped by hand rather than DIRECT_FIELDS because `headers` is a map, and because an
     // http MCP with no url has nothing to connect to at all.
@@ -309,7 +337,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         .map(|(_, f)| *f)
     else {
         return Err(format!(
-            "unknown type: {type_} (supported: mysql | redis | pg | proc | http | rest | echo)"
+            "unknown type: {type_} (supported: mysql | redis | pg | proc | http | rest | echo | figma)"
         ));
     };
     for k in allowed {
@@ -819,10 +847,11 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     let mut row = json!({
                         "name": d.name,
                         "source": d.source.as_str(),
-                        "type": d.adapter.kind(),
-                        // How this MCP is launched (http / rest / npx / uvx / ...), so the sidebar
-                        // can label every row without a per-row details fetch.
-                        "tag": tag_of(d.adapter.kind(), &d.def),
+                        // The DEF type, not the adapter kind: a figma MCP builds an http
+                        // adapter but is a figma MCP everywhere a user looks — the row, the
+                        // tag chip (http / rest / npx / uvx / ...), the edit form.
+                        "type": d.def.type_(),
+                        "tag": tag_of(d.def.type_(), &d.def),
                         "description": d.def.get_str("description").unwrap_or_default(),
                         "lifecycle": d.lifecycle.as_str(),
                         "state": if d.lifecycle == Lifecycle::Started { d.status.as_str() } else { d.lifecycle.as_str() },
@@ -853,7 +882,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                         // OAuth MCPs carry their auth state for the sidebar badge (docs/24
                         // D5): stored credentials read authorized — expiry is the adapter's
                         // to handle with a refresh, not the badge's to guess at.
-                        if d.def.get_str("auth") == Some("oauth") {
+                        if swiss_mcp::oauth::is_oauth(&d.def) {
                             let state = if swiss_mcp::oauth::credentials(&d.name).is_some() {
                                 "authorized"
                             } else {
@@ -1251,11 +1280,17 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
             };
             let target = entry.data.read().ok().and_then(|d| {
-                if d.adapter.kind() != "http" || d.def.get_str("auth") != Some("oauth") {
+                // The figma type expands to an http adapter whose OAuth is implied, so the
+                // predicate is the shared one and the URL falls back to the figma endpoint.
+                if d.adapter.kind() != "http" || !swiss_mcp::oauth::is_oauth(&d.def) {
                     return None;
                 }
                 Some((
-                    d.def.get_str("url").unwrap_or_default().to_string(),
+                    d.def
+                        .get_str("url")
+                        .filter(|u| !u.is_empty())
+                        .unwrap_or(swiss_mcp::oauth::FIGMA_MCP_URL)
+                        .to_string(),
                     d.def.get_str("oauthClientName").map(str::to_string),
                 ))
             });
@@ -1511,7 +1546,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             }
             // Same badge field as the list row (docs/24 D5) — the detail view lights the
             // Authorize button on needs-auth.
-            if d.def.get_str("auth") == Some("oauth") {
+            if swiss_mcp::oauth::is_oauth(&d.def) {
                 let state = if swiss_mcp::oauth::credentials(&d.name).is_some() {
                     "authorized"
                 } else {

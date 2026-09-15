@@ -306,9 +306,19 @@ pub fn make_adapter(
         "redis" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, redis::RedisEngine::new(&def, name), log.clone()))),
         "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?, log.clone()))),
         "proc" => Ok(Arc::new(proc::ProcAdapter::new(&def, name, log.clone()))),
+        // The figma type is an http+oauth def with every choice already made (docs/24 rev):
+        // expand to the full http def, then build exactly the adapter a hand-written def
+        // would get — refresh, badge and authorize flows need no case of their own.
+        "figma" => {
+            let mut expanded = raw_def.clone();
+            expanded.set("type", serde_json::json!("http"));
+            expanded.set("url", serde_json::json!(crate::oauth::FIGMA_MCP_URL));
+            expanded.set("auth", serde_json::json!("oauth"));
+            make_adapter(&expanded, name, log)
+        }
         "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name, log.clone())?)),
         other => Err(format!(
-            "Unknown adapter type: {other} (built-in: echo | mysql | pg | redis | proc | http | rest)"
+            "Unknown adapter type: {other} (built-in: echo | mysql | pg | redis | proc | http | rest | figma)"
         )),
     }
 }
@@ -461,5 +471,19 @@ mod tests {
         };
         assert!(err.contains("needs a url"), "{err}");
         assert_eq!(raw.get_str("url"), Some("${SWISS_TEST_MISSING_URL}"));
+    }
+
+    #[test]
+    fn a_figma_def_builds_the_oauth_http_adapter_and_keeps_its_own_shape() {
+        // The figma type is sugar over http+oauth (docs/24 rev): the built adapter IS the http
+        // one — kind is what the tag and the authorize guard read — while the def the registry
+        // holds stays type figma with no url or auth key on it, exactly as the panel wrote it.
+        let raw = def(json!({ "type": "figma", "description": "Figma design files" }));
+        let adapter = make_adapter(&raw, "figma", &crate::calls::test_log()).expect("figma builds");
+        assert_eq!(adapter.kind(), "http");
+        assert_eq!(raw.type_(), "figma");
+        assert_eq!(raw.get_str("url"), None);
+        assert_eq!(raw.get_str("auth"), None);
+        assert!(crate::oauth::is_oauth(&raw));
     }
 }

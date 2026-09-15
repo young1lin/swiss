@@ -82,6 +82,16 @@ var TYPE_FIELDS = {
     { k: "exposePrompts", label: "Expose prompts", bool: true, def: true },
     AUTOSTART_EAGER,
   ],
+  /* The figma type (docs/24 rev): the form is a description and nothing else. The endpoint
+     and the OAuth mode are the type's to decide — the server refuses a url or auth key on a
+     figma def — and the detail view's Authorize button is the one step after Save. No Test
+     button: a keyless handshake is always 401 (see runConnTest). */
+  figma: [
+    DESC_FIELD,
+    { k: "exposeResources", label: "Expose resources", bool: true, def: true },
+    { k: "exposePrompts", label: "Expose prompts", bool: true, def: true },
+    AUTOSTART_EAGER,
+  ],
   rest: [
     DESC_FIELD,
     { k: "baseUrl", label: "Base URL", ph: "https://api.github.com" },
@@ -109,6 +119,7 @@ var TYPE_LABELS = {
   redis: "redis — in-process driver",
   pg: "postgres — in-process driver",
   http: "http — proxy a remote MCP endpoint",
+  figma: "figma — Figma 官方远程 MCP（OAuth 全托管，只需授权一次）",
   rest: "rest — declare tools over a plain HTTP API",
 };
 
