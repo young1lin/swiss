@@ -1,22 +1,25 @@
 //! Test-only SSH and proxy infrastructure (docs/27 §2.6.1).
 //!
 //! Three pieces, all on ephemeral loopback ports, none of them sleeping:
-//!  - a REAL ssh server: russh's server side, accept-all auth, direct-tcpip channels
-//!    dialed back to the requested address — the far end a proxied client must reach;
+//!  - a REAL ssh server: russh's server side, auth per a chosen policy (accept-all, or
+//!    reject-everything for the bad-credentials paths), direct-tcpip channels dialed
+//!    back to the requested address — the far end a proxied or jumped client must reach.
+//!    A killable/restartable flavor keeps one fixed port and host key for the
+//!    loss-and-recovery lifecycle (docs/27 §3.4.3);
 //!  - a fake socks5 proxy speaking RFC 1928/1929, recording every byte of the handshake
 //!    and then transparently pumping to the real target;
 //!  - a fake http proxy answering CONNECT with a canned status line and pumping on 2xx.
 //!
-//! Shared by the proxy dialer tests (proxy.rs) and the manager-level lifecycle test
-//! (manager.rs); Item 3 (jump) reuses the ssh server unchanged.
+//! Shared by the proxy dialer tests (proxy.rs) and the manager-level lifecycle tests
+//! (manager.rs), including the jump chains (docs/27 §3.4).
 
 #![cfg(test)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::mpsc;
 
 /// Everything the fake socks5 proxy observed on one connection (docs/27 §2.6.2): the
@@ -41,62 +44,74 @@ pub enum SocksAuth {
     UserPass,
 }
 
-/// A real SSH server on an ephemeral loopback port. Runs until the test binary exits;
-/// accepts any password and any public key, and forwards direct-tcpip channels to the
-/// address the client asked for.
-pub async fn spawn_ssh_server() -> u16 {
-    use russh::server::{self, Auth, ChannelOpenHandle, Msg, Session};
-    use russh::Channel;
+/// What the test SSH server does with credentials (docs/27 §3.4.4): accept anything,
+/// or refuse every method — the bad-credentials paths need a server that says no.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TestAuth {
+    AcceptAll,
+    RejectAll,
+}
 
-    struct TestHandler;
+/// The russh server handler behind every test server: answer auth per the policy, and
+/// forward direct-tcpip channels to the address the client asked for.
+struct TestHandler {
+    auth: TestAuth,
+}
 
-    impl server::Handler for TestHandler {
-        type Error = russh::Error;
+impl russh::server::Handler for TestHandler {
+    type Error = russh::Error;
 
-        async fn auth_password(
-            &mut self,
-            _user: &str,
-            _password: &str,
-        ) -> Result<Auth, Self::Error> {
-            Ok(Auth::Accept)
-        }
-
-        async fn auth_publickey(
-            &mut self,
-            _user: &str,
-            _key: &russh::keys::ssh_key::PublicKey,
-        ) -> Result<Auth, Self::Error> {
-            Ok(Auth::Accept)
-        }
-
-        async fn channel_open_direct_tcpip(
-            &mut self,
-            channel: Channel<Msg>,
-            host_to_connect: &str,
-            port_to_connect: u32,
-            _originator_address: &str,
-            _originator_port: u32,
-            reply: ChannelOpenHandle,
-            _session: &mut Session,
-        ) -> Result<(), Self::Error> {
-            reply.accept().await;
-            let target = (host_to_connect.to_string(), port_to_connect as u16);
-            tokio::spawn(async move {
-                // The far side of the channel: dial the requested address and pump
-                // bytes both ways until either end closes.
-                if let Ok(mut tcp) = TcpStream::connect(target).await {
-                    let mut chan = channel.into_stream();
-                    let _ = tokio::io::copy_bidirectional(&mut chan, &mut tcp).await;
-                }
-            });
-            Ok(())
-        }
+    async fn auth_password(
+        &mut self,
+        _user: &str,
+        _password: &str,
+    ) -> Result<russh::server::Auth, Self::Error> {
+        Ok(match self.auth {
+            TestAuth::AcceptAll => russh::server::Auth::Accept,
+            TestAuth::RejectAll => russh::server::Auth::reject(),
+        })
     }
 
-    // A fresh random host key per server: the client under test runs TOFU with no
-    // expected fingerprint, so any key verifies. Built from a random seed rather than
-    // PrivateKey::random because russh's rng traits live on rand 0.10 and the workspace
-    // carries rand 0.9 — from_seed needs no rng crate at all.
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        _key: &russh::keys::ssh_key::PublicKey,
+    ) -> Result<russh::server::Auth, Self::Error> {
+        Ok(match self.auth {
+            TestAuth::AcceptAll => russh::server::Auth::Accept,
+            TestAuth::RejectAll => russh::server::Auth::reject(),
+        })
+    }
+
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::server::Msg>,
+        host_to_connect: &str,
+        port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: russh::server::ChannelOpenHandle,
+        _session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        reply.accept().await;
+        let target = (host_to_connect.to_string(), port_to_connect as u16);
+        tokio::spawn(async move {
+            // The far side of the channel: dial the requested address and pump
+            // bytes both ways until either end closes.
+            if let Ok(mut tcp) = TcpStream::connect(target).await {
+                let mut chan = channel.into_stream();
+                let _ = tokio::io::copy_bidirectional(&mut chan, &mut tcp).await;
+            }
+        });
+        Ok(())
+    }
+}
+
+/// A fresh server config with a fresh random host key: the client under test runs TOFU
+/// with no expected fingerprint, so any key verifies. Built from a random seed rather
+/// than PrivateKey::random because russh's rng traits live on rand 0.10 and the workspace
+/// carries rand 0.9 — from_seed needs no rng crate at all.
+fn test_server_config() -> Arc<russh::server::Config> {
     let seed = rand::random::<[u8; 32]>();
     let keypair = russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed);
     let key = russh::keys::PrivateKey::new(
@@ -104,27 +119,152 @@ pub async fn spawn_ssh_server() -> u16 {
         "",
     )
     .expect("a fresh host key");
-    let config = Arc::new(server::Config {
+    Arc::new(russh::server::Config {
         inactivity_timeout: None,
         auth_rejection_time: Duration::from_millis(200),
         auth_rejection_time_initial: Some(Duration::from_millis(200)),
         keys: vec![key],
         ..Default::default()
-    });
+    })
+}
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ssh");
-    let port = listener.local_addr().expect("ssh addr").port();
+/// The accept loop every server flavor shares. `track` collects each session's
+/// russh handle so a killable server can disconnect established connections too.
+fn serve_connections(
+    listener: TcpListener,
+    config: Arc<russh::server::Config>,
+    auth: TestAuth,
+    track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Ok((socket, _)) = listener.accept().await {
             let config = config.clone();
+            let track = track.clone();
             tokio::spawn(async move {
-                if let Ok(session) = server::run_stream(config, socket, TestHandler).await {
-                    let _ = session.await;
+                if let Ok(run) =
+                    russh::server::run_stream(config, socket, TestHandler { auth }).await
+                {
+                    if let Some(track) = &track {
+                        if let Ok(mut list) = track.lock() {
+                            list.push(run.handle());
+                        }
+                    }
+                    let _ = run.await;
                 }
             });
         }
-    });
+    })
+}
+
+/// A real SSH server on an ephemeral loopback port. Runs until the test binary exits;
+/// accepts any password and any public key, and forwards direct-tcpip channels to the
+/// address the client asked for.
+pub async fn spawn_ssh_server() -> u16 {
+    spawn_ssh_server_with(TestAuth::AcceptAll).await
+}
+
+/// The same server with a chosen auth policy (docs/27 §3.4.4).
+pub async fn spawn_ssh_server_with(auth: TestAuth) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ssh");
+    let port = listener.local_addr().expect("ssh addr").port();
+    serve_connections(listener, test_server_config(), auth, None);
     port
+}
+
+/// Bind 127.0.0.1:<port> with SO_REUSEADDR, so a killed server's port can be taken back
+/// by a restart. Port 0 picks an ephemeral port the usual way.
+fn bind_reuse_port(port: u16) -> TcpListener {
+    let socket = TcpSocket::new_v4().expect("a v4 socket");
+    socket
+        .set_reuseaddr(true)
+        .expect("so a restart can rebind the same port");
+    socket
+        .bind(
+            format!("127.0.0.1:{port}")
+                .parse()
+                .expect("a loopback addr"),
+        )
+        .expect("bind ssh");
+    socket.listen(64).expect("listen ssh")
+}
+
+/// A killable and restartable SSH server on one fixed port (docs/27 §3.4.3). `kill`
+/// stops the accepts and disconnects every established session — "the bastion went
+/// away" — and `restart` rebinds the SAME port with the SAME host key, so the def
+/// under test keeps pointing at it and TOFU still verifies when it comes back.
+pub struct SshServerHandle {
+    port: u16,
+    config: Arc<russh::server::Config>,
+    auth: TestAuth,
+    accept: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The live sessions' russh handles. russh runs each accepted session in its OWN
+    /// internally-spawned task, so aborting the wrapper task above cannot reach the
+    /// socket — the handle's disconnect message is the one kill switch that can.
+    sessions: Arc<Mutex<Vec<russh::server::Handle>>>,
+}
+
+impl SshServerHandle {
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Take the server down: no more accepts, and every established session is
+    /// disconnected at the protocol level — clients see their transport die.
+    pub async fn kill(&self) {
+        if let Ok(mut slot) = self.accept.lock() {
+            if let Some(task) = slot.take() {
+                task.abort();
+            }
+        }
+        // Take the list out before awaiting: a std guard must never sit across an
+        // await point, and the disconnects below are sends into the sessions.
+        let sessions = match self.sessions.lock() {
+            Ok(mut list) => std::mem::take(&mut *list),
+            Err(_) => Vec::new(),
+        };
+        for handle in sessions {
+            // A session that already ended refuses the send; that is the normal
+            // cleanup path, not an error.
+            let _ = handle
+                .disconnect(
+                    russh::Disconnect::ByApplication,
+                    "killed by the test".into(),
+                    String::new(),
+                )
+                .await;
+        }
+    }
+
+    /// Bring it back on the same port with the same host key.
+    pub async fn restart(&self) {
+        self.kill().await;
+        let task = serve_connections(
+            bind_reuse_port(self.port),
+            self.config.clone(),
+            self.auth,
+            Some(self.sessions.clone()),
+        );
+        if let Ok(mut slot) = self.accept.lock() {
+            *slot = Some(task);
+        }
+    }
+}
+
+/// The loss-and-recovery fixture (docs/27 §3.4.3): a server whose death and return are
+/// both real and observable.
+pub fn spawn_killable_ssh_server(auth: TestAuth) -> SshServerHandle {
+    let listener = bind_reuse_port(0);
+    let port = listener.local_addr().expect("ssh addr").port();
+    let config = test_server_config();
+    let sessions = Arc::new(Mutex::new(Vec::new()));
+    let task = serve_connections(listener, config.clone(), auth, Some(sessions.clone()));
+    SshServerHandle {
+        port,
+        config,
+        auth,
+        accept: Mutex::new(Some(task)),
+        sessions,
+    }
 }
 
 /// A fake socks5 proxy on an ephemeral loopback port. `rep` is the reply code it answers

@@ -13,7 +13,8 @@
 //!    before its SSH handshake (docs/27 §2): credentials reach the handshake as
 //!    components, never as a URL string.
 //!  - `ssh`     — one refcounted russh client per SSH connection: TOFU host keys, the banner,
-//!    single-flight dial, channel opens, and the transport-death watcher.
+//!    single-flight dial, channel opens, the transport-death watcher, and the jump
+//!    chains that dial through another connection's live session (docs/27 §3).
 //!  - `forward` — one rule's local listener: accept, cap, pipe socket <-> SSH channel, and the
 //!    close-destroys-everything-then-verify-release contract.
 //!  - `manager` — the live state machine: start/stop with per-rule serialization, reconnect
