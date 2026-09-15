@@ -122,6 +122,17 @@ impl TunnelStore {
                 return;
             }
         };
+        // docs/25 E2: whole-value bare vault refs become envelope refs in memory here —
+        // the file keeps its spelling until the next save rewrites it. Mixed strings stay
+        // as authored (a mid-string rewrite would need the ambiguous scan the envelope
+        // exists to replace).
+        let mut raw = raw;
+        let migrated = swiss_core::secure::refs::migrate_legacy(&mut raw);
+        if migrated > 0 {
+            log::info(&format!(
+                "tunnels.json: {migrated} legacy secret:// reference(s) migrated to ${{secret://...}}"
+            ));
+        }
         for c in raw
             .get("connections")
             .and_then(Value::as_array)
@@ -849,6 +860,34 @@ mod tests {
             target_port: 5432.0,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn legacy_bare_vault_refs_load_as_envelope_refs() {
+        // docs/25 E2 at the tunnels surface: a connection saved with a whole-value bare
+        // password loads wrapped in memory; the disk file keeps its legacy spelling — a
+        // load is not a write.
+        let (dir, mut s) = temp_store("legacy-refs");
+        let c = s
+            .add_connection(&ConnInput {
+                auth_type: AuthType::Password,
+                password: Some("secret://legacy-tunnel".into()),
+                ..conn_input("bastion")
+            })
+            .expect("seed connection");
+        let path = dir.join("tunnels.json");
+        let reloaded = TunnelStore::new(&path, 19999);
+        assert_eq!(
+            reloaded
+                .connection(&c.id)
+                .expect("still there")
+                .password
+                .as_deref(),
+            Some("${secret://legacy-tunnel}")
+        );
+        let disk = read_secure_json(&path).expect("re-read").expect("present");
+        assert_eq!(disk["connections"][0]["password"], "secret://legacy-tunnel");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
