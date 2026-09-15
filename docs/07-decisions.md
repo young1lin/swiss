@@ -615,4 +615,40 @@ What was rejected: keeping Figma as an http preset the panel fills in (a saved d
 carries a URL the operator never chose, and "add Figma" still meant five fields); and a
 generic per-provider type registry (one provider does not justify a table — the second one
 reopens this ADR).
+---
+
+## ADR-022 — The zai-vision type: @z_ai/mcp-server ported native, the Node child retired
+
+**Status: Accepted (2026-09-16).** The operator asked whether the GLM vision MCP could stop
+being a Node child and become a type of its own, the way figma did.
+
+`zai-vision` was the last proc def whose child sat in memory for a metered HTTP API. What
+the upstream `@z_ai/mcp-server` (0.1.5) actually is: eight tools, each a fixed system prompt
+plus ONE multimodal chat-completions call against an OpenAI-compatible endpoint, URL or
+base64 media in, message text out. No state, no streaming, no stdio protocol worth a process.
+So the port is an `Engine` compiled into the binary (`adapters/zai.rs`): idle cost zero, the
+Node child and its ~tens of MB working set gone.
+
+The decisions that keep it honest:
+
+- **Parity is the contract.** Tool names, descriptions, JSON schemas, the optional-argument
+  prompt weaving (`<language_hint>` etc.), URL passthrough vs base64 data URLs, ZHIPU/ZAI
+  bases, thinking enabled, 300 s timeout: all byte-identical to the deployed build. The
+  system prompts live in `zai_prompts.rs` extracted VERBATIM by
+  `scripts/extract-zai-prompts.js` — never retyped by hand. One deliberate deviation, noted
+  in code: retries skip non-429 4xx (upstream retried everything).
+- **The key is always a `${...}` reference.** `build_def` refuses a literal apiKey: a
+  literal would ride to the panel unmasked ("apiKey" is not a whole-key secret name), and
+  the sealed env store is where a credential belongs (docs/19 D4 reached through the type).
+- **No ping, no Test button.** Same rule as http/rest: a metered endpoint must not be
+  probed on a timer; the registry honestly reports unknown. The panel's runConnTest says
+  so instead of firing a call.
+- **The def says only what the engine cannot know.** `mode` (ZHIPU = open.bigmodel.cn,
+  ZAI = api.z.ai) or a `baseUrl` override for self-hosted GLM, an optional `model`, optional
+  `proxy`/`timeoutMs`. No `url` — that would be a second way to pick the endpoint.
+
+What was rejected: keeping the proc def and shrinking its idle footprint (a lazy child still
+costs a wakeup, an npx cache copy, and a process per use — all to wrap one HTTP POST); and a
+generic "OpenAI-compatible vision" type (the eight prompts ARE the product; a generic type
+would have to carry them as config, which is retyping the prompts by another door).
 

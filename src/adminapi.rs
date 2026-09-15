@@ -235,6 +235,64 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         }
         return Ok(ServerDef(def));
     }
+    // The zai-vision type: the GLM vision tools compiled in (adapters/zai.rs). The def carries
+    // only what the engine cannot know: the API key as a ${...} reference, the ZHIPU/ZAI mode
+    // (or a self-hosted baseUrl override), and optionally a model name. A `url` would be a
+    // second way to pick the endpoint - that is what mode/baseUrl are for.
+    if type_ == "zai-vision" {
+        let api_key = str_field(body, "apiKey").unwrap_or_default().trim().to_string();
+        if api_key.is_empty() {
+            return Err("apiKey is required for a zai-vision MCP (a ${ENV_VAR} reference)".into());
+        }
+        // The credential rule, enforced at the type: a zai-vision key is ALWAYS a ${...}
+        // reference. A literal would ride to the panel unmasked ("apiKey" is not a
+        // whole-key secret name), and the sealed env store is where it belongs anyway.
+        if !swiss_host::config::is_env_ref(&json!(api_key)) {
+            return Err(
+                "apiKey must be a ${ENV_VAR} or ${secret://name} reference for a zai-vision MCP".into(),
+            );
+        }
+        def.insert("apiKey".into(), json!(api_key));
+        if let Some(mode) = str_field(body, "mode") {
+            let mode = mode.trim().to_ascii_uppercase();
+            if !mode.is_empty() {
+                if mode != "ZHIPU" && mode != "ZAI" {
+                    return Err(format!("unknown mode '{mode}' (supported: ZHIPU | ZAI)"));
+                }
+                def.insert("mode".into(), json!(mode));
+            }
+        }
+        for key in ["model", "baseUrl"] {
+            if let Some(v) = str_field(body, key) {
+                if !v.trim().is_empty() {
+                    def.insert(key.into(), json!(v.trim()));
+                }
+            }
+        }
+        if let Some(description) = str_field(body, "description") {
+            if !description.trim().is_empty() {
+                def.insert("description".into(), json!(description.trim()));
+            }
+        }
+        if let Some(timeout) = body.get("timeoutMs") {
+            if !timeout.is_null() && timeout.as_f64().is_some_and(|n| n > 0.0) {
+                def.insert("timeoutMs".into(), timeout.clone());
+            }
+        }
+        if let Some(proxy) = str_field(body, "proxy") {
+            if !proxy.trim().is_empty() {
+                def.insert("proxy".into(), json!(proxy.trim()));
+            }
+        }
+        for key in ["exposeResources", "exposePrompts"] {
+            if let Some(v) = body.get(key) {
+                if !v.is_null() && !as_bool(v) {
+                    def.insert(key.into(), json!(false));
+                }
+            }
+        }
+        return Ok(ServerDef(def));
+    }
     // A remote MCP is configured, not launched: where it is, and the headers its API key travels
     // in. Shaped by hand rather than DIRECT_FIELDS because `headers` is a map, and because an
     // http MCP with no url has nothing to connect to at all.
@@ -337,7 +395,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         .map(|(_, f)| *f)
     else {
         return Err(format!(
-            "unknown type: {type_} (supported: mysql | redis | pg | proc | http | rest | echo | figma)"
+            "unknown type: {type_} (supported: mysql | redis | pg | proc | http | rest | echo | figma | zai-vision)"
         ));
     };
     for k in allowed {

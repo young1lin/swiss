@@ -358,6 +358,13 @@ async function runConnTest(p) {
     out.style.color = "";
     return;
   }
+  // A metered vision API: the only honest "test" is a real generation, and that spends
+  // tokens. The health probe already skips it for the same reason — say so instead.
+  if (type === "zai-vision") {
+    out.textContent = "Metered GLM API: every call spends tokens — save it and call a tool from an MCP client instead.";
+    out.style.color = "";
+    return;
+  }
   btn.disabled = true;
   btn.textContent = "Testing…";
   out.hidden = false;
