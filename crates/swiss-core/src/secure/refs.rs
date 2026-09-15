@@ -1,28 +1,35 @@
-//! The one resolver every credential string passes on its way to a live use (docs/19 D1/D4).
+//! The one resolver every credential string passes on its way to a live use (docs/19 D4,
+//! grammar revised by docs/25 E1).
 //!
-//! Two reference families, one scanner, one pass:
+//! One envelope, two families, one pass:
 //! - `${UPPER_SNAKE}` — env refs, resolved against envstore's overlay plus the process env.
 //!   Missing stays the historical lenient contract: expand to an empty string. Ambient machine
 //!   state may legitimately be absent.
-//! - `secret://kebab-name` — vault refs, resolved against the secret vault. Missing is a HARD
-//!   failure naming the reference: the operator declared a secret this machine does not hold,
-//!   and silently sending an empty credential would turn a configuration error into a
-//!   mysterious 401 on someone else's server.
+//! - `${secret://kebab-name}` — vault refs, resolved against the secret vault. Missing is a
+//!   HARD failure naming the reference: the operator declared a secret this machine does not
+//!   hold, and silently sending an empty credential would turn a configuration error into a
+//!   mysterious 401 on someone else's server. The scheme inside the envelope keeps the
+//!   reference self-describing; the envelope gives it a boundary.
+//!
+//! Outside the envelope there are NO references. A bare `secret://` is literal text —
+//! `https://x/secret://aaa/y` passes through byte-identical whatever the vault holds,
+//! because without delimiters a scheme substring cannot be told apart from a URL path (the
+//! defect docs/25 §0 records as the reason the bare scheme was retired).
 //!
 //! A replaced value is never re-scanned: a secret whose value itself contains `${X}` is data,
 //! not a second-order reference. The scan advances one CHARACTER past anything it does not
-//! consume, so multi-byte text survives untouched (same care as config.rs's scanner).
+//! consume, so multi-byte text survives untouched.
 
 use serde_json::{Map, Value};
 
 use super::envstore::env_lookup;
-use super::secretstore::vault_lookup;
+use super::secretstore::{valid_name, vault_lookup};
 
-/// The scheme a vault reference starts with.
+/// The scheme a vault reference carries inside the envelope.
 const SECRET_SCHEME: &str = "secret://";
 
-/// Resolve every reference in ONE string (docs/19 D4). Err carries the sentence an operator
-/// reads — it names the reference, never a value.
+/// Resolve every reference in ONE string (docs/19 D4; grammar docs/25 E1). Err carries the
+/// sentence an operator reads — it names the reference, never a value.
 pub fn resolve(input: &str) -> Result<String, String> {
     resolve_collect(input).map(|(out, _)| out)
 }
@@ -36,63 +43,43 @@ pub fn resolve_collect(input: &str) -> Result<(String, Vec<String>), String> {
     let chars: Vec<char> = input.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        // --- vault refs: secret://name -----------------------------------------------
-        if input[byte_of(&chars, i)..].starts_with(SECRET_SCHEME) {
-            let mut j = i + SECRET_SCHEME.len();
-            while j < chars.len()
-                && (chars[j].is_ascii_lowercase() || chars[j].is_ascii_digit() || chars[j] == '-')
-            {
-                j += 1;
-            }
-            let name: String = chars[i + SECRET_SCHEME.len()..j].iter().collect();
-            let first = chars.get(i + SECRET_SCHEME.len()).copied();
-            match first {
-                // A name-shaped run: a real reference, present or missing.
-                Some(c) if c.is_ascii_lowercase() => {
-                    let Some(value) = vault_lookup(&name) else {
-                        return Err(format!(
-                            "references secret://{name} which is not in the vault"
-                        ));
-                    };
-                    resolved.push(value.clone());
-                    out.push_str(&value);
-                    i = j;
-                    continue;
-                }
-                // Letters that cannot start a kebab name: almost certainly a typo of a
-                // reference. Refuse it — a literal passthrough would ship a credential-shaped
-                // string to a third party.
-                Some(c) if c.is_ascii_alphabetic() || c == '_' => {
-                    let mut shown = String::new();
-                    for ch in &chars[i + SECRET_SCHEME.len()..] {
-                        if ch.is_whitespace() || shown.chars().count() >= 24 {
-                            break;
-                        }
-                        shown.push(*ch);
+        // --- the envelope: ${...} ----------------------------------------------------
+        if chars[i] == '$' && chars.get(i + 1) == Some(&'{') {
+            if let Some(close) = (i + 2..chars.len()).find(|&j| chars[j] == '}') {
+                let content: String = chars[i + 2..close].iter().collect();
+                // Vault refs: the scheme inside the envelope is a declared intent. A
+                // well-formed name resolves or fails hard; a malformed one refuses rather
+                // than shipping a credential-shaped literal to a third party.
+                if let Some(name) = content.strip_prefix(SECRET_SCHEME) {
+                    if valid_name(name) {
+                        let Some(value) = vault_lookup(name) else {
+                            return Err(format!(
+                                "references secret://{name} which is not in the vault"
+                            ));
+                        };
+                        resolved.push(value.clone());
+                        out.push_str(&value);
+                        i = close + 1;
+                        continue;
                     }
+                    let shown: String = content.chars().take(24).collect();
                     return Err(format!(
-                        "invalid reference 'secret://{shown}' — secret names are lowercase kebab ([a-z][a-z0-9-]{{0,63}})"
+                        "invalid reference '${{{shown}}}' — secret names are lowercase kebab ([a-z][a-z0-9-]{{0,63}})"
                     ));
                 }
-                // No name claimed (punctuation, digits, end): plain text that happens to
-                // contain the scheme — pass it through.
-                _ => {}
-            }
-        }
-        // --- env refs: ${UPPER_SNAKE} ------------------------------------------------
-        if chars[i] == '$' && chars.get(i + 1) == Some(&'{') {
-            let mut j = i + 2;
-            while j < chars.len()
-                && (chars[j].is_ascii_uppercase() || chars[j].is_ascii_digit() || chars[j] == '_')
-            {
-                j += 1;
-            }
-            if j > i + 2 && chars.get(j) == Some(&'}') {
-                let name: String = chars[i + 2..j].iter().collect();
-                // Lenient by contract (docs/19 D4): ambient state may be absent.
-                out.push_str(&env_lookup(&name).unwrap_or_default());
-                i = j + 1;
-                continue;
+                // Env refs: the pre-vault grammar, unchanged and lenient (docs/19 D4).
+                let is_env_name = !content.is_empty()
+                    && content
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                if is_env_name {
+                    out.push_str(&env_lookup(&content).unwrap_or_default());
+                    i = close + 1;
+                    continue;
+                }
+                // No family claims the content — the '$' is plain text. Advance ONE
+                // character so the rest rescans exactly as authored (`${lowercase}`
+                // stays `${lowercase}`, the contract its test locks in).
             }
         }
         out.push(chars[i]);
@@ -101,10 +88,32 @@ pub fn resolve_collect(input: &str) -> Result<(String, Vec<String>), String> {
     Ok((out, resolved))
 }
 
-/// The char index as a byte index into `input` (chars are indexed uniformly; the byte offset
-/// is what starts_with needs).
-fn byte_of(chars: &[char], i: usize) -> usize {
-    chars[..i].iter().map(|c| c.len_utf8()).sum()
+/// The one-time shape normalization (docs/25 E2): rewrite WHOLE-VALUE bare vault refs
+/// `secret://name` into the envelope form `${secret://name}`. Loaders call it on a state
+/// file's tree right after reading; the disk copy catches up on the next save, so no boot
+/// ever rewrites a file just to re-spell a reference. Mixed strings (`Bearer secret://x`)
+/// and bare schemes inside larger text (URLs) are left byte-identical: rewriting mid-string
+/// tokens would need exactly the ambiguous scan the envelope exists to replace. Idempotent;
+/// returns how many strings changed, for the loader's one-line boot note.
+pub fn migrate_legacy(v: &mut Value) -> usize {
+    match v {
+        Value::String(s) => {
+            let Some(name) = s.strip_prefix(SECRET_SCHEME) else {
+                return 0;
+            };
+            if !valid_name(name) {
+                return 0;
+            }
+            *s = format!("${{{SECRET_SCHEME}{name}}}");
+            1
+        }
+        Value::Array(items) => items.iter_mut().map(migrate_legacy).sum(),
+        Value::Object(map) => {
+            // Keys are field names, never credentials — the same stance resolve_at takes.
+            map.values_mut().map(migrate_legacy).sum()
+        }
+        _ => 0,
+    }
 }
 
 /// Walk a serde_json Value and resolve every string in it. Errors carry the JSON path, so the
@@ -177,17 +186,19 @@ mod tests {
     }
 
     #[test]
-    fn a_present_vault_ref_substitutes() {
+    fn a_vault_ref_substitutes_whole_and_embedded() {
         plant("refs-present", "sk_live_xyz");
+        assert_eq!(resolve("${secret://refs-present}").unwrap(), "sk_live_xyz");
+        // The reference is a token inside a larger string, not a whole-value convention.
         assert_eq!(
-            resolve("Bearer secret://refs-present").unwrap(),
+            resolve("Bearer ${secret://refs-present}").unwrap(),
             "Bearer sk_live_xyz"
         );
     }
 
     #[test]
     fn a_missing_vault_ref_fails_naming_the_reference() {
-        let err = resolve("Bearer secret://refs-absent-tail").unwrap_err();
+        let err = resolve("Bearer ${secret://refs-absent-tail}").unwrap_err();
         assert!(
             err.contains("secret://refs-absent-tail") && err.contains("not in the vault"),
             "names the reference: {err}"
@@ -196,16 +207,36 @@ mod tests {
     }
 
     #[test]
-    fn an_invalid_secret_name_is_refused() {
-        let err = resolve("secret://BadName rest").unwrap_err();
-        assert!(err.contains("lowercase kebab"), "explains the grammar: {err}");
+    fn an_invalid_secret_name_inside_the_envelope_is_refused() {
+        for bad in ["${secret://BadName}", "${secret://}", "${secret://a b}"] {
+            let err = resolve(bad).unwrap_err();
+            assert!(err.contains("lowercase kebab"), "explains the grammar for {bad}: {err}");
+        }
     }
 
     #[test]
-    fn bare_scheme_without_a_name_is_plain_text() {
-        // "secret://" followed by punctuation or end claims no name — pass through.
+    fn a_bare_scheme_is_literal_text_whatever_the_vault_holds() {
+        // The URL that decided the grammar (docs/25 §0): no envelope, no reference —
+        // byte-identical passthrough with the name stored AND with it absent.
+        plant("refs-url", "v");
+        let stored = "https://test.com/secret://refs-url/tail";
+        assert_eq!(resolve(stored).unwrap(), stored);
+        let absent = "https://test.com/secret://refs-never-planted/tail";
+        assert_eq!(resolve(absent).unwrap(), absent);
+        // Punctuation after the scheme claims no name either — same as ever.
         assert_eq!(resolve("see secret:// docs").unwrap(), "see secret:// docs");
         assert_eq!(resolve("secret://").unwrap(), "secret://");
+    }
+
+    #[test]
+    fn an_unterminated_envelope_is_literal_text() {
+        // No closing brace, no envelope: the '$' passes through and nothing is claimed.
+        plant("refs-present", "v");
+        assert_eq!(
+            resolve("${secret://refs-present").unwrap(),
+            "${secret://refs-present"
+        );
+        assert_eq!(resolve("Bearer ${secret://x").unwrap(), "Bearer ${secret://x");
     }
 
     #[test]
@@ -213,9 +244,17 @@ mod tests {
         unsafe { std::env::set_var("SWISS_REFS_TEST_B", "beta") };
         plant("refs-mixed", "gamma");
         assert_eq!(
-            resolve("${SWISS_REFS_TEST_B}/secret://refs-mixed/tail").unwrap(),
+            resolve("${SWISS_REFS_TEST_B}/${secret://refs-mixed}/tail").unwrap(),
             "beta/gamma/tail"
         );
+    }
+
+    #[test]
+    fn a_nested_envelope_scans_from_the_inside_out() {
+        // The outer '${' claims up to the FIRST '}', which names no family it knows, so
+        // the '$' passes through and the inner reference resolves on its own pass.
+        plant("refs-nested", "v");
+        assert_eq!(resolve("${${secret://refs-nested}}").unwrap(), "${v}");
     }
 
     #[test]
@@ -223,7 +262,7 @@ mod tests {
         // The planted value itself contains an env ref — data, not a second-order reference.
         plant("refs-indirect", "x=${SWISS_REFS_TEST_NEVER_SET}");
         assert_eq!(
-            resolve("secret://refs-indirect").unwrap(),
+            resolve("${secret://refs-indirect}").unwrap(),
             "x=${SWISS_REFS_TEST_NEVER_SET}"
         );
     }
@@ -231,7 +270,7 @@ mod tests {
     #[test]
     fn collect_returns_what_secrets_resolved_to() {
         plant("refs-collect", "sk_mask_me");
-        let (out, resolved) = resolve_collect("a secret://refs-collect b").unwrap();
+        let (out, resolved) = resolve_collect("a ${secret://refs-collect} b").unwrap();
         assert_eq!(out, "a sk_mask_me b");
         assert_eq!(resolved, vec!["sk_mask_me".to_string()]);
     }
@@ -239,19 +278,45 @@ mod tests {
     #[test]
     fn value_walk_reports_the_json_path() {
         plant("refs-walk", "v");
-        let def = json!({ "headers": { "Authorization": "secret://refs-walk" } });
+        let def = json!({ "headers": { "Authorization": "${secret://refs-walk}" } });
         let resolved = resolve_value(&def).unwrap();
         assert_eq!(resolved["headers"]["Authorization"], "v");
 
-        let bad = json!({ "headers": { "Authorization": "secret://refs-walk-missing" } });
+        let bad = json!({ "headers": { "Authorization": "${secret://refs-walk-missing}" } });
         let err = resolve_value(&bad).unwrap_err();
         assert!(
             err.starts_with("headers.Authorization "),
             "carries the path: {err}"
         );
 
-        let arr = json!({ "args": ["--key", "secret://refs-walk-missing"] });
+        let arr = json!({ "args": ["--key", "${secret://refs-walk-missing}"] });
         let err = resolve_value(&arr).unwrap_err();
         assert!(err.starts_with("args[1] "), "arrays carry an index: {err}");
+    }
+
+    #[test]
+    fn migration_rewrites_whole_value_bare_refs_only() {
+        let mut v = json!({
+            "headers": {
+                "X-Key": "secret://m-1",
+                "Auth": "Bearer secret://m-2",
+                "Url": "https://x/secret://m-1/tail",
+                "Keep": "plain"
+            },
+            "args": ["secret://m-3", "no-ref"],
+            "shaped": "secret://Bad-Name"
+        });
+        assert_eq!(migrate_legacy(&mut v), 2);
+        assert_eq!(v["headers"]["X-Key"], "${secret://m-1}");
+        assert_eq!(v["args"][0], "${secret://m-3}");
+        // Mixed strings, URLs, non-refs and invalid names stay byte-identical: a mid-string
+        // rewrite would need the ambiguous scan the envelope exists to replace.
+        assert_eq!(v["headers"]["Auth"], "Bearer secret://m-2");
+        assert_eq!(v["headers"]["Url"], "https://x/secret://m-1/tail");
+        assert_eq!(v["headers"]["Keep"], "plain");
+        assert_eq!(v["args"][1], "no-ref");
+        assert_eq!(v["shaped"], "secret://Bad-Name");
+        // Idempotent: a second pass over the same tree finds nothing.
+        assert_eq!(migrate_legacy(&mut v), 0);
     }
 }

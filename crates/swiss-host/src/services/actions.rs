@@ -737,7 +737,7 @@ async fn legacy_command_env_vars_reach_the_child_and_refs_in_values_resolve() {
         // The strict half of the credential contract (docs/19 D4): the legacy command path
         // stays lenient for env refs, but a missing vault reference names itself and refuses.
         let err = parse_legacy_input(&json!({
-            "command": "echo secret://actions-missing-key"
+            "command": "echo ${secret://actions-missing-key}"
         }))
         .expect_err("refused");
         let msg = format!("{err}");
@@ -752,8 +752,8 @@ async fn legacy_command_env_vars_reach_the_child_and_refs_in_values_resolve() {
     fn a_present_vault_reference_resolves_and_masks() {
         plant_secret("actions-present-key", "sk_live_actions_mask_me");
         let spec = parse_legacy_input(&json!({
-            "command": "echo token=secret://actions-present-key",
-            "env": { "MODE": "secret://actions-present-key" }
+            "command": "echo token=${secret://actions-present-key}",
+            "env": { "MODE": "${secret://actions-present-key}" }
         }))
         .expect("resolves");
         // The command carries the value (tokenized: the token holding the resolved secret).

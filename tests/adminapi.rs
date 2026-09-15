@@ -2464,7 +2464,7 @@ async fn the_vault_stores_overwrites_and_deletes_by_rev() {
     assert_eq!(body["have"], rev2 + 1);
     assert_eq!(body["saw"], rev);
 
-    let resolved = swiss_core::secure::refs::resolve("secret://panel-roundtrip").expect("stored");
+    let resolved = swiss_core::secure::refs::resolve("${secret://panel-roundtrip}").expect("stored");
     assert_eq!(resolved, "second", "the overwrite won");
 
     let (status, _) = h.delete("/api/secrets/panel-roundtrip").await;
@@ -2519,7 +2519,7 @@ async fn an_mcp_builder_refuses_a_missing_vault_reference() {
     let d = def(json!({
         "type": "http",
         "url": "https://example.test/mcp",
-        "headers": { "Authorization": "Bearer secret://context7" }
+        "headers": { "Authorization": "Bearer ${secret://context7}" }
     }));
     let err = match make_adapter(&d, "context7", &h.calls) {
         Err(e) => e,
@@ -2556,7 +2556,7 @@ async fn the_rest_connection_test_fails_honestly_on_a_missing_vault_reference() 
                 "type": "rest",
                 "baseUrl": "https://example.test/api",
                 "tools": [{ "name": "ping", "template": { "method": "GET", "path": "/x" } }],
-                "headers": { "Authorization": "Bearer secret://rest-test-gone" }
+                "headers": { "Authorization": "Bearer ${secret://rest-test-gone}" }
             }),
         )
         .await;
