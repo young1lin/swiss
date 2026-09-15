@@ -36,8 +36,10 @@ $Exe = Join-Path $PSScriptRoot '..\target-test\release\swiss.exe'
 $HealthUrl = "http://127.0.0.1:$Port/health"
 
 # Sealed state worth snapshotting: keys, config, managed MCPs, tunnels, jobs and their run
-# facts, the env store, the secret vault (docs/19). Copied, never linked - the test home must
-# be a point-in-time snapshot the test instance may then scribble over freely.
+# facts, the env store, the secret vault (docs/19), and the OAuth grants (docs/24 - without
+# that file a 19998 Figma MCP would answer needs-auth on a home that holds a real grant).
+# Copied, never linked - the test home must be a point-in-time snapshot the test instance may
+# then scribble over freely.
 $StateFiles = @(
     'master.key',
     'gateway.config.json',
@@ -46,7 +48,8 @@ $StateFiles = @(
     'jobs.json',
     'jobs-state.json',
     'env.json',
-    'secrets.json'
+    'secrets.json',
+    'mcp-oauth.json'
 )
 
 function Get-PortOwnerPid {

@@ -671,6 +671,70 @@ fn persist_locked(map: &HashMap<String, StoredCredentials>) -> Result<(), String
         .map_err(|err| format!("persisting oauth credentials failed: {err}"))
 }
 
+/// An MCP rename re-keys its stored credentials (the store is name-keyed, docs/24 D1). A name
+/// holding nothing is a no-op — renaming an MCP that never authorized must not fail the rename.
+/// A collision at the destination is refused rather than silently overwritten.
+pub fn rename_credentials(from: &str, to: &str) -> Result<(), String> {
+    let mut guard = store().write().map_err(|_| "credential store lock poisoned")?;
+    if !guard.contains_key(from) {
+        return Ok(());
+    }
+    if guard.contains_key(to) {
+        return Err(format!("oauth credentials already exist under '{to}'"));
+    }
+    if let Some(creds) = guard.remove(from) {
+        guard.insert(to.to_string(), creds);
+    }
+    persist_locked(&guard)
+}
+
+// --- authorize flows: the pollable state behind the admin API (docs/24 D5) --------------------------
+
+/// One authorize flow's live state, written by the flow task and polled by the admin API. Held
+/// in AppContext's name-keyed map; a new POST replaces a terminal handle and is refused while
+/// one is live (single-flight per name).
+pub struct FlowHandle {
+    /// Identifies this attempt in API answers; random per POST.
+    pub flow_id: String,
+    pub status: RwLock<FlowStatus>,
+}
+
+/// The four states of docs/24 D5. `Starting` and `AuthorizationRequired` are live (the flow owns
+/// a loopback listener); `Approved` and `Error` are terminal — the panel stops polling on them.
+#[derive(Clone)]
+pub enum FlowStatus {
+    /// Discovery + dynamic registration in flight.
+    Starting,
+    /// The URL the panel must open in a real browser.
+    AuthorizationRequired(String),
+    /// Tokens exchanged and stored, the MCP started. `tools` counts the live tools/list.
+    Approved { tools: usize },
+    /// Terminal failure; the message is panel-safe (no token ever travels this path, D7).
+    Error(String),
+}
+
+impl FlowStatus {
+    /// The JSON the poll route answers — status strings are the panel's contract (D5).
+    pub fn to_json(&self) -> Value {
+        match self {
+            FlowStatus::Starting => json!({ "status": "starting" }),
+            FlowStatus::AuthorizationRequired(url) => {
+                json!({ "status": "authorization_required", "authorizationUrl": url })
+            }
+            FlowStatus::Approved { tools } => json!({ "status": "approved", "tools": tools }),
+            FlowStatus::Error(message) => json!({ "status": "error", "error": message }),
+        }
+    }
+
+    /// Terminal states end polling (the panel loop exits on them).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            FlowStatus::Approved { .. } | FlowStatus::Error(_)
+        )
+    }
+}
+
 // --- the authorization flow (docs/24 D2 steps 3–6, D5) ---------------------------------------------
 
 /// A running authorization flow. `start_flow` binds the loopback callback, registers the

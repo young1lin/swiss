@@ -468,3 +468,51 @@ The decisions that shape the implementation:
 - **The panel debounces 150ms** and only asks when the caret ends a word
   (`[A-Za-z0-9_.$]+`); the list borrows the SQL overlay's mirror trick to sit at the caret
   and owns only the keys it consumed — arrows, Tab/Enter, Esc — leaving Ctrl+Enter to Run.
+
+---
+
+## ADR-020 — HTTP MCP OAuth: impersonate the allowlisted client, own the token
+
+**Status: Accepted (2026-09-15).** Spec: docs/24 (in the main worktree).
+
+Remote MCPs behind OAuth — Figma being the one that started this — gate every request behind a
+provider bearer, and the provider's dynamic client registration (RFC 7591) admits only two
+exact `client_name` strings: `"Claude Code"` and `"Codex"`. Anything else registers 403. So the
+question was never "which OAuth library" — it was how a gateway whose whole identity is *not*
+being Claude Code gets through that door, and where the resulting tokens live.
+
+The decisions that shape the implementation:
+
+- **Impersonation is a default, not a disguise.** `oauthClientName` on the http def overrides
+  the provider default (`"Claude Code"` for Figma, per `provider_defaults`); nothing else about
+  the client lies. The allowlist is the provider's bug to carry, and the refusal a def-level
+  `oauthClientName` still gets is answered with the two accepted names spelled out.
+- **Endpoints are discovered, never hard-coded.** RFC 9728 → RFC 8414, every flow. Figma moved
+  its scopes to the protected-resource document; discovery reads them there first.
+- **Credentials are a sealed file of their own — `mcp-oauth.json`, keyed by MCP name — not the
+  vault (docs/19).** The vault is operator-typed values referenced from defs; OAuth grants are
+  machine-issued pairs the def never names. `swiss export/import` carries the section, so a
+  machine move keeps its grants (ADR-014's plaintext-escape reasoning applied twice).
+- **The def surface is two keys**: `auth: "oauth"` turns Authorization over to the gateway (a
+  hand-written Authorization header alongside is refused at construction), and the optional
+  `oauthClientName`. Everything else — discovery URLs, client registration, PKCE, refresh —
+  is the adapter's business, invisible in config.
+- **"Anytime auth" is one POST away.** `POST /api/mcps/{name}/authorize` single-flights a flow
+  per name (a live flow is handed back, a terminal one replaced); the panel's Authorize button
+  opens the consent URL in a real browser window once and polls to `approved`, which stores the
+  grant atomically and starts the MCP. A dead refresh token degrades to exactly this button —
+  the 401 path refreshes once, retries once, then clears the credentials and surfaces the
+  `needs authorization` marker instead of looping.
+- **The single-flight dedups on the refused token, not on freshness.** A no-expiry access token
+  reads "fresh" right up to the 401 that proves it dead; shortcutting on freshness hands the
+  corpse back to the retry. The check is "has the stored token *changed* since this one was
+  refused" — the bug class the integration suite pinned.
+- **No new dependency.** sha2 0.11 (PKCE S256) reuses the units swiss-core already links for
+  HKDF; `cargo tree -d` is byte-identical to the baseline. The flow's loopback callback is one
+  ephemeral axum listener per authorize click, gone when the flow ends — zero idle cost.
+
+What was rejected: a general provider-UI (this is one flow, Figma-shaped, with defaults per
+provider at the code level); the device flow (the loopback redirect is strictly better on a
+desktop with a browser); token reveal in the panel (D7 redaction — the grant is never shown);
+and auto-reauthorize (a grant that died needs a human consent click, by design).
+
