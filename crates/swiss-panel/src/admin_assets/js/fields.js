@@ -61,7 +61,7 @@ var TYPE_FIELDS = {
     {
       k: "headers", label: "Headers (NAME=VALUE per line)", area: true, kv: true,
       ph: "Authorization=Bearer ${CONTEXT7_API_KEY}",
-      hint: "Where the remote's API key goes. Prefer a reference — secret://name (store it once on the Plugins page) or ${ENV_VAR} — so neither this panel nor managed.json ever holds the value.",
+      hint: "Where the remote's API key goes. Prefer a reference — ${secret://name} (store it once on the Plugins page) or ${ENV_VAR} — so neither this panel nor managed.json ever holds the value.",
     },
     {
       k: "proxy", label: "Proxy", ph: "http://127.0.0.1:7890 or ${MY_PROXY}",
@@ -77,7 +77,7 @@ var TYPE_FIELDS = {
     {
       k: "headers", label: "Headers (NAME=VALUE per line)", area: true, kv: true,
       ph: "Authorization=Bearer ${MY_API_KEY}",
-      hint: "Prefer a reference — secret://name (store it once on the Plugins page) or ${ENV_VAR} — so neither this panel nor managed.json ever holds the value.",
+      hint: "Prefer a reference — ${secret://name} (store it once on the Plugins page) or ${ENV_VAR} — so neither this panel nor managed.json ever holds the value.",
     },
     {
       k: "proxy", label: "Proxy", ph: "http://127.0.0.1:7890 or ${MY_PROXY}",

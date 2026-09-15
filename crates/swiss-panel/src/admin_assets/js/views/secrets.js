@@ -52,7 +52,7 @@ async function loadSecrets() {
 function rowHtml(name) {
   return '<div class="row" data-secret="' + esc(name) + '"><div class="row-main">' +
     '<div class="name">' + esc(name) + "</div>" +
-    '<div class="desc"><code>secret://' + esc(name) + '</code> — substituted at run time wherever a credential is used</div>' +
+    '<div class="desc"><code>${secret://' + esc(name) + '}</code> — substituted at run time wherever a credential is used</div>' +
     "</div>" + '<div class="row-act">' +
       '<button class="btn" data-skcopy="' + esc(name) + '">Copy ref</button> ' +
       '<button class="btn danger" data-skdel="' + esc(name) + '">Delete</button>' +
@@ -102,7 +102,7 @@ function paintGroups() {
   painted = signature();
   host.innerHTML = "";
   if (!secrets.list.length) {
-    host.innerHTML = emptyHtml({ icon: "key", title: "No secrets yet", hint: "Store a credential once, reference it everywhere as secret://name." });
+    host.innerHTML = emptyHtml({ icon: "key", title: "No secrets yet", hint: "Store a credential once, reference it everywhere as ${secret://name}." });
     return;
   }
   slice(secrets.list, secrets.groups || ["default"], groupOfName).forEach(function (g) {
@@ -151,7 +151,7 @@ function render() {
   // No location title: the context bar already says "Gateway / Secrets".
   $("pane").innerHTML = '<div class="wide">' +
     '<div class="pane-head"><div>' +
-      '<div class="pane-desc">Device-bound vault (docs/19). A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: <code>secret://name</code> in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed.</div>' +
+      '<div class="pane-desc">Device-bound vault (docs/19). A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: <code>${secret://name}</code> in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed.</div>' +
     "</div></div>" +
     '<div class="vault-store">' +
       '<input class="v v-sk-name" id="skName" placeholder="name — lowercase kebab (a-z 0-9 -)">' +
@@ -179,7 +179,7 @@ function wire() {
       });
       return;
     }
-    if (hit.dataset.skcopy) { copyText("secret://" + hit.dataset.skcopy, "Reference"); return; }
+    if (hit.dataset.skcopy) { copyText("${secret://" + hit.dataset.skcopy + "}", "Reference"); return; }
     if (hit.dataset.skdel) { await removeSecret(hit.dataset.skdel); return; }
   };
 }
@@ -206,13 +206,13 @@ async function storeSecret() {
   $("skValue").value = "";
   await loadSecrets();
   paintGroups();
-  toast("stored — reference it as secret://" + name);
+  toast("stored — reference it as ${secret://" + name + "}");
 }
 
 /** Delete one secret after an explicit confirm: everything referencing it starts failing
  *  honestly until it is re-stored. */
 async function removeSecret(name) {
-  if (!confirm('Delete secret "' + name + '"? Everything referencing secret://' + name + " starts failing until it is re-stored.")) return;
+  if (!confirm('Delete secret "' + name + '"? Everything referencing ${secret://' + name + "} starts failing until it is re-stored.")) return;
   var j = await apiJson("/api/secrets/" + encodeURIComponent(name) + "?rev=" + secrets.rev, { method: "DELETE" });
   if (!j) return;
   await loadSecrets();
