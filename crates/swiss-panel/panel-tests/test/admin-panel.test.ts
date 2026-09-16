@@ -46,12 +46,13 @@ describe("admin panel assets", () => {
     // The pre-paint theme resolver must stay inline in the shell — a linked script would flash.
     // (The localStorage key was renamed swiss_theme by the rebrand; this assertion lagged it.)
     expect(shell).toContain("swiss_theme");
-    // And the 6k-line monolith it replaces is really gone. The bound rose with the icon
-    // sprite (docs/18 V2, ~26 lines of hand-drawn symbols) — still small, still no markup.
-    // The Apache-2.0 banner is stripped before counting: it is a fixed licence cost, not
-    // shell content, and it must never buy anyone headroom.
+    // And the 6k-line monolith it replaces is really gone. The bound rose twice with the icon
+    // sprite — docs/18 V2 (~26 lines of hand-drawn symbols), then docs/29 (13 more: the
+    // launch-tag glyphs) — still small, still no markup. The Apache-2.0 banner is stripped
+    // before counting: it is a fixed licence cost, not shell content, and it must never buy
+    // anyone headroom.
     const shellBody = shell.replace(/^<!--[\s\S]*?-->\s*/, "");
-    expect(shellBody.split("\n").length).toBeLessThan(120);
+    expect(shellBody.split("\n").length).toBeLessThan(140);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {
