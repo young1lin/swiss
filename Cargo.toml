@@ -16,7 +16,8 @@ name = "swiss"
 version = "0.1.0"
 edition = "2021"
 description = "A developer's Swiss Army knife: one tiny local process, every tool behind one loopback port."
-license = "MIT"
+license = "Apache-2.0"
+repository = "https://github.com/young1lin/swiss"
 
 [[bin]]
 name = "swiss"

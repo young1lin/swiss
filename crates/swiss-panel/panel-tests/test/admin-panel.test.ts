@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -32,7 +48,10 @@ describe("admin panel assets", () => {
     expect(shell).toContain("swiss_theme");
     // And the 6k-line monolith it replaces is really gone. The bound rose with the icon
     // sprite (docs/18 V2, ~26 lines of hand-drawn symbols) — still small, still no markup.
-    expect(shell.split("\n").length).toBeLessThan(120);
+    // The Apache-2.0 banner is stripped before counting: it is a fixed licence cost, not
+    // shell content, and it must never buy anyone headroom.
+    const shellBody = shell.replace(/^<!--[\s\S]*?-->\s*/, "");
+    expect(shellBody.split("\n").length).toBeLessThan(120);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {
