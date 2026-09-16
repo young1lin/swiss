@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { $, api, esc, icon, state, toast } from "./util.js";
 import { createPageRegistry } from "./page-core.js";
 import { glyphHtml, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
@@ -14,12 +30,12 @@ var legacy = [
 ].map(function (p, i) { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
 var management = { id: "plugins", pluginId: "host", label: "Plugins", order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
 /* The vault is host-owned like the management page (every plugin may depend on it, docs/19 D6),
- * so it is synthesized here too — the Gateway group's second page: Plugins | Secrets. */
+ * so it is synthesized here too — the Settings group's second page: Plugins | Secrets. */
 var vaultPage = { id: "secrets", pluginId: "host", label: "Secrets", order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
 /* Group labels used when the host serves no plugin inventory (an older gateway answers 404 on
    /api/plugins), plus the one group that has no inventory row at all: the management page is
    synthesized here, not contributed by a plugin. */
-var GROUP_LABELS = { mcp: "MCP", tunnels: "Tunnels", data: "Data", jobs: "Jobs", host: "Gateway" };
+var GROUP_LABELS = { mcp: "MCP", tunnels: "Tunnels", data: "Data", jobs: "Jobs", host: "Settings" };
 var registry = createPageRegistry();
 registry.replace(legacy);
 var inventory = null;

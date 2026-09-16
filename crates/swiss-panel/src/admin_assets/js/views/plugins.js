@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 /* ================================================================================================
    Plugins — the host's own management view.
 
@@ -10,12 +26,19 @@
    from, so a second panel that changed something in between loses the race with a visible 409
    instead of silently overwriting it. A failed START is not a failed request — the row comes back
    state="failed" with its lastError, and the retry is pressing Enable again.
+
+   A third, smaller section rides along: start-at-sign-in, the one OS-level host setting. It is
+   host-owned like this page, so it lives here rather than in a page of its own — and its store
+   is the OS (a registry Run value, a LaunchAgent, a systemd user unit), not the gateway, so the
+   toggle reads and writes /api/autostart with no revision to race on.
    ================================================================================================ */
-import { $, apiJson, emptyHtml, esc, toast } from "../util.js";
+import { $, api, apiJson, emptyHtml, esc, toast } from "../util.js";
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
 
 var busy = {}; // plugin id -> true while its own toggle is in flight
 var painted = ""; // the structural signature of the drawn list; a change means rebuild
+var autostart = null; // { enabled, detail, command } from /api/autostart; null = old gateway
+var autostartBusy = false; // true while the OS registration write is in flight
 
 function inv() { return pluginInventory() || { plugins: [], revision: 0 }; }
 function rows() { return inv().plugins || []; }
@@ -36,15 +59,19 @@ function stateLabel(p) {
 // (docs/18 V4): the state word left the row — the dot carries it; stateLabel is the dot's
 // title (docs/18 V6), so the host's own vocabulary explains the colour on hover.
 
-/** The dependency badge (docs/12 W3): a plugin whose required capability has no provider
- *  says SO on its row — "needs connection-catalog (no provider)" — instead of failing
- *  mysteriously when its floor is switched off. Met requirements render nothing, but the
+/** The dependency badge (docs/12 W3): the row ALWAYS names what a plugin requires —
+ *  "requires connection-catalog" while the host reports the floor met, "needs X (no
+ *  provider)" when it does not — so the build's dependency structure is visible at a glance,
+ *  not only in the moment something breaks. Plugins that require nothing say nothing, but the
  *  row always carries the (empty) span so poll-patch has its anchor either way.
  *  Exported pure for the suite: no DOM, just the row JSON in and badge HTML out. */
 export function requiresBadge(p) {
-  var missing = (p.requires || []).filter(function () { return p.requiresMet === false; });
-  if (!missing.length) return "";
-  return '· needs ' + esc(missing.join(", ")) + ' <span class="warn">(no provider)</span>';
+  var requires = p.requires || [];
+  if (!requires.length) return "";
+  if (p.requiresMet === false) {
+    return '· needs ' + esc(requires.join(", ")) + ' <span class="warn">(no provider)</span>';
+  }
+  return "· requires " + esc(requires.join(", "));
 }
 
 /** One plugins row (docs/18 V4): dot + name + one grey line (id, pages, requirements,
@@ -71,6 +98,27 @@ export function rowHtml(p) {
     "</div>";
 }
 
+/** The start-at-sign-in row — the same vocabulary as a plugin row (dot + name + one grey
+ *  line + the panel's switch), because it is the same kind of fact: a thing that is on or
+ *  off. The grey line says where the OS registration lives, so the operator can check it
+ *  outside the panel; the row title carries the exact command the OS would run. Exported
+ *  pure; null (an old gateway without the route) renders nothing. */
+export function startupRowHtml(a) {
+  if (!a) return "";
+  return '<div class="tun-row" data-autostart title="' + esc(a.command || "") + '">' +
+    '<span class="dot ' + (a.enabled ? "up" : "idle") + '" title="' + (a.enabled ? "enabled" : "off") + '"></span>' +
+    '<div class="tun-main">' +
+      '<div class="tun-name">Start swiss when you sign in' +
+        (a.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
+      '<div class="tun-sub"><span class="via">' + esc(a.detail || "") + "</span></div>" +
+    "</div>" +
+    '<div class="tun-acts">' +
+      '<button class="sw" data-autostart-toggle role="switch" aria-checked="' + (a.enabled ? "true" : "false") + '"' +
+        ' aria-label="Toggle start at sign-in"></button>' +
+    "</div>" +
+  "</div>";
+}
+
 function chipText() {
   var all = rows();
   var on = all.filter(function (p) { return p.enabled; }).length;
@@ -85,11 +133,15 @@ function render() {
   var body = all.length
     ? '<div class="group">' + all.map(rowHtml).join("") + "</div>"
     : emptyHtml({ icon: "power", title: "No plugins", hint: "This gateway reports an empty inventory." });
-  // No location title: the context bar already says "Gateway / Plugins".
+  // No location title: the context bar already says "Settings / Plugins".
   $("pane").innerHTML = '<div class="wide">' +
     '<div class="pane-head"><div>' +
       '<div class="pane-desc">What this build is composed of. Disabling one stops its subsystem and takes its pages and API routes off the air until it is enabled again; definitions, logs and state files are left alone.</div>' +
     "</div></div>" +
+    (autostart
+      ? '<div class="sec-head"><span class="sec-cap">Startup</span></div>' +
+        '<div class="group">' + startupRowHtml(autostart) + "</div>"
+      : "") +
     '<div class="sec-head"><span class="sec-cap">Installed</span></div>' +
     body +
     '<div class="tun-foot" data-foot><span data-foot-text>' + esc(chipText()) + "</span>" +
@@ -129,6 +181,8 @@ function patch() {
 function wire() {
   var pane = $("pane");
   pane.onclick = function (event) {
+    var asButton = event.target.closest("[data-autostart-toggle]");
+    if (asButton) { void toggleAutostart(); return; }
     var button = event.target.closest("[data-toggle]");
     if (!button) return;
     var prow = button.closest("[data-plugin]");
@@ -136,8 +190,29 @@ function wire() {
   };
 }
 
-/** Store one secret, then redraw from the vault's own answer. The rev goes with the write, so
- *  a second panel that changed the vault in between loses the race with a visible error. */
+/** Read the OS registration the way the host reads it. A gateway without the route answers
+ *  404 and leaves autostart null — the section stays hidden, an old binary never grows a
+ *  dead control. */
+async function loadAutostart() {
+  var r = await api("/api/autostart");
+  if (r.ok) autostart = await r.json();
+}
+
+/** Flip the OS registration, then redraw from the host's own read-back — never from our
+ *  guess of what the click should have done. */
+async function toggleAutostart() {
+  if (!autostart || autostartBusy) return;
+  autostartBusy = true;
+  var j = await apiJson("/api/autostart", {
+    method: "PUT",
+    body: JSON.stringify({ enabled: !autostart.enabled }),
+  });
+  autostartBusy = false;
+  if (!j) return; // apiJson already toasted the refusal
+  autostart = j;
+  render();
+}
+
 /** Enable or disable one plugin, then redraw from the host's answer — never from our guess of
  *  what the click should have done. The revision goes with the request so a stale list is
  *  refused rather than applied. */
@@ -167,6 +242,7 @@ async function toggle(id) {
 export async function mount() {
   busy = {};
   try { await reloadPluginInventory(); } catch (error) { /* the toast is enough; draw what we have */ }
+  try { await loadAutostart(); } catch (error) { /* no route or no answer: the section stays hidden */ }
   render();
 }
 export async function refresh() { await mount(); }
@@ -175,4 +251,4 @@ export async function poll() {
   patch();
 }
 export function countText() { return chipText(); }
-export function unmount() { busy = {}; painted = ""; }
+export function unmount() { busy = {}; painted = ""; autostart = null; }

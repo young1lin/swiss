@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! The management API under /api — port of `adminapi.ts`.
 //!
 //! The gate: there is none. The panel has no login — the router's loopback guard ahead of every
@@ -499,6 +515,29 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
             json!({ "tokenEnv": ctx.token_env, "panelVersion": swiss_panel::admin::panel_version_stamp(), "build": crate::app::build_info() }),
         )
     }));
+
+    // --- start-at-sign-in: the one OS-level host setting --------------------------------------------
+    //
+    // GET reads the registration the OS holds; PUT applies {"enabled": bool} and answers with
+    // the state read back from the OS. There is no revision to race on — the registry entry,
+    // plist or unit file IS the store, and status() reads it the same way this answer does.
+    r = r.route(
+        "/api/autostart",
+        get(|| async move { admin_json(StatusCode::OK, crate::autostart::status().to_json()) }).put(
+            |body: crate::reply::NodeBody| async move {
+                let Some(enabled) = body.0.get("enabled").and_then(Value::as_bool) else {
+                    return admin_error(
+                        StatusCode::BAD_REQUEST,
+                        "body must carry {\"enabled\": true|false}",
+                    );
+                };
+                match crate::autostart::set(enabled) {
+                    Ok(state) => admin_json(StatusCode::OK, state.to_json()),
+                    Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
+                }
+            },
+        ),
+    );
 
     // --- tokens: named per-client bearers, so the logs can attribute every request to a client ----
     r = r.route(

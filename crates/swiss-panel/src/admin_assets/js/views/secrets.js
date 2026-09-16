@@ -1,5 +1,21 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 /* ================================================================================================
-   Secrets — the Gateway group's second page (docs/19 D6).
+   Secrets — the Settings group's second page (docs/19 D6).
 
    The vault is host-owned: every plugin may depend on it, so it is not a plugin itself and
    lives beside Plugins, not inside it. Names only, ever (D5: write-only — a forgotten value
@@ -205,7 +221,7 @@ function groupSelectHtml() {
 
 function render() {
   painted = signature();
-  // No location title: the context bar already says "Gateway / Secrets".
+  // No location title: the context bar already says "Settings / Secrets".
   $("pane").innerHTML = '<div class="wide">' +
     '<div class="pane-head"><div>' +
       '<div class="pane-desc">Device-bound vault (docs/19). A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: <code>${secret://name}</code> in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed.</div>' +

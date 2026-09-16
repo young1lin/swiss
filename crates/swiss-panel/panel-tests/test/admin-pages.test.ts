@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { describe, expect, it } from "vitest";
 import { createPageRegistry, groupPages } from "../../src/admin_assets/js/page-core.js";
 
@@ -82,9 +98,9 @@ describe("page grouping", () => {
 
   it("labels a group from the plugin row, then fallbackLabels, then the page itself — never dropping it", () => {
     // pluginId "host" has no inventory row (the management page is synthesized client-side).
-    const withFallback = groupPages([page("plugins", "host", 1000)], [], { host: "Gateway" });
+    const withFallback = groupPages([page("plugins", "host", 1000)], [], { host: "Settings" });
     expect(withFallback).toHaveLength(1);
-    expect(withFallback[0].label).toBe("Gateway");
+    expect(withFallback[0].label).toBe("Settings");
     expect(withFallback[0].pages.map((p: { id: string }) => p.id)).toEqual(["plugins"]);
     // No fallback either: the page's own label becomes the group label, and the page survives.
     const bare = groupPages([page("plugins", "host", 1000, "Plugins")], [], {});

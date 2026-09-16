@@ -1,6 +1,22 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 
-/* The Secrets page (the Gateway group's second page, docs/19 D6): names only, a write-only
+/* The Secrets page (the Settings group's second page, docs/19 D6): names only, a write-only
    store form, a rev-carrying delete, and a poll that never repaints the form mid-typing. The
    rows markup is a pure string (the requiresBadge precedent — exported for the suite); the
    mutations are driven directly under a fetch stub, because this repo's micro-DOM does not

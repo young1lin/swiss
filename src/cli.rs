@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! The `swiss` command line — port of `cli.ts`.
 //!
 //! Deliberately free of the server's module graph: `swiss status` does not build a registry or a
@@ -16,14 +32,15 @@ use crate::skill_install::install_skill;
 
 pub const COMMANDS: &[&str] = &[
     "start", "stop", "restart", "status", "logs", "token", "creds", "open", "export", "import",
-    "skill",
+    "skill", "autostart", "update",
 ];
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Parsed {
     pub cmd: String,
-    /// Subcommand for `skill` — only `install` exists today.
-    pub skill_sub: Option<String>,
+    /// The subcommand slot `skill` (only `install`) and `autostart` (`on`/`off`, or
+    /// nothing for the status read) share.
+    pub sub: Option<String>,
     /// The positional file argument for 'import'.
     pub file: Option<String>,
     pub port: Option<u16>,
@@ -63,6 +80,17 @@ pub trait Ops {
     fn import_state(&self, bundle: &Value) -> Result<Vec<String>, String>;
     async fn foreground(&self, port: Option<u16>);
     fn skill_install(&self) -> Result<Vec<String>, String>;
+
+    // The autostart commands carry no daemon state, so the trait ships them as defaults over
+    // the library fns: RealOps needs nothing hand-written, and a test fake inherits real
+    // behaviour. (swiss update is NOT here: an async default would force Sync onto dyn Ops
+    // for every implementor, and a network call has no fake worth trait plumbing.)
+    fn autostart_status(&self) -> crate::autostart::AutoStartState {
+        crate::autostart::status()
+    }
+    fn autostart_set(&self, enabled: bool) -> Result<crate::autostart::AutoStartState, String> {
+        crate::autostart::set(enabled)
+    }
 }
 
 pub const USAGE: &str =
@@ -82,6 +110,10 @@ usage: swiss <command> [options]
                    move-to-another-machine path; redirect to a file and protect it
   import <file>    restore an export on THIS machine (every file re-sealed to this machine)
   skill install    copy the shipped AI skill to ~/.agents/skills, ~/.claude/skills, ~/.cursor/skills
+  autostart [on|off]
+                   show, enable or disable start-at-sign-in — a registry Run value on
+                   Windows, a LaunchAgent on macOS, a systemd user unit on Linux
+  update           check GitHub for a newer release; updating stays a manual exe swap
   serve            run the gateway in this process (what the daemon spawns)
 
 options
@@ -107,8 +139,8 @@ pub fn parse_argv(argv: &[String]) -> Parsed {
         if !arg.starts_with('-') {
             if p.cmd.is_empty() {
                 p.cmd = arg.clone();
-            } else if p.cmd == "skill" && p.skill_sub.is_none() {
-                p.skill_sub = Some(arg.clone());
+            } else if (p.cmd == "skill" || p.cmd == "autostart") && p.sub.is_none() {
+                p.sub = Some(arg.clone());
             } else if p.file.is_none() {
                 p.file = Some(arg.clone());
             }
@@ -567,9 +599,54 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
                 }
             }
         }
+        "autostart" => match p.sub.as_deref() {
+            None | Some("status") => {
+                let st = ops.autostart_status();
+                io.out(&format!("start at sign-in: {}", if st.enabled { "on" } else { "off" }));
+                io.out(&row("registered", &st.detail));
+                io.out(&row("command", &st.command));
+                0
+            }
+            Some("on") => match ops.autostart_set(true) {
+                Ok(_) => {
+                    io.out("start at sign-in enabled");
+                    0
+                }
+                Err(err) => {
+                    io.err(&err);
+                    1
+                }
+            },
+            Some("off") => match ops.autostart_set(false) {
+                Ok(_) => {
+                    io.out("start at sign-in disabled");
+                    0
+                }
+                Err(err) => {
+                    io.err(&err);
+                    1
+                }
+            },
+            Some(other) => {
+                io.err(&format!("unknown autostart subcommand: {other}"));
+                1
+            }
+        },
+        "update" => match crate::update_check::check().await {
+            Ok(info) => {
+                for line in info.render().lines() {
+                    io.out(line);
+                }
+                0
+            }
+            Err(err) => {
+                io.err(&err);
+                1
+            }
+        },
         "skill" => {
-            if p.skill_sub.as_deref() != Some("install") {
-                match p.skill_sub {
+            if p.sub.as_deref() != Some("install") {
+                match p.sub {
                     Some(sub) => io.err(&format!("unknown skill subcommand: {sub}")),
                     None => io.err("usage: swiss skill install"),
                 }
@@ -820,6 +897,24 @@ mod tests {
 
         let p = parse_argv(&argv(&["start", "--port", "abc"]));
         assert!(p.bad_port);
+    }
+
+    #[test]
+    fn autostart_and_update_parse() {
+        let p = parse_argv(&argv(&["autostart", "on"]));
+        assert_eq!(p.cmd, "autostart");
+        assert_eq!(p.sub.as_deref(), Some("on"));
+
+        // Bare autostart is the status read.
+        let p = parse_argv(&argv(&["autostart"]));
+        assert_eq!(p.sub, None);
+
+        let p = parse_argv(&argv(&["update"]));
+        assert_eq!(p.cmd, "update");
+
+        // skill shares the same subcommand slot.
+        let p = parse_argv(&argv(&["skill", "install"]));
+        assert_eq!(p.sub.as_deref(), Some("install"));
     }
 
     #[test]
