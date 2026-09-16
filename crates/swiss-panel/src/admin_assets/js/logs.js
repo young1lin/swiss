@@ -122,6 +122,24 @@ function argLine(args) {
   }).join(", ") + "</div>";
 }
 
+/** A tool stays one quiet row until the user asks for its complete MCP metadata. */
+function toolDetail(it, args) {
+  var description = it.description || "No description provided.";
+  var schema = it.inputSchema ? JSON.stringify(it.inputSchema, null, 2) : "No input schema provided.";
+  return '<details class="item-detail">' +
+    '<summary title="' + esc(description) + '">' +
+      '<span class="item-chev">' + icon("chevron-right") + "</span>" +
+      '<span class="item-summary"><span class="name">' + esc(it.name) + "</span>" +
+        '<span class="desc item-teaser">' + esc(description) + "</span>" + args + "</span>" +
+    "</summary>" +
+    '<div class="item-full">' +
+      '<div class="item-full-label">Full description</div>' +
+      '<div class="item-full-text">' + esc(description) + "</div>" +
+      '<div class="item-full-label">Input schema</div>' +
+      '<pre class="item-schema">' + esc(schema) + "</pre>" +
+    "</div></details>";
+}
+
 function kindBody(d, kind, m) {
   var kd = d[kind];
   // Resources get a master on/off at the top: off empties the list (the capability stays, so the
@@ -184,7 +202,7 @@ function kindBody(d, kind, m) {
     // exercised from the list it was found in. A toggle turns the tool off for clients — it drops
     // out of tools/list and clients are told to re-list (notifications/tools/list_changed).
     if (kind === "tools") {
-      return '<div class="row row-act"><div class="row-main">' + main + "</div>" +
+      return '<div class="row row-act item-row">' + toolDetail(it, args) +
         '<button class="btn" data-try="' + esc(it.name) + '" title="Try this tool">Try</button>' +
         '<button class="sw" role="switch" aria-checked="true" aria-label="Visible to clients" data-toggle="' +
         esc(it.name) + '" data-on="1" title="Visible to clients — click to hide"></button></div>';

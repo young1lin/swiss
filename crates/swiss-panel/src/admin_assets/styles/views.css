@@ -111,6 +111,55 @@
     /* Required ones by weight and contrast, not by hue: red here would compete with the error red on
        a failed call two rows down, and "required" is not a failure. Run's red * is a form marker. */
     .args b { font-weight: 600; color: var(--text-2); }
+
+    /* Tool rows are summaries first: one name, one clipped description, one signature. Native
+       details keeps the complete MCP metadata keyboard-reachable without making every row tall. */
+    .item-row { align-items: flex-start; }
+    .item-detail { flex: 1; min-width: 0; }
+    .item-detail > summary { display: flex; gap: var(--s2); min-width: 0; cursor: pointer; list-style: none; }
+    .item-detail > summary::-webkit-details-marker { display: none; }
+    .item-summary { display: block; flex: 1; min-width: 0; }
+    .item-summary > .name, .item-summary > .item-teaser, .item-summary > .args { display: block; }
+    .item-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
+    .item-chev .ic { width: var(--s3); height: var(--s3); }
+    .item-detail[open] .item-chev { transform: rotate(90deg); }
+    .item-teaser { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .item-detail[open] .item-teaser { display: none; }
+    .item-detail[open] .args { display: none; }
+    .item-full { margin: var(--s2) 0 0 var(--s5); padding-left: var(--s3); border-left: 1px solid var(--sep); }
+    .item-full-label { font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-top: var(--s3); }
+    .item-full-label:first-child { margin-top: 0; }
+    .item-full-text { font-size: var(--f-label); color: var(--text-2); line-height: 1.5; margin-top: var(--s1); white-space: pre-wrap; }
+    .item-schema { margin: var(--s1) 0 0; padding: var(--s2) var(--s3); max-height: 40vh; overflow: auto; background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-caption); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    @media (prefers-reduced-motion: reduce) { .item-chev { transition: none; } }
+
+    /* Read-only MCP configuration is an overview plus two deliberate folds. The target and badges
+       answer the common questions; all raw settings and parked revisions remain one click away. */
+    .config-head { display: flex; align-items: flex-start; gap: var(--s3); padding: var(--s4); }
+    .config-identity { flex: 1; min-width: 0; }
+    .config-kind { display: flex; align-items: center; gap: var(--s2); color: var(--text-2); font-size: var(--f-label); }
+    .config-target { margin-top: var(--s2); font-family: var(--mono); font-size: var(--f-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .config-badges { display: flex; flex-wrap: wrap; gap: var(--s1); padding: 0 var(--s4) var(--s3); }
+    .config-more, .config-revisions { margin: 0; }
+    .config-more { border-top: 1px solid var(--sep-soft); }
+    .config-more > summary, .config-revisions > summary { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); cursor: pointer; list-style: none; color: var(--text-2); font-size: var(--f-label); font-weight: 500; }
+    .config-more > summary::-webkit-details-marker, .config-revisions > summary::-webkit-details-marker { display: none; }
+    .config-count { margin-left: auto; color: var(--text-3); font-size: var(--f-caption); font-weight: 400; font-variant-numeric: tabular-nums; }
+    .config-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
+    .config-revisions > summary > .config-chev { margin-left: auto; }
+    .config-chev .ic { width: var(--s3); height: var(--s3); }
+    details[open] > summary > .config-chev { transform: rotate(90deg); }
+    .config-rows { border-top: 1px solid var(--sep-soft); }
+    .config-row { display: flex; gap: var(--s4); padding: var(--s2) var(--s4); }
+    .config-row + .config-row { border-top: 1px solid var(--sep-soft); }
+    .config-label { flex: 0 0 32%; min-width: 0; color: var(--text-2); font-size: var(--f-label); }
+    .config-value { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--f-label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .config-revisions { margin-top: var(--s5); background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
+    .config-revision-body { border-top: 1px solid var(--sep-soft); padding: var(--s3) var(--s4) var(--s4); }
+    .config-revision-intro { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s3); color: var(--text-3); font-size: var(--f-label); }
+    .config-revision-intro > span { flex: 1; }
+    @media (prefers-reduced-motion: reduce) { .config-chev { transition: none; } }
+
     /* One-off label chip (the token list's "copies use this"). */
     .tag { font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); background: var(--sep-soft); padding: 1px 6px; border-radius: 5px; }
 
