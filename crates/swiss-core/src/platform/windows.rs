@@ -1,9 +1,25 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! The Windows platform seam — direct Win32 calls replacing every `powershell.exe` spawn the Node
 //! build had to make. Each of those spawns cost ~65 MB of transient working set and ~350 ms; the
 //! direct calls are free, which is why the memory view stops being opt-in in this build.
 
-use windows::core::{w, Result as WinResult};
-use windows::Win32::Foundation::{LocalFree, ERROR_SUCCESS, HLOCAL};
+use windows::core::{w, PCWSTR, Result as WinResult};
+use windows::Win32::Foundation::{LocalFree, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HLOCAL};
 use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
 };
@@ -12,7 +28,8 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_OPEN_CREATE_OPTIONS,
     REG_SAM_FLAGS, REG_SZ, REG_VALUE_TYPE,
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
@@ -161,6 +178,115 @@ pub fn machine_id() -> Option<String> {
         let wide = std::slice::from_raw_parts(buf.as_ptr() as *const u16, len as usize / 2);
         let end = wide.iter().position(|c| *c == 0).unwrap_or(wide.len());
         Some(String::from_utf16_lossy(&wide[..end]))
+    }
+}
+
+/// The HKCU Run entry the start-at-sign-in setting owns (src/autostart.rs): one REG_SZ value
+/// named "swiss" under the per-user Run key. HKCU needs no elevation, and a per-user value is
+/// the honest scope for a per-user toolbox. None when the value is absent or unreadable.
+pub fn run_entry_read() -> Option<String> {
+    // SAFETY: same shape as machine_id — the handle is closed on every path and the buffer is
+    // bounded by the length the size query reported.
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            0,
+            REG_SAM_FLAGS(KEY_READ.0),
+            &mut hkey,
+        ) != ERROR_SUCCESS
+        {
+            return None;
+        }
+        let mut ty = REG_VALUE_TYPE::default();
+        let mut len = 0u32;
+        if RegQueryValueExW(hkey, w!("swiss"), None, Some(&mut ty), None, Some(&mut len))
+            != ERROR_SUCCESS
+            || ty != REG_SZ
+            || len == 0
+        {
+            let _ = RegCloseKey(hkey);
+            return None;
+        }
+        let mut buf = vec![0u8; len as usize];
+        let ok = RegQueryValueExW(
+            hkey,
+            w!("swiss"),
+            None,
+            None,
+            Some(buf.as_mut_ptr()),
+            Some(&mut len),
+        ) == ERROR_SUCCESS;
+        let _ = RegCloseKey(hkey);
+        if !ok {
+            return None;
+        }
+        // REG_SZ is NUL-terminated UTF-16; trim everything from the first NUL.
+        let wide = std::slice::from_raw_parts(buf.as_ptr() as *const u16, len as usize / 2);
+        let end = wide.iter().position(|c| *c == 0).unwrap_or(wide.len());
+        Some(String::from_utf16_lossy(&wide[..end]))
+    }
+}
+
+/// Write the Run value, creating the key if a profile somehow lacks it. The value data is a
+/// NUL-terminated UTF-16 copy of the command string, owned by a live Vec across the call.
+pub fn run_entry_write(cmd: &str) -> Result<(), String> {
+    // SAFETY: the handle is created and closed here; the value data points at a Vec that
+    // outlives the call, and every parameter that may be NULL is.
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            0,
+            PCWSTR::null(),
+            REG_OPEN_CREATE_OPTIONS(0), // REG_OPTION_NON_VOLATILE — persist across sessions
+            REG_SAM_FLAGS(KEY_WRITE.0),
+            None,
+            &mut hkey,
+            None,
+        ) != ERROR_SUCCESS
+        {
+            return Err("could not open the Run key".to_string());
+        }
+        let mut wide: Vec<u16> = cmd.encode_utf16().collect();
+        wide.push(0); // REG_SZ is NUL-terminated
+        // The binding takes the value data as a byte slice, length included.
+        let mut data: Vec<u8> = Vec::with_capacity(wide.len() * 2);
+        for unit in &wide {
+            data.extend_from_slice(&unit.to_le_bytes());
+        }
+        let written = RegSetValueExW(hkey, w!("swiss"), 0, REG_SZ, Some(&data));
+        let _ = RegCloseKey(hkey);
+        if written != ERROR_SUCCESS {
+            return Err(format!("could not write the Run value ({written:?})"));
+        }
+        Ok(())
+    }
+}
+
+/// Delete the Run value. A value that is already gone is success — "off" must be idempotent.
+pub fn run_entry_remove() -> Result<(), String> {
+    // SAFETY: the handle is opened and closed here; RegDeleteValueW takes no pointers.
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+            0,
+            REG_SAM_FLAGS(KEY_WRITE.0),
+            &mut hkey,
+        ) != ERROR_SUCCESS
+        {
+            return Err("could not open the Run key".to_string());
+        }
+        let deleted = RegDeleteValueW(hkey, w!("swiss"));
+        let _ = RegCloseKey(hkey);
+        if deleted == ERROR_SUCCESS || deleted == ERROR_FILE_NOT_FOUND {
+            return Ok(());
+        }
+        Err(format!("could not delete the Run value ({deleted:?})"))
     }
 }
 

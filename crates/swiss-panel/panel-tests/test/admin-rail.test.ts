@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import { describe, it, expect } from "vitest";
 import {
   defaultPinIds,
@@ -16,7 +32,7 @@ const groups = [
   { id: "mcp", label: "MCP", order: 10, pages: [{ id: "mcps" }] },
   { id: "tunnels", label: "Tunnels", order: 30, pages: [{ id: "tunnels" }] },
   { id: "terminal", label: "Terminal", order: 70, pages: [{ id: "terminal" }] },
-  { id: "host", label: "Gateway", order: 1000, pages: [{ id: "plugins" }, { id: "secrets" }] },
+  { id: "host", label: "Settings", order: 1000, pages: [{ id: "plugins" }, { id: "secrets" }] },
 ];
 
 describe("the rail shortlist", () => {
@@ -46,7 +62,7 @@ describe("the palette rows", () => {
     // No pins means no Pinned section: everything lands under All plugins.
     expect(paletteRows(groups, [], "tun")[0].groups.map((g) => g.id)).toEqual(["tunnels"]);
     expect(paletteRows(groups, [], "MCP")[0].groups.map((g) => g.id)).toEqual(["mcp"]);
-    expect(paletteRows(groups, [], "gateway")[0].groups.map((g) => g.id)).toEqual(["host"]);
+    expect(paletteRows(groups, [], "settings")[0].groups.map((g) => g.id)).toEqual(["host"]);
   });
 });
 

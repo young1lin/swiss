@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! The admin API, driven through the real router — port of the Node build's
 //! `test/adminapi.test.ts`.
 //!
@@ -3453,4 +3469,37 @@ async fn the_zai_vision_type_adds_and_keeps_the_key_a_reference() {
         body["error"].as_str().unwrap_or_default().contains("unknown mode"),
         "{body}"
     );
+}
+
+// --- start-at-sign-in (src/autostart.rs) ---------------------------------------------------------
+//
+// The OS registration is real machine state, so the suite exercises the read and the "off"
+// write only: "off" is idempotent on every platform (a missing Run value / plist / unit is
+// success), while "on" would register the TEST binary as a login item on whatever machine
+// runs this file — not something a green suite should leave behind.
+
+#[tokio::test]
+async fn autostart_route_reads_the_os_registration() {
+    let h = setup();
+    let (status, body) = h.get("/api/autostart").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["enabled"].is_boolean(), "enabled must be a bool: {body}");
+    assert!(body["detail"].is_string(), "detail must say where the registration lives: {body}");
+    assert!(body["command"].is_string(), "command must say what the entry runs: {body}");
+}
+
+#[tokio::test]
+async fn autostart_route_turns_off_idempotently() {
+    let h = setup();
+    let (status, body) = h.put("/api/autostart", json!({ "enabled": false })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["enabled"], false, "{body}");
+}
+
+#[tokio::test]
+async fn autostart_route_refuses_a_body_without_a_verdict() {
+    let h = setup();
+    let (status, body) = h.put("/api/autostart", json!({})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].is_string(), "{body}");
 }

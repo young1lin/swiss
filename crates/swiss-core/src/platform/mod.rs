@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! Platform seams: file privacy, the machine id, process walking, DPAPI, the kill-on-close job
 //! guard and local pseudo-terminals all live behind this module so the rest of the crate stays
 //! platform-agnostic. It is also where `unsafe` is allowed to live (AGENTS.md): every FFI call
@@ -23,7 +39,8 @@ mod windows;
 #[cfg(windows)]
 pub use windows::{
     descendant_pids, dpapi_protect, dpapi_unprotect, machine_id, parent_process, pid_alive,
-    process_tree_working_set, self_private_bytes, self_working_set, tree_kill,
+    process_tree_working_set, run_entry_read, run_entry_remove, run_entry_write,
+    self_private_bytes, self_working_set, tree_kill,
 };
 
 #[cfg(not(windows))]
