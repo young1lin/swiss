@@ -17,7 +17,7 @@
 import { $, api, apiJson, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, cancelEdit, changeEditType, clearCalls, deleteRevision, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
-import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml } from "./fields.js";
+import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
 import { fmtChars, fmtJson, logsBody, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
@@ -412,6 +412,19 @@ function configBody(d) {
     // Stored values for the MCP's own type, nothing for a different one — then whatever the user has
     // already typed on top, so a type switch or a rejected save doesn't empty the form.
     var vals = Object.assign({}, type === ((d.config && d.config.type) || "proc") ? d.config : {}, d.editVals || {});
+    // docs/30: a pg def stores one url; the form edits the pieces. Split it here (once, the same
+    // parser the submit path mirrors) — an unparseable url falls back to a raw field and rides
+    // through save untouched (__pgRaw), because old experience beats lost data.
+    if (type === "pg" && vals.url !== undefined) {
+      var pgParts = parsePgUrl(vals.url);
+      if (pgParts) {
+        delete vals.url;
+        Object.keys(pgParts).forEach(function (k) { if (vals[k] === undefined) vals[k] = pgParts[k]; });
+      } else {
+        vals.__pgRaw = vals.url;
+        delete vals.url;
+      }
+    }
     // The stored def carries `lazy`; the form shows its inverse as "Start automatically". A stored
     // def with no lazy at all gets the type's default (proc off, everything else on).
     if (vals.lazy !== undefined) vals.autostart = !vals.lazy;
@@ -420,9 +433,16 @@ function configBody(d) {
       return '<option value="' + t + '"' + (t === type ? " selected" : "") + ">" + esc(TYPE_LABELS[t] || t) + "</option>";
     }).join("");
     var replacing = d.editMode === "replace";
+    var pgRaw = type === "pg" && vals.__pgRaw !== undefined
+      ? '<label class="field"><span>Connection URL</span>' +
+        '<textarea id="e-pgraw" rows="2">' + esc(vals.__pgRaw) + "</textarea>" +
+        '<div class="hint">A whole-value \${...} ref (or a url that did not decompose) — it is kept whole.' +
+        " Fill the fields above to replace it with a decomposed url.</div></label>"
+      : "";
     return '<div class="group"><div class="form">' +
       '<label class="field"><span>Type</span><select id="e-type">' + opts + "</select></label>" +
       fieldsHtml(type, vals, "e-") +
+      pgRaw +
       (replacing
         ? '<label class="field"><span>Note (kept with the parked revision)</span>' +
           '<input id="e-note" placeholder="optional — e.g. proc version, before the swap"></label>'

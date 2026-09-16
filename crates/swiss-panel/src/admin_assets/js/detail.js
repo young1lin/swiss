@@ -15,7 +15,7 @@
  */
 
 import { $, KINDS, api, apiJson, now, state, toast } from "./util.js";
-import { readFields, translateOauth } from "./fields.js";
+import { readFields, translateOauth, translatePg } from "./fields.js";
 import { fmtJson } from "./logs.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
@@ -379,6 +379,7 @@ async function saveReplace() {
   var body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body);
+  translatePg(type, body); // docs/30: the pg form's pieces become one url
   var noteEl = $("e-note");
   if (noteEl) body.note = noteEl.value;
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
@@ -468,6 +469,7 @@ async function runConnTest(p) {
   var d = state.detail;
   var type = p === "a-" ? $("a-type").value : (d && (d.editType || (d.config && d.config.type))) || "proc";
   var body = Object.assign({ type: type }, readFields(type, p));
+  translatePg(type, body); // docs/30: pg's split fields travel as the url the server tests
   delete body.autostart; // a boot-time switch, not a credential — irrelevant to a connection test
   // figma implies OAuth the way a checked auth box states it: no keyless test exists for either.
   var wantsOauth = type === "figma" || (type === "http" && body.auth === true);
@@ -523,6 +525,7 @@ async function saveEdit() {
   var body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body); // the auth checkbox is the def auth string (docs/24 D1)
+  translatePg(type, body); // docs/30: the pg form's pieces become one url
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
   var name = d.name;
   // Rendering the pane destroys the form, so hold on to what was typed: a save the server rejects

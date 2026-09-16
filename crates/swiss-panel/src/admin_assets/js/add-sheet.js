@@ -16,7 +16,7 @@
 
 import { $, DEFAULT_GROUP, apiJson, esc, state, toast } from "./util.js";
 import { openDetail, runConnTest } from "./detail.js";
-import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsHtml, readFields, translateOauth } from "./fields.js";
+import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsHtml, readFields, translateOauth, translatePg } from "./fields.js";
 import { loadList } from "./polling.js";
 import { addTitle, groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { newGroup } from "./sidebar.js";
@@ -129,6 +129,7 @@ async function submitAdd() {
   var body = Object.assign({ name: $("a-name").value.trim(), type: type, enabled: $("a-start").checked }, readFields(type, "a-"));
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body); // the auth checkbox is the def's auth string (docs/24 D1)
+  translatePg(type, body); // docs/30: the pg form's pieces become one url
   if (!body.name) { toast("Name is required", true); return; }
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
   // The select wins over the + that opened the sheet — a changed pick is the pick.
