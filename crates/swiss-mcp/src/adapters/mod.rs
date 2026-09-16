@@ -304,6 +304,13 @@ pub fn make_adapter(
             let engine = mysql::MysqlEngine::new(&def, name)?;
             Ok(Arc::new(direct::DirectAdapter::new(&def, name, engine, log.clone())))
         }
+        // MariaDB speaks the MySQL wire protocol (docs/29): the type stays "mariadb" in the
+        // def — identity, panel tag, icon — while the engine is the mysql one. A def that says
+        // what it points at is worth more than an alias that erases it.
+        "mariadb" => {
+            let engine = mysql::MysqlEngine::new(&def, name)?;
+            Ok(Arc::new(direct::DirectAdapter::new(&def, name, engine, log.clone())))
+        }
         "pg" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, pg::PgEngine::new(&def, name), log.clone()))),
         "redis" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, redis::RedisEngine::new(&def, name), log.clone()))),
         "rest" => Ok(Arc::new(direct::DirectAdapter::new(&def, name, rest::RestEngine::new(&def, name)?, log.clone()))),
@@ -328,7 +335,7 @@ pub fn make_adapter(
         }
         "http" => Ok(Arc::new(http::HttpAdapter::new(&def, name, log.clone())?)),
         other => Err(format!(
-            "Unknown adapter type: {other} (built-in: echo | mysql | pg | redis | proc | http | rest | figma | zai-vision)"
+            "Unknown adapter type: {other} (built-in: echo | mysql | mariadb | pg | redis | proc | http | rest | figma | zai-vision)"
         )),
     }
 }

@@ -80,6 +80,24 @@ function icon(name, label) {
     : '<svg class="ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
 }
 
+/** Launch-tag glyphs (docs/29): a monochrome brand mark where one exists, the text chip
+ *  otherwise. Keys are the tags tag_of produces on the server: the type for in-process and
+ *  remote MCPs, the command's first word for proc ones — arbitrary words appear (node, python,
+ *  echo…), so this is a whitelist and everything outside it falls back to text. The icon
+ *  carries the word as its aria-label: a screen reader hears the type the chip no longer spells. */
+var TYPE_ICONS = {
+  mysql: "mysql", mariadb: "mariadb", redis: "redis", pg: "pg", postgres: "pg",
+  http: "globe", https: "globe", rest: "plug",
+  figma: "figma", "zai-vision": "zai",
+  npx: "package", uvx: "package", docker: "docker",
+  proc: "terminal",
+};
+function typeTagHtml(tag) {
+  var name = TYPE_ICONS[tag];
+  if (!name) return esc(tag);
+  return icon(name, tag);
+}
+
 /** One empty state (docs/18 V7): icon, title, one line of hint, optional ghost action. Every
  *  view's "nothing here" is this shape — the Terminal alone keeps its own, because it lives in
  *  the black frame with its own tokens. The action button carries data-empty-action so the
@@ -171,4 +189,4 @@ async function apiJson(path, opts) {
   }
 }
 
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, esc, icon, now, state, toast, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, esc, icon, now, state, toast, typeTagHtml, TYPE_ICONS, whenLabel };
