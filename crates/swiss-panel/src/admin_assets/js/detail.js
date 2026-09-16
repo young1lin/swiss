@@ -163,9 +163,9 @@ function openDetail(name) {
       histOpen: false, histSelSeq: null, histFull: {}, histQ: "",
     },
     // Logs tab: a page of recorded tool calls (null until loaded), any child stderr, which rows are
-    // expanded, and replies fetched in full by seq.
+    // expanded, replies fetched in full by seq, and the server-side search needle (docs/31).
     calls: null, stderr: "", callsOpen: {}, callsLoading: false,
-    callsPage: 0, callsMore: false, callsFull: {},
+    callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
   };
   KINDS.forEach(function (k) { d[k] = pageState(); });
   state.detail = d;
@@ -204,7 +204,8 @@ async function loadCalls(name) {
   if (!d || d.name !== name || d.callsLoading) return;
   d.callsLoading = true;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/calls?page=" + d.callsPage);
+    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/calls?page=" + d.callsPage +
+      (d.callsQ ? "&q=" + encodeURIComponent(d.callsQ) : ""));
     if (r.ok) {
       var j = await r.json();
       if (state.detail !== d) return; // a revisit built a new detail object — see loadMeta

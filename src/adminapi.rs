@@ -1894,7 +1894,12 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     .get("pageSize")
                     .and_then(|p| p.parse::<i64>().ok())
                     .unwrap_or(CALLS_PAGE_SIZE as i64);
-                let mut result = ctx.calls.read_calls(&name, page, page_size).await;
+                // docs/31: q, when given, filters the page server-side — the full stored
+                // arguments and reply are matched, not the clipped row preview.
+                let mut result = ctx
+                    .calls
+                    .read_calls(&name, page, page_size, q.get("q").map(String::as_str))
+                    .await;
                 result["name"] = json!(name);
                 result["stderr"] = json!(entry
                     .data

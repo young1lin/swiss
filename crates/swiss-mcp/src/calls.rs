@@ -815,16 +815,38 @@ fn parse_lines(lines: &[String]) -> Vec<CallEntry> {
 impl CallLog {
     /// One page of an MCP's log, newest first. Each entry carries the preview already stored in the
     /// index.
-    pub async fn read_calls(&self, mcp: &str, page: i64, page_size: i64) -> Value {
+    pub async fn read_calls(&self, mcp: &str, page: i64, page_size: i64, q: Option<&str>) -> Value {
         self.flush_calls(Some(mcp)).await;
         let size = page_size.clamp(1, 100) as usize;
         let page = page.max(0) as usize;
         let from = page * size;
-        let tail = tail_lines(&self.file_for(mcp), from + size + 1).unwrap_or(Tail {
-            lines: Vec::new(),
-            more: false,
-        });
-        let entries = parse_lines(&tail.lines);
+        // With no needle this stays the bounded tail read it always was. With one, the whole
+        // index is scanned and filtered BEFORE paging — the same stance as read_tool_history:
+        // a match is decided on what a row shows (tool name, FULL arguments, stored reply text),
+        // never on the clipped preview, and a reply that only survives as a preview is matched
+        // as the preview, not pretended to have been searched in full.
+        let needle = q.unwrap_or("").trim().to_ascii_lowercase();
+        let (entries, tail_more) = if needle.is_empty() {
+            let tail = tail_lines(&self.file_for(mcp), from + size + 1).unwrap_or(Tail {
+                lines: Vec::new(),
+                more: false,
+            });
+            (parse_lines(&tail.lines), tail.more)
+        } else {
+            let tail = tail_lines(&self.file_for(mcp), usize::MAX).unwrap_or(Tail {
+                lines: Vec::new(),
+                more: false,
+            });
+            let kept: Vec<CallEntry> = parse_lines(&tail.lines)
+                .into_iter()
+                .filter(|e| {
+                    e.tool.to_ascii_lowercase().contains(&needle)
+                        || e.args.to_ascii_lowercase().contains(&needle)
+                        || e.output.to_ascii_lowercase().contains(&needle)
+                })
+                .collect();
+            (kept, false)
+        };
         let slice: Vec<&CallEntry> = entries.iter().skip(from).take(size).collect();
         let calls: Vec<Value> = slice
             .iter()
@@ -834,7 +856,7 @@ impl CallLog {
             "calls": calls,
             "page": page,
             "pageSize": size,
-            "more": entries.len() > from + size || tail.more,
+            "more": entries.len() > from + size || tail_more,
         })
     }
 
@@ -1075,7 +1097,7 @@ mod tests {
     /// Every read flushes pending appends, so reading is enough to see a call just recorded.
     async fn entries(mcp: &str) -> Vec<CallEntry> {
         let log = test_log();
-        let page = log.read_calls(mcp, 0, CALLS_PAGE_SIZE as i64).await;
+        let page = log.read_calls(mcp, 0, CALLS_PAGE_SIZE as i64, None).await;
         serde_json::from_value(page["calls"].clone()).unwrap_or_default()
     }
 
@@ -1236,7 +1258,7 @@ mod tests {
             log.record_call(Some(mcp), &source(), rec(&format!("t{i}"), None, true, "x"));
         }
 
-        let first = log.read_calls(mcp, 0, CALLS_PAGE_SIZE as i64).await;
+        let first = log.read_calls(mcp, 0, CALLS_PAGE_SIZE as i64, None).await;
         assert_eq!(first["calls"].as_array().unwrap().len(), CALLS_PAGE_SIZE);
         assert_eq!(
             first["calls"][0]["tool"],
@@ -1244,7 +1266,7 @@ mod tests {
         );
         assert_eq!(first["more"], true);
 
-        let second = log.read_calls(mcp, 1, CALLS_PAGE_SIZE as i64).await;
+        let second = log.read_calls(mcp, 1, CALLS_PAGE_SIZE as i64, None).await;
         assert_eq!(second["calls"].as_array().unwrap().len(), 5);
         assert_eq!(second["calls"][0]["tool"], "t5");
         assert_eq!(second["more"], false);
@@ -1276,6 +1298,65 @@ mod tests {
         assert_eq!(full.preview, None);
         let parsed: Value = serde_json::from_str(&full.output).unwrap();
         assert_eq!(parsed["rows"].as_array().unwrap().len(), 4000);
+    }
+
+    // docs/31 — the Logs search. The needle matches what a row shows: the tool name, the FULL
+    // stored arguments, or the stored reply text; case-insensitive; pages over the filtered set.
+    #[tokio::test]
+    async fn search_matches_tool_args_or_reply_case_insensitively() {
+        let log = test_log();
+        let mcp = "search";
+        log.clear_calls(mcp).await;
+        let args = |s: &str| serde_json::json!({ "command": s });
+        log.record_call(Some(mcp), &source(), rec("redis_query", Some(args("SET cache:a 1")), true, "OK"));
+        log.record_call(Some(mcp), &source(), rec("redis_query", Some(args("GET cache:a")), true, "\"1\""));
+        log.record_call(Some(mcp), &source(), rec("pg_query", Some(args("SELECT 1")), true, "1 row"));
+        log.record_call(Some(mcp), &source(), rec("get_user", None, true, "found"));
+
+        let tools = |page: Value| -> Vec<String> {
+            page["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["tool"].as_str().unwrap().to_string())
+                .collect()
+        };
+        // "GET" reaches the GET arguments, the get_user tool name, and nothing else
+        // (newest first — get_user was recorded last).
+        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("GET")).await), vec!["get_user", "redis_query"]);
+        // The reply text is searchable too.
+        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("1 row")).await), vec!["pg_query"]);
+        // No match answers an empty page rather than falling back to the unfiltered one.
+        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("nope")).await).len(), 0);
+        // An empty or whitespace needle means "no filter" — the plain page comes back.
+        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("")).await).len(), 4);
+        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("   ")).await).len(), 4);
+    }
+
+    #[tokio::test]
+    async fn search_pages_within_the_filtered_set() {
+        let log = test_log();
+        let mcp = "search-pages";
+        log.clear_calls(mcp).await;
+        for i in 0..CALLS_PAGE_SIZE + 5 {
+            log.record_call(
+                Some(mcp),
+                &source(),
+                rec("redis_query", Some(serde_json::json!({ "command": format!("GET key:{i}") })), true, "v"),
+            );
+        }
+        log.record_call(Some(mcp), &source(), rec("other", None, true, "noise"));
+
+        let first = log.read_calls(mcp, 0, CALLS_PAGE_SIZE as i64, Some("GET")).await;
+        assert_eq!(first["calls"].as_array().unwrap().len(), CALLS_PAGE_SIZE);
+        assert_eq!(first["more"], json!(true));
+        let second = log.read_calls(mcp, 1, CALLS_PAGE_SIZE as i64, Some("GET")).await;
+        assert_eq!(second["calls"].as_array().unwrap().len(), 5);
+        assert_eq!(second["more"], json!(false));
+        // The noise entry never leaks onto a filtered page.
+        for page in [&first, &second] {
+            assert!(page["calls"].as_array().unwrap().iter().all(|c| c["tool"] == json!("redis_query")));
+        }
     }
 
     #[tokio::test]
