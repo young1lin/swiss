@@ -183,6 +183,9 @@
        and a segmented control has no baseline to share. */
     .sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); min-height: 36px; }
     .sec-cap { font-size: var(--f-caption); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+    /* docs/31: the Logs search sits in the section head, next to Clear — a filter, not a form
+       field, so it is sized to its role and pushed right against the actions. */
+    .sec-head #callsQ { margin-left: auto; width: 180px; padding: 3px var(--s2); font-size: var(--f-caption); }
     .call + .call { border-top: 1px solid var(--sep-soft); }
     .call-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; padding: var(--s2) var(--s4); cursor: pointer; }
     .call-sum:hover { background: var(--hover); }

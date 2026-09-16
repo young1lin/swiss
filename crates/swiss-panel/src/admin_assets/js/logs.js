@@ -71,12 +71,21 @@ function callHtml(d, c) {
 
 function logsBody(d) {
   if (d.calls == null) return '<div class="note"><span class="spin"></span> Loading calls…</div>';
+  /* docs/31: server-side search over the stored calls. The input re-renders with the page, but
+   * renderCallsOnly swaps the LIVE node back in, so focus and caret survive a result repaint. */
+  var q = d.callsQ || "";
   var head = '<div class="sec-head"><span class="sec-cap">Tool calls · newest first</span>' +
-    '<button class="btn" id="callsClear"' + (d.calls.length || d.callsPage ? "" : " disabled") + ">Clear</button></div>";
+    '<input id="callsQ" type="search" placeholder="Search calls" aria-label="Search tool calls"' +
+    ' value="' + esc(q) + '">' +
+    '<button class="btn" id="callsClear"' + (d.calls.length || d.callsPage || q ? "" : " disabled") + ">Clear</button></div>";
   var body = d.calls.length
     ? '<div class="group">' + d.calls.map(function (c) { return callHtml(d, c); }).join("") + "</div>"
     : '<div class="group"><div class="row"><span class="rowmsg">' +
-      (d.callsPage ? "Nothing on this page." : "No calls yet. Every tool invocation — from an MCP client or from the Run tab — is recorded here with its arguments and its reply, and the log is kept on disk across restarts.") +
+      (d.callsPage
+        ? "Nothing on this page."
+        : q
+          ? "No calls matching \u201C" + esc(q) + "\u201D."
+          : "No calls yet. Every tool invocation — from an MCP client or from the Run tab — is recorded here with its arguments and its reply, and the log is kept on disk across restarts.") +
       "</span></div></div>";
   var pager = (d.callsPage > 0 || d.callsMore)
     ? '<div class="pager"><button class="btn" id="clPrev"' + (d.callsPage > 0 ? "" : " disabled") + ">Newer</button>" +

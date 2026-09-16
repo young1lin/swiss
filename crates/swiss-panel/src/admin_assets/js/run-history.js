@@ -16,7 +16,7 @@
 
 import { $, api, apiJson, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
-import { callsPageStep, cancelEdit, changeEditType, clearCalls, deleteRevision, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
+import { callsPageStep, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
 import { fmtChars, fmtJson, logsBody, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
@@ -580,6 +580,32 @@ function wireTabBody(d, m) {
   // Logs tab
   var clear = $("callsClear");
   if (clear) clear.onclick = clearCalls;
+  // The search box (docs/31): debounced server-side reload; Escape clears at once. Property
+  // assignment, not addEventListener — renderCallsOnly may re-wire the SAME live node.
+  var q = $("callsQ");
+  if (q) {
+    q.oninput = function () {
+      clearTimeout(d.callsQTimer);
+      d.callsQTimer = setTimeout(function () {
+        var nd = state.detail;
+        if (!nd || nd.name !== d.name) return;
+        nd.callsQ = q.value;
+        nd.callsPage = 0;
+        nd.calls = null; // the loading state, not the previous needle's rows
+        loadCalls(nd.name);
+      }, 300);
+    };
+    q.onkeydown = function (ev) {
+      if (ev.key !== "Escape" || !q.value) return;
+      ev.preventDefault();
+      clearTimeout(d.callsQTimer);
+      q.value = "";
+      d.callsQ = "";
+      d.callsPage = 0;
+      d.calls = null;
+      loadCalls(d.name);
+    };
+  }
   var clPrev = $("clPrev"); if (clPrev) clPrev.onclick = function () { callsPageStep(-1); };
   var clNext = $("clNext"); if (clNext) clNext.onclick = function () { callsPageStep(1); };
   document.querySelectorAll("#tabbody [data-callseq]").forEach(function (s) {
@@ -701,11 +727,25 @@ function renderCallsOnly() {
   var body = $("tabbody");
   if (!body) return;
   // Repaint only when the log actually changed — otherwise a 6 s poll would scroll an open result
-  // back to the top while it is being read.
+  // back to the top while it is being read. The needle counts too (docs/31): a cleared or changed
+  // search must repaint even when the row count happens to stay the same.
   var calls = d.calls || [];
-  var sig = (calls.length ? calls[0].seq : 0) + ":" + calls.length + ":" + d.stderr.length;
+  var sig = (calls.length ? calls[0].seq : 0) + ":" + calls.length + ":" + d.stderr.length + ":" + (d.callsQ || "");
   if (body.dataset.callsig === sig) return;
+  // Keep the search box the user is typing into: the fresh markup carries a rebuilt input, and the
+  // live node (focus, caret, IME state) is swapped back into its place. innerHTML detaching the
+  // old node blurs it — focus and caret are restored explicitly after the swap, or the next
+  // keystroke after a result repaint would land nowhere.
+  var liveQ = document.getElementById("callsQ");
+  var hadFocus = !!(liveQ && document.activeElement === liveQ);
+  var caret = hadFocus ? liveQ.selectionStart : null;
   body.innerHTML = logsBody(d);
+  var freshQ = document.getElementById("callsQ");
+  if (liveQ && freshQ && liveQ !== freshQ) freshQ.replaceWith(liveQ);
+  if (hadFocus && liveQ) {
+    liveQ.focus();
+    try { liveQ.setSelectionRange(caret, caret); } catch (err) { /* type=search supports it; guard anyway */ }
+  }
   body.dataset.callsig = sig;
   wireTabBody(d, rowOf(d.name) || {});
 }
