@@ -1,4 +1,4 @@
-import { $, dotTitle, state } from "./util.js";
+import { $, dotTitle, state, typeTagHtml } from "./util.js";
 import { closeMenu } from "./pane.js";
 import { groupOf, groupedMcps, rowOf, sideCfg, visibleMcps } from "./sidebar.js";
 import { mountGroup } from "./groups.js";
@@ -131,7 +131,9 @@ function patchSidebar() {
     // same name, so the row is never rebuilt and the trailing label would otherwise go stale.
     var tagEl = node.querySelector(".side-type");
     var tag = m.tag || m.type || "";
-    tagEl.textContent = tag;
+    // docs/29: a mapped tag renders its glyph (the word rides the aria-label); anything else
+    // keeps the text chip exactly as before. innerHTML, not textContent — icon() is markup.
+    tagEl.innerHTML = tag ? typeTagHtml(tag) : "";
     if (tag) tagEl.setAttribute("data-tag", tag);
     else tagEl.removeAttribute("data-tag");
     node.title = tooltipOf(m);

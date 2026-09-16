@@ -93,9 +93,23 @@ fn tag_of(type_: &str, def: &ServerDef) -> String {
 
 /// Connection fields each direct adapter reads. Anything else in the request body is dropped, so
 /// the panel can edit a definition without polluting it.
-const DIRECT_FIELDS: [(&str, &[&str]); 3] = [
+const DIRECT_FIELDS: [(&str, &[&str]); 4] = [
     (
         "mysql",
+        &[
+            "description",
+            "host",
+            "port",
+            "user",
+            "password",
+            "database",
+            "timezone",
+            "maxRows",
+        ],
+    ),
+    // docs/29: MariaDB is its own type with the mysql wire protocol's fields verbatim.
+    (
+        "mariadb",
         &[
             "description",
             "host",
@@ -395,7 +409,7 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         .map(|(_, f)| *f)
     else {
         return Err(format!(
-            "unknown type: {type_} (supported: mysql | redis | pg | proc | http | rest | echo | figma | zai-vision)"
+            "unknown type: {type_} (supported: mysql | mariadb | redis | pg | proc | http | rest | echo | figma | zai-vision)"
         ));
     };
     for k in allowed {

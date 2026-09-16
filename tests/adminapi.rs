@@ -3638,3 +3638,29 @@ async fn a_disabled_mcp_refuses_clients_with_the_disabled_wording() {
     assert!(text.contains("enable it from the panel"), "{text}");
 }
 
+
+#[tokio::test]
+async fn a_mariadb_def_builds_and_carries_its_own_tag() {
+    let _lock = traffic_lock().await;
+    let h = setup();
+    // docs/29: MariaDB is its own type — the def, the tag, the seal — on the mysql engine.
+    // Disabled so the test never depends on a server existing anywhere.
+    let (status, body) = h
+        .post(
+            "/api/mcps",
+            json!({ "name": "mdb", "type": "mariadb", "host": "127.0.0.1", "port": 3306,
+                    "user": "u", "password": "${MDB_PW}", "database": "d", "enabled": false }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (_, list) = h.get("/api/mcps").await;
+    let row = list["mcps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "mdb")
+        .expect("row")
+        .clone();
+    assert_eq!(row["tag"], "mariadb");
+}
+

@@ -30,9 +30,10 @@ describe("admin panel assets", () => {
     // The pre-paint theme resolver must stay inline in the shell — a linked script would flash.
     // (The localStorage key was renamed swiss_theme by the rebrand; this assertion lagged it.)
     expect(shell).toContain("swiss_theme");
-    // And the 6k-line monolith it replaces is really gone. The bound rose with the icon
-    // sprite (docs/18 V2, ~26 lines of hand-drawn symbols) — still small, still no markup.
-    expect(shell.split("\n").length).toBeLessThan(120);
+    // And the 6k-line monolith it replaces is really gone. The bound rose twice with the icon
+    // sprite — docs/18 V2 (~26 lines of hand-drawn symbols), then docs/29 (13 more: the
+    // launch-tag glyphs) — still small, still no markup.
+    expect(shell.split("\n").length).toBeLessThan(140);
   });
 
   it("links the whole module graph: every import resolves to a file that exports the name", () => {

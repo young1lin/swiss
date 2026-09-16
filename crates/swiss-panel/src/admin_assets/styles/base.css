@@ -400,6 +400,10 @@
       white-space: nowrap; padding: 1px 6px; border-radius: 4px;
       color: var(--text-3); background: color-mix(in srgb, var(--text) 5%, transparent);
     }
+    /* A glyph chip (docs/29) sits tighter than the word chip it replaces: the mark is 14px
+       tall, so the side padding collapses and the mono font rules stop applying. */
+    .side-type:has(.ic) { padding: 2px 3px; }
+    .side-type .ic { display: block; width: 14px; height: 14px; }
 
     /* --- groups (docs/20 §4.1, the tree model) ----------------------------------------------------
        One component, two densities: the sidebar tree and the page card list. The group is a

@@ -21,7 +21,7 @@ var AUTOSTART_EAGER = {
   k: "autostart", label: "Start automatically at boot", bool: true, def: true,
   hint: "Off: idle at boot — the first client request starts it.",
 };
-var TESTABLE_TYPES = ["mysql", "redis", "pg", "http", "rest"];
+var TESTABLE_TYPES = ["mysql", "mariadb", "redis", "pg", "http", "rest"];
 var TYPE_FIELDS = {
   proc: [
     DESC_FIELD,
@@ -34,6 +34,16 @@ var TYPE_FIELDS = {
     AUTOSTART_PROC,
   ],
   mysql: [
+    DESC_FIELD,
+    { k: "host", label: "Host", half: true }, { k: "port", label: "Port", num: true, half: true },
+    { k: "user", label: "User", half: true }, { k: "password", label: "Password", half: true },
+    { k: "database", label: "Database", half: true }, { k: "timezone", label: "Timezone", half: true, ph: "Z" },
+    { k: "maxRows", label: "Default row limit", num: true, half: true, ph: "200" },
+    AUTOSTART_EAGER,
+  ],
+  // docs/29: MariaDB speaks the MySQL wire protocol — this form is the mysql one verbatim
+  // (the server maps the type to the same engine); only the type string and the seal differ.
+  mariadb: [
     DESC_FIELD,
     { k: "host", label: "Host", half: true }, { k: "port", label: "Port", num: true, half: true },
     { k: "user", label: "User", half: true }, { k: "password", label: "Password", half: true },
