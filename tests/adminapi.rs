@@ -1126,6 +1126,11 @@ async fn with_echo_named(name: &str) -> Harness {
 
 #[tokio::test]
 async fn pages_the_call_log_and_serves_one_reply_in_full() {
+    // The panel /call posts below land in the shared traffic ring; without the lock a parallel
+    // traffic test saw one of these rows as a stray "default" client (2026-09-16, full-suite
+    // run after the docs/31 binary shifted thread interleaving) — the same family as the
+    // 11-vs-10 note above. Serialize like every other ring writer.
+    let _lock = traffic_lock().await;
     let h = with_echo_named("pg1").await;
     for i in 0..3 {
         let (status, _) = h
