@@ -25,9 +25,12 @@
 # a portable snapshot.
 #
 # Usage:
-#   scripts/test-instance.ps1            # -Start (default): snapshot state, serve on 19998
-#   scripts/test-instance.ps1 -Fresh     # wipe the test home first (a clean instance)
-#   scripts/test-instance.ps1 -Stop      # kill whatever owns port 19998 - by pid, never name
+#   scripts/test-instance.ps1                     # -Start (default): snapshot state, serve on 19998
+#   scripts/test-instance.ps1 -Fresh               # wipe the test home first (a clean instance)
+#   scripts/test-instance.ps1 -Stop                # kill whatever owns port 19998 - by pid, never name
+#   scripts/test-instance.ps1 -Port 19997 -Fresh   # a second, non-default port: gets its OWN
+#                                                   # test home (swiss-test-home-p19997) so two
+#                                                   # instances never share one sealed-state home
 #
 # Stop deliberately finds its victim ONLY through Get-NetTCPConnection's OwningProcess:
 # Get-Process swiss would kill the user's 19999 daemon too, which is also an swiss.exe.
@@ -38,13 +41,16 @@
 param(
     [switch]$Start,
     [switch]$Stop,
-    [switch]$Fresh
+    [switch]$Fresh,
+    [int]$Port = 19998
 )
 
 $ErrorActionPreference = 'Stop'
 
-$Port = 19998
-$TestHome = Join-Path $env:LOCALAPPDATA 'swiss-test-home'
+# A non-default port gets its own home suffix: the sealed state files are single-writer, so
+# a 19997 instance and a 19998 instance sharing one home would race each other's saves.
+$HomeName = if ($Port -eq 19998) { 'swiss-test-home' } else { "swiss-test-home-p$Port" }
+$TestHome = Join-Path $env:LOCALAPPDATA $HomeName
 $ProdHome = Join-Path $env:USERPROFILE '.mcp-gateway'
 $Exe = Join-Path $PSScriptRoot '..\target-test\release\swiss.exe'
 $HealthUrl = "http://127.0.0.1:$Port/health"
@@ -99,7 +105,7 @@ if ($Stop) {
         Write-Error "port $Port is still held after killing pid $owner"
         exit 1
     }
-    Write-Host "19998 stopped; 19999 (production) untouched"
+    Write-Host "$Port stopped; 19999 (production) untouched"
     exit 0
 }
 
@@ -164,7 +170,7 @@ if (-not $healthy) {
     exit 1
 }
 
-Write-Host "19998 is up: pid $($proc.Id), $HealthUrl"
+Write-Host "$Port is up: pid $($proc.Id), $HealthUrl"
 Write-Host "state writes go to $TestHome - production config untouched"
 exit 0
 

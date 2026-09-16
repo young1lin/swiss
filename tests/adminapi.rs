@@ -636,7 +636,7 @@ async fn pages_tools_and_resources_on_demand_while_details_carries_logs() {
 #[tokio::test]
 async fn answers_a_listing_for_an_mcp_that_was_never_started() {
     // Not a Node case: the Node fixture always started. The Rust panel polls a stopped MCP too,
-    // and the answer must be the 503 it renders as "not started", never a 500.
+    // and the answer must be the 503 it renders as "disabled", never a 500.
     let h = setup();
     h.register_fixture("f3");
     assert_eq!(
@@ -3503,3 +3503,187 @@ async fn autostart_route_refuses_a_body_without_a_verdict() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body["error"].is_string(), "{body}");
 }
+
+// ---- docs/28 D1: replace / restore / revisions ----------------------------------------------
+// The operator's flow this serves: park the current def of a name, install a new one under
+// the SAME name, roll back with one click. "One active def per name" is structural — the
+// revision list is inert data and never reaches the registry or the boot path.
+
+async fn add_echo(h: &Harness, name: &str, enabled: bool) {
+    let (status, body) = h
+        .post("/api/mcps", json!({ "name": name, "type": "echo", "enabled": enabled }))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "add {name}: {body}");
+}
+
+#[tokio::test]
+async fn replace_parks_the_old_def_and_serves_the_new_one() {
+    let _lock = traffic_lock().await; // the admin posts below land in the shared traffic ring
+    let h = setup();
+    add_echo(&h, "m", true).await;
+    let (status, body) = h
+        .post(
+            "/api/mcps/m/replace",
+            json!({ "type": "http", "url": "https://x.test/mcp", "note": "swap one" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["parked"], json!(true));
+    assert_eq!(body["type"], json!("http"));
+    assert_eq!(body["revisions"], json!(1));
+    // x.test does not resolve: the swap stands, the start failure rides in the body — the
+    // rollback path must be reachable, not buried under a 500.
+    assert!(body["restartError"].is_string(), "{body}");
+    assert!(!h.has_server("m"));
+    // The live def is the new one; exactly one row answers to the name (one active per name).
+    assert_eq!(h.def_of("m")["type"], json!("http"));
+    assert_eq!(h.names().await, vec!["m".to_string()]);
+    // The parked snapshot is the OLD def, note and all.
+    let (status, list) = h.get("/api/mcps/m/revisions").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["revisions"][0]["type"], json!("echo"));
+    assert_eq!(list["revisions"][0]["note"], json!("swap one"));
+    assert!(list["revisions"][0]["at"].as_i64().unwrap_or(0) > 0);
+}
+
+#[tokio::test]
+async fn a_failing_replace_changes_nothing() {
+    let _lock = traffic_lock().await;
+    let h = setup();
+    add_echo(&h, "m", true).await;
+    // A rest def with no tools fails build_def — before anything is written.
+    let (status, body) = h.post("/api/mcps/m/replace", json!({ "type": "rest" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(h.def_of("m")["type"], json!("echo"));
+    let (_, list) = h.get("/api/mcps/m/revisions").await;
+    assert_eq!(list["revisions"].as_array().map(Vec::len), Some(0));
+}
+
+#[tokio::test]
+async fn replace_leaves_a_stopped_mcp_stopped() {
+    let _lock = traffic_lock().await;
+    let h = setup();
+    add_echo(&h, "m", false).await;
+    assert!(!h.has_server("m"), "enabled:false never started it");
+    let (status, body) = h
+        .post("/api/mcps/m/replace", json!({ "type": "http", "url": "https://x.test/mcp" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["lifecycle"], json!("stopped"), "a def swap is not a start");
+    assert!(!h.has_server("m"));
+}
+
+#[tokio::test]
+async fn restore_swaps_back_and_parks_the_live_def() {
+    let _lock = traffic_lock().await;
+    let h = setup();
+    add_echo(&h, "m", true).await;
+    h.post(
+        "/api/mcps/m/replace",
+        json!({ "type": "http", "url": "https://x.test/mcp", "note": "swap" }),
+    )
+    .await;
+    let (status, body) = h.post("/api/mcps/m/revisions/0/restore", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["restored"], json!(0));
+    assert_eq!(h.def_of("m")["type"], json!("echo"), "the parked def is live again");
+    // The replaced def was parked in turn — rollback is itself reversible.
+    let (_, list) = h.get("/api/mcps/m/revisions").await;
+    assert_eq!(list["revisions"].as_array().map(Vec::len), Some(1));
+    assert_eq!(list["revisions"][0]["type"], json!("http"));
+    // Restoring an index that is not there refuses loudly instead of guessing.
+    let (status, body) = h.post("/api/mcps/m/revisions/5/restore", json!({})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn six_replaces_keep_only_the_last_five_snapshots() {
+    let _lock = traffic_lock().await;
+    let h = setup();
+    add_echo(&h, "m", true).await;
+    for i in 0..6 {
+        let (status, _) = h
+            .post(
+                "/api/mcps/m/replace",
+                json!({ "type": "http", "url": "https://x.test/mcp", "note": format!("gen {i}") }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let (_, list) = h.get("/api/mcps/m/revisions").await;
+    let notes: Vec<String> = list["revisions"]
+        .as_array()
+        .expect("revisions")
+        .iter()
+        .map(|r| r["note"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(notes.len(), 5, "the cap holds through the routes");
+    assert_eq!(notes[0], "gen 1", "the oldest was evicted");
+}
+
+#[tokio::test]
+async fn rename_carries_revisions_and_delete_clears_them() {
+    let _lock = traffic_lock().await;
+    let h = setup();
+    add_echo(&h, "m", true).await;
+    h.post(
+        "/api/mcps/m/replace",
+        json!({ "type": "http", "url": "https://x.test/mcp", "note": "rides" }),
+    )
+    .await;
+    let (status, _) = h.post("/api/mcps/m/rename", json!({ "name": "m2" })).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, list) = h.get("/api/mcps/m2/revisions").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["revisions"][0]["note"], json!("rides"));
+    let (status, _) = h.get("/api/mcps/m/revisions").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "the old name is gone");
+    // Deleting the MCP drops its parked snapshots with it — a future same-named MCP starts
+    // clean (same rule the OAuth credentials already follow above).
+    let (status, _) = h.delete("/api/mcps/m2").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = h.get("/api/mcps/m2/revisions").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn one_revision_can_be_dropped_without_touching_the_rest() {
+    let _lock = traffic_lock().await;
+    let h = setup();
+    add_echo(&h, "m", true).await;
+    for note in ["a", "b"] {
+        h.post(
+            "/api/mcps/m/replace",
+            json!({ "type": "http", "url": "https://x.test/mcp", "note": note }),
+        )
+        .await;
+    }
+    let (status, _) = h.delete("/api/mcps/m/revisions/0").await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, list) = h.get("/api/mcps/m/revisions").await;
+    assert_eq!(list["revisions"].as_array().map(Vec::len), Some(1));
+    assert_eq!(list["revisions"][0]["note"], json!("b"));
+    let (status, _) = h.delete("/api/mcps/m/revisions/0").await;
+    assert_eq!(status, StatusCode::OK);
+    // The list is empty now; deleting again says so (404: nothing parked) instead of erroring.
+    let (status, body) = h.delete("/api/mcps/m/revisions/0").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+
+#[tokio::test]
+async fn a_disabled_mcp_refuses_clients_with_the_disabled_wording() {
+    let _lock = traffic_lock().await;
+    let h = setup();
+    add_echo(&h, "m", false).await;
+    // docs/28 D2: disabled means the client sees nothing of it — every method answers the
+    // same refusal, and the wording names the operator's verb and the way out.
+    let (status, body) = h
+        .mcp("/mcp/m", TOKEN, json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let text = body.to_string();
+    assert!(text.contains("disabled"), "wording must say disabled: {text}");
+    assert!(text.contains("enable it from the panel"), "{text}");
+}
+

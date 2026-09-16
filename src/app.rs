@@ -392,15 +392,12 @@ async fn mcp_post(
     }
     ctx.registry.note_activity(&name); // served traffic pushes a lazy proc's idle-reap deadline back
     let Some(handler) = ctx.handler_for(&entry) else {
-        let state = entry
-            .data
-            .read()
-            .ok()
-            .map(|d| d.lifecycle.as_str())
-            .unwrap_or("unknown");
+        // docs/28 D2: this state is a disable — it persists across boots and refuses every
+        // client method. The wording says the operator's word and the way out, not the
+        // lifecycle's internal noun.
         return json_rpc_error(
             StatusCode::SERVICE_UNAVAILABLE,
-            &format!("MCP '{name}' is not started (state: {state})"),
+            &format!("MCP '{name}' is disabled — enable it from the panel"),
         );
     };
 
