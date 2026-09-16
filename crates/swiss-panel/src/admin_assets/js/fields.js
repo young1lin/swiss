@@ -75,10 +75,18 @@ var TYPE_FIELDS = {
     { k: "allowEval", label: "Allow Lua (EVAL / FCALL)", bool: true, hint: "A script is opaque to every other rule here — it can reach anything they refuse." },
     AUTOSTART_EAGER,
   ],
+  // docs/30: the def keeps ONE url string; the form edits the pieces. parse/serialize below,
+  // the same pair on open and on save, so an edit touches exactly the field it meant to.
   pg: [
     DESC_FIELD,
-    { k: "url", label: "Connection URL", area: true, ph: "postgresql://user:pass@127.0.0.1:5432/db?sslmode=disable" },
-    { k: "maxRows", label: "Default row limit", num: true, half: true, ph: "200" },
+    { k: "host", label: "Host", half: true }, { k: "port", label: "Port", num: true, half: true },
+    { k: "user", label: "User", half: true },
+    {
+      k: "password", label: "Password", half: true,
+      hint: "A literal, or a ${ENV_VAR} / ${secret://name} ref — the ref is stored, the value never is.",
+    },
+    { k: "database", label: "Database", half: true }, { k: "maxRows", label: "Default row limit", num: true, half: true, ph: "200" },
+    { k: "params", label: "Options (k=v per line)", area: true, ph: "sslmode=disable" },
     AUTOSTART_EAGER,
   ],
   http: [
@@ -247,8 +255,70 @@ function translateOauth(body) {
   return body;
 }
 
+/* --- pg url <-> fields (docs/30) ------------------------------------------------------------------ */
+/* The def keeps ONE url string (the engine, the mask/unmask machinery and DIRECT_FIELDS all
+ * read it); the form edits the pieces. The pair below is the only place the split happens,
+ * used on open AND on every submit path. Two things must survive verbatim:
+ *   - ${...} refs (a ${secret://name} password contains ':' and '/', which the url grammar
+ *     would otherwise claim), so refs are lifted out to placeholders before the split;
+ *   - the mask sentinel in a url password — the server restores it from the stored def.
+ * Params render one k=v per line; the url keeps them &-joined. */
+var PG_PARTS = ["host", "port", "user", "password", "database", "params"];
+function parsePgUrl(url) {
+  var refs = [];
+  var s = String(url || "").replace(/\$\{[^}]*\}/g, function (r) {
+    refs.push(r);
+    return "\u0001" + (refs.length - 1) + "\u0001";
+  });
+  /* The lifted placeholders are \u0001 + digits + \u0001 — none of :@/? — so the url grammar
+   * below can stay plain; the refs ride through whatever slot they sit in. */
+  var m = /^postgres(?:ql)?:\/\/(?:([^:@/]*)(?::([^@]*))?@)?([^:/?]*)(?::(\d+))?\/([^?]*)(?:\?(.*))?$/.exec(s);
+  if (!m) return null;
+  var back = function (v) {
+    return v.replace(/\u0001(\d+)\u0001/g, function (_, i) { return refs[+i] || ""; });
+  };
+  return {
+    host: back(m[3] || ""),
+    port: back(m[4] || ""),
+    user: back(m[1] || ""),
+    password: back(m[2] || ""),
+    database: back(m[5] || ""),
+    params: back(m[6] || "").replace(/&/g, "\n"),
+  };
+}
+function pgUrlFrom(p) {
+  var auth = p.user ? p.user + (p.password ? ":" + p.password : "") + "@" : "";
+  var port = p.port ? ":" + p.port : "";
+  var q = p.params ? "?" + String(p.params).split(/\r?\n/).map(function (l) { return l.trim(); })
+    .filter(Boolean).join("&") : "";
+  return "postgresql://" + auth + (p.host || "") + port + "/" + (p.database || "") + q;
+}
+/** The submit-path half: parts -> one url, on every body the server sees. Precedence: any
+ *  filled part field wins (the operator is decomposing — a whole-value ${...} url ref or an
+ *  unparseable string gave the raw field, and typing into the parts is the choice to replace
+ *  it); with no part filled, __pgRaw passes through untouched — a whole-value ref stays a
+ *  ref, old experience beats lost data. */
+function translatePg(type, body) {
+  if (type !== "pg") { delete body.__pgRaw; return body; }
+  var hasParts = PG_PARTS.some(function (k) { return body[k] !== undefined; });
+  if (!hasParts && body.__pgRaw != null) {
+    body.url = String(body.__pgRaw);
+  } else {
+    body.url = pgUrlFrom({
+      host: body.host, port: body.port, user: body.user,
+      password: body.password, database: body.database, params: body.params,
+    });
+  }
+  PG_PARTS.forEach(function (k) { delete body[k]; });
+  delete body.__pgRaw;
+  return body;
+}
+
 function readFields(type, p) {
   var o = {};
+  /* docs/30: the unparseable-url fallback renders its own textarea (#e-pgraw / #a-pgraw);
+     every submit path reads through readFields, so the raw value boards here like any field. */
+  if (type === "pg") { var raw = $(p + "pgraw"); if (raw) o.__pgRaw = raw.value; }
   (TYPE_FIELDS[type] || []).forEach(function (f) {
     var node = $(p + f.k);
     if (!node) return;
@@ -264,4 +334,4 @@ function readFields(type, p) {
   return o;
 }
 
-export { AUTOSTART_EAGER, AUTOSTART_PROC, DESC_FIELD, TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToObj, envToText, fieldHtml, fieldsHtml, readFields, translateOauth };
+export { AUTOSTART_EAGER, AUTOSTART_PROC, DESC_FIELD, TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToObj, envToText, fieldHtml, fieldsHtml, parsePgUrl, pgUrlFrom, readFields, translateOauth, translatePg };
