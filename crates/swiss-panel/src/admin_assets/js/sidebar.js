@@ -16,8 +16,8 @@
 
 import { state } from "./util.js";
 import { openSheet } from "./add-sheet.js";
-import { openDetail } from "./detail.js";
-import { patchSidebar } from "./menu.js";
+import { act, openDetail, removeMcp, renameMcp } from "./detail.js";
+import { patchSidebar, popupMenu } from "./menu.js";
 import { loadList } from "./polling.js";
 import { assignMember, groupOf as makeGroupOf, newGroupFlow, saveGroupNames, saveOrder, slice } from "./groups.js";
 
@@ -111,7 +111,10 @@ function nudgeSelected(up) {
 
 /** One sidebar row: dot, name, launch tag. One line — the description, source and latency live
  *  in the tooltip and the pane header. Click opens the detail pane; drag is wired by the
- *  groups component (reorder + re-home in one gesture). */
+ *  groups component (reorder + re-home in one gesture). Right-click raises the row's action
+ *  menu (docs/28 D3): the row itself is a <button>, and a button cannot nest the ellipsis
+ *  button the Jobs/Tunnels rows use — the ctx-menu anchor pattern (data-csv.js) fits instead,
+ *  and the tooltip says so. */
 function sideRowNode(m) {
   var b = document.createElement("button");
   b.className = "side-row";
@@ -129,7 +132,28 @@ function sideRowNode(m) {
   tag.className = "side-type"; // http / rest / npx / uvx — filled by the patch pass
   b.appendChild(tag);
   b.onclick = function () { openDetail(m.name); };
+  b.addEventListener("contextmenu", function (ev) {
+    if (ev.preventDefault) ev.preventDefault();
+    // The cursor point as anchor — the same shape the data grid's ctx menus pass.
+    var pt = { left: ev.clientX || 0, top: ev.clientY || 0, bottom: ev.clientY || 0 };
+    rowMenu(m.name, pt);
+  });
   return b;
+}
+
+/** The row's right-click menu (docs/28 D3): the three verbs the operator asked to have
+ *  within reach — rename, disable/enable by state, delete. The label is read live from
+ *  state.mcps (rowOf), never off the row's render-time snapshot, so a poll that flipped the
+ *  lifecycle cannot make the menu offer the wrong verb. */
+function rowMenu(name, anchor) {
+  var m = rowOf(name) || { name: name, lifecycle: "stopped" };
+  var started = m.lifecycle === "started";
+  popupMenu(anchor, [
+    { label: "Rename…", fn: function () { renameMcp(name); } },
+    { label: started ? "Disable" : "Enable", fn: function () { act(name, started ? "stop" : "start"); } },
+    { sep: true },
+    { label: "Delete", danger: true, fn: function () { removeMcp(name); } },
+  ]);
 }
 
 /** The mcps scope's cfg for mountGroup (see groups.js for the full contract). Built fresh each
@@ -193,4 +217,4 @@ async function assignGroup(name, group) {
   patchSidebar();
 }
 
-export { assignGroup, groupOf, groupedMcps, moveRow, navRows, newGroup, nudgeSelected, rowOf, saveGroups, sideCfg, visibleMcps };
+export { assignGroup, groupOf, groupedMcps, moveRow, navRows, newGroup, nudgeSelected, rowMenu, rowOf, saveGroups, sideCfg, sideRowNode, visibleMcps };

@@ -28,18 +28,22 @@ async function act(name, verb) {
   if (state.busy[name]) return;
   state.busy[name] = verb;
   patchSidebar(); patchDetailHead();
+  // docs/28 D2: the wire keeps the stop/start verbs; the panel says disable/enable — a stop
+  // that survives a boot and refuses every client is a disable, and the word owed it.
+  var shown = verb === "stop" ? "disable" : verb === "start" ? "enable" : verb;
   try {
     var r = await api("/api/mcps/" + encodeURIComponent(name) + "/" + verb, { method: "POST" });
     var j = await r.json();
     if (!r.ok) {
-      state.lastAction[name] = { msg: verb + " failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
+      state.lastAction[name] = { msg: shown + " failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
       toast(name + ": " + (j.error || "failed"), true);
     } else {
-      state.lastAction[name] = { msg: verb + " → " + (j.lifecycle || "ok"), err: false, at: now() };
+      var state_word = j.lifecycle === "stopped" ? "disabled" : j.lifecycle;
+      state.lastAction[name] = { msg: shown + " → " + (state_word || "ok"), err: false, at: now() };
       toast(name + ": " + state.lastAction[name].msg);
     }
   } catch (e) {
-    state.lastAction[name] = { msg: verb + " request failed", err: true, at: now() };
+    state.lastAction[name] = { msg: shown + " request failed", err: true, at: now() };
   }
   delete state.busy[name];
   await loadList();
@@ -304,6 +308,8 @@ function showTab(tab) {
   d.editing = false;
   renderPane();
   if (KINDS.indexOf(tab) >= 0 && !d[tab].loaded && !d[tab].loading) loadPage(d.name, tab);
+  // The config tab's revision list (docs/28 D1) rides along with the tab, not the poll.
+  if (tab === "config") loadRevisions(d.name);
   // Run needs the tool list to build its argument form.
   if (tab === "run" && !d.tools.loaded && !d.tools.loading) loadPage(d.name, "tools");
   if (tab === "logs") loadCalls(d.name);
@@ -326,16 +332,118 @@ function startEdit() {
   var d = state.detail;
   if (!d || !d.config) return;
   d.editing = true;
+  d.editMode = "edit";
   d.editType = d.config.type || "proc";
   d.editVals = null; // start from what is stored
+  renderPane();
+}
+// docs/28 D1: the same form, another verb — Save parks the current def as a revision and
+// installs the new one under the SAME name. The operator's rollback lives one click away.
+function startReplace() {
+  var d = state.detail;
+  if (!d || !d.config) return;
+  d.editing = true;
+  d.editMode = "replace";
+  d.editType = d.config.type || "proc";
+  d.editVals = null;
   renderPane();
 }
 function cancelEdit() {
   if (!state.detail) return;
   state.detail.editing = false;
+  state.detail.editMode = null;
   state.detail.editType = null;
   state.detail.editVals = null;
   renderPane();
+}
+
+/* --- def revisions (docs/28 D1) ---------------------------------------------------------------- */
+async function loadRevisions(name) {
+  var d = state.detail;
+  if (!d || d.name !== name) return;
+  try {
+    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/revisions");
+    if (!r.ok) return;
+    var j = await r.json();
+    if (state.detail !== d) return; // a revisit built a new detail object — see loadMeta
+    d.revisions = j.revisions || [];
+    if (d.tab === "config" && !d.editing) renderPane();
+  } catch (e) { /* handled */ }
+}
+
+async function saveReplace() {
+  var d = state.detail;
+  if (!d) return;
+  var type = d.editType || (d.config && d.config.type) || "proc";
+  var fields = readFields(type, "e-");
+  var body = Object.assign({ type: type }, fields);
+  if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
+  translateOauth(body);
+  var noteEl = $("e-note");
+  if (noteEl) body.note = noteEl.value;
+  if (type === "proc" && !body.command) { toast("Command is required", true); return; }
+  var name = d.name;
+  var restore = function () {
+    if (!state.detail || state.detail !== d) return;
+    d.editing = true;
+    d.editType = type;
+    d.editVals = fields;
+  };
+  state.busy[name] = "save";
+  d.editing = false;
+  renderPane(); patchSidebar();
+  try {
+    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/replace", { method: "POST", body: JSON.stringify(body) });
+    var j = await r.json();
+    if (!r.ok) {
+      state.lastAction[name] = { msg: "replace failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
+      toast(j.error || "replace failed", true);
+      restore();
+    } else {
+      state.lastAction[name] = { msg: "def replaced → revision " + (j.revisions || "?") + " parked", err: false, at: now() };
+      toast(name + ": replaced — previous def parked as revision " + (j.revisions || "?"));
+      // The swap stands even when the new def will not start; the panel must say so, not hide it.
+      if (j.restartError) toast(name + " failed to start: " + j.restartError, true);
+      if (state.detail === d) d.editVals = null;
+      KINDS.forEach(function (k) { if (state.detail) state.detail[k] = pageState(); });
+      loadMeta(name);
+      loadRevisions(name);
+    }
+  } catch (e) {
+    state.lastAction[name] = { msg: "replace request failed", err: true, at: now() };
+    toast("replace request failed", true);
+    restore();
+  }
+  delete state.busy[name];
+  await loadList();
+  renderPane();
+}
+
+async function restoreRevision(index) {
+  var d = state.detail;
+  if (!d) return;
+  if (!confirm("Restore revision " + (index + 1) + "?\n\nThe current def is parked as a new revision first — this is reversible too.")) return;
+  try {
+    var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index + "/restore", { method: "POST", body: "{}" });
+    var j = await r.json();
+    if (!r.ok) { toast(j.error || "restore failed", true); return; }
+    toast(d.name + ": revision " + (index + 1) + " restored");
+    if (j.restartError) toast(d.name + " failed to start: " + j.restartError, true);
+    KINDS.forEach(function (k) { if (state.detail) state.detail[k] = pageState(); });
+    loadMeta(d.name);
+    loadRevisions(d.name);
+    await loadList();
+    renderPane();
+  } catch (e) { toast("restore request failed", true); }
+}
+
+async function deleteRevision(index) {
+  var d = state.detail;
+  if (!d) return;
+  if (!confirm("Delete parked revision " + (index + 1) + "? This only drops the snapshot — the live def is untouched.")) return;
+  if (!await apiJson("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index, { method: "DELETE" })) return;
+  toast("Revision " + (index + 1) + " deleted");
+  loadRevisions(d.name);
 }
 /** Switching type re-renders the form, so read what is in it first and carry it across — a field
  *  both types share (description, host, password) survives the switch. A masked secret carried into
@@ -452,4 +560,4 @@ async function saveEdit() {
   renderPane();
 }
 
-export { act, authorizeMcp, callsPageStep, cancelEdit, changeEditType, clearCalls, loadCalls, loadMeta, loadPage, openDetail, pageNext, pagePrev, pageState, removeMcp, renameMcp, runConnTest, saveEdit, showFullResult, showTab, startEdit };
+export { act, authorizeMcp, callsPageStep, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadMeta, loadPage, loadRevisions, openDetail, pageNext, pagePrev, pageState, removeMcp, renameMcp, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace };

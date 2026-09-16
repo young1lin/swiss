@@ -651,4 +651,39 @@ What was rejected: keeping the proc def and shrinking its idle footprint (a lazy
 costs a wakeup, an npx cache copy, and a process per use — all to wrap one HTTP POST); and a
 generic "OpenAI-compatible vision" type (the eight prompts ARE the product; a generic type
 would have to carry them as config, which is retyping the prompts by another door).
+---
+
+## ADR-023 — The name is the service, the def is a revision
+
+**Status: Accepted (2026-09-16).** The operator wanted to replace an MCP's def under the same
+name with the old one kept for rollback (docs/28): "同名可以,但是同名只有一个可以生效."
+The first design sketch — a second registry of disabled defs, with runtime arbitration
+picking the live one — was rejected before it was built: OAuth credentials, the call log,
+group membership and tunnel links are all keyed by name, so two live same-named defs would
+contend for one set of state.
+
+The accepted model is the one Kubernetes Deployments and systemd units already share: the
+name is the logical service; defs are revisions of it. managed.json gains a `revisions` map
+(def snapshots, capped at five per name, oldest evicted). A revision is inert data — never
+registered, never started, never resolved; it keeps its `${...}` references verbatim. The
+active def stays the only thing the registry and the boot path ever read, so "one live def
+per name" is a structural invariant, not a runtime arbitration.
+
+The decisions that keep it honest:
+
+- **Replace is transaction-shaped at the front: build first.** build_def and make_adapter
+  run before anything is written, so a bad def changes nothing. After the swap, a def that
+  builds but will not start is a 200 with `restartError` — the rollback path must stay
+  reachable, not drown under a 500 (the add route treats start failures the same way).
+- **Restore takes before it parks.** Parking first could evict the very revision being
+  restored when the list sits at the cap.
+- **A def swap is not a start.** A stopped MCP stays stopped through replace and restore,
+  the rule the edit route already established.
+- **Rename carries revisions; delete clears them** — with the OAuth credentials, the parked
+  snapshots describe the logical service, so they follow the name and die with it. A future
+  same-named MCP starts clean.
+
+What was rejected: the disabled-shadow registry (state contention above); and "rename the old
+one first" as the only answer (it works — ADR-less — but the operator asked for rollback
+under one name, and a rename that loses the name loses the rollback).
 
