@@ -1,3 +1,19 @@
+/*
+ * Copyright 2026 The swiss authors
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *     https://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 //! The gateway HTTP server — port of `router.ts` (with `http.ts`'s routing contract carried by
 //! axum): the panel, health, the management API, and the MCP endpoints under the `/mcp/` prefix
 //! as a catch-all single-segment route resolved dynamically from the registry, so paths can be

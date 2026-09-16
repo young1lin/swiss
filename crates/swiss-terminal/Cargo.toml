@@ -2,7 +2,7 @@
 name = "swiss-terminal"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 
 # ADR-010: a subsystem crate depends on swiss-core and swiss-host and on NO other subsystem
 # crate. SSH arrives through the shell capability seat in swiss-host (docs/14 §4), the local
