@@ -1,4 +1,4 @@
-import { $, api, apiJson, esc, state, toast } from "./util.js";
+import { $, api, apiJson, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, cancelEdit, changeEditType, clearCalls, deleteRevision, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml } from "./fields.js";
@@ -359,6 +359,37 @@ function renderRunResult() {
   }
 }
 
+function configFieldLabel(type, key) {
+  if (key === "type") return "Type";
+  if (key === "lazy") return "Startup";
+  var fields = TYPE_FIELDS[type] || [];
+  var found = fields.find(function (f) { return f.k === key || (key === "lazy" && f.k === "autostart"); });
+  return found ? found.label : key;
+}
+
+function configValue(key, value) {
+  if (key === "lazy") return value ? "On demand" : "At boot";
+  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (typeof value === "object") return Array.isArray(value) ? JSON.stringify(value) : envToText(value);
+  return String(value);
+}
+
+function configTarget(c) {
+  var type = c.type || "proc";
+  if (type === "mysql" || type === "mariadb" || type === "redis") {
+    var host = c.host || "default host";
+    var target = host + (c.port != null ? ":" + c.port : "");
+    var scope = type === "redis" ? c.db : c.database;
+    return scope != null && scope !== "" ? target + " / " + scope : target;
+  }
+  if (type === "proc") return c.command || "Command not configured";
+  if (type === "pg" || type === "http") return c.url || "Endpoint not configured";
+  if (type === "rest") return c.baseUrl || "Base URL not configured";
+  if (type === "figma") return "https://mcp.figma.com/mcp";
+  if (type === "zai-vision") return c.baseUrl || (c.mode || "ZHIPU") + " endpoint";
+  return c.url || c.baseUrl || c.host || "Connection target not configured";
+}
+
 function configBody(d) {
   if (d.editing) {
     var type = d.editType || (d.config && d.config.type) || "proc";
@@ -391,41 +422,61 @@ function configBody(d) {
   }
   var c = d.config;
   if (!c) return '<div class="note"><span class="spin"></span> Loading…</div>';
-  var rows = Object.keys(c).map(function (k) {
-    var v = c[k];
-    if (v == null || v === "") return "";
-    /* An array (a rest MCP's tools, a disabled-tool list) is not a KEY=VALUE map — envToText turns one
-       into `0=[object Object]`. */
-    var text = typeof v === "object" ? (Array.isArray(v) ? JSON.stringify(v) : envToText(v)) : String(v);
-    return '<div class="row"><span class="k">' + esc(k) + '</span><span class="v wrap">' + esc(text) + "</span></div>";
+  var type = c.type || "proc";
+  var settings = Object.keys(c).reduce(function (all, key) {
+    var value = c[key];
+    if (value == null || value === "") return all;
+    all.push({ key: key, label: configFieldLabel(type, key), text: configValue(key, value) });
+    return all;
+  }, []);
+  var rows = settings.map(function (setting) {
+    var title = setting.text.replace(/\r?\n/g, " · ");
+    return '<div class="config-row"><span class="config-label">' + esc(setting.label) +
+      '</span><span class="config-value" title="' + esc(title) + '">' + esc(setting.text) + "</span></div>";
   }).join("");
+  var label = TYPE_LABELS[type] || type;
+  var split = label.indexOf(" — ");
+  var kind = split >= 0 ? label.slice(split + 3) : "MCP adapter";
+  var target = configTarget(c);
+  var badges = [];
+  if (c.lazy !== undefined) badges.push(c.lazy ? "Starts on demand" : "Starts at boot");
+  if (c.exposeResources !== undefined) badges.push(c.exposeResources ? "Resources on" : "Resources off");
+  if (c.exposePrompts !== undefined) badges.push(c.exposePrompts ? "Prompts on" : "Prompts off");
+  if (c.auth === "oauth") badges.push("OAuth managed");
+  var badgeHtml = badges.length ? '<div class="config-badges">' + badges.map(function (badge) {
+    return '<span class="tag">' + esc(badge) + "</span>";
+  }).join("") + "</div>" : "";
+  var summary = '<div class="group config-summary">' +
+    '<div class="config-head"><div class="config-identity">' +
+      '<div class="config-kind"><span class="tag">' + esc(type) + "</span><span>" + esc(kind) + "</span></div>" +
+      '<div class="config-target" title="' + esc(target) + '">' + esc(target) + "</div>" +
+    '</div><button class="btn" id="c-edit">Edit configuration…</button></div>' +
+    badgeHtml +
+    '<details class="config-more"><summary><span>All settings</span><span class="config-count">' + settings.length +
+      (settings.length === 1 ? ' value' : ' values') + '</span><span class="config-chev">' + icon("chevron-right") + "</span></summary>" +
+      '<div class="config-rows">' + rows + "</div></details></div>";
   var note = d.source === "config"
     ? '<div class="note">Defined in gateway.config.json. Edits are saved as an override in managed.json; ' +
       "<code>${ENV}</code> references are kept as references, so no credential is written to disk.</div>"
     : "";
   var revs = d.revisions || [];
-  // docs/28 D1: parked def snapshots under this name — the rollback shelf. One line each,
-  // Restore swaps it back (parking the live def first), Delete drops the snapshot only.
-  var revBlock =
-    '<div class="cap">Saved revisions (' + revs.length + ")</div>" +
-    '<div class="group">' +
-    (revs.length
-      ? revs
-          .map(function (r, i) {
-            var when = r.at ? new Date(r.at).toLocaleString() : "";
-            return '<div class="row"><span class="k">' + esc(TYPE_LABELS[r.type] || r.type || "?") + "</span>" +
-              '<span class="v wrap">' + esc((r.note || "(no note)") + (when ? " · " + when : "")) +
-              ' <button class="btn" data-restore="' + i + '">Restore</button>' +
-              ' <button class="btn danger" data-revdel="' + i + '">Delete</button></span></div>';
-          })
-          .join("")
-      : '<div class="row"><span class="v">None yet — Replace definition… parks the outgoing def here.</span></div>') +
-    "</div>";
-  return tunnelDepsHtml(d) + '<div class="group">' + rows + "</div>" + note +
-    '<div class="form-actions" style="padding-top:var(--s4)">' +
-    '<button class="btn" id="c-edit">Edit configuration…</button>' +
-    '<button class="btn" id="c-replace">Replace definition…</button></div>' +
-    '<div style="height:var(--s5)"></div>' + revBlock;
+  // Parked definition snapshots stay available without making an empty shelf a permanent section.
+  var revRows = revs.length
+    ? revs.map(function (r, i) {
+        var when = r.at ? new Date(r.at).toLocaleString() : "";
+        return '<div class="row"><span class="k">' + esc(TYPE_LABELS[r.type] || r.type || "?") + "</span>" +
+          '<span class="v wrap">' + esc((r.note || "(no note)") + (when ? " · " + when : "")) +
+          ' <button class="btn" data-restore="' + i + '">Restore</button>' +
+          ' <button class="btn danger" data-revdel="' + i + '">Delete</button></span></div>';
+      }).join("")
+    : '<div class="row"><span class="rowmsg">None yet — replacing a definition parks the outgoing settings here.</span></div>';
+  var revBlock = '<details class="config-revisions"><summary><span>Saved revisions (' + revs.length + ")</span>" +
+    '<span class="config-chev">' + icon("chevron-right") + "</span></summary>" +
+    '<div class="config-revision-body"><div class="config-revision-intro">' +
+      '<span>Swap the adapter definition while keeping the current one available for restore.</span>' +
+      '<button class="btn" id="c-replace">Replace definition…</button></div>' +
+      '<div class="group">' + revRows + "</div></div></details>";
+  return tunnelDepsHtml(d) + summary + note + revBlock;
 }
 
 /**
