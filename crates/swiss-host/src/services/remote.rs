@@ -142,6 +142,18 @@ pub struct RemoteFileStat {
     pub is_dir: bool,
 }
 
+/// One directory listing entry: the name is relative to the listed path (never
+/// absolute, never a credential), 'is_dir' is what the sync/pull walkers recurse
+/// on, and 'size' is the entry's byte size when the transport can see it. This is
+/// the directory listing the sync/pull walkers need; names are relative to path,
+/// no credentials.
+#[derive(Clone, Debug)]
+pub struct RemoteListing {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
 /// How big one file chunk may be on this seam. Chunked (not stream-object) on purpose:
 /// a Vec-per-chunk with a fixed ceiling is the smallest interface both a real SFTP
 /// transport and a test fake can implement, and it caps the per-operation memory by
@@ -213,6 +225,14 @@ pub trait RemoteTransportProvider: Send + Sync {
 
     /// Create one absolute remote path and any missing parents (idempotent).
     async fn mkdir_p(&self, endpoint: &str, holder: &str, path: &str) -> Result<(), RemoteError>;
+
+    /// List one absolute remote directory's immediate children, as [RemoteListing]s.
+    async fn list_dir(
+        &self,
+        endpoint: &str,
+        holder: &str,
+        path: &str,
+    ) -> Result<Vec<RemoteListing>, RemoteError>;
 }
 
 /// Whether the transport capability can serve right now, and if not, who is missing —
@@ -396,6 +416,16 @@ impl RemoteTransportRegistry {
         provider.mkdir_p(endpoint, holder, path).await
     }
 
+    pub async fn list_dir(
+        &self,
+        endpoint: &str,
+        holder: &str,
+        path: &str,
+    ) -> Result<Vec<RemoteListing>, RemoteError> {
+        let provider = self.files_provider()?;
+        provider.list_dir(endpoint, holder, path).await
+    }
+
     fn files_provider(&self) -> Result<Arc<dyn RemoteTransportProvider>, RemoteError> {
         let provider = self.provider()?;
         if !provider.supports_files() {
@@ -552,6 +582,48 @@ mod tests {
                 .insert(format!("{path}/"), Vec::new());
             Ok(())
         }
+
+        async fn list_dir(
+            &self,
+            endpoint: &str,
+            _holder: &str,
+            path: &str,
+        ) -> Result<Vec<RemoteListing>, RemoteError> {
+            if endpoint != "build-01" {
+                return Err(RemoteError::Unknown(format!(
+                    "unknown remote endpoint: {endpoint}"
+                )));
+            }
+            // The map holds files (and "path/" markers from mkdir); the immediate
+            // children of the listed path are the first segments of deeper keys.
+            let files = self.files.lock().unwrap();
+            let prefix = format!("{}/", path.trim_end_matches('/'));
+            let mut names: Vec<String> = Vec::new();
+            for key in files.keys() {
+                let Some(rest) = key.strip_prefix(prefix.as_str()) else {
+                    continue;
+                };
+                if rest.is_empty() {
+                    continue; // the directory's own marker, not a child
+                }
+                let name = rest.split('/').next().unwrap_or_default().to_string();
+                if !name.is_empty() && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            names.sort();
+            Ok(names
+                .into_iter()
+                .map(|name| {
+                    let child = format!("{prefix}{name}");
+                    RemoteListing {
+                        is_dir: files.keys().any(|k| k.starts_with(&format!("{child}/"))),
+                        size: files.get(&child).map(|b| b.len() as u64).unwrap_or(0),
+                        name,
+                    }
+                })
+                .collect())
+        }
     }
 
     /// An exec-only transport: the file routes must answer Unsupported, not pretend.
@@ -600,6 +672,14 @@ mod tests {
             Err(RemoteError::Unsupported("no files".into()))
         }
         async fn mkdir_p(&self, _: &str, _: &str, _: &str) -> Result<(), RemoteError> {
+            Err(RemoteError::Unsupported("no files".into()))
+        }
+        async fn list_dir(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> Result<Vec<RemoteListing>, RemoteError> {
             Err(RemoteError::Unsupported("no files".into()))
         }
     }

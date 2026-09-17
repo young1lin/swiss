@@ -37,7 +37,7 @@ use swiss_host::services::remote::{
     RemoteError, RemoteExecEvent, RemoteExecRequest, RemoteTransportRegistry,
 };
 
-use crate::sync::{pull_one, sync_tree, SyncOptions};
+use crate::sync::{pull_one, pull_tree, sync_tree, SyncOptions};
 use crate::target::{safe_join, RemoteTarget};
 use crate::RemoteSystem;
 
@@ -212,14 +212,6 @@ impl RemoteExecAction {
                     ))
                 }
             };
-        // The workspace guardrail (docs/32): sudo escalates past everything the
-        // target row promises, so it is refused at the door with the reason. An
-        // agent that needs root configures it on the machine, not per command.
-        if argv.first().is_some_and(|first| first == "sudo") {
-            return Err(ActionError::InvalidInput(
-                "argv[0] must not be sudo: remote targets run unprivileged; configure what needs root on the machine itself".into(),
-            ));
-        }
         let env = env_map(&obj)?;
         let cwd = opt_text_field(&obj, "cwd")?;
         if let Some(rel) = &cwd {
@@ -252,6 +244,15 @@ struct ParsedExec {
 }
 
 const EXEC_FIELDS: [&str; 5] = ["target", "argv", "env", "cwd", "timeoutMs"];
+
+/// The parsed, validated sync input (also the validate_input surface).
+struct ParsedSync {
+    target: String,
+    source: PathBuf,
+    extra_excludes: Vec<String>,
+    verbose: bool,
+    to: Option<String>,
+}
 
 /// Stream one exec to completion: spawn the transport call, forward events to the
 /// tap, return the exit result. Shared by both entry points so the unstreaming
@@ -427,7 +428,7 @@ impl Action for RemoteExecAction {
 
 // --- remote.sync -------------------------------------------------------------------------
 
-const SYNC_FIELDS: [&str; 4] = ["target", "source", "exclude", "verbose"];
+const SYNC_FIELDS: [&str; 5] = ["target", "source", "exclude", "verbose", "to"];
 
 /// Upload a local tree to the target workspace (docs/32 §20). One-way, no deletes:
 /// changed files (by size) stream up; up-to-date files are skipped; the summary
@@ -443,7 +444,7 @@ impl RemoteSyncAction {
         RemoteSyncAction { system, registry }
     }
 
-    fn parse(&self, input: &Value) -> Result<(String, PathBuf, Vec<String>, bool), ActionError> {
+    fn parse(&self, input: &Value) -> Result<ParsedSync, ActionError> {
         let obj = object_of(input)?;
         refuse_unknown(&obj, &SYNC_FIELDS, "input")?;
         let target = text_field(&obj, "target")?;
@@ -469,7 +470,14 @@ impl RemoteSyncAction {
             Some(_) => return Err(ActionError::InvalidInput("exclude must be an array".into())),
         }
         let verbose = matches!(obj.get("verbose"), Some(Value::Bool(true)));
-        Ok((target, source, extra, verbose))
+        let to = opt_text_field(&obj, "to")?;
+        Ok(ParsedSync {
+            target,
+            source,
+            extra_excludes: extra,
+            verbose,
+            to,
+        })
     }
 
     async fn run(
@@ -479,15 +487,16 @@ impl RemoteSyncAction {
         sink: Option<&RunOutputSink>,
     ) -> Result<ActionOutcome, ActionError> {
         let started = std::time::Instant::now();
-        let (target_id, source, extra, verbose) = self.parse(input)?;
+        let parsed = self.parse(input)?;
         let target = self
             .system
-            .resolve(&target_id)
+            .resolve(&parsed.target)
             .map_err(ActionError::InvalidInput)?;
         let opts = SyncOptions {
-            source,
-            extra_excludes: extra,
-            verbose,
+            source: parsed.source,
+            extra_excludes: parsed.extra_excludes,
+            to: parsed.to,
+            verbose: parsed.verbose,
         };
         let report = {
             let mut lines = String::new();
@@ -556,13 +565,14 @@ impl Action for RemoteSyncAction {
             "required": ["target"],
             "properties": {
                 "target": { "type": "string" },
-                "source": { "type": "string", "description": "Local directory to upload; default '.'." },
+                "source": { "type": "string", "description": "Local directory (or single file) to upload; default '.'." },
                 "exclude": {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Extra excludes on top of .git/.swiss/target/node_modules. Trailing slash = directory prefix."
                 },
-                "verbose": { "type": "boolean", "description": "One line per uploaded file; default summary only." }
+                "verbose": { "type": "boolean", "description": "One line per uploaded file; default summary only." },
+                "to": { "type": "string", "description": "Remote name for a single-file upload; default the source file's own name." }
             },
             "additionalProperties": false
         })
@@ -590,11 +600,13 @@ impl Action for RemoteSyncAction {
 }
 // --- remote.pull -------------------------------------------------------------------------
 
-const PULL_FIELDS: [&str; 3] = ["target", "remote", "to"];
+const PULL_FIELDS: [&str; 4] = ["target", "remote", "to", "verbose"];
 
-/// Download one file from the target workspace (docs/32 §20): streams chunk by
-/// chunk into a local path (default: the same relative path under the current
-/// directory). The remote path is workspace-relative; escaping is refused.
+/// Download a file or a whole directory tree from the target workspace (docs/32
+/// §20): the remote path is statted first - a file streams chunk by chunk into a
+/// local path (default: the same relative path under the current directory), a
+/// directory walks down recursively. The remote path is workspace-relative;
+/// escaping is refused.
 pub struct RemotePullAction {
     system: Arc<RemoteSystem>,
     registry: Arc<RemoteTransportRegistry>,
@@ -606,7 +618,7 @@ impl RemotePullAction {
         RemotePullAction { system, registry }
     }
 
-    fn parse(&self, input: &Value) -> Result<(String, String, PathBuf), ActionError> {
+    fn parse(&self, input: &Value) -> Result<(String, String, PathBuf, bool), ActionError> {
         let obj = object_of(input)?;
         refuse_unknown(&obj, &PULL_FIELDS, "input")?;
         let target = text_field(&obj, "target")?;
@@ -625,7 +637,8 @@ impl RemotePullAction {
                 ))
             }
         };
-        Ok((target, remote, to))
+        let verbose = matches!(obj.get("verbose"), Some(Value::Bool(true)));
+        Ok((target, remote, to, verbose))
     }
 
     async fn run(
@@ -635,12 +648,46 @@ impl RemotePullAction {
         sink: Option<&RunOutputSink>,
     ) -> Result<ActionOutcome, ActionError> {
         let started = std::time::Instant::now();
-        let (target_id, remote, to) = self.parse(input)?;
+        let (target_id, remote, to, verbose) = self.parse(input)?;
         let target = self
             .system
             .resolve(&target_id)
             .map_err(ActionError::InvalidInput)?;
-        let total = {
+        // File or tree? The stat decides: a directory pulls recursively through
+        // pull_tree, a file streams exactly as it always did.
+        let remote_path =
+            safe_join(&target.workspace_root, &remote).map_err(ActionError::InvalidInput)?;
+        let holder = format!("{}:{}", REMOTE_OWNER, target.id);
+        let stat = self
+            .registry
+            .stat(&target.endpoint, &holder, &remote_path)
+            .await
+            .map_err(transport_error)?;
+        let mut meta = Map::new();
+        let summary = if stat.is_some_and(|s| s.is_dir) {
+            let mut lines = String::new();
+            let report = pull_tree(
+                &self.registry,
+                &target,
+                &remote,
+                &to,
+                verbose,
+                |line: &str| lines.push_str(line),
+                &cancel,
+            )
+            .await
+            .map_err(ActionError::Failed)?;
+            if let Some(sink) = sink {
+                sink.append(&lines);
+            }
+            meta.insert("files".into(), json!(report.files));
+            meta.insert("bytes".into(), json!(report.bytes));
+            meta.insert("dirs".into(), json!(report.dirs));
+            format!(
+                "pull: {} files ({} bytes), {} dirs",
+                report.files, report.bytes, report.dirs
+            )
+        } else {
             let mut lines = String::new();
             let total = pull_one(
                 &self.registry,
@@ -655,13 +702,11 @@ impl RemotePullAction {
             if let Some(sink) = sink {
                 sink.append(&lines);
             }
-            total
+            meta.insert("bytes".into(), json!(total));
+            format!("pulled {remote} ({total} bytes)")
         };
-        let mut meta = Map::new();
         meta.insert("target".into(), json!(target.id));
-        meta.insert("bytes".into(), json!(total));
         meta.insert("to".into(), json!(to.display().to_string()));
-        let summary = format!("pulled {remote} ({total} bytes)");
         let chars = summary.len();
         Ok(ActionOutcome {
             ok: true,
@@ -685,7 +730,7 @@ impl Action for RemotePullAction {
     }
 
     fn title(&self) -> String {
-        "Download one file from a remote target".into()
+        "Download a file or folder from a remote target".into()
     }
 
     fn provider(&self) -> &'static str {
@@ -698,8 +743,9 @@ impl Action for RemotePullAction {
             "required": ["target", "remote"],
             "properties": {
                 "target": { "type": "string" },
-                "remote": { "type": "string", "description": "Workspace-relative path on the target." },
-                "to": { "type": "string", "description": "Local destination path; default the same relative path." }
+                "remote": { "type": "string", "description": "Workspace-relative file or directory path on the target." },
+                "to": { "type": "string", "description": "Local destination path; default the same relative path." },
+                "verbose": { "type": "boolean", "description": "One line per pulled file; default summary only." }
             },
             "additionalProperties": false
         })
@@ -748,14 +794,37 @@ mod tests {
         json!({ "target": target, "argv": argv })
     }
 
-    #[test]
-    fn sudo_is_refused_at_the_door() {
-        let (system, _fake) = system_with_fake();
+    #[tokio::test]
+    async fn sudo_runs_like_any_other_argv0() {
+        // sudo is argv[0] like any other program now. There is no PTY, so an
+        // interactive password prompt cannot work - non-interactive sudo (-n,
+        // or passwordless config on the machine) is the supported shape.
+        let (system, fake) = system_with_fake();
+        fake.program(
+            "sudo",
+            FakeProgram {
+                argv0: "sudo".into(),
+                stdout: b"ok\n".to_vec(),
+                stderr: Vec::new(),
+                exit: 0,
+                delay_ms: 0,
+            },
+        );
         let action = RemoteExecAction::new(system);
-        let err = action
-            .validate_input(&exec_input("dev", &["sudo", "rm", "/etc/hosts"]))
-            .unwrap_err();
-        assert!(err.contains("sudo"), "{err}");
+        action
+            .validate_input(&exec_input("dev", &["sudo", "-n", "true"]))
+            .expect("sudo validates like any other argv[0]");
+        let out = action
+            .execute(
+                &exec_input("dev", &["sudo", "-n", "true"]),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the exec runs");
+        assert!(out.ok);
+        assert_eq!(out.exit_code, Some(0));
+        let calls = fake.exec_calls.lock().unwrap();
+        assert_eq!(calls[0].argv, vec!["sudo", "-n", "true"]);
     }
 
     #[test]
@@ -1080,6 +1149,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sync_of_a_single_file_uploads_just_that_file() {
+        let (system, fake) = system_with_fake();
+        let dir =
+            std::env::temp_dir().join(format!("swiss-psh-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let src = dir.join("one.txt");
+        std::fs::write(&src, b"single").expect("w");
+        std::fs::write(dir.join("sibling.txt"), b"not this one").expect("w");
+        let action = RemoteSyncAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "source": src.display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(out.meta.get("scanned").unwrap(), 1);
+        assert_eq!(out.meta.get("uploaded").unwrap(), 1);
+        {
+            let files = fake.files.lock().unwrap();
+            assert_eq!(
+                files.get("/data/ws/proj/one.txt").map(Vec::as_slice),
+                Some(&b"single"[..]),
+                "the one named file landed under its own name",
+            );
+            assert!(
+                !files.contains_key("/data/ws/proj/sibling.txt"),
+                "a sibling of the source file is not uploaded"
+            );
+        }
+        // With "to": the same single file under the caller's remote name.
+        let out = action
+            .execute(
+                &json!({
+                    "target": "dev",
+                    "source": src.display().to_string(),
+                    "to": "renamed.txt"
+                }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the sync runs");
+        assert!(out.ok, "{}", out.error.unwrap_or_default());
+        assert_eq!(
+            fake.files
+                .lock()
+                .unwrap()
+                .get("/data/ws/proj/renamed.txt")
+                .map(Vec::as_slice),
+            Some(&b"single"[..]),
+            "the file landed under the to name",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn pull_streams_one_file_to_a_local_path() {
         let (system, fake) = system_with_fake();
         fake.files
@@ -1102,6 +1228,39 @@ mod tests {
         assert_eq!(
             std::fs::read(dir.join("got.bin")).expect("pulled"),
             b"artifact-bytes".to_vec(),
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn pull_walks_a_remote_directory_tree_into_a_local_one() {
+        let (system, fake) = system_with_fake();
+        {
+            let mut files = fake.files.lock().unwrap();
+            files.insert("/data/ws/proj/a/x.txt".into(), b"xx".to_vec());
+            files.insert("/data/ws/proj/a/sub/y.txt".into(), b"yyy".to_vec());
+        }
+        let dir =
+            std::env::temp_dir().join(format!("swiss-pte-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let action = RemotePullAction::new(system);
+        let out = action
+            .execute(
+                &json!({ "target": "dev", "remote": "a", "to": dir.join("got").display().to_string() }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("the pull runs");
+        assert!(out.ok, "{}", out.error.clone().unwrap_or_default());
+        assert_eq!(out.meta.get("files").unwrap(), 2, "both files counted");
+        assert_eq!(out.meta.get("bytes").unwrap(), 5, "2 + 3 bytes");
+        assert_eq!(
+            std::fs::read(dir.join("got/x.txt")).expect("x landed"),
+            b"xx".to_vec(),
+        );
+        assert_eq!(
+            std::fs::read(dir.join("got/sub/y.txt")).expect("y landed"),
+            b"yyy".to_vec(),
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

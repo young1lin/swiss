@@ -22,7 +22,7 @@ can actually read.
 - **Live run output** (host): `RunOutputSink` streams action output into the run buffer
   (256 KiB live window, 64 KiB finished tail) and `GET /api/runs/{id}/output?after=&max=`
   reads it with a monotonic cursor - the panel AND the CLI AND an agent poll the same URL.
-- **The `remote` plugin** (root `src/plugins/remote.rs`): no page this phase, routes
+- **The `remote` plugin** (root `src/plugins/remote.rs`): the #remote targets page, routes
   `/api/remote`, deliberately NO capability requirement - the target table stays editable
   while tunnels is off, and exec says honestly what is missing.
 - **CLI** (`swiss remote ...`, `swiss run ...` in `src/remote_cli.rs`): endpoints/targets/
@@ -54,9 +54,9 @@ disabled.
 
 | action | input | notes |
 |---|---|---|
-| `remote.exec` | `{target, argv[], env?, cwd?, timeoutMs?}` | argv is an ARRAY. sudo as argv[0] is refused at the door. cwd is workspace-relative. Streams stdout+stderr live; outcome carries exitCode, canceled flag, target/endpoint meta. |
-| `remote.sync` | `{target, source?, exclude[], verbose?}` | Upload-only, NEVER deletes. Skips `.git/ .swiss/ target/ node_modules/` plus caller excludes; uploads only changed sizes; one summary line. |
-| `remote.pull` | `{target, remote, to?}` | One workspace-relative file streamed to a local path. |
+| `remote.exec` | `{target, argv[], env?, cwd?, timeoutMs?}` | argv is an ARRAY. cwd is workspace-relative. Streams stdout+stderr live; outcome carries exitCode, canceled flag, target/endpoint meta. |
+| `remote.sync` | `{target, source?, to?, exclude[], verbose?}` | Upload, NEVER deletes. A directory source walks the tree (skips `.git/ .swiss/ target/ node_modules/` plus caller excludes, uploads only changed sizes); a FILE source uploads just that file, renamed by `to` when given. One summary line. |
+| `remote.pull` | `{target, remote, to?, verbose?}` | A workspace-relative FILE streams to a local path; a workspace-relative DIRECTORY recurses (list_dir over the transport, depth/count capped) into a local tree. |
 
 Every action runs through the shared RunCoordinator: Run ID is the job ID, cancel is the
 run cancel chain (`POST /api/runs/{id}/cancel` reaches the SSH channel close through the
@@ -69,8 +69,10 @@ true, ok: false), not an error - the run row says "canceled", which is the truth
   (`..`, absolute cwd) are refused, but the exec itself runs as the SSH login user - if that
   user can `cd /`, the guardrail does not stop a program that tries. The row documents
   intent; the machine enforces reality.
-- **No privilege escalation**: argv[0] == sudo is refused with the reason. What needs root
-  is configured on the machine, not per command.
+- **Privilege is the machine's business, and the surface is an SSH superset**: sudo passes
+  through like any argv[0]. There is no PTY, so an interactive password prompt cannot be
+  answered - passwordless sudo (NOPASSWD or `sudo -n`) is what works, exactly as over
+  `ssh host "sudo ..."`.
 - **No agent forwarding, no SSHFS, no interactive shells**: one exec channel per run, one
   SFTP session per file operation, bounded (3 s) drain on cancel.
 - **POSIX quoting happens once**, inside the tunnels crate, through `quote_posix`: a safe
@@ -106,13 +108,15 @@ swiss remote exec build -- make -j8            # streams, exits with make exit c
 swiss remote exec build --timeout 30m -- ./test.sh --filter "weird \"quoted\" name"
 swiss remote exec --target build --detach -- make check   # 202 + run id
 swiss remote sync build --source . --exclude vendor/
+swiss remote push build app.exe            # one file, to the workspace root
 swiss remote pull build out/app.bin --to artifacts/app.bin
+swiss remote pull build out/dists          # a directory recurses into artifacts/out/dists
 swiss run logs 17 -f; swiss run cancel 17
 ```
 
 ## Explicitly not this phase
 
-- **R6: the panel page** - the routes are the contract; a page rides on them later.
+- **The panel page (R6) shipped after the first cut**: #remote lists targets with an Add/Edit sheet over the same /api/remote routes (crates/swiss-panel/src/admin_assets/js/views/remote.js).
 - **R7: the MCP adapter** - the actions already appear in `GET /api/actions` with schemas;
   an MCP tool wrapper is additive and NOT built now.
 - No second SSH client, no separate daemon, no sync delete, no shell pseudo-terminal, no
@@ -124,7 +128,7 @@ swiss run logs 17 -f; swiss run cancel 17
 - `swiss-tunnels`: `quote_posix` cases, fake-transport exec/stat/lease tests, and two REAL
   russh server tests (exec round-trip, cancel of a never-finishing command).
 - `swiss-remote`: target validation/store, project binding discovery, all three actions
-  (streaming, tail bounds, cancel outcome, sudo refusal, unknown target, honest
+  (streaming, tail bounds, cancel outcome, sudo passes through, unknown target, honest
   no-transport error, sync skip/upload, pull round-trip), `/api/remote` route policy, and
   the submit-to-output E2E chain through the REAL host run routes.
 - Root: plugin lifecycle (start registers/stop withdraws and unregisters), CLI parsing

@@ -1,5 +1,6 @@
-//! The file-movement half of remote execution (docs/32 §20): one-way sync (local
-//! directory -> workspace on the target) and pull (one remote file -> local).
+//! The file-movement half of remote execution (docs/32 §20): one-way sync (a local
+//! directory, or a single file -> workspace on the target) and pull (one remote
+//! file, or a whole directory tree -> local).
 //!
 //! Sync is UPLOAD-ONLY and NEVER DELETES (docs/32 §20): a sync that removes files
 //! remotely is a footgun no agent should hold. What it does: walk the local tree,
@@ -22,11 +23,15 @@ pub const DEFAULT_EXCLUDES: [&str; 4] = [".git/", ".swiss/", "target/", "node_mo
 
 /// One sync's knobs, with the wire's defaults already applied.
 pub struct SyncOptions {
-    /// Local root to walk ("." for the binding's workspace).
+    /// Local root to walk ("." for the binding's workspace), or ONE file to
+    /// upload under its own name (or `to`, when given).
     pub source: PathBuf,
     /// Extra excludes on top of [DEFAULT_EXCLUDES], as slash paths with trailing
     /// slash for directories (same grammar as the project binding).
     pub extra_excludes: Vec<String>,
+    /// Remote relative path for a single-file upload; None keeps the source
+    /// file's own name. Ignored when `source` is a directory.
+    pub to: Option<String>,
     /// How much output one line of progress carries (a summary is always printed).
     pub verbose: bool,
 }
@@ -128,22 +133,51 @@ pub async fn sync_tree(
     }
     let mut excludes: Vec<String> = DEFAULT_EXCLUDES.iter().map(|s| s.to_string()).collect();
     excludes.extend(opts.extra_excludes.iter().cloned());
-    let mut files = Vec::new();
-    walk(&opts.source, "", 0, &excludes, &mut files)?;
+    // Single-file mode: a FILE source uploads just that one file, under its own
+    // name or the caller's `to` name - no walk and no excludes, because the file
+    // was named on purpose. A directory walks exactly as before.
+    let pairs: Vec<(PathBuf, String)> = if std::fs::metadata(&opts.source)
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+    {
+        let name = opts.to.clone().or_else(|| {
+            opts.source
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        });
+        match name {
+            Some(name) => vec![(opts.source.clone(), name)],
+            None => {
+                return Err(format!(
+                    "source {} has no file name to upload under; pass to",
+                    opts.source.display()
+                ))
+            }
+        }
+    } else {
+        let mut files = Vec::new();
+        walk(&opts.source, "", 0, &excludes, &mut files)?;
+        files
+            .into_iter()
+            .map(|rel| {
+                let local = opts
+                    .source
+                    .join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+                (local, rel)
+            })
+            .collect()
+    };
     let holder = format!("{}:{}", crate::actions::REMOTE_OWNER, target.id);
     let mut report = SyncReport {
-        scanned: files.len(),
+        scanned: pairs.len(),
         ..Default::default()
     };
     let mut made_dirs: Vec<String> = Vec::new();
-    for rel in &files {
+    for (local, rel) in &pairs {
         if cancel.is_cancelled() {
             return Err("the sync was canceled".into());
         }
-        let local = opts
-            .source
-            .join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
-        let meta = match std::fs::metadata(&local) {
+        let meta = match std::fs::metadata(local) {
             Ok(m) => m,
             Err(err) => {
                 report.failures.push(format!("{rel}: {err}"));
@@ -171,7 +205,7 @@ pub async fn sync_tree(
                 made_dirs.push(parent);
             }
         }
-        let bytes = std::fs::read(&local).map_err(|err| format!("read {rel}: {err}"))?;
+        let bytes = std::fs::read(local).map_err(|err| format!("read {rel}: {err}"))?;
         let mut writer = registry
             .create(&target.endpoint, &holder, &remote_path)
             .await
@@ -232,9 +266,27 @@ pub async fn pull_one(
         return Err("the pull was canceled".into());
     }
     let remote_path = safe_join(&target.workspace_root, rel)?;
+    let total = pull_stream(registry, target, &remote_path, to, cancel).await?;
+    emit(&format!(
+        "pulled {rel} ({total} bytes) -> {}\n",
+        to.display()
+    ));
+    Ok(total)
+}
+
+/// The streaming core every pull path shares: open the remote file, create the
+/// local parent, stream chunk-by-chunk into `to`, return the byte count. The
+/// cancel handle is honoured per chunk, so a canceled pull stops mid-file.
+async fn pull_stream(
+    registry: &Arc<RemoteTransportRegistry>,
+    target: &RemoteTarget,
+    remote_path: &str,
+    to: &Path,
+    cancel: &swiss_host::services::action::CancelHandle,
+) -> Result<u64, String> {
     let holder = format!("{}:{}", crate::actions::REMOTE_OWNER, target.id);
     let mut reader = registry
-        .open_read(&target.endpoint, &holder, &remote_path)
+        .open_read(&target.endpoint, &holder, remote_path)
         .await
         .map_err(|err| format!("open {remote_path}: {err}"))?;
     if let Some(parent) = to.parent() {
@@ -265,9 +317,154 @@ pub async fn pull_one(
         .map_err(|err| format!("flush {}: {err}", to.display()))?;
     drop(out);
     drop(reader);
-    emit(&format!(
-        "pulled {rel} ({total} bytes) -> {}\n",
-        to.display()
-    ));
     Ok(total)
+}
+
+/// What one pull-tree walk brought down, for the summary line and the meta.
+#[derive(Default, Debug, PartialEq)]
+pub struct PullReport {
+    pub files: usize,
+    pub bytes: u64,
+    pub dirs: usize,
+}
+
+/// Caps in the sync walk's style: a pull is for workspaces, not whole disks.
+const PULL_MAX_FILES: usize = 2_000;
+const PULL_MAX_DEPTH: usize = 32;
+
+/// Pull a remote file OR a whole directory tree (relative to the workspace
+/// root) into `to`: stat first, then either one streaming file (the pull_one
+/// path) or a recursive walk. Cancels per file like sync does; one summary
+/// line at the end, and each file's path when `verbose`.
+pub async fn pull_tree(
+    registry: &Arc<RemoteTransportRegistry>,
+    target: &RemoteTarget,
+    rel: &str,
+    to: &Path,
+    verbose: bool,
+    mut emit: impl FnMut(&str) + Send,
+    cancel: &swiss_host::services::action::CancelHandle,
+) -> Result<PullReport, String> {
+    if !target
+        .capabilities
+        .iter()
+        .any(|c| c == "files" || c == "sync")
+    {
+        return Err(format!(
+            "target {} does not declare the files or sync capability",
+            target.id
+        ));
+    }
+    if cancel.is_cancelled() {
+        return Err("the pull was canceled".into());
+    }
+    let holder = format!("{}:{}", crate::actions::REMOTE_OWNER, target.id);
+    let remote_path = safe_join(&target.workspace_root, rel)?;
+    let stat = registry
+        .stat(&target.endpoint, &holder, &remote_path)
+        .await
+        .map_err(|err| format!("stat {remote_path}: {err}"))?;
+    let mut report = PullReport::default();
+    match stat {
+        Some(stat) if stat.is_dir => {
+            // `to` is the local stand-in for the remote root directory.
+            std::fs::create_dir_all(to).map_err(|err| format!("mkdir {}: {err}", to.display()))?;
+            report.dirs += 1;
+            PullWalk {
+                registry,
+                target,
+                report: &mut report,
+                verbose,
+                emit: &mut emit,
+                cancel,
+            }
+            .dir(rel, to, 0)
+            .await?;
+        }
+        Some(_) => {
+            // A file at the root: exactly the one-file pull that always existed.
+            let total = pull_one(registry, target, rel, to, |line| emit(line), cancel).await?;
+            report.files += 1;
+            report.bytes += total;
+        }
+        None => return Err(format!("{rel}: no such file or directory on the target")),
+    }
+    emit(&format!(
+        "pull: {} files ({} bytes), {} dirs\n",
+        report.files, report.bytes, report.dirs
+    ));
+    Ok(report)
+}
+
+/// The state one pull-tree walk threads through every recursion level: the
+/// transport plumbing, the running report and the output tap. A struct (not an
+/// argument list) because the walk recurses and the signature would grow with
+/// every new knob.
+struct PullWalk<'a> {
+    registry: &'a Arc<RemoteTransportRegistry>,
+    target: &'a RemoteTarget,
+    report: &'a mut PullReport,
+    verbose: bool,
+    emit: &'a mut (dyn FnMut(&str) + Send),
+    cancel: &'a swiss_host::services::action::CancelHandle,
+}
+
+impl PullWalk<'_> {
+    /// One directory level of the pull walk: list the remote directory, recurse
+    /// into child directories, stream the files down. Every child is re-joined
+    /// through [safe_join], so a hostile listing cannot steer the pull outside
+    /// the workspace; a name that is not one plain segment is skipped.
+    async fn dir(&mut self, rel: &str, local_dir: &Path, depth: usize) -> Result<(), String> {
+        if depth > PULL_MAX_DEPTH {
+            return Err(format!(
+                "tree deeper than {PULL_MAX_DEPTH} levels under {rel}"
+            ));
+        }
+        let holder = format!("{}:{}", crate::actions::REMOTE_OWNER, self.target.id);
+        let dir_path = safe_join(&self.target.workspace_root, rel)?;
+        let entries = self
+            .registry
+            .list_dir(&self.target.endpoint, &holder, &dir_path)
+            .await
+            .map_err(|err| format!("list {dir_path}: {err}"))?;
+        for entry in entries {
+            if self.cancel.is_cancelled() {
+                return Err("the pull was canceled".into());
+            }
+            if entry.name.is_empty()
+                || entry.name == "."
+                || entry.name == ".."
+                || entry.name.contains('/')
+                || entry.name.contains('\\')
+            {
+                continue;
+            }
+            let child_rel = if rel.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{rel}/{}", entry.name)
+            };
+            if entry.is_dir {
+                let child_dir = local_dir.join(&entry.name);
+                std::fs::create_dir_all(&child_dir)
+                    .map_err(|err| format!("mkdir {}: {err}", child_dir.display()))?;
+                self.report.dirs += 1;
+                Box::pin(self.dir(&child_rel, &child_dir, depth + 1)).await?;
+            } else {
+                if self.report.files >= PULL_MAX_FILES {
+                    return Err(format!("more than {PULL_MAX_FILES} files under {rel}"));
+                }
+                let remote_path = safe_join(&self.target.workspace_root, &child_rel)?;
+                let to = local_dir.join(&entry.name);
+                let total =
+                    pull_stream(self.registry, self.target, &remote_path, &to, self.cancel).await?;
+                self.report.files += 1;
+                self.report.bytes += total;
+                if self.verbose {
+                    (self.emit)(&format!("{child_rel} ({total} bytes)\n"));
+                }
+            }
+        }
+        Ok(())
+    }
 }

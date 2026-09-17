@@ -133,6 +133,12 @@ pub trait SshLike: Send + Sync {
         path: String,
         hold: ConnectionLease,
     ) -> ConnFuture<'_, Result<(), TunnelError>>;
+    /// List one remote directory's immediate children over SFTP readdir.
+    fn list_dir(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<Vec<swiss_host::services::remote::RemoteListing>, TunnelError>>;
     fn end(&self) -> ConnFuture<'_, ()>;
 }
 
@@ -217,6 +223,14 @@ impl SshLike for SshConnection {
         hold: ConnectionLease,
     ) -> ConnFuture<'_, Result<(), TunnelError>> {
         Box::pin(async move { SshConnection::mkdir_p(self, path, hold).await })
+    }
+    /// List one remote directory's immediate children over SFTP readdir.
+    fn list_dir(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<Vec<swiss_host::services::remote::RemoteListing>, TunnelError>> {
+        Box::pin(async move { SshConnection::list_dir(self, path, hold).await })
     }
     fn end(&self) -> ConnFuture<'_, ()> {
         Box::pin(SshConnection::end(self))
@@ -2074,6 +2088,46 @@ mod tests {
                     .unwrap()
                     .insert(format!("{path}/"), Vec::new());
                 Ok(())
+            })
+        }
+        fn list_dir(
+            &self,
+            path: String,
+            hold: ConnectionLease,
+        ) -> ConnFuture<'_, Result<Vec<swiss_host::services::remote::RemoteListing>, TunnelError>>
+        {
+            Box::pin(async move {
+                drop(hold);
+                // The map holds files (and "path/" markers from mkdir); the
+                // immediate children of the listed path are the first segments
+                // of deeper keys.
+                let files = self.files.lock().unwrap();
+                let prefix = format!("{}/", path.trim_end_matches('/'));
+                let mut names: Vec<String> = Vec::new();
+                for key in files.keys() {
+                    let Some(rest) = key.strip_prefix(prefix.as_str()) else {
+                        continue;
+                    };
+                    if rest.is_empty() {
+                        continue; // the directory's own marker, not a child
+                    }
+                    let name = rest.split('/').next().unwrap_or_default().to_string();
+                    if !name.is_empty() && !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+                names.sort();
+                Ok(names
+                    .into_iter()
+                    .map(|name| {
+                        let child = format!("{prefix}{name}");
+                        swiss_host::services::remote::RemoteListing {
+                            is_dir: files.keys().any(|k| k.starts_with(&format!("{child}/"))),
+                            size: files.get(&child).map(|b| b.len() as u64).unwrap_or(0),
+                            name,
+                        }
+                    })
+                    .collect())
             })
         }
     }

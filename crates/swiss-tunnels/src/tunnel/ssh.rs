@@ -884,6 +884,30 @@ impl SshConnection {
         Ok(())
     }
 
+    /// List one remote directory's immediate children over SFTP readdir. Names are
+    /// the entries' own names (read_dir already skips "." and ".."); a size the
+    /// server did not report reads as 0, which the walkers tolerate by design.
+    pub async fn list_dir(
+        &self,
+        path: String,
+        hold: super::manager::ConnectionLease,
+    ) -> Result<Vec<swiss_host::services::remote::RemoteListing>, TunnelError> {
+        let session = self.sftp_session().await?;
+        let entries = session.read_dir(&path).await.map_err(|err| {
+            TunnelError::new(format!("sftp readdir {path}: {err}"), FailureKind::Network)
+        })?;
+        let mut out = Vec::new();
+        for entry in entries {
+            out.push(swiss_host::services::remote::RemoteListing {
+                name: entry.file_name(),
+                is_dir: entry.file_type().is_dir(),
+                size: entry.metadata().len(),
+            });
+        }
+        drop(hold);
+        Ok(out)
+    }
+
     /// End the session (best effort, capped): a wedged transport must not block a shutdown.
     pub async fn end(&self) {
         let live = self.live.lock().unwrap_or_else(|e| e.into_inner()).take();
