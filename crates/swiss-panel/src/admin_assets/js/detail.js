@@ -16,7 +16,7 @@
 
 import { $, KINDS, api, apiJson, now, state, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
-import { fmtJson } from "./logs.js";
+import { callsErrHtml, callsStatusHtml, fmtJson } from "./logs.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { loadList } from "./polling.js";
@@ -164,8 +164,13 @@ function openDetail(name) {
     },
     // Logs tab: a page of recorded tool calls (null until loaded), any child stderr, which rows are
     // expanded, replies fetched in full by seq, and the server-side search needle (docs/31).
-    calls: null, stderr: "", callsOpen: {}, callsLoading: false,
+    // docs/32 B1: paging is a transaction — callsPage is ALWAYS the committed page; a switch in
+    // flight lives in callsPendingPage, its visible failure in callsError (with the target a
+    // Retry owes in callsRetryTarget), and callsRequest is the generation that drops stale
+    // responses before they can commit over a newer needle/page.
+    calls: null, stderr: "", callsOpen: {},
     callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
+    callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null, callsRequest: 0,
   };
   KINDS.forEach(function (k) { d[k] = pageState(); });
   state.detail = d;
@@ -198,36 +203,102 @@ async function loadMeta(name) {
   } catch (e) { /* handled */ }
 }
 
-/** One page of recorded tool calls (arguments + reply) and, for a proc MCP, its stderr. */
+/** One page of recorded tool calls (arguments + reply) and, for a proc MCP, its stderr.
+ * docs/32 B1: a load is a transaction — a response may only commit while it is still the newest
+ * request for this detail (generation), and it commits exactly the page it asked for. The page,
+ * rows, more-flag and stderr land together or not at all; a failure keeps everything committed
+ * and shows itself in place with a Retry. */
 async function loadCalls(name) {
   var d = state.detail;
-  if (!d || d.name !== name || d.callsLoading) return;
-  d.callsLoading = true;
+  if (!d || d.name !== name) return;
+  var target = d.callsPendingPage != null ? d.callsPendingPage : d.callsPage;
+  var gen = ++d.callsRequest;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/calls?page=" + d.callsPage +
+    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/calls?page=" + target +
       (d.callsQ ? "&q=" + encodeURIComponent(d.callsQ) : ""));
-    if (r.ok) {
-      var j = await r.json();
-      if (state.detail !== d) return; // a revisit built a new detail object — see loadMeta
-      d.calls = j.calls || [];
-      d.callsMore = !!j.more;
-      d.stderr = j.stderr || "";
-      renderCallsOnly();
-    }
-  } catch (e) { /* handled */ } finally {
-    d.callsLoading = false; // this request's own flag, whatever the pane shows now
+    var j = await r.json().catch(function () { return {}; });
+    // A revisit built a new detail object (see loadMeta), or a newer request superseded this
+    // one — either way this response is stale and must not commit.
+    if (state.detail !== d || gen !== d.callsRequest) return;
+    if (!r.ok) { callsLoadFailed(d, target, r.status); return; }
+    d.callsPage = target;
+    if (d.callsPendingPage === target) d.callsPendingPage = null;
+    d.callsError = "";
+    d.callsErrStatus = "";
+    d.callsRetryTarget = null;
+    d.calls = j.calls || [];
+    d.callsMore = !!j.more;
+    d.stderr = j.stderr || "";
+    renderCallsOnly();
+  } catch (e) {
+    if (state.detail !== d || gen !== d.callsRequest) return;
+    callsLoadFailed(d, target, 0);
   }
 }
 
+/** A foreground load failed: the committed page, its rows, the open expansions and the scroll
+ *  position all stay exactly as they are; the failure says so in place and offers the same
+ *  target again (docs/32 B1). */
+function callsLoadFailed(d, target, status) {
+  d.callsPendingPage = null;
+  d.callsError = "Could not load calls.";
+  d.callsErrStatus = status ? "HTTP " + status : "";
+  d.callsRetryTarget = target;
+  patchCallsChrome(d);
+}
+
+/** Newer/Older: begin a page switch. Nothing committed changes until the response lands — the
+ *  rows stay on screen, marked busy, and the request carries the target page (docs/32 B1). */
 function callsPageStep(delta) {
   var d = state.detail;
-  if (!d) return;
+  if (!d || d.callsPendingPage != null) return; // one switch at a time
   var next = d.callsPage + delta;
   if (next < 0 || (delta > 0 && !d.callsMore)) return;
-  d.callsPage = next;
-  d.calls = null; // show the loading state rather than the previous page's rows
-  renderCallsOnly();
+  d.callsError = "";
+  d.callsErrStatus = "";
+  d.callsRetryTarget = null;
+  d.callsPendingPage = next;
+  patchCallsChrome(d);
   loadCalls(d.name);
+}
+
+/** Retry of a failed foreground load: the same target again, through the same transaction. */
+function callsRetry() {
+  var d = state.detail;
+  if (!d || d.callsPendingPage != null || d.callsRetryTarget == null) return;
+  var target = d.callsRetryTarget;
+  d.callsError = "";
+  d.callsErrStatus = "";
+  d.callsRetryTarget = null;
+  d.callsPendingPage = target;
+  patchCallsChrome(d);
+  loadCalls(d.name);
+}
+
+/** Sync the pager chrome — busy state, both buttons, the status cell, the error block — onto
+ *  the PAINTED dom without repainting: a pending switch or a failed one must not detach the
+ *  rows, the search input or the scroll position (docs/32 B1). */
+function patchCallsChrome(d) {
+  var busy = d.callsPendingPage != null;
+  var region = $("callsRegion");
+  if (region && region.setAttribute) region.setAttribute("aria-busy", busy ? "true" : "false");
+  var status = $("clStatus");
+  if (status) status.innerHTML = callsStatusHtml(d);
+  var prev = $("clPrev"), next = $("clNext");
+  if (prev) prev.disabled = busy || d.callsPage <= 0;
+  if (next) next.disabled = busy || !d.callsMore;
+  // The error block is idempotent — drop whatever is there, then insert when an error is set.
+  // A new switch (pending or Retry) takes the old error away; a failure puts it back beside the
+  // pager, where the click that failed happened.
+  var err = $("clErr");
+  if (err && err.remove) err.remove();
+  if (d.callsError) {
+    var html = callsErrHtml(d);
+    var pager = $("clPager");
+    if (pager && pager.insertAdjacentHTML) pager.insertAdjacentHTML("afterend", html);
+    var retry = $("clRetry");
+    if (retry) retry.onclick = callsRetry;
+  }
 }
 
 /** Fetch one reply in full — the log page ships only the first 2 KB of each. */
@@ -564,4 +635,4 @@ async function saveEdit() {
   renderPane();
 }
 
-export { act, authorizeMcp, callsPageStep, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadMeta, loadPage, loadRevisions, openDetail, pageNext, pagePrev, pageState, removeMcp, renameMcp, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace };
+export { act, authorizeMcp, callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadMeta, loadPage, loadRevisions, openDetail, pageNext, pagePrev, pageState, removeMcp, renameMcp, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace };

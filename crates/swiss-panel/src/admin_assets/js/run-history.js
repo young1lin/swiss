@@ -16,7 +16,7 @@
 
 import { $, api, apiJson, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
-import { callsPageStep, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
+import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
 import { fmtChars, fmtJson, logsBody, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
@@ -608,6 +608,7 @@ function wireTabBody(d, m) {
   }
   var clPrev = $("clPrev"); if (clPrev) clPrev.onclick = function () { callsPageStep(-1); };
   var clNext = $("clNext"); if (clNext) clNext.onclick = function () { callsPageStep(1); };
+  var clRetry = $("clRetry"); if (clRetry) clRetry.onclick = callsRetry;
   document.querySelectorAll("#tabbody [data-callseq]").forEach(function (s) {
     s.onclick = function () { toggleCall(s.dataset.callseq); };
     s.onkeydown = function (ev) {
@@ -730,7 +731,10 @@ function renderCallsOnly() {
   // back to the top while it is being read. The needle counts too (docs/31): a cleared or changed
   // search must repaint even when the row count happens to stay the same.
   var calls = d.calls || [];
-  var sig = (calls.length ? calls[0].seq : 0) + ":" + calls.length + ":" + d.stderr.length + ":" + (d.callsQ || "");
+  // The page, a pending switch and the error state are part of the picture now (docs/32 B1):
+  // a commit or a failure must repaint even when the row count happens to stay the same.
+  var sig = (calls.length ? calls[0].seq : 0) + ":" + calls.length + ":" + d.stderr.length + ":" + (d.callsQ || "") +
+    ":p" + d.callsPage + ":w" + (d.callsPendingPage == null ? "-" : d.callsPendingPage) + ":e" + (d.callsError || "");
   if (body.dataset.callsig === sig) return;
   // Keep the search box the user is typing into: the fresh markup carries a rebuilt input, and the
   // live node (focus, caret, IME state) is swapped back into its place. innerHTML detaching the
