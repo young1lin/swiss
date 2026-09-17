@@ -123,6 +123,9 @@ function callRow(seq: number) {
   return { seq, at: "2026-09-17T10:00:00.000Z", via: "panel", client: "panel", ms: 5, chars: 100, ok: true, tool: "get_" + seq, args: "a" + seq, output: "o" + seq, preview: false };
 }
 function rowsOf(seqs: number[]) { return seqs.map(callRow); }
+/** One sidebar row — the real loadList closes the detail of an MCP missing from /api/mcps,
+ *  so any list answer that must keep the detail open carries it. */
+const ROW = { name: "redis", lifecycle: "started", state: "up", type: "http", source: "managed", group: "default", description: "" };
 const PAGE0 = rowsOf(Array.from({ length: 20 }, (_, i) => 100 - i)); // seq 100..81
 const PAGE1 = rowsOf(Array.from({ length: 20 }, (_, i) => 80 - i));  // seq 80..61
 
@@ -226,6 +229,124 @@ describe("docs/32 B2: the pager is the scroll anchor, focus follows the action",
     clickOlder(); // the click blurs the input in a real browser; the repaint must still not eat it
     await ok({ calls: PAGE1, more: true, stderr: "" }, 0);
     expect(byId.get("callsQ")!.focused, "focus is restored after the repaint").toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("docs/32 B3: history pages hold still, errors are honest", () => {
+  it("the MCP poll refreshes calls on page 0 and stays off every older page", async () => {
+    const d = fakeDetail();
+    mountLogs(d); // page 0, committed
+    const mcps = await import("../../src/admin_assets/js/views/mcps.js");
+    // The list answer must still contain the row — the real loadList closes the detail of an
+    // MCP that vanished from the list, which is not what this test is about.
+    const list = { mcps: [{ ...ROW }], groups: ["default"] };
+    const p1 = mcps.poll();
+    await ok(list, 0); // the list half of the poll parks, then resolves
+    expect(requests.some((r) => r.url.includes("/calls?")), "page 0 is polled").toBe(true);
+    await ok({ calls: PAGE0, more: true, stderr: "" }, 0); // the calls half — poll can finish
+    await p1;
+    // Back to a committed older page: reading position, not a live view.
+    const d2 = fakeDetail();
+    mountLogs(d2);
+    d2.callsPage = 2;
+    requests.length = 0;
+    parked.length = 0;
+    const p2 = mcps.poll();
+    await ok(list, 0);
+    await p2;
+    expect(requests.some((r) => r.url.includes("/calls?")), "an offset page is never polled").toBe(false);
+  });
+
+  it("a poll request itself refuses an offset page or a pending switch", () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    d.callsPage = 3;
+    detail.loadCalls(d.name, true);
+    expect(requests.length).toBe(0);
+    d.callsPage = 0;
+    clickOlder();
+    requests.length = 0;
+    detail.loadCalls(d.name, true);
+    expect(requests.length, "no poll while a switch is mid-transaction").toBe(0);
+  });
+
+  it("a poll failure is silent: rows stay, no error block appears", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    byId.set("clPager", new FakeNode("div")); // the painted pager, present and untouched
+    detail.loadCalls(d.name, true);
+    await http({ error: "down" }, 0, 500);
+    expect(d.callsError).toBe("");
+    expect(d.calls).toEqual(PAGE0);
+    expect(byId.get("clPager")!.inserted.length).toBe(0);
+  });
+
+  it("a foreground failure of the very first load replaces the spinner, not with rows", async () => {
+    const d = fakeDetail();
+    d.calls = null;
+    util.state.detail = d;
+    byId.set("pane", new FakeNode("main"));
+    const tb = new FakeNode("div");
+    byId.set("tabbody", tb);
+    rh.renderCallsOnly();
+    expect(tb.innerHTML).toContain("Loading calls…");
+    detail.loadCalls(d.name); // foreground (showTab path)
+    await http({ error: "nope" }, 0, 503);
+    expect(d.callsError).toBe("Could not load calls.");
+    expect(tb.innerHTML, "the error replaces the eternal spinner").toContain("Could not load calls.");
+    expect(tb.innerHTML).toContain(">Retry</button>");
+    expect(tb.innerHTML).not.toContain("Loading calls…");
+  });
+
+  it("a fetch rejection lands in the same visible error", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    clickOlder();
+    await net(0);
+    expect(d.callsPage).toBe(0);
+    expect(d.calls).toEqual(PAGE0);
+    expect(d.callsError).toBe("Could not load calls.");
+    expect(byId.get("clPager")!.inserted.length).toBe(1);
+  });
+
+  it("a new needle supersedes a pending switch: the debounce clears it and returns to page 0", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    clickOlder();
+    expect(d.callsPendingPage).toBe(1);
+    const q = byId.get("callsQ")!;
+    q.value = "GET";
+    q.oninput!();
+    await new Promise((r) => setTimeout(r, 340)); // the docs/31 debounce
+    expect(d.callsPendingPage).toBeNull();
+    expect(d.callsPage).toBe(0);
+    const last = requests[requests.length - 1];
+    expect(last.url).toContain("page=0");
+    expect(last.url).toContain("q=GET");
+    await ok({ calls: rowsOf([7]), more: false, stderr: "" }, 0); // drain the parked search
+  });
+
+  it("Escape clears the needle at once, through the same reset", async () => {
+    const d = fakeDetail();
+    mountLogs(d, { q: "GET" });
+    clickOlder();
+    const q = byId.get("callsQ")!;
+    q.value = "GET";
+    q.onkeydown!({ key: "Escape", preventDefault() {} });
+    expect(d.callsQ).toBe("");
+    expect(d.callsPendingPage).toBeNull();
+    expect(d.callsPage).toBe(0);
+    expect(requests[requests.length - 1].url).not.toContain("q=");
+    await ok({ calls: PAGE0, more: true, stderr: "" }, 0); // drain
+  });
+
+  it("re-entering the Logs tab while a switch is pending fires no duplicate request", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    clickOlder();
+    detail.showTab("logs");
+    expect(requests.length).toBe(1);
+    await ok({ calls: PAGE1, more: true, stderr: "" }, 0); // drain
   });
 });
 

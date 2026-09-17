@@ -589,8 +589,14 @@ function wireTabBody(d, m) {
       d.callsQTimer = setTimeout(function () {
         var nd = state.detail;
         if (!nd || nd.name !== d.name) return;
+        // docs/32 B3: a new needle supersedes any switch in flight — target page 0, the
+        // pending switch cancelled, its error taken down.
         nd.callsQ = q.value;
         nd.callsPage = 0;
+        nd.callsPendingPage = null;
+        nd.callsSwitch = null;
+        nd.callsError = "";
+        nd.callsErrStatus = "";
         nd.calls = null; // the loading state, not the previous needle's rows
         loadCalls(nd.name);
       }, 300);
@@ -602,6 +608,10 @@ function wireTabBody(d, m) {
       q.value = "";
       d.callsQ = "";
       d.callsPage = 0;
+      d.callsPendingPage = null;
+      d.callsSwitch = null;
+      d.callsError = "";
+      d.callsErrStatus = "";
       d.calls = null;
       loadCalls(d.name);
     };

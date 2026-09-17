@@ -20,7 +20,13 @@ import { loadCalls, loadMeta, loadPage, pageState } from "../detail.js";
 import { renderPane } from "../pane.js";
 import { histClose } from "../run-history.js";
 export async function mount() { await loadList(); renderPane(); }
-export async function poll() { await loadList(); if (state.detail && state.detail.tab === "logs") await loadCalls(state.detail.name); }
+export async function poll() {
+  await loadList();
+  var d = state.detail;
+  // docs/32 B3: only page 0 is live — an offset page is a reading position a poll must not
+  // drift, and a switch in flight owns the tab until it commits.
+  if (d && d.tab === "logs" && d.callsPage === 0 && d.callsPendingPage == null) await loadCalls(d.name, true);
+}
 export async function refresh() {
   await poll();
   var d = state.detail;
