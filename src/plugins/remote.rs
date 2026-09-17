@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     https://www.apache.org/licenses/LICENSE-2.0
+ * https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,26 +19,35 @@
 //!
 //! A plugin built purely on the public contracts, like the terminal plugin before
 //! it: everything the host needs is said here in data. The instance's whole job is
-//! to open the [RemoteSystem] (the sealed target table plus the three actions),
-//! install it into the state slot the /api/remote routes read, and take it back on
-//! stop. The transport itself belongs to the tunnels plugin - this plugin declares
-//! NO capability requirement on purpose: the target table must stay writable while
-//! tunnels is off, and the exec actions say honestly what is missing (docs/32).
+//! to open the [RemoteSystem] (the sealed target table plus the remote actions),
+//! install it into the state slot the /api/remote routes read, mount the same
+//! surface as the builtin "remote" MCP under /mcp/remote (R7), and take both back
+//! on stop. The transport itself belongs to the tunnels plugin - this plugin
+//! declares NO capability requirement on purpose: the target table must stay
+//! writable while tunnels is off, and the exec actions say honestly what is
+//! missing (docs/32).
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use swiss_core::log;
 use swiss_host::host::descriptor::{PageDescriptor, PluginDescriptor};
 use swiss_host::host::factory::{PluginFactory, PluginInstance};
 use swiss_host::host::scope::PluginScope;
 use swiss_host::services::RuntimeServices;
+use swiss_mcp::calls::CallLog;
+use swiss_mcp::registry::{Registry, Source};
 use swiss_remote::api::RemoteState;
 use swiss_remote::RemoteSystem;
 
 /// The plugin id, also the config row key and the routes' owner.
 pub const PLUGIN_ID: &str = "remote";
+
+/// The name the instance registers its builtin MCP under (R7): /mcp/remote,
+/// mounted like every other builtin, owned by this plugin's lifecycle.
+const MCP_NAME: &str = "remote";
 
 pub struct RemotePlugin {
     services: Arc<RuntimeServices>,
@@ -46,14 +55,26 @@ pub struct RemotePlugin {
     state: Arc<RemoteState>,
     /// Where the sealed target table lives; overridden in tests.
     targets_path: std::path::PathBuf,
+    /// The app's MCP registry, where the instance mounts its builtin entry (R7).
+    registry: Arc<Registry>,
+    /// The app's one call log, shared with every adapter so the Logs tab sees
+    /// remote tool traffic in the same place as every other MCP's.
+    call_log: Arc<CallLog>,
 }
 
 impl RemotePlugin {
-    pub fn new(services: Arc<RuntimeServices>, state: Arc<RemoteState>) -> Self {
+    pub fn new(
+        services: Arc<RuntimeServices>,
+        state: Arc<RemoteState>,
+        registry: Arc<Registry>,
+        call_log: Arc<CallLog>,
+    ) -> Self {
         RemotePlugin {
             services,
             state,
             targets_path: swiss_core::paths::data_path(&["remote.json"]),
+            registry,
+            call_log,
         }
     }
 
@@ -120,6 +141,8 @@ impl PluginFactory for RemotePlugin {
             state: self.state.clone(),
             services: self.services.clone(),
             targets_path: self.targets_path.clone(),
+            registry: self.registry.clone(),
+            call_log: self.call_log.clone(),
         }))
     }
 }
@@ -128,28 +151,109 @@ struct RemoteInstance {
     state: Arc<RemoteState>,
     services: Arc<RuntimeServices>,
     targets_path: std::path::PathBuf,
+    registry: Arc<Registry>,
+    call_log: Arc<CallLog>,
+}
+
+/// Whether the registry's "remote" entry is OURS (def type "remote"): a user MCP
+/// that happens to carry the name must not be hijacked by a restart.
+fn mcp_is_ours(registry: &Arc<Registry>) -> bool {
+    registry
+        .get(MCP_NAME)
+        .and_then(|entry| entry.data.read().ok().map(|d| d.def.type_() == "remote"))
+        .unwrap_or(false)
 }
 
 #[async_trait]
 impl PluginInstance for RemoteInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
-        // One system for the whole plugin: the sealed target table and the three
-        // capabilities registered into the shared action registry - a remote.exec
-        // IS a run through the coordinator, not a new job system (docs/32).
+        // One system for the whole plugin: the sealed target table and the
+        // remote capabilities registered into the shared action registry - a
+        // remote.exec IS a run through the coordinator, not a new job system
+        // (docs/32).
         let system = RemoteSystem::open(self.services.clone(), self.targets_path.clone());
         swiss_remote::actions::register_all(system.clone(), &self.services.actions)?;
-        self.state.install(system);
+        self.state.install(system.clone());
+
+        // R7 (docs/32): the same table as an MCP under /mcp/remote - five thin
+        // tools that run the actions just registered through the same
+        // coordinator, so a model can drive a target with no shell. Plugin-owned
+        // on purpose: the entry mounts here and comes down with stop(), so
+        // disabling Remote withdraws the tools together with the actions they
+        // dispatch to. The alias seam reads the LIVE table, so a target added on
+        // the page shows up in the tool descriptions on the next tools/list.
+        let adapter = Arc::new(swiss_mcp::adapters::remote::RemoteAdapter::new(
+            self.services.clone(),
+            self.call_log.clone(),
+            Arc::new(move || {
+                system.with_store(|store| {
+                    store
+                        .list()
+                        .iter()
+                        .map(|t| t.id.clone())
+                        .collect::<Vec<_>>()
+                })
+            }),
+        ));
+        let def = swiss_host::config::ServerDef(
+            json!({
+                "type": "remote",
+                "description": "Builtin: the gateway's remote targets as five tools (remote_exec, remote_sync, remote_pull, remote_cat, remote_write)."
+            })
+            .as_object()
+            .cloned()
+            .expect("the literal above is an object"),
+        );
+        if self.registry.has(MCP_NAME) {
+            if mcp_is_ours(&self.registry) {
+                // A restart after stop: swap in this instance's adapter (the old
+                // one still holds the previous system's alias seam) and bring the
+                // entry back up.
+                self.registry
+                    .update_def(MCP_NAME, def, adapter, true)
+                    .await
+                    .map_err(|err| format!("remote mcp restart: {err}"))?;
+            } else {
+                // A user MCP owns the name: theirs wins, ours stays unmounted,
+                // and the rest of the plugin is unaffected.
+                log::warn(
+                    "the /mcp/remote path is taken by a user MCP; the builtin remote tools stay unmounted",
+                    None,
+                );
+            }
+        } else {
+            self.registry
+                .register(MCP_NAME, Source::Config, def, adapter)
+                .map_err(|err| format!("remote mcp registration: {err}"))?;
+            self.registry
+                .start(MCP_NAME)
+                .await
+                .map_err(|err| format!("remote mcp start: {err}"))?;
+        }
         Ok(())
     }
 
     async fn stop(&self) {
         // Withdraw first so no request finds a system that is about to die, then
         // unregister the capabilities so a disabled plugin answers "unknown action"
-        // instead of running an action whose transport seat may be gone.
+        // instead of running an action whose transport seat may be gone. By
+        // prefix rather than a fixed list: actions this system added later
+        // (remote.cat, remote.write, ...) withdraw without this list growing.
         if let Some(system) = self.state.withdraw() {
-            for name in ["remote.exec", "remote.sync", "remote.pull"] {
-                system.services().actions.unregister(name);
+            for info in system.services().actions.list() {
+                if info.type_name.starts_with("remote.") {
+                    system.services().actions.unregister(&info.type_name);
+                }
             }
+        }
+        // The MCP entry follows the plugin down - stopped, not deleted: a user
+        // panel stop of the entry survives a plugin bounce the same way, and the
+        // restart path above swaps the adapter back in.
+        if let Err(err) = self.registry.stop(MCP_NAME).await {
+            log::warn(
+                "the remote mcp entry did not stop cleanly",
+                Some(json!({ "err": err })),
+            );
         }
     }
 }
@@ -157,10 +261,29 @@ impl PluginInstance for RemoteInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use swiss_mcp::registry::Lifecycle;
+
+    /// A registry + call log pair that writes nowhere a test would mourn.
+    fn test_registry() -> (Arc<Registry>, Arc<CallLog>) {
+        let calls = Arc::new(CallLog::at(std::env::temp_dir().join(format!(
+            "swiss-remoteplug-calls-{}",
+            swiss_core::util::random_hex(8)
+        ))));
+        (Registry::new(15_000, calls.clone()), calls)
+    }
+
+    fn lifecycle_of(registry: &Arc<Registry>, name: &str) -> Lifecycle {
+        registry
+            .get(name)
+            .and_then(|e| e.data.read().ok().map(|d| d.lifecycle))
+            .expect("the entry exists")
+    }
 
     #[test]
     fn the_descriptor_carries_one_page_and_no_requirements() {
-        let d = RemotePlugin::new(RuntimeServices::new(), RemoteState::new()).descriptor();
+        let (registry, calls) = test_registry();
+        let d = RemotePlugin::new(RuntimeServices::new(), RemoteState::new(), registry, calls)
+            .descriptor();
         assert_eq!(d.id, "remote");
         assert_eq!(d.pages.len(), 1);
         assert_eq!(d.pages[0].id, "remote");
@@ -171,7 +294,8 @@ mod tests {
 
     #[test]
     fn unknown_config_keys_are_refused() {
-        let plugin = RemotePlugin::new(RuntimeServices::new(), RemoteState::new());
+        let (registry, calls) = test_registry();
+        let plugin = RemotePlugin::new(RuntimeServices::new(), RemoteState::new(), registry, calls);
         assert!(plugin.validate_config(&json!({})).is_ok());
         assert!(plugin.validate_config(&json!({ "endpoints": [] })).is_err());
     }
@@ -184,7 +308,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("scratch");
         let services = RuntimeServices::new();
         let state = RemoteState::new();
-        let plugin = RemotePlugin::new(services.clone(), state.clone())
+        let (registry, calls) = test_registry();
+        let plugin = RemotePlugin::new(services.clone(), state.clone(), registry.clone(), calls)
             .with_targets_path(dir.join("remote.json"));
 
         // The instance path: create through the factory (the host only wraps this),
@@ -200,6 +325,10 @@ mod tests {
                 .any(|a| a.type_name == "remote.exec"),
             "the capabilities registered",
         );
+        // R7: the plugin's start also mounted the builtin MCP, serving.
+        assert!(registry.has("remote"), "the builtin MCP registered");
+        assert_eq!(lifecycle_of(&registry, "remote"), Lifecycle::Started);
+
         instance.stop().await;
         assert!(
             !services
@@ -209,11 +338,22 @@ mod tests {
                 .any(|a| a.type_name == "remote.exec"),
             "the capabilities unregistered",
         );
+        assert_ne!(
+            lifecycle_of(&registry, "remote"),
+            Lifecycle::Started,
+            "the MCP entry stopped with the plugin"
+        );
         // And the routes see the empty slot again.
         assert!(
             state.withdraw().is_none(),
             "stop already withdrew the system"
         );
+
+        // A restart reuses the registered entry rather than colliding with it.
+        let mut scope = PluginScope::new("remote");
+        instance.clone().start(&mut scope).await.expect("restarts");
+        assert_eq!(lifecycle_of(&registry, "remote"), Lifecycle::Started);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -277,10 +277,7 @@ pub fn usage_text() -> String {
             "push [name] <file> [--to NAME]",
             "upload one file under a remote name",
         ),
-        (
-            "cat [name] <path>",
-            "print one remote file to stdout",
-        ),
+        ("cat [name] <path>", "print one remote file to stdout"),
         (
             "write [name] <path>",
             "write stdin to one remote file (create/overwrite)",
