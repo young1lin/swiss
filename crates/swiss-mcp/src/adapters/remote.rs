@@ -385,9 +385,27 @@ fn plan(tool: &str, args: &Map<String, Value>) -> Result<Plan, String> {
 /// model can quote when asking a human what happened. Non-success is an
 /// in-band isError result, which MCP clients surface as tool output rather than
 /// a protocol fault - a failed build is data, not a broken call.
+/// How much run output a tool result may carry. A model context is the scarce
+/// resource here: exec can still stream a huge log through the run window into
+/// a tool result. Keep the HEAD (the part a model usually needs) and say the rest.
+const RESULT_TEXT_CAP: usize = 64 * 1024;
+
 fn run_result(view: &RunView) -> CallToolResponse {
     let ok = view.state == RunState::Succeeded;
     let mut text = view.output.clone().unwrap_or_default();
+    if text.len() > RESULT_TEXT_CAP {
+        // Cut on a char boundary, keep the head, and let the marker say the rest.
+        let mut cut = RESULT_TEXT_CAP;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let full = text.len();
+        text.truncate(cut);
+        text.push_str(&format!(
+            "\n--- output truncated: {} of {} bytes shown; remote.pull the file or read the run for the rest\n",
+            cut, full
+        ));
+    }
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
