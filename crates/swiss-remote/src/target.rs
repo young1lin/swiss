@@ -359,6 +359,10 @@ pub fn safe_join(root: &str, rel: &str) -> Result<String, String> {
     if rel.is_empty() {
         return Ok(root.trim_end_matches('/').to_string());
     }
+    // An absolute rel is a path the caller typed in full — the same trust an ssh
+    // command line gets. It is normalized on its own and never joined onto the
+    // root: the root anchors *relative* paths, it does not cage absolute ones.
+    let base = if rel.starts_with('/') { "" } else { root };
     let mut parts: Vec<&str> = Vec::new();
     for seg in rel.split('/') {
         match seg {
@@ -371,7 +375,7 @@ pub fn safe_join(root: &str, rel: &str) -> Result<String, String> {
             other => parts.push(other),
         }
     }
-    let mut path = root.trim_end_matches('/').to_string();
+    let mut path = base.trim_end_matches('/').to_string();
     for seg in parts {
         path.push('/');
         path.push_str(seg);
@@ -383,6 +387,21 @@ pub fn safe_join(root: &str, rel: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use serde_json::Map;
+
+    #[test]
+    fn safe_join_passes_an_absolute_rel_through_as_the_path_itself() {
+        // An absolute path is what the caller typed in full - ssh-level trust, never
+        // joined onto the root (docs/32: the root anchors relative paths, not a cage).
+        assert_eq!(
+            safe_join("/tmp/ws", "/home/dev/app").unwrap(),
+            "/home/dev/app"
+        );
+        assert_eq!(
+            safe_join("/tmp/ws", "//var//log/./x").unwrap(),
+            "/var/log/x"
+        );
+        assert!(safe_join("/tmp/ws", "/a/../..").is_err());
+    }
     use std::path::Path;
 
     fn target(id: &str) -> RemoteTarget {
