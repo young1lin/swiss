@@ -147,7 +147,7 @@ function fakeDetail(name = "redis") {
     // docs/32 B1 fields, seeded the way openDetail builds them — the generation counter must
     // start at a number, or every response would look stale to it.
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
-    callsRetryDir: null, callsSwitch: null, callsRequest: 0,
+    callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
   } as any;
 }
 
@@ -278,6 +278,29 @@ describe("docs/32 B3: history pages hold still, errors are honest", () => {
     requests.length = 0;
     detail.loadCalls(d.name, true);
     expect(requests.length, "no poll while a switch is mid-transaction").toBe(0);
+  });
+
+  it("the poll never races a foreground load in flight — a stolen generation would swallow the failure", async () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: PAGE0.slice(0, 3), more: false }); // single page, no pager
+    detail.showTab("logs"); // the re-entry foreground load parks, unresolved
+    expect(requests.filter((r) => r.url.includes("/calls?")).length).toBe(1);
+    const mcps = await import("../../src/admin_assets/js/views/mcps.js");
+    const list = { mcps: [{ ...ROW }], groups: ["default"] };
+    const p = mcps.poll();
+    await ok(list, 1); // the list half (parked behind the re-entry load) resolves; the calls half must not have fired at all
+    await p;
+    expect(
+      requests.filter((r) => r.url.includes("/calls?")).length,
+      "no poll load while a foreground load is in flight",
+    ).toBe(1);
+    await net(0); // the foreground load dies — its failure is still the newest word
+    expect(d.callsError).toBe("Could not load calls.");
+    expect(d.calls, "the committed rows stay").toEqual(PAGE0.slice(0, 3));
+    expect(
+      byId.get("callsRegion")!.inserted.filter(([, html]) => html.includes("clErr")).length,
+      "the strip lands — the poll never stole the generation",
+    ).toBe(1);
   });
 
   it("a poll failure is silent: rows stay, no error block appears", async () => {

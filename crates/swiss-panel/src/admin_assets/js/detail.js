@@ -171,7 +171,7 @@ function openDetail(name) {
     calls: null, stderr: "", callsOpen: {},
     callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
-    callsRetryDir: null, callsSwitch: null, callsRequest: 0,
+    callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
   };
   KINDS.forEach(function (k) { d[k] = pageState(); });
   state.detail = d;
@@ -215,9 +215,14 @@ async function loadMeta(name) {
 async function loadCalls(name, isPoll) {
   var d = state.detail;
   if (!d || d.name !== name) return;
-  if (isPoll && (d.callsPage > 0 || d.callsPendingPage != null)) return;
+  // A poll dispatched while a FOREGROUND load still hangs would take the newest generation
+  // for itself; the foreground failure would then land as "stale" and be reported to nobody.
+  // The poll is a courtesy refresh — skipping one cycle costs 6 s, a swallowed failure costs
+  // the user's trust (found live: a hung re-entry load during a server stop).
+  if (isPoll && (d.callsPage > 0 || d.callsPendingPage != null || d.callsActive > 0)) return;
   var target = d.callsPendingPage != null ? d.callsPendingPage : d.callsPage;
   var gen = ++d.callsRequest;
+  d.callsActive = (d.callsActive || 0) + 1;
   // A page switch rides this request; take its anchor intent now, so a request issued later (a
   // new needle) can never spend an anchor that belonged to this one (docs/32 B2).
   var sw = null;
@@ -243,6 +248,8 @@ async function loadCalls(name, isPoll) {
   } catch (e) {
     if (state.detail !== d || gen !== d.callsRequest) return;
     if (!isPoll) callsLoadFailed(d, target, 0, sw);
+  } finally {
+    d.callsActive -= 1; // every exit path settles its own in-flight mark
   }
 }
 
