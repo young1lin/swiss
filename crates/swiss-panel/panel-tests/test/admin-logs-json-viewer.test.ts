@@ -223,6 +223,17 @@ describe("docs/33 C2: buildJsonTree", () => {
     void rows;
   });
 
+  it("docs/33 readability: every key carries a JSON colon span", () => {
+    vi.stubGlobal("document", { createElement: el } as never);
+    const host = el("div");
+    logs.buildJsonTree(host, { cursor: "5088", keys: [], done: false }, {});
+    const cursorRow = rowByKey(host, "cursor")!;
+    const cols = (cursorRow.children as Record<string, unknown>[]).filter((c) => String(c.className).includes("jt-col"));
+    expect(cols.length, "one colon span after the key").toBe(1);
+    expect(String((cols[0] as { textContent: string }).textContent)).toBe(":");
+    vi.unstubAllGlobals();
+  });
+
   it("a long leaf string truncates for display at 200 characters", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");

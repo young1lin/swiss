@@ -211,14 +211,21 @@
     .jtree-in { font-family: var(--mono); font-size: var(--f-caption); }
     .jt-row { display: flex; align-items: baseline; gap: var(--s2); padding: 1px 0; min-width: 0; }
     .jt-key { color: var(--accent); font-weight: 600; flex: none; }
+    .jt-col { color: var(--text-3); flex: none; }
+    /* docs/33: chevrons, spacers, summaries and copy buttons are chrome — a text selection of
+       the block must read "key": value lines, not interleaved button/svg noise (live complaint). */
+    .jtree .jt-chev, .jtree .jt-spc, .jtree .jt-sum, .jtree .jt-copy { user-select: none; }
     .jt-val { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .jt-val.s { color: var(--green); }
     .jt-val.n { color: var(--amber); }
     .jt-val.b { color: var(--text-3); font-weight: 600; }
     .jt-sum { color: var(--text-3); flex: none; }
     .jt-spc { width: 12px; flex: none; }
-    .jt-row .btn.icon { margin-left: auto; flex: none; color: var(--text-3); opacity: 0; }
-    .jt-row:hover .btn.icon, .jt-row .btn.icon:focus-visible { opacity: 1; }
+    /* docs/33: the margin-left:auto belongs to the COPY button ONLY. It first matched the
+       chevron too (chevrons also carry .btn.icon), pushing container keys to mid-row and the
+       root summary to centre — the "what is this" layout, found live on 19997. */
+    .jt-row .jt-copy { margin-left: auto; flex: none; color: var(--text-3); opacity: 0; }
+    .jt-row:hover .jt-copy, .jt-row .jt-copy:focus-visible { opacity: 1; }
     .jt-row .jt-chev { color: var(--text-3); opacity: 1; width: 12px; height: 12px; padding: 0; }
     .jt-row .jt-chev .ic { width: 12px; height: 12px; }
     .jt-row.open > .jt-chev { transform: rotate(90deg); }

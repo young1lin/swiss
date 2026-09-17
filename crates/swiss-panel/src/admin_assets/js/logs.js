@@ -106,6 +106,9 @@ function jtNode(parentEl, key, val, path, depth, open) {
   if (isObj && open[path] === undefined) open[path] = depth < 2; // record the default once
   var row = jtDiv("jt-row" + (isObj && open[path] ? " open" : ""));
   var keySpan = key !== "" ? jtSpan("jt-key", JSON.stringify(key)) : null;
+  // The JSON colon is its own span so a text selection of the block reads "key": value —
+  // and so the key text itself stays the bare quoted name for tests and queries.
+  var colSpan = key !== "" ? jtSpan("jt-col", ":") : null;
   var cp = jtBtn("jt-copy", "Copy");
   cp.dataset.copy = "1";
   cp.innerHTML = icon("copy");
@@ -129,6 +132,7 @@ function jtNode(parentEl, key, val, path, depth, open) {
     };
     row.appendChild(chev);
     if (keySpan) row.appendChild(keySpan);
+    if (colSpan) row.appendChild(colSpan);
     row.appendChild(jtSpan("jt-sum", jtSummary(val)));
     row.appendChild(cp);
     if (open[path]) renderKids();
@@ -139,6 +143,7 @@ function jtNode(parentEl, key, val, path, depth, open) {
   } else {
     row.appendChild(jtDiv("jt-spc"));
     if (keySpan) row.appendChild(keySpan);
+    if (colSpan) row.appendChild(colSpan);
     var text = typeof val === "string" ? JSON.stringify(val) : String(val);
     var cls = typeof val === "string" ? "s" : typeof val === "number" ? "n" : "b";
     row.appendChild(jtSpan("jt-val " + cls, text.length > 200 ? text.slice(0, 200) + "…" : text));
