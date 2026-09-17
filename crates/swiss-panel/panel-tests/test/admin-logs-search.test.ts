@@ -47,8 +47,10 @@ describe("docs/31: logs search box", () => {
     expect(html).not.toContain("No calls matching");
   });
 
-  it("a needle enables Clear even with no rows on the page", () => {
-    const withNeedle = logs.logsBody(stub({ callsQ: "x" }));
-    expect(withNeedle).not.toMatch(/id="callsClear"[^>]*disabled/);
+  it("docs/32 B4: the toolbar action is the ellipsis menu — no standing Clear button", () => {
+    const html = logs.logsBody(stub({ callsQ: "x" }));
+    expect(html).toContain('id="clMenu"');
+    expect(html).toContain('aria-label="More log actions"');
+    expect(html).not.toContain("callsClear");
   });
 });

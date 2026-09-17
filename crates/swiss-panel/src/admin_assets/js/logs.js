@@ -98,7 +98,7 @@ function logsBody(d) {
   var head = '<div class="sec-head"><span class="sec-cap">Tool calls · newest first</span>' +
     '<input id="callsQ" type="search" placeholder="Search calls" aria-label="Search tool calls"' +
     ' value="' + esc(q) + '">' +
-    '<button class="btn" id="callsClear"' + ((d.calls && d.calls.length) || d.callsPage || q ? "" : " disabled") + ">Clear</button></div>";
+    '<button class="btn icon" id="clMenu" aria-label="More log actions" title="More log actions">' + icon("ellipsis") + "</button></div>";
   var busy = d.callsPendingPage != null;
   var body = "", pager = "";
   if (d.calls == null) {
