@@ -20,7 +20,7 @@ import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, dele
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
 import { popupMenu } from "./menu.js";
 import { closeMenu } from "./pane.js";
-import { copyLogText, fmtChars, fmtJson, logsBody, toggleCall } from "./logs.js";
+import { copyLogText, fmtChars, fmtJson, logsBody, mountJsonTrees, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
 import { rowOf } from "./sidebar.js";
@@ -790,6 +790,7 @@ function renderCallsOnly() {
   }
   body.dataset.callsig = sig;
   wireTabBody(d, rowOf(d.name) || {});
+  mountJsonTrees(d); // docs/33 C2: open rows get their trees back, expansion restored
 }
 
 export { applyRunHistory, configBody, fillRunArgs, histButtonLabel, histClose, histOpen, histPreview, histRowsHtml, histSearchTimer, histToggle, histViewHtml, histWhen, loadRunHistory, queueHistSearch, readResource, renderCallsOnly, renderHistoryOnly, renderRunResult, runTool, toggleResources, toggleTool, tryTool, tunnelDepsHtml, wireHistRows, wireTabBody };

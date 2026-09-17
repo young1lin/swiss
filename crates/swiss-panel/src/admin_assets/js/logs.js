@@ -44,50 +44,6 @@ function fmtJson(text) {
   }
 }
 
-/** docs/33 C1: colour the pretty text, never trust it. The text is only tokenized after it
- *  parses as JSON (the fmtJson tail note is split off first and re-appended escaped), so a
- *  non-JSON payload never enters the highlighter, and every token is escaped on its way into
- *  HTML — an adversarial payload cannot inject markup. The palette is db-sql-hl's (views.css):
- *  keys accent, strings green, numbers amber, the two booleans and null quiet grey. */
-function hlJson(text) {
-  if (!text) return "";
-  var body = text, tail = "";
-  var cut = text.lastIndexOf("\n\n[");
-  if (cut > 0 && text.charAt(text.length - 1) === "]") { body = text.slice(0, cut); tail = text.slice(cut); }
-  var trimmed = body.trim();
-  if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return text;
-  try { JSON.parse(trimmed); } catch (e) { return text; }
-  var out = "", i = 0, n = body.length;
-  while (i < n) {
-    var ch = body.charAt(i);
-    if (ch === '"') {
-      var j = i + 1;
-      while (j < n) {
-        if (body.charAt(j) === "\\") { j += 2; continue; }
-        if (body.charAt(j) === '"') break;
-        j++;
-      }
-      var lit = body.slice(i, j + 1);
-      var k = j + 1;
-      while (k < n && (body.charAt(k) === " " || body.charAt(k) === "\t")) k++;
-      var isKey = body.charAt(k) === ":";
-      out += '<span class="' + (isKey ? "k" : "s") + '">' + esc(lit) + "</span>";
-      i = j + 1;
-      continue;
-    }
-    if (ch === "-" || (ch >= "0" && ch <= "9")) {
-      var num = body.slice(i).match(/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/);
-      if (num) { out += '<span class="n">' + esc(num[0]) + "</span>"; i += num[0].length; continue; }
-    }
-    var word = body.startsWith("true", i) ? "true" : body.startsWith("false", i) ? "false"
-      : body.startsWith("null", i) ? "null" : "";
-    if (word) { out += '<span class="b">' + word + "</span>"; i += word.length; continue; }
-    out += esc(ch);
-    i++;
-  }
-  return out + (tail ? esc(tail) : "");
-}
-
 /** docs/33 C1: the house clipboard idiom (connect.js copyText, data-csv dbCopyText) for the log
  *  blocks: async clipboard first, the textarea fallback second, one quiet toast either way. */
 function legacyCopy(text) {
@@ -111,6 +67,138 @@ async function copyLogText(text) {
   } catch (e) { /* fall through to the legacy path */ }
   try { legacyCopy(text); toast("Copied"); }
   catch (e) { toast("Copy failed", true); }
+}
+
+/** docs/33 C2: a block is tree material only when it is a JSON object or array. Plain strings,
+ *  error text and a truncated payload that no longer parses keep the C1 pre. */
+function parseJsonBlock(text) {
+  if (!text) return null;
+  var trimmed = text.trim();
+  if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return null;
+  try { return JSON.parse(trimmed); } catch (e) { return null; }
+}
+
+/* --- docs/33 C2: the collapsible tree ----------------------------------------------------------
+   A pure DOM builder: children render lazily on first expand, so the built DOM stays proportional
+   to what the operator actually opened. Expansion lives in the caller's `open` map (path -> bool)
+   — the 6-second repaint rebuilds the tree from it and the open nodes survive. Containers shallower
+   than depth 2 record an initial `true` once, so defaults and explicit toggles share one truth. */
+function jtDiv(cls) { var n = document.createElement("div"); n.className = cls; return n; }
+function jtSpan(cls, text) { var n = document.createElement("span"); n.className = cls; n.textContent = text; return n; }
+function jtBtn(cls, title) {
+  var b = document.createElement("button");
+  b.type = "button"; b.className = "btn icon " + cls; b.title = title;
+  return b;
+}
+function jtSummary(v) {
+  if (Array.isArray(v)) return "[ " + v.length + (v.length === 1 ? " item ]" : " items ]");
+  var n = Object.keys(v).length;
+  return "{ " + n + (n === 1 ? " key }" : " keys }");
+}
+function jtCopyText(v) {
+  if (v !== null && typeof v === "object") return JSON.stringify(v, null, 2);
+  if (typeof v === "string") return v; // the scalar text, unquoted
+  return String(v);
+}
+
+function jtNode(parentEl, key, val, path, depth, open) {
+  var isObj = val !== null && typeof val === "object";
+  if (isObj && open[path] === undefined) open[path] = depth < 2; // record the default once
+  var row = jtDiv("jt-row" + (isObj && open[path] ? " open" : ""));
+  var keySpan = key !== "" ? jtSpan("jt-key", JSON.stringify(key)) : null;
+  var cp = jtBtn("jt-copy", "Copy");
+  cp.dataset.copy = "1";
+  cp.innerHTML = icon("copy");
+  cp.onclick = function () { void copyLogText(jtCopyText(val)); };
+  if (isObj) {
+    var chev = jtBtn("jt-chev", "Toggle");
+    chev.innerHTML = icon("chevron-right");
+    var kids = jtDiv("jt-kids");
+    var renderKids = function () {
+      while (kids.firstChild) kids.removeChild(kids.firstChild);
+      if (!open[path]) return;
+      var entries = Array.isArray(val)
+        ? val.map(function (v, i) { return [i, v]; })
+        : Object.keys(val).map(function (k) { return [k, val[k]]; });
+      entries.forEach(function (e) { jtNode(kids, e[0], e[1], path + e[0] + "/", depth + 1, open); });
+    };
+    chev.onclick = function () {
+      open[path] = !open[path];
+      row.className = "jt-row" + (open[path] ? " open" : "");
+      renderKids();
+    };
+    row.appendChild(chev);
+    if (keySpan) row.appendChild(keySpan);
+    row.appendChild(jtSpan("jt-sum", jtSummary(val)));
+    row.appendChild(cp);
+    if (open[path]) renderKids();
+    var wrap = jtDiv("jt-node");
+    wrap.appendChild(row);
+    wrap.appendChild(kids);
+    parentEl.appendChild(wrap);
+  } else {
+    row.appendChild(jtDiv("jt-spc"));
+    if (keySpan) row.appendChild(keySpan);
+    var text = typeof val === "string" ? JSON.stringify(val) : String(val);
+    var cls = typeof val === "string" ? "s" : typeof val === "number" ? "n" : "b";
+    row.appendChild(jtSpan("jt-val " + cls, text.length > 200 ? text.slice(0, 200) + "…" : text));
+    row.appendChild(cp);
+    parentEl.appendChild(row);
+  }
+}
+
+/** docs/33 C2: one block's body — a tree slot when the value is an object/array, a plain
+ *  escaped pre for everything else (plain strings, error text, a payload truncated mid-JSON).
+ *  C1's pre highlighter is gone with the tree here: a pre that reached hlJson could never have
+ *  parsed, so hlJson could only ever return its input — dead code, deleted, not kept. */
+function blockHtml(raw, kind, seq, ok) {
+  var pretty = fmtJson(raw);
+  if (parseJsonBlock(pretty) != null) return '<div class="jtree" data-jtree="' + kind + ":" + seq + '"></div>';
+  return '<pre class="logs' + (ok ? "" : " err") + '"' + (kind === "out" ? ' data-out="' + seq + '"' : "") + ">" +
+    esc(pretty || (kind === "args" ? "(none)" : "(empty)")) + "</pre>";
+}
+
+/** Build the tree into `host` (a .jtree slot). Rebuildable any number of times. */
+function buildJsonTree(host, value, open) {
+  open = open || {};
+  host.className = "jtree-in";
+  while (host.firstChild) host.removeChild(host.firstChild);
+  jtNode(host, "", value, "/", 0, open);
+}
+
+/** docs/33 C2: mount every open row's tree blocks. Called after a repaint (the poll rebuilds
+ *  the DOM every 6s on page 0), when a row first opens, and when a full reply lands. Expansion
+ *  comes back from d.callsTree, so the operator's open nodes survive all three. */
+function mountJsonTrees(d, onlySeq) {
+  if (typeof document === "undefined" || !document.querySelectorAll) return;
+  document.querySelectorAll("#tabbody .call.open").forEach(function (rowEl) {
+    var seq = Number(rowEl.getAttribute("data-seq"));
+    if (!seq || (onlySeq != null && seq !== onlySeq)) return;
+    var c = (d.calls || []).find(function (r) { return r.seq === seq; });
+    if (!c) return;
+    mountBlock(rowEl, d, c, "args", c.args);
+    mountBlock(rowEl, d, c, "out", d.callsFull[seq] != null ? d.callsFull[seq] : c.output);
+  });
+}
+
+/** One block: build the tree when the value parses. A preview that was truncated mid-JSON painted
+ *  a pre; once the full reply parses, the out block's pre is upgraded to a tree in place. */
+function mountBlock(rowEl, d, c, kind, raw) {
+  var value = parseJsonBlock(fmtJson(raw || ""));
+  if (value == null) return;
+  var slot = rowEl.querySelector('[data-jtree="' + kind + ":" + c.seq + '"]');
+  if (!slot) {
+    if (kind !== "out") return; // args are never truncated — no pre to upgrade
+    var pre = rowEl.querySelector("pre[data-out]");
+    if (!pre) return;
+    slot = document.createElement("div");
+    slot.className = "jtree";
+    slot.setAttribute("data-jtree", "out:" + c.seq);
+    pre.replaceWith(slot);
+  }
+  if (!d.callsTree) d.callsTree = {};
+  if (!d.callsTree[c.seq]) d.callsTree[c.seq] = {};
+  buildJsonTree(slot, value, d.callsTree[c.seq]);
 }
 
 /** docs/33 C1: a block label row — the caption plus the copy affordance for that block. */
@@ -139,9 +227,8 @@ function callHtml(d, c) {
       '<span class="call-meta">' + esc(meta) + "</span>" +
     "</div>" +
     '<div class="call-body">' +
-      lblHtml("Arguments", "args", c.seq) + '<pre class="logs jhl">' + hlJson(fmtJson(c.args) || "(none)") + "</pre>" +
-      lblHtml(c.ok ? "Result" : "Error", "out", c.seq) +
-      '<pre class="logs jhl' + (c.ok ? "" : " err") + '" data-out="' + c.seq + '">' + hlJson(fmtJson(body) || "(empty)") + "</pre>" +
+      lblHtml("Arguments", "args", c.seq) + blockHtml(c.args, "args", c.seq, true) +
+      lblHtml(c.ok ? "Result" : "Error", "out", c.seq) + blockHtml(body, "out", c.seq, c.ok) +
       more +
     "</div></div>";
 }
@@ -231,6 +318,7 @@ function toggleCall(seq) {
   d.callsOpen[seq] = !d.callsOpen[seq];
   var node = document.querySelector('#tabbody .call[data-seq="' + seq + '"]');
   if (node) node.className = "call" + (d.callsOpen[seq] ? " open" : "");
+  if (d.callsOpen[seq]) mountJsonTrees(d, seq); // docs/33 C2: trees build when the row opens
 }
 
 /** One truncated line of argument names, required ones in bold. `args` is [{ name, req }].
@@ -355,4 +443,4 @@ function kindBody(d, kind, m) {
   return (resToggle ? '<div class="group">' + resToggle + "</div>" : "") + '<div class="group">' + rows + "</div>" + pager;
 }
 
-export { argLine, callHtml, callsErrHtml, callsStatusHtml, copyLogText, fmtChars, fmtJson, hlJson, kindBody, logsBody, toggleCall };
+export { argLine, buildJsonTree, callHtml, callsErrHtml, callsStatusHtml, copyLogText, fmtChars, fmtJson, kindBody, logsBody, mountJsonTrees, parseJsonBlock, toggleCall };
