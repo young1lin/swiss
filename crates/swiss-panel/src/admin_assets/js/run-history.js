@@ -19,6 +19,7 @@ import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
 import { popupMenu } from "./menu.js";
+import { closeMenu } from "./pane.js";
 import { fmtChars, fmtJson, logsBody, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
@@ -584,6 +585,8 @@ function wireTabBody(d, m) {
   var clMenu = $("clMenu");
   if (clMenu) clMenu.onclick = function (ev) {
     ev.stopPropagation();
+    // The house toggle idiom (pane.js toggleMenu): a second click dismisses instead of reopening.
+    if (state.menuOpen) { closeMenu(); return; }
     popupMenu(clMenu.getBoundingClientRect(), [
       { label: "Clear logs…", danger: true, fn: function () { void clearCalls(); } },
     ]);

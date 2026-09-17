@@ -332,16 +332,18 @@ function patchCallsChrome(d) {
   if (prev) prev.disabled = busy || d.callsPage <= 0;
   if (next) next.disabled = busy || !d.callsMore;
   // The error block is idempotent — drop whatever is there, then insert when an error is set.
-  // A new switch (pending or Retry) takes the old error away; a failure puts it back beside the
-  // pager, where the click that failed happened.
+  // A new switch (pending or Retry) takes the old error away; a failure puts it back at the end
+  // of the region — after the pager when one is painted, after the rows on a single-page log
+  // that has none. The full repaint composes the same order (logs.js: body + pager + err).
   var err = $("clErr");
   if (err && err.remove) err.remove();
   if (d.callsError) {
-    var html = callsErrHtml(d);
-    var pager = $("clPager");
-    if (pager && pager.insertAdjacentHTML) pager.insertAdjacentHTML("afterend", html);
+    var regionEl = $("callsRegion");
+    if (regionEl && regionEl.insertAdjacentHTML) regionEl.insertAdjacentHTML("beforeend", callsErrHtml(d));
     var retry = $("clRetry");
-    if (retry) retry.onclick = callsRetry;
+    // The same keyboard contract as the painted wiring (run-history): a Retry driven by
+    // Enter/Space (detail === 0) owes the user their focus back once the retry commits.
+    if (retry) retry.onclick = function (ev) { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
   }
 }
 
@@ -377,6 +379,10 @@ async function clearCalls() {
   try {
     var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls", { method: "DELETE" });
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
+    // The clear is part of the same transaction space as the paging loads: bump the generation so
+    // a response that left before the DELETE (a poll, a parked switch — confirm blocks the event
+    // loop, not the network) lands stale and cannot repaint rows over the emptied log.
+    d.callsRequest++;
     d.calls = [];
     d.callsOpen = {};
     d.callsFull = {};
