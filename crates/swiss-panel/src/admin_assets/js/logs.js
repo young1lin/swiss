@@ -82,7 +82,9 @@ function callsStatusHtml(d) {
 /** A failed foreground load, in place: the sentence and the way out, nothing else. The HTTP
  *  status is the only secondary text — a response body never lands in the panel (docs/32 B1). */
 function callsErrHtml(d) {
-  return '<div class="calls-err" id="clErr" role="status"><span>Could not load calls.</span>' +
+  // The sentence is set once, in the state field (detail.js callsLoadFailed) — the html renders
+  // the field, so the copy cannot drift between the two.
+  return '<div class="calls-err" id="clErr" role="status"><span>' + esc(d.callsError || "Could not load calls.") + "</span>" +
     (d.callsErrStatus ? '<span class="calls-err-why">' + esc(d.callsErrStatus) + "</span>" : "") +
     '<button class="btn" id="clRetry">Retry</button></div>';
 }
