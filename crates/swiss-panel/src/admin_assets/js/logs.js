@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { esc, icon, state } from "./util.js";
+import { esc, icon, state, toast } from "./util.js";
 import { rowOf } from "./sidebar.js";
 
 /* --- Logs: what was called, with what, and what came back ------------------------------------- */
@@ -44,6 +44,83 @@ function fmtJson(text) {
   }
 }
 
+/** docs/33 C1: colour the pretty text, never trust it. The text is only tokenized after it
+ *  parses as JSON (the fmtJson tail note is split off first and re-appended escaped), so a
+ *  non-JSON payload never enters the highlighter, and every token is escaped on its way into
+ *  HTML — an adversarial payload cannot inject markup. The palette is db-sql-hl's (views.css):
+ *  keys accent, strings green, numbers amber, the two booleans and null quiet grey. */
+function hlJson(text) {
+  if (!text) return "";
+  var body = text, tail = "";
+  var cut = text.lastIndexOf("\n\n[");
+  if (cut > 0 && text.charAt(text.length - 1) === "]") { body = text.slice(0, cut); tail = text.slice(cut); }
+  var trimmed = body.trim();
+  if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return text;
+  try { JSON.parse(trimmed); } catch (e) { return text; }
+  var out = "", i = 0, n = body.length;
+  while (i < n) {
+    var ch = body.charAt(i);
+    if (ch === '"') {
+      var j = i + 1;
+      while (j < n) {
+        if (body.charAt(j) === "\\") { j += 2; continue; }
+        if (body.charAt(j) === '"') break;
+        j++;
+      }
+      var lit = body.slice(i, j + 1);
+      var k = j + 1;
+      while (k < n && (body.charAt(k) === " " || body.charAt(k) === "\t")) k++;
+      var isKey = body.charAt(k) === ":";
+      out += '<span class="' + (isKey ? "k" : "s") + '">' + esc(lit) + "</span>";
+      i = j + 1;
+      continue;
+    }
+    if (ch === "-" || (ch >= "0" && ch <= "9")) {
+      var num = body.slice(i).match(/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/);
+      if (num) { out += '<span class="n">' + esc(num[0]) + "</span>"; i += num[0].length; continue; }
+    }
+    var word = body.startsWith("true", i) ? "true" : body.startsWith("false", i) ? "false"
+      : body.startsWith("null", i) ? "null" : "";
+    if (word) { out += '<span class="b">' + word + "</span>"; i += word.length; continue; }
+    out += esc(ch);
+    i++;
+  }
+  return out + (tail ? esc(tail) : "");
+}
+
+/** docs/33 C1: the house clipboard idiom (connect.js copyText, data-csv dbCopyText) for the log
+ *  blocks: async clipboard first, the textarea fallback second, one quiet toast either way. */
+function legacyCopy(text) {
+  var ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); } catch (e) { /* nothing else to try */ }
+  document.body.removeChild(ta);
+}
+async function copyLogText(text) {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      toast("Copied");
+      return;
+    }
+  } catch (e) { /* fall through to the legacy path */ }
+  try { legacyCopy(text); toast("Copied"); }
+  catch (e) { toast("Copy failed", true); }
+}
+
+/** docs/33 C1: a block label row — the caption plus the copy affordance for that block. */
+function lblHtml(text, kind, seq) {
+  var label = kind === "args" ? "Copy arguments" : "Copy result";
+  return '<div class="call-lbl">' + text +
+    '<button class="btn icon" data-copy="' + kind + ":" + seq + '" aria-label="' + label + '" title="' + label + '">' +
+    icon("copy") + "</button></div>";
+}
+
 function callHtml(d, c) {
   var when = new Date(c.at).toLocaleString();
   var meta = when + "  ·  " + c.via + (c.client ? "  ·  " + c.client : "") + "  ·  " + c.ms + " ms  ·  " + fmtChars(c.chars);
@@ -62,9 +139,9 @@ function callHtml(d, c) {
       '<span class="call-meta">' + esc(meta) + "</span>" +
     "</div>" +
     '<div class="call-body">' +
-      '<div class="call-lbl">Arguments</div><pre class="logs">' + esc(fmtJson(c.args) || "(none)") + "</pre>" +
-      '<div class="call-lbl">' + (c.ok ? "Result" : "Error") + "</div>" +
-      '<pre class="logs' + (c.ok ? "" : " err") + '" data-out="' + c.seq + '">' + esc(fmtJson(body) || "(empty)") + "</pre>" +
+      lblHtml("Arguments", "args", c.seq) + '<pre class="logs jhl">' + hlJson(fmtJson(c.args) || "(none)") + "</pre>" +
+      lblHtml(c.ok ? "Result" : "Error", "out", c.seq) +
+      '<pre class="logs jhl' + (c.ok ? "" : " err") + '" data-out="' + c.seq + '">' + hlJson(fmtJson(body) || "(empty)") + "</pre>" +
       more +
     "</div></div>";
 }
@@ -278,4 +355,4 @@ function kindBody(d, kind, m) {
   return (resToggle ? '<div class="group">' + resToggle + "</div>" : "") + '<div class="group">' + rows + "</div>" + pager;
 }
 
-export { argLine, callHtml, callsErrHtml, callsStatusHtml, fmtChars, fmtJson, kindBody, logsBody, toggleCall };
+export { argLine, callHtml, callsErrHtml, callsStatusHtml, copyLogText, fmtChars, fmtJson, hlJson, kindBody, logsBody, toggleCall };
