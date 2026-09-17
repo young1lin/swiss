@@ -189,6 +189,40 @@ describe("docs/33 C2: buildJsonTree", () => {
     vi.unstubAllGlobals();
   });
 
+  it("a dataset-string seq (\"4\" from data-callseq) still mounts — found live on 19998", () => {
+    const rows: Record<string, unknown>[] = [];
+    const rowEl = {
+      getAttribute: (k: string) => (k === "data-seq" ? "4" : null),
+      querySelector: () => null, // no slot, no pre — nothing to mount, but the row must not be skipped
+      children: [], className: "call open", dataset: {}, style: {},
+    } as never;
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [rowEl],
+      createElement: el,
+    } as never);
+    const d = { calls: [{ seq: 4, args: "plain", output: "plain" }], callsFull: {} } as never;
+    logs.mountJsonTrees(d, "4"); // a string, exactly as wireTabBody delivers it
+    // "not skipped" is observable only when a mountable value exists: use a parseable one.
+    const rowEl2 = {
+      getAttribute: (k: string) => (k === "data-seq" ? "4" : null),
+      querySelector: (sel: string) => (String(sel).includes("args:4") ? host4 : null),
+      children: [], className: "call open", dataset: {}, style: {},
+    } as never;
+    const host4 = el("div");
+    (rowEl2 as { querySelector: (s: string) => unknown }).querySelector = (sel: string) =>
+      String(sel).includes("args:4") ? host4 : null;
+    vi.stubGlobal("document", {
+      querySelectorAll: () => [rowEl2],
+      createElement: el,
+    } as never);
+    const d2 = { calls: [{ seq: 4, args: '{"k":1}', output: "plain" }], callsFull: {} } as never;
+    logs.mountJsonTrees(d2, "4");
+    expect(String(host4.className)).toContain("jtree-in");
+    expect((host4.children as unknown[]).length, "the tree built for the string-addressed row").toBeGreaterThan(0);
+    vi.unstubAllGlobals();
+    void rows;
+  });
+
   it("a long leaf string truncates for display at 200 characters", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");
