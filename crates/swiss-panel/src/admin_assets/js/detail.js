@@ -16,7 +16,7 @@
 
 import { $, KINDS, api, apiJson, now, state, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
-import { callsErrHtml, callsStatusHtml, fmtJson } from "./logs.js";
+import { callsErrHtml, callsStatusHtml, fmtJson, mountJsonTrees } from "./logs.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { loadList } from "./polling.js";
@@ -172,6 +172,7 @@ function openDetail(name) {
     callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
     callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
+    callsTree: {}, // docs/33 C2: per-seq JSON tree expansion, survives the poll repaint
   };
   KINDS.forEach(function (k) { d[k] = pageState(); });
   state.detail = d;
@@ -370,6 +371,7 @@ async function showFullResult(seq) {
       return;
     }
     d.callsFull[seq] = j.call.output;
+    mountJsonTrees(d, seq); // docs/33 C2: a full reply that parses upgrades/refreshes the tree
     var pre = document.querySelector('#tabbody .call[data-seq="' + seq + '"] pre[data-out]');
     if (pre) pre.textContent = fmtJson(j.call.output);
     var btn = document.querySelector('#tabbody [data-full="' + seq + '"]');
