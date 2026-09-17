@@ -24,6 +24,12 @@ swiss remote pull build out/dists                       # a directory pulls recu
 swiss run logs 17 -f; swiss run cancel 17               # detached runs: swiss remote exec ... --detach
 ```
 
+Editing remote files (no PTY - pick by scope):
+- one line / regex:  swiss remote exec build -- sed -i 's/old/new/g' conf/app.toml
+- whole small file:  swiss remote cat build conf/app.toml > local, edit, then
+                     swiss remote write build conf/app.toml < local   (cat caps at 8 MiB; pull for big)
+- human editing:     swiss remote pull build conf/ --to conf/ ... push it back after
+
 A repository can carry `.swiss/remote.json` (plain JSON, no secrets) naming targets and
 actions like `build`; `swiss remote exec build -- make` then resolves through it.
 workspaceRoot is a guardrail, not a sandbox - the command runs as the SSH login user.
