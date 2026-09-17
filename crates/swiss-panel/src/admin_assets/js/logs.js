@@ -69,29 +69,63 @@ function callHtml(d, c) {
     "</div></div>";
 }
 
+/** The pager's status cell: the committed page number, with the pending suffix while a switch
+ *  is in flight. The number NEVER shows the target — pending must not pretend to be committed
+ *  (docs/32 B1). One builder for the full paint and the in-place chrome patch, so they cannot drift. */
+function callsStatusHtml(d) {
+  var page = d.callsPage + 1;
+  return d.callsPendingPage != null
+    ? "Page " + page + " · " + '<span class="spin"></span>' + "Loading…"
+    : "Page " + page;
+}
+
+/** A failed foreground load, in place: the sentence and the way out, nothing else. The HTTP
+ *  status is the only secondary text — a response body never lands in the panel (docs/32 B1). */
+function callsErrHtml(d) {
+  return '<div class="calls-err" id="clErr" role="status"><span>Could not load calls.</span>' +
+    (d.callsErrStatus ? '<span class="calls-err-why">' + esc(d.callsErrStatus) + "</span>" : "") +
+    '<button class="btn" id="clRetry">Retry</button></div>';
+}
+
 function logsBody(d) {
-  if (d.calls == null) return '<div class="note"><span class="spin"></span> Loading calls…</div>';
+  if (d.calls == null && !d.callsError) {
+    /* First open, before anything is there to keep in place (docs/32 B1). */
+    return '<div class="note"><span class="spin"></span> Loading calls…</div>';
+  }
   /* docs/31: server-side search over the stored calls. The input re-renders with the page, but
    * renderCallsOnly swaps the LIVE node back in, so focus and caret survive a result repaint. */
   var q = d.callsQ || "";
   var head = '<div class="sec-head"><span class="sec-cap">Tool calls · newest first</span>' +
     '<input id="callsQ" type="search" placeholder="Search calls" aria-label="Search tool calls"' +
     ' value="' + esc(q) + '">' +
-    '<button class="btn" id="callsClear"' + (d.calls.length || d.callsPage || q ? "" : " disabled") + ">Clear</button></div>";
-  var body = d.calls.length
-    ? '<div class="group">' + d.calls.map(function (c) { return callHtml(d, c); }).join("") + "</div>"
-    : '<div class="group"><div class="row"><span class="rowmsg">' +
-      (d.callsPage
-        ? "Nothing on this page."
-        : q
-          ? "No calls matching \u201C" + esc(q) + "\u201D."
-          : "No calls yet. Every tool invocation — from an MCP client or from the Run tab — is recorded here with its arguments and its reply, and the log is kept on disk across restarts.") +
-      "</span></div></div>";
-  var pager = (d.callsPage > 0 || d.callsMore)
-    ? '<div class="pager"><button class="btn" id="clPrev"' + (d.callsPage > 0 ? "" : " disabled") + ">Newer</button>" +
-      "<span>Page " + (d.callsPage + 1) + "</span>" +
-      '<button class="btn" id="clNext"' + (d.callsMore ? "" : " disabled") + ">Older</button></div>"
-    : "";
+    '<button class="btn" id="callsClear"' + ((d.calls && d.calls.length) || d.callsPage || q ? "" : " disabled") + ">Clear</button></div>";
+  var busy = d.callsPendingPage != null;
+  var body = "", pager = "";
+  if (d.calls == null) {
+    body = callsErrHtml(d); // the very first load failed — the error replaces the shell, not the rows
+  } else {
+    body = d.calls.length
+      ? '<div class="group">' + d.calls.map(function (c) { return callHtml(d, c); }).join("") + "</div>"
+      : '<div class="group"><div class="row"><span class="rowmsg">' +
+        (d.callsPage
+          ? "Nothing on this page."
+          : q
+            ? "No calls matching \u201C" + esc(q) + "\u201D."
+            : "No calls yet. Every tool invocation — from an MCP client or from the Run tab — is recorded here with its arguments and its reply, and the log is kept on disk across restarts.") +
+        "</span></div></div>";
+    /* Both directions go quiet while a switch is pending; the number stays the committed page. */
+    pager = (d.callsPage > 0 || d.callsMore)
+      ? '<div class="pager" id="clPager" role="navigation" aria-label="Call log pages">' +
+        '<button class="btn" id="clPrev"' + (!busy && d.callsPage > 0 ? "" : " disabled") + ">Newer</button>" +
+        '<span class="calls-status" id="clStatus" aria-live="polite">' + callsStatusHtml(d) + "</span>" +
+        '<button class="btn" id="clNext"' + (!busy && d.callsMore ? "" : " disabled") + ">Older</button></div>"
+      : "";
+  }
+  var errHtml = d.callsError && d.calls != null ? callsErrHtml(d) : "";
+  /* One region for rows/pager/error lets a pending switch mark itself busy in place, without
+   * touching the search box above it or the stderr section below it (docs/32 B1). */
+  var region = '<div class="calls" id="callsRegion" aria-busy="' + (busy ? "true" : "false") + '">' +
+    body + pager + errHtml + "</div>";
   var err = "";
   if (d.stderr) {
     err = '<div class="sec-head" style="padding-top:var(--s5)"><span class="sec-cap">Child process stderr</span></div>' +
@@ -108,7 +142,7 @@ function logsBody(d) {
     err = '<div class="sec-head" style="padding-top:var(--s5)"><span class="sec-cap">Child process stderr</span></div>' +
       '<div class="group"><div class="row"><span class="rowmsg">' + why + "</span></div></div>";
   }
-  return head + body + pager + err;
+  return head + region + err;
 }
 
 /** Expand/collapse one call without re-rendering: a poll must not close what you just opened. */
@@ -242,4 +276,4 @@ function kindBody(d, kind, m) {
   return (resToggle ? '<div class="group">' + resToggle + "</div>" : "") + '<div class="group">' + rows + "</div>" + pager;
 }
 
-export { argLine, callHtml, fmtChars, fmtJson, kindBody, logsBody, toggleCall };
+export { argLine, callHtml, callsErrHtml, callsStatusHtml, fmtChars, fmtJson, kindBody, logsBody, toggleCall };
