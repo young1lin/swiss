@@ -1,8 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-/* docs/33 — the Logs JSON viewer. C1: the highlighter is a pure function over the pretty
-   text; the copy affordance is markup plus a clipboard helper. Both are tested here as
-   units and through logsBody markup, the way admin-logs-search pins markup. */
+/* docs/33 — the Logs JSON viewer. Compact wire text is parsed into the restrained tree;
+   non-JSON stays plain text. Copy is tested both per block and per node. */
 
 vi.mock("../../src/admin_assets/js/util.js", () => {
   const toasts: string[] = [];
@@ -89,17 +88,32 @@ function keyOf(row: Record<string, unknown>): string {
   const k = (row.children as Record<string, unknown>[]).find((c) => String(c.className).includes("jt-key"));
   return k ? String(k.textContent) : "";
 }
-/** The exact row whose key span IS `raw` (quoted key text), regardless of what other rows contain. */
+/** The exact row whose key span is `raw`, regardless of what other rows contain. */
 function rowByKey(node: Record<string, unknown>, raw: string): Record<string, unknown> | undefined {
   let hit: Record<string, unknown> | undefined;
   (function walk(n: Record<string, unknown>) {
     (n.children as Record<string, unknown>[] || []).forEach((c) => {
-      if (!hit && String(c.className || "").includes("jt-row") && keyOf(c) === JSON.stringify(raw)) hit = c;
+      if (!hit && String(c.className || "").includes("jt-row") && keyOf(c) === raw) hit = c;
       walk(c);
     });
   })(node);
   return hit;
 }
+
+describe("docs/33: compact wire text is formatted only for display", () => {
+  it("pretty-prints compact JSON while preserving the gateway truncation note", () => {
+    const raw = '{"rowCount":1,"rows":[{"id":1}]}\n\n[showing the first 1 of 4 items. Narrow the request.]';
+    expect(logs.fmtJson(raw)).toBe(
+      '{\n  "rowCount": 1,\n  "rows": [\n    {\n      "id": 1\n    }\n  ]\n}' +
+      '\n\n[showing the first 1 of 4 items. Narrow the request.]',
+    );
+  });
+
+  it("leaves non-JSON and truncated JSON unchanged", () => {
+    expect(logs.fmtJson("upstream failed")).toBe("upstream failed");
+    expect(logs.fmtJson('{"rows":[')).toBe('{"rows":[');
+  });
+});
 
 describe("docs/33 C2: parseJsonBlock only accepts objects and arrays", () => {
   it("parses an object or an array, rejects everything else", () => {
@@ -115,60 +129,65 @@ describe("docs/33 C2: parseJsonBlock only accepts objects and arrays", () => {
 describe("docs/33 C2: buildJsonTree", () => {
   const VALUE = { command: "GET", args: ["k1", "k2"], nested: { deep: { x: 1 } } };
 
-  it("renders rows with keys, chevrons on containers, and default-opens the first two depths", () => {
+  it("shows the useful top level directly and keeps nested containers folded", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");
     const open: Record<string, boolean> = {};
     logs.buildJsonTree(host, VALUE, open);
-    expect(findRow(host, "command"), "a leaf row exists").toBeTruthy();
-    const argsRow = findRow(host, "args");
-    expect(argsRow, "the array container row exists").toBeTruthy();
-    expect(String(argsRow!.textContent)).toContain("[ 2 items ]");
-    expect(findRow(host, "nested"), "depth-1 container row renders").toBeTruthy();
-    expect(findRow(host, "deep"), "depth-1 is open by default: its child row is visible").toBeTruthy();
-    expect(findRow(host, "x"), "depth-2 containers start closed").toBeUndefined();
+    expect(rowByKey(host, "command"), "a top-level leaf row exists").toBeTruthy();
+    const argsRow = rowByKey(host, "args");
+    expect(argsRow, "the top-level array row exists").toBeTruthy();
+    expect(String(argsRow!.textContent)).toContain("[2]");
+    expect(rowByKey(host, "nested"), "the top-level object row exists").toBeTruthy();
+    expect(rowByKey(host, "deep"), "nested content starts folded").toBeUndefined();
+    expect(open["/args/"], "top-level containers record their folded default").toBe(false);
+    const hasSyntheticRoot = (host.children as Record<string, unknown>[]).some((c) => {
+      const first = (c.children as Record<string, unknown>[] || [])[0];
+      return String(c.className || "").includes("jt-node") && first && keyOf(first) === "";
+    });
+    expect(hasSyntheticRoot, "there is no redundant synthetic root row").toBe(false);
     vi.unstubAllGlobals();
   });
 
-  it("children are lazy: a closed container has no built kids until its chevron opens it", () => {
+  it("renders empty object and array roots honestly", () => {
+    vi.stubGlobal("document", { createElement: el } as never);
+    const objectHost = el("div");
+    const arrayHost = el("div");
+    logs.buildJsonTree(objectHost, {}, {});
+    logs.buildJsonTree(arrayHost, [], {});
+    expect(String(objectHost.textContent)).toBe("{}");
+    expect(String(arrayHost.textContent)).toBe("[]");
+    vi.unstubAllGlobals();
+  });
+
+  it("children are lazy: a folded top-level container builds nothing until opened", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");
     const open: Record<string, boolean> = {};
-    // depth rule: depth-1 containers open, depth-2 closed — lvl2's kids must not exist yet.
-    logs.buildJsonTree(host, { lvl1: { lvl2: { leaf: 1 } } }, open);
-    const lvl2 = rowByKey(host, "lvl2");
-    expect(lvl2, "the depth-2 container row renders").toBeTruthy();
-    expect(String(lvl2!.textContent)).toContain("{ 1 key }");
-    // lvl2's kids container is the sibling of its row, both under the same jt-node wrap
-    let lvl2Kids: Record<string, unknown> | undefined;
-    (function walk(n: Record<string, unknown>) {
-      (n.children as Record<string, unknown>[] || []).forEach((c) => {
-        const first = (c.children as Record<string, unknown>[] || [])[0];
-        if (String(c.className || "").includes("jt-node") && first && keyOf(first) === '"lvl2"') {
-          lvl2Kids = (c.children as Record<string, unknown>[])[1];
-        }
-        walk(c);
-      });
-    })(host);
-    expect(lvl2Kids && String(lvl2Kids!.className).includes("jt-kids"), "lvl2's kids container exists").toBe(true);
-    expect((lvl2Kids!.children as unknown[]).length, "nothing built under a closed container").toBe(0);
+    logs.buildJsonTree(host, { rows: [{ id: 1 }] }, open);
+    const rows = rowByKey(host, "rows")!;
+    const wrap = (host.children as Record<string, unknown>[]).find((c) =>
+      String(c.className || "").includes("jt-node") && (c.children as Record<string, unknown>[])[0] === rows)!;
+    const kids = (wrap.children as Record<string, unknown>[])[1];
+    expect(String(rows.textContent)).toContain("[1]");
+    expect((kids.children as unknown[]).length, "nothing is built under the folded result array").toBe(0);
     vi.unstubAllGlobals();
   });
 
-  it("a chevron click opens the node, records the path, and a rebuild restores it", () => {
+  it("a chevron opens a top-level node, records its path, and a rebuild restores it", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const open: Record<string, boolean> = {};
     const host1 = el("div");
-    // b sits at depth 2: closed by default, so its chevron is the first honest toggle.
-    logs.buildJsonTree(host1, { a: { b: { c: 1 } } }, open);
-    const bRow = rowByKey(host1, "b");
-    expect(String(bRow!.textContent)).toContain("{ 1 key }");
-    const chev = (bRow!.children as Record<string, unknown>[]).find((c) => c.tag === "button" && !((c as { dataset: Record<string, string> }).dataset.copy));
+    logs.buildJsonTree(host1, { a: { b: 1 } }, open);
+    const aRow = rowByKey(host1, "a")!;
+    expect(String(aRow.textContent)).toContain("{1}");
+    const chev = (aRow.children as Record<string, unknown>[]).find((c) => c.tag === "button" && !((c as { dataset: Record<string, string> }).dataset.copy));
     ((chev as { onclick: () => void }).onclick)();
-    expect(open["/a/b/"], "the expansion is recorded under a stable path").toBe(true);
+    expect(open["/a/"], "the expansion is recorded under a stable path").toBe(true);
+    expect((chev as { attrs: Record<string, string> }).attrs["aria-expanded"]).toBe("true");
     const host2 = el("div");
-    logs.buildJsonTree(host2, { a: { b: { c: 1 } } }, open);
-    expect(rowByKey(host2, "c"), "a rebuild with the same open state shows the node open").toBeTruthy();
+    logs.buildJsonTree(host2, { a: { b: 1 } }, open);
+    expect(rowByKey(host2, "b"), "a rebuild with the same open state restores its children").toBeTruthy();
     vi.unstubAllGlobals();
   });
 
