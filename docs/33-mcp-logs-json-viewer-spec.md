@@ -1,6 +1,6 @@
 # docs/33 — MCP Logs: JSON viewer for arguments and replies
 
-Status: Draft — implementation in flight (C1, C2 below, one commit each, red-first tests).
+Status: Shipped — C1 in 8c87cdb, C2 in 52c90f3, two live-found fixes in 2713054 (dataset-string seq skipped every row; buildJsonTree clobbered the slot's `jtree` class). C1's pre highlighter was deleted with C2: once parseable JSON goes to the tree, a pre that reached it could never have parsed, so it could only return its input. Verified live on 19998 (real pointer events): lazy chevrons, per-node and block copy payloads, poll-repaint expansion persistence, truncated-pre upgrade via Show full result, light/dark at 1440 and 900px.
 
 The Logs tab (docs/31 search, docs/32 paging) ships tool arguments and replies as flat
 pretty-printed `<pre>` text. Three gaps, reported by the operator on the live panel:
