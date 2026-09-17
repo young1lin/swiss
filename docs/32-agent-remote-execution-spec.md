@@ -65,10 +65,13 @@ true, ok: false), not an error - the run row says "canceled", which is the truth
 
 ## Security model
 
-- **workspaceRoot is a guardrail, not a sandbox**: paths are joined with it and escapes
-  (`..`, absolute cwd) are refused, but the exec itself runs as the SSH login user - if that
-  user can `cd /`, the guardrail does not stop a program that tries. The row documents
-  intent; the machine enforces reality.
+- **workspaceRoot is a guardrail, not a sandbox, and it anchors - it does not cage**:
+  RELATIVE paths (cwd, sync, pull) resolve under it and a `..` that climbs is refused;
+  an ABSOLUTE path is what the caller typed in full and is used as-is, the same trust an
+  ssh command line gets. To work on /home/dev/app through a target rooted at
+  /tmp/swiss, pass `--cwd /home/dev/app` (or pull `/home/dev/app/...`) - no
+  per-directory target needed. The exec still runs as the SSH login user; the row
+  documents intent, the machine enforces reality.
 - **Privilege is the machine's business, and the surface is an SSH superset**: sudo passes
   through like any argv[0]. There is no PTY, so an interactive password prompt cannot be
   answered - passwordless sudo (NOPASSWD or `sudo -n`) is what works, exactly as over

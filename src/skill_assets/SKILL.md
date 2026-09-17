@@ -67,6 +67,7 @@ swiss remote endpoints                                  # what the transport ser
 swiss remote target add build --endpoint conn-1 --root /data/ws/proj --caps exec,sync
 swiss remote exec build -- make -j8                     # streams, exits with the REMOTE exit code
 swiss remote exec build --timeout 30m -- ./test.sh -k   # everything after -- is ARGV, untouched
+swiss remote exec build --cwd /home/dev/app -- ls  # ABSOLUTE paths pass as-is (ssh trust); relative ones resolve under the root
 swiss remote sync build                                 # upload a tree (never deletes); .git/ target/ excluded
 swiss remote push build app.exe                         # upload one file
 swiss remote pull build out/app.bin --to artifacts/app.bin

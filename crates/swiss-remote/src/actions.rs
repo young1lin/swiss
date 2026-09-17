@@ -215,9 +215,12 @@ impl RemoteExecAction {
         let env = env_map(&obj)?;
         let cwd = opt_text_field(&obj, "cwd")?;
         if let Some(rel) = &cwd {
-            if rel.starts_with('/') || rel.contains("..") {
+            // Absolute cwds are used as-is (the caller typed the full path - the same
+            // trust an ssh command line gets); relative ones resolve under the root.
+            // Only `..` is refused, in either form.
+            if rel.split('/').any(|s| s == "..") {
                 return Err(ActionError::InvalidInput(format!(
-                    "cwd {rel:?} must be relative to the target's workspaceRoot and must not contain .."
+                    "cwd {rel:?} must not contain ..; relative cwds resolve under the target's workspaceRoot, absolute cwds are used as-is"
                 )));
             }
         }
@@ -345,7 +348,7 @@ impl Action for RemoteExecAction {
                     "additionalProperties": { "type": "string" },
                     "description": "Extra environment for the command; names must be identifiers."
                 },
-                "cwd": { "type": "string", "description": "Working directory relative to the target's workspaceRoot." },
+                "cwd": { "type": "string", "description": "Working directory: relative resolves under the target's workspaceRoot." },
                 "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 86400000, "description": "Run deadline; the submit path owns it." }
             },
             "additionalProperties": false
@@ -623,9 +626,11 @@ impl RemotePullAction {
         refuse_unknown(&obj, &PULL_FIELDS, "input")?;
         let target = text_field(&obj, "target")?;
         let remote = text_field(&obj, "remote")?;
-        if remote.starts_with('/') || remote.contains("..") {
+        // Absolute remote paths are used as-is (the caller typed the full path);
+        // relative ones resolve under the workspaceRoot. Only `..` is refused.
+        if remote.split('/').any(|s| s == "..") {
             return Err(ActionError::InvalidInput(format!(
-                "remote {remote:?} must be relative to the target's workspaceRoot and must not contain .."
+                "remote {remote:?} must not contain ..; relative paths resolve under the target's workspaceRoot, absolute paths are used as-is"
             )));
         }
         let to = match obj.get("to") {
@@ -878,7 +883,14 @@ mod tests {
         assert!(action
             .validate_input(&json!({ "target": "dev", "argv": ["make"], "cwd": "build" }))
             .is_ok());
-        for bad in ["/etc", "a/../..", ".."] {
+        // An absolute cwd is an explicit path the caller typed in full - ssh-level
+        // trust; only `..` is refused in either form (docs/32 superset rule).
+        assert!(action
+            .validate_input(
+                &json!({ "target": "dev", "argv": ["make"], "cwd": "/home/dev/app" })
+            )
+            .is_ok());
+        for bad in ["a/../..", ".."] {
             assert!(
                 action
                     .validate_input(&json!({ "target": "dev", "argv": ["make"], "cwd": bad }))
@@ -1269,14 +1281,13 @@ mod tests {
     fn pull_refuses_paths_that_escape_the_workspace() {
         let (system, _fake) = system_with_fake();
         let action = RemotePullAction::new(system);
-        for bad in ["/etc/passwd", "../../etc/passwd"] {
-            assert!(
-                action
-                    .validate_input(&json!({ "target": "dev", "remote": bad }))
-                    .is_err(),
-                "{bad} must not pass"
-            );
-        }
+        // Absolute remote paths pass (caller typed them in full); only `..` climbs.
+        assert!(action
+            .validate_input(&json!({ "target": "dev", "remote": "/etc/passwd" }))
+            .is_ok());
+        assert!(action
+            .validate_input(&json!({ "target": "dev", "remote": "../../etc/passwd" }))
+            .is_err());
     }
 
     #[test]
