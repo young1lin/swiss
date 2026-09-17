@@ -136,7 +136,8 @@ function fakeDetail(name = "redis") {
     calls: null, stderr: "", callsOpen: {}, callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
     // docs/32 B1 fields, seeded the way openDetail builds them — the generation counter must
     // start at a number, or every response would look stale to it.
-    callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null, callsRequest: 0,
+    callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
+    callsRetryDir: null, callsSwitch: null, callsRequest: 0,
   } as any;
 }
 
@@ -170,6 +171,62 @@ beforeEach(() => {
   util.state.mcps = [];
   util.state.groups = ["default"];
   util.state.menuOpen = false;
+});
+
+describe("docs/32 B2: the pager is the scroll anchor, focus follows the action", () => {
+  it("pane.scrollTop compensates exactly the pager's viewport drift", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    const paneNode = byId.get("pane")!;
+    paneNode.scrollTop = 1200;
+    // The geometry seam (admin-data-loaders' scroll-regression idiom): the pager's rect is the
+    // test's to move between the pre-click read and the post-commit read.
+    const pager = new FakeNode("div");
+    pager.setRect(500);
+    byId.set("clPager", pager);
+    clickOlder();
+    pager.setRect(380); // the new page's pager sits 120px higher at the same scroll
+    await ok({ calls: PAGE1, more: true, stderr: "" }, 0);
+    expect(paneNode.scrollTop, "scroll moves by the pager's drift — not to an absolute").toBe(1080);
+  });
+
+  it("a keyboard switch returns focus to the same-direction button", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    byId.get("clNext")!.onclick!({ detail: 0 }); // Enter/Space on a focused button
+    await ok({ calls: PAGE1, more: true, stderr: "" }, 0);
+    expect(byId.get("clNext")!.focused).toBe(1);
+    expect(byId.get("clPrev")!.focused).toBe(0);
+    expect(byId.get("callsQ")!.focused, "the search box is never stolen").toBe(0);
+  });
+
+  it("focus falls to the other direction at a boundary page", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    byId.get("clNext")!.onclick!({ detail: 0 });
+    await ok({ calls: PAGE1, more: false, stderr: "" }, 0); // Older is done on this page
+    expect(byId.get("clNext")!.focused, "the done direction yields focus").toBe(0);
+    expect(byId.get("clPrev")!.focused).toBe(1);
+  });
+
+  it("a mouse switch moves no focus at all", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    clickOlder();
+    await ok({ calls: PAGE1, more: true, stderr: "" }, 0);
+    expect(byId.get("clNext")!.focused + byId.get("clPrev")!.focused + byId.get("callsQ")!.focused).toBe(0);
+  });
+
+  it("the docs/31 input contract survives a switch repaint: a focused search box keeps node, focus and caret", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    const q = byId.get("callsQ")!;
+    q.focus();
+    q.setSelectionRange(2, 2);
+    clickOlder(); // the click blurs the input in a real browser; the repaint must still not eat it
+    await ok({ calls: PAGE1, more: true, stderr: "" }, 0);
+    expect(byId.get("callsQ")!.focused, "focus is restored after the repaint").toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe("docs/32 B1: a page switch is a transaction", () => {
