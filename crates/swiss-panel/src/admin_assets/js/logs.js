@@ -161,7 +161,9 @@ function blockHtml(raw, kind, seq, ok) {
 /** Build the tree into `host` (a .jtree slot). Rebuildable any number of times. */
 function buildJsonTree(host, value, open) {
   open = open || {};
-  host.className = "jtree-in";
+  // Keep BOTH classes: jtree is the container chrome (ground, radius, max-height), jtree-in marks
+  // the built state. Assigning only one would strip the other (found live on 19998).
+  host.className = "jtree jtree-in";
   while (host.firstChild) host.removeChild(host.firstChild);
   jtNode(host, "", value, "/", 0, open);
 }
@@ -171,6 +173,9 @@ function buildJsonTree(host, value, open) {
  *  comes back from d.callsTree, so the operator's open nodes survive all three. */
 function mountJsonTrees(d, onlySeq) {
   if (typeof document === "undefined" || !document.querySelectorAll) return;
+  // Callers hand a DATASET value in ("4" from data-callseq / data-full), the log stores numbers —
+  // normalize once here or `seq !== onlySeq` silently skips every row (found live on 19998).
+  if (onlySeq != null) onlySeq = Number(onlySeq);
   document.querySelectorAll("#tabbody .call.open").forEach(function (rowEl) {
     var seq = Number(rowEl.getAttribute("data-seq"));
     if (!seq || (onlySeq != null && seq !== onlySeq)) return;
