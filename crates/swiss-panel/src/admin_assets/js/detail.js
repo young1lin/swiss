@@ -371,6 +371,9 @@ async function showFullResult(seq) {
 async function clearCalls() {
   var d = state.detail;
   if (!d) return;
+  // docs/32 B4: one mis-click removes the index AND the stored full replies, and nothing can
+  // undo it — so the confirm names both costs, and a cancelled confirm fires no request at all.
+  if (!confirm("Clear all recorded tool calls for \u201C" + d.name + "\u201D? This removes the call history and stored full replies. The MCP configuration is not changed.")) return;
   try {
     var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls", { method: "DELETE" });
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
@@ -379,6 +382,13 @@ async function clearCalls() {
     d.callsFull = {};
     d.callsPage = 0;
     d.callsMore = false;
+    d.callsPendingPage = null;
+    d.callsSwitch = null;
+    d.callsError = "";
+    d.callsErrStatus = "";
+    d.callsRetryTarget = null;
+    d.callsRetryDir = null;
+    toast("Call log cleared");
     renderCallsOnly();
   } catch (e) { toast("request failed", true); }
 }

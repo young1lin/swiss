@@ -185,11 +185,13 @@
     /* --- call log (Logs tab) ------------------------------------------------------------------- */
     /* center, not baseline: this header carries a segmented control and a button next to its caption,
        and a segmented control has no baseline to share. */
-    .sec-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); min-height: 36px; }
+    /* docs/32 B4: the head may wrap under ~900px — the caption and the trailing menu button
+       keep the first row, the search box takes what width is left rather than forcing overflow. */
+    .sec-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3); padding: 0 var(--s1) var(--s2); min-height: 36px; }
     .sec-cap { font-size: var(--f-caption); font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
-    /* docs/31: the Logs search sits in the section head, next to Clear — a filter, not a form
-       field, so it is sized to its role and pushed right against the actions. */
-    .sec-head #callsQ { margin-left: auto; width: 180px; padding: 3px var(--s2); font-size: var(--f-caption); }
+    /* docs/31: the Logs search sits in the section head, next to the toolbar menu — a filter,
+       not a form field: it shrinks before the row overflows and grows into spare space. */
+    .sec-head #callsQ { margin-left: auto; flex: 1 1 180px; min-width: 140px; max-width: 260px; width: auto; padding: 3px var(--s2); font-size: var(--f-caption); }
     .call + .call { border-top: 1px solid var(--sep-soft); }
     .call-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; padding: var(--s2) var(--s4); cursor: pointer; }
     .call-sum:hover { background: var(--hover); }

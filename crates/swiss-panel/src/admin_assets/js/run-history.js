@@ -18,6 +18,7 @@ import { $, api, apiJson, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
+import { popupMenu } from "./menu.js";
 import { fmtChars, fmtJson, logsBody, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
@@ -578,8 +579,15 @@ function wireTabBody(d, m) {
   });
 
   // Logs tab
-  var clear = $("callsClear");
-  if (clear) clear.onclick = clearCalls;
+  // docs/32 B4: Clear lives behind the toolbar's ellipsis menu — a destructive action does not
+  // get a standing button in the filter row. The house popupMenu (menu.js) carries the item.
+  var clMenu = $("clMenu");
+  if (clMenu) clMenu.onclick = function (ev) {
+    ev.stopPropagation();
+    popupMenu(clMenu.getBoundingClientRect(), [
+      { label: "Clear logs…", danger: true, fn: function () { void clearCalls(); } },
+    ]);
+  };
   // The search box (docs/31): debounced server-side reload; Escape clears at once. Property
   // assignment, not addEventListener — renderCallsOnly may re-wire the SAME live node.
   var q = $("callsQ");

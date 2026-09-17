@@ -85,6 +85,10 @@ const doc = {
 const requests: Array<{ url: string; method?: string }> = [];
 const parked: Array<{ ok(body: any): void; http(body: any, status?: number): void; net(): void }> = [];
 
+/* docs/32 B4: the confirm behind Clear logs — recorded, and its answer the test's to choose. */
+let confirmAnswer = false;
+const confirmTexts: string[] = [];
+
 let detail: typeof import("../../src/admin_assets/js/detail.js");
 let logs: typeof import("../../src/admin_assets/js/logs.js");
 let util: typeof import("../../src/admin_assets/js/util.js");
@@ -95,7 +99,10 @@ beforeAll(async () => {
   (globalThis as unknown as Record<string, unknown>).window = { addEventListener() {}, innerWidth: 1280, innerHeight: 800 };
   (globalThis as unknown as Record<string, unknown>).localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
   (globalThis as unknown as Record<string, unknown>).location = { origin: "http://127.0.0.1:19998", reload() {} };
-  (globalThis as unknown as Record<string, unknown>).confirm = () => false;
+  (globalThis as unknown as Record<string, unknown>).confirm = (msg: unknown) => {
+    confirmTexts.push(String(msg));
+    return confirmAnswer;
+  };
   (globalThis as unknown as Record<string, unknown>).alert = () => {};
   (globalThis as unknown as Record<string, unknown>).prompt = () => "";
   (globalThis as unknown as Record<string, unknown>).fetch = ((url: any, opts: any) => {
@@ -167,6 +174,9 @@ function clickNewer() { byId.get("clPrev")!.onclick!({ detail: 1 }); }
 beforeEach(() => {
   byId.clear();
   doc.activeElement = null;
+  doc.body = new FakeNode("body");
+  confirmAnswer = false;
+  confirmTexts.length = 0;
   requests.length = 0;
   parked.length = 0;
   util.state.detail = null;
@@ -467,5 +477,69 @@ describe("docs/32 B1: a page switch is a transaction", () => {
     expect(html).toContain('role="navigation"');
     expect(html).toContain('aria-label="Call log pages"');
     expect(html).toMatch(/id="clStatus"[^>]*aria-live="polite"/);
+  });
+});
+
+describe("docs/32 B4: the toolbar ellipsis, Clear logs behind a confirm", () => {
+  /** The popup menu popupMenu appends to <body> — its last child. */
+  function lastMenu() {
+    const body = (globalThis as unknown as { document: typeof doc }).document.body;
+    return body.children[body.children.length - 1];
+  }
+
+  it("the toolbar carries the ellipsis menu button, not a standing Clear", () => {
+    const d = fakeDetail();
+    const tb = mountLogs(d);
+    expect(tb.innerHTML).toContain('id="clMenu"');
+    expect(tb.innerHTML).toContain('aria-label="More log actions"');
+    expect(tb.innerHTML).not.toContain("callsClear");
+    expect(tb.innerHTML).not.toContain("Clear logs", "the destructive verb is not painted inline");
+  });
+
+  it("the menu opens with Clear logs… as its danger item", () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    const menu = lastMenu();
+    const items = menu.children.filter((c) => c.tag === "BUTTON");
+    expect(items.map((c) => c.textContent)).toEqual(["Clear logs…"]);
+    expect(items[0].className).toContain("danger");
+  });
+
+  it("a cancelled confirm fires no request at all", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(requests.length).toBe(0);
+  });
+
+  it("confirm names both costs, and only then the DELETE runs and the log resets to a clean page 0", async () => {
+    const d = fakeDetail();
+    const tb = mountLogs(d);
+    d.callsOpen = { 100: true };
+    d.callsFull = { 100: "full" };
+    clickOlder(); // a switch in flight — Clear must still win and reset it
+    await http({ error: "boom" }, 0, 500); // failed switch leaves an error + Retry target
+    confirmAnswer = true;
+    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
+    expect(confirmTexts).toEqual([
+      "Clear all recorded tool calls for \u201Credis\u201D? This removes the call history and stored full replies. The MCP configuration is not changed.",
+    ]);
+    await new Promise((r) => setTimeout(r, 0));
+    const del = requests.find((r) => r.method === "DELETE");
+    expect(del && del.url).toContain("/api/mcps/redis/calls");
+    await ok({}, 0);
+    expect(d.calls).toEqual([]);
+    expect(d.callsPage).toBe(0);
+    expect(d.callsMore).toBe(false);
+    expect(d.callsOpen).toEqual({});
+    expect(d.callsFull).toEqual({});
+    expect(d.callsError).toBe("");
+    expect(d.callsPendingPage).toBeNull();
+    expect(byId.get("toast")!.textContent).toBe("Call log cleared");
+    expect(tb.innerHTML).toContain("No calls yet");
   });
 });
