@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -57,13 +57,6 @@ pub const DEFAULT_LIMITS: RenderLimits = RenderLimits {
     max_items: 1000,
     max_bytes: 256 * 1024,
 };
-
-/// Results this small stay pretty-printed; anything larger is rendered compact.
-///
-/// Indentation is ~25% of a wide SQL row (one newline plus six spaces per column), which buys
-/// nothing on a reply that is already too long to read at a glance. Small answers — SELECT 1, a
-/// describe, a handful of keys — still arrive formatted.
-const PRETTY_MAX: usize = 1024;
 
 /// Cut a string down to a BYTE budget, dropping any trailing partial character whole rather than
 /// replacing it with U+FFFD (which would cost three bytes of the room we just made).
@@ -191,12 +184,6 @@ pub fn render_result(result: &Value, limits: RenderLimits) -> String {
                 total_items,
                 limits.max_bytes
             ));
-        }
-    }
-
-    if byte_len(&text) <= PRETTY_MAX {
-        if let Ok(pretty) = serde_json::to_string_pretty(&value) {
-            text = pretty;
         }
     }
 
@@ -576,13 +563,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn small_results_stay_pretty_and_complete() {
+    fn small_results_stay_compact_and_complete() {
         let out = render_result(
             &json!({ "rowCount": 1, "rows": [{ "id": 1 }] }),
             DEFAULT_LIMITS,
         );
-        assert!(out.contains("\n"), "small result is pretty-printed");
-        assert!(!out.contains('[') || !out.starts_with('[') || out.contains("rowCount"));
+        assert_eq!(out, r#"{"rowCount":1,"rows":[{"id":1}]}"#);
     }
 
     #[test]

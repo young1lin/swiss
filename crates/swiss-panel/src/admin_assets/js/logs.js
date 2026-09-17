@@ -88,12 +88,13 @@ function jtSpan(cls, text) { var n = document.createElement("span"); n.className
 function jtBtn(cls, title) {
   var b = document.createElement("button");
   b.type = "button"; b.className = "btn icon " + cls; b.title = title;
+  b.setAttribute("aria-label", title);
   return b;
 }
 function jtSummary(v) {
-  if (Array.isArray(v)) return "[ " + v.length + (v.length === 1 ? " item ]" : " items ]");
+  if (Array.isArray(v)) return v.length ? "[" + v.length + "]" : "[]";
   var n = Object.keys(v).length;
-  return "{ " + n + (n === 1 ? " key }" : " keys }");
+  return n ? "{" + n + "}" : "{}";
 }
 function jtCopyText(v) {
   if (v !== null && typeof v === "object") return JSON.stringify(v, null, 2);
@@ -101,15 +102,15 @@ function jtCopyText(v) {
   return String(v);
 }
 
-function jtNode(parentEl, key, val, path, depth, open) {
+function jtNode(parentEl, key, val, path, open) {
   var isObj = val !== null && typeof val === "object";
-  if (isObj && open[path] === undefined) open[path] = depth < 2; // record the default once
+  if (isObj && open[path] === undefined) open[path] = false; // top-level shape first; details on demand
   var row = jtDiv("jt-row" + (isObj && open[path] ? " open" : ""));
-  var keySpan = key !== "" ? jtSpan("jt-key", JSON.stringify(key)) : null;
-  // The JSON colon is its own span so a text selection of the block reads "key": value —
-  // and so the key text itself stays the bare quoted name for tests and queries.
-  var colSpan = key !== "" ? jtSpan("jt-col", ":") : null;
-  var cp = jtBtn("jt-copy", "Copy");
+  // Keys identify fields, so they use the text face and omit JSON's punctuation-heavy quotes.
+  // The block copy action still returns exact, valid JSON.
+  var keySpan = jtSpan("jt-key", String(key));
+  var colSpan = jtSpan("jt-col", ":");
+  var cp = jtBtn("jt-copy", "Copy value");
   cp.dataset.copy = "1";
   cp.innerHTML = icon("copy");
   cp.onclick = function () { void copyLogText(jtCopyText(val)); };
@@ -123,16 +124,24 @@ function jtNode(parentEl, key, val, path, depth, open) {
       var entries = Array.isArray(val)
         ? val.map(function (v, i) { return [i, v]; })
         : Object.keys(val).map(function (k) { return [k, val[k]]; });
-      entries.forEach(function (e) { jtNode(kids, e[0], e[1], path + e[0] + "/", depth + 1, open); });
+      entries.forEach(function (e) { jtNode(kids, e[0], e[1], path + e[0] + "/", open); });
     };
+    var setChevronLabel = function () {
+      var label = (open[path] ? "Collapse " : "Expand ") + String(key);
+      chev.title = label;
+      chev.setAttribute("aria-label", label);
+      chev.setAttribute("aria-expanded", open[path] ? "true" : "false");
+    };
+    setChevronLabel();
     chev.onclick = function () {
       open[path] = !open[path];
       row.className = "jt-row" + (open[path] ? " open" : "");
+      setChevronLabel();
       renderKids();
     };
     row.appendChild(chev);
-    if (keySpan) row.appendChild(keySpan);
-    if (colSpan) row.appendChild(colSpan);
+    row.appendChild(keySpan);
+    row.appendChild(colSpan);
     row.appendChild(jtSpan("jt-sum", jtSummary(val)));
     row.appendChild(cp);
     if (open[path]) renderKids();
@@ -142,11 +151,12 @@ function jtNode(parentEl, key, val, path, depth, open) {
     parentEl.appendChild(wrap);
   } else {
     row.appendChild(jtDiv("jt-spc"));
-    if (keySpan) row.appendChild(keySpan);
-    if (colSpan) row.appendChild(colSpan);
+    row.appendChild(keySpan);
+    row.appendChild(colSpan);
     var text = typeof val === "string" ? JSON.stringify(val) : String(val);
-    var cls = typeof val === "string" ? "s" : typeof val === "number" ? "n" : "b";
-    row.appendChild(jtSpan("jt-val " + cls, text.length > 200 ? text.slice(0, 200) + "…" : text));
+    // Strings use the neutral base style; numbers and literals keep semantic hooks for alignment.
+    var cls = typeof val === "number" ? " n" : typeof val === "string" ? "" : " b";
+    row.appendChild(jtSpan("jt-val" + cls, text.length > 200 ? text.slice(0, 200) + "…" : text));
     row.appendChild(cp);
     parentEl.appendChild(row);
   }
@@ -163,14 +173,23 @@ function blockHtml(raw, kind, seq, ok) {
     esc(pretty || (kind === "args" ? "(none)" : "(empty)")) + "</pre>";
 }
 
-/** Build the tree into `host` (a .jtree slot). Rebuildable any number of times. */
+/** Build the tree into `host` (a .jtree slot). Rebuildable any number of times.
+ *  The root is the block itself, so painting a second synthetic root row only wastes a line. Show
+ *  its immediate fields and keep every nested container folded until the operator asks for it. */
 function buildJsonTree(host, value, open) {
   open = open || {};
   // Keep BOTH classes: jtree is the container chrome (ground, radius, max-height), jtree-in marks
   // the built state. Assigning only one would strip the other (found live on 19998).
   host.className = "jtree jtree-in";
   while (host.firstChild) host.removeChild(host.firstChild);
-  jtNode(host, "", value, "/", 0, open);
+  var entries = Array.isArray(value)
+    ? value.map(function (v, i) { return [i, v]; })
+    : Object.keys(value).map(function (k) { return [k, value[k]]; });
+  if (!entries.length) {
+    host.appendChild(jtSpan("jt-empty", Array.isArray(value) ? "[]" : "{}"));
+    return;
+  }
+  entries.forEach(function (e) { jtNode(host, e[0], e[1], "/" + e[0] + "/", open); });
 }
 
 /** docs/33 C2: mount every open row's tree blocks. Called after a repaint (the poll rebuilds
