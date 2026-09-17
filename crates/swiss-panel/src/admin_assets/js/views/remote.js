@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,13 +17,14 @@
 /* ================================================================================================
    Remote Targets - the remote plugin page (#remote), docs/32 R6.
 
-   One table of target rows (alias -> endpoint + workspace root + capabilities), the
-   endpoints the transport currently serves above it, and an Add/Edit sheet. The CLI
+   A hairline card of house rows: dot (endpoint state) + alias + mono root sub-line +
+   monochrome chips for endpoint and capabilities + one overflow menu. The CLI
    (swiss remote ...) and this page write the SAME rows through the same routes; the
    page exists so a target never needs a terminal to exist.
    ================================================================================================ */
 import { $, apiJson, emptyHtml, esc, toast } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
+import { popupMenu } from "../menu.js";
 
 var targets = [];
 var endpoints = [];
@@ -45,6 +46,14 @@ function endpointLabel(id) {
   return hit ? hit.label || hit.id : id;
 }
 
+// The dot mirrors the endpoint's state: filled = connected, hollow = idle (will start
+// on demand), amber = mid-transition. The title always says the state in words.
+function endpointDot(id) {
+  var st = (endpoints.find(function (e) { return e.id === id; }) || {}).state || "unknown";
+  var cls = st === "connected" || st === "up" ? "up" : st === "idle" ? "idle" : "starting";
+  return '<span class="dot ' + cls + '" title="endpoint ' + esc(st) + '"></span>';
+}
+
 var painted = ""; // structural signature of the drawn list; a poll that changes nothing repaints nothing
 
 function signature() {
@@ -52,37 +61,37 @@ function signature() {
     targets.map(function (t) { return [t.id, t.endpoint, t.workspaceRoot, (t.capabilities || []).join("+")].join("|"); }).join("\n");
 }
 
+function chip(text) {
+  return '<span class="side-type">' + esc(text) + "</span>";
+}
+
+function row(t) {
+  var caps = (t.capabilities || []).map(chip).join("");
+  var label = t.label ? ' <span class="text-3">' + esc(t.label) + "</span>" : "";
+  return (
+    '<div class="row row-act">' + endpointDot(t.endpoint) +
+      '<div class="row-main">' +
+        '<div class="name"><a href="#remote" class="rowname" data-rmedit="' + esc(t.id) + '">' + esc(t.id) + "</a>" + label + "</div>" +
+        '<div class="sub mono">' + esc(t.workspaceRoot || "") + "</div>" +
+      "</div>" +
+      '<div class="row-chips">' + chip(endpointLabel(t.endpoint)) + caps + "</div>" +
+      '<button class="ic" data-rmmore="' + esc(t.id) + '" aria-label="Actions for ' + esc(t.id) + '">&#8943;</button>' +
+    "</div>"
+  );
+}
+
 function render() {
   painted = signature();
   var head =
-    '<div class="page-head"><h2>Remote Targets</h2>' +
+    '<div class="page-head"><h2>Targets</h2>' +
     '<button class="btn primary" id="rmAdd">Add target</button></div>' +
-    '<p class="muted">transport: ' + esc(presence) + " \u00b7 " + endpoints.length +
-    " endpoint(s) served. A target names an endpoint and an absolute workspace root - never a host, user or password.</p>";
+    '<p class="quiet">' + esc(presence) + " · " + endpoints.length + " endpoint" +
+    (endpoints.length === 1 ? "" : "s") + " served by tunnels</p>";
   if (!targets.length) {
     $("pane").innerHTML = head + emptyHtml({ icon: "globe", title: "No targets yet", hint: "Add a target to run commands on the machines the Tunnels connections reach." });
     $("countChip").textContent = "";
   } else {
-    var rows = targets
-      .map(function (t) {
-        return (
-          "<tr>" +
-            '<td><a href="#remote" class="rowname" data-rmedit="' + esc(t.id) + '">' + esc(t.id) + "</a></td>" +
-            "<td>" + esc(t.label || "") + "</td>" +
-            "<td>" + esc(endpointLabel(t.endpoint)) + "</td>" +
-            "<td><code>" + esc(t.workspaceRoot || "") + "</code></td>" +
-            "<td>" + esc((t.capabilities || []).join(", ")) + "</td>" +
-            '<td class="rowctl"><button class="btn" data-rmedit="' + esc(t.id) + '">Edit</button> ' +
-            '<button class="btn danger" data-rmdel="' + esc(t.id) + '">Delete</button></td>' +
-          "</tr>"
-        );
-      })
-      .join("");
-    $("pane").innerHTML =
-      head +
-      '<table class="list"><thead><tr><th>Alias</th><th>Label</th><th>Endpoint</th><th>Workspace root</th><th>Capabilities</th><th></th></tr></thead><tbody>' +
-      rows +
-      "</tbody></table>";
+    $("pane").innerHTML = head + '<div class="group">' + targets.map(row).join("") + "</div>";
     $("countChip").textContent = targets.length + " target" + (targets.length === 1 ? "" : "s");
   }
 }
@@ -100,7 +109,6 @@ function openSheet(target) {
   var caps = ["exec", "sync", "files"];
   var capBoxes = caps
     .map(function (c) {
-      var on = target ? (target.capabilities || []).indexOf(c) >= 0 : c === "exec";
       return '<label class="check"><input type="checkbox" id="rmcap-' + c + '"> ' + c + "</label>";
     })
     .join(" ");
@@ -122,7 +130,7 @@ function openSheet(target) {
   // Prefill programmatically, not via value=" markup": the pane redraws by signature,
   // and programmatic values are the one source of truth an edit and a test can both read.
   $("rm-id").disabled = !!editing; // the alias never edits; state set here, not in markup
-  caps.forEach(function (c, i) {
+  caps.forEach(function (c) {
     $("rmcap-" + c).checked = target ? (target.capabilities || []).indexOf(c) >= 0 : c === "exec";
   });
   if (target) {
@@ -161,10 +169,18 @@ async function save() {
   render();
 }
 
+async function removeTarget(id) {
+  if (!confirm("Delete target " + id + "? The Tunnels connection and any files on the machine are not touched.")) return;
+  var d = await apiJson("/api/remote/targets/" + encodeURIComponent(id), { method: "DELETE" });
+  if (!d) return;
+  await load();
+  render();
+}
+
 export async function mount() {
   if (!(await load())) return;
   render();
-  $("pane").onclick = async function (event) {
+  $("pane").onclick = function (event) {
     var add = event.target.closest("#rmAdd");
     if (add) { openSheet(null); return; }
     var edit = event.target.closest("[data-rmedit]");
@@ -173,13 +189,17 @@ export async function mount() {
       if (hit) openSheet(hit);
       return;
     }
-    var del = event.target.closest("[data-rmdel]");
-    if (del) {
-      if (!confirm("Delete target " + del.dataset.rmdel + "?")) return;
-      var d = await apiJson("/api/remote/targets/" + encodeURIComponent(del.dataset.rmdel), { method: "DELETE" });
-      if (!d) return;
-      await load();
-      render();
+    var more = event.target.closest("[data-rmmore]");
+    if (more) {
+      // The opening click must not reach document (menu.js closes on outside clicks).
+      event.stopPropagation();
+      var t = targets.find(function (x) { return x.id === more.dataset.rmmore; });
+      if (!t) return;
+      popupMenu(more.getBoundingClientRect(), [
+        { label: "Edit", fn: function () { openSheet(t); } },
+        { sep: true },
+        { label: "Delete", danger: true, fn: function () { removeTarget(t.id); } },
+      ]);
     }
   };
 }

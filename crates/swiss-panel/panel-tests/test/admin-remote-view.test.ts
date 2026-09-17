@@ -124,7 +124,7 @@ describe("the Remote Targets page (remote plugin, R6)", () => {
     };
     await view.mount();
     const pane = byId("pane").innerHTML;
-    expect(pane).toContain("transport: serving");
+    expect(pane).toContain("served by tunnels");
     expect(pane).toContain(">build<");
     expect(pane).toContain("Build box");
     expect(pane).toContain("/data/ws/proj");
