@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -54,9 +54,8 @@ use swiss_mcp::registry::Registry;
 
 const TOKEN: &str = "test-terminal-token-0123456789";
 
-type Ws = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 // --- the fake shell -------------------------------------------------------------------------------
 
@@ -106,12 +105,7 @@ impl ShellProvider for FakeShells {
         }]
     }
 
-    async fn open(
-        &self,
-        id: &str,
-        holder: &str,
-        size: PtySize,
-    ) -> Result<PtySession, ShellError> {
+    async fn open(&self, id: &str, holder: &str, size: PtySize) -> Result<PtySession, ShellError> {
         let lease = self.ledger.grant(id, holder);
         let (session, endpoint) = PtySession::duplex(format!("remote-{id}"), id, size, lease);
         let (out, input) = endpoint.split();
@@ -321,8 +315,10 @@ impl Rig {
         id: &str,
         ticket: &str,
     ) -> Result<(Ws, axum::http::Response<Option<Vec<u8>>>), tungstenite::Error> {
-        self.connect(&format!("/api/terminal/sessions/{id}/stream?ticket={ticket}"))
-            .await
+        self.connect(&format!(
+            "/api/terminal/sessions/{id}/stream?ticket={ticket}"
+        ))
+        .await
     }
 }
 
@@ -382,7 +378,10 @@ async fn the_enabled_plugin_lists_targets_and_local_is_off() {
     // LocalShells; no test override exists, by design).
     assert_eq!(body["local"]["enabled"], json!(false));
     assert!(
-        !body["local"]["shell"].as_str().unwrap_or_default().is_empty(),
+        !body["local"]["shell"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty(),
         "the local program must be the host's own default shell"
     );
     // The fake provider holds the seat: serving, with its one host listed.
@@ -479,17 +478,25 @@ async fn a_good_ticket_upgrades_and_bytes_flow_both_ways() {
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
 
     // Output arrives as raw binary — no base64, no JSON wrapping (docs/14 §8).
-    far.say("hello
-").await;
+    far.say(
+        "hello
+",
+    )
+    .await;
     let message = recv(&mut ws, "the shell's greeting").await;
     match message {
-        Message::Binary(data) => assert_eq!(data.as_ref(), b"hello
-"),
+        Message::Binary(data) => assert_eq!(
+            data.as_ref(),
+            b"hello
+"
+        ),
         other => panic!("expected binary output, got {other:?}"),
     }
 
     // Keystrokes go the other way the same way.
-    ws.send(Message::Binary(b"ls\r".to_vec().into())).await.expect("sends");
+    ws.send(Message::Binary(b"ls\r".to_vec().into()))
+        .await
+        .expect("sends");
     match far.heard().await.expect("the keystroke arrived") {
         PtyInput::Data(bytes) => assert_eq!(bytes, b"ls\r"),
         other => panic!("expected input data, got {other:?}"),
@@ -510,7 +517,9 @@ async fn a_good_ticket_upgrades_and_bytes_flow_both_ways() {
 
     // An unknown control object is ignored, not fatal (docs/14 §8) — the next real
     // frame still flows after the junk one.
-    ws.send(Message::Text(r#"{"t":"ping"}"#.into())).await.expect("sends junk");
+    ws.send(Message::Text(r#"{"t":"ping"}"#.into()))
+        .await
+        .expect("sends junk");
     far.say("still here\r").await;
     let message = recv(&mut ws, "output after junk control frame").await;
     match message {
@@ -619,11 +628,17 @@ async fn a_reconnect_within_the_grace_picks_up_the_catch_up() {
 
     let (mut ws, response) = rig.connect_session(&id, &ticket).await.expect("upgrades");
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
-    far.say("before the drop
-").await;
+    far.say(
+        "before the drop
+",
+    )
+    .await;
     match recv(&mut ws, "output before the drop").await {
-        Message::Binary(data) => assert_eq!(data.as_ref(), b"before the drop
-"),
+        Message::Binary(data) => assert_eq!(
+            data.as_ref(),
+            b"before the drop
+"
+        ),
         other => panic!("expected binary output, got {other:?}"),
     }
 
@@ -632,8 +647,11 @@ async fn a_reconnect_within_the_grace_picks_up_the_catch_up() {
     wait_detached(&rig, &id).await;
 
     // Output produced while nobody is watching lands in the bounded catch-up buffer.
-    far.say("caught up while away
-").await;
+    far.say(
+        "caught up while away
+",
+    )
+    .await;
 
     // The reconnect flow T5 exists to serve: a FRESH ticket (the old one is long
     // spent), then the socket.
@@ -641,7 +659,10 @@ async fn a_reconnect_within_the_grace_picks_up_the_catch_up() {
         .http("POST", &format!("/api/terminal/sessions/{id}/ticket"), None)
         .await;
     assert_eq!(status, StatusCode::OK, "{text}");
-    let fresh = body.expect("JSON")["ticket"].as_str().expect("a ticket").to_string();
+    let fresh = body.expect("JSON")["ticket"]
+        .as_str()
+        .expect("a ticket")
+        .to_string();
     let (mut ws, response) = rig.connect_session(&id, &fresh).await.expect("re-upgrades");
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
 
@@ -731,9 +752,7 @@ async fn the_session_listing_is_camel_case_and_counts_bytes() {
     far.say("count me").await;
     for _ in 0..300 {
         let (_, body, _) = rig.http("GET", "/api/terminal/sessions", None).await;
-        let listed = body
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default();
+        let listed = body.and_then(|v| v.as_array().cloned()).unwrap_or_default();
         let row = listed.iter().find(|r| r["id"] == json!(id)).cloned();
         if let Some(row) = row {
             if row["bytesOut"].as_u64().unwrap_or(0) >= 8 {
@@ -764,9 +783,7 @@ async fn a_recording_is_written_when_configured() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{text}");
     let body = body.expect("JSON");
-    let path = std::path::PathBuf::from(
-        body["recording"].as_str().expect("a recording path"),
-    );
+    let path = std::path::PathBuf::from(body["recording"].as_str().expect("a recording path"));
     assert!(path.is_file(), "the cast file exists: {}", path.display());
     let _ = rig.far();
 }

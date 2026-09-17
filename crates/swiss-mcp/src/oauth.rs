@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -212,9 +212,9 @@ pub async fn discover(client: &reqwest::Client, mcp_url: &str) -> Result<Discove
         .ok_or_else(|| {
             "oauth discovery failed: authorization_servers is missing or empty".to_string()
         })?;
-    let issuer = servers[0]
-        .as_str()
-        .ok_or_else(|| "oauth discovery failed: authorization_servers[0] is not a string".to_string())?;
+    let issuer = servers[0].as_str().ok_or_else(|| {
+        "oauth discovery failed: authorization_servers[0] is not a string".to_string()
+    })?;
     let issuer = origin_of(issuer)?;
     let server: Value = get_json(
         client,
@@ -313,10 +313,7 @@ pub async fn register_client(
         .await
         .map_err(|err| format!("client registration failed: {err}"))?;
     let status = response.status();
-    let text = response
-        .text()
-        .await
-        .unwrap_or_default();
+    let text = response.text().await.unwrap_or_default();
     if !status.is_success() {
         if status.as_u16() == 403 || status.as_u16() == 401 {
             return Err(format!(
@@ -332,8 +329,8 @@ pub async fn register_client(
             text.chars().take(300).collect::<String>()
         ));
     }
-    let body: Value =
-        serde_json::from_str(&text).map_err(|err| format!("registration response is not JSON: {err}"))?;
+    let body: Value = serde_json::from_str(&text)
+        .map_err(|err| format!("registration response is not JSON: {err}"))?;
     let client_id = body
         .get("client_id")
         .and_then(Value::as_str)
@@ -437,7 +434,9 @@ async fn token_post(
         // The two codes that mean "this grant is dead, re-authorize" (docs/24 D2.7) — surfaced
         // with the marker the panel keys on so the Authorize button lights.
         if error_code == "invalid_grant" || error_code == "invalid_client" {
-            return Err(format!("{NEEDS_AUTH} — the grant was refused ({error_code})"));
+            return Err(format!(
+                "{NEEDS_AUTH} — the grant was refused ({error_code})"
+            ));
         }
         return Err(format!(
             "token request failed: HTTP {}: {}",
@@ -663,7 +662,9 @@ pub fn credentials(name: &str) -> Option<StoredCredentials> {
 /// atomic swap, docs/24 D6). A read failure logs and keeps serving; a write failure is an
 /// error the caller reports.
 pub fn replace_credentials(name: &str, creds: StoredCredentials) -> Result<(), String> {
-    let mut guard = store().write().map_err(|_| "credential store lock poisoned")?;
+    let mut guard = store()
+        .write()
+        .map_err(|_| "credential store lock poisoned")?;
     guard.insert(name.to_string(), creds);
     persist_locked(&guard)
 }
@@ -671,7 +672,9 @@ pub fn replace_credentials(name: &str, creds: StoredCredentials) -> Result<(), S
 /// Swap only the token half (the refresh path). No entry yet is an error — a refresh without a
 /// registered client cannot happen through this module's flow.
 pub fn update_tokens(name: &str, tokens: &TokenSet) -> Result<StoredCredentials, String> {
-    let mut guard = store().write().map_err(|_| "credential store lock poisoned")?;
+    let mut guard = store()
+        .write()
+        .map_err(|_| "credential store lock poisoned")?;
     let entry = guard
         .get_mut(name)
         .ok_or_else(|| format!("{NEEDS_AUTH} — no stored credentials for '{name}'"))?;
@@ -684,7 +687,9 @@ pub fn update_tokens(name: &str, tokens: &TokenSet) -> Result<StoredCredentials,
 /// Drop one MCP's credentials entirely — the needs-auth path (docs/24 D2.7/D4): the old
 /// client_id is worthless anyway (each flow re-registers with a fresh loopback port).
 pub fn clear_credentials(name: &str) -> Result<(), String> {
-    let mut guard = store().write().map_err(|_| "credential store lock poisoned")?;
+    let mut guard = store()
+        .write()
+        .map_err(|_| "credential store lock poisoned")?;
     if guard.remove(name).is_some() {
         return persist_locked(&guard);
     }
@@ -692,9 +697,7 @@ pub fn clear_credentials(name: &str) -> Result<(), String> {
 }
 
 fn persist_locked(map: &HashMap<String, StoredCredentials>) -> Result<(), String> {
-    let value = Value::Object(
-        map.iter().map(|(k, v)| (k.clone(), v.to_json())).collect(),
-    );
+    let value = Value::Object(map.iter().map(|(k, v)| (k.clone(), v.to_json())).collect());
     write_secure_json(&store_path(), &value)
         .map_err(|err| format!("persisting oauth credentials failed: {err}"))
 }
@@ -703,7 +706,9 @@ fn persist_locked(map: &HashMap<String, StoredCredentials>) -> Result<(), String
 /// holding nothing is a no-op — renaming an MCP that never authorized must not fail the rename.
 /// A collision at the destination is refused rather than silently overwritten.
 pub fn rename_credentials(from: &str, to: &str) -> Result<(), String> {
-    let mut guard = store().write().map_err(|_| "credential store lock poisoned")?;
+    let mut guard = store()
+        .write()
+        .map_err(|_| "credential store lock poisoned")?;
     if !guard.contains_key(from) {
         return Ok(());
     }
@@ -756,10 +761,7 @@ impl FlowStatus {
 
     /// Terminal states end polling (the panel loop exits on them).
     pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            FlowStatus::Approved { .. } | FlowStatus::Error(_)
-        )
+        matches!(self, FlowStatus::Approved { .. } | FlowStatus::Error(_))
     }
 }
 
@@ -794,7 +796,8 @@ enum CallbackOutcome {
 }
 
 /// The browser-facing result of the redirect — tiny, no script, nothing secret.
-const CALLBACK_OK_PAGE: &str = "<html><body><h2>Authorized</h2><p>You can return to the swiss panel.</p></body></html>";
+const CALLBACK_OK_PAGE: &str =
+    "<html><body><h2>Authorized</h2><p>You can return to the swiss panel.</p></body></html>";
 const CALLBACK_BAD_PAGE: &str = "<html><body><h2>Invalid OAuth callback</h2></body></html>";
 
 #[derive(Clone)]
@@ -857,13 +860,9 @@ pub async fn start_flow(
     let defaults = provider_defaults(mcp_url, mcp_name);
     let client_name = client_name_override.unwrap_or(defaults.client_name);
     // Scope: the provider default first, else what the AS advertises, else none (docs/24 D3).
-    let scope: Option<String> = defaults
-        .scope
-        .map(str::to_string)
-        .or_else(|| {
-            (!discovered.scopes_supported.is_empty())
-                .then(|| discovered.scopes_supported.join(" "))
-        });
+    let scope: Option<String> = defaults.scope.map(str::to_string).or_else(|| {
+        (!discovered.scopes_supported.is_empty()).then(|| discovered.scopes_supported.join(" "))
+    });
     let registration_endpoint = discovered.registration_endpoint.clone().ok_or_else(|| {
         "oauth registration failed: the authorization server does not advertise dynamic \
          client registration, and this gateway does not store a pre-registered client_id"
@@ -936,12 +935,11 @@ impl AuthFlow {
         } = self;
         let outcome = match tokio::time::timeout(CALLBACK_WAIT, callback_rx).await {
             Ok(Ok(outcome)) => outcome,
-            Ok(Err(_)) => {
-                return Err("the oauth callback listener closed unexpectedly".to_string())
-            }
+            Ok(Err(_)) => return Err("the oauth callback listener closed unexpectedly".to_string()),
             Err(_) => {
                 return Err(
-                    "authorization timed out after 5 minutes — start again from the panel".to_string(),
+                    "authorization timed out after 5 minutes — start again from the panel"
+                        .to_string(),
                 )
             }
         };
@@ -992,7 +990,10 @@ mod tests {
         assert!(is_figma_remote("", "design-figma"));
         assert!(is_figma_remote("https://figma.example/mcp", "figma"));
         // ...but the name never drags in a different host.
-        assert!(!is_figma_remote("https://api.example.com/mcp", "figma-export"));
+        assert!(!is_figma_remote(
+            "https://api.example.com/mcp",
+            "figma-export"
+        ));
         assert!(!is_figma_remote("https://api.example.com/mcp", "design"));
     }
 
@@ -1000,27 +1001,33 @@ mod tests {
     fn is_oauth_reads_both_spellings() {
         // The predicate behind the badge, the authorize guard and the panel note: a def is
         // OAuth when its http def says so, or when it is the figma type that implies it.
-        let http_oauth = swiss_host::config::ServerDef(serde_json::json!({
-            "type": "http",
-            "url": "https://mcp.example.com/mcp",
-            "auth": "oauth",
-        })
-        .as_object()
-        .expect("object")
-        .clone());
-        assert!(is_oauth(&http_oauth));
-        let figma = swiss_host::config::ServerDef(serde_json::json!({ "type": "figma" })
+        let http_oauth = swiss_host::config::ServerDef(
+            serde_json::json!({
+                "type": "http",
+                "url": "https://mcp.example.com/mcp",
+                "auth": "oauth",
+            })
             .as_object()
             .expect("object")
-            .clone());
+            .clone(),
+        );
+        assert!(is_oauth(&http_oauth));
+        let figma = swiss_host::config::ServerDef(
+            serde_json::json!({ "type": "figma" })
+                .as_object()
+                .expect("object")
+                .clone(),
+        );
         assert!(is_oauth(&figma));
-        let plain = swiss_host::config::ServerDef(serde_json::json!({
-            "type": "http",
-            "url": "https://mcp.example.com/mcp",
-        })
-        .as_object()
-        .expect("object")
-        .clone());
+        let plain = swiss_host::config::ServerDef(
+            serde_json::json!({
+                "type": "http",
+                "url": "https://mcp.example.com/mcp",
+            })
+            .as_object()
+            .expect("object")
+            .clone(),
+        );
         assert!(!is_oauth(&plain));
     }
 
@@ -1050,10 +1057,19 @@ mod tests {
 
     #[test]
     fn origin_extraction_strips_paths_and_keeps_ports() {
-        assert_eq!(origin_of("https://mcp.figma.com/mcp").unwrap(), "https://mcp.figma.com");
-        assert_eq!(origin_of("http://127.0.0.1:8080/x/y").unwrap(), "http://127.0.0.1:8080");
+        assert_eq!(
+            origin_of("https://mcp.figma.com/mcp").unwrap(),
+            "https://mcp.figma.com"
+        );
+        assert_eq!(
+            origin_of("http://127.0.0.1:8080/x/y").unwrap(),
+            "http://127.0.0.1:8080"
+        );
         assert!(origin_of("mcp.figma.com/mcp").is_err(), "no scheme");
-        assert!(origin_of("https://user@host/x").is_err(), "userinfo refused");
+        assert!(
+            origin_of("https://user@host/x").is_err(),
+            "userinfo refused"
+        );
     }
 
     #[test]
@@ -1071,10 +1087,17 @@ mod tests {
         assert_eq!(base, "https://www.figma.com/oauth/mcp");
         let pairs: Vec<(String, String)> = query
             .split('&')
-            .map(|pair| pair.split_once('=').map(|(k, v)| {
-                // the same decoder the rest of the crate uses, round-tripped
-                (crate::adapters::rest::form_decode(k), crate::adapters::rest::form_decode(v))
-            }).expect("every pair is k=v"))
+            .map(|pair| {
+                pair.split_once('=')
+                    .map(|(k, v)| {
+                        // the same decoder the rest of the crate uses, round-tripped
+                        (
+                            crate::adapters::rest::form_decode(k),
+                            crate::adapters::rest::form_decode(v),
+                        )
+                    })
+                    .expect("every pair is k=v")
+            })
             .collect();
         let get = |k: &str| {
             pairs
@@ -1264,22 +1287,27 @@ mod tests {
             )
             .route(
                 "/test/mint",
-                axum::routing::get(move |params: axum::extract::Query<HashMap<String, String>>| {
-                    let s = mint_s.clone();
-                    async move {
-                        let n = s.counter.fetch_add(1, Ordering::SeqCst) + 1;
-                        let code = format!("code-{n}");
-                        s.codes.lock().unwrap().insert(
-                            code.clone(),
-                            MintedCode {
-                                challenge: params.get("challenge").cloned().unwrap_or_default(),
-                                client_id: params.get("client_id").cloned().unwrap_or_default(),
-                                redirect_uri: params.get("redirect_uri").cloned().unwrap_or_default(),
-                            },
-                        );
-                        axum::Json(json!({ "code": code }))
-                    }
-                }),
+                axum::routing::get(
+                    move |params: axum::extract::Query<HashMap<String, String>>| {
+                        let s = mint_s.clone();
+                        async move {
+                            let n = s.counter.fetch_add(1, Ordering::SeqCst) + 1;
+                            let code = format!("code-{n}");
+                            s.codes.lock().unwrap().insert(
+                                code.clone(),
+                                MintedCode {
+                                    challenge: params.get("challenge").cloned().unwrap_or_default(),
+                                    client_id: params.get("client_id").cloned().unwrap_or_default(),
+                                    redirect_uri: params
+                                        .get("redirect_uri")
+                                        .cloned()
+                                        .unwrap_or_default(),
+                                },
+                            );
+                            axum::Json(json!({ "code": code }))
+                        }
+                    },
+                ),
             )
             .route(
                 "/v1/oauth/token",
@@ -1298,7 +1326,10 @@ mod tests {
                             .collect();
                         let get = |k: &str| form.get(k).cloned().unwrap_or_default();
                         let client_id = get("client_id");
-                        let secret_ok = match (s.clients.lock().unwrap().get(&client_id), get("client_secret")) {
+                        let secret_ok = match (
+                            s.clients.lock().unwrap().get(&client_id),
+                            get("client_secret"),
+                        ) {
                             (Some(want), got) => *want == got && !got.is_empty(),
                             (None, _) => false,
                         };
@@ -1311,7 +1342,8 @@ mod tests {
                         let resource_ok = get("resource") == format!("{}/mcp", s.base);
                         match get("grant_type").as_str() {
                             "authorization_code" => {
-                                let Some(mint) = s.codes.lock().unwrap().remove(&get("code")) else {
+                                let Some(mint) = s.codes.lock().unwrap().remove(&get("code"))
+                                else {
                                     return (
                                         axum::http::StatusCode::BAD_REQUEST,
                                         axum::Json(json!({ "error": "invalid_grant" })),
@@ -1404,9 +1436,14 @@ mod tests {
     #[tokio::test]
     async fn discovery_reads_both_well_knowns_and_names_the_endpoints() {
         let as_url = fake_as(vec!["Claude Code"]).await;
-        let d = discover(&http(), &format!("{}/mcp", as_url.base)).await.expect("discovery");
+        let d = discover(&http(), &format!("{}/mcp", as_url.base))
+            .await
+            .expect("discovery");
         assert_eq!(d.resource, format!("{}/mcp", as_url.base));
-        assert_eq!(d.authorization_endpoint, format!("{}/oauth/authorize", as_url.base));
+        assert_eq!(
+            d.authorization_endpoint,
+            format!("{}/oauth/authorize", as_url.base)
+        );
         assert_eq!(
             d.registration_endpoint.as_deref(),
             Some(format!("{}/v1/oauth/mcp/register", as_url.base).as_str())
@@ -1461,10 +1498,14 @@ mod tests {
     async fn a_flow_completes_against_the_fake_as_and_persists_sealed() {
         let _guard = store_preamble().await;
         let as_url = fake_as(vec!["Claude Code", "Codex"]).await;
-        let flow =
-            start_flow(http(), "figma-flow-a", &format!("{}/mcp", as_url.base), Some("Claude Code"))
-                .await
-                .expect("the flow starts");
+        let flow = start_flow(
+            http(),
+            "figma-flow-a",
+            &format!("{}/mcp", as_url.base),
+            Some("Claude Code"),
+        )
+        .await
+        .expect("the flow starts");
 
         // The authorization URL carries the whole contract (the fake AS's /authorize is never
         // real — the browser step is simulated by minting a code and hitting the redirect).
@@ -1507,7 +1548,11 @@ mod tests {
 
         // Completing exchanges the code and assembles the credentials.
         let creds = flow.complete().await.expect("the exchange succeeds");
-        assert!(creds.access_token.as_deref().unwrap_or("").starts_with("acc-"));
+        assert!(creds
+            .access_token
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("acc-"));
         assert!(creds.refresh_token.is_some());
         assert!(creds.access_fresh());
 
@@ -1524,10 +1569,14 @@ mod tests {
     async fn refresh_rotates_once_then_reports_needs_auth() {
         let _guard = store_preamble().await;
         let as_url = fake_as(vec!["Claude Code"]).await;
-        let flow =
-            start_flow(http(), "figma-flow-b", &format!("{}/mcp", as_url.base), Some("Claude Code"))
-                .await
-                .expect("flow");
+        let flow = start_flow(
+            http(),
+            "figma-flow-b",
+            &format!("{}/mcp", as_url.base),
+            Some("Claude Code"),
+        )
+        .await
+        .expect("flow");
         let params = query_of(&flow.authorization_url);
         let minted: Value = http()
             .get(format!(
@@ -1599,10 +1648,14 @@ mod tests {
     #[tokio::test]
     async fn a_redirect_with_the_wrong_state_is_refused() {
         let as_url = fake_as(vec!["Claude Code"]).await;
-        let flow =
-            start_flow(http(), "figma-flow-c", &format!("{}/mcp", as_url.base), Some("Claude Code"))
-                .await
-                .expect("flow");
+        let flow = start_flow(
+            http(),
+            "figma-flow-c",
+            &format!("{}/mcp", as_url.base),
+            Some("Claude Code"),
+        )
+        .await
+        .expect("flow");
         let response = http()
             .get(format!("{}?code=x&state=not-the-state", flow.redirect_uri))
             .send()

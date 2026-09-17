@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -42,7 +42,8 @@ fn echo_def() -> ServerDef {
 /// OWN scratch directory (the S2 instantiation): no two tests share one, so a call one test
 /// makes can never surface in another test's Logs page.
 async fn app_with_echo() -> axum::Router {
-    let scratch = std::env::temp_dir().join(format!("swiss-app-{}", swiss_core::util::random_hex(8)));
+    let scratch =
+        std::env::temp_dir().join(format!("swiss-app-{}", swiss_core::util::random_hex(8)));
     let calls = Arc::new(swiss_mcp::calls::CallLog::at(scratch.join("calls")));
     let registry = Registry::new(3_600_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(scratch.join("managed.json")));

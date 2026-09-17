@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -802,7 +802,8 @@ pub fn redis_pipeline_commands(body: &Value) -> Result<Vec<Vec<String>>, String>
                 })
                 .collect()
         })
-        .collect()}
+        .collect()
+}
 
 // --- identifier quoting --------------------------------------------------------------------------
 
@@ -890,7 +891,9 @@ pub fn browse_table_sort(sort: Option<&str>, dir: Option<&str>) -> Result<TableS
         Some("rows") => TableSortKey::Rows,
         Some("size") => TableSortKey::Size,
         Some(other) => {
-            return Err(format!("cannot sort the table list by unknown key: {other}"))
+            return Err(format!(
+                "cannot sort the table list by unknown key: {other}"
+            ))
         }
     };
     let desc = match dir.filter(|d| !d.is_empty()) {
@@ -1320,7 +1323,6 @@ fn castable_data_type(data_type: Option<&str>) -> Option<&str> {
     })
 }
 
-
 // --- exact-precision serialization (docs/22 W2.4) ------------------------------------------------
 
 /// An i64 cell as an exact JSON string. The panel is JavaScript: JSON.parse turns any number
@@ -1387,9 +1389,11 @@ pub const EDIT_ADDR_MD5_MIN: usize = 64;
 /// any of these fragments.
 fn is_text_or_binary(data_type: &str) -> bool {
     let t = data_type.to_ascii_lowercase();
-    ["char", "text", "blob", "binary", "bytea", "enum", "set", "json", "xml"]
-        .iter()
-        .any(|frag| t.contains(frag))
+    [
+        "char", "text", "blob", "binary", "bytea", "enum", "set", "json", "xml",
+    ]
+    .iter()
+    .any(|frag| t.contains(frag))
 }
 
 /// The byte kinds of is_text_or_binary: values whose WIRE form is \\x hex (the adapters render
@@ -1398,7 +1402,9 @@ fn is_text_or_binary(data_type: &str) -> bool {
 /// string (a digest of mangled text matches nothing and the edit reads back as a false 409).
 pub fn is_binary_type(data_type: &str) -> bool {
     let t = data_type.to_ascii_lowercase();
-    ["blob", "binary", "bytea"].iter().any(|frag| t.contains(frag))
+    ["blob", "binary", "bytea"]
+        .iter()
+        .any(|frag| t.contains(frag))
 }
 
 /// The \\x + lowercase-hex wire form of raw bytes — the string a binary column's value rides
@@ -1418,7 +1424,8 @@ pub fn bytea_unhex(s: &str) -> Option<Vec<u8>> {
     (0..hex.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
-        .collect()}
+        .collect()
+}
 
 /// MD5 over the bytes, lowercase hex — the spelling both dialects' own md5() produce.
 pub fn md5_hex(input: &[u8]) -> String {
@@ -1450,9 +1457,9 @@ fn md5_digest(msg: &[u8]) -> [u8; 16] {
     ];
     // Per-round shift amounts, RFC 1321 §3.4.
     const S: [u32; 64] = [
-        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20,
-        5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
-        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
+        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
+        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
     ];
     let mut a0: u32 = 0x6745_2301;
     let mut b0: u32 = 0xefcd_ab89;
@@ -1482,10 +1489,7 @@ fn md5_digest(msg: &[u8]) -> [u8; 16] {
             let temp = d;
             d = c;
             c = b;
-            let sum = a
-                .wrapping_add(f)
-                .wrapping_add(K[i])
-                .wrapping_add(m[g]);
+            let sum = a.wrapping_add(f).wrapping_add(K[i]).wrapping_add(m[g]);
             b = b.wrapping_add(sum.rotate_left(S[i]));
             a = temp;
         }
@@ -1505,12 +1509,7 @@ fn md5_digest(msg: &[u8]) -> [u8; 16] {
 /// One md5-addressed comparison — md5(col) = ? — for a text or binary value past
 /// EDIT_ADDR_MD5_MIN bytes. The placeholder stays bare on purpose: the bound value is the
 /// 32-char digest (text on both dialects), never the column's own type.
-fn md5_address(
-    dialect: DbDialect,
-    quoted: &str,
-    bytes: &[u8],
-    params: &mut Vec<Value>,
-) -> String {
+fn md5_address(dialect: DbDialect, quoted: &str, bytes: &[u8], params: &mut Vec<Value>) -> String {
     params.push(json!(md5_hex(bytes)));
     format!("md5({quoted}) = {}", ph(dialect, params))
 }
@@ -1546,9 +1545,9 @@ impl AddressGap {
             AddressGap::Null(c) => format!(
                 "{op} needs a non-NULL value for every column (no primary key): {c} is NULL"
             ),
-            AddressGap::Missing(c) => format!(
-                "{op} needs a value for every column (no primary key): {c} is missing"
-            ),
+            AddressGap::Missing(c) => {
+                format!("{op} needs a value for every column (no primary key): {c} is missing")
+            }
         }
     }
 }
@@ -1565,7 +1564,8 @@ fn address_where(
 ) -> Result<String, AddressGap> {
     let mut parts: Vec<String> = Vec::with_capacity(columns.len());
     for c in columns {
-        let quoted = quote_ident(dialect, &c.name).map_err(|_| AddressGap::Missing(c.name.clone()))?;
+        let quoted =
+            quote_ident(dialect, &c.name).map_err(|_| AddressGap::Missing(c.name.clone()))?;
         let Some(v) = row.get(&c.name) else {
             return Err(AddressGap::Missing(c.name.clone()));
         };
@@ -1576,12 +1576,7 @@ fn address_where(
             // Binary columns fold at ANY length: `col = ?` would bind the \\x hex text,
             // which can never equal the column's bytes. The digest runs over the decoded
             // bytes (binary_wire_bytes) — md5(col) in SQL sees the raw column bytes.
-            parts.push(md5_address(
-                dialect,
-                &quoted,
-                &binary_wire_bytes(v),
-                params,
-            ));
+            parts.push(md5_address(dialect, &quoted, &binary_wire_bytes(v), params));
         } else if is_text_or_binary(&c.data_type) && value_len(v) > EDIT_ADDR_MD5_MIN {
             parts.push(md5_address(dialect, &quoted, &text_bytes(v), params));
         } else {
@@ -1771,7 +1766,10 @@ pub fn readback_plan(
                 return ReadBack::None; // no key columns: nothing to select by
             }
             ReadBack::Select(BuiltStatement {
-                sql: format!("SELECT {list} FROM {target} WHERE {}", where_parts.join(" AND ")),
+                sql: format!(
+                    "SELECT {list} FROM {target} WHERE {}",
+                    where_parts.join(" AND ")
+                ),
                 params,
             })
         }
@@ -1876,9 +1874,7 @@ pub fn upsert_suffix(
         }
         DbDialect::Pg => {
             if primary_key.is_empty() {
-                return Err(
-                    "table has no primary key — Postgres has no ON CONFLICT target".into(),
-                );
+                return Err("table has no primary key — Postgres has no ON CONFLICT target".into());
             }
             let conflict = primary_key
                 .iter()
@@ -1927,12 +1923,14 @@ pub fn build_import_statements(
         .iter()
         .map(|c| (c.name.as_str(), c.data_type.as_str()))
         .collect();
-    let degraded =
-        if mode == ImportMode::Upsert && dialect == DbDialect::Pg && primary_key.is_empty() {
-            Some("table has no primary key — upsert is not possible on Postgres, rows were inserted instead")
-        } else {
-            None
-        };
+    let degraded = if mode == ImportMode::Upsert
+        && dialect == DbDialect::Pg
+        && primary_key.is_empty()
+    {
+        Some("table has no primary key — upsert is not possible on Postgres, rows were inserted instead")
+    } else {
+        None
+    };
     let upsert = mode == ImportMode::Upsert && degraded.is_none();
     let mut out: Vec<BuiltStatement> = Vec::with_capacity(rows.len());
     for row in rows {
@@ -1991,11 +1989,10 @@ pub fn build_edit_statements(
             };
         // The every-column twin of pk_where (docs/22 W4.1): the trailing LIMIT 1 MySQL alone
         // accepts — Postgres' ambiguity guard is the affected-rows check in the adapter.
-        let row_where = |pk: &Map<String, Value>,
-                         params: &mut Vec<Value>|
-         -> Result<String, String> {
-            address_where(dialect, columns, pk, params).map_err(|gap| gap.message(edit.op()))
-        };
+        let row_where =
+            |pk: &Map<String, Value>, params: &mut Vec<Value>| -> Result<String, String> {
+                address_where(dialect, columns, pk, params).map_err(|gap| gap.message(edit.op()))
+            };
         let mysql_limit = |stmt: String| -> String {
             if keyless && dialect == DbDialect::Mysql {
                 format!("{stmt} LIMIT 1")
@@ -2112,10 +2109,7 @@ pub fn build_edit_statements(
                             md5_address(dialect, &quoted, &text_bytes(orig), &mut params)
                         } else {
                             params.push(orig.clone());
-                            format!(
-                                "{quoted} = {}",
-                                typed_ph(dialect, &params, dt)
-                            )
+                            format!("{quoted} = {}", typed_ph(dialect, &params, dt))
                         };
                         w.push_str(" AND ");
                         w.push_str(&frag);
@@ -2397,7 +2391,10 @@ fn ddl_column_clause(dialect: DbDialect, c: &DdlColumn) -> Result<String, String
     }
     if dialect == DbDialect::Mysql {
         if let Some(cm) = c.comment.as_deref().filter(|s| !s.is_empty()) {
-            s.push_str(&format!(" COMMENT {}", sql_dump_literal(dialect, Some(&json!(cm)))?));
+            s.push_str(&format!(
+                " COMMENT {}",
+                sql_dump_literal(dialect, Some(&json!(cm)))?
+            ));
         }
     }
     Ok(s)
@@ -2515,7 +2512,9 @@ pub fn index_ddl(
         return Err("an index needs at least one column".into());
     }
     if columns.len() > MAX_DDL_KEY_PARTS {
-        return Err(format!("an index may name at most {MAX_DDL_KEY_PARTS} columns"));
+        return Err(format!(
+            "an index may name at most {MAX_DDL_KEY_PARTS} columns"
+        ));
     }
     let schema = schema.filter(|s| !s.is_empty());
     let target = qualified(dialect, schema, table)?;
@@ -3119,48 +3118,294 @@ pub const COMPLETION_BUDGET_BYTES: usize = 64 * 1024;
 /// per dialect into a sorted, deduped table; CORE carries the shared vocabulary.
 pub fn sql_keywords(dialect: DbDialect) -> &'static [&'static str] {
     const CORE: &[&str] = &[
-        "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "NULL", "IS", "IN", "LIKE", "BETWEEN",
-        "AS", "ON", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS", "UNION",
-        "ALL", "ANY", "SOME", "EXISTS", "CASE", "WHEN", "THEN", "ELSE", "END", "CAST",
-        "COALESCE", "NULLIF", "DISTINCT", "GROUP", "BY", "HAVING", "ORDER", "ASC", "DESC",
-        "LIMIT", "OFFSET", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE",
-        "DROP", "ALTER", "TABLE", "VIEW", "INDEX", "SEQUENCE", "TRIGGER", "FUNCTION",
-        "PROCEDURE", "PRIMARY", "FOREIGN", "KEY", "REFERENCES", "CONSTRAINT", "UNIQUE",
-        "DEFAULT", "CHECK", "CASCADE", "RESTRICT", "IF", "TEMP", "TEMPORARY", "WITH",
-        "RETURNING", "TRUE", "FALSE", "UNKNOWN", "COMMENT", "GRANT", "REVOKE", "BEGIN",
-        "COMMIT", "ROLLBACK", "TRANSACTION", "ISOLATION", "LEVEL", "READ", "WRITE", "ONLY",
-        "EXPLAIN", "ANALYZE", "VERBOSE", "TRUNCATE", "RENAME", "ADD", "COLUMN", "USING",
-        "INTERVAL", "DAY", "HOUR", "MINUTE", "SECOND", "YEAR", "MONTH", "QUARTER", "WEEK",
-        "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "LOCALTIME", "LOCALTIMESTAMP",
-        "EXTRACT", "SUBSTRING", "TRIM", "UPPER", "LOWER", "LENGTH", "REPLACE", "CONCAT",
-        "ABS", "ROUND", "CEILING", "FLOOR", "MOD", "POWER", "SQRT", "COUNT", "SUM", "AVG",
-        "MIN", "MAX", "CHAR", "VARCHAR", "DATE", "TIME", "TIMESTAMP", "INTEGER", "INT",
-        "SMALLINT", "BIGINT", "FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "BOOLEAN", "TEXT",
-        "ESCAPE", "ACTION", "NO",
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "AND",
+        "OR",
+        "NOT",
+        "NULL",
+        "IS",
+        "IN",
+        "LIKE",
+        "BETWEEN",
+        "AS",
+        "ON",
+        "JOIN",
+        "INNER",
+        "LEFT",
+        "RIGHT",
+        "FULL",
+        "OUTER",
+        "CROSS",
+        "UNION",
+        "ALL",
+        "ANY",
+        "SOME",
+        "EXISTS",
+        "CASE",
+        "WHEN",
+        "THEN",
+        "ELSE",
+        "END",
+        "CAST",
+        "COALESCE",
+        "NULLIF",
+        "DISTINCT",
+        "GROUP",
+        "BY",
+        "HAVING",
+        "ORDER",
+        "ASC",
+        "DESC",
+        "LIMIT",
+        "OFFSET",
+        "INSERT",
+        "INTO",
+        "VALUES",
+        "UPDATE",
+        "SET",
+        "DELETE",
+        "CREATE",
+        "DROP",
+        "ALTER",
+        "TABLE",
+        "VIEW",
+        "INDEX",
+        "SEQUENCE",
+        "TRIGGER",
+        "FUNCTION",
+        "PROCEDURE",
+        "PRIMARY",
+        "FOREIGN",
+        "KEY",
+        "REFERENCES",
+        "CONSTRAINT",
+        "UNIQUE",
+        "DEFAULT",
+        "CHECK",
+        "CASCADE",
+        "RESTRICT",
+        "IF",
+        "TEMP",
+        "TEMPORARY",
+        "WITH",
+        "RETURNING",
+        "TRUE",
+        "FALSE",
+        "UNKNOWN",
+        "COMMENT",
+        "GRANT",
+        "REVOKE",
+        "BEGIN",
+        "COMMIT",
+        "ROLLBACK",
+        "TRANSACTION",
+        "ISOLATION",
+        "LEVEL",
+        "READ",
+        "WRITE",
+        "ONLY",
+        "EXPLAIN",
+        "ANALYZE",
+        "VERBOSE",
+        "TRUNCATE",
+        "RENAME",
+        "ADD",
+        "COLUMN",
+        "USING",
+        "INTERVAL",
+        "DAY",
+        "HOUR",
+        "MINUTE",
+        "SECOND",
+        "YEAR",
+        "MONTH",
+        "QUARTER",
+        "WEEK",
+        "CURRENT_DATE",
+        "CURRENT_TIME",
+        "CURRENT_TIMESTAMP",
+        "LOCALTIME",
+        "LOCALTIMESTAMP",
+        "EXTRACT",
+        "SUBSTRING",
+        "TRIM",
+        "UPPER",
+        "LOWER",
+        "LENGTH",
+        "REPLACE",
+        "CONCAT",
+        "ABS",
+        "ROUND",
+        "CEILING",
+        "FLOOR",
+        "MOD",
+        "POWER",
+        "SQRT",
+        "COUNT",
+        "SUM",
+        "AVG",
+        "MIN",
+        "MAX",
+        "CHAR",
+        "VARCHAR",
+        "DATE",
+        "TIME",
+        "TIMESTAMP",
+        "INTEGER",
+        "INT",
+        "SMALLINT",
+        "BIGINT",
+        "FLOAT",
+        "DOUBLE",
+        "DECIMAL",
+        "NUMERIC",
+        "BOOLEAN",
+        "TEXT",
+        "ESCAPE",
+        "ACTION",
+        "NO",
     ];
     const PG_EXTRA: &[&str] = &[
-        "ILIKE", "SIMILAR", "REGEXP", "LATERAL", "RECURSIVE", "WINDOW", "PARTITION", "ROWS",
-        "RANGE", "GROUPS", "FILTER", "FETCH", "SHARE", "NOWAIT", "CONFLICT", "DO",
-        "NOTHING", "SERIALIZABLE", "REPEATABLE", "DEFERRABLE", "INITIALLY", "VACUUM",
-        "ANALYSE", "LISTEN", "NOTIFY", "LOAD", "SAVEPOINT", "PREPARE", "EXECUTE",
-        "DEALLOCATE", "DISCARD", "RESET", "REASSIGN", "OWNED", "OBJECT", "PRIVILEGES",
-        "TABLESPACE", "DATABASE", "ROLE", "PASSWORD", "VALID", "UNTIL", "CONNECTION",
-        "EXTENSION", "TYPE", "DOMAIN", "ENUM", "ARRAY", "JSONB", "JSON", "UUID", "XML",
-        "MONEY", "BYTEA", "TIMESTAMPTZ", "TIMETZ", "INET", "CIDR", "MACADDR", "TSVECTOR",
-        "GENERATED", "IDENTITY", "ALWAYS", "STORED", "IMMUTABLE", "STABLE", "VOLATILE",
-        "LANGUAGE", "SQL", "RETURNS", "SETOF", "ORDINALITY", "SERIAL", "BIGSERIAL",
-        "FOR", "SKIP", "LOCKED", "SERVER",
+        "ILIKE",
+        "SIMILAR",
+        "REGEXP",
+        "LATERAL",
+        "RECURSIVE",
+        "WINDOW",
+        "PARTITION",
+        "ROWS",
+        "RANGE",
+        "GROUPS",
+        "FILTER",
+        "FETCH",
+        "SHARE",
+        "NOWAIT",
+        "CONFLICT",
+        "DO",
+        "NOTHING",
+        "SERIALIZABLE",
+        "REPEATABLE",
+        "DEFERRABLE",
+        "INITIALLY",
+        "VACUUM",
+        "ANALYSE",
+        "LISTEN",
+        "NOTIFY",
+        "LOAD",
+        "SAVEPOINT",
+        "PREPARE",
+        "EXECUTE",
+        "DEALLOCATE",
+        "DISCARD",
+        "RESET",
+        "REASSIGN",
+        "OWNED",
+        "OBJECT",
+        "PRIVILEGES",
+        "TABLESPACE",
+        "DATABASE",
+        "ROLE",
+        "PASSWORD",
+        "VALID",
+        "UNTIL",
+        "CONNECTION",
+        "EXTENSION",
+        "TYPE",
+        "DOMAIN",
+        "ENUM",
+        "ARRAY",
+        "JSONB",
+        "JSON",
+        "UUID",
+        "XML",
+        "MONEY",
+        "BYTEA",
+        "TIMESTAMPTZ",
+        "TIMETZ",
+        "INET",
+        "CIDR",
+        "MACADDR",
+        "TSVECTOR",
+        "GENERATED",
+        "IDENTITY",
+        "ALWAYS",
+        "STORED",
+        "IMMUTABLE",
+        "STABLE",
+        "VOLATILE",
+        "LANGUAGE",
+        "SQL",
+        "RETURNS",
+        "SETOF",
+        "ORDINALITY",
+        "SERIAL",
+        "BIGSERIAL",
+        "FOR",
+        "SKIP",
+        "LOCKED",
+        "SERVER",
     ];
     const MYSQL_EXTRA: &[&str] = &[
-        "ENGINE", "CHARSET", "COLLATE", "AUTO_INCREMENT", "UNSIGNED", "ZEROFILL",
-        "TINYINT", "MEDIUMINT", "BIT", "TINYBLOB", "BLOB", "MEDIUMBLOB", "LONGBLOB",
-        "TINYTEXT", "MEDIUMTEXT", "LONGTEXT", "NATIONAL", "VARYING", "STRAIGHT_JOIN",
-        "SQL_NO_CACHE", "SQL_CALC_FOUND_ROWS", "LOCK", "MODE", "OUTFILE", "DUMPFILE",
-        "DUPLICATE", "LAST_INSERT_ID", "BINLOG", "PURGE", "MASTER", "SLAVE", "START",
-        "STOP", "REPAIR", "OPTIMIZE", "CHECKSUM", "SHOW", "DESCRIBE", "EXTENDED",
-        "PARTITION", "LESS", "THAN", "MAXVALUE", "LINEAR", "SUBPARTITION", "SIGNED",
-        "BINARY", "VARBINARY", "DELIMITER", "DELAYED", "HIGH_PRIORITY", "LOW_PRIORITY",
-        "QUICK", "ENFORCED", "CLUSTER", "GTID", "REPLICA", "SOURCE",
+        "ENGINE",
+        "CHARSET",
+        "COLLATE",
+        "AUTO_INCREMENT",
+        "UNSIGNED",
+        "ZEROFILL",
+        "TINYINT",
+        "MEDIUMINT",
+        "BIT",
+        "TINYBLOB",
+        "BLOB",
+        "MEDIUMBLOB",
+        "LONGBLOB",
+        "TINYTEXT",
+        "MEDIUMTEXT",
+        "LONGTEXT",
+        "NATIONAL",
+        "VARYING",
+        "STRAIGHT_JOIN",
+        "SQL_NO_CACHE",
+        "SQL_CALC_FOUND_ROWS",
+        "LOCK",
+        "MODE",
+        "OUTFILE",
+        "DUMPFILE",
+        "DUPLICATE",
+        "LAST_INSERT_ID",
+        "BINLOG",
+        "PURGE",
+        "MASTER",
+        "SLAVE",
+        "START",
+        "STOP",
+        "REPAIR",
+        "OPTIMIZE",
+        "CHECKSUM",
+        "SHOW",
+        "DESCRIBE",
+        "EXTENDED",
+        "PARTITION",
+        "LESS",
+        "THAN",
+        "MAXVALUE",
+        "LINEAR",
+        "SUBPARTITION",
+        "SIGNED",
+        "BINARY",
+        "VARBINARY",
+        "DELIMITER",
+        "DELAYED",
+        "HIGH_PRIORITY",
+        "LOW_PRIORITY",
+        "QUICK",
+        "ENFORCED",
+        "CLUSTER",
+        "GTID",
+        "REPLICA",
+        "SOURCE",
     ];
     static PG_KEYWORDS: OnceLock<Vec<&'static str>> = OnceLock::new();
     static MYSQL_KEYWORDS: OnceLock<Vec<&'static str>> = OnceLock::new();
@@ -3283,12 +3528,26 @@ pub fn completion_items(
 /// Does this console statement change schema shape? The completion cache is invalidated
 /// when it does — a stale column list after CREATE TABLE is worse than none.
 pub fn sql_touches_schema(sql: &str) -> bool {
-    let first = sql.trim_start().split(|c: char| c.is_whitespace() || c == '(').next()
+    let first = sql
+        .trim_start()
+        .split(|c: char| c.is_whitespace() || c == '(')
+        .next()
         .unwrap_or("");
     matches!(
         first.to_ascii_uppercase().as_str(),
-        "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" | "COMMENT" | "GRANT" | "REVOKE"
-            | "VACUUM" | "ANALYSE" | "ANALYZE" | "REFRESH" | "REINDEX"
+        "CREATE"
+            | "ALTER"
+            | "DROP"
+            | "TRUNCATE"
+            | "RENAME"
+            | "COMMENT"
+            | "GRANT"
+            | "REVOKE"
+            | "VACUUM"
+            | "ANALYSE"
+            | "ANALYZE"
+            | "REFRESH"
+            | "REINDEX"
     )
 }
 
@@ -3686,28 +3945,18 @@ mod tests {
     #[test]
     fn grep_where_numbers_placeholders_per_dialect() {
         // Postgres numbers after the schema bind ($1): first pattern is $2.
-        let w = grep_where(
-            DbDialect::Pg,
-            "c.relname",
-            "user*|account",
-            1,
-        )
-        .unwrap()
-        .expect("grammar");
+        let w = grep_where(DbDialect::Pg, "c.relname", "user*|account", 1)
+            .unwrap()
+            .expect("grammar");
         assert_eq!(
             w.frag,
             " AND (c.relname ILIKE $2 ESCAPE '!' OR c.relname ILIKE $3 ESCAPE '!')"
         );
         assert_eq!(w.params, vec![json!("user%"), json!("%account%")]);
         // MySQL binds positionally and LIKE is case-insensitive under the default collation.
-        let w = grep_where(
-            DbDialect::Mysql,
-            "table_name",
-            "user*|account",
-            0,
-        )
-        .unwrap()
-        .expect("grammar");
+        let w = grep_where(DbDialect::Mysql, "table_name", "user*|account", 0)
+            .unwrap()
+            .expect("grammar");
         assert_eq!(
             w.frag,
             " AND (table_name LIKE ? ESCAPE '!' OR table_name LIKE ? ESCAPE '!')"
@@ -3745,7 +3994,10 @@ mod tests {
     fn page_and_next_truncates_the_probe_row() {
         // docs/22 W1.9: limit+1 fetched, the spare row reported as nextPage and dropped.
         let row = || -> Map<String, Value> {
-            [("id", 1)].iter().map(|(k, v)| (k.to_string(), json!(v))).collect()
+            [("id", 1)]
+                .iter()
+                .map(|(k, v)| (k.to_string(), json!(v)))
+                .collect()
         };
         let (page, next) = page_and_next(vec![row(), row(), row()], 2);
         assert!(next);
@@ -4031,8 +4283,8 @@ mod tests {
             "SELECT `id`, `name` FROM `app`.`users` WHERE `name` LIKE ? ESCAPE '!' LIMIT 5000 OFFSET 0"
         );
         assert_eq!(stmt.params, vec![json!("%al%")]);
-        let count = browse_count_sql(DbDialect::Mysql, Some("app"), "users", &w.frag, &w.params)
-            .unwrap();
+        let count =
+            browse_count_sql(DbDialect::Mysql, Some("app"), "users", &w.frag, &w.params).unwrap();
         assert_eq!(
             count.sql,
             "SELECT COUNT(*) AS total FROM `app`.`users` WHERE `name` LIKE ? ESCAPE '!'"
@@ -4234,13 +4486,8 @@ mod tests {
             "op": "delete",
             "pk": { "name": "row-1", "payload": wire(&payload) },
         }))];
-        let out = build_edit_statements(DbDialect::Mysql, None, "t", &edits, &cols, &[])
-            .unwrap();
-        assert!(
-            out[0].sql.contains("md5(`payload`) = ?"),
-            "{}",
-            out[0].sql
-        );
+        let out = build_edit_statements(DbDialect::Mysql, None, "t", &edits, &cols, &[]).unwrap();
+        assert!(out[0].sql.contains("md5(`payload`) = ?"), "{}", out[0].sql);
         assert_eq!(out[0].params.last().unwrap(), &json!(md5_hex(&payload)));
     }
 
@@ -4258,13 +4505,8 @@ mod tests {
             "op": "delete",
             "pk": { "name": "row-1", "payload": wire(&payload) },
         }))];
-        let out = build_edit_statements(DbDialect::Mysql, None, "t", &edits, &cols, &[])
-            .unwrap();
-        assert!(
-            out[0].sql.contains("md5(`payload`) = ?"),
-            "{}",
-            out[0].sql
-        );
+        let out = build_edit_statements(DbDialect::Mysql, None, "t", &edits, &cols, &[]).unwrap();
+        assert!(out[0].sql.contains("md5(`payload`) = ?"), "{}", out[0].sql);
         assert_eq!(out[0].params.last().unwrap(), &json!(md5_hex(&payload)));
     }
 
@@ -4284,15 +4526,9 @@ mod tests {
             "source": { "id": 5, "payload": wire(&payload) },
             "changes": { "payload": wire(&[0x01, 0x02]) },
         }))];
-        let out = build_edit_statements(
-            DbDialect::Pg,
-            None,
-            "t",
-            &edits,
-            &cols,
-            &["id".to_string()],
-        )
-        .unwrap();
+        let out =
+            build_edit_statements(DbDialect::Pg, None, "t", &edits, &cols, &["id".to_string()])
+                .unwrap();
         assert!(
             out[0].sql.contains("md5(\"payload\") = $"),
             "{}",
@@ -4330,7 +4566,9 @@ mod tests {
             "d174ab98d277d9f5a5611c2c9f419d9f"
         );
         assert_eq!(
-            md5_hex(b"12345678901234567890123456789012345678901234567890123456789012345678901234567890"),
+            md5_hex(
+                b"12345678901234567890123456789012345678901234567890123456789012345678901234567890"
+            ),
             "57edf4a22be3c955ac49da2e2107b67a"
         );
         assert_eq!(
@@ -4370,8 +4608,8 @@ mod tests {
             "pk": { "id": 7, "name": "alice" },
             "changes": { "name": "ann" },
         }))];
-        let out = build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &[])
-            .unwrap();
+        let out =
+            build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &[]).unwrap();
         assert_eq!(
             out[0].sql,
             "UPDATE `users` SET `name` = ? WHERE `id` = ? AND `name` = ? LIMIT 1"
@@ -4382,9 +4620,11 @@ mod tests {
             out[0].sql,
             "UPDATE \"users\" SET \"name\" = CAST($1 AS varchar) WHERE \"id\" = CAST($2 AS int) AND \"name\" = CAST($3 AS varchar)"
         );
-        let edits = vec![edit(json!({ "op": "delete", "pk": { "id": 7, "name": "alice" } }))];
-        let out = build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &[])
-            .unwrap();
+        let edits = vec![edit(
+            json!({ "op": "delete", "pk": { "id": 7, "name": "alice" } }),
+        )];
+        let out =
+            build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &[]).unwrap();
         assert_eq!(
             out[0].sql,
             "DELETE FROM `users` WHERE `id` = ? AND `name` = ? LIMIT 1"
@@ -4404,7 +4644,10 @@ mod tests {
         // SELECT, which shares this addressing) from carrying whole paragraphs. Both
         // dialects have md5() built in, so the one spelling serves both.
         let long = "x".repeat(100);
-        let cols = vec![col("id", "int", false, false), col("note", "text", true, false)];
+        let cols = vec![
+            col("id", "int", false, false),
+            col("note", "text", true, false),
+        ];
         let edits = vec![edit(json!({
             "op": "update",
             "pk": { "id": 7, "note": long },
@@ -4417,7 +4660,11 @@ mod tests {
         );
         assert_eq!(
             out[0].params,
-            vec![json!("short now"), json!(7), json!("aed563ecafb4bcc5654c597a421547b2")]
+            vec![
+                json!("short now"),
+                json!(7),
+                json!("aed563ecafb4bcc5654c597a421547b2")
+            ]
         );
         let out = build_edit_statements(DbDialect::Pg, None, "t", &edits, &cols, &[]).unwrap();
         assert_eq!(
@@ -4446,8 +4693,10 @@ mod tests {
             DbDialect::Mysql,
             None,
             "u",
-            &[edit(json!({ "op": "update", "pk": { "id": 7, "name": null },
-                           "changes": { "name": "x" } }))],
+            &[edit(
+                json!({ "op": "update", "pk": { "id": 7, "name": null },
+                           "changes": { "name": "x" } }),
+            )],
             &cols,
             &[],
         )
@@ -4487,15 +4736,14 @@ mod tests {
             "pk": { "id": 7, "name": "old", "city": "la" },
             "changes": { "name": "new" },
         }))];
-        let out = build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &pk)
-            .unwrap();
+        let out =
+            build_edit_statements(DbDialect::Mysql, None, "users", &edits, &cols, &pk).unwrap();
         assert_eq!(
             out[0].sql,
             "UPDATE `users` SET `name` = ? WHERE `id` = ? AND `name` = ?"
         );
         assert_eq!(out[0].params, vec![json!("new"), json!(7), json!("old")]);
-        let out = build_edit_statements(DbDialect::Pg, None, "users", &edits, &cols, &pk)
-            .unwrap();
+        let out = build_edit_statements(DbDialect::Pg, None, "users", &edits, &cols, &pk).unwrap();
         assert_eq!(
             out[0].sql,
             "UPDATE \"users\" SET \"name\" = CAST($1 AS varchar) WHERE \"id\" = CAST($2 AS int) AND \"name\" = CAST($3 AS varchar)"
@@ -4509,15 +4757,16 @@ mod tests {
             "source": { "id": 7, "note": null },
             "changes": { "note": "written" },
         }))];
-        let cols2 = vec![col("id", "int", false, true), col("note", "text", true, false)];
-        let out = build_edit_statements(DbDialect::Mysql, None, "u", &edits, &cols2, &pk)
-            .unwrap();
+        let cols2 = vec![
+            col("id", "int", false, true),
+            col("note", "text", true, false),
+        ];
+        let out = build_edit_statements(DbDialect::Mysql, None, "u", &edits, &cols2, &pk).unwrap();
         assert_eq!(
             out[0].sql,
             "UPDATE `u` SET `note` = ? WHERE `id` = ? AND `note` <=> ?"
         );
-        let out = build_edit_statements(DbDialect::Pg, None, "u", &edits, &cols2, &pk)
-            .unwrap();
+        let out = build_edit_statements(DbDialect::Pg, None, "u", &edits, &cols2, &pk).unwrap();
         assert_eq!(
             out[0].sql,
             "UPDATE \"u\" SET \"note\" = CAST($1 AS text) WHERE \"id\" = CAST($2 AS int) AND \"note\" IS NOT DISTINCT FROM CAST($3 AS text)"
@@ -4529,8 +4778,7 @@ mod tests {
             "pk": { "id": 7, "name": "x" },
             "changes": { "id": 8, "name": "y" },
         }))];
-        let out = build_edit_statements(DbDialect::Mysql, None, "u", &edits, &cols, &pk)
-            .unwrap();
+        let out = build_edit_statements(DbDialect::Mysql, None, "u", &edits, &cols, &pk).unwrap();
         assert_eq!(
             out[0].sql,
             "UPDATE `u` SET `id` = ?, `name` = ? WHERE `id` = ? AND `name` = ?"
@@ -4768,7 +5016,9 @@ mod tests {
         // docs/22 W4.4 live-verify caught this once: a trailing comma after the last clause
         // made the sketch (and any SQL dump that replays it) invalid SQL. The tail must be
         // the clause, then the paren — never a comma between them.
-        assert!(ddl.ends_with("    FOREIGN KEY (\"id\") REFERENCES \"public\".\"users\" (\"id\")\n);"));
+        assert!(
+            ddl.ends_with("    FOREIGN KEY (\"id\") REFERENCES \"public\".\"users\" (\"id\")\n);")
+        );
     }
 
     #[test]
@@ -4824,7 +5074,6 @@ mod tests {
         let err = build_ddl_op_sql(DbDialect::Mysql, "explode", None, "a", None).unwrap_err();
         assert!(err.contains("unknown structure operation"), "{err}");
     }
-
 
     // --- docs/22 W4.6: the minimal DDL set (form -> one builder -> SQL; preview = commit) -------------
 
@@ -4900,8 +5149,15 @@ mod tests {
         );
         // No schema, no pk, no comments: the bare create, one column.
         assert_eq!(
-            table_ddl(DbDialect::Mysql, None, "t", &[ddl_col("a", "int", true)], &[], None)
-                .unwrap(),
+            table_ddl(
+                DbDialect::Mysql,
+                None,
+                "t",
+                &[ddl_col("a", "int", true)],
+                &[],
+                None
+            )
+            .unwrap(),
             vec!["CREATE TABLE `t` (\n    `a` int\n)".to_string()]
         );
     }
@@ -4948,8 +5204,15 @@ mod tests {
             vec!["CREATE INDEX `users_name_idx` ON `app`.`users` (`name`, `order`)".to_string()]
         );
         assert_eq!(
-            index_ddl(DbDialect::Pg, None, "users", "users_email_key", &["email".to_string()], true)
-                .unwrap(),
+            index_ddl(
+                DbDialect::Pg,
+                None,
+                "users",
+                "users_email_key",
+                &["email".to_string()],
+                true
+            )
+            .unwrap(),
             vec!["CREATE UNIQUE INDEX \"users_email_key\" ON \"users\" (\"email\")".to_string()]
         );
     }
@@ -4971,7 +5234,9 @@ mod tests {
             stmts[0],
             "CREATE TABLE \"public\".\"cfg\" (\n    \"id\" bigint NOT NULL,\n    \"label\" varchar(40) DEFAULT '',\n    PRIMARY KEY (\"id\")\n)"
         );
-        assert!(stmts.contains(&"COMMENT ON COLUMN \"public\".\"cfg\".\"label\" IS '标签'".to_string()));
+        assert!(
+            stmts.contains(&"COMMENT ON COLUMN \"public\".\"cfg\".\"label\" IS '标签'".to_string())
+        );
 
         let o = json!({ "table": "t", "columns": [{ "name": "a", "type": "int" }] });
         assert_eq!(
@@ -5026,15 +5291,18 @@ mod tests {
     #[test]
     fn w46_ddl_refuses_illegal_identifiers_and_payloads() {
         // The identifier whitelist: table, column and index names that are not bare words.
-        let bad_col = json!({ "table": "t", "columns": [{ "name": "a; DROP TABLE users", "type": "int" }] });
+        let bad_col =
+            json!({ "table": "t", "columns": [{ "name": "a; DROP TABLE users", "type": "int" }] });
         let err = build_ddl_create(DbDialect::Mysql, "create_table", &bad_col).unwrap_err();
         assert!(err.contains("not a valid MySQL identifier"), "{err}");
-        let bad_table = json!({ "table": "drop table; --", "columns": [{ "name": "a", "type": "int" }] });
+        let bad_table =
+            json!({ "table": "drop table; --", "columns": [{ "name": "a", "type": "int" }] });
         assert!(build_ddl_create(DbDialect::Pg, "create_table", &bad_table).is_err());
         let bad_index = json!({ "table": "t", "index": "x y", "columns": ["a"] });
         assert!(build_ddl_create(DbDialect::Mysql, "create_index", &bad_index).is_err());
         // A type or default that could break the statement out of its one line.
-        let bad_type = json!({ "table": "t", "columns": [{ "name": "a", "type": "int; DROP TABLE x" }] });
+        let bad_type =
+            json!({ "table": "t", "columns": [{ "name": "a", "type": "int; DROP TABLE x" }] });
         let err = build_ddl_create(DbDialect::Pg, "create_table", &bad_type).unwrap_err();
         assert!(err.contains("not a valid column type"), "{err}");
         let bad_default = json!({ "table": "t", "columns": [{ "name": "a", "type": "int", "default": "0; -- done" }] });
@@ -5053,7 +5321,8 @@ mod tests {
         let missing = json!({});
         let err = build_ddl_create(DbDialect::Mysql, "add_column", &missing).unwrap_err();
         assert!(err.contains("table is required"), "{err}");
-        let unknown = build_ddl_create(DbDialect::Mysql, "drop_database", &json!({ "table": "t" })).unwrap_err();
+        let unknown = build_ddl_create(DbDialect::Mysql, "drop_database", &json!({ "table": "t" }))
+            .unwrap_err();
         assert!(unknown.contains("unknown ddl operation"), "{unknown}");
     }
 
@@ -5072,7 +5341,10 @@ mod tests {
             comment: Some("it's \\ kept".into()),
         }];
         let my = table_ddl(DbDialect::Mysql, None, "t", &c, &[], None).unwrap();
-        assert_eq!(my[0], "CREATE TABLE `t` (\n    `a` int COMMENT 'it\\'s \\\\ kept'\n)");
+        assert_eq!(
+            my[0],
+            "CREATE TABLE `t` (\n    `a` int COMMENT 'it\\'s \\\\ kept'\n)"
+        );
         let pg = table_ddl(DbDialect::Pg, None, "t", &c, &[], None).unwrap();
         assert_eq!(pg[1], "COMMENT ON COLUMN \"t\".\"a\" IS 'it''s \\ kept'");
     }
@@ -5274,15 +5546,22 @@ mod tests {
              \n\
              CREATE TABLE \"public\".\"t\" (\n    \"id\" integer NOT NULL\n);\n"
         );
-        assert_eq!(sql_dump_foot(DbDialect::Mysql), "SET FOREIGN_KEY_CHECKS=1;\n");
+        assert_eq!(
+            sql_dump_foot(DbDialect::Mysql),
+            "SET FOREIGN_KEY_CHECKS=1;\n"
+        );
         assert_eq!(sql_dump_foot(DbDialect::Pg), "");
     }
 
     #[test]
     fn sql_insert_batches_rows_into_multi_value_statements() {
-        let mut batch =
-            SqlInsertBatch::new(DbDialect::Mysql, Some("app"), "users", &["id".into(), "name".into()])
-                .unwrap();
+        let mut batch = SqlInsertBatch::new(
+            DbDialect::Mysql,
+            Some("app"),
+            "users",
+            &["id".into(), "name".into()],
+        )
+        .unwrap();
         assert_eq!(batch.push("(1, 'a')"), None);
         assert_eq!(batch.push("(2, NULL)"), None);
         assert_eq!(
@@ -5299,7 +5578,9 @@ mod tests {
         let big = format!("('{}')", "x".repeat(700_000));
         let mut batch = SqlInsertBatch::new(DbDialect::Pg, None, "t", &["pad".into()]).unwrap();
         assert_eq!(batch.push(&big), None);
-        let shipped = batch.push(&big).expect("second ~700 KB row must flush the first");
+        let shipped = batch
+            .push(&big)
+            .expect("second ~700 KB row must flush the first");
         assert!(shipped.starts_with("INSERT INTO \"t\" (\"pad\") VALUES\n('"));
         assert!(shipped.ends_with(";\n"));
         assert!(shipped.len() < EXPORT_SQL_MAX_PACKET + big.len());
@@ -5361,11 +5642,18 @@ mod tests {
         let cols = stub_columns();
         let pk = vec!["id".to_string()];
         for dialect in [DbDialect::Mysql, DbDialect::Pg] {
-            let via_import =
-                build_import_statements(dialect, Some("app"), "users", &rows, &cols, &pk, ImportMode::Insert)
-                    .unwrap();
-            let via_grid = build_edit_statements(dialect, Some("app"), "users", &edits, &cols, &pk)
-                .unwrap();
+            let via_import = build_import_statements(
+                dialect,
+                Some("app"),
+                "users",
+                &rows,
+                &cols,
+                &pk,
+                ImportMode::Insert,
+            )
+            .unwrap();
+            let via_grid =
+                build_edit_statements(dialect, Some("app"), "users", &edits, &cols, &pk).unwrap();
             assert_eq!(via_import.0, via_grid, "{dialect:?}");
             assert_eq!(via_import.1, None);
         }
@@ -5376,9 +5664,16 @@ mod tests {
         let rows = vec![row(&[("id", json!(1)), ("name", json!("alice"))])];
         let cols = stub_columns();
         let pk = vec!["id".to_string()];
-        let (out, degraded) =
-            build_import_statements(DbDialect::Mysql, Some("app"), "users", &rows, &cols, &pk, ImportMode::Upsert)
-                .unwrap();
+        let (out, degraded) = build_import_statements(
+            DbDialect::Mysql,
+            Some("app"),
+            "users",
+            &rows,
+            &cols,
+            &pk,
+            ImportMode::Upsert,
+        )
+        .unwrap();
         assert_eq!(degraded, None);
         assert_eq!(
             out[0].sql,
@@ -5386,9 +5681,16 @@ mod tests {
         );
         assert_eq!(out[0].params, vec![json!(1), json!("alice")]);
 
-        let (out, degraded) =
-            build_import_statements(DbDialect::Pg, Some("public"), "users", &rows, &cols, &pk, ImportMode::Upsert)
-                .unwrap();
+        let (out, degraded) = build_import_statements(
+            DbDialect::Pg,
+            Some("public"),
+            "users",
+            &rows,
+            &cols,
+            &pk,
+            ImportMode::Upsert,
+        )
+        .unwrap();
         assert_eq!(degraded, None);
         assert_eq!(
             out[0].sql,
@@ -5408,7 +5710,11 @@ mod tests {
         );
         // Quotes, newlines: every character real_escape_string would not let through raw.
         assert_eq!(
-            sql_dump_literal(DbDialect::Mysql, Some(&json!("it's \"quoted\"\nline\r end"))).unwrap(),
+            sql_dump_literal(
+                DbDialect::Mysql,
+                Some(&json!("it's \"quoted\"\nline\r end"))
+            )
+            .unwrap(),
             "'it\\'s \\\"quoted\\\"\\nline\\r end'"
         );
         // NUL and Ctrl-Z (0x1A) — the two control bytes the Windows MySQL client chokes on.
@@ -5418,15 +5724,31 @@ mod tests {
         );
         // Unicode passes through untouched — the bytes replay as themselves.
         assert_eq!(
-            sql_dump_literal(DbDialect::Mysql, Some(&json!("\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}"))).unwrap(),
+            sql_dump_literal(
+                DbDialect::Mysql,
+                Some(&json!("\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}"))
+            )
+            .unwrap(),
             "'\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}'"
         );
         // Numbers, bools and nulls keep the plain shapes the dump always used.
-        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(7))).unwrap(), "7");
-        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(1.5))).unwrap(), "1.5");
-        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&json!(true))).unwrap(), "true");
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!(7))).unwrap(),
+            "7"
+        );
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!(1.5))).unwrap(),
+            "1.5"
+        );
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&json!(true))).unwrap(),
+            "true"
+        );
         assert_eq!(sql_dump_literal(DbDialect::Mysql, None).unwrap(), "NULL");
-        assert_eq!(sql_dump_literal(DbDialect::Mysql, Some(&Value::Null)).unwrap(), "NULL");
+        assert_eq!(
+            sql_dump_literal(DbDialect::Mysql, Some(&Value::Null)).unwrap(),
+            "NULL"
+        );
     }
 
     #[test]
@@ -5438,14 +5760,21 @@ mod tests {
             "'it''s \"x\"\n\\ line'"
         );
         assert_eq!(
-            sql_dump_literal(DbDialect::Pg, Some(&json!("\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}"))).unwrap(),
+            sql_dump_literal(
+                DbDialect::Pg,
+                Some(&json!("\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}"))
+            )
+            .unwrap(),
             "'\u{4e2d}\u{6587} \u{3b1}\u{3b2}\u{3b3}'"
         );
         // A NUL cannot live in a Postgres text value; refusing it beats emitting the raw byte
         // into a dump that would then be corrupt from that row on.
         let err = sql_dump_literal(DbDialect::Pg, Some(&json!("a\0b"))).unwrap_err();
         assert!(err.contains("NUL"), "{err}");
-        assert_eq!(sql_dump_literal(DbDialect::Pg, Some(&json!(9))).unwrap(), "9");
+        assert_eq!(
+            sql_dump_literal(DbDialect::Pg, Some(&json!(9))).unwrap(),
+            "9"
+        );
         assert_eq!(sql_dump_literal(DbDialect::Pg, None).unwrap(), "NULL");
     }
 
@@ -5567,7 +5896,13 @@ mod tests {
 
     // --- docs/22 W3.1: server-side completion -------------------------------------------------
 
-    fn items_of(dialect: DbDialect, sql: &str, caret: usize, tables: &[&str], columns: &[&str]) -> Vec<Value> {
+    fn items_of(
+        dialect: DbDialect,
+        sql: &str,
+        caret: usize,
+        tables: &[&str],
+        columns: &[&str],
+    ) -> Vec<Value> {
         let tables: Vec<String> = tables.iter().map(|s| s.to_string()).collect();
         let cols: Vec<String> = columns.iter().map(|s| s.to_string()).collect();
         let prefix = sql_word_ending_at(sql, caret).unwrap_or("");
@@ -5582,7 +5917,10 @@ mod tests {
         // Only [A-Za-z0-9_.$] count as word characters — the panel triggers on the same class.
         assert_eq!(sql_word_ending_at("SELECT * FROM us", 16), Some("us"));
         assert_eq!(sql_word_ending_at("SELECT na", 9), Some("na"));
-        assert_eq!(sql_word_ending_at("SELECT public.us", 16), Some("public.us"));
+        assert_eq!(
+            sql_word_ending_at("SELECT public.us", 16),
+            Some("public.us")
+        );
         // A caret over whitespace or after ')' has no word — nothing to complete.
         assert_eq!(sql_word_ending_at("SELECT * FROM users ", 20), None);
         assert_eq!(sql_word_ending_at("SELECT 1)", 9), None);
@@ -5600,10 +5938,7 @@ mod tests {
         // The NEAREST FROM wins — a subquery's FROM shadows the outer one. JOIN targets are
         // not resolved: the spec promises the FROM-nearest match, nothing fancier.
         assert_eq!(
-            completion_from_table(
-                "SELECT * FROM a WHERE x IN (SELECT * FROM b ",
-                43
-            ),
+            completion_from_table("SELECT * FROM a WHERE x IN (SELECT * FROM b ", 43),
             Some("b".to_string())
         );
         assert_eq!(
@@ -5634,10 +5969,7 @@ mod tests {
             &["users", "user_events"],
             &["id", "user_name"],
         );
-        let labels: Vec<&str> = items
-            .iter()
-            .filter_map(|i| i["label"].as_str())
-            .collect();
+        let labels: Vec<&str> = items.iter().filter_map(|i| i["label"].as_str()).collect();
         // The from-table's columns come first, then matching tables, then keywords.
         assert_eq!(labels[0], "user_name");
         assert!(labels.contains(&"users"));
@@ -5660,9 +5992,20 @@ mod tests {
     fn each_dialect_carries_a_keyword_table_worth_offering() {
         for dialect in [DbDialect::Pg, DbDialect::Mysql] {
             let kws = sql_keywords(dialect);
-            assert!(kws.len() >= 120, "{} has {} keywords", dialect.as_str(), kws.len());
-            for core in ["SELECT", "FROM", "WHERE", "JOIN", "INSERT", "UPDATE", "DELETE", "WITH"] {
-                assert!(kws.contains(&core), "{core} missing from {}", dialect.as_str());
+            assert!(
+                kws.len() >= 120,
+                "{} has {} keywords",
+                dialect.as_str(),
+                kws.len()
+            );
+            for core in [
+                "SELECT", "FROM", "WHERE", "JOIN", "INSERT", "UPDATE", "DELETE", "WITH",
+            ] {
+                assert!(
+                    kws.contains(&core),
+                    "{core} missing from {}",
+                    dialect.as_str()
+                );
             }
         }
         // Dialect-specific spellings exist on their dialect only.
@@ -5681,15 +6024,21 @@ mod tests {
         assert_eq!(cache.tables(t0).unwrap(), vec!["users".to_string()]);
         // Fresh for the whole TTL, expired one tick past it.
         assert!(cache.tables(t0 + COMPLETION_TTL).is_some());
-        assert!(cache.tables(t0 + COMPLETION_TTL + Duration::from_millis(1)).is_none());
+        assert!(cache
+            .tables(t0 + COMPLETION_TTL + Duration::from_millis(1))
+            .is_none());
 
         cache.set_columns("users".into(), vec!["id".into()], t0);
         assert_eq!(cache.columns("users", t0).unwrap(), vec!["id".to_string()]);
-        assert!(cache.columns("users", t0 + COMPLETION_TTL + Duration::from_millis(1)).is_none());
+        assert!(cache
+            .columns("users", t0 + COMPLETION_TTL + Duration::from_millis(1))
+            .is_none());
 
         // The byte budget caps cached column NAMES; past it the cache degrades to keywords
         // + tables instead of growing without bound on a wide schema.
-        let wide: Vec<String> = (0..4000).map(|i| format!("column_name_number_{i:05}")).collect();
+        let wide: Vec<String> = (0..4000)
+            .map(|i| format!("column_name_number_{i:05}"))
+            .collect();
         cache.set_columns("wide".into(), wide, t0);
         assert!(cache.is_degraded());
         assert!(cache.columns("wide", t0).is_none());
@@ -5709,7 +6058,9 @@ mod tests {
         // budget degraded the cache after a few minutes of typing.
         let mut cache = CompletionCache::new();
         let t0 = Instant::now();
-        let cols: Vec<String> = (0..200).map(|i| format!("column_with_a_long_name_{i:03}")).collect();
+        let cols: Vec<String> = (0..200)
+            .map(|i| format!("column_with_a_long_name_{i:03}"))
+            .collect();
         for round in 0..20u32 {
             let at = t0 + COMPLETION_TTL * round + Duration::from_secs(1);
             cache.set_columns("big".into(), cols.clone(), at);

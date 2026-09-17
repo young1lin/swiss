@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -41,7 +41,7 @@ use serde_json::{json, Map, Value};
 
 use super::forward::{ByteStream, ChannelOpener, Forward, ForwardTarget};
 use super::port;
-use super::ssh::{JumpDialer, JumpDefs, SshConnection, SshHooks};
+use super::ssh::{JumpDefs, JumpDialer, SshConnection, SshHooks};
 use super::store::{ConnInput, RuleInput, TunnelStore};
 use super::types::{
     is_retryable, ConnState, FailureKind, PortOwner, RuleDef, RuleState, SshConnDef, TunnelError,
@@ -98,6 +98,41 @@ pub trait SshLike: Send + Sync {
         endpoint: PtyEndpoint,
         hold: Box<dyn Send + 'static>,
     ) -> ConnFuture<'_, Result<(), TunnelError>>;
+    /// Run one non-interactive command to completion over a session channel
+    /// (docs/32 §11), streaming stdout/stderr into `events` as they arrive and
+    /// honouring `cancel` by closing the channel. `hold` is the operation's
+    /// reference on this client, owned by the returned future.
+    fn exec(
+        &self,
+        request: swiss_host::services::remote::RemoteExecRequest,
+        events: tokio::sync::mpsc::Sender<swiss_host::services::remote::RemoteExecEvent>,
+        cancel: swiss_host::services::action::CancelHandle,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<i32, TunnelError>>;
+    /// Stat one remote path over SFTP; None when it does not exist.
+    fn stat_file(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<Option<swiss_host::services::remote::RemoteFileStat>, TunnelError>>;
+    /// Open one remote path for streaming read. The returned reader owns `hold`.
+    fn open_read(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<Box<dyn swiss_host::services::remote::RemoteRead>, TunnelError>>;
+    /// Create/truncate one remote path for streaming write. The writer owns `hold`.
+    fn create_file(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<Box<dyn swiss_host::services::remote::RemoteWrite>, TunnelError>>;
+    /// Create one remote path (and missing parents) over SFTP.
+    fn mkdir_p(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<(), TunnelError>>;
     fn end(&self) -> ConnFuture<'_, ()>;
 }
 
@@ -135,22 +170,78 @@ impl SshLike for SshConnection {
     ) -> ConnFuture<'_, Result<(), TunnelError>> {
         Box::pin(async move { SshConnection::open_shell(self, size, endpoint, hold).await })
     }
+    /// Run one non-interactive command to completion over a session channel
+    /// (docs/32 §11), streaming stdout/stderr into `events` as they arrive and
+    /// honouring `cancel` by closing the channel. `hold` is the operation's
+    /// reference on this client, owned by the returned future.
+    fn exec(
+        &self,
+        request: swiss_host::services::remote::RemoteExecRequest,
+        events: tokio::sync::mpsc::Sender<swiss_host::services::remote::RemoteExecEvent>,
+        cancel: swiss_host::services::action::CancelHandle,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<i32, TunnelError>> {
+        Box::pin(async move { SshConnection::exec(self, request, events, cancel, hold).await })
+    }
+    /// Stat one remote path over SFTP; None when it does not exist.
+    fn stat_file(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<Option<swiss_host::services::remote::RemoteFileStat>, TunnelError>>
+    {
+        Box::pin(async move { SshConnection::stat_file(self, path, hold).await })
+    }
+    /// Open one remote path for streaming read. The returned reader owns `hold`.
+    fn open_read(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<Box<dyn swiss_host::services::remote::RemoteRead>, TunnelError>>
+    {
+        Box::pin(async move { SshConnection::open_read(self, path, hold).await })
+    }
+    /// Create/truncate one remote path for streaming write. The writer owns `hold`.
+    fn create_file(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<Box<dyn swiss_host::services::remote::RemoteWrite>, TunnelError>>
+    {
+        Box::pin(async move { SshConnection::create_file(self, path, hold).await })
+    }
+    /// Create one remote path (and missing parents) over SFTP.
+    fn mkdir_p(
+        &self,
+        path: String,
+        hold: ConnectionLease,
+    ) -> ConnFuture<'_, Result<(), TunnelError>> {
+        Box::pin(async move { SshConnection::mkdir_p(self, path, hold).await })
+    }
     fn end(&self) -> ConnFuture<'_, ()> {
         Box::pin(SshConnection::end(self))
     }
 }
 
-/// One interactive session's reference on an SSH client, released when the session ends.
+/// One operation's reference on an SSH client, released when the operation ends
+/// (docs/32 §10).
 ///
-/// It exists so that the shell capability counts references through the SAME path a rule
-/// does. Dropping it is the release; the pump task that owns it drops it when the far side
-/// or the consumer goes away.
-pub struct ShellSessionGuard {
+/// Born as the shell session's guard (docs/14 T2) and generalized when remote exec and
+/// SFTP needed the same discipline: whatever the operation — a rule, a PTY, an exec, a
+/// file transfer — it counts its reference through the ONE path (`put_ref`) that knows
+/// "the last one out ends the client". Dropping the lease is the release; the task that
+/// owns it drops it when the work is over. `ShellSessionGuard` remains as an alias so
+/// existing imports keep their meaning.
+pub struct ConnectionLease {
     manager: Arc<TunnelManager>,
     conn: Arc<dyn SshLike>,
 }
 
-impl Drop for ShellSessionGuard {
+/// The pre-remote name of [ConnectionLease], kept so the shell-side vocabulary stays
+/// readable where only shells are meant.
+pub type ShellSessionGuard = ConnectionLease;
+
+impl Drop for ConnectionLease {
     fn drop(&mut self) {
         let manager = self.manager.clone();
         let conn = self.conn.clone();
@@ -428,22 +519,20 @@ impl TunnelManager {
         // (manager -> client -> hook -> manager); a manager that is already gone fails
         // the hop as config rather than holding shutdown open.
         let weak_jump = Arc::downgrade(self);
-        let jump: JumpDialer = Arc::new(
-            move |jump_id: &str, host: &str, port: u16| {
-                let weak_jump = weak_jump.clone();
-                let jump_id = jump_id.to_string();
-                let host = host.to_string();
-                Box::pin(async move {
-                    let Some(mgr) = weak_jump.upgrade() else {
-                        return Err(TunnelError::new(
-                            "the tunnel manager is shutting down",
-                            FailureKind::Config,
-                        ));
-                    };
-                    mgr.dial_jump(&jump_id, &host, port).await
-                })
-            },
-        );
+        let jump: JumpDialer = Arc::new(move |jump_id: &str, host: &str, port: u16| {
+            let weak_jump = weak_jump.clone();
+            let jump_id = jump_id.to_string();
+            let host = host.to_string();
+            Box::pin(async move {
+                let Some(mgr) = weak_jump.upgrade() else {
+                    return Err(TunnelError::new(
+                        "the tunnel manager is shutting down",
+                        FailureKind::Config,
+                    ));
+                };
+                mgr.dial_jump(&jump_id, &host, port).await
+            })
+        });
         (self.make_connection)(
             def,
             SshHooks {
@@ -642,13 +731,39 @@ impl TunnelManager {
         };
         let c = self.dial(&def).await?;
         c.refs().fetch_add(1, Ordering::SeqCst);
-        let hold = ShellSessionGuard {
+        let hold = ConnectionLease {
             manager: self.clone(),
             conn: c.clone(),
         };
         // On failure the guard drops here and gives the reference straight back, so a
         // refused PTY cannot leave a connection pinned open with nothing using it.
         c.open_shell(size, endpoint, Box::new(hold)).await
+    }
+
+    /// Dial (or reuse) one connection and hand back the client TOGETHER with its
+    /// operation-scoped lease (docs/32 §10): the remote capability's entry point, used
+    /// by exec and by every SFTP operation. The caller moves the lease into whatever
+    /// owns the operation — the exec future or the file reader/writer — so the reference
+    /// lives exactly as long as the work does.
+    pub async fn lease_connection(
+        self: &Arc<Self>,
+        conn_id: &str,
+    ) -> Result<(Arc<dyn SshLike>, ConnectionLease), TunnelError> {
+        let Some(def) = self.with_store(|s| s.connection(conn_id)) else {
+            return Err(TunnelError::new(
+                format!("unknown ssh connection: {conn_id}"),
+                FailureKind::Config,
+            ));
+        };
+        let c = self.dial(&def).await?;
+        c.refs().fetch_add(1, Ordering::SeqCst);
+        Ok((
+            c.clone(),
+            ConnectionLease {
+                manager: self.clone(),
+                conn: c,
+            },
+        ))
     }
 
     /// Close the forward (releasing the port) and drop the SSH reference.
@@ -1648,8 +1763,9 @@ mod tests {
     use super::*;
     use crate::tunnel::sshtest;
     use crate::tunnel::types::AuthType;
-    use std::path::PathBuf;
-    use std::sync::atomic::AtomicU32;
+    use async_trait::async_trait;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicI32, AtomicU32};
     use std::time::Duration as StdDuration;
 
     use swiss_host::services::shell::{
@@ -1677,6 +1793,14 @@ mod tests {
         ended: AtomicU32,
         /// Interactive shells opened on this client (docs/14 T2).
         shells: AtomicU32,
+        /// Non-interactive execs run on this client (docs/32).
+        execs: AtomicU32,
+        /// The exit status the next fake exec reports.
+        exec_exit: AtomicI32,
+        /// Bytes the next fake exec streams to stdout before exiting.
+        exec_output: Mutex<Vec<u8>>,
+        /// The in-memory remote filesystem the fake file ops serve.
+        files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
         /// Set to make every shell request fail - a server with PTYs disabled.
         refuse_shell: AtomicBool,
         /// Set to make every connect fail with this error.
@@ -1694,6 +1818,10 @@ mod tests {
                 dials: AtomicU32::new(0),
                 ended: AtomicU32::new(0),
                 shells: AtomicU32::new(0),
+                execs: AtomicU32::new(0),
+                exec_exit: AtomicI32::new(0),
+                exec_output: Mutex::new(Vec::new()),
+                files: Arc::new(Mutex::new(HashMap::new())),
                 refuse_shell: AtomicBool::new(false),
                 fail_with: Mutex::new(None),
             })
@@ -1835,6 +1963,170 @@ mod tests {
                 *self.state.lock().unwrap() = ConnState::Idle;
             })
         }
+        fn exec(
+            &self,
+            _request: swiss_host::services::remote::RemoteExecRequest,
+            events: tokio::sync::mpsc::Sender<swiss_host::services::remote::RemoteExecEvent>,
+            cancel: swiss_host::services::action::CancelHandle,
+            hold: ConnectionLease,
+        ) -> ConnFuture<'_, Result<i32, TunnelError>> {
+            Box::pin(async move {
+                if !self.is_connected() {
+                    return Err(TunnelError::new("not established", FailureKind::Network));
+                }
+                self.execs.fetch_add(1, Ordering::SeqCst);
+                // Stream the canned output in small pieces, parking between them, so
+                // a test can exercise mid-run observation and cancel.
+                let payload = self.exec_output.lock().unwrap().clone();
+                for chunk in payload.chunks(7) {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {
+                            drop(hold);
+                            return Err(TunnelError::new(
+                                "the remote command was canceled".to_string(),
+                                FailureKind::Canceled,
+                            ));
+                        }
+                        sent = events.send(
+                            swiss_host::services::remote::RemoteExecEvent::Stdout(chunk.to_vec()),
+                        ) => {
+                            if sent.is_err() {
+                                drop(hold);
+                                return Err(TunnelError::new(
+                                    "the run reading this output went away".to_string(),
+                                    FailureKind::Canceled,
+                                ));
+                            }
+                        }
+                    }
+                }
+                drop(hold);
+                Ok(self.exec_exit.load(Ordering::SeqCst))
+            })
+        }
+        fn stat_file(
+            &self,
+            path: String,
+            hold: ConnectionLease,
+        ) -> ConnFuture<'_, Result<Option<swiss_host::services::remote::RemoteFileStat>, TunnelError>>
+        {
+            Box::pin(async move {
+                drop(hold);
+                Ok(self.files.lock().unwrap().get(&path).map(|b| {
+                    swiss_host::services::remote::RemoteFileStat {
+                        size: b.len() as u64,
+                        mtime_ms: Some(1_000),
+                        is_dir: false,
+                    }
+                }))
+            })
+        }
+        fn open_read(
+            &self,
+            path: String,
+            hold: ConnectionLease,
+        ) -> ConnFuture<'_, Result<Box<dyn swiss_host::services::remote::RemoteRead>, TunnelError>>
+        {
+            Box::pin(async move {
+                let bytes = self
+                    .files
+                    .lock()
+                    .unwrap()
+                    .get(&path)
+                    .cloned()
+                    .ok_or_else(|| {
+                        TunnelError::new(format!("no such file: {path}"), FailureKind::Network)
+                    })?;
+                Ok(Box::new(FakeFileRead {
+                    bytes,
+                    at: 0,
+                    _hold: Some(hold),
+                })
+                    as Box<dyn swiss_host::services::remote::RemoteRead>)
+            })
+        }
+        fn create_file(
+            &self,
+            path: String,
+            hold: ConnectionLease,
+        ) -> ConnFuture<'_, Result<Box<dyn swiss_host::services::remote::RemoteWrite>, TunnelError>>
+        {
+            Box::pin(async move {
+                Ok(Box::new(FakeFileWrite {
+                    files: self.files.clone(),
+                    path,
+                    buf: Vec::new(),
+                    hold: Some(hold),
+                })
+                    as Box<dyn swiss_host::services::remote::RemoteWrite>)
+            })
+        }
+        fn mkdir_p(
+            &self,
+            path: String,
+            hold: ConnectionLease,
+        ) -> ConnFuture<'_, Result<(), TunnelError>> {
+            Box::pin(async move {
+                drop(hold);
+                self.files
+                    .lock()
+                    .unwrap()
+                    .insert(format!("{path}/"), Vec::new());
+                Ok(())
+            })
+        }
+    }
+
+    /// The fake reader/writer halves behind the fake SFTP - chunked, lease-owning,
+    /// shaped exactly like the real ones in ssh.rs.
+    struct FakeFileRead {
+        bytes: Vec<u8>,
+        at: usize,
+        _hold: Option<ConnectionLease>,
+    }
+
+    #[async_trait]
+    impl swiss_host::services::remote::RemoteRead for FakeFileRead {
+        async fn read_chunk(
+            &mut self,
+        ) -> Result<Option<Vec<u8>>, swiss_host::services::remote::RemoteError> {
+            if self.at >= self.bytes.len() {
+                self._hold.take(); // release once the stream truly ends
+                return Ok(None);
+            }
+            let end =
+                (self.at + swiss_host::services::remote::REMOTE_CHUNK_BYTES).min(self.bytes.len());
+            let chunk = self.bytes[self.at..end].to_vec();
+            self.at = end;
+            Ok(Some(chunk))
+        }
+    }
+
+    struct FakeFileWrite {
+        files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+        path: String,
+        buf: Vec<u8>,
+        hold: Option<ConnectionLease>,
+    }
+
+    #[async_trait]
+    impl swiss_host::services::remote::RemoteWrite for FakeFileWrite {
+        async fn write_chunk(
+            &mut self,
+            bytes: &[u8],
+        ) -> Result<(), swiss_host::services::remote::RemoteError> {
+            self.buf.extend_from_slice(bytes);
+            Ok(())
+        }
+        async fn finish(&mut self) -> Result<(), swiss_host::services::remote::RemoteError> {
+            self.files
+                .lock()
+                .unwrap()
+                .insert(self.path.clone(), std::mem::take(&mut self.buf));
+            self.hold.take(); // commit done, connection reference back
+            Ok(())
+        }
     }
 
     // --- harness ----------------------------------------------------------------------------
@@ -1844,7 +2136,8 @@ mod tests {
     /// DPAPI or the machine id.
     fn scratch() -> (PathBuf, Arc<Mutex<TunnelStore>>) {
         swiss_core::secure::key::use_test_master_key();
-        let dir = std::env::temp_dir().join(format!("swiss-tmgr-{}", swiss_core::util::random_hex(8)));
+        let dir =
+            std::env::temp_dir().join(format!("swiss-tmgr-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("create the scratch dir");
         let store = TunnelStore::new(dir.join("tunnels.json"), 19999);
         (dir, Arc::new(Mutex::new(store)))
@@ -2082,7 +2375,8 @@ mod tests {
     async fn a_proxied_connection_forwards_through_the_manager_lifecycle() {
         let ssh_port = crate::tunnel::sshtest::spawn_ssh_server().await;
         let (proxy_port, mut obs) =
-            crate::tunnel::sshtest::spawn_socks5_proxy(crate::tunnel::sshtest::SocksAuth::None, 0).await;
+            crate::tunnel::sshtest::spawn_socks5_proxy(crate::tunnel::sshtest::SocksAuth::None, 0)
+                .await;
         let echo = echo_server().await;
         let (dir, store) = scratch();
         let mut input = ConnInput {
@@ -2108,7 +2402,10 @@ mod tests {
         // The SSH session itself must have gone through the proxy — without this, a dialer
         // that silently ignored the proxy field would still pass on the direct route.
         let o = obs.recv().await.expect("the proxy saw the ssh dial");
-        assert_eq!((o.atyp, o.host.as_slice(), o.port), (0x03, b"localhost".as_slice(), ssh_port));
+        assert_eq!(
+            (o.atyp, o.host.as_slice(), o.port),
+            (0x03, b"localhost".as_slice(), ssh_port)
+        );
         assert_eq!(round_trip(port, "proxied").await, "PROXIED");
 
         m.stop_rule(&r.id, true, false).await.expect("stop");
@@ -2358,7 +2655,14 @@ mod tests {
         assert_eq!(
             keys(&plain_row),
             vec![
-                "id", "name", "host", "port", "username", "authType", "state", "ruleCount",
+                "id",
+                "name",
+                "host",
+                "port",
+                "username",
+                "authType",
+                "state",
+                "ruleCount",
                 "activeRules",
             ]
         );
@@ -2729,7 +3033,10 @@ mod tests {
             sink.lock().unwrap().push(conn.clone());
             conn as Arc<dyn SshLike>
         });
-        (TunnelManager::with_connections(store.clone(), None, factory), built)
+        (
+            TunnelManager::with_connections(store.clone(), None, factory),
+            built,
+        )
     }
 
     fn real_conns_with(built: &RealBuilt, id: &str) -> Vec<Arc<SshConnection>> {
@@ -2825,16 +3132,20 @@ mod tests {
         assert_eq!(refs_of(&built, &b.id), 1, "held by db's session");
         assert_eq!(refs_of(&built, &c.id), 1, "held by the rule");
 
-        m.stop_rule(&r.id, true, false).await.expect("stop the target");
+        m.stop_rule(&r.id, true, false)
+            .await
+            .expect("stop the target");
         // The unwind is async (each release ends the client that holds the next hop);
         // every hop must land at zero — a leaked hold anywhere leaves the hop below live.
         assert!(
             wait_until(Duration::from_secs(5), || {
-                [a.id.as_str(), b.id.as_str(), c.id.as_str()].into_iter().all(|id| {
-                    real_conns_with(&built, id)
-                        .iter()
-                        .all(|c| c.refs.load(Ordering::SeqCst) == 0)
-                })
+                [a.id.as_str(), b.id.as_str(), c.id.as_str()]
+                    .into_iter()
+                    .all(|id| {
+                        real_conns_with(&built, id)
+                            .iter()
+                            .all(|c| c.refs.load(Ordering::SeqCst) == 0)
+                    })
             })
             .await,
             "a hop kept a reference after the chain unwound"
@@ -2852,7 +3163,10 @@ mod tests {
         let s1 = sshtest::spawn_killable_ssh_server(sshtest::TestAuth::AcceptAll);
         let s2 = sshtest::spawn_ssh_server().await;
         let echo = echo_server().await;
-        let a = add_conn_with(&store, jump_pw_conn("bastion", "127.0.0.1", s1.port(), None));
+        let a = add_conn_with(
+            &store,
+            jump_pw_conn("bastion", "127.0.0.1", s1.port(), None),
+        );
         let b = add_conn_with(&store, jump_pw_conn("db", "127.0.0.1", s2, Some(&a.id)));
         let port = free_port().await;
         let r = add_rule(
@@ -2869,12 +3183,16 @@ mod tests {
 
         s1.kill().await;
         assert!(
-            wait_until(Duration::from_secs(5), || state_of(&m, &r.id) == "reconnecting")
-                .await,
+            wait_until(Duration::from_secs(5), || state_of(&m, &r.id)
+                == "reconnecting")
+            .await,
             "the chain stayed {} after the jump died",
             state_of(&m, &r.id)
         );
-        assert!(port_is_free(port).await, "the port goes down with the chain");
+        assert!(
+            port_is_free(port).await,
+            "the port goes down with the chain"
+        );
 
         s1.restart().await;
         assert!(
@@ -2921,7 +3239,10 @@ mod tests {
         let res = m.test_connection(&b.id).await.expect("the test call");
         assert_eq!(res["kind"], json!("auth"), "{res}");
         assert!(
-            res["error"].as_str().unwrap_or_default().contains("via bastion:"),
+            res["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("via bastion:"),
             "{res}"
         );
         // Past the reconnect interval: nothing may have retried the refused credentials.
@@ -2982,7 +3303,9 @@ mod tests {
         // With the dependent gone the delete goes through.
         m.stop_rule(&r.id, true, true).await.expect("stop");
         m.delete_rule(&r.id, false).await.expect("delete the rule");
-        m.delete_connection(&b.id).await.expect("delete the dependent");
+        m.delete_connection(&b.id)
+            .await
+            .expect("delete the dependent");
         m.delete_connection(&a.id).await.expect("delete the jump");
         assert!(store.lock().unwrap().is_empty());
     }
@@ -2996,7 +3319,10 @@ mod tests {
         let (m, built) = real_manager(&store);
         let s1 = sshtest::spawn_killable_ssh_server(sshtest::TestAuth::AcceptAll);
         let s2 = sshtest::spawn_ssh_server().await;
-        let a = add_conn_with(&store, jump_pw_conn("bastion", "127.0.0.1", s1.port(), None));
+        let a = add_conn_with(
+            &store,
+            jump_pw_conn("bastion", "127.0.0.1", s1.port(), None),
+        );
         let b = add_conn_with(&store, jump_pw_conn("db", "127.0.0.1", s2, Some(&a.id)));
 
         let res = m.test_connection(&b.id).await.expect("the test call");
@@ -3004,22 +3330,23 @@ mod tests {
         assert_eq!(built.lock().unwrap().len(), 0, "no shared client was built");
         assert_eq!(m.conn_state(&b.id), ConnState::Idle);
         // A successful Test of a keyless hop stores nothing (the TOFU note, §3.2).
-        assert!(
-            store
-                .lock()
-                .unwrap()
-                .connection(&a.id)
-                .unwrap()
-                .host_key
-                .is_none()
-        );
+        assert!(store
+            .lock()
+            .unwrap()
+            .connection(&a.id)
+            .unwrap()
+            .host_key
+            .is_none());
 
         s1.kill().await;
         let res = m.test_connection(&b.id).await.expect("the test call");
         assert_eq!(res["ok"], json!(false), "{res}");
         assert_eq!(res["kind"], json!("network"), "{res}");
         assert!(
-            res["error"].as_str().unwrap_or_default().contains("via bastion:"),
+            res["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("via bastion:"),
             "{res}"
         );
     }
@@ -3232,8 +3559,15 @@ mod tests {
         let c = add_conn(&store);
         let mut rules = Vec::new();
         for i in 0..6 {
-            let r = add_rule(&store, rule_input(&format!("r{i}"), &c.id, free_port().await, echo));
-            store.lock().unwrap().set_enabled(&r.id, true).expect("enable");
+            let r = add_rule(
+                &store,
+                rule_input(&format!("r{i}"), &c.id, free_port().await, echo),
+            );
+            store
+                .lock()
+                .unwrap()
+                .set_enabled(&r.id, true)
+                .expect("enable");
             rules.push(r);
         }
 
@@ -3249,15 +3583,31 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         for r in &rules {
-            assert_ne!(state_of(&m, &r.id), "up", "{} came up after close_all", r.name);
-            assert!(port_is_free(r.local_port).await, "{} still holds its port", r.name);
+            assert_ne!(
+                state_of(&m, &r.id),
+                "up",
+                "{} came up after close_all",
+                r.name
+            );
+            assert!(
+                port_is_free(r.local_port).await,
+                "{} still holds its port",
+                r.name
+            );
         }
         for i in 0..built_len(&built) {
-            assert!(!nth(&built, i).is_connected(), "a client survived close_all");
+            assert!(
+                !nth(&built, i).is_connected(),
+                "a client survived close_all"
+            );
         }
         // A rule asked to start behind the gate is refused, not half-built.
         let refused = m.start_rule(&rules[0].id).await.expect_err("closed");
-        assert!(refused.message().contains("closed"), "{}", refused.message());
+        assert!(
+            refused.message().contains("closed"),
+            "{}",
+            refused.message()
+        );
         assert_eq!(state_of(&m, &rules[0].id), "stopped");
 
         // The next boot lowers the gate and everything comes back.
@@ -3282,14 +3632,22 @@ mod tests {
         m.start_rule(&r.id).await.expect("start");
         let first = nth(&built, 0);
         first.end().await; // the session is gone; the listener is not
-        assert!(!port_is_free(port).await, "the stale listener is still bound");
+        assert!(
+            !port_is_free(port).await,
+            "the stale listener is still bound"
+        );
 
-        m.start_rule(&r.id).await.expect("restart over the dead client");
+        m.start_rule(&r.id)
+            .await
+            .expect("restart over the dead client");
         assert_eq!(state_of(&m, &r.id), "up");
         // The dead client was the rule's last reference, so it left the map; the restart
         // built a fresh one instead of reviving it.
         assert!(!first.is_connected(), "the ended client stays ended");
-        assert!(nth(&built, built_len(&built) - 1).is_connected(), "a live client replaced it");
+        assert!(
+            nth(&built, built_len(&built) - 1).is_connected(),
+            "a live client replaced it"
+        );
         assert_eq!(round_trip(port, "hello").await, "HELLO");
         m.close_all().await;
     }
@@ -3635,5 +3993,341 @@ mod tests {
             );
         }
         assert_eq!(session.next_event().await, Some(PtyEvent::Data(vec![0x03])));
+    }
+
+    // --- remote execution leases + provider (docs/32) --------------------------------------
+
+    use swiss_host::services::action::CancelSource;
+    use swiss_host::services::remote::{
+        RemoteError, RemoteExecEvent, RemoteExecRequest, RemoteTransportProvider,
+    };
+
+    /// A minimal request helper: argv only, the shape every lease test needs.
+    fn exec_req(argv: &[&str]) -> RemoteExecRequest {
+        RemoteExecRequest {
+            argv: argv.iter().map(|s| s.to_string()).collect(),
+            env: Vec::new(),
+            cwd: None,
+        }
+    }
+
+    fn collect(mut rx: tokio::sync::mpsc::Receiver<RemoteExecEvent>) -> (String, String) {
+        let (mut out, mut err) = (String::new(), String::new());
+        loop {
+            match rx.try_recv() {
+                Ok(RemoteExecEvent::Stdout(b)) => out.push_str(&String::from_utf8_lossy(&b)),
+                Ok(RemoteExecEvent::Stderr(b)) => err.push_str(&String::from_utf8_lossy(&b)),
+                Err(_) => break, // empty or the sender side dropped: both mean "done"
+            }
+        }
+        (out, err)
+    }
+
+    /// Real-transport helper: store + connection row against a spawned test server port.
+    fn real_store_with(dir: &Path, port: u16) -> (Arc<Mutex<TunnelStore>>, SshConnDef) {
+        swiss_core::secure::key::use_test_master_key();
+        let store = Arc::new(Mutex::new(TunnelStore::new(
+            dir.join("tunnels.json"),
+            19999,
+        )));
+        let input = ConnInput {
+            name: "srv".into(),
+            host: "127.0.0.1".into(),
+            port: port as f64,
+            username: "deploy".into(),
+            auth_type: AuthType::Password,
+            password: Some("pw".into()),
+            ..Default::default()
+        };
+        let conn = store.lock().unwrap().add_connection(&input).expect("add");
+        (store, conn)
+    }
+
+    #[tokio::test]
+    async fn a_remote_exec_shares_the_rule_client_and_releases_its_lease() {
+        let (dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let conn = add_conn(&store);
+        let echo = echo_server().await;
+        let rule = add_rule(&store, rule_input("r1", &conn.id, free_port().await, echo));
+        m.start_rule(&rule.id).await.expect("starts");
+        let refs_with_rule = nth(&built, 0).ref_count();
+
+        // The provider leases while the exec runs and gives the reference back.
+        let provider = crate::tunnel::remote::TunnelRemote::new(m.clone());
+        *nth(&built, 0).exec_output.lock().unwrap() = b"hello\nworld\n".to_vec();
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        let result = provider
+            .exec(
+                &conn.id,
+                "remote.exec",
+                exec_req(&["make"]),
+                tx,
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("execs");
+        assert_eq!(result.exit_code, 0);
+        let (out, _) = collect(rx);
+        assert_eq!(out, "hello\nworld\n");
+        assert_eq!(nth(&built, 0).execs.load(Ordering::SeqCst), 1);
+        assert!(
+            eventually(|| nth(&built, 0).ref_count() == refs_with_rule).await,
+            "the lease returned to the rule's reference count"
+        );
+        assert_eq!(
+            nth(&built, 0).dials(),
+            1,
+            "no second dial: the client is shared"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_nonzero_exit_is_a_result_not_an_error() {
+        let (dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let conn = add_conn(&store);
+        // No rule here: a setup lease dials the client and holds it while the exec
+        // rides the same connection, which is the interesting half of the contract.
+        let (_client, lease) = m.lease_connection(&conn.id).await.expect("dial");
+        nth(&built, 0).exec_exit.store(7, Ordering::SeqCst);
+        let provider = crate::tunnel::remote::TunnelRemote::new(m.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let result = provider
+            .exec(
+                &conn.id,
+                "remote.exec",
+                exec_req(&["false"]),
+                tx,
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("a nonzero exit is still a completed exec");
+        assert_eq!(result.exit_code, 7);
+        // The lease release is a spawned task (Drop cannot await): poll for it.
+        assert!(
+            eventually(|| nth(&built, 0).ref_count() == 1).await,
+            "back to the setup lease only"
+        );
+        drop(lease);
+        assert!(
+            eventually(|| nth(&built, 0).ref_count() == 0).await,
+            "no leaked lease"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_canceled_exec_stops_and_releases_the_lease() {
+        let (dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let conn = add_conn(&store);
+        let (_client, lease) = m.lease_connection(&conn.id).await.expect("dial");
+        // Enough output chunks that the cancel lands mid-stream.
+        *nth(&built, 0).exec_output.lock().unwrap() = vec![b'x'; 7 * 200];
+        let provider = crate::tunnel::remote::TunnelRemote::new(m.clone());
+        let source = CancelSource::new();
+        let (tx, rx) = tokio::sync::mpsc::channel(4); // small: the pump parks, cancel wins
+        let handle = source.handle();
+        let exec = provider.exec(
+            &conn.id,
+            "remote.exec",
+            exec_req(&["long-build"]),
+            tx,
+            handle,
+        );
+        // Cancel while the first chunks are still in flight: the fake checks the
+        // cancel flag between every chunk, so a mid-stream cancel is deterministic.
+        tokio::time::sleep(StdDuration::from_millis(5)).await;
+        source.cancel();
+        match exec.await {
+            Err(RemoteError::Canceled(m)) => assert!(m.contains("canceled"), "{m}"),
+            Ok(_) => panic!("canceled, not a result"),
+            Err(other) => panic!("wrong error: {other}"),
+        }
+        drop(rx);
+        // The exec's own reference is back even though the command "never finished";
+        // the setup lease then unwinds the client itself.
+        assert!(
+            eventually(|| nth(&built, 0).ref_count() == 1).await,
+            "canceled released the exec lease"
+        );
+        drop(lease);
+        assert!(
+            eventually(|| nth(&built, 0).ref_count() == 0 && nth(&built, 0).ended() == 1).await,
+            "the client unwound after its last lease"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn an_exec_on_an_unknown_endpoint_is_named() {
+        let (dir, store) = scratch();
+        let (m, _) = manager(&store);
+        let provider = crate::tunnel::remote::TunnelRemote::new(m.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        match provider
+            .exec(
+                "ghost",
+                "remote.exec",
+                exec_req(&["make"]),
+                tx,
+                CancelSource::new().handle(),
+            )
+            .await
+        {
+            Err(RemoteError::Unknown(m)) => assert!(m.contains("ghost"), "{m}"),
+            Ok(_) => panic!("unknown endpoint, got a result"),
+            Err(other) => panic!("wrong error: {other}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn file_operations_round_trip_and_release_their_leases() {
+        let (dir, store) = scratch();
+        let (m, built) = manager(&store);
+        let conn = add_conn(&store);
+        let (_client, lease) = m.lease_connection(&conn.id).await.expect("dial");
+        let provider = crate::tunnel::remote::TunnelRemote::new(m.clone());
+        provider
+            .mkdir_p(&conn.id, "sync", "/data/ws/proj/src")
+            .await
+            .expect("mkdir");
+        let mut writer = provider
+            .create(&conn.id, "sync", "/data/ws/proj/src/main.c")
+            .await
+            .expect("create");
+        // The lease is held WHILE the writer is open: refs on the client are >= 2
+        // (the setup lease plus the writer's own).
+        assert!(
+            nth(&built, 0).ref_count() >= 2,
+            "an open file holds its lease on top of the setup lease"
+        );
+        writer.write_chunk(b"int main(){}\n").await.expect("write");
+        writer.finish().await.expect("finish");
+        drop(writer);
+        let stat = provider
+            .stat(&conn.id, "sync", "/data/ws/proj/src/main.c")
+            .await
+            .expect("stat")
+            .expect("present");
+        assert_eq!(stat.size, 13, "the written byte count");
+        let mut reader = provider
+            .open_read(&conn.id, "pull", "/data/ws/proj/src/main.c")
+            .await
+            .expect("read");
+        let mut back = Vec::new();
+        while let Some(chunk) = reader.read_chunk().await.expect("chunk") {
+            back.extend_from_slice(&chunk);
+        }
+        drop(reader);
+        assert_eq!(back, b"int main(){}\n");
+        assert!(
+            eventually(|| nth(&built, 0).ref_count() == 1).await,
+            "every file lease returned to the setup lease's count"
+        );
+        drop(lease);
+        assert!(
+            eventually(|| nth(&built, 0).ref_count() == 0).await,
+            "the client unwound after its last lease"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The full russh stack against the fake exec server (sshtest): connect, session
+    /// channel, exec request, streaming Data/ExtendedData, exit status.
+    #[tokio::test]
+    async fn the_real_client_execs_against_a_real_russh_server() {
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-ssh-exec-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let port = sshtest::spawn_exec_ssh_server(sshtest::ExecScript {
+            stdout: b"hello\nworld\n".to_vec(),
+            stderr: b"warn".to_vec(),
+            exit: Some(0),
+        })
+        .await;
+        let (store, conn) = real_store_with(&dir, port);
+        let m = TunnelManager::new(store.clone(), None);
+        let provider = crate::tunnel::remote::TunnelRemote::new(m);
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let result = provider
+            .exec(
+                &conn.id,
+                "remote.exec",
+                RemoteExecRequest {
+                    argv: vec!["echo".into(), "one two".into(), "it's".into()],
+                    env: vec![("BOARD".into(), "a;b".into())],
+                    cwd: Some("/tmp/x y".into()),
+                },
+                tx,
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("exec over the real transport");
+        assert_eq!(result.exit_code, 0);
+        let (stdout, stderr) = collect(rx);
+        assert_eq!(stdout, "hello\nworld\n");
+        assert_eq!(stderr, "warn");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Cancellation against the real transport: the server stalls between its output
+    /// and the exit status; the client closes the channel and reports canceled.
+    #[tokio::test]
+    async fn the_real_client_cancels_a_stalled_exec() {
+        let dir =
+            std::env::temp_dir().join(format!("swiss-ssh-cxl-{}", swiss_core::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        // A wedged command: output, then nothing — no exit status, no close. The
+        // only ways out are the client's cancel or its deadline.
+        let port = sshtest::spawn_exec_ssh_server(sshtest::ExecScript {
+            stdout: b"partial".to_vec(),
+            stderr: Vec::new(),
+            exit: None,
+        })
+        .await;
+        let (store, conn) = real_store_with(&dir, port);
+        let m = TunnelManager::new(store.clone(), None);
+        let provider = crate::tunnel::remote::TunnelRemote::new(m);
+        let source = CancelSource::new();
+        let handle = source.handle();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        // SPAWN the exec: an unpinned future is never polled, and on the current_thread
+        // runtime only a spawned task can stream while the test waits for the first
+        // bytes.
+        let exec = tokio::spawn(async move {
+            provider
+                .exec(&conn.id, "remote.exec", exec_req(&["yocto"]), tx, handle)
+                .await
+        });
+        // Park until the first stdout arrives, then cancel into the stall.
+        let streamed = loop {
+            match rx.recv().await {
+                Some(RemoteExecEvent::Stdout(b)) if !b.is_empty() => break true,
+                Some(_) => continue,
+                None => break false,
+            }
+        };
+        // Cancel only matters while the exec still runs; if it already ended, the
+        // await below returns immediately and the assert names what it returned.
+        if streamed {
+            source.cancel();
+        }
+        let outcome = exec.await.expect("the exec task finished");
+        assert!(
+            streamed,
+            "the stalled exec streamed its output first; it finished instead: {outcome:?}"
+        );
+        match outcome {
+            Err(RemoteError::Canceled(_)) => {}
+            Ok(_) => panic!("a stalled exec must not finish"),
+            Err(other) => panic!("wrong error: {other}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

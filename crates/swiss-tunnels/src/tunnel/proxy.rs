@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -207,8 +207,11 @@ async fn connect_http(
     let target = format!("{host}:{port}");
     let mut req = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n");
     if username.is_some() || password.is_some() {
-        let basic = base64::engine::general_purpose::STANDARD
-            .encode(format!("{}:{}", username.as_deref().unwrap_or(""), password.as_deref().unwrap_or("")));
+        let basic = base64::engine::general_purpose::STANDARD.encode(format!(
+            "{}:{}",
+            username.as_deref().unwrap_or(""),
+            password.as_deref().unwrap_or("")
+        ));
         req.push_str(&format!("Proxy-Authorization: Basic {basic}\r\n"));
     }
     req.push_str("\r\n");
@@ -218,18 +221,17 @@ async fn connect_http(
             FailureKind::Network,
         )
     };
-    stream
-        .write_all(req.as_bytes())
-        .await
-        .map_err(io_err)?;
+    stream.write_all(req.as_bytes()).await.map_err(io_err)?;
     let mut head = Vec::new();
     let mut byte = [0u8; 1];
     loop {
         match stream.read(&mut byte).await {
-            Ok(0) => return Err(io_err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "eof",
-            ))),
+            Ok(0) => {
+                return Err(io_err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "eof",
+                )))
+            }
             Ok(_) => {
                 head.push(byte[0]);
                 if head.ends_with(b"\r\n\r\n") {
@@ -288,16 +290,17 @@ async fn connect_socks5(
             FailureKind::Network,
         )
     };
-    let greeting: &[u8] = if creds { &[0x05, 0x02, 0x00, 0x02] } else { &[0x05, 0x01, 0x00] };
+    let greeting: &[u8] = if creds {
+        &[0x05, 0x02, 0x00, 0x02]
+    } else {
+        &[0x05, 0x01, 0x00]
+    };
     stream.write_all(greeting).await.map_err(io_err)?;
     let mut reply = [0u8; 2];
     stream.read_exact(&mut reply).await.map_err(io_err)?;
     if reply[0] != 0x05 {
         return Err(TunnelError::new(
-            format!(
-                "proxy {}:{} sent a malformed socks5 reply",
-                p.host, p.port
-            ),
+            format!("proxy {}:{} sent a malformed socks5 reply", p.host, p.port),
             FailureKind::Network,
         ));
     }
@@ -316,10 +319,7 @@ async fn connect_socks5(
             stream.read_exact(&mut sub).await.map_err(io_err)?;
             if sub != [0x01, 0x00] {
                 return Err(TunnelError::new(
-                    format!(
-                        "proxy {}:{} rejected socks5 credentials",
-                        p.host, p.port
-                    ),
+                    format!("proxy {}:{} rejected socks5 credentials", p.host, p.port),
                     FailureKind::Network,
                 ));
             }
@@ -372,10 +372,7 @@ async fn connect_socks5(
     stream.read_exact(&mut head).await.map_err(io_err)?;
     if head[0] != 0x05 {
         return Err(TunnelError::new(
-            format!(
-                "proxy {}:{} sent a malformed socks5 reply",
-                p.host, p.port
-            ),
+            format!("proxy {}:{} sent a malformed socks5 reply", p.host, p.port),
             FailureKind::Network,
         ));
     }
@@ -395,10 +392,7 @@ async fn connect_socks5(
         }
         _ => {
             return Err(TunnelError::new(
-                format!(
-                    "proxy {}:{} sent a malformed socks5 reply",
-                    p.host, p.port
-                ),
+                format!("proxy {}:{} sent a malformed socks5 reply", p.host, p.port),
                 FailureKind::Network,
             ));
         }
@@ -542,11 +536,7 @@ mod tests {
         let conn = Arc::new(SshConnection::new(def, SshHooks::default()));
         let err = conn.connect().await.expect_err("the refusal");
         assert_eq!(err.kind, FailureKind::Network);
-        assert!(
-            err.message.contains("socks5 reply"),
-            "{}",
-            err.message
-        );
+        assert!(err.message.contains("socks5 reply"), "{}", err.message);
     }
 
     /// docs/27 §2.6.5: a credential reference that does not resolve fails as Config,
@@ -595,7 +585,8 @@ mod tests {
         let err = conn.connect().await.expect_err("the method refusal");
         assert_eq!(err.kind, FailureKind::Network);
         assert!(
-            err.message.contains("offers no supported socks5 auth method"),
+            err.message
+                .contains("offers no supported socks5 auth method"),
             "{}",
             err.message
         );

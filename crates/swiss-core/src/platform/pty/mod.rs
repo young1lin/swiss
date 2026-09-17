@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -55,9 +55,8 @@
 mod conpty;
 #[cfg(windows)]
 pub use conpty::{
-    default_shell, default_shell_in, find_on_path, find_on_path_with, open_pty,
-    resolve_program, resolve_program_in, shell_candidates, shell_candidates_in, PtyHandle,
-    PtyPump,
+    default_shell, default_shell_in, find_on_path, find_on_path_with, open_pty, resolve_program,
+    resolve_program_in, shell_candidates, shell_candidates_in, PtyHandle, PtyPump,
 };
 
 #[cfg(not(windows))]

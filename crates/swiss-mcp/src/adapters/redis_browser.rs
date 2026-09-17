@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -22,9 +22,9 @@ use super::redis::{
     assert_command_allowed, type_aware_read, value_i64, value_string, RedisHandle, SCAN_TYPES,
 };
 use async_trait::async_trait;
-use swiss_host::dbbrowser::RedisBrowser;
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
+use swiss_host::dbbrowser::RedisBrowser;
 
 pub struct RedisDataBrowser {
     label: String,
@@ -67,7 +67,10 @@ fn parse_redis_version(info: &str) -> Option<(u64, u64)> {
 /// every query-string param as a JSON STRING (Node coerced with `Number()`), so `count` arrives
 /// as `"500"` at least as often as `500`, and an uncoerced or unclamped value is either a SCAN
 /// syntax error or a request for the whole keyspace in one round trip.
-fn scan_args(o: &Value, scan_type_supported: bool) -> Result<(Vec<String>, Option<String>), String> {
+fn scan_args(
+    o: &Value,
+    scan_type_supported: bool,
+) -> Result<(Vec<String>, Option<String>), String> {
     let cursor = o
         .get("cursor")
         .and_then(Value::as_str)
@@ -459,7 +462,10 @@ redis_mode:standalone
     fn an_older_server_filters_locally_the_type_never_reaches_scan() {
         // The pre-6.0 path: no TYPE token in the args, the type rides back for local filtering.
         let (a, local) = scan_args(&json!({"type": "hash"}), false).expect("valid params");
-        assert!(!a.iter().any(|x| x == "TYPE"), "TYPE must not reach SCAN: {a:?}");
+        assert!(
+            !a.iter().any(|x| x == "TYPE"),
+            "TYPE must not reach SCAN: {a:?}"
+        );
         assert_eq!(local.as_deref(), Some("hash"));
         // A 6.0+ server keeps the server-side filter and filters nothing locally.
         let (a, local) = scan_args(&json!({"type": "hash"}), true).expect("valid params");

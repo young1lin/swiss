@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -76,7 +76,10 @@ struct Harness {
 fn setup() -> Harness {
     sandbox();
     let path = std::env::temp_dir()
-        .join(format!("swiss-adminapi-{}", swiss_core::util::random_hex(8)))
+        .join(format!(
+            "swiss-adminapi-{}",
+            swiss_core::util::random_hex(8)
+        ))
         .join("managed.json");
     std::fs::create_dir_all(path.parent().expect("the scratch file has a parent"))
         .expect("create the scratch directory");
@@ -342,7 +345,8 @@ async fn appends_mcps_the_user_has_never_positioned_in_name_order() {
     for n in ["a", "zeta", "mid", "alpha"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    h.put("/api/groups/mcps/order", json!({ "order": ["zeta", "a"] })).await;
+    h.put("/api/groups/mcps/order", json!({ "order": ["zeta", "a"] }))
+        .await;
     // The arrangement wins for the two it names; the rest sort among themselves rather than
     // landing wherever the registry happened to start them.
     assert_eq!(h.names().await, ["zeta", "a", "alpha", "mid"]);
@@ -354,9 +358,13 @@ async fn goes_back_to_name_order_when_the_arrangement_is_cleared() {
     for n in ["b", "c", "a"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    h.put("/api/groups/mcps/order", json!({ "order": ["c", "b", "a"] }))
+    h.put(
+        "/api/groups/mcps/order",
+        json!({ "order": ["c", "b", "a"] }),
+    )
+    .await;
+    h.put("/api/groups/mcps/order", json!({ "order": [] }))
         .await;
-    h.put("/api/groups/mcps/order", json!({ "order": [] })).await;
     assert_eq!(h.names().await, ["a", "b", "c"]);
 }
 
@@ -366,7 +374,9 @@ async fn persists_a_panel_order_and_lists_by_it_appending_unknown_names() {
     for n in ["a", "b", "c"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    let (status, _) = h.put("/api/groups/mcps/order", json!({ "order": ["c", "a"] })).await;
+    let (status, _) = h
+        .put("/api/groups/mcps/order", json!({ "order": ["c", "a"] }))
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(h.names().await, ["c", "a", "b"], "b is not in the order");
     // It survives a restart of the store, because it is on disk and not in the registry.
@@ -379,7 +389,9 @@ async fn persists_a_panel_order_and_lists_by_it_appending_unknown_names() {
 #[tokio::test]
 async fn rejects_a_malformed_order_payload() {
     let h = setup();
-    let (status, _) = h.put("/api/groups/mcps/order", json!({ "order": "c,a" })).await;
+    let (status, _) = h
+        .put("/api/groups/mcps/order", json!({ "order": "c,a" }))
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -389,8 +401,11 @@ async fn keeps_a_renamed_mcps_position_and_prunes_a_deleted_one_from_the_order()
     for n in ["a", "b", "c"] {
         h.register(n, json!({ "type": "echo" }));
     }
-    h.put("/api/groups/mcps/order", json!({ "order": ["a", "b", "c"] }))
-        .await;
+    h.put(
+        "/api/groups/mcps/order",
+        json!({ "order": ["a", "b", "c"] }),
+    )
+    .await;
     let (status, _) = h.post("/api/mcps/a/rename", json!({ "name": "z" })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(h.store.get_order(), ["z", "b", "c"]);
@@ -1794,16 +1809,27 @@ async fn creates_groups_and_reports_them_on_the_list() {
 #[tokio::test]
 async fn reordering_groups_never_rehomes_the_first_groups_default_members() {
     let h = with_mcps();
-    h.put("/api/groups/mcps", json!({ "groups": ["g1", "g2"] })).await;
+    h.put("/api/groups/mcps", json!({ "groups": ["g1", "g2"] }))
+        .await;
     assert_eq!(groups_of(&h).await, ["g1", "g1", "g1"]);
 
-    let (status, put) = h.put("/api/groups/mcps", json!({ "groups": ["g2", "g1"] })).await;
+    let (status, put) = h
+        .put("/api/groups/mcps", json!({ "groups": ["g2", "g1"] }))
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(put["groups"], json!(["g2", "g1"]));
 
     let (_, list) = h.get("/api/mcps").await;
-    assert_eq!(list["groups"], json!(["g2", "g1"]), "the order itself changed");
-    assert_eq!(groups_of(&h).await, ["g1", "g1", "g1"], "but nobody re-homed");
+    assert_eq!(
+        list["groups"],
+        json!(["g2", "g1"]),
+        "the order itself changed"
+    );
+    assert_eq!(
+        groups_of(&h).await,
+        ["g1", "g1", "g1"],
+        "but nobody re-homed"
+    );
 }
 
 /// The same Move up shape through the tokens scope: this store owns its member set, so the
@@ -1819,7 +1845,8 @@ async fn reordering_token_groups_never_rehomes_the_first_groups_default_members(
         .as_str()
         .expect("the id")
         .to_string();
-    h.put("/api/groups/tokens", json!({ "groups": ["g1", "g2"] })).await;
+    h.put("/api/groups/tokens", json!({ "groups": ["g1", "g2"] }))
+        .await;
 
     let (status, put) = h
         .put("/api/groups/tokens", json!({ "groups": ["g2", "g1"] }))
@@ -1837,16 +1864,14 @@ async fn rejects_a_malformed_duplicate_empty_or_last_group_destroying_list() {
     let (status, _) = h.put("/api/groups/mcps", json!({ "groups": "Docs" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    for groups in [
-        json!(["Docs", "docs"]),
-        json!([" "]),
-        json!([]),
-    ] {
+    for groups in [json!(["Docs", "docs"]), json!([" "]), json!([])] {
         let (status, _) = h.put("/api/groups/mcps", json!({ "groups": groups })).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{groups}");
     }
     // `default` is an ordinary name now — a list of just it is fine.
-    let (status, _) = h.put("/api/groups/mcps", json!({ "groups": ["default"] })).await;
+    let (status, _) = h
+        .put("/api/groups/mcps", json!({ "groups": ["default"] }))
+        .await;
     assert_eq!(status, StatusCode::OK);
     // A rejected call must not have half-applied.
     let (_, list) = h.get("/api/mcps").await;
@@ -1860,17 +1885,27 @@ async fn assigns_a_config_sourced_mcp_to_a_group_and_back_to_default() {
         .await;
 
     let (status, put) = h
-        .put("/api/groups/mcps/members/context7", json!({ "group": "Docs" }))
+        .put(
+            "/api/groups/mcps/members/context7",
+            json!({ "group": "Docs" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(put, json!({ "group": "Docs" }), "the family answers the canonical group");
+    assert_eq!(
+        put,
+        json!({ "group": "Docs" }),
+        "the family answers the canonical group"
+    );
 
     let (_, list) = h.get("/api/mcps").await;
     assert_eq!(row_named(&list, "context7")["group"], json!("Docs"));
     assert_eq!(row_named(&list, "deepwiki")["group"], json!("default"));
 
     let (status, _) = h
-        .put("/api/groups/mcps/members/context7", json!({ "group": null }))
+        .put(
+            "/api/groups/mcps/members/context7",
+            json!({ "group": null }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     let (_, list) = h.get("/api/mcps").await;
@@ -1880,9 +1915,13 @@ async fn assigns_a_config_sourced_mcp_to_a_group_and_back_to_default() {
 #[tokio::test]
 async fn survives_a_restart_because_the_assignment_is_on_disk_not_in_the_registry() {
     let h = with_mcps();
-    h.put("/api/groups/mcps", json!({ "groups": ["Docs"] })).await;
-    h.put("/api/groups/mcps/members/context7", json!({ "group": "Docs" }))
+    h.put("/api/groups/mcps", json!({ "groups": ["Docs"] }))
         .await;
+    h.put(
+        "/api/groups/mcps/members/context7",
+        json!({ "group": "Docs" }),
+    )
+    .await;
 
     let reloaded = ManagedStore::open_at(h.path.clone());
     assert_eq!(reloaded.get_groups(), ["Docs"]);
@@ -1899,9 +1938,12 @@ async fn answers_404_for_an_unknown_mcp_and_400_for_an_unknown_group() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        h.put("/api/groups/mcps/members/context7", json!({ "group": "Nope" }))
-            .await
-            .0,
+        h.put(
+            "/api/groups/mcps/members/context7",
+            json!({ "group": "Nope" })
+        )
+        .await
+        .0,
         StatusCode::BAD_REQUEST
     );
 }
@@ -1920,7 +1962,10 @@ async fn renames_a_group_and_carries_its_members() {
     }
 
     let (status, put) = h
-        .post("/api/groups/mcps/rename", json!({ "from": "Docs", "to": "Reference" }))
+        .post(
+            "/api/groups/mcps/rename",
+            json!({ "from": "Docs", "to": "Reference" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(put["groups"], json!(["Reference", "Search"]));
@@ -1946,10 +1991,7 @@ async fn refuses_a_rename_onto_an_existing_group_or_a_missing_one() {
         ("Ghost", "X", StatusCode::NOT_FOUND),
     ] {
         let (status, _) = h
-            .post(
-                "/api/groups/mcps/rename",
-                json!({ "from": from, "to": to }),
-            )
+            .post("/api/groups/mcps/rename", json!({ "from": from, "to": to }))
             .await;
         assert_eq!(status, expected, "renaming {from} to {to}");
     }
@@ -1963,11 +2005,17 @@ async fn renames_default_like_any_other_group_carrying_the_first_slot_with_it() 
         json!({ "groups": ["default", "Docs", "Search"] }),
     )
     .await;
-    h.put("/api/groups/mcps/members/context7", json!({ "group": "default" }))
-        .await;
+    h.put(
+        "/api/groups/mcps/members/context7",
+        json!({ "group": "default" }),
+    )
+    .await;
 
     let (status, _) = h
-        .post("/api/groups/mcps/rename", json!({ "from": "default", "to": "主力" }))
+        .post(
+            "/api/groups/mcps/rename",
+            json!({ "from": "default", "to": "主力" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
 
@@ -1983,17 +2031,24 @@ async fn deleting_a_group_by_omission_moves_its_mcps_to_the_first_remaining_grou
     let h = with_mcps();
     h.put("/api/groups/mcps", json!({ "groups": ["Docs", "Search"] }))
         .await;
-    h.put("/api/groups/mcps/members/context7", json!({ "group": "Docs" }))
-        .await;
-    h.put("/api/groups/mcps/members/github", json!({ "group": "Search" }))
-        .await;
+    h.put(
+        "/api/groups/mcps/members/context7",
+        json!({ "group": "Docs" }),
+    )
+    .await;
+    h.put(
+        "/api/groups/mcps/members/github",
+        json!({ "group": "Search" }),
+    )
+    .await;
 
-    h.put("/api/groups/mcps", json!({ "groups": ["Search"] })).await;
+    h.put("/api/groups/mcps", json!({ "groups": ["Search"] }))
+        .await;
 
     let (_, list) = h.get("/api/mcps").await;
     assert_eq!(list["groups"], json!(["Search"]));
     assert_eq!(list["mcps"].as_array().map(Vec::len), Some(3)); // nothing was deleted
-    // Members of the dropped group land in the FIRST remaining group — Search, the only one.
+                                                                // Members of the dropped group land in the FIRST remaining group — Search, the only one.
     assert_eq!(row_named(&list, "context7")["group"], json!("Search"));
     assert_eq!(row_named(&list, "github")["group"], json!("Search"));
 }
@@ -2008,8 +2063,10 @@ async fn carries_an_mcps_group_through_a_rename_and_drops_it_on_delete() {
         )
         .await;
     assert_eq!(status, StatusCode::CREATED);
-    h.put("/api/groups/mcps", json!({ "groups": ["Docs"] })).await;
-    h.put("/api/groups/mcps/members/a", json!({ "group": "Docs" })).await;
+    h.put("/api/groups/mcps", json!({ "groups": ["Docs"] }))
+        .await;
+    h.put("/api/groups/mcps/members/a", json!({ "group": "Docs" }))
+        .await;
 
     h.post("/api/mcps/a/rename", json!({ "name": "b" })).await;
     assert_eq!(h.store.group_of("b"), "Docs");
@@ -2044,16 +2101,23 @@ async fn the_family_replaces_the_whole_group_list_per_scope() {
 #[tokio::test]
 async fn the_family_assigns_a_member_and_answers_the_canonical_group() {
     let h = with_mcps();
-    h.put("/api/groups/mcps", json!({ "groups": ["default", "Docs"] })).await;
+    h.put("/api/groups/mcps", json!({ "groups": ["default", "Docs"] }))
+        .await;
 
     let (status, body) = h
-        .put("/api/groups/mcps/members/context7", json!({ "group": "docs" }))
+        .put(
+            "/api/groups/mcps/members/context7",
+            json!({ "group": "docs" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({ "group": "Docs" })); // canonical casing, not what was typed
 
     let (status, _) = h
-        .put("/api/groups/mcps/members/context7", json!({ "group": null }))
+        .put(
+            "/api/groups/mcps/members/context7",
+            json!({ "group": null }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     let (_, list) = h.get("/api/mcps").await;
@@ -2061,15 +2125,24 @@ async fn the_family_assigns_a_member_and_answers_the_canonical_group() {
 
     // 404 for a member nothing serves; 400 for a group nothing holds.
     assert_eq!(
-        h.put("/api/groups/mcps/members/ghost", json!({ "group": null })).await.0,
+        h.put("/api/groups/mcps/members/ghost", json!({ "group": null }))
+            .await
+            .0,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        h.put("/api/groups/mcps/members/context7", json!({ "group": "Nope" })).await.0,
+        h.put(
+            "/api/groups/mcps/members/context7",
+            json!({ "group": "Nope" })
+        )
+        .await
+        .0,
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
-        h.put("/api/groups/mcps/members/context7", json!({ "group": 3 })).await.0,
+        h.put("/api/groups/mcps/members/context7", json!({ "group": 3 }))
+            .await
+            .0,
         StatusCode::BAD_REQUEST
     );
 }
@@ -2078,7 +2151,10 @@ async fn the_family_assigns_a_member_and_answers_the_canonical_group() {
 async fn the_family_persists_the_scope_order() {
     let h = with_mcps();
     let (status, body) = h
-        .put("/api/groups/mcps/order", json!({ "order": ["deepwiki", "context7", "github"] }))
+        .put(
+            "/api/groups/mcps/order",
+            json!({ "order": ["deepwiki", "context7", "github"] }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["order"], json!(["deepwiki", "context7", "github"]));
@@ -2102,8 +2178,16 @@ async fn an_unknown_scope_is_a_named_404_on_every_family_route() {
     let h = with_mcps();
     for (method, path, body) in [
         ("PUT", "/api/groups/nope", json!({ "groups": ["default"] })),
-        ("POST", "/api/groups/nope/rename", json!({ "from": "a", "to": "b" })),
-        ("PUT", "/api/groups/nope/members/x", json!({ "group": null })),
+        (
+            "POST",
+            "/api/groups/nope/rename",
+            json!({ "from": "a", "to": "b" }),
+        ),
+        (
+            "PUT",
+            "/api/groups/nope/members/x",
+            json!({ "group": null }),
+        ),
         ("PUT", "/api/groups/nope/order", json!({ "order": [] })),
     ] {
         let (status, resp) = match method {
@@ -2111,14 +2195,19 @@ async fn an_unknown_scope_is_a_named_404_on_every_family_route() {
             _ => h.post(path, body).await,
         };
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
-        assert_eq!(resp["error"], json!("unknown scope: nope"), "{method} {path}");
+        assert_eq!(
+            resp["error"],
+            json!("unknown scope: nope"),
+            "{method} {path}"
+        );
     }
 }
 
 #[tokio::test]
 async fn the_family_rename_body_is_from_to_and_missing_fields_are_400() {
     let h = with_mcps();
-    h.put("/api/groups/mcps", json!({ "groups": ["default", "Docs"] })).await;
+    h.put("/api/groups/mcps", json!({ "groups": ["default", "Docs"] }))
+        .await;
     let (status, _) = h
         .post("/api/groups/mcps/rename", json!({ "to": "X" })) // no from
         .await;
@@ -2221,14 +2310,20 @@ async fn the_family_serves_the_tunnel_scopes() {
 
     // The whole-list mutation, on the scope word the family owns (conns, not connections).
     let (status, body) = h
-        .put("/api/groups/conns", json!({ "groups": ["default", "prod"] }))
+        .put(
+            "/api/groups/conns",
+            json!({ "groups": ["default", "prod"] }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["groups"], json!(["default", "prod"]));
 
     // Assignment is by tunnel id, answers the canonical casing, and lands in tunnels.json.
     let (status, body) = h
-        .put(&format!("/api/groups/conns/members/{c}"), json!({ "group": "PROD" }))
+        .put(
+            &format!("/api/groups/conns/members/{c}"),
+            json!({ "group": "PROD" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({ "group": "prod" }));
@@ -2238,12 +2333,21 @@ async fn the_family_serves_the_tunnel_scopes() {
     );
 
     // Rename keeps the slot and counts the members that rode along explicitly.
-    h.put("/api/groups/rules", json!({ "groups": ["default", "Learning"] }))
-        .await;
-    h.put(&format!("/api/groups/rules/members/{r2}"), json!({ "group": "default" }))
-        .await;
+    h.put(
+        "/api/groups/rules",
+        json!({ "groups": ["default", "Learning"] }),
+    )
+    .await;
+    h.put(
+        &format!("/api/groups/rules/members/{r2}"),
+        json!({ "group": "default" }),
+    )
+    .await;
     let (status, body) = h
-        .post("/api/groups/rules/rename", json!({ "from": "default", "to": "Basics" }))
+        .post(
+            "/api/groups/rules/rename",
+            json!({ "from": "default", "to": "Basics" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["groups"], json!(["Basics", "Learning"]));
@@ -2257,7 +2361,10 @@ async fn the_family_serves_the_tunnel_scopes() {
 
     // The scope's flat order: one list per call now, not both at once.
     let (status, body) = h
-        .put("/api/groups/rules/order", json!({ "order": [r2.clone(), r1.clone()] }))
+        .put(
+            "/api/groups/rules/order",
+            json!({ "order": [r2.clone(), r1.clone()] }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["order"], json!([r2, r1]));
@@ -2280,7 +2387,11 @@ async fn the_retired_mcp_group_and_order_routes_are_gone() {
     for (method, path, body) in [
         ("PUT", "/api/order", json!({ "order": [] })),
         ("PUT", "/api/groups", json!({ "groups": ["default"] })),
-        ("PUT", "/api/groups/mcps/members/ghost", json!({ "group": null })),
+        (
+            "PUT",
+            "/api/groups/mcps/members/ghost",
+            json!({ "group": null }),
+        ),
     ] {
         let (status, _) = match method {
             "PUT" => h.put(path, body).await,
@@ -2431,7 +2542,9 @@ static VAULT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 async fn the_vault_lists_names_never_values() {
     let _guard = VAULT_LOCK.lock().await;
     let h = setup();
-    let rev = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    let rev = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
     h.put(
         "/api/secrets/panel-list",
         json!({ "value": "sk_live_never_in_a_response", "rev": rev }),
@@ -2455,7 +2568,9 @@ async fn the_vault_lists_names_never_values() {
 async fn the_vault_stores_overwrites_and_deletes_by_rev() {
     let _guard = VAULT_LOCK.lock().await;
     let h = setup();
-    let rev = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    let rev = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
 
     let (status, body) = h
         .put(
@@ -2485,13 +2600,20 @@ async fn the_vault_stores_overwrites_and_deletes_by_rev() {
     assert_eq!(body["have"], rev2 + 1);
     assert_eq!(body["saw"], rev);
 
-    let resolved = swiss_core::secure::refs::resolve("${secret://panel-roundtrip}").expect("stored");
+    let resolved =
+        swiss_core::secure::refs::resolve("${secret://panel-roundtrip}").expect("stored");
     assert_eq!(resolved, "second", "the overwrite won");
 
     let (status, _) = h.delete("/api/secrets/panel-roundtrip").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "a rev-less delete is refused");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a rev-less delete is refused"
+    );
 
-    let rev_now = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    let rev_now = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
     let (status, _) = h
         .delete(&format!("/api/secrets/panel-roundtrip?rev={rev_now}"))
         .await;
@@ -2509,7 +2631,9 @@ async fn the_vault_stores_overwrites_and_deletes_by_rev() {
     assert_eq!(status, StatusCode::CONFLICT, "stale rev delete: {body}");
 
     // With the fresh rev, the absent name is an honest 404.
-    let rev_after = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    let rev_after = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
     let (status, _) = h
         .delete(&format!("/api/secrets/panel-roundtrip?rev={rev_after}"))
         .await;
@@ -2522,11 +2646,17 @@ async fn the_vault_refuses_names_outside_the_grammar() {
     let h = setup();
     for bad in ["BadName", "under_score", "1digit", "-dash"] {
         let (status, body) = h
-            .put(&format!("/api/secrets/{bad}"), json!({ "value": "v", "rev": 0 }))
+            .put(
+                &format!("/api/secrets/{bad}"),
+                json!({ "value": "v", "rev": 0 }),
+            )
             .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
         let msg = body["error"].as_str().unwrap_or_default();
-        assert!(msg.contains("lowercase kebab"), "{bad} quotes the grammar: {msg}");
+        assert!(
+            msg.contains("lowercase kebab"),
+            "{bad} quotes the grammar: {msg}"
+        );
     }
 }
 
@@ -2547,13 +2677,17 @@ async fn an_mcp_builder_refuses_a_missing_vault_reference() {
         Ok(_) => panic!("a missing vault reference must refuse the build"),
     };
     assert!(
-        err.contains("context7") && err.contains("headers.Authorization")
-            && err.contains("secret://context7") && err.contains("not in the vault"),
+        err.contains("context7")
+            && err.contains("headers.Authorization")
+            && err.contains("secret://context7")
+            && err.contains("not in the vault"),
         "names the surface and the reference: {err}"
     );
 
     // With the secret stored, the same definition builds and the header carries the value.
-    let rev = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    let rev = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
     h.put(
         "/api/secrets/context7",
         json!({ "value": "tok-context7", "rev": rev }),
@@ -2615,19 +2749,37 @@ async fn the_family_serves_the_secrets_scope() {
     let h = setup();
 
     // Two secrets to move around.
-    let rev = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
-    h.put("/api/secrets/panel-g6-a", json!({ "value": "v-one", "rev": rev })).await;
-    let rev = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
-    h.put("/api/secrets/panel-g6-b", json!({ "value": "v-two", "rev": rev })).await;
+    let rev = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
+    h.put(
+        "/api/secrets/panel-g6-a",
+        json!({ "value": "v-one", "rev": rev }),
+    )
+    .await;
+    let rev = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
+    h.put(
+        "/api/secrets/panel-g6-b",
+        json!({ "value": "v-two", "rev": rev }),
+    )
+    .await;
 
     // The whole list, then a member assign that keeps the canonical casing.
     let (status, body) = h
-        .put("/api/groups/secrets", json!({ "groups": ["default", "Ops"] }))
+        .put(
+            "/api/groups/secrets",
+            json!({ "groups": ["default", "Ops"] }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["groups"], json!(["default", "Ops"]));
     let (status, body) = h
-        .put("/api/groups/secrets/members/panel-g6-a", json!({ "group": "ops" }))
+        .put(
+            "/api/groups/secrets/members/panel-g6-a",
+            json!({ "group": "ops" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["group"], json!("Ops"));
@@ -2638,7 +2790,11 @@ async fn the_family_serves_the_secrets_scope() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["groups"], json!(["default", "Ops"]));
     assert_eq!(body["secretGroups"]["panel-g6-a"], json!("Ops"));
-    assert_eq!(body["secretGroups"]["panel-g6-b"], json!("default"), "unassigned sinks");
+    assert_eq!(
+        body["secretGroups"]["panel-g6-b"],
+        json!("default"),
+        "unassigned sinks"
+    );
     let text = body.to_string();
     assert!(!text.contains("v-one"), "no value ever crosses: {text}");
 
@@ -2651,13 +2807,23 @@ async fn the_family_serves_the_secrets_scope() {
         .as_object()
         .map(|m| m.values().filter(|g| g.as_str() == Some("default")).count())
         .unwrap_or(0);
-    assert!(in_default >= 1, "panel-g6-b at least renders under default: {before}");
+    assert!(
+        in_default >= 1,
+        "panel-g6-b at least renders under default: {before}"
+    );
     let (status, body) = h
-        .post("/api/groups/secrets/rename", json!({ "from": "default", "to": "Basics" }))
+        .post(
+            "/api/groups/secrets/rename",
+            json!({ "from": "default", "to": "Basics" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["groups"], json!(["Basics", "Ops"]));
-    assert_eq!(body["moved"], json!(in_default), "the whole first slot moved");
+    assert_eq!(
+        body["moved"],
+        json!(in_default),
+        "the whole first slot moved"
+    );
 
     // docs/26: the order is the model's third list. Unknown names drop out, so a stale
     // panel cannot plant a ghost row; the landed order comes back.
@@ -2677,7 +2843,10 @@ async fn the_family_serves_the_secrets_scope() {
 
     // Unknown member: the family's one 404.
     let (status, body) = h
-        .put("/api/groups/secrets/members/ghost", json!({ "group": null }))
+        .put(
+            "/api/groups/secrets/members/ghost",
+            json!({ "group": null }),
+        )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 }
@@ -2686,10 +2855,22 @@ async fn the_family_serves_the_secrets_scope() {
 async fn a_secrets_regroup_is_one_rev_bump_and_values_survive() {
     let _guard = VAULT_LOCK.lock().await;
     let h = setup();
-    let rev0 = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
-    h.put("/api/secrets/panel-g6-rev", json!({ "value": "keep-me", "rev": rev0 })).await;
-    h.put("/api/groups/secrets", json!({ "groups": ["default", "Ops"] })).await;
-    let before = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
+    let rev0 = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
+    h.put(
+        "/api/secrets/panel-g6-rev",
+        json!({ "value": "keep-me", "rev": rev0 }),
+    )
+    .await;
+    h.put(
+        "/api/groups/secrets",
+        json!({ "groups": ["default", "Ops"] }),
+    )
+    .await;
+    let before = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
     let (status, body) = h
         .put(
             "/api/groups/secrets/members/panel-g6-rev",
@@ -2697,8 +2878,14 @@ async fn a_secrets_regroup_is_one_rev_bump_and_values_survive() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let after = h.get("/api/secrets").await.1["rev"].as_u64().expect("a rev");
-    assert_eq!(after, before + 1, "a regroup is ONE rev bump, like a value write");
+    let after = h.get("/api/secrets").await.1["rev"]
+        .as_u64()
+        .expect("a rev");
+    assert_eq!(
+        after,
+        before + 1,
+        "a regroup is ONE rev bump, like a value write"
+    );
     // The value the regroup rode along with is intact - the file still seals it.
     assert_eq!(
         swiss_core::secure::secretstore::vault_lookup("panel-g6-rev").as_deref(),
@@ -2716,7 +2903,10 @@ async fn the_family_serves_the_tokens_scope() {
     let id = body["id"].as_str().expect("the id").to_string();
 
     let (status, body) = h
-        .put("/api/groups/tokens", json!({ "groups": ["default", "Lab"] }))
+        .put(
+            "/api/groups/tokens",
+            json!({ "groups": ["default", "Lab"] }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["groups"], json!(["default", "Lab"]));
@@ -2738,7 +2928,10 @@ async fn the_family_serves_the_tokens_scope() {
     assert_eq!(body["tokenGroups"][&id], json!("Lab"));
 
     let (status, body) = h
-        .post("/api/groups/tokens/rename", json!({ "from": "Lab", "to": "Ops" }))
+        .post(
+            "/api/groups/tokens/rename",
+            json!({ "from": "Lab", "to": "Ops" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["groups"], json!(["default", "Ops"]));
@@ -2761,28 +2954,43 @@ async fn the_family_serves_the_tokens_scope() {
 #[tokio::test]
 async fn token_lifecycle_never_touches_the_groups() {
     let h = setup();
-    let id = h
-        .post("/api/tokens", json!({ "label": "g7-life" }))
-        .await
-        .1["id"]
+    let id = h.post("/api/tokens", json!({ "label": "g7-life" })).await.1["id"]
         .as_str()
         .expect("the id")
         .to_string();
-    h.put("/api/groups/tokens", json!({ "groups": ["default", "Ops"] })).await;
-    h.put(&format!("/api/groups/tokens/members/{id}"), json!({ "group": "Ops" })).await;
+    h.put(
+        "/api/groups/tokens",
+        json!({ "groups": ["default", "Ops"] }),
+    )
+    .await;
+    h.put(
+        &format!("/api/groups/tokens/members/{id}"),
+        json!({ "group": "Ops" }),
+    )
+    .await;
 
     // A rotate keeps the id, so the assignment rides along untouched.
     let (status, body) = h.post(&format!("/api/tokens/{id}/rotate"), json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let body = h.get("/api/tokens").await.1;
-    assert_eq!(body["tokenGroups"][&id], json!("Ops"), "a rotate keeps the group");
+    assert_eq!(
+        body["tokenGroups"][&id],
+        json!("Ops"),
+        "a rotate keeps the group"
+    );
 
     // Deleting the group sinks its tokens into the first one - the token itself is
     // untouched, still listed, still authenticating (docs/20 G7).
-    let (status, body) = h.put("/api/groups/tokens", json!({ "groups": ["default"] })).await;
+    let (status, body) = h
+        .put("/api/groups/tokens", json!({ "groups": ["default"] }))
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let body = h.get("/api/tokens").await.1;
-    assert_eq!(body["groups"], json!(["default"]), "the whole list, Ops omitted");
+    assert_eq!(
+        body["groups"],
+        json!(["default"]),
+        "the whole list, Ops omitted"
+    );
     assert!(
         body["tokenGroups"].get(&id).is_none(),
         "the sunk token carries no explicit entry: {body}"
@@ -2796,12 +3004,23 @@ async fn token_lifecycle_never_touches_the_groups() {
     );
 
     // A revoke forgets the member: no ghost entry outlives its token.
-    h.put("/api/groups/tokens", json!({ "groups": ["default", "Ops"] })).await;
-    h.put(&format!("/api/groups/tokens/members/{id}"), json!({ "group": "Ops" })).await;
+    h.put(
+        "/api/groups/tokens",
+        json!({ "groups": ["default", "Ops"] }),
+    )
+    .await;
+    h.put(
+        &format!("/api/groups/tokens/members/{id}"),
+        json!({ "group": "Ops" }),
+    )
+    .await;
     let (status, _) = h.delete(&format!("/api/tokens/{id}")).await;
     assert_eq!(status, StatusCode::OK);
     let body = h.get("/api/tokens").await.1;
-    assert!(body["tokenGroups"].get(&id).is_none(), "no ghost member: {body}");
+    assert!(
+        body["tokenGroups"].get(&id).is_none(),
+        "no ghost member: {body}"
+    );
 }
 
 // --- the jobs scope over the family (docs/20 G4) --------------------------------------------------
@@ -2828,15 +3047,12 @@ fn setup_with_jobs() -> (Harness, Arc<swiss_jobs::jobs::JobSystem>) {
     // action, registered the way the jobs plugin's own tests do it.
     services
         .actions
-        .register(Arc::new(swiss_host::services::actions::LegacyCommandAction::new(
-            services.supervisor.clone(),
-        )))
+        .register(Arc::new(
+            swiss_host::services::actions::LegacyCommandAction::new(services.supervisor.clone()),
+        ))
         .expect("the legacy command capability registers once");
-    let jobs = swiss_jobs::jobs::JobSystem::open(
-        dir.join("jobs.json"),
-        services,
-        config_store.clone(),
-    );
+    let jobs =
+        swiss_jobs::jobs::JobSystem::open(dir.join("jobs.json"), services, config_store.clone());
     config_store
         .update_plugin(
             "jobs",
@@ -2894,10 +3110,7 @@ async fn the_family_serves_the_jobs_scope() {
 
     // Assign keeps the canonical casing and lands in the row the scheduler reads.
     let (status, body) = h
-        .put(
-            "/api/groups/jobs/members/vacuum",
-            json!({ "group": "ops" }),
-        )
+        .put("/api/groups/jobs/members/vacuum", json!({ "group": "ops" }))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["group"], json!("Ops"));
@@ -2942,14 +3155,12 @@ async fn the_family_serves_the_jobs_scope() {
 
     // Unknown member: the family's one 404.
     let (status, body) = h
-        .put(
-            "/api/groups/jobs/members/ghost",
-            json!({ "group": null }),
-        )
+        .put("/api/groups/jobs/members/ghost", json!({ "group": null }))
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(
-        body["error"], json!("unknown member: ghost"),
+        body["error"],
+        json!("unknown member: ghost"),
         "the family words it, not the scope"
     );
 }
@@ -2959,8 +3170,10 @@ async fn the_family_serves_the_jobs_scope() {
 #[tokio::test]
 async fn reordering_job_groups_never_rehomes_the_first_groups_default_members() {
     let (h, _jobs) = setup_with_jobs();
-    h.put("/api/groups/jobs", json!({ "groups": ["g1", "g2"] })).await;
-    h.put("/api/groups/jobs/members/vacuum", json!({ "group": "g2" })).await;
+    h.put("/api/groups/jobs", json!({ "groups": ["g1", "g2"] }))
+        .await;
+    h.put("/api/groups/jobs/members/vacuum", json!({ "group": "g2" }))
+        .await;
 
     let (status, put) = h
         .put("/api/groups/jobs", json!({ "groups": ["g2", "g1"] }))
@@ -2975,11 +3188,14 @@ async fn reordering_job_groups_never_rehomes_the_first_groups_default_members() 
             .unwrap()
             .iter()
             .find(|j| j["name"] == json!(name))
-            .unwrap_or_else(|| panic!("no row for {name}"))
-            ["group"]
+            .unwrap_or_else(|| panic!("no row for {name}"))["group"]
             .clone()
     };
-    assert_eq!(group_of("vacuum"), json!("g2"), "the explicit member never moves");
+    assert_eq!(
+        group_of("vacuum"),
+        json!("g2"),
+        "the explicit member never moves"
+    );
     assert_eq!(group_of("report"), json!("g1"), "the default member stayed");
 }
 
@@ -2993,10 +3209,7 @@ async fn moving_a_job_between_groups_advances_the_config_revision_in_place() {
         .await;
     let before = jobs.applied_revision();
     let (status, body) = h
-        .put(
-            "/api/groups/jobs/members/report",
-            json!({ "group": "Ops" }),
-        )
+        .put("/api/groups/jobs/members/report", json!({ "group": "Ops" }))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["group"], json!("Ops"));
@@ -3095,10 +3308,12 @@ async fn fake_figma_remote() -> (String, std::sync::Arc<FakeOauthState>) {
         let s = reg_state.clone();
         async move {
             let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-            s.registered_names
-                .lock()
-                .expect("state")
-                .push(v.get("client_name").and_then(Value::as_str).unwrap_or("").to_string());
+            s.registered_names.lock().expect("state").push(
+                v.get("client_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            );
             axum::Json(json!({
                 "client_id": "e2e-cid",
                 "client_secret": "e2e-sec",
@@ -3149,55 +3364,53 @@ async fn fake_figma_remote() -> (String, std::sync::Arc<FakeOauthState>) {
         }
     });
     let mcp_state = state.clone();
-    let mcp = axum::routing::post(
-        move |headers: axum::http::HeaderMap, body: String| {
-            let s = mcp_state.clone();
-            async move {
-                let expected = s.current.lock().expect("state").clone().unwrap_or_default();
-                let got = headers
-                    .get("authorization")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or_default()
-                    .to_string();
-                if got != format!("Bearer {expected}") {
-                    return (
-                        axum::http::StatusCode::UNAUTHORIZED,
-                        axum::Json(json!({ "error": "unauthorized" })),
-                    );
-                }
-                let message: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-                if message.get("id").is_none() {
-                    return (axum::http::StatusCode::OK, axum::Json(Value::Null));
-                }
-                match message.get("method").and_then(Value::as_str) {
-                    Some("initialize") => (
-                        axum::http::StatusCode::OK,
-                        axum::Json(json!({
-                            "jsonrpc": "2.0",
-                            "id": message.get("id"),
-                            "result": {
-                                "protocolVersion": "2025-06-18",
-                                "capabilities": {},
-                            },
-                        })),
-                    ),
-                    _ => (
-                        axum::http::StatusCode::OK,
-                        axum::Json(json!({
-                            "jsonrpc": "2.0",
-                            "id": message.get("id"),
-                            "result": {
-                                "tools": [
-                                    { "name": "get_file", "inputSchema": { "type": "object" } },
-                                    { "name": "get_code", "inputSchema": { "type": "object" } },
-                                ],
-                            },
-                        })),
-                    ),
-                }
+    let mcp = axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
+        let s = mcp_state.clone();
+        async move {
+            let expected = s.current.lock().expect("state").clone().unwrap_or_default();
+            let got = headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            if got != format!("Bearer {expected}") {
+                return (
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    axum::Json(json!({ "error": "unauthorized" })),
+                );
             }
-        },
-    );
+            let message: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+            if message.get("id").is_none() {
+                return (axum::http::StatusCode::OK, axum::Json(Value::Null));
+            }
+            match message.get("method").and_then(Value::as_str) {
+                Some("initialize") => (
+                    axum::http::StatusCode::OK,
+                    axum::Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": message.get("id"),
+                        "result": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": {},
+                        },
+                    })),
+                ),
+                _ => (
+                    axum::http::StatusCode::OK,
+                    axum::Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": message.get("id"),
+                        "result": {
+                            "tools": [
+                                { "name": "get_file", "inputSchema": { "type": "object" } },
+                                { "name": "get_code", "inputSchema": { "type": "object" } },
+                            ],
+                        },
+                    })),
+                ),
+            }
+        }
+    });
     let app = axum::Router::new()
         .route("/.well-known/oauth-protected-resource", protected)
         .route(
@@ -3323,11 +3536,7 @@ async fn a_second_post_while_live_hands_back_the_same_flow() {
     assert_eq!(status, StatusCode::OK, "{again}");
     assert_eq!(again["flowId"], json!(flow_id));
     assert_eq!(again["status"], json!("authorization_required"));
-    let names = remote
-        .registered_names
-        .lock()
-        .expect("state")
-        .clone();
+    let names = remote.registered_names.lock().expect("state").clone();
     // One dynamic registration, not two: the allowlisted-name DCR is not free to spam.
     assert_eq!(names.len(), 1);
 }
@@ -3436,7 +3645,10 @@ async fn the_zai_vision_type_adds_and_keeps_the_key_a_reference() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(
-        body["error"].as_str().unwrap_or_default().contains("must be a ${"),
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("must be a ${"),
         "{body}"
     );
 
@@ -3450,17 +3662,26 @@ async fn the_zai_vision_type_adds_and_keeps_the_key_a_reference() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(
-        body["error"].as_str().unwrap_or_default().contains("apiKey is required"),
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("apiKey is required"),
         "{body}"
     );
 
     // The validation edge: no key, or a mode that is not one of the two, is a 400 at add time.
     let (status, body) = h
-        .post("/api/mcps", json!({ "name": "zai-nokey", "type": "zai-vision" }))
+        .post(
+            "/api/mcps",
+            json!({ "name": "zai-nokey", "type": "zai-vision" }),
+        )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(
-        body["error"].as_str().unwrap_or_default().contains("apiKey is required"),
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("apiKey is required"),
         "{body}"
     );
     let (status, body) = h
@@ -3471,7 +3692,10 @@ async fn the_zai_vision_type_adds_and_keeps_the_key_a_reference() {
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(
-        body["error"].as_str().unwrap_or_default().contains("unknown mode"),
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown mode"),
         "{body}"
     );
 }
@@ -3488,9 +3712,18 @@ async fn autostart_route_reads_the_os_registration() {
     let h = setup();
     let (status, body) = h.get("/api/autostart").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(body["enabled"].is_boolean(), "enabled must be a bool: {body}");
-    assert!(body["detail"].is_string(), "detail must say where the registration lives: {body}");
-    assert!(body["command"].is_string(), "command must say what the entry runs: {body}");
+    assert!(
+        body["enabled"].is_boolean(),
+        "enabled must be a bool: {body}"
+    );
+    assert!(
+        body["detail"].is_string(),
+        "detail must say where the registration lives: {body}"
+    );
+    assert!(
+        body["command"].is_string(),
+        "command must say what the entry runs: {body}"
+    );
 }
 
 #[tokio::test]
@@ -3516,7 +3749,10 @@ async fn autostart_route_refuses_a_body_without_a_verdict() {
 
 async fn add_echo(h: &Harness, name: &str, enabled: bool) {
     let (status, body) = h
-        .post("/api/mcps", json!({ "name": name, "type": "echo", "enabled": enabled }))
+        .post(
+            "/api/mcps",
+            json!({ "name": name, "type": "echo", "enabled": enabled }),
+        )
         .await;
     assert_eq!(status, StatusCode::CREATED, "add {name}: {body}");
 }
@@ -3557,7 +3793,9 @@ async fn a_failing_replace_changes_nothing() {
     let h = setup();
     add_echo(&h, "m", true).await;
     // A rest def with no tools fails build_def — before anything is written.
-    let (status, body) = h.post("/api/mcps/m/replace", json!({ "type": "rest" })).await;
+    let (status, body) = h
+        .post("/api/mcps/m/replace", json!({ "type": "rest" }))
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(h.def_of("m")["type"], json!("echo"));
     let (_, list) = h.get("/api/mcps/m/revisions").await;
@@ -3571,10 +3809,17 @@ async fn replace_leaves_a_stopped_mcp_stopped() {
     add_echo(&h, "m", false).await;
     assert!(!h.has_server("m"), "enabled:false never started it");
     let (status, body) = h
-        .post("/api/mcps/m/replace", json!({ "type": "http", "url": "https://x.test/mcp" }))
+        .post(
+            "/api/mcps/m/replace",
+            json!({ "type": "http", "url": "https://x.test/mcp" }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["lifecycle"], json!("stopped"), "a def swap is not a start");
+    assert_eq!(
+        body["lifecycle"],
+        json!("stopped"),
+        "a def swap is not a start"
+    );
     assert!(!h.has_server("m"));
 }
 
@@ -3591,7 +3836,11 @@ async fn restore_swaps_back_and_parks_the_live_def() {
     let (status, body) = h.post("/api/mcps/m/revisions/0/restore", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["restored"], json!(0));
-    assert_eq!(h.def_of("m")["type"], json!("echo"), "the parked def is live again");
+    assert_eq!(
+        h.def_of("m")["type"],
+        json!("echo"),
+        "the parked def is live again"
+    );
     // The replaced def was parked in turn — rollback is itself reversible.
     let (_, list) = h.get("/api/mcps/m/revisions").await;
     assert_eq!(list["revisions"].as_array().map(Vec::len), Some(1));
@@ -3675,7 +3924,6 @@ async fn one_revision_can_be_dropped_without_touching_the_rest() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 }
 
-
 #[tokio::test]
 async fn a_disabled_mcp_refuses_clients_with_the_disabled_wording() {
     let _lock = traffic_lock().await;
@@ -3684,14 +3932,20 @@ async fn a_disabled_mcp_refuses_clients_with_the_disabled_wording() {
     // docs/28 D2: disabled means the client sees nothing of it — every method answers the
     // same refusal, and the wording names the operator's verb and the way out.
     let (status, body) = h
-        .mcp("/mcp/m", TOKEN, json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .mcp(
+            "/mcp/m",
+            TOKEN,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+        )
         .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let text = body.to_string();
-    assert!(text.contains("disabled"), "wording must say disabled: {text}");
+    assert!(
+        text.contains("disabled"),
+        "wording must say disabled: {text}"
+    );
     assert!(text.contains("enable it from the panel"), "{text}");
 }
-
 
 #[tokio::test]
 async fn a_mariadb_def_builds_and_carries_its_own_tag() {
@@ -3717,4 +3971,3 @@ async fn a_mariadb_def_builds_and_carries_its_own_tag() {
         .clone();
     assert_eq!(row["tag"], "mariadb");
 }
-

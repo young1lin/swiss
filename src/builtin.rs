@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -301,7 +301,14 @@ impl PluginFactory for TunnelsPlugin {
             // the rail still holds ONE tunnels seat.
             pages: vec![
                 page("tunnels", TUNNELS_ID, "SSH Connections", 30, false, "page"),
-                page("tunnel-forwards", TUNNELS_ID, "Port Forwards", 35, false, "page"),
+                page(
+                    "tunnel-forwards",
+                    TUNNELS_ID,
+                    "Port Forwards",
+                    35,
+                    false,
+                    "page",
+                ),
             ],
             routes: vec!["/api/tunnels".into()],
             restart_on_config_change: true,
@@ -315,6 +322,7 @@ impl PluginFactory for TunnelsPlugin {
             manager: self.manager.clone(),
             services: self.services.clone(),
             shells: swiss_tunnels::tunnel::shell::TunnelShells::new(self.manager.clone()),
+            remote: swiss_tunnels::tunnel::remote::TunnelRemote::new(self.manager.clone()),
         }))
     }
 }
@@ -331,6 +339,10 @@ struct TunnelsInstance {
     /// The interactive-shell provider this instance registers (docs/14 T2). One per
     /// INSTANCE: a stopped instance drains ITS sessions, never the next one's.
     shells: Arc<swiss_tunnels::tunnel::shell::TunnelShells>,
+    /// The remote-execution transport this instance registers (docs/32 §9). Same
+    /// manager, same connection inventory, same refcounting — a remote exec shares the
+    /// client a tunnel or a terminal already holds.
+    remote: Arc<swiss_tunnels::tunnel::remote::TunnelRemote>,
 }
 
 #[async_trait]
@@ -368,11 +380,21 @@ impl PluginInstance for TunnelsInstance {
         });
         // Register the shell capability LAST, for the same reason the MCP plugin registers
         // its catalog last: a failed start must never leave a provider behind that a
-        // stopped subsystem is supposedly serving (docs/12 W3, docs/14 §4).
+        // stopped subsystem is supposedly serving (docs/12 W3, docs/14 §4). The remote
+        // transport registers just before it under the same rule: if either
+        // registration fails, this start returns Err having left nothing behind.
+        self.services
+            .remote
+            .register(self.remote.clone(), TUNNELS_ID)
+            .map_err(|err| format!("remote transport registration: {err}"))?;
         self.services
             .shells
             .register(self.shells.clone(), TUNNELS_ID)
-            .map_err(|err| format!("interactive shell registration: {err}"))?;
+            .map_err(|err| {
+                // The remote provider registered above must not survive a failed start.
+                self.services.remote.clear();
+                format!("interactive shell registration: {err}")
+            })?;
         Ok(())
     }
 
@@ -381,6 +403,12 @@ impl PluginInstance for TunnelsInstance {
         // terminals reach a client that is about to close, the live ones get a short
         // window, and the warning names how many were closed over. The window is short on
         // purpose — an attached terminal does not hand itself back (docs/14 §4).
+        //
+        // The remote transport withdraws FIRST (docs/32 §28): it must reject new
+        // operations before anything closes, but it does NOT get a drain window — a
+        // remote exec is a RUN with its own deadline and its own cancel path, and the
+        // connections closing underneath turn any survivor into an honestly-failed run.
+        self.services.remote.begin_withdraw();
         self.services.shells.begin_withdraw();
         self.shells.ledger().begin_withdraw();
         swiss_host::services::shell::drain_sessions(
@@ -390,6 +418,7 @@ impl PluginInstance for TunnelsInstance {
         )
         .await;
         self.manager.close_all().await;
+        self.services.remote.clear();
         self.services.shells.clear();
     }
 }
@@ -612,8 +641,10 @@ impl PluginFactory for JobsPlugin {
     /// warn itself is asserted at the def.rs unit level (parse_boot reports the drops
     /// that feed it); log output is println and not capturable from integration tests.
     fn validate_config_for_start(&self, config: &Value) -> Result<(), String> {
-        match swiss_jobs::jobs::def::JobsConfig::parse_boot_with_actions(config, self.jobs.actions())
-        {
+        match swiss_jobs::jobs::def::JobsConfig::parse_boot_with_actions(
+            config,
+            self.jobs.actions(),
+        ) {
             Ok((boot, _)) => {
                 for (id, reason) in boot.dropped {
                     log::warn(
@@ -866,11 +897,17 @@ mod tests {
             .collect();
         assert_eq!(
             pages,
-            vec![("tunnels", "SSH Connections", 30), ("tunnel-forwards", "Port Forwards", 35)],
+            vec![
+                ("tunnels", "SSH Connections", 30),
+                ("tunnel-forwards", "Port Forwards", 35)
+            ],
             "adjacent orders, connections first — the deep link #tunnels keeps its meaning"
         );
         // The entry contract: the shell dynamic-imports exactly this path per page id.
-        assert_eq!(descriptor.pages[1].entry, "/admin/js/views/tunnel-forwards.js");
+        assert_eq!(
+            descriptor.pages[1].entry,
+            "/admin/js/views/tunnel-forwards.js"
+        );
         assert_eq!(descriptor.pages[1].path, "#tunnel-forwards");
         for page in &descriptor.pages {
             assert_ne!(

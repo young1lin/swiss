@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -31,8 +31,19 @@ use crate::port::as_listen_port;
 use crate::skill_install::install_skill;
 
 pub const COMMANDS: &[&str] = &[
-    "start", "stop", "restart", "status", "logs", "token", "creds", "open", "export", "import",
-    "skill", "autostart", "update",
+    "start",
+    "stop",
+    "restart",
+    "status",
+    "logs",
+    "token",
+    "creds",
+    "open",
+    "export",
+    "import",
+    "skill",
+    "autostart",
+    "update",
 ];
 
 #[derive(Debug, Default, PartialEq)]
@@ -93,8 +104,7 @@ pub trait Ops {
     }
 }
 
-pub const USAGE: &str =
-    "swiss — one local endpoint in front of your databases and remote MCPs
+pub const USAGE: &str = "swiss — one local endpoint in front of your databases and remote MCPs
 
 usage: swiss <command> [options]
 
@@ -602,7 +612,10 @@ pub async fn run(argv: &[String], io: &dyn Io, ops: &dyn Ops) -> i32 {
         "autostart" => match p.sub.as_deref() {
             None | Some("status") => {
                 let st = ops.autostart_status();
-                io.out(&format!("start at sign-in: {}", if st.enabled { "on" } else { "off" }));
+                io.out(&format!(
+                    "start at sign-in: {}",
+                    if st.enabled { "on" } else { "off" }
+                ));
                 io.out(&row("registered", &st.detail));
                 io.out(&row("command", &st.command));
                 0
@@ -854,6 +867,14 @@ impl Io for PrintIo {
 
 /// Wire the real implementations and run — the CLI entry point main.rs calls.
 pub async fn main(argv: Vec<String>) -> i32 {
+    // `remote` and `run` carry their own argv contract (docs/32 SS26): a bare `--` means
+    // everything after it is the far side's ARGV, untouched. The generic parser would eat
+    // flags out of that passthrough, so these two dispatch before it.
+    match argv.first().map(String::as_str) {
+        Some("remote") => return crate::remote_cli::main(argv[1..].to_vec()).await,
+        Some("run") => return crate::remote_cli::run_main(argv[1..].to_vec()).await,
+        _ => {}
+    }
     run(&argv, &PrintIo, &RealOps).await
 }
 
@@ -928,7 +949,9 @@ mod tests {
         let (hash, time) = rest
             .split_once(", ")
             .unwrap_or_else(|| panic!("no hash/time pair: {line}"));
-        let time = time.strip_suffix(')').unwrap_or_else(|| panic!("unterminated: {line}"));
+        let time = time
+            .strip_suffix(')')
+            .unwrap_or_else(|| panic!("unterminated: {line}"));
         // A git-less box builds "unknown"; a repo builds a short hex id, optionally -dirty.
         let bare = hash.strip_suffix("-dirty").unwrap_or(hash);
         assert!(

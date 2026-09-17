@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -29,9 +29,10 @@
 //! - [`runs`]: the shared run registry and coordinator — bounded, owner-scoped and
 //!   first-wins, so scheduled runs and manual runs share one accounting without either
 //!   owning the other.
-//! - [`catalog`] and [`shell`]: the two typed capability seats. One provider registers,
-//!   consumers take leases, and a provider stopping withdraws before it closes — the
-//!   pattern that lets two plugins cooperate without a crate edge between them.
+//! - [`catalog`], [`shell`] and [`remote`]: the three typed capability seats. One
+//!   provider registers, consumers take leases, and a provider stopping withdraws before
+//!   it closes — the pattern that lets two plugins cooperate without a crate edge between
+//!   them.
 //!
 //! Nothing here knows about Jobs, MCP or the panel: the consumers are plugins.
 
@@ -40,6 +41,7 @@ pub mod actions;
 pub mod api;
 pub mod catalog;
 pub mod process;
+pub mod remote;
 pub mod runs;
 pub mod shell;
 
@@ -48,6 +50,7 @@ use std::sync::Arc;
 use crate::services::action::ActionRegistry;
 use crate::services::catalog::CatalogRegistry;
 use crate::services::process::Supervisor;
+use crate::services::remote::RemoteTransportRegistry;
 use crate::services::runs::RunCoordinator;
 use crate::services::shell::ShellRegistry;
 
@@ -70,6 +73,10 @@ pub struct RuntimeServices {
     /// start; the consumer (Terminal) takes a session-scoped lease per open PTY. Same
     /// reason for living here as the catalog — the seat outlives both plugins.
     pub shells: Arc<ShellRegistry>,
+    /// The remote-execution transport capability (docs/32): the provider (Tunnels)
+    /// registers on start; the consumer (Remote) takes run-scoped leases per exec or
+    /// file operation. Same seat-outlives-plugins reason as the two above.
+    pub remote: Arc<RemoteTransportRegistry>,
 }
 
 impl RuntimeServices {
@@ -81,6 +88,7 @@ impl RuntimeServices {
             supervisor: Supervisor::new(),
             catalog: Arc::new(CatalogRegistry::new()),
             shells: Arc::new(ShellRegistry::new()),
+            remote: Arc::new(RemoteTransportRegistry::new()),
         })
     }
 

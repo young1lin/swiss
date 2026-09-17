@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -39,9 +39,9 @@
 
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -371,7 +371,9 @@ fn shell_label(path: &Path) -> String {
         _ => {}
     }
     let lower = path.to_string_lossy().to_ascii_lowercase();
-    if file.eq_ignore_ascii_case("bash.exe") && (lower.contains("\\git\\") || lower.contains("/git/")) {
+    if file.eq_ignore_ascii_case("bash.exe")
+        && (lower.contains("\\git\\") || lower.contains("/git/"))
+    {
         return "Git Bash".into();
     }
     file
@@ -419,7 +421,9 @@ pub fn shell_candidates_in(
     if let Some(p) = find_on_path("powershell.exe", path) {
         offer(&mut found, &mut seen, p);
     }
-    let cmd = comspec.map(PathBuf::from).or_else(|| find_on_path("cmd.exe", path));
+    let cmd = comspec
+        .map(PathBuf::from)
+        .or_else(|| find_on_path("cmd.exe", path));
     if let Some(p) = cmd {
         offer(&mut found, &mut seen, p);
     }
@@ -803,7 +807,10 @@ mod tests {
             Some(dir.join("pwsh.exe"))
         );
         // An extension outside PATHEXT is not double-suffixed.
-        assert_eq!(find_on_path_with("pwsh.exe", &path, ".COM;.BAT"), Some(dir.join("pwsh.exe")));
+        assert_eq!(
+            find_on_path_with("pwsh.exe", &path, ".COM;.BAT"),
+            Some(dir.join("pwsh.exe"))
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -812,15 +819,25 @@ mod tests {
         let a = scratch_shells(&["pwsh.exe"]);
         let b = scratch_shells(&["pwsh.exe"]);
         let path = format!("{};{}", a.display(), b.display());
-        assert_eq!(find_on_path_with("pwsh.exe", &path, ".EXE"), Some(a.join("pwsh.exe")));
+        assert_eq!(
+            find_on_path_with("pwsh.exe", &path, ".EXE"),
+            Some(a.join("pwsh.exe"))
+        );
         // An empty segment is skipped, not joined onto "".
         let with_gap = format!(";;{};", b.display());
-        assert_eq!(find_on_path_with("pwsh.exe", &with_gap, ".EXE"), Some(b.join("pwsh.exe")));
+        assert_eq!(
+            find_on_path_with("pwsh.exe", &with_gap, ".EXE"),
+            Some(b.join("pwsh.exe"))
+        );
         // Nothing anywhere: empty PATH, and a name no directory holds.
         assert_eq!(find_on_path_with("pwsh.exe", "", ".EXE"), None);
         let empty = scratch_shells(&[]);
         assert_eq!(
-            find_on_path_with("no-such-program-9d2f1a", empty.to_string_lossy().as_ref(), ".EXE"),
+            find_on_path_with(
+                "no-such-program-9d2f1a",
+                empty.to_string_lossy().as_ref(),
+                ".EXE"
+            ),
             None
         );
         // A name carrying a directory is not PATH-searchable at all.
@@ -845,8 +862,14 @@ mod tests {
             pwsh.join("pwsh.exe").to_string_lossy().into_owned()
         );
         assert_eq!(
-            default_shell_in(powershell.to_string_lossy().as_ref(), Some(cmd.to_string_lossy().as_ref())),
-            powershell.join("powershell.exe").to_string_lossy().into_owned()
+            default_shell_in(
+                powershell.to_string_lossy().as_ref(),
+                Some(cmd.to_string_lossy().as_ref())
+            ),
+            powershell
+                .join("powershell.exe")
+                .to_string_lossy()
+                .into_owned()
         );
         // No shell on PATH: COMSPEC is the honest default, and without it the bare name.
         assert_eq!(
@@ -881,7 +904,10 @@ mod tests {
         assert!(labels.contains(&"PowerShell 7"), "{labels:?}");
         assert!(labels.contains(&"cmd"), "{labels:?}");
         assert!(labels.contains(&"Git Bash"), "{labels:?}");
-        assert!(found.iter().all(|c| Path::new(&c.program).is_absolute()), "{found:?}");
+        assert!(
+            found.iter().all(|c| Path::new(&c.program).is_absolute()),
+            "{found:?}"
+        );
 
         // Same pwsh found twice (COMSPEC pointing at the PATH hit) is offered once.
         let deduped = shell_candidates_in(
@@ -910,7 +936,10 @@ mod tests {
         let absolute = r"C:\Program Files\PowerShell\7\pwsh.exe";
         assert_eq!(resolve_program_in(absolute, &path), absolute);
         // An unresolvable name is returned as given: CreateProcessW gets the last word.
-        assert_eq!(resolve_program_in("no-such-shell-9d2f1a.exe", &path), "no-such-shell-9d2f1a.exe");
+        assert_eq!(
+            resolve_program_in("no-such-shell-9d2f1a.exe", &path),
+            "no-such-shell-9d2f1a.exe"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

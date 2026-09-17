@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -28,14 +28,15 @@ use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Either, Row};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{TableSort, TableSortKey, bytea_hex, exact_int64, exact_int64_list, finite_f64};
+use swiss_host::dbbrowser::{
+    bytea_hex, exact_int64, exact_int64_list, finite_f64, TableSort, TableSortKey,
+};
 
 use super::direct::{BoxFut, Lazy};
 use super::pg_resources::PgResources;
 use super::sql::{
-    clamp_row_limit, drop_null_columns, like_contains, limit_report,
-    table_page_args, with_row_limit, DEFAULT_ROW_LIMIT, DEFAULT_TABLE_LIMIT, MAX_ROW_LIMIT,
-    MAX_TABLE_LIMIT,
+    clamp_row_limit, drop_null_columns, like_contains, limit_report, table_page_args,
+    with_row_limit, DEFAULT_ROW_LIMIT, DEFAULT_TABLE_LIMIT, MAX_ROW_LIMIT, MAX_TABLE_LIMIT,
 };
 use super::tool_server::{Engine, ServerMeta, ToolDef};
 
@@ -187,7 +188,11 @@ fn with_pg_list_order(sql: String, sort: TableSort) -> String {
 /// `pred` arrives as " AND (...)" from grep_where — the leading AND is the one the replaced
 /// line carried. A plain substring grep never reaches here; pg_list_tables_sql keeps its SQL
 /// byte-for-byte.
-pub fn pg_list_tables_grammar_sql(sort: TableSort, pred: &str, patterns: usize) -> (String, String) {
+pub fn pg_list_tables_grammar_sql(
+    sort: TableSort,
+    pred: &str,
+    patterns: usize,
+) -> (String, String) {
     // The single $2 grep bind becomes N patterns, so LIMIT/OFFSET shift by N-1: $3/$4 →
     // $(N+2)/$(N+3).
     let limit_n = patterns + 2;
@@ -709,7 +714,10 @@ pub async fn run_pg_tx_rows(
     for p in params {
         query = bind_value(query, p);
     }
-    let rows = query.fetch_all(&mut **tx).await.map_err(|e| e.to_string())?;
+    let rows = query
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(rows
         .iter()
         .map(pg_row_to_value)
@@ -958,8 +966,7 @@ impl Engine for PgEngine {
 
     fn browser(&self) -> Option<swiss_host::dbbrowser::BrowserFlavor> {
         Some(swiss_host::dbbrowser::BrowserFlavor::Db(Arc::new(
-            super::pg_browser::PgBrowser::new(self.target(), self.conn.clone(),
-            ),
+            super::pg_browser::PgBrowser::new(self.target(), self.conn.clone()),
         )))
     }
 
@@ -1021,14 +1028,15 @@ mod tests {
         // Regression: the inline assembly sent the count with the patterns alone, and Postgres
         // refused it with "bind message supplies 2 parameters, but prepared statement
         // requires 3" — the schema slot is a placeholder whether or not a schema was picked.
-        let (list, count) =
-            pg_grammar_params(None, &[json!("user%"), json!("%account%")], 200, 0);
+        let (list, count) = pg_grammar_params(None, &[json!("user%"), json!("%account%")], 200, 0);
         assert_eq!(list.len(), 5); // schema, two patterns, limit, offset
         assert_eq!(count.len(), 3);
         assert_eq!(count[0], Value::Null);
-        let (list, count) =
-            pg_grammar_params(Some("app"), &[json!("user%")], 200, 0);
-        assert_eq!(list, vec![json!("app"), json!("user%"), json!(200), json!(0)]);
+        let (list, count) = pg_grammar_params(Some("app"), &[json!("user%")], 200, 0);
+        assert_eq!(
+            list,
+            vec![json!("app"), json!("user%"), json!(200), json!(0)]
+        );
         assert_eq!(count, vec![json!("app"), json!("user%")]);
     }
 
@@ -1044,14 +1052,23 @@ mod tests {
         )
         .unwrap()
         .expect("grammar");
-        let (list, count) =
-            pg_list_tables_grammar_sql(TableSort { key: TableSortKey::Name, desc: false }, &w.frag, w.params.len());
+        let (list, count) = pg_list_tables_grammar_sql(
+            TableSort {
+                key: TableSortKey::Name,
+                desc: false,
+            },
+            &w.frag,
+            w.params.len(),
+        );
         assert!(
             list.contains("AND (c.relname ILIKE $2 ESCAPE '!' OR c.relname ILIKE $3 ESCAPE '!')"),
             "{list}"
         );
         assert!(list.contains("LIMIT $4 OFFSET $5"), "{list}");
-        assert!(list.contains("ORDER BY n.nspname, lower(c.relname)"), "{list}");
+        assert!(
+            list.contains("ORDER BY n.nspname, lower(c.relname)"),
+            "{list}"
+        );
         assert!(
             count.contains("AND (c.relname ILIKE $2 ESCAPE '!' OR c.relname ILIKE $3 ESCAPE '!')"),
             "{count}"
@@ -1100,15 +1117,14 @@ mod tests {
         );
     }
 }
-    #[test]
-    fn rows_in_an_open_group_at_stream_end_are_a_cut_not_a_result() {
-        // Every statement closes with a completion; rows without one are the tail of a
-        // connection that died mid-query. They must surface as an error, never as a
-        // completed (silently short) group.
-        assert!(open_group_verdict(0).is_ok());
-        let cut = open_group_verdict(7).expect_err("cut mid-statement");
-        assert!(cut.contains("connection lost mid-query"), "{cut}");
-        assert!(cut.contains("7 row(s)"), "{cut}");
-        assert!(cut.contains("retry"), "{cut}");
-    }
-
+#[test]
+fn rows_in_an_open_group_at_stream_end_are_a_cut_not_a_result() {
+    // Every statement closes with a completion; rows without one are the tail of a
+    // connection that died mid-query. They must surface as an error, never as a
+    // completed (silently short) group.
+    assert!(open_group_verdict(0).is_ok());
+    let cut = open_group_verdict(7).expect_err("cut mid-statement");
+    assert!(cut.contains("connection lost mid-query"), "{cut}");
+    assert!(cut.contains("7 row(s)"), "{cut}");
+    assert!(cut.contains("retry"), "{cut}");
+}

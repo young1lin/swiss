@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -51,18 +51,26 @@ pub async fn check() -> Result<UpdateInfo, String> {
         .build()
         .map_err(|err| format!("cannot build an http client: {err}"))?;
     let answer = client
-        .get(format!("https://api.github.com/repos/{REPO}/releases/latest"))
+        .get(format!(
+            "https://api.github.com/repos/{REPO}/releases/latest"
+        ))
         .send()
         .await
         .map_err(|err| format!("cannot reach github: {err}"))?;
     if answer.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(UpdateInfo { current: current_version(), latest: None, newer: false });
+        return Ok(UpdateInfo {
+            current: current_version(),
+            latest: None,
+            newer: false,
+        });
     }
     if !answer.status().is_success() {
         return Err(format!("github answered HTTP {}", answer.status()));
     }
-    let body: serde_json::Value =
-        answer.json().await.map_err(|err| format!("unreadable answer: {err}"))?;
+    let body: serde_json::Value = answer
+        .json()
+        .await
+        .map_err(|err| format!("unreadable answer: {err}"))?;
     let Some(tag) = body.get("tag_name").and_then(|v| v.as_str()) else {
         return Err("the release carries no tag_name".to_string());
     };
@@ -73,7 +81,11 @@ pub async fn check() -> Result<UpdateInfo, String> {
         .unwrap_or("https://github.com/young1lin/swiss/releases/latest")
         .to_string();
     let newer = is_newer(&tag, env!("CARGO_PKG_VERSION"));
-    Ok(UpdateInfo { current: current_version(), latest: Some(Release { tag, url }), newer })
+    Ok(UpdateInfo {
+        current: current_version(),
+        latest: Some(Release { tag, url }),
+        newer,
+    })
 }
 
 /// "vMAJOR.MINOR.PATCH" as a tuple. A missing patch reads as .0; anything that does not parse
@@ -83,7 +95,12 @@ fn version_tuple(tag: &str) -> Option<(u64, u64, u64)> {
     let mut parts = trimmed.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
-    let patch_head = parts.next().unwrap_or("0").split(['-', '+']).next().unwrap_or("0");
+    let patch_head = parts
+        .next()
+        .unwrap_or("0")
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("0");
     let patch = patch_head.parse().ok()?;
     if parts.next().is_some() {
         return None;
@@ -108,7 +125,11 @@ impl UpdateInfo {
             None => out.push_str("latest:  no releases published yet\n"),
             Some(release) => {
                 out.push_str(&format!("latest:  {}", release.tag));
-                out.push_str(if self.newer { " — a newer release exists\n" } else { " (up to date)\n" });
+                out.push_str(if self.newer {
+                    " — a newer release exists\n"
+                } else {
+                    " (up to date)\n"
+                });
                 out.push_str(&format!("download: {}\n", release.url));
             }
         }
@@ -135,13 +156,20 @@ mod tests {
     fn equal_older_and_unparseable_are_not_newer() {
         assert!(!is_newer("v0.1.0", "0.1.0"));
         assert!(!is_newer("v0.1.0", "0.1.1"));
-        assert!(!is_newer("nightly", "0.1.0"), "junk never claims to be newer");
+        assert!(
+            !is_newer("nightly", "0.1.0"),
+            "junk never claims to be newer"
+        );
         assert!(!is_newer("v0.1.0", "custom-build"));
     }
 
     #[test]
     fn render_always_carries_the_manual_steps() {
-        let info = UpdateInfo { current: "0.1.0 (deadbee)".into(), latest: None, newer: false };
+        let info = UpdateInfo {
+            current: "0.1.0 (deadbee)".into(),
+            latest: None,
+            newer: false,
+        };
         let text = info.render();
         assert!(text.contains("current: 0.1.0 (deadbee)"));
         assert!(text.contains("no releases published yet"));
@@ -153,7 +181,10 @@ mod tests {
     fn render_names_the_download_when_one_exists() {
         let info = UpdateInfo {
             current: "0.1.0 (deadbee)".into(),
-            latest: Some(Release { tag: "v0.2.0".into(), url: "https://example.com/rel".into() }),
+            latest: Some(Release {
+                tag: "v0.2.0".into(),
+                url: "https://example.com/rel".into(),
+            }),
             newer: true,
         };
         let text = info.render();

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -119,10 +119,7 @@ impl Groups {
 
     /// The canonical spelling of a name in the list, matched case-insensitively.
     pub fn canonical(&self, name: &str) -> Option<String> {
-        self.names
-            .iter()
-            .find(|n| same_name(n, name))
-            .cloned()
+        self.names.iter().find(|n| same_name(n, name)).cloned()
     }
 
     /// The group a member renders under: its stored group when that group still exists, else
@@ -188,7 +185,8 @@ impl Groups {
             }
         }
         self.names = clean.clone();
-        self.members.retain(|_, g| self.names.iter().any(|n| n == g));
+        self.members
+            .retain(|_, g| self.names.iter().any(|n| n == g));
         Ok(clean)
     }
 
@@ -300,7 +298,9 @@ pub trait GroupScope: Send + Sync {
 /// same way a plugin joins the host - docs/09's "mechanism in the host, business in the
 /// plugin", applied to groups.
 #[derive(Default)]
-pub struct GroupScopes(std::sync::RwLock<std::collections::HashMap<&'static str, std::sync::Arc<dyn GroupScope>>>);
+pub struct GroupScopes(
+    std::sync::RwLock<std::collections::HashMap<&'static str, std::sync::Arc<dyn GroupScope>>>,
+);
 
 impl GroupScopes {
     pub fn new() -> Self {
@@ -323,7 +323,10 @@ mod tests {
     use super::*;
 
     fn groups(names: &[&str]) -> Groups {
-        Groups::from_parts(names.iter().map(|s| s.to_string()).collect(), BTreeMap::new())
+        Groups::from_parts(
+            names.iter().map(|s| s.to_string()).collect(),
+            BTreeMap::new(),
+        )
     }
 
     /// Invariant 1: the list is never empty - something must catch unassigned members.
@@ -334,7 +337,11 @@ mod tests {
             g.set_names(vec![]).unwrap_err(),
             "at least one group must remain"
         );
-        assert_eq!(g.names(), ["default", "Docs"], "a rejected list leaves state untouched");
+        assert_eq!(
+            g.names(),
+            ["default", "Docs"],
+            "a rejected list leaves state untouched"
+        );
         // A fresh model starts from one ordinary group, not from nothing.
         assert_eq!(Groups::new().names(), ["default"]);
     }
@@ -368,7 +375,7 @@ mod tests {
         g.assign("a", Some("docs")).expect("case-insensitive match");
         assert_eq!(g.group_of("a"), "Docs"); // canonical casing comes back
         assert_eq!(g.group_of("b"), "default"); // unassigned
-        // Delete Docs: "a" is unassigned again and lands in the first group.
+                                                // Delete Docs: "a" is unassigned again and lands in the first group.
         g.set_names(vec!["Work".into()]).expect("replaces the list");
         assert_eq!(g.group_of("a"), "Work");
     }
@@ -441,8 +448,11 @@ mod tests {
         // "a" and "c" have no entry: they render in g1 because g1 is first - the exact shape
         // the panel's Move up broke (three under g1, g2 empty, one Move up and all three
         // answered g2).
-        g.set_names_pinning(vec!["g2".into(), "g1".into()], ["a", "b", "c"].map(String::from))
-            .unwrap();
+        g.set_names_pinning(
+            vec!["g2".into(), "g1".into()],
+            ["a", "b", "c"].map(String::from),
+        )
+        .unwrap();
         assert_eq!(g.names(), ["g2", "g1"]);
         assert_eq!(g.group_of("a"), "g1", "default members stay with the name");
         assert_eq!(g.group_of("c"), "g1");
@@ -453,13 +463,9 @@ mod tests {
         assert_eq!(g.group_of("a"), "g2");
         // A rejected list pins nothing and leaves state untouched.
         let mut h = groups(&["g1", "g2"]);
-        assert!(
-            h.set_names_pinning(
-                vec!["g2".into(), "g2".into()],
-                ["a"].map(String::from)
-            )
-            .is_err()
-        );
+        assert!(h
+            .set_names_pinning(vec!["g2".into(), "g2".into()], ["a"].map(String::from))
+            .is_err());
         assert_eq!(h.names(), ["g1", "g2"]);
         assert!(h.members().is_empty(), "a rejected list pinned nothing");
         // A replace that RESPELLS the first group while demoting it pins under the new
@@ -509,12 +515,24 @@ mod tests {
     fn the_scope_table_answers_by_name_and_unknown_scopes_are_absent() {
         struct Fixed;
         impl GroupScope for Fixed {
-            fn names(&self) -> Vec<String> { vec!["default".into()] }
-            fn set_names(&self, _next: Vec<String>) -> Result<Vec<String>, String> { Ok(self.names()) }
-            fn rename(&self, _from: &str, _to: &str) -> Result<(Vec<String>, usize), String> { Ok((self.names(), 0)) }
-            fn assign(&self, _id: &str, _group: Option<&str>) -> Result<String, String> { Ok("default".into()) }
-            fn set_order(&self, _ids: Vec<String>) -> Result<Vec<String>, String> { Ok(vec![]) }
-            fn has_member(&self, _id: &str) -> bool { true }
+            fn names(&self) -> Vec<String> {
+                vec!["default".into()]
+            }
+            fn set_names(&self, _next: Vec<String>) -> Result<Vec<String>, String> {
+                Ok(self.names())
+            }
+            fn rename(&self, _from: &str, _to: &str) -> Result<(Vec<String>, usize), String> {
+                Ok((self.names(), 0))
+            }
+            fn assign(&self, _id: &str, _group: Option<&str>) -> Result<String, String> {
+                Ok("default".into())
+            }
+            fn set_order(&self, _ids: Vec<String>) -> Result<Vec<String>, String> {
+                Ok(vec![])
+            }
+            fn has_member(&self, _id: &str) -> bool {
+                true
+            }
         }
         let scopes = GroupScopes::new();
         assert!(scopes.get("mcps").is_none());

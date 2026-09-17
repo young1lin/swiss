@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,16 +26,18 @@ use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions,
 use sqlx::{Column, Either, Executor, Row};
 
 use swiss_host::config::ServerDef;
-use swiss_host::dbbrowser::{TableSort, TableSortKey, bytea_hex, exact_int64, exact_uint64, finite_f64};
+use swiss_host::dbbrowser::{
+    bytea_hex, exact_int64, exact_uint64, finite_f64, TableSort, TableSortKey,
+};
 
 use super::direct::{BoxFut, Lazy};
 use super::mysql_browser::MysqlBrowser;
 use super::mysql_resources::MysqlResources;
 use super::resources::human_bytes;
 use super::sql::{
-    assert_single_statement, clamp_row_limit, drop_null_columns, like_contains,
-    limit_report, table_page_args, with_row_limit, DEFAULT_ROW_LIMIT, DEFAULT_TABLE_LIMIT,
-    MAX_ROW_LIMIT, MAX_TABLE_LIMIT,
+    assert_single_statement, clamp_row_limit, drop_null_columns, like_contains, limit_report,
+    table_page_args, with_row_limit, DEFAULT_ROW_LIMIT, DEFAULT_TABLE_LIMIT, MAX_ROW_LIMIT,
+    MAX_TABLE_LIMIT,
 };
 use super::tool_server::{Engine, ServerMeta, ToolDef};
 
@@ -110,7 +112,11 @@ fn tools() -> Vec<ToolDef> {
 
 /// `col` (+ direction), with the name as an ascending tiebreaker so pages never shuffle equals.
 fn keyed_order(col: &str, desc: bool) -> String {
-    if desc { format!("{col} DESC, table_name") } else { format!("{col}, table_name") }
+    if desc {
+        format!("{col} DESC, table_name")
+    } else {
+        format!("{col}, table_name")
+    }
 }
 
 /// The `{ list, count }` pair behind mysql_list_tables, built as a pure function so the filtering
@@ -162,10 +168,23 @@ pub fn mysql_list_tables_grammar_sql(
 /// an ascending tiebreaker — DESC applies to the chosen key only, never the tiebreaker.
 fn mysql_list_order(sort: Option<TableSort>) -> String {
     match sort {
-        Some(TableSort { key: TableSortKey::Rows, desc }) => keyed_order("approx_rows", desc),
-        Some(TableSort { key: TableSortKey::Size, desc }) => keyed_order("bytes", desc),
-        Some(TableSort { key: TableSortKey::Name, desc: false }) | None => "table_name".into(),
-        Some(TableSort { key: TableSortKey::Name, desc: true }) => "table_name DESC".into(),
+        Some(TableSort {
+            key: TableSortKey::Rows,
+            desc,
+        }) => keyed_order("approx_rows", desc),
+        Some(TableSort {
+            key: TableSortKey::Size,
+            desc,
+        }) => keyed_order("bytes", desc),
+        Some(TableSort {
+            key: TableSortKey::Name,
+            desc: false,
+        })
+        | None => "table_name".into(),
+        Some(TableSort {
+            key: TableSortKey::Name,
+            desc: true,
+        }) => "table_name DESC".into(),
     }
 }
 
@@ -564,7 +583,10 @@ pub async fn run_query_tx_rows(
     for p in params {
         query = bind_value(query, p);
     }
-    let rows = query.fetch_all(&mut **tx).await.map_err(|e| e.to_string())?;
+    let rows = query
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(rows
         .iter()
         .map(mysql_row_to_value)
@@ -743,8 +765,12 @@ impl MysqlEngine {
         };
         let paging = table_page_args(args.get("limit"), args.get("page"));
         let grep = args.get("grep").and_then(Value::as_str);
-        let ((list_sql, list_params), (count_sql, count_params)) =
-            mysql_list_tables_sql(&database, grep, (paging.page, paging.limit, paging.offset), None);
+        let ((list_sql, list_params), (count_sql, count_params)) = mysql_list_tables_sql(
+            &database,
+            grep,
+            (paging.page, paging.limit, paging.offset),
+            None,
+        );
         let pool = self.conn.get().await?;
         let (list, count) = tokio::join!(
             run_query(&pool, &list_sql, &list_params),
@@ -862,7 +888,10 @@ mod tests {
     #[test]
     fn session_sql_has_no_read_only_statement() {
         // The pool only caps runaway SELECTs; nothing makes the session read-only.
-        assert_eq!(mysql_session_sql(), vec!["SET SESSION max_execution_time = 15000"]);
+        assert_eq!(
+            mysql_session_sql(),
+            vec!["SET SESSION max_execution_time = 15000"]
+        );
     }
 
     #[test]
@@ -913,9 +942,18 @@ mod tests {
 
     #[test]
     fn list_tables_sql_sorts_by_the_chosen_key_with_a_name_tiebreaker() {
-        let rows_desc = TableSort { key: TableSortKey::Rows, desc: true };
-        let size_asc = TableSort { key: TableSortKey::Size, desc: false };
-        let name_desc = TableSort { key: TableSortKey::Name, desc: true };
+        let rows_desc = TableSort {
+            key: TableSortKey::Rows,
+            desc: true,
+        };
+        let size_asc = TableSort {
+            key: TableSortKey::Size,
+            desc: false,
+        };
+        let name_desc = TableSort {
+            key: TableSortKey::Name,
+            desc: true,
+        };
         let ((list, _), _) = mysql_list_tables_sql("mydb", None, (0, 200, 0), Some(rows_desc));
         assert!(list.contains("ORDER BY approx_rows DESC, table_name"));
         let ((list, _), _) = mysql_list_tables_sql("mydb", None, (0, 200, 0), Some(size_asc));
@@ -934,18 +972,17 @@ mod tests {
         assert!(!ping_ok(&[]));
     }
 }
-    #[test]
-    fn a_stream_that_never_terminates_is_an_error_not_an_empty_success() {
-        // The paid-for lesson, as a rule: every MySQL statement ends with the EOF/OK
-        // terminator, so a stream that ends without one was cut mid-query. Answering
-        // Ok(rows-so-far) there told a caller their table was EMPTY (or silently short)
-        // while the tunnel was flapping — the worst failure shape there is.
-        assert!(stream_end_verdict(true, 0).is_ok());
-        assert!(stream_end_verdict(true, 4).is_ok());
-        let cut = stream_end_verdict(false, 0).expect_err("cut before any row");
-        assert!(cut.contains("connection lost mid-query"), "{cut}");
-        let partial = stream_end_verdict(false, 3).expect_err("cut mid-result-set");
-        assert!(partial.contains("3 row(s)"), "{partial}");
-        assert!(partial.contains("retry"), "{partial}");
-    }
-
+#[test]
+fn a_stream_that_never_terminates_is_an_error_not_an_empty_success() {
+    // The paid-for lesson, as a rule: every MySQL statement ends with the EOF/OK
+    // terminator, so a stream that ends without one was cut mid-query. Answering
+    // Ok(rows-so-far) there told a caller their table was EMPTY (or silently short)
+    // while the tunnel was flapping — the worst failure shape there is.
+    assert!(stream_end_verdict(true, 0).is_ok());
+    assert!(stream_end_verdict(true, 4).is_ok());
+    let cut = stream_end_verdict(false, 0).expect_err("cut before any row");
+    assert!(cut.contains("connection lost mid-query"), "{cut}");
+    let partial = stream_end_verdict(false, 3).expect_err("cut mid-result-set");
+    assert!(partial.contains("3 row(s)"), "{partial}");
+    assert!(partial.contains("retry"), "{partial}");
+}

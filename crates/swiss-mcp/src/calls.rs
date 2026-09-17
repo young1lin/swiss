@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -1068,8 +1068,10 @@ impl CallLog {
 pub fn test_log() -> std::sync::Arc<CallLog> {
     static LOG: std::sync::OnceLock<std::sync::Arc<CallLog>> = std::sync::OnceLock::new();
     LOG.get_or_init(|| {
-        let dir =
-            std::env::temp_dir().join(format!("swiss-calls-test-{}", swiss_core::util::random_hex(8)));
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-calls-test-{}",
+            swiss_core::util::random_hex(8)
+        ));
         std::sync::Arc::new(CallLog::at(dir))
     })
     .clone()
@@ -1308,9 +1310,21 @@ mod tests {
         let mcp = "search";
         log.clear_calls(mcp).await;
         let args = |s: &str| serde_json::json!({ "command": s });
-        log.record_call(Some(mcp), &source(), rec("redis_query", Some(args("SET cache:a 1")), true, "OK"));
-        log.record_call(Some(mcp), &source(), rec("redis_query", Some(args("GET cache:a")), true, "\"1\""));
-        log.record_call(Some(mcp), &source(), rec("pg_query", Some(args("SELECT 1")), true, "1 row"));
+        log.record_call(
+            Some(mcp),
+            &source(),
+            rec("redis_query", Some(args("SET cache:a 1")), true, "OK"),
+        );
+        log.record_call(
+            Some(mcp),
+            &source(),
+            rec("redis_query", Some(args("GET cache:a")), true, "\"1\""),
+        );
+        log.record_call(
+            Some(mcp),
+            &source(),
+            rec("pg_query", Some(args("SELECT 1")), true, "1 row"),
+        );
         log.record_call(Some(mcp), &source(), rec("get_user", None, true, "found"));
 
         let tools = |page: Value| -> Vec<String> {
@@ -1323,14 +1337,26 @@ mod tests {
         };
         // "GET" reaches the GET arguments, the get_user tool name, and nothing else
         // (newest first — get_user was recorded last).
-        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("GET")).await), vec!["get_user", "redis_query"]);
+        assert_eq!(
+            tools(log.read_calls(mcp, 0, 100, Some("GET")).await),
+            vec!["get_user", "redis_query"]
+        );
         // The reply text is searchable too.
-        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("1 row")).await), vec!["pg_query"]);
+        assert_eq!(
+            tools(log.read_calls(mcp, 0, 100, Some("1 row")).await),
+            vec!["pg_query"]
+        );
         // No match answers an empty page rather than falling back to the unfiltered one.
-        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("nope")).await).len(), 0);
+        assert_eq!(
+            tools(log.read_calls(mcp, 0, 100, Some("nope")).await).len(),
+            0
+        );
         // An empty or whitespace needle means "no filter" — the plain page comes back.
         assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("")).await).len(), 4);
-        assert_eq!(tools(log.read_calls(mcp, 0, 100, Some("   ")).await).len(), 4);
+        assert_eq!(
+            tools(log.read_calls(mcp, 0, 100, Some("   ")).await).len(),
+            4
+        );
     }
 
     #[tokio::test]
@@ -1342,20 +1368,33 @@ mod tests {
             log.record_call(
                 Some(mcp),
                 &source(),
-                rec("redis_query", Some(serde_json::json!({ "command": format!("GET key:{i}") })), true, "v"),
+                rec(
+                    "redis_query",
+                    Some(serde_json::json!({ "command": format!("GET key:{i}") })),
+                    true,
+                    "v",
+                ),
             );
         }
         log.record_call(Some(mcp), &source(), rec("other", None, true, "noise"));
 
-        let first = log.read_calls(mcp, 0, CALLS_PAGE_SIZE as i64, Some("GET")).await;
+        let first = log
+            .read_calls(mcp, 0, CALLS_PAGE_SIZE as i64, Some("GET"))
+            .await;
         assert_eq!(first["calls"].as_array().unwrap().len(), CALLS_PAGE_SIZE);
         assert_eq!(first["more"], json!(true));
-        let second = log.read_calls(mcp, 1, CALLS_PAGE_SIZE as i64, Some("GET")).await;
+        let second = log
+            .read_calls(mcp, 1, CALLS_PAGE_SIZE as i64, Some("GET"))
+            .await;
         assert_eq!(second["calls"].as_array().unwrap().len(), 5);
         assert_eq!(second["more"], json!(false));
         // The noise entry never leaks onto a filtered page.
         for page in [&first, &second] {
-            assert!(page["calls"].as_array().unwrap().iter().all(|c| c["tool"] == json!("redis_query")));
+            assert!(page["calls"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|c| c["tool"] == json!("redis_query")));
         }
     }
 

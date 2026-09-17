@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -402,9 +402,7 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
         Some(Value::Object(map)) => {
             for (k, v) in map {
                 let Some(v) = v.as_str() else {
-                    return Err(invalid(format!(
-                        "input.env.{k}: must be a string"
-                    )));
+                    return Err(invalid(format!("input.env.{k}: must be a string")));
                 };
                 if k.is_empty() || k.contains('=') || k.contains('\0') {
                     return Err(invalid(format!(
@@ -426,7 +424,11 @@ fn parse_legacy_input(input: &Value) -> Result<ProcSpec, ActionError> {
                 env.push((k.clone(), resolved_value));
             }
         }
-        Some(_) => return Err(invalid("input.env: must be an object of string values".into())),
+        Some(_) => {
+            return Err(invalid(
+                "input.env: must be an object of string values".into(),
+            ))
+        }
     }
     Ok(ProcSpec {
         program: resolved.to_string_lossy().into_owned(),
@@ -473,11 +475,11 @@ mod tests {
     async fn typed_input_is_validated_strictly() {
         let action = ProcessExecAction::new(Supervisor::new());
         for bad in [
-            json!({}),                                                          // no program
-            json!({ "program": "" }),                                           // empty program
-            json!({ "program": "x", "wat": 1 }),                                // unknown field
-            json!({ "program": "x", "args": "not-array" }),                     // wrong type
-            json!({ "program": "x", "args": [1] }),                             // non-string arg
+            json!({}),                                                            // no program
+            json!({ "program": "" }),                                             // empty program
+            json!({ "program": "x", "wat": 1 }),                                  // unknown field
+            json!({ "program": "x", "args": "not-array" }),                       // wrong type
+            json!({ "program": "x", "args": [1] }),                               // non-string arg
             json!({ "program": "x", "env": { "A": 1 } }), // non-string env value
             json!({ "program": "x", "cwd": "${SWISS_EXEC_DEFINITELY_UNSET_3}" }), // missing required ref
         ] {
@@ -736,108 +738,108 @@ async fn legacy_command_env_vars_reach_the_child_and_refs_in_values_resolve() {
         )
         .await
         .is_err());
-    }
+}
 
-    /// Plant a vault value under a test-unique name (one scratch home per test binary).
-    #[cfg(test)]
-    fn plant_secret(name: &str, value: &str) {
-        let _guard = swiss_core::paths::DATA_DIR_LOCK.blocking_lock();
+/// Plant a vault value under a test-unique name (one scratch home per test binary).
+#[cfg(test)]
+fn plant_secret(name: &str, value: &str) {
+    let _guard = swiss_core::paths::DATA_DIR_LOCK.blocking_lock();
+    let path = swiss_core::paths::test_home().join("secrets.json");
+    swiss_core::secure::secretstore::inject_vault(&path);
+    let rev = swiss_core::secure::secretstore::vault_rev();
+    swiss_core::secure::secretstore::put_secret(&path, name, value, rev).expect("plant");
+}
+
+#[test]
+fn a_missing_vault_reference_in_a_command_is_refused() {
+    // The strict half of the credential contract (docs/19 D4): the legacy command path
+    // stays lenient for env refs, but a missing vault reference names itself and refuses.
+    let err = parse_legacy_input(&json!({
+        "command": "echo ${secret://actions-missing-key}"
+    }))
+    .expect_err("refused");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("input.command")
+            && msg.contains("secret://actions-missing-key")
+            && msg.contains("not in the vault"),
+        "names the input field and the reference: {msg}"
+    );
+}
+
+#[test]
+fn a_present_vault_reference_resolves_and_masks() {
+    plant_secret("actions-present-key", "sk_live_actions_mask_me");
+    let spec = parse_legacy_input(&json!({
+        "command": "echo token=${secret://actions-present-key}",
+        "env": { "MODE": "${secret://actions-present-key}" }
+    }))
+    .expect("resolves");
+    // The command carries the value (tokenized: the token holding the resolved secret).
+    assert!(
+        spec.args
+            .iter()
+            .any(|a| a.contains("sk_live_actions_mask_me")),
+        "program={:?} args={:?}",
+        spec.program,
+        spec.args
+    );
+    // ...the env row carries it...
+    assert!(spec
+        .env
+        .iter()
+        .any(|(k, v)| k == "MODE" && v.contains("sk_live_actions_mask_me")));
+    // ...and the same value is registered for masking, so captured output never echoes it.
+    assert!(
+        spec.secrets.iter().any(|s| s == "sk_live_actions_mask_me"),
+        "the resolved secret is masked: {:?}",
+        spec.secrets
+    );
+}
+
+#[tokio::test]
+async fn an_unreferenced_vault_value_never_reaches_a_child_environment() {
+    // docs/19 D8 — the isolation the env store cannot offer: a vault value is ONLY ever
+    // present where a reference put it. Plant a secret, run a child that dumps its whole
+    // environment, reference nothing: the value must be absent. The job's own env row is
+    // the positive control proving the dump actually sees the child environment.
+    // plant_secret's blocking_lock is for the sync tests; this one is async.
+    {
+        let _guard = swiss_core::paths::DATA_DIR_LOCK.lock().await;
         let path = swiss_core::paths::test_home().join("secrets.json");
         swiss_core::secure::secretstore::inject_vault(&path);
         let rev = swiss_core::secure::secretstore::vault_rev();
-        swiss_core::secure::secretstore::put_secret(&path, name, value, rev).expect("plant");
+        swiss_core::secure::secretstore::put_secret(
+            &path,
+            "actions-isolation",
+            "sk_live_isolation_canary",
+            rev,
+        )
+        .expect("plant");
     }
-
-    #[test]
-    fn a_missing_vault_reference_in_a_command_is_refused() {
-        // The strict half of the credential contract (docs/19 D4): the legacy command path
-        // stays lenient for env refs, but a missing vault reference names itself and refuses.
-        let err = parse_legacy_input(&json!({
-            "command": "echo ${secret://actions-missing-key}"
-        }))
-        .expect_err("refused");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("input.command") && msg.contains("secret://actions-missing-key")
-                && msg.contains("not in the vault"),
-            "names the input field and the reference: {msg}"
-        );
-    }
-
-    #[test]
-    fn a_present_vault_reference_resolves_and_masks() {
-        plant_secret("actions-present-key", "sk_live_actions_mask_me");
-        let spec = parse_legacy_input(&json!({
-            "command": "echo token=${secret://actions-present-key}",
-            "env": { "MODE": "${secret://actions-present-key}" }
-        }))
-        .expect("resolves");
-        // The command carries the value (tokenized: the token holding the resolved secret).
-        assert!(
-            spec.args.iter().any(|a| a.contains("sk_live_actions_mask_me")),
-            "program={:?} args={:?}",
-            spec.program,
-            spec.args
-        );
-        // ...the env row carries it...
-        assert!(
-            spec.env
-                .iter()
-                .any(|(k, v)| k == "MODE" && v.contains("sk_live_actions_mask_me"))
-        );
-        // ...and the same value is registered for masking, so captured output never echoes it.
-        assert!(
-            spec.secrets.iter().any(|s| s == "sk_live_actions_mask_me"),
-            "the resolved secret is masked: {:?}",
-            spec.secrets
-        );
-    }
-
-    #[tokio::test]
-    async fn an_unreferenced_vault_value_never_reaches_a_child_environment() {
-        // docs/19 D8 — the isolation the env store cannot offer: a vault value is ONLY ever
-        // present where a reference put it. Plant a secret, run a child that dumps its whole
-        // environment, reference nothing: the value must be absent. The job's own env row is
-        // the positive control proving the dump actually sees the child environment.
-        // plant_secret's blocking_lock is for the sync tests; this one is async.
-        {
-            let _guard = swiss_core::paths::DATA_DIR_LOCK.lock().await;
-            let path = swiss_core::paths::test_home().join("secrets.json");
-            swiss_core::secure::secretstore::inject_vault(&path);
-            let rev = swiss_core::secure::secretstore::vault_rev();
-            swiss_core::secure::secretstore::put_secret(
-                &path,
-                "actions-isolation",
-                "sk_live_isolation_canary",
-                rev,
-            )
-            .expect("plant");
-        }
-        let action = LegacyCommandAction::new(Supervisor::new());
-        let input = if cfg!(windows) {
-            json!({
-                "command": "cmd /c set",
-                "env": { "JOB_CANARY": "job-canary-present" }
-            })
-        } else {
-            json!({
-                "command": "sh -c 'env'",
-                "env": { "JOB_CANARY": "job-canary-present" }
-            })
-        };
-        let out = action
-            .execute(&input, CancelHandle::never())
-            .await
-            .expect("runs");
-        assert!(out.ok, "{out:?}");
-        assert!(
-            out.output.contains("job-canary-present"),
-            "positive control: the job env row reached the child: {out:?}"
-        );
-        assert!(
-            !out.output.contains("sk_live_isolation_canary"),
-            "an unreferenced vault value leaked into the child environment: {out:?}"
-        );
-    }
-
-
+    let action = LegacyCommandAction::new(Supervisor::new());
+    let input = if cfg!(windows) {
+        json!({
+            "command": "cmd /c set",
+            "env": { "JOB_CANARY": "job-canary-present" }
+        })
+    } else {
+        json!({
+            "command": "sh -c 'env'",
+            "env": { "JOB_CANARY": "job-canary-present" }
+        })
+    };
+    let out = action
+        .execute(&input, CancelHandle::never())
+        .await
+        .expect("runs");
+    assert!(out.ok, "{out:?}");
+    assert!(
+        out.output.contains("job-canary-present"),
+        "positive control: the job env row reached the child: {out:?}"
+    );
+    assert!(
+        !out.output.contains("sk_live_isolation_canary"),
+        "an unreferenced vault value leaked into the child environment: {out:?}"
+    );
+}

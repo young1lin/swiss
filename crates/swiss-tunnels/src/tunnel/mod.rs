@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -60,6 +60,7 @@ pub mod mcpmatch;
 pub mod port;
 /// HTTP CONNECT / SOCKS5 dialing for proxied SSH connections (docs/27 §2).
 pub mod proxy;
+pub mod remote;
 pub mod shell;
 pub mod ssh;
 #[cfg(test)]
@@ -69,7 +70,8 @@ pub mod types;
 
 pub use api::{McpDisplay, Tunnels};
 pub use groups::register_tunnel_scopes;
-pub use manager::{McpView, OpError, OpResult, ShellSessionGuard, TunnelManager};
+pub use manager::{ConnectionLease, McpView, OpError, OpResult, ShellSessionGuard, TunnelManager};
+pub use remote::TunnelRemote;
 pub use shell::TunnelShells;
 pub use store::TunnelStore;
 pub use types::{FailureKind, RuleDef, RuleState, SshConnDef, TunnelError};

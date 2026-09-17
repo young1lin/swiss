@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -112,7 +112,9 @@ fn normalize_legacy_refs(path: &std::path::Path, mut raw: Value) -> Value {
     if n > 0 {
         swiss_core::log::info(&format!(
             "{}: {n} legacy secret:// reference(s) migrated to ${{secret://...}}",
-            path.file_name().map(|s| s.to_string_lossy()).unwrap_or_default()
+            path.file_name()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default()
         ));
     }
     raw
@@ -409,14 +411,20 @@ mod tests {
         let raw = read_secure_json(&path).expect("read").expect("present");
         let store = ConfigStore::from_loaded(path.clone(), raw);
         let snap = store.snapshot();
-        assert_eq!(snap.raw["servers"]["echo"]["headers"]["X-Key"], "${secret://legacy-a}");
+        assert_eq!(
+            snap.raw["servers"]["echo"]["headers"]["X-Key"],
+            "${secret://legacy-a}"
+        );
         assert_eq!(
             snap.raw["servers"]["echo"]["headers"]["Mix"],
             "Bearer secret://legacy-b"
         );
         // The disk keeps its legacy spelling until the next save.
         let disk = read_secure_json(&path).expect("re-read").expect("present");
-        assert_eq!(disk["servers"]["echo"]["headers"]["X-Key"], "secret://legacy-a");
+        assert_eq!(
+            disk["servers"]["echo"]["headers"]["X-Key"],
+            "secret://legacy-a"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -342,9 +342,7 @@ async fn stream(
     // expired or replayed ticket be refused as an HTTP status the panel can show,
     // instead of as a socket that opens and immediately dies.
     match sessions.attach(&id, ticket).await {
-        Ok(attachment) => {
-            upgrade.on_upgrade(move |socket| pump(socket, attachment, sessions, id))
-        }
+        Ok(attachment) => upgrade.on_upgrade(move |socket| pump(socket, attachment, sessions, id)),
         Err(err) => fail(&err),
     }
 }
@@ -515,8 +513,8 @@ mod tests {
 
     #[test]
     fn control_frames_parse_strictly() {
-        let size =
-            parse_control(r#"{"t":"resize","cols":120,"rows":30}"#).expect("a legal resize decodes");
+        let size = parse_control(r#"{"t":"resize","cols":120,"rows":30}"#)
+            .expect("a legal resize decodes");
         assert_eq!(size, PtySize::new(120, 30).expect("legal"));
         // Unknown t, missing fields, wrong types, absurd geometry: all ignored.
         assert!(parse_control(r#"{"t":"ping"}"#).is_none());
@@ -565,7 +563,8 @@ mod tests {
         }
 
         let state = TerminalState::new();
-        let dir = std::env::temp_dir().join(format!("swiss-targets-{}", swiss_core::util::random_hex(8)));
+        let dir =
+            std::env::temp_dir().join(format!("swiss-targets-{}", swiss_core::util::random_hex(8)));
         state.install(TerminalSessions::new(
             TerminalConfig::default(),
             Arc::new(ShellRegistry::new()),
@@ -592,9 +591,12 @@ mod tests {
             .expect("local.shells is an array");
         assert_eq!(shells.len(), 2, "{shells:?}");
         assert!(shells.iter().all(|s| {
-            !s["program"].as_str().unwrap_or("").is_empty() && !s["label"].as_str().unwrap_or("").is_empty()
+            !s["program"].as_str().unwrap_or("").is_empty()
+                && !s["label"].as_str().unwrap_or("").is_empty()
         }));
-        let shell = body["local"]["shell"].as_str().expect("local.shell is a string");
+        let shell = body["local"]["shell"]
+            .as_str()
+            .expect("local.shell is a string");
         assert_eq!(shell, r"C:\shells\pwsh.exe");
         assert!(
             std::path::Path::new(shell).is_absolute(),

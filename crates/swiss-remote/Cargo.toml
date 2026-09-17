@@ -1,0 +1,25 @@
+[package]
+name = "swiss-remote"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[dependencies]
+# Peer of swiss-mcp/swiss-tunnels: the agent-facing remote-execution plugin. Depends on
+# the host contracts ONLY (docs/32 §4) - never on swiss-tunnels: the endpoint is an id
+# and a lease through the RemoteTransportRegistry, so this crate builds and tests with
+# no SSH client linked at all.
+swiss-core = { path = "../swiss-core" }
+swiss-host = { path = "../swiss-host" }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync", "fs", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
+async-trait = "0.1"
+thiserror = "2"
+
+[dev-dependencies]
+# test-utils pins the deterministic master key for this crate's own test binaries.
+swiss-core = { path = "../swiss-core", features = ["test-utils"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "time", "sync", "fs", "test-util"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }

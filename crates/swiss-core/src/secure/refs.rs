@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -142,9 +142,13 @@ pub fn resolve_value(v: &Value) -> Result<Value, String> {
 
 fn resolve_at(v: &Value, path: &str) -> Result<Value, String> {
     match v {
-        Value::String(s) => resolve(s)
-            .map(Value::String)
-            .map_err(|e| if path.is_empty() { e } else { format!("{path} {e}") }),
+        Value::String(s) => resolve(s).map(Value::String).map_err(|e| {
+            if path.is_empty() {
+                e
+            } else {
+                format!("{path} {e}")
+            }
+        }),
         Value::Array(a) => Ok(Value::Array(
             a.iter()
                 .enumerate()
@@ -226,7 +230,10 @@ mod tests {
     fn an_invalid_secret_name_inside_the_envelope_is_refused() {
         for bad in ["${secret://BadName}", "${secret://}", "${secret://a b}"] {
             let err = resolve(bad).unwrap_err();
-            assert!(err.contains("lowercase kebab"), "explains the grammar for {bad}: {err}");
+            assert!(
+                err.contains("lowercase kebab"),
+                "explains the grammar for {bad}: {err}"
+            );
         }
     }
 
@@ -252,7 +259,10 @@ mod tests {
             resolve("${secret://refs-present").unwrap(),
             "${secret://refs-present"
         );
-        assert_eq!(resolve("Bearer ${secret://x").unwrap(), "Bearer ${secret://x");
+        assert_eq!(
+            resolve("Bearer ${secret://x").unwrap(),
+            "Bearer ${secret://x"
+        );
     }
 
     #[test]

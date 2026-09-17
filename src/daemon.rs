@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -104,7 +104,10 @@ pub fn parse_version_hash(line: &str) -> Option<&str> {
 /// The build of the gateway binary ON DISK: run the entry's own --version and read its hash
 /// (docs/16 H3). A missing entry or a non-gateway placeholder answers None — never a guess.
 fn disk_build_of(entry: &str) -> Option<String> {
-    let out = std::process::Command::new(entry).arg("--version").output().ok()?;
+    let out = std::process::Command::new(entry)
+        .arg("--version")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -959,7 +962,10 @@ mod tests {
         // under the new one, and the reverse: the config and the pin can come from different
         // eras, and an existing token must be found either way.
         let _lock = daemon_state().await;
-        seal("gateway.config.json", json!({ "tokenEnv": "MCP_GATEWAY_TOKEN" }));
+        seal(
+            "gateway.config.json",
+            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN" }),
+        );
         seal_env(&[("SWISS_TOKEN", "new-era-pin")]);
         assert_eq!(read_gateway_token().as_deref(), Some("new-era-pin"));
 
@@ -975,7 +981,10 @@ mod tests {
         // (token_lookup) treats empty as missing, and the CLI must agree — otherwise creds
         // prints an empty token while serve authenticates the pair partner's value.
         let _lock = daemon_state().await;
-        seal("gateway.config.json", json!({ "tokenEnv": "MCP_GATEWAY_TOKEN" }));
+        seal(
+            "gateway.config.json",
+            json!({ "tokenEnv": "MCP_GATEWAY_TOKEN" }),
+        );
         seal_env(&[("MCP_GATEWAY_TOKEN", ""), ("SWISS_TOKEN", "the-real-pin")]);
         assert_eq!(read_gateway_token().as_deref(), Some("the-real-pin"));
         clear_state();
@@ -987,7 +996,10 @@ mod tests {
         // not quietly authenticate with a token pinned under a name its operator never wrote.
         let _lock = daemon_state().await;
         seal("gateway.config.json", json!({ "tokenEnv": "MY_OWN_TOKEN" }));
-        seal_env(&[("MCP_GATEWAY_TOKEN", "legacy-pin"), ("SWISS_TOKEN", "new-pin")]);
+        seal_env(&[
+            ("MCP_GATEWAY_TOKEN", "legacy-pin"),
+            ("SWISS_TOKEN", "new-pin"),
+        ]);
         assert_eq!(read_gateway_token(), None);
         clear_state();
     }
@@ -1076,7 +1088,7 @@ mod tests {
         assert_eq!(vault["stripe-key"], json!("sk_new")); // imported
         assert_eq!(vault["keep-me"], json!("source-value")); // imported wins
         assert_eq!(vault["local-only"], json!("x")); // nothing is deleted
-        // A tampered entry (bad name) is skipped without costing the rest.
+                                                     // A tampered entry (bad name) is skipped without costing the rest.
         import_state(&json!({
             "version": 1,
             "secrets": { "secrets": { "not_a_name": "y", "fresh-one": "z" } }
@@ -1272,7 +1284,9 @@ mod tests {
         assert!(matches!(result, StartResult::Failed { .. }));
         let text = std::fs::read_to_string(&dump).expect("the probe dumped its environment");
         assert!(
-            !text.lines().any(|l| l.to_ascii_uppercase().starts_with("NO_COLOR=")),
+            !text
+                .lines()
+                .any(|l| l.to_ascii_uppercase().starts_with("NO_COLOR=")),
             "the launcher's NO_COLOR must not reach the daemon: {text}"
         );
         assert!(
@@ -1282,7 +1296,8 @@ mod tests {
             "prefix-family noise must not reach the daemon: {text}"
         );
         assert!(
-            text.lines().any(|l| l.to_ascii_uppercase().starts_with("PATH=")),
+            text.lines()
+                .any(|l| l.to_ascii_uppercase().starts_with("PATH=")),
             "the machine's own variables DO reach the daemon: {text}"
         );
         // SAFETY: restore the machine for the rest of the test binary.
@@ -1414,7 +1429,10 @@ mod tests {
         #[cfg(windows)]
         let (script, text) = (dir.join("version-probe.cmd"), format!("@echo {line}\r\n"));
         #[cfg(not(windows))]
-        let (script, text) = (dir.join("version-probe.sh"), format!("#!/bin/sh\necho '{line}'\n"));
+        let (script, text) = (
+            dir.join("version-probe.sh"),
+            format!("#!/bin/sh\necho '{line}'\n"),
+        );
         std::fs::write(&script, text).expect("write the version probe");
         #[cfg(unix)]
         {
@@ -1434,7 +1452,9 @@ mod tests {
         // disk build), and the test binary itself would misbehave asked that — point it at a
         // probe reporting the SAME hash the fake gateway serves: the matching-build path.
         let mut rec = read_pid_file(gw.port).expect("planted");
-        rec.entry = version_probe_entry(&data_dir(), "aaaaaaa").to_string_lossy().into_owned();
+        rec.entry = version_probe_entry(&data_dir(), "aaaaaaa")
+            .to_string_lossy()
+            .into_owned();
         rec.node = rec.entry.clone();
         write_pid_file(&rec);
 
@@ -1457,7 +1477,10 @@ mod tests {
         // startedAt is an ISO stamp, so the uptime is a duration rather than a guess.
         assert!(status.uptime_ms.is_some());
         // The build pair agrees (disk probe says what /health says): no note (docs/16 H3).
-        assert_eq!(status.build.as_ref().map(|b| b["hash"].clone()), Some(json!("aaaaaaa")));
+        assert_eq!(
+            status.build.as_ref().map(|b| b["hash"].clone()),
+            Some(json!("aaaaaaa"))
+        );
         assert_eq!(status.disk_build.as_deref(), Some("aaaaaaa"));
         assert_eq!(status.build_note, None);
         remove_pid_file(gw.port);
@@ -1483,17 +1506,30 @@ mod tests {
 
         let status = daemon_status(gw.port).await;
         assert!(status.running);
-        assert_eq!(status.build.as_ref().map(|b| b["hash"].clone()), Some(json!("aaaaaaa")));
+        assert_eq!(
+            status.build.as_ref().map(|b| b["hash"].clone()),
+            Some(json!("aaaaaaa"))
+        );
         assert_eq!(status.disk_build.as_deref(), Some("bbbbbbb"));
-        let note = status.build_note.as_deref().expect("a disagreement is a note");
-        assert!(note.contains("bbbbbbb") && note.contains("aaaaaaa"), "{note}");
+        let note = status
+            .build_note
+            .as_deref()
+            .expect("a disagreement is a note");
+        assert!(
+            note.contains("bbbbbbb") && note.contains("aaaaaaa"),
+            "{note}"
+        );
         assert!(note.contains("restart"), "{note}");
 
         let text = crate::cli::render_status(&status);
         assert!(text.contains("build"), "{text}");
         assert!(text.contains("note:"), "{text}");
-        let json_text = serde_json::to_string(&crate::cli::status_json(&status)).unwrap_or_default();
-        assert!(json_text.contains("\"diskBuild\":\"bbbbbbb\""), "{json_text}");
+        let json_text =
+            serde_json::to_string(&crate::cli::status_json(&status)).unwrap_or_default();
+        assert!(
+            json_text.contains("\"diskBuild\":\"bbbbbbb\""),
+            "{json_text}"
+        );
         remove_pid_file(gw.port);
         gw.stop();
     }

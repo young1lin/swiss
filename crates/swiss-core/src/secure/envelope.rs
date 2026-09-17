@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -257,7 +257,10 @@ mod tests {
     fn the_wire_literals_stay_frozen() {
         assert_eq!(HKDF_INFO, b"lmg-state-v1");
         let sealed = serde_json::to_value(seal(&FIXTURE_KEY, "env", "x")).expect("serializes");
-        assert!(sealed.get("lmg").is_some(), "the marker must serialize as \"lmg\"");
+        assert!(
+            sealed.get("lmg").is_some(),
+            "the marker must serialize as \"lmg\""
+        );
         assert!(sealed.get("swiss").is_none());
     }
 

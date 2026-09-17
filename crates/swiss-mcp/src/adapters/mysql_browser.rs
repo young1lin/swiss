@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -22,18 +22,18 @@ use super::mysql::{
     MYSQL_BROWSE_PK_SQL,
 };
 use async_trait::async_trait;
+use serde_json::{json, Map, Value};
+use sqlx::mysql::MySqlPool;
+use std::sync::Arc;
 use swiss_host::dbbrowser::{
     ambiguous_row_error, browse_count_sql, browse_offset, browse_order, browse_page_size,
     browse_rows_sql, build_ddl_create, build_ddl_op_sql, build_edit_statements,
     build_import_statements, conflict_of, ddl_script, export_row_limit, js_to_string,
-    map_import_rows, optimistic_lock_columns,
-    readback_plan, sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns, to_csv,
-    to_json_lines, BrowseColumn, DbBrowser, DbDialect, DumpPiece, EditConflict, EditError,
-    ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+    map_import_rows, optimistic_lock_columns, readback_plan, sql_dump_foot, sql_dump_head,
+    sql_dump_literal, to_browse_columns, to_csv, to_json_lines, BrowseColumn, DbBrowser, DbDialect,
+    DumpPiece, EditConflict, EditError, ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK,
+    EXPORT_ROW_CAP, IMPORT_ROW_CAP,
 };
-use serde_json::{json, Map, Value};
-use sqlx::mysql::MySqlPool;
-use std::sync::Arc;
 
 pub struct MysqlBrowser {
     database: String,
@@ -49,9 +49,7 @@ impl MysqlBrowser {
             database,
             label,
             conn,
-            completion_cache: std::sync::Mutex::new(
-                swiss_host::dbbrowser::CompletionCache::new(),
-            ),
+            completion_cache: std::sync::Mutex::new(swiss_host::dbbrowser::CompletionCache::new()),
         }
     }
     async fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<Map<String, Value>>, String> {
@@ -128,9 +126,7 @@ impl DbBrowser for MysqlBrowser {
         // docs/22 W1.6: a grammar grep (comma AND / | OR / * wildcard) expands to multi-LIKE
         // SQL; a plain substring keeps the single-LIKE statement byte-for-byte.
         let grammar = grep
-            .map(|g| {
-                swiss_host::dbbrowser::grep_where(DbDialect::Mysql, "table_name", g, 0)
-            })
+            .map(|g| swiss_host::dbbrowser::grep_where(DbDialect::Mysql, "table_name", g, 0))
             .transpose()?
             .flatten();
         let ((ls, lp), (cs, cp)) = match grammar {
@@ -525,8 +521,10 @@ impl DbBrowser for MysqlBrowser {
                 for row in &page {
                     // The dump body is EXECUTED on replay — sql_dump_literal, never the
                     // clipboard's sql_literal (docs/22 W4.4 audit blocker).
-                    let literals: Result<Vec<String>, String> =
-                        names.iter().map(|c| sql_dump_literal(DbDialect::Mysql, row.get(c))).collect();
+                    let literals: Result<Vec<String>, String> = names
+                        .iter()
+                        .map(|c| sql_dump_literal(DbDialect::Mysql, row.get(c)))
+                        .collect();
                     let literals = match literals {
                         Ok(l) => l,
                         Err(e) => {
@@ -548,7 +546,9 @@ impl DbBrowser for MysqlBrowser {
             if let Some(tail) = batch.finish() {
                 let _ = tx.send(Ok(tail.into_bytes())).await;
             }
-            let _ = tx.send(Ok(sql_dump_foot(DbDialect::Mysql).as_bytes().to_vec())).await;
+            let _ = tx
+                .send(Ok(sql_dump_foot(DbDialect::Mysql).as_bytes().to_vec()))
+                .await;
         });
         Ok(SqlDump {
             columns: dump_columns,
@@ -683,9 +683,7 @@ impl DbBrowser for MysqlBrowser {
     }
 
     async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
-        use swiss_host::dbbrowser::{
-            completion_from_table, completion_items, sql_word_ending_at,
-        };
+        use swiss_host::dbbrowser::{completion_from_table, completion_items, sql_word_ending_at};
         let Some(prefix) = sql_word_ending_at(sql, caret) else {
             return Ok(json!({ "items": [] }));
         };
@@ -746,7 +744,11 @@ impl DbBrowser for MysqlBrowser {
                     .await?;
                 let cols: Vec<String> = rows
                     .iter()
-                    .filter_map(|r| r.get("column_name").and_then(Value::as_str).map(str::to_string))
+                    .filter_map(|r| {
+                        r.get("column_name")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
                     .collect();
                 self.completion_cache
                     .lock()

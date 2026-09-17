@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -312,6 +312,9 @@ pub enum FailureKind {
     Network,
     Port,
     Config,
+    /// An in-flight remote operation was canceled through its handle — never retried,
+    /// and mapped to RemoteError::Canceled at the transport seam (docs/32).
+    Canceled,
 }
 
 impl FailureKind {
@@ -322,6 +325,7 @@ impl FailureKind {
             FailureKind::Network => "network",
             FailureKind::Port => "port",
             FailureKind::Config => "config",
+            FailureKind::Canceled => "canceled",
         }
     }
 }
@@ -462,17 +466,21 @@ mod tests {
     #[test]
     fn conn_json_keeps_node_field_order_without_proxy_fields() {
         let v = conn_def("c1", false).to_json();
-        let keys: Vec<&str> = v
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(|s| s.as_str())
-            .collect();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
         assert_eq!(
             keys,
             vec![
-                "id", "name", "host", "port", "username", "authType", "keyPath",
-                "passphrase", "password", "hostKey", "group"
+                "id",
+                "name",
+                "host",
+                "port",
+                "username",
+                "authType",
+                "keyPath",
+                "passphrase",
+                "password",
+                "hostKey",
+                "group"
             ]
         );
     }
@@ -481,18 +489,25 @@ mod tests {
     #[test]
     fn conn_json_appends_proxy_fields_in_spec_order() {
         let v = conn_def("c1", true).to_json();
-        let keys: Vec<&str> = v
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(|s| s.as_str())
-            .collect();
+        let keys: Vec<&str> = v.as_object().unwrap().keys().map(|s| s.as_str()).collect();
         assert_eq!(
             keys,
             vec![
-                "id", "name", "host", "port", "username", "authType", "keyPath",
-                "passphrase", "password", "hostKey", "group", "proxy", "proxyUsername",
-                "proxyPassword", "jump"
+                "id",
+                "name",
+                "host",
+                "port",
+                "username",
+                "authType",
+                "keyPath",
+                "passphrase",
+                "password",
+                "hostKey",
+                "group",
+                "proxy",
+                "proxyUsername",
+                "proxyPassword",
+                "jump"
             ]
         );
     }

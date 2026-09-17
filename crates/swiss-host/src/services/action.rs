@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -39,6 +39,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use tokio::sync::watch;
+
+use crate::services::runs::RunOutputBuffer;
 
 /// The observing half of a cancellation flag, shared by every reader of one run. Watch
 /// (not a broadcast channel): O(1) per reader, and a late subscriber still sees the flag.
@@ -183,6 +185,50 @@ pub struct ActionInfo {
     pub schema: Value,
 }
 
+/// The write half of one run's live output, handed to an action through
+/// [ActionContext]. Appends are synchronous and bounded: they land in the run's
+/// [RunOutputBuffer] (cap enforced there) and never block, so an action may append from
+/// inside a select arm without stalling anything.
+///
+/// An action that never looks at it loses nothing — the buffer simply stays empty and
+/// the run's outcome text is the only output, exactly as before this seam existed.
+#[derive(Clone)]
+pub struct RunOutputSink {
+    buffer: Arc<RunOutputBuffer>,
+}
+
+impl RunOutputSink {
+    pub(crate) fn new(buffer: Arc<RunOutputBuffer>) -> Self {
+        RunOutputSink { buffer }
+    }
+
+    /// Append output text to the run's live buffer. Bounded by the buffer's own cap
+    /// (oldest data evicted, cursor keeps advancing) — an hours-long Yocto build may
+    /// stream gigabytes through here while the gateway holds kilobytes.
+    pub fn append(&self, text: &str) {
+        self.buffer.append(text.as_bytes());
+    }
+
+    /// Append raw bytes (lossy when they split a character; cursors stay byte-based).
+    pub fn append_bytes(&self, bytes: &[u8]) {
+        self.buffer.append(bytes);
+    }
+
+    /// The cursor after everything appended so far — the "caught up to" mark a follower
+    /// would poll with next.
+    pub fn cursor(&self) -> u64 {
+        self.buffer.total_bytes()
+    }
+}
+
+/// What [Action::execute_with_context] receives: the cancel handle every action already
+/// knows, plus the run's live output sink. One struct so the contract can grow another
+/// capability later without a second blanket-rename of every action.
+pub struct ActionContext {
+    pub cancel: CancelHandle,
+    pub output: RunOutputSink,
+}
+
 /// One callable capability. Implementations are shared as Arc<dyn Action> through the
 /// registry; they must therefore be stateless or internally synchronized.
 #[async_trait]
@@ -225,6 +271,19 @@ pub trait Action: Send + Sync {
         input: &Value,
         cancel: CancelHandle,
     ) -> Result<ActionOutcome, ActionError>;
+
+    /// The streaming-aware entry point (docs/32 §16): same contract as [Action::execute]
+    /// plus a live output sink. The DEFAULT delegates to `execute`, so every existing
+    /// action keeps working unchanged and migrates at its own pace; the run coordinator
+    /// calls only this one. An action that produces output incrementally overrides this,
+    /// appends as output arrives, and still returns the bounded tail in its outcome.
+    async fn execute_with_context(
+        &self,
+        input: &Value,
+        ctx: ActionContext,
+    ) -> Result<ActionOutcome, ActionError> {
+        self.execute(input, ctx.cancel).await
+    }
 }
 
 /// Name -> impl map. Registration refuses duplicates: two providers claiming one id is a

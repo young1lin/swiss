@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -62,6 +62,7 @@ pub fn mount(services: Arc<RuntimeServices>) -> Router {
         .route("/api/runs", get(list_runs).post(submit_run))
         .route("/api/runs/{id}", get(get_run))
         .route("/api/runs/{id}/cancel", post(cancel_run))
+        .route("/api/runs/{id}/output", get(run_output))
         .with_state(services)
 }
 
@@ -200,4 +201,46 @@ async fn cancel_run(
 
 fn unknown_run(id: &str) -> Response {
     admin_error(StatusCode::NOT_FOUND, &format!("no run {id}"))
+}
+
+#[derive(serde::Deserialize)]
+struct OutputQuery {
+    /// The cursor a previous read ended on; absent = from the oldest retained byte.
+    after: Option<String>,
+    /// A caller's own cap on one read; the server clamps it to its maximum anyway.
+    max: Option<String>,
+}
+
+/// One bounded slice of a run's LIVE output (docs/32 §17): while the run is executing,
+/// what it appended so far; once finished, the retained tail. The response carries a
+/// monotonic cursor — poll again with it as `?after`. A cursor older than the retained
+/// window reads the oldest kept bytes with `truncated: true`, never a silent gap.
+async fn run_output(
+    State(services): State<Arc<RuntimeServices>>,
+    Path(id): Path<String>,
+    Query(query): Query<OutputQuery>,
+) -> Response {
+    let Some(run_id) = id.parse::<u64>().ok() else {
+        return unknown_run(&id);
+    };
+    let after = query.after.and_then(|a| a.parse::<u64>().ok()).unwrap_or(0);
+    let max = query
+        .max
+        .and_then(|m| m.parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    match services.runs.output(run_id, after, max) {
+        Some((state, chunk)) => admin_json(
+            StatusCode::OK,
+            json!({
+                "runId": run_id,
+                "state": state.as_str(),
+                "cursor": chunk.cursor,
+                "nextCursor": chunk.next_cursor,
+                "output": chunk.text,
+                "truncated": chunk.truncated,
+                "terminal": state.is_terminal(),
+            }),
+        ),
+        None => unknown_run(&id),
+    }
 }

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,7 +18,7 @@
 //! build had to make. Each of those spawns cost ~65 MB of transient working set and ~350 ms; the
 //! direct calls are free, which is why the memory view stops being opt-in in this build.
 
-use windows::core::{w, PCWSTR, Result as WinResult};
+use windows::core::{w, Result as WinResult, PCWSTR};
 use windows::Win32::Foundation::{LocalFree, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HLOCAL};
 use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
@@ -252,7 +252,7 @@ pub fn run_entry_write(cmd: &str) -> Result<(), String> {
         }
         let mut wide: Vec<u16> = cmd.encode_utf16().collect();
         wide.push(0); // REG_SZ is NUL-terminated
-        // The binding takes the value data as a byte slice, length included.
+                      // The binding takes the value data as a byte slice, length included.
         let mut data: Vec<u8> = Vec::with_capacity(wide.len() * 2);
         for unit in &wide {
             data.extend_from_slice(&unit.to_le_bytes());
@@ -563,4 +563,3 @@ mod tests {
         assert!(!parent.name.is_empty());
     }
 }
-

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -50,9 +50,9 @@ use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
 
 use super::direct::{def_bool, BoxFut, Lazy};
-use crate::oauth::{self as oauth_flow, Discovered, NEEDS_AUTH};
 use super::proxy::{assert_proxy_url, proxied_client, ProxyOpts, ProxyServer, RemoteMcp};
 use super::{rmcp_endpoint, Adapter, McpEndpoint};
+use crate::oauth::{self as oauth_flow, Discovered, NEEDS_AUTH};
 
 /// The protocol revision this client offers at initialize, exactly what the Node build's SDK
 /// sent as its latest. Any server worth proxying accepts it or negotiates down.
@@ -166,9 +166,10 @@ impl OauthHalf {
     async fn usable_token(&self) -> Result<String, String> {
         let name = self.current_name();
         match oauth_flow::credentials(&name) {
-            Some(creds) if creds.access_fresh() => creds.access_token.clone().ok_or_else(|| {
-                format!("{NEEDS_AUTH} — open the panel and click Authorize")
-            }),
+            Some(creds) if creds.access_fresh() => creds
+                .access_token
+                .clone()
+                .ok_or_else(|| format!("{NEEDS_AUTH} — open the panel and click Authorize")),
             Some(creds) => {
                 let tokens = match self.refresh_from(&creds).await {
                     Ok(tokens) => tokens,
@@ -653,8 +654,7 @@ impl HttpAdapter {
                 } else {
                     None
                 };
-                let (session, caps) =
-                    RemoteMcpClient::connect(client, &url, headers, auth).await?;
+                let (session, caps) = RemoteMcpClient::connect(client, &url, headers, auth).await?;
                 Ok(RemoteSession {
                     client: session,
                     caps,
@@ -1031,7 +1031,12 @@ mod tests {
                         let form: HashMap<String, String> = body
                             .split('&')
                             .filter_map(|p| p.split_once('='))
-                            .map(|(k, v)| (crate::adapters::rest::form_decode(k), crate::adapters::rest::form_decode(v)))
+                            .map(|(k, v)| {
+                                (
+                                    crate::adapters::rest::form_decode(k),
+                                    crate::adapters::rest::form_decode(v),
+                                )
+                            })
                             .collect();
                         let get = |k: &str| form.get(k).cloned().unwrap_or_default();
                         let _ = headers; // the client posts its credentials in the body
@@ -1180,7 +1185,10 @@ mod tests {
             Err(err) => err,
             Ok(_) => panic!("a hand-written Authorization must be refused on an oauth MCP"),
         };
-        assert!(refused.contains("manages Authorization itself"), "{refused}");
+        assert!(
+            refused.contains("manages Authorization itself"),
+            "{refused}"
+        );
     }
 
     #[tokio::test]
@@ -1191,8 +1199,12 @@ mod tests {
             ..FakeOauthState::default()
         })
         .await;
-        let a = HttpAdapter::new(&oauth_def(&remote.base), "http-oauth-none", crate::calls::test_log())
-            .expect("adapter builds");
+        let a = HttpAdapter::new(
+            &oauth_def(&remote.base),
+            "http-oauth-none",
+            crate::calls::test_log(),
+        )
+        .expect("adapter builds");
         let err = match a.build().await {
             Err(err) => err,
             Ok(_) => panic!("no stored credentials must be a start error"),
@@ -1213,7 +1225,11 @@ mod tests {
         let a = HttpAdapter::new(&oauth_def(&remote.base), name, crate::calls::test_log())
             .expect("adapter");
         let endpoint = a.build().await.expect("the stored bearer connects");
-        let (tools, _) = endpoint.probe.list("tools", None).await.expect("tools/list");
+        let (tools, _) = endpoint
+            .probe
+            .list("tools", None)
+            .await
+            .expect("tools/list");
         assert!(tools.is_empty());
         let seen = remote.state.lock().unwrap().seen.clone();
         assert!(
@@ -1241,12 +1257,25 @@ mod tests {
         }
         let a = HttpAdapter::new(&oauth_def(&remote.base), name, crate::calls::test_log())
             .expect("adapter");
-        let endpoint = a.build().await.expect("the refresh happens before initialize");
-        endpoint.probe.list("tools", None).await.expect("tools work");
+        let endpoint = a
+            .build()
+            .await
+            .expect("the refresh happens before initialize");
+        endpoint
+            .probe
+            .list("tools", None)
+            .await
+            .expect("tools work");
         let stored = oauth::credentials(name).expect("credentials survive");
         // What /token minted is what /mcp now accepts AND what is stored — one truth, read
         // from the remote rather than hard-coded, so the fake's rotation stays free to vary.
-        let accepted = remote.state.lock().unwrap().current.clone().expect("rotated");
+        let accepted = remote
+            .state
+            .lock()
+            .unwrap()
+            .current
+            .clone()
+            .expect("rotated");
         assert_eq!(stored.access_token.as_deref(), Some(accepted.as_str()));
         assert_eq!(stored.refresh_token.as_deref(), Some("ref-next"));
     }
@@ -1292,7 +1321,11 @@ mod tests {
         let a = HttpAdapter::new(&oauth_def(&remote.base), name, crate::calls::test_log())
             .expect("adapter");
         let endpoint = a.build().await.expect("connects while fresh");
-        endpoint.probe.list("tools", None).await.expect("fresh works");
+        endpoint
+            .probe
+            .list("tools", None)
+            .await
+            .expect("fresh works");
 
         // The remote rotates under us: no expiry on our side, the 401 is the first notice.
         // A tool CALL is the observable (a failed tools/list degrades to empty by design).
@@ -1303,7 +1336,13 @@ mod tests {
             .await
             .expect("the 401 refreshed and retried");
         let stored = oauth::credentials(name).expect("still stored");
-        let accepted = remote.state.lock().unwrap().current.clone().expect("rotated");
+        let accepted = remote
+            .state
+            .lock()
+            .unwrap()
+            .current
+            .clone()
+            .expect("rotated");
         assert_eq!(stored.access_token.as_deref(), Some(accepted.as_str()));
     }
 

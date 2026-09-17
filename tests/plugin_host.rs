@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -665,9 +665,30 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
     assert_eq!(
         pages,
         vec![
-            ("mcps".into(), "mcp".into(), "#mcps".into(), true, 10, "resource".into()),
-            ("traffic".into(), "mcp".into(), "#traffic".into(), false, 20, "page".into()),
-            ("tokens".into(), "mcp".into(), "#tokens".into(), false, 30, "page".into()),
+            (
+                "mcps".into(),
+                "mcp".into(),
+                "#mcps".into(),
+                true,
+                10,
+                "resource".into()
+            ),
+            (
+                "traffic".into(),
+                "mcp".into(),
+                "#traffic".into(),
+                false,
+                20,
+                "page".into()
+            ),
+            (
+                "tokens".into(),
+                "mcp".into(),
+                "#tokens".into(),
+                false,
+                30,
+                "page".into()
+            ),
             (
                 "tunnels".into(),
                 "tunnels".into(),
@@ -692,7 +713,14 @@ async fn inventory_shape_is_exact_and_the_mcp_plugin_started_the_mcps() {
                 40,
                 "workspace".into()
             ),
-            ("jobs".into(), "jobs".into(), "#jobs".into(), false, 50, "page".into()),
+            (
+                "jobs".into(),
+                "jobs".into(),
+                "#jobs".into(),
+                false,
+                50,
+                "page".into()
+            ),
         ],
     );
     let entries: Vec<String> = body["pages"]
@@ -1984,4 +2012,3 @@ async fn the_catalog_seat_survives_a_hundred_mcp_restarts() {
     assert_eq!(body.expect("JSON")["connections"], json!([]));
 }
 // --- W4: the touchstone plugin (docs/12) ---------------------------------------------------------
-

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -188,7 +188,10 @@ pub fn vault_rev() -> u64 {
 
 /// Is this name stored? The family's member check (docs/20 G6) - presence, never the value.
 pub fn vault_has(name: &str) -> bool {
-    vault().read().map(|v| v.secrets.contains_key(name)).unwrap_or(false)
+    vault()
+        .read()
+        .map(|v| v.secrets.contains_key(name))
+        .unwrap_or(false)
 }
 
 /// The group list (docs/20 G6) - names only, never a value. Never empty.
@@ -210,8 +213,14 @@ pub fn vault_groups() -> Vec<String> {
 /// that are not stored: a listing asks before it filters.
 pub fn vault_group_of(name: &str) -> String {
     let v = vault().read();
-    let Ok(v) = v else { return "default".to_string() };
-    let first = v.groups.first().cloned().unwrap_or_else(|| "default".to_string());
+    let Ok(v) = v else {
+        return "default".to_string();
+    };
+    let first = v
+        .groups
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "default".to_string());
     v.member_groups
         .get(name)
         .filter(|g| v.groups.iter().any(|n| n == *g))
@@ -248,7 +257,10 @@ pub fn set_vault_groups(
         return Err(MutateError::Seal("vault lock poisoned".into()));
     };
     if rev != expect_rev {
-        return Err(MutateError::RevMismatch { have: rev, saw: expect_rev });
+        return Err(MutateError::RevMismatch {
+            have: rev,
+            saw: expect_rev,
+        });
     }
     persist_then_commit(
         path,
@@ -309,7 +321,12 @@ fn persist_then_commit(path: &Path, candidate: Vault) -> Result<u64, MutateError
 }
 
 /// Store or overwrite one secret (docs/19 D5). `expect_rev` is the rev the caller saw.
-pub fn put_secret(path: &Path, name: &str, value: &str, expect_rev: u64) -> Result<u64, MutateError> {
+pub fn put_secret(
+    path: &Path,
+    name: &str,
+    value: &str,
+    expect_rev: u64,
+) -> Result<u64, MutateError> {
     if !valid_name(name) {
         return Err(MutateError::InvalidName(name.to_string()));
     }
@@ -333,7 +350,10 @@ pub fn put_secret(path: &Path, name: &str, value: &str, expect_rev: u64) -> Resu
         return Err(MutateError::Seal("vault lock poisoned".into()));
     };
     if rev != expect_rev {
-        return Err(MutateError::RevMismatch { have: rev, saw: expect_rev });
+        return Err(MutateError::RevMismatch {
+            have: rev,
+            saw: expect_rev,
+        });
     }
     secrets.insert(name.to_string(), value.to_string());
     persist_then_commit(
@@ -363,7 +383,13 @@ pub fn import_secrets(
     // bundle does not mention keeps its value) is about what is stored on disk.
     // The bundle restores VALUES; the group model on disk rides along untouched - the
     // same keep-what-is-there promise a name the bundle does not mention already has.
-    let Vault { rev, mut secrets, groups, member_groups, order } = read_file(path);
+    let Vault {
+        rev,
+        mut secrets,
+        groups,
+        member_groups,
+        order,
+    } = read_file(path);
     for (name, value) in entries {
         if !valid_name(name) {
             continue;
@@ -391,7 +417,10 @@ pub fn delete_secret(path: &Path, name: &str, expect_rev: u64) -> Result<u64, Mu
         return Err(MutateError::Seal("vault lock poisoned".into()));
     };
     if rev != expect_rev {
-        return Err(MutateError::RevMismatch { have: rev, saw: expect_rev });
+        return Err(MutateError::RevMismatch {
+            have: rev,
+            saw: expect_rev,
+        });
     }
     if secrets.remove(name).is_none() {
         return Err(MutateError::NotFound);
@@ -481,7 +510,10 @@ mod tests {
         // The sealed file must not carry the plaintext.
         let raw = std::fs::read(&path).expect("the vault file exists");
         let raw_text = String::from_utf8_lossy(&raw);
-        assert!(!raw_text.contains("sk_live_abcd"), "the value never lands in the clear");
+        assert!(
+            !raw_text.contains("sk_live_abcd"),
+            "the value never lands in the clear"
+        );
 
         // Wrong rev answers a mismatch carrying both numbers.
         match put_secret(&path, "other", "v", rev0) {
@@ -510,7 +542,10 @@ mod tests {
         match put_secret(&path, "BadName", "v", rev0) {
             Err(e @ MutateError::InvalidName(_)) => {
                 let msg = e.message();
-                assert!(msg.contains("lowercase kebab"), "explains the grammar: {msg}");
+                assert!(
+                    msg.contains("lowercase kebab"),
+                    "explains the grammar: {msg}"
+                );
             }
             other => panic!("expected InvalidName, got {other:?}"),
         }
@@ -555,7 +590,10 @@ mod tests {
             vec!["ord-b".to_string(), "ghost".to_string()],
         )
         .expect("order write");
-        assert_eq!(vault_order(), vec!["ord-b".to_string(), "ghost".to_string()]);
+        assert_eq!(
+            vault_order(),
+            vec!["ord-b".to_string(), "ghost".to_string()]
+        );
 
         inject_vault(&path);
         assert_eq!(
@@ -565,10 +603,17 @@ mod tests {
         );
 
         put_secret(&path, "ord-c", "v", vault_rev()).expect("put");
-        assert_eq!(vault_order(), vec!["ord-b".to_string(), "ghost".to_string()]);
+        assert_eq!(
+            vault_order(),
+            vec!["ord-b".to_string(), "ghost".to_string()]
+        );
 
         let _ = delete_secret(&path, "ord-b", vault_rev());
-        assert_eq!(vault_order(), vec!["ghost".to_string()], "only its own slot goes");
+        assert_eq!(
+            vault_order(),
+            vec!["ghost".to_string()],
+            "only its own slot goes"
+        );
         let _ = delete_secret(&path, "ord-c", vault_rev());
         let _ = delete_secret(&path, "ord-a", vault_rev());
     }
@@ -600,7 +645,10 @@ mod tests {
         )
         .expect("regroup");
         assert_eq!(rev2, rev1 + 1, "a regroup is one rev bump");
-        assert_eq!(vault_groups(), vec!["default".to_string(), "Ops".to_string()]);
+        assert_eq!(
+            vault_groups(),
+            vec!["default".to_string(), "Ops".to_string()]
+        );
         assert_eq!(vault_group_of("g6-key"), "Ops");
         // An unassigned or unknown name answers the first group - the sink rule.
         assert_eq!(vault_group_of("never-stored"), "default");
@@ -611,7 +659,11 @@ mod tests {
 
         // Deleting the secret drops its assignment - no ghost member in a later set_names.
         let _ = delete_secret(&path, "g6-key", vault_rev());
-        assert_eq!(vault_group_of("g6-key"), "default", "no assignment outlives the name");
+        assert_eq!(
+            vault_group_of("g6-key"),
+            "default",
+            "no assignment outlives the name"
+        );
 
         // The sealed file carries the group labels but never the value.
         let raw = String::from_utf8_lossy(&std::fs::read(&path).expect("file")).to_string();

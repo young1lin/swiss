@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -40,6 +40,7 @@
 //! are joined. Dropping a JoinHandle and hoping is not cancellation here.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -49,12 +50,127 @@ use std::panic::AssertUnwindSafe;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::services::action::{ActionError, ActionOutcome, ActionRegistry, CancelSource};
+use crate::services::action::{
+    ActionContext, ActionError, ActionOutcome, ActionRegistry, CancelSource, RunOutputSink,
+};
 use swiss_core::util::now_ms;
 
 /// Finished runs kept in memory for the API (bounded history: the ring holds at most this
 /// many recent outcomes, each with its already-capped output).
 const FINISHED_RING: usize = 32;
+
+/// The live-output ceiling while a run is active (docs/32 §17). 256 KiB is a few hundred
+/// build lines either side of "now" — enough for a follower to see progress, small
+/// enough that a dozen concurrent runs cost single-digit megabytes worst case.
+pub const MAX_LIVE_OUTPUT_BYTES: usize = 256 * 1024;
+
+/// What a finished run's buffer keeps for later reads. Compacting on finish bounds the
+/// finished history (32 runs x 64 KiB = 2 MiB worst case) instead of holding every
+/// finished run's full live window forever.
+pub const KEEP_FINISHED_OUTPUT_BYTES: usize = 64 * 1024;
+
+/// The largest chunk one output read returns, so a single poll cannot materialise the
+/// whole retained window into one response and one String.
+pub const MAX_OUTPUT_READ_BYTES: usize = 128 * 1024;
+
+/// One run's bounded live output: a monotonic byte cursor over everything ever appended,
+/// with the oldest data evicted when the cap is hit. A follower polls with the cursor its
+/// previous read ended on; a cursor older than what is still retained reads the oldest
+/// kept data with `truncated = true`, never a silent gap.
+pub struct RunOutputBuffer {
+    inner: Mutex<OutputInner>,
+    terminal: AtomicBool,
+}
+
+#[derive(Default)]
+struct OutputInner {
+    data: VecDeque<u8>,
+    /// The cursor value of `data.front()` — everything before it was evicted.
+    start: u64,
+    /// Bytes ever appended; also the cursor the NEXT append starts at.
+    total: u64,
+}
+
+impl RunOutputBuffer {
+    pub fn new() -> Arc<Self> {
+        Arc::new(RunOutputBuffer {
+            inner: Mutex::new(OutputInner::default()),
+            terminal: AtomicBool::new(false),
+        })
+    }
+
+    /// Append bytes, evicting the oldest past the live cap. Never blocks, never fails:
+    /// dropping old bytes IS the policy, and the cursor makes the drop visible.
+    pub fn append(&self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.data.extend(bytes.iter().copied());
+        inner.total = inner.total.saturating_add(bytes.len() as u64);
+        let overflow = inner.data.len().saturating_sub(MAX_LIVE_OUTPUT_BYTES);
+        if overflow > 0 {
+            inner.data.drain(..overflow);
+            inner.start = inner.start.saturating_add(overflow as u64);
+        }
+    }
+
+    /// Everything appended so far — the cursor a follower passes on its next poll.
+    pub fn total_bytes(&self) -> u64 {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).total
+    }
+
+    /// The run reached its terminal state: freeze the retained window down to the
+    /// finished-keep cap so history stays cheap. Reads with a cursor inside the evicted
+    /// range keep working, flagged truncated.
+    pub fn finish(&self) {
+        self.terminal.store(true, Ordering::SeqCst);
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let overflow = inner.data.len().saturating_sub(KEEP_FINISHED_OUTPUT_BYTES);
+        if overflow > 0 {
+            inner.data.drain(..overflow);
+            inner.start = inner.start.saturating_add(overflow as u64);
+        }
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        self.terminal.load(Ordering::SeqCst)
+    }
+
+    /// Read from `after` (a previous next-cursor). Returns the text, the cursor to poll
+    /// with next, and whether the requested range had already been partially evicted.
+    pub fn read_from(&self, after: u64, max_bytes: usize) -> RunOutputChunk {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let max = max_bytes.clamp(1, MAX_OUTPUT_READ_BYTES);
+        // A caller ahead of the stream (or at its end) reads nothing, not an error.
+        let from = after.min(inner.total);
+        let truncated = from < inner.start;
+        let begin = from.max(inner.start) as usize;
+        let begin = begin.saturating_sub(inner.start as usize);
+        let end = (begin + max).min(inner.data.len());
+        let bytes = inner.data.range(begin..end).copied().collect::<Vec<u8>>();
+        let next = inner.start + end as u64;
+        RunOutputChunk {
+            text: String::from_utf8_lossy(&bytes).into_owned(),
+            cursor: from,
+            next_cursor: next,
+            truncated,
+        }
+    }
+}
+
+/// One bounded read out of a [RunOutputBuffer].
+#[derive(Debug, Clone)]
+pub struct RunOutputChunk {
+    pub text: String,
+    /// The cursor this read was asked to start from (echoed for the client's bookkeeping).
+    pub cursor: u64,
+    /// Poll with this next. Equal to `cursor` when there was nothing new.
+    pub next_cursor: u64,
+    /// True when `cursor` named data older than what is still retained — the read
+    /// started at the oldest kept byte instead, and the client knows it missed some.
+    pub truncated: bool,
+}
 
 /// The docs' safe defaults for the shared pool; the jobs config reconciler overrides these
 /// with the plugin's maxConcurrentRuns / maxQueuedRuns when Jobs is configured.
@@ -135,6 +251,14 @@ impl RunState {
             RunState::TimedOut => "timeout",
             RunState::Canceled => "canceled",
         }
+    }
+
+    /// Whether no further output can arrive — what an output follower polls for.
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            RunState::Succeeded | RunState::Failed | RunState::TimedOut | RunState::Canceled
+        )
     }
 }
 
@@ -251,6 +375,11 @@ struct Inner {
     active: HashMap<u64, ActiveRun>,
     queued: VecDeque<QueuedRun>,
     finished: VecDeque<RunView>,
+    /// Live output buffers for every run this coordinator knows (active and queued).
+    outputs: HashMap<u64, Arc<RunOutputBuffer>>,
+    /// The buffers of finished runs, retired alongside the finished ring (same bound;
+    /// each already compacted to KEEP_FINISHED_OUTPUT_BYTES).
+    finished_outputs: VecDeque<(u64, Arc<RunOutputBuffer>)>,
 }
 
 /// The coordinator. Shared as one Arc between RuntimeServices, the jobs scheduler and the
@@ -261,6 +390,13 @@ pub struct RunCoordinator {
 }
 
 impl RunCoordinator {
+    /// The action registry this coordinator resolves submissions against — shared with
+    /// the composition root's RuntimeServices, exposed for route handlers and tests that
+    /// register new capabilities into the same pool.
+    pub fn actions(&self) -> &Arc<ActionRegistry> {
+        &self.registry
+    }
+
     pub fn new(registry: Arc<ActionRegistry>) -> Arc<Self> {
         Arc::new(RunCoordinator {
             registry,
@@ -323,9 +459,20 @@ impl RunCoordinator {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let run_id = inner.next_id;
         inner.next_id += 1;
+        // The output buffer exists from the moment the run id is committed, so the
+        // output route can follow a QUEUED run too (it simply has nothing yet).
+        let output = RunOutputBuffer::new();
+        inner.outputs.insert(run_id, output.clone());
         let queued_at = now_ms();
         if inner.active.len() < inner.capacity.max_concurrent {
-            self.start_locked(&mut inner, run_id, request.clone(), queued_at, done_tx);
+            self.start_locked(
+                &mut inner,
+                run_id,
+                request.clone(),
+                queued_at,
+                done_tx,
+                output,
+            );
         } else if request.queue_if_busy {
             if inner.queued.len() >= inner.capacity.max_queued {
                 return Err(SubmitError::Capacity(format!(
@@ -362,6 +509,7 @@ impl RunCoordinator {
         request: SubmitRequest,
         queued_at_ms: u64,
         done: oneshot::Sender<RunView>,
+        output: Arc<RunOutputBuffer>,
     ) {
         let cancel = Arc::new(CancelSource::new());
         let started_at = now_ms();
@@ -382,6 +530,7 @@ impl RunCoordinator {
                         started_at,
                         cancel_for_task,
                         done,
+                        output,
                     )
                     .await
             })
@@ -403,6 +552,9 @@ impl RunCoordinator {
     /// One run's whole life: resolve the action, race execution against the deadline
     /// (through CANCELLATION, never by dropping the future), record the terminal view
     /// exactly once, and dispatch the queue. A tracked task on the shared runtime.
+    // The run's whole life spans exactly these inputs; grouping them into a struct would
+    // rename the same seven facts without hiding any of them.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_run(
         self: Arc<Self>,
         run_id: u64,
@@ -411,8 +563,9 @@ impl RunCoordinator {
         started_at_ms: u64,
         cancel: Arc<CancelSource>,
         done: oneshot::Sender<RunView>,
+        output: Arc<RunOutputBuffer>,
     ) -> RunView {
-        let (result, timed_out) = drive_action(&self.registry, &request, &cancel).await;
+        let (result, timed_out) = drive_action(&self.registry, &request, &cancel, &output).await;
         let ended_at = now_ms();
         let mut view = RunView {
             run_id,
@@ -476,22 +629,46 @@ impl RunCoordinator {
 
     /// Bookkeeping when a run reaches its terminal state: leave the active set, enter the
     /// bounded finished ring, dispatch whatever was waiting for the freed slot.
+    /// One bounded read of a run's live output (docs/32 §17): the text from `after`
+    /// onward, the cursor to poll with next, and the run's state so a follower can stop
+    /// polling the moment it goes terminal. None when the id is unknown — a run whose
+    /// history has rotated out of the finished ring is gone, not empty.
+    pub fn output(
+        &self,
+        run_id: u64,
+        after: u64,
+        max_bytes: usize,
+    ) -> Option<(RunState, RunOutputChunk)> {
+        let state = self.get(run_id)?.state;
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let buffer = inner.outputs.get(&run_id).cloned().or_else(|| {
+            inner
+                .finished_outputs
+                .iter()
+                .find(|(id, _)| *id == run_id)
+                .map(|(_, b)| b.clone())
+        })?;
+        Some((state, buffer.read_from(after, max_bytes)))
+    }
+
     fn finish(self: &Arc<Self>, run_id: u64, view: RunView) {
         {
             let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.active.remove(&run_id);
             inner.finished.push_front(view);
             inner.finished.truncate(FINISHED_RING);
+            retire_output_locked(&mut inner, run_id);
         }
         self.dispatch_queue();
     }
 
     /// Enter the finished ring without touching the active set (queued runs canceled in
     /// place).
-    fn push_finished(&self, view: RunView) {
+    fn push_finished(&self, run_id: u64, view: RunView) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.finished.push_front(view);
         inner.finished.truncate(FINISHED_RING);
+        retire_output_locked(&mut inner, run_id);
     }
 
     /// Start queued runs while the pool has room, FIFO.
@@ -510,7 +687,13 @@ impl RunCoordinator {
             else {
                 return;
             };
-            self.start_locked(&mut inner, run_id, request, queued_at_ms, done);
+            // The queued run's buffer was created at submit; hand it over to the task.
+            let output = inner
+                .outputs
+                .get(&run_id)
+                .cloned()
+                .unwrap_or_else(RunOutputBuffer::new);
+            self.start_locked(&mut inner, run_id, request, queued_at_ms, done, output);
         }
     }
 
@@ -549,7 +732,7 @@ impl RunCoordinator {
             let view = queued_canceled_view(run_id, &request, queued_at_ms);
             drop(inner);
             let _ = done.send(view.clone());
-            self.push_finished(view.clone());
+            self.push_finished(run_id, view.clone());
             return Some(view);
         }
         // Not active, not queued: finished (first-wins no-op) or unknown.
@@ -616,7 +799,7 @@ impl RunCoordinator {
             inner.queued = kept;
         }
         for view in canceled_queued {
-            self.push_finished(view);
+            self.push_finished(view.run_id, view);
         }
         count
     }
@@ -730,6 +913,7 @@ async fn drive_action(
     registry: &ActionRegistry,
     request: &SubmitRequest,
     cancel: &Arc<CancelSource>,
+    output: &Arc<RunOutputBuffer>,
 ) -> (Result<ActionOutcome, ActionError>, bool) {
     let Some(action) = registry.get(&request.action_type) else {
         return (
@@ -741,7 +925,13 @@ async fn drive_action(
         );
     };
     let deadline = tokio::time::Instant::now() + Duration::from_millis(request.timeout_ms.max(1));
-    let exec = AssertUnwindSafe(action.execute(&request.input, cancel.handle())).catch_unwind();
+    // The single execution seam (docs/32 §16): every action runs through
+    // execute_with_context; actions that predate it simply never touch the sink.
+    let ctx = ActionContext {
+        cancel: cancel.handle(),
+        output: RunOutputSink::new(output.clone()),
+    };
+    let exec = AssertUnwindSafe(action.execute_with_context(&request.input, ctx)).catch_unwind();
     tokio::pin!(exec);
     let mut timed_out = false;
     let res = tokio::select! {
@@ -764,6 +954,18 @@ async fn drive_action(
     }
 }
 
+/// Move one run's output buffer from the active map into the retired ring: mark it
+/// terminal (which also compacts it to the finished-keep cap), then park it next to
+/// the finished views. Called under the coordinator lock by every path that puts a
+/// view into the ring, so a buffer can never outlive its run's history slot.
+fn retire_output_locked(inner: &mut Inner, run_id: u64) {
+    let Some(buffer) = inner.outputs.remove(&run_id) else {
+        return;
+    };
+    buffer.finish();
+    inner.finished_outputs.push_front((run_id, buffer));
+    inner.finished_outputs.truncate(FINISHED_RING);
+}
 /// The view for a queued run that never started (canceled / shutdown while waiting).
 fn queued_canceled_view(run_id: u64, request: &SubmitRequest, queued_at_ms: u64) -> RunView {
     RunView {
@@ -1115,5 +1317,242 @@ mod tests {
             .submit(request("manual", "after", 1))
             .expect("submitted");
         assert_eq!(next.done.await.expect("view").state, RunState::Succeeded);
+    }
+
+    // --- live output (docs/32 §17) -------------------------------------------------------
+
+    /// An action that appends to the live sink in bursts and finishes: the
+    /// streaming-aware seam without any process or network in the way.
+    struct StreamingAction;
+
+    #[async_trait]
+    impl Action for StreamingAction {
+        fn type_name(&self) -> &'static str {
+            "test.streaming"
+        }
+        fn schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        fn cancelable(&self) -> bool {
+            true
+        }
+        async fn execute(
+            &self,
+            _input: &Value,
+            _cancel: CancelHandle,
+        ) -> Result<ActionOutcome, ActionError> {
+            unreachable!("the coordinator must call execute_with_context")
+        }
+        async fn execute_with_context(
+            &self,
+            _input: &Value,
+            ctx: crate::services::action::ActionContext,
+        ) -> Result<ActionOutcome, ActionError> {
+            for word in ["hello", " ", "world", "\n"] {
+                ctx.output.append(word);
+                // Yield so a concurrent reader can observe the intermediate cursor.
+                tokio::task::yield_now().await;
+            }
+            Ok(ActionOutcome::ok())
+        }
+    }
+
+    /// A streaming action that PARKS between its two lines: the running-state read is
+    /// then deterministic, not a scheduling race.
+    struct GatedStream {
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl Action for GatedStream {
+        fn type_name(&self) -> &'static str {
+            "test.gated"
+        }
+        fn schema(&self) -> Value {
+            json!({ "type": "object" })
+        }
+        async fn execute(
+            &self,
+            _input: &Value,
+            _cancel: CancelHandle,
+        ) -> Result<ActionOutcome, ActionError> {
+            unreachable!("the coordinator must call execute_with_context")
+        }
+        async fn execute_with_context(
+            &self,
+            _input: &Value,
+            ctx: crate::services::action::ActionContext,
+        ) -> Result<ActionOutcome, ActionError> {
+            ctx.output.append("hello");
+            self.release.notified().await;
+            ctx.output.append(" world\n");
+            Ok(ActionOutcome::ok())
+        }
+    }
+
+    #[tokio::test]
+    async fn live_output_is_readable_while_the_run_runs_and_after_it_finishes() {
+        let (runs, _) = coordinator(RunCapacity::default());
+        let release = Arc::new(tokio::sync::Notify::new());
+        runs.actions()
+            .register(Arc::new(GatedStream {
+                release: release.clone(),
+            }))
+            .expect("register");
+        let mut r = request("manual", "gated", 30_000);
+        r.action_type = "test.gated".into();
+        let submitted = runs.submit(r).expect("submitted");
+        // Park the action between its lines: the running read must see "hello" alone.
+        let mut running_text = None;
+        for _ in 0..200 {
+            if let Some((state, chunk)) = runs.output(submitted.run_id, 0, usize::MAX) {
+                if state == RunState::Running && !chunk.text.is_empty() {
+                    running_text = Some(chunk.text.clone());
+                    break;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            running_text.as_deref(),
+            Some("hello"),
+            "partial text mid-run"
+        );
+        release.notify_waiters();
+        let view = submitted.done.await.expect("view");
+        assert_eq!(view.state, RunState::Succeeded);
+        let (_, chunk) = runs
+            .output(submitted.run_id, 0, usize::MAX)
+            .expect("output readable after finish");
+        assert_eq!(chunk.text, "hello world\n");
+        assert_eq!(chunk.next_cursor, "hello world\n".len() as u64);
+        assert!(!chunk.truncated);
+    }
+
+    #[tokio::test]
+    async fn the_cursor_returns_only_new_bytes() {
+        let (runs, _) = coordinator(RunCapacity::default());
+        runs.actions()
+            .register(Arc::new(StreamingAction))
+            .expect("register");
+        let submitted = runs
+            .submit(request("manual", "cursor", 1))
+            .expect("submitted");
+        let _ = submitted.done.await.expect("view");
+        let (_, first) = runs.output(submitted.run_id, 0, usize::MAX).expect("first");
+        let (_, again) = runs
+            .output(submitted.run_id, first.next_cursor, usize::MAX)
+            .expect("second");
+        assert!(again.text.is_empty());
+        assert_eq!(again.next_cursor, first.next_cursor);
+        // A cursor past the end reads nothing rather than erroring, and echoes the cap.
+        let (_, ahead) = runs
+            .output(submitted.run_id, 999_999, usize::MAX)
+            .expect("ahead");
+        assert!(ahead.text.is_empty());
+        assert_eq!(ahead.cursor, first.next_cursor);
+    }
+
+    #[test]
+    fn an_evicted_window_reads_oldest_kept_bytes_and_says_truncated() {
+        let buffer = RunOutputBuffer::new();
+        let big = "x".repeat(MAX_LIVE_OUTPUT_BYTES + 10);
+        buffer.append(big.as_bytes());
+        // One read is capped by MAX_OUTPUT_READ_BYTES: the whole window takes two.
+        let first = buffer.read_from(0, usize::MAX);
+        assert!(first.truncated, "the first 10 bytes were evicted");
+        assert_eq!(first.text.len(), MAX_OUTPUT_READ_BYTES);
+        let second = buffer.read_from(first.next_cursor, usize::MAX);
+        assert!(!second.truncated);
+        assert_eq!(first.text.len() + second.text.len(), MAX_LIVE_OUTPUT_BYTES);
+        assert_eq!(second.next_cursor, big.len() as u64);
+        let follow = buffer.read_from(second.next_cursor, usize::MAX);
+        assert!(!follow.truncated);
+        assert!(follow.text.is_empty());
+        // Finishing compacts to the finished-keep cap: even more is evicted, flagged.
+        buffer.finish();
+        let compact = buffer.read_from(10, usize::MAX);
+        assert!(compact.truncated);
+        assert_eq!(compact.text.len(), KEEP_FINISHED_OUTPUT_BYTES);
+        assert!(buffer.is_terminal());
+    }
+
+    #[test]
+    fn a_read_cap_limits_one_reads_size() {
+        let buffer = RunOutputBuffer::new();
+        buffer.append(&vec![b'y'; MAX_OUTPUT_READ_BYTES * 2]);
+        let chunk = buffer.read_from(0, 1000);
+        assert_eq!(chunk.text.len(), 1000);
+        assert!(!chunk.truncated, "nothing evicted, only read-capped");
+        let next = buffer.read_from(chunk.next_cursor, usize::MAX);
+        assert_eq!(next.text.len(), MAX_OUTPUT_READ_BYTES);
+    }
+
+    #[tokio::test]
+    async fn output_for_an_unknown_run_is_none() {
+        let (runs, _) = coordinator(RunCapacity::default());
+        assert!(runs.output(424242, 0, usize::MAX).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_canceled_run_keeps_its_partial_output() {
+        let (runs, _) = coordinator(RunCapacity {
+            max_concurrent: 1,
+            max_queued: 0,
+        });
+        // A streaming action that parks forever after emitting one line: cancel is the
+        // only way out, and its already-streamed text must survive it.
+        struct ParkingStream;
+        #[async_trait]
+        impl Action for ParkingStream {
+            fn type_name(&self) -> &'static str {
+                "test.parking"
+            }
+            fn schema(&self) -> Value {
+                json!({ "type": "object" })
+            }
+            async fn execute(
+                &self,
+                _input: &Value,
+                _cancel: CancelHandle,
+            ) -> Result<ActionOutcome, ActionError> {
+                unreachable!("the coordinator must call execute_with_context")
+            }
+            async fn execute_with_context(
+                &self,
+                _input: &Value,
+                ctx: crate::services::action::ActionContext,
+            ) -> Result<ActionOutcome, ActionError> {
+                ctx.output.append("partial\n");
+                ctx.cancel.cancelled().await;
+                Ok(ActionOutcome {
+                    ok: false,
+                    canceled: true,
+                    ..ActionOutcome::ok()
+                })
+            }
+        }
+        runs.actions()
+            .register(Arc::new(ParkingStream))
+            .expect("register");
+        let mut r = request("manual", "park", 1);
+        r.action_type = "test.parking".into();
+        let submitted = runs.submit(r).expect("submitted");
+        for _ in 0..200 {
+            if runs
+                .output(submitted.run_id, 0, usize::MAX)
+                .is_some_and(|(_, c)| !c.text.is_empty())
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let view = runs.cancel(submitted.run_id).await.expect("canceled");
+        assert_eq!(view.state, RunState::Canceled);
+        let (state, chunk) = runs
+            .output(submitted.run_id, 0, usize::MAX)
+            .expect("buffer retired, not dropped");
+        assert!(state.is_terminal());
+        assert_eq!(chunk.text, "partial\n");
     }
 }

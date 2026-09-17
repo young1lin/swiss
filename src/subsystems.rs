@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -134,7 +134,10 @@ impl GroupScope for McpGroups {
         // entry) follow the first slot on their own and are honestly not counted.
         let before = self.store.get_mcp_groups();
         self.store.rename_group(from, to)?;
-        let moved = before.values().filter(|g| g.eq_ignore_ascii_case(from)).count();
+        let moved = before
+            .values()
+            .filter(|g| g.eq_ignore_ascii_case(from))
+            .count();
         Ok((self.store.get_groups(), moved))
     }
     fn assign(&self, id: &str, group: Option<&str>) -> Result<String, String> {
@@ -169,7 +172,10 @@ impl GroupScope for TokenGroups {
     fn rename(&self, from: &str, to: &str) -> Result<(Vec<String>, usize), String> {
         let before = self.store.get_token_members();
         self.store.rename_token_group(from, to)?;
-        let moved = before.values().filter(|g| g.eq_ignore_ascii_case(from)).count();
+        let moved = before
+            .values()
+            .filter(|g| g.eq_ignore_ascii_case(from))
+            .count();
         Ok((self.store.get_token_groups(), moved))
     }
     fn assign(&self, id: &str, group: Option<&str>) -> Result<String, String> {
@@ -186,8 +192,18 @@ impl GroupScope for TokenGroups {
 
 /// Register the scopes AppContext owns natively. Called from AppContext::new so every
 /// composition — the gateway, the admin API tests — serves the same family.
-pub fn register_host_scopes(scopes: &GroupScopes, registry: Arc<Registry>, store: Arc<ManagedStore>) {
-    scopes.register("mcps", Arc::new(McpGroups { registry, store: store.clone() }));
+pub fn register_host_scopes(
+    scopes: &GroupScopes,
+    registry: Arc<Registry>,
+    store: Arc<ManagedStore>,
+) {
+    scopes.register(
+        "mcps",
+        Arc::new(McpGroups {
+            registry,
+            store: store.clone(),
+        }),
+    );
     scopes.register("tokens", Arc::new(TokenGroups { store }));
 }
 
@@ -279,7 +295,8 @@ mod tests {
         // a parser that dropped what it did not understand would silently re-enable every
         // subsystem on the next boot.
         swiss_core::secure::key::use_test_master_key();
-        let dir = std::env::temp_dir().join(format!("swiss-subs-{}", swiss_core::util::random_hex(8)));
+        let dir =
+            std::env::temp_dir().join(format!("swiss-subs-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         unsafe { std::env::set_var("SWISS_SUBS_TOKEN", "tok") };
         let path = dir.join("gateway.config.json");

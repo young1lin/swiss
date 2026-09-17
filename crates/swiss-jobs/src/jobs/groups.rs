@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -60,5 +60,10 @@ impl GroupScope for JobGroups {
 /// Register the jobs scope over one JobSystem. Called from swiss's server.rs, right after
 /// the system opens - the same composition point tunnels use.
 pub fn register_job_scopes(scopes: &GroupScopes, system: &Arc<JobSystem>) {
-    scopes.register("jobs", Arc::new(JobGroups { system: system.clone() }));
+    scopes.register(
+        "jobs",
+        Arc::new(JobGroups {
+            system: system.clone(),
+        }),
+    );
 }

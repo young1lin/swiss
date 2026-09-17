@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -68,10 +68,28 @@ pub enum TestAuth {
     RejectAll,
 }
 
+/// What the fake exec server answers one exec request with (docs/32 §11):
+/// channel success, stdout, stderr, then — when `exit` is set — the exit status
+/// and channel close. A None `exit` is a WEDGED command: the handler returns, the
+/// channel stays open, and the client must cancel or hit its deadline. (The stall
+/// used to be a sleep inside the handler; that blocked the server's whole event
+/// loop, so even the CHANNEL_SUCCESS sat unflushed. A real sshd always answers the
+/// request before the program runs.)
+#[derive(Clone, Default)]
+pub struct ExecScript {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub exit: Option<u32>,
+}
+
 /// The russh server handler behind every test server: answer auth per the policy, and
 /// forward direct-tcpip channels to the address the client asked for.
 struct TestHandler {
     auth: TestAuth,
+    /// When set, session-channel exec requests answer with this script (docs/32 §11
+    /// tests): channel success, stdout, stderr, an optional stall, then the exit
+    /// status. A None handler ignores exec requests entirely.
+    exec: Option<ExecScript>,
 }
 
 impl russh::server::Handler for TestHandler {
@@ -121,6 +139,45 @@ impl russh::server::Handler for TestHandler {
         });
         Ok(())
     }
+
+    async fn channel_open_session(
+        &mut self,
+        _channel: russh::Channel<russh::server::Msg>,
+        reply: russh::server::ChannelOpenHandle,
+        _session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        // Dropping the handle rejects, so accept explicitly: session channels are how
+        // exec (and later SFTP) reach this server.
+        reply.accept().await;
+        Ok(())
+    }
+
+    async fn exec_request(
+        &mut self,
+        channel: russh::ChannelId,
+        data: &[u8],
+        session: &mut russh::server::Session,
+    ) -> Result<(), Self::Error> {
+        let Some(script) = self.exec.clone() else {
+            return Ok(());
+        };
+        let _ = session.channel_success(channel);
+        if !script.stdout.is_empty() {
+            session.data(channel, script.stdout.clone())?;
+        }
+        if !script.stderr.is_empty() {
+            session.extended_data(channel, 1, script.stderr.clone())?;
+        }
+        // Everything sent here flushes when this handler returns to the event loop.
+        if let Some(exit) = script.exit {
+            session.exit_status_request(channel, exit)?;
+            session.close(channel)?;
+        }
+        // `data` (the command string) is unused on purpose: the echo of it is the
+        // client's own assertion, not the server's.
+        let _ = data;
+        Ok(())
+    }
 }
 
 /// A fresh server config with a fresh random host key: the client under test runs TOFU
@@ -152,13 +209,25 @@ fn serve_connections(
     auth: TestAuth,
     track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
 ) -> tokio::task::JoinHandle<()> {
+    serve_connections_exec(listener, config, auth, track, None)
+}
+
+/// The accept loop with an optional exec script handed to every session's handler.
+fn serve_connections_exec(
+    listener: TcpListener,
+    config: Arc<russh::server::Config>,
+    auth: TestAuth,
+    track: Option<Arc<Mutex<Vec<russh::server::Handle>>>>,
+    exec: Option<ExecScript>,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Ok((socket, _)) = listener.accept().await {
             let config = config.clone();
             let track = track.clone();
+            let exec = exec.clone();
             tokio::spawn(async move {
                 if let Ok(run) =
-                    russh::server::run_stream(config, socket, TestHandler { auth }).await
+                    russh::server::run_stream(config, socket, TestHandler { auth, exec }).await
                 {
                     if let Some(track) = &track {
                         if let Ok(mut list) = track.lock() {
@@ -177,6 +246,22 @@ fn serve_connections(
 /// address the client asked for.
 pub async fn spawn_ssh_server() -> u16 {
     spawn_ssh_server_with(TestAuth::AcceptAll).await
+}
+
+/// The same server whose session channels answer exec requests per `script` (docs/32
+/// §11): the full russh client path — connect, session channel, exec request, streaming
+/// Data/ExtendedData, exit status — with no real shell anywhere.
+pub async fn spawn_exec_ssh_server(script: ExecScript) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind ssh");
+    let port = listener.local_addr().expect("ssh addr").port();
+    serve_connections_exec(
+        listener,
+        test_server_config(),
+        TestAuth::AcceptAll,
+        None,
+        Some(script),
+    );
+    port
 }
 
 /// The same server with a chosen auth policy (docs/27 §3.4.4).
@@ -288,7 +373,10 @@ pub fn spawn_killable_ssh_server(auth: TestAuth) -> SshServerHandle {
 /// accepted connection reports one `Socks5Observations`; after a successful reply the
 /// socket pumps transparently to the address the client asked for, so the SSH handshake
 /// that follows rides this proxy like a real one.
-pub async fn spawn_socks5_proxy(auth: SocksAuth, rep: u8) -> (u16, mpsc::Receiver<Socks5Observations>) {
+pub async fn spawn_socks5_proxy(
+    auth: SocksAuth,
+    rep: u8,
+) -> (u16, mpsc::Receiver<Socks5Observations>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind socks5");
     let port = listener.local_addr().expect("socks5 addr").port();
     let (tx, rx) = mpsc::channel(4);
@@ -391,7 +479,9 @@ pub async fn spawn_socks5_proxy(auth: SocksAuth, rep: u8) -> (u16, mpsc::Receive
 /// transparently to the CONNECT target; otherwise it closes. Each accepted connection
 /// reports the full request head verbatim for the header assertions (docs/27 §2.6.3).
 pub async fn spawn_http_proxy(status_line: &'static str) -> (u16, mpsc::Receiver<String>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind http proxy");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind http proxy");
     let port = listener.local_addr().expect("http proxy addr").port();
     let (tx, rx) = mpsc::channel(4);
     tokio::spawn(async move {
@@ -419,9 +509,7 @@ pub async fn spawn_http_proxy(status_line: &'static str) -> (u16, mpsc::Receiver
                 }
                 let head = String::from_utf8_lossy(&head).into_owned();
                 let _ = tx.send(head.clone()).await;
-                let _ = sock
-                    .write_all(format!("{status}\r\n\r\n").as_bytes())
-                    .await;
+                let _ = sock.write_all(format!("{status}\r\n\r\n").as_bytes()).await;
                 let ok = status
                     .split_whitespace()
                     .nth(1)
@@ -439,7 +527,9 @@ pub async fn spawn_http_proxy(status_line: &'static str) -> (u16, mpsc::Receiver
                 let Some((host, port)) = target.rsplit_once(':') else {
                     return;
                 };
-                let Ok(port) = port.parse::<u16>() else { return };
+                let Ok(port) = port.parse::<u16>() else {
+                    return;
+                };
                 if let Ok(mut up) = TcpStream::connect((host, port)).await {
                     let _ = tokio::io::copy_bidirectional(&mut sock, &mut up).await;
                 }
