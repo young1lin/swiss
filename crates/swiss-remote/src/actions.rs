@@ -844,9 +844,9 @@ impl RemoteCatAction {
             let chunk = reader.read_chunk().await.map_err(transport_error)?;
             let Some(chunk) = chunk else { break };
             total += chunk.len() as u64;
-            if total > 8 * 1024 * 1024 {
+            if total > 200 * 1024 {
                 return Err(ActionError::InvalidInput(format!(
-                    "{remote} is larger than the 8 MiB cat limit; use remote.pull instead"
+                    "{remote} is larger than the 200 KiB cat limit; use remote.pull instead"
                 )));
             }
             let part = String::from_utf8_lossy(&chunk).into_owned();
