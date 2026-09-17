@@ -286,10 +286,14 @@ pub async fn run_gateway() -> Result<(), String> {
     )))
     .expect("the terminal plugin registers");
     // The remote plugin (docs/32): CLI-first, no page, and deliberately no capability
-    // requirement - the target table must stay editable while tunnels is off.
+    // requirement - the target table must stay editable while tunnels is off. The
+    // registry + call log ride along so the plugin can mount its builtin remote
+    // MCP under /mcp/remote (R7) on the same surfaces every other MCP uses.
     host.register(Arc::new(crate::plugins::remote::RemotePlugin::new(
         services.clone(),
         remote_state.clone(),
+        registry.clone(),
+        call_log.clone(),
     )))
     .expect("the remote plugin registers");
     // The capability probe the inventory's requiresMet answers through (docs/12 W3): one

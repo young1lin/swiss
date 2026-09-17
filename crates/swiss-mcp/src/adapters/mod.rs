@@ -38,6 +38,7 @@ pub mod proxy;
 pub mod redis;
 pub mod redis_browser;
 pub mod redis_resources;
+pub mod remote;
 pub mod resources;
 pub mod rest;
 pub mod sql;
