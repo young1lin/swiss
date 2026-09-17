@@ -170,7 +170,8 @@ function openDetail(name) {
     // responses before they can commit over a newer needle/page.
     calls: null, stderr: "", callsOpen: {},
     callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
-    callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null, callsRequest: 0,
+    callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
+    callsRetryDir: null, callsSwitch: null, callsRequest: 0,
   };
   KINDS.forEach(function (k) { d[k] = pageState(); });
   state.detail = d;
@@ -213,6 +214,10 @@ async function loadCalls(name) {
   if (!d || d.name !== name) return;
   var target = d.callsPendingPage != null ? d.callsPendingPage : d.callsPage;
   var gen = ++d.callsRequest;
+  // A page switch rides this request; take its anchor intent now, so a request issued later (a
+  // new needle) can never spend an anchor that belonged to this one (docs/32 B2).
+  var sw = null;
+  if (d.callsPendingPage === target && d.callsSwitch) { sw = d.callsSwitch; d.callsSwitch = null; }
   try {
     var r = await api("/api/mcps/" + encodeURIComponent(name) + "/calls?page=" + target +
       (d.callsQ ? "&q=" + encodeURIComponent(d.callsQ) : ""));
@@ -220,7 +225,7 @@ async function loadCalls(name) {
     // A revisit built a new detail object (see loadMeta), or a newer request superseded this
     // one — either way this response is stale and must not commit.
     if (state.detail !== d || gen !== d.callsRequest) return;
-    if (!r.ok) { callsLoadFailed(d, target, r.status); return; }
+    if (!r.ok) { callsLoadFailed(d, target, r.status, sw); return; }
     d.callsPage = target;
     if (d.callsPendingPage === target) d.callsPendingPage = null;
     d.callsError = "";
@@ -230,49 +235,83 @@ async function loadCalls(name) {
     d.callsMore = !!j.more;
     d.stderr = j.stderr || "";
     renderCallsOnly();
+    if (sw) restoreCallsAnchor(sw, d);
   } catch (e) {
     if (state.detail !== d || gen !== d.callsRequest) return;
-    callsLoadFailed(d, target, 0);
+    callsLoadFailed(d, target, 0, sw);
   }
 }
 
 /** A foreground load failed: the committed page, its rows, the open expansions and the scroll
  *  position all stay exactly as they are; the failure says so in place and offers the same
  *  target again (docs/32 B1). */
-function callsLoadFailed(d, target, status) {
+function callsLoadFailed(d, target, status, sw) {
   d.callsPendingPage = null;
+  d.callsSwitch = null;
   d.callsError = "Could not load calls.";
   d.callsErrStatus = status ? "HTTP " + status : "";
   d.callsRetryTarget = target;
+  d.callsRetryDir = sw && sw.dir ? sw.dir : null; // a Retry re-anchors toward the same direction
   patchCallsChrome(d);
 }
 
 /** Newer/Older: begin a page switch. Nothing committed changes until the response lands — the
  *  rows stay on screen, marked busy, and the request carries the target page (docs/32 B1). */
-function callsPageStep(delta) {
+function callsPageStep(delta, opts) {
+  opts = opts || {};
   var d = state.detail;
   if (!d || d.callsPendingPage != null) return; // one switch at a time
   var next = d.callsPage + delta;
   if (next < 0 || (delta > 0 && !d.callsMore)) return;
-  d.callsError = "";
-  d.callsErrStatus = "";
-  d.callsRetryTarget = null;
-  d.callsPendingPage = next;
-  patchCallsChrome(d);
-  loadCalls(d.name);
+  callsBegin(d, next, delta < 0 ? "newer" : "older", !!opts.fromKey);
 }
 
-/** Retry of a failed foreground load: the same target again, through the same transaction. */
-function callsRetry() {
+/** Retry of a failed foreground load: the same target again, through the same transaction — and
+ *  through the same anchor contract, with the direction the failed switch had. */
+function callsRetry(opts) {
+  opts = opts || {};
   var d = state.detail;
   if (!d || d.callsPendingPage != null || d.callsRetryTarget == null) return;
-  var target = d.callsRetryTarget;
+  callsBegin(d, d.callsRetryTarget, d.callsRetryDir, !!opts.fromKey);
+}
+
+/** Begin a switch toward a target page. The anchor — the pager's viewport top, the direction,
+ *  and whether a keyboard drove the action — rides the REQUEST (not the detail), so an anchor
+ *  can never be spent by a response it did not belong to (docs/32 B2). */
+function callsBegin(d, target, dir, fromKey) {
   d.callsError = "";
   d.callsErrStatus = "";
   d.callsRetryTarget = null;
   d.callsPendingPage = target;
+  var pager = $("clPager");
+  d.callsSwitch = (pager && pager.getBoundingClientRect)
+    ? { dir: dir, fromKey: fromKey, pagerTop: pager.getBoundingClientRect().top }
+    : null; // without a pager on screen there is nothing to hold still (the very first load)
   patchCallsChrome(d);
   loadCalls(d.name);
+}
+
+/** After a committed switch: put the pager back where it was on screen — the button the user
+ *  clicked is where their hand and eye already are — and hand keyboard drivers their focus back
+ *  on the equivalent button, falling to the other direction at a boundary. Never scrollIntoView:
+ *  that drags the whole app shell (docs/32 B2). */
+function restoreCallsAnchor(sw, d) {
+  var pane = $("pane");
+  var pager = $("clPager");
+  if (pane && pager && pager.getBoundingClientRect) {
+    pane.scrollTop += pager.getBoundingClientRect().top - sw.pagerTop;
+  }
+  if (!sw.fromKey) return; // a mouse switch leaves focus alone — never steal the search box
+  // Which button may take focus comes from the COMMITTED state, never from a node property:
+  // the fresh markup in a real browser, and the same truth everywhere else.
+  var newerOk = d.callsPage > 0;
+  var olderOk = d.callsMore;
+  var pickOk = sw.dir === "newer" ? newerOk : olderOk;
+  var otherOk = sw.dir === "newer" ? olderOk : newerOk;
+  var to = pickOk ? (sw.dir === "newer" ? $("clPrev") : $("clNext"))
+    : otherOk ? (sw.dir === "newer" ? $("clNext") : $("clPrev"))
+    : $("clStatus");
+  if (to && to.focus) to.focus();
 }
 
 /** Sync the pager chrome — busy state, both buttons, the status cell, the error block — onto

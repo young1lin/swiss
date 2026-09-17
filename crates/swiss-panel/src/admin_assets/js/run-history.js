@@ -606,9 +606,11 @@ function wireTabBody(d, m) {
       loadCalls(d.name);
     };
   }
-  var clPrev = $("clPrev"); if (clPrev) clPrev.onclick = function () { callsPageStep(-1); };
-  var clNext = $("clNext"); if (clNext) clNext.onclick = function () { callsPageStep(1); };
-  var clRetry = $("clRetry"); if (clRetry) clRetry.onclick = callsRetry;
+  // docs/32 B2: a keyboard activation (Enter/Space on a focused button) carries detail === 0 —
+  // that action owes the user focus back on the equivalent button once the switch commits.
+  var clPrev = $("clPrev"); if (clPrev) clPrev.onclick = function (ev) { callsPageStep(-1, { fromKey: !!ev && ev.detail === 0 }); };
+  var clNext = $("clNext"); if (clNext) clNext.onclick = function (ev) { callsPageStep(1, { fromKey: !!ev && ev.detail === 0 }); };
+  var clRetry = $("clRetry"); if (clRetry) clRetry.onclick = function (ev) { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
   document.querySelectorAll("#tabbody [data-callseq]").forEach(function (s) {
     s.onclick = function () { toggleCall(s.dataset.callseq); };
     s.onkeydown = function (ev) {
