@@ -208,10 +208,14 @@ async function loadMeta(name) {
  * docs/32 B1: a load is a transaction — a response may only commit while it is still the newest
  * request for this detail (generation), and it commits exactly the page it asked for. The page,
  * rows, more-flag and stderr land together or not at all; a failure keeps everything committed
- * and shows itself in place with a Retry. */
-async function loadCalls(name) {
+ * and shows itself in place with a Retry.
+ * docs/32 B3: the poll (isPoll) refreshes the LIVE page only — never an offset page, never a
+ * switch in mid-transaction — and its failures are silent: the poll says nothing the user asked
+ * for, so it takes nothing away either. */
+async function loadCalls(name, isPoll) {
   var d = state.detail;
   if (!d || d.name !== name) return;
+  if (isPoll && (d.callsPage > 0 || d.callsPendingPage != null)) return;
   var target = d.callsPendingPage != null ? d.callsPendingPage : d.callsPage;
   var gen = ++d.callsRequest;
   // A page switch rides this request; take its anchor intent now, so a request issued later (a
@@ -225,7 +229,7 @@ async function loadCalls(name) {
     // A revisit built a new detail object (see loadMeta), or a newer request superseded this
     // one — either way this response is stale and must not commit.
     if (state.detail !== d || gen !== d.callsRequest) return;
-    if (!r.ok) { callsLoadFailed(d, target, r.status, sw); return; }
+    if (!r.ok) { if (!isPoll) callsLoadFailed(d, target, r.status, sw); return; }
     d.callsPage = target;
     if (d.callsPendingPage === target) d.callsPendingPage = null;
     d.callsError = "";
@@ -238,7 +242,7 @@ async function loadCalls(name) {
     if (sw) restoreCallsAnchor(sw, d);
   } catch (e) {
     if (state.detail !== d || gen !== d.callsRequest) return;
-    callsLoadFailed(d, target, 0, sw);
+    if (!isPoll) callsLoadFailed(d, target, 0, sw);
   }
 }
 
@@ -252,7 +256,8 @@ function callsLoadFailed(d, target, status, sw) {
   d.callsErrStatus = status ? "HTTP " + status : "";
   d.callsRetryTarget = target;
   d.callsRetryDir = sw && sw.dir ? sw.dir : null; // a Retry re-anchors toward the same direction
-  patchCallsChrome(d);
+  if (d.calls == null) renderCallsOnly(); // nothing painted yet — the spinner becomes the error
+  else patchCallsChrome(d);
 }
 
 /** Newer/Older: begin a page switch. Nothing committed changes until the response lands — the
@@ -423,7 +428,9 @@ function showTab(tab) {
   if (tab === "config") loadRevisions(d.name);
   // Run needs the tool list to build its argument form.
   if (tab === "run" && !d.tools.loaded && !d.tools.loading) loadPage(d.name, "tools");
-  if (tab === "logs") loadCalls(d.name);
+  // docs/32 B3: a pending switch already owns the tab; re-entering it must not fire a second
+  // request for the same target on top of the one in flight.
+  if (tab === "logs" && d.callsPendingPage == null) loadCalls(d.name);
 }
 function pageNext() {
   var d = state.detail, kd = d && d[d.tab];
