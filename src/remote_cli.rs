@@ -237,6 +237,8 @@ async fn run(argv: &[String]) -> i32 {
         "sync" => cmd_sync(gw, &a).await,
         "push" => cmd_push(gw, &a).await,
         "pull" => cmd_pull(gw, &a).await,
+        "cat" => cmd_cat(gw, &a).await,
+        "write" => cmd_write(gw, &a).await,
         other => {
             eprintln!("unknown remote subcommand: {other}");
             eprintln!("{}", usage_text());
@@ -274,6 +276,14 @@ pub fn usage_text() -> String {
         (
             "push [name] <file> [--to NAME]",
             "upload one file under a remote name",
+        ),
+        (
+            "cat [name] <path>",
+            "print one remote file to stdout",
+        ),
+        (
+            "write [name] <path>",
+            "write stdin to one remote file (create/overwrite)",
         ),
         (
             "pull [name] <path> [--to LOCAL]",
@@ -789,6 +799,81 @@ async fn cmd_push(gw: Gateway, a: &RemoteArgs) -> i32 {
         &gw,
         "remote.sync",
         &format!("push {}", resolved.target),
+        input,
+        resolved.timeout_ms,
+        a,
+    )
+    .await
+}
+
+async fn cmd_cat(gw: Gateway, a: &RemoteArgs) -> i32 {
+    // cat <name> <path>: print one remote file to stdout, no local file.
+    let named = a.words.first().cloned();
+    let lookup = RemoteArgs {
+        words: named.clone().into_iter().collect(),
+        ..a.clone()
+    };
+    let resolved = match resolve_name(&gw, &lookup).await {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let path = a
+        .words
+        .get(1)
+        .cloned()
+        .or_else(|| if a.target.is_some() { named } else { None });
+    let Some(path) = path else {
+        eprintln!("cat needs a remote path (swiss remote cat <name> <path>)");
+        return 1;
+    };
+    let input = json!({ "target": resolved.target, "remote": path });
+    submit_and_stream(
+        &gw,
+        "remote.cat",
+        &format!("cat {}", resolved.target),
+        input,
+        resolved.timeout_ms,
+        a,
+    )
+    .await
+}
+
+async fn cmd_write(gw: Gateway, a: &RemoteArgs) -> i32 {
+    // write <name> <path>: stdin becomes the whole remote file (create/overwrite).
+    let named = a.words.first().cloned();
+    let lookup = RemoteArgs {
+        words: named.clone().into_iter().collect(),
+        ..a.clone()
+    };
+    let resolved = match resolve_name(&gw, &lookup).await {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let path = a
+        .words
+        .get(1)
+        .cloned()
+        .or_else(|| if a.target.is_some() { named } else { None });
+    let Some(path) = path else {
+        eprintln!("write needs a remote path (swiss remote write <name> <path> < local-file)");
+        return 1;
+    };
+    let mut content = String::new();
+    if std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut content).is_err() {
+        eprintln!("could not read stdin");
+        return 1;
+    }
+    let input = json!({ "target": resolved.target, "remote": path, "content": content });
+    submit_and_stream(
+        &gw,
+        "remote.write",
+        &format!("write {}", resolved.target),
         input,
         resolved.timeout_ms,
         a,

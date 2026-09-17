@@ -70,6 +70,8 @@ swiss remote exec build --timeout 30m -- ./test.sh -k   # everything after -- is
 swiss remote exec build --cwd /home/dev/app -- ls  # ABSOLUTE paths pass as-is (ssh trust); relative ones resolve under the root
 swiss remote sync build                                 # upload a tree (never deletes); .git/ target/ excluded
 swiss remote push build app.exe                         # upload one file
+swiss remote cat build config.toml                      # print a remote file to stdout
+swiss remote write build config.toml < config.toml      # stdin becomes the remote file (overwrite)
 swiss remote pull build out/app.bin --to artifacts/app.bin
 swiss remote pull build out/dists                       # a directory pulls recursively
 swiss run logs 17 -f; swiss run cancel 17               # detached runs: swiss remote exec ... --detach

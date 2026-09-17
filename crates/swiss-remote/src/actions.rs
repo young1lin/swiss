@@ -777,14 +777,297 @@ impl Action for RemotePullAction {
     }
 }
 
-/// Register all three capabilities (the plugin's start calls this).
+/// remote.cat - print one remote file as the run output. The model-facing read
+/// primitive: no local file is created, the content streams chunk-by-chunk into
+/// the run output (and into the outcome text for the CLI). The same path rule as
+/// pull: relative resolves under the workspaceRoot, absolute passes as-is.
+pub struct RemoteCatAction {
+    system: Arc<RemoteSystem>,
+    registry: Arc<RemoteTransportRegistry>,
+}
+
+impl RemoteCatAction {
+    pub fn new(system: Arc<RemoteSystem>) -> Self {
+        let registry = system.services().remote.clone();
+        RemoteCatAction { system, registry }
+    }
+
+    fn parse(&self, input: &Value) -> Result<(String, String), ActionError> {
+        let obj = object_of(input)?;
+        refuse_unknown(&obj, &["target", "remote"], "input")?;
+        let target = text_field(&obj, "target")?;
+        let remote = text_field(&obj, "remote")?;
+        if remote.split('/').any(|s| s == "..") {
+            return Err(ActionError::InvalidInput(format!(
+                "remote {remote:?} must not contain ..; relative paths resolve under the target's workspaceRoot, absolute paths are used as-is"
+            )));
+        }
+        Ok((target, remote))
+    }
+
+    async fn run(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+        sink: Option<&RunOutputSink>,
+    ) -> Result<ActionOutcome, ActionError> {
+        let started = std::time::Instant::now();
+        let (target_id, remote) = self.parse(input)?;
+        let target = self
+            .system
+            .resolve(&target_id)
+            .map_err(ActionError::InvalidInput)?;
+        if !target
+            .capabilities
+            .iter()
+            .any(|c| c == "files" || c == "sync")
+        {
+            return Err(ActionError::InvalidInput(format!(
+                "target {} does not declare the files or sync capability",
+                target.id
+            )));
+        }
+        let remote_path =
+            safe_join(&target.workspace_root, &remote).map_err(ActionError::InvalidInput)?;
+        let holder = format!("{}:{}", REMOTE_OWNER, target.id);
+        let mut reader = self
+            .registry
+            .open_read(&target.endpoint, &holder, &remote_path)
+            .await
+            .map_err(transport_error)?;
+        let mut text = String::new();
+        let mut total: u64 = 0;
+        loop {
+            if cancel.is_cancelled() {
+                return Err(ActionError::InvalidInput("the cat was canceled".into()));
+            }
+            let chunk = reader.read_chunk().await.map_err(transport_error)?;
+            let Some(chunk) = chunk else { break };
+            total += chunk.len() as u64;
+            if total > 8 * 1024 * 1024 {
+                return Err(ActionError::InvalidInput(format!(
+                    "{remote} is larger than the 8 MiB cat limit; use remote.pull instead"
+                )));
+            }
+            let part = String::from_utf8_lossy(&chunk).into_owned();
+            if let Some(sink) = sink {
+                sink.append_bytes(chunk.as_slice());
+            }
+            text.push_str(&part);
+        }
+        let mut meta = Map::new();
+        meta.insert("target".into(), json!(target.id));
+        meta.insert("remote".into(), json!(remote));
+        meta.insert("bytes".into(), json!(total));
+        Ok(ActionOutcome {
+            ok: true,
+            ms: started.elapsed().as_millis() as u64,
+            pid: None,
+            exit_code: Some(0),
+            timed_out: false,
+            canceled: false,
+            error: None,
+            output: text,
+            chars: total as usize,
+            meta,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl Action for RemoteCatAction {
+    fn type_name(&self) -> &'static str {
+        "remote.cat"
+    }
+
+    fn title(&self) -> String {
+        "Print one remote file as the run output".into()
+    }
+
+    fn provider(&self) -> &'static str {
+        "remote"
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["target", "remote"],
+            "properties": {
+                "target": { "type": "string" },
+                "remote": { "type": "string", "description": "Workspace-relative file path; absolute paths pass as-is." }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    fn validate_input(&self, input: &Value) -> Result<(), String> {
+        self.parse(input).map(|_| ()).map_err(|err| err.to_string())
+    }
+
+    async fn execute(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+    ) -> Result<ActionOutcome, ActionError> {
+        self.run(input, cancel, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        input: &Value,
+        ctx: ActionContext,
+    ) -> Result<ActionOutcome, ActionError> {
+        self.run(input, ctx.cancel.clone(), Some(&ctx.output)).await
+    }
+}
+
+/// remote.write - write a content string to one remote file (create or overwrite).
+/// The model-facing write primitive: whole-content semantics, the mirror of cat.
+pub struct RemoteWriteAction {
+    system: Arc<RemoteSystem>,
+    registry: Arc<RemoteTransportRegistry>,
+}
+
+impl RemoteWriteAction {
+    pub fn new(system: Arc<RemoteSystem>) -> Self {
+        let registry = system.services().remote.clone();
+        RemoteWriteAction { system, registry }
+    }
+
+    fn parse(&self, input: &Value) -> Result<(String, String, String), ActionError> {
+        let obj = object_of(input)?;
+        refuse_unknown(&obj, &["target", "remote", "content"], "input")?;
+        let target = text_field(&obj, "target")?;
+        let remote = text_field(&obj, "remote")?;
+        let content = text_field(&obj, "content")?;
+        if remote.split('/').any(|s| s == "..") {
+            return Err(ActionError::InvalidInput(format!(
+                "remote {remote:?} must not contain ..; relative paths resolve under the target's workspaceRoot, absolute paths are used as-is"
+            )));
+        }
+        Ok((target, remote, content))
+    }
+
+    async fn run(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+        sink: Option<&RunOutputSink>,
+    ) -> Result<ActionOutcome, ActionError> {
+        let started = std::time::Instant::now();
+        let (target_id, remote, content) = self.parse(input)?;
+        let target = self
+            .system
+            .resolve(&target_id)
+            .map_err(ActionError::InvalidInput)?;
+        if !target
+            .capabilities
+            .iter()
+            .any(|c| c == "files" || c == "sync")
+        {
+            return Err(ActionError::InvalidInput(format!(
+                "target {} does not declare the files or sync capability",
+                target.id
+            )));
+        }
+        let remote_path =
+            safe_join(&target.workspace_root, &remote).map_err(ActionError::InvalidInput)?;
+        let holder = format!("{}:{}", REMOTE_OWNER, target.id);
+        let mut writer = self
+            .registry
+            .create(&target.endpoint, &holder, &remote_path)
+            .await
+            .map_err(transport_error)?;
+        for chunk in content.as_bytes().chunks(64 * 1024) {
+            if cancel.is_cancelled() {
+                return Err(ActionError::InvalidInput("the write was canceled".into()));
+            }
+            writer.write_chunk(chunk).await.map_err(transport_error)?;
+        }
+        writer.finish().await.map_err(transport_error)?;
+        let summary = format!("wrote {} ({} bytes)", remote, content.len());
+        let chars = summary.len();
+        if let Some(sink) = sink {
+            sink.append_bytes(summary.as_bytes());
+            sink.append_bytes(b"\n");
+        }
+        let mut meta = Map::new();
+        meta.insert("target".into(), json!(target.id));
+        meta.insert("remote".into(), json!(remote));
+        meta.insert("bytes".into(), json!(content.len()));
+        Ok(ActionOutcome {
+            ok: true,
+            ms: started.elapsed().as_millis() as u64,
+            pid: None,
+            exit_code: Some(0),
+            timed_out: false,
+            canceled: false,
+            error: None,
+            output: summary,
+            chars,
+            meta,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl Action for RemoteWriteAction {
+    fn type_name(&self) -> &'static str {
+        "remote.write"
+    }
+
+    fn title(&self) -> String {
+        "Write a content string to one remote file".into()
+    }
+
+    fn provider(&self) -> &'static str {
+        "remote"
+    }
+
+    fn schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["target", "remote", "content"],
+            "properties": {
+                "target": { "type": "string" },
+                "remote": { "type": "string", "description": "Workspace-relative file path; absolute paths pass as-is." },
+                "content": { "type": "string", "description": "The full file content; create or overwrite." }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    fn validate_input(&self, input: &Value) -> Result<(), String> {
+        self.parse(input).map(|_| ()).map_err(|err| err.to_string())
+    }
+
+    async fn execute(
+        &self,
+        input: &Value,
+        cancel: CancelHandle,
+    ) -> Result<ActionOutcome, ActionError> {
+        self.run(input, cancel, None).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        input: &Value,
+        ctx: ActionContext,
+    ) -> Result<ActionOutcome, ActionError> {
+        self.run(input, ctx.cancel.clone(), Some(&ctx.output)).await
+    }
+}
+
+/// Register every capability (the plugin's start calls this).
 pub fn register_all(
     system: Arc<RemoteSystem>,
     registry: &Arc<swiss_host::services::action::ActionRegistry>,
 ) -> Result<(), String> {
     registry.register(Arc::new(RemoteExecAction::new(system.clone())))?;
     registry.register(Arc::new(RemoteSyncAction::new(system.clone())))?;
-    registry.register(Arc::new(RemotePullAction::new(system)))?;
+    registry.register(Arc::new(RemotePullAction::new(system.clone())))?;
+    registry.register(Arc::new(RemoteCatAction::new(system.clone())))?;
+    registry.register(Arc::new(RemoteWriteAction::new(system)))?;
     Ok(())
 }
 #[cfg(test)]
@@ -1288,6 +1571,39 @@ mod tests {
         assert!(action
             .validate_input(&json!({ "target": "dev", "remote": "../../etc/passwd" }))
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn write_then_cat_round_trips_through_the_fake_transport() {
+        let (system, fake) = system_with_fake();
+        let cancel = CancelSource::new().handle();
+        let write = RemoteWriteAction::new(system.clone());
+        let out = write
+            .execute(
+                &json!({ "target": "dev", "remote": "notes/hello.txt", "content": "hi from write" }),
+                cancel.clone(),
+            )
+            .await
+            .expect("write runs");
+        assert!(out.ok);
+        assert_eq!(
+            fake.files
+                .lock()
+                .unwrap()
+                .get("/data/ws/proj/notes/hello.txt")
+                .cloned(),
+            Some(b"hi from write".to_vec())
+        );
+        let cat = RemoteCatAction::new(system);
+        let out = cat
+            .execute(
+                &json!({ "target": "dev", "remote": "notes/hello.txt" }),
+                cancel,
+            )
+            .await
+            .expect("cat runs");
+        assert!(out.ok);
+        assert_eq!(out.output, "hi from write");
     }
 
     #[test]
