@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use crate::app::{build_app, AppContext};
 use crate::bootstrap::ensure_first_run;
+use serde_json::json;
 use swiss_core::log;
 use swiss_core::secure::envstore::{env_store_path, inject_env_store};
 use swiss_core::secure::secretstore::{inject_vault, secret_store_path};
@@ -31,7 +32,6 @@ use swiss_host::managed::ManagedStore;
 use swiss_host::token::TokenManager;
 use swiss_mcp::adapters::make_adapter;
 use swiss_mcp::registry::{Registry, Source};
-use serde_json::json;
 
 pub async fn run_gateway() -> Result<(), String> {
     // Who started us - the attribution the 2026-09-14 deploy incident had to reconstruct
@@ -110,9 +110,9 @@ pub async fn run_gateway() -> Result<(), String> {
     // The ONE call log for this app (S2 instantiation): the registry, the adapters and the
     // admin API all share this instance, so what an adapter records is exactly what the Logs
     // tab reads - and nothing outside this app can see it.
-    let call_log = std::sync::Arc::new(swiss_mcp::calls::CallLog::at(swiss_core::paths::data_path(&[
-        "logs", "calls",
-    ])));
+    let call_log = std::sync::Arc::new(swiss_mcp::calls::CallLog::at(
+        swiss_core::paths::data_path(&["logs", "calls"]),
+    ));
     let registry = Registry::new(15_000, call_log.clone());
     let store = Arc::new(ManagedStore::open());
 
@@ -202,6 +202,11 @@ pub async fn run_gateway() -> Result<(), String> {
     // serving), not a different router.
     let terminal_state = crate::plugins::terminal_api::TerminalState::new();
 
+    // The /api/remote routes' state slot (docs/32): the same one-slot pattern as the
+    // terminal state above - built before the host so the router mounted below and the
+    // plugin instance that fills the slot share ONE seat.
+    let remote_state = swiss_remote::api::RemoteState::new();
+
     // The shared runtime services (docs/09 §3, docs/10 §2): the action registry every
     // capability provider registers into, the bounded run pool both the scheduler and the
     // panel submit to, and the one child-process supervisor. Constructed here, owned by no
@@ -280,18 +285,31 @@ pub async fn run_gateway() -> Result<(), String> {
         terminal_state.clone(),
     )))
     .expect("the terminal plugin registers");
+    // The remote plugin (docs/32): CLI-first, no page, and deliberately no capability
+    // requirement - the target table must stay editable while tunnels is off.
+    host.register(Arc::new(crate::plugins::remote::RemotePlugin::new(
+        services.clone(),
+        remote_state.clone(),
+    )))
+    .expect("the remote plugin registers");
     // The capability probe the inventory's requiresMet answers through (docs/12 W3): one
     // closure over the shared services, so "connection-catalog" tracks the catalog's real
     // presence as MCP starts and stops.
     host.set_capability_probe({
         let catalog = services.catalog.clone();
         let shells = services.shells.clone();
+        let remote = services.remote.clone();
         Arc::new(move |cap: &str| match cap {
             "connection-catalog" => catalog.has_provider(),
             // docs/14 §4: the terminal plugin does NOT declare requires:["ssh-shell"] —
             // a local session needs no SSH at all — but the probe still answers, so the
             // inventory can say honestly whether remote targets are reachable.
             "ssh-shell" => shells.has_provider(),
+            // docs/32: the remote plugin deliberately does NOT declare
+            // requires:["remote-transport"] (the target table must stay editable while
+            // tunnels is off), but the probe still answers, so the inventory can say
+            // honestly whether remote exec is currently possible.
+            "remote-transport" => remote.has_provider(),
             _ => false,
         })
     });
@@ -312,7 +330,11 @@ pub async fn run_gateway() -> Result<(), String> {
         // Inside the SAME guard and plugin boundary as the trees above: the terminal
         // routes are owned by the terminal plugin (route_owner prefix /api/terminal),
         // so a disabled plugin answers the structured 503 with no 503 of its own here.
-        .merge(crate::plugins::terminal_api::mount(terminal_state));
+        .merge(crate::plugins::terminal_api::mount(terminal_state))
+        // Same guard and boundary: the /api/remote tree is owned by the remote plugin
+        // (route_owner prefix /api/remote), so a disabled plugin answers the structured
+        // 503 here too.
+        .merge(swiss_remote::api::mount(remote_state));
     let app = build_app(ctx.clone(), Some(extra));
 
     let listener = tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port))
@@ -475,8 +497,8 @@ mod tests {
     // the Node build's index.ts pins — is the per-MCP registration decision, which is where a
     // panel Stop, a tool toggle and the lazy rule all have to survive a restart.
     use super::*;
-    use swiss_mcp::registry::Lifecycle;
     use serde_json::Value;
+    use swiss_mcp::registry::Lifecycle;
 
     /// A store of this test's own. The directory has to exist before anything writes: `open_at`
     /// does not create it, and a failed persist would silently drop the very Stop these tests set

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -340,7 +340,10 @@ mod tests {
         // SAFETY: under the Sandbox's data-dir lock, like every other MCP_GATEWAY_HOME write.
         unsafe { std::env::set_var("MCP_GATEWAY_HOME", &nested) };
         let report = sb.boot();
-        assert!(report.created, "a nonexistent home is created, not an error");
+        assert!(
+            report.created,
+            "a nonexistent home is created, not an error"
+        );
         assert_eq!(report.data_dir, nested);
         assert!(nested.join("gateway.config.json").is_file());
     }

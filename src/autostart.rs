@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -65,7 +65,8 @@ pub fn command_line() -> String {
 mod provider {
     use super::AutoStartState;
 
-    const DETAIL: &str = "registry: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run (value: swiss)";
+    const DETAIL: &str =
+        "registry: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run (value: swiss)";
 
     pub fn status() -> AutoStartState {
         AutoStartState {
@@ -108,7 +109,9 @@ mod provider {
     /// XML-escape a path for the plist body — an unescaped ampersand is rare in paths but
     /// legal, and one would make launchd refuse the whole file.
     fn xml_escape(s: &str) -> String {
-        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
     }
 
     /// The LaunchAgent body, pure so the suite can pin it: RunAtLoad starts the gateway at
@@ -127,7 +130,8 @@ mod provider {
             enabled: path.as_ref().is_some_and(|p| p.exists()),
             detail: format!(
                 "launch agent: {}",
-                path.as_ref().map_or("(no HOME)".to_string(), |p| p.display().to_string())
+                path.as_ref()
+                    .map_or("(no HOME)".to_string(), |p| p.display().to_string())
             ),
             command: super::command_line(),
         }
@@ -164,8 +168,12 @@ mod provider {
     use std::path::{Path, PathBuf};
 
     fn user_dir() -> Option<PathBuf> {
-        std::env::var_os("HOME")
-            .map(|home| PathBuf::from(home).join(".config").join("systemd").join("user"))
+        std::env::var_os("HOME").map(|home| {
+            PathBuf::from(home)
+                .join(".config")
+                .join("systemd")
+                .join("user")
+        })
     }
 
     fn unit_path() -> Option<PathBuf> {
@@ -197,13 +205,14 @@ mod provider {
     pub fn status() -> AutoStartState {
         let unit = unit_path();
         let wants = wants_link();
-        let enabled = unit.as_ref().is_some_and(|p| p.exists())
-            && wants.as_ref().is_some_and(|p| p.exists());
+        let enabled =
+            unit.as_ref().is_some_and(|p| p.exists()) && wants.as_ref().is_some_and(|p| p.exists());
         AutoStartState {
             enabled,
             detail: format!(
                 "systemd user unit: {}",
-                unit.as_ref().map_or("(no HOME)".to_string(), |p| p.display().to_string())
+                unit.as_ref()
+                    .map_or("(no HOME)".to_string(), |p| p.display().to_string())
             ),
             command: super::command_line(),
         }
@@ -269,7 +278,11 @@ pub fn status() -> AutoStartState {
 /// Register (true) or unregister (false) start-at-sign-in for the CURRENT user. The state in
 /// the answer is read back from the OS, never echoed from what we meant to write.
 pub fn set(enabled: bool) -> Result<AutoStartState, String> {
-    if enabled { provider::enable() } else { provider::disable() }
+    if enabled {
+        provider::enable()
+    } else {
+        provider::disable()
+    }
 }
 
 #[cfg(test)]
@@ -285,7 +298,11 @@ mod tests {
 
     #[test]
     fn state_json_shape_is_three_keys() {
-        let state = AutoStartState { enabled: false, detail: "d".into(), command: "c".into() };
+        let state = AutoStartState {
+            enabled: false,
+            detail: "d".into(),
+            command: "c".into(),
+        };
         let v = state.to_json();
         assert_eq!(v["enabled"], false);
         assert_eq!(v["detail"], "d");
@@ -300,7 +317,10 @@ mod tests {
         // found it whatever assert fires.
         let _ = swiss_core::platform::run_entry_remove();
         swiss_core::platform::run_entry_write("test-value").expect("write Run value");
-        assert_eq!(swiss_core::platform::run_entry_read().as_deref(), Some("test-value"));
+        assert_eq!(
+            swiss_core::platform::run_entry_read().as_deref(),
+            Some("test-value")
+        );
         swiss_core::platform::run_entry_remove().expect("remove Run value");
         assert!(swiss_core::platform::run_entry_read().is_none());
     }

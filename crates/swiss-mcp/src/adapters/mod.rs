@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -312,8 +312,8 @@ pub fn make_adapter(
     name: &str,
     log: &std::sync::Arc<crate::calls::CallLog>,
 ) -> Result<Arc<dyn Adapter>, String> {
-    let def = swiss_host::config::resolve_def_checked(raw_def)
-        .map_err(|e| format!("{name}: {e}"))?;
+    let def =
+        swiss_host::config::resolve_def_checked(raw_def).map_err(|e| format!("{name}: {e}"))?;
     match def.type_() {
         "echo" => Ok(Arc::new(echo::EchoAdapter::new(name, log.clone()))),
         "mysql" => {

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -40,9 +40,9 @@ use swiss_host::services::shell::{
 };
 
 use super::*;
-use swiss_core::platform::pty::ShellCandidate;
 use crate::terminal::config::LocalConfig;
 use crate::terminal::local::LocalShell;
+use swiss_core::platform::pty::ShellCandidate;
 
 // --- the fakes -----------------------------------------------------------------------------
 
@@ -356,7 +356,9 @@ async fn local_sessions_are_uncapped_and_consume_no_remote_budget() {
             .await
             .unwrap_or_else(|e| panic!("local tab {i} should be allowed: {e}"));
     }
-    h.open("box-one").await.expect("a remote seat is still free");
+    h.open("box-one")
+        .await
+        .expect("a remote seat is still free");
     assert_eq!(h.sessions.list().len(), 6);
 }
 
@@ -479,7 +481,9 @@ async fn the_configured_local_shell_is_what_a_session_runs_unless_overridden() {
     config.local.shell = Some("C:\\Program Files\\Git\\bin\\bash.exe".to_string());
     let mut h = Harness::new(config);
 
-    h.open(LOCAL_TARGET).await.expect("opens with the config shell");
+    h.open(LOCAL_TARGET)
+        .await
+        .expect("opens with the config shell");
     // The recorder's mutex is scoped on purpose: FakeLocal::open locks it from INSIDE the
     // awaited open() call, so holding it across the second open would deadlock the
     // current_thread runtime — lock, assert, release, then open again.
@@ -507,8 +511,7 @@ async fn the_configured_local_shell_is_what_a_session_runs_unless_overridden() {
     // And the view reports the configured shell through the fake's resolver (identity).
     let view = h.sessions.targets();
     assert_eq!(
-        view.local.shell,
-        "C:\\Program Files\\Git\\bin\\bash.exe",
+        view.local.shell, "C:\\Program Files\\Git\\bin\\bash.exe",
         "the label says what would run"
     );
 }
@@ -988,6 +991,8 @@ async fn a_second_attachment_joins_rather_than_replaces() {
         ),
         other => panic!("the surviving tab got {other:?}"),
     }
-    assert!(h.sessions.list()[0].attached, "one live tab still counts as attached");
+    assert!(
+        h.sessions.list()[0].attached,
+        "one live tab still counts as attached"
+    );
 }
-

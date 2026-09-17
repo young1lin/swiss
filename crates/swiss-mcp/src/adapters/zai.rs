@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -87,7 +87,9 @@ impl ZaiEngine {
     pub fn new(def: &ServerDef, name: &str) -> Result<Self, String> {
         let api_key = def.get_str("apiKey").unwrap_or("").trim().to_string();
         if api_key.is_empty() {
-            return Err("apiKey is required (a ${ENV_VAR} or ${secret://name} reference)".to_string());
+            return Err(
+                "apiKey is required (a ${ENV_VAR} or ${secret://name} reference)".to_string(),
+            );
         }
         // An explicit baseUrl wins (self-hosted GLM endpoints, and the test fake); otherwise
         // the mode picks one of the two official bases, ZHIPU when unset.
@@ -100,7 +102,11 @@ impl ZaiEngine {
                 url
             }
             _ => {
-                let mode = def.get_str("mode").unwrap_or("ZHIPU").trim().to_ascii_uppercase();
+                let mode = def
+                    .get_str("mode")
+                    .unwrap_or("ZHIPU")
+                    .trim()
+                    .to_ascii_uppercase();
                 match mode.as_str() {
                     "ZHIPU" => ZHIPU_BASE.to_string(),
                     "ZAI" | "Z_AI" => ZAI_BASE.to_string(),
@@ -132,7 +138,9 @@ impl ZaiEngine {
             Box::pin(async move {
                 match &proxy_url {
                     Some(url) => proxied_client(url),
-                    None => reqwest::Client::builder().build().map_err(|err| err.to_string()),
+                    None => reqwest::Client::builder()
+                        .build()
+                        .map_err(|err| err.to_string()),
                 }
             }) as super::direct::BoxFut<Result<reqwest::Client, String>>
         }));
@@ -246,7 +254,11 @@ impl ZaiEngine {
             let bytes = tokio::fs::read(source)
                 .await
                 .map_err(|err| format!("reading {source} failed: {err}"))?;
-            let mime = if ext == "png" { "image/png" } else { "image/jpeg" };
+            let mime = if ext == "png" {
+                "image/png"
+            } else {
+                "image/jpeg"
+            };
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             format!("data:{mime};base64,{b64}")
         };
@@ -309,14 +321,17 @@ fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 
 /// An optional string argument that counts only when non-empty (upstream's `if (x && x.trim())`).
 fn arg_opt<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
-    args.get(key).and_then(Value::as_str).filter(|s| !s.trim().is_empty())
+    args.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
 }
 
 /// The eight tool declarations, ported from the upstream `server.tool(...)` calls: names,
 /// descriptions and JSON Schemas verbatim - a client written against the child process
 /// must not see anything move.
 fn tool_defs() -> Vec<ToolDef> {
-    let image_source = || json!({ "type": "string", "description": "Local file path or remote URL to the image" });
+    let image_source =
+        || json!({ "type": "string", "description": "Local file path or remote URL to the image" });
     vec![
         ToolDef {
             name: "ui_to_artifact".into(),
@@ -449,25 +464,35 @@ impl Engine for ZaiEngine {
                     }
                 };
                 let part = Self::image_part(arg_str(args, "image_source")?).await?;
-                let text = self.vision(Some(system), arg_str(args, "prompt")?, vec![part]).await?;
+                let text = self
+                    .vision(Some(system), arg_str(args, "prompt")?, vec![part])
+                    .await?;
                 Ok(Value::String(text))
             }
             "extract_text_from_screenshot" => {
                 let mut user = arg_str(args, "prompt")?.to_string();
                 if let Some(lang) = arg_opt(args, "programming_language") {
-                    user.push_str(&format!("\n\n<language_hint>The code is in {lang}.</language_hint>"));
+                    user.push_str(&format!(
+                        "\n\n<language_hint>The code is in {lang}.</language_hint>"
+                    ));
                 }
                 let part = Self::image_part(arg_str(args, "image_source")?).await?;
-                let text = self.vision(Some(zai_prompts::TEXT_EXTRACTION), &user, vec![part]).await?;
+                let text = self
+                    .vision(Some(zai_prompts::TEXT_EXTRACTION), &user, vec![part])
+                    .await?;
                 Ok(Value::String(text))
             }
             "diagnose_error_screenshot" => {
                 let mut user = arg_str(args, "prompt")?.to_string();
                 if let Some(context) = arg_opt(args, "context") {
-                    user.push_str(&format!("\n\n<error_context>This error occurred {context}.</error_context>"));
+                    user.push_str(&format!(
+                        "\n\n<error_context>This error occurred {context}.</error_context>"
+                    ));
                 }
                 let part = Self::image_part(arg_str(args, "image_source")?).await?;
-                let text = self.vision(Some(zai_prompts::ERROR_DIAGNOSIS), &user, vec![part]).await?;
+                let text = self
+                    .vision(Some(zai_prompts::ERROR_DIAGNOSIS), &user, vec![part])
+                    .await?;
                 Ok(Value::String(text))
             }
             "understand_technical_diagram" => {
@@ -478,16 +503,22 @@ impl Engine for ZaiEngine {
                     ));
                 }
                 let part = Self::image_part(arg_str(args, "image_source")?).await?;
-                let text = self.vision(Some(zai_prompts::DIAGRAM), &user, vec![part]).await?;
+                let text = self
+                    .vision(Some(zai_prompts::DIAGRAM), &user, vec![part])
+                    .await?;
                 Ok(Value::String(text))
             }
             "analyze_data_visualization" => {
                 let mut user = arg_str(args, "prompt")?.to_string();
                 if let Some(focus) = arg_opt(args, "analysis_focus") {
-                    user.push_str(&format!("\n\n<analysis_focus>Focus particularly on: {focus}.</analysis_focus>"));
+                    user.push_str(&format!(
+                        "\n\n<analysis_focus>Focus particularly on: {focus}.</analysis_focus>"
+                    ));
                 }
                 let part = Self::image_part(arg_str(args, "image_source")?).await?;
-                let text = self.vision(Some(zai_prompts::DATA_VIZ), &user, vec![part]).await?;
+                let text = self
+                    .vision(Some(zai_prompts::DATA_VIZ), &user, vec![part])
+                    .await?;
                 Ok(Value::String(text))
             }
             "ui_diff_check" => {
@@ -499,13 +530,19 @@ impl Engine for ZaiEngine {
                 );
                 let expected = Self::image_part(arg_str(args, "expected_image_source")?).await?;
                 let actual = Self::image_part(arg_str(args, "actual_image_source")?).await?;
-                let text = self.vision(Some(zai_prompts::UI_DIFF), &user, vec![expected, actual]).await?;
+                let text = self
+                    .vision(Some(zai_prompts::UI_DIFF), &user, vec![expected, actual])
+                    .await?;
                 Ok(Value::String(text))
             }
             "analyze_image" => {
                 let part = Self::image_part(arg_str(args, "image_source")?).await?;
                 let text = self
-                    .vision(Some(zai_prompts::GENERAL_IMAGE), arg_str(args, "prompt")?, vec![part])
+                    .vision(
+                        Some(zai_prompts::GENERAL_IMAGE),
+                        arg_str(args, "prompt")?,
+                        vec![part],
+                    )
                     .await?;
                 Ok(Value::String(text))
             }
@@ -565,7 +602,9 @@ mod tests {
 
     /// A fake chat-completions endpoint that replies with `script` in order (one entry per
     /// request) and records everything it saw.
-    async fn fake_chat(script: Vec<(u16, &'static str)>) -> (String, Arc<std::sync::Mutex<Vec<Captured>>>) {
+    async fn fake_chat(
+        script: Vec<(u16, &'static str)>,
+    ) -> (String, Arc<std::sync::Mutex<Vec<Captured>>>) {
         use axum::body::Body;
         use axum::extract::Request;
         use axum::http::StatusCode;
@@ -604,7 +643,9 @@ mod tests {
                 }
             }),
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let port = listener.local_addr().expect("addr").port();
         tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
@@ -664,10 +705,13 @@ mod tests {
         let default = ZaiEngine::new(&def(json!({ "type": "zai-vision", "apiKey": "k" })), "m")
             .expect("default");
         assert_eq!(default.model, "glm-5.3-flash");
-        assert!(ZaiEngine::new(&def(json!({ "type": "zai-vision", "apiKey": "k", "mode": "nope" })), "m")
-            .err()
-            .expect("bad mode")
-            .contains("unknown mode"));
+        assert!(ZaiEngine::new(
+            &def(json!({ "type": "zai-vision", "apiKey": "k", "mode": "nope" })),
+            "m"
+        )
+        .err()
+        .expect("bad mode")
+        .contains("unknown mode"));
         assert!(ZaiEngine::new(&def(json!({ "type": "zai-vision" })), "m")
             .err()
             .expect("keyless")
@@ -699,13 +743,23 @@ mod tests {
         // first and the text part last, upstream's order.
         assert_eq!(captured.body["messages"][0]["role"], json!("system"));
         assert_eq!(
-            captured.body["messages"][0]["content"].as_str().unwrap_or("")
-            .chars().take(40).collect::<String>(),
-            zai_prompts::GENERAL_IMAGE.chars().take(40).collect::<String>()
+            captured.body["messages"][0]["content"]
+                .as_str()
+                .unwrap_or("")
+                .chars()
+                .take(40)
+                .collect::<String>(),
+            zai_prompts::GENERAL_IMAGE
+                .chars()
+                .take(40)
+                .collect::<String>()
         );
         let content = &captured.body["messages"][1]["content"];
         assert_eq!(content[0]["type"], json!("image_url"));
-        assert_eq!(content[0]["image_url"]["url"], json!("https://example.com/a.png"));
+        assert_eq!(
+            content[0]["image_url"]["url"],
+            json!("https://example.com/a.png")
+        );
         assert_eq!(content[1]["type"], json!("text"));
         assert_eq!(content[1]["text"], json!("what is this"));
     }
@@ -730,9 +784,7 @@ mod tests {
         // await point.
         let url = {
             let seen = seen.lock().expect("seen");
-            seen.last()
-                .expect("request")
-                .body["messages"][1]["content"][0]["image_url"]["url"]
+            seen.last().expect("request").body["messages"][1]["content"][0]["image_url"]["url"]
                 .as_str()
                 .expect("url")
                 .to_string()
@@ -747,12 +799,18 @@ mod tests {
         let bad = dir.join("shot.gif");
         std::fs::write(&bad, magic).expect("write");
         let err = engine
-            .call("analyze_image", &json!({ "image_source": bad.to_string_lossy(), "prompt": "x" }))
+            .call(
+                "analyze_image",
+                &json!({ "image_source": bad.to_string_lossy(), "prompt": "x" }),
+            )
             .await
             .unwrap_err();
         assert!(err.contains("Unsupported image format"), "{err}");
         let missing = engine
-            .call("analyze_image", &json!({ "image_source": dir.join("nope.png").to_string_lossy(), "prompt": "x" }))
+            .call(
+                "analyze_image",
+                &json!({ "image_source": dir.join("nope.png").to_string_lossy(), "prompt": "x" }),
+            )
             .await
             .unwrap_err();
         assert!(missing.contains("not found"), "{missing}");
@@ -817,7 +875,9 @@ mod tests {
             content[1]["image_url"]["url"],
             json!("https://example.com/actual.png")
         );
-        let text = content.last().expect("text")["text"].as_str().expect("text");
+        let text = content.last().expect("text")["text"]
+            .as_str()
+            .expect("text");
         assert!(text.starts_with("<images>"), "{text}");
         assert!(text.contains("EXPECTED/REFERENCE"), "{text}");
         assert!(text.ends_with("find regressions"), "{text}");

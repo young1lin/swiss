@@ -52,12 +52,12 @@ for how configuration drives them.
 A cargo workspace that still ships one static `swiss.exe`. The edges are the architecture:
 
 ```
-swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-panel }  ←  swiss
+swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-remote, swiss-panel }  ←  swiss
 ```
 
 `swiss-core` knows nothing about gateways (paths, logging, sealed files, platform calls).
 `swiss-host` is the mechanism every subsystem shares — the plugin host, actions, runs, the process
-supervisor, config, the security boundary. The six subsystem crates are peers that never depend
+supervisor, config, the security boundary. The seven subsystem crates are peers that never depend
 on each other; `swiss` (the root `src/`) is composition and nothing else. If a change seems to need
 an edge between two subsystem crates, the host contract is missing something — add it there
 instead. Full map in `docs/02-architecture.md`.

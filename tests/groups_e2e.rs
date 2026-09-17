@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -123,7 +123,10 @@ fn groups_of(list: &Value) -> Vec<(String, String)> {
 /// covers: the app is RESTARTED over the home the reorder wrote, and the members stay put.
 #[tokio::test]
 async fn move_up_keeps_members_across_the_wire_and_a_restart() {
-    let dir = std::env::temp_dir().join(format!("swiss-groups-e2e-{}", swiss_core::util::random_hex(8)));
+    let dir = std::env::temp_dir().join(format!(
+        "swiss-groups-e2e-{}",
+        swiss_core::util::random_hex(8)
+    ));
     std::fs::create_dir_all(&dir).expect("scratch home");
     // Safety: this test binary's own scratch home, set once before any state file opens, the
     // same pin every suite uses so nothing touches the operator's real home or OS keystore.

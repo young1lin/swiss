@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -185,7 +185,11 @@ fn load_revisions(path: &Path) -> HashMap<String, Vec<RevisionRec>> {
                 Some(RevisionRec {
                     def: ServerDef(def.clone()),
                     at: o.get("at").and_then(Value::as_i64).unwrap_or(0),
-                    note: o.get("note").and_then(Value::as_str).unwrap_or("").to_string(),
+                    note: o
+                        .get("note")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
                 })
             })
             .collect();
@@ -256,9 +260,7 @@ pub fn load_groups(path: &Path) -> Vec<String> {
 /// reads as the single default group; a list someone emptied by hand recovers the same way —
 /// something must catch unassigned tokens.
 pub fn load_token_groups(path: &Path) -> Vec<String> {
-    let list = match read_managed_raw(path).and_then(|raw| {
-        raw.get("tokenGroups").cloned()
-    }) {
+    let list = match read_managed_raw(path).and_then(|raw| raw.get("tokenGroups").cloned()) {
         Some(Value::Array(a)) => a
             .iter()
             .filter_map(Value::as_str)
@@ -550,7 +552,10 @@ impl ManagedStore {
             return Ok(None);
         };
         if index >= list.len() {
-            return Err(format!("no revision {index} for {name} (has {})", list.len()));
+            return Err(format!(
+                "no revision {index} for {name} (has {})",
+                list.len()
+            ));
         }
         let rec = list.remove(index);
         if list.is_empty() {
@@ -605,12 +610,7 @@ impl ManagedStore {
     /// assignment (docs/20 G7) — the group model never names a token that is not there.
     pub fn save_tokens(&self, next: Vec<TokenRec>) {
         if let Ok(mut s) = self.state.lock() {
-            for gone in s
-                .tokens
-                .iter()
-                .map(|t| t.id.clone())
-                .collect::<Vec<_>>()
-            {
+            for gone in s.tokens.iter().map(|t| t.id.clone()).collect::<Vec<_>>() {
                 if !next.iter().any(|t| t.id == gone) {
                     s.token_groups.forget_member(&gone);
                 }
@@ -990,7 +990,9 @@ mod tests {
     fn revisions_round_trip_through_the_sealed_file() {
         let path = scratch();
         let store = ManagedStore::open_at(path.clone());
-        store.add(entry("m", json!({ "type": "echo" }), true)).expect("add");
+        store
+            .add(entry("m", json!({ "type": "echo" }), true))
+            .expect("add");
         store
             .push_revision("m", rev("proc", "before swap"))
             .expect("park");
@@ -1006,7 +1008,9 @@ mod tests {
     fn revisions_are_capped_at_five_evicting_the_oldest() {
         let path = scratch();
         let store = ManagedStore::open_at(path);
-        store.add(entry("m", json!({ "type": "echo" }), true)).expect("add");
+        store
+            .add(entry("m", json!({ "type": "echo" }), true))
+            .expect("add");
         for i in 0..6 {
             store
                 .push_revision("m", rev("proc", &format!("gen {i}")))
@@ -1022,23 +1026,31 @@ mod tests {
     fn take_revision_reports_out_of_range_instead_of_guessing() {
         let path = scratch();
         let store = ManagedStore::open_at(path);
-        store
-            .push_revision("m", rev("proc", "only"))
-            .expect("park");
+        store.push_revision("m", rev("proc", "only")).expect("park");
         assert!(store.take_revision("m", 1).is_err());
-        let gone = store.take_revision("m", 0).expect("take in range").expect("present");
+        let gone = store
+            .take_revision("m", 0)
+            .expect("take in range")
+            .expect("present");
         assert_eq!(gone.note, "only");
         // The emptied list leaves no empty key behind — and an unknown name is Ok(None).
         assert!(store.revisions_of("m").is_empty());
-        assert!(store.take_revision("ghost", 0).expect("unknown name").is_none());
+        assert!(store
+            .take_revision("ghost", 0)
+            .expect("unknown name")
+            .is_none());
     }
 
     #[test]
     fn rename_carries_revisions_and_remove_clears_them() {
         let path = scratch();
         let store = ManagedStore::open_at(path.clone());
-        store.add(entry("old", json!({ "type": "echo" }), true)).expect("add");
-        store.push_revision("old", rev("proc", "rides along")).expect("park");
+        store
+            .add(entry("old", json!({ "type": "echo" }), true))
+            .expect("add");
+        store
+            .push_revision("old", rev("proc", "rides along"))
+            .expect("park");
         store.rename("old", "new").expect("rename");
         assert_eq!(store.revisions_of("new")[0].note, "rides along");
         assert!(store.revisions_of("old").is_empty());
@@ -1374,7 +1386,9 @@ mod tests {
         );
         assert_eq!(load_groups(&path), vec!["default", "Search", "Docs"]);
         // The v2 marker rode along: a reload of a DELETED default must not resurrect it.
-        store.set_groups(vec!["Search".into(), "Docs".into()]).unwrap();
+        store
+            .set_groups(vec!["Search".into(), "Docs".into()])
+            .unwrap();
         assert_eq!(
             ManagedStore::open_at(path).get_groups(),
             vec!["Search", "Docs"]
@@ -1384,10 +1398,7 @@ mod tests {
     #[test]
     fn materializes_default_at_the_front_of_an_unmarked_pre_v2_file() {
         let path = scratch();
-        write_plain(
-            &path,
-            json!({ "mcps": [], "groups": ["learn", "ForTest"] }),
-        );
+        write_plain(&path, json!({ "mcps": [], "groups": ["learn", "ForTest"] }));
         assert_eq!(load_groups(&path), vec!["default", "learn", "ForTest"]);
     }
 
@@ -1465,7 +1476,9 @@ mod tests {
     fn treats_default_as_an_ordinary_name_rejecting_only_real_conflicts() {
         let path = scratch();
         let store = ManagedStore::open_at(path);
-        store.set_groups(vec!["default".into(), "Docs".into()]).unwrap();
+        store
+            .set_groups(vec!["default".into(), "Docs".into()])
+            .unwrap();
         assert!(store
             .set_groups(vec!["Docs".into(), "docs".into()])
             .unwrap_err()
@@ -1644,7 +1657,9 @@ mod tests {
         let store = ManagedStore::open_at(path.clone());
         store.set_groups(vec!["g1".into(), "g2".into()]).unwrap();
         let ids = vec!["a".into(), "b".into(), "c".into()];
-        store.set_groups_pinning(vec!["g2".into(), "g1".into()], ids).unwrap();
+        store
+            .set_groups_pinning(vec!["g2".into(), "g1".into()], ids)
+            .unwrap();
 
         assert_eq!(store.get_groups(), vec!["g2", "g1"], "the order changed");
         assert_eq!(store.group_of("a"), "g1", "but nobody re-homed");
@@ -1676,13 +1691,25 @@ mod tests {
                 created_at: "2026-01-01T00:00:00.000Z".into(),
             },
         ]);
-        store.set_token_groups(vec!["g1".into(), "g2".into()]).unwrap();
+        store
+            .set_token_groups(vec!["g1".into(), "g2".into()])
+            .unwrap();
         store.set_token_group("t2", Some("g2")).unwrap();
 
-        store.set_token_groups(vec!["g2".into(), "g1".into()]).unwrap();
+        store
+            .set_token_groups(vec!["g2".into(), "g1".into()])
+            .unwrap();
         assert_eq!(store.get_token_groups(), vec!["g2", "g1"]);
-        assert_eq!(store.token_group_of("t1"), "g1", "the default member stayed");
-        assert_eq!(store.token_group_of("t2"), "g2", "the explicit member never moves");
+        assert_eq!(
+            store.token_group_of("t1"),
+            "g1",
+            "the default member stayed"
+        );
+        assert_eq!(
+            store.token_group_of("t2"),
+            "g2",
+            "the explicit member never moves"
+        );
         assert_eq!(
             ManagedStore::open_at(path).token_group_of("t1"),
             "g1",

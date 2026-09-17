@@ -1,0 +1,78 @@
+   Compiling swiss-remote v0.1.0 (<repo>\.agents\worktrees\ssh\crates\swiss-remote)
+warning: unused import: `IntoResponse`
+  --> crates\swiss-remote\src\api.rs:25:22
+   |
+25 | use axum::response::{IntoResponse, Response};
+   |                      ^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `argv0` is never read
+   --> crates\swiss-remote\src\lib.rs:111:13
+    |
+110 |     pub struct FakeProgram {
+    |                ----------- field in this struct
+111 |         pub argv0: String,
+    |             ^^^^^
+    |
+    = note: `FakeProgram` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `NoTransport` is never constructed
+   --> crates\swiss-remote\src\lib.rs:312:16
+    |
+312 |     pub struct NoTransport;
+    |                ^^^^^^^^^^^
+
+warning: `swiss-remote` (lib) generated 1 warning (run `cargo fix --lib -p swiss-remote` to apply 1 suggestion)
+warning: `swiss-remote` (lib test) generated 3 warnings (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.04s
+     Running unittests src\lib.rs (target\debug\deps\swiss_remote-94030c2b6e01c4b8.exe)
+
+running 37 tests
+test api::tests::an_empty_slot_answers_service_unavailable_not_a_panic ... ok
+test actions::tests::pull_refuses_paths_that_escape_the_workspace ... ok
+test actions::tests::an_exec_resolves_cwd_under_the_workspace_root ... ok
+test actions::tests::an_unknown_target_is_invalid_input_not_a_transport_error ... ok
+test project::tests::a_binding_parses_with_defaults ... ok
+test project::tests::a_full_binding_round_trips_the_fields_that_matter ... ok
+test actions::tests::an_exec_streams_and_reports_the_exit_code ... ok
+test project::tests::version_mismatches_and_unknown_fields_are_refused ... ok
+test target::tests::a_row_round_trips_and_defaults_apply ... ok
+test target::tests::credential_fields_are_refused_loudly ... ok
+test target::tests::exec_is_the_minimum_capability_and_others_must_be_known ... ok
+test target::tests::ids_must_be_slugs ... ok
+test target::tests::only_the_posix_shell_is_safe_so_far ... ok
+test target::tests::safe_join_keeps_paths_inside_the_root ... ok
+test actions::tests::sudo_is_refused_at_the_door ... ok
+test actions::tests::argv_must_be_an_array_of_strings ... ok
+test target::tests::unknown_fields_are_refused_naming_the_path ... ok
+test actions::tests::register_all_registers_the_three_capabilities ... ok
+test api::tests::credential_fields_are_refused_by_the_route_too ... ok
+test target::tests::workspace_roots_must_be_absolute_posix_without_dots ... ok
+test api::tests::an_unknown_endpoint_is_refused_while_the_transport_serves ... ok
+test actions::tests::no_transport_means_an_honest_enable_tunnels_error ... ok
+test actions::tests::cwd_must_stay_inside_the_workspace ... ok
+test api::tests::endpoints_reports_the_fake_and_its_presence ... ok
+test actions::tests::unknown_fields_are_refused ... ok
+test api::tests::without_a_transport_any_nonempty_endpoint_is_accepted ... ok
+test actions::tests::a_nonzero_exit_is_a_failed_but_completed_run ... ok
+test actions::tests::env_names_must_be_identifiers ... ok
+test actions::tests::exec_streams_into_the_live_buffer ... ok
+test actions::tests::a_canceled_exec_stops_honestly ... ok
+test project::tests::discovery_walks_up_and_the_first_file_wins ... ok
+test api::tests::targets_round_trip_and_duplicates_are_refused ... ok
+test actions::tests::pull_streams_one_file_to_a_local_path ... ok
+test target::tests::the_store_persists_through_the_sealed_file ... ok
+test actions::tests::sync_uploads_changed_files_and_skips_up_to_date_ones ... ok
+test target::tests::updates_cannot_rename_and_removal_of_unknown_is_named ... ok
+test api::tests::updates_cannot_rename_and_delete_removes ... ok
+
+test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+   Doc-tests swiss_remote
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,29 @@
+   Compiling swiss-tunnels v0.1.0 (<repo>\.agents\worktrees\ssh\crates\swiss-tunnels)
+warning: variable does not need to be mutable
+    --> crates\swiss-tunnels\src\tunnel\manager.rs:4139:18
+     |
+4139 |         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+     |                  ----^^
+     |                  |
+     |                  help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+error[E0382]: borrow of moved value: `source`
+    --> crates\swiss-tunnels\src\tunnel\manager.rs:4197:9
+     |
+4178 |         let source = CancelSource::new();
+     |             ------ move occurs because `source` has type `CancelSource`, which does not implement the `Copy` trait
+...
+4183 |         let exec = tokio::spawn(async move {
+     |                                 ---------- value moved here
+4184 |             provider
+4185 |                 .exec(&conn.id, "remote.exec", exec_req(&["yocto"]), tx, source.handle())
+     |                                                                          ------ variable moved due to use in coroutine
+...
+4197 |         source.cancel();
+     |         ^^^^^^ value borrowed here after move
+
+For more information about this error, try `rustc --explain E0382`.
+warning: `swiss-tunnels` (lib test) generated 1 warning
+error: could not compile `swiss-tunnels` (lib test) due to 1 previous error; 1 warning emitted

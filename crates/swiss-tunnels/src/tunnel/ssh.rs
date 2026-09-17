@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -37,6 +37,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use base64::Engine;
 use russh::client::{Handle, Handler, Msg};
 use russh::keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
@@ -137,9 +138,8 @@ pub type JumpDialer = Arc<
             u16,
         ) -> Pin<
             Box<
-                dyn Future<
-                        Output = Result<(ByteStream, Box<dyn Send + 'static>), TunnelError>,
-                    > + Send,
+                dyn Future<Output = Result<(ByteStream, Box<dyn Send + 'static>), TunnelError>>
+                    + Send,
             >,
         > + Send
         + Sync,
@@ -151,8 +151,9 @@ pub type JumpDefs = Arc<dyn Fn(&str) -> Option<SshConnDef> + Send + Sync>;
 
 /// One jump dial's boxed future: the channel stream the caller's handshake rides on,
 /// plus the hold keeping the hop alive for the session's lifetime.
-type JumpResolved =
-    Pin<Box<dyn Future<Output = Result<(ByteStream, Box<dyn Send + 'static>), TunnelError>> + Send>>;
+type JumpResolved = Pin<
+    Box<dyn Future<Output = Result<(ByteStream, Box<dyn Send + 'static>), TunnelError>> + Send>,
+>;
 
 /// Callbacks the manager registers on a live connection.
 #[derive(Default)]
@@ -386,11 +387,9 @@ impl SshConnection {
                     .map_err(|err| as_tunnel_error(err, None))?
             } else {
                 match def.proxy.clone() {
-                    None => {
-                        russh::client::connect(config, (def_host.as_str(), def_port), handler)
-                            .await
-                            .map_err(|err| as_tunnel_error(err, None))?
-                    }
+                    None => russh::client::connect(config, (def_host.as_str(), def_port), handler)
+                        .await
+                        .map_err(|err| as_tunnel_error(err, None))?,
                     Some(url) => {
                         let mut proxy = super::proxy::parse(&url)
                             .map_err(|e| TunnelError::new(e, FailureKind::Config))?;
@@ -404,13 +403,9 @@ impl SshConnection {
                 }
             };
             self.authenticate(&mut handle, &def, key).await?;
-            Ok::<
-                (
-                    Handle<ClientHandler>,
-                    Option<Box<dyn Send + 'static>>,
-                ),
-                TunnelError,
-            >((handle, jump_hold))
+            Ok::<(Handle<ClientHandler>, Option<Box<dyn Send + 'static>>), TunnelError>((
+                handle, jump_hold,
+            ))
         })
         .await;
 
@@ -624,6 +619,271 @@ impl SshConnection {
         Ok(())
     }
 
+    // --- non-interactive exec and SFTP (docs/32 §11, §20) ---------------------------------------
+
+    /// The live handle clone every operation below starts with: connected-state check and
+    /// Arc bump in one place, identical to open_channel/open_shell above.
+    fn live_handle(&self) -> Result<Arc<Handle<ClientHandler>>, TunnelError> {
+        let live = self.live.lock().unwrap_or_else(|e| e.into_inner());
+        if self.state() != ConnState::Connected {
+            return Err(TunnelError::new(
+                "ssh connection is not established",
+                FailureKind::Network,
+            ));
+        }
+        let Some(live) = live.as_ref() else {
+            return Err(TunnelError::new(
+                "ssh connection is not established",
+                FailureKind::Network,
+            ));
+        };
+        Ok(live.handle.clone())
+    }
+
+    /// Run one non-interactive command over a session channel, streaming stdout/stderr
+    /// into `events` AS THEY ARRIVE (never read-to-end), and return the exit status.
+    ///
+    /// Cancellation is cooperative and real (docs/32 §19): on cancel the channel is
+    /// closed from this side, a bounded drain collects whatever the far side flushes,
+    /// and the operation resolves as canceled — no future-dropping pretence. The
+    /// `hold` lease travels with this future, so the connection reference lives
+    /// exactly as long as the exec.
+    pub async fn exec(
+        &self,
+        request: swiss_host::services::remote::RemoteExecRequest,
+        events: tokio::sync::mpsc::Sender<swiss_host::services::remote::RemoteExecEvent>,
+        cancel: swiss_host::services::action::CancelHandle,
+        hold: super::manager::ConnectionLease,
+    ) -> Result<i32, TunnelError> {
+        let handle = self.live_handle()?;
+        let channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|err| as_tunnel_error(err, Some("could not open a session channel")))?;
+        let (mut read, write) = channel.split();
+        // argv -> POSIX command string happens HERE, once, through the tested quoting
+        // in tunnel/remote.rs — the provider contract carries argv precisely so this
+        // translation cannot drift per caller.
+        let command = super::remote::exec_command_string(&request);
+        write
+            .exec(true, command.as_bytes().to_vec())
+            .await
+            .map_err(|err| as_tunnel_error(err, Some("exec request failed")))?;
+        await_request_reply(&mut read, "the exec request").await?;
+
+        let mut exit_code: Option<i32> = None;
+        let result = loop {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    // Ask the far side to stop, then drain briefly: a well-behaved
+                    // command flushes; a wedged one costs at most CANCEL_DRAIN and the
+                    // channel close kills the session either way.
+                    let _ = write.close().await;
+                    let drained = tokio::time::timeout(CANCEL_DRAIN, async {
+                        while let Some(msg) = read.wait().await {
+                            match msg {
+                                ChannelMsg::Data { data } => {
+                                    if events
+                                        .send(swiss_host::services::remote::RemoteExecEvent::Stdout(data.to_vec()))
+                                        .await
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                                ChannelMsg::ExtendedData { data, .. } => {
+                                    if events
+                                        .send(swiss_host::services::remote::RemoteExecEvent::Stderr(data.to_vec()))
+                                        .await
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                                ChannelMsg::ExitStatus { exit_status } => {
+                                    exit_code = Some(exit_status as i32);
+                                }
+                                ChannelMsg::Close | ChannelMsg::Eof => return,
+                                _ => {}
+                            }
+                        }
+                    })
+                    .await;
+                    let _ = drained;
+                    break Err(TunnelError::new(
+                        "the remote command was canceled".to_string(),
+                        FailureKind::Canceled,
+                    ));
+                }
+                msg = read.wait() => {
+                    let Some(msg) = msg else {
+                        // The channel ended without an ExitStatus — ssh2's convention is
+                        // 255 for "no exit status", and OpenSSH's ssh does the same.
+                        break Ok(exit_code.unwrap_or(255));
+                    };
+                    match msg {
+                        ChannelMsg::Data { data } => {
+                            if events
+                                .send(swiss_host::services::remote::RemoteExecEvent::Stdout(data.to_vec()))
+                                .await
+                                .is_err()
+                            {
+                                // The consumer is gone: no point reading more. Close the
+                                // channel so the remote command sees EOF on its stdout
+                                // and the lease below is released promptly.
+                                let _ = write.close().await;
+                                read.wait().await; // park until the channel truly ends
+                                break Err(TunnelError::new(
+                                    "the run reading this output went away".to_string(),
+                                    FailureKind::Canceled,
+                                ));
+                            }
+                        }
+                        ChannelMsg::ExtendedData { data, .. } => {
+                            if events
+                                .send(swiss_host::services::remote::RemoteExecEvent::Stderr(data.to_vec()))
+                                .await
+                                .is_err()
+                            {
+                                let _ = write.close().await;
+                                read.wait().await;
+                                break Err(TunnelError::new(
+                                    "the run reading this output went away".to_string(),
+                                    FailureKind::Canceled,
+                                ));
+                            }
+                        }
+                        ChannelMsg::ExitStatus { exit_status } => {
+                            exit_code = Some(exit_status as i32);
+                        }
+                        ChannelMsg::Eof => { /* status comes next, keep reading */ }
+                        ChannelMsg::Close => break Ok(exit_code.unwrap_or(255)),
+                        ChannelMsg::WindowAdjusted { .. } => {}
+                        _ => {}
+                    }
+                }
+            }
+        };
+        // The lease drops here — after the channel ended, before the caller learns the
+        // result — so the connection reference cannot outlive the operation.
+        drop(hold);
+        result
+    }
+
+    /// Open one SFTP session over this connection (docs/32 §20): a session channel, the
+    /// "sftp" subsystem request, then russh-sftp's handshake over the channel stream.
+    /// One SFTP session per operation keeps lifetimes obvious; the connection itself is
+    /// still shared and refcounted underneath.
+    async fn sftp_session(&self) -> Result<Arc<russh_sftp::client::SftpSession>, TunnelError> {
+        let handle = self.live_handle()?;
+        let channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|err| as_tunnel_error(err, Some("could not open an sftp channel")))?;
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|err| as_tunnel_error(err, Some("the sftp request failed")))?;
+        let session = russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|err| TunnelError::new(format!("sftp: {err}"), FailureKind::Network))?;
+        Ok(Arc::new(session))
+    }
+
+    pub async fn stat_file(
+        &self,
+        path: String,
+        hold: super::manager::ConnectionLease,
+    ) -> Result<Option<swiss_host::services::remote::RemoteFileStat>, TunnelError> {
+        let session = self.sftp_session().await?;
+        let result = match session.metadata(&path).await {
+            Ok(meta) => Some(swiss_host::services::remote::RemoteFileStat {
+                size: meta.len(),
+                // SFTP's mtime is whole seconds; the ms field keeps room for transports
+                // that can see finer.
+                mtime_ms: meta.mtime.map(|secs| secs as u64 * 1000),
+                is_dir: meta.is_dir(),
+            }),
+            Err(err) if is_no_such_file(&err) => None,
+            Err(err) => {
+                return Err(TunnelError::new(
+                    format!("sftp stat {path}: {err}"),
+                    FailureKind::Network,
+                ))
+            }
+        };
+        drop(hold);
+        Ok(result)
+    }
+
+    pub async fn open_read(
+        &self,
+        path: String,
+        hold: super::manager::ConnectionLease,
+    ) -> Result<Box<dyn swiss_host::services::remote::RemoteRead>, TunnelError> {
+        let session = self.sftp_session().await?;
+        let file = session.open(&path).await.map_err(|err| {
+            TunnelError::new(format!("sftp open {path}: {err}"), FailureKind::Network)
+        })?;
+        Ok(Box::new(SftpRead {
+            file,
+            _session: session,
+            _hold: hold,
+        }))
+    }
+
+    pub async fn create_file(
+        &self,
+        path: String,
+        hold: super::manager::ConnectionLease,
+    ) -> Result<Box<dyn swiss_host::services::remote::RemoteWrite>, TunnelError> {
+        let session = self.sftp_session().await?;
+        let file = session.create(&path).await.map_err(|err| {
+            TunnelError::new(format!("sftp create {path}: {err}"), FailureKind::Network)
+        })?;
+        Ok(Box::new(SftpWrite {
+            file,
+            session: Some(session),
+            hold: Some(hold),
+        }))
+    }
+
+    pub async fn mkdir_p(
+        &self,
+        path: String,
+        hold: super::manager::ConnectionLease,
+    ) -> Result<(), TunnelError> {
+        let session = self.sftp_session().await?;
+        // Walk the prefix chain: SFTP's mkdir is single-level and fails on an existing
+        // directory, so each component is attempted and existence is tolerated.
+        let mut built = String::new();
+        for part in path.split('/').filter(|p| !p.is_empty()) {
+            built.push('/');
+            built.push_str(part);
+            if let Err(err) = session.create_dir(&built).await {
+                if !is_already_exists(&err) {
+                    // Distinguish "a FILE blocks this path" from transport trouble.
+                    if let Ok(meta) = session.metadata(&built).await {
+                        if !meta.is_dir() {
+                            return Err(TunnelError::new(
+                                format!("sftp mkdir {built}: a non-directory is in the way"),
+                                FailureKind::Network,
+                            ));
+                        }
+                    } else {
+                        return Err(TunnelError::new(
+                            format!("sftp mkdir {built}: {err}"),
+                            FailureKind::Network,
+                        ));
+                    }
+                }
+            }
+        }
+        drop(hold);
+        Ok(())
+    }
+
     /// End the session (best effort, capped): a wedged transport must not block a shutdown.
     pub async fn end(&self) {
         let live = self.live.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -712,12 +972,7 @@ fn throwaway_dialer(defs: JumpDefs) -> JumpDialer {
 /// One hop of the throwaway chain. The probe's Arc travels as the hold: the channel
 /// stream keeps the hop's session meaningful for exactly as long as the caller's
 /// handshake needs it, and the hop tears down with the probe.
-fn throwaway_jump(
-    defs: JumpDefs,
-    jump_id: String,
-    host: String,
-    port: u16,
-) -> JumpResolved {
+fn throwaway_jump(defs: JumpDefs, jump_id: String, host: String, port: u16) -> JumpResolved {
     Box::pin(async move {
         let Some(def) = defs(&jump_id) else {
             return Err(TunnelError::new(
@@ -853,6 +1108,100 @@ impl TestResult {
 }
 
 // --- interactive shell plumbing (docs/14 T2) -------------------------------------------------
+
+/// How long a canceled exec drains for before giving up on the far side's flush.
+/// Bounded so a wedged remote command cannot hold a cancel hostage.
+const CANCEL_DRAIN: Duration = Duration::from_secs(3);
+
+/// russh-sftp surfaces server refusals as typed status codes; absence is a normal
+/// answer to a sync's existence check, not a transport loss.
+fn is_no_such_file(err: &russh_sftp::client::error::Error) -> bool {
+    matches!(
+        err,
+        russh_sftp::client::error::Error::Status(s)
+            if s.status_code == russh_sftp::protocol::StatusCode::NoSuchFile
+    )
+}
+
+/// OpenSSH answers mkdir over an existing directory with the generic FAILURE code
+/// (there is no dedicated "exists" code in SFTP v3); the caller only needs the parents
+/// to exist, so that answer is tolerated.
+fn is_already_exists(err: &russh_sftp::client::error::Error) -> bool {
+    matches!(
+        err,
+        russh_sftp::client::error::Error::Status(s)
+            if s.status_code == russh_sftp::protocol::StatusCode::Failure
+                || s.status_code == russh_sftp::protocol::StatusCode::PermissionDenied
+    )
+}
+
+/// One streaming remote read over SFTP. Owns the file handle, the SFTP session and the
+/// connection lease: all three live exactly as long as the reader (docs/32 §29).
+struct SftpRead {
+    file: russh_sftp::client::fs::File,
+    _session: Arc<russh_sftp::client::SftpSession>,
+    _hold: super::manager::ConnectionLease,
+}
+
+#[async_trait]
+impl swiss_host::services::remote::RemoteRead for SftpRead {
+    async fn read_chunk(
+        &mut self,
+    ) -> Result<Option<Vec<u8>>, swiss_host::services::remote::RemoteError> {
+        use tokio::io::AsyncReadExt;
+        let mut buf = vec![0u8; swiss_host::services::remote::REMOTE_CHUNK_BYTES];
+        match self.file.read(&mut buf).await {
+            Ok(0) => Ok(None),
+            Ok(n) => {
+                buf.truncate(n);
+                Ok(Some(buf))
+            }
+            Err(err) => Err(swiss_host::services::remote::RemoteError::Failed(format!(
+                "sftp read: {err}"
+            ))),
+        }
+    }
+}
+
+/// One streaming remote write over SFTP. Same ownership story as SftpRead; `finish`
+/// flushes, `drop` without finish is an abort.
+struct SftpWrite {
+    file: russh_sftp::client::fs::File,
+    session: Option<Arc<russh_sftp::client::SftpSession>>,
+    hold: Option<super::manager::ConnectionLease>,
+}
+
+#[async_trait]
+impl swiss_host::services::remote::RemoteWrite for SftpWrite {
+    async fn write_chunk(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(), swiss_host::services::remote::RemoteError> {
+        use tokio::io::AsyncWriteExt;
+        self.file.write_all(bytes).await.map_err(|err| {
+            swiss_host::services::remote::RemoteError::Failed(format!("sftp write: {err}"))
+        })?;
+        self.file.flush().await.map_err(|err| {
+            swiss_host::services::remote::RemoteError::Failed(format!("sftp flush: {err}"))
+        })?;
+        Ok(())
+    }
+
+    async fn finish(&mut self) -> Result<(), swiss_host::services::remote::RemoteError> {
+        use tokio::io::AsyncWriteExt;
+        let _ = self.file.flush().await;
+        self.file.shutdown().await.map_err(|err| {
+            swiss_host::services::remote::RemoteError::Failed(format!("sftp close: {err}"))
+        })?;
+        // Release the session and the lease AFTER the close — the write is what keeps
+        // the connection alive, and it is over now.
+        let session = self.session.take();
+        let hold = self.hold.take();
+        drop(session);
+        drop(hold);
+        Ok(())
+    }
+}
 
 /// Consume the server's answer to one `want_reply` channel request. Anything other than
 /// Success is reported by name: "the server refused a pseudo-terminal" is something a user

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -41,10 +41,7 @@ impl TunnelGroups {
 
     /// Lock the store and run one mutation; a poisoned lock is an error, never a panic -
     /// one wedged scope must not take the admin API down with it.
-    fn with<T>(
-        &self,
-        f: impl FnOnce(&mut TunnelStore) -> Result<T, String>,
-    ) -> Result<T, String> {
+    fn with<T>(&self, f: impl FnOnce(&mut TunnelStore) -> Result<T, String>) -> Result<T, String> {
         self.store
             .lock()
             .map_err(|_| "tunnels.json is busy".to_string())

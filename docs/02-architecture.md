@@ -25,6 +25,9 @@ local-mcp-gateway-rust/
     swiss-tunnels/src/  tunnel/…           # types, store, manager, forward, port, ssh, mcpmatch, import, api
     swiss-jobs/src/     jobs/…             # def, migrate, schedule, clock, state, runner, runlog, api
     swiss-terminal/src/ terminal/…         # config, session, tickets, recording, local shells (no axum, no SSH)
+    swiss-remote/src/   target.rs actions.rs sync.rs project.rs api.rs
+                                          # the R1-R5 remote-execution surface (docs/32): target
+                                          # table, remote.exec/sync/pull actions, /api/remote
     swiss-panel/src/    admin.rs
                       admin_assets/      # copied verbatim from ../local-mcp-gateway/src/admin;
                                          # renders the two-level navigation (docs/13)
@@ -44,7 +47,7 @@ but it makes the plugin architecture a fact the compiler enforces rather than a 
 document. The edges are exactly:
 
 ```
-swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-panel }  ←  swiss
+swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-remote, swiss-panel }  ←  swiss
 ```
 
 No subsystem crate depends on another. That is not decoration: Data used to reach into MCP for

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -249,10 +249,7 @@ fn conn_input(body: &Map<String, Value>) -> ConnInput {
             .get("proxyPassword")
             .and_then(Value::as_str)
             .map(str::to_string),
-        jump: body
-            .get("jump")
-            .and_then(Value::as_str)
-            .map(str::to_string),
+        jump: body.get("jump").and_then(Value::as_str).map(str::to_string),
     }
 }
 
@@ -768,7 +765,8 @@ mod tests {
 
     #[test]
     fn dir_listing_sorts_directories_first() {
-        let dir = std::env::temp_dir().join(format!("swiss-dir-{}", swiss_core::util::random_hex(6)));
+        let dir =
+            std::env::temp_dir().join(format!("swiss-dir-{}", swiss_core::util::random_hex(6)));
         std::fs::create_dir_all(dir.join("zed")).unwrap();
         std::fs::create_dir_all(dir.join("abc")).unwrap();
         std::fs::write(dir.join("b.txt"), b"x").unwrap();
@@ -845,9 +843,13 @@ mod tests {
         use tower::ServiceExt;
 
         swiss_core::secure::key::use_test_master_key();
-        let dir = std::env::temp_dir().join(format!("swiss-tapi-{}", swiss_core::util::random_hex(8)));
+        let dir =
+            std::env::temp_dir().join(format!("swiss-tapi-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("create the scratch dir");
-        let store = Arc::new(Mutex::new(TunnelStore::new(dir.join("tunnels.json"), 19999)));
+        let store = Arc::new(Mutex::new(TunnelStore::new(
+            dir.join("tunnels.json"),
+            19999,
+        )));
         let id = {
             let mut s = store.lock().unwrap();
             let conn = s
@@ -884,13 +886,21 @@ mod tests {
             .oneshot(bodiless(format!("/api/tunnels/rules/{id}/stop"), "POST"))
             .await
             .expect("infallible router");
-        assert_eq!(stop.status(), StatusCode::OK, "a bodiless stop is a plain stop");
+        assert_eq!(
+            stop.status(),
+            StatusCode::OK,
+            "a bodiless stop is a plain stop"
+        );
 
         let delete = app
             .oneshot(bodiless(format!("/api/tunnels/rules/{id}"), "DELETE"))
             .await
             .expect("infallible router");
-        assert_eq!(delete.status(), StatusCode::OK, "a bodiless delete is a plain delete");
+        assert_eq!(
+            delete.status(),
+            StatusCode::OK,
+            "a bodiless delete is a plain delete"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -982,7 +992,10 @@ mod tests {
             swiss_core::util::random_hex(8),
         ));
         std::fs::create_dir_all(&dir).expect("create the scratch dir");
-        let store = Arc::new(Mutex::new(TunnelStore::new(dir.join("tunnels.json"), 19999)));
+        let store = Arc::new(Mutex::new(TunnelStore::new(
+            dir.join("tunnels.json"),
+            19999,
+        )));
         let manager = TunnelManager::new(store.clone(), None);
         let app = mount(Arc::new(Tunnels {
             store,
@@ -1045,7 +1058,10 @@ mod tests {
             swiss_core::util::random_hex(8),
         ));
         std::fs::create_dir_all(&dir).expect("create the scratch dir");
-        let store = Arc::new(Mutex::new(TunnelStore::new(dir.join("tunnels.json"), 19999)));
+        let store = Arc::new(Mutex::new(TunnelStore::new(
+            dir.join("tunnels.json"),
+            19999,
+        )));
         let jump_id = {
             let mut s = store.lock().unwrap();
             let a = s

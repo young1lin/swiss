@@ -56,6 +56,27 @@ Secrets: put the credential in `~/.mcp-gateway/.env`, reference `${REDIS_PASS}` 
 
 Add returns `201` `{ name, type, lifecycle }`. Unset `${ENV}` → `down`; fill it and restart.
 
+
+## Remote execution (SSH targets)
+
+Run commands on the machines the Tunnels plugin already reaches. Targets name a tunnels
+connection id plus an absolute workspace path - never a host, user or password.
+
+```bash
+swiss remote endpoints                                  # what the transport serves
+swiss remote target add build --endpoint conn-1 --root /data/ws/proj --caps exec,sync
+swiss remote exec build -- make -j8                     # streams, exits with the REMOTE exit code
+swiss remote exec build --timeout 30m -- ./test.sh -k   # everything after -- is ARGV, untouched
+swiss remote sync build                                 # upload-only (never deletes); .git/ target/ excluded
+swiss remote pull build out/app.bin --to artifacts/app.bin
+swiss run logs 17 -f; swiss run cancel 17               # detached runs: swiss remote exec ... --detach
+```
+
+A repository can carry `.swiss/remote.json` (plain JSON, no secrets) naming targets and
+actions like `build`; `swiss remote exec build -- make` then resolves through it.
+workspaceRoot is a guardrail, not a sandbox - the command runs as the SSH login user.
+sudo is refused at the door. Full contract: docs/32.
+
 ## Connect a client
 
 **Claude Code**

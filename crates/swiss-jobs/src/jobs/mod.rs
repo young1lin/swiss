@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -171,7 +171,11 @@ impl JobDef {
                         }
                         out.insert(k.clone(), s.to_string());
                     }
-                    if out.is_empty() { None } else { Some(out) }
+                    if out.is_empty() {
+                        None
+                    } else {
+                        Some(out)
+                    }
                 }
                 Some(_) => return Err("env: must be an object of string values".into()),
             },
@@ -1982,8 +1986,10 @@ mod tests {
     #[test]
     fn a_config_write_that_cannot_persist_is_an_error_not_a_warning() {
         swiss_core::secure::key::use_test_master_key();
-        let dir =
-            std::env::temp_dir().join(format!("swiss-jobs-gone-{}", swiss_core::util::random_hex(8)));
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-jobs-gone-{}",
+            swiss_core::util::random_hex(8)
+        ));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         // jobs.json and the runlog tree stay real; only the config file sits under a
         // directory that does not exist, so every store persist fails on every platform.

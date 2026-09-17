@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -46,7 +46,9 @@
 
 use std::sync::Arc;
 
-use swiss_core::platform::pty::{self, PtyCommand, PtyGeometry, PtyHandle, ShellCandidate, PtyPump};
+use swiss_core::platform::pty::{
+    self, PtyCommand, PtyGeometry, PtyHandle, PtyPump, ShellCandidate,
+};
 use swiss_host::services::shell::{
     PtyEvent, PtyIn, PtyInput, PtyOut, PtySession, PtySize, SessionLedger, ShellError,
 };
@@ -352,7 +354,10 @@ mod tests {
                     _ => "default-shell.exe",
                 }
             );
-            assert!(cmd.env.contains(&("TERM".into(), super::super::recording::RECORDING_TERM.into())));
+            assert!(cmd.env.contains(&(
+                "TERM".into(),
+                super::super::recording::RECORDING_TERM.into()
+            )));
             assert!(cmd.env.contains(&("COLORTERM".into(), "truecolor".into())));
             assert_eq!(cmd.env_remove, vec!["NO_COLOR".to_string()]);
         }
@@ -364,7 +369,8 @@ mod tests {
         // The bug as seen: the gateway inherits NO_COLOR=1 from whoever started it, the
         // local pwsh inherits it from the gateway, and PSStyle goes PlainText. Plant the
         // variable in this process, open a real shell, and ask it what it decided.
-        let Some(pwsh) = pty::find_on_path("pwsh.exe", &std::env::var("PATH").unwrap_or_default()) else {
+        let Some(pwsh) = pty::find_on_path("pwsh.exe", &std::env::var("PATH").unwrap_or_default())
+        else {
             eprintln!("no pwsh on PATH; skipping");
             return;
         };

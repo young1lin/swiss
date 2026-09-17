@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -80,8 +80,11 @@ pub fn browsable_connections(
     order: &[String],
     group_of: &dyn Fn(&str) -> String,
 ) -> Vec<Value> {
-    let rank: std::collections::HashMap<&str, usize> =
-        order.iter().enumerate().map(|(i, n)| (n.as_str(), i)).collect();
+    let rank: std::collections::HashMap<&str, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i))
+        .collect();
     let mut rows: Vec<(String, Value)> = catalog
         .list()
         .into_iter()
@@ -573,7 +576,10 @@ async fn export_sql(
                 header::HeaderName::from_static("x-export-capped"),
                 if dump.capped { "1".into() } else { "0".into() },
             ),
-            (header::HeaderName::from_static("x-export-format"), "sql".to_string()),
+            (
+                header::HeaderName::from_static("x-export-format"),
+                "sql".to_string(),
+            ),
         ],
         axum::body::Body::from_stream(body),
     )
@@ -623,7 +629,8 @@ async fn import(catalog: &CatalogRegistry, name: &str, body: &Value) -> Result<V
     // docs/22 W4.5: the panel picks the statement form — insert stays the default, and a
     // payload without the field rides exactly as it did before the mode existed.
     let mode = swiss_host::dbbrowser::parse_import_mode(body.get("mode")).map_err(Fail::bad)?;
-    let mut logged = json!({ "name": name, "table": coerced_str(body, "table"), "rows": lines.len() });
+    let mut logged =
+        json!({ "name": name, "table": coerced_str(body, "table"), "rows": lines.len() });
     if mode == swiss_host::dbbrowser::ImportMode::Upsert {
         logged["mode"] = json!("upsert");
     }
@@ -1111,14 +1118,14 @@ mod tests {
     use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::{HeaderMap, Request};
+    use serde_json::json;
+    use std::sync::Mutex;
     use swiss_host::dbbrowser::{
         browse_offset, browse_page_size, map_import_rows, BROWSE_DEFAULT_PAGE,
     };
     use swiss_host::services::catalog::{
         ConnectionCatalog, ConnectionInfo, ConnectionLease, LeaseTracker,
     };
-    use serde_json::json;
-    use std::sync::Mutex;
     use tower::ServiceExt;
 
     /// What the stub recorded of the last call — the Node suite's `seen` object.
@@ -1230,10 +1237,12 @@ mod tests {
             // red cells from.
             for e in edits.as_array().unwrap_or(&vec![]) {
                 if e.get("op").and_then(Value::as_str) == Some("update") {
-                    if let Some(cols) = e.pointer("/changes/__conflict__").and_then(Value::as_array) {
+                    if let Some(cols) = e.pointer("/changes/__conflict__").and_then(Value::as_array)
+                    {
                         return Err(swiss_host::dbbrowser::EditError::Conflict(
                             swiss_host::dbbrowser::EditConflict {
-                                message: "row was changed by another writer — columns: ".to_string()
+                                message: "row was changed by another writer — columns: "
+                                    .to_string()
                                     + &cols
                                         .iter()
                                         .map(|c| c.as_str().unwrap_or_default())
@@ -1321,9 +1330,13 @@ mod tests {
             let seen_ref = self.seen.clone();
             tokio::spawn(async move {
                 let mut pieces = 0usize;
-                let mut batch =
-                    SqlInsertBatch::new(swiss_host::dbbrowser::DbDialect::Mysql, Some("app"), "stub", &columns)
-                        .expect("stub identifiers are legal");
+                let mut batch = SqlInsertBatch::new(
+                    swiss_host::dbbrowser::DbDialect::Mysql,
+                    Some("app"),
+                    "stub",
+                    &columns,
+                )
+                .expect("stub identifiers are legal");
                 if tx.send(Ok(head.into_bytes())).await.is_err() {
                     return;
                 }
@@ -1348,11 +1361,9 @@ mod tests {
                     pieces += 1;
                 }
                 if tx
-                    .send(Ok(
-                        sql_dump_foot(swiss_host::dbbrowser::DbDialect::Mysql)
-                            .as_bytes()
-                            .to_vec(),
-                    ))
+                    .send(Ok(sql_dump_foot(swiss_host::dbbrowser::DbDialect::Mysql)
+                        .as_bytes()
+                        .to_vec()))
                     .await
                     .is_err()
                 {
@@ -1714,20 +1725,22 @@ mod tests {
         // in stored order, members by flat rank inside them) - the label rides the row, it
         // never re-sorts anything.
         let stub = || {
-            Arc::new(StubDb { seen: Arc::new(Mutex::new(Seen::default())) }) as Arc<dyn DbBrowser>
+            Arc::new(StubDb {
+                seen: Arc::new(Mutex::new(Seen::default())),
+            }) as Arc<dyn DbBrowser>
         };
-        let rows = vec![db_entry("alpha-conn", stub()), db_entry("beta-conn", stub())];
+        let rows = vec![
+            db_entry("alpha-conn", stub()),
+            db_entry("beta-conn", stub()),
+        ];
         // The visual order the composition computes: beta's group is stored first.
         let order = vec!["beta-conn".into(), "alpha-conn".into()];
         let groups = vec![
             ("alpha-conn".to_string(), "Alpha".to_string()),
             ("beta-conn".to_string(), "Beta".to_string()),
         ];
-        let app = catalog_grouped_router_of(
-            |tracker| StubProvider { rows, tracker },
-            order,
-            groups,
-        );
+        let app =
+            catalog_grouped_router_of(|tracker| StubProvider { rows, tracker }, order, groups);
         let (_, _, body, _) = call(app, "GET", "/api/db", None).await;
         let body = body.expect("json");
         let conns = body["connections"].as_array().expect("connections");
@@ -1736,7 +1749,10 @@ mod tests {
             .map(|c| {
                 (
                     c["name"].as_str().expect("name").to_string(),
-                    c["group"].as_str().expect("the row carries its group").to_string(),
+                    c["group"]
+                        .as_str()
+                        .expect("the row carries its group")
+                        .to_string(),
                 )
             })
             .collect();
@@ -1753,15 +1769,25 @@ mod tests {
     #[tokio::test]
     async fn the_picker_ranks_by_the_sidebars_manual_order() {
         let stub = || {
-            Arc::new(StubDb { seen: Arc::new(Mutex::new(Seen::default())) }) as Arc<dyn DbBrowser>
+            Arc::new(StubDb {
+                seen: Arc::new(Mutex::new(Seen::default())),
+            }) as Arc<dyn DbBrowser>
         };
-        let rows = vec![db_entry("db-b", stub()), db_entry("db-a", stub()), db_entry("db-c", stub())];
+        let rows = vec![
+            db_entry("db-b", stub()),
+            db_entry("db-a", stub()),
+            db_entry("db-c", stub()),
+        ];
         // No manual order yet — plain name order, like /api/mcps.
         let app = router_of(rows.clone());
         let (_, _, body, _) = call(app, "GET", "/api/db", None).await;
         fn names(b: &Value) -> Vec<String> {
-            b["connections"].as_array().expect("connections")
-                .iter().map(|c| c["name"].as_str().expect("name").to_string()).collect()
+            b["connections"]
+                .as_array()
+                .expect("connections")
+                .iter()
+                .map(|c| c["name"].as_str().expect("name").to_string())
+                .collect()
         }
         assert_eq!(names(&body.expect("json")), vec!["db-a", "db-b", "db-c"]);
         // The order a sidebar drag persists reorders the picker; a name the order never
@@ -1876,13 +1902,7 @@ mod tests {
             "db",
             Arc::new(StubDb { seen: seen.clone() }),
         )]);
-        let (status, _, _, _) = call(
-            app,
-            "GET",
-            "/api/db/db/tables?page=0&schema=app",
-            None,
-        )
-        .await;
+        let (status, _, _, _) = call(app, "GET", "/api/db/db/tables?page=0&schema=app", None).await;
         assert_eq!(status, StatusCode::OK);
         let opts = seen.lock().expect("seen").tables_opts.take();
         assert_eq!(opts, Some(json!({ "page": "0", "schema": "app" })));
@@ -2114,7 +2134,10 @@ mod tests {
         }
         assert_eq!(text.matches("\n(").count(), 400);
         let pieces = seen.lock().expect("seen").dump_pieces;
-        assert!(pieces >= statements + 2, "head and foot ship as pieces too: {pieces}");
+        assert!(
+            pieces >= statements + 2,
+            "head and foot ship as pieces too: {pieces}"
+        );
         let opts = seen
             .lock()
             .expect("seen")
@@ -2355,7 +2378,6 @@ mod tests {
         assert!(err.contains("rename, truncate or drop"), "{err}");
     }
 
-
     // --- docs/22 W4.6: preview and commit share one builder -------------------------------------------
 
     /// The body both W4.6 endpoints take: (op, payload). The stub browser builds the create
@@ -2371,7 +2393,10 @@ mod tests {
             ]
         });
         let seen = SeenRef::default();
-        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: seen.clone() }))]);
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
         let (status, _, body, _) = call(
             app,
             "POST",
@@ -2381,9 +2406,15 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         let sql = body.expect("json")["sql"].as_str().unwrap().to_string();
-        assert_eq!(sql, "CREATE TABLE `app`.`cfg` (\n    `order` int NOT NULL COMMENT '序号'\n);");
+        assert_eq!(
+            sql,
+            "CREATE TABLE `app`.`cfg` (\n    `order` int NOT NULL COMMENT '序号'\n);"
+        );
 
-        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: seen.clone() }))]);
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb { seen: seen.clone() }),
+        )]);
         let (status, _, body, _) = call(
             app,
             "POST",
@@ -2410,7 +2441,12 @@ mod tests {
 
     #[tokio::test]
     async fn ddl_preview_validates_op_and_identifiers() {
-        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: SeenRef::default() }))]);
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
         let (status, _, body, _) = call(
             app,
             "POST",
@@ -2420,9 +2456,17 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let err = body.expect("json")["error"].as_str().unwrap().to_string();
-        assert!(err.contains("op must be create_table, add_column or create_index"), "{err}");
+        assert!(
+            err.contains("op must be create_table, add_column or create_index"),
+            "{err}"
+        );
 
-        let app = router_of(vec![db_entry("db", Arc::new(StubDb { seen: SeenRef::default() }))]);
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+            }),
+        )]);
         let (status, _, body, _) = call(
             app,
             "POST",
@@ -2673,7 +2717,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        let items = body.expect("json")["items"].as_array().expect("items").clone();
+        let items = body.expect("json")["items"]
+            .as_array()
+            .expect("items")
+            .clone();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["kind"], "table");
         assert_eq!(items[1]["kind"], "keyword");
@@ -2694,7 +2741,11 @@ mod tests {
                 Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
             )])
         };
-        for bad in [json!({ "caret": 3 }), json!({ "sql": 5, "caret": 3 }), json!(null)] {
+        for bad in [
+            json!({ "caret": 3 }),
+            json!({ "sql": 5, "caret": 3 }),
+            json!(null),
+        ] {
             let (status, _, body, _) =
                 call(make(), "POST", "/api/db/db/completion", Some(bad.clone())).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
@@ -2731,7 +2782,10 @@ mod tests {
         )]);
         let (status, _, body, _) = call(app, "GET", "/api/db/db/activity", None).await;
         assert_eq!(status, StatusCode::OK);
-        let rows = body.expect("json")["rows"].as_array().expect("rows").clone();
+        let rows = body.expect("json")["rows"]
+            .as_array()
+            .expect("rows")
+            .clone();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["pid"], json!(101));
         assert_eq!(rows[0]["query"], "SELECT pg_sleep(60)");
@@ -2756,9 +2810,18 @@ mod tests {
             json!({ "pid": -3, "mode": "terminate" }),
             json!({ "pid": "7", "mode": "cancel" }),
         ] {
-            let (status, _, body, _) = call(make(), "POST", "/api/db/db/activity-kill", Some(bad.clone())).await;
+            let (status, _, body, _) = call(
+                make(),
+                "POST",
+                "/api/db/db/activity-kill",
+                Some(bad.clone()),
+            )
+            .await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
-            let err = body.expect("json")["error"].as_str().expect("error").to_string();
+            let err = body.expect("json")["error"]
+                .as_str()
+                .expect("error")
+                .to_string();
             assert!(
                 err == "mode must be cancel or terminate"
                     || err == "pid must be a session id (positive integer)",

@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,14 +19,14 @@
 //! contract travels with the adapters; the browser consumes these statements verbatim.
 //! Lived in dbbrowser.rs before the workspace split.
 
+use serde_json::json;
+use swiss_host::dbbrowser::{browse_table_sort, TableSort, TableSortKey};
 use swiss_mcp::adapters::mysql::{
     MYSQL_BROWSE_COLUMNS_SQL, MYSQL_BROWSE_FK_SQL, MYSQL_BROWSE_INDEXES_SQL,
 };
 use swiss_mcp::adapters::pg::{
     pg_browse_table_params, pg_list_tables_sql, COUNT_TABLES_SQL, DESCRIBE_SQL, LIST_TABLES_SQL,
 };
-use swiss_host::dbbrowser::{browse_table_sort, TableSort, TableSortKey};
-use serde_json::json;
 
 /// The Node test's `placeholders()` — the highest $n a statement carries, scanned by hand
 /// (ADR-007: no regex engine).
@@ -84,19 +84,34 @@ fn pg_table_list_supplies_every_placeholder() {
 #[test]
 fn pg_table_list_sort_rewrites_only_the_order_by() {
     let name_asc = browse_table_sort(None, None).unwrap();
-    assert_eq!(name_asc, TableSort { key: TableSortKey::Name, desc: false });
+    assert_eq!(
+        name_asc,
+        TableSort {
+            key: TableSortKey::Name,
+            desc: false
+        }
+    );
     // name/asc is the tool's standing statement with a case-insensitive name inside each
     // schema — the default sort must not drift from the constant the MCP tool still uses.
     assert_eq!(
         pg_list_tables_sql(name_asc).replace("n.nspname, lower(c.relname)", "1, 2"),
         LIST_TABLES_SQL
     );
-    assert!(pg_list_tables_sql(TableSort { key: TableSortKey::Name, desc: true })
-        .contains("n.nspname, lower(c.relname) DESC"));
-    assert!(pg_list_tables_sql(TableSort { key: TableSortKey::Rows, desc: true })
-        .contains("ORDER BY approx_rows DESC NULLS LAST, n.nspname, c.relname"));
-    assert!(pg_list_tables_sql(TableSort { key: TableSortKey::Size, desc: false })
-        .contains("ORDER BY pg_total_relation_size(c.oid), n.nspname, c.relname"));
+    assert!(pg_list_tables_sql(TableSort {
+        key: TableSortKey::Name,
+        desc: true
+    })
+    .contains("n.nspname, lower(c.relname) DESC"));
+    assert!(pg_list_tables_sql(TableSort {
+        key: TableSortKey::Rows,
+        desc: true
+    })
+    .contains("ORDER BY approx_rows DESC NULLS LAST, n.nspname, c.relname"));
+    assert!(pg_list_tables_sql(TableSort {
+        key: TableSortKey::Size,
+        desc: false
+    })
+    .contains("ORDER BY pg_total_relation_size(c.oid), n.nspname, c.relname"));
 }
 
 #[test]
@@ -105,11 +120,17 @@ fn table_list_sort_refuses_unknown_keys_and_directions() {
     assert!(browse_table_sort(Some("name"), Some("sideways")).is_err());
     assert_eq!(
         browse_table_sort(Some("rows"), None).unwrap(),
-        TableSort { key: TableSortKey::Rows, desc: false }
+        TableSort {
+            key: TableSortKey::Rows,
+            desc: false
+        }
     );
     assert_eq!(
         browse_table_sort(None, Some("desc")).unwrap(),
-        TableSort { key: TableSortKey::Name, desc: true }
+        TableSort {
+            key: TableSortKey::Name,
+            desc: true
+        }
     );
 }
 

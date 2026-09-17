@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -727,7 +727,12 @@ fn parse_definition(
                 })?;
             Some(canonical.clone())
         }
-        Some(_) => return Err(type_err(field_path(parent, "group"), "a group name or null")),
+        Some(_) => {
+            return Err(type_err(
+                field_path(parent, "group"),
+                "a group name or null",
+            ))
+        }
     };
     let trigger = parse_trigger(obj.get("trigger"), &field_path(parent, "trigger"))?;
     let action = parse_action(obj.get("action"), &field_path(parent, "action"))?;
@@ -1758,11 +1763,7 @@ mod tests {
     fn a_group_list_itself_follows_the_one_model() {
         // The invariants every scope enforces (docs/20 2.1), read at parse time so a
         // hand-edited row cannot smuggle a broken list past the family's mutations.
-        for bad in [
-            json!(["  "]),
-            json!(["Ops", "ops"]),
-            json!({"x": 1}),
-        ] {
+        for bad in [json!(["  "]), json!(["Ops", "ops"]), json!({"x": 1})] {
             let config = json!({ "groups": bad, "definitions": {} });
             assert!(
                 JobsConfig::parse(&config).is_err(),

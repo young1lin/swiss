@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -98,12 +98,14 @@ pub fn as_listen_port(v: &str) -> Option<u16> {
 /// name comes back so a caller can report an unusable value against the variable the user
 /// actually set. `None` when both are unset or empty.
 pub fn env_port_raw() -> Option<(&'static str, String)> {
-    ["SWISS_PORT", "MCP_GATEWAY_PORT"].into_iter().find_map(|name| {
-        std::env::var(name)
-            .ok()
-            .filter(|raw| !raw.is_empty())
-            .map(|raw| (name, raw))
-    })
+    ["SWISS_PORT", "MCP_GATEWAY_PORT"]
+        .into_iter()
+        .find_map(|name| {
+            std::env::var(name)
+                .ok()
+                .filter(|raw| !raw.is_empty())
+                .map(|raw| (name, raw))
+        })
 }
 
 /// The port named by `SWISS_PORT` / `MCP_GATEWAY_PORT` (new name first) when it parses to a

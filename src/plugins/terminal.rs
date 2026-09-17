@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -229,13 +229,15 @@ mod tests {
         // The form is generated from the schema; the limits are enforced by the parser.
         // If these drift apart the panel offers a default the backend rejects (or
         // silently substitutes), which is exactly the bug this test exists to catch.
-        let schema =
-            TerminalPlugin::new(RuntimeServices::new(), TerminalState::new())
-                .descriptor()
-                .config_schema;
+        let schema = TerminalPlugin::new(RuntimeServices::new(), TerminalState::new())
+            .descriptor()
+            .config_schema;
         let defaults = TerminalConfig::default();
         let props = &schema["properties"];
-        assert_eq!(props["local"]["properties"]["enabled"]["default"], json!(false));
+        assert_eq!(
+            props["local"]["properties"]["enabled"]["default"],
+            json!(false)
+        );
         // docs/15 §2.1: the schema is the sheet's hint, so the default order it states must
         // name the same shells conpty's probe prefers.
         let shell_desc = props["local"]["properties"]["shell"]["description"]
@@ -259,7 +261,10 @@ mod tests {
             props["graceSeconds"]["default"],
             json!(defaults.grace.as_secs())
         );
-        assert_eq!(props["stallSeconds"]["default"], json!(defaults.stall.as_secs()));
+        assert_eq!(
+            props["stallSeconds"]["default"],
+            json!(defaults.stall.as_secs())
+        );
         assert_eq!(props["recording"]["default"], json!(defaults.recording));
         // Every key the parser accepts is in the schema, and nothing else.
         let mut schema_keys: Vec<&str> = props

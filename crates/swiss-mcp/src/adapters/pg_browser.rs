@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,24 +23,22 @@
 use super::direct::Lazy;
 use super::pg::{
     pg_browse_table_params, pg_grammar_params, pg_list_tables_grammar_sql, pg_list_tables_sql,
-    pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL, PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL,
-    PK_SQL,
+    pg_query_rows, COUNT_TABLES_SQL, DESCRIBE_SQL, PG_BROWSE_FK_SQL, PG_BROWSE_INDEXES_SQL, PK_SQL,
 };
 use super::sql::{clamp_row_limit, limit_report, with_row_limit};
 use async_trait::async_trait;
-use swiss_host::dbbrowser::{
-    ambiguous_row_error, browse_count_sql, browse_offset, browse_order, browse_page_size,
-    browse_rows_sql, browse_table_sort, build_ddl_create, build_ddl_op_sql,
-    build_edit_statements, build_import_statements, build_pg_ddl, conflict_of, ddl_script,
-    export_row_limit, js_to_string, map_import_rows, optimistic_lock_columns, readback_plan,
-    sql_dump_foot, sql_dump_head, sql_dump_literal, to_browse_columns, to_browse_indexes,
-    to_csv, to_json_lines, BrowseColumn, BrowseForeignKey, DbBrowser, DbDialect, DumpPiece,
-    EditConflict, EditError, ReadBack, SqlDump, SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP,
-    IMPORT_ROW_CAP,
-};
 use serde_json::{json, Map, Value};
 use sqlx::PgPool;
 use std::sync::Arc;
+use swiss_host::dbbrowser::{
+    ambiguous_row_error, browse_count_sql, browse_offset, browse_order, browse_page_size,
+    browse_rows_sql, browse_table_sort, build_ddl_create, build_ddl_op_sql, build_edit_statements,
+    build_import_statements, build_pg_ddl, conflict_of, ddl_script, export_row_limit, js_to_string,
+    map_import_rows, optimistic_lock_columns, readback_plan, sql_dump_foot, sql_dump_head,
+    sql_dump_literal, to_browse_columns, to_browse_indexes, to_csv, to_json_lines, BrowseColumn,
+    BrowseForeignKey, DbBrowser, DbDialect, DumpPiece, EditConflict, EditError, ReadBack, SqlDump,
+    SqlInsertBatch, EXPORT_CHUNK, EXPORT_ROW_CAP, IMPORT_ROW_CAP,
+};
 
 pub struct PgBrowser {
     label: String,
@@ -55,9 +53,7 @@ impl PgBrowser {
         Self {
             label,
             conn,
-            completion_cache: std::sync::Mutex::new(
-                swiss_host::dbbrowser::CompletionCache::new(),
-            ),
+            completion_cache: std::sync::Mutex::new(swiss_host::dbbrowser::CompletionCache::new()),
         }
     }
 
@@ -264,7 +260,8 @@ impl DbBrowser for PgBrowser {
         let limit = browse_page_size(o.get("limit"), 50);
         // The grid's filters feed the page, the COUNT and exports through one WHERE
         // (browse_where) so the three can never drift (docs/22 W0.2).
-        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let exprs = swiss_host::dbbrowser::pg_typed_exprs(&columns)?;
         // docs/22 W1.9: fetch one row past the page — its presence answers "is there a next
         // page" without trusting COUNT arithmetic under concurrent writes.
@@ -456,13 +453,14 @@ impl DbBrowser for PgBrowser {
                     (rows.len() as u64, rows.into_iter().next())
                 }
                 _ => {
-                    let affected =
-                        super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
+                    let affected = super::pg::run_pg_tx(&mut tx, &stmt.sql, &stmt.params).await?;
                     let row = match plan {
-                        ReadBack::Select(s) => super::pg::run_pg_tx_rows(&mut tx, &s.sql, &s.params)
-                            .await?
-                            .into_iter()
-                            .next(),
+                        ReadBack::Select(s) => {
+                            super::pg::run_pg_tx_rows(&mut tx, &s.sql, &s.params)
+                                .await?
+                                .into_iter()
+                                .next()
+                        }
                         ReadBack::None => None,
                         ReadBack::Returning(_) => unreachable!("matched above"),
                     };
@@ -520,7 +518,8 @@ impl DbBrowser for PgBrowser {
         let cap = export_row_limit(o.get("limit"));
         // An export of a filtered grid exports the FILTERED set: the same browse_where the
         // page and its COUNT use (docs/22 W0.2), values bound, never inlined.
-        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         let mut all: Vec<Map<String, Value>> = Vec::new();
         let mut capped = false;
         // Offset paging in chunks: simple, and the cap keeps the O(offset) tail-walk bounded.
@@ -576,7 +575,8 @@ impl DbBrowser for PgBrowser {
         let cap = export_row_limit(o.get("limit"));
         // The dump exports the FILTERED set: the same browse_where the page, the COUNT and the
         // folded exports use (docs/22 W0.2), values bound, never inlined.
-        let where_ = swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
+        let where_ =
+            swiss_host::dbbrowser::browse_where(DbDialect::Pg, &columns, o.get("filters"))?;
         // Header facts come from that same WHERE's COUNT, so rows and capped are true before
         // the first byte ships (the folded formats learn their row count only after fetching;
         // a writer racing the stream can still move the table under a taken count — inherent).
@@ -605,7 +605,8 @@ impl DbBrowser for PgBrowser {
             if tx.send(Ok(head.into_bytes())).await.is_err() {
                 return; // the consumer is gone; stop fetching
             }
-            let mut batch = match SqlInsertBatch::new(DbDialect::Pg, Some(&schema), &table, &names) {
+            let mut batch = match SqlInsertBatch::new(DbDialect::Pg, Some(&schema), &table, &names)
+            {
                 Ok(b) => b,
                 Err(e) => {
                     let _ = tx.send(Err(e)).await;
@@ -650,8 +651,10 @@ impl DbBrowser for PgBrowser {
                 for row in &page {
                     // The dump body is EXECUTED on replay — sql_dump_literal, never the
                     // clipboard's sql_literal (docs/22 W4.4 audit blocker).
-                    let literals: Result<Vec<String>, String> =
-                        names.iter().map(|c| sql_dump_literal(DbDialect::Pg, row.get(c))).collect();
+                    let literals: Result<Vec<String>, String> = names
+                        .iter()
+                        .map(|c| sql_dump_literal(DbDialect::Pg, row.get(c)))
+                        .collect();
                     let literals = match literals {
                         Ok(l) => l,
                         Err(e) => {
@@ -673,7 +676,9 @@ impl DbBrowser for PgBrowser {
             if let Some(tail) = batch.finish() {
                 let _ = tx.send(Ok(tail.into_bytes())).await;
             }
-            let _ = tx.send(Ok(sql_dump_foot(DbDialect::Pg).as_bytes().to_vec())).await;
+            let _ = tx
+                .send(Ok(sql_dump_foot(DbDialect::Pg).as_bytes().to_vec()))
+                .await;
         });
         Ok(SqlDump {
             columns: dump_columns,
@@ -832,9 +837,7 @@ impl DbBrowser for PgBrowser {
     }
 
     async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String> {
-        use swiss_host::dbbrowser::{
-            completion_from_table, completion_items, sql_word_ending_at,
-        };
+        use swiss_host::dbbrowser::{completion_from_table, completion_items, sql_word_ending_at};
         let Some(prefix) = sql_word_ending_at(sql, caret) else {
             return Ok(json!({ "items": [] }));
         };
@@ -902,7 +905,11 @@ impl DbBrowser for PgBrowser {
                     .await?;
                 let cols: Vec<String> = rows
                     .iter()
-                    .filter_map(|r| r.get("column_name").and_then(Value::as_str).map(str::to_string))
+                    .filter_map(|r| {
+                        r.get("column_name")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
                     .collect();
                 self.completion_cache
                     .lock()

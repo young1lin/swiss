@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -156,11 +156,8 @@ pub fn resolve_def(def: &ServerDef) -> ServerDef {
 /// hold. The error carries the JSON path (`headers.Authorization references secret://x which is
 /// not in the vault`) plus no value ever — the caller prefixes the MCP's name.
 pub fn resolve_def_checked(def: &ServerDef) -> Result<ServerDef, String> {
-    let resolved =
-        swiss_core::secure::refs::resolve_value(&Value::Object(def.0.clone()))?;
-    Ok(ServerDef(
-        resolved.as_object().cloned().unwrap_or_default(),
-    ))
+    let resolved = swiss_core::secure::refs::resolve_value(&Value::Object(def.0.clone()))?;
+    Ok(ServerDef(resolved.as_object().cloned().unwrap_or_default()))
 }
 
 /// The token env var this build seeds into new configs.
@@ -293,8 +290,8 @@ pub fn load_config(path: &Path) -> Result<GatewayConfig, String> {
     // An empty value counts as missing, exactly as a direct lookup treated it before the pair
     // existed. Resolved after the host refusal so a bad host reports as a bad host, not as a
     // missing token.
-    let token = token_lookup(&token_env)
-        .ok_or_else(|| format!("Missing token env var: {token_env}"))?;
+    let token =
+        token_lookup(&token_env).ok_or_else(|| format!("Missing token env var: {token_env}"))?;
 
     let port = resolve_port(obj.get("port"))?;
 
@@ -361,8 +358,10 @@ mod tests {
         p
     }
     fn temp_dir(tag: &str) -> PathBuf {
-        let d =
-            std::env::temp_dir().join(format!("swiss-cfg-{tag}-{}", swiss_core::util::random_hex(6)));
+        let d = std::env::temp_dir().join(format!(
+            "swiss-cfg-{tag}-{}",
+            swiss_core::util::random_hex(6)
+        ));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
@@ -474,7 +473,9 @@ mod tests {
         // observed in this process — load_config injects the machine's real sealed store into
         // a sticky overlay, and this machine's store legitimately holds MCP_GATEWAY_TOKEN.
         // That fallback leg is covered end-to-end by the daemon tests' hermetic scratch home.
-        let _well_known = WELL_KNOWN_TOKEN_TESTS.lock().expect("well-known token test lock");
+        let _well_known = WELL_KNOWN_TOKEN_TESTS
+            .lock()
+            .expect("well-known token test lock");
         for (named, held) in [(TOKEN_ENV, TOKEN_ENV_LEGACY), (TOKEN_ENV_LEGACY, TOKEN_ENV)] {
             set_env(named, "primary-value");
             set_env(held, "pair-value");
@@ -488,7 +489,9 @@ mod tests {
     fn a_custom_token_env_name_gets_no_fallback() {
         // Only the two well-known names are a pair; a config naming its own variable must not
         // quietly authenticate with a token pinned under either of them.
-        let _well_known = WELL_KNOWN_TOKEN_TESTS.lock().expect("well-known token test lock");
+        let _well_known = WELL_KNOWN_TOKEN_TESTS
+            .lock()
+            .expect("well-known token test lock");
         let dir = temp_dir("token-custom");
         let p = write_cfg(&dir, json!({ "tokenEnv": "MINE_TOKEN", "servers": {} }));
         set_env(TOKEN_ENV, "not-mine");

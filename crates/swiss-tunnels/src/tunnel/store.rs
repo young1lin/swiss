@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -287,14 +287,10 @@ impl TunnelStore {
         // Members live on the rows themselves (tunnels.json's shape), so the Groups here hold
         // the names and the ordering; from_parts still normalizes them - dedupe, trim, drop
         // over-long names - exactly the way every other scope's list loads.
-        self.rule_groups = Groups::from_parts(
-            migrated(group_list(&raw, "ruleGroups")),
-            BTreeMap::new(),
-        );
-        self.conn_groups = Groups::from_parts(
-            migrated(group_list(&raw, "connGroups")),
-            BTreeMap::new(),
-        );
+        self.rule_groups =
+            Groups::from_parts(migrated(group_list(&raw, "ruleGroups")), BTreeMap::new());
+        self.conn_groups =
+            Groups::from_parts(migrated(group_list(&raw, "connGroups")), BTreeMap::new());
     }
 
     fn persist(&self) -> Result<(), String> {
@@ -430,7 +426,10 @@ impl TunnelStore {
                 if id == def.id {
                     def.jump.clone()
                 } else {
-                    self.conns.iter().find(|c| c.id == id).and_then(|c| c.jump.clone())
+                    self.conns
+                        .iter()
+                        .find(|c| c.id == id)
+                        .and_then(|c| c.jump.clone())
                 }
             };
             let mut chain = vec![def.id.clone()];
@@ -698,11 +697,7 @@ impl TunnelStore {
     /// entries, so they render in the new first group. A reorder pins the rows that render in
     /// the first group by default (group: None) to the name, so demoting it re-homes nobody:
     /// members live on the rows here, not in the model's sparse map.
-    pub fn set_groups(
-        &mut self,
-        kind: GroupKind,
-        names: &[String],
-    ) -> Result<Vec<String>, String> {
+    pub fn set_groups(&mut self, kind: GroupKind, names: &[String]) -> Result<Vec<String>, String> {
         let before = self.groups_of_kind(kind).names();
         let clean = self.groups_of_kind_mut(kind).set_names(names.to_vec())?;
         if let Some(first) = swiss_host::groups::demoted_first(&before, &clean) {
@@ -926,8 +921,12 @@ fn parse_proxy_port(raw: &str) -> Result<u16, String> {
 /// default port (http -> 80, socks5 -> 1080): what is on disk is what is dialed.
 fn normalize_proxy(input: &str) -> Result<String, String> {
     let url = input.trim();
-    let scheme_msg =
-        || format!("proxy must be an http:// or socks5:// URL, got {}", json_quote(input));
+    let scheme_msg = || {
+        format!(
+            "proxy must be an http:// or socks5:// URL, got {}",
+            json_quote(input)
+        )
+    };
     let Some(sep) = url.find("://") else {
         return Err(scheme_msg());
     };
@@ -1228,11 +1227,8 @@ mod tests {
             "at least one group must remain"
         );
         assert_eq!(
-            s.set_groups(
-                GroupKind::Rules,
-                &["default".to_string(), "G1".to_string()],
-            )
-            .unwrap(),
+            s.set_groups(GroupKind::Rules, &["default".to_string(), "G1".to_string()],)
+                .unwrap(),
             vec!["default".to_string(), "G1".to_string()],
             "default is a stored name now, kept like any other"
         );
@@ -1258,10 +1254,12 @@ mod tests {
             "an absent/null group means the first group, whatever it is called"
         );
         assert_eq!(
-            s.set_group(GroupKind::Rules, a_id, Some("Nope")).unwrap_err(),
+            s.set_group(GroupKind::Rules, a_id, Some("Nope"))
+                .unwrap_err(),
             "unknown group: Nope"
         );
-        s.reorder(GroupKind::Rules, std::slice::from_ref(z_id)).unwrap();
+        s.reorder(GroupKind::Rules, std::slice::from_ref(z_id))
+            .unwrap();
         assert_eq!(
             s.rules()[0].id,
             *z_id,
@@ -1281,13 +1279,21 @@ mod tests {
         let pinned_id = s.add_rule(&rule_input("z", &c.id, 5434.0)).unwrap().id;
         s.set_groups(GroupKind::Rules, &["g1".to_string(), "g2".to_string()])
             .unwrap();
-        s.set_group(GroupKind::Rules, &pinned_id, Some("g2")).unwrap();
+        s.set_group(GroupKind::Rules, &pinned_id, Some("g2"))
+            .unwrap();
 
         s.set_groups(GroupKind::Rules, &["g2".to_string(), "g1".to_string()])
             .unwrap();
-        assert_eq!(s.groups_of(GroupKind::Rules), vec!["g2".to_string(), "g1".to_string()]);
+        assert_eq!(
+            s.groups_of(GroupKind::Rules),
+            vec!["g2".to_string(), "g1".to_string()]
+        );
         let row = s.rule(&pinned_id).unwrap();
-        assert_eq!(row.group.as_deref(), Some("g2"), "the explicit row never moves");
+        assert_eq!(
+            row.group.as_deref(),
+            Some("g2"),
+            "the explicit row never moves"
+        );
         for r in s.rules() {
             if r.id != pinned_id {
                 assert_eq!(
@@ -1299,17 +1305,26 @@ mod tests {
         }
         // The connections list reorders the same way over its own rows: create the two,
         // then swap them.
-        s.set_groups(GroupKind::Connections, &["cg1".to_string(), "cg2".to_string()])
-            .unwrap();
-        s.set_groups(GroupKind::Connections, &["cg2".to_string(), "cg1".to_string()])
-            .unwrap();
+        s.set_groups(
+            GroupKind::Connections,
+            &["cg1".to_string(), "cg2".to_string()],
+        )
+        .unwrap();
+        s.set_groups(
+            GroupKind::Connections,
+            &["cg2".to_string(), "cg1".to_string()],
+        )
+        .unwrap();
         assert_eq!(s.connection(&c.id).unwrap().group.as_deref(), Some("cg1"));
         // A replace that respells the group while demoting it pins under the NEW spelling:
         // the panel buckets rows by exact string match, so an old-spelling row.group
         // would fall out of its own group.
         s.set_group(GroupKind::Connections, &c.id, None).unwrap();
-        s.set_groups(GroupKind::Connections, &["cg1".to_string(), "CG2".to_string()])
-            .unwrap();
+        s.set_groups(
+            GroupKind::Connections,
+            &["cg1".to_string(), "CG2".to_string()],
+        )
+        .unwrap();
         assert_eq!(
             s.connection(&c.id).unwrap().group.as_deref(),
             Some("CG2"),
@@ -1372,8 +1387,7 @@ mod tests {
         .unwrap();
         let mut s = TunnelStore::new(&path, 19999);
         // Deleting the default group is ordinary now; the remaining group takes the sink slot.
-        s.set_groups(GroupKind::Rules, &["G1".to_string()])
-            .unwrap();
+        s.set_groups(GroupKind::Rules, &["G1".to_string()]).unwrap();
         let raw = swiss_core::secure::statefile::read_secure_json(&path)
             .expect("the saved file reads back")
             .expect("the file exists");
@@ -1393,8 +1407,10 @@ mod tests {
 
     #[test]
     fn loads_a_plaintext_file_with_node_defaults() {
-        let dir =
-            std::env::temp_dir().join(format!("swiss-tunnel-load-{}", swiss_core::util::random_hex(8)));
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-tunnel-load-{}",
+            swiss_core::util::random_hex(8)
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tunnels.json");
         std::fs::write(
@@ -1668,7 +1684,10 @@ mod tests {
             "a connection can have a proxy or a jump, not both; put the proxy on the jump connection if it needs one"
         );
         // The legal chain is untouched by all of the above refusals.
-        assert_eq!(s.connection(&c.id).unwrap().jump.as_deref(), Some(b.id.as_str()));
+        assert_eq!(
+            s.connection(&c.id).unwrap().jump.as_deref(),
+            Some(b.id.as_str())
+        );
     }
     #[test]
     fn mcp_link_maintenance() {

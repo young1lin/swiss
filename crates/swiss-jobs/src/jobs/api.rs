@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -129,7 +129,11 @@ fn def_from_body(name: &str, body: &Value) -> Result<JobDef, String> {
                 }
                 out.insert(k.clone(), s.to_string());
             }
-            if out.is_empty() { None } else { Some(out) }
+            if out.is_empty() {
+                None
+            } else {
+                Some(out)
+            }
         }
         Some(_) => return Err("env: must be an object of string values".into()),
     };
@@ -157,9 +161,9 @@ pub fn mount(jobs: Arc<JobSystem>) -> Router {
         "/api/jobs",
         get(|State(jobs): State<Arc<JobSystem>>| async move {
             admin_json(
-            StatusCode::OK,
-            json!({ "jobs": jobs.all_views(), "groups": jobs.groups() }),
-        )
+                StatusCode::OK,
+                json!({ "jobs": jobs.all_views(), "groups": jobs.groups() }),
+            )
         }),
     );
 

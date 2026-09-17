@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -53,7 +53,7 @@ pub const LAUNCHER_NOISE: &[&str] = &[
     "NO_COLOR",
     // CI runners. Jobs run user scripts; scripts gate interactivity and colour on these.
     "CI",
-    "TF_BUILD",     // Azure Pipelines
+    "TF_BUILD", // Azure Pipelines
     "GITHUB_ACTIONS",
     // Agent-harness markers (Claude Code sets CLAUDECODE and CLAUDE_CODE_ENTRYPOINT; the
     // prefix entry below catches the rest of that family).

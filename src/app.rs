@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -485,8 +485,10 @@ async fn moved_hint_404(State(ctx): State<Arc<AppContext>>, req: Request) -> Res
         .strip_prefix('/')
         .filter(|rest| !rest.is_empty() && !rest.contains('/'));
     if let Some(name) = root_name {
-        if matches!(method, axum::http::Method::POST | axum::http::Method::DELETE)
-            && ctx.registry.get(name).is_some()
+        if matches!(
+            method,
+            axum::http::Method::POST | axum::http::Method::DELETE
+        ) && ctx.registry.get(name).is_some()
         {
             return admin_error(
                 StatusCode::NOT_FOUND,
@@ -646,7 +648,10 @@ fn visual_order(store: &ManagedStore, names: &mut [String]) -> Vec<String> {
     let groups = store.get_groups();
     let mut by_group: HashMap<String, Vec<String>> = HashMap::new();
     for n in names.iter() {
-        by_group.entry(store.group_of(n)).or_default().push(n.clone());
+        by_group
+            .entry(store.group_of(n))
+            .or_default()
+            .push(n.clone());
     }
     let mut out = Vec::new();
     for g in &groups {
@@ -661,7 +666,14 @@ mod tests {
 
     fn scratch_store() -> ManagedStore {
         // A unique scratch path per call; the test never needs to clean up, only to not collide.
-        let dir = std::env::temp_dir().join(format!("swiss-visual-order-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-visual-order-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         ManagedStore::open_at(dir.join("managed.json"))
     }
@@ -705,7 +717,9 @@ mod tests {
     #[test]
     fn visual_order_keeps_unranked_names_last_in_name_order_inside_their_group() {
         let store = scratch_store();
-        store.set_groups(vec!["default".into(), "new".into()]).unwrap();
+        store
+            .set_groups(vec!["default".into(), "new".into()])
+            .unwrap();
         store.set_mcp_group("zebra", Some("new")).unwrap();
         store.set_mcp_group("alpha", Some("new")).unwrap();
         // No manual order at all: every name is unranked, so plain name order inside each group;

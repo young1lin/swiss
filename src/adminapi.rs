@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 The swiss authors
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -37,7 +37,7 @@ use serde_json::{json, Map, Value};
 use crate::app::{admin_error, admin_json, AppContext};
 use swiss_core::log;
 use swiss_host::config::ServerDef;
-use swiss_host::managed::{ManagedEntry, RevisionRec, now_ms};
+use swiss_host::managed::{now_ms, ManagedEntry, RevisionRec};
 use swiss_host::mask::{mask_def, unmask_body};
 use swiss_host::mem::get_memory_info;
 use swiss_mcp::adapters::make_adapter;
@@ -270,7 +270,10 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
     // (or a self-hosted baseUrl override), and optionally a model name. A `url` would be a
     // second way to pick the endpoint - that is what mode/baseUrl are for.
     if type_ == "zai-vision" {
-        let api_key = str_field(body, "apiKey").unwrap_or_default().trim().to_string();
+        let api_key = str_field(body, "apiKey")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         if api_key.is_empty() {
             return Err("apiKey is required for a zai-vision MCP (a ${ENV_VAR} reference)".into());
         }
@@ -279,7 +282,8 @@ fn build_typed_def(body: &Value) -> Result<ServerDef, String> {
         // whole-key secret name), and the sealed env store is where it belongs anyway.
         if !swiss_host::config::is_env_ref(&json!(api_key)) {
             return Err(
-                "apiKey must be a ${ENV_VAR} or ${secret://name} reference for a zai-vision MCP".into(),
+                "apiKey must be a ${ENV_VAR} or ${secret://name} reference for a zai-vision MCP"
+                    .into(),
             );
         }
         def.insert("apiKey".into(), json!(api_key));
@@ -489,9 +493,9 @@ async fn add_managed(
         enabled,
         override_: false,
     })?;
-    if let Err(err) = ctx
-        .registry
-        .register(name, swiss_mcp::registry::Source::Managed, def, adapter)
+    if let Err(err) =
+        ctx.registry
+            .register(name, swiss_mcp::registry::Source::Managed, def, adapter)
     {
         let _ = ctx.store.remove(name);
         return Err(err);
@@ -537,8 +541,8 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // plist or unit file IS the store, and status() reads it the same way this answer does.
     r = r.route(
         "/api/autostart",
-        get(|| async move { admin_json(StatusCode::OK, crate::autostart::status().to_json()) }).put(
-            |body: crate::reply::NodeBody| async move {
+        get(|| async move { admin_json(StatusCode::OK, crate::autostart::status().to_json()) })
+            .put(|body: crate::reply::NodeBody| async move {
                 let Some(enabled) = body.0.get("enabled").and_then(Value::as_bool) else {
                     return admin_error(
                         StatusCode::BAD_REQUEST,
@@ -549,8 +553,7 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     Ok(state) => admin_json(StatusCode::OK, state.to_json()),
                     Err(err) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &err),
                 }
-            },
-        ),
+            }),
     );
 
     // --- tokens: named per-client bearers, so the logs can attribute every request to a client ----
@@ -1388,11 +1391,12 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
 
     r = r.route(
         "/api/mcps/{name}/revisions",
-        get(|State(ctx): State<Arc<AppContext>>, Path(name): Path<String>| async move {
-            if ctx.registry.get(&name).is_none() {
-                return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
-            }
-            let list: Vec<Value> = ctx
+        get(
+            |State(ctx): State<Arc<AppContext>>, Path(name): Path<String>| async move {
+                if ctx.registry.get(&name).is_none() {
+                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
+                }
+                let list: Vec<Value> = ctx
                 .store
                 .revisions_of(&name)
                 .iter()
@@ -1401,8 +1405,9 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                     json!({ "index": index, "at": r.at, "note": r.note, "type": r.def.type_() })
                 })
                 .collect();
-            admin_json(StatusCode::OK, json!({ "revisions": list }))
-        }),
+                admin_json(StatusCode::OK, json!({ "revisions": list }))
+            },
+        ),
     );
 
     r = r.route(
@@ -1446,7 +1451,11 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 // the PUT edit above has always had.
                 if let Err(err) = ctx.store.push_revision(
                     &name,
-                    RevisionRec { def: current_def, at: now_ms(), note },
+                    RevisionRec {
+                        def: current_def,
+                        at: now_ms(),
+                        note,
+                    },
                 ) {
                     return admin_error(StatusCode::BAD_REQUEST, &err);
                 }
@@ -1459,14 +1468,27 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                 if let Err(err) = persist {
                     return admin_error(StatusCode::BAD_REQUEST, &err);
                 }
-                let was_running = entry.data.read().ok().map(|d| d.server.is_some()).unwrap_or(false);
+                let was_running = entry
+                    .data
+                    .read()
+                    .ok()
+                    .map(|d| d.server.is_some())
+                    .unwrap_or(false);
                 // The swap is done the moment update_def returns; a def that builds but will
                 // not start leaves the MCP stopped with a reason — the add route treats a start
                 // failure the same way, and a rollback needs to be reachable, not a 500.
-                let restart_error = match ctx.registry.update_def(&name, def.clone(), adapter, was_running).await {
+                let restart_error = match ctx
+                    .registry
+                    .update_def(&name, def.clone(), adapter, was_running)
+                    .await
+                {
                     Ok(()) => Value::Null,
                     Err(err) => {
-                        log::log("warn", "mcp start failed on replace", Some(json!({ "name": name, "err": err })));
+                        log::log(
+                            "warn",
+                            "mcp start failed on replace",
+                            Some(json!({ "name": name, "err": err })),
+                        );
                         json!(err)
                     }
                 };
@@ -1485,100 +1507,128 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
         ),
     );
 
-    r = r.route(
-        "/api/mcps/{name}/revisions/{index}",
-        delete(
-            |State(ctx): State<Arc<AppContext>>, Path((name, index)): Path<(String, String)>| async move {
-                if ctx.registry.get(&name).is_none() {
-                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
-                }
-                let Ok(index) = index.parse::<usize>() else {
-                    return admin_error(StatusCode::BAD_REQUEST, "index must be a whole number");
-                };
-                match ctx.store.take_revision(&name, index) {
-                    Ok(Some(_)) => {
-                        admin_json(StatusCode::OK, json!({ "name": name, "index": index, "deleted": true }))
+    r =
+        r.route(
+            "/api/mcps/{name}/revisions/{index}",
+            delete(
+                |State(ctx): State<Arc<AppContext>>,
+                 Path((name, index)): Path<(String, String)>| async move {
+                    if ctx.registry.get(&name).is_none() {
+                        return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
                     }
-                    Ok(None) => {
-                        admin_error(StatusCode::NOT_FOUND, &format!("no revisions for {name}"))
+                    let Ok(index) = index.parse::<usize>() else {
+                        return admin_error(
+                            StatusCode::BAD_REQUEST,
+                            "index must be a whole number",
+                        );
+                    };
+                    match ctx.store.take_revision(&name, index) {
+                        Ok(Some(_)) => admin_json(
+                            StatusCode::OK,
+                            json!({ "name": name, "index": index, "deleted": true }),
+                        ),
+                        Ok(None) => {
+                            admin_error(StatusCode::NOT_FOUND, &format!("no revisions for {name}"))
+                        }
+                        Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
                     }
-                    Err(err) => admin_error(StatusCode::BAD_REQUEST, &err),
-                }
-            },
-        ),
-    );
+                },
+            ),
+        );
 
-    r = r.route(
-        "/api/mcps/{name}/revisions/{index}/restore",
-        post(
-            |State(ctx): State<Arc<AppContext>>, Path((name, index)): Path<(String, String)>| async move {
-                let Some(entry) = ctx.registry.get(&name) else {
-                    return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
-                };
-                let Ok(index) = index.parse::<usize>() else {
-                    return admin_error(StatusCode::BAD_REQUEST, "index must be a whole number");
-                };
-                let list = ctx.store.revisions_of(&name);
-                if index >= list.len() {
-                    return admin_error(
-                        StatusCode::BAD_REQUEST,
-                        &format!("no revision {index} for {name} (has {})", list.len()),
-                    );
-                }
-                let target_def = list[index].def.clone();
-                // The def built once must still build now (an env ref can have gone missing);
-                // validating before any write keeps restore as transaction-shaped as replace.
-                let adapter = match make_adapter(&target_def, &name, &ctx.calls) {
-                    Ok(adapter) => adapter,
-                    Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
-                };
-                // Take the target FIRST, then park the current def: parking first could evict
-                // the very revision being restored when the list is at the cap. If the disk
-                // fails between the two writes the taken snapshot is lost but the live def is
-                // untouched — the honest failure mode.
-                if let Err(err) = ctx.store.take_revision(&name, index) {
-                    return admin_error(StatusCode::BAD_REQUEST, &err);
-                }
-                if let Some(current_def) = entry.data.read().ok().map(|d| d.def.clone()) {
-                    let _ = ctx.store.push_revision(
-                        &name,
-                        RevisionRec { def: current_def, at: now_ms(), note: "pre-restore".into() },
-                    );
-                }
-                let source = entry.data.read().ok().map(|d| d.source);
-                let persist = if source == Some(swiss_mcp::registry::Source::Config) {
-                    ctx.store.upsert_override(&name, target_def.clone())
-                } else {
-                    ctx.store.update_def(&name, target_def.clone())
-                };
-                if let Err(err) = persist {
-                    return admin_error(StatusCode::BAD_REQUEST, &err);
-                }
-                let was_running = entry.data.read().ok().map(|d| d.server.is_some()).unwrap_or(false);
-                // Same rule as replace: the def swap already happened, so a start failure is
-                // reported in the body, not as a 500 that hides the swap.
-                let restart_error = match ctx.registry.update_def(&name, target_def.clone(), adapter, was_running).await {
-                    Ok(()) => Value::Null,
-                    Err(err) => {
-                        log::log("warn", "mcp start failed on restore", Some(json!({ "name": name, "err": err })));
-                        json!(err)
+    r =
+        r.route(
+            "/api/mcps/{name}/revisions/{index}/restore",
+            post(
+                |State(ctx): State<Arc<AppContext>>,
+                 Path((name, index)): Path<(String, String)>| async move {
+                    let Some(entry) = ctx.registry.get(&name) else {
+                        return admin_error(StatusCode::NOT_FOUND, &format!("unknown MCP: {name}"));
+                    };
+                    let Ok(index) = index.parse::<usize>() else {
+                        return admin_error(
+                            StatusCode::BAD_REQUEST,
+                            "index must be a whole number",
+                        );
+                    };
+                    let list = ctx.store.revisions_of(&name);
+                    if index >= list.len() {
+                        return admin_error(
+                            StatusCode::BAD_REQUEST,
+                            &format!("no revision {index} for {name} (has {})", list.len()),
+                        );
                     }
-                };
-                admin_json(
-                    StatusCode::OK,
-                    json!({
-                        "name": name,
-                        "type": target_def.type_(),
-                        "restored": index,
-                        "parked": true,
-                        "lifecycle": lifecycle_of(&ctx, &name),
-                        "revisions": ctx.store.revisions_of(&name).len(),
-                        "restartError": restart_error,
-                    }),
-                )
-            },
-        ),
-    );
+                    let target_def = list[index].def.clone();
+                    // The def built once must still build now (an env ref can have gone missing);
+                    // validating before any write keeps restore as transaction-shaped as replace.
+                    let adapter = match make_adapter(&target_def, &name, &ctx.calls) {
+                        Ok(adapter) => adapter,
+                        Err(err) => return admin_error(StatusCode::BAD_REQUEST, &err),
+                    };
+                    // Take the target FIRST, then park the current def: parking first could evict
+                    // the very revision being restored when the list is at the cap. If the disk
+                    // fails between the two writes the taken snapshot is lost but the live def is
+                    // untouched — the honest failure mode.
+                    if let Err(err) = ctx.store.take_revision(&name, index) {
+                        return admin_error(StatusCode::BAD_REQUEST, &err);
+                    }
+                    if let Some(current_def) = entry.data.read().ok().map(|d| d.def.clone()) {
+                        let _ = ctx.store.push_revision(
+                            &name,
+                            RevisionRec {
+                                def: current_def,
+                                at: now_ms(),
+                                note: "pre-restore".into(),
+                            },
+                        );
+                    }
+                    let source = entry.data.read().ok().map(|d| d.source);
+                    let persist = if source == Some(swiss_mcp::registry::Source::Config) {
+                        ctx.store.upsert_override(&name, target_def.clone())
+                    } else {
+                        ctx.store.update_def(&name, target_def.clone())
+                    };
+                    if let Err(err) = persist {
+                        return admin_error(StatusCode::BAD_REQUEST, &err);
+                    }
+                    let was_running = entry
+                        .data
+                        .read()
+                        .ok()
+                        .map(|d| d.server.is_some())
+                        .unwrap_or(false);
+                    // Same rule as replace: the def swap already happened, so a start failure is
+                    // reported in the body, not as a 500 that hides the swap.
+                    let restart_error = match ctx
+                        .registry
+                        .update_def(&name, target_def.clone(), adapter, was_running)
+                        .await
+                    {
+                        Ok(()) => Value::Null,
+                        Err(err) => {
+                            log::log(
+                                "warn",
+                                "mcp start failed on restore",
+                                Some(json!({ "name": name, "err": err })),
+                            );
+                            json!(err)
+                        }
+                    };
+                    admin_json(
+                        StatusCode::OK,
+                        json!({
+                            "name": name,
+                            "type": target_def.type_(),
+                            "restored": index,
+                            "parked": true,
+                            "lifecycle": lifecycle_of(&ctx, &name),
+                            "revisions": ctx.store.revisions_of(&name).len(),
+                            "restartError": restart_error,
+                        }),
+                    )
+                },
+            ),
+        );
 
     // --- OAuth authorize (docs/24 D5) ---------------------------------------------------------------
     //
@@ -2078,8 +2128,9 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
                                         c.get("blob")
                                             .and_then(Value::as_str)
                                             .map(|b| {
-                                                let bytes =
-                                                    swiss_core::util::to_hex(b.as_bytes()).len() / 2;
+                                                let bytes = swiss_core::util::to_hex(b.as_bytes())
+                                                    .len()
+                                                    / 2;
                                                 format!("[{bytes} bytes of binary]")
                                             })
                                             .unwrap_or_default()
