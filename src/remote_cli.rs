@@ -235,6 +235,7 @@ async fn run(argv: &[String]) -> i32 {
         "resolve" => cmd_resolve(gw, &a).await,
         "exec" => cmd_exec(gw, &a).await,
         "sync" => cmd_sync(gw, &a).await,
+        "push" => cmd_push(gw, &a).await,
         "pull" => cmd_pull(gw, &a).await,
         other => {
             eprintln!("unknown remote subcommand: {other}");
@@ -267,10 +268,17 @@ pub fn usage_text() -> String {
             "run a command on a target",
         ),
         (
-            "sync [name] [--source DIR] [--exclude PATTERN]... [--verbose]",
-            "upload the local tree",
+            "sync [name] [--source PATH] [--exclude PATTERN]... [--verbose]",
+            "upload the local tree or one file",
         ),
-        ("pull [name] <path> [--to LOCAL]", "download one file"),
+        (
+            "push [name] <file> [--to NAME]",
+            "upload one file under a remote name",
+        ),
+        (
+            "pull [name] <path> [--to LOCAL]",
+            "download a file or folder",
+        ),
     ] {
         s.push_str(&format!("  {cmd:<70} {text}\n"));
     }
@@ -743,6 +751,51 @@ async fn cmd_sync(gw: Gateway, a: &RemoteArgs) -> i32 {
     .await
 }
 
+/// `swiss remote push <name> <localfile> [--to remotename]`: one file up,
+/// through the same remote.sync action a tree sync uses - the source is simply
+/// a file and the optional `to` names it on the far side.
+async fn cmd_push(gw: Gateway, a: &RemoteArgs) -> i32 {
+    // Resolve exactly like sync: the first word (when present) names the target.
+    let named = a.words.first().cloned();
+    let lookup = RemoteArgs {
+        words: named.clone().into_iter().collect(),
+        ..a.clone()
+    };
+    let resolved = match resolve_name(&gw, &lookup).await {
+        Ok(resolved) => resolved,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    // The file: the word after the name, or the first word with --target.
+    let file = a
+        .words
+        .get(1)
+        .cloned()
+        .or_else(|| if a.target.is_some() { named } else { None });
+    let Some(file) = file else {
+        eprintln!("push needs a local file (swiss remote push <name> <file> [--to NAME])");
+        return 1;
+    };
+    let mut input = json!({ "target": resolved.target, "source": file });
+    if let Some(to) = &a.to {
+        input["to"] = json!(to);
+    }
+    if a.verbose || a.json {
+        input["verbose"] = json!(true);
+    }
+    submit_and_stream(
+        &gw,
+        "remote.sync",
+        &format!("push {}", resolved.target),
+        input,
+        resolved.timeout_ms,
+        a,
+    )
+    .await
+}
+
 async fn cmd_pull(gw: Gateway, a: &RemoteArgs) -> i32 {
     let named = a.words.first().cloned();
     let path = a.words.get(1).cloned().or_else(|| {
@@ -895,6 +948,18 @@ mod tests {
         assert!(a.json);
         let a = parse(&argv(&["exec", "--wat"]));
         assert_eq!(a.unknown, vec!["--wat"]);
+    }
+
+    #[test]
+    fn push_parses_name_file_and_to() {
+        let a = parse(&argv(&["push", "dev", "app.exe", "--to", "bin/app.exe"]));
+        assert_eq!(a.sub, "push");
+        assert_eq!(a.words, vec!["dev", "app.exe"]);
+        assert_eq!(a.to.as_deref(), Some("bin/app.exe"));
+        // --target spelling: the only word is the file.
+        let a = parse(&argv(&["push", "--target", "dev", "app.exe"]));
+        assert_eq!(a.words, vec!["app.exe"]);
+        assert_eq!(a.target.as_deref(), Some("dev"));
     }
 
     #[test]

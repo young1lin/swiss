@@ -98,7 +98,7 @@ pub(crate) mod testing {
     use swiss_host::services::action::CancelHandle;
     use swiss_host::services::remote::{
         RemoteEndpoint, RemoteError, RemoteExecEvent, RemoteExecRequest, RemoteExecResult,
-        RemoteFileStat, RemoteRead, RemoteTransportProvider, RemoteWrite,
+        RemoteFileStat, RemoteListing, RemoteRead, RemoteTransportProvider, RemoteWrite,
     };
     use swiss_host::services::RuntimeServices;
 
@@ -216,16 +216,25 @@ pub(crate) mod testing {
             _holder: &str,
             path: &str,
         ) -> Result<Option<RemoteFileStat>, RemoteError> {
-            Ok(self
-                .files
-                .lock()
-                .unwrap()
-                .get(path)
-                .map(|b| RemoteFileStat {
-                    size: b.len() as u64,
+            let files = self.files.lock().unwrap();
+            if let Some(bytes) = files.get(path) {
+                return Ok(Some(RemoteFileStat {
+                    size: bytes.len() as u64,
                     mtime_ms: Some(1_700_000_000_000),
                     is_dir: false,
-                }))
+                }));
+            }
+            // The map holds files only; a path that prefixes other keys is a
+            // directory, which is what the pull walker's stat dispatch asks.
+            let prefix = format!("{}/", path.trim_end_matches('/'));
+            if files.keys().any(|k| k.starts_with(&prefix)) {
+                return Ok(Some(RemoteFileStat {
+                    size: 0,
+                    mtime_ms: None,
+                    is_dir: true,
+                }));
+            }
+            Ok(None)
         }
 
         async fn open_read(
@@ -268,6 +277,44 @@ pub(crate) mod testing {
                 .unwrap()
                 .insert(format!("{path}/"), Vec::new());
             Ok(())
+        }
+
+        async fn list_dir(
+            &self,
+            _endpoint: &str,
+            _holder: &str,
+            path: &str,
+        ) -> Result<Vec<RemoteListing>, RemoteError> {
+            // Listings are derived from the map keys: the immediate children of
+            // the listed path are the first segments of deeper keys, and a child
+            // is a directory when it is a prefix of other keys.
+            let files = self.files.lock().unwrap();
+            let prefix = format!("{}/", path.trim_end_matches('/'));
+            let mut names: Vec<String> = Vec::new();
+            for key in files.keys() {
+                let Some(rest) = key.strip_prefix(prefix.as_str()) else {
+                    continue;
+                };
+                if rest.is_empty() {
+                    continue; // the directory's own mkdir marker, not a child
+                }
+                let name = rest.split('/').next().unwrap_or_default().to_string();
+                if !name.is_empty() && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+            names.sort();
+            Ok(names
+                .into_iter()
+                .map(|name| {
+                    let child = format!("{prefix}{name}");
+                    RemoteListing {
+                        is_dir: files.keys().any(|k| k.starts_with(&format!("{child}/"))),
+                        size: files.get(&child).map(|b| b.len() as u64).unwrap_or(0),
+                        name,
+                    }
+                })
+                .collect())
         }
     }
 
@@ -370,6 +417,15 @@ pub(crate) mod testing {
             _holder: &str,
             _path: &str,
         ) -> Result<(), RemoteError> {
+            Err(RemoteError::Unsupported("no transport".into()))
+        }
+
+        async fn list_dir(
+            &self,
+            _endpoint: &str,
+            _holder: &str,
+            _path: &str,
+        ) -> Result<Vec<RemoteListing>, RemoteError> {
             Err(RemoteError::Unsupported("no transport".into()))
         }
     }

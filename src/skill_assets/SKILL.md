@@ -67,15 +67,17 @@ swiss remote endpoints                                  # what the transport ser
 swiss remote target add build --endpoint conn-1 --root /data/ws/proj --caps exec,sync
 swiss remote exec build -- make -j8                     # streams, exits with the REMOTE exit code
 swiss remote exec build --timeout 30m -- ./test.sh -k   # everything after -- is ARGV, untouched
-swiss remote sync build                                 # upload-only (never deletes); .git/ target/ excluded
+swiss remote sync build                                 # upload a tree (never deletes); .git/ target/ excluded
+swiss remote push build app.exe                         # upload one file
 swiss remote pull build out/app.bin --to artifacts/app.bin
+swiss remote pull build out/dists                       # a directory pulls recursively
 swiss run logs 17 -f; swiss run cancel 17               # detached runs: swiss remote exec ... --detach
 ```
 
 A repository can carry `.swiss/remote.json` (plain JSON, no secrets) naming targets and
 actions like `build`; `swiss remote exec build -- make` then resolves through it.
 workspaceRoot is a guardrail, not a sandbox - the command runs as the SSH login user.
-sudo is refused at the door. Full contract: docs/32.
+sudo passes through like any command (no PTY, so it needs NOPASSWD or -n). Full contract: docs/32.
 
 ## Connect a client
 

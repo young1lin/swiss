@@ -30,7 +30,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use swiss_host::host::descriptor::PluginDescriptor;
+use swiss_host::host::descriptor::{PageDescriptor, PluginDescriptor};
 use swiss_host::host::factory::{PluginFactory, PluginInstance};
 use swiss_host::host::scope::PluginScope;
 use swiss_host::services::RuntimeServices;
@@ -80,10 +80,19 @@ impl PluginFactory for RemotePlugin {
                 "properties": {},
                 "additionalProperties": false
             }),
-            // No page in this phase (docs/32): the CLI is the primary client and
-            // the panel page is R6. The routes exist from day one so scripts do
-            // not depend on a UI shipping.
-            pages: Vec::new(),
+            // The targets page (docs/32 R6): the CLI stays the primary client,
+            // but a target no longer needs a terminal to exist. Before the
+            // plugins page's 1000, after Terminal's 70.
+            pages: vec![PageDescriptor {
+                id: "remote".into(),
+                plugin_id: PLUGIN_ID.into(),
+                label: "Remote Targets".into(),
+                order: 75,
+                path: "#remote".into(),
+                entry: "/admin/js/views/remote.js".into(),
+                sidebar: false,
+                layout: "page",
+            }],
             routes: vec!["/api/remote".into()],
             // The targets/routes have nothing to re-read; a config PUT does not
             // restart the instance.
@@ -150,10 +159,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_descriptor_is_cli_first_and_dependency_free() {
+    fn the_descriptor_carries_one_page_and_no_requirements() {
         let d = RemotePlugin::new(RuntimeServices::new(), RemoteState::new()).descriptor();
         assert_eq!(d.id, "remote");
-        assert!(d.pages.is_empty(), "no panel page this phase");
+        assert_eq!(d.pages.len(), 1);
+        assert_eq!(d.pages[0].id, "remote");
+        assert_eq!(d.pages[0].entry, "/admin/js/views/remote.js");
         assert_eq!(d.routes, vec!["/api/remote".to_string()]);
         assert!(d.requires.is_empty(), "must start without the transport");
     }

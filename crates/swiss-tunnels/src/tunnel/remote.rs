@@ -43,7 +43,7 @@ use super::types::{FailureKind, TunnelError};
 use swiss_host::services::action::CancelHandle;
 use swiss_host::services::remote::{
     RemoteEndpoint, RemoteError, RemoteExecEvent, RemoteExecRequest, RemoteExecResult,
-    RemoteFileStat, RemoteRead, RemoteTransportProvider, RemoteWrite,
+    RemoteFileStat, RemoteListing, RemoteRead, RemoteTransportProvider, RemoteWrite,
 };
 
 /// Quote ONE argument for a POSIX shell.
@@ -230,6 +230,22 @@ impl RemoteTransportProvider for TunnelRemote {
             .await
             .map_err(as_remote_error)?;
         conn.mkdir_p(path.to_string(), lease)
+            .await
+            .map_err(as_remote_error)
+    }
+
+    async fn list_dir(
+        &self,
+        endpoint: &str,
+        _holder: &str,
+        path: &str,
+    ) -> Result<Vec<RemoteListing>, RemoteError> {
+        let (conn, lease) = self
+            .manager
+            .lease_connection(endpoint)
+            .await
+            .map_err(as_remote_error)?;
+        conn.list_dir(path.to_string(), lease)
             .await
             .map_err(as_remote_error)
     }
