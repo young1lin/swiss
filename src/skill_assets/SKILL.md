@@ -47,14 +47,9 @@ Base `http://127.0.0.1:19999`, loopback only (that is the whole gate). MCP endpo
 Import turns stdio `command`+`args` into `proc`, remote `url` into `http`. Names already in use become `redis-1`, `redis-2`. Entries whose URL is this gateway are skipped.
 
 Secrets: put the credential in `~/.mcp-gateway/.env`, reference `${REDIS_PASS}` in the MCP.
-
-**Redis** `type: redis` — `description, host, port, password, db, readonly, allowDestructive, allowEval`
-
-**MySQL** `type: mysql` — `description, host, port, user, password, database, timezone, readonly, maxRows`
-
-**Postgres** `type: pg` — `description, url, readonly, maxRows` (`url` required)
-
-Add returns `201` `{ name, type, lifecycle }`. Unset `${ENV}` → `down`; fill it and restart.
+Adapter field shapes (redis/mysql/pg/…): `GET /api/mcps` lists live ones with their shapes; the
+panel's Add sheet shows every field per type. Add returns `201 {name, type, lifecycle}`;
+unset `${ENV}` → `down`, fill it and restart.
 
 
 ## Remote execution (SSH targets)
