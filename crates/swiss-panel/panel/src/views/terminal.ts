@@ -50,14 +50,14 @@ import { closeSheet } from "../add-sheet.js";
    pipeline is text-only; a font file cannot enter the tree, by design. */
 var FONT = 'ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace';
 
-var packages = null;             // the vendored constructors, loaded once per module lifetime
-export var targets = null;       // the last /api/terminal/targets reply (a live binding: terminal-settings.js reads it)
-export var sessions = [];        // the last listing (rows without local state; exported as a live binding too)
-var models = [];       // sessions this mount has wired a terminal for
-var active = null;     // the session id whose terminal is on stage
+var packages: Promise<TerminalPackages> | null = null;             // the vendored constructors, loaded once per module lifetime
+export var targets: ApiTerminalTargets | null = null;       // the last /api/terminal/targets reply (a live binding: terminal-settings.js reads it)
+export var sessions: ApiTerminalSessionRow[] = [];        // the last listing (rows without local state; exported as a live binding too)
+var models: TermModel[] = [];       // sessions this mount has wired a terminal for
+var active: string | null = null;     // the session id whose terminal is on stage
 var epoch = 0;         // mount generation: loops and sockets from an older mount stop
 var seq = 0;           // temp ids for sessions opened but not yet answered
-var fitTimer = null;
+var fitTimer: ReturnType<typeof setTimeout> | null = null;
 /* The terminal's own font size, zoomed with Ctrl+=/-/0 or Ctrl+wheel and remembered
    per browser — a preference about this screen, not gateway state, so localStorage
    like the theme. Read once at module load; a blocked store just means 13px. */
@@ -67,13 +67,13 @@ var fontSize = readFontSize(readStoredFontSize());
    grace window lapses; without this set, every repaint would resurrect a tab the user
    has already closed, and dismissing would look decorative. Cleared of ids the listing
    no longer carries so it cannot grow without bound. */
-var dismissed = new Set();
+var dismissed = new Set<string>();
 /* P0 preferences (docs/22 §2.3/§2.4): a bell must be VISIBLE by default and a
    selection must reach the clipboard by default — both remember their mode per
    browser, like the font size, because they are preferences about this screen. */
 var BELL_KEY = "swiss.terminal.bell";
 var COPYSEL_KEY = "swiss.terminal.copyOnSelect";
-function storedPref(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+function storedPref(key: string) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
 /* One-shot guidance (docs/22 P0 guidance layer): the first attach is the one moment a
    newcomer is guaranteed to be looking at the terminal, so it carries one sentence of
@@ -81,7 +81,7 @@ function storedPref(key) { try { return localStorage.getItem(key); } catch (e) {
 var HINT_KEY = "swiss.terminal.hint";
 var bellMode = readBellMode(storedPref(BELL_KEY));
 var copyOnSelect = readCopyOnSelect(storedPref(COPYSEL_KEY));
-var bellAudio = null;   // the AudioContext, created by the first audible bell
+var bellAudio: AudioContext | null = null;   // the AudioContext, created by the first audible bell
 
 function load() {
   if (!packages) {
@@ -97,14 +97,14 @@ function load() {
   return packages;
 }
 
-function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function sleep(ms: number) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-function model(id) { return models.find(function (m) { return m.id === id; }) || null; }
+function model(id: string | null) { return models.find(function (m) { return m.id === id; }) || null; }
 
 /* The status foot under the surface: a state dot that answers before the words do,
    then one sentence for whichever session is on stage. The tone classes come from the
    status strings this file and the gateway's control frames produce. */
-function statusTone(text) {
+function statusTone(text: string) {
   if (!text) return "";
   if (/attached/.test(text)) return "ok";
   if (/connecting|opening|reconnecting/.test(text)) return "warn";
@@ -147,7 +147,7 @@ function paintTabs() {
   /* Rebuilding identical markup rips the nodes out mid-double-click (see select) and
      would destroy an open rename input; same string in, same string out - skip. */
   var html = all.map(function (m) {
-    var label = esc(tabLabel(m, m.shellTitle, m.customTitle)) + (m.gone ? " · closed" : "");
+    var label = esc(tabLabel(m as unknown as ApiTerminalSessionRow, m.shellTitle, m.customTitle)) + (m.gone ? " · closed" : "");
     return '<button role="tab" data-act="select" data-id="' + esc(m.id) + '"' +
       ' aria-selected="' + String(m.id === active) + '" title="' + label + '">' +
       '<span class="term-tab-label">' + label + "</span>" +
@@ -180,7 +180,7 @@ function readStoredFontSize() {
 
 /* Apply one font size to every wired terminal and refit the one on stage - the others
    are refitted when they are selected, exactly as after a window resize. */
-function setFontSize(size) {
+function setFontSize(size: number) {
   if (size === fontSize) return;
   fontSize = size;
   try { localStorage.setItem(FONT_SIZE_KEY, String(size)); } catch (e) { /* per-tab only */ }
@@ -198,7 +198,7 @@ function setFontSize(size) {
 /* Copy the selection and clear it — Windows Terminal's semantics: the next Ctrl+C must
    be the interrupt again. writeText works on http://127.0.0.1 (a potentially-trustworthy
    origin); the rare refusal gets a sentence rather than silence. */
-function copySelection(term) {
+function copySelection(term: XtermTerminal) {
   var text = term.getSelection();
   navigator.clipboard.writeText(text).catch(function () {
     toast("could not write the selection to the clipboard", true);
@@ -233,8 +233,8 @@ function beep() {
    viewport is captured BEFORE the write and restored after it — the bottom when
    pinned, the saved line when not. Capture-before-write matters because an rAF can
    flip the pin mid-write (Tabby's rule, docs/22 §2.10). */
-function writeTerm(m, bytes) {
-  var term = m.term;
+function writeTerm(m: TermModel, bytes: Uint8Array) {
+  var term = m.term as XtermTerminal;
   if (!term) return;
   var b = term.buffer.active;
   var was = m.pinned;
@@ -248,7 +248,7 @@ function writeTerm(m, bytes) {
 
 /* The "N new \u2193" chip over a terminal the user has scrolled away from (docs/22
    §2.10): one button, absolutely positioned, honest about how far behind they are. */
-function paintJump(m) {
+function paintJump(m: TermModel) {
   if (!m.holder) return;
   if (!m.jump) {
     var chip = document.createElement("button");
@@ -274,20 +274,20 @@ function tabList() {
     return s && s.id && known.indexOf(s.id) < 0 && !dismissed.has(s.id);
   });
   return models.concat(extra.map(function (s) {
-    return { id: s.id, target: s.target, label: s.label, status: "", gone: false };
+    return { id: s.id, target: s.target, label: s.label, status: "", gone: false } as TermModel;
   }));
 }
 
 /* Alt+1..9 / Alt+arrows out of a focused terminal (docs/22 §2.5). The browser keeps
    Ctrl+Tab and Ctrl+Shift+W for itself — no page can have them — so Alt carries the
    set; the web-panel reality desktop terminals do not face. */
-function jumpTab(at) {
+function jumpTab(at: number) {
   var all = tabList();
   if (at < 0 || at >= all.length) return;
   select(all[at].id);
 }
 
-function cycleTab(dir) {
+function cycleTab(dir: number) {
   var all = tabList();
   if (all.length < 2) return;
   var at = -1;
@@ -299,8 +299,8 @@ function cycleTab(dir) {
 /* Double-click renames a tab: one inline input replaces the label; Enter commits,
    Escape cancels, blur commits (docs/22 consensus 1 + §2.5). A custom title outranks
    the shell's OSC title until it is emptied. */
-function startRename(id) {
-  var m = model(id);
+function startRename(id: string) {
+  var m = model(id) as TermModel;
   var bar = $("term-tabs");
   if (!m || !bar) return;
   var btn = Array.prototype.find.call(bar.children, function (c) {
@@ -318,7 +318,7 @@ function startRename(id) {
   input.focus();
   input.select();
   var settled = false;
-  var done = function (commit) {
+  var done = function (commit: boolean) {
     if (settled) return;
     settled = true;
     if (commit) m.customTitle = input.value.trim() || null;
@@ -353,15 +353,15 @@ var FIND_DECOR = {
 };
 
 function findBar() { return $("term-find"); }
-function findInput() { return $("term-find-q"); }
+function findInput() { return $<HTMLInputElement>("term-find-q"); }
 
-function paintFindCount(res) {
+function paintFindCount(res: { resultIndex: number; resultCount: number } | null | undefined) {
   var el = $("term-find-count");
   if (!el) return;
   el.textContent = !res ? "" : res.resultCount ? (res.resultIndex + 1) + "/" + res.resultCount : "no results";
 }
 
-function runFind(back) {
+function runFind(back: boolean) {
   var m = model(active);
   if (!m || !m.search) return;
   var input = findInput();
@@ -395,11 +395,11 @@ function closeFind() {
    new surfaces invented. kbd is monospace because a key is a value you would copy
    (design rule 1). */
 function openHelpSheet() {
-  var row = function (keys, what) {
+  var row = function (keys: string, what: string) {
     return '<div class="term-key-row"><span class="term-key-k">' + keys + "</span><span>" + what + "</span></div>";
   };
-  var cap = function (title) { return '<div class="term-key-cap">' + title + "</div>"; };
-  var k = function (t) { return "<kbd>" + t + "</kbd>"; };
+  var cap = function (title: string) { return '<div class="term-key-cap">' + title + "</div>"; };
+  var k = function (t: string) { return "<kbd>" + t + "</kbd>"; };
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="Terminal shortcuts">' +
       '<div class="sheet-head"><h2>Terminal shortcuts</h2></div>' +
@@ -426,7 +426,7 @@ function openHelpSheet() {
       '<div class="sheet-foot"><span class="grow"></span><button class="btn" id="th-close">Close</button></div>' +
     "</div>";
   $("sheet").hidden = false;
-  var onKey = function (ev) { if (ev.key === "Escape") close(); };
+  var onKey = function (ev: KeyboardEvent) { if (ev.key === "Escape") close(); };
   var close = function () {
     document.removeEventListener("keydown", onKey, true);
     closeSheet();
@@ -444,7 +444,7 @@ function openHelpSheet() {
    binds the same chord, and xterm's _keyDown consults that handler without ever
    checking defaultPrevented - a document-capture call on top would double-fire
    openFind, whose toggle then closes the bar again (fresh-eyes audit B2). */
-function pageFindShortcut(ev) {
+function pageFindShortcut(ev: KeyboardEvent) {
   var el = ev.target;
   var tag = el && el.tagName;
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
@@ -503,7 +503,7 @@ async function openFind() {
   runFind(false);   // searching on open makes "open, type" work with zero extra keys
 }
 
-function wireTerminal(m) {
+function wireTerminal(m: TermModel) {
   if (m.term) return Promise.resolve();
   // The promise is module-cached, so a rejected load retries naturally on the next wire.
   return load().then(function (got) {
@@ -529,7 +529,7 @@ function wireTerminal(m) {
     // fallback, and a lost GL context falls back to it mid-session the same way.
     try {
       var gl = new got.WebglAddon();
-      gl.onContextLoss(function () { gl.dispose(); });
+      gl.onContextLoss(function () { gl.dispose!(); });
       term.loadAddon(gl);
       m.gl = gl;   // kept for clearTextureAtlas() after a font zoom
     } catch (e) { /* the DOM renderer stays */ }
@@ -578,7 +578,7 @@ function wireTerminal(m) {
       if (action === "search") { ev.preventDefault(); void openFind(); return false; }
       if (action === "tab-close") {
         ev.preventDefault();
-        void closeSession(active);
+        void closeSession(active!);
         return false;
       }
       if (action === "tab-prev" || action === "tab-next") {
@@ -703,8 +703,8 @@ function termTheme() {
   };
 }
 
-var encoder = null;
-function sendInput(m, text) {
+var encoder = null as unknown as TextEncoder;
+function sendInput(m: TermModel, text: string) {
   if (!m.ws || m.ws.readyState !== 1) {
     /* Keystrokes typed while the FIRST socket is still coming up ride exactly once
        (VS Code's pre-launch queue, docs/22 §4 P0 item 8); a reconnect gap still drops them —
@@ -720,7 +720,7 @@ function sendInput(m, text) {
 /* Connect one session with a ticket. The ticket is spent by the gateway BEFORE the 101,
    so a refused one arrives as onclose with an HTTP story - the reconnect loop then finds
    the session either alive (mint again) or gone (say so). */
-function connect(m, ticket) {
+function connect(m: TermModel, ticket: string) {
   var ws = new WebSocket(streamUrl(m.id, ticket));
   ws.binaryType = "arraybuffer";   // default would wrap every frame in a Blob
   m.ws = ws;
@@ -777,7 +777,7 @@ function connect(m, ticket) {
    session, back off between rounds, and stop the moment the story is final. Uses raw
    api() rather than apiJson() because a 503/404 here is an ANSWER, not something to
    toast about on every round. */
-async function reconnect(m) {
+async function reconnect(m: TermModel) {
   if (m.userClosed || m.gone) return;
   var my = epoch;
   m.status = "reconnecting\u2026";
@@ -806,7 +806,7 @@ async function reconnect(m) {
   }
 }
 
-function gone(m, story) {
+function gone(m: TermModel, story: string) {
   m.gone = true;
   m.status = story;
   paintStatus();
@@ -844,7 +844,7 @@ function scheduleFit() {
 
 /* Selecting a tab: wire the terminal if it is the first look, stage it, and refit -
    the container was hidden or absent when the terminal was created. */
-function select(id) {
+function select(id: string) {
   /* Re-clicking the ACTIVE tab is deliberately a no-op for painting: paintTabs
      rebuilds the bar's innerHTML, and a rebuild between the two clicks of a
      double-click makes the second land on a fresh node - no dblclick ever fires,
@@ -867,7 +867,7 @@ function select(id) {
   if (seen && seen.bell) seen.bell = false;   // selecting a tab answers its bell
   paintTabs();
   paintStage();
-  var m = model(id);
+  var m = model(id) as TermModel;
   if (!m) {
     var row = sessions.find(function (s) { return s && s.id === id; });
     if (!row) return;
@@ -897,7 +897,7 @@ function select(id) {
 
 /* Attach to a session that already exists (returning to the page, or a session opened
    in another browser tab): mint a ticket and connect. */
-async function resume(m) {
+async function resume(m: TermModel) {
   var my = epoch;
   var minted = await api(ticketUrl(m.id), { method: "POST" });
   if (my !== epoch || m.ws || m.gone || m.userClosed) return;
@@ -910,13 +910,13 @@ async function resume(m) {
 /* Open a fresh session: create the terminal first so fit can measure a real container,
    then open with the measured geometry. */
 async function openSession() {
-  var pick = $("term-target");
+  var pick = $<HTMLSelectElement>("term-target");
   if (!pick || !pick.value) return;
   var my = epoch;
   // The short tab label comes from the picker row ("jdoe-demo"), not the target id -
   // a remote session without this showed its raw connection UUID on the tab.
   var row = targetRows(targets).rows.find(function (r) { return r.id === pick.value; });
-  var m = {
+  var m: TermModel = {
     id: "pending-" + (++seq), target: pick.value, label: row ? String(row.label).split(" \u00b7 ")[0] : "",
     status: "opening\u2026",
     attempt: 0, userClosed: false, gone: false, sentCols: 0, sentRows: 0,
@@ -943,13 +943,13 @@ async function openSession() {
   paintStage();
   var g = { cols: 80, rows: 24 };
   try {
-    var dims = m.fit.proposeDimensions();
+    var dims = m.fit!.proposeDimensions();
     if (dims && dims.cols && dims.rows) g = clampGeometry(dims.cols, dims.rows);
-    m.fit.fit();
+    m.fit!.fit();
   } catch (e) { /* the defaults already stand */ }
   m.status = "opening\u2026";
   paintStatus();
-  var reply = await apiJson(sessionsUrl(), {
+  var reply = await apiJson<ApiTerminalOpened>(sessionsUrl(), {
     method: "POST",
     body: JSON.stringify({ target: m.target, cols: g.cols, rows: g.rows }),
   });
@@ -972,7 +972,7 @@ async function openSession() {
   var wasActive = active === m.id;
   m.id = String(reply.id);
   if (wasActive) active = m.id;
-  m.holder.setAttribute("data-term", m.id);
+  m.holder!.setAttribute("data-term", m.id);
   paintTabs();
   paintStage();
   if (reply.ticket) connect(m, reply.ticket);
@@ -985,7 +985,7 @@ async function openSession() {
 /* Closing a tab: a live session is DELETEd (the gateway writes the visible reason into
    the stream before it closes); a closed one is only removed locally - the session is
    already gone, a DELETE would just be a 404. */
-async function closeSession(id) {
+async function closeSession(id: string) {
   var m = model(id);
   dismissed.add(id);   // stays dismissed until the listing itself drops the row
   if (m && m.term) { m.term.dispose(); m.term = null; }   // same guard as the open-failure path
@@ -1072,25 +1072,25 @@ function render() {
   var tabs = $("term-tabs");
   if (tabs) {
     tabs.onclick = function (event) {
-      var closer = event.target.closest('[data-act="close"]');
-      if (closer) { void closeSession(closer.getAttribute("data-id")); return; }
-      var tab = event.target.closest('[data-act="select"]');
-      if (tab) select(tab.getAttribute("data-id"));
+      var closer = event.target!.closest!('[data-act="close"]');
+      if (closer) { void closeSession(closer.getAttribute("data-id")!); return; }
+      var tab = event.target!.closest!('[data-act="select"]');
+      if (tab) select(tab.getAttribute("data-id")!);
     };
     tabs.ondblclick = function (event) {
-      var tab = event.target.closest('[data-act="select"]');
-      if (tab) startRename(tab.getAttribute("data-id"));
+      var tab = event.target!.closest!('[data-act="select"]');
+      if (tab) startRename(tab.getAttribute("data-id")!);
     };
     tabs.onauxclick = function (event) {
       if (event.button !== 1) return;   // middle-click closes (Tabby / native terminals)
-      var tab = event.target.closest('[data-act="select"]');
-      if (tab) void closeSession(tab.getAttribute("data-id"));
+      var tab = event.target!.closest!('[data-act="select"]');
+      if (tab) void closeSession(tab.getAttribute("data-id")!);
     };
     tabs.oncontextmenu = function (event) {
-      var tab = event.target.closest('[data-act="select"]');
+      var tab = event.target!.closest!('[data-act="select"]');
       if (!tab) return;
       event.preventDefault();   // the browser menu has nothing to say about a session tab
-      startRename(tab.getAttribute("data-id"));
+      startRename(tab.getAttribute("data-id")!);
     };
   }
   window.addEventListener("resize", scheduleFit);
@@ -1106,7 +1106,7 @@ function render() {
 }
 
 export async function reload() {   // exported for terminal-settings.js (a save refreshes the page through it)
-  var t = await apiJson(targetsUrl());
+  var t = await apiJson<ApiTerminalTargets>(targetsUrl());
   if (t) targets = t;
   var r = await api(sessionsUrl());
   if (r.status === 503) {

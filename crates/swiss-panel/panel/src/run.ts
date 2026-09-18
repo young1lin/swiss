@@ -127,8 +127,8 @@ function runBody(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): string {
   if (!tools.length) return '<div class="group"><div class="row"><span class="rowmsg">This MCP exposes no tools.</span></div></div>';
 
   var current: ApiMcpTool | null = null;
-  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i];
-  if (!current) current = tools[0];
+  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i] as ApiMcpTool;
+  if (!current) current = tools[0] as ApiMcpTool;
   d.run.tool = current.name;
 
   var opts = tools.map(function (t) {

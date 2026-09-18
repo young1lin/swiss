@@ -35,16 +35,16 @@
 import { $, api, apiJson, emptyHtml, esc, toast } from "../util.js";
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
 
-var busy = {}; // plugin id -> true while its own toggle is in flight
+var busy                          = {}; // plugin id -> true while its own toggle is in flight
 var painted = ""; // the structural signature of the drawn list; a change means rebuild
-var autostart = null; // { enabled, detail, command } from /api/autostart; null = old gateway
+var autostart                                                                 = null; // { enabled, detail, command } from /api/autostart; null = old gateway
 var autostartBusy = false; // true while the OS registration write is in flight
 
-function inv() { return pluginInventory() || { plugins: [], revision: 0 }; }
-function rows() { return inv().plugins || []; }
-function signature() { return rows().map(function (p) { return p.id; }).join("\n"); }
+function inv()                     { return pluginInventory() || { plugins: [], revision: 0 }                                 ; }
+function rows()                 { return inv().plugins || []; }
+function signature()         { return rows().map(function (p              )         { return p.id; }).join("\n"); }
 
-function dotClass(p) {
+function dotClass(p              )         {
   if (busy[p.id] || p.state === "starting") return "starting";
   if (p.state === "stopping") return "stopping";
   if (p.state === "failed") return "down";
@@ -52,7 +52,7 @@ function dotClass(p) {
 }
 
 /** What the row says it is doing, in the host's own words — never a guess of our own. */
-function stateLabel(p) {
+function stateLabel(p              )         {
   if (busy[p.id]) return "working…";
   return p.enabled ? p.state : "disabled";
 }
@@ -65,7 +65,7 @@ function stateLabel(p) {
  *  not only in the moment something breaks. Plugins that require nothing say nothing, but the
  *  row always carries the (empty) span so poll-patch has its anchor either way.
  *  Exported pure for the suite: no DOM, just the row JSON in and badge HTML out. */
-export function requiresBadge(p) {
+export function requiresBadge(p              )         {
   var requires = p.requires || [];
   if (!requires.length) return "";
   if (p.requiresMet === false) {
@@ -77,7 +77,7 @@ export function requiresBadge(p) {
 /** One plugins row (docs/18 V4): dot + name + one grey line (id, pages, requirements,
  *  error) — version rides the row title, the state word is the dot's job — and the toggle
  *  is the panel's switch, the control every other row-level on/off uses. Exported pure. */
-export function rowHtml(p) {
+export function rowHtml(p              )         {
   var pages = (p.pages || []).join(", ");
   return '<div class="tun-row" data-plugin="' + esc(p.id) + '"' +
       (p.version ? ' title="v' + esc(p.version) + '"' : "") + ">" +
@@ -103,7 +103,7 @@ export function rowHtml(p) {
  *  off. The grey line says where the OS registration lives, so the operator can check it
  *  outside the panel; the row title carries the exact command the OS would run. Exported
  *  pure; null (an old gateway without the route) renders nothing. */
-export function startupRowHtml(a) {
+export function startupRowHtml(a                                                                )         {
   if (!a) return "";
   return '<div class="tun-row" data-autostart title="' + esc(a.command || "") + '">' +
     '<span class="dot ' + (a.enabled ? "up" : "idle") + '" title="' + (a.enabled ? "enabled" : "off") + '"></span>' +
@@ -119,15 +119,15 @@ export function startupRowHtml(a) {
   "</div>";
 }
 
-function chipText() {
+function chipText()         {
   var all = rows();
-  var on = all.filter(function (p) { return p.enabled; }).length;
-  var failed = all.filter(function (p) { return p.state === "failed"; }).length;
+  var on = all.filter(function (p              )          { return p.enabled; }).length;
+  var failed = all.filter(function (p              )          { return p.state === "failed"; }).length;
   return all.length + (all.length === 1 ? " plugin" : " plugins") + " · " + on + " on" +
     (failed ? " · " + failed + " failed" : "");
 }
 
-function render() {
+function render()       {
   painted = signature();
   var all = rows();
   var body = all.length
@@ -151,39 +151,39 @@ function render() {
 }
 
 /** Poll-safe update: dots, the state word, the error tail and the button. Never structure. */
-function patch() {
+function patch()       {
   var pane = $("pane");
   if (!pane.querySelector(".group") || signature() !== painted) { render(); return; }
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-plugin]"), function (row) {
-    var p = null;
-    rows().forEach(function (cand) { if (cand.id === row.getAttribute("data-plugin")) p = cand; });
+  Array.prototype.forEach.call(pane.querySelectorAll("[data-plugin]"), function (row         )       {
+    var p = null                       ;
+    rows().forEach(function (cand              )       { if (cand.id === row.getAttribute("data-plugin")) p = cand; });
     if (!p) return;
-    var dot = row.querySelector("[data-dot]");
+    var dot = row.querySelector("[data-dot]")                      ;
     // Class and title in one pass (docs/18 V6): the poll patches, never rebuilds, so the
     // title must follow the class or it keeps explaining the state before the last change.
     if (dot) { dot.className = "dot " + dotClass(p); dot.title = stateLabel(p); }
-    var err = row.querySelector("[data-err]");
+    var err = row.querySelector("[data-err]")                      ;
     if (err) err.innerHTML = p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "";
-    var reqs = row.querySelector("[data-reqs]");
+    var reqs = row.querySelector("[data-reqs]")                      ;
     if (reqs) reqs.innerHTML = requiresBadge(p);
-    var button = row.querySelector("[data-toggle]");
+    var button = row.querySelector("[data-toggle]")                            ;
     if (button) {
       button.disabled = !!busy[p.id];
       button.setAttribute("aria-checked", p.enabled ? "true" : "false");
     }
-    var name = row.querySelector(".tun-name");
+    var name = row.querySelector(".tun-name")                      ;
     if (name) name.innerHTML = esc(p.label || p.id) + (p.enabled ? "" : ' <span class="via">· off</span>');
   });
-  var foot = pane.querySelector("[data-foot-text]");
+  var foot = pane.querySelector("[data-foot-text]")                      ;
   if (foot) foot.textContent = chipText();
 }
 
-function wire() {
+function wire()       {
   var pane = $("pane");
-  pane.onclick = function (event) {
-    var asButton = event.target.closest("[data-autostart-toggle]");
+  pane.onclick = function (event            )       {
+    var asButton = event.target .closest ("[data-autostart-toggle]");
     if (asButton) { void toggleAutostart(); return; }
-    var button = event.target.closest("[data-toggle]");
+    var button = event.target .closest ("[data-toggle]");
     if (!button) return;
     var prow = button.closest("[data-plugin]");
     if (prow) void toggle(prow.getAttribute("data-plugin"));
@@ -193,17 +193,17 @@ function wire() {
 /** Read the OS registration the way the host reads it. A gateway without the route answers
  *  404 and leaves autostart null — the section stays hidden, an old binary never grows a
  *  dead control. */
-async function loadAutostart() {
+async function loadAutostart()                {
   var r = await api("/api/autostart");
-  if (r.ok) autostart = await r.json();
+  if (r.ok) autostart = await r.json()                                                           ;
 }
 
 /** Flip the OS registration, then redraw from the host's own read-back — never from our
  *  guess of what the click should have done. */
-async function toggleAutostart() {
+async function toggleAutostart()                {
   if (!autostart || autostartBusy) return;
   autostartBusy = true;
-  var j = await apiJson("/api/autostart", {
+  var j = await apiJson                                                         ("/api/autostart", {
     method: "PUT",
     body: JSON.stringify({ enabled: !autostart.enabled }),
   });
@@ -216,18 +216,18 @@ async function toggleAutostart() {
 /** Enable or disable one plugin, then redraw from the host's answer — never from our guess of
  *  what the click should have done. The revision goes with the request so a stale list is
  *  refused rather than applied. */
-async function toggle(id) {
-  var p = null;
-  rows().forEach(function (cand) { if (cand.id === id) p = cand; });
-  if (!p || busy[id]) return;
+async function toggle(id               )                {
+  var p = null                       ;
+  rows().forEach(function (cand              )       { if (cand.id === id) p = cand; });
+  if (!p || busy[id ]) return;
   var action = p.enabled ? "disable" : "enable";
-  busy[id] = true;
+  busy[id ] = true;
   patch();
-  var reply = await apiJson("/api/plugins/" + encodeURIComponent(id) + "/" + action, {
+  var reply = await apiJson                           ("/api/plugins/" + encodeURIComponent(id ) + "/" + action, {
     method: "POST",
     body: JSON.stringify({ revision: inv().revision }),
   });
-  delete busy[id];
+  delete busy[id ];
   // Reload either way: a refused write means our copy is stale, and a successful one changed
   // the page list the tab strip is drawn from.
   try { await reloadPluginInventory(); }
@@ -239,16 +239,16 @@ async function toggle(id) {
   if (reply && reply.plugin && reply.plugin.lastError) toast(reply.plugin.lastError, true);
 }
 
-export async function mount() {
+export async function mount()                {
   busy = {};
   try { await reloadPluginInventory(); } catch (error) { /* the toast is enough; draw what we have */ }
   try { await loadAutostart(); } catch (error) { /* no route or no answer: the section stays hidden */ }
   render();
 }
-export async function refresh() { await mount(); }
-export async function poll() {
+export async function refresh()                { await mount(); }
+export async function poll()                {
   try { await reloadPluginInventory(); } catch (error) { return; }
   patch();
 }
-export function countText() { return chipText(); }
+export function countText()         { return chipText(); }
 export function unmount() { busy = {}; painted = ""; autostart = null; }

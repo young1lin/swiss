@@ -78,7 +78,7 @@ beforeAll(async () => {
     },
     fetch: (path: unknown, init: unknown) => {
       const p = String(path);
-      requests.push({ path: p, method: (init && (init as { method?: string }).method) || "GET" });
+      requests.push({ path: p, method: ((init && (init as { method?: string }).method) || "GET") as string });
       const body = bodyByPath[p];
       return Promise.resolve({ status: body === undefined ? 404 : 200, ok: body !== undefined, json: async () => body ?? { error: "no such route in this test: " + p } });
     },

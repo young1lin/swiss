@@ -396,10 +396,10 @@ interface ApiJobRow {
   cwd?: string;
   env?: Record<string, string>;
   editableInV1: boolean;
-  trigger?: { kind: string; [key: string]: unknown };
+  trigger?: { kind: string; everyMs?: number; expression?: string; firstRun?: string; [key: string]: unknown };
   action?: { type: string; [key: string]: unknown };
   source: string;
-  group: string;
+  group: string | null;
   actionAvailable: boolean;
   configRevision: number;
   lastRunAt?: string;
@@ -422,6 +422,12 @@ interface ApiJobRunRecord {
   ok: boolean;
   ms: number;
   outcome: string;
+  /* the history meta line reads these when present (jobs-v2 historyMeta) */
+  error?: string;
+  reason?: string;
+  missedCount?: number;
+  timedOut?: boolean;
+  canceled?: boolean;
   occurrenceKey?: string;
   attempt: number;
   attempts: number;
@@ -457,7 +463,9 @@ interface ApiTunnelConnectionRow {
   authType: string;
   keyPath?: string;
   hostKey?: string;
-  group?: string;
+  /* group is absent when unset; the panel also stages a null locally before the assign
+   *  round-trip lands the canonical name. */
+  group?: string | null;
   state: string;
   reason?: string;
   ruleCount: number;
@@ -482,7 +490,7 @@ interface ApiTunnelRuleRow {
   reconnectInterval: number;
   enabled: boolean;
   mcps: string[];
-  group?: string;
+  group?: string | null;
   state: string;
   reason?: string;
   connectionName: string;
@@ -505,9 +513,16 @@ interface ApiTunnelsKeysResponse {
 /** GET /api/tunnels/browse - tunnel/api.rs DirListing::to_json; error set on a bad dir. */
 interface ApiTunnelsBrowseResponse {
   dir: string;
-  parent?: string;
-  entries: { name: string; path: string; dir: boolean }[];
+  parent?: string | null;
+  entries: ApiTunnelsBrowseEntry[];
   error?: string;
+}
+
+/** One row of that listing: a folder or a candidate key file. */
+interface ApiTunnelsBrowseEntry {
+  name: string;
+  path: string;
+  dir: boolean;
 }
 
 /** GET /api/tunnels/suggest/{port} - tunnel/api.rs:473: MCPs pointing at this local port. */
@@ -519,6 +534,44 @@ interface ApiTunnelsSuggestResponse {
 /** POST/PUT /api/tunnels/connections - the masked echo the sheet reads back once. */
 interface ApiTunnelConnMutation {
   connection: ApiTunnelConnectionRow;
+}
+
+/** POST/PUT /api/tunnels/rules - the created/updated rule echoed back. */
+interface ApiTunnelRuleMutation {
+  rule?: ApiTunnelRuleRow;
+}
+
+/* The connection sheet's working copy (tunnel-sheets openConnSheet): the row when editing,
+ *  the seed literal when creating. port-target fields are strings only in the seed. */
+interface ConnSheetDraft {
+  id?: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: string;
+  keyPath?: string;
+  passphrase?: string;
+  password?: string;
+  proxy?: string;
+  proxyUsername?: string;
+  proxyPassword?: string;
+  jump?: string;
+}
+
+/* The rule sheet's working copy (openRuleSheet): same idea - the row, or the seed with
+ *  empty string ports where a saved row carries numbers. */
+interface RuleSheetDraft {
+  id?: string;
+  name: string;
+  connectionId: string;
+  localPort: number | string;
+  targetHost: string;
+  targetPort: number | string;
+  remark?: string;
+  autoReconnect: boolean;
+  reconnectInterval: number;
+  mcps?: string[];
 }
 
 /* --- the Data browser (swiss-data/src/dbbrowser_api.rs, dbbrowser.rs) --------------------------- */

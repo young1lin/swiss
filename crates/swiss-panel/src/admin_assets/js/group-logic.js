@@ -40,7 +40,7 @@ function groupOf(names          )                                               
 /** The list's shape: the groups in their stored order, each holding its members in the flat
  *  order the caller already sorted by. Empty groups keep their slot - you have to be able
  *  to see a group you just made. */
-function slice                        (rows       , names          , fn                      )                    {
+function slice     (rows       , names          , fn                      )                    {
   return names.map(function (name) {
     return { name: name, rows: rows.filter(function (r) { return fn(r) === name; }) };
   });

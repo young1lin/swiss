@@ -62,7 +62,7 @@ function openQuitSheet() {
 }
 
 async function requestQuit() {
-  var button = $("quit-confirm");
+  var button = $<HTMLButtonElement>("quit-confirm");
   if (button) { button.disabled = true; button.textContent = "Quitting…"; }
   var stopped = await apiJson("/api/shutdown", { method: "POST" });
   if (!stopped) {

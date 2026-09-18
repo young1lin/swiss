@@ -114,7 +114,8 @@ describe("dbFormRowFields — one row as the form paints it", () => {
 
 describe("dbFormWrite — the form's buffer semantics ARE the grid's", () => {
   const meta = { pk: { id: 1 }, orig: "alice" };
-  const d0 = () => ({ updates: {}, inserts: [{ values: {} }] });
+  const d0 = (): { updates: Record<string, { pk: unknown; changes: Record<string, unknown> }>; inserts: { values: Record<string, unknown> }[] } =>
+    ({ updates: {}, inserts: [{ values: {} }] });
 
   it("writes a changed value into the update buffer, keyed like the grid", () => {
     var d = d0();

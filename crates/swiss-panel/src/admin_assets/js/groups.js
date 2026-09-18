@@ -121,7 +121,7 @@ function newGroupFlow(scope        , names          , reload                    
 /** The Group field of a create sheet: every live group, `sel` selected. The select - not a
  *  hidden promise made by whichever + opened the sheet - is where the row lands, so a value
  *  the user changed wins. #g-sel is the one id every create sheet shares. */
-function groupFieldHtml(names          , sel         )         {
+function groupFieldHtml(names          , sel                )         {
   var opts = names.map(function (n) {
     return '<option value="' + esc(n) + '"' + (n === sel ? " selected" : "") + ">" + esc(n) + "</option>";
   }).join("");
@@ -157,7 +157,7 @@ function groupFieldHtml(names          , sel         )         {
  *    onAssign(id, group)             member PUT, applied locally first (caller-owned rows)
  *    filtered       a search is on: groups with no match hide, matches force expansion
  */
-function mountGroup                        (cfg               , g                 )              {
+function mountGroup     (cfg               , g                 )              {
   var page = cfg.density === "page";
   // At page density the group IS the card: .group brings the ring, the radius and the clip,
   // so the rows need no second surface under the head (and jobs.js's "is the list painted"
@@ -272,18 +272,18 @@ function mountGroup                        (cfg               , g               
  *  click, so the toggle still folds. The + and ellipsis buttons cancel the drag at its
  *  start instead: a hand that moves a pixel while pressing one must still land the click,
  *  and a cancelled dragstart is exactly a mouse-up that clicks. */
-function wireHeadDrag                        (cfg               , wrap             , head             , group        )       {
+function wireHeadDrag     (cfg               , wrap             , head             , group        )       {
   head.draggable = true;
   head.addEventListener("dragstart", function (e) {
     var t = e.target                      ;
     if (t && t.closest && t.closest(".grp-add, .grp-more")) { e.preventDefault(); return; }
-    cfg.dragGroup.set(group);
+    cfg.dragGroup .set(group);
     wrap.classList.add("dragging");
     try { e.dataTransfer .setData("text/plain", group); } catch (err) { /* old IE */ }
     e.dataTransfer .effectAllowed = "move";
   });
   head.addEventListener("dragend", function () {
-    cfg.dragGroup.set(null); // lets the deferred rebuild run - same contract as a row drag
+    cfg.dragGroup .set(null); // lets the deferred rebuild run - same contract as a row drag
     wrap.classList.remove("dragging");
     document.querySelectorAll(".grp.drop-before, .grp.drop-after").forEach(function (n) {
       n.classList.remove("drop-before", "drop-after");
@@ -294,18 +294,18 @@ function wireHeadDrag                        (cfg               , wrap          
 
 /** Row drag: reorder and re-home in one gesture. The insertion point is the hovered row's
  *  half; the group comes from the target row, so a cross-group drag needs no second drop. */
-function wireRowDrag                        (cfg               , node             , row     )       {
+function wireRowDrag     (cfg               , node             , row     )       {
   if (cfg.draggable === false) return;
-  var id = cfg.rowId(row);
+  var id = cfg.rowId (row);
   node.draggable = true;
   node.addEventListener("dragstart", function (e) {
-    cfg.drag.set(id);
+    cfg.drag .set(id);
     node.classList.add("dragging");
     try { e.dataTransfer .setData("text/plain", id); } catch (err) { /* old IE */ }
     e.dataTransfer .effectAllowed = "move";
   });
   node.addEventListener("dragover", function (e) {
-    if (!cfg.drag.get() || cfg.drag.get() === id) return;
+    if (!cfg.drag .get() || cfg.drag .get() === id) return;
     e.preventDefault();
     e.dataTransfer .dropEffect = "move";
     var before = e.clientY < node.getBoundingClientRect().top + node.offsetHeight / 2;
@@ -318,16 +318,16 @@ function wireRowDrag                        (cfg               , node           
   node.addEventListener("drop", function (e) {
     e.preventDefault();
     var before = e.clientY < node.getBoundingClientRect().top + node.offsetHeight / 2;
-    var dragged = cfg.drag.get();
+    var dragged = cfg.drag .get();
     // Order first, then membership: the move re-renders from the flat list, and doing it
     // after the reassignment would land the row at whatever slot it happened to hold.
     if (dragged && dragged !== id) {
-      cfg.onMoveRow(dragged, id, before);
-      cfg.onAssign(dragged, cfg.groupOfRow(row));
+      cfg.onMoveRow (dragged, id, before);
+      cfg.onAssign (dragged, cfg.groupOfRow(row));
     }
   });
   node.addEventListener("dragend", function () {
-    cfg.drag.set(null); // lets the deferred rebuild run
+    cfg.drag .set(null); // lets the deferred rebuild run
     node.classList.remove("dragging");
     document.querySelectorAll(".drop-before, .drop-after").forEach(function (r) {
       r.classList.remove("drop-before", "drop-after");
@@ -339,9 +339,9 @@ function wireRowDrag                        (cfg               , node           
 /** A ROW dropped on the head (or on the empty line) appends to this group - the only way
  *  into a group with no rows yet. Group drags pass through untouched: the whole .grp
  *  answers those (wireGroupDrop), so a head never has to know which kind it is under. */
-function wireIntoDrop                        (cfg               , node             , group        )       {
+function wireIntoDrop     (cfg               , node             , group        )       {
   node.addEventListener("dragover", function (e) {
-    if (!cfg.drag.get()) return;
+    if (!cfg.drag .get()) return;
     e.preventDefault();
     e.dataTransfer .dropEffect = "move";
     node.classList.add("drop-into");
@@ -350,11 +350,11 @@ function wireIntoDrop                        (cfg               , node          
     node.classList.remove("drop-into");
   });
   node.addEventListener("drop", function (e) {
-    var id = cfg.drag.get();
+    var id = cfg.drag .get();
     if (!id) return; // a group drop: let it bubble to the .grp
     e.preventDefault();
     node.classList.remove("drop-into");
-    cfg.drag.set(null);
+    cfg.drag .set(null);
     dropInto(cfg, id, group);
   });
 }
@@ -363,13 +363,13 @@ function wireIntoDrop                        (cfg               , node          
  *  WHOLE group decides, head and members alike, so the target is the block the user sees
  *  moving and not a 36px strip of it. Row drags never reach here with a group in flight;
  *  the rows and the head handle their own kind and let this one bubble. */
-function wireGroupDrop                        (cfg               , wrap             , group        )       {
+function wireGroupDrop     (cfg               , wrap             , group        )       {
   var half = function (e           ) {
     var r = wrap.getBoundingClientRect();
     return e.clientY < r.top + r.height / 2;
   };
   wrap.addEventListener("dragover", function (e) {
-    var dg = cfg.dragGroup.get();
+    var dg = cfg.dragGroup .get();
     if (!dg || dg === group) return;
     e.preventDefault();
     e.dataTransfer .dropEffect = "move";
@@ -382,29 +382,29 @@ function wireGroupDrop                        (cfg               , wrap         
     wrap.classList.remove("drop-before", "drop-after");
   });
   wrap.addEventListener("drop", function (e) {
-    var dg = cfg.dragGroup.get();
+    var dg = cfg.dragGroup .get();
     if (!dg) return;
     e.preventDefault();
     wrap.classList.remove("drop-before", "drop-after");
-    cfg.dragGroup.set(null);
+    cfg.dragGroup .set(null);
     if (dg !== group) moveGroup(cfg, dg, group, half(e));
   });
 }
 
 /** Land a dragged row at the end of a group: slot it after that group's last member so the
  *  flat order agrees with what the list now shows, then reassign. */
-function dropInto                        (cfg               , id        , group        )       {
+function dropInto     (cfg               , id        , group        )       {
   var members = cfg.rowsById().filter(function (r) {
-    return cfg.groupOfRow(r) === group && cfg.rowId(r) !== id;
+    return cfg.groupOfRow(r) === group && cfg.rowId (r) !== id;
   });
-  if (members.length) cfg.onMoveRow(id, cfg.rowId(members[members.length - 1]), false);
-  cfg.onAssign(id, group); // the header's name is always a live group
+  if (members.length) cfg.onMoveRow (id, cfg.rowId (members[members.length - 1]), false);
+  cfg.onAssign (id, group); // the header's name is always a live group
 }
 
 /** Move a group to a new slot in the stored order. The whole list is sent - create, reorder
  *  and delete are all "here is the new list" on this API - and the server keeps the order it
  *  is given, so the panel and every other consumer agree. */
-function moveGroup                        (cfg               , name        , target        , before         )       {
+function moveGroup     (cfg               , name        , target        , before         )       {
   if (!name || name === target) return;
   var rest = cfg.names.filter(function (g) { return g !== name; });
   var to = rest.indexOf(target);
@@ -418,7 +418,7 @@ function moveGroup                        (cfg               , name        , tar
 /** Swap a group with its neighbour (the ellipsis menu's Move up/down): the click-precise
  *  and keyboard counterpart of dragging the head. Falls through at the edges, where the
  *  menu does not offer the move. */
-function moveGroupBy                        (cfg               , name        , delta        )       {
+function moveGroupBy     (cfg               , name        , delta        )       {
   var i = cfg.names.indexOf(name);
   var j = i + delta;
   if (i < 0 || j < 0 || j >= cfg.names.length) return;
@@ -430,7 +430,7 @@ function moveGroupBy                        (cfg               , name        , d
 }
 
 /** Rename through the one-field sheet; the fold key rides along, or the group springs open. */
-function renameFlow                        (cfg               , from        )       {
+function renameFlow     (cfg               , from        )       {
   openGroupSheet(from, async function (to        ) {
     var j = await renameGroupApi(cfg.scope, from, to);
     if (!j) return false;
@@ -443,7 +443,7 @@ function renameFlow                        (cfg               , from        )   
 
 /** Deleting a group deletes nothing else, so the confirm only has to say where the members
  *  go: the first remaining group - that slot is the server's sink for them. */
-function deleteFlow                        (cfg               , name        )       {
+function deleteFlow     (cfg               , name        )       {
   var count = cfg.rowsById().filter(function (r) { return cfg.groupOfRow(r) === name; }).length;
   var rest = cfg.names.filter(function (g) { return g !== name; });
   if (!rest.length) { toast("At least one group must remain"); return; }

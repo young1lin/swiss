@@ -516,7 +516,7 @@ describe("docs/32 B4: the toolbar ellipsis, Clear logs behind a confirm", () => 
     expect(tb.innerHTML).toContain('id="clMenu"');
     expect(tb.innerHTML).toContain('aria-label="More log actions"');
     expect(tb.innerHTML).not.toContain("callsClear");
-    expect(tb.innerHTML).not.toContain("Clear logs", "the destructive verb is not painted inline");
+    (expect(tb.innerHTML).not.toContain as (expected: unknown, message?: string) => void)("Clear logs", "the destructive verb is not painted inline");
   });
 
   it("the menu opens with Clear logs… as its danger item", () => {

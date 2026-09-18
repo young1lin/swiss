@@ -142,7 +142,10 @@ type PhantomMcpRow = Partial<ApiMcpRow> & { name: string; state: string; type: s
  *  everything a scope owns - row markup, ids, its own moves - while the component owns the
  *  band, the folds, the drags and the /api/groups/{scope} family. Row-generic: mcps, conns,
  *  rules, jobs, secrets, tokens and targets all pass their own row type through it. */
-interface GroupCfg<Row extends GroupedRow> {
+/* drag/dragGroup/rowId/onMoveRow/onAssign are optional: scopes without the row-drag
+ *  contract (tokens: creation time is the order) omit them and gate everything behind
+ *  draggable: false, so the wiring that would read them never runs. */
+interface GroupCfg<Row> {
   scope: string;
   density: "side" | "page";
   names: string[];
@@ -153,26 +156,31 @@ interface GroupCfg<Row extends GroupedRow> {
   reload: () => void | Promise<void>;
   render?: () => void;
   afterDrag?: () => void;
-  drag: { get(): string | null | undefined; set(value: string | null): void };
-  dragGroup: { get(): string | null | undefined; set(value: string | null): void };
+  drag?: { get(): string | null | undefined; set(value: string | null): void };
+  dragGroup?: { get(): string | null | undefined; set(value: string | null): void };
   rowNode?: (row: Row) => HTMLElement;
   rowsHtml?: (group: GroupSlice<Row>) => string;
   wireRow?: (node: HTMLElement, row: Row) => void;
-  rowId: (row: Row) => string;
+  rowId?: (row: Row) => string;
   rowSel?: (row: Row) => string;
   rowsById: () => Row[];
   groupOfRow: (row: Row) => string;
-  onMoveRow: (id: string, targetId: string, before: boolean) => unknown;
-  onAssign: (id: string, group: string) => unknown;
+  onMoveRow?: (id: string, targetId: string, before: boolean) => unknown;
+  onAssign?: (id: string, group: string | null) => unknown;
   draggable?: boolean;
-  filtered: boolean;
+  /* optional: only the sidebar's filtered scope sets it; absent means the full list */
+  filtered?: boolean;
 }
 
 /* connect.ts's document-click guard probes e.target.closest; lib.dom types a click target
  *  as bare EventTarget, which declares no closest, and D9 forbids the parenthesised cast
  *  an in-place fix would need. Optional so concrete elements keep their required method. */
 interface EventTarget {
-  closest?: (selector: string) => Element | null;
+  /* Generic form so a call site can name the row kind it queried
+   *  (target.closest<HTMLElement>(...)) and read dataset/handlers off it with no
+   *  parenthesised cast: ts-blank-space emits parentheses for (x as T).member, which the
+   *  line-for-line emit gate forbids. Optional: many targets have no closest at all. */
+  closest?: { <E extends Element = Element>(selector: string): E | null };
   /* The DDL sheet's Enter guard reads tagName/type off the (untyped) key event's target.
    *  tagName stays string-optional (Element narrows it back to required); type must be
    *  unknown because SVG elements declare their own required `type` members, which an
@@ -218,7 +226,12 @@ interface FilterTextArea extends HTMLTextAreaElement {
 /* A button whose click handler mutates the button itself (this.disabled / this.textContent):
    redeclaring onclick without the GlobalEventHandlers this-param restores this-typing. */
 interface ActionButton extends HTMLButtonElement {
-  onclick: ((ev: PointerEvent) => any) | null;
+  /* ev optional, no this-param: several sheets invoke a wired handler bare as a "run the
+   *  primary now" shorthand (jobs.ts save path), and with noImplicitThis off the handlers
+   *  that read `this` (menu geometry) stay unchecked any - lib's own onclick declaration
+   *  would force this: GlobalEventHandlers, which has no getBoundingClientRect and breaks
+   *  assignability both ways. */
+  onclick: ((ev?: MouseEvent) => any) | null;
 }
 
 /* The same this-value read on selects (data-filters.ts column/operator pickers). */

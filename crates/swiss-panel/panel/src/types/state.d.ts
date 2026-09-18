@@ -48,7 +48,9 @@ interface McpRunState {
   tool: string | null;
   result: unknown;
   running: boolean;
-  hist: ApiJobRunRecord[] | null;
+  /* hist holds the tool-call listing rows (/calls), which are ApiMcpCallRow-shaped -
+   *  not job runs, despite the file that renders them. */
+  hist: ApiMcpCallRow[] | null;
   histTool: string | null;
   histLoading: boolean;
   histOpen: boolean;
@@ -63,6 +65,9 @@ interface McpRunState {
 interface McpDetail {
   name: string;
   tab: string;
+  /* views/mcps.ts stages the active tab's page state under the tab key (d[d.tab]), so the
+   *  detail carries an index signature for the per-tab slots. */
+  [key: string]: unknown;
   config: Record<string, unknown> | null;
   source?: string;
   editing: boolean;
@@ -73,8 +78,12 @@ interface McpDetail {
   editVals: Record<string, unknown> | null;
   revisions?: { at?: string; note?: string; [key: string]: unknown }[];
   /* /details' tunnel forwards for this MCP (the config tab chips count them); absent when the
-   *  host sends none. */
+   *  host sends none. Rows are tunnel-rule shaped (McpTunnelDepRow in types/runs.d.ts). */
   tunnels?: unknown[];
+  /* The calls tab's search debounce handle (run-history.ts queueHistSearch); joins at
+   *  runtime, not in the openDetail literal. The union spans the browser build (number)
+   *  and the node-typed test tsconfig (Timeout). */
+  callsQTimer?: ReturnType<typeof setTimeout> | number;
   oauth?: "authorized" | "needs-auth";
   oauthBusy: boolean;
   run: McpRunState;
@@ -121,12 +130,72 @@ interface JobsState {
   data: ApiJobRow[];
   groups: string[];
   collapsed: Record<string, boolean>;
-  busy: Record<string, string>;
+  busy: Record<string, boolean>;
   painted: string;
   hist: { name: string; runs: ApiJobRunRecord[] } | null;
   dragging: string | null;
   draggingGroup: string | null;
   pendingGroup: string | null;
+}
+
+/* The jobs plugin's config row (jobs.ts openV2Sheet): the definitions map plus the groups
+ *  the sheet's select offers; read-modify-PUT with the revision just read. */
+interface JobConfigRow {
+  definitions?: Record<string, JobDef>;
+  groups?: string[];
+  revision?: number;
+  [key: string]: unknown;
+}
+
+/* One v2 job definition (docs/10 section 5): the form owns the keys it shows, everything
+ *  else rides along untouched - hence the index signature. */
+interface JobDef {
+  id?: string;
+  title?: string;
+  labels?: string[];
+  trigger?: { kind: string; everyMs?: number; cron?: string; expression?: string; firstRun?: string; timezone?: string; [key: string]: unknown };
+  action?: { type: string; input?: Record<string, unknown>; [key: string]: unknown };
+  timeoutMs?: number;
+  disabled?: boolean;
+  overlap?: string;
+  misfire?: string;
+  retry?: { maxAttempts?: number; delayMs?: number; backoff?: string; retryOn?: string[]; [key: string]: unknown };
+  output?: { capture?: string; maxBytes?: number; [key: string]: unknown };
+  [key: string]: unknown;
+}
+
+/* formValues()' flat output (jobs.ts openV2Sheet): every form control's value as a string,
+ *  assembled into a definition by formToV2. */
+interface JobFormValues {
+  title: string;
+  labels: string;
+  kind: string;
+  everyMs: string;
+  firstRun: string;
+  cron: string;
+  timeoutMs: string;
+  disabled: boolean;
+  overlap: string;
+  misfire: string;
+  retryMax: string;
+  retryDelayMs: string;
+  retryBackoff: string;
+  retryOn: string[];
+  capture: string;
+  maxBytes: string;
+  actionType: string;
+}
+
+/* The schedule builder's live state (jobs.ts schedFromJob/schedToBody): one discriminated
+ *  bag whose fields only the active mode reads. */
+interface JobSched {
+  mode: "interval" | "daily" | "weekly" | "monthly" | "cron";
+  every?: number;
+  unit?: string;
+  time?: string;
+  days?: number[];
+  day?: number;
+  cron?: string;
 }
 
 /** One buffered insert row (the grid's edit buffer). */
@@ -346,6 +415,6 @@ interface PanelState {
   tun: TunState;
   jobs: JobsState;
   tokenGroups?: string[];
-  tokenMembers?: Record<string, string[]>;
+  tokenMembers?: Record<string, string>;
   tokenViewSecret?: string | null;
 }

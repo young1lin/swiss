@@ -37,7 +37,7 @@ import {
 let jobRowHtml: (j: Record<string, unknown>) => string;
 let ruleRowHtml: (r: Record<string, unknown>) => string;
 let connRowHtml: (c: Record<string, unknown>) => string;
-let state: { jobs: { busy: Record<string, string> }; tun: { busy: Record<string, string> } };
+let state: { jobs: { busy: Record<string, boolean> }; tun: { busy: Record<string, string> } };
 
 beforeAll(async () => {
   const anyG = globalThis as unknown as Record<string, unknown>;
@@ -53,7 +53,12 @@ beforeAll(async () => {
       addEventListener() {}, documentElement: elem(), body: elem(),
     };
   }
-  ({ jobRowHtml, ruleRowHtml, connRowHtml } = await import("../src/polling.js"));
+  const polling = await import("../src/polling.js") as unknown as {
+    jobRowHtml: (j: Record<string, unknown>) => string;
+    ruleRowHtml: (r: Record<string, unknown>) => string;
+    connRowHtml: (c: Record<string, unknown>) => string;
+  };
+  ({ jobRowHtml, ruleRowHtml, connRowHtml } = polling);
   state = (await import("../src/util.js")).state;
 });
 
@@ -132,39 +137,39 @@ describe("visual refresh V6 — the status dot carries a title", () => {
 
 describe("triggerSummary", () => {
   it("reads the v2 trigger object", () => {
-    expect(triggerSummary({ trigger: { kind: "cron", expression: "30 3 * * *" } })).toBe("cron 30 3 * * *");
-    expect(triggerSummary({ trigger: { kind: "interval", everyMs: 3600000, firstRun: "aligned" } })).toBe("every 3600 s");
-    expect(triggerSummary({ trigger: { kind: "interval", everyMs: 90000, firstRun: "immediate" } })).toBe("every 90 s · immediate");
-    expect(triggerSummary({ trigger: { kind: "manual" } })).toBe("manual");
+    expect(triggerSummary({ trigger: { kind: "cron", expression: "30 3 * * *" } } as ApiJobRow)).toBe("cron 30 3 * * *");
+    expect(triggerSummary({ trigger: { kind: "interval", everyMs: 3600000, firstRun: "aligned" } } as ApiJobRow)).toBe("every 3600 s");
+    expect(triggerSummary({ trigger: { kind: "interval", everyMs: 90000, firstRun: "immediate" } } as ApiJobRow)).toBe("every 90 s · immediate");
+    expect(triggerSummary({ trigger: { kind: "manual" } } as ApiJobRow)).toBe("manual");
   });
 
   it("falls back to the v1 flat fields, so the row survives an older gateway", () => {
-    expect(triggerSummary({ cron: "30 3 * * *" })).toBe("cron 30 3 * * *");
-    expect(triggerSummary({ everySec: 60 })).toBe("every 60 s");
-    expect(triggerSummary({})).toBe("no schedule");
+    expect(triggerSummary({ cron: "30 3 * * *" } as ApiJobRow)).toBe("cron 30 3 * * *");
+    expect(triggerSummary({ everySec: 60 } as ApiJobRow)).toBe("every 60 s");
+    expect(triggerSummary({} as ApiJobRow)).toBe("no schedule");
   });
 });
 
 describe("historyMeta", () => {
   it("describes a plain ran record", () => {
-    expect(historyMeta({ trigger: "manual", ms: 42, exitCode: 0 })).toBe("manual · 42 ms · exit 0");
+    expect(historyMeta({ trigger: "manual", ms: 42, exitCode: 0 } as ApiJobRunRecord)).toBe("manual · 42 ms · exit 0");
   });
 
   it("carries the retry position of an attempt", () => {
-    expect(historyMeta({ trigger: "timer", attempt: 2, attempts: 3, ms: 10, exitCode: 3 }))
+    expect(historyMeta({ trigger: "timer", attempt: 2, attempts: 3, ms: 10, exitCode: 3 } as ApiJobRunRecord))
       .toBe("timer · attempt 2/3 · 10 ms · exit 3");
   });
 
   it("names non-run outcomes for what they are, with no exit or timing masquerade", () => {
-    expect(historyMeta({ trigger: "timer", outcome: "skipped", reason: "overlap" })).toBe("timer · skipped (overlap)");
-    expect(historyMeta({ trigger: "timer", outcome: "missed", missedCount: 71 })).toBe("timer · missed · 71 more missed");
-    expect(historyMeta({ trigger: "timer", outcome: "refused", error: "no such action" }))
+    expect(historyMeta({ trigger: "timer", outcome: "skipped", reason: "overlap" } as ApiJobRunRecord)).toBe("timer · skipped (overlap)");
+    expect(historyMeta({ trigger: "timer", outcome: "missed", missedCount: 71 } as ApiJobRunRecord)).toBe("timer · missed · 71 more missed");
+    expect(historyMeta({ trigger: "timer", outcome: "refused", error: "no such action" } as ApiJobRunRecord))
       .toBe("timer · refused · no such action");
   });
 
   it("marks timeout and cancellation", () => {
-    expect(historyMeta({ trigger: "timer", ms: 1500, timedOut: true })).toBe("timer · 1500 ms · timed out");
-    expect(historyMeta({ trigger: "manual", ms: 10, canceled: true })).toBe("manual · 10 ms · canceled");
+    expect(historyMeta({ trigger: "timer", ms: 1500, timedOut: true } as ApiJobRunRecord)).toBe("timer · 1500 ms · timed out");
+    expect(historyMeta({ trigger: "manual", ms: 10, canceled: true } as ApiJobRunRecord)).toBe("manual · 10 ms · canceled");
   });
 });
 

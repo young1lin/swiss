@@ -25,7 +25,7 @@
 /** The row's schedule text (docs/11 §3.3): one line naming when the job fires. Reads the
  * v2 `trigger` object with a fallback to the v1 flat fields, so the same row renders on a
  * gateway that predates the v2 listing. */
-function triggerSummary(j) {
+function triggerSummary(j: ApiJobRow): string {
   var t = j.trigger;
   if (!t || !t.kind) {
     // v1 spelling: everySec | cron directly on the row.
@@ -41,7 +41,7 @@ function triggerSummary(j) {
 
 /** The history meta line for one run record (docs/11 §7.3): what happened, in one glance.
  * Outcome records say why they are not runs; attempts carry their retry position. */
-function historyMeta(r) {
+function historyMeta(r: ApiJobRunRecord & { reason?: string; missedCount?: number; timedOut?: boolean; canceled?: boolean }): string {
   var parts = [r.trigger || "?"];
   if (r.outcome && r.outcome !== "ran") {
     parts.push(r.outcome + (r.reason ? " (" + r.reason + ")" : ""));
@@ -59,7 +59,7 @@ function historyMeta(r) {
 
 /** A fresh definition for the JSON editor's "New (advanced)" sheet — the minimum the
  * config validator accepts, in config spelling (docs/11 §3.2). */
-function defTemplate(id) {
+function defTemplate(id: string): JobDef {
   return {
     title: id,
     trigger: { kind: "interval", everyMs: 3600000, firstRun: "aligned" },
@@ -72,10 +72,10 @@ function defTemplate(id) {
  * checkbox-shaped ones: disabled is boolean, retryOn is the checked-name list). Unknown
  * definition keys are NOT read here; they survive through the `base` object formToV2
  * writes onto. */
-function v2ToForm(def) {
-  var t = def.trigger || {};
-  var retry = def.retry || {};
-  var output = def.output || {};
+function v2ToForm(def: JobDef): JobFormValues {
+  var t = def.trigger || {} as NonNullable<JobDef["trigger"]>;
+  var retry = def.retry || {} as NonNullable<JobDef["retry"]>;
+  var output = def.output || {} as NonNullable<JobDef["output"]>;
   return {
     title: def.title || "",
     labels: (def.labels || []).join(", "),
@@ -98,7 +98,7 @@ function v2ToForm(def) {
 }
 
 /** Deep-copy a plain JSON value (definitions are plain JSON by contract). */
-function cloneJson(v) {
+function cloneJson(v: unknown): unknown {
   return v == null ? v : JSON.parse(JSON.stringify(v));
 }
 
@@ -107,10 +107,10 @@ function cloneJson(v) {
  * a field a future gateway understands survives an edit made by this panel (docs/10 §5:
  * losing a key here deletes configuration). Keys the form leaves at their default are
  * written explicitly: explicit defaults parse identically and keep the JSON editor honest. */
-function formToV2(form, base, actionInput) {
-  var def = cloneJson(base) || {};
+function formToV2(form: JobFormValues, base: JobDef, actionInput: Record<string, unknown>): JobDef {
+  var def = cloneJson(base) as JobDef || {};
   if (form.title) def.title = form.title; else delete def.title;
-  var labels = form.labels.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  var labels = form.labels.split(",").map(function (s: string): string { return s.trim(); }).filter(Boolean);
   if (labels.length) def.labels = labels; else delete def.labels;
   if (form.disabled) def.disabled = true; else delete def.disabled;
   if (form.kind === "cron") {
@@ -151,10 +151,10 @@ export { cloneJson, defTemplate, envToLines, formToV2, historyMeta, parseEnvLine
  * carry. Pure so the parsing rules are pinned by tests, not by typing into the sheet. */
 
 /** env object -> "KEY=value" lines, in the object's own key order. */
-function envToLines(env) {
+function envToLines(env: Record<string, string> | null | undefined): string {
   if (!env || typeof env !== "object") return "";
   return Object.keys(env)
-    .map(function (k) { return k + "=" + env[k]; })
+    .map(function (k: string): string { return k + "=" + env[k]; })
     .join("\n");
 }
 
@@ -162,8 +162,8 @@ function envToLines(env) {
  * empty key, or a key containing "=" or NUL is an error the form shows verbatim — a
  * silent drop here would mean a job that runs WITHOUT a variable the user believes it
  * has, which is the worst kind of wrong. */
-function parseEnvLines(text) {
-  var env = {};
+function parseEnvLines(text: string): { env: Record<string, string> | null; error: string } {
+  var env: Record<string, string> = {};
   var lines = String(text == null ? "" : text).split(/\r?\n/);
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i].trim();

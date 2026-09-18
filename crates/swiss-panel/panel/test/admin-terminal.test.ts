@@ -81,8 +81,8 @@ describe("terminal control-frame stories", () => {
       .toBe("closed: the terminal plugin is stopping");
     expect(frameStatus({ t: "error" })).toBe("closed");
     expect(frameStatus({ t: "stalled" })).toContain("stalled");
-    expect(frameStatus({ t: "resize", cols: 1, rows: 2 })).toBeNull();
-    expect(frameStatus("not json")).toBeNull();
+    expect(frameStatus({ t: "resize", cols: 1, rows: 2 } as Parameters<typeof frameStatus>[0])).toBeNull();
+    expect(frameStatus("not json" as unknown as Parameters<typeof frameStatus>[0])).toBeNull();
     expect(frameStatus(null)).toBeNull();
   });
 });
@@ -116,9 +116,9 @@ describe("terminal geometry", () => {
 
 describe("terminal target picker rows", () => {
   it("offers local only when the config says so, with its program in the label", () => {
-    expect(targetRows({ local: { enabled: false, shell: "pwsh" }, remote: { presence: "serving", targets: [] } }).rows)
+    expect(targetRows({ local: { enabled: false, shell: "pwsh" }, remote: { presence: "serving", targets: [] } } as unknown as ApiTerminalTargets).rows)
       .toEqual([]);
-    const withLocal = targetRows({ local: { enabled: true, shell: "pwsh.exe" }, remote: { presence: "serving", targets: [] } });
+    const withLocal = targetRows({ local: { enabled: true, shell: "pwsh.exe" }, remote: { presence: "serving", targets: [] } } as unknown as ApiTerminalTargets);
     expect(withLocal.rows).toEqual([{ id: "local", label: "local · pwsh.exe" }]);
   });
   it("labels remote targets user@host, port only when it is not the default", () => {
@@ -127,30 +127,30 @@ describe("terminal target picker rows", () => {
         { id: "box", label: "the box", host: "box.example", port: 22, username: "dev", state: "connected" },
         { id: "alt", label: "alt", host: "alt.example", port: 2222, username: "", state: "connected" },
       ] },
-    });
+    } as ApiTerminalTargets);
     expect(rows.map((r: { label: string }) => r.label)).toEqual([
       "the box · dev@box.example",
       "alt · alt.example:2222",
     ]);
   });
   it("carries the gateway's own reason when the remote side is absent", () => {
-    const { rows, note } = targetRows({ remote: { presence: "absent", reason: "the tunnels plugin is disabled — enable it to reach remote hosts", targets: [] } });
+    const { rows, note } = targetRows({ remote: { presence: "absent", reason: "the tunnels plugin is disabled — enable it to reach remote hosts", targets: [] } } as unknown as ApiTerminalTargets);
     expect(rows).toEqual([]);
     expect(note).toBe("the tunnels plugin is disabled — enable it to reach remote hosts");
   });
   it("explains itself when there is simply nothing to open", () => {
-    const { note } = targetRows({ remote: { presence: "serving", targets: [] } });
+    const { note } = targetRows({ remote: { presence: "serving", targets: [] } } as unknown as ApiTerminalTargets);
     expect(note).toContain("no terminal targets");
   });
   it("labels session tabs by target, local spelled out", () => {
-    expect(sessionLabel({ target: "local" })).toBe("local");
-    expect(sessionLabel({ target: "box" })).toBe("box");
+    expect(sessionLabel({ target: "local" } as ApiTerminalSessionRow)).toBe("local");
+    expect(sessionLabel({ target: "box" } as ApiTerminalSessionRow)).toBe("box");
     expect(sessionLabel(null)).toBe("?");
   });
   it("prefers the listing row's label over the raw target id", () => {
     // A remote tab without this showed the connection UUID; the listing carries the
     // human name ("jdoe-demo") and the tab must use it.
-    expect(sessionLabel({ target: "8fb67a6e-f244-4241-a556-1ec72f81d5ad", label: "jdoe-demo" })).toBe("jdoe-demo");
+    expect(sessionLabel({ target: "8fb67a6e-f244-4241-a556-1ec72f81d5ad", label: "jdoe-demo" } as ApiTerminalSessionRow)).toBe("jdoe-demo");
   });
 });
 
@@ -277,21 +277,21 @@ describe("local shell settings (docs/15 §2)", () => {
       .toEqual([{ id: "local", label: "local · PowerShell 7" }]);
   });
   it("falls back to the file name when the shell is unknown or the list is absent", () => {
-    expect(localShellLabel({ enabled: true, shell: "pwsh.exe" })).toBe("pwsh.exe");
-    expect(localShellLabel({ enabled: true, shell: "C:/Git/bin/bash.exe", shells: [] })).toBe("bash.exe");
-    expect(localShellLabel({ enabled: true })).toBe("shell");
+    expect(localShellLabel({ enabled: true, shell: "pwsh.exe" } as Parameters<typeof localShellLabel>[0])).toBe("pwsh.exe");
+    expect(localShellLabel({ enabled: true, shell: "C:/Git/bin/bash.exe", shells: [] } as Parameters<typeof localShellLabel>[0])).toBe("bash.exe");
+    expect(localShellLabel({ enabled: true } as unknown as Parameters<typeof localShellLabel>[0])).toBe("shell");
   });
   it("flags a switched-off local shell and keeps the remote reason separate", () => {
     const absent = targetRows({
       local: { enabled: false, shell: "pwsh.exe" },
       remote: { presence: "absent", reason: "the tunnels plugin is disabled", targets: [] },
-    });
+    } as unknown as ApiTerminalTargets);
     expect(absent.rows).toEqual([]);
     expect(absent.localOff).toBe(true);
     expect(absent.reason).toBe("the tunnels plugin is disabled");
-    expect(targetRows({ local: { enabled: false }, remote: { presence: "serving", targets: [] } }).localOff).toBe(true);
-    expect(targetRows({ remote: { presence: "serving", targets: [] } }).localOff).toBe(false);
-    expect(targetRows({ local: { enabled: true, shell: "pwsh.exe" }, remote: { presence: "serving", targets: [] } }).localOff).toBe(false);
+    expect(targetRows({ local: { enabled: false }, remote: { presence: "serving", targets: [] } } as unknown as ApiTerminalTargets).localOff).toBe(true);
+    expect(targetRows({ remote: { presence: "serving", targets: [] } } as unknown as ApiTerminalTargets).localOff).toBe(false);
+    expect(targetRows({ local: { enabled: true, shell: "pwsh.exe" }, remote: { presence: "serving", targets: [] } } as unknown as ApiTerminalTargets).localOff).toBe(false);
   });
   it("builds the save payload from the current config, touching only local", () => {
     const current = { maxSessions: 8, recording: false, local: { enabled: false, shell: "cmd.exe" } };
@@ -311,15 +311,15 @@ describe("local shell settings (docs/15 §2)", () => {
 
 describe("terminal tab labels (rename > shell title > target, docs/22 consensus 1)", () => {
   it("prefers a manual rename over the shell's title over the target", () => {
-    const s = { target: "local", label: "Local shell" };
+    const s = { target: "local", label: "Local shell" } as ApiTerminalSessionRow;
     expect(tabLabel(s, "vim ~/.bashrc", "my tab")).toBe("my tab");
     expect(tabLabel(s, "vim ~/.bashrc", null)).toBe("vim ~/.bashrc");
   });
   it("treats an empty shell title as a reset and falls back to the session label", () => {
-    const s = { target: "local", label: "Local shell" };
+    const s = { target: "local", label: "Local shell" } as ApiTerminalSessionRow;
     expect(tabLabel(s, "", null)).toBe("Local shell");
     expect(tabLabel(s, "   ", undefined)).toBe("Local shell");
-    expect(tabLabel({ target: "box-one" }, null, null)).toBe("box-one");
+    expect(tabLabel({ target: "box-one" } as ApiTerminalSessionRow, null, null)).toBe("box-one");
   });
 });
 

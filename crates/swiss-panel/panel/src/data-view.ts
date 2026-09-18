@@ -308,10 +308,10 @@ function renderDbView(): void {
   // wrapped: onclick hands the handler the click EVENT, and dbRunSql's first parameter is
   // `explain` — an event object is truthy, so a plain Run has been quietly running EXPLAIN.
   $<HTMLButtonElement>("dbSqlRun").onclick = function (): void { dbRunSql(false); };
-  $<ActionButton>("dbSqlExplain").onclick = function (ev: MouseEvent): void {
+  $<ActionButton>("dbSqlExplain").onclick = function (ev?: MouseEvent): void {
     // stopPropagation: connect.js closes any open menu on clicks that reach document, and
     // without it the click that opens the menu also tears it down (same as the Export menu).
-    ev.stopPropagation();
+    ev!.stopPropagation();
     popupMenu(this.getBoundingClientRect(), [
       { label: "Explain", fn: function (): void { dbRunSql("plan"); } },
       { label: "Explain ANALYZE", fn: function (): void { dbRunSql("analyze"); } },
@@ -369,9 +369,9 @@ function renderDbView(): void {
   }
   var dbMore = $<ActionButton>("dbMore");
   dbMore.innerHTML = icon("ellipsis");
-  dbMore.onclick = function (e: MouseEvent): void {
+  dbMore.onclick = function (e?: MouseEvent): void {
     // stopPropagation: the document click closes popup menus — the opening click must not.
-    e.stopPropagation();
+    e!.stopPropagation();
     var d = state.db;
     popupMenu(this.getBoundingClientRect(), [
       { label: d!.activity ? "Close activity" : "Activity…", fn: dbActivityToggle },

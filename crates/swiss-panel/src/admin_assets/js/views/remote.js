@@ -35,20 +35,20 @@ import { closeSheet } from "../add-sheet.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, groupFieldHtml, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
 
-var targets = [];
-var endpoints = [];
+var targets = []                     ;
+var endpoints = []                       ;
 var presence = "";
 var groupNames = ["default"];
-var editing = null; // the id an open sheet is editing, null when adding
-var pendingGroup = null; // the group whose header + opened the sheet; the select still wins
-var dragging = null; // in-flight row drag: a poll must not rebuild under it
-var draggingGroup = null; // in-flight group drag, same rule
+var editing = null                 ; // the id an open sheet is editing, null when adding
+var pendingGroup = null                 ; // the group whose header + opened the sheet; the select still wins
+var dragging = null                 ; // in-flight row drag: a poll must not rebuild under it
+var draggingGroup = null                 ; // in-flight group drag, same rule
 var painted = ""; // structural signature of the drawn list; a poll that changes nothing repaints nothing
-var collapsed = {}; // the groups fold map, loaded once before the first paint
+var collapsed = {}                           ; // the groups fold map, loaded once before the first paint
 
 async function load() {
-  var e = await apiJson("/api/remote/endpoints");
-  var t = await apiJson("/api/remote/targets");
+  var e = await apiJson                            ("/api/remote/endpoints");
+  var t = await apiJson                          ("/api/remote/targets");
   if (!e || !t) return false; // apiJson toasted; keep the last paint
   presence = e.presence || "none";
   endpoints = e.endpoints || [];
@@ -65,20 +65,20 @@ async function reload() {
   render();
 }
 
-function endpointLabel(id) {
+function endpointLabel(id        )         {
   var hit = endpoints.find(function (e) { return e.id === id; });
   return hit ? hit.label || hit.id : id;
 }
 
 // The dot mirrors the endpoint's state: filled = connected, hollow = idle (will start
 // on demand), amber = mid-transition. The title always says the state in words.
-function endpointDot(id) {
-  var st = (endpoints.find(function (e) { return e.id === id; }) || {}).state || "unknown";
+function endpointDot(id        )         {
+  var st = (endpoints.find(function (e) { return e.id === id; }) || {}                     ).state || "unknown";
   var cls = st === "connected" || st === "up" ? "up" : st === "idle" ? "idle" : "starting";
   return '<span class="dot ' + cls + '" title="endpoint ' + esc(st) + '"></span>';
 }
 
-function signature() {
+function signature()         {
   return presence + "\u0000" + endpoints.map(function (e) { return e.id + "=" + e.state; }).join(",") + "\u0000" +
     groupNames.join(",") + "\u0000" +
     targets.map(function (t) {
@@ -86,11 +86,11 @@ function signature() {
     }).join("\n");
 }
 
-function chip(text) {
+function chip(text        )         {
   return '<span class="side-type">' + esc(text) + "</span>";
 }
 
-function row(t) {
+function row(t                 )         {
   var caps = (t.capabilities || []).map(chip).join("");
   // A label the sheet defaulted to the alias (see save) is not worth saying twice.
   var label = t.label && t.label !== t.id ? ' <span class="text-3">' + esc(t.label) + "</span>" : "";
@@ -107,7 +107,7 @@ function row(t) {
 }
 
 /** The groups component's cfg (docs/20): this page's nouns, rows and moves. */
-function cfg() {
+function cfg()                            {
   return {
     scope: "targets",
     density: "page",
@@ -142,7 +142,7 @@ function cfg() {
 }
 
 /** Paint the groups region only - the head, the quiet line and the chip stay put. */
-function paint() {
+function paint()       {
   var region = $("rmGroups");
   if (!region) return;
   region.innerHTML = "";
@@ -151,7 +151,7 @@ function paint() {
   });
 }
 
-function render() {
+function render()       {
   painted = signature();
   // The body header is the family's (tunnels/secrets): task prose + status line on the
   // left, actions right-aligned in pane-actions - no location title (the context bar
@@ -189,7 +189,7 @@ function render() {
 
 /** Flat reorder after a row drag: applied locally so the row jumps immediately, then
  *  the scope's order route - a reject takes the server's word for it. */
-function moveRow(id, targetId, before) {
+function moveRow(id        , targetId        , before         )       {
   if (!id || !targetId || id === targetId) return;
   var item = targets.filter(function (r) { return r.id === id; })[0];
   if (!item) return;
@@ -204,7 +204,7 @@ function moveRow(id, targetId, before) {
 
 /** Put one row in a group after a drop-into: applied locally first so the row jumps
  *  immediately, then the member PUT - the server's canonical spelling wins. */
-async function assign(id, group) {
+async function assign(id        , group               )                {
   var row = targets.filter(function (r) { return r.id === id; })[0];
   if (!row) return;
   if (groupOf(groupNames)(row) === (group || groupNames[0])) return;
@@ -220,7 +220,7 @@ async function assign(id, group) {
 
 /* The Add/Edit sheet. Same shape as every sheet: #sheet unhidden BEFORE innerHTML,
    closeSheet from add-sheet.js, backdrop click closes. */
-function openSheet(target) {
+function openSheet(target                        )       {
   editing = target ? target.id : null;
   var endpointOptions = endpoints
     .map(function (e) {
@@ -258,13 +258,13 @@ function openSheet(target) {
   $("sheet").hidden = false;
   // Prefill programmatically, not via value=" markup": the pane redraws by signature,
   // and programmatic values are the one source of truth an edit and a test can both read.
-  $("rm-id").disabled = !!editing; // the alias never edits; state set here, not in markup
+  $                  ("rm-id").disabled = !!editing; // the alias never edits; state set here, not in markup
   caps.forEach(function (c) {
-    $("rmcap-" + c).checked = target ? (target.capabilities || []).indexOf(c) >= 0 : c === "exec";
+    $                  ("rmcap-" + c).checked = target ? (target.capabilities || []).indexOf(c) >= 0 : c === "exec";
   });
   if (target) {
-    $("rm-label").value = target.label === target.id ? "" : target.label || "";
-    $("rm-root").value = target.workspaceRoot || "";
+    $                  ("rm-label").value = target.label === target.id ? "" : target.label || "";
+    $                  ("rm-root").value = target.workspaceRoot || "";
   }
   $("rm-cancel").onclick = closeSheet;
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
@@ -272,20 +272,20 @@ function openSheet(target) {
   if (!editing) $("rm-id").focus();
 }
 
-async function save() {
-  var caps = ["exec", "sync", "files"].filter(function (c) { return $("rmcap-" + c).checked; });
+async function save()                {
+  var caps = ["exec", "sync", "files"].filter(function (c) { return $                  ("rmcap-" + c).checked; });
   if (!caps.length) { toast("Pick at least one capability", true); return; }
-  var id = editing || $("rm-id").value.trim();
-  var body = {
+  var id = editing || $                  ("rm-id").value.trim();
+  var body                   = {
     // The store refuses an empty label (swiss-remote target.rs), and the field says
     // optional: an alias is a fine label, so a blank one becomes the alias rather than
     // a rejected save the user cannot see the reason for.
-    label: $("rm-label").value.trim() || id,
-    endpoint: $("rm-endpoint").value,
+    label: $                  ("rm-label").value.trim() || id,
+    endpoint: $                   ("rm-endpoint").value,
     // The group the select shows - the row is born INTO it server-side (docs/34 R8),
     // one write, no second assign round-trip.
-    group: $("g-sel") ? $("g-sel").value : null,
-    workspaceRoot: $("rm-root").value.trim(),
+    group: $                   ("g-sel") ? $                   ("g-sel").value : null,
+    workspaceRoot: $                  ("rm-root").value.trim(),
     capabilities: caps,
     // The one shell the surface speaks today (docs/34): the route requires it, and a
     // select with a single honest option would be decoration.
@@ -305,7 +305,7 @@ async function save() {
   await reload();
 }
 
-async function removeTarget(id) {
+async function removeTarget(id        )                {
   if (!confirm("Delete target " + id + "? The Tunnels connection and any files on the machine are not touched.")) return;
   var d = await apiJson("/api/remote/targets/" + encodeURIComponent(id), { method: "DELETE" });
   if (!d) return;
@@ -316,27 +316,27 @@ export async function mount() {
   collapsed = loadCollapsed("targets");
   if (!(await load())) return;
   render();
-  $("pane").onclick = function (event) {
-    var add = event.target.closest("#rmAdd");
+  $("pane").onclick = function (event            )       {
+    var add = event.target .closest ("#rmAdd");
     if (add) { pendingGroup = null; openSheet(null); return; }
-    var newGroup = event.target.closest("#rmNewGroup");
+    var newGroup = event.target .closest ("#rmNewGroup");
     if (newGroup) { void newGroupFlow("targets", groupNames, reload); return; }
-    var edit = event.target.closest("[data-rmedit]");
+    var edit = event.target .closest              ("[data-rmedit]");
     if (edit) {
-      var hit = targets.find(function (t) { return t.id === edit.dataset.rmedit; });
+      var hit = targets.find(function (t) { return t.id === edit .dataset.rmedit; });
       if (hit) openSheet(hit);
       return;
     }
-    var more = event.target.closest("[data-rmmore]");
+    var more = event.target .closest              ("[data-rmmore]");
     if (more) {
       // The opening click must not reach document (menu.js closes on outside clicks).
       event.stopPropagation();
-      var t = targets.find(function (x) { return x.id === more.dataset.rmmore; });
+      var t = targets.find(function (x) { return x.id === more .dataset.rmmore; });
       if (!t) return;
       popupMenu(more.getBoundingClientRect(), [
-        { label: "Edit", fn: function () { openSheet(t); } },
+        { label: "Edit", fn: function () { openSheet(t ); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: function () { removeTarget(t.id); } },
+        { label: "Delete", danger: true, fn: function () { removeTarget(t .id); } },
       ]);
     }
   };
