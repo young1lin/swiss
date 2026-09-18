@@ -27,48 +27,48 @@ import { clampMenuPos } from "./menu.js";
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user
    retypes the table name — because both destroy data with no transaction to roll back to. */
 /** docs/22 W1.10: build one template for the open table and drop it into the console. */
-function dbGenerateSql(kind) {
+function dbGenerateSql(kind: string): void {
   var d = state.db;
-  if (!d.data || !d.data.columns || !d.data.columns.length) {
+  if (!d!.data || !d!.data.columns || !d!.data.columns.length) {
     toast("Open the table first — the template needs its column set", true);
     return;
   }
-  var dialect = (d.conns.find(function (c) { return c.name === d.conn; }) || {}).dialect || "mysql";
+  var dialect = (d!.conns.find(function (c: ApiDbConnectionRow): boolean { return c.name === d!.conn; }) || {} as { dialect?: string }).dialect || "mysql";
   var sql;
   try {
-    sql = dbTemplateSql(kind, dialect, d.schema, d.table,
-      d.data.columns.map(function (c) { return c.name; }), d.data.primaryKey || []);
+    sql = dbTemplateSql(kind, dialect, d!.schema!, d!.table!,
+      d!.data!.columns.map(function (c: ApiDbColumn): string { return c.name; }), d!.data!.primaryKey || []);
   } catch (err) { toast(String(err), true); return; }
   dbFillConsole(sql);
 }
 
-function dbTableMenu(anchorEl) {
+function dbTableMenu(anchorEl: HTMLElement): void {
   var d = state.db;
-  if (!d.conn || !d.table) return;
+  if (!d!.conn || !d!.table) return;
   var menu = el("div", "ctx-menu");
-  function item(label, fn) {
-    var b = el("button", "", label);
+  function item(label: string, fn: () => void): void {
+    var b = el("button", "", label) as HTMLButtonElement;
     b.onclick = function () { closeMenu2(); fn(); };
     menu.appendChild(b);
   }
   // docs/22 W1.10: generate this table's four statements from the column set the page already
   // carries (the describe_table shape). Identifiers pass the whitelist, values are ?
   // placeholders, and the template lands in the console — fill the ?s, run, and it is history.
-  ["select", "insert", "update", "delete"].forEach(function (kind) {
+  ["select", "insert", "update", "delete"].forEach(function (kind: string): void {
     item("Generate " + kind.toUpperCase(), function () { dbGenerateSql(kind); });
   });
   menu.appendChild(document.createElement("hr"));
   item("Rename table\u2026", function () {
-    var to = prompt("Rename " + (d.schema ? d.schema + "." : "") + d.table + " to:", d.table);
-    if (!to || to === d.table) return;
+    var to = prompt("Rename " + (d!.schema ? d!.schema + "." : "") + d!.table + " to:", d!.table!);
+    if (!to || to === d!.table) return;
     if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast("Not a valid table name", true); return; }
     dbRunDdl("rename", to);
   });
   item("Truncate table\u2026", function () {
-    dbTypedConfirm({ what: "TRUNCATE (delete every row)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, function () { dbRunDdl("truncate"); });
+    dbTypedConfirm({ what: "TRUNCATE (delete every row)", name: (d!.schema ? d!.schema + "." : "") + d!.table, kind: "table", typed: d!.table }, function (): void { dbRunDdl("truncate"); });
   });
   item("Drop table\u2026", function () {
-    dbTypedConfirm({ what: "DROP (permanently delete)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, function () { dbRunDdl("drop"); });
+    dbTypedConfirm({ what: "DROP (permanently delete)", name: (d!.schema ? d!.schema + "." : "") + d!.table, kind: "table", typed: d!.table }, function (): void { dbRunDdl("drop"); });
   });
   document.body.appendChild(menu);
   // docs/22 closeout audit: the Table menu now clamps to the viewport like popupMenu — a
@@ -79,10 +79,10 @@ function dbTableMenu(anchorEl) {
   menu.style.left = pos.left + "px";
   menu.style.top = pos.top + "px";
   state.menuOpen = true;
-  function closeMenu2() { menu.remove(); state.menuOpen = false; }
+  function closeMenu2(): void { menu.remove(); state.menuOpen = false; }
   setTimeout(function () {
     document.addEventListener("mousedown", function h(ev) {
-      if (!menu.contains(ev.target)) { menu.remove(); state.menuOpen = false; document.removeEventListener("mousedown", h); }
+      if (!menu.contains(ev.target as Node)) { menu.remove(); state.menuOpen = false; document.removeEventListener("mousedown", h); }
     });
   }, 0);
 }
@@ -93,7 +93,7 @@ function dbTableMenu(anchorEl) {
    it word for word. `typed` is what must be typed and defaults to `name`: the table flavor
    SHOWS a qualified name but demands the bare one; the key flavor's display name is the
    thing itself. */
-function dbTypedConfirm(o, fn) {
+function dbTypedConfirm(o: { what: string; name: string; kind: string; typed?: string | null }, fn: () => void): void {
   var typed = prompt(o.what + " " + o.name + "\n" +
     "This cannot be undone. Type the " + o.kind + " name to confirm:", "");
   if (typed !== (o.typed != null ? o.typed : o.name)) {
@@ -103,11 +103,11 @@ function dbTypedConfirm(o, fn) {
   fn();
 }
 
-async function dbRunDdl(op, to) {
+async function dbRunDdl(op: string, to?: string): Promise<void> {
   var d = state.db;
-  var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/ddl", {
+  var j = await apiJson<{ ran: string }>("/api/db/" + encodeURIComponent(d!.conn!) + "/ddl", {
     method: "POST",
-    body: JSON.stringify({ op: op, table: d.table, schema: d.schema, to: to }),
+    body: JSON.stringify({ op: op, table: d!.table, schema: d!.schema, to: to }),
   });
   if (!j) return;
   toast("Ran: " + j.ran);
@@ -116,17 +116,17 @@ async function dbRunDdl(op, to) {
     // result tabs and the view state (order, filters, focus) belong to the dropped table
     // as much as d.data does, and the pane itself needs a repaint — renderDbTables
     // refreshes only the LEFT list (docs/22 closeout audit).
-    d.table = null; d.schema = null; d.data = null; d.detail = null;
-    d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: every result tab closes
-    d.tab = "data"; d.order = null; d.dir = "asc"; d.filters = []; d.focus = null;
+    d!.table = null; d!.schema = null; d!.data = null; d!.detail = null;
+    d!.sqlResult = null; d!.sqlResults = null; d!.sqlTab = 0; // docs/22 W4.3: every result tab closes
+    d!.tab = "data"; d!.order = null; d!.dir = "asc"; d!.filters = []; d!.focus = null;
     dbDropEdits();
   }
-  if (op === "rename" && to) { d.table = to; d.data = null; }
+  if (op === "rename" && to) { d!.table = to; d!.data = null; }
   if (op === "truncate") { dbDropEdits(); }
-  d.tablesPage = 0;
+  d!.tablesPage = 0;
   if (dbIsRedis()) dbLoadKeys(true);
   else dbLoadTables();
-  if (d.table) dbLoadData(true);
+  if (d!.table) dbLoadData(true);
   else {
     renderDbTables();
     // and the RIGHT pane, whose last paint still shows the dropped table's rows
@@ -141,9 +141,9 @@ async function dbRunDdl(op, to) {
    offers "Edit in dialog" so the choice stays with the user. */
 var DB_INLINE_MAX = 80;
 
-var dbInlineEdit = null; // { td, ta, kind, key, i, column, meta, closed }
+var dbInlineEdit: { td: HTMLElement; ta: HTMLTextAreaElement; kind: string; key: string; i: number; column: string; meta: DbCellMeta } | null = null; // { td, ta, kind, key, i, column, meta, closed }
 
-function dbCloseInlineEdit() {
+function dbCloseInlineEdit(): void {
   if (!dbInlineEdit) return;
   var e = dbInlineEdit;
   dbInlineEdit = null;
@@ -151,19 +151,19 @@ function dbCloseInlineEdit() {
   document.removeEventListener("mousedown", dbInlineDismiss, true);
 }
 
-function dbInlineDismiss(ev) {
+function dbInlineDismiss(ev: MouseEvent): void {
   if (!dbInlineEdit) return;
-  if (ev.target === dbInlineEdit.td || dbInlineEdit.td.contains(ev.target) || ev.target === dbInlineEdit.ta) return;
+  if (ev.target === dbInlineEdit.td || dbInlineEdit.td.contains(ev.target as Node) || ev.target === dbInlineEdit.ta) return;
   dbSaveInlineEdit();
 }
 
-function dbOpenInlineEdit(kind, key, i, column, meta, td, current) {
+function dbOpenInlineEdit(kind: string, key: string, i: number, column: string, meta: DbCellMeta, td: HTMLElement, current: string): void {
   var d = state.db;
   if (dbInlineEdit) dbCloseInlineEdit();
   var rect = td.getBoundingClientRect();
-  var wrap = $("dbGridWrap");
+  var wrap = $<HTMLElement>("dbGridWrap");
   var wrapRect = wrap ? wrap.getBoundingClientRect() : { left: 0, top: 0 };
-  var ta = el("textarea", "db-inline-edit");
+  var ta = el("textarea", "db-inline-edit") as HTMLTextAreaElement;
   ta.rows = 1;
   ta.value = current == null ? "" : String(current);
   ta.style.left = (rect.left - wrapRect.left + wrap.scrollLeft) + "px";
@@ -173,12 +173,12 @@ function dbOpenInlineEdit(kind, key, i, column, meta, td, current) {
   wrap.appendChild(ta);
   dbInlineEdit = { td: td, ta: ta, kind: kind, key: key, i: i, column: column, meta: meta };
 
-  function autoSize() {
+  function autoSize(): void {
     ta.style.height = "auto";
     ta.style.height = Math.min(Math.max(ta.scrollHeight, 22), 320) + "px";
   }
   ta.oninput = autoSize;
-  ta.onkeydown = function (e) {
+  ta.onkeydown = function (e: KeyboardEvent): void {
     e.stopPropagation();
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); dbSaveInlineEdit(); }
     else if (e.key === "Escape") { e.preventDefault(); dbCloseInlineEdit(); renderDbGrid(); }
@@ -186,7 +186,7 @@ function dbOpenInlineEdit(kind, key, i, column, meta, td, current) {
       e.preventDefault();
       dbSaveInlineEdit();
       // move to the next editable cell in this row, dialog-free
-      var tds = Array.prototype.slice.call(td.parentNode.querySelectorAll("td.db-cell-edit"));
+      var tds = Array.prototype.slice.call(td.parentNode!.querySelectorAll("td.db-cell-edit"));
       var idx = tds.indexOf(td);
       var next = tds[idx + 1] || tds[0];
       if (next && next !== td) next.dispatchEvent(new MouseEvent("dblclick", { bubbles: false }));
@@ -199,22 +199,22 @@ function dbOpenInlineEdit(kind, key, i, column, meta, td, current) {
   ta.select();
 }
 
-function dbSaveInlineEdit() {
+function dbSaveInlineEdit(): void {
   var e = dbInlineEdit;
   if (!e) return;
   var raw = e.ta.value;
   dbCloseInlineEdit();
   var d = state.db;
   if (e.kind === "insert") {
-    var ins = d.inserts[e.i];
-    if (raw === "") delete ins.values[e.column];
-    else ins.values[e.column] = raw;
+    var ins = d!.inserts[e.i];
+    if (raw === "") delete ins!.values[e.column];
+    else ins!.values[e.column] = raw;
   } else {
-    var upd = d.updates[e.key] || (d.updates[e.key] = { pk: e.meta.pk, changes: {} });
+    var upd = d!.updates[e.key] || (d!.updates[e.key] = { pk: e.meta.pk as Record<string, unknown>, changes: {} });
     var origTxt = e.meta.orig == null ? "" : String(e.meta.orig);
     if (raw === origTxt) {
       delete upd.changes[e.column];
-      if (!Object.keys(upd.changes).length) delete d.updates[e.key];
+      if (!Object.keys(upd.changes).length) delete d!.updates[e.key];
     } else upd.changes[e.column] = raw;
   }
   renderDbGrid();
@@ -222,7 +222,7 @@ function dbSaveInlineEdit() {
 }
 
 /** The single entry point: short values edit inline, long ones open the dialog. */
-function dbEditCellEnter(kind, key, i, column, meta, td, current) {
+function dbEditCellEnter(kind: "update" | "insert", key: string, i: number, column: string, meta: DbCellMeta, td: HTMLElement, current: unknown): void {
   var s = current == null ? "" : String(current);
   if (s.length > DB_INLINE_MAX || s.indexOf("\n") >= 0) {
     dbOpenCellEditor(kind, key, i, column, meta);

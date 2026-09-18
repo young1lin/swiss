@@ -111,8 +111,9 @@ interface TunState {
   draggingGroup: string | null;
   pendingGroup: string | null;
   /* The two tunnels scopes' fold maps, loaded in main.ts before the first paint (the
-   *  per-scope localStorage keys, docs/20). */
-  collapsed: { conns: Record<string, boolean>; rules: Record<string, boolean> };
+   *  per-scope localStorage keys, docs/20); optional because the util.ts boot literal
+   *  predates that load. */
+  collapsed?: { conns: Record<string, boolean>; rules: Record<string, boolean> };
 }
 
 /** The Jobs view's slice (util.ts boot literal; jobs.js renders it, polling.js loads it). */
@@ -126,9 +127,103 @@ interface JobsState {
   dragging: string | null;
   draggingGroup: string | null;
   pendingGroup: string | null;
-  /* The two tunnels scopes' fold maps, loaded in main.ts before the first paint (the
-   *  per-scope localStorage keys, docs/20). */
-  collapsed: { conns: Record<string, boolean>; rules: Record<string, boolean> };
+}
+
+/** One buffered insert row (the grid's edit buffer). */
+interface DbInsert {
+  values: Record<string, unknown>;
+}
+
+/** The per-type plan the redis value view renders by (data-browsers.ts DB_REDIS_TYPES). */
+interface DbRedisTypeCfg {
+  cols: string[];
+  edit: string[];
+  ins: string[];
+  thing: string;
+  deletable: boolean;
+  add: string;
+}
+
+/** The redis value view's edit buffer: field-addressed updates/deletes and new rows,
+ *  folded by dbRedisCommands into the pipeline Commit posts. */
+interface DbRedisEdits {
+  key: string;
+  type: string;
+  updates: Record<string, unknown>;
+  deletes: Record<string, unknown>;
+  inserts: Record<string, unknown>[];
+}
+
+/* The DDL sheet's model (data-ddl.ts): one row of the columns mini-grid (prefilled rows
+ *  render disabled - only adds are in the W4.6 minimal set). */
+interface DdlRow {
+  name: string;
+  type: string;
+  nullable: boolean;
+  default: string;
+  comment: string;
+  isNew: boolean;
+}
+
+/** The (op, payload) body /api/db/:name/ddl-preview and /ddl both take. */
+interface DbDdlPayload {
+  schema?: string;
+  table?: string;
+  index?: string;
+  /* the index flavor lists plain column names; the table/column flavors list row objects. */
+  columns?: ({ name?: string; type?: string; nullable?: boolean; default?: string; comment?: string } | string)[];
+  unique?: boolean;
+  comment?: string;
+  [key: string]: unknown;
+}
+
+/** One open DDL sheet's whole mutable context; rebuilt per open, nulled on close. */
+interface DdlSheetState {
+  kind: "table" | "column" | "index";
+  dialect: string;
+  conn: string;
+  schema: string;
+  schemas: string[];
+  table: string;
+  oldColumns: ApiDbColumn[];
+  rows: DdlRow[];
+  indexName: string;
+  indexCols: string[];
+  unique: boolean;
+  comment: string;
+  lastSql: string | null;
+  lastPayload: DbDdlPayload | null;
+  seq: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  /* indexTouched joins at the first hand edit of the suggested index name. */
+  indexTouched?: boolean;
+}
+
+/** One Structure tab's table spec (data-structure.ts): row is method-syntax so the three
+ *  differently-typed row builders all fit it. */
+interface DbDetailSpec {
+  head: string[];
+  row(r: unknown): (string | { text: unknown; cls?: string; fk?: ApiDbFkRow })[];
+  rows: unknown[];
+  meta: string;
+}
+
+/** One form field as data-form.ts paints it: buffered value where pending, original where
+ *  not; an insert's unset column is undefined (never null). */
+interface DbFormField {
+  name: string;
+  type: string;
+  orig: unknown;
+  value: unknown;
+  pending: boolean;
+}
+
+/** The cell editor's row context (data-grid.ts passes it): orig is the value as loaded,
+ *  pk the row's primary-key shape for the header line. */
+interface DbCellMeta {
+  orig: unknown;
+  pk: unknown;
+  [key: string]: unknown;
 }
 
 /** One buffered row update in the Data grid (data-view.ts): pk identifies the row, changes
@@ -143,7 +238,8 @@ interface DbBufferedUpdate {
 interface DbFilterTerm {
   column: string;
   op: string;
-  value: string | null;
+  /* a pushed cell filter carries the cell's raw value (number/boolean included). */
+  value: string | number | boolean | null;
 }
 
 /** Per-connection grid geometry (docs/22 W2.1): saved column widths and hidden columns. */
@@ -165,7 +261,7 @@ interface DbState {
   grep: string;
   schemaFilter: string;
   sort: string;
-  sortDir: "asc" | "desc";
+  sortDir: string;
   table: string | null;
   schema: string | null;
   data: ApiDbDataPage | null;
@@ -173,13 +269,13 @@ interface DbState {
   pageSize: number;
   offset: number;
   order: string | null;
-  dir: "asc" | "desc";
+  dir: string;
   loading: boolean;
   gridCfg: DbGridConfig;
   sqlPreview: boolean;
   updates: Record<string, DbBufferedUpdate>;
   deletes: Record<string, Record<string, unknown>>;
-  inserts: { values: Record<string, unknown> }[];
+  inserts: DbInsert[];
   sel: Record<string, boolean>;
   selAnchor: number;
   focus: { r: number; c: number } | null;
@@ -190,17 +286,25 @@ interface DbState {
   sqlTab: number;
   sqlBusy: boolean;
   history: string[];
-  tab: "data" | "form" | "columns" | "indexes" | "ddl" | "fks";
+  favorites?: string[];
+  tab: string;
   formIdx: number;
-  redis: { keys: ApiDbRedisKeyRow[]; cursor: number; done: boolean; total: number } | null;
+  /* The SCAN cursor is the wire's string (redis cursors are big unsigned numbers the
+   *  panel compares against "0" - never a JS number). */
+  redis: { keys: ApiDbRedisKeyRow[]; cursor: string; done: boolean; total: number } | null;
+  /* optional: the fresh pageState literal predates the redis value view and favorites. */
+  redisValue?: ApiDbRedisValue | null;
   redisKey: string | null;
-  redisEdits: Record<string, unknown> | null;
+  redisEdits: DbRedisEdits | null;
   activity: boolean;
-  activityRows: ApiDbActivityReply | null;
+  activityRows: ApiDbActivityRow[] | null;
   redisType: string;
   redisError: boolean;
   detail: ApiDbTableDetail | null;
   detailBusy: boolean;
+  /* the 409 observer's mark: which buffered row and columns lost a commit race.
+   * Optional: the dbFreshState literal predates the fetch observer that writes it. */
+  conflict?: { key: string; columns: string[] } | null;
 }
 
 /** The one shared bag, booted by util.ts's literal. tokenGroups/tokenMembers/tokenViewSecret

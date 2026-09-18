@@ -27,14 +27,14 @@ import { dbSqlPaint } from "./data-filters.js";
 
 var SUGGEST_DEBOUNCE_MS = 150;
 var SUGGEST_MAX_ITEMS = 8;
-var dbSuggestTimer = null;
-var dbSuggestItems = [];
+var dbSuggestTimer: ReturnType<typeof setTimeout> | null = null;
+var dbSuggestItems: ApiDbCompletionItem[] = [];
 var dbSuggestSel = -1;
 var dbSuggestPrefix = "";
 
 /** The word the server would complete: the [A-Za-z0-9_.$] run ending at the caret — the same
  *  character class sql_word_ending_at speaks on the server. Pure. */
-function dbSuggestPrefixAt(text, caret) {
+function dbSuggestPrefixAt(text: unknown, caret: number): string {
   var s = String(text).slice(0, caret);
   var m = s.match(/[A-Za-z0-9_.$]+$/);
   return m ? m[0] : "";
@@ -42,11 +42,11 @@ function dbSuggestPrefixAt(text, caret) {
 
 /** The caret as a byte offset: the server slices bytes, a selection index counts UTF-16
  *  units, and the two only agree while the statement is ASCII. Pure. */
-function dbSuggestByteOffset(text, caret) {
+function dbSuggestByteOffset(text: unknown, caret: number): number {
   return new TextEncoder().encode(String(text).slice(0, caret)).length;
 }
 
-function dbSuggestHide() {
+function dbSuggestHide(): void {
   var box = $("dbSuggest");
   if (box && box.parentNode) box.parentNode.removeChild(box);
   dbSuggestItems = [];
@@ -56,8 +56,8 @@ function dbSuggestHide() {
 
 /** The input hook (debounced): a caret over no word closes the list at once — a debounce that
  *  kept a dead list on screen would be a lie about what is being completed. */
-function dbSuggestOnInput() {
-  clearTimeout(dbSuggestTimer);
+function dbSuggestOnInput(): void {
+  clearTimeout(dbSuggestTimer!);
   var d = state.db;
   if (!d || !d.conn || dbIsRedis()) { dbSuggestHide(); return; }
   if (!dbSuggestPrefixAt(this.value, this.selectionStart)) { dbSuggestHide(); return; }
@@ -65,30 +65,30 @@ function dbSuggestOnInput() {
   dbSuggestTimer = setTimeout(function () { void dbSuggestFetch(ta); }, SUGGEST_DEBOUNCE_MS);
 }
 
-async function dbSuggestFetch(ta) {
+async function dbSuggestFetch(ta: HTMLTextAreaElement): Promise<void> {
   var d = state.db;
   if (!d || !d.conn || dbIsRedis() || !ta.closest(".db-sql-wrap")) { dbSuggestHide(); return; }
-  var caret = ta.selectionStart;
+  var caret = ta.selectionStart!;
   var text = ta.value;
   var prefix = dbSuggestPrefixAt(text, caret);
   if (!prefix) { dbSuggestHide(); return; }
-  var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/completion", {
+  var j = await apiJson<ApiDbCompletionReply>("/api/db/" + encodeURIComponent(d.conn) + "/completion", {
     method: "POST",
     body: JSON.stringify({ sql: text, caret: dbSuggestByteOffset(text, caret) }),
   });
   if (!j) { dbSuggestHide(); return; }
-  var items = (j.items || []).slice(0, SUGGEST_MAX_ITEMS);
+  var items: ApiDbCompletionItem[] = (j.items || []).slice(0, SUGGEST_MAX_ITEMS);
   if (!items.length) { dbSuggestHide(); return; }
   // A reply for a word the caret has already left is stale: drop it, the next keystroke is
   // fetching its own.
-  if (dbSuggestPrefixAt(ta.value, ta.selectionStart) !== prefix) return;
+  if (dbSuggestPrefixAt(ta.value, ta.selectionStart!) !== prefix) return;
   dbSuggestItems = items;
   dbSuggestPrefix = prefix;
   dbSuggestSel = -1;
   dbSuggestRender(ta);
 }
 
-function dbSuggestRender(ta) {
+function dbSuggestRender(ta: HTMLTextAreaElement): void {
   // Replace only the BOX ELEMENT here — dbSuggestHide() also clears the item list, and this
   // function draws from that list: calling it first once rendered an empty, positioned box
   // for every reply (caught live on 19998).
@@ -98,14 +98,14 @@ function dbSuggestRender(ta) {
   if (!wrap) return;
   var box = el("div", "db-suggest");
   box.id = "dbSuggest";
-  dbSuggestItems.forEach(function (it, i) {
+  dbSuggestItems.forEach(function (it: ApiDbCompletionItem, i: number): void {
     var row = el("div", "db-suggest-item");
     row.appendChild(el("span", "db-suggest-label", String(it.label)));
     row.appendChild(el("span", "db-suggest-kind", String(it.kind)));
     row.title = it.detail || it.kind;
     // mousedown, not click: the textarea's blur would tear the list down before a click on
     // it lands, and preventDefault keeps the caret where the accept will splice.
-    row.onmousedown = function (e) { e.preventDefault(); dbSuggestAccept(i); };
+    row.onmousedown = function (e: MouseEvent): void { e.preventDefault(); dbSuggestAccept(i); };
     box.appendChild(row);
   });
   wrap.appendChild(box);
@@ -115,11 +115,11 @@ function dbSuggestRender(ta) {
 /** Put the list at the caret. The mirror div inherits the textarea's face (same font, size,
  *  padding, width, wrapping) and carries a zero-width marker right after the text up to the
  *  caret; the marker's offset minus the textarea's scroll is the caret's point in the wrap. */
-function dbSuggestPlace(ta, box) {
+function dbSuggestPlace(ta: HTMLTextAreaElement, box: HTMLElement): void {
   var wrap = ta.closest(".db-sql-wrap");
   if (!wrap) return;
   var mirror = el("div", "db-sql-mirror db-sql-face");
-  mirror.textContent = ta.value.slice(0, ta.selectionStart);
+  mirror.textContent = ta.value.slice(0, ta.selectionStart!);
   var marker = el("span", "db-suggest-mark", "\u200b");
   mirror.appendChild(marker);
   wrap.appendChild(mirror);
@@ -134,7 +134,7 @@ function dbSuggestPlace(ta, box) {
   box.style.top = top + "px";
 }
 
-function dbSuggestPaintSel() {
+function dbSuggestPaintSel(): void {
   var box = $("dbSuggest");
   if (!box) return;
   var rows = box.children;
@@ -144,14 +144,14 @@ function dbSuggestPaintSel() {
 }
 
 /** Replace the typed prefix with the chosen label and hand the console back its paint. */
-function dbSuggestAccept(i) {
-  var ta = $("dbSql");
+function dbSuggestAccept(i: number): void {
+  var ta = $<HTMLTextAreaElement>("dbSql");
   if (!ta || !dbSuggestItems[i]) { dbSuggestHide(); return; }
   var label = String(dbSuggestItems[i].label);
-  var caret = ta.selectionStart;
+  var caret = ta.selectionStart!;
   var start = caret - dbSuggestPrefix.length;
   ta.setRangeText(label, start, caret, "end");
-  state.db.sqlText = ta.value;
+  state.db!.sqlText = ta.value;
   dbSqlPaint();
   dbSuggestHide();
   ta.focus();
@@ -159,7 +159,7 @@ function dbSuggestAccept(i) {
 
 /** The console's key hook while the list is open: arrows move, Tab/Enter accept, Esc closes.
  *  Ctrl/Cmd+Enter falls through untouched — Run keeps working with the list on screen. */
-function dbSuggestKeys(e) {
+function dbSuggestKeys(e: KeyboardEvent): void {
   if (!dbSuggestItems.length) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();

@@ -214,7 +214,7 @@ function mountGroup                        (cfg               , g               
   more.onclick = function (ev) {
     ev.stopPropagation();
     var i = cfg.names.indexOf(g.name);
-    var items = [];
+    var items             = [];
     if (i > 0) items.push({ label: "Move up", fn: function () { moveGroupBy(cfg, g.name, -1); } });
     if (i >= 0 && i < cfg.names.length - 1) {
       items.push({ label: "Move down", fn: function () { moveGroupBy(cfg, g.name, 1); } });
