@@ -23,11 +23,12 @@
    page exists so a target never needs a terminal to exist.
 
    Groups (docs/34 R8): the list renders through the groups component as the seventh
-   scope of the docs/20 family - page density, drag ON both ways. A row drag reorders
-   the flat list (the scope's order route); a drop into another group moves the row
-   (the member route). The group names ride with the rows in ONE /api/remote/targets
-   response, and an older gateway without them answers the single default group the
-   component draws as no divider at all.
+   scope of the docs/20 family - page density (one card per group, docs/35), drag ON
+   both ways. A row drag reorders the flat list (the scope's order route); a drop into
+   another group moves the row (the member route); a group drags by its whole head. The
+   group names ride with the rows in ONE /api/remote/targets response, and an older
+   gateway without them answers the single default group the component draws as no
+   divider at all.
    ================================================================================================ */
 import { $, apiJson, emptyHtml, esc, icon, toast } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
@@ -91,7 +92,8 @@ function chip(text) {
 
 function row(t) {
   var caps = (t.capabilities || []).map(chip).join("");
-  var label = t.label ? ' <span class="text-3">' + esc(t.label) + "</span>" : "";
+  // A label the sheet defaulted to the alias (see save) is not worth saying twice.
+  var label = t.label && t.label !== t.id ? ' <span class="text-3">' + esc(t.label) + "</span>" : "";
   return (
     '<div class="row row-act" data-rmrow="' + esc(t.id) + '">' + endpointDot(t.endpoint) +
       '<div class="row-main">' +
@@ -153,13 +155,17 @@ function render() {
   painted = signature();
   // The body header is the family's (tunnels/secrets): task prose + status line on the
   // left, actions right-aligned in pane-actions - no location title (the context bar
-  // already says Remote Targets) and no invented classes.
+  // already says Remote Targets) and no invented classes. One sentence of what, one of
+  // who else writes it; the drag is taught by the list itself, not by prose.
+  // The status line names the presence only when it is NOT the normal one: "serving ·
+  // 3 endpoints served by tunnels" said serving twice.
+  var status = endpoints.length + " endpoint" + (endpoints.length === 1 ? "" : "s") + " served by tunnels";
+  if (presence !== "serving") status = "Tunnels " + esc(presence) + " · " + status;
   var head =
     '<div class="wide">' +
       '<div class="pane-head"><div>' +
-        '<div class="pane-desc">Machines the gateway can run commands on, reached over Tunnels SSH connections. This page and the CLI (swiss remote …) write the same table through the same routes; drag a row to reorder or to move it between groups.</div>' +
-        '<div class="pane-sub">' + esc(presence) + " · " + endpoints.length + " endpoint" +
-          (endpoints.length === 1 ? "" : "s") + " served by tunnels</div>" +
+        '<div class="pane-desc">Machines the gateway can run commands on, reached over Tunnels SSH connections. The CLI (swiss remote …) writes the same table.</div>' +
+        '<div class="pane-sub">' + status + "</div>" +
       "</div>" +
       '<div class="pane-actions">' +
         '<button class="btn primary" id="rmAdd">Add target</button>' +
@@ -257,7 +263,7 @@ function openSheet(target) {
     $("rmcap-" + c).checked = target ? (target.capabilities || []).indexOf(c) >= 0 : c === "exec";
   });
   if (target) {
-    $("rm-label").value = target.label || "";
+    $("rm-label").value = target.label === target.id ? "" : target.label || "";
     $("rm-root").value = target.workspaceRoot || "";
   }
   $("rm-cancel").onclick = closeSheet;
@@ -269,8 +275,12 @@ function openSheet(target) {
 async function save() {
   var caps = ["exec", "sync", "files"].filter(function (c) { return $("rmcap-" + c).checked; });
   if (!caps.length) { toast("Pick at least one capability", true); return; }
+  var id = editing || $("rm-id").value.trim();
   var body = {
-    label: $("rm-label").value.trim(),
+    // The store refuses an empty label (swiss-remote target.rs), and the field says
+    // optional: an alias is a fine label, so a blank one becomes the alias rather than
+    // a rejected save the user cannot see the reason for.
+    label: $("rm-label").value.trim() || id,
     endpoint: $("rm-endpoint").value,
     // The group the select shows - the row is born INTO it server-side (docs/34 R8),
     // one write, no second assign round-trip.
@@ -287,7 +297,7 @@ async function save() {
   }
   var url = "/api/remote/targets";
   if (editing) url += "/" + encodeURIComponent(editing);
-  else body.id = $("rm-id").value.trim();
+  else body.id = id;
   var j = await apiJson(url, { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
   if (body.group) rememberGroup("targets", body.group);

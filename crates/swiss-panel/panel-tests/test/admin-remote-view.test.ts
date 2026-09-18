@@ -304,6 +304,29 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(sent.group).toBe("prod");
   });
 
+  it("a blank label posts the alias - the store refuses an empty one and the field says optional", async () => {
+    serve([], ["default"]);
+    await view.mount();
+    const addBtn = fakeEl();
+    addBtn.closest = (sel: string) => (sel === "#rmAdd" ? addBtn : null);
+    click(addBtn);
+    byId("rm-id").value = "flash";
+    byId("rm-label").value = "";
+    byId("rm-endpoint").value = "conn-1";
+    byId("rm-root").value = "/opt/flash";
+    byId("rmcap-exec").checked = true;
+    const save = byId("rm-save").onclick as () => Promise<void>;
+    await save();
+    const sent = JSON.parse(String(lastPost?.init.body));
+    expect(sent.id).toBe("flash");
+    expect(sent.label).toBe("flash");
+    // ...and a label that only repeats the alias is not drawn twice in the row.
+    serve([{ id: "flash", label: "flash", endpoint: "conn-1", workspaceRoot: "/opt/flash", capabilities: ["exec"] }]);
+    await view.mount();
+    expect(drawn()).toContain(">flash<");
+    expect(drawn()).not.toContain('<span class="text-3">flash</span>');
+  });
+
   it("a poll that changes nothing repaints nothing - the sheet the user types into stays put", async () => {
     serve([{ id: "build", endpoint: "conn-1", workspaceRoot: "/data/ws", capabilities: ["exec"] }]);
     await view.mount();
