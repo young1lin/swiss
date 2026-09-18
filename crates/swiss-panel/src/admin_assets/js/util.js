@@ -22,7 +22,7 @@ var KINDS = ["tools", "resources", "prompts"];
    slot unassigned MCPs render under). The server now stores it like any other name. */
 var DEFAULT_GROUP = "default";
 
-var state = {
+var state             = {
   mcps: [],          // rows from /api/mcps (each carries .group)
   groups: [],        // group names in sidebar order — the FIRST entry is the sink slot for unassigned rows
   collapsed: {},     // mcps fold map; group name -> true. Panel-only, so it lives in localStorage (groups.js)
@@ -74,23 +74,23 @@ var state = {
   },
 };
 
-function $(id) { return document.getElementById(id); }
-function el(tag, cls, text) {
+function $                                     (id        )    { return document.getElementById(id)     ; }
+function el                                       (tag   , cls         , text                )                           {
   var n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
   return n;
 }
-function esc(s) {
+function esc(s         )         {
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c                               ];
   });
 }
-function now() { return new Date().toLocaleTimeString(); }
+function now()         { return new Date().toLocaleTimeString(); }
 
 /** One inline icon from the shell's sprite (docs/18 V2). Stroke follows currentColor and .ic
  *  sizes it; decorative by default, an image with a name when `label` is passed (icon buttons). */
-function icon(name, label) {
+function icon(name        , label         )         {
   return label
     ? '<svg class="ic" role="img" aria-label="' + esc(label) + '"><use href="#i-' + name + '"></use></svg>'
     : '<svg class="ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
@@ -101,7 +101,7 @@ function icon(name, label) {
  *  remote MCPs, the command's first word for proc ones — arbitrary words appear (node, python,
  *  echo…), so this is a whitelist and everything outside it falls back to text. The icon
  *  carries the word as its aria-label: a screen reader hears the type the chip no longer spells. */
-var TYPE_ICONS = {
+var TYPE_ICONS                         = {
   mysql: "mysql", mariadb: "mariadb", redis: "redis", pg: "pg", postgres: "pg",
   http: "globe", https: "globe", rest: "plug",
   figma: "figma", "zai-vision": "zai",
@@ -109,7 +109,7 @@ var TYPE_ICONS = {
   remote: "remote",
   proc: "terminal",
 };
-function typeTagHtml(tag) {
+function typeTagHtml(tag        )         {
   var name = TYPE_ICONS[tag];
   if (!name) return esc(tag);
   return icon(name, tag);
@@ -119,7 +119,7 @@ function typeTagHtml(tag) {
  *  view's "nothing here" is this shape — the Terminal alone keeps its own, because it lives in
  *  the black frame with its own tokens. The action button carries data-empty-action so the
  *  owning view can wire it without inventing per-view ids. */
-function emptyHtml(opts) {
+function emptyHtml(opts                )         {
   var action = opts.action
     ? '<button class="btn ghost" data-empty-action="' + esc(opts.action) + '">' + esc(opts.action) + "</button>"
     : "";
@@ -136,7 +136,7 @@ function emptyHtml(opts) {
  *  already paints, never a synonym of our own. ONE builder for every dot in the panel: the
  *  chip text once drifted between two copies, and a dot whose title disagrees with its class
  *  is the same bug one hover wide. */
-function dotTitle(word, latencyMs, reason) {
+function dotTitle(word        , latencyMs                , reason         )         {
   if (word === "up") return latencyMs != null ? "up · " + latencyMs + " ms" : "up";
   // Idle is the one word that explains nothing: say what the ring means — nothing is wrong,
   // it starts when it is first needed.
@@ -148,7 +148,7 @@ function dotTitle(word, latencyMs, reason) {
 /** One time format for row lists: time-of-day inside the last 24h, date+time beyond it (the
  *  pure time becomes ambiguous the moment a list spans midnight). Run-history had this logic as
  *  histWhen; Traffic rows now share it instead of printing bare times on pages days old. */
-function whenLabel(iso) {
+function whenLabel(iso                 )         {
   var d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso);
   var day = 24 * 60 * 60 * 1000;
@@ -161,7 +161,7 @@ function whenLabel(iso) {
 // key per scope, because a group named "prod" in two lists folding together would be a
 // coincidence, not a feature.
 
-function toast(msg, isErr) {
+function toast(msg        , isErr          )       {
   var t = $("toast");
   t.textContent = msg;
   t.className = "toast" + (isErr ? " err" : "");
@@ -171,7 +171,7 @@ function toast(msg, isErr) {
 }
 
 
-async function api(path, opts) {
+async function api(path        , opts              )                    {
   opts = opts || {};
   opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
   return fetch(path, opts);
@@ -181,7 +181,7 @@ async function api(path, opts) {
  *  a request takes a token from issue() right before it fires, and its response may only
  *  write state while accepts(token) holds — a slow answer that lands after a newer request
  *  started is dropped silently instead of overwriting what the newer one painted. Pure. */
-function dbReqGuard() {
+function dbReqGuard()                                                       {
   var seq = 0;
   return {
     issue: function () { return ++seq; },
@@ -191,12 +191,12 @@ function dbReqGuard() {
 
 /** Call the API and hand back the parsed body, or null once the failure has been reported. Every
  *  mutation repeated the same fetch → parse → toast dance, so the dance lives here once. */
-async function apiJson(path, opts) {
+async function apiJson             (path        , opts              )                    {
   try {
     var r = await api(path, opts);
-    var j = await r.json().catch(function () { return {}; });
+    var j                     = await r.json().catch(function () { return {}; });
     if (!r.ok) { toast(j.error || "HTTP " + r.status, true); return null; }
-    return j;
+    return j                ;
   } catch (e) {
     // A network-level failure (gateway stopped mid-click) must be reported too: every caller is
     // `if (!j) return;`, and a silent null made clicking Commit do literally nothing after the
