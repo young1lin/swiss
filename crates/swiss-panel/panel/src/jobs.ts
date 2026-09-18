@@ -36,7 +36,7 @@
 import type { ApiJobRow, ApiJobRunRecord, ApiMcpTool, ToolInputSchema } from "./types/api.js";
 import type { GroupCfg, GroupSlice } from "./types/dom.js";
 import type { JobConfigRow, JobDef, JobFormValues, JobSched } from "./types/state.js";
-import { $, api, apiJson, dotTitle, emptyHtml, errText, esc, icon, state, toast, whenLabel } from "./util.js";
+import { $, api, apiJson, dotTitle, emptyHtml, errText, esc, icon, toast, whenLabel } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { assignMember, groupFieldHtml, groupOf as makeGroupOf, lastGroup, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "./groups.js";
 import { popupMenu } from "./menu.js";
@@ -45,6 +45,7 @@ import { argFieldsHtml, readRunArgs } from "./run.js";
 import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
 import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
 import { currentView } from "./ui-state.js";
+import { appendJobRuns, clearJobBusy, jobDragging, jobDraggingGroup, jobFolds, jobHistory, jobHistoryIsFor, jobIsBusy, jobRows, paintedJobsSig, setJobBusy, setJobDragging, setJobDraggingGroup, setJobPendingGroup, setPaintedJobsSig, startJobHistory, takeJobPendingGroup } from "./job-state.js";
 
 let probed: boolean | null = null; // null = not probed yet; then the cached boolean answer for this page load
 
@@ -71,13 +72,13 @@ function jobGroupOfRow(j: ApiJobRow): string {
 
 /** Persist the on-screen order: the family's order route for the jobs scope, ids in a row. */
 function saveJobOrder(): void {
-  void saveOrder("jobs", state.jobs.data.map((j: ApiJobRow): string => { return j.name; }));
+  void saveOrder("jobs", jobRows().map((j: ApiJobRow): string => { return j.name; }));
 }
 
 /** Move one row to just before/after another, re-render, persist. */
 function moveJobRow(id: string, target: string, before: boolean): void {
   if (!id || !target || id === target) return;
-  const rows = state.jobs.data;
+  const rows = jobRows();
   const item = rows.filter((r: ApiJobRow): boolean => { return r.name === id; })[0];
   if (!item) return;
   const to = rows.findIndex((r: ApiJobRow): boolean => { return r.name === target; });
@@ -91,7 +92,7 @@ function moveJobRow(id: string, target: string, before: boolean): void {
 /** Put one job in a group. Applied locally first so the row jumps immediately, then persisted
  *  — a reject takes the server's word for it. */
 async function assignJobGroup(id: string, group: string | null): Promise<void> {
-  const row = state.jobs.data.filter((r: ApiJobRow): boolean => { return r.name === id; })[0];
+  const row = jobRows().filter((r: ApiJobRow): boolean => { return r.name === id; })[0];
   if (!row) return;
   const names = jobGroupsList();
   if (jobGroupOfRow(row) === (group || names[0])) return;
@@ -104,12 +105,12 @@ async function assignJobGroup(id: string, group: string | null): Promise<void> {
 }
 
 function renderJobs(): void {
-  const rows = state.jobs.data;
+  const rows = jobRows();
   // The structural signature the poll compares against: the group names, then every row as
   // name+group in order — any add/remove/reorder/regroup means a rebuild is due; dots and
   // labels alone never justify one.
-  state.jobs.painted = jobGroupsList().join("\n") + "\u0000" +
-    rows.map((j: ApiJobRow): string => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
+  setPaintedJobsSig(jobGroupsList().join("\n") + "\u0000" +
+    rows.map((j: ApiJobRow): string => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n"));
   const body = rows.length
     ? '<div id="jobGroups"></div>'
     : emptyHtml({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands the gateway runs on this machine. Add one with New." });
@@ -146,30 +147,30 @@ function jobCfg(): GroupCfg<ApiJobRow> {
     scope: "jobs",
     density: "page",
     names: jobGroupsList(),
-    collapsed: state.jobs.collapsed,
+    collapsed: jobFolds(),
     noun: "job",
     addTitle: (g: string): string => { return "Add a job to " + g; },
     onAdd: (g: string): void => {
-      state.jobs.pendingGroup = g; // a real name now — the sheet's save lands the job in it
+      setJobPendingGroup(g); // a real name now — the sheet's save lands the job in it
       openJobSheet(null);
     },
     reload: (): Promise<void> => { return loadJobs(); },
     render: renderJobs,
     afterDrag: (): void => { renderJobs(); }, // the catch-up rebuild a deferred poll owes
     drag: {
-      get: (): string | null => { return state.jobs.dragging; },
-      set: (v: string | null): void => { state.jobs.dragging = v; },
+      get: (): string | null => { return jobDragging(); },
+      set: (v: string | null): void => { setJobDragging(v); },
     },
     dragGroup: {
-      get: (): string | null => { return state.jobs.draggingGroup; },
-      set: (v: string | null): void => { state.jobs.draggingGroup = v; },
+      get: (): string | null => { return jobDraggingGroup(); },
+      set: (v: string | null): void => { setJobDraggingGroup(v); },
     },
     rowId: (r: ApiJobRow): string => { return r.name; },
     rowSel: (r: ApiJobRow): string => {
       const v = window.CSS && CSS.escape ? CSS.escape(r.name) : r.name;
       return '[data-job="' + v + '"]';
     },
-    rowsById: (): ApiJobRow[] => { return state.jobs.data; },
+    rowsById: (): ApiJobRow[] => { return jobRows(); },
     groupOfRow: jobGroupOfRow,
     rowsHtml: (g: GroupSlice<ApiJobRow>): string => { return g.rows.map(jobRowHtml).join(""); },
     onMoveRow: moveJobRow,
@@ -183,16 +184,16 @@ function patchJobs(): void {
   if (currentView() !== "jobs") return;
   const pane = $("pane");
   const sig = jobGroupsList().join("\n") + "\u0000" +
-    state.jobs.data.map((j: ApiJobRow): string => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
-  if (!pane.querySelector(".group") || sig !== state.jobs.painted) {
-    if (!state.jobs.dragging && !state.jobs.draggingGroup) renderJobs();
+    jobRows().map((j: ApiJobRow): string => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
+  if (!pane.querySelector(".group") || sig !== paintedJobsSig()) {
+    if (!jobDragging() && !jobDraggingGroup()) renderJobs();
     return;
   }
   Array.prototype.forEach.call(pane.querySelectorAll("[data-job]"), (row: Element): void => {
     let j = null as ApiJobRow | null;
-    state.jobs.data.forEach((cand: ApiJobRow): void => { if (cand.name === row.getAttribute("data-job")) j = cand; });
+    jobRows().forEach((cand: ApiJobRow): void => { if (cand.name === row.getAttribute("data-job")) j = cand; });
     if (!j) return;
-    const busy = state.jobs.busy[j.name];
+    const busy = jobIsBusy(j.name);
     const dot = row.querySelector(".dot") as HTMLElement | null;
     const word = busy ? "starting" : jobDotClass(j!);
     // Title and class move together (docs/18 V6): the poll never rebuilds the list, so a
@@ -210,7 +211,7 @@ function patchJobs(): void {
   // Group counts move with rows: a count that only refreshed on rebuild would disagree with
   // the patched dots beside it for the rest of the poll.
   Array.prototype.forEach.call(pane.querySelectorAll("[data-group]"), (grp: HTMLElement): void => {
-    const n = state.jobs.data.filter((j: ApiJobRow): boolean => { return jobGroupOfRow(j) === grp.dataset.group; }).length;
+    const n = jobRows().filter((j: ApiJobRow): boolean => { return jobGroupOfRow(j) === grp.dataset.group; }).length;
     const badge = grp.querySelector(".grp-n");
     if (badge) badge.textContent = String(n);
   });
@@ -220,7 +221,7 @@ function patchJobs(): void {
 
 function jobByName(name: string | null): ApiJobRow | null {
   let out: ApiJobRow | null = null;
-  state.jobs.data.forEach((j: ApiJobRow): void => { if (j.name === name) out = j; });
+  jobRows().forEach((j: ApiJobRow): void => { if (j.name === name) out = j; });
   return out;
 }
 
@@ -262,13 +263,13 @@ function wireJobs(): void {
  * run outlives the page, and the row stays live through the poll. The toast still names the
  * outcome, because the record settles into the history either way. */
 async function runJob(name: string): Promise<void> {
-  state.jobs.busy[name] = true;
+  setJobBusy(name);
   patchJobs();
   const j = await apiJson<{ runId?: number }>("/api/jobs/" + encodeURIComponent(name) + "/run", {
     method: "POST",
     body: JSON.stringify({ async: true }),
   });
-  if (!j || j.runId == null) { delete state.jobs.busy[name]; patchJobs(); return; }
+  if (!j || j.runId == null) { clearJobBusy(name); patchJobs(); return; }
   const runId = j.runId;
   // Bounded poll: queued -> running -> terminal. The job's own timeoutMs bounds the run; the
   // poll gives up after 30 minutes and lets the history sheet tell the rest of the story.
@@ -280,14 +281,14 @@ async function runJob(name: string): Promise<void> {
     const v = await apiJson<{ runId?: number; state?: string; ms?: number; error?: string }>("/api/runs/" + runId);
     if (!v || !v.state) continue;
     if (v.state === "queued" || v.state === "running") continue;
-    delete state.jobs.busy[name];
+    clearJobBusy(name);
     const ok = v.state === "succeeded";
     toast(name + ": " + v.state + (v.ms != null ? " in " + v.ms + " ms" : "") +
       (v.error ? " \u2014 " + v.error : ""), !ok);
     await loadJobs();
     return;
   }
-  delete state.jobs.busy[name];
+  clearJobBusy(name);
   patchJobs();
   toast(name + " is still running \u2014 watch it in History", false);
 }
@@ -425,9 +426,8 @@ function openJobSheet(job: ApiJobRow | null): void {
   // The Group promise of a header "+", consumed here: the select is the truth from now on.
   let picked: string | null = null;
   if (!editing) {
-    picked = state.jobs.pendingGroup != null ? state.jobs.pendingGroup
-      : resolveDefaultGroup(jobGroupsList(), lastGroup("jobs"));
-    state.jobs.pendingGroup = null;
+    const staged = takeJobPendingGroup();
+    picked = staged != null ? staged : resolveDefaultGroup(jobGroupsList(), lastGroup("jobs"));
   }
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit job" : "New job") + '">' +
@@ -645,9 +645,8 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   const rowGroups = config.groups && config.groups.length ? config.groups : ["default"];
   let picked: string | null = null;
   if (!editing) {
-    picked = state.jobs.pendingGroup != null ? state.jobs.pendingGroup
-      : resolveDefaultGroup(rowGroups, lastGroup("jobs"));
-    state.jobs.pendingGroup = null;
+    const staged = takeJobPendingGroup();
+    picked = staged != null ? staged : resolveDefaultGroup(rowGroups, lastGroup("jobs"));
   }
 
   const actionOpts = actions.map((a: ApiMcpTool): string => {
@@ -865,23 +864,23 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
 
 /* --- the run-history sheet ---------------------------------------------------------------------- */
 
-/* The sheet pages through the JSONL history: each fetch appends to state.jobs.hist and the
+/* The sheet pages through the JSONL history: each fetch appends to the domain buffer and the
    whole sheet re-renders from it, so "Load more" is just another fetch with a cursor. The
    cursor parameter is the v2 spelling (docs/11 §7.3); the records carry the v2 outcome
    fields, so a skipped or missed line says so instead of masquerading as a failed run. */
 async function openRunsSheet(name: string, cursor?: string | null): Promise<void> {
-  if (!cursor || !state.jobs.hist || state.jobs.hist.name !== name) {
-    state.jobs.hist = { name: name, runs: [] };
+  if (!cursor || !jobHistoryIsFor(name)) {
+    startJobHistory(name);
   }
   const j = await apiJson<{ runs?: ApiJobRunRecord[]; nextBefore?: string }>("/api/jobs/" + encodeURIComponent(name) + "/runs?limit=20" +
     (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
   if (!j) return;
-  state.jobs.hist!.runs = state.jobs.hist?.runs.concat(j.runs || []);
+  appendJobRuns(j.runs || []);
   renderRunsSheet(j.nextBefore || null);
 }
 
 function renderRunsSheet(nextBefore?: string | null): void {
-  const hist = state.jobs.hist;
+  const hist = jobHistory();
   const rows = hist?.runs.map((r: ApiJobRunRecord): string => {
     return '<div class="call">' +
       '<button class="call-sum" type="button">' +

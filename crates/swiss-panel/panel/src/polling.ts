@@ -23,6 +23,7 @@ import { rowOf } from "./sidebar.js";
 import { triggerSummary } from "./jobs-v2.js";
 import { currentView } from "./ui-state.js";
 import { setTunResponse, tunBusyOf, tunDragging, tunResponse, mountedTunScope } from "./tunnel-state.js";
+import { jobGroupNames, jobIsBusy, jobRows, setJobGroupNames, setJobRows } from "./job-state.js";
 
 
 /* --- polling ---------------------------------------------------------------------------------- */
@@ -110,7 +111,7 @@ function tunGroupsList(): string[] {
 }
 
 /** The jobs scope's group names (docs/20 G4) — /api/jobs carries them at its top level. */
-function jobGroupsList(): string[] { return state.jobs.groups || ["default"]; }
+function jobGroupsList(): string[] { return jobGroupNames() || ["default"]; }
 
 function setView(v: string): Promise<void> { return navigatePage(v); }
 
@@ -164,7 +165,7 @@ function jobDotClass(j: ApiJobRow): string {
 }
 
 function jobRowHtml(j: ApiJobRow): string {
-  const busy = state.jobs.busy[j.name];
+  const busy = jobIsBusy(j.name);
   // The v2 identity (docs/11 §7.1): the title is the human name when one is set, the id
   // stays beside it because every action still addresses the id.
   const title = j.title && j.title !== j.name ? esc(j.title) + ' <span class="via">· ' + esc(j.name) + "</span>" : esc(j.name);
@@ -195,7 +196,7 @@ function jobRowHtml(j: ApiJobRow): string {
 }
 
 function jobsChipText(): string {
-  const rows = state.jobs.data;
+  const rows = jobRows();
   const on = rows.filter((j) => { return j.enabled; }).length;
   const failing = rows.filter((j) => { return j.enabled && j.lastOk === false; }).length;
   return rows.length + (rows.length === 1 ? " job" : " jobs") + " · " + on + " on" +
@@ -207,8 +208,8 @@ function jobsChipText(): string {
 async function loadJobs(patchOnly?: boolean): Promise<void> {
   const j = await apiJson<ApiJobsResponse>("/api/jobs");
   if (!j) return;
-  state.jobs.data = j.jobs || [];
-  state.jobs.groups = j.groups && j.groups.length ? j.groups : ["default"];
+  setJobRows(j.jobs || []);
+  setJobGroupNames(j.groups && j.groups.length ? j.groups : ["default"]);
   if (currentView() === "jobs") {
     const { patchJobs, renderJobs } = await import("./jobs.js");
     if (patchOnly && $("pane").querySelector("[data-foot]")) patchJobs();

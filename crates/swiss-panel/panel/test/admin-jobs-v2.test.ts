@@ -39,7 +39,6 @@ import {
 let jobRowHtml: (j: Record<string, unknown>) => string;
 let ruleRowHtml: (r: Record<string, unknown>) => string;
 let connRowHtml: (c: Record<string, unknown>) => string;
-let state: { jobs: { busy: Record<string, boolean> } };
 
 beforeAll(async () => {
   const anyG = globalThis as unknown as Record<string, unknown>;
@@ -61,7 +60,6 @@ beforeAll(async () => {
     connRowHtml: (c: Record<string, unknown>) => string;
   };
   ({ jobRowHtml, ruleRowHtml, connRowHtml } = polling);
-  state = (await import("../src/util.js")).state;
 });
 
 describe("visual refresh V5 — one primary action per row", () => {
