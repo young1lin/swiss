@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mods: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let state: any;
+let tunState: any;
 
 beforeAll(async () => {
   const prevDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -64,7 +64,7 @@ beforeAll(async () => {
     if (prevFetch) Object.defineProperty(globalThis, "fetch", prevFetch);
     else delete (globalThis as Record<string, unknown>).fetch;
   });
-  state = (await import("../src/util.js")).state;
+  tunState = await import("../src/tunnel-state.js");
   mods = await import("../src/tunnels.js");
 });
 
@@ -79,19 +79,19 @@ describe("the tunnels plugin's two L2 pages", () => {
 
   it("mounting a page pins its scope, so scope-keyed operations follow the page", async () => {
     await mods.mountTunnelsPage("conns");
-    expect(state.tun.tab).toBe("conns");
+    expect(tunState.mountedTunScope()).toBe("conns");
     await mods.mountTunnelsPage("rules");
-    expect(state.tun.tab).toBe("rules");
+    expect(tunState.mountedTunScope()).toBe("rules");
   });
 
   it("unmount clears the family's cached state, exactly as the old single view did", () => {
-    state.tun.data = { connections: [{ id: "c1" }], rules: [] };
-    state.tun.keys = { keys: [] };
-    state.tun.dragging = "c1";
+    tunState.setTunResponse({ connections: [{ id: "c1" }], rules: [] });
+    tunState.setTunKeys({ keys: [] });
+    tunState.setTunDragging("c1");
     mods.unmountTunnelsPage();
-    expect(state.tun.data).toBe(null);
-    expect(state.tun.keys).toBe(null);
-    expect(state.tun.dragging).toBe(null);
+    expect(tunState.tunResponse()).toBe(null);
+    expect(tunState.tunKeys()).toBe(null);
+    expect(tunState.tunDragging()).toBe(null);
   });
 
   it("isTunnelsView covers exactly the two page ids the guards key on", async () => {
@@ -106,7 +106,7 @@ describe("the tunnels plugin's two L2 pages", () => {
   });
 
   it("the count text names the mounted page's scope", () => {
-    state.tun.data = {
+    tunState.setTunResponse({
       connections: [
         { id: "c1", state: "connected" },
         { id: "c2", state: "down" },
@@ -117,11 +117,11 @@ describe("the tunnels plugin's two L2 pages", () => {
         { id: "r2", state: "down" },
       ],
       ruleGroups: [], connGroups: [], mcps: [],
-    };
+    });
     expect(mods.tunnelsCountText("conns")).toBe("3 connections, 2 connected");
     expect(mods.tunnelsCountText("rules")).toBe("2 rules, 1 active");
     // Singular forms stay honest.
-    state.tun.data.connections = [{ id: "c1", state: "connected" }];
+    tunState.tunResponse().connections = [{ id: "c1", state: "connected" }];
     expect(mods.tunnelsCountText("conns")).toBe("1 connection, 1 connected");
   });
 
@@ -131,6 +131,8 @@ describe("the tunnels plugin's two L2 pages", () => {
     // context bar's page switcher is the one L2 mechanism.
     expect(src).not.toContain('data-tab="conns"');
     expect(src).not.toContain('role="tablist"');
+    // The name of the removed control, guarded as a literal: docs/37 R4 gave the state slice a
+    // reader for the mounted scope, and it is deliberately NOT called this.
     expect(src).not.toContain("tunTab");
     // The scope's actions stayed in the body header, including the rules-only pair.
     expect(src).toContain("tNewConn");

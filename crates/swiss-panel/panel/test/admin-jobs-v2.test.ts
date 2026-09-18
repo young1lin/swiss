@@ -16,6 +16,7 @@
 
 import type { ApiJobRow, ApiJobRunRecord } from "../src/types/api.js";
 import { describe, it, expect, beforeAll } from "vitest";
+import { clearTunBusy, setTunBusy } from "../src/tunnel-state.js";
 import {
   cloneJson,
   defTemplate,
@@ -38,7 +39,7 @@ import {
 let jobRowHtml: (j: Record<string, unknown>) => string;
 let ruleRowHtml: (r: Record<string, unknown>) => string;
 let connRowHtml: (c: Record<string, unknown>) => string;
-let state: { jobs: { busy: Record<string, boolean> }; tun: { busy: Record<string, string> } };
+let state: { jobs: { busy: Record<string, boolean> } };
 
 beforeAll(async () => {
   const anyG = globalThis as unknown as Record<string, unknown>;
@@ -109,10 +110,10 @@ describe("visual refresh V6 — the status dot carries a title", () => {
   it("the rule dot: error names its reason, a busy row says starting", () => {
     const bad = ruleRowHtml({ id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "error", reason: "SSH refused" });
     expect(bad).toContain('<span class="dot error" data-dot title="error: SSH refused"></span>');
-    state.tun.busy = { r2: "start" };
+    setTunBusy("r2", "start");
     const busy = ruleRowHtml({ id: "r2", name: "pg", localPort: 18990, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "down" });
     expect(busy).toContain('<span class="dot starting" data-dot title="starting"></span>');
-    state.tun.busy = {};
+    clearTunBusy("r2");
   });
 
   it("the connection dot: connected reads as up", () => {

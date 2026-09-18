@@ -113,7 +113,7 @@ const MASK = "\u2022".repeat(8);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mods: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let state: any;
+let tunState: any;
 
 beforeAll(async () => {
   const anyG = globalThis as unknown as Record<string, unknown>;
@@ -136,7 +136,7 @@ beforeAll(async () => {
     };
   };
   anyG.document = doc;
-  state = (await import("../src/util.js")).state;
+  tunState = await import("../src/tunnel-state.js");
   mods = {
     polling: await import("../src/polling.js"),
     sheets: await import("../src/tunnel-sheets.js"),
@@ -144,8 +144,8 @@ beforeAll(async () => {
 });
 
 function seedTunData(connections: Array<Record<string, unknown>>) {
-  state.tun.tab = "conns";
-  state.tun.data = { connections, rules: [], ruleGroups: [], connGroups: ["default"], mcps: [] };
+  tunState.setMountedTunScope("conns");
+  tunState.setTunResponse({ connections, rules: [], ruleGroups: [], connGroups: ["default"], mcps: [] });
 }
 
 function openSheet(def: Record<string, unknown> | null): string {
