@@ -84,6 +84,14 @@ export default tseslint.config(
        * warn; the exact per-file counts are frozen by test/non-null-ratchet.test.ts, which
        * fails on any growth. Clean files get the full error. */
       "@typescript-eslint/no-non-null-assertion": "error",
+      /* R4, not a row on the docs/37 §9 table - added because the state slices kept leaving
+       * dead `state` imports behind and nothing caught them. This config lists its rules one
+       * by one instead of spreading a preset, so no-unused-vars was simply absent; switching
+       * it on found 21 sites that predate R4 entirely. The ratchet only tightens, so it goes
+       * in as an error with the sites cleared, not as a warning inventory.
+       * caughtErrors is off: the deliberate `catch (e) { /* comment *\/ }` swallows are the
+       * house idiom for "this failure is the expected path", and the comment IS the handling. */
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", caughtErrors: "none" }],
     },
   },
   {

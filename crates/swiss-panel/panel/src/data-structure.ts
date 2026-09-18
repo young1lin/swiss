@@ -16,7 +16,7 @@
 
 import type { ApiDbColumn, ApiDbConnectionRow, ApiDbFkRow, ApiDbTableDetail } from "./types/api.js";
 import type { DbDetailSpec, DbState } from "./types/state.js";
-import { $, apiJson, dbReqGuard, el, state } from "./util.js";
+import { apiJson, dbReqGuard, el, state } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbDialectOf, dbOkToDrop, dbOpenTable } from "./data-view.js";
 import { openDbDdlSheet } from "./data-ddl.js";

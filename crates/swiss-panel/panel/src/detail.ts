@@ -22,7 +22,7 @@ import { callsErrHtml, callsStatusHtml, fmtJson, mountJsonTrees } from "./logs.j
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { loadList } from "./polling.js";
-import { histOpen, renderCallsOnly } from "./run-history.js";
+import { renderCallsOnly } from "./run-history.js";
 import { rowOf } from "./sidebar.js";
 import { setMenuOpen } from "./ui-state.js";
 

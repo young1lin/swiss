@@ -20,14 +20,13 @@ import type { ApiMcpResourceRead, McpConfigLike, McpRevisionRow, McpRunResult, M
 import type { McpDetail } from "./types/state.js";
 import { $, api, apiJson, errText, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
-import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
+import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
 import { popupMenu } from "./menu.js";
 import { closeMenu } from "./pane.js";
 import { copyLogText, fmtChars, fmtJson, logsBody, mountJsonTrees, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
-import { rowOf } from "./sidebar.js";
 import { ago } from "./traffic.js";
 import { menuIsOpen } from "./ui-state.js";
 
@@ -127,7 +126,7 @@ function histOpen(): void {
     '<div class="hist-empty">Hover a run to see it in full — the arguments and the reply it produced.</div>' +
     "</div>";
   document.body.appendChild(pop);
-  wireHistRows(d);
+  wireHistRows();
   const box = $<HTMLInputElement>("r-hist-q");
   if (box) {
     box.value = d.run.histQ || "";
@@ -255,7 +254,7 @@ function renderHistoryOnly(): void {
   const list = $("r-hist-list");
   if (list && d.run.histOpen) {
     list.innerHTML = histRowsHtml(d, d.run.tool);
-    wireHistRows(d);
+    wireHistRows();
     if (d.run.histSelSeq != null) void histPreview(d.run.histSelSeq); // keep what was being read
   }
 }
@@ -286,7 +285,7 @@ async function applyRunHistory(seq: number): Promise<void> {
 }
 
 /** Bind the popover's rows: hover/focus previews in full, click refills the form and closes. */
-function wireHistRows(d: McpDetail): void {
+function wireHistRows(): void {
   // NOTE: the popover lives on <body> (histOpen), not inside #tabbody — selecting from #tabbody
   // here is why hover never fired: the rows existed, the wiring found none of them.
   document.querySelectorAll<HTMLElement>("#r-hist-pop .hist-row").forEach((row) => {
@@ -548,7 +547,7 @@ function tunnelDepsHtml(d: McpDetail): string {
   return '<div class="cap">Depends on</div><div class="group">' + rows + "</div><div style=\"height:var(--s5)\"></div>";
 }
 
-function wireTabBody(d: McpDetail, m: unknown): void {
+function wireTabBody(d: McpDetail): void {
   const prev = $("pgPrev"); if (prev) prev.onclick = pagePrev;
   const next = $("pgNext"); if (next) next.onclick = pageNext;
   const edit = $("c-edit"); if (edit) edit.onclick = startEdit;
@@ -794,7 +793,7 @@ function renderCallsOnly(): void {
     try { liveQ.setSelectionRange(caret, caret); } catch (err) { /* type=search supports it; guard anyway */ }
   }
   body.dataset.callsig = sig;
-  wireTabBody(d, rowOf(d.name) || {});
+  wireTabBody(d);
   mountJsonTrees(d); // docs/33 C2: open rows get their trees back, expansion restored
 }
 

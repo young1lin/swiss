@@ -19,7 +19,7 @@
 import { $, apiJson, dbReqGuard, el, emptyHtml, errText, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
-import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 // Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
 // runtime-only use — the same shape as the data-sql import above.
@@ -345,7 +345,6 @@ function dbRedisTtl(v                 )              {
  *  struck rows, the narrow ✕/↩ control column), pointing at the redis buffer instead of the
  *  SQL edit buffer. */
 function dbRedisTypedTable(wrap             , v                 , cfg                )       {
-  const d = state.db;
   const b = dbRedisEdits();
   if (!b) return;
   const tbl = el("table", "db-grid");

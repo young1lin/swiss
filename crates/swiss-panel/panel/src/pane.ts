@@ -154,7 +154,7 @@ function renderPane(): void {
     b.onclick = () => { showTab(b.dataset.tab!); };
   });
   const d_ = d!;
-  wireTabBody(d_, m);
+  wireTabBody(d_);
   // A late tools/list response re-renders the pane; without this the ... menu you opened a moment
   // ago would just disappear. The menu is state, so it is restored like any other.
   if (menuWasOpen) openMenu(d_, m);
@@ -179,7 +179,7 @@ function openMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
   const live = rowOf(d.name) || m;
   host.insertAdjacentHTML("beforeend", menuHtml(live));
   setMenuOpen(true);
-  wireMenu(d, live);
+  wireMenu(d);
 }
 function closeMenu(): void {
   const node = $("menu");
@@ -216,7 +216,7 @@ function menuHtml(m: ApiMcpRow | PhantomMcpRow): string {
     '<hr><button class="danger" data-act="delete">Delete</button>' +
     "</div>";
 }
-function wireMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
+function wireMenu(d: McpDetail): void {
   $("menu").querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
     b.onclick = (ev) => {
       ev.stopPropagation();

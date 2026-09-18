@@ -166,7 +166,6 @@ function dbInlineDismiss(ev: MouseEvent): void {
 }
 
 function dbOpenInlineEdit(kind: string, key: string, i: number, column: string, meta: DbCellMeta, td: HTMLElement, current: string): void {
-  const d = state.db;
   if (dbInlineEdit) dbCloseInlineEdit();
   const rect = td.getBoundingClientRect();
   const wrap = $("dbGridWrap");
