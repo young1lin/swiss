@@ -125,7 +125,7 @@ impl PluginFactory for TerminalPlugin {
                     "recording": {
                         "type": "boolean",
                         "default": true,
-                        "description": "asciicast v2, output only, ~/.mcp-gateway/terminal/<sessionId>.cast, 8 MB cap."
+                        "description": "asciicast v2, output only, ~/.swiss/terminal/<sessionId>.cast, 8 MB cap."
                     }
                 },
                 "additionalProperties": false
@@ -187,7 +187,7 @@ struct TerminalInstance {
 #[async_trait]
 impl PluginInstance for TerminalInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
-        // Recordings land in ~/.mcp-gateway/terminal/<sessionId>.cast. Created eagerly
+        // Recordings land in ~/.swiss/terminal/<sessionId>.cast. Created eagerly
         // so a session open never races a mkdir, and so a read-only data dir fails
         // HERE — on the inventory row — instead of on the first open.
         let dir = swiss_core::paths::data_path(&["terminal"]);

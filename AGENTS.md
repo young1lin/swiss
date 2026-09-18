@@ -203,5 +203,5 @@ working tree, on every platform — CRLF never enters a commit.
 - **Write all code comments in English**, including in docs code samples.
 - **Never commit** `gateway.config.json`, `.env`, `managed.json`, `tunnels.json`, `master.key` or
   `*.log` — all gitignored, all carry real secrets locally. The same goes for
-  `~/.mcp-gateway/terminal/*.cast`: a terminal recording is output-only by design, but shells echo
+  `~/.swiss/terminal/*.cast`: a terminal recording is output-only by design, but shells echo
   what was typed, so a recording can still hold a password that was entered.

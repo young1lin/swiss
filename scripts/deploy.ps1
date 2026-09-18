@@ -36,7 +36,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Exe = 'target\release\swiss.exe'
 . "$PSScriptRoot\deploy-lock.ps1"
-$Home_ = if ($env:SWISS_HOME) { $env:SWISS_HOME } else { Join-Path $env:USERPROFILE '.mcp-gateway' }
+$Home_ = Get-SwissProdHome
 $DeployLog = Join-Path $Home_ 'deploy.log'
 function Fail($message) {
     Write-Host $message -ForegroundColor Red

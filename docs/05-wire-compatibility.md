@@ -9,10 +9,10 @@ Get it wrong and the user's configuration has to be exported and re-imported by 
 
 ## The data directory
 
-`~/.mcp-gateway` (overridable with `SWISS_HOME` / the legacy `MCP_GATEWAY_HOME`). Verified layout on this machine, 2026-09-07:
+`~/.swiss` (overridable with `SWISS_HOME` / the legacy `MCP_GATEWAY_HOME`). Verified layout on this machine, 2026-09-07 (under the pre-rename name; the contents are unchanged):
 
 ```
-~/.mcp-gateway/
+~/.swiss/
   gateway.config.json      sealed   server layout, port, host, tokenEnv
   managed.json             sealed   user-added MCPs, overrides, toggles, enabled flags, tokens
   tunnels.json             sealed   SSH connections + forward rules
@@ -32,11 +32,20 @@ Port-scoping is deliberate and load-bearing: two gateways on different ports mus
 shared PID ledger let one instance's reap kill the other instance's live children. Keep the naming.
 
 > **Rename note:** the product is now named `swiss`; the on-disk wire surface is unchanged — the
-> `~/.mcp-gateway` home, the state file names, the sealed envelope (its `"lmg": 1` marker and
-> `lmg-state-v1` HKDF info are frozen history a rename must not touch), and the config field
-> names, including legacy `tokenEnv` values seeded with `MCP_GATEWAY_TOKEN`. Env overrides are
-> now read as `SWISS_HOME` / `SWISS_PORT` / `SWISS_TOKEN` / `SWISS_MASTER_KEY` first, with the
-> `MCP_GATEWAY_*` names still honored, so state and shells written before the rename keep working.
+> state file names, the sealed envelope (its `"lmg": 1` marker and `lmg-state-v1` HKDF info are
+> frozen history a rename must not touch), and the config field names, including legacy
+> `tokenEnv` values seeded with `MCP_GATEWAY_TOKEN`. Env overrides are read as `SWISS_HOME` /
+> `SWISS_PORT` / `SWISS_TOKEN` / `SWISS_MASTER_KEY` first, with the `MCP_GATEWAY_*` names still
+> honored, so state and shells written before the rename keep working.
+>
+> **The home directory did move** (2026-09-18): `~/.mcp-gateway` -> `~/.swiss`. The files inside
+> are path-independent (DPAPI binds `master.key` to machine+user, not to a directory — the
+> test-instance script has copied it into another home since docs/16), so the move is one
+> `rename` of the whole directory, done by `swiss start` / `restart` and at `serve` boot
+> (`swiss_core::paths::migrate_legacy_home`), refused while a `gateway-<port>.pid` in the old
+> home names a live process. Until it happens, `data_dir()` keeps answering with the old
+> directory, so every subcommand — `stop` included — still finds the running daemon's files.
+> Nothing is ever written under the old name once `~/.swiss` holds files.
 
 ### The group keys (docs/20)
 

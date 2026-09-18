@@ -64,6 +64,13 @@ pub async fn run_gateway() -> Result<(), String> {
     let login_path = swiss_host::pathenv::login_path_from_env();
     unsafe { std::env::set_var("PATH", &login_path) };
 
+    // The one-time `~/.mcp-gateway` -> `~/.swiss` move, before anything opens a state file.
+    // `swiss start` already did it before spawning us; this covers a foreground `serve` and
+    // `start -f`. Blocked/failed is logged and the old directory keeps serving (paths.rs).
+    match swiss_core::paths::migrate_legacy_home() {
+        swiss_core::paths::LegacyHomeMigration::NotNeeded => {}
+        outcome => log::log("info", "state home migration", Some(json!(format!("{outcome:?}")))),
+    }
     // Create the data dir, seed a default config, and guarantee a token exists — before
     // load_config reads that token. A no-op on every boot after the first.
     ensure_first_run();

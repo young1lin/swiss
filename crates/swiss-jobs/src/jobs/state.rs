@@ -18,7 +18,7 @@
 //! gateway-maintained FACT about runs. The two must not share a writable file
 //! (docs/10 §5): editing a definition can never fabricate or lose a "last ran" fact.
 //!
-//! `~/.mcp-gateway/jobs-state.json`, sealed and private-permission like every state
+//! `~/.swiss/jobs-state.json`, sealed and private-permission like every state
 //! file (docs/11 §2 rule 1). Only SMALL BOUNDED facts live here - one line per job:
 //! when it last started, whether that run exited 0, the coordinator's run id, and a
 //! consecutive-failure counter. Output, command text and credential references never
