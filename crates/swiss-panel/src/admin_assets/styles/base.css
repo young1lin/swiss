@@ -280,8 +280,6 @@
       color: var(--text-2);
     }
     .rail-btn .ic { width: 17px; height: 17px; }
-    /* Unknown third-party plugins have no glyph in the sprite; their initial stands in. */
-    .rail-glyph { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; font-size: 12px; font-weight: 650; line-height: 1; }
     .rail-btn-label {
       font-size: 9px; letter-spacing: .01em; max-width: 52px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
