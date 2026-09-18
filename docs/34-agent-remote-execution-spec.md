@@ -153,6 +153,50 @@ row, and the Add/Edit sheet carries the family's Group select - one POST, the ro
 born into its group. The names ride with the rows in the one `GET /api/remote/targets`
 response, so the page paints from a single read.
 
+## R9 - the run log (2026-09-18)
+
+The coordinator's finished ring is 32 views in memory and gone at restart; the build an
+agent kicked off at 3 a.m. must still be readable in the morning, in the panel. So every
+`remote.*` run now leaves a durable record beside the target table:
+
+```
+~/.swiss/logs/remote/
+  runs.jsonl          one line per FINISHED run: the /api/runs row as it was (runId, state,
+                      exitCode, ms, timedOut/canceled, error, meta.target/endpoint) plus
+                      input (argv, cwd, target, sync/pull paths; env as envKeys ONLY - the
+                      values may be secrets), outputBytes, and outputCapped + tail when the
+                      output file hit its cap
+  out/<runId>.txt     the whole stdout+stderr stream, teed as it flowed (head up to 16 MiB;
+                      past that the record keeps the last 64 KiB as `tail`)
+```
+
+Budgets, oldest-first: **30 days**, **500 MiB** on disk (index plus output files), 5000
+runs. Checked in O(1) on every finish and every page read from a tracked ledger; the full
+pass (two streaming walks, a tmp+rename rewrite) runs only when a budget is over.
+
+The seam is the host's (`RunHistorySink` in `swiss-host/src/services/runs.rs`): a sink
+sees a run START — and hands back a tee that receives every output append — then its
+terminal view once, before the view enters the finished ring. The remote plugin registers
+`swiss-remote/src/history.rs` at start and removes it at stop; the host never learns a
+directory. `RunView` gained `meta` (the action's outcome extras) so a run row can say what
+it ran against.
+
+Routes, under the plugin's `/api/remote`:
+
+| route | answers |
+|---|---|
+| `GET /api/remote/runs?before=&limit=&target=` | `runs` (recorded, newest first, paged by run id), `active` (queued/running remote runs from the coordinator, with their in-flight `input`), `nextBefore`, `limits`, `usage` |
+| `GET /api/remote/runs/{id}` | one record (404 when unknown or evicted) |
+| `GET /api/remote/runs/{id}/output?after=&max=` | the recorded stream from a byte cursor, the live route's shape plus `total` |
+| `DELETE /api/remote/runs` | forget everything |
+
+The panel: **Remote / Runs**, the plugin's second page (the context bar switches Targets
+and Runs — sibling pages, never page-local tabs). A Traffic-shaped card: live runs first
+(output followed on a 1.5 s timer while the row is open, Cancel in the body head), the
+record under them; a row opens to its output (128 KiB a read, Load more), the capped tail,
+the error; a target filter and Clear. `views/remote-runs.js`; vitest
+`admin-remote-runs-view.test.ts`.
+
 ## Where the tests live
 
 - `swiss-host`: registry/contract fakes + run output buffer cursor semantics (runs.rs).
@@ -161,7 +205,10 @@ response, so the page paints from a single read.
 - `swiss-remote`: target validation/store, project binding discovery, all three actions
   (streaming, tail bounds, cancel outcome, sudo passes through, unknown target, honest
   no-transport error, sync skip/upload, pull round-trip), `/api/remote` route policy, and
-  the submit-to-output E2E chain through the REAL host run routes. The group contract:
+  the submit-to-output E2E chain through the REAL host run routes. The run log (R9):
+  `history.rs` unit tests (tee + record, env keys only, cap + tail, the three budgets,
+  paging + filter, orphan sweep, clear) and the `recorded` chain test (a real run through
+  the real routes leaves a readable record). The group contract:
   store family semantics (pin/rename/reorder/legacy shape), the scope unit test, and the
   root integration test `the_family_serves_the_targets_scope` (tests/adminapi.rs).
 - Root: plugin lifecycle (start registers/stop withdraws and unregisters), CLI parsing

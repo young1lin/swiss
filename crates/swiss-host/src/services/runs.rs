@@ -52,7 +52,9 @@ use tokio::task::JoinHandle;
 
 use crate::services::action::{
     ActionContext, ActionError, ActionOutcome, ActionRegistry, CancelSource, RunOutputSink,
+    RunOutputTee,
 };
+use serde_json::Map;
 use swiss_core::util::now_ms;
 
 /// Finished runs kept in memory for the API (bounded history: the ring holds at most this
@@ -72,6 +74,22 @@ pub const KEEP_FINISHED_OUTPUT_BYTES: usize = 64 * 1024;
 /// The largest chunk one output read returns, so a single poll cannot materialise the
 /// whole retained window into one response and one String.
 pub const MAX_OUTPUT_READ_BYTES: usize = 128 * 1024;
+
+/// A durable record of runs, provided by the plugin whose runs must outlive the process
+/// (2026-09-18, the remote run log): the coordinator itself keeps the 32-view ring in
+/// memory and nothing else. A sink sees a run START — and may attach a tee that receives
+/// every output append — and then its terminal view, once. Where that goes, for how long
+/// and under what budget is the sink's business, so the host never learns a directory.
+/// Registered by a plugin's start and removed by its stop, like every other seat.
+pub trait RunHistorySink: Send + Sync {
+    /// A run is about to execute (queued runs are not announced). `Some(tee)` records
+    /// it: the tee receives the output stream and `finish` follows with the terminal
+    /// view. `None` leaves the run to the in-memory ring alone.
+    fn begin(&self, run_id: u64, request: &SubmitRequest) -> Option<Arc<dyn RunOutputTee>>;
+    /// The terminal view of a run `begin` accepted — called before the view enters the
+    /// finished ring, so a client that sees the run terminal can already read the record.
+    fn finish(&self, view: &RunView, request: &SubmitRequest);
+}
 
 /// One run's bounded live output: a monotonic byte cursor over everything ever appended,
 /// with the oldest data evicted when the cap is hit. A follower polls with the cursor its
@@ -283,6 +301,9 @@ pub struct RunView {
     pub output: Option<String>,
     pub chars: Option<usize>,
     pub output_truncated: bool,
+    /// The action's own extras (a remote run's target and endpoint, a sync's counts) —
+    /// what the outcome carried, so a run row can say WHAT ran without re-reading input.
+    pub meta: Map<String, Value>,
 }
 
 impl RunView {
@@ -325,6 +346,9 @@ impl RunView {
         }
         if self.output_truncated {
             m.insert("outputTruncated".into(), json!(true));
+        }
+        if !self.meta.is_empty() {
+            m.insert("meta".into(), Value::Object(self.meta.clone()));
         }
         if include_output {
             if let Some(out) = &self.output {
@@ -387,6 +411,9 @@ struct Inner {
 pub struct RunCoordinator {
     registry: Arc<ActionRegistry>,
     inner: Mutex<Inner>,
+    /// The history sinks (usually none, at most one per plugin that keeps a record).
+    /// Its own lock: a sink is consulted at run start, outside the bookkeeping lock.
+    history: Mutex<Vec<Arc<dyn RunHistorySink>>>,
 }
 
 impl RunCoordinator {
@@ -404,7 +431,47 @@ impl RunCoordinator {
                 capacity: RunCapacity::default(),
                 ..Inner::default()
             }),
+            history: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Attach a history sink (a plugin's start). Runs already executing are not
+    /// announced to it — a record begins with the next run to start.
+    pub fn add_history_sink(&self, sink: Arc<dyn RunHistorySink>) {
+        let mut sinks = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        if !sinks.iter().any(|s| Arc::ptr_eq(s, &sink)) {
+            sinks.push(sink);
+        }
+    }
+
+    /// Detach a sink (a plugin's stop). A run it already accepted still gets its
+    /// `finish`: the recorders were captured at start, so a record is never left open.
+    pub fn remove_history_sink(&self, sink: &Arc<dyn RunHistorySink>) {
+        let mut sinks = self.history.lock().unwrap_or_else(|e| e.into_inner());
+        sinks.retain(|s| !Arc::ptr_eq(s, sink));
+    }
+
+    /// How many history sinks are attached — the lifecycle tests' evidence that a
+    /// plugin's stop gave its seat back.
+    pub fn history_sinks(&self) -> usize {
+        self.history.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    /// The sinks that want this run, each with the tee it handed back.
+    fn history_begin(
+        &self,
+        run_id: u64,
+        request: &SubmitRequest,
+    ) -> Vec<(Arc<dyn RunHistorySink>, Arc<dyn RunOutputTee>)> {
+        let sinks = self
+            .history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        sinks
+            .into_iter()
+            .filter_map(|sink| sink.begin(run_id, request).map(|tee| (sink, tee)))
+            .collect()
     }
 
     /// The pool's current bounds.
@@ -565,7 +632,10 @@ impl RunCoordinator {
         done: oneshot::Sender<RunView>,
         output: Arc<RunOutputBuffer>,
     ) -> RunView {
-        let (result, timed_out) = drive_action(&self.registry, &request, &cancel, &output).await;
+        let recorders = self.history_begin(run_id, &request);
+        let tees: Vec<Arc<dyn RunOutputTee>> = recorders.iter().map(|(_, t)| t.clone()).collect();
+        let (result, timed_out) =
+            drive_action(&self.registry, &request, &cancel, &output, tees).await;
         let ended_at = now_ms();
         let mut view = RunView {
             run_id,
@@ -585,6 +655,7 @@ impl RunCoordinator {
             output: None,
             chars: None,
             output_truncated: false,
+            meta: Map::new(),
         };
         match result {
             Ok(outcome) => {
@@ -598,6 +669,7 @@ impl RunCoordinator {
                     .get("outputTruncated")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                view.meta = outcome.meta;
                 // The deadline layer owns the timeout truth; the action's own canceled
                 // flag only counts as a cancel when the deadline did not cause it.
                 view.canceled = outcome.canceled && !timed_out;
@@ -619,6 +691,12 @@ impl RunCoordinator {
                     RunState::Failed
                 };
             }
+        }
+        // The durable record first, so the run is never terminal in the API before its
+        // history row exists; the sinks were captured at start, so a plugin stop in
+        // between cannot orphan a record.
+        for (sink, _) in &recorders {
+            sink.finish(&view, &request);
         }
         self.finish(run_id, view.clone());
         // The submitter may already be gone (fire-and-forget scheduled runs) — that is
@@ -829,6 +907,7 @@ impl RunCoordinator {
                 output: None,
                 chars: None,
                 output_truncated: false,
+                meta: Map::new(),
             });
         }
         for (run_id, a) in &inner.active {
@@ -850,6 +929,7 @@ impl RunCoordinator {
                 output: None,
                 chars: None,
                 output_truncated: false,
+                meta: Map::new(),
             });
         }
         views.extend(inner.finished.iter().cloned());
@@ -878,6 +958,7 @@ impl RunCoordinator {
                 output: None,
                 chars: None,
                 output_truncated: false,
+                meta: Map::new(),
             });
         }
         if let Some(a) = inner.active.get(&run_id) {
@@ -899,6 +980,7 @@ impl RunCoordinator {
                 output: None,
                 chars: None,
                 output_truncated: false,
+                meta: Map::new(),
             });
         }
         inner.finished.iter().find(|v| v.run_id == run_id).cloned()
@@ -914,6 +996,7 @@ async fn drive_action(
     request: &SubmitRequest,
     cancel: &Arc<CancelSource>,
     output: &Arc<RunOutputBuffer>,
+    tees: Vec<Arc<dyn RunOutputTee>>,
 ) -> (Result<ActionOutcome, ActionError>, bool) {
     let Some(action) = registry.get(&request.action_type) else {
         return (
@@ -929,7 +1012,7 @@ async fn drive_action(
     // execute_with_context; actions that predate it simply never touch the sink.
     let ctx = ActionContext {
         cancel: cancel.handle(),
-        output: RunOutputSink::new(output.clone()),
+        output: RunOutputSink::new(output.clone(), tees),
     };
     let exec = AssertUnwindSafe(action.execute_with_context(&request.input, ctx)).catch_unwind();
     tokio::pin!(exec);
@@ -986,6 +1069,7 @@ fn queued_canceled_view(run_id: u64, request: &SubmitRequest, queued_at_ms: u64)
         output: None,
         chars: None,
         output_truncated: false,
+        meta: Map::new(),
     }
 }
 #[cfg(test)]

@@ -21,13 +21,15 @@
 
 use std::sync::{Arc, RwLock};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use swiss_host::reply::{admin_error, admin_json};
+
+use crate::history::{OutputChunk, PAGE_SIZE};
 
 use crate::target::RemoteTarget;
 use crate::RemoteSystem;
@@ -77,7 +79,165 @@ pub fn mount(state: Arc<RemoteState>) -> Router<()> {
             "/api/remote/targets/{id}",
             get(get_target).post(update_target).delete(delete_target),
         )
+        // The run log (history.rs): the durable record the panel's Runs pane reads.
+        // Live runs stay on the host's /api/runs; a history row is the same shape.
+        .route("/api/remote/runs", get(list_runs).delete(clear_runs))
+        .route("/api/remote/runs/{id}", get(get_run))
+        .route("/api/remote/runs/{id}/output", get(run_output))
         .with_state(state)
+}
+
+#[derive(serde::Deserialize)]
+struct RunsQuery {
+    before: Option<String>,
+    limit: Option<String>,
+    target: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct RunOutputQuery {
+    after: Option<String>,
+    max: Option<String>,
+}
+
+/// GET /api/remote/runs?before=&limit=&target=: one page of recorded runs, newest
+/// first, plus the remote runs the coordinator holds right now that are NOT yet in
+/// the record (queued / running) so the pane paints from one read. `nextBefore` is
+/// the cursor for the older page; absent on the last one. The budgets and what they
+/// currently hold ride along so the page can say what "kept" means.
+async fn list_runs(
+    State(state): State<Arc<RemoteState>>,
+    Query(query): Query<RunsQuery>,
+) -> Response {
+    let Some(system) = state.live() else {
+        return not_running();
+    };
+    let before = query.before.as_deref().and_then(|b| b.parse::<u64>().ok());
+    let limit = query
+        .limit
+        .as_deref()
+        .and_then(|l| l.parse::<usize>().ok())
+        .unwrap_or(PAGE_SIZE);
+    let target = query.target.as_deref().filter(|t| !t.is_empty());
+    let history = system.history();
+    let (runs, next_before) = history.page(before, limit, target);
+    // Active = not terminal: the record only ever holds finished runs, so there is
+    // no overlap to reconcile.
+    let active: Vec<Value> = system
+        .services()
+        .runs
+        .list()
+        .into_iter()
+        .filter(|v| v.action_type.starts_with("remote.") && !v.state.is_terminal())
+        .map(|v| {
+            let mut row = v.to_json(false);
+            if let Some(input) = history.in_flight_input(v.run_id) {
+                row["input"] = input;
+            }
+            row
+        })
+        .filter(|row| {
+            target.is_none_or(|t| row["input"]["target"].as_str() == Some(t))
+        })
+        .collect();
+    let limits = history.limits();
+    let (bytes, count) = history.usage();
+    let mut body = json!({
+        "runs": runs,
+        "active": active,
+        "limits": {
+            "maxAgeMs": limits.max_age_ms,
+            "maxTotalBytes": limits.max_total_bytes,
+            "maxRuns": limits.max_runs,
+            "maxOutputBytes": limits.max_output_bytes,
+        },
+        "usage": { "bytes": bytes, "runs": count },
+    });
+    if let Some(next) = next_before {
+        body["nextBefore"] = json!(next);
+    }
+    admin_json(StatusCode::OK, body)
+}
+
+/// GET /api/remote/runs/{id}: one recorded run — the row plus `tail` when its output
+/// file was capped.
+async fn get_run(State(state): State<Arc<RemoteState>>, Path(id): Path<String>) -> Response {
+    let Some(system) = state.live() else {
+        return not_running();
+    };
+    let Some(run_id) = id.parse::<u64>().ok() else {
+        return unknown_run(&id);
+    };
+    match system.history().get(run_id) {
+        Some(record) => admin_json(StatusCode::OK, record),
+        None => unknown_run(&id),
+    }
+}
+
+/// GET /api/remote/runs/{id}/output?after=&max=: the recorded output from a byte
+/// cursor, in the live route's shape (`cursor` / `nextCursor` / `output` / `terminal`)
+/// plus `total`, so the panel reads a finished run with the reader it follows a live
+/// one with. A run that ran silently answers an empty chunk; an unknown id 404s.
+async fn run_output(
+    State(state): State<Arc<RemoteState>>,
+    Path(id): Path<String>,
+    Query(query): Query<RunOutputQuery>,
+) -> Response {
+    let Some(system) = state.live() else {
+        return not_running();
+    };
+    let Some(run_id) = id.parse::<u64>().ok() else {
+        return unknown_run(&id);
+    };
+    let after = query.after.and_then(|a| a.parse::<u64>().ok()).unwrap_or(0);
+    let max = query
+        .max
+        .and_then(|m| m.parse::<usize>().ok())
+        .unwrap_or(usize::MAX);
+    let history = system.history();
+    let chunk = match history.output(run_id, after, max) {
+        Some(chunk) => chunk,
+        None => {
+            // No file: either the run never wrote (a record exists) or it is unknown.
+            if history.get(run_id).is_none() {
+                return unknown_run(&id);
+            }
+            OutputChunk {
+                text: String::new(),
+                cursor: 0,
+                next_cursor: 0,
+                total: 0,
+            }
+        }
+    };
+    admin_json(
+        StatusCode::OK,
+        json!({
+            "runId": run_id,
+            "cursor": chunk.cursor,
+            "nextCursor": chunk.next_cursor,
+            "output": chunk.text,
+            "total": chunk.total,
+            "truncated": false,
+            "terminal": true,
+        }),
+    )
+}
+
+/// DELETE /api/remote/runs: forget the whole record — the pane's Clear.
+async fn clear_runs(State(state): State<Arc<RemoteState>>) -> Response {
+    let Some(system) = state.live() else {
+        return not_running();
+    };
+    system.history().clear();
+    admin_json(StatusCode::OK, json!({ "ok": true }))
+}
+
+fn unknown_run(id: &str) -> Response {
+    admin_error(
+        StatusCode::NOT_FOUND,
+        &format!("no recorded remote run {id}"),
+    )
 }
 
 /// The defensive branch: the boundary should have answered this, but a mounted

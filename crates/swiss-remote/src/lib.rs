@@ -36,6 +36,7 @@
 pub mod actions;
 pub mod api;
 pub mod groups;
+pub mod history;
 pub mod project;
 pub mod sync;
 pub mod target;
@@ -45,6 +46,7 @@ use std::sync::{Arc, Mutex};
 use swiss_host::services::RuntimeServices;
 
 pub use groups::register_remote_scopes;
+pub use history::RunHistory;
 use target::TargetStore;
 
 /// The shared seat the routes and actions read through: the sealed target table plus
@@ -55,18 +57,35 @@ pub struct RemoteSystem {
     /// The target table. Locked briefly per operation (resolve, list, mutate) - never
     /// across an await: an hours-long run holds NO lock here.
     store: Mutex<TargetStore>,
+    /// The durable run log (history.rs), one per system for the same reason the table
+    /// is: a plugin restart mid-run must finish its record into the SAME instance,
+    /// and the orphan sweep at open must run once, before any run is in flight.
+    history: Arc<RunHistory>,
 }
 
 impl RemoteSystem {
+    /// `targets_path` is the sealed table (`<home>/remote.json`); the run log lives
+    /// beside it at `<home>/logs/remote`, so one path names the whole footprint.
     pub fn open(services: Arc<RuntimeServices>, targets_path: std::path::PathBuf) -> Arc<Self> {
+        let history_dir = targets_path
+            .parent()
+            .map(|home| home.join("logs").join("remote"))
+            .unwrap_or_else(|| std::path::PathBuf::from("logs").join("remote"));
         Arc::new(RemoteSystem {
             services,
             store: Mutex::new(TargetStore::open(targets_path)),
+            history: RunHistory::open(history_dir),
         })
     }
 
     pub fn services(&self) -> &Arc<RuntimeServices> {
         &self.services
+    }
+
+    /// The run log — what the plugin registers as the coordinator's history sink and
+    /// what /api/remote/runs reads.
+    pub fn history(&self) -> &Arc<RunHistory> {
+        &self.history
     }
 
     /// Run a closure over the table under its lock. For mutations only; reads on the
@@ -565,5 +584,140 @@ mod chain {
         let run: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(run["state"], "succeeded");
         assert_eq!(run["exitCode"], 0);
+    }
+}
+
+/// The durable half of the chain (history.rs): with the run log registered as the
+/// coordinator's history sink — exactly what the plugin's start does — a remote exec
+/// leaves a record the /api/remote/runs routes read back after the ring would have
+/// forgotten it, output stream included, and a foreign run leaves none.
+#[cfg(test)]
+mod recorded {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    async fn call(app: &axum::Router, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(if body.is_null() {
+                Body::empty()
+            } else {
+                Body::from(serde_json::to_string(&body).unwrap())
+            })
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    #[tokio::test]
+    async fn a_finished_remote_run_is_readable_from_the_record() {
+        let (system, fake) = crate::testing::system_with_fake();
+        fake.program(
+            "make",
+            crate::testing::FakeProgram {
+                argv0: "make".into(),
+                stdout: b"compiling...\nok\n".to_vec(),
+                stderr: b"warn: x\n".to_vec(),
+                exit: 3,
+                delay_ms: 0,
+            },
+        );
+        crate::actions::register_all(system.clone(), &system.services().actions).unwrap();
+        let sink: Arc<dyn swiss_host::services::runs::RunHistorySink> = system.history().clone();
+        system.services().runs.add_history_sink(sink);
+        let state = crate::api::RemoteState::new();
+        state.install(system.clone());
+        let app = swiss_host::services::api::mount(system.services().clone())
+            .merge(crate::api::mount(state));
+
+        // Nothing recorded yet: an empty page with the budgets stated.
+        let (status, empty) = call(&app, "GET", "/api/remote/runs", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(empty["runs"], json!([]));
+        assert_eq!(empty["active"], json!([]));
+        assert_eq!(empty["limits"]["maxAgeMs"], crate::history::MAX_AGE_MS);
+        assert_eq!(empty["limits"]["maxTotalBytes"], crate::history::MAX_TOTAL_BYTES);
+        assert_eq!(empty["usage"]["runs"], 0);
+
+        let (status, submitted) = call(
+            &app,
+            "POST",
+            "/api/runs",
+            json!({
+                "action": "remote.exec",
+                "input": { "target": "dev", "argv": ["make"], "env": { "CC": "clang" } },
+                "timeoutMs": 30000,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let run_id = submitted["runId"].as_u64().unwrap();
+        for _ in 0..500 {
+            let (_, run) = call(&app, "GET", &format!("/api/runs/{run_id}?output=0"), Value::Null).await;
+            if run["state"] != "queued" && run["state"] != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+
+        // The record: the same row shape /api/runs showed, plus what was asked.
+        let (status, page) = call(&app, "GET", "/api/remote/runs", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        let rows = page["runs"].as_array().unwrap();
+        assert_eq!(rows.len(), 1, "{page}");
+        let row = &rows[0];
+        assert_eq!(row["runId"], run_id);
+        assert_eq!(row["action"], "remote.exec");
+        assert_eq!(row["state"], "failed");
+        assert_eq!(row["exitCode"], 3);
+        assert_eq!(row["meta"]["target"], "dev");
+        assert_eq!(row["input"]["argv"], json!(["make"]));
+        assert_eq!(row["input"]["envKeys"], json!(["CC"]));
+        assert!(row["input"].get("env").is_none());
+        assert_eq!(row["outputBytes"], 24);
+        assert_eq!(page["usage"]["runs"], 1);
+        assert_eq!(page["active"], json!([]), "a finished run is not active");
+
+        let (status, one) = call(&app, "GET", &format!("/api/remote/runs/{run_id}"), Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(one["runId"], run_id);
+
+        // The whole stream, from the file, in the live route's shape.
+        let (status, out) = call(
+            &app,
+            "GET",
+            &format!("/api/remote/runs/{run_id}/output?after=0&max=65536"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = out["output"].as_str().unwrap();
+        assert!(text.contains("compiling...\nok\n"), "{text:?}");
+        assert!(text.contains("warn: x\n"), "stderr rides the same stream: {text:?}");
+        assert_eq!(out["total"], 24);
+        assert_eq!(out["nextCursor"], 24);
+        assert_eq!(out["terminal"], true);
+
+        // Unknown ids are 404, not empty.
+        let (status, _) = call(&app, "GET", "/api/remote/runs/424242", Value::Null).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = call(&app, "GET", "/api/remote/runs/424242/output", Value::Null).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // Clear forgets it.
+        let (status, _) = call(&app, "DELETE", "/api/remote/runs", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, page) = call(&app, "GET", "/api/remote/runs", Value::Null).await;
+        assert_eq!(page["runs"], json!([]));
+        assert_eq!(page["usage"]["bytes"], 0);
     }
 }

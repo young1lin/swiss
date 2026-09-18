@@ -478,6 +478,13 @@
     .row[data-rmrow].drop-before { box-shadow: inset 0 2px 0 var(--accent); }
     .row[data-rmrow].drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 
+    /* --- Remote Runs (#remote-runs): the Traffic card of .call rows over the run record.
+       The target filter sits in the section head like the Logs search (#callsQ): a filter,
+       not a form field, so it takes its own width instead of the form's 100%. A live row's
+       body head carries the one action a running run has (Cancel) at its right edge. */
+    .sec-head #rrTarget { margin-left: auto; width: auto; min-width: 140px; padding: 3px var(--s6) 3px var(--s2); font-size: var(--f-caption); }
+    .rr-live-head { justify-content: space-between; }
+
     /* --- data view (the DBeaver-style browser) --------------------------------------------------- */
     .pane > .db-root { max-width: none; }
     /* A workspace body (docs/13 D5 as revised): the pane drops its padding and measure so
