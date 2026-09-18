@@ -419,48 +419,42 @@
     .side-type:has(.ic) { padding: 2px 3px; }
     .side-type .ic { display: block; width: 14px; height: 14px; }
 
-    /* --- groups (docs/20 §4.1 revised by docs/35) --------------------------------------------------
-       One component, two densities, one anatomy (chevron, name, count leading; + and the
-       ellipsis trailing). What differs is what CONTAINS the members:
+    /* --- groups (docs/20 §4 as revised by docs/35) -----------------------------------------------
+       One component, one shape, two densities. A group is a header BAND over its members:
+       chevron + name + count leading, + (always, dimmed) and the ellipsis (hover) trailing. The
+       band is the container marker - no folder glyph, no guide line, no second surface under
+       the head - and the WHOLE band is the drag surface (groups.js wireHeadDrag): the grab
+       cursor teaches "this block reorders", the two buttons keep their pointer and their clicks.
+       The leading columns' x positions are a CONTRACT with the head's markup (toggle first,
+       actions after), measured on the LAID-OUT label:
 
-       side - the sidebar TREE. The head is a tree node, not a section band: transparent ground
-              (hover lifts it), chevron + folder + name + count. The leading columns' x positions
-              are a CONTRACT with the head's markup (toggle first, actions after - groups.js), and
-              the indent is measured on the LAID-OUT LABEL, not on padding arithmetic:
-                head pad 4 + chev 12 + gap 4 + folder 14 + gap 4  -> name x 38;
-                body 42 + row pad 8 + dot 6 + gap 8              -> member text x 64 (delta 26)
-              The guide line drops through the CHEVRON column to the last member's midline - the
-              classic source-list rail, so a child sits visibly inside its parent's gutter. The
-              folder glyph is worn by parents only.
+         side - the sidebar. A 28px band on --sep-soft; members (.side-row, 30px) one grid step
+                in, so a member's dot sits under the band's name; groups 8px apart.
+                  band pad 8 + chev 12 + gap 8              -> name x 28
+                  body 16 + row pad 8 + dot 6 + gap 8       -> member text x 38 (delta 10)
+         page - the card. The .grp IS the .group card (views.css: ring, radius, clip); a 36px
+                band on --sep-soft across its top, rows straight under it edge to edge; groups
+                16px apart. The band's chevron sits in the rows' dot column, its name over theirs.
+                  band pad 12 + chev 12 + gap 8             -> name x 32
+                  row pad 16 + dot 6 + gap 12               -> member text x 34
 
-       page - the grouped inset CARD. The .grp IS the .group card (views.css: ring, radius, clip);
-              the head is a 36px band across its top on --sep-soft and the rows sit straight under
-              it, full width, hairline-separated. The card's edge says where the group starts and
-              ends. The head's chevron sits in the rows' dot column and its name over their names
-              (head pad 12 + chev 12 + gap 8 -> name x 32; row pad 16 + dot 6 + gap 12 -> 34), so
-              the header reads as the first line of the table, not as a label floating above it.
-              The tree model was tried here first and failed at 1180px: a transparent head whose +
-              sat a screen away from its name, over a card indented under a 15px stub of rail.
-
-       Both: the WHOLE head is the drag surface (groups.js wireHeadDrag) - the grab cursor on the
-       band teaches "this block reorders", the buttons keep their pointer and their clicks. */
+       The tree model (transparent head, folder glyph, a 42px gutter behind a 1px guide line)
+       was the first attempt: it read as three things - a label, a line, a card - instead of one
+       container, and at page width its + drifted a screen away from its name. */
     .grp { position: relative; }
-    .grp--side + .grp--side { margin-top: var(--s1); }
+    .grp--side + .grp--side { margin-top: var(--s2); }
     .grp--page + .grp--page { margin-top: var(--s4); }
+    /* The band. Hover goes one grey step up (--sep over --sep-soft): --hover is lighter than
+       the band's own ground and would read as the band switching OFF. */
     .grp-head {
-      display: flex; align-items: center; gap: var(--s1);
-      background: none; border-radius: var(--r-row);
+      display: flex; align-items: center; gap: var(--s2);
+      background: var(--sep-soft); border-radius: var(--r-row);
     }
-    .grp-head:hover { background: var(--hover); }
-    .grp--side .grp-head { height: 28px; padding: 0 var(--s1); }
-    /* The band: the one tinted strip in a white card, squared because the card clips its own
-       corners. Hover goes one grey step up (--sep over --sep-soft) - --hover is lighter than the
-       band's own ground and would read as the band switching OFF. */
-    .grp--page .grp-head {
-      height: 36px; padding: 0 var(--s4) 0 var(--s3); gap: var(--s2);
-      background: var(--sep-soft); border-radius: 0;
-    }
-    .grp--page .grp-head:hover { background: var(--sep); }
+    .grp-head:hover { background: var(--sep); }
+    .grp--side .grp-head { height: 28px; padding: 0 var(--s2); }
+    /* Squared on the card, which clips its own corners; the right pad lines the head's glyphs
+       up with the rows' own ellipsis column. */
+    .grp--page .grp-head { height: 36px; padding: 0 var(--s4) 0 var(--s3); border-radius: 0; }
     /* Draggable whole (docs/35): the head, and the toggle that covers most of it, show the grab
        cursor; the two buttons keep the pointer they were born with. data-view.js builds inert
        heads with the same classes and never sets draggable, so they show neither. */
@@ -468,19 +462,13 @@
     .grp-head[draggable="true"] .grp-toggle { cursor: inherit; }
     .grp.dragging { opacity: 0.55; }
     .grp-toggle {
-      flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s1);
-      text-align: left; color: var(--text-2);
+      flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s2);
+      text-align: left; color: var(--text);
       font-size: var(--f-body); font-weight: 600;
     }
-    /* On the band the name is the table's own title line, so it takes the full text tone. */
-    .grp--page .grp-toggle { gap: var(--s2); color: var(--text); }
     .grp-chev { flex: none; width: 12px; color: var(--text-3); transition: transform .15s ease; }
     .grp:not(.collapsed) .grp-chev { transform: rotate(90deg); }
     @media (prefers-reduced-motion: reduce) { .grp-chev { transition: none; } }
-    /* The container glyph (i-folder): a visual privilege of parenthood in the tree - members never
-       wear one, so the silhouette alone separates the two levels before the indent is read. */
-    .grp-folder { flex: none; width: 14px; height: 14px; display: inline-flex; color: var(--text-3); }
-    .grp-folder .ic { width: 14px; height: 14px; }
     .grp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* Tabular so a count change does not wiggle the name beside it; dimmed because it is
        metadata, kept visible folded because 0 versus 3 is how a folded group explains itself. */
@@ -499,32 +487,23 @@
     .grp-more { opacity: 0; }
     .grp-head:hover .grp-add, .grp-head:hover .grp-more,
     .grp-add:focus-visible, .grp-more:focus-visible { opacity: 1; }
-    .grp-add:hover, .grp-more:hover { color: var(--text); background: var(--sep-soft); }
-    .grp--page .grp-add:hover, .grp--page .grp-more:hover { background: var(--card); }
+    .grp-add:hover, .grp-more:hover { color: var(--text); background: var(--card); }
     .grp.collapsed .grp-body { display: none; }
-    /* The tree's rail: a 1px guide from under the head's chevron to the last member's midline
-       (half a row height). It hangs on .grp, not on .grp-body, so it can keep the chevron's
-       x whatever the body's indent is; a collapsed group draws nothing. */
-    .grp--side::before {
-      content: ""; position: absolute; left: 10px; top: 28px; bottom: 15px;
-      border-left: 1px solid var(--sep);
-    }
-    .grp--side.collapsed::before { display: none; }
-    /* The tree's member gutter: one full tree step right of the parent's LABEL (the numbers in
-       the section comment above), not a cosmetic 20px nudge. The card has no gutter: its rows
-       run edge to edge under the band. */
-    .grp--side .grp-body { padding-left: 42px; }
+    /* The sidebar's members: one grid step in from the band (the numbers above), a hair of
+       air under the band so the first row's hover does not fuse with it. The card has no
+       gutter: its rows run edge to edge under the band. */
+    .grp--side .grp-body { padding: var(--s1) 0 0 var(--s4); }
     /* An empty group is a place, not an empty state: one quiet line keeps the container a
        visible drop target and explains the + beside it. In the card it takes a row's height and
        inset, so an empty group is one empty row and not a caption tucked under a band. */
     .grp-empty {
-      height: 28px; display: flex; align-items: center;
+      height: 28px; display: flex; align-items: center; padding: 0 var(--s2);
       font-size: var(--f-caption); color: var(--text-3);
     }
     .grp--page .grp-empty { height: 42px; padding: 0 var(--s4); font-size: var(--f-label); }
     /* Drop feedback. A ROW over the head or the empty line: a ring, "it goes in here". A GROUP
        over another group: the before/after edge on the WHOLE block it would land beside - the
-       card keeps its ring under the accent line, the tree draws the line across its head. */
+       card keeps its ring under the accent line, the sidebar draws the line across the block. */
     .grp-head.drop-into, .grp-empty.drop-into { box-shadow: inset 0 0 0 1.5px var(--accent); }
     .grp--side.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
     .grp--side.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }

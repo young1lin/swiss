@@ -1,6 +1,7 @@
-# 35 — 分组列表：页面密度改为「组即卡片」，组头整条可拖
+# 35 — 分组列表：一种画法（色带组头）、组头整条可拖、内联表单一行
 
-> 状态：**已实施（本提交）**。基线 `c4d6b1f`（2026-09-18）。
+> 状态：**已实施（两轮：`c878734` 页面密度卡片化 + 整头可拖；第二轮侧栏同画法、内联表单、行动作归 ⋯）**。
+> 基线 `c4d6b1f`（2026-09-18）。设计的规范化文本在 skill §16.5 / §16.8 / §19。
 > 前置阅读：`.agents/skills/swiss-ui-design/SKILL.md` §16.5 / §16.8（本文改写了这两条），
 > `docs/20-groups-and-hierarchy-spec.md` §4（组件、API、存储不变，只改容器画法与拖拽面）。
 > 代码注释与 UI 文案一律英文；文档散文中文。
@@ -87,3 +88,38 @@ list）。页面密度（Tunnels、Remote、Jobs、Secrets、Tokens）把同一�
       按钮 dragstart 退出、页面密度自带 `.group`、无 folder、CSS 数字）。
 - [ ] 未验证：Secrets / Tokens 页的行内表单在卡片内的表现只看了渲染（组数正确），没有走完
       新增流程。
+
+## 3. 第二轮（同日）：侧栏同画法、内联表单、行动作
+
+> 用户："这个是不是太过紧凑了，也要重构下？我记得有很多地方都是这样的，太过紧凑了。……这种分组的
+> （侧栏），你也要重构下。"
+
+### 3.1 侧栏分组改为同一种色带组头
+
+第一轮把页面密度改成卡片后，侧栏仍是树节点（透明头、folder、引导线、42px 缩进），两处"分组"长得
+不像一件事。现在**只有一种画法**：`--sep-soft` 色带 + chevron + 名称 + 计数 + `+`/`⋯`，侧栏 28px、
+页面 36px。folder 图标与引导线一并删除（`i-folder` sprite 删；`folder-plus` 保留给"新建组"）。
+侧栏成员缩进一格（`--s4`），成员的圆点落在组名正下方；组间距 `--s2`；色带下留 `--s1` 的空气，
+避免第一行的 hover 与色带粘连。`data-view.js` 手搭的 pg schema 组头用的是同一组 class，自动跟上。
+
+### 3.2 内联表单：一行
+
+Tokens 页的表单用了 `.two`，而 `.two` 在 sheet 之外没有任何规则——于是输入框独占一行、按钮换行挤在
+下面、列表直接贴上来。Secrets 的 `.vault-store` 是自己的一套。现在两页共用 `views.css .inline-form`：
+`[字段…] [字段…] [group ▾] [主按钮]` 一行，flex-wrap，与列表之间 `--s5`；"New group" 移到
+`.pane-head` 右侧的 `.pane-actions`——和 Remote / Tunnels 一致，页面级动作永远在右上。
+
+### 3.3 行动作归 ⋯
+
+Tokens 行有 Use / Rotate / **Revoke（红）**，Secrets 行有 Copy ref / **Delete（红）**，违反 skill
+§16.4（一行最多一个非图标按钮，红色不上行）。现在：Tokens 行 = `Use`（正在使用的那枚没有）+ `⋯`
+（Rotate secret ─ Revoke）；Secrets 行 = `Copy ref` + `⋯`（Delete）。行尾的 `⋯` 与组头的 `⋯` 同一列。
+
+### 3.4 验收（19998，真实指针）
+
+- [x] MCP 侧栏：色带组头；按住 `ForTest` 组名拖到 `learn` 的成员行上 → `drop-after`，顺序
+      `[default, learn, ForTest]`。深色正常。
+- [x] Tokens：内联表单一行、表单到列表 20px；Create 落库并弹出一次性 secret 框；行无红按钮；
+      `⋯`（原始 mouse down/up）→ "Rotate secret / Revoke"；Rotate 出新 secret；Revoke 经 confirm 删除。
+- [x] Secrets：同上；Store 落库；`⋯` → Delete 经 confirm 删除。
+- [x] vitest 59 / 535 通过（icons 测试改钉 `i-folder-plus`；secrets 测试改钉 `data-skmore`）。

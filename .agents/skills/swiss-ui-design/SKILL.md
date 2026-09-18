@@ -335,13 +335,13 @@ The idiom is a management UI in the Apple System Settings / Linear lineage: a so
 2. **Saturation is for state.** Dots, the one accent, error red, amber. Type chips, launch-method tags, group names and everything descriptive are monochrome. A colour that carries no information is noise; `mysql` and `redis` both being red taught that.
 3. **Text needs a measure.** Nothing is full-bleed except the terminal. `--measure` by default, `--measure-wide` for genuinely wide rows (logs, traffic). Content hugs the left edge; it is never centred a second time inside the pane.
 4. **One primary action per view; the rest go behind `⋯`.** A row holds at most one non-icon `.btn`. Red never appears on a row — destructive items live in the overflow menu, last, after a separator, in `--red` text.
-5. **Hierarchy is drawn with surface and indent, not with size and caps.** A container's header names it in `--f-body` 600 mixed case with its count in `--text-3` tnum, and the container has one of two shapes by density (docs/35): in the **sidebar** it is a tree node — 28px transparent head (hover lifts it), chevron + folder + name + count, children indented one tree step behind a 1px `--sep` guide line from the chevron column; on a **page** it is a card — the group *is* the `.group` card, a 36px `--sep-soft` band across its top (chevron + name + count, no folder), the rows straight under it edge to edge. Never a transparent tree head over an indented card at page width: the `+` drifts a screen away from its name and nothing says where the group ends. Uppercase 11px captions are for *section* titles the product wrote ("Scheduled commands"), never for containers the user named. This is docs/20 §4 as revised; the group component `groups.js` is the only implementation of it.
+5. **Hierarchy is drawn with surface and indent, not with size and caps.** A user-named container is a header **band** over its members — one shape everywhere (docs/35, §19): a `--sep-soft` band, `--r-row` corners, chevron + name (`--f-body` 600 mixed case) + count (`--text-3` tnum), `+` and `⋯` at its end. No folder glyph, no guide line, no second surface under the head: the band *is* the container marker. In the **sidebar** the band is 28px and the members sit one grid step (`--s4`) in beneath it; on a **page** the group *is* the `.group` card, the band is 36px across its top and the rows run edge to edge under it. Never a transparent tree head — at page width its `+` drifts a screen from its name and nothing says where the group ends; in the sidebar it read as a label, a line and a card instead of one thing. Uppercase 11px captions are for *section* titles the product wrote ("Scheduled commands"), never for containers the user named. This is docs/20 §4 as revised; the group component `groups.js` is the only implementation of it.
 6. **Every "new" says where it goes.** A create sheet or inline form has a Group field — a select over the scope's groups plus "New group…" — prefilled from the header `+` that opened it or from the last group used; the sheet title carries the group ("New job in *learn*"). Nothing lands in a group silently.
 7. **One glyph, one meaning per page.** Two `plus` icons on one screen must do the same thing. A different act gets a different icon (`folder-plus` for a new group, `plus` for a new item).
 8. **One persistent glyph per container header, and the whole header drags.** `+` stays visible (dimmed) because adding is frequent; `⋯` appears on hover/focus. The header itself is the drag surface for reordering groups (docs/35) — pick it up by the name, the count or the empty band; there is no grip to find. The buttons on it cancel the drag at `dragstart` (`groups.js wireHeadDrag`), so a twitch while clicking `+` or `⋯` still lands the click. Any new draggable container follows the same two rules: draggable whole, buttons opt out.
 9. **Icons are the sprite.** Lucide-style, 24 viewBox, 1.5 stroke, `currentColor`, hand-written paths in `index.html`, used through `icon(name)`. No Unicode glyphs as icons, no icon packages. Adding one icon means adding one `<symbol>`; twenty-odd symbols under 4 KB is the budget.
 10. **Status is a dot plus neutral text.** 6px; filled green up, filled red down/error, hollow ring (`.dot.idle`) for "not running, will start on demand" — the shape says idle, not a colour. Every dot carries a `title` that says the state in words.
-11. **Empty states use one template** — `emptyHtml({icon, title, hint, action})`: an icon in `--text-3`, an `--f-head` title, an `--f-label` hint under 44ch, an optional ghost action. An empty *container* is not an empty state: it shows one quiet row ("Empty — drop rows here or press +") so it still reads as a place.
+11. **Empty states use one template** — `emptyHtml({icon, title, hint, action})`: an icon in `--text-3`, an `--f-head` title, an `--f-label` hint under 44ch, an optional ghost action. An empty *container* is not an empty state: it shows one quiet row ("No items — drop here or press +") the height of a real row, so it still reads as a place and a drop target.
 12. **Surfaces are a grey ladder, not a shadow stack.** Cards are lifted by a hairline ring only; shadows belong to floating layers (sheet, popup menu). Dark mode is a warm near-black that reads as paper, with brightness as the ladder.
 13. **Motion is 150ms ease or nothing**, and nothing under `prefers-reduced-motion`. Chevrons rotate; nothing slides, bounces or fades in.
 14. **Copy is English, short, declarative.** Titles name the thing ("Tunnels"), descriptions say what it does in one sentence, hints say what to do next. No exclamation marks, no "please", no emoji. Confirmations state consequences and what is *not* destroyed: "Its 3 jobs move to 'default'. Nothing is removed."
@@ -358,7 +358,8 @@ Use these words in specs and class names; if a design needs a word not here, add
 | **context bar** | The always-present second row: `Plugin / [Page ▾]` switcher (or single-page location text), count chip, Focus at right | `index.html #ctxBar`, `js/page-registry.js`, `base.css .ctxbar` |
 | **pane** | The content area under the bars | `views.css .pane` |
 | **sidebar** | The 248px source list beside a detail pane | `base.css .side*` |
-| **group** (`.grp`) | A user-named, ordered, collapsible container of rows with a header (draggable whole), `+`, `⋯`; two shapes — sidebar tree node, page card | docs/20 §4, docs/35, `js/groups.js` |
+| **group** (`.grp`) | A user-named, ordered, collapsible container of rows: a header band (draggable whole) with `+` and `⋯`, over the members; 28px in the sidebar, 36px on the card it is at page density | docs/20 §4, docs/35, §19, `js/groups.js` |
+| **inline form** (`.inline-form`) | Create-in-place instead of a sheet (Tokens, Secrets): ONE row of fields + the Group select + the one primary, `--s5` of air before the list; New group lives in the page header's `pane-actions` | docs/35 §3, `views.css .inline-form` |
 | **section** | A product-named division of a page: uppercase caption, optional actions at right | `.sec-head`, `.sec-cap` |
 | **card** (`.group` in CSS — historical) | A hairline-ringed white surface holding rows | `views.css .group` |
 | **row** | One item: dot · name · mono sub-line · one primary `.btn` · `⋯` | `.row`, `.tun-row`, `.side-row` |
@@ -374,7 +375,8 @@ Use these words in specs and class names; if a design needs a word not here, add
 - Every colour, size and radius is a token; `grep -n "#[0-9a-f]\{6\}\|[0-9]\+px" styles/views.css` on your diff shows nothing new outside the token block.
 - Both themes screenshotted; nothing is defined only under dark.
 - No new Unicode icon, no `innerHTML` of a glyph; every new icon is a `<symbol>`.
-- No row with two non-icon buttons; no `.btn.danger` inside a row.
+- No row with two non-icon buttons; no `.btn.danger` inside a row — the second action and every destructive one live behind the row's `⋯` (`popupMenu`, danger last).
+- Vertical rhythm on a list page (§19): header → `--s5` → inline form → `--s5` → list; cards `--s4` apart; nothing is glued to the block above it.
 - Every new list that a user can add to shows which container the item joins before submit.
 - Group headers and section captions are not confused: user-named → band + mixed case; product-named → uppercase caption.
 - Every new `.dot` has a `title`; every `.ic`-only button has `aria-label`.
@@ -382,3 +384,44 @@ Use these words in specs and class names; if a design needs a word not here, add
 - 900px width: the rail does not clip, the context bar stays, rows wrap their sub-line instead of overflowing.
 - The CSS comment beside a changed rule still states the *reason*; if the reason changed, the comment changed.
 - And §13 above — hierarchy and ownership first, polish second.
+
+## 19. Reference anatomy: the grouped list page (docs/35, 2026-09-18)
+
+The one shape every grouped page is built from. Copy it; do not reinterpret it.
+
+```text
+Page body (Content template, §6A) — .wide measure
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ pane-desc: one or two sentences, --text-2, 68ch      [New group]  [Primary] │  pane-head; actions right
+│ pane-sub: one status line, --f-label                                         │
+│                                        ─ --s5 ─                              │
+│ [ Field ………………………………………… ] [ Field …… ] [ group ▾ ] [ Store ]                 │  inline form (only pages that create in place)
+│                                        ─ --s5 ─                              │
+│ ┌ .grp.grp--page.group ──────────────────────────────────────────────────┐   │
+│ │ ▾ default  3                                                   +   ⋯  │   │  36px band, --sep-soft; whole band drags
+│ ├────────────────────────────────────────────────────────────────────────┤   │
+│ │ ● name                                                 [One btn]   ⋯  │   │  row; the ⋯ column lines up with the band's
+│ │   mono sub-line                                                        │   │
+│ ├────────────────────────────────────────────────────────────────────────┤   │
+│ │ ○ name                                                 [One btn]   ⋯  │   │
+│ └────────────────────────────────────────────────────────────────────────┘   │
+│                                        ─ --s4 ─                              │
+│ ┌ .grp.grp--page.group ──────────────────────────────────────────────────┐   │
+│ │ ▾ test  0                                                      +   ⋯  │   │
+│ ├────────────────────────────────────────────────────────────────────────┤   │
+│ │   No items — drop here or press +                                      │   │  42px, --f-label, --text-3: an empty row, not a caption
+│ └────────────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+Sidebar (source list) — the same band, smaller, no card
+┌ .grp.grp--side ────────────────────┐
+│ ▾ default  9                 +  ⋯  │  28px band, --sep-soft, --r-row
+│   ● mysql                      ⌗   │  .side-row 30px, one grid step (--s4) in
+│   ● redis                      ⌗   │
+└────────────────────────────────────┘  groups --s2 apart
+```
+
+- **Where things go.** Page-level actions (`New group`, the sheet-opening primary) in `pane-actions` at the header's right; the in-place primary (Create / Store) at the end of the inline form; per-row: at most one `.btn` plus `⋯`; per-group: `+` (always) and `⋯` (hover) on the band.
+- **Drag.** The band moves the group: grab cursor on it, buttons opt out at dragstart. A group lands before/after the *whole* group under the pointer; a row lands on another row (reorder + re-home), on a band or on an empty line (append). Feedback: `.grp.drop-before/after` edge on the block, `.drop-into` ring on the band or the empty line, `.grp.dragging` dims the whole group.
+- **Alignment contract** (base.css groups section states the numbers): the band's chevron sits in the rows' dot column and its name over their names on the card; in the sidebar a member's dot sits under the band's name.
+- **What was tried and rejected.** A transparent tree head with a folder glyph and a guide line (docs/20 §4.1 first revision): three visual things for one container, and at page width the `+` a screen from its name. A hover-only grip as the drag handle: the user could not find it. A red `Delete`/`Revoke` on every row: noise on a page whose rows are read far more often than deleted.

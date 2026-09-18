@@ -160,7 +160,9 @@ describe("the Secrets page (docs/19 D6)", () => {
     expect(html).toContain("stripe-key");
     expect(html).toContain("<code>${secret://stripe-key}</code>");
     expect(html).toContain("Copy ref");
-    expect(html).toContain("Delete");
+    // Delete lives behind the row's overflow menu (design rule 4: red never sits on a row).
+    expect(html).not.toContain("btn danger");
+    expect(html).toContain("data-skmore=");
     // The page never even holds a value to leak: the state is names + rev only.
     expect(mods.countText()).toBe("2 secrets");
   });
@@ -234,7 +236,7 @@ describe("the Secrets page (docs/19 D6)", () => {
     const groupsBefore = planted.skGroups;
     replies["/api/secrets"] = { secrets: ["a", "b"], rev: 2 };
     await mods.poll();
-    expect(pane.innerHTML).toContain("vault-store"); // the form markup is still the pane's
+    expect(pane.innerHTML).toContain("inline-form"); // the form markup is still the pane's
     // The refreshed list lands in the SAME groups container - a repaint, not a re-mount.
     expect(planted.skGroups).toBe(groupsBefore);
     expect(mods.rowsHtml()).toContain("b");

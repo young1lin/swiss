@@ -20,14 +20,14 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emptyLineText } from "../../src/admin_assets/js/group-logic.js";
 
-/* The group component DOM contract (docs/20 section 4.1 as revised by docs/35): the head
- * leads with chevron, (folder in the tree), name, count, with the two low-frequency actions
- * after them, so the leading columns keep one stable x for the CSS indent contract. The
- * WHOLE head is draggable - there is no grip - and the two buttons opt out at dragstart.
- * At page density the group is the card itself. The suite runs the real mountGroup under a
- * hand-rolled DOM whose elements keep their children (the navigation suite idiom, extended
- * by one tree walk), plus pure wording and the CSS numbers the head markup and base.css
- * must stay in agreement on. */
+/* The group component DOM contract (docs/20 section 4 as revised by docs/35): one shape at
+ * two densities. The head is a BAND that leads with chevron, name, count, with the two
+ * low-frequency actions after them, so the leading columns keep one stable x for the CSS
+ * indent contract; no folder glyph, no guide line. The WHOLE head is draggable - there is
+ * no grip - and the two buttons opt out at dragstart. At page density the group is the
+ * card itself. The suite runs the real mountGroup under a hand-rolled DOM whose elements
+ * keep their children (the navigation suite idiom, extended by one tree walk), plus pure
+ * wording and the CSS numbers the head markup and base.css must stay in agreement on. */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function fakeNode(tag: string): any {
@@ -118,7 +118,7 @@ function cfg(rows: any[], collapsed: Record<string, boolean> = {}) {
 }
 
 describe("group head - anatomy", () => {
-  it("side: leads with chevron + folder + name + count; the two actions after; no grip", () => {
+  it("side: leads with chevron + name + count; the two actions after; no folder, no grip", () => {
     const wrap = mountGroup(cfg([{ name: "redis" }, { name: "mysql" }]), { name: "default", rows: [{ name: "redis" }, { name: "mysql" }] });
     expect(wrap.className).toContain("grp grp--side");
     expect(wrap.className).not.toContain("group");
@@ -126,22 +126,16 @@ describe("group head - anatomy", () => {
     expect(head.className).toBe("grp-head");
     const kinds = head.children.map((c: any) => c.className);
     // The order IS the contract: the leading columns must start at the head first child,
-    // because base.css measures the chevron/folder/name x positions from them.
+    // because base.css measures the chevron/name x positions from them.
     expect(kinds).toEqual(["grp-toggle", "grp-add", "grp-more"]);
     const toggle = head.children[0];
-    const chev = toggle.children[0];
-    const folder = toggle.children[1];
-    const name = toggle.children[2];
-    const count = toggle.children[3];
-    expect(chev.className).toBe("grp-chev");
-    expect(folder.className).toBe("grp-folder");
-    expect(folder.innerHTML).toContain("#i-folder");
-    expect(name.className).toBe("grp-name");
-    expect(name.textContent).toBe("default");
-    expect(count.textContent).toBe("2");
+    const inner = toggle.children.map((c: any) => c.className);
+    expect(inner).toEqual(["grp-chev", "grp-name", "grp-n"]);
+    expect(toggle.children[1].textContent).toBe("default");
+    expect(toggle.children[2].textContent).toBe("2");
   });
 
-  it("page: the group IS the card, the head wears no folder, its name sits over the rows' names", () => {
+  it("page: the group IS the card; the same head, its name over the rows' names", () => {
     const pageCfg: any = cfg([]);
     pageCfg.density = "page";
     pageCfg.rowNode = undefined;
@@ -209,7 +203,7 @@ describe("group head - anatomy", () => {
     expect(open.className).not.toContain("collapsed");
     const folded = mountGroup(cfg([], { default: true }), { name: "default", rows: [] });
     expect(folded.className).toContain("collapsed");
-    expect(folded.children[0].children[0].children[3].textContent).toBe("0");
+    expect(folded.children[0].children[0].children[2].textContent).toBe("0");
     // The attribute itself is set through the stubbed setAttribute; pin the source line so
     // the a11y contract cannot drift silently.
     const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../src/admin_assets/js/groups.js"), "utf8");
@@ -253,21 +247,21 @@ describe("the CSS contract (over the shipped sheet)", () => {
   const base = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "styles", "base.css"), "utf8");
   const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
 
-  it("side: the head is a tree node (no band), the guide drops through the chevron column and folds away", () => {
-    expect(base).toMatch(/\n    \.grp-head \{[^}]*background: none/);
-    expect(base).toMatch(/\.grp--side::before \{[^}]*border-left: 1px solid var\(--sep\)/);
-    expect(base).toMatch(/\.grp--side\.collapsed::before \{ display: none; \}/);
-    // The number behind the label-offset contract in the base.css groups section (child
-    // text sits 26px right of the parent label): changing it is a deliberate hierarchy
-    // change, not a tweak.
-    expect(base).toMatch(/\.grp--side \.grp-body \{ padding-left: 42px; \}/);
+  it("the head is a band in both densities: --sep-soft ground, no tree rail, no folder glyph", () => {
+    expect(base).toMatch(/\n    \.grp-head \{[^}]*background: var\(--sep-soft\)/);
+    expect(base).toMatch(/\.grp--side \.grp-head \{ height: 28px/);
+    expect(base).toMatch(/\.grp--page \.grp-head \{ height: 36px/);
+    expect(base).not.toMatch(/.grp[^ {]*::before/);
+    expect(base).not.toContain("grp-folder");
+    expect(html).not.toContain('id="i-folder"');
   });
 
-  it("page: the head is a band on the card and the rows run edge to edge under it", () => {
-    expect(base).toMatch(/\.grp--page \.grp-head \{[^}]*background: var\(--sep-soft\)/);
-    expect(base).toMatch(/\.grp--page \.grp-head \{[^}]*height: 36px/);
-    expect(base).not.toMatch(/\.grp--page \.grp-body \{ padding-left/);
-    expect(base).not.toMatch(/\.grp--page::before/);
+  it("members sit one grid step in under the sidebar band; the card's rows run edge to edge", () => {
+    // The number behind the label-offset contract in the base.css groups section (a
+    // member's dot sits under the band's name): changing it is a deliberate hierarchy
+    // change, not a tweak.
+    expect(base).toMatch(/\.grp--side \.grp-body \{ padding: var\(--s1\) 0 0 var\(--s4\); \}/);
+    expect(base).not.toMatch(/\.grp--page \.grp-body \{ padding/);
   });
 
   it("the whole head shows the grab cursor, the group dims while dragging, and there is no grip anywhere", () => {
