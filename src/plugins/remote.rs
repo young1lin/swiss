@@ -120,19 +120,33 @@ impl PluginFactory for RemotePlugin {
                 "properties": {},
                 "additionalProperties": false
             }),
-            // The targets page (docs/34 R6): the CLI stays the primary client,
-            // but a target no longer needs a terminal to exist. Before the
-            // plugins page's 1000, after Terminal's 70.
-            pages: vec![PageDescriptor {
-                id: "remote".into(),
-                plugin_id: PLUGIN_ID.into(),
-                label: "Remote Targets".into(),
-                order: 75,
-                path: "#remote".into(),
-                entry: "/admin/js/views/remote.js".into(),
-                sidebar: false,
-                layout: "page",
-            }],
+            // Two pages, switched in the context bar (the panel's L2): the targets
+            // page (docs/34 R6 - the CLI stays the primary client, but a target no
+            // longer needs a terminal to exist) and the runs page (history.rs - what
+            // ran, with its output, after the coordinator's ring forgot it). Before
+            // the plugins page's 1000, after Terminal's 70.
+            pages: vec![
+                PageDescriptor {
+                    id: "remote".into(),
+                    plugin_id: PLUGIN_ID.into(),
+                    label: "Targets".into(),
+                    order: 75,
+                    path: "#remote".into(),
+                    entry: "/admin/js/views/remote.js".into(),
+                    sidebar: false,
+                    layout: "page",
+                },
+                PageDescriptor {
+                    id: "remote-runs".into(),
+                    plugin_id: PLUGIN_ID.into(),
+                    label: "Runs".into(),
+                    order: 76,
+                    path: "#remote-runs".into(),
+                    entry: "/admin/js/views/remote-runs.js".into(),
+                    sidebar: false,
+                    layout: "page",
+                },
+            ],
             routes: vec!["/api/remote".into()],
             // The targets/routes have nothing to re-read; a config PUT does not
             // restart the instance.
@@ -193,6 +207,11 @@ impl PluginInstance for RemoteInstance {
         // always see the same table.
         let system = self.system.clone();
         swiss_remote::actions::register_all(system.clone(), &self.services.actions)?;
+        // The durable run log (docs/34 follow-up, history.rs): from here every remote.*
+        // run the coordinator starts is teed to disk and recorded at its end. A seat
+        // like the others - stop() takes it back.
+        let sink: Arc<dyn swiss_host::services::runs::RunHistorySink> = system.history().clone();
+        self.services.runs.add_history_sink(sink);
         self.state.install(system.clone());
 
         // R7 (docs/34): the same table as an MCP under /mcp/remote - five thin
@@ -265,6 +284,9 @@ impl PluginInstance for RemoteInstance {
                     system.services().actions.unregister(&info.type_name);
                 }
             }
+            let sink: Arc<dyn swiss_host::services::runs::RunHistorySink> =
+                system.history().clone();
+            system.services().runs.remove_history_sink(&sink);
         }
         // The MCP entry follows the plugin down - stopped, not deleted: a user
         // panel stop of the entry survives a plugin bounce the same way, and the
@@ -300,14 +322,19 @@ mod tests {
     }
 
     #[test]
-    fn the_descriptor_carries_one_page_and_no_requirements() {
+    fn the_descriptor_carries_two_pages_and_no_requirements() {
         let (registry, calls) = test_registry();
         let d = RemotePlugin::new(RuntimeServices::new(), RemoteState::new(), registry, calls)
             .descriptor();
         assert_eq!(d.id, "remote");
-        assert_eq!(d.pages.len(), 1);
+        // Targets and Runs are sibling pages of one plugin: the context bar switches
+        // them (swiss-ui-design §5), so both ride the descriptor, targets first.
+        assert_eq!(d.pages.len(), 2);
         assert_eq!(d.pages[0].id, "remote");
         assert_eq!(d.pages[0].entry, "/admin/js/views/remote.js");
+        assert_eq!(d.pages[1].id, "remote-runs");
+        assert_eq!(d.pages[1].entry, "/admin/js/views/remote-runs.js");
+        assert!(d.pages[0].order < d.pages[1].order);
         assert_eq!(d.routes, vec!["/api/remote".to_string()]);
         assert!(d.requires.is_empty(), "must start without the transport");
     }
@@ -348,6 +375,7 @@ mod tests {
         // R7: the plugin's start also mounted the builtin MCP, serving.
         assert!(registry.has("remote"), "the builtin MCP registered");
         assert_eq!(lifecycle_of(&registry, "remote"), Lifecycle::Started);
+        assert_eq!(services.runs.history_sinks(), 1, "the run log took its seat");
 
         instance.stop().await;
         assert!(
@@ -358,6 +386,7 @@ mod tests {
                 .any(|a| a.type_name == "remote.exec"),
             "the capabilities unregistered",
         );
+        assert_eq!(services.runs.history_sinks(), 0, "stop gave the seat back");
         assert_ne!(
             lifecycle_of(&registry, "remote"),
             Lifecycle::Started,

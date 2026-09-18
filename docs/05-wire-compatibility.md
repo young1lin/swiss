@@ -26,6 +26,9 @@ Get it wrong and the user's configuration has to be exported and re-imported by 
     calls/
       <mcp>.jsonl                   one line per tool call: metadata + preview
       bodies/<mcp>/<seq>.txt        the full reply, when it exceeded the preview
+    remote/                         the remote run log (docs/34 R9, 2026-09-18)
+      runs.jsonl                    one line per finished remote run: the run row + input
+      out/<runId>.txt               the run's whole output stream
 ```
 
 Port-scoping is deliberate and load-bearing: two gateways on different ports must coexist, and a

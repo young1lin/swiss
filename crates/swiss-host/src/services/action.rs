@@ -185,33 +185,49 @@ pub struct ActionInfo {
     pub schema: Value,
 }
 
+/// A copy of one run's output stream as it is appended — the durable half of a
+/// [crate::services::runs::RunHistorySink]. Writes ride on the synchronous buffer append,
+/// so an implementation bounds its own cost (a capped file, never a growing Vec) and
+/// never blocks on anything but the write itself.
+pub trait RunOutputTee: Send + Sync {
+    fn write(&self, bytes: &[u8]);
+}
+
 /// The write half of one run's live output, handed to an action through
 /// [ActionContext]. Appends are synchronous and bounded: they land in the run's
 /// [RunOutputBuffer] (cap enforced there) and never block, so an action may append from
-/// inside a select arm without stalling anything.
+/// inside a select arm without stalling anything. Every append is also copied to the
+/// tees a history sink attached at run start (none for most runs).
 ///
 /// An action that never looks at it loses nothing — the buffer simply stays empty and
 /// the run's outcome text is the only output, exactly as before this seam existed.
 #[derive(Clone)]
 pub struct RunOutputSink {
     buffer: Arc<RunOutputBuffer>,
+    tees: Arc<[Arc<dyn RunOutputTee>]>,
 }
 
 impl RunOutputSink {
-    pub(crate) fn new(buffer: Arc<RunOutputBuffer>) -> Self {
-        RunOutputSink { buffer }
+    pub(crate) fn new(buffer: Arc<RunOutputBuffer>, tees: Vec<Arc<dyn RunOutputTee>>) -> Self {
+        RunOutputSink {
+            buffer,
+            tees: tees.into(),
+        }
     }
 
     /// Append output text to the run's live buffer. Bounded by the buffer's own cap
     /// (oldest data evicted, cursor keeps advancing) — an hours-long Yocto build may
     /// stream gigabytes through here while the gateway holds kilobytes.
     pub fn append(&self, text: &str) {
-        self.buffer.append(text.as_bytes());
+        self.append_bytes(text.as_bytes());
     }
 
     /// Append raw bytes (lossy when they split a character; cursors stay byte-based).
     pub fn append_bytes(&self, bytes: &[u8]) {
         self.buffer.append(bytes);
+        for tee in self.tees.iter() {
+            tee.write(bytes);
+        }
     }
 
     /// The cursor after everything appended so far — the "caught up to" mark a follower
