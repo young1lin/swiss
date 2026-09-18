@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The `swiss remote` and `swiss run` command lines (docs/32 SS26).
+//! The `swiss remote` and `swiss run` command lines (docs/34 SS26).
 //!
 //! A thin, honest client of the HTTP surface: every mutation goes through
 //! /api/remote, every execution goes through /api/runs, and the command streams
@@ -22,7 +22,7 @@
 //! No second job system, no local exec engine - the CLI is just the agent-facing
 //! face of the same gateway.
 //!
-//! THE HARD RULE (docs/32 SS26): everything after a bare `--` is ARGV for the far
+//! THE HARD RULE (docs/34 SS26): everything after a bare `--` is ARGV for the far
 //! side, never parsed as a flag. `swiss remote exec build -- make -j8 -- -k` must
 //! send `["make","-j8","--","-k"]` untouched.
 
@@ -31,7 +31,7 @@ use serde_json::{json, Value};
 use crate::daemon::{read_gateway_token, resolve_port};
 
 /// How long one exec may run unless --timeout, the project binding, or the target
-/// row says otherwise (docs/32 SS26: CLI > binding > target > this).
+/// row says otherwise (docs/34 SS26: CLI > binding > target > this).
 const DEFAULT_EXEC_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1000;
 /// The submit route ceiling (docs/10 SS7); refusing here is a better error than
 /// the same refusal from the API after a round trip.
@@ -470,7 +470,7 @@ fn report(result: Result<Value, String>, done: &str, as_json: bool) -> i32 {
 // --- name resolution: explicit target > project action > binding default --------------------
 
 /// What one exec/sync/pull name resolved to. The binding is discovered from the
-/// working directory, exactly like git finds .git (docs/32 SS24).
+/// working directory, exactly like git finds .git (docs/34 SS24).
 pub struct Resolved {
     pub target: String,
     pub cwd: Option<String>,
@@ -478,7 +478,7 @@ pub struct Resolved {
     pub via: String,
 }
 
-/// The deadline chain (docs/32 SS26): --timeout > project action > target row >
+/// The deadline chain (docs/34 SS26): --timeout > project action > target row >
 /// 2h, capped at the submit route's 24h ceiling.
 fn deadline(cli: Option<&str>, action: Option<u64>, target_default: Option<u64>) -> Option<u64> {
     let picked = parse_duration(cli.unwrap_or(""))
@@ -638,7 +638,7 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
     .await
 }
 /// Submit one remote run and, unless --detach, stream its live output through the
-/// cursor API until it is terminal - then exit with the REMOTE exit code (docs/32
+/// cursor API until it is terminal - then exit with the REMOTE exit code (docs/34
 /// SS26): `swiss remote exec build -- false` exits 1 because false did.
 async fn submit_and_stream(
     gw: &Gateway,
@@ -994,7 +994,7 @@ mod tests {
 
     #[test]
     fn the_bare_dash_dash_splits_and_nothing_after_it_is_a_flag() {
-        // THE contract (docs/32 SS26): everything after the first -- is ARGV.
+        // THE contract (docs/34 SS26): everything after the first -- is ARGV.
         let whole = argv(&["exec", "build", "--", "make", "-j8", "--", "-k", "--json"]);
         let (head, tail) = split_passthrough(&whole);
         assert_eq!(head, &argv(&["exec", "build"]));

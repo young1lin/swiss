@@ -202,7 +202,7 @@ pub async fn run_gateway() -> Result<(), String> {
     // serving), not a different router.
     let terminal_state = crate::plugins::terminal_api::TerminalState::new();
 
-    // The /api/remote routes' state slot (docs/32): the same one-slot pattern as the
+    // The /api/remote routes' state slot (docs/34): the same one-slot pattern as the
     // terminal state above - built before the host so the router mounted below and the
     // plugin instance that fills the slot share ONE seat.
     let remote_state = swiss_remote::api::RemoteState::new();
@@ -285,7 +285,7 @@ pub async fn run_gateway() -> Result<(), String> {
         terminal_state.clone(),
     )))
     .expect("the terminal plugin registers");
-    // The remote plugin (docs/32): CLI-first, no page, and deliberately no capability
+    // The remote plugin (docs/34): CLI-first, no page, and deliberately no capability
     // requirement - the target table must stay editable while tunnels is off. The
     // registry + call log ride along so the plugin can mount its builtin remote
     // MCP under /mcp/remote (R7) on the same surfaces every other MCP uses.
@@ -309,7 +309,7 @@ pub async fn run_gateway() -> Result<(), String> {
             // a local session needs no SSH at all — but the probe still answers, so the
             // inventory can say honestly whether remote targets are reachable.
             "ssh-shell" => shells.has_provider(),
-            // docs/32: the remote plugin deliberately does NOT declare
+            // docs/34: the remote plugin deliberately does NOT declare
             // requires:["remote-transport"] (the target table must stay editable while
             // tunnels is off), but the probe still answers, so the inventory can say
             // honestly whether remote exec is currently possible.

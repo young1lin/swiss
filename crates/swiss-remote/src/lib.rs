@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Agent-friendly remote execution (docs/32): the swiss-remote plugin.
+//! Agent-friendly remote execution (docs/34): the swiss-remote plugin.
 //!
 //! The fourth way to reach a machine: NOT a second SSH client. This crate knows no
 //! russh, no tunnels store, no credentials - it holds the agent-facing vocabulary
@@ -28,7 +28,7 @@
 //! coordinator's own cancel, and live output is the run output endpoint added with the
 //! ActionContext seam.
 //!
-//! No MCP adapter in this phase (docs/32 §2): the CLI and the /api/remote routes are
+//! No MCP adapter in this phase (docs/34 §2): the CLI and the /api/remote routes are
 //! the surfaces; the MCP adapter is a later, deliberate step.
 
 pub mod actions;
@@ -461,7 +461,7 @@ pub(crate) mod testing {
     }
 }
 
-/// The whole submit-then-read chain (docs/32 SS17): POST /api/runs answers 202 with
+/// The whole submit-then-read chain (docs/34 SS17): POST /api/runs answers 202 with
 /// a runId immediately, the live output endpoint streams what the exec produced while
 /// it runs, and the finished row carries the REMOTE exit code. Mounted through the
 /// REAL host routes (services::api) plus the real /api/remote tree, driven with

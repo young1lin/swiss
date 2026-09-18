@@ -867,7 +867,7 @@ impl Io for PrintIo {
 
 /// Wire the real implementations and run — the CLI entry point main.rs calls.
 pub async fn main(argv: Vec<String>) -> i32 {
-    // `remote` and `run` carry their own argv contract (docs/32 SS26): a bare `--` means
+    // `remote` and `run` carry their own argv contract (docs/34 SS26): a bare `--` means
     // everything after it is the far side's ARGV, untouched. The generic parser would eat
     // flags out of that passthrough, so these two dispatch before it.
     match argv.first().map(String::as_str) {

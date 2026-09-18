@@ -35,7 +35,7 @@ swiss-jobs = { path = "crates/swiss-jobs" }
 # crate's src/plugins; the crate itself stays free of axum so its tests need no server.
 swiss-terminal = { path = "crates/swiss-terminal" }
 swiss-panel = { path = "crates/swiss-panel" }
-# The remote-execution subsystem (docs/32): targets, actions and the /api/remote routes;
+# The remote-execution subsystem (docs/34): targets, actions and the /api/remote routes;
 # the plugin wrapper lives in this crate's src/plugins like terminal's.
 swiss-remote = { path = "crates/swiss-remote" }
 # The rmcp `macros` feature stays off: servers implement ServerHandler by hand, mirroring the

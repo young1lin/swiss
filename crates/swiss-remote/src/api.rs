@@ -1,4 +1,4 @@
-//! The /api/remote management surface (docs/32): which endpoints the transport
+//! The /api/remote management surface (docs/34): which endpoints the transport
 //! can see, and the target table CRUD. No panel page in this phase - the CLI is
 //! the primary client - but the shapes are the same ones any page would read.
 //!

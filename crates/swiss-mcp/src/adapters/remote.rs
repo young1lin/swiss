@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The builtin remote MCP adapter (docs/32 R7): the remote plugin's agent-facing
+//! The builtin remote MCP adapter (docs/34 R7): the remote plugin's agent-facing
 //! vocabulary as FIVE tools under /mcp/remote, so a model can drive a build box
 //! without a shell.
 //!
@@ -26,7 +26,7 @@
 //! registered (the remote plugin disabled) answers as an in-band tool error
 //! naming it, never a protocol fault.
 //!
-//! Routing rules every tool's description repeats (docs/32 SS5): 'target' is an
+//! Routing rules every tool's description repeats (docs/34 SS5): 'target' is an
 //! ALIAS from the gateway's sealed targets table - never a host; relative paths
 //! resolve under the target's workspaceRoot; absolute paths pass through as-is.
 //! Paths named by sync/pull are GATEWAY-side paths, a fact the descriptions
@@ -59,7 +59,7 @@ const MCP_RUN_OWNER: &str = "remote-mcp";
 /// surface's own default, which is what a panel-run action of the same shape gets.
 const TOOL_TIMEOUT_MS: u64 = 600_000;
 /// The default deadline for remote_exec: the remote.exec action's own default
-/// (docs/32 SS26), so a model that omits timeoutMs gets the same two hours the
+/// (docs/34 SS26), so a model that omits timeoutMs gets the same two hours the
 /// CLI does, not a silent ten-minute cap.
 const EXEC_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1000;
 /// The submit-route ceiling, enforced the same way here: a deadline past this is
@@ -594,7 +594,7 @@ impl ServerHandler for RemoteServer {
 /// host service handles and the alias seam, and costs nothing until a call
 /// arrives.
 ///
-/// Registered by the remote plugin under the name "remote" (docs/32 R7): the
+/// Registered by the remote plugin under the name "remote" (docs/34 R7): the
 /// entry's lifecycle follows the plugin's, so disabling Remote withdraws the
 /// tools together with the actions they dispatch to.
 pub struct RemoteAdapter {

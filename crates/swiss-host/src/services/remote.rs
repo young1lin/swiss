@@ -15,7 +15,7 @@
  */
 
 //! The remote-execution transport capability — who can run a non-interactive command
-//! (or move a file) on a remote machine, and under what identity (docs/32).
+//! (or move a file) on a remote machine, and under what identity (docs/34).
 //!
 //! Same shape as [crate::services::catalog] and [crate::services::shell]: ONE provider
 //! registers on start, consumers take operation-scoped leases through the provider, and
@@ -97,7 +97,7 @@ pub struct RemoteExecResult {
 }
 
 /// How much output may sit between the provider and the consumer before the provider's
-/// sends park. Bounded on purpose (docs/32 §memory): a build that floods must slow the
+/// sends park. Bounded on purpose (docs/34 §memory): a build that floods must slow the
 /// transport down, not buffer here.
 pub const EXEC_EVENT_QUEUE: usize = 64;
 

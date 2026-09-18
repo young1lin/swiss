@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The tunnels plugin as a provider of remote EXECUTION (docs/32 §9) — the whole SSH
+//! The tunnels plugin as a provider of remote EXECUTION (docs/34 §9) — the whole SSH
 //! side of the remote plugin, exactly as `tunnel/shell.rs` is the whole SSH side of the
 //! terminal.
 //!
@@ -58,7 +58,7 @@ use swiss_host::services::remote::{
 ///   argument becomes `''`. Unicode always takes this path: quoted bytes survive any
 ///   locale, and no locale can reinterpret them as syntax.
 ///
-/// This is the ONLY argv->string step in the crate (docs/32 §13); do not grow a
+/// This is the ONLY argv->string step in the crate (docs/34 §13); do not grow a
 /// second. No join(" ") shortcut exists anywhere.
 pub fn quote_posix(arg: &str) -> String {
     let safe = |c: char| {
@@ -136,7 +136,7 @@ impl TunnelRemote {
 impl RemoteTransportProvider for TunnelRemote {
     fn list(&self) -> Vec<RemoteEndpoint> {
         // The endpoint list IS the tunnels connection inventory — ids, labels and live
-        // state, no hosts, no users, no credentials (docs/32 §36).
+        // state, no hosts, no users, no credentials (docs/34 §36).
         self.manager
             .connections()
             .into_iter()
@@ -255,7 +255,7 @@ impl RemoteTransportProvider for TunnelRemote {
 mod tests {
     use super::*;
 
-    // --- POSIX quoting (docs/32 §13) ------------------------------------------------------
+    // --- POSIX quoting (docs/34 §13) ------------------------------------------------------
     // Every argument that can break a naive join is pinned here; the properties that
     // matter are: exactly one argv element survives as one shell word, and nothing the
     // argument contains is ever interpreted as syntax.

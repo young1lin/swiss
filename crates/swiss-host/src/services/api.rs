@@ -211,7 +211,7 @@ struct OutputQuery {
     max: Option<String>,
 }
 
-/// One bounded slice of a run's LIVE output (docs/32 §17): while the run is executing,
+/// One bounded slice of a run's LIVE output (docs/34 §17): while the run is executing,
 /// what it appended so far; once finished, the retained tail. The response carries a
 /// monotonic cursor — poll again with it as `?after`. A cursor older than the retained
 /// window reads the oldest kept bytes with `truncated: true`, never a silent gap.

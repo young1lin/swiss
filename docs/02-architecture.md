@@ -26,7 +26,7 @@ local-mcp-gateway-rust/
     swiss-jobs/src/     jobs/…             # def, migrate, schedule, clock, state, runner, runlog, api
     swiss-terminal/src/ terminal/…         # config, session, tickets, recording, local shells (no axum, no SSH)
     swiss-remote/src/   target.rs actions.rs sync.rs project.rs api.rs
-                                          # the R1-R5 remote-execution surface (docs/32): target
+                                          # the R1-R5 remote-execution surface (docs/34): target
                                           # table, remote.exec/sync/pull actions, /api/remote
     swiss-panel/src/    admin.rs
                       admin_assets/      # copied verbatim from ../local-mcp-gateway/src/admin;

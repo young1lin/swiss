@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The remote TARGET table (docs/32): what an agent may aim at.
+//! The remote TARGET table (docs/34): what an agent may aim at.
 //!
 //! A target is the agent-facing half of a connection: an endpoint id (a tunnels
 //! connection, by that connection's own id), a workspaceRoot on the far side, a shell
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn safe_join_passes_an_absolute_rel_through_as_the_path_itself() {
         // An absolute path is what the caller typed in full - ssh-level trust, never
-        // joined onto the root (docs/32: the root anchors relative paths, not a cage).
+        // joined onto the root (docs/34: the root anchors relative paths, not a cage).
         assert_eq!(
             safe_join("/tmp/ws", "/home/dev/app").unwrap(),
             "/home/dev/app"
