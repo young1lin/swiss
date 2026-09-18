@@ -27,6 +27,15 @@
     "lib": ["es2022", "dom", "dom.iterable"],
     "types": [],
     "strict": true,
+    /* The Node-era catch idiom reads e.message on every error handler; with the strict
+       default the variable is unknown and the only type-true fix is a parenthesised cast,
+       which docs/36 D9 forbids (parentheses are tokens, not whitespace). The variable is
+       any until a better answer shows up - every other strict check stays on. */
+    "useUnknownInCatchVariables": false,
+    /* One bare handler reads this.value on an input's oninput (main.ts, via FilterInput in
+     * types/dom.d.ts, whose oninput override drops the DOM's this-param): the read is the
+     * Node-era idiom and every type-true fix is a token change docs/36 D9 forbids. */
+    "noImplicitThis": false,
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,
     "isolatedModules": true,

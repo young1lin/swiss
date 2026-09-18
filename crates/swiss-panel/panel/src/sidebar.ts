@@ -26,10 +26,10 @@ import { assignMember, groupOf as makeGroupOf, newGroupFlow, saveGroupNames, sav
  *  panel's MCP state and the groups component. Everything a grouped list IS lives in
  *  groups.js now (docs/20); what stayed here is what only the MCP list knows — which row
  *  fields exist, what opening one does, and the chip text. */
-function rowOf(name) {
+function rowOf(name: string): ApiMcpRow | undefined {
   return state.mcps.find(function (m) { return m.name === name; });
 }
-function visibleMcps() {
+function visibleMcps(): ApiMcpRow[] {
   var f = state.filter.trim().toLowerCase();
   if (!f) return state.mcps;
   return state.mcps.filter(function (m) {
@@ -42,13 +42,13 @@ function visibleMcps() {
 
 /** The group a row renders under — the one rule, shared with the server: the stored group
  *  while it exists, else the FIRST group (that slot, never a name, is the sink). */
-function groupOf(m) {
+function groupOf(m: GroupedRow): string {
   return makeGroupOf(state.groups)(m);
 }
 
 /** The sidebar's shape: one flat order sliced by group — which is why moving an MCP between
  *  groups never has to rewrite the ordering. */
-function groupedMcps() {
+function groupedMcps(): GroupSlice<ApiMcpRow>[] {
   var fn = makeGroupOf(state.groups);
   var rows = visibleMcps();
   var sliced = slice(rows, state.groups, fn);
@@ -57,8 +57,8 @@ function groupedMcps() {
 
 /** Rows in the order the eye sees them: group by group, skipping what is folded shut. Arrow-key
  *  navigation follows this, not the flat list — otherwise Down would jump into a collapsed group. */
-function navRows() {
-  var out = [];
+function navRows(): ApiMcpRow[] {
+  var out: ApiMcpRow[] = [];
   groupedMcps().forEach(function (g) {
     if (!state.collapsed[g.name] || state.filter.trim()) out = out.concat(g.rows);
   });
@@ -69,14 +69,14 @@ function navRows() {
 
 /** Persist the current list order. The server ranks /api/mcps by it and appends unknown names, so
  *  the panel and every other consumer agree on one order. */
-function saveOrderFlat() {
+function saveOrderFlat(): void {
   saveOrder("mcps", state.mcps.map(function (m) { return m.name; }))
     .catch(function () { /* the next reorder retries; the list is already right locally */ });
 }
 
 /** Move 'name' to just before/after 'target' in state.mcps, re-render, persist. Works on the FULL
  *  list (not the filtered view), so reordering with a search active does not shuffle the rest. */
-function moveRow(name, target, before) {
+function moveRow(name: string, target: string, before?: boolean): void {
   if (!name || !target || name === target) return;
   var item = state.mcps.find(function (m) { return m.name === name; });
   if (!item) return;
@@ -91,8 +91,8 @@ function moveRow(name, target, before) {
 /** Swap the selected MCP with its neighbour IN ITS OWN GROUP (Alt+Up / Alt+Down), then persist.
  *  Deliberately stops at the group edge: a keystroke that silently re-homed an MCP would be a
  *  surprise, and dragging is right there for that. */
-function nudgeSelected(up) {
-  var sel = rowOf(state.selected);
+function nudgeSelected(up: boolean): boolean {
+  var sel = rowOf(state.selected!);
   if (!sel) return false;
   var g = groupOf(sel);
   var rows = visibleMcps().filter(function (m) { return groupOf(m) === g; });
@@ -115,7 +115,7 @@ function nudgeSelected(up) {
  *  menu (docs/28 D3): the row itself is a <button>, and a button cannot nest the ellipsis
  *  button the Jobs/Tunnels rows use — the ctx-menu anchor pattern (data-csv.js) fits instead,
  *  and the tooltip says so. */
-function sideRowNode(m) {
+function sideRowNode(m: ApiMcpRow): HTMLButtonElement {
   var b = document.createElement("button");
   b.className = "side-row";
   b.type = "button";
@@ -145,7 +145,7 @@ function sideRowNode(m) {
  *  within reach — rename, disable/enable by state, delete. The label is read live from
  *  state.mcps (rowOf), never off the row's render-time snapshot, so a poll that flipped the
  *  lifecycle cannot make the menu offer the wrong verb. */
-function rowMenu(name, anchor) {
+function rowMenu(name: string, anchor: { left: number; top: number; bottom: number }): void {
   var m = rowOf(name) || { name: name, lifecycle: "stopped" };
   var started = m.lifecycle === "started";
   popupMenu(anchor, [
@@ -158,7 +158,7 @@ function rowMenu(name, anchor) {
 
 /** The mcps scope's cfg for mountGroup (see groups.js for the full contract). Built fresh each
  *  render so 'names' and 'collapsed' always reference the live state objects. */
-function sideCfg() {
+function sideCfg(): GroupCfg<ApiMcpRow> {
   return {
     scope: "mcps",
     density: "side",
@@ -191,7 +191,7 @@ function sideCfg() {
 /* --- group mutations (the pane's menu and the add sheet still call these) ------------------------ */
 
 /** Send the whole group list. Create, reorder and delete are all "here is the new list". */
-async function saveGroups(next) {
+async function saveGroups(next: string[]): Promise<boolean> {
   var j = await saveGroupNames("mcps", next);
   if (!j) return false;
   state.groups = j.groups || [];
@@ -199,14 +199,14 @@ async function saveGroups(next) {
   return true;
 }
 
-function newGroup() {
+function newGroup(): void {
   newGroupFlow("mcps", state.groups, function () { return loadList(); });
 }
 
 /** Move one MCP into a group. Applied locally first so the row jumps immediately, then persisted.
  *  The group name goes over as-is — 'default' is a real name now, and null (no explicit group)
  *  is only sent by the pane's "remove from group" paths, which the server reads as "first group". */
-async function assignGroup(name, group) {
+async function assignGroup(name: string, group?: string | null): Promise<void> {
   var m = rowOf(name);
   if (!m || groupOf(m) === (group || state.groups[0])) return;
   m.group = group;

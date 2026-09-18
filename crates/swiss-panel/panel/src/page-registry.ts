@@ -19,7 +19,7 @@ import { createPageRegistry } from "./page-core.js";
 import { glyphHtml, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
-var legacy = [
+var legacy: PageDescriptor[] = [
   { id: "mcps", pluginId: "mcp", label: "MCPs", sidebar: true },
   { id: "traffic", pluginId: "mcp", label: "Traffic" },
   { id: "tokens", pluginId: "mcp", label: "Token" },
@@ -28,29 +28,29 @@ var legacy = [
   { id: "data", pluginId: "data", label: "Data" },
   { id: "jobs", pluginId: "jobs", label: "Jobs" },
 ].map(function (p, i) { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
-var management = { id: "plugins", pluginId: "host", label: "Plugins", order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
+var management: PageDescriptor = { id: "plugins", pluginId: "host", label: "Plugins", order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
 /* These pages are host-owned like management: every plugin may depend on the vault, while System
  * controls the one running process rather than any individual plugin. */
-var vaultPage = { id: "secrets", pluginId: "host", label: "Secrets", order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
-var systemPage = { id: "system", pluginId: "host", label: "System", order: 1002, path: "#system", entry: "/admin/js/views/system.js" };
+var vaultPage: PageDescriptor = { id: "secrets", pluginId: "host", label: "Secrets", order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
+var systemPage: PageDescriptor = { id: "system", pluginId: "host", label: "System", order: 1002, path: "#system", entry: "/admin/js/views/system.js" };
 /* Group labels used when the host serves no plugin inventory (an older gateway answers 404 on
    /api/plugins), plus the one group that has no inventory row at all: the management page is
    synthesized here, not contributed by a plugin. */
 var GROUP_LABELS = { mcp: "MCP", tunnels: "Tunnels", data: "Data", jobs: "Jobs", host: "Settings" };
 var registry = createPageRegistry();
 registry.replace(legacy);
-var inventory = null;
-var active = null;
+var inventory: ApiPluginsResponse | null = null;
+var active: { id: string; module: PageModule; controller: AbortController } | null = null;
 var sequence = 0;
-var boot = null;
+var boot: Promise<void> | null = null;
 var polling = false;
 
-function pluginInventory() { return inventory; }
+function pluginInventory(): ApiPluginsResponse | null { return inventory; }
 function pageHasPendingChanges() { return !!(active && active.module.hasPendingChanges && active.module.hasPendingChanges()); }
 function pageUsesSidebar() { return layoutOf(registry.get(state.view)) === "resource"; }
 function currentPageCount() { return active && active.module.countText ? active.module.countText() : ""; }
-function pluginFor(page) { return inventory && (inventory.plugins || []).find(function (p) { return p.id === page.pluginId; }); }
-function unavailable(page) {
+function pluginFor(page: PageDescriptor): ApiPluginRow | null | undefined { return inventory && (inventory.plugins || []).find(function (p) { return p.id === page.pluginId; }); }
+function unavailable(page: PageDescriptor): ApiPluginRow | null {
   var plugin = pluginFor(page);
   return plugin && (plugin.enabled === false || ["disabled", "failed", "waitingDependency", "not-built"].indexOf(plugin.state) >= 0) ? plugin : null;
 }
@@ -63,13 +63,13 @@ function unavailable(page) {
    always draws its own chrome (rail and context bar) around every layout, so nothing here
    decides who owns the chrome anymore. Workspace is never guessed - no plugin accidentally
    loses the resource sidebar to a fallback. */
-function layoutOf(page) {
+function layoutOf(page: PageDescriptor | null | undefined): string {
   if (page && (page.layout === "resource" || page.layout === "page" || page.layout === "workspace")) return page.layout;
   return page && page.sidebar ? "resource" : "page";
 }
 
-function currentGroups() { return registry.groups(inventory && inventory.plugins, GROUP_LABELS); }
-function currentGroup() {
+function currentGroups(): PageGroup[] { return registry.groups(inventory && inventory.plugins, GROUP_LABELS); }
+function currentGroup(): PageGroup | undefined {
   return currentGroups().find(function (g) { return g.pages.some(function (p) { return p.id === state.view; }); });
 }
 
@@ -78,7 +78,7 @@ function currentGroup() {
    searchable list - the rail is the shortlist, not the ceiling). A seat carries data-group
    and data-view (the group's lowest-order page) so the deep selector in jobs.js keeps
    matching, and clicks delegate on [data-view]. */
-function railSeat(g) {
+function railSeat(g: PageGroup): string {
   var active = g.pages.some(function (p) { return p.id === state.view; });
   var offPlugin = unavailable(g.pages[0]);
   var allOff = g.pages.every(function (p) { return !!unavailable(p); });
@@ -95,15 +95,15 @@ function moreSeat() {
     '<span class="rail-btn-label">More</span></button>';
 }
 
-function paintPluginRail() {
+function paintPluginRail(): void {
   var nav = $("railNav");
   nav.innerHTML = pinnedGroups(currentGroups()).map(railSeat).join("") + moreSeat();
   nav.onclick = function (event) {
-    var target = event.target;
-    var more = target.closest ? target.closest(".rail-more") : null;
+    var target = event.target as HTMLElement;
+    var more = target.closest ? target.closest(".rail-more") as HTMLElement | null : null;
     if (more) { openPluginPalette(decoratedGroups(), navigatePage, paintPluginRail); return; }
-    var button = target.closest ? target.closest("[data-view]") : null;
-    if (button) void navigatePage(button.dataset.view);
+    var button = target.closest ? target.closest("[data-view]") as HTMLElement | null : null;
+    if (button) void navigatePage(button.dataset.view!);
   };
 }
 
@@ -130,7 +130,7 @@ function decoratedGroups() {
 /** The switcher menu's items for one group: its pages in order, the current one picked,
  *  unavailable ones marked. Factored out of the click handler so the contract (order, the
  *  pick column, the · off marker) is testable without a menu. */
-function pageMenuItems(current) {
+function pageMenuItems(current: PageGroup): PageMenuItemSpec[] {
   return current.pages.map(function (p) {
     var po = unavailable(p);
     return {
@@ -142,7 +142,7 @@ function pageMenuItems(current) {
   });
 }
 
-function paintPluginContext() {
+function paintPluginContext(): void {
   var bar = $("ctxBar");
   var btn = $("pageBtn");
   var loc = $("pageLoc");
@@ -161,23 +161,23 @@ function paintPluginContext() {
     loc.hidden = true;
     return;
   }
-  var off = unavailable(page);
-  if (current.pages.length >= 2) {
+  var off = unavailable(page!);
+  if (current!.pages.length >= 2) {
     btn.hidden = false;
     loc.hidden = true;
     btn.innerHTML =
-      '<span class="ctx-plugin">' + esc(current.label) + "</span>" +
+      '<span class="ctx-plugin">' + esc(current!.label) + "</span>" +
       '<span class="ctx-sep">/</span>' +
-      '<span class="ctx-page">' + esc(page.label) + "</span>" +
+      '<span class="ctx-page">' + esc(page!.label) + "</span>" +
       icon("chevron-right");
-    btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current.label + " page";
+    btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current!.label + " page";
     btn.onclick = function (ev) {
       ev.stopPropagation();
       btn.setAttribute("aria-expanded", "true");
-      var items = pageMenuItems(current).map(function (it, i) {
-        var p = current.pages[i];
+      var items = pageMenuItems(current!).map(function (it, i) {
+        var p = current!.pages[i];
         it.fn = function () { btn.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
-        return it;
+        return it as MenuItemAction;
       });
       /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
        * top level), so it loads HERE, at interaction time - the shell's own module graph stays
@@ -197,34 +197,34 @@ function paintPluginContext() {
     btn.onclick = null;
     btn.setAttribute("aria-expanded", "false");
     loc.hidden = false;
-    loc.innerHTML = '<span class="ctx-page">' + esc(current.label) + "</span>";
+    loc.innerHTML = '<span class="ctx-page">' + esc(current!.label) + "</span>";
     loc.title = off ? (off.lastError || "Plugin disabled") : "";
   }
 }
 
-function paintNavigation() {
+function paintNavigation(): void {
   paintPluginRail();
   paintPluginContext();
 }
 
-async function reloadPluginInventory() {
+async function reloadPluginInventory(): Promise<ApiPluginsResponse | null> {
   var response = await api("/api/plugins");
   if (response.status === 404) {
     inventory = null;
     registry.replace(legacy);
   } else {
     if (!response.ok) throw new Error("Cannot load plugin inventory: HTTP " + response.status);
-    var next = await response.json();
+    var next: ApiPluginsResponse & { plugins?: (ApiPluginRow & { pages?: ApiPluginPage[] })[] } = await response.json();
     var pages = next.pages || (next.plugins || []).flatMap(function (p) { return p.pages || []; });
     registry.replace(pages.filter(function (p) { return ["plugins", "secrets", "system"].indexOf(p.id) < 0; })
-      .concat([management, vaultPage, systemPage]));
+      .concat([management, vaultPage, systemPage] as ApiPluginPage[]));
     inventory = next;
   }
   paintNavigation();
   return inventory;
 }
 
-function initPages() {
+function initPages(): Promise<void> {
   if (boot) return boot;
   boot = (async function () {
     try { await reloadPluginInventory(); }
@@ -240,7 +240,7 @@ function initPages() {
   return boot;
 }
 
-async function navigatePage(id, force) {
+async function navigatePage(id: string, force?: boolean): Promise<void> {
   var page = registry.get(id);
   if (!page || (!force && active && active.id === id)) return;
   if (active && active.module.canLeave && !active.module.canLeave()) {
@@ -248,7 +248,7 @@ async function navigatePage(id, force) {
     return;
   }
   var ticket = ++sequence;
-  var module;
+  var module: PageModule;
   var off = unavailable(page);
   try { module = off ? {} : await registry.load(id); }
   catch (error) { toast(error.message, true); return; }
@@ -263,7 +263,7 @@ async function navigatePage(id, force) {
   /* The resource sidebar belongs to the resource layout alone; every other layout gets the
    * full body width (a "page" wraps its content in the pane's padding, a "workspace" is
    * full-bleed - a framing difference only, the shell's chrome is drawn either way). */
-  document.querySelector(".sidebar").hidden = layoutOf(page) !== "resource";
+  document.querySelector<HTMLElement>(".sidebar")!.hidden = layoutOf(page) !== "resource";
   paintNavigation();
   history.replaceState(null, "", page.path || "#" + id);
   $("pane").innerHTML = off
@@ -274,14 +274,14 @@ async function navigatePage(id, force) {
   if (ticket === sequence) $("countChip").textContent = currentPageCount();
 }
 
-async function pollPage() {
+async function pollPage(): Promise<void> {
   if (polling || !active || !active.module.poll) return;
   polling = true;
   try { await active.module.poll(); }
   catch (error) { toast(error.message, true); }
   finally { polling = false; }
 }
-async function refreshPage() {
+async function refreshPage(): Promise<void> {
   if (!active) return;
   try { if (active.module.refresh) await active.module.refresh(); else if (active.module.poll) await active.module.poll(); }
   catch (error) { toast(error.message, true); }

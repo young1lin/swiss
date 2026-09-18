@@ -64,21 +64,21 @@ import { popupMenu } from "./menu.js";
 /** Fold state is keyed by group name under swiss.groups.<scope>.collapsed. A rename carries
  *  the key across - otherwise a renamed group springs open. Panel-only state, so it lives
  *  here rather than in any store. */
-function collapseKey(scope) { return "swiss.groups." + scope + ".collapsed"; }
+function collapseKey(scope        )         { return "swiss.groups." + scope + ".collapsed"; }
 
-function loadCollapsed(scope) {
-  try { return JSON.parse(localStorage.getItem(collapseKey(scope))) || {}; } catch (e) { return {}; }
+function loadCollapsed(scope        )                          {
+  try { return JSON.parse(localStorage.getItem(collapseKey(scope))          ) || {}; } catch (e) { return {}; }
 }
-function saveCollapsed(scope, map) {
+function saveCollapsed(scope        , map                         )       {
   try { localStorage.setItem(collapseKey(scope), JSON.stringify(map)); } catch (e) { /* full or blocked */ }
 }
 
 /** The group picked the last time something was created in this scope - read raw (null when
  *  never set); resolveDefaultGroup decides whether it still means anything. */
-function lastGroup(scope) {
+function lastGroup(scope        )                {
   try { return localStorage.getItem(lastGroupKey(scope)); } catch (e) { return null; }
 }
-function rememberGroup(scope, name) {
+function rememberGroup(scope        , name        )       {
   try { localStorage.setItem(lastGroupKey(scope), name); } catch (e) { /* full or blocked */ }
 }
 
@@ -86,31 +86,31 @@ function rememberGroup(scope, name) {
 
 /** Create, reorder and delete are all "here is the new list"; the server drops omitted
  *  groups and returns their members to the first remaining one. */
-async function saveGroupNames(scope, next) {
+async function saveGroupNames(scope        , next          )                                       {
   return apiJson("/api/groups/" + scope, { method: "PUT", body: JSON.stringify({ groups: next }) });
 }
 
 /** Rename in place: the slot is kept and the members ride along; the answer's moved count is
  *  what the toast reports, so renaming a full group looks like what it was. */
-async function renameGroupApi(scope, from, to) {
+async function renameGroupApi(scope        , from        , to        )                                          {
   return apiJson("/api/groups/" + scope + "/rename", { method: "POST", body: JSON.stringify({ from: from, to: to }) });
 }
 
 /** Put one member in a group (the canonical name comes back), or null to render it in the
  *  first group. */
-async function assignMember(scope, id, group) {
+async function assignMember(scope        , id        , group                )                                         {
   return apiJson("/api/groups/" + scope + "/members/" + encodeURIComponent(id),
     { method: "PUT", body: JSON.stringify({ group: group === undefined ? null : group }) });
 }
 
 /** The scope's flat order: ids in the order the panel now sees. */
-async function saveOrder(scope, ids) {
+async function saveOrder(scope        , ids          )                                         {
   return apiJson("/api/groups/" + scope + "/order", { method: "PUT", body: JSON.stringify({ order: ids }) });
 }
 
 /** The New-group flow every scope shares: the one-field sheet, then the whole list. */
-function newGroupFlow(scope, names, reload) {
-  openGroupSheet(null, async function (name) {
+function newGroupFlow(scope        , names          , reload                                  )       {
+  openGroupSheet(null, async function (name        ) {
     var j = await saveGroupNames(scope, names.concat([name]));
     if (!j) return false;
     await reload();
@@ -121,7 +121,7 @@ function newGroupFlow(scope, names, reload) {
 /** The Group field of a create sheet: every live group, `sel` selected. The select - not a
  *  hidden promise made by whichever + opened the sheet - is where the row lands, so a value
  *  the user changed wins. #g-sel is the one id every create sheet shares. */
-function groupFieldHtml(names, sel) {
+function groupFieldHtml(names          , sel         )         {
   var opts = names.map(function (n) {
     return '<option value="' + esc(n) + '"' + (n === sel ? " selected" : "") + ">" + esc(n) + "</option>";
   }).join("");
@@ -157,7 +157,7 @@ function groupFieldHtml(names, sel) {
  *    onAssign(id, group)             member PUT, applied locally first (caller-owned rows)
  *    filtered       a search is on: groups with no match hide, matches force expansion
  */
-function mountGroup(cfg, g) {
+function mountGroup                        (cfg               , g                 )              {
   var page = cfg.density === "page";
   // At page density the group IS the card: .group brings the ring, the radius and the clip,
   // so the rows need no second surface under the head (and jobs.js's "is the list painted"
@@ -236,11 +236,11 @@ function mountGroup(cfg, g) {
 
   var body = el("div", "grp-body");
   if (page && g.rows.length) {
-    body.innerHTML = cfg.rowsHtml(g);
+    body.innerHTML = cfg.rowsHtml (g);
     g.rows.forEach(function (row) {
       // rowSel, not a data-id: tunnels address rows by data-conn/data-rule, jobs and secrets
       // by their own keys — the caller owns the DOM it built.
-      var node = body.querySelector(cfg.rowSel(row));
+      var node = body.querySelector             (cfg.rowSel (row));
       if (node) {
         wireRowDrag(cfg, node, row);
         if (cfg.wireRow) cfg.wireRow(node, row); // the caller's own actions on the row
@@ -248,7 +248,7 @@ function mountGroup(cfg, g) {
     });
   } else if (cfg.rowNode) {
     g.rows.forEach(function (row) {
-      var node = cfg.rowNode(row);
+      var node = cfg.rowNode (row);
       wireRowDrag(cfg, node, row);
       body.appendChild(node);
     });
@@ -272,15 +272,15 @@ function mountGroup(cfg, g) {
  *  click, so the toggle still folds. The + and ellipsis buttons cancel the drag at its
  *  start instead: a hand that moves a pixel while pressing one must still land the click,
  *  and a cancelled dragstart is exactly a mouse-up that clicks. */
-function wireHeadDrag(cfg, wrap, head, group) {
+function wireHeadDrag                        (cfg               , wrap             , head             , group        )       {
   head.draggable = true;
   head.addEventListener("dragstart", function (e) {
-    var t = e.target;
+    var t = e.target                      ;
     if (t && t.closest && t.closest(".grp-add, .grp-more")) { e.preventDefault(); return; }
     cfg.dragGroup.set(group);
     wrap.classList.add("dragging");
-    try { e.dataTransfer.setData("text/plain", group); } catch (err) { /* old IE */ }
-    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer .setData("text/plain", group); } catch (err) { /* old IE */ }
+    e.dataTransfer .effectAllowed = "move";
   });
   head.addEventListener("dragend", function () {
     cfg.dragGroup.set(null); // lets the deferred rebuild run - same contract as a row drag
@@ -294,20 +294,20 @@ function wireHeadDrag(cfg, wrap, head, group) {
 
 /** Row drag: reorder and re-home in one gesture. The insertion point is the hovered row's
  *  half; the group comes from the target row, so a cross-group drag needs no second drop. */
-function wireRowDrag(cfg, node, row) {
+function wireRowDrag                        (cfg               , node             , row     )       {
   if (cfg.draggable === false) return;
   var id = cfg.rowId(row);
   node.draggable = true;
   node.addEventListener("dragstart", function (e) {
     cfg.drag.set(id);
     node.classList.add("dragging");
-    try { e.dataTransfer.setData("text/plain", id); } catch (err) { /* old IE */ }
-    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer .setData("text/plain", id); } catch (err) { /* old IE */ }
+    e.dataTransfer .effectAllowed = "move";
   });
   node.addEventListener("dragover", function (e) {
     if (!cfg.drag.get() || cfg.drag.get() === id) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+    e.dataTransfer .dropEffect = "move";
     var before = e.clientY < node.getBoundingClientRect().top + node.offsetHeight / 2;
     node.classList.toggle("drop-before", before);
     node.classList.toggle("drop-after", !before);
@@ -339,11 +339,11 @@ function wireRowDrag(cfg, node, row) {
 /** A ROW dropped on the head (or on the empty line) appends to this group - the only way
  *  into a group with no rows yet. Group drags pass through untouched: the whole .grp
  *  answers those (wireGroupDrop), so a head never has to know which kind it is under. */
-function wireIntoDrop(cfg, node, group) {
+function wireIntoDrop                        (cfg               , node             , group        )       {
   node.addEventListener("dragover", function (e) {
     if (!cfg.drag.get()) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+    e.dataTransfer .dropEffect = "move";
     node.classList.add("drop-into");
   });
   node.addEventListener("dragleave", function () {
@@ -363,8 +363,8 @@ function wireIntoDrop(cfg, node, group) {
  *  WHOLE group decides, head and members alike, so the target is the block the user sees
  *  moving and not a 36px strip of it. Row drags never reach here with a group in flight;
  *  the rows and the head handle their own kind and let this one bubble. */
-function wireGroupDrop(cfg, wrap, group) {
-  var half = function (e) {
+function wireGroupDrop                        (cfg               , wrap             , group        )       {
+  var half = function (e           ) {
     var r = wrap.getBoundingClientRect();
     return e.clientY < r.top + r.height / 2;
   };
@@ -372,13 +372,13 @@ function wireGroupDrop(cfg, wrap, group) {
     var dg = cfg.dragGroup.get();
     if (!dg || dg === group) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+    e.dataTransfer .dropEffect = "move";
     wrap.classList.toggle("drop-before", half(e));
     wrap.classList.toggle("drop-after", !half(e));
   });
   wrap.addEventListener("dragleave", function (e) {
     // Crossing from the head into a row is not leaving the group.
-    if (e.relatedTarget && wrap.contains(e.relatedTarget)) return;
+    if (e.relatedTarget && wrap.contains(e.relatedTarget        )) return;
     wrap.classList.remove("drop-before", "drop-after");
   });
   wrap.addEventListener("drop", function (e) {
@@ -393,7 +393,7 @@ function wireGroupDrop(cfg, wrap, group) {
 
 /** Land a dragged row at the end of a group: slot it after that group's last member so the
  *  flat order agrees with what the list now shows, then reassign. */
-function dropInto(cfg, id, group) {
+function dropInto                        (cfg               , id        , group        )       {
   var members = cfg.rowsById().filter(function (r) {
     return cfg.groupOfRow(r) === group && cfg.rowId(r) !== id;
   });
@@ -404,7 +404,7 @@ function dropInto(cfg, id, group) {
 /** Move a group to a new slot in the stored order. The whole list is sent - create, reorder
  *  and delete are all "here is the new list" on this API - and the server keeps the order it
  *  is given, so the panel and every other consumer agree. */
-function moveGroup(cfg, name, target, before) {
+function moveGroup                        (cfg               , name        , target        , before         )       {
   if (!name || name === target) return;
   var rest = cfg.names.filter(function (g) { return g !== name; });
   var to = rest.indexOf(target);
@@ -418,7 +418,7 @@ function moveGroup(cfg, name, target, before) {
 /** Swap a group with its neighbour (the ellipsis menu's Move up/down): the click-precise
  *  and keyboard counterpart of dragging the head. Falls through at the edges, where the
  *  menu does not offer the move. */
-function moveGroupBy(cfg, name, delta) {
+function moveGroupBy                        (cfg               , name        , delta        )       {
   var i = cfg.names.indexOf(name);
   var j = i + delta;
   if (i < 0 || j < 0 || j >= cfg.names.length) return;
@@ -430,8 +430,8 @@ function moveGroupBy(cfg, name, delta) {
 }
 
 /** Rename through the one-field sheet; the fold key rides along, or the group springs open. */
-function renameFlow(cfg, from) {
-  openGroupSheet(from, async function (to) {
+function renameFlow                        (cfg               , from        )       {
+  openGroupSheet(from, async function (to        ) {
     var j = await renameGroupApi(cfg.scope, from, to);
     if (!j) return false;
     if (cfg.collapsed[from]) { delete cfg.collapsed[from]; cfg.collapsed[to] = true; saveCollapsed(cfg.scope, cfg.collapsed); }
@@ -443,7 +443,7 @@ function renameFlow(cfg, from) {
 
 /** Deleting a group deletes nothing else, so the confirm only has to say where the members
  *  go: the first remaining group - that slot is the server's sink for them. */
-function deleteFlow(cfg, name) {
+function deleteFlow                        (cfg               , name        )       {
   var count = cfg.rowsById().filter(function (r) { return cfg.groupOfRow(r) === name; }).length;
   var rest = cfg.names.filter(function (g) { return g !== name; });
   if (!rest.length) { toast("At least one group must remain"); return; }

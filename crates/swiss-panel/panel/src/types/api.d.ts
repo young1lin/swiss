@@ -68,7 +68,10 @@ interface ApiMcpRow {
   description: string;
   lifecycle: string;
   state: string;
-  group: string;
+  /* Always present on the wire; optional here because the panel optimistically rewrites it
+   * (or clears it) on a member move before the server's answer lands; the member PUT's
+   * answer echoes null when the explicit entry was removed. */
+  group?: string | null;
   latencyMs?: number;
   lastCheck?: string;
   reason?: string;
@@ -348,6 +351,10 @@ interface ApiJobsResponse {
  *  v2 triggers leave both schedule fields absent rather than rounding a lie. */
 interface ApiJobRow {
   name: string;
+  /* The v2 identity (docs/11 section 7.1): a human title and free-form labels on top of
+   *  the id; optional because a v1-era config carries neither. */
+  title?: string;
+  labels?: string[];
   enabled: boolean;
   timeoutMs: number;
   command: string;
@@ -724,6 +731,13 @@ interface ApiPluginToggleResponse {
 /* --- every admin error body ---------------------------------------------------------------------- */
 
 /** The one error shape every route answers with - adminapi.rs admin_error. */
+/** POST /api/mcpdefs/import - the .mcp.json importer's answer: what landed (rows by name)
+ *  and what was refused (reasons live server-side; the toast counts only). */
+interface ApiMcpDefsImportResponse {
+  imported?: { name: string }[];
+  skipped?: unknown[];
+}
+
 interface ApiErrorBody {
   error: string;
 }

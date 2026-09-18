@@ -25,9 +25,9 @@
      "host") still gets a group: fallback label first, then the page's own label. Never drop
      a page because its plugin row is missing - a page that cannot be reached is worse than
      a group with an ugly name. */
-function groupPages(pages, plugins, fallbackLabels) {
+function groupPages(pages: PageDescriptor[], plugins: ApiPluginRow[] | null | undefined, fallbackLabels: Record<string, string> | null | undefined): PageGroup[] {
   var byId = new Map((plugins || []).map(function (p) { return [p.id, p]; }));
-  var groups = new Map();
+  var groups = new Map<string, PageGroup>();
   pages.forEach(function (page) {
     var gid = page.pluginId || page.id;
     var group = groups.get(gid);
@@ -45,20 +45,20 @@ function groupPages(pages, plugins, fallbackLabels) {
     .sort(function (a, b) { return a.order - b.order; });
 }
 
-function createPageRegistry(importer) {
-  var entries = new Map();
-  var modules = new Map();
-  importer = importer || function (entry) { return import(entry); };
-  function valid(page) {
+function createPageRegistry(importer?: (entry: string) => Promise<PageModule>) {
+  var entries = new Map<string, PageDescriptor>();
+  var modules = new Map<string, { entry: string; promise: Promise<PageModule> }>();
+  importer = importer || function (entry: string) { return import(entry); };
+  function valid(page: PageInput): PageDescriptor {
     if (!page || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(page.id || "")) throw new Error("Invalid page id");
     if (typeof page.label !== "string" || !page.label) throw new Error("Page label is required");
     var entryOk = /^\/admin\/(?:js\/views|plugins)\/[a-zA-Z0-9_./-]+\.js$/.test(page.entry || "") && (page.entry || "").indexOf("..") === -1;
     if (!entryOk) throw new Error("Page entry must be a local admin module");
-    return Object.assign({}, page, { order: Number.isFinite(page.order) ? page.order : 0 });
+    return Object.assign({}, page, { order: Number.isFinite(page.order) ? page.order : 0 }) as PageDescriptor;
   }
-  function listSorted() { return Array.from(entries.values()).sort(function (a, b) { return a.order - b.order; }); }
+  function listSorted(): PageDescriptor[] { return Array.from(entries.values()).sort(function (a, b) { return a.order - b.order; }); }
   return {
-    replace: function (pages) {
+    replace: function (pages: PageInput[]) {
       if (!Array.isArray(pages)) throw new Error("Pages must be an array");
       var next = new Map();
       pages.forEach(function (page) {
@@ -68,19 +68,19 @@ function createPageRegistry(importer) {
       });
       entries = next;
       modules.forEach(function (cached, id) {
-        if (!entries.has(id) || entries.get(id).entry !== cached.entry) modules.delete(id);
+        if (!entries.has(id) || entries.get(id)!.entry !== cached.entry) modules.delete(id);
       });
     },
-    get: function (id) { return entries.get(id); },
+    get: function (id: string) { return entries.get(id); },
     list: listSorted,
-    groups: function (plugins, fallbackLabels) { return groupPages(listSorted(), plugins, fallbackLabels); },
-    load: function (id) {
+    groups: function (plugins: ApiPluginRow[] | null | undefined, fallbackLabels?: Record<string, string>) { return groupPages(listSorted(), plugins, fallbackLabels); },
+    load: function (id: string) {
       var page = entries.get(id);
       if (!page) return Promise.reject(new Error("Unknown page: " + id));
       var cached = modules.get(id);
       if (cached) return cached.promise;
-      var promise = Promise.resolve().then(function () { return importer(page.entry); }).catch(function (error) {
-        if (modules.get(id) && modules.get(id).promise === promise) modules.delete(id);
+      var promise = Promise.resolve().then(function () { return importer(page!.entry); }).catch(function (error) {
+        if (modules.get(id) && modules.get(id)!.promise === promise) modules.delete(id);
         throw error;
       });
       modules.set(id, { entry: page.entry, promise: promise });
