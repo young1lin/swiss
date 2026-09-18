@@ -168,15 +168,17 @@ function render() {
       '<div id="rmGroups"></div>' +
     "</div>";
   $("pane").innerHTML = head;
-  if (!targets.length) {
-    // The empty state takes the groups slot (the tunnels page's shape): the header and
-    // its actions stay above it, so Add target is one click away.
+  // The grouped list shows once there is anything to show: any row, or any group
+  // beyond the implicit default. A group the user just made is a PLACE (docs/20: an
+  // empty group is not an empty state) - hiding it behind "No targets yet" reads as
+  // the create having failed, which is exactly the bug it was. The bare table (no
+  // rows, only default) keeps the explaining empty state.
+  if (!targets.length && groupNames.length <= 1) {
     $("rmGroups").innerHTML = emptyHtml({ icon: "globe", title: "No targets yet", hint: "Add a target to run commands on the machines the Tunnels connections reach." });
-    $("countChip").textContent = "";
   } else {
-    $("countChip").textContent = targets.length + " target" + (targets.length === 1 ? "" : "s");
     paint();
   }
+  $("countChip").textContent = targets.length ? targets.length + " target" + (targets.length === 1 ? "" : "s") : "";
 }
 
 /** Flat reorder after a row drag: applied locally so the row jumps immediately, then

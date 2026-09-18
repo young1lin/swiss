@@ -201,6 +201,19 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(byId("countChip").textContent).toBe("");
   });
 
+  it("a group the user created stays visible with no rows yet - a place, not an empty state", async () => {
+    // The production bug this pins: create a group on an empty table and the page
+    // answered the full empty state, so the new group vanished (docs/20: an empty
+    // group is not an empty state - it is a drop target with a +).
+    serve([], ["default", "test"]);
+    await view.mount();
+    expect(drawn()).toContain("default");
+    expect(drawn()).toContain("test");
+    expect(groupsEl.children.length).toBe(2);
+    expect(drawn()).not.toContain("No targets yet");
+    expect(byId("countChip").textContent).toBe("");
+  });
+
   it("the rows render through the groups component: headers, one card per group, the family's page chrome", async () => {
     serve(
       [
