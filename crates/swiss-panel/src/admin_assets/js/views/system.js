@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-import { $, apiJson, emptyHtml, state } from "../util.js";
+import { $, apiJson, emptyHtml } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
+import { currentView } from "../ui-state.js";
 
 /** The process action is deliberately a Settings page, not permanent app chrome: quitting the
  *  whole toolbox is destructive, rare, and belongs beside other host-owned controls. */
@@ -71,7 +72,7 @@ async function requestQuit() {
   }
   closeSheet();
   // A slow response must not overwrite a different page reached while the sheet was open.
-  if (state.view === "system") {
+  if (currentView() === "system") {
     $("pane").innerHTML = emptyHtml({
       icon: "power",
       title: "swiss is stopping",

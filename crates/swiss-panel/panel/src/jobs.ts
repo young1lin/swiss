@@ -44,6 +44,7 @@ import { jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs } from "
 import { argFieldsHtml, readRunArgs } from "./run.js";
 import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
 import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
+import { currentView } from "./ui-state.js";
 
 let probed: boolean | null = null; // null = not probed yet; then the cached boolean answer for this page load
 
@@ -179,7 +180,7 @@ function jobCfg(): GroupCfg<ApiJobRow> {
 /** Poll-safe update: dots, last/next labels, the Run-now button, group counts, the footer.
  *  Never structure — and never a rebuild mid-drag, which would cancel the gesture. */
 function patchJobs(): void {
-  if (state.view !== "jobs") return;
+  if (currentView() !== "jobs") return;
   const pane = $("pane");
   const sig = jobGroupsList().join("\n") + "\u0000" +
     state.jobs.data.map((j: ApiJobRow): string => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");

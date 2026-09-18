@@ -13,7 +13,10 @@ vi.mock("../src/util.js", () => ({
   emptyHtml: (o: { title: string; hint: string }) =>
     '<div class="empty"><div><h2>' + o.title + "</h2><p>" + o.hint + "</p></div></div>",
   icon: () => "",
-  state: env.state,
+}));
+
+vi.mock("../src/ui-state.js", () => ({
+  currentView: () => env.state.view,
 }));
 
 vi.mock("../src/add-sheet.js", () => ({

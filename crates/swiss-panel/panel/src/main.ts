@@ -40,6 +40,7 @@ import { exitImmersive, immersiveOn, initImmersive } from "./immersive.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
 import { loadTokens } from "./views/tokens.js";
+import { knownPanelVersion, menuIsOpen, setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
 
 
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
@@ -50,7 +51,7 @@ import { loadTokens } from "./views/tokens.js";
 let warnedNewPanel = false;
 function maybeReloadPanel(newVersion: string): void {
   const typing = isTyping();
-  const busy = !$("sheet").hidden || state.menuOpen;
+  const busy = !$("sheet").hidden || menuIsOpen();
   const edits = pageHasPendingChanges();
   if (typing || busy || edits) {
     if (!warnedNewPanel) {
@@ -59,7 +60,7 @@ function maybeReloadPanel(newVersion: string): void {
     }
     return;
   }
-  state.panelVersion = newVersion; // remember before reload so a fast retry does not loop
+  setKnownPanelVersion(newVersion); // remember before reload so a fast retry does not loop
   location.reload();
 }
 
@@ -80,8 +81,8 @@ async function loadInfo(): Promise<void> {
       state.info = await r.json();
       // First sight records the stamp; a LATER, DIFFERENT one means the panel was rebuilt —
       // reload in place when nothing unsaved would be lost (checked in maybeReloadPanel).
-      if (state.panelVersion === null) state.panelVersion = state.info?.panelVersion || null;
-      else if (state.info?.panelVersion && state.info?.panelVersion !== state.panelVersion) {
+      if (knownPanelVersion() === null) setKnownPanelVersion(state.info?.panelVersion || null);
+      else if (state.info?.panelVersion && state.info?.panelVersion !== knownPanelVersion()) {
         maybeReloadPanel(state.info?.panelVersion!);
       }
     }
@@ -169,7 +170,7 @@ window.addEventListener("beforeunload", (e) => {
 // refreshMemoryNow — a reading is not a reload button); the ONE explicit view refresh left
 // is the r key below, which keeps Data's manual reload alive.
 
-$<HTMLInputElement>("filter").oninput = (e) => { state.filter = (e.currentTarget as HTMLInputElement).value; patchSidebar(); };
+$<HTMLInputElement>("filter").oninput = (e) => { setListFilter((e.currentTarget as HTMLInputElement).value); patchSidebar(); };
 initImmersive(); // the context bar's focus control: the page body can take the whole window
 
 /* Keyboard: arrows move through the sidebar, / focuses search, Escape closes the sheet/menu,
@@ -177,7 +178,7 @@ initImmersive(); // the context bar's focus control: the page body can take the 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (!$("sheet").hidden) { closeSheet(); return; }
-    if (state.menuOpen) { closeMenu(); return; }
+    if (menuIsOpen()) { closeMenu(); return; }
     const hd = state.detail;
     if (hd && hd.run && hd.run.histOpen) { histClose(); return; }
     if (immersiveOn()) { exitImmersive(); return; }
@@ -205,7 +206,7 @@ document.addEventListener("keydown", (e) => {
   openDetail(rows[nextIndex].name);
 });
 
-state.collapsed = loadCollapsed("mcps"); // before the first paint, so folded groups never flash open
+setFoldMap(loadCollapsed("mcps")); // before the first paint, so folded groups never flash open
 state.tun.collapsed = { conns: loadCollapsed("conns"), rules: loadCollapsed("rules") }; // same, per tunnels page scope
 state.jobs.collapsed = loadCollapsed("jobs"); // the jobs scope's own fold map (docs/20 G4)
 showApp();

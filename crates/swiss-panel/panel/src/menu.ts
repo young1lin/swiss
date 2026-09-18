@@ -20,6 +20,7 @@ import { $, dotTitle, state, typeTagHtml } from "./util.js";
 import { closeMenu } from "./pane.js";
 import { groupOf, groupedMcps, rowOf, sideCfg, visibleMcps } from "./sidebar.js";
 import { mountGroup } from "./groups.js";
+import { currentView, draggingGroupName, draggingRow, foldMap, listFilter, setMenuOpen } from "./ui-state.js";
 
 /* --- a menu anchored to a button ---------------------------------------------------------------
    The pane's overflow menu anchors to .pane-actions; menus raised from the sidebar have no such
@@ -52,7 +53,7 @@ function popupMenu(anchor: { left: number; top: number; bottom: number }, items:
   node.style.left = pos.left + "px";
   // Below the button, unless that would run off the bottom — then above it.
   node.style.top = pos.top + "px";
-  state.menuOpen = true;
+  setMenuOpen(true);
   // Roles and keys (guarded: the vitest micro-DOM has neither querySelectorAll nor focus).
   if (node.setAttribute) node.setAttribute("role", "menu");
   const buttons = typeof node.querySelectorAll === "function"
@@ -112,7 +113,7 @@ function tooltipOf(m: ApiMcpRow): string {
 /** Patch existing rows in place; only rebuild when the visible set changes. Keeps scroll, keeps
  *  focus, and stops the whole list flashing on every poll.
  *
- *  While a drag is in flight (state.dragging) the rebuild is DEFERRED: a poll landing mid-drag would
+ *  While a drag is in flight (draggingRow()) the rebuild is DEFERRED: a poll landing mid-drag would
  *  replace the DOM under the pointer and silently cancel it. Attribute patching never moves nodes,
  *  so rows stay live; dragend triggers one catch-up rebuild. */
 function patchSidebar(): void {
@@ -122,11 +123,11 @@ function patchSidebar(): void {
   // The rebuild key covers everything structural: which groups exist, what is in each, and which are
   // folded shut. Dot colour, latency and selection are patched below and stay out of it on purpose.
   const sig = groups.map((g) => {
-    return g.name + "\u0001" + (state.collapsed[g.name] && !state.filter.trim() ? "c" : "o") + "\u0001" +
+    return g.name + "\u0001" + (foldMap()[g.name] && !listFilter().trim() ? "c" : "o") + "\u0001" +
       g.rows.map((m) => { return m.name; }).join("\u0000");
   }).join("\u0002");
 
-  if (list.dataset.sig !== sig && !state.dragging && !state.draggingGroup) {
+  if (list.dataset.sig !== sig && !draggingRow() && !draggingGroupName()) {
     list.innerHTML = "";
     const cfg = sideCfg();
     groups.forEach((g) => { list.appendChild(mountGroup(cfg, g)); });
@@ -165,14 +166,14 @@ function patchSidebar(): void {
   });
   // The chip belongs to whichever view is on screen; the tunnel and jobs views count their own
   // rows (updateCountChip owns those), so the MCP text must not overwrite them mid-poll.
-  if (state.view === "mcps") {
+  if (currentView() === "mcps") {
     $("countChip").textContent = state.mcps.length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
   }
   // Group headers name the sections now, so the standing "MCPS" caption is noise; it earns its line
   // only while a search is on, where the match count is the useful part.
   const cap = $("sideCap");
   cap.textContent = rows.length + " matching";
-  cap.hidden = !state.filter;
+  cap.hidden = !listFilter();
 }
 
 export { clampMenuPos, patchSidebar, popupMenu, tooltipOf };

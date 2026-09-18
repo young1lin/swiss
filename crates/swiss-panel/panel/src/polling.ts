@@ -21,6 +21,7 @@ import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { rowOf } from "./sidebar.js";
 import { triggerSummary } from "./jobs-v2.js";
+import { currentView } from "./ui-state.js";
 
 
 /* --- polling ---------------------------------------------------------------------------------- */
@@ -131,7 +132,7 @@ async function loadTunnels(patchOnly?: boolean): Promise<void> {
   const j = await apiJson<ApiTunnelsResponse>("/api/tunnels");
   if (!j) return;
   state.tun.data = j;
-  if (isTunnelsView(state.view)) {
+  if (isTunnelsView(currentView())) {
     const { patchTunnels, renderTunnels } = await import("./tunnels.js");
     if (state.tun.dragging) return; // a rebuild under the pointer would cancel the drag; patch later
     if (patchOnly && $("pane").querySelector(".tun-foot")) patchTunnels();
@@ -207,7 +208,7 @@ async function loadJobs(patchOnly?: boolean): Promise<void> {
   if (!j) return;
   state.jobs.data = j.jobs || [];
   state.jobs.groups = j.groups && j.groups.length ? j.groups : ["default"];
-  if (state.view === "jobs") {
+  if (currentView() === "jobs") {
     const { patchJobs, renderJobs } = await import("./jobs.js");
     if (patchOnly && $("pane").querySelector("[data-foot]")) patchJobs();
     else renderJobs();

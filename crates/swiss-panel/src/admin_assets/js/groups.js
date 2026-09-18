@@ -139,7 +139,7 @@ function groupFieldHtml(names          , sel                )         {
  *    scope          "mcps" | "conns" | ... - API paths and the localStorage key
  *    density        "side" (28px header, .side-row children) | "page" (36px header, .group card)
  *    names          the scope's ordered group names (the ellipsis menu's Move edges, the sink)
- *    collapsed      the fold map (state.collapsed / the tunnels tab's own)
+ *    collapsed      the fold map (foldMap() / the tunnels tab's own)
  *    noun           what the delete confirm counts ("MCP", "row")
  *    addTitle(g)    the header +'s title, e.g. "Add an MCP to learn"
  *    onAdd(group)   the header + - opens the scope's create flow on that group

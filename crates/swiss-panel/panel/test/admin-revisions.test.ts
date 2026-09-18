@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
 
 /* def revisions (docs/28 D1): the config tab's Replace flow and the rollback shelf. The
    rendering assertions go through the real renderPane markup; the confirm-gated restore is
@@ -86,7 +87,7 @@ function freshState(overrides: Record<string, unknown> = {}) {
   util.state.detail = null;
   util.state.busy = {};
   util.state.lastAction = {};
-  util.state.menuOpen = false;
+  setMenuOpen(false);
   Object.assign(util.state, overrides);
 }
 

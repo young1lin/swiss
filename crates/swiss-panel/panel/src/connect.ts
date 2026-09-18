@@ -23,6 +23,7 @@ import { closeMenu } from "./pane.js";
 import { configBody, histClose } from "./run-history.js";
 import { runBody } from "./run.js";
 import { activeTokenSecret, pickCopyToken, refreshTokens, rememberedTokenId, setActiveTokenSecret, tokenRows } from "./views/tokens.js";
+import { menuIsOpen } from "./ui-state.js";
 
 /* --- connecting a client ---------------------------------------------------------------------- */
 /**
@@ -131,7 +132,7 @@ function legacyCopy(text: string): void {
   document.body.removeChild(ta);
 }
 document.addEventListener("click", (e) => {
-  if (state.menuOpen) closeMenu();
+  if (menuIsOpen()) closeMenu();
   // The Run history popover closes on any click outside itself AND outside the popover — the
   // popover sits on <body>, so clicking its scrollbar or the preview pane must not count as "outside".
   // A row click closes it through applyRunHistory, its own handler.

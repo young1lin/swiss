@@ -24,6 +24,7 @@ import { renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
 import { clampMenuPos } from "./menu.js";
+import { setMenuOpen } from "./ui-state.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user
@@ -84,11 +85,11 @@ function dbTableMenu(anchorEl             )       {
   const pos = clampMenuPos(r, box.width, box.height, window.innerWidth, window.innerHeight);
   menu.style.left = pos.left + "px";
   menu.style.top = pos.top + "px";
-  state.menuOpen = true;
-  function closeMenu2()       { menu.remove(); state.menuOpen = false; }
+  setMenuOpen(true);
+  function closeMenu2()       { menu.remove(); setMenuOpen(false); }
   setTimeout(() => {
     document.addEventListener("mousedown", function h(ev) {
-      if (!menu.contains(ev.target        )) { menu.remove(); state.menuOpen = false; document.removeEventListener("mousedown", h); }
+      if (!menu.contains(ev.target        )) { menu.remove(); setMenuOpen(false); document.removeEventListener("mousedown", h); }
     });
   }, 0);
 }

@@ -21,6 +21,7 @@ import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsHtml, readFields, trans
 import { loadList } from "./polling.js";
 import { addTitle, groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { newGroup } from "./sidebar.js";
+import { addGroupTarget, setAddGroupTarget } from "./ui-state.js";
 
 /* --- Add sheet -------------------------------------------------------------------------------- */
 /** `group` is the group the new MCP joins — the header + that opened this sheet. A null
@@ -30,7 +31,7 @@ import { newGroup } from "./sidebar.js";
 function openSheet(group               )       {
   const names = state.groups && state.groups.length ? state.groups : [DEFAULT_GROUP];
   const initial = group || resolveDefaultGroup(names, lastGroup("mcps"));
-  state.addGroup = initial;
+  setAddGroupTarget(initial);
   const types = Object.keys(TYPE_FIELDS);
   const opts = types.map((t) => { return '<option value="' + t + '">' + esc(TYPE_LABELS[t] || t) + "</option>"; }).join("");
   $("sheet").innerHTML =
@@ -137,19 +138,19 @@ async function submitAdd()                {
   if (!body.name) { toast("Name is required", true); return; }
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
   // The select wins over the + that opened the sheet — a changed pick is the pick.
-  if ($("g-sel")) state.addGroup = $                   ("g-sel").value;
+  if ($("g-sel")) setAddGroupTarget($                   ("g-sel").value);
   const j = await apiJson                        ("/api/mcps", { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
-  rememberGroup("mcps", state.addGroup );
+  rememberGroup("mcps", addGroupTarget() );
   closeSheet();
   toast("Added " + body.name + " (" + (j.lifecycle || "stopped") + ")");
   state.selected = body.name;
   // Join the group whose + opened this sheet, BEFORE the list reload — so the row is drawn in its
   // group once, rather than hopping a moment later. `default` is a real group name now: joining it
   // is an explicit assignment like any other.
-  if (state.addGroup) {
+  if (addGroupTarget()) {
     await apiJson("/api/groups/mcps/members/" + encodeURIComponent(body.name),
-      { method: "PUT", body: JSON.stringify({ group: state.addGroup }) });
+      { method: "PUT", body: JSON.stringify({ group: addGroupTarget() }) });
   }
   await loadList();
   openDetail(body.name);

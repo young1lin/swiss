@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
 
 /* OAuth authorize (docs/24): the form fields + the bool-to-string translation (fields.js),
    the pane header button (pane.js renderPane), and the one-click flow (detail.js authorizeMcp)
@@ -97,7 +98,7 @@ function freshState(overrides: Record<string, unknown> = {}) {
   util.state.detail = null;
   util.state.busy = {};
   util.state.lastAction = {};
-  util.state.menuOpen = false;
+  setMenuOpen(false);
   Object.assign(util.state, overrides);
 }
 

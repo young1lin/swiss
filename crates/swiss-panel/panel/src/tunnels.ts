@@ -22,6 +22,7 @@ import { popupMenu } from "./menu.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
 import { connRowHtml, isTunnelsView, loadList, loadTunnels, ruleRowHtml, tunData, tunGroupsList, tunRows, tunScope } from "./polling.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
+import { currentView } from "./ui-state.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
    The sidebar's model, shared through the groups component (docs/20 §4): one flat order per
@@ -181,7 +182,7 @@ function tunCfg(): GroupCfg<ApiTunnelConnectionRow | ApiTunnelRuleRow> {
 
 /** Poll-safe update: dots, reasons, button labels and the footer. Never structure. */
 function patchTunnels() {
-  if (!isTunnelsView(state.view)) return;
+  if (!isTunnelsView(currentView())) return;
   const d = tunData();
   const rows = state.tun.tab === "conns" ? d.connections : d.rules;
   const attr = state.tun.tab === "conns" ? "data-conn" : "data-rule";
