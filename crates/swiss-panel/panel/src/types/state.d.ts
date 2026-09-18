@@ -20,8 +20,8 @@
    over from the boot literal in util.ts and the per-view factories (data-view's dbFreshState,
    the tun/jobs literals) — the shape lives here now, the WHY stays with the field. */
 
+import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableDetail, ApiDbTableRow, ApiInfoResponse, ApiJobRow, ApiJobRunRecord, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo, ApiTunnelsKeysResponse, ApiTunnelsResponse, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableDetail, ApiDbTableRow, ApiInfoResponse, ApiJobRow, ApiJobRunRecord, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo, ApiTokenRow, ApiTrafficClientRow, ApiTrafficFull, ApiTrafficRow, ApiTunnelsKeysResponse, ApiTunnelsResponse, DbQueryReply } from "./api.js";
 export interface LastAction {
   msg: string;
   err: boolean;
@@ -396,17 +396,6 @@ export interface PanelState {
   mem: ApiMemoryInfo | null;
   menuOpen: boolean;
   info: ApiInfoResponse | null;
-  traffic: ApiTrafficRow[];
-  trafficClients: ApiTrafficClientRow[];
-  trafficFilter: "actions" | "all";
-  trafficClient: string | null;
-  trafficPage: number;
-  trafficMore: boolean;
-  trafficTotal: number;
-  trafficAll: number;
-  trafficOpen: Record<string, boolean>;
-  trafficFull: Record<string, ApiTrafficFull>;
-  trafficSig: string | null;
   view: string;
   panelVersion: string | null;
   addGroup: string | null;

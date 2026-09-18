@@ -14,9 +14,40 @@
  * limitations under the License.
  */
 
-import type { ApiTrafficFull, ApiTrafficPage, ApiTrafficRow } from "./types/api.js";
+import type { ApiTrafficClientRow, ApiTrafficFull, ApiTrafficPage, ApiTrafficRow } from "./types/api.js";
 import { $, apiJson, esc, icon, state, whenLabel } from "./util.js";
 import { fmtJson } from "./logs.js";
+
+/* The traffic domain owns its state (docs/37 R4, slice 2 of 7): ONE page of interactions, the
+ * ring-wide client fold, the query that produced them (filter, client, page) and the per-row
+ * expansion cache. This module reads the record directly; views/traffic.ts reaches it only
+ * through resetTrafficSig/clearTrafficView below, so no other module can poke a field. */
+const traffic: {
+  rows: ApiTrafficRow[];
+  clients: ApiTrafficClientRow[];
+  filter: "actions" | "all";
+  client: string | null;
+  page: number;
+  more: boolean;
+  total: number;
+  all: number;
+  open: Record<string, boolean>;
+  full: Record<string, ApiTrafficFull>;
+  sig: string | null;
+} = {
+  rows: [], clients: [], filter: "actions", client: null, page: 0,
+  more: false, total: 0, all: 0, open: {}, full: {}, sig: null,
+};
+
+/** A forced repaint: drop the signature so the next load rebuilds instead of skipping it. */
+export function resetTrafficSig(): void { traffic.sig = null; }
+/** Leaving the view: drop the page and the expansion cache so a return starts clean. */
+export function clearTrafficView(): void {
+  traffic.rows = [];
+  traffic.full = {};
+  traffic.open = {};
+  traffic.sig = null;
+}
 
 /* --- traffic: who (token + self-reported client) asked what, across every MCP -----------------
    Two sections: a "Clients" summary (who has been talking to the gateway, and which MCPs), and an
@@ -45,46 +76,46 @@ function ago(iso: string): string {
  * a 200-entry dump that carried every entry's raw request and reply (8 KB each) — up to megabytes on
  * a 6-second poll, to draw a dozen lines whose JSON was hidden behind a chevron. Two consequences to
  * keep in mind while reading the rest of this section: a row has no `.body`/`.response` until it is
- * expanded (see toggleTraffic), and `state.trafficClients` is the whole ring's fold, not this page's.
+ * expanded (see toggleTraffic), and `traffic.clients` is the whole ring's fold, not this page's.
  */
 async function loadTraffic(): Promise<void> {
-  const q = "/api/traffic?page=" + (state.trafficPage || 0) +
-    (state.trafficFilter !== "all" ? "&actions=1" : "") +
-    (state.trafficClient ? "&client=" + encodeURIComponent(state.trafficClient) : "");
+  const q = "/api/traffic?page=" + (traffic.page || 0) +
+    (traffic.filter !== "all" ? "&actions=1" : "") +
+    (traffic.client ? "&client=" + encodeURIComponent(traffic.client) : "");
   const j = await apiJson<ApiTrafficPage>(q);
   if (!j) return;
-  state.traffic = j.entries || [];
-  state.trafficClients = j.clients || [];
-  state.trafficTotal = j.total || 0;
-  state.trafficAll = j.totalUnfiltered || 0;
-  state.trafficMore = !!j.more;
+  traffic.rows = j.entries || [];
+  traffic.clients = j.clients || [];
+  traffic.total = j.total || 0;
+  traffic.all = j.totalUnfiltered || 0;
+  traffic.more = !!j.more;
   if (state.view !== "traffic") return;
   // Skip the rebuild when nothing changed: a 6s poll would otherwise collapse every expanded row and
   // reset scroll while you are reading one. Filter/refresh/view-entry call renderTraffic() directly.
-  const sig = (state.traffic.length ? state.traffic[0].seq : 0) + ":" + state.traffic.length +
-    ":" + state.trafficTotal + ":" + state.trafficClients.length;
-  if (state.trafficSig === sig) return;
-  state.trafficSig = sig;
+  const sig = (traffic.rows.length ? traffic.rows[0].seq : 0) + ":" + traffic.rows.length +
+    ":" + traffic.total + ":" + traffic.clients.length;
+  if (traffic.sig === sig) return;
+  traffic.sig = sig;
   renderTraffic();
 }
 
 /** Re-query after anything that changes which rows the server should return. */
 function trafficReload(resetPage?: boolean): void {
-  if (resetPage) state.trafficPage = 0;
-  state.trafficSig = null;
+  if (resetPage) traffic.page = 0;
+  traffic.sig = null;
   void loadTraffic();
 }
 function trafficPageStep(delta: number): void {
-  const next = (state.trafficPage || 0) + delta;
-  if (next < 0 || (delta > 0 && !state.trafficMore)) return;
-  state.trafficPage = next;
+  const next = (traffic.page || 0) + delta;
+  if (next < 0 || (delta > 0 && !traffic.more)) return;
+  traffic.page = next;
   trafficReload(false);
 }
 function trafficRow(e: ApiTrafficRow): string {
   const meta = (e.clientName ? e.clientName + (e.clientVersion ? " " + e.clientVersion : "") : "—") +
     "  ·  /" + e.mcp + "  ·  " + (e.ok ? "ok" : "err") + "  ·  " + e.ms + "ms  ·  " + whenLabel(e.at);
   // Collapsed: method + a one-line params preview + meta. Expanded (chevron): the raw request JSON.
-  return '<div class="call' + (state.trafficOpen[e.seq] ? " open" : "") + '" data-tseq="' + e.seq + '">' +
+  return '<div class="call' + (traffic.open[e.seq] ? " open" : "") + '" data-tseq="' + e.seq + '">' +
     '<div class="call-sum" data-tog="' + e.seq + '" role="button" tabindex="0">' +
       '<span class="chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
       '<span class="dot ' + (e.ok ? "up" : "down") + '"></span>' +
@@ -100,7 +131,7 @@ function trafficRow(e: ApiTrafficRow): string {
 }
 
 function trafficBodyHtml(e: { seq: number }): string {
-  const full = state.trafficFull[e.seq];
+  const full = traffic.full[e.seq];
   if (!full) return '<div class="note"><span class="spin"></span> Loading…</div>';
   if (full.gone) return '<div class="note">This interaction has rolled out of the buffer.</div>';
   return '<div class="call-lbl">Request</div>' +
@@ -111,34 +142,34 @@ function trafficBodyHtml(e: { seq: number }): string {
 
 /** Fetch one interaction's raw request and reply, then paint it into the already-open row. */
 async function loadTrafficBody(seq: number): Promise<void> {
-  if (state.trafficFull[seq]) return;
+  if (traffic.full[seq]) return;
   const j = await apiJson("/api/traffic/" + encodeURIComponent(seq));
   // A 404 means the ring rolled past it while the row sat there; say so rather than spin forever.
-  state.trafficFull[seq] = j || { gone: true } as ApiTrafficFull;
+  traffic.full[seq] = j || { gone: true } as ApiTrafficFull;
   const node = document.querySelector('#pane .call[data-tseq="' + seq + '"] .call-body');
   if (node) node.innerHTML = trafficBodyHtml({ seq: seq });
 }
 /** Expand/collapse one row's raw JSON in place — a poll must not close what you just opened. */
 function toggleTraffic(seq: number): void {
-  state.trafficOpen[seq] = !state.trafficOpen[seq];
+  traffic.open[seq] = !traffic.open[seq];
   const node = document.querySelector('#pane .call[data-tseq="' + seq + '"]');
-  if (node) node.className = "call" + (state.trafficOpen[seq] ? " open" : "");
-  if (state.trafficOpen[seq]) void loadTrafficBody(seq);
+  if (node) node.className = "call" + (traffic.open[seq] ? " open" : "");
+  if (traffic.open[seq]) void loadTrafficBody(seq);
 }
 function renderTraffic(): void {
   // `entries` is one page; `clients`, `total` and `all` describe the whole ring (server-computed).
-  const entries = state.traffic || [];
-  const clients = state.trafficClients || [];
-  const total = state.trafficTotal || 0;
-  const all = state.trafficAll || 0;
-  const sel = state.trafficClient;
+  const entries = traffic.rows || [];
+  const clients = traffic.clients || [];
+  const total = traffic.total || 0;
+  const all = traffic.all || 0;
+  const sel = traffic.client;
 
   // Controls: action/everything toggle + clear. This whole pane is the Traffic view's content.
   const ctrl = '<div class="sec-head"><span class="sec-cap">Traffic</span>' +
     '<span style="display:flex;gap:var(--s2);align-items:center">' +
       '<div class="seg" id="trFilter">' +
-        '<button data-filter="actions" aria-selected="' + (state.trafficFilter !== "all") + '">Actions</button>' +
-        '<button data-filter="all" aria-selected="' + (state.trafficFilter === "all") + '">Everything</button>' +
+        '<button data-filter="actions" aria-selected="' + (traffic.filter !== "all") + '">Actions</button>' +
+        '<button data-filter="all" aria-selected="' + (traffic.filter === "all") + '">Everything</button>' +
       "</div>" +
       '<button class="btn" id="trClear"' + (all ? "" : " disabled") + ">" + (sel ? "Clear client" : "Clear") + "</button>" +
     "</span></div>";
@@ -175,7 +206,7 @@ function renderTraffic(): void {
   }
 
   // Activity log — de-noised by the toggle, narrowed by a selected client.
-  const actCap = "Activity · " + (state.trafficFilter === "all" ? "everything" : "actions only");
+  const actCap = "Activity · " + (traffic.filter === "all" ? "everything" : "actions only");
   const countTxt = total.toLocaleString() + (total !== all ? " of " + all.toLocaleString() : "") + " interactions";
   const actHead = '<div class="sec-head" style="padding-top:var(--s5)"><span class="sec-cap">' + esc(actCap) + "</span>" +
     '<span class="hint">' + esc(countTxt) + "</span></div>";
@@ -183,11 +214,11 @@ function renderTraffic(): void {
   if (!all) {
     body = '<div class="group"><div class="row"><span class="rowmsg">No interactions yet. Every JSON-RPC request a client sends — initialize, tools/list, resources/read, tools/call — is recorded here; the clients above are summarized from it.</span></div></div>';
   } else if (!entries.length) {
-    const hint = state.trafficPage
+    const hint = traffic.page
       ? "Nothing on this page."
       : sel
-        ? "No activity for this client" + (state.trafficFilter !== "all" ? " in actions-only view." : ".")
-        : (state.trafficFilter !== "all" ? "No actions yet — switch to Everything to see the protocol handshake." : "No interactions.");
+        ? "No activity for this client" + (traffic.filter !== "all" ? " in actions-only view." : ".")
+        : (traffic.filter !== "all" ? "No actions yet — switch to Everything to see the protocol handshake." : "No interactions.");
     body = '<div class="group"><div class="row"><span class="rowmsg">' + esc(hint) + "</span></div></div>";
   } else {
     body = '<div class="group">' + entries.map(trafficRow).join("") + "</div>";
@@ -195,10 +226,10 @@ function renderTraffic(): void {
 
   // Newer/Older, worded and shaped exactly like the tool-call log's pager — same direction, so
   // "Newer" always means toward the top of a newest-first list in both views.
-  const pager = (state.trafficPage > 0 || state.trafficMore)
-    ? '<div class="pager"><button class="btn" id="trPrev"' + (state.trafficPage > 0 ? "" : " disabled") + ">Newer</button>" +
-      "<span>Page " + (state.trafficPage + 1) + "</span>" +
-      '<button class="btn" id="trNext"' + (state.trafficMore ? "" : " disabled") + ">Older</button></div>"
+  const pager = (traffic.page > 0 || traffic.more)
+    ? '<div class="pager"><button class="btn" id="trPrev"' + (traffic.page > 0 ? "" : " disabled") + ">Newer</button>" +
+      "<span>Page " + (traffic.page + 1) + "</span>" +
+      '<button class="btn" id="trNext"' + (traffic.more ? "" : " disabled") + ">Older</button></div>"
     : "";
 
   // Wrapped in .wide: an interaction row is method + params + client + timing on one line, which the
@@ -208,11 +239,11 @@ function renderTraffic(): void {
   // Every control below re-queries rather than re-filtering in place: the server owns the filter now,
   // so a page of "actions only for claude-code" can only come from asking for exactly that.
   $("trFilter").querySelectorAll("button").forEach((b) => {
-    b.onclick = () => { state.trafficFilter = b.dataset.filter as "actions" | "all"; trafficReload(true); };
+    b.onclick = () => { traffic.filter = b.dataset.filter as "actions" | "all"; trafficReload(true); };
   });
   $("pane").querySelectorAll<HTMLElement>("[data-ckey]").forEach((row) => {
     row.onclick = () => {
-      state.trafficClient = state.trafficClient === row.dataset.ckey ? null : row.dataset.ckey as string;
+      traffic.client = traffic.client === row.dataset.ckey ? null : row.dataset.ckey as string;
       trafficReload(true);
     };
     row.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); row.click(); } };
@@ -224,17 +255,17 @@ function renderTraffic(): void {
     s.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleTraffic(s.dataset.tog as unknown as number); } };
   });
   const cclr = $("pane").querySelector<HTMLElement>("[data-cclr]");
-  if (cclr) cclr.onclick = (ev) => { ev.stopPropagation(); state.trafficClient = null; trafficReload(true); };
+  if (cclr) cclr.onclick = (ev) => { ev.stopPropagation(); traffic.client = null; trafficReload(true); };
   const clr = $("trClear");
   if (clr) clr.onclick = async () => {
     // Clear the selected client only when one is filtered ("Clear client"); otherwise clear all.
-    const sel = state.trafficClient;
+    const sel = traffic.client;
     const url = "/api/traffic" + (sel ? "?client=" + encodeURIComponent(sel) : "");
     const j = await apiJson(url, { method: "DELETE" });
     if (!j) return;
-    state.trafficOpen = {};
-    state.trafficFull = {};
-    state.trafficClient = null; // the filtered client is gone (or we cleared all); drop the filter
+    traffic.open = {};
+    traffic.full = {};
+    traffic.client = null; // the filtered client is gone (or we cleared all); drop the filter
     trafficReload(true);
   };
 }
