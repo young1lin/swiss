@@ -34,15 +34,6 @@ const state: PanelState = {
   mem: null,
   info: null,        // { tokenEnv } from /api/info — the env var name
   db: null,           // the whole Data view state (data-view.js builds/owns it; redisValue rides on it)
-  tun: {             // tunnel view state; `data` is the last /api/tunnels response
-    tab: "conns",    // "conns" | "rules"
-    data: null,
-    busy: {},        // id -> verb in flight
-    keys: null,      // cached /api/tunnels/keys
-    dragging: null,  // id of the row being dragged — polls must not rebuild under it
-      draggingGroup: null, // name of the group header being dragged — same rebuild freeze as a row drag
-    pendingGroup: null, // group chosen via a header "+", preselected in the sheet it opens
-  },
   jobs: {             // jobs view state (jobs.js renders it; polling.js loads it)
     data: [],        // rows from /api/jobs
     groups: ["default"], // the scope's group names, from /api/jobs' top level (docs/20 G4)

@@ -15,19 +15,22 @@
  */
 
 import type { ApiTunnelConnectionRow, ApiTunnelRuleMutation, ApiTunnelRuleRow, ApiTunnelsBrowseEntry, ApiTunnelsBrowseResponse, ApiTunnelsKeysResponse, ApiTunnelsSuggestResponse, ConnSheetDraft, RuleSheetDraft } from "./types/api.js";
-import { $, api, apiJson, el, esc, state, toast } from "./util.js";
+import { $, api, apiJson, el, esc, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { loadTunnels, tunConnName, tunData, tunGroupsList } from "./polling.js";
 import { assignTunScoped } from "./tunnels.js";
 import { groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
+import { setTunKeys, takeTunPendingGroup, tunKeys } from "./tunnel-state.js";
 
 /* --- connection sheet -------------------------------------------------------------------------- */
 
 async function loadKeys(): Promise<ApiTunnelsKeysResponse> {
-  if (state.tun.keys) return state.tun.keys;
+  const cached = tunKeys();
+  if (cached) return cached;
   const j = await apiJson<ApiTunnelsKeysResponse>("/api/tunnels/keys");
-  state.tun.keys = j || { keys: [], defaultPath: "" };
-  return state.tun.keys!;
+  const keys = j || { keys: [], defaultPath: "" };
+  setTunKeys(keys);
+  return keys;
 }
 
 /** docs/27 §4: the Advanced fold — proxy and jump live here, collapsed by default. The
@@ -75,8 +78,7 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
   // last-used one when the top New opened this). Editing: no field - moving a connection is
   // the list's gesture (drag / row menu), not a property of its definition.
   const names = tunGroupsList();
-  const initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("conns"));
-  state.tun.pendingGroup = null; // consumed: the select is the truth from here
+  const initial = takeTunPendingGroup() || resolveDefaultGroup(names, lastGroup("conns"));
   const groupField = editing ? "" : groupFieldHtml(names, initial);
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit connection" : "New connection") + '">' +
@@ -195,7 +197,7 @@ async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> 
     authType: authType,
   };
   if (authType === "key") {
-    body.keyPath = $<HTMLInputElement>("c-keypath").value.trim() || (state.tun.keys && state.tun.keys.defaultPath) || "";
+    body.keyPath = $<HTMLInputElement>("c-keypath").value.trim() || tunKeys()?.defaultPath || "";
     body.passphrase = $<HTMLInputElement>("c-pass").value;
   } else {
     body.password = $<HTMLInputElement>("c-pass").value;
@@ -259,8 +261,7 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
   // Same contract as the connection sheet: a Group select on create only, preselected from
   // the header + that opened this, else the scope's last-used group.
   const names = tunGroupsList();
-  const initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("rules"));
-  state.tun.pendingGroup = null;
+  const initial = takeTunPendingGroup() || resolveDefaultGroup(names, lastGroup("rules"));
   const groupField = editing ? "" : groupFieldHtml(names, initial);
   const opts = d.connections.map((c: ApiTunnelConnectionRow): string => {
     return '<option value="' + esc(c.id) + '"' + (c.id === r.connectionId ? " selected" : "") + ">" + esc(c.name) + "</option>";

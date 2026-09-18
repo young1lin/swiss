@@ -20,7 +20,7 @@
    over from the boot literal in util.ts and the per-view factories (data-view's dbFreshState,
    the tun/jobs literals) — the shape lives here now, the WHY stays with the field. */
 
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableDetail, ApiDbTableRow, ApiInfoResponse, ApiJobRow, ApiJobRunRecord, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo, ApiTunnelsKeysResponse, ApiTunnelsResponse, DbQueryReply } from "./api.js";
+import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableDetail, ApiDbTableRow, ApiInfoResponse, ApiJobRow, ApiJobRunRecord, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -109,21 +109,6 @@ export interface McpDetail {
   tools: KindPageState;
   resources: KindPageState;
   prompts: KindPageState;
-}
-
-/** The tunnel view's slice (util.ts boot literal; tunnels.ts renders it, polling.ts loads). */
-export interface TunState {
-  tab: "conns" | "rules";
-  data: ApiTunnelsResponse | null;
-  busy: Record<string, string>;
-  keys: ApiTunnelsKeysResponse | null;
-  dragging: string | null;
-  draggingGroup: string | null;
-  pendingGroup: string | null;
-  /* The two tunnels scopes' fold maps, loaded in main.ts before the first paint (the
-   *  per-scope localStorage keys, docs/20); optional because the util.ts boot literal
-   *  predates that load. */
-  collapsed?: { conns: Record<string, boolean>; rules: Record<string, boolean> };
 }
 
 /** The Jobs view's slice (util.ts boot literal; jobs.js renders it, polling.js loads it). */
@@ -394,6 +379,5 @@ export interface PanelState {
   mem: ApiMemoryInfo | null;
   info: ApiInfoResponse | null;
   db: DbState | null;
-  tun: TunState;
   jobs: JobsState;
 }

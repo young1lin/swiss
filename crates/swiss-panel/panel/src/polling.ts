@@ -22,6 +22,7 @@ import { patchDetailHead, renderPane } from "./pane.js";
 import { rowOf } from "./sidebar.js";
 import { triggerSummary } from "./jobs-v2.js";
 import { currentView } from "./ui-state.js";
+import { setTunResponse, tunBusyOf, tunDragging, tunResponse, mountedTunScope } from "./tunnel-state.js";
 
 
 /* --- polling ---------------------------------------------------------------------------------- */
@@ -90,11 +91,11 @@ function refreshNow(): void { void loadMemory(true); void refreshPage(); }
 
    The plugin owns TWO L2 pages now (docs/13 D5, as revised): #tunnels (SSH Connections,
    scope "conns") and #tunnel-forwards (Port Forwards, scope "rules"). The page mount sets
-   state.tun.tab to its scope; there is no page-local tab control anymore.
+   mountedTunScope() to its scope; there is no page-local tab control anymore.
    ================================================================================================ */
 
 function tunData(): ApiTunnelsResponse {
-  return state.tun.data || { connections: [], rules: [], ruleGroups: [], connGroups: [], mcps: [] };
+  return tunResponse() || { connections: [], rules: [], ruleGroups: [], connGroups: [], mcps: [] };
 }
 
 /** Either tunnels page id — the render/patch guards and nothing else. */
@@ -102,10 +103,10 @@ function isTunnelsView(v: string | null): boolean { return v === "tunnels" || v 
 
 /** Which tunnel scope is on screen — the /api/groups/{scope} family's own word. The wire keys
  *  stay ruleGroups/connGroups (docs/20 §3); this maps the mounted page to its scope. */
-function tunScope(): "conns" | "rules" { return state.tun.tab === "conns" ? "conns" : "rules"; }
-function tunRows(): ApiTunnelConnectionRow[] | ApiTunnelRuleRow[] { return state.tun.tab === "conns" ? tunData().connections : tunData().rules; }
+function tunScope(): "conns" | "rules" { return mountedTunScope() === "conns" ? "conns" : "rules"; }
+function tunRows(): ApiTunnelConnectionRow[] | ApiTunnelRuleRow[] { return mountedTunScope() === "conns" ? tunData().connections : tunData().rules; }
 function tunGroupsList(): string[] {
-  return state.tun.tab === "conns" ? tunData().connGroups || [] : tunData().ruleGroups || [];
+  return mountedTunScope() === "conns" ? tunData().connGroups || [] : tunData().ruleGroups || [];
 }
 
 /** The jobs scope's group names (docs/20 G4) — /api/jobs carries them at its top level. */
@@ -131,10 +132,10 @@ function updateCountChip(): void { $("countChip").textContent = currentPageCount
 async function loadTunnels(patchOnly?: boolean): Promise<void> {
   const j = await apiJson<ApiTunnelsResponse>("/api/tunnels");
   if (!j) return;
-  state.tun.data = j;
+  setTunResponse(j);
   if (isTunnelsView(currentView())) {
     const { patchTunnels, renderTunnels } = await import("./tunnels.js");
-    if (state.tun.dragging) return; // a rebuild under the pointer would cancel the drag; patch later
+    if (tunDragging()) return; // a rebuild under the pointer would cancel the drag; patch later
     if (patchOnly && $("pane").querySelector(".tun-foot")) patchTunnels();
     else renderTunnels();
   }
@@ -236,7 +237,7 @@ function ruleSubHtml(r: ApiTunnelRuleRow): string {
 }
 
 function ruleRowHtml(r: ApiTunnelRuleRow): string {
-  const busy = state.tun.busy[r.id];
+  const busy = tunBusyOf(r.id);
   const word = busy ? "starting" : r.state;
   const running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
   return '<div class="tun-row" draggable="true" data-rule="' + esc(r.id) + '">' +
@@ -278,7 +279,7 @@ function connBadges(c: ApiTunnelConnectionRow): string {
 }
 
 function connRowHtml(c: ApiTunnelConnectionRow): string {
-  const busy = state.tun.busy[c.id];
+  const busy = tunBusyOf(c.id);
   const word = busy ? "starting" : c.state === "connected" ? "up" : c.state;
   return '<div class="tun-row" draggable="true" data-conn="' + esc(c.id) + '">' +
       '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word, null, c.reason)) + '"></span>' +

@@ -211,6 +211,7 @@ function click(node: FakeNode) {
 let mods: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let state: any;
+let tunState: any;
 
 const JOB_RUNS_URL = "/api/jobs/env-check/runs";
 
@@ -237,6 +238,7 @@ beforeAll(async () => {
     util: await import("../src/util.js"),
   };
   state = mods.util.state;
+  tunState = await import("../src/tunnel-state.js");
 });
 
 describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
@@ -319,9 +321,9 @@ describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
     pane.appendChild(held);
     pane.appendChild(free);
 
-    // tunData() reads state.tun.data — the payload loadTunnels stores.
-    state.tun.tab = "rules";
-    state.tun.data = {
+    // tunData() reads the tunnel domain payload — the payload loadTunnels stores.
+    tunState.setMountedTunScope("rules");
+    tunState.setTunResponse({
       connections: [],
       rules: [
         { id: "r1", localPort: 50383, portOwner: { pid: 12188 }, host: "a", state: "down" },
@@ -330,7 +332,7 @@ describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
       ruleGroups: [],
       connGroups: [],
       mcps: [],
-    };
+    });
     mods.tunnels.wireTunnels();
 
     const menu1 = openMenuOf(held.querySelector("[data-more]")!);
@@ -349,14 +351,14 @@ describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
     conn.appendChild(actionButton("data-more"));
     pane.appendChild(conn);
 
-    state.tun.tab = "conns";
-    state.tun.data = {
+    tunState.setMountedTunScope("conns");
+    tunState.setTunResponse({
       connections: [{ id: "c1", host: "192.168.1.24", port: 22 }],
       rules: [],
       ruleGroups: [],
       connGroups: [],
       mcps: [],
-    };
+    });
     mods.tunnels.wireTunnels();
 
     const menu = openMenuOf(conn.querySelector("[data-more]")!);

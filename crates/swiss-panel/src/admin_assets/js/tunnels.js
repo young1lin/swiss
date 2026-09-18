@@ -16,13 +16,14 @@
 
                                                                                
                                                                      
-import { $, api, apiJson, dotTitle, emptyHtml, esc, state, toast } from "./util.js";
+import { $, api, apiJson, dotTitle, emptyHtml, esc, toast } from "./util.js";
 import { copyText } from "./connect.js";
 import { popupMenu } from "./menu.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
 import { connRowHtml, isTunnelsView, loadList, loadTunnels, ruleRowHtml, tunData, tunGroupsList, tunRows, tunScope } from "./polling.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 import { currentView } from "./ui-state.js";
+import { clearTunBusy, clearTunView, setTunBusy, setTunDragging, setTunDraggingGroup, setTunPendingGroup, setMountedTunScope, tunBusyOf, tunDragging, tunDraggingGroup, tunFolds, mountedTunScope } from "./tunnel-state.js";
 
 /* --- tunnels: groups and drag-to-reorder --------------------------------------------------------
    The sidebar's model, shared through the groups component (docs/20 §4): one flat order per
@@ -75,7 +76,7 @@ async function assignTunScoped(scope        , id        , group               ) 
 /* --- the page -----------------------------------------------------------------------------------
    The tunnels plugin contributes TWO L2 pages (docs/13 D5, as revised): the Context Bar's
    "Tunnels / SSH Connections ▾" and "Tunnels / Port Forwards ▾" switch between them, and the
-   mounted page decides which scope this module renders (state.tun.tab, set by the page's
+   mounted page decides which scope this module renders (mountedTunScope(), set by the page's
    mount). The body header is the page's TASK, not its location: one line of scope prose and
    the scope's actions on the right — no repeated "Tunnels" title, no second copy of the page
    switcher. */
@@ -102,7 +103,7 @@ function tunnelsCountText(scope        )         {
 
 function renderTunnels()       {
   const d = tunData();
-  const isConns = state.tun.tab === "conns";
+  const isConns = mountedTunScope() === "conns";
   // The page's actions, right-aligned in the body header (pane-actions is the panel's own
   // vocabulary for exactly this slot). Rules carry the bulk start/stop pair; connections
   // carry only New — Test lives on each row.
@@ -145,35 +146,35 @@ function tunCfg()                                                      {
     scope: tunScope(),
     density: "page",
     names: tunGroupsList(),
-    collapsed: state.tun?.collapsed [state.tun.tab] || {},
+    collapsed: tunFolds(mountedTunScope()),
     noun: "row",
     addTitle: (g        )         => {
-      return (state.tun.tab === "conns" ? "Add an SSH connection to " : "Add a forwarding rule to ") + g;
+      return (mountedTunScope() === "conns" ? "Add an SSH connection to " : "Add a forwarding rule to ") + g;
     },
     onAdd: (g        )       => {
-      state.tun.pendingGroup = g; // a real name now — the sheet's save lands the row in it
-      if (state.tun.tab === "conns") openConnSheet(null); else openRuleSheet(null);
+      setTunPendingGroup(g); // a real name now — the sheet's save lands the row in it
+      if (mountedTunScope() === "conns") openConnSheet(null); else openRuleSheet(null);
     },
     reload: ()                => { return loadTunnels(); },
     render: renderTunnels,
     afterDrag: ()       => { renderTunnels(); }, // the catch-up rebuild a deferred poll owes
     drag: {
-      get: ()                => { return state.tun.dragging; },
-      set: (v               )       => { state.tun.dragging = v; },
+      get: ()                => { return tunDragging(); },
+      set: (v               )       => { setTunDragging(v); },
     },
     dragGroup: {
-      get: ()                => { return state.tun.draggingGroup; },
-      set: (v               )       => { state.tun.draggingGroup = v; },
+      get: ()                => { return tunDraggingGroup(); },
+      set: (v               )       => { setTunDraggingGroup(v); },
     },
     rowId: (r                                           )         => { return r.id; },
     rowSel: (r                                           )         => {
       const v = window.CSS && CSS.escape ? CSS.escape(r.id) : r.id;
-      return state.tun.tab === "conns" ? '[data-conn="' + v + '"]' : '[data-rule="' + v + '"]';
+      return mountedTunScope() === "conns" ? '[data-conn="' + v + '"]' : '[data-rule="' + v + '"]';
     },
     rowsById: tunRows,
     groupOfRow: tunGroupOfRow,
     rowsHtml: (g                                                       )         => {
-      return g.rows.map(state.tun.tab === "conns" ? connRowHtml                                                                        : ruleRowHtml                                                                       ).join("");
+      return g.rows.map(mountedTunScope() === "conns" ? connRowHtml                                                                        : ruleRowHtml                                                                       ).join("");
     },
     onMoveRow: moveTunRow,
     onAssign: (id        , g               )       => { void assignTunScoped(tunScope(), id, g); },
@@ -184,22 +185,22 @@ function tunCfg()                                                      {
 function patchTunnels() {
   if (!isTunnelsView(currentView())) return;
   const d = tunData();
-  const rows = state.tun.tab === "conns" ? d.connections : d.rules;
-  const attr = state.tun.tab === "conns" ? "data-conn" : "data-rule";
+  const rows = mountedTunScope() === "conns" ? d.connections : d.rules;
+  const attr = mountedTunScope() === "conns" ? "data-conn" : "data-rule";
   const nodes = $("pane").querySelectorAll("[" + attr + "]");
   // A row appeared or vanished (another tab, or a reconnect that deleted nothing) — structure
   // changed, so a patch cannot express it. Never mid-drag: a rebuild there cancels the gesture.
   if (nodes.length !== rows.length) {
-    if (!state.tun.dragging && !state.tun.draggingGroup) renderTunnels();
+    if (!tunDragging() && !tunDraggingGroup()) renderTunnels();
     return;
   }
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const node = $("pane").querySelector("[" + attr + '="' + (window.CSS && CSS.escape ? CSS.escape(row.id) : row.id) + '"]');
-    if (!node) { if (!state.tun.dragging && !state.tun.draggingGroup) renderTunnels(); return; }
-    const busy = state.tun.busy[row.id];
+    if (!node) { if (!tunDragging() && !tunDraggingGroup()) renderTunnels(); return; }
+    const busy = tunBusyOf(row.id);
     const dot = node.querySelector("[data-dot]")                      ;
-    const live = state.tun.tab === "conns" ? (row.state === "connected" ? "up" : row.state) : row.state;
+    const live = mountedTunScope() === "conns" ? (row.state === "connected" ? "up" : row.state) : row.state;
     // Title and class move together (docs/18 V6): the poll only patches, and a dot whose
     // class moved but whose title stayed would keep explaining the previous state.
     if (dot) { dot.className = "dot " + (busy ? "starting" : live); dot.title = dotTitle(busy ? "starting" : live, null, row.reason); }
@@ -225,7 +226,7 @@ function patchTunnels() {
     if (badge) badge.textContent = String(n);
   });
   const foot = $("pane").querySelector(".tun-foot");
-  if (foot) foot.textContent = tunnelsCountText(state.tun.tab === "conns" ? "conns" : "rules");
+  if (foot) foot.textContent = tunnelsCountText(mountedTunScope() === "conns" ? "conns" : "rules");
 }
 
 function wireTunnels() {
@@ -279,13 +280,13 @@ function wireTunnels() {
 }
 
 async function withTunBusy(id        , verb        , fn                        )                   {
-  if (state.tun.busy[id]) return null;
-  state.tun.busy[id] = verb;
+  if (tunBusyOf(id)) return null;
+  setTunBusy(id, verb);
   patchTunnels();
   try {
     return await fn();
   } finally {
-    delete state.tun.busy[id];
+    clearTunBusy(id);
     await loadTunnels();
   }
 }
@@ -392,9 +393,9 @@ async function deleteConn(conn                        )                {
    business logic is duplicated on either side of the pair. */
 
 /** Mount one tunnels page: pin the scope, then load. Scope is the /api/groups family's own
- *  word ("conns"|"rules"); everything in this module reads it through state.tun.tab. */
+ *  word ("conns"|"rules"); everything in this module reads it through mountedTunScope(). */
 async function mountTunnelsPage(scope        )                {
-  state.tun.tab = scope === "rules" ? "rules" : "conns";
+  setMountedTunScope(scope);
   return loadTunnels();
 }
 
@@ -406,9 +407,7 @@ async function pollTunnelsPage() {
 }
 
 function unmountTunnelsPage() {
-  state.tun.data = null;
-  state.tun.keys = null;
-  state.tun.dragging = null;
+  clearTunView();
 }
 
 export { assignTunScoped, deleteConn, deleteRule, forceFreePort, mountTunnelsPage, moveTunRow, patchTunnels, pollTunnelsPage, refreshTunnelsPage, renderTunnels, ruleAct, saveTunOrder, startAllRules, stopAllRules, testConn, tunCfg, tunnelsCountText, unmountTunnelsPage, wireTunnels, withTunBusy };
