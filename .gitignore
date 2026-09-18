@@ -24,9 +24,10 @@ master.key
 /.claude/worktrees/
 /.claude/settings.local.json
 
-# Dev-only vitest tooling for the panel suite (crates/swiss-panel/panel-tests) — node is a
-# test dependency, never a build step; its install tree stays untracked.
-/crates/swiss-panel/panel-tests/node_modules/
+# Dev-only npm tooling for the panel home (crates/swiss-panel/panel — sources, emit script
+# and the vitest suite; docs/36) — node is a dev dependency, never a cargo build step; its
+# install tree stays untracked.
+/crates/swiss-panel/panel/node_modules/
 
 # Agent-authored context under .agents is SOURCE now (docs/, skills/, skill-eval/,
 # .mcp.json) and ships with the repo. The worktrees/ subtree stays untracked on purpose:
