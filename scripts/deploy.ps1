@@ -36,8 +36,6 @@ param(
 $ErrorActionPreference = 'Stop'
 $Exe = 'target\release\swiss.exe'
 . "$PSScriptRoot\deploy-lock.ps1"
-$Home_ = Get-SwissProdHome
-$DeployLog = Join-Path $Home_ 'deploy.log'
 function Fail($message) {
     Write-Host $message -ForegroundColor Red
     Phase "FAILED: $message"
@@ -47,9 +45,13 @@ function Phase($message) {
     # Timestamped everywhere, immediately: console (flushed, so a piped consumer sees
     # progress as it happens) and the gateway home's deploy.log (survives wrappers that
     # buffer stdout into silence).
+    # The home is resolved per line, not once: the start below may move a pre-rename
+    # ~\.mcp-gateway to ~\.swiss (deploy.log travels with it), and the lines after that
+    # must land where the log now lives.
     Write-Host "== $message"
     try {
-        Add-Content -Path $DeployLog -Value ("{0} deploy: {1}" -f (Get-Date).ToString('s'), $message)
+        $log = Join-Path (Get-SwissProdHome) 'deploy.log'
+        Add-Content -Path $log -Value ("{0} deploy: {1}" -f (Get-Date).ToString('s'), $message)
     } catch { }
     [Console]::Out.Flush()
 }
