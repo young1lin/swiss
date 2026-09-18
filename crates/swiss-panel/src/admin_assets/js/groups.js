@@ -17,22 +17,36 @@
 /* ================================================================================================
    Groups - the one grouped-list component (docs/20 §4).
 
-   Seven scopes (mcps, conns, rules, jobs, secrets, tokens, targets), two densities (the sidebar
-   tree and the page card list), one anatomy: a tree-node header - chevron, folder glyph, name in mixed
-   case, count - on a transparent ground (hover lifts it), with + always visible and the
-   ellipsis and the drag grip on hover, and members indented one full tree gutter (24-32px of
-   text) behind a 1px guide line that drops from the chevron column. Before this module the sidebar and the Tunnels
-   page each carried a private copy of the whole idea (two drag implementations, two header
-   anatomies, two delete-confirm wordings) and they had already forked; Jobs, Secrets and
-   Tokens were about to grow three more. Everything a grouped list does lives here once:
+   Seven scopes (mcps, conns, rules, jobs, secrets, tokens, targets), two densities, one
+   anatomy: a header - chevron, name in mixed case, count - with + always visible and the
+   ellipsis on hover, over the members. The densities differ in what CONTAINS the members
+   (docs/35):
+
+     side  - the sidebar TREE: the head is a tree node (it also wears a folder glyph) on a
+             transparent ground, members indented one tree gutter behind a 1px guide line
+             that drops from the chevron column (docs/20 §4.1).
+     page  - the grouped inset CARD: the .grp is the .group card itself, the head is a 36px
+             band across its top and the rows sit straight under it, full width. The card's
+             edge says where the group starts and ends - at 1180px a transparent head over
+             an indented card never did (its + drifted a screen away from the name).
+
+   The WHOLE head is the drag surface for reordering groups: pick it up by the name, the
+   count or the empty band. The two buttons on it opt out at dragstart, so a twitch while
+   clicking + still lands the click - there is no hover-only grip to find first.
+
+   Before this module the sidebar and the Tunnels page each carried a private copy of the
+   whole idea (two drag implementations, two header anatomies, two delete-confirm wordings)
+   and they had already forked; Jobs, Secrets and Tokens were about to grow three more.
+   Everything a grouped list does lives here once:
 
    - slice()/groupOf() - one flat order cut into group slices; moving a member between groups
      never rewrites the ordering.
    - the /api/groups/{scope} family - saveGroupNames/rename/assign/saveOrder, one request shape.
    - collapse state per scope in localStorage, keys carried across a rename.
-   - mountGroup() - the DOM: header (collapse, +, ellipsis menu with Move/Rename/Delete, grip),
-     drop targets (rows reorder + re-home in one gesture, headers append into a group, grips
-     reorder the groups), and the empty-group line that keeps a fresh group visible.
+   - mountGroup() - the DOM: header (collapse, +, ellipsis menu with Move/Rename/Delete; the
+     head itself drags), drop targets (rows reorder + re-home in one gesture, a head or the
+     empty line appends into a group, a whole group lands before/after another), and the
+     empty-group line that keeps a fresh group visible.
 
    The caller keeps what is genuinely its own: the row markup, what a row does when opened,
    the flat order it stores, and the noun the delete confirm names.
@@ -119,7 +133,7 @@ function groupFieldHtml(names, sel) {
 
 /* --- the component ------------------------------------------------------------------------------- */
 
-/** Build one group container: the header band (grip, disclosure, name, count, +, ellipsis)
+/** Build one group container: the header (disclosure, name, count, +, ellipsis; draggable whole)
  *  and the body (rows, or the empty line that keeps a fresh group visible). All gesture
  *  handling a group owns lives here; cfg carries the caller's own nouns and moves:
  *
@@ -136,10 +150,10 @@ function groupFieldHtml(names, sel) {
  *    drag/dragGroup { get, set } - the two in-flight-drag slots; a poll must not rebuild
  *                   under either (the caller's loader checks them)
  *    rowNode(row)   side density: one row element; the component wires click + drag
- *    rowsHtml(g)    page density: the rows as one HTML string, inside one .group card
+ *    rowsHtml(g)    page density: the rows as one HTML string, straight into the card body
  *    wireRow(el, row) page density: extra per-row wiring (actions); drag is wired here
  *    rowId(row)     the id a drag carries (name for MCPs, id for tunnels)
- *    rowSel(row)    page density: a selector that finds rowId's node inside the card
+ *    rowSel(row)    page density: a selector that finds rowId's node inside the body
  *    rowsById()     live rows, for drop-into's "slot after the last member" step
  *    groupOfRow(row) the rendering group of a row (a groupOf(names) closure)
  *    onMoveRow(id, targetId, before) flat reorder + order PUT + render (caller-owned list)
@@ -147,17 +161,21 @@ function groupFieldHtml(names, sel) {
  *    filtered       a search is on: groups with no match hide, matches force expansion
  */
 function mountGroup(cfg, g) {
-  var wrap = el("div", "grp grp--" + cfg.density + (cfg.collapsed[g.name] && !cfg.filtered ? " collapsed" : ""));
+  var page = cfg.density === "page";
+  // At page density the group IS the card: .group brings the ring, the radius and the clip,
+  // so the rows need no second surface under the head (and jobs.js's "is the list painted"
+  // probe keeps finding a .group).
+  var wrap = el("div", "grp grp--" + cfg.density + (page ? " group" : "") +
+    (cfg.collapsed[g.name] && !cfg.filtered ? " collapsed" : ""));
   wrap.dataset.group = g.name;
 
   var head = el("div", "grp-head");
 
-  // The head is a TREE NODE, not a section band (the refresh of docs/20 §4.1): chevron,
-  // folder glyph, name, count - in that column order, on a transparent ground that only
-  // lifts on hover. The three leading columns are the contract base.css aligns to: the
-  // chevron column is where the guide line drops, the folder column ends where the name
-  // begins, and members sit one full gutter (24-32px of TEXT, not of padding) to the
-  // right of the name. aria-expanded says the fold state to assistive tech.
+  // The head's leading columns - chevron, (folder), name, count - are the contract base.css
+  // aligns to. In the sidebar tree the chevron column is where the guide line drops and
+  // members sit one full gutter (24-32px of TEXT, not of padding) to the right of the name.
+  // In the page card the chevron sits in the rows' dot column and the name over their
+  // names. aria-expanded says the fold state to assistive tech.
   var toggle = el("button", "grp-toggle");
   toggle.type = "button";
   var folded = !!(cfg.collapsed[g.name] && !cfg.filtered);
@@ -167,10 +185,13 @@ function mountGroup(cfg, g) {
   toggle.appendChild(chev);
   // The folder is the "this row is a container" hint a source list gives (Finder, VS Code):
   // a member can never grow one, so the glyph alone separates parents from children even
-  // before the indent is seen.
-  var folder = el("span", "grp-folder");
-  folder.innerHTML = icon("folder");
-  toggle.appendChild(folder);
+  // before the indent is seen. The card needs none - its edge is the container - and
+  // without it the head's name lines up over the rows' names.
+  if (!page) {
+    var folder = el("span", "grp-folder");
+    folder.innerHTML = icon("folder");
+    toggle.appendChild(folder);
+  }
   toggle.appendChild(el("span", "grp-name", g.name));
   // The count stays visible when folded - 0 versus 3 is exactly how a folded empty group
   // tells itself apart from a folded full one.
@@ -196,7 +217,7 @@ function mountGroup(cfg, g) {
   head.appendChild(add);
 
   // The ellipsis is rare, so it appears on hover/focus only. Move up/down are the
-  // keyboard-and-precision path to what the grip does by drag: present exactly when the move
+  // keyboard-and-precision path to what dragging the head does: present exactly when the move
   // exists, absent at the list's edges.
   var more = el("button", "grp-more");
   more.innerHTML = icon("ellipsis");
@@ -221,44 +242,18 @@ function mountGroup(cfg, g) {
   };
   head.appendChild(more);
 
-  // A drag HANDLE, not a draggable header: the + and ellipsis buttons must never live inside
-  // a draggable element - a hand that moves a pixel while pressing one turns the click into a
-  // cancelled drag and the button silently does nothing. The grip is the only draggable thing
-  // on the head, so buttons keep every click. It sits at the head's END, after the actions,
-  // so the leading columns (chevron, folder, name) keep one stable x for the tree alignment;
-  // it takes layout space but paints only on hover/focus.
-  var grip = el("span", "grp-grip");
-  grip.innerHTML = icon("grip");
-  grip.title = "Drag to reorder this group";
-  grip.setAttribute("aria-label", "Reorder group " + g.name);
-  grip.draggable = true;
-  grip.addEventListener("dragstart", function (e) {
-    cfg.dragGroup.set(g.name);
-    head.classList.add("dragging");
-    try { e.dataTransfer.setData("text/plain", g.name); } catch (err) { /* old IE */ }
-    e.dataTransfer.effectAllowed = "move";
-  });
-  grip.addEventListener("dragend", function () {
-    cfg.dragGroup.set(null); // lets the deferred rebuild run - same contract as a row drag
-    head.classList.remove("dragging");
-    document.querySelectorAll(".grp-head.drop-before, .grp-head.drop-after").forEach(function (h) {
-      h.classList.remove("drop-before", "drop-after");
-    });
-    if (cfg.afterDrag) cfg.afterDrag();
-  });
-  head.appendChild(grip);
-  wireHeadDrop(cfg, head, g.name);
+  wireHeadDrag(cfg, wrap, head, g.name);
+  wireIntoDrop(cfg, head, g.name);
+  wireGroupDrop(cfg, wrap, g.name);
   wrap.appendChild(head);
 
   var body = el("div", "grp-body");
-  if (cfg.density === "page" && g.rows.length) {
-    var card = el("div", "group");
-    card.innerHTML = cfg.rowsHtml(g);
-    body.appendChild(card);
+  if (page && g.rows.length) {
+    body.innerHTML = cfg.rowsHtml(g);
     g.rows.forEach(function (row) {
       // rowSel, not a data-id: tunnels address rows by data-conn/data-rule, jobs and secrets
       // by their own keys — the caller owns the DOM it built.
-      var node = card.querySelector(cfg.rowSel(row));
+      var node = body.querySelector(cfg.rowSel(row));
       if (node) {
         wireRowDrag(cfg, node, row);
         if (cfg.wireRow) cfg.wireRow(node, row); // the caller's own actions on the row
@@ -276,10 +271,38 @@ function mountGroup(cfg, g) {
   // hover, so the line does not have to repeat the instructions. A scope whose rows cannot
   // drag (tokens) says the honest half only.
   if (!g.rows.length && !cfg.filtered) {
-    body.appendChild(el("div", "grp-empty", emptyLineText(cfg.draggable !== false)));
+    var empty = el("div", "grp-empty", emptyLineText(cfg.draggable !== false));
+    // "drop here" has to be true of the line that says it, not only of the head above it.
+    wireIntoDrop(cfg, empty, g.name);
+    body.appendChild(empty);
   }
   wrap.appendChild(body);
   return wrap;
+}
+
+/** The whole head drags the group (docs/35). Picking it up anywhere - the name, the count,
+ *  the band - starts a group drag; the browser's own drag threshold keeps a plain click a
+ *  click, so the toggle still folds. The + and ellipsis buttons cancel the drag at its
+ *  start instead: a hand that moves a pixel while pressing one must still land the click,
+ *  and a cancelled dragstart is exactly a mouse-up that clicks. */
+function wireHeadDrag(cfg, wrap, head, group) {
+  head.draggable = true;
+  head.addEventListener("dragstart", function (e) {
+    var t = e.target;
+    if (t && t.closest && t.closest(".grp-add, .grp-more")) { e.preventDefault(); return; }
+    cfg.dragGroup.set(group);
+    wrap.classList.add("dragging");
+    try { e.dataTransfer.setData("text/plain", group); } catch (err) { /* old IE */ }
+    e.dataTransfer.effectAllowed = "move";
+  });
+  head.addEventListener("dragend", function () {
+    cfg.dragGroup.set(null); // lets the deferred rebuild run - same contract as a row drag
+    wrap.classList.remove("dragging");
+    document.querySelectorAll(".grp.drop-before, .grp.drop-after").forEach(function (n) {
+      n.classList.remove("drop-before", "drop-after");
+    });
+    if (cfg.afterDrag) cfg.afterDrag();
+  });
 }
 
 /** Row drag: reorder and re-home in one gesture. The insertion point is the hovered row's
@@ -326,40 +349,58 @@ function wireRowDrag(cfg, node, row) {
   });
 }
 
-/** A group header is a drop target twice over: dropping a ROW on it is the only way into a
- *  group with no rows yet, and dropping another header's GRIP on it reorders the groups. The
- *  hovered half picks before/after - for every group alike; no header is pinned. */
-function wireHeadDrop(cfg, head, group) {
-  var half = function (e) { return e.clientY < head.getBoundingClientRect().top + head.offsetHeight / 2; };
-  head.addEventListener("dragover", function (e) {
-    if (cfg.dragGroup.get()) {
-      if (cfg.dragGroup.get() === group) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      head.classList.toggle("drop-before", half(e));
-      head.classList.toggle("drop-after", !half(e));
-      return;
-    }
+/** A ROW dropped on the head (or on the empty line) appends to this group - the only way
+ *  into a group with no rows yet. Group drags pass through untouched: the whole .grp
+ *  answers those (wireGroupDrop), so a head never has to know which kind it is under. */
+function wireIntoDrop(cfg, node, group) {
+  node.addEventListener("dragover", function (e) {
     if (!cfg.drag.get()) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    head.classList.add("drop-into");
+    node.classList.add("drop-into");
   });
-  head.addEventListener("dragleave", function () {
-    head.classList.remove("drop-into", "drop-before", "drop-after");
+  node.addEventListener("dragleave", function () {
+    node.classList.remove("drop-into");
   });
-  head.addEventListener("drop", function (e) {
-    e.preventDefault();
-    head.classList.remove("drop-into", "drop-before", "drop-after");
-    var dg = cfg.dragGroup.get();
-    if (dg) {
-      cfg.dragGroup.set(null);
-      if (dg !== group) moveGroup(cfg, dg, group, half(e));
-      return;
-    }
+  node.addEventListener("drop", function (e) {
     var id = cfg.drag.get();
+    if (!id) return; // a group drop: let it bubble to the .grp
+    e.preventDefault();
+    node.classList.remove("drop-into");
     cfg.drag.set(null);
-    if (id) dropInto(cfg, id, group);
+    dropInto(cfg, id, group);
+  });
+}
+
+/** Another GROUP dragged over this one lands before or after it - the hovered half of the
+ *  WHOLE group decides, head and members alike, so the target is the block the user sees
+ *  moving and not a 36px strip of it. Row drags never reach here with a group in flight;
+ *  the rows and the head handle their own kind and let this one bubble. */
+function wireGroupDrop(cfg, wrap, group) {
+  var half = function (e) {
+    var r = wrap.getBoundingClientRect();
+    return e.clientY < r.top + r.height / 2;
+  };
+  wrap.addEventListener("dragover", function (e) {
+    var dg = cfg.dragGroup.get();
+    if (!dg || dg === group) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    wrap.classList.toggle("drop-before", half(e));
+    wrap.classList.toggle("drop-after", !half(e));
+  });
+  wrap.addEventListener("dragleave", function (e) {
+    // Crossing from the head into a row is not leaving the group.
+    if (e.relatedTarget && wrap.contains(e.relatedTarget)) return;
+    wrap.classList.remove("drop-before", "drop-after");
+  });
+  wrap.addEventListener("drop", function (e) {
+    var dg = cfg.dragGroup.get();
+    if (!dg) return;
+    e.preventDefault();
+    wrap.classList.remove("drop-before", "drop-after");
+    cfg.dragGroup.set(null);
+    if (dg !== group) moveGroup(cfg, dg, group, half(e));
   });
 }
 
@@ -388,8 +429,8 @@ function moveGroup(cfg, name, target, before) {
 }
 
 /** Swap a group with its neighbour (the ellipsis menu's Move up/down): the click-precise
- *  counterpart of dragging the grip. Falls through at the edges, where the menu does not
- *  offer the move. */
+ *  and keyboard counterpart of dragging the head. Falls through at the edges, where the
+ *  menu does not offer the move. */
 function moveGroupBy(cfg, name, delta) {
   var i = cfg.names.indexOf(name);
   var j = i + delta;

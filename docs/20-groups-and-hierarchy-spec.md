@@ -8,6 +8,11 @@
 > 竖向 guide 改挂在 `.grp::before`，从 chevron 列降到最后一行的中线，折叠即消失。
 > 空组文案缩短为 "No items — drop here or press +"（不可拖的 scope 只说 "No items"）。
 > 组件、API、localStorage 键、拖拽语义全部不变；`aria-expanded` 补上。**
+> **§4 第二次修订（docs/35，2026-09-18）：tree 模型只保留在侧栏密度；页面密度改为「组即卡片」——
+> `.grp` 自身就是 `.group` 卡，36px `--sep-soft` 色带作组头（chevron、名称、计数，不画 folder），
+> 行直接铺在色带下、通栏。组头整条可拖（没有 grip，`i-grip` 已删），`+`/`⋯` 在 dragstart 取消拖拽以
+> 保住点击；组的 before/after 落点是整块 `.grp`（头和成员都算），行的 drop-into 落点是组头或空行。
+> 本文 §4.1 的图与「抓手」条目以 docs/35 为准。**
 > 设计语言的总纲从本文起由 `.claude/skills/swiss-design/SKILL.md` 承载：本文 §4 是那份语言在「分组列表」
 > 上的展开，两者冲突时以 skill 为准（skill 改了要回来改这里）。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/18-panel-visual-refresh-spec.md`（本文沿用它的 token、

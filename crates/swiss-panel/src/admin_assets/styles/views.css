@@ -418,8 +418,8 @@
     .tun-foot { font-size: var(--f-label); color: var(--text-3); padding: var(--s3) var(--s1) 0; display: flex; justify-content: space-between; gap: var(--s3); }
     /* The right-hand slot: a value you would copy (the inventory revision), so it earns mono. */
     .tun-foot-rev { font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); }
-    /* Grouped tunnel lists are the groups component at page density now (base.css .grp--page):
-       a 36px band over an indented .group card. Only the row layout is tunnel-specific. */
+    /* Grouped tunnel lists are the groups component at page density (base.css .grp--page):
+       the group is the card, a 36px band over the rows. Only the row layout is tunnel-specific. */
     .tun-row[draggable="true"] { cursor: grab; }
     .tun-row.dragging { opacity: 0.55; }
     .tun-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
