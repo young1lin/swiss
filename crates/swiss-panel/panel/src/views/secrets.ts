@@ -30,6 +30,7 @@
    folder names, not credentials — they are the one thing about a secret a listing may say
    beyond its name.
    ================================================================================================ */
+import type { GroupCfg, GroupSlice } from "../types/dom.js";
 import { $, apiJson, emptyHtml, esc, icon, state, targetEl, toast } from "../util.js";
 import { copyText } from "../connect.js";
 import { popupMenu } from "../menu.js";
@@ -156,7 +157,7 @@ function moveSecretRow(id: string, target: string, before: boolean): void {
   secrets.list.splice(before ? to : to + 1, 0, id);
   paintGroups();
   void saveOrder("secrets", secrets.list.slice()).then((j: unknown): void => {
-    if (j) loadSecrets().then(paintGroups); // the order PUT bumped the rev — resync it
+    if (j) void loadSecrets().then(paintGroups); // the order PUT bumped the rev — resync it
   });
 }
 
@@ -256,7 +257,7 @@ function wire(): void {
       });
       return;
     }
-    if (hit.dataset.skcopy) { copyText("${secret://" + hit.dataset.skcopy + "}", "Reference"); return; }
+    if (hit.dataset.skcopy) { void copyText("${secret://" + hit.dataset.skcopy + "}", "Reference"); return; }
     if (hit.dataset.skmore) {
       // The opening click must not reach document (menu.js closes on outside clicks).
       event.stopPropagation();

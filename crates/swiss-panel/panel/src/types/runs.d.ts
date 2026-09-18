@@ -25,7 +25,8 @@
 
 /** POST /api/mcps/{name}/resource (readResource): one resource read's reply. text is the
  *  body, mimeType rides when the source sent one, ms is the round trip. */
-interface ApiMcpResourceRead {
+import type { ApiRemoteTargetRow } from "./api.js";
+export interface ApiMcpResourceRead {
   ok: boolean;
   text?: string;
   mimeType?: string;
@@ -34,7 +35,7 @@ interface ApiMcpResourceRead {
 
 /** The result literal runTool stamps on d.run.result (renderRunResult reads it back).
  *  McpRunState keeps the field unknown because only this module writes it. */
-interface McpRunResult {
+export interface McpRunResult {
   ok: boolean;
   text: string;
   ms?: number | null;
@@ -44,7 +45,7 @@ interface McpRunResult {
  *  types the rows open-ended; this names the three fields the revision list reads. type is
  *  required here only to index TYPE_LABELS - an older row without one falls to "?" at
  *  runtime exactly as before. */
-interface McpRevisionRow {
+export interface McpRevisionRow {
   type: string;
   at?: string;
   note?: string;
@@ -54,7 +55,7 @@ interface McpRevisionRow {
 /** One tunnel forward a /details answer carries for this MCP (tunnelDepsHtml). state.d.ts
  *  types the field unknown[] because this module is its only reader; the fields are the
  *  rule row's own (tunnel/manager.rs rule_row_of minus the live counters it does not read). */
-interface McpTunnelDepRow {
+export interface McpTunnelDepRow {
   name: string;
   localPort: number;
   targetHost: string;
@@ -67,7 +68,7 @@ interface McpTunnelDepRow {
 
 /** The masked MCP config as configTarget reads it: a Record<string, unknown> on the wire
  *  (d.config); the fields the adapter branches touch, named so the reads stay checked. */
-interface McpConfigLike {
+export interface McpConfigLike {
   type?: string;
   command?: string;
   url?: string;
@@ -82,7 +83,7 @@ interface McpConfigLike {
 /* --- views/remote.ts ---------------------------------------------------------------------------- */
 
 /** One live remote endpoint row (/api/remote/endpoints' list, api.rs:262). */
-interface RemoteEndpointRow {
+export interface RemoteEndpointRow {
   id: string;
   label: string;
   state: string;
@@ -91,10 +92,10 @@ interface RemoteEndpointRow {
 /** A remote target row as the Targets page holds it: the wire row with group widened to
  *  the null a member-removal writes back locally before the server's answer lands
  *  (ApiRemoteTargetRow.group is string on the wire). */
-type RemoteTargetRow = Omit<ApiRemoteTargetRow, "group"> & { group: string | null };
+export type RemoteTargetRow = Omit<ApiRemoteTargetRow, "group"> & { group: string | null };
 
 /** The Add/Edit sheet's POST body (save): id only on a create (the URL carries it on edit). */
-interface RemoteTargetBody {
+export interface RemoteTargetBody {
   id?: string;
   label: string;
   endpoint: string;
@@ -104,11 +105,13 @@ interface RemoteTargetBody {
   shell: string;
 }
 
+import type { ApiRunRow } from "./api.js";
+
 /* --- views/remote-runs.ts ----------------------------------------------------------------------- */
 
 /** The input half of a remote run row: argv for exec, source/to for sync, remote/to for
  *  pull, path for cat/write, target and cwd on any kind. */
-interface RemoteRunInput {
+export interface RemoteRunInput {
   argv?: unknown[];
   source?: string;
   to?: string;
@@ -122,7 +125,7 @@ interface RemoteRunInput {
 /** One /api/remote/runs row as the Runs page reads it: ApiRunRow plus the input the active
  *  rows carry and the record's capped-output pair. api.d.ts types input only on the
  *  response's active half; the page passes both halves through one row type. */
-interface ApiRemoteRunRow extends ApiRunRow {
+export interface ApiRemoteRunRow extends ApiRunRow {
   input?: RemoteRunInput;
   outputCapped?: boolean;
   tail?: string;
@@ -131,7 +134,7 @@ interface ApiRemoteRunRow extends ApiRunRow {
 
 /** One opened recorded row's fetched body (bodies[runId]): the growing text, the next
  *  read's cursor and the whole-run total. gone marks a run the record rolled past. */
-interface RemoteRunBody {
+export interface RemoteRunBody {
   text: string;
   next: number;
   total: number;
@@ -140,7 +143,7 @@ interface RemoteRunBody {
 
 /** One opened live row's followed output (live[runId]): what has been shown, and where the
  *  next pull continues from. */
-interface RemoteLiveBody {
+export interface RemoteLiveBody {
   text: string;
   cursor: number;
 }

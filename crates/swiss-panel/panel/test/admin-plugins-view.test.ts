@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiPluginRow } from "../src/types/api.js";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";

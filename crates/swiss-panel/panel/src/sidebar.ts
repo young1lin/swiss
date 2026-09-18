@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ApiMcpRow } from "./types/api.js";
+import type { GroupCfg, GroupSlice, GroupedRow } from "./types/dom.js";
 import { state } from "./util.js";
 import { openSheet } from "./add-sheet.js";
 import { act, openDetail, removeMcp, renameMcp } from "./detail.js";
@@ -149,10 +151,10 @@ function rowMenu(name: string, anchor: { left: number; top: number; bottom: numb
   const m = rowOf(name) || { name: name, lifecycle: "stopped" };
   const started = m.lifecycle === "started";
   popupMenu(anchor, [
-    { label: "Rename…", fn: () => { renameMcp(name); } },
-    { label: started ? "Disable" : "Enable", fn: () => { act(name, started ? "stop" : "start"); } },
+    { label: "Rename…", fn: () => { void renameMcp(name); } },
+    { label: started ? "Disable" : "Enable", fn: () => { void act(name, started ? "stop" : "start"); } },
     { sep: true },
-    { label: "Delete", danger: true, fn: () => { removeMcp(name); } },
+    { label: "Delete", danger: true, fn: () => { void removeMcp(name); } },
   ]);
 }
 

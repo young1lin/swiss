@@ -25,6 +25,8 @@
      "host") still gets a group: fallback label first, then the page's own label. Never drop
      a page because its plugin row is missing - a page that cannot be reached is worse than
      a group with an ugly name. */
+import type { ApiPluginRow } from "./types/api.js";
+import type { PageDescriptor, PageGroup, PageInput, PageModule } from "./types/dom.js";
 function groupPages(pages: PageDescriptor[], plugins: ApiPluginRow[] | null | undefined, fallbackLabels: Record<string, string> | null | undefined): PageGroup[] {
   const byId = new Map((plugins || []).map((p) => { return [p.id, p]; }));
   const groups = new Map<string, PageGroup>();

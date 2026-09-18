@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiTrafficFull, ApiTrafficPage, ApiTrafficRow } from "./types/api.js";
 import { $, apiJson, esc, icon, state, whenLabel } from "./util.js";
 import { fmtJson } from "./logs.js";
 

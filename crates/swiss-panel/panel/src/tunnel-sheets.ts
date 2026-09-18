@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiTunnelConnectionRow, ApiTunnelRuleMutation, ApiTunnelRuleRow, ApiTunnelsBrowseEntry, ApiTunnelsBrowseResponse, ApiTunnelsKeysResponse, ApiTunnelsSuggestResponse, ConnSheetDraft, RuleSheetDraft } from "./types/api.js";
 import { $, api, apiJson, el, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { loadTunnels, tunConnName, tunData, tunGroupsList } from "./polling.js";

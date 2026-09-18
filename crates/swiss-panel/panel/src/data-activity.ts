@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiDbActivityReply, ApiDbActivityRow } from "./types/api.js";
 import { $, apiJson, el, icon, state, toast } from "./util.js";
 import { popupMenu } from "./menu.js";
 

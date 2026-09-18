@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+import type { ApiMcpCallRow, ApiMcpTool } from "./types/api.js";
+import type { PgUrlParts } from "./types/dom.js";
+import type { ApiMcpResourceRead, McpConfigLike, McpRevisionRow, McpRunResult, McpTunnelDepRow } from "./types/runs.js";
+import type { McpDetail } from "./types/state.js";
 import { $, api, apiJson, errText, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
@@ -609,7 +613,7 @@ function wireTabBody(d: McpDetail, m: unknown): void {
         nd.callsError = "";
         nd.callsErrStatus = "";
         nd.calls = null; // the loading state, not the previous needle's rows
-        loadCalls(nd.name);
+        void loadCalls(nd.name);
       }, 300);
     };
     q.onkeydown = (ev) => {
@@ -624,7 +628,7 @@ function wireTabBody(d: McpDetail, m: unknown): void {
       d.callsError = "";
       d.callsErrStatus = "";
       d.calls = null;
-      loadCalls(d.name);
+      void loadCalls(d.name);
     };
   }
   // docs/32 B2: a keyboard activation (Enter/Space on a focused button) carries detail === 0 —
@@ -654,7 +658,7 @@ function wireTabBody(d: McpDetail, m: unknown): void {
     };
   });
   document.querySelectorAll<HTMLElement>("#tabbody [data-full]").forEach((b) => {
-    b.onclick = (ev) => { ev.stopPropagation(); showFullResult(b.dataset.full as unknown as number); };
+    b.onclick = (ev) => { ev.stopPropagation(); void showFullResult(b.dataset.full as unknown as number); };
   });
 
   // Run tab
@@ -677,14 +681,14 @@ function wireTabBody(d: McpDetail, m: unknown): void {
   }
   // Loading here rather than in showTab: the tool the Run tab will show is only settled once the
   // form is built (runBody falls back to the first tool when none was preselected via Try).
-  if (d.tab === "run" && d.run.tool) loadRunHistory(d.name, d.run.tool);
+  if (d.tab === "run" && d.run.tool) void loadRunHistory(d.name, d.run.tool);
   const runBtn = $("runBtn");
   if (runBtn) {
     runBtn.onclick = runTool;
     // Ctrl/Cmd+Enter runs, so a SQL textarea can be submitted without reaching for the mouse.
     document.querySelectorAll<HTMLElement>("#tabbody textarea, #tabbody input[type=text]").forEach((f) => {
       f.addEventListener("keydown", (ev) => {
-        if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); runTool(); }
+        if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); void runTool(); }
       });
     });
   }

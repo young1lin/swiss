@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiJobRow, ApiJobRunRecord } from "../src/types/api.js";
 import { describe, it, expect, beforeAll } from "vitest";
 import {
   cloneJson,

@@ -32,6 +32,7 @@
    is the OS (a registry Run value, a LaunchAgent, a systemd user unit), not the gateway, so the
    toggle reads and writes /api/autostart with no revision to race on.
    ================================================================================================ */
+import type { ApiPluginRow, ApiPluginsResponse } from "../types/api.js";
 import { $, api, apiJson, emptyHtml, esc, targetEl, toast } from "../util.js";
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
 

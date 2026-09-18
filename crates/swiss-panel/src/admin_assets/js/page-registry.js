@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+                                                                                      
+                                                                                                              
 import { $, api, errText, esc, icon, state, toast } from "./util.js";
 import { createPageRegistry } from "./page-core.js";
 import { glyphHtml, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
@@ -183,7 +185,7 @@ function paintPluginContext()       {
       /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
        * top level), so it loads HERE, at interaction time - the shell's own module graph stays
        * DOM-free at eval, which the pure-helper suites (plugins.js) import it under. */
-      import("./menu.js").then((menu) => { menu.popupMenu(btn.getBoundingClientRect(), items); });
+      void import("./menu.js").then((menu) => { menu.popupMenu(btn.getBoundingClientRect(), items); });
       /* The menu also closes without an item click (document click, Escape); a one-shot
        * listener puts the flag back whenever that lands. */
       setTimeout(() => {

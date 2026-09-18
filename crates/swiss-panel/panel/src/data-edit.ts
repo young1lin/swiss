@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ApiDbColumn, ApiDbConnectionRow } from "./types/api.js";
+import type { DbCellMeta } from "./types/state.js";
 import { $, apiJson, el, errText, state, toast } from "./util.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbOpenCellEditor } from "./data-cell.js";
@@ -64,15 +66,15 @@ function dbTableMenu(anchorEl: HTMLElement): void {
     const to = prompt("Rename " + (d_.schema ? d_.schema + "." : "") + d_.table + " to:", d_.table!);
     if (!to || to === d_.table) return;
     if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast("Not a valid table name", true); return; }
-    dbRunDdl("rename", to);
+    void dbRunDdl("rename", to);
   });
   item("Truncate table\u2026", () => {
     const d_ = d!;
-    dbTypedConfirm({ what: "TRUNCATE (delete every row)", name: (d_.schema ? d_.schema + "." : "") + d_.table, kind: "table", typed: d_.table }, (): void => { dbRunDdl("truncate"); });
+    dbTypedConfirm({ what: "TRUNCATE (delete every row)", name: (d_.schema ? d_.schema + "." : "") + d_.table, kind: "table", typed: d_.table }, (): void => { void dbRunDdl("truncate"); });
   });
   item("Drop table\u2026", () => {
     const d_ = d!;
-    dbTypedConfirm({ what: "DROP (permanently delete)", name: (d_.schema ? d_.schema + "." : "") + d_.table, kind: "table", typed: d_.table }, (): void => { dbRunDdl("drop"); });
+    dbTypedConfirm({ what: "DROP (permanently delete)", name: (d_.schema ? d_.schema + "." : "") + d_.table, kind: "table", typed: d_.table }, (): void => { void dbRunDdl("drop"); });
   });
   document.body.appendChild(menu);
   // docs/22 closeout audit: the Table menu now clamps to the viewport like popupMenu — a
@@ -129,9 +131,9 @@ async function dbRunDdl(op: string, to?: string): Promise<void> {
   if (op === "rename" && to) { d_.table = to; d_.data = null; }
   if (op === "truncate") { dbDropEdits(); }
   d_.tablesPage = 0;
-  if (dbIsRedis()) dbLoadKeys(true);
-  else dbLoadTables();
-  if (d_.table) dbLoadData(true);
+  if (dbIsRedis()) void dbLoadKeys(true);
+  else void dbLoadTables();
+  if (d_.table) void dbLoadData(true);
   else {
     renderDbTables();
     // and the RIGHT pane, whose last paint still shows the dropped table's rows

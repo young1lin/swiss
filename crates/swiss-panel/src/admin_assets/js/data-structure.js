@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+                                                                                                    
+                                                              
 import { $, apiJson, dbReqGuard, el, state } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbDialectOf, dbOkToDrop, dbOpenTable } from "./data-view.js";
@@ -47,7 +49,7 @@ function dbSetTab(t        )       {
   renderDbFilters();
   renderDbGrid();
   renderDbBar();
-  if (t !== "data" && t !== "form" && d_.conn && d_.table) dbLoadDetail();
+  if (t !== "data" && t !== "form" && d_.conn && d_.table) void dbLoadDetail();
 }
 
 // One /schema request chain: a slow answer for the table the user just left must be

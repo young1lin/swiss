@@ -1,3 +1,4 @@
+import type { JtBox } from "../src/types/dom.js";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 /* docs/33 — the Logs JSON viewer. Compact wire text is parsed into the restrained tree;

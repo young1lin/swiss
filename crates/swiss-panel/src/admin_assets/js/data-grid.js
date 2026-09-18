@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+                                                                                                               
+                                               
+                                                                                         
 import { $, apiJson, dbReqGuard, el, emptyHtml, errText, icon, state, toast } from "./util.js";
 import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
@@ -404,7 +407,7 @@ async function dbLoadData(keepOffset          )                {
   // 50" (docs/22 closeout audit).
   if (!j.rows.length && d_.offset > 0) {
     d_.offset = Math.max(0, d_.offset - d_.pageSize);
-    dbLoadData(true);
+    void dbLoadData(true);
     return;
   }
   d_.data = j;
@@ -553,7 +556,7 @@ function renderDbToolbar()       {
       d_.pageSize = Number(t.value);
       d_.offset = 0;
       dbDropEdits();
-      dbLoadData(true);
+      void dbLoadData(true);
     };
     dataCtl.appendChild(size);
 
@@ -570,7 +573,7 @@ function renderDbToolbar()       {
       const d_ = d ;
       d_.offset = Math.max(0, d_.offset - d_.pageSize);
       dbDropEdits();
-      dbLoadData(true);
+      void dbLoadData(true);
     };
     const next = el("button", "btn icon")                     ;
     next.innerHTML = icon("chevron-right");
@@ -583,7 +586,7 @@ function renderDbToolbar()       {
       const d_ = d ;
       d_.offset += d_.pageSize;
       dbDropEdits();
-      dbLoadData(true);
+      void dbLoadData(true);
     };
     dataCtl.appendChild(prev);
     dataCtl.appendChild(next);
@@ -593,7 +596,7 @@ function renderDbToolbar()       {
     refresh.onclick = ()       => {
       if (!dbOkToDrop()) return;
       dbDropEdits();
-      dbLoadData(true);
+      void dbLoadData(true);
     };
     dataCtl.appendChild(refresh);
 
@@ -619,9 +622,9 @@ function renderDbToolbar()       {
       // and without this the very click that opens the menu also tears it down.
       ev.stopPropagation();
       popupMenu((ev.currentTarget                     ).getBoundingClientRect(), [
-        { label: "Export CSV…", fn: ()       => { dbExportTable(exp, "csv"); } },
-        { label: "Export NDJSON…", fn: ()       => { dbExportTable(exp, "json"); } },
-        { label: "Export SQL dump…", fn: ()       => { dbExportTable(exp, "sql"); } },
+        { label: "Export CSV…", fn: ()       => { void dbExportTable(exp, "csv"); } },
+        { label: "Export NDJSON…", fn: ()       => { void dbExportTable(exp, "json"); } },
+        { label: "Export SQL dump…", fn: ()       => { void dbExportTable(exp, "sql"); } },
       ]);
     };
     dataCtl.appendChild(exp);
@@ -853,7 +856,7 @@ function renderDbGrid()       {
       d_.dir = next ? next.dir : "asc";
       d_.offset = 0;
       dbDropEdits();
-      dbLoadData(true);
+      void dbLoadData(true);
     };
     // docs/22 W1.4: the header's own right-click runs this column's stats — top values or
     // COUNT/MIN/MAX/AVG. The statement is generated behind the identifier gate and lands in

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ApiDbColumn, ApiDbConnectionRow, DbQueryReply } from "./types/api.js";
+import type { DbInsert, DbState } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, errText, state, toast } from "./util.js";
 import {
   dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,

@@ -23,7 +23,7 @@
 /** One wired session. The literals in select()/openSession() build the core fields; the
  *  rest join at their first real value (wireTerminal, connect, paintJump) and are
  *  optional for exactly that reason - the literals predate them. */
-interface TermModel {
+export interface TermModel {
   id: string;
   target: string;
   label: string;
@@ -56,7 +56,7 @@ interface TermModel {
 }
 
 /** The five vendored constructors load() caches for the module's lifetime. */
-interface TerminalPackages {
+export interface TerminalPackages {
   Terminal: XtermTerminalCtor;
   FitAddon: XtermFitAddonCtor;
   Unicode11Addon: XtermUnicode11AddonCtor;
@@ -64,17 +64,19 @@ interface TerminalPackages {
   WebglAddon: new () => XtermWebglAddon;
 }
 
-/* The one fit-addon member the resize/open paths read. Merged into types/vendor.d.ts's
-   XtermFitAddon (interfaces merge across .d.ts files); proposeDimensions may answer
-   nothing when the terminal is not measurable yet. */
-interface XtermFitAddon {
+/* The two fit-addon members the resize/open paths read (exporting this file made it a
+   module, so its interface no longer ambient-merges with types/vendor.d.ts's
+   XtermFitAddon - the members the panel touches are declared here instead).
+   proposeDimensions may answer nothing when the terminal is not measurable yet. */
+export interface XtermFitAddon {
+  fit(): void;
   proposeDimensions(): { cols: number; rows: number } | undefined;
 }
 
 /* --- the Local shell settings sheet (views/terminal-settings.ts) -------------------------------- */
 
 /** The local block of the terminal plugin's config, as the settings sheet reads it. */
-interface TerminalLocalCfg {
+export interface TerminalLocalCfg {
   enabled?: boolean;
   shell?: string;
   shells?: { program: string; label: string }[];
@@ -85,7 +87,7 @@ interface TerminalLocalCfg {
  *  reason line walks (properties.local.properties.enabled.description). The read sits in
  *  a try because an older schema can lack any link of that chain, so the declared depth
  *  is best-effort by design. */
-interface TerminalPluginConfigResponse {
+export interface TerminalPluginConfigResponse {
   revision: number;
   config: { local?: TerminalLocalCfg | null; [key: string]: unknown };
   schema: {

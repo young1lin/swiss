@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+import type { ApiMcpRow, ApiMcpTool, ToolSchemaProp } from "./types/api.js";
+import type { PhantomMcpRow } from "./types/dom.js";
+import type { McpDetail } from "./types/state.js";
 import { $, esc } from "./util.js";
 import { histButtonLabel } from "./run-history.js";
 

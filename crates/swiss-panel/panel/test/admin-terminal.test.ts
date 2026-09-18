@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiTerminalSessionRow, ApiTerminalTargets } from "../src/types/api.js";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { GroupedRow } from "../src/types/dom.js";
 import { describe, expect, it } from "vitest";
 import {
   addTitle,

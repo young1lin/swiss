@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ApiDbColumn } from "./types/api.js";
+import type { DbCellMeta } from "./types/state.js";
 import { $, esc, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbGrid } from "./data-grid.js";

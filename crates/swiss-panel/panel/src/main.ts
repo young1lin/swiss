@@ -67,7 +67,7 @@ function maybeReloadPanel(newVersion: string): void {
  *  at all already means you are on the machine it serves. Nothing to sign in to — just start. */
 function showApp(): void {
   void initPages();
-  loadInfo();
+  void loadInfo();
 }
 
 /** Host facts the panel needs once: the token's env var name, and the named-token list (no
@@ -148,8 +148,8 @@ if (window.matchMedia as unknown) {
    still pauses when the tab is hidden: nobody is looking. */
 function poll(): void {
   if (document.visibilityState !== "visible") return;
-  loadMemory(true);
-  loadInfo();
+  void loadMemory(true);
+  void loadInfo();
   void pollPage();
 }
 
@@ -211,4 +211,4 @@ state.jobs.collapsed = loadCollapsed("jobs"); // the jobs scope's own fold map (
 showApp();
 // Ask for the child walk on the very first paint too, so the chip never shows a gateway-only total
 // that a poll silently corrects 6s later.
-loadMemory(true);
+void loadMemory(true);

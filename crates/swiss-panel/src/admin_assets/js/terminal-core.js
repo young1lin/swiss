@@ -23,6 +23,7 @@
    test/admin-terminal.test.ts, not by clicking. The DOM/xterm/WS wiring stays in
    views/terminal.js; everything a test needs to trust lives here. */
 
+                                                                                
 const PTY_MIN = 1;
 const PTY_MAX = 1000;   // the bounds swiss-host enforces on both axes — a 0-column PTY is
                       // undefined behaviour on the far side, so the panel clamps BEFORE

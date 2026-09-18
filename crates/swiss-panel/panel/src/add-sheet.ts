@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiMcpDefsImportResponse } from "./types/api.js";
 import { $, DEFAULT_GROUP, apiJson, esc, state, toast } from "./util.js";
 import { openDetail, runConnTest } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsHtml, readFields, translateOauth, translatePg } from "./fields.js";
@@ -126,6 +127,9 @@ async function submitImport(input: HTMLInputElement): Promise<void> {
 
 async function submitAdd(): Promise<void> {
   const type = $<HTMLSelectElement>("a-type").value;
+  /* the def body is open by construction: readFields(type) emits the type-specific
+   * fields (url/command/program/args/auth...), then the two translate passes rewrite
+   * more - only the three shared keys are spelled out (docs/37 M9 keep). */
   const body: { name: string; type: string; enabled: boolean; [key: string]: unknown } = Object.assign({ name: $<HTMLInputElement>("a-name").value.trim(), type: type, enabled: $<HTMLInputElement>("a-start").checked }, readFields(type, "a-"));
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body); // the auth checkbox is the def's auth string (docs/24 D1)

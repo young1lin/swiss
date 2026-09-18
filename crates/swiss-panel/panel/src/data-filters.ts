@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { DbFilterTerm } from "./types/state.js";
 import { $, el, esc, state } from "./util.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbLoadData } from "./data-grid.js";
@@ -87,7 +88,7 @@ function dbApplyFilters(): boolean {
   if (!dbOkToDrop()) { renderDbFilters(); return false; }
   d!.offset = 0;
   dbDropEdits();
-  dbLoadData(true);
+  void dbLoadData(true);
   return true;
 }
 
@@ -110,11 +111,11 @@ function renderDbFilters(): void {
     ri.oninput = (e) => {
       const v = (e.currentTarget as HTMLInputElement).value;
       clearTimeout(t2!);
-      t2 = setTimeout((): void => { d!.grep = v; dbLoadKeys(true); }, 400);
+      t2 = setTimeout((): void => { d!.grep = v; void dbLoadKeys(true); }, 400);
     };
     ri.onkeydown = (e) => {
       e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); clearTimeout(t2!); d!.grep = (e.currentTarget as HTMLInputElement).value; dbLoadKeys(true); }
+      if (e.key === "Enter") { e.preventDefault(); clearTimeout(t2!); d!.grep = (e.currentTarget as HTMLInputElement).value; void dbLoadKeys(true); }
     };
     rf.appendChild(ri);
     // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
@@ -127,7 +128,7 @@ function renderDbFilters(): void {
       o.selected = (d?.redisType || "") === t;
       rt.appendChild(o);
     });
-    rt.onchange = (e) => { d!.redisType = (e.currentTarget as HTMLSelectElement).value; dbLoadKeys(true); };
+    rt.onchange = (e) => { d!.redisType = (e.currentTarget as HTMLSelectElement).value; void dbLoadKeys(true); };
     rf.appendChild(rt);
     if (d_.redis && d_.redis.total != null) {
       rf.appendChild(el("span", "db-filter-hint",

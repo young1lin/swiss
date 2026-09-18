@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ApiDbColumn } from "./types/api.js";
+import type { DbDdlPayload, DdlRow, DdlSheetState } from "./types/state.js";
 import { $, api, apiJson, el, esc, icon, toast } from "./util.js";
 import { dbHighlightSql } from "./data-filters.js";
 import { dbLoadData } from "./data-grid.js";
@@ -487,11 +489,11 @@ async function commitDbDdl(): Promise<void> {
     dbOpenTable({ name: table, schema: schema, type: "table" });
   } else if (kind === "column") {
     toast("Column added to " + table);
-    dbLoadDetail();
-    dbLoadData(true);
+    void dbLoadDetail();
+    void dbLoadData(true);
   } else {
     toast("Index created on " + table);
-    dbLoadDetail();
+    void dbLoadDetail();
   }
 }
 

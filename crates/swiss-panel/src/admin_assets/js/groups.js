@@ -48,6 +48,8 @@
    The caller keeps what is genuinely its own: the row markup, what a row does when opened,
    the flat order it stores, and the noun the delete confirm names.
    ================================================================================================ */
+                                                                                                                                    
+                                                                     
 import { apiJson, el, esc, icon, toast } from "./util.js";
 import { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resolveDefaultGroup, slice } from "./group-logic.js";
 import { openGroupSheet } from "./add-sheet.js";
@@ -412,7 +414,7 @@ function moveGroup     (cfg               , name        , target        , before
   else rest.splice(before ? to : to + 1, 0, name);
   cfg.names = rest;
   if (cfg.render) cfg.render();
-  void saveGroupNames(cfg.scope, rest).then((j) => { if (j) cfg.reload(); });
+  void saveGroupNames(cfg.scope, rest).then((j) => { if (j) void cfg.reload(); });
 }
 
 /** Swap a group with its neighbour (the ellipsis menu's Move up/down): the click-precise
@@ -426,7 +428,7 @@ function moveGroupBy     (cfg               , name        , delta        )      
   const tmp = next[i]; next[i] = next[j]; next[j] = tmp;
   cfg.names = next;
   if (cfg.render) cfg.render();
-  void saveGroupNames(cfg.scope, next).then((done) => { if (done) cfg.reload(); });
+  void saveGroupNames(cfg.scope, next).then((done) => { if (done) void cfg.reload(); });
 }
 
 /** Rename through the one-field sheet; the fold key rides along, or the group springs open. */
