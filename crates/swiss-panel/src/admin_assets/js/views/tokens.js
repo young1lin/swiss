@@ -25,7 +25,7 @@
    The view is poll-safe the way Jobs and Plugins are: the 6s poll refetches the list and
    patches the ROWS CONTAINER only — a full repaint would wipe the label input while
    somebody is typing a new token's name into it. The once-only secret box lives in
-   state.tokenViewSecret and survives both poll and refresh until navigation leaves.
+   the tokens domain (setTokenViewSecret) and survives both poll and refresh until navigation leaves.
 
    Groups (docs/20 G7): the list renders through the groups component with dragging off —
    creation time is the tokens' order, so the scope's order route is a 400 and no row can be
@@ -42,6 +42,44 @@ import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, remem
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the tokens fold map, loaded once before the first paint
 
+/* The tokens domain's own state (docs/37 R4, slice 1 of 7): the named-token list, its
+ * group family, the most-recently revealed secret, and the once-only create/rotate box.
+ * Everything reads and writes through the accessors below - no other module reaches in
+ * (connect.ts resolves through them, main.ts boots through loadTokens). */
+const tokensDomain   
+                      
+                   
+                                  
+                              
+                            
+  = { list: [], groups: [], members: {}, activeSecret: null, viewSecret: null };
+
+export function tokenRows()                { return tokensDomain.list; }
+export function setTokenRows(rows               )       { tokensDomain.list = rows; }
+export function tokenGroupNames()           { return tokensDomain.groups; }
+export function tokenMemberOf(id        )                     { return tokensDomain.members[id]; }
+export function setTokenFamily(groups          , members                        )       {
+  tokensDomain.groups = groups;
+  tokensDomain.members = members;
+}
+export function activeTokenSecret()                { return tokensDomain.activeSecret; }
+/** The once-only box's secret - test seams and rotate/create set it; mount clears it. */
+export function setTokenViewSecret(secret               )       { tokensDomain.viewSecret = secret; }
+export function setActiveTokenSecret(secret               )       { tokensDomain.activeSecret = secret; }
+
+/** The tokens domain's load (the old util-state boot and connect.ts both funnel here):
+ * /api/tokens, then the group family on top. */
+export async function loadTokens()                {
+  const r = await api("/api/tokens");
+  if (!r.ok) return;
+  const j = await r.json()                     ;
+  tokensDomain.list = j.tokens || [];
+  // The two lists (docs/20 G7). An older gateway answers neither: the single default group,
+  // which the component draws as no divider at all.
+  tokensDomain.groups = j.groups && j.groups.length ? j.groups : ["default"];
+  tokensDomain.members = j.tokenGroups || {};
+}
+
 /** Same rule as src/token.ts `pickCopyToken` — remembered id, else the `default` label, else first. */
 function pickCopyToken(list               , remembered               )                     {
   if (!list.length) return null;
@@ -53,14 +91,7 @@ function pickCopyToken(list               , remembered               )          
 }
 
 async function refreshTokens()                {
-  const r = await api("/api/tokens");
-  if (!r.ok) return;
-  const j = await r.json()                     ;
-  state.tokens = j.tokens || [];
-  // The two lists (docs/20 G7). An older gateway answers neither: the single default group,
-  // which the component draws as no divider at all.
-  state.tokenGroups = j.groups && j.groups.length ? j.groups : ["default"];
-  state.tokenMembers = j.tokenGroups || {};
+  await loadTokens();
 }
 
 function rememberedTokenId()                {
@@ -75,19 +106,20 @@ function connectAll(secret        )         {
 /** The rendering group of one token: the stored label while its group lives, else the first
  *  group — the sink rule (docs/20 §2.1). */
 function groupOfToken(t             )         {
-  const g = state.tokenMembers && state.tokenMembers[t.id];
-  return (state.tokenGroups || []).indexOf(g ) >= 0 ? g  : (state.tokenGroups || ["default"])[0];
+  const g = tokenMemberOf(t.id);
+  const names = tokenGroupNames();
+  return names.indexOf(g ) >= 0 ? g  : (names.length ? names[0] : "default");
 }
 
 function signature()         {
-  return (state.tokens || []).map((t             )         => { return t.id + ":" + t.label + ":" + (t.createdAt || 0); }).join("\n") +
-    "\u0000" + (state.tokenGroups || []).join("\n") + "\u0000" +
-    (state.tokens || []).map((t             )         => { return t.id + "\u0001" + groupOfToken(t); }).join("\n");
+  return tokenRows().map((t             )         => { return t.id + ":" + t.label + ":" + (t.createdAt || 0); }).join("\n") +
+    "\u0000" + tokenGroupNames().join("\n") + "\u0000" +
+    tokenRows().map((t             )         => { return t.id + "\u0001" + groupOfToken(t); }).join("\n");
 }
 
 /** Which token the copy actions embed is real state the user should be able to see and change,
  *  rather than "whichever one you touched last". With no prior "Use", copies use `default`. */
-function inUse()                     { return pickCopyToken(state.tokens || [], rememberedTokenId()); }
+function inUse()                     { return pickCopyToken(tokenRows(), rememberedTokenId()); }
 
 /** One token's row: one button (Use, absent on the token copies already use) and the
  *  overflow menu with Rotate and Revoke - red never sits on a row (design rule 4). The
@@ -106,7 +138,7 @@ function rowHtml(t             )         {
 }
 
 function rowsHtml()         {
-  const list = state.tokens || [];
+  const list = tokenRows();
   return list.length ? list.map(rowHtml).join("") : '<div class="row"><span class="rowmsg">No tokens.</span></div>';
 }
 
@@ -117,7 +149,7 @@ function tkCfg()                        {
   return {
     scope: "tokens",
     density: "page",
-    names: state.tokenGroups || ["default"],
+    names: tokenGroupNames().length ? tokenGroupNames() : ["default"],
     collapsed: collapsed,
     noun: "token",
     addTitle: (g        )         => { return "Create a token in " + g; },
@@ -131,7 +163,7 @@ function tkCfg()                        {
     reload: ()                => { return refreshTokens().then(paintGroups); },
     render: paintGroups,
     draggable: false,
-    rowsById: ()                => { return state.tokens || []; },
+    rowsById: ()                => { return tokenRows(); },
     groupOfRow: groupOfToken,
     rowsHtml: (g                         )         => { return g.rows.map(rowHtml).join(""); },
     rowSel: (r             )         => {
@@ -147,7 +179,7 @@ function tkCfg()                        {
 function refreshGroupSelect()       {
   const sel = $                   ("tkGroup");
   if (!sel) return;
-  const names = state.tokenGroups && state.tokenGroups.length ? state.tokenGroups : ["default"];
+  const names = tokenGroupNames().length ? tokenGroupNames() : ["default"];
   const wanted = sel.value && names.indexOf(sel.value) >= 0
     ? sel.value
     : resolveDefaultGroup(names, lastGroup("tokens"));
@@ -164,13 +196,13 @@ function paintGroups()       {
   if (!host) return;
   painted = signature();
   host.innerHTML = "";
-  const list = state.tokens || [];
+  const list = tokenRows();
   if (!list.length) {
     host.innerHTML = emptyHtml({ icon: "key", title: "No tokens", hint: "One token per client — create one, then copy its connect command." });
     refreshGroupSelect();
     return;
   }
-  slice(list, state.tokenGroups || ["default"], groupOfToken).forEach((g                         )       => {
+  slice(list, tokenGroupNames().length ? tokenGroupNames() : ["default"], groupOfToken).forEach((g                         )       => {
     host.appendChild(mountGroup(tkCfg(), g));
   });
   refreshGroupSelect();
@@ -179,7 +211,7 @@ function paintGroups()       {
 
 /** The Group select of the create form: the scope's groups, the last-used one selected. */
 function groupSelectHtml()         {
-  const names = state.tokenGroups && state.tokenGroups.length ? state.tokenGroups : ["default"];
+  const names = tokenGroupNames().length ? tokenGroupNames() : ["default"];
   const picked = resolveDefaultGroup(names, lastGroup("tokens"));
   return '<select class="v" id="tkGroup" title="The group this token lists under">' +
     names.map((n        )         => {
@@ -190,11 +222,11 @@ function groupSelectHtml()         {
 /** The once-only secret box: shown after a create or rotate, kept in state so a poll or the
  *  explicit refresh cannot lose the one chance to copy it. */
 function secretHtml()         {
-  const secret = state.tokenViewSecret;
+  const secret = tokensDomain.viewSecret;
   return secret
     ? '<div class="group" style="margin-top:var(--s4)"><div class="row"><div class="row-main">' +
         '<div class="name">New secret — copy now, shown only once</div>' +
-        '<input class="v" style="width:100%" value="' + esc(secret) + '" readonly></div></div>' +
+        '<input class="v" id="tkSecret" style="width:100%" value="' + esc(secret) + '" readonly aria-label="The new token secret, shown once"></div></div>' +
         '<div class="form-actions">' +
           '<button class="btn" id="tkCopySecret">Copy secret</button>' +
           '<button class="btn primary" id="tkCopyConn">Copy connect commands (all MCPs)</button>' +
@@ -235,7 +267,7 @@ async function rotateToken(id        )                {
   const r = await apiJson                 ("/api/tokens/" + encodeURIComponent(id) + "/rotate", { method: "POST" });
   if (!r) return;
   await refreshTokens();
-  state.tokenViewSecret = r.secret;
+  tokensDomain.viewSecret = r.secret;
   if (rememberedTokenId() === r.id) useToken(r.id, r.secret);
   render();
 }
@@ -246,7 +278,7 @@ async function revokeToken(id        )                {
   const d = await apiJson         ("/api/tokens/" + encodeURIComponent(id), { method: "DELETE" });
   if (!d) return;
   if (rememberedTokenId() === id) {
-    state.activeSecret = null;
+    setActiveTokenSecret(null);
     try { localStorage.removeItem(TOKEN_ID_KEY); } catch (e) { /* blocked */ }
   }
   await refreshTokens();
@@ -268,18 +300,18 @@ function wire()       {
         await assignMember("tokens", j.id, picked);
       }
       await refreshTokens();
-      state.tokenViewSecret = j.secret;
+      tokensDomain.viewSecret = j.secret;
       render();
       return;
     }
     if (button.id === "tkNewGroup") {
-      newGroupFlow("tokens", state.tokenGroups || ["default"], ()                => {
+      newGroupFlow("tokens", tokenGroupNames().length ? tokenGroupNames() : ["default"], ()                => {
         return refreshTokens().then(()       => { render(); });
       });
       return;
     }
-    if (button.id === "tkCopySecret") { void copyText(state.tokenViewSecret , "Token secret"); return; }
-    if (button.id === "tkCopyConn") { void copyText(connectAll(state.tokenViewSecret ), "Connect commands"); return; }
+    if (button.id === "tkCopySecret") { void copyText(tokensDomain.viewSecret , "Token secret"); return; }
+    if (button.id === "tkCopyConn") { void copyText(connectAll(tokensDomain.viewSecret ), "Connect commands"); return; }
     if (button.dataset.tkuse) {
       if (await fetchSecret(button.dataset.tkuse)) render();
       return;
@@ -298,7 +330,7 @@ function wire()       {
 }
 
 export async function mount()                {
-  state.tokenViewSecret = null; // the once-only box is per-visit, like the sheet it replaced
+  tokensDomain.viewSecret = null; // the once-only box is per-visit, like the sheet it replaced
   collapsed = loadCollapsed("tokens"); // before the first paint, so folded groups never flash open
   await refreshTokens();
   render();
@@ -306,7 +338,7 @@ export async function mount()                {
 export async function refresh()                { await refreshTokens(); render(); }
 export async function poll()                { await refreshTokens(); patch(); }
 export function countText()         {
-  const n = (state.tokens || []).length;
+  const n = tokenRows().length;
   return n + (n === 1 ? " token" : " tokens");
 }
 export function unmount()       { painted = ""; }

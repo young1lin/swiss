@@ -39,6 +39,7 @@ import { loadMemory, refreshNow } from "./polling.js";
 import { exitImmersive, immersiveOn, initImmersive } from "./immersive.js";
 import { histClose } from "./run-history.js";
 import { navRows, nudgeSelected } from "./sidebar.js";
+import { loadTokens } from "./views/tokens.js";
 
 
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
@@ -84,8 +85,7 @@ async function loadInfo()                {
         maybeReloadPanel(state.info?.panelVersion );
       }
     }
-    const t = await api("/api/tokens");
-    if (t.ok) state.tokens = (await t.json()).tokens || [];
+    await loadTokens();
   } catch (e) { /* the token list just stays empty */ }
 }
 /* --- appearance ------------------------------------------------------------------------------- */

@@ -36,8 +36,6 @@ const state             = {
   mem: null,
   menuOpen: false,
   info: null,        // { tokenEnv } from /api/info — the env var name
-  tokens: [],        // named tokens from /api/tokens (no secrets) — the management list
-  activeSecret: null, // most-recently shown token secret, embedded into copied connect commands
   traffic: [],       // ONE PAGE of interactions from /api/traffic — no .body/.response on a row
   trafficClients: [],       // every client in the ring, folded server-side (not just this page)
   trafficFilter: "actions", // "actions" (tools/call, resources/read, …) or "all" (incl. protocol)
