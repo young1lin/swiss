@@ -41,7 +41,7 @@ describe("group logic", () => {
   });
 
   it("falls back to 'default' when the list is somehow empty", () => {
-    expect(groupOf([])({ name: "x", group: null })).toBe("default");
+    expect(groupOf([])({ name: "x", group: null } as GroupedRow)).toBe("default");
   });
 
   it("slices in stored group order, keeping empty groups in their slot", () => {

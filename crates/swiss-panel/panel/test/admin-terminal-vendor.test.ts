@@ -19,7 +19,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import vm from "node:vm";
-import { unwrapGlobal } from "../../src/admin_assets/js/vendor/xterm/load-classic.js";
+const { unwrapGlobal } = await import(
+  new URL("../../src/admin_assets/js/vendor/xterm/load-classic.js", import.meta.url).href
+) as {
+  unwrapGlobal: (ns: unknown, name: string) => unknown;
+};
 
 /** The vendored xterm bundles run as CLASSIC scripts: the browser hands them a global and
  * they assign their exports onto it. The first real browser run caught the shims assuming

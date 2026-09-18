@@ -24,7 +24,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { listEmitted, listSources, emitOne } from "../build.mjs";
+const { listEmitted, listSources, emitOne } = await import(new URL("../build.mjs", import.meta.url).href) as {
+  listEmitted: () => string[];
+  listSources: () => string[];
+  emitOne: (rel: string) => string;
+};
 
 const outDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "js");
 

@@ -296,10 +296,10 @@ describe("visual refresh V6 — state and controls", () => {
     }
     try {
       const { tooltipOf } = await import("../src/menu.js");
-      const tip = tooltipOf({ name: "mysql", type: "proc", source: "managed", state: "idle" });
+      const tip = tooltipOf({ name: "mysql", type: "proc", source: "managed", state: "idle" } as ApiMcpRow);
       expect(tip).toContain("idle");
       expect(tip).toContain("lazy");
-      expect(tooltipOf({ name: "pg", type: "http", source: "managed", state: "up" })).not.toContain("lazy");
+      expect(tooltipOf({ name: "pg", type: "http", source: "managed", state: "up" } as ApiMcpRow)).not.toContain("lazy");
     } finally {
       if (prev === undefined) delete anyG.document;
     }

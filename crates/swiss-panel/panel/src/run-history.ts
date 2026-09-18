@@ -29,13 +29,13 @@ import { ago } from "./traffic.js";
 /* --- Run history: the refill control in the actions row ------------------------------------------ */
 /** When an entry ran. Reuses ago() inside a day; past that, ago's time-of-day would be ambiguous,
  *  so the date comes back too. */
-function histWhen(iso) {
+function histWhen(iso: string): string {
   return Date.now() - new Date(iso).getTime() < 86400000 ? ago(iso) : new Date(iso).toLocaleString();
 }
 
 /** The control's closed label. "↺ Past runs (12)" says what it opens and how much is in it, so the
  *  closed control explains itself without looking like a form value. */
-function histButtonLabel(d, tool) {
+function histButtonLabel(d: McpDetail, tool: string): string {
   if (d.run.histTool !== tool) return "↺ Past runs…"; // never loaded, or a fetch in flight
   var n = (d.run.hist || []).length;
   return n ? "↺ Past runs (" + n + ")" : "↺ No past runs";
@@ -45,9 +45,9 @@ function histButtonLabel(d, tool) {
  *  runs whose FULL recorded arguments contain the search box's query (the server does that matching —
  *  the 96-char row label would miss a keyword deeper in). The row label is the clipped one-line
  *  preview — the full text is what the right pane is for. */
-function histRowsHtml(d, tool) {
+function histRowsHtml(d: McpDetail, tool: string): string {
   if (d.run.histTool !== tool) return '<div class="hist-empty">loading…</div>';
-  var list = d.run.hist || [];
+  var list = d.run.hist as unknown as ApiMcpCallRow[] || [];
   if (!list.length) {
     return d.run.histQ
       ? '<div class="hist-empty">No runs whose arguments contain ' + esc('"' + d.run.histQ + '"') + ".</div>"
@@ -62,7 +62,7 @@ function histRowsHtml(d, tool) {
 /** One hovered entry rendered in full: the meta line, the COMPLETE arguments (the row label is
  *  clipped at 96 chars — this is the answer to "let me read the whole thing"), and the reply that
  *  run produced (the stored preview, so a 1 MB reply never loads on a hover). */
-function histViewHtml(c) {
+function histViewHtml(c: ApiMcpCallRow): string {
   // The identity line: status dot (the panel's universal up/down mark), when, who, how long —
   // not prose glued with dots, so each fact keeps its own weight and nothing runs together.
   var head = '<div class="hist-head">' +
@@ -87,16 +87,16 @@ function histViewHtml(c) {
 
 /** Open/close the popover. Opening does not steal focus from the form — the rows are reachable
  *  with the mouse, or with Tab once the control itself has focus. */
-function histToggle() {
+function histToggle(): void {
   var d = state.detail;
   if (!d || d.tab !== "run" || !d.run.tool) return;
   d.run.histOpen ? histClose() : histOpen();
 }
-function histOpen() {
+function histOpen(): void {
   var d = state.detail;
   if (!d || d.tab !== "run" || !d.run.tool) return;
   histClose(); // a pane rebuild can leave a stray popover behind under the same id
-  var btn = $("r-hist");
+  var btn = $<HTMLButtonElement>("r-hist");
   if (!btn || btn.disabled) return;
   d.run.histOpen = true;
   btn.setAttribute("aria-expanded", "true");
@@ -123,21 +123,21 @@ function histOpen() {
     "</div>";
   document.body.appendChild(pop);
   wireHistRows(d);
-  var box = $("r-hist-q");
+  var box = $<FilterInput>("r-hist-q");
   if (box) {
     box.value = d.run.histQ || "";
-    box.oninput = function () { queueHistSearch(d); };
+    box.oninput = function () { queueHistSearch(d!); };
     // The box is where the hand already is — one ArrowDown lands on the first row, no mouse needed.
     box.onkeydown = function (ev) {
       if (ev.key === "ArrowDown") {
-        var first = document.querySelector("#r-hist-pop .hist-row");
+        var first = document.querySelector<HTMLElement>("#r-hist-pop .hist-row");
         if (first) { ev.preventDefault(); first.focus(); }
       }
     };
   }
 }
-function histClose() {
-  window.clearTimeout(histSearchTimer);
+function histClose(): void {
+  window.clearTimeout(histSearchTimer!);
   histSearchTimer = null;
   var pop = $("r-hist-pop");
   if (pop) pop.remove();
@@ -155,18 +155,18 @@ function histClose() {
       }
     }
   }
-  var btn = $("r-hist");
+  var btn = $<HTMLButtonElement>("r-hist");
   if (btn) btn.setAttribute("aria-expanded", "false");
 }
 
 /** Typing in the filter re-asks the server for this tool's runs containing the text — the match
  *  happens there against the FULL stored arguments, so a hit past the 96-char preview still shows.
  *  Debounced: one scan per pause in typing, not one per keystroke. */
-var histSearchTimer = null;
-function queueHistSearch(d) {
-  var box = $("r-hist-q");
+var histSearchTimer = null as number | null;
+function queueHistSearch(d: McpDetail): void {
+  var box = $<FilterInput>("r-hist-q");
   d.run.histQ = box ? box.value.trim() : "";
-  window.clearTimeout(histSearchTimer);
+  window.clearTimeout(histSearchTimer!);
   histSearchTimer = window.setTimeout(function () {
     if (state.detail !== d || !d.run.histOpen) return;
     d.run.histTool = null; // the loaded list answers the old query — force the refetch
@@ -176,7 +176,7 @@ function queueHistSearch(d) {
 
 /** Hover/focus a row: show that run in full in the right pane. Entries are cached by seq, and the
  *  seq guard drops a reply that lost the race to a newer hover. */
-async function histPreview(seq) {
+async function histPreview(seq: number): Promise<void> {
   var d = state.detail;
   var view = $("r-hist-view");
   if (!d || d.tab !== "run" || !d.run.histOpen || !view) return;
@@ -196,21 +196,21 @@ async function histPreview(seq) {
     }
   }
   if (d.run.histSelSeq !== seq) return; // a newer hover already won
-  view.innerHTML = histViewHtml(full);
+  view.innerHTML = histViewHtml(full as ApiMcpCallRow);
 }
 
 /** Load the selected tool's newest DISTINCT runs — the full list when the search box is empty, the
  *  runs whose arguments contain d.run.histQ when it is not. Idempotent per tool: a repaint that
  *  re-wires the tab does not refetch. Set d.run.histTool = null first to force a refresh (right
  *  after a run, or on each debounced keystroke in the filter). */
-async function loadRunHistory(name, tool) {
+async function loadRunHistory(name: string, tool: string | null): Promise<void> {
   var d = state.detail;
   if (!d || d.name !== name || d.run.histTool === tool || d.run.histLoading) return;
   d.run.histLoading = true;
   var q = d.run.histQ || "";
   try {
     var r = await api("/api/mcps/" + encodeURIComponent(name) + "/tool-history?tool=" +
-      encodeURIComponent(tool) + "&limit=300" + (q ? "&q=" + encodeURIComponent(q) : ""));
+      encodeURIComponent(tool as string) + "&limit=300" + (q ? "&q=" + encodeURIComponent(q) : ""));
     if (r.ok) {
       var j = await r.json();
       // A revisit built a new detail object, or the query moved on (a newer keystroke, or the close
@@ -236,10 +236,10 @@ async function loadRunHistory(name, tool) {
 
 /** Repaint only the control's label and (if open) the popover's rows, never the form around it —
  *  the same discipline as renderRunResult, so the SQL being edited survives a post-run refresh. */
-function renderHistoryOnly() {
+function renderHistoryOnly(): void {
   var d = state.detail;
   if (!d || d.tab !== "run" || !d.run.tool) return;
-  var btn = $("r-hist");
+  var btn = $<HTMLButtonElement>("r-hist");
   if (btn) {
     btn.textContent = histButtonLabel(d, d.run.tool);
     // "No history at all" disables the control — but a filter that matched nothing must not: the
@@ -256,12 +256,12 @@ function renderHistoryOnly() {
 }
 
 /** A run was picked: fetch its full arguments by seq, then write them into the form. */
-async function applyRunHistory(seq) {
+async function applyRunHistory(seq: number): Promise<void> {
   var d = state.detail;
   if (!d || !d.run.tool) return;
   var tools = d.tools.items || [];
-  var toolDef = null;
-  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i];
+  var toolDef = null as ApiMcpTool | null;
+  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i] as ApiMcpTool;
   if (!toolDef) return;
   try {
     var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
@@ -281,10 +281,10 @@ async function applyRunHistory(seq) {
 }
 
 /** Bind the popover's rows: hover/focus previews in full, click refills the form and closes. */
-function wireHistRows(d) {
+function wireHistRows(d: McpDetail): void {
   // NOTE: the popover lives on <body> (histOpen), not inside #tabbody — selecting from #tabbody
   // here is why hover never fired: the rows existed, the wiring found none of them.
-  document.querySelectorAll("#r-hist-pop .hist-row").forEach(function (row) {
+  document.querySelectorAll<HTMLElement>("#r-hist-pop .hist-row").forEach(function (row) {
     row.onclick = function () { void applyRunHistory(Number(row.dataset.seq)); };
     row.onmouseenter = function () { void histPreview(Number(row.dataset.seq)); };
     row.onfocus = function () { void histPreview(Number(row.dataset.seq)); };
@@ -294,10 +294,10 @@ function wireHistRows(d) {
 /** Write one call's arguments into the generated form fields — the inverse of readRunArgs. Fields
  *  the call does not mention are cleared, so nothing stale survives a refill; keys the schema no
  *  longer knows are dropped (the tool would reject them anyway). */
-function fillRunArgs(tool, args) {
+function fillRunArgs(tool: ApiMcpTool, args: Record<string, unknown>): void {
   var props = (tool.inputSchema && tool.inputSchema.properties) || {};
   Object.keys(props).forEach(function (k) {
-    var node = $("r-arg-" + k);
+    var node = $<HTMLInputElement>("r-arg-" + k);
     if (!node) return;
     var kind = node.dataset.kind;
     if (kind === "boolean") { node.checked = args[k] === true; return; }
@@ -315,12 +315,12 @@ function fillRunArgs(tool, args) {
   });
 }
 
-async function runTool() {
+async function runTool(): Promise<void> {
   var d = state.detail;
   if (!d || d.run.running) return;
   var tools = d.tools.items || [];
-  var toolDef = null;
-  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i];
+  var toolDef = null as ApiMcpTool | null;
+  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i] as ApiMcpTool;
   if (!toolDef) return;
   var args;
   try {
@@ -331,7 +331,7 @@ async function runTool() {
     return;
   }
   d.run.running = true;
-  var btn = $("runBtn");
+  var btn = $<HTMLButtonElement>("runBtn");
   if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
   var meta = $("runMeta");
   if (meta) meta.innerHTML = '<span class="spin"></span>';
@@ -357,15 +357,15 @@ async function runTool() {
 }
 
 /** Update only the output and the meta line — never the form, so the SQL you typed survives a run. */
-function renderRunResult() {
+function renderRunResult(): void {
   var d = state.detail;
   var running = !!(d && d.run.running);
-  var btn = $("runBtn");
+  var btn = $<HTMLButtonElement>("runBtn");
   // Also called right after a pane rebuild, which may land mid-run — keep the button honest.
   if (btn) { btn.disabled = running; btn.textContent = running ? "Running…" : "Run"; }
   var out = $("runOut"), meta = $("runMeta");
   if (!out || !d) return;
-  var res = d.run.result;
+  var res = d.run.result as McpRunResult | null;
   if (!res) { out.textContent = ""; if (meta) meta.textContent = ""; return; }
   // Formatted for reading; the size in the meta line is the real (compact) reply.
   out.textContent = fmtJson(res.text);
@@ -377,7 +377,7 @@ function renderRunResult() {
   }
 }
 
-function configFieldLabel(type, key) {
+function configFieldLabel(type: string, key: string): string {
   if (key === "type") return "Type";
   if (key === "lazy") return "Startup";
   var fields = TYPE_FIELDS[type] || [];
@@ -385,14 +385,14 @@ function configFieldLabel(type, key) {
   return found ? found.label : key;
 }
 
-function configValue(key, value) {
+function configValue(key: string, value: unknown): string {
   if (key === "lazy") return value ? "On demand" : "At boot";
   if (typeof value === "boolean") return value ? "On" : "Off";
-  if (typeof value === "object") return Array.isArray(value) ? JSON.stringify(value) : envToText(value);
+  if (typeof value === "object") return Array.isArray(value) ? JSON.stringify(value) : envToText(value as Record<string, string>);
   return String(value);
 }
 
-function configTarget(c) {
+function configTarget(c: McpConfigLike): string {
   var type = c.type || "proc";
   if (type === "mysql" || type === "mariadb" || type === "redis") {
     var host = c.host || "default host";
@@ -408,9 +408,9 @@ function configTarget(c) {
   return c.url || c.baseUrl || c.host || "Connection target not configured";
 }
 
-function configBody(d) {
+function configBody(d: McpDetail): string {
   if (d.editing) {
-    var type = d.editType || (d.config && d.config.type) || "proc";
+    var type = d.editType || (d.config && d.config.type) as string || "proc";
     // Stored values for the MCP's own type, nothing for a different one — then whatever the user has
     // already typed on top, so a type switch or a rejected save doesn't empty the form.
     var vals = Object.assign({}, type === ((d.config && d.config.type) || "proc") ? d.config : {}, d.editVals || {});
@@ -418,7 +418,7 @@ function configBody(d) {
     // parser the submit path mirrors) — an unparseable url falls back to a raw field and rides
     // through save untouched (__pgRaw), because old experience beats lost data.
     if (type === "pg" && vals.url !== undefined) {
-      var pgParts = parsePgUrl(vals.url);
+      var pgParts = parsePgUrl(vals.url as string) as PgUrlParts & Record<string, string>;
       if (pgParts) {
         delete vals.url;
         Object.keys(pgParts).forEach(function (k) { if (vals[k] === undefined) vals[k] = pgParts[k]; });
@@ -460,13 +460,13 @@ function configBody(d) {
   }
   var c = d.config;
   if (!c) return '<div class="note"><span class="spin"></span> Loading…</div>';
-  var type = c.type || "proc";
+  var type = c.type as string || "proc";
   var settings = Object.keys(c).reduce(function (all, key) {
-    var value = c[key];
+    var value = c![key];
     if (value == null || value === "") return all;
     all.push({ key: key, label: configFieldLabel(type, key), text: configValue(key, value) });
     return all;
-  }, []);
+  }, [] as { key: string; label: string; text: string }[]);
   var rows = settings.map(function (setting) {
     var title = setting.text.replace(/\r?\n/g, " · ");
     return '<div class="config-row"><span class="config-label">' + esc(setting.label) +
@@ -475,7 +475,7 @@ function configBody(d) {
   var label = TYPE_LABELS[type] || type;
   var split = label.indexOf(" — ");
   var kind = split >= 0 ? label.slice(split + 3) : "MCP adapter";
-  var target = configTarget(c);
+  var target = configTarget(c as McpConfigLike);
   var badges = [];
   if (c.lazy !== undefined) badges.push(c.lazy ? "Starts on demand" : "Starts at boot");
   if (c.exposeResources !== undefined) badges.push(c.exposeResources ? "Resources on" : "Resources off");
@@ -497,7 +497,7 @@ function configBody(d) {
     ? '<div class="note">Defined in gateway.config.json. Edits are saved as an override in managed.json; ' +
       "<code>${ENV}</code> references are kept as references, so no credential is written to disk.</div>"
     : "";
-  var revs = d.revisions || [];
+  var revs = d.revisions as McpRevisionRow[] || [];
   // Parked definition snapshots stay available without making an empty shelf a permanent section.
   var revRows = revs.length
     ? revs.map(function (r, i) {
@@ -525,8 +525,8 @@ function configBody(d) {
  * means its pool may hold sockets of the old SSH session, and the fix is the Restart button that is
  * already there. Nothing restarts an MCP on its own.
  */
-function tunnelDepsHtml(d) {
-  var t = d.tunnels;
+function tunnelDepsHtml(d: McpDetail): string {
+  var t = d.tunnels as McpTunnelDepRow[] | null | undefined;
   if (!t || !t.length) return "";
   var rows = t.map(function (x) {
     var dot = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "";
@@ -543,39 +543,39 @@ function tunnelDepsHtml(d) {
   return '<div class="cap">Depends on</div><div class="group">' + rows + "</div><div style=\"height:var(--s5)\"></div>";
 }
 
-function wireTabBody(d, m) {
+function wireTabBody(d: McpDetail, m: unknown): void {
   var prev = $("pgPrev"); if (prev) prev.onclick = pagePrev;
   var next = $("pgNext"); if (next) next.onclick = pageNext;
   var edit = $("c-edit"); if (edit) edit.onclick = startEdit;
   var replaceBtn = $("c-replace"); if (replaceBtn) replaceBtn.onclick = startReplace;
   var save = $("e-save"); if (save) save.onclick = d.editMode === "replace" ? saveReplace : saveEdit;
-  document.querySelectorAll("#tabbody [data-restore]").forEach(function (b) {
+  document.querySelectorAll<HTMLElement>("#tabbody [data-restore]").forEach(function (b) {
     b.onclick = function () { void restoreRevision(Number(b.dataset.restore)); };
   });
-  document.querySelectorAll("#tabbody [data-revdel]").forEach(function (b) {
+  document.querySelectorAll<HTMLElement>("#tabbody [data-revdel]").forEach(function (b) {
     b.onclick = function () { void deleteRevision(Number(b.dataset.revdel)); };
   });
   var cancel = $("e-cancel"); if (cancel) cancel.onclick = cancelEdit;
   var testBtn = $("e-test"); if (testBtn) testBtn.onclick = function () { void runConnTest("e-"); };
-  var type = $("e-type"); if (type) type.onchange = function () { changeEditType(type.value); };
+  var type = $<FilterSelect>("e-type"); if (type) type.onchange = function () { changeEditType(type.value); };
 
   // Tools list → Try
-  document.querySelectorAll("#tabbody [data-try]").forEach(function (b) {
-    b.onclick = function () { tryTool(b.dataset.try); };
+  document.querySelectorAll<HTMLElement>("#tabbody [data-try]").forEach(function (b) {
+    b.onclick = function () { tryTool(b.dataset.try as string); };
   });
 
   // Resources list → Read
-  document.querySelectorAll("#tabbody [data-read]").forEach(function (b) {
-    b.onclick = function () { void readResource(b.dataset.read, b); };
+  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-read]").forEach(function (b) {
+    b.onclick = function () { void readResource(b.dataset.read as string, b); };
   });
 
   // Tools list → on/off toggle
-  document.querySelectorAll("#tabbody [data-toggle]").forEach(function (b) {
-    b.onclick = function () { void toggleTool(b.dataset.toggle, b.dataset.on === "1", b); };
+  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-toggle]").forEach(function (b) {
+    b.onclick = function () { void toggleTool(b.dataset.toggle as string, b.dataset.on === "1", b); };
   });
 
   // Resources → master on/off
-  document.querySelectorAll("#tabbody [data-restog]").forEach(function (b) {
+  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-restog]").forEach(function (b) {
     b.onclick = function () { void toggleResources(b.dataset.restog === "1", b); };
   });
 
@@ -593,7 +593,7 @@ function wireTabBody(d, m) {
   };
   // The search box (docs/31): debounced server-side reload; Escape clears at once. Property
   // assignment, not addEventListener — renderCallsOnly may re-wire the SAME live node.
-  var q = $("callsQ");
+  var q = $<FilterInput>("callsQ");
   if (q) {
     q.oninput = function () {
       clearTimeout(d.callsQTimer);
@@ -634,7 +634,7 @@ function wireTabBody(d, m) {
   var clRetry = $("clRetry"); if (clRetry) clRetry.onclick = function (ev) { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
   // docs/33 C1: block copy buttons. The text comes from the CALL ROW, not the painted DOM —
   // a truncated preview or a highlighted render still copies the full pretty payload.
-  document.querySelectorAll("#tabbody [data-copy]").forEach(function (b) {
+  document.querySelectorAll<HTMLElement>("#tabbody [data-copy]").forEach(function (b) {
     b.onclick = function () {
       var nd = state.detail;
       if (!nd) return;
@@ -647,22 +647,22 @@ function wireTabBody(d, m) {
       void copyLogText(text || "");
     };
   });
-  document.querySelectorAll("#tabbody [data-callseq]").forEach(function (s) {
-    s.onclick = function () { toggleCall(s.dataset.callseq); };
+  document.querySelectorAll<HTMLElement>("#tabbody [data-callseq]").forEach(function (s) {
+    s.onclick = function () { toggleCall(s.dataset.callseq as unknown as number); };
     s.onkeydown = function (ev) {
-      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleCall(s.dataset.callseq); }
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleCall(s.dataset.callseq as unknown as number); }
     };
   });
-  document.querySelectorAll("#tabbody [data-full]").forEach(function (b) {
-    b.onclick = function (ev) { ev.stopPropagation(); showFullResult(b.dataset.full); };
+  document.querySelectorAll<HTMLElement>("#tabbody [data-full]").forEach(function (b) {
+    b.onclick = function (ev) { ev.stopPropagation(); showFullResult(b.dataset.full as unknown as number); };
   });
 
   // Run tab
-  var toolSel = $("r-tool");
+  var toolSel = $<FilterSelect>("r-tool");
   if (toolSel) {
     toolSel.onchange = function () { d.run.tool = toolSel.value; d.run.result = null; renderPane(); };
   }
-  var histBtn = $("r-hist");
+  var histBtn = $<HTMLButtonElement>("r-hist");
   if (histBtn) {
     histBtn.onclick = function () { histToggle(); };
     // Same guard as renderHistoryOnly: a filter that matched nothing is a search in progress, not
@@ -682,7 +682,7 @@ function wireTabBody(d, m) {
   if (runBtn) {
     runBtn.onclick = runTool;
     // Ctrl/Cmd+Enter runs, so a SQL textarea can be submitted without reaching for the mouse.
-    document.querySelectorAll("#tabbody textarea, #tabbody input[type=text]").forEach(function (f) {
+    document.querySelectorAll<HTMLElement>("#tabbody textarea, #tabbody input[type=text]").forEach(function (f) {
       f.addEventListener("keydown", function (ev) {
         if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); runTool(); }
       });
@@ -692,7 +692,7 @@ function wireTabBody(d, m) {
 }
 
 /** Jump from the Tools list into Run with that tool preselected. */
-function tryTool(name) {
+function tryTool(name: string): void {
   var d = state.detail;
   if (!d) return;
   d.run.tool = name;
@@ -702,10 +702,10 @@ function tryTool(name) {
 
 /** Toggle all of an MCP's resources on/off. Live: the server answers an empty list while off and
  *  pushes notifications/resources/list_changed, so this just fires the change and reloads. */
-async function toggleResources(currentlyOn, btn) {
+async function toggleResources(currentlyOn: boolean, btn: HTMLButtonElement): Promise<void> {
   if (!state.selected) return;
   btn.disabled = true;
-  var j = await apiJson("/api/mcps/" + encodeURIComponent(state.selected) + "/resources-toggle", {
+  var j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(state.selected) + "/resources-toggle", {
     method: "POST",
     body: JSON.stringify({ enabled: !currentlyOn }),
   });
@@ -718,10 +718,10 @@ async function toggleResources(currentlyOn, btn) {
 
 /** Toggle a tool on/off for clients. Live: the server filters the next tools/list and pushes
  *  notifications/tools/list_changed, so this just fires the change and reloads the list. */
-async function toggleTool(name, currentlyOn, btn) {
+async function toggleTool(name: string, currentlyOn: boolean, btn: HTMLButtonElement): Promise<void> {
   if (!state.selected) return;
   btn.disabled = true;
-  var j = await apiJson("/api/mcps/" + encodeURIComponent(state.selected) + "/tools/" + encodeURIComponent(name), {
+  var j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(state.selected) + "/tools/" + encodeURIComponent(name), {
     method: "POST",
     body: JSON.stringify({ enabled: !currentlyOn }),
   });
@@ -734,11 +734,11 @@ async function toggleTool(name, currentlyOn, btn) {
 }
 
 /** Read one resource and show its contents. Read-only, so a sheet with no form is the whole UI. */
-async function readResource(uri, btn) {
+async function readResource(uri: string, btn: HTMLButtonElement | null): Promise<void> {
   if (!state.selected) return;
   var label = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "…"; }
-  var j = await apiJson("/api/mcps/" + encodeURIComponent(state.selected) + "/resource", {
+  var j = await apiJson<ApiMcpResourceRead>("/api/mcps/" + encodeURIComponent(state.selected) + "/resource", {
     method: "POST",
     body: JSON.stringify({ uri: uri }),
   });
@@ -760,7 +760,7 @@ async function readResource(uri, btn) {
 
 /** Repaint only the Logs tab body, so a poll doesn't rebuild the pane (or the header, or the menu).
  *  Expanded rows survive because `callsOpen` is state, not DOM. */
-function renderCallsOnly() {
+function renderCallsOnly(): void {
   var d = state.detail;
   if (!d || d.tab !== "logs") return;
   var body = $("tabbody");
@@ -778,7 +778,7 @@ function renderCallsOnly() {
   // live node (focus, caret, IME state) is swapped back into its place. innerHTML detaching the
   // old node blurs it — focus and caret are restored explicitly after the swap, or the next
   // keystroke after a result repaint would land nowhere.
-  var liveQ = document.getElementById("callsQ");
+  var liveQ = document.getElementById("callsQ") as FilterInput & { selectionStart: number };
   var hadFocus = !!(liveQ && document.activeElement === liveQ);
   var caret = hadFocus ? liveQ.selectionStart : null;
   body.innerHTML = logsBody(d);

@@ -34,6 +34,6 @@ export function unmount() {
 export function countText() {
   var d = state.db;
   if (!d || !d.conn) return "";
-  var c = (d.conns || []).find(function (x) { return x.name === d.conn; });
+  var c = (d.conns || []).find(function (x) { return x.name === d .conn; });
   return c ? dbConnLabel(c) : "";
 }

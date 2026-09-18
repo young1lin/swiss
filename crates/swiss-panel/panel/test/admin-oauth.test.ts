@@ -166,7 +166,7 @@ describe("the figma type (docs/24 rev): one field, everything implied", () => {
 
   it("runConnTest answers the honest message for a figma MCP without firing a request", async () => {
     byId.clear(); freshState();
-    freshState({ detail: { ...fakeDetail("fig2", { type: "figma" }), editing: true, editType: "figma" } as never });
+    freshState({ detail: { ...fakeDetail("fig2", { type: "figma" }) as Record<string, unknown>, editing: true, editType: "figma" } as never });
     let fired = 0;
     (globalThis as unknown as Record<string, unknown>).fetch = async () => { fired++; return { ok: true, status: 200, json: async () => ({}) } as never; };
     await detail.runConnTest("e-");
@@ -219,7 +219,7 @@ describe("both submit paths run the translation through the real modules (docs/2
 
   it("saveEdit PUTs auth oauth through the edit form", async () => {
     byId.clear(); freshState();
-    util.state.detail = { ...fakeDetail("fig", { type: "http", auth: "oauth" }), editing: true, editType: "http" } as never;
+    util.state.detail = { ...fakeDetail("fig", { type: "http", auth: "oauth" }) as Record<string, unknown>, editing: true, editType: "http" } as never;
     Object.assign(doc.getElementById("e-url"), { value: "https://mcp.figma.com/mcp" });
     Object.assign(doc.getElementById("e-auth"), { checked: true });
     let put: Record<string, unknown> | null = null;

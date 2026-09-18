@@ -130,7 +130,7 @@ beforeAll(async () => {
     else delete (globalThis as Record<string, unknown>).fetch;
   });
   responder = () => Promise.resolve({ status: 200, ok: true, json: async () => body });
-  state = ((await import("../src/util.js")) as { state: Record<string, unknown> }).state;
+  state = ((await import("../src/util.js")) as unknown as { state: Record<string, unknown> }).state;
   view = await import("../src/views/tokens.js");
 });
 

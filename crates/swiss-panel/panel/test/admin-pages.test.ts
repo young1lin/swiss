@@ -76,7 +76,7 @@ describe("page grouping", () => {
   it("merges pages that share a pluginId into one group, pages sorted by order inside it", () => {
     const groups = groupPages(
       [page("traffic", "mcp", 20), page("mcps", "mcp", 10), page("tunnels", "tunnels", 30)],
-      [{ id: "mcp", label: "MCP" }, { id: "tunnels", label: "Tunnels" }],
+      [{ id: "mcp", label: "MCP" }, { id: "tunnels", label: "Tunnels" }] as ApiPluginRow[],
       {},
     );
     expect(groups.map((g: { id: string }) => g.id)).toEqual(["mcp", "tunnels"]);
@@ -89,7 +89,7 @@ describe("page grouping", () => {
     // mcp holds orders 1 and 10: the group's order is the MIN (1), which puts it ahead of jobs (50).
     const groups = groupPages(
       [page("jobs", "jobs", 50), page("traffic", "mcp", 1), page("mcps", "mcp", 10)],
-      [{ id: "jobs", label: "Jobs" }, { id: "mcp", label: "MCP" }],
+      [{ id: "jobs", label: "Jobs" }, { id: "mcp", label: "MCP" }] as ApiPluginRow[],
       {},
     );
     expect(groups.map((g: { id: string }) => g.id)).toEqual(["mcp", "jobs"]);
@@ -121,6 +121,6 @@ describe("page grouping", () => {
   });
 
   it("maps an empty page list to an empty group list", () => {
-    expect(groupPages([], [{ id: "mcp", label: "MCP" }], {})).toEqual([]);
+    expect(groupPages([], [{ id: "mcp", label: "MCP" }] as ApiPluginRow[], {})).toEqual([]);
   });
 });

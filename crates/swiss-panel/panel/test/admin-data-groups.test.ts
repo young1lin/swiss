@@ -68,7 +68,7 @@ beforeAll(async () => {
     if (prevDocument) Object.defineProperty(globalThis, "document", prevDocument);
     else delete (globalThis as Record<string, unknown>).document;
   });
-  state = ((await import("../src/util.js")) as { state: Record<string, unknown> }).state;
+  state = ((await import("../src/util.js")) as unknown as { state: Record<string, unknown> }).state;
   dataView = await import("../src/data-view.js");
 });
 

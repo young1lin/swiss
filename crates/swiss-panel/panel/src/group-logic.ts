@@ -40,7 +40,7 @@ function groupOf(names: string[]): (row: GroupedRow | null | undefined) => strin
 /** The list's shape: the groups in their stored order, each holding its members in the flat
  *  order the caller already sorted by. Empty groups keep their slot - you have to be able
  *  to see a group you just made. */
-function slice<Row extends GroupedRow>(rows: Row[], names: string[], fn: (row: Row) => string): GroupSlice<Row>[] {
+function slice<Row>(rows: Row[], names: string[], fn: (row: Row) => string): GroupSlice<Row>[] {
   return names.map(function (name) {
     return { name: name, rows: rows.filter(function (r) { return fn(r) === name; }) };
   });

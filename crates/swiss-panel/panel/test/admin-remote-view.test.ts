@@ -50,7 +50,7 @@ interface FakeEl {
   setAttribute(): void;
   focus(): void;
   getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number };
-  closest(): FakeEl | null;
+  closest(sel?: string): FakeEl | null;
 }
 
 function fakeEl(): FakeEl {

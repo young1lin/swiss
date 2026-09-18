@@ -68,7 +68,7 @@ const sql = await import(pathToFileURL(join(admin, "js", "data-sql.js")).href) a
   dbFavoriteName: (sql: string) => string;
   dbFavPush: (sql: string) => void;
 };
-const util = await import(pathToFileURL(join(admin, "js", "util.js")).href) as { state: { db: Record<string, unknown> } };
+const util = await import(pathToFileURL(join(admin, "js", "util.js")).href) as { state: { db: { favorites: string[] } } };
 
 // The whitespace-only equivalent the round-trip pins against: the console's own lexer, every
 // token kept verbatim, all whitespace dropped. Two statements are equivalent-for-running

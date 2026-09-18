@@ -596,10 +596,10 @@ function renderDbToolbar()       {
 
     var exp = el("button", "btn", "Export…")                ;
     exp.title = "Export the whole table as CSV, NDJSON, or SQL dump (capped at 100k rows)";
-    exp.onclick = function (ev            )       {
+    exp.onclick = function (ev             )       {
       // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
       // and without this the very click that opens the menu also tears it down.
-      ev.stopPropagation();
+      ev .stopPropagation();
       popupMenu(this.getBoundingClientRect(), [
         { label: "Export CSV…", fn: function ()       { dbExportTable(exp, "csv"); } },
         { label: "Export NDJSON…", fn: function ()       { dbExportTable(exp, "json"); } },
@@ -663,7 +663,7 @@ function dbPaintCell(td                      , v         , has         , colType
 
 /* --- column header hover card -------------------------------------------------------------------- */
 
-var dbTip                                                                     = { node: null, timer: 0 };
+var dbTip                                                                              = { node: null, timer: 0 };
 
 function dbTipHide()       {
   // Cancel a pending show too (docs/22 closeout audit): dbTipHide is what a grid rebuild

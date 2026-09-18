@@ -133,7 +133,7 @@ describe("docs/33 C2: buildJsonTree", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");
     const open: Record<string, boolean> = {};
-    logs.buildJsonTree(host, VALUE, open);
+    logs.buildJsonTree(host as unknown as HTMLElement, VALUE, open);
     expect(rowByKey(host, "command"), "a top-level leaf row exists").toBeTruthy();
     const argsRow = rowByKey(host, "args");
     expect(argsRow, "the top-level array row exists").toBeTruthy();
@@ -153,8 +153,8 @@ describe("docs/33 C2: buildJsonTree", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const objectHost = el("div");
     const arrayHost = el("div");
-    logs.buildJsonTree(objectHost, {}, {});
-    logs.buildJsonTree(arrayHost, [], {});
+    logs.buildJsonTree(objectHost as unknown as HTMLElement, {}, {});
+    logs.buildJsonTree(arrayHost as unknown as HTMLElement, [] as unknown as JtBox, {});
     expect(String(objectHost.textContent)).toBe("{}");
     expect(String(arrayHost.textContent)).toBe("[]");
     vi.unstubAllGlobals();
@@ -164,7 +164,7 @@ describe("docs/33 C2: buildJsonTree", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");
     const open: Record<string, boolean> = {};
-    logs.buildJsonTree(host, { rows: [{ id: 1 }] }, open);
+    logs.buildJsonTree(host as unknown as HTMLElement, { rows: [{ id: 1 }] }, open);
     const rows = rowByKey(host, "rows")!;
     const wrap = (host.children as Record<string, unknown>[]).find((c) =>
       String(c.className || "").includes("jt-node") && (c.children as Record<string, unknown>[])[0] === rows)!;
@@ -178,7 +178,7 @@ describe("docs/33 C2: buildJsonTree", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const open: Record<string, boolean> = {};
     const host1 = el("div");
-    logs.buildJsonTree(host1, { a: { b: 1 } }, open);
+    logs.buildJsonTree(host1 as unknown as HTMLElement, { a: { b: 1 } }, open);
     const aRow = rowByKey(host1, "a")!;
     expect(String(aRow.textContent)).toContain("{1}");
     const chev = (aRow.children as Record<string, unknown>[]).find((c) => c.tag === "button" && !((c as { dataset: Record<string, string> }).dataset.copy));
@@ -186,7 +186,7 @@ describe("docs/33 C2: buildJsonTree", () => {
     expect(open["/a/"], "the expansion is recorded under a stable path").toBe(true);
     expect((chev as { attrs: Record<string, string> }).attrs["aria-expanded"]).toBe("true");
     const host2 = el("div");
-    logs.buildJsonTree(host2, { a: { b: 1 } }, open);
+    logs.buildJsonTree(host2 as unknown as HTMLElement, { a: { b: 1 } }, open);
     expect(rowByKey(host2, "b"), "a rebuild with the same open state restores its children").toBeTruthy();
     vi.unstubAllGlobals();
   });
@@ -196,7 +196,7 @@ describe("docs/33 C2: buildJsonTree", () => {
     vi.stubGlobal("navigator", { clipboard: { writeText: (t: string) => { wrote.push(t); return Promise.resolve(); } } });
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");
-    logs.buildJsonTree(host, { nested: { a: 1 }, s: "long value" }, {});
+    logs.buildJsonTree(host as unknown as HTMLElement, { nested: { a: 1 }, s: "long value" }, {});
     const copyBtns = (row: Record<string, unknown>) =>
       (row.children as Record<string, unknown>[]).filter((c) => c.tag === "button" && String((c as { dataset: Record<string, string> }).dataset.copy) === "1");
     const nestedRow = rowByKey(host, "nested")!;
@@ -245,7 +245,7 @@ describe("docs/33 C2: buildJsonTree", () => {
   it("docs/33 readability: every key carries a JSON colon span", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");
-    logs.buildJsonTree(host, { cursor: "5088", keys: [], done: false }, {});
+    logs.buildJsonTree(host as unknown as HTMLElement, { cursor: "5088", keys: [], done: false }, {});
     const cursorRow = rowByKey(host, "cursor")!;
     const cols = (cursorRow.children as Record<string, unknown>[]).filter((c) => String(c.className).includes("jt-col"));
     expect(cols.length, "one colon span after the key").toBe(1);
@@ -257,7 +257,7 @@ describe("docs/33 C2: buildJsonTree", () => {
     vi.stubGlobal("document", { createElement: el } as never);
     const host = el("div");
     const long = new Array(240).join("x"); // 239 chars — over the 200 display cap
-    logs.buildJsonTree(host, { s: long }, {});
+    logs.buildJsonTree(host as unknown as HTMLElement, { s: long }, {});
     const row = findRow(host, "s")!;
     const text = String(row.textContent);
     expect(text.length).toBeLessThan(220);

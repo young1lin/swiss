@@ -33,7 +33,7 @@ const groups = [
   { id: "tunnels", label: "Tunnels", order: 30, pages: [{ id: "tunnels" }] },
   { id: "terminal", label: "Terminal", order: 70, pages: [{ id: "terminal" }] },
   { id: "host", label: "Settings", order: 1000, pages: [{ id: "plugins" }, { id: "secrets" }] },
-];
+] as PageGroup[];
 
 describe("the rail shortlist", () => {
   it("defaults to the first RAIL_LIMIT groups in group order", () => {
@@ -68,17 +68,17 @@ describe("the palette rows", () => {
 
 describe("seat glyphs", () => {
   it("built-ins use the sprite, and the remote plugin wears its own mark", () => {
-    expect(pluginGlyph({ id: "mcp", label: "MCP" })).toBe("mcp");
-    expect(glyphHtml({ id: "mcp", label: "MCP" })).toContain("#i-mcp");
-    expect(pluginGlyph({ id: "remote", label: "Remote" })).toBe("remote");
-    expect(glyphHtml({ id: "remote", label: "Remote" })).toContain("#i-remote");
+    expect(pluginGlyph({ id: "mcp", label: "MCP" } as PageGroup)).toBe("mcp");
+    expect(glyphHtml({ id: "mcp", label: "MCP" } as PageGroup)).toContain("#i-mcp");
+    expect(pluginGlyph({ id: "remote", label: "Remote" } as PageGroup)).toBe("remote");
+    expect(glyphHtml({ id: "remote", label: "Remote" } as PageGroup)).toContain("#i-remote");
   });
 
   it("an unknown plugin falls back to the default puzzle glyph, never a letter", () => {
     // A seat is a row of drawn icons; an initial letter reads as a broken glyph (the
     // "Remote shows a bare R" sighting). The puzzle piece is the universal plugin mark.
-    expect(pluginGlyph({ id: "kubernetes", label: "Kubernetes" })).toBe(null);
-    const html = glyphHtml({ id: "kubernetes", label: "Kubernetes" });
+    expect(pluginGlyph({ id: "kubernetes", label: "Kubernetes" } as PageGroup)).toBe(null);
+    const html = glyphHtml({ id: "kubernetes", label: "Kubernetes" } as PageGroup);
     expect(html).toContain("#i-puzzle");
     expect(html).not.toContain("rail-glyph");
     expect(html).not.toContain(">K<");

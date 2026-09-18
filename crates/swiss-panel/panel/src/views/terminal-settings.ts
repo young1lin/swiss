@@ -34,15 +34,15 @@ import { reload, sessions, targets } from "./terminal.js";
    and the revision from the GET makes a save that raced another panel lose loudly (409)
    instead of silently overwriting it. */
 export async function openLocalSheet() {
-  var got = await apiJson("/api/plugins/terminal/config");
+  var got = await apiJson<TerminalPluginConfigResponse>("/api/plugins/terminal/config");
   if (!got) return;   // the toast already said why
-  var local = (got.config && got.config.local) || {};
-  var l = (targets && targets.local) || {};
+  var local = (got.config && got.config.local) || {} as TerminalLocalCfg;
+  var l = (targets && targets.local) || {} as TerminalLocalCfg;
   var shells = Array.isArray(l.shells) ? l.shells : [];
   /* The switch's reason line is the schema's own description: one source, no fork — the
      sentence next to the checkbox can never drift from the one the backend enforces. */
   var whyOff = "";
-  try { whyOff = got.schema.properties.local.properties.enabled.description || ""; } catch (e) { /* an older schema: no line */ }
+  try { whyOff = got.schema!.properties.local.properties.enabled.description || ""; } catch (e) { /* an older schema: no line */ }
   var options = shells.map(function (s) {
     return '<option value="' + esc(s.program) + '">' + esc(s.label) + " · " + esc(s.program) + "</option>";
   }).join("");
@@ -64,14 +64,14 @@ export async function openLocalSheet() {
     "</div>";
   $("sheet").hidden = false;
   $("ls-cancel").onclick = closeSheet;
-  $("ls-save").onclick = function () { void saveLocalSheet(got); };
+  $("ls-save").onclick = function () { void saveLocalSheet(got!); };
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
   $("ls-enabled").focus();
 }
 
-async function saveLocalSheet(got) {
-  var enabled = $("ls-enabled").checked;
-  var shell = $("ls-shell").value;
+async function saveLocalSheet(got: TerminalPluginConfigResponse) {
+  var enabled = $<HTMLInputElement>("ls-enabled").checked;
+  var shell = $<HTMLInputElement>("ls-shell").value;
   /* restart_on_config_change is the honest cost of this save (docs/15 §2.1): the
      plugin restarts, and with it every session — say how many and let the user back out. */
   if (sessions.length) {
@@ -88,6 +88,6 @@ async function saveLocalSheet(got) {
   await reload();
   /* The row the user just switched on is the one they mean to open next; select it
      explicitly instead of trusting the rows' order to put it first forever. */
-  var pick = $("term-target");
+  var pick = $<HTMLSelectElement>("term-target");
   if (pick && targetRows(targets).rows.some(function (r) { return r.id === "local"; })) pick.value = "local";
 }

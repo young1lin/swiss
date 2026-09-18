@@ -43,7 +43,7 @@ interface FakeNode {
   appendChild(c: unknown): unknown;
   removeChild(c: unknown): unknown;
   remove(): void;
-  classList: { add(): void; remove(): void; toggle(): void; contains(): boolean };
+  classList: { add(c?: string): void; remove(c?: string): void; toggle(): void; contains(): boolean };
   addEventListener(): void;
   removeEventListener(): void;
   setAttribute(): void;

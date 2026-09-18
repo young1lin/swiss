@@ -59,7 +59,7 @@ const edits = await import(
   dbRedisValidScore: (s: string) => boolean;
   dbRedisCommands: (key: string, type: string, buf: unknown) => { verb: string; args: unknown[] }[];
   dbRedisCommandText: (cmd: { verb: string; args: unknown[] }) => string;
-  dbRedisEntries: (v: unknown, buf: unknown) => unknown[];
+  dbRedisEntries: (v: unknown, buf: unknown) => { addr: string; deleted: boolean; updated: boolean; cells: unknown }[];
   dbRedisPendingCount: () => number;
 };
 

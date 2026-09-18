@@ -29,26 +29,26 @@ import { requiresBadge, rowHtml, startupRowHtml } from "../src/views/plugins.js"
  *  badge-HTML-out; no DOM involved. */
 describe("plugins view dependency badge", () => {
   it("names the capability when the requirement is unmet", () => {
-    expect(requiresBadge({ id: "data", requires: ["connection-catalog"], requiresMet: false }))
+    expect(requiresBadge({ id: "data", requires: ["connection-catalog"], requiresMet: false } as ApiPluginRow))
       .toBe('· needs connection-catalog <span class="warn">(no provider)</span>');
   });
 
   it("names the requirement while it is met — the dependency stays visible, not only the break", () => {
-    expect(requiresBadge({ id: "data", requires: ["connection-catalog"], requiresMet: true }))
+    expect(requiresBadge({ id: "data", requires: ["connection-catalog"], requiresMet: true } as ApiPluginRow))
       .toBe("· requires connection-catalog");
     // An older inventory row that predates the verdict key reads as met-but-named.
-    expect(requiresBadge({ id: "data", requires: ["connection-catalog"] }))
+    expect(requiresBadge({ id: "data", requires: ["connection-catalog"] } as ApiPluginRow))
       .toBe("· requires connection-catalog");
   });
 
   it("has nothing to say for plugins without requirements", () => {
     // Plugins that need nothing carry no requires keys at all — absent, not null.
-    expect(requiresBadge({ id: "mcp" })).toBe("");
-    expect(requiresBadge({ id: "jobs", requires: [], requiresMet: true })).toBe("");
+    expect(requiresBadge({ id: "mcp" } as ApiPluginRow)).toBe("");
+    expect(requiresBadge({ id: "jobs", requires: [], requiresMet: true } as unknown as ApiPluginRow)).toBe("");
   });
 
   it("escapes capability names and joins several", () => {
-    expect(requiresBadge({ id: "x", requires: ["a<b", "c&d"], requiresMet: false }))
+    expect(requiresBadge({ id: "x", requires: ["a<b", "c&d"], requiresMet: false } as ApiPluginRow))
       .toBe('· needs a&lt;b, c&amp;d <span class="warn">(no provider)</span>');
   });
 });
@@ -58,7 +58,7 @@ describe("plugins view dependency badge", () => {
    what it is doing. */
 describe("visual refresh V4 — the plugins row", () => {
   it("toggles with a switch, not a Disable/Enable button", () => {
-    const row = rowHtml({ id: "data", label: "Data", enabled: true, state: "active", pages: ["mcps", "traffic"], version: "0.1" });
+    const row = rowHtml({ id: "data", label: "Data", enabled: true, state: "active", pages: ["mcps", "traffic"], version: "0.1" } as ApiPluginRow);
     expect(row).toContain('role="switch"');
     expect(row).toContain('aria-checked="true"');
     expect(row).not.toContain(">Disable<");
@@ -66,7 +66,7 @@ describe("visual refresh V4 — the plugins row", () => {
   });
 
   it("keeps id and pages on the grey line; version rides the title, state is the dot", () => {
-    const row = rowHtml({ id: "data", label: "Data", enabled: true, state: "active", pages: ["mcps", "traffic"], version: "0.1" });
+    const row = rowHtml({ id: "data", label: "Data", enabled: true, state: "active", pages: ["mcps", "traffic"], version: "0.1" } as ApiPluginRow);
     expect(row).toContain("<code>data</code>");
     expect(row).toContain("pages: mcps, traffic");
     expect(row).toContain('title="v0.1"');
@@ -75,13 +75,13 @@ describe("visual refresh V4 — the plugins row", () => {
   });
 
   it("a pageless plugin says so", () => {
-    expect(rowHtml({ id: "host", label: "Settings", enabled: true, state: "active" })).toContain("· no page");
+    expect(rowHtml({ id: "host", label: "Settings", enabled: true, state: "active" } as ApiPluginRow)).toContain("· no page");
   });
 
   it("the dot carries the host's own state word as its title (docs/18 V6)", () => {
-    expect(rowHtml({ id: "data", label: "Data", enabled: true, state: "active" })).toContain('data-dot title="active"');
-    expect(rowHtml({ id: "mcp", label: "MCP", enabled: false, state: "active" })).toContain('data-dot title="disabled"');
-    expect(rowHtml({ id: "x", label: "X", enabled: true, state: "failed" })).toContain('data-dot title="failed"');
+    expect(rowHtml({ id: "data", label: "Data", enabled: true, state: "active" } as ApiPluginRow)).toContain('data-dot title="active"');
+    expect(rowHtml({ id: "mcp", label: "MCP", enabled: false, state: "active" } as ApiPluginRow)).toContain('data-dot title="disabled"');
+    expect(rowHtml({ id: "x", label: "X", enabled: true, state: "failed" } as ApiPluginRow)).toContain('data-dot title="failed"');
   });
 
   it("views.css stops centring pane content", () => {

@@ -22,11 +22,11 @@ import { groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from ".
 
 /* --- connection sheet -------------------------------------------------------------------------- */
 
-async function loadKeys() {
+async function loadKeys(): Promise<ApiTunnelsKeysResponse> {
   if (state.tun.keys) return state.tun.keys;
-  var j = await apiJson("/api/tunnels/keys");
+  var j = await apiJson<ApiTunnelsKeysResponse>("/api/tunnels/keys");
   state.tun.keys = j || { keys: [], defaultPath: "" };
-  return state.tun.keys;
+  return state.tun.keys!;
 }
 
 /** docs/27 §4: the Advanced fold — proxy and jump live here, collapsed by default. The
@@ -36,13 +36,13 @@ async function loadKeys() {
  *  no open attribute, so the browser starts it folded. The jump dropdown lists every other
  *  connection (this one excluded); the backend stays the single source of truth for cycles,
  *  its 400 lands inline in the sheet, and the panel does not pre-walk chains. */
-function advancedConnHtml(d, editing) {
+function advancedConnHtml(d: ConnSheetDraft, editing: boolean): string {
   var chips = "";
   if (d.proxy) chips += ' <span class="tag">proxy</span>';
   if (d.jump) chips += ' <span class="tag">via ' + esc(tunConnName(d.jump)) + "</span>";
   var opts = '<option value="">None</option>' + tunData().connections
-    .filter(function (c) { return !editing || c.id !== d.id; })
-    .map(function (c) {
+    .filter(function (c: ApiTunnelConnectionRow): boolean { return !editing || c.id !== d.id; })
+    .map(function (c: ApiTunnelConnectionRow): string {
       return '<option value="' + esc(c.id) + '"' + (d.jump === c.id ? " selected" : "") + ">" + esc(c.name) + "</option>";
     })
     .join("");
@@ -67,9 +67,9 @@ function advancedConnHtml(d, editing) {
     '<div class="hint" id="c-err" hidden></div>';
 }
 
-function openConnSheet(def) {
+function openConnSheet(def: ApiTunnelConnectionRow | null): void {
   var editing = !!def;
-  var d = def || { name: "", host: "", port: 22, username: "", authType: "key", keyPath: "", passphrase: "", password: "" };
+  var d: ConnSheetDraft = def || { name: "", host: "", port: 22, username: "", authType: "key", keyPath: "", passphrase: "", password: "" };
   // Creating: a Group select names where the row lands (the header +'s group preselected, the
   // last-used one when the top New opened this). Editing: no field - moving a connection is
   // the list's gesture (drag / row menu), not a property of its definition.
@@ -100,10 +100,10 @@ function openConnSheet(def) {
     "</div>";
   $("sheet").hidden = false;
 
-  var paint = async function () {
+  var paint = async function (): Promise<void> {
     var keys = await loadKeys();
-    var isKey = $("c-auth").value === "key";
-    $("c-auth-fields").innerHTML = isKey
+    var isKey = $<FilterSelect>("c-auth").value === "key";
+    $<HTMLElement>("c-auth-fields").innerHTML = isKey
       ? '<div class="with-btn">' +
           '<label class="field"><span>Private key path</span><input id="c-keypath" value="' + esc(d.keyPath || "") +
             '" placeholder="' + esc(keys.defaultPath) + '" autocomplete="off" spellcheck="false"></label>' +
@@ -114,17 +114,17 @@ function openConnSheet(def) {
         '<div class="hint">Defaults to <code>' + esc(keys.defaultPath) + "</code> when left empty.</div>"
       : '<label class="field"><span>Password</span>' +
           '<input id="c-pass" type="password" value="' + esc(d.password || "") + '" placeholder="Enter the password" autocomplete="off"></label>';
-    if ($("c-browse")) $("c-browse").onclick = openKeyPicker;
+    if ($("c-browse")) $<ActionButton>("c-browse").onclick = openKeyPicker;
   };
   void paint();
-  $("c-auth").onchange = function () { void paint(); };
-  if ($("g-sel")) $("g-sel").onchange = function () {
-    $("t-title").textContent = "New SSH connection in " + $("g-sel").value;
+  $<FilterSelect>("c-auth").onchange = function (): void { void paint(); };
+  if ($("g-sel")) $<FilterSelect>("g-sel").onchange = function (): void {
+    $<HTMLElement>("t-title").textContent = "New SSH connection in " + $<FilterSelect>("g-sel").value;
   };
-  $("c-cancel").onclick = closeSheet;
-  $("c-save").onclick = function () { void saveConn(def); };
-  $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
-  $("c-name").focus();
+  $<ActionButton>("c-cancel").onclick = closeSheet;
+  $<ActionButton>("c-save").onclick = function (): void { void saveConn(def!); };
+  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
+  $<FilterInput>("c-name").focus();
 }
 
 /**
@@ -132,8 +132,8 @@ function openConnSheet(def) {
  * server-side path (only a bare filename), so Browse is served from /api/tunnels/browse, which can
  * reach any folder the gateway process can read — not just ~/.ssh. Folders navigate; files pick.
  */
-async function openKeyPicker() {
-  var target = $("c-keypath");
+async function openKeyPicker(): Promise<void> {
+  var target = $<FilterInput>("c-keypath");
   // Start in the current key's folder if one is set, otherwise let the backend default to ~/.ssh.
   var cur = target.value && target.value.trim() ? target.value.trim().replace(/[/\\][^/\\]*$/, "") : "";
 
@@ -145,15 +145,15 @@ async function openKeyPicker() {
   picker.setAttribute("aria-label", "Choose a private key file");
   back.appendChild(picker);
   document.body.appendChild(back);
-  var close = function () { document.body.removeChild(back); target.focus(); };
-  back.onclick = function (e) { if (e.target === back) close(); };
+  var close = function (): void { document.body.removeChild(back); target.focus(); };
+  back.onclick = function (e: MouseEvent): void { if (e.target === back) close(); };
 
-  async function render() {
-    var j = await apiJson("/api/tunnels/browse" + (cur ? "?dir=" + encodeURIComponent(cur) : ""));
+  async function render(): Promise<void> {
+    var j = await apiJson<ApiTunnelsBrowseResponse>("/api/tunnels/browse" + (cur ? "?dir=" + encodeURIComponent(cur) : ""));
     if (!j) { toast("Could not read that folder", true); return; }
     cur = j.dir; // normalize to the resolved path the server returned
-    var dirs = j.entries.filter(function (e) { return e.dir; });
-    var files = j.entries.filter(function (e) { return !e.dir; });
+    var dirs = j.entries.filter(function (e: ApiTunnelsBrowseEntry): boolean { return e.dir; });
+    var files = j.entries.filter(function (e: ApiTunnelsBrowseEntry): boolean { return !e.dir; });
     picker.innerHTML =
       '<div class="sheet-head"><h2>Choose a private key</h2></div>' +
       '<div class="sheet-body">' +
@@ -164,40 +164,40 @@ async function openKeyPicker() {
         '</div>' +
         (j.error ? '<div class="hint">' + esc(j.error) + '</div>' : '') +
         '<div class="keylist">' +
-          dirs.map(function (e) { return '<button class="is-dir" data-dir="' + esc(e.path) + '">📁 ' + esc(e.name) + '</button>'; }).join("") +
-          files.map(function (e) { return '<button data-file="' + esc(e.path) + '">📄 ' + esc(e.name) + '</button>'; }).join("") +
+          dirs.map(function (e: ApiTunnelsBrowseEntry): string { return '<button class="is-dir" data-dir="' + esc(e.path) + '">📁 ' + esc(e.name) + '</button>'; }).join("") +
+          files.map(function (e: ApiTunnelsBrowseEntry): string { return '<button data-file="' + esc(e.path) + '">📄 ' + esc(e.name) + '</button>'; }).join("") +
         '</div>' +
       '</div>' +
       '<div class="sheet-foot"><button class="btn" data-close>Cancel</button></div>';
-    picker.querySelector("[data-close]").onclick = close;
-    if (j.parent) picker.querySelector("#b-up").onclick = function () { cur = j.parent; void render(); };
-    var go = function () { cur = $("b-path").value.trim(); void render(); };
-    picker.querySelector("#b-go").onclick = go;
-    picker.querySelector("#b-path").onkeydown = function (ev) { if (ev.key === "Enter") go(); };
-    Array.prototype.forEach.call(picker.querySelectorAll("[data-dir]"), function (b) {
-      b.onclick = function () { cur = b.getAttribute("data-dir"); void render(); };
+    picker.querySelector<HTMLButtonElement>("[data-close]")!.onclick = close;
+    if (j.parent) picker.querySelector<HTMLButtonElement>("#b-up")!.onclick = function (): void { cur = j!.parent!; void render(); };
+    var go = function (): void { cur = $<FilterInput>("b-path").value.trim(); void render(); };
+    picker.querySelector<HTMLButtonElement>("#b-go")!.onclick = go;
+    picker.querySelector<FilterInput>("#b-path")!.onkeydown = function (ev: KeyboardEvent): void { if (ev.key === "Enter") go(); };
+    Array.prototype.forEach.call(picker.querySelectorAll("[data-dir]"), function (b: HTMLElement): void {
+      b.onclick = function (): void { cur = b.getAttribute("data-dir")!; void render(); };
     });
-    Array.prototype.forEach.call(picker.querySelectorAll("[data-file]"), function (b) {
-      b.onclick = function () { target.value = b.getAttribute("data-file"); close(); };
+    Array.prototype.forEach.call(picker.querySelectorAll("[data-file]"), function (b: HTMLElement): void {
+      b.onclick = function (): void { target.value = b.getAttribute("data-file")!; close(); };
     });
   }
   void render();
 }
 
-async function saveConn(existing) {
-  var authType = $("c-auth").value;
-  var body = {
-    name: $("c-name").value.trim(),
-    host: $("c-host").value.trim(),
-    port: Number($("c-port").value) || 22,
-    username: $("c-user").value.trim(),
+async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> {
+  var authType = $<FilterSelect>("c-auth").value;
+  var body: Record<string, unknown> = {
+    name: $<FilterInput>("c-name").value.trim(),
+    host: $<FilterInput>("c-host").value.trim(),
+    port: Number($<FilterInput>("c-port").value) || 22,
+    username: $<FilterInput>("c-user").value.trim(),
     authType: authType,
   };
   if (authType === "key") {
-    body.keyPath = $("c-keypath").value.trim() || (state.tun.keys && state.tun.keys.defaultPath) || "";
-    body.passphrase = $("c-pass").value;
+    body.keyPath = $<FilterInput>("c-keypath").value.trim() || (state.tun.keys && state.tun.keys.defaultPath) || "";
+    body.passphrase = $<FilterInput>("c-pass").value;
   } else {
-    body.password = $("c-pass").value;
+    body.password = $<FilterInput>("c-pass").value;
   }
   // docs/27 §4: the Advanced fields are optional — a key rides the payload only while the
   // sheet holds a value; empty means unset, and clearing a stored value sends nothing (the
@@ -205,28 +205,28 @@ async function saveConn(existing) {
   // both land as "no value"). An untouched proxyPassword input still carries the mask
   // sentinel the row brought in; echoing it back unchanged is what keeps the stored secret
   // (unmask_conn restores it server-side), exactly the MCP sheet's sentinel habit.
-  var proxy = $("c-proxy").value.trim();
+  var proxy = $<FilterInput>("c-proxy").value.trim();
   if (proxy) body.proxy = proxy;
-  var proxyUser = $("c-proxy-user").value.trim();
+  var proxyUser = $<FilterInput>("c-proxy-user").value.trim();
   if (proxyUser) body.proxyUsername = proxyUser;
-  var proxyPass = $("c-proxy-pass").value;
+  var proxyPass = $<FilterInput>("c-proxy-pass").value;
   if (proxyPass) body.proxyPassword = proxyPass;
-  var jump = $("c-jump").value;
+  var jump = $<FilterSelect>("c-jump").value;
   if (jump) body.jump = jump;
   // Read the sheet's Group before closeSheet wipes it: a create lands in the picked group
   // (remembered as this scope's last-used), the same pre-join the MCP sheet does.
-  var picked = $("g-sel") ? $("g-sel").value : null;
+  var picked = $("g-sel") ? $<FilterSelect>("g-sel").value : null;
   // api() rather than apiJson: a refused save (the §1.3 family — a bad proxy URL, a jump
   // cycle, proxy and jump together) must land INLINE beside the fields that caused it, not
   // only in a toast, and the sheet stays open so the fix is a keystroke away.
-  var j;
+  var j: { error?: string; connection?: ApiTunnelConnectionRow };
   try {
     var r = await api(existing
       ? "/api/tunnels/connections/" + encodeURIComponent(existing.id)
       : "/api/tunnels/connections", { method: existing ? "PUT" : "POST", body: JSON.stringify(body) });
-    j = await r.json().catch(function () { return {}; });
+    j = await r.json().catch(function (): object { return {}; }) as { error?: string; connection?: ApiTunnelConnectionRow };
     if (!r.ok) {
-      var err = $("c-err");
+      var err = $<HTMLElement>("c-err");
       if (err) {
         err.hidden = false;
         err.textContent = j.error || "HTTP " + r.status;
@@ -241,17 +241,17 @@ async function saveConn(existing) {
   if (picked) rememberGroup("conns", picked);
   closeSheet();
   await loadTunnels();
-  if (!existing && picked && j.connection && j.connection.id) await assignTunScoped("conns", j.connection.id, picked);
+  if (!existing && picked && j!.connection && j!.connection.id) await assignTunScoped("conns", j!.connection.id, picked);
   toast((existing ? "Saved " : "Added ") + body.name);
 }
 
 /* --- rule sheet ------------------------------------------------------------------------------- */
 
-function openRuleSheet(def) {
+function openRuleSheet(def: ApiTunnelRuleRow | null): void {
   var d = tunData();
   if (!d.connections.length) { toast("Add an SSH connection first", true); return; }
   var editing = !!def;
-  var r = def || {
+  var r: RuleSheetDraft = def || {
     name: "", connectionId: d.connections[0].id, localPort: "", targetHost: "127.0.0.1", targetPort: "",
     remark: "", autoReconnect: false, reconnectInterval: 10, mcps: [],
   };
@@ -261,7 +261,7 @@ function openRuleSheet(def) {
   var initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("rules"));
   state.tun.pendingGroup = null;
   var groupField = editing ? "" : groupFieldHtml(names, initial);
-  var opts = d.connections.map(function (c) {
+  var opts = d.connections.map(function (c: ApiTunnelConnectionRow): string {
     return '<option value="' + esc(c.id) + '"' + (c.id === r.connectionId ? " selected" : "") + ">" + esc(c.name) + "</option>";
   }).join("");
   $("sheet").innerHTML =
@@ -292,32 +292,32 @@ function openRuleSheet(def) {
 
   paintMcpPicks(r.mcps || [], []);
   // For a new rule, the suggestion is the point: type 5433 and the matching MCP checks itself.
-  var suggest = async function () {
-    var port = Number($("r-lport").value);
+  var suggest = async function (): Promise<void> {
+    var port = Number($<FilterInput>("r-lport").value);
     if (!port) return;
-    var j = await apiJson("/api/tunnels/suggest/" + port);
+    var j = await apiJson<ApiTunnelsSuggestResponse>("/api/tunnels/suggest/" + port);
     if (!j) return;
-    var checked = editing ? readMcpPicks() : j.mcps;
-    paintMcpPicks(checked, j.mcps);
+    var checked = editing ? readMcpPicks() : j.mcps as string[];
+    paintMcpPicks(checked, j.mcps as string[]);
   };
-  if (!editing) $("r-lport").onchange = suggest;
+  if (!editing) $<FilterInput>("r-lport").onchange = suggest;
   else void suggest(); // editing: keep the stored choice, but label what matches
-  if ($("g-sel")) $("g-sel").onchange = function () {
-    $("t-title").textContent = "New forwarding rule in " + $("g-sel").value;
+  if ($("g-sel")) $<FilterSelect>("g-sel").onchange = function (): void {
+    $<HTMLElement>("t-title").textContent = "New forwarding rule in " + $<FilterSelect>("g-sel").value;
   };
-  $("r-cancel").onclick = closeSheet;
-  $("r-save").onclick = function () { void saveRule(def); };
-  $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
-  $("r-name").focus();
+  $<ActionButton>("r-cancel").onclick = closeSheet;
+  $<ActionButton>("r-save").onclick = function (): void { void saveRule(def!); };
+  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
+  $<FilterInput>("r-name").focus();
 }
 
-function paintMcpPicks(checked, suggested) {
+function paintMcpPicks(checked: string[], suggested: string[]): void {
   var names = tunData().mcps || [];
   if (!names.length) {
-    $("r-mcps").innerHTML = '<div class="hint">No MCPs registered.</div>';
+    $<HTMLElement>("r-mcps").innerHTML = '<div class="hint">No MCPs registered.</div>';
     return;
   }
-  $("r-mcps").innerHTML = names.map(function (n) {
+  $<HTMLElement>("r-mcps").innerHTML = names.map(function (n: string): string {
     var on = checked.indexOf(n) >= 0;
     var hint = suggested.indexOf(n) >= 0 ? ' <span class="hint">(matches this local port)</span>' : "";
     return '<label class="check"><input type="checkbox" data-mcp="' + esc(n) + '"' + (on ? " checked" : "") + ">" +
@@ -325,36 +325,36 @@ function paintMcpPicks(checked, suggested) {
   }).join("");
 }
 
-function readMcpPicks() {
-  var out = [];
-  Array.prototype.forEach.call($("r-mcps").querySelectorAll("[data-mcp]"), function (b) {
-    if (b.checked) out.push(b.dataset.mcp);
+function readMcpPicks(): string[] {
+  var out: string[] = [];
+  Array.prototype.forEach.call($<HTMLElement>("r-mcps").querySelectorAll("[data-mcp]"), function (b: HTMLInputElement): void {
+    if (b.checked) out.push(b.dataset.mcp!);
   });
   return out;
 }
 
-async function saveRule(existing) {
+async function saveRule(existing: ApiTunnelRuleRow): Promise<void> {
   var body = {
-    name: $("r-name").value.trim(),
-    connectionId: $("r-conn").value,
-    localPort: Number($("r-lport").value),
-    targetHost: $("r-thost").value.trim() || "127.0.0.1",
-    targetPort: Number($("r-tport").value),
-    remark: $("r-remark").value.trim(),
-    autoReconnect: $("r-auto").checked,
-    reconnectInterval: Number($("r-interval").value) || 10,
+    name: $<FilterInput>("r-name").value.trim(),
+    connectionId: $<FilterSelect>("r-conn").value,
+    localPort: Number($<FilterInput>("r-lport").value),
+    targetHost: $<FilterInput>("r-thost").value.trim() || "127.0.0.1",
+    targetPort: Number($<FilterInput>("r-tport").value),
+    remark: $<FilterInput>("r-remark").value.trim(),
+    autoReconnect: $<FilterInput>("r-auto").checked,
+    reconnectInterval: Number($<FilterInput>("r-interval").value) || 10,
     mcps: readMcpPicks(),
   };
   if (!body.targetPort) body.targetPort = body.localPort;
-  var picked = $("g-sel") ? $("g-sel").value : null;
+  var picked = $("g-sel") ? $<FilterSelect>("g-sel").value : null;
   var j = existing
-    ? await apiJson("/api/tunnels/rules/" + encodeURIComponent(existing.id), { method: "PUT", body: JSON.stringify(body) })
-    : await apiJson("/api/tunnels/rules", { method: "POST", body: JSON.stringify(body) });
+    ? await apiJson<ApiTunnelRuleMutation>("/api/tunnels/rules/" + encodeURIComponent(existing.id), { method: "PUT", body: JSON.stringify(body) })
+    : await apiJson<ApiTunnelRuleMutation>("/api/tunnels/rules", { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
   if (picked) rememberGroup("rules", picked);
   closeSheet();
   await loadTunnels();
-  var row = j.rule || {};
+  var row = j.rule || {} as ApiTunnelRuleRow;
   // A create lands in the picked group, not wherever the header + promised.
   if (!existing && picked && row.id) await assignTunScoped("rules", row.id, picked);
   toast((existing ? "Saved " : "Added ") + body.name + (row.state && row.state !== "stopped" ? " (" + row.state + ")" : ""));
