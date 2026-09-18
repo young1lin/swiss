@@ -31,29 +31,29 @@
    ================================================================================================ */
 import { $, apiJson, emptyHtml, esc, icon, targetEl, toast, whenLabel } from "../util.js";
 
-var PAGE = 20;
-var LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
+const PAGE = 20;
+const LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
 
-var runs = []                     ; // the recorded page, newest first
-var active = []                     ; // remote runs the coordinator still holds (queued / running)
-var nextBefore = null                 ; // the cursor for the older page, null on the last one
-var cursors = [null]                     ; // cursors[i] loaded page i; page 0 has none
-var page = 0;
-var usage = { bytes: 0, runs: 0 };
-var limits = null                                          ;
-var target = ""; // the target filter, "" for all
-var targetIds = []            ; // for the filter select, from the targets table
-var open = {}                           ; // runId -> true while a row is expanded
-var bodies = {}                                 ; // runId -> { text, next, total, done, capped, tail } for opened recorded rows
-var live = {}                                  ; // runId -> { text, cursor } for opened active rows
-var liveTimer = null                                         ;
-var painted = "";
+let runs = []                     ; // the recorded page, newest first
+let active = []                     ; // remote runs the coordinator still holds (queued / running)
+let nextBefore = null                 ; // the cursor for the older page, null on the last one
+let cursors = [null]                     ; // cursors[i] loaded page i; page 0 has none
+let page = 0;
+let usage = { bytes: 0, runs: 0 };
+let limits = null                                          ;
+let target = ""; // the target filter, "" for all
+let targetIds = []            ; // for the filter select, from the targets table
+let open = {}                           ; // runId -> true while a row is expanded
+let bodies = {}                                 ; // runId -> { text, next, total, done, capped, tail } for opened recorded rows
+let live = {}                                  ; // runId -> { text, cursor } for opened active rows
+let liveTimer = null                                         ;
+let painted = "";
 
 async function load() {
-  var q = "/api/remote/runs?limit=" + PAGE +
+  const q = "/api/remote/runs?limit=" + PAGE +
     (cursors[page] ? "&before=" + cursors[page] : "") +
     (target ? "&target=" + encodeURIComponent(target) : "");
-  var j = await apiJson                       (q);
+  const j = await apiJson                       (q);
   if (!j) return false; // apiJson toasted; keep the last paint
   runs = j.runs                      || [];
   active = j.active                      || [];
@@ -64,14 +64,14 @@ async function load() {
 }
 
 async function loadTargets() {
-  var t = await apiJson                          ("/api/remote/targets");
-  if (t && t.targets) targetIds = t.targets.map(function (x) { return x.id; });
+  const t = await apiJson                          ("/api/remote/targets");
+  if (t && t.targets) targetIds = t.targets.map((x) => { return x.id; });
 }
 
 function signature()         {
   return page + "|" + target + "|" + usage.bytes + "/" + usage.runs + "|" +
-    active.map(function (r) { return r.runId + "=" + r.state; }).join(",") + "|" +
-    runs.map(function (r) { return r.runId; }).join(",");
+    active.map((r) => { return r.runId + "=" + r.state; }).join(",") + "|" +
+    runs.map((r) => { return r.runId; }).join(",");
 }
 
 function fmtBytes(n        )         {
@@ -85,13 +85,13 @@ function fmtMs(ms                           )         {
   if (ms == null) return "";
   if (ms < 1000) return ms + "ms";
   if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
-  var m = Math.floor(ms / 60000);
+  const m = Math.floor(ms / 60000);
   return m + "m " + Math.round((ms - m * 60000) / 1000) + "s";
 }
 
 /** The dot says the state in shape and colour; the title says it in words. */
 function stateDot(r                 )         {
-  var cls = r.state === "succeeded" ? "up"
+  const cls = r.state === "succeeded" ? "up"
     : r.state === "running" ? "starting"
     : r.state === "queued" || r.state === "canceled" ? "idle"
     : "down";
@@ -101,8 +101,8 @@ function stateDot(r                 )         {
 /** What ran, as a command line: the argv for an exec, the shape for a sync / pull. An
  *  active row that predates the record (an older gateway) falls back to its label. */
 function commandOf(r                 )         {
-  var input = r.input || {}                  ;
-  var kind = (r.action || "").replace(/^remote\./, "");
+  const input = r.input || {}                  ;
+  const kind = (r.action || "").replace(/^remote\./, "");
   if (kind === "exec" && Array.isArray(input.argv)) return input.argv.join(" ");
   if (kind === "sync") return "sync " + (input.source || ".") + (input.to ? " \u2192 " + input.to : "");
   if (kind === "pull") return "pull " + (input.remote || "") + (input.to ? " \u2192 " + input.to : "");
@@ -115,7 +115,7 @@ function targetOf(r                 )         {
 }
 
 function metaOf(r                 )         {
-  var parts = ["#" + r.runId];
+  const parts = ["#" + r.runId];
   if (r.state === "running" || r.state === "queued") parts.push(r.state);
   else if (r.exitCode != null) parts.push("exit " + r.exitCode);
   else if (r.state === "canceled") parts.push("canceled");
@@ -127,7 +127,7 @@ function metaOf(r                 )         {
 }
 
 function row(r                 , isLive         )         {
-  var cwd = r.input && r.input.cwd ? " \u00b7 " + r.input.cwd : "";
+  const cwd = r.input && r.input.cwd ? " \u00b7 " + r.input.cwd : "";
   return '<div class="call' + (open[r.runId] ? " open" : "") + '" data-rrun="' + r.runId + '"' + (isLive ? ' data-rlive="1"' : "") + ">" +
     '<div class="call-sum" data-rtog="' + r.runId + '" role="button" tabindex="0">' +
       '<span class="chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
@@ -144,7 +144,7 @@ function row(r                 , isLive         )         {
 
 function bodyHtml(r                 , isLive         )         {
   if (isLive) {
-    var l = live[r.runId];
+    const l = live[r.runId];
     return '<div class="call-lbl rr-live-head"><span>Live output</span>' +
         (r.state === "running" || r.state === "queued"
           ? '<button class="btn" data-rcancel="' + r.runId + '">Cancel</button>'
@@ -154,8 +154,8 @@ function bodyHtml(r                 , isLive         )         {
         (l && l.text ? "" : '<span style="color:var(--text-3)">' + (r.state === "queued" ? "Queued - waiting for a free slot." : "No output yet.") + "</span>") +
       "</pre>";
   }
-  var b = bodies[r.runId];
-  var html = "";
+  const b = bodies[r.runId];
+  let html = "";
   if (r.error) html += '<div class="call-lbl">Error</div><pre class="logs err">' + esc(r.error) + "</pre>";
   if (!b) return html + '<div class="note"><span class="spin"></span> Loading\u2026</div>';
   if (b.gone) return html + '<div class="note">This run has rolled out of the record.</div>';
@@ -177,25 +177,25 @@ function bodyHtml(r                 , isLive         )         {
 }
 
 function findRun(id        )                         {
-  return active.find(function (r) { return r.runId === id; }) || runs.find(function (r) { return r.runId === id; }) || null;
+  return active.find((r) => { return r.runId === id; }) || runs.find((r) => { return r.runId === id; }) || null;
 }
 
 function isLiveRun(id        )          {
-  return active.some(function (r) { return r.runId === id; });
+  return active.some((r) => { return r.runId === id; });
 }
 
 function repaintBody(id        )       {
-  var r = findRun(id);
-  var node = document.querySelector('#pane .call[data-rrun="' + id + '"] .call-body');
+  const r = findRun(id);
+  const node = document.querySelector('#pane .call[data-rrun="' + id + '"] .call-body');
   if (r && node) node.innerHTML = bodyHtml(r, isLiveRun(id));
 }
 
 /** One recorded run's output, from the cursor the previous read ended on (128 KB a read). */
 async function loadBody(id        , more         )                {
-  var b = bodies[id];
+  const b = bodies[id];
   if (b && !more) return;
-  var after = b ? b.next : 0;
-  var j = await apiJson                    ("/api/remote/runs/" + id + "/output?after=" + after + "&max=131072");
+  const after = b ? b.next : 0;
+  const j = await apiJson                    ("/api/remote/runs/" + id + "/output?after=" + after + "&max=131072");
   if (!j) { bodies[id] = { gone: true }                            ; repaintBody(id); return; }
   bodies[id] = {
     text: (b ? b.text : "") + (j.output || ""),
@@ -207,21 +207,21 @@ async function loadBody(id        , more         )                {
 
 /** Pull what an open live row has not shown yet; a terminal answer ends the following. */
 async function pullLive(id        )                {
-  var l = live[id] || (live[id] = { text: "", cursor: 0 });
-  var j = await apiJson                   ("/api/runs/" + id + "/output?after=" + l.cursor + "&max=131072");
+  const l = live[id] || (live[id] = { text: "", cursor: 0 });
+  const j = await apiJson                   ("/api/runs/" + id + "/output?after=" + l.cursor + "&max=131072");
   if (!j) return;
   if (j.output) l.text += j.output;
   l.cursor = j.nextCursor || l.cursor;
-  var pre = document.querySelector('#pane pre[data-rlivepre="' + id + '"]');
+  const pre = document.querySelector('#pane pre[data-rlivepre="' + id + '"]');
   if (pre) pre.textContent = l.text;
   if (j.terminal) void refresh(); // the run moved into the record: repaint from it
 }
 
 function armLive()       {
-  var wanted = active.some(function (r) { return open[r.runId]; });
+  const wanted = active.some((r) => { return open[r.runId]; });
   if (wanted && !liveTimer) {
-    liveTimer = setInterval(function () {
-      active.forEach(function (r) { if (open[r.runId]) void pullLive(r.runId); });
+    liveTimer = setInterval(() => {
+      active.forEach((r) => { if (open[r.runId]) void pullLive(r.runId); });
     }, LIVE_EVERY_MS);
   } else if (!wanted && liveTimer) {
     clearInterval(liveTimer);
@@ -231,7 +231,7 @@ function armLive()       {
 
 function toggle(id        )       {
   open[id] = !open[id];
-  var node = document.querySelector('#pane .call[data-rrun="' + id + '"]');
+  const node = document.querySelector('#pane .call[data-rrun="' + id + '"]');
   if (node) node.className = "call" + (open[id] ? " open" : "");
   if (open[id]) {
     repaintBody(id);
@@ -241,7 +241,7 @@ function toggle(id        )       {
 }
 
 async function cancelRun(id        )                {
-  var j = await apiJson("/api/runs/" + id + "/cancel", { method: "POST" });
+  const j = await apiJson("/api/runs/" + id + "/cancel", { method: "POST" });
   if (!j) return;
   toast("Cancel requested for run #" + id);
   void refresh();
@@ -249,7 +249,7 @@ async function cancelRun(id        )                {
 
 async function clearAll()                {
   if (!confirm("Forget every recorded remote run and its output? Runs still in flight are not affected.")) return;
-  var j = await apiJson("/api/remote/runs", { method: "DELETE" });
+  const j = await apiJson("/api/remote/runs", { method: "DELETE" });
   if (!j) return;
   bodies = {};
   open = {};
@@ -261,12 +261,12 @@ async function clearAll()                {
 
 function render()       {
   painted = signature();
-  var kept = usage.runs + " run" + (usage.runs === 1 ? "" : "s") + " recorded \u00b7 " + fmtBytes(usage.bytes) +
+  const kept = usage.runs + " run" + (usage.runs === 1 ? "" : "s") + " recorded \u00b7 " + fmtBytes(usage.bytes) +
     (limits ? " of " + fmtBytes(limits.maxTotalBytes) + " \u00b7 kept " + Math.round(limits.maxAgeMs / 86400000) + " days" : "");
-  var options = '<option value="">All targets</option>' + targetIds.map(function (id) {
+  const options = '<option value="">All targets</option>' + targetIds.map((id) => {
     return '<option value="' + esc(id) + '"' + (id === target ? " selected" : "") + ">" + esc(id) + "</option>";
   }).join("");
-  var head =
+  const head =
     '<div class="wide">' +
       '<div class="pane-head"><div>' +
         '<div class="pane-desc">Every command, sync and pull run on a remote target, with its output - as the CLI (swiss remote \u2026) and the remote MCP tools ran it.</div>' +
@@ -282,8 +282,8 @@ function render()       {
     "</div>";
   $("pane").innerHTML = head;
   paintList();
-  var sel = $                   ("rrTarget");
-  if (sel) sel.onchange = function () {
+  const sel = $                   ("rrTarget");
+  if (sel) sel.onchange = () => {
     target = sel.value;
     cursors = [null];
     page = 0;
@@ -293,7 +293,7 @@ function render()       {
 }
 
 function paintList()       {
-  var region = $("rrList");
+  const region = $("rrList");
   if (!region) return;
   if (!active.length && !runs.length) {
     region.innerHTML = page || target
@@ -302,7 +302,7 @@ function paintList()       {
     if (page) region.innerHTML += pagerHtml();
     return;
   }
-  var rows = active.map(function (r) { return row(r, true); }).join("") + runs.map(function (r) { return row(r, false); }).join("");
+  const rows = active.map((r) => { return row(r, true); }).join("") + runs.map((r) => { return row(r, false); }).join("");
   region.innerHTML = '<div class="group">' + rows + "</div>" + pagerHtml();
 }
 
@@ -331,12 +331,12 @@ export async function mount() {
   await loadTargets();
   if (!(await load())) return;
   render();
-  $("pane").onclick = function (event            )       {
-    var tog = targetEl(event)?.closest             ("[data-rtog]");
+  $("pane").onclick = (event            )       => {
+    const tog = targetEl(event)?.closest             ("[data-rtog]");
     if (tog) { toggle(Number(tog.dataset.rtog)); return; }
-    var more = targetEl(event)?.closest             ("[data-rmore]");
+    const more = targetEl(event)?.closest             ("[data-rmore]");
     if (more) { void loadBody(Number(more.dataset.rmore), true); return; }
-    var cancel = targetEl(event)?.closest             ("[data-rcancel]");
+    const cancel = targetEl(event)?.closest             ("[data-rcancel]");
     if (cancel) { void cancelRun(Number(cancel.dataset.rcancel)); return; }
     if (targetEl(event)?.closest("#rrClear")) { void clearAll(); return; }
     if (targetEl(event)?.closest("#rrPrev")) { void step(-1); return; }

@@ -35,20 +35,20 @@ import { closeSheet } from "../add-sheet.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, groupFieldHtml, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
 
-var targets = [] as RemoteTargetRow[];
-var endpoints = [] as RemoteEndpointRow[];
-var presence = "";
-var groupNames = ["default"];
-var editing = null as string | null; // the id an open sheet is editing, null when adding
-var pendingGroup = null as string | null; // the group whose header + opened the sheet; the select still wins
-var dragging = null as string | null; // in-flight row drag: a poll must not rebuild under it
-var draggingGroup = null as string | null; // in-flight group drag, same rule
-var painted = ""; // structural signature of the drawn list; a poll that changes nothing repaints nothing
-var collapsed = {} as Record<string, boolean>; // the groups fold map, loaded once before the first paint
+let targets = [] as RemoteTargetRow[];
+let endpoints = [] as RemoteEndpointRow[];
+let presence = "";
+let groupNames = ["default"];
+let editing = null as string | null; // the id an open sheet is editing, null when adding
+let pendingGroup = null as string | null; // the group whose header + opened the sheet; the select still wins
+let dragging = null as string | null; // in-flight row drag: a poll must not rebuild under it
+let draggingGroup = null as string | null; // in-flight group drag, same rule
+let painted = ""; // structural signature of the drawn list; a poll that changes nothing repaints nothing
+let collapsed = {} as Record<string, boolean>; // the groups fold map, loaded once before the first paint
 
 async function load() {
-  var e = await apiJson<ApiRemoteEndpointsResponse>("/api/remote/endpoints");
-  var t = await apiJson<ApiRemoteTargetsResponse>("/api/remote/targets");
+  const e = await apiJson<ApiRemoteEndpointsResponse>("/api/remote/endpoints");
+  const t = await apiJson<ApiRemoteTargetsResponse>("/api/remote/targets");
   if (!e || !t) return false; // apiJson toasted; keep the last paint
   presence = e.presence || "none";
   endpoints = e.endpoints || [];
@@ -66,22 +66,22 @@ async function reload() {
 }
 
 function endpointLabel(id: string): string {
-  var hit = endpoints.find(function (e) { return e.id === id; });
+  const hit = endpoints.find((e) => { return e.id === id; });
   return hit ? hit.label || hit.id : id;
 }
 
 // The dot mirrors the endpoint's state: filled = connected, hollow = idle (will start
 // on demand), amber = mid-transition. The title always says the state in words.
 function endpointDot(id: string): string {
-  var st = (endpoints.find(function (e) { return e.id === id; }) || {} as RemoteEndpointRow).state || "unknown";
-  var cls = st === "connected" || st === "up" ? "up" : st === "idle" ? "idle" : "starting";
+  const st = (endpoints.find((e) => { return e.id === id; }) || {} as RemoteEndpointRow).state || "unknown";
+  const cls = st === "connected" || st === "up" ? "up" : st === "idle" ? "idle" : "starting";
   return '<span class="dot ' + cls + '" title="endpoint ' + esc(st) + '"></span>';
 }
 
 function signature(): string {
-  return presence + "\u0000" + endpoints.map(function (e) { return e.id + "=" + e.state; }).join(",") + "\u0000" +
+  return presence + "\u0000" + endpoints.map((e) => { return e.id + "=" + e.state; }).join(",") + "\u0000" +
     groupNames.join(",") + "\u0000" +
-    targets.map(function (t) {
+    targets.map((t) => {
       return [t.id, t.endpoint, t.workspaceRoot, (t.capabilities || []).join("+"), t.group || ""].join("|");
     }).join("\n");
 }
@@ -91,9 +91,9 @@ function chip(text: string): string {
 }
 
 function row(t: RemoteTargetRow): string {
-  var caps = (t.capabilities || []).map(chip).join("");
+  const caps = (t.capabilities || []).map(chip).join("");
   // A label the sheet defaulted to the alias (see save) is not worth saying twice.
-  var label = t.label && t.label !== t.id ? ' <span class="text-3">' + esc(t.label) + "</span>" : "";
+  const label = t.label && t.label !== t.id ? ' <span class="text-3">' + esc(t.label) + "</span>" : "";
   return (
     '<div class="row row-act" data-rmrow="' + esc(t.id) + '">' + endpointDot(t.endpoint) +
       '<div class="row-main">' +
@@ -114,39 +114,39 @@ function cfg(): GroupCfg<RemoteTargetRow> {
     names: groupNames,
     collapsed: collapsed,
     noun: "target",
-    addTitle: function (g) { return "Add a remote target to " + g; },
-    onAdd: function (g) {
+    addTitle: (g) => { return "Add a remote target to " + g; },
+    onAdd: (g) => {
       pendingGroup = g; // a real name now - the sheet's Group select starts on it
       openSheet(null);
     },
-    reload: function () { return reload(); },
+    reload: () => { return reload(); },
     render: paint,
-    afterDrag: function () { paint(); }, // the catch-up rebuild a deferred poll owes
+    afterDrag: () => { paint(); }, // the catch-up rebuild a deferred poll owes
     drag: {
-      get: function () { return dragging; },
-      set: function (v) { dragging = v; },
+      get: () => { return dragging; },
+      set: (v) => { dragging = v; },
     },
     dragGroup: {
-      get: function () { return draggingGroup; },
-      set: function (v) { draggingGroup = v; },
+      get: () => { return draggingGroup; },
+      set: (v) => { draggingGroup = v; },
     },
-    rowsHtml: function (g) { return g.rows.map(row).join(""); },
-    rowId: function (r) { return r.id; },
+    rowsHtml: (g) => { return g.rows.map(row).join(""); },
+    rowId: (r) => { return r.id; },
     // Ids are validated slugs (a-z 0-9 -), so a bare attribute selector is safe.
-    rowSel: function (r) { return '[data-rmrow="' + r.id + '"]'; },
-    rowsById: function () { return targets; },
+    rowSel: (r) => { return '[data-rmrow="' + r.id + '"]'; },
+    rowsById: () => { return targets; },
     groupOfRow: groupOf(groupNames),
     onMoveRow: moveRow,
-    onAssign: function (id, g) { void assign(id, g); },
+    onAssign: (id, g) => { void assign(id, g); },
   };
 }
 
 /** Paint the groups region only - the head, the quiet line and the chip stay put. */
 function paint(): void {
-  var region = $("rmGroups");
+  const region = $("rmGroups");
   if (!region) return;
   region.innerHTML = "";
-  slice(targets, groupNames, groupOf(groupNames)).forEach(function (g) {
+  slice(targets, groupNames, groupOf(groupNames)).forEach((g) => {
     region.appendChild(mountGroup(cfg(), g));
   });
 }
@@ -159,9 +159,9 @@ function render(): void {
   // who else writes it; the drag is taught by the list itself, not by prose.
   // The status line names the presence only when it is NOT the normal one: "serving ·
   // 3 endpoints served by tunnels" said serving twice.
-  var status = endpoints.length + " endpoint" + (endpoints.length === 1 ? "" : "s") + " served by tunnels";
+  let status = endpoints.length + " endpoint" + (endpoints.length === 1 ? "" : "s") + " served by tunnels";
   if (presence !== "serving") status = "Tunnels " + esc(presence) + " · " + status;
-  var head =
+  const head =
     '<div class="wide">' +
       '<div class="pane-head"><div>' +
         '<div class="pane-desc">Machines the gateway can run commands on, reached over Tunnels SSH connections. The CLI (swiss remote …) writes the same table.</div>' +
@@ -191,27 +191,27 @@ function render(): void {
  *  the scope's order route - a reject takes the server's word for it. */
 function moveRow(id: string, targetId: string, before: boolean): void {
   if (!id || !targetId || id === targetId) return;
-  var item = targets.filter(function (r) { return r.id === id; })[0];
+  const item = targets.filter((r) => { return r.id === id; })[0];
   if (!item) return;
-  var to = targets.findIndex(function (r) { return r.id === targetId; });
+  const to = targets.findIndex((r) => { return r.id === targetId; });
   if (to < 0) return; // target vanished mid-drag - leave everything where it is
   targets.splice(targets.indexOf(item), 1);
   targets.splice(before ? to : to + 1, 0, item);
   painted = ""; // the optimistic move changed the structure the signature would compare
   paint();
-  saveOrder("targets", targets.map(function (r) { return r.id; }));
+  saveOrder("targets", targets.map((r) => { return r.id; }));
 }
 
 /** Put one row in a group after a drop-into: applied locally first so the row jumps
  *  immediately, then the member PUT - the server's canonical spelling wins. */
 async function assign(id: string, group: string | null): Promise<void> {
-  var row = targets.filter(function (r) { return r.id === id; })[0];
+  const row = targets.filter((r) => { return r.id === id; })[0];
   if (!row) return;
   if (groupOf(groupNames)(row) === (group || groupNames[0])) return;
   row.group = group;
   painted = "";
   paint();
-  var j = await assignMember("targets", id, group);
+  const j = await assignMember("targets", id, group);
   if (!j) { await reload(); return; }
   row.group = j.group; // the canonical name the server stored
   painted = "";
@@ -222,21 +222,21 @@ async function assign(id: string, group: string | null): Promise<void> {
    closeSheet from add-sheet.js, backdrop click closes. */
 function openSheet(target: RemoteTargetRow | null): void {
   editing = target ? target.id : null;
-  var endpointOptions = endpoints
-    .map(function (e) {
-      var sel = target && target.endpoint === e.id ? " selected" : "";
+  const endpointOptions = endpoints
+    .map((e) => {
+      const sel = target && target.endpoint === e.id ? " selected" : "";
       return '<option value="' + esc(e.id) + '"' + sel + ">" + esc(e.label || e.id) + "</option>";
     })
     .join("");
   // The Group select is where the row lands: the group whose + opened the sheet
   // preselects, the last used one otherwise, and a value the user changed wins.
-  var groupSel = target
+  const groupSel = target
     ? groupOf(groupNames)(target)
     : pendingGroup || lastGroup("targets") || groupNames[0];
   pendingGroup = null;
-  var caps = ["exec", "sync", "files"];
-  var capBoxes = caps
-    .map(function (c) {
+  const caps = ["exec", "sync", "files"];
+  const capBoxes = caps
+    .map((c) => {
       return '<label class="check"><input type="checkbox" id="rmcap-' + c + '"> ' + c + "</label>";
     })
     .join(" ");
@@ -259,7 +259,7 @@ function openSheet(target: RemoteTargetRow | null): void {
   // Prefill programmatically, not via value=" markup": the pane redraws by signature,
   // and programmatic values are the one source of truth an edit and a test can both read.
   $<HTMLInputElement>("rm-id").disabled = !!editing; // the alias never edits; state set here, not in markup
-  caps.forEach(function (c) {
+  caps.forEach((c) => {
     $<HTMLInputElement>("rmcap-" + c).checked = target ? (target.capabilities || []).indexOf(c) >= 0 : c === "exec";
   });
   if (target) {
@@ -267,16 +267,16 @@ function openSheet(target: RemoteTargetRow | null): void {
     $<HTMLInputElement>("rm-root").value = target.workspaceRoot || "";
   }
   $("rm-cancel").onclick = closeSheet;
-  $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
+  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
   $("rm-save").onclick = save;
   if (!editing) $("rm-id").focus();
 }
 
 async function save(): Promise<void> {
-  var caps = ["exec", "sync", "files"].filter(function (c) { return $<HTMLInputElement>("rmcap-" + c).checked; });
+  const caps = ["exec", "sync", "files"].filter((c) => { return $<HTMLInputElement>("rmcap-" + c).checked; });
   if (!caps.length) { toast("Pick at least one capability", true); return; }
-  var id = editing || $<HTMLInputElement>("rm-id").value.trim();
-  var body: RemoteTargetBody = {
+  const id = editing || $<HTMLInputElement>("rm-id").value.trim();
+  const body: RemoteTargetBody = {
     // The store refuses an empty label (swiss-remote target.rs), and the field says
     // optional: an alias is a fine label, so a blank one becomes the alias rather than
     // a rejected save the user cannot see the reason for.
@@ -295,10 +295,10 @@ async function save(): Promise<void> {
     toast("Workspace root must be an absolute POSIX path", true);
     return;
   }
-  var url = "/api/remote/targets";
+  let url = "/api/remote/targets";
   if (editing) url += "/" + encodeURIComponent(editing);
   else body.id = id;
-  var j = await apiJson(url, { method: "POST", body: JSON.stringify(body) });
+  const j = await apiJson(url, { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
   if (body.group) rememberGroup("targets", body.group);
   closeSheet();
@@ -307,7 +307,7 @@ async function save(): Promise<void> {
 
 async function removeTarget(id: string): Promise<void> {
   if (!confirm("Delete target " + id + "? The Tunnels connection and any files on the machine are not touched.")) return;
-  var d = await apiJson("/api/remote/targets/" + encodeURIComponent(id), { method: "DELETE" });
+  const d = await apiJson("/api/remote/targets/" + encodeURIComponent(id), { method: "DELETE" });
   if (!d) return;
   await reload();
 }
@@ -316,27 +316,27 @@ export async function mount() {
   collapsed = loadCollapsed("targets");
   if (!(await load())) return;
   render();
-  $("pane").onclick = function (event: MouseEvent): void {
-    var add = targetEl(event)?.closest("#rmAdd");
+  $("pane").onclick = (event: MouseEvent): void => {
+    const add = targetEl(event)?.closest("#rmAdd");
     if (add) { pendingGroup = null; openSheet(null); return; }
-    var newGroup = targetEl(event)?.closest("#rmNewGroup");
+    const newGroup = targetEl(event)?.closest("#rmNewGroup");
     if (newGroup) { void newGroupFlow("targets", groupNames, reload); return; }
-    var edit = targetEl(event)?.closest<HTMLElement>("[data-rmedit]");
+    const edit = targetEl(event)?.closest<HTMLElement>("[data-rmedit]");
     if (edit) {
-      var hit = targets.find(function (t) { return t.id === edit!.dataset.rmedit; });
+      const hit = targets.find((t) => { return t.id === edit?.dataset.rmedit; });
       if (hit) openSheet(hit);
       return;
     }
-    var more = targetEl(event)?.closest<HTMLElement>("[data-rmmore]");
+    const more = targetEl(event)?.closest<HTMLElement>("[data-rmmore]");
     if (more) {
       // The opening click must not reach document (menu.js closes on outside clicks).
       event.stopPropagation();
-      var t = targets.find(function (x) { return x.id === more!.dataset.rmmore; });
+      const t = targets.find((x) => { return x.id === more?.dataset.rmmore; });
       if (!t) return;
       popupMenu(more.getBoundingClientRect(), [
-        { label: "Edit", fn: function () { openSheet(t!); } },
+        { label: "Edit", fn: () => { openSheet(t!); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: function () { removeTarget(t!.id); } },
+        { label: "Delete", danger: true, fn: () => { removeTarget(t?.id); } },
       ]);
     }
   };

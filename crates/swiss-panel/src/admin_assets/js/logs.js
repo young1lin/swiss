@@ -32,10 +32,10 @@ function fmtChars(n        )         {
  */
 function fmtJson(text                           )         {
   if (!text) return "";
-  var body = text, tail = "";
-  var cut = text.lastIndexOf("\n\n[");
+  let body = text, tail = "";
+  const cut = text.lastIndexOf("\n\n[");
   if (cut > 0 && text.charAt(text.length - 1) === "]") { body = text.slice(0, cut); tail = text.slice(cut); }
-  var trimmed = body.trim();
+  const trimmed = body.trim();
   if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return text;
   try {
     return JSON.stringify(JSON.parse(trimmed), null, 2) + tail;
@@ -47,7 +47,7 @@ function fmtJson(text                           )         {
 /** docs/33 C1: the house clipboard idiom (connect.js copyText, data-csv dbCopyText) for the log
  *  blocks: async clipboard first, the textarea fallback second, one quiet toast either way. */
 function legacyCopy(text        )       {
-  var ta = document.createElement("textarea");
+  const ta = document.createElement("textarea");
   ta.value = text;
   ta.setAttribute("readonly", "");
   ta.style.position = "fixed";
@@ -73,7 +73,7 @@ async function copyLogText(text        )                {
  *  error text and a truncated payload that no longer parses keep the C1 pre. */
 function parseJsonBlock(text        )          {
   if (!text) return null;
-  var trimmed = text.trim();
+  const trimmed = text.trim();
   if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return null;
   try { return JSON.parse(trimmed); } catch (e) { return null; }
 }
@@ -83,17 +83,17 @@ function parseJsonBlock(text        )          {
    to what the operator actually opened. Expansion lives in the caller's `open` map (path -> bool)
    — the 6-second repaint rebuilds the tree from it and the open nodes survive. Containers shallower
    than depth 2 record an initial `true` once, so defaults and explicit toggles share one truth. */
-function jtDiv(cls        )                 { var n = document.createElement("div"); n.className = cls; return n; }
-function jtSpan(cls        , text        )                  { var n = document.createElement("span"); n.className = cls; n.textContent = text; return n; }
+function jtDiv(cls        )                 { const n = document.createElement("div"); n.className = cls; return n; }
+function jtSpan(cls        , text        )                  { const n = document.createElement("span"); n.className = cls; n.textContent = text; return n; }
 function jtBtn(cls        , title        )                    {
-  var b = document.createElement("button");
+  const b = document.createElement("button");
   b.type = "button"; b.className = "btn icon " + cls; b.title = title;
   b.setAttribute("aria-label", title);
   return b;
 }
 function jtSummary(v         )         {
   if (Array.isArray(v)) return v.length ? "[" + v.length + "]" : "[]";
-  var n = Object.keys(v                           ).length;
+  const n = Object.keys(v                           ).length;
   return n ? "{" + n + "}" : "{}";
 }
 function jtCopyText(v         )         {
@@ -103,37 +103,37 @@ function jtCopyText(v         )         {
 }
 
 function jtNode(parentEl             , key                 , val       , path        , open                         )       {
-  var isObj = val !== null && typeof val === "object";
+  const isObj = val !== null && typeof val === "object";
   if (isObj && open[path] === undefined) open[path] = false; // top-level shape first; details on demand
-  var row = jtDiv("jt-row" + (isObj && open[path] ? " open" : ""));
+  const row = jtDiv("jt-row" + (isObj && open[path] ? " open" : ""));
   // Keys identify fields, so they use the text face and omit JSON's punctuation-heavy quotes.
   // The block copy action still returns exact, valid JSON.
-  var keySpan = jtSpan("jt-key", String(key));
-  var colSpan = jtSpan("jt-col", ":");
-  var cp = jtBtn("jt-copy", "Copy value");
+  const keySpan = jtSpan("jt-key", String(key));
+  const colSpan = jtSpan("jt-col", ":");
+  const cp = jtBtn("jt-copy", "Copy value");
   cp.dataset.copy = "1";
   cp.innerHTML = icon("copy");
-  cp.onclick = function () { void copyLogText(jtCopyText(val)); };
+  cp.onclick = () => { void copyLogText(jtCopyText(val)); };
   if (isObj) {
-    var chev = jtBtn("jt-chev", "Toggle");
+    const chev = jtBtn("jt-chev", "Toggle");
     chev.innerHTML = icon("chevron-right");
-    var kids = jtDiv("jt-kids");
-    var renderKids = function () {
+    const kids = jtDiv("jt-kids");
+    const renderKids = () => {
       while (kids.firstChild) kids.removeChild(kids.firstChild);
       if (!open[path]) return;
-      var entries                               = Array.isArray(val)
-        ? val.map(function (v       , i        )                    { return [i, v]; })
-        : Object.keys(val).map(function (k        )                    { return [k, val[k]]; });
-      entries.forEach(function (e) { jtNode(kids, e[0], e[1]         , path + e[0] + "/", open); });
+      const entries                               = Array.isArray(val)
+        ? val.map((v       , i        )                    => { return [i, v]; })
+        : Object.keys(val).map((k        )                    => { return [k, val[k]]; });
+      entries.forEach((e) => { jtNode(kids, e[0], e[1]         , path + e[0] + "/", open); });
     };
-    var setChevronLabel = function () {
-      var label = (open[path] ? "Collapse " : "Expand ") + String(key);
+    const setChevronLabel = () => {
+      const label = (open[path] ? "Collapse " : "Expand ") + String(key);
       chev.title = label;
       chev.setAttribute("aria-label", label);
       chev.setAttribute("aria-expanded", open[path] ? "true" : "false");
     };
     setChevronLabel();
-    chev.onclick = function () {
+    chev.onclick = () => {
       open[path] = !open[path];
       row.className = "jt-row" + (open[path] ? " open" : "");
       setChevronLabel();
@@ -145,7 +145,7 @@ function jtNode(parentEl             , key                 , val       , path   
     row.appendChild(jtSpan("jt-sum", jtSummary(val)));
     row.appendChild(cp);
     if (open[path]) renderKids();
-    var wrap = jtDiv("jt-node");
+    const wrap = jtDiv("jt-node");
     wrap.appendChild(row);
     wrap.appendChild(kids);
     parentEl.appendChild(wrap);
@@ -153,9 +153,9 @@ function jtNode(parentEl             , key                 , val       , path   
     row.appendChild(jtDiv("jt-spc"));
     row.appendChild(keySpan);
     row.appendChild(colSpan);
-    var text = typeof val === "string" ? JSON.stringify(val) : String(val);
+    const text = typeof val === "string" ? JSON.stringify(val) : String(val);
     // Strings use the neutral base style; numbers and literals keep semantic hooks for alignment.
-    var cls = typeof val === "number" ? " n" : typeof val === "string" ? "" : " b";
+    const cls = typeof val === "number" ? " n" : typeof val === "string" ? "" : " b";
     row.appendChild(jtSpan("jt-val" + cls, text.length > 200 ? text.slice(0, 200) + "…" : text));
     row.appendChild(cp);
     parentEl.appendChild(row);
@@ -167,7 +167,7 @@ function jtNode(parentEl             , key                 , val       , path   
  *  C1's pre highlighter is gone with the tree here: a pre that reached hlJson could never have
  *  parsed, so hlJson could only ever return its input — dead code, deleted, not kept. */
 function blockHtml(raw                           , kind        , seq        , ok         )         {
-  var pretty = fmtJson(raw);
+  const pretty = fmtJson(raw);
   if (parseJsonBlock(pretty) != null) return '<div class="jtree" data-jtree="' + kind + ":" + seq + '"></div>';
   return '<pre class="logs' + (ok ? "" : " err") + '"' + (kind === "out" ? ' data-out="' + seq + '"' : "") + ">" +
     esc(pretty || (kind === "args" ? "(none)" : "(empty)")) + "</pre>";
@@ -182,14 +182,14 @@ function buildJsonTree(host             , value       , open                    
   // the built state. Assigning only one would strip the other (found live on 19998).
   host.className = "jtree jtree-in";
   while (host.firstChild) host.removeChild(host.firstChild);
-  var entries                               = Array.isArray(value)
-    ? value.map(function (v       , i        )                    { return [i, v]; })
-    : Object.keys(value).map(function (k        )                    { return [k, value[k]]; });
+  const entries                               = Array.isArray(value)
+    ? value.map((v       , i        )                    => { return [i, v]; })
+    : Object.keys(value).map((k        )                    => { return [k, value[k]]; });
   if (!entries.length) {
     host.appendChild(jtSpan("jt-empty", Array.isArray(value) ? "[]" : "{}"));
     return;
   }
-  entries.forEach(function (e) { jtNode(host, e[0], e[1]         , "/" + e[0] + "/", open); });
+  entries.forEach((e) => { jtNode(host, e[0], e[1]         , "/" + e[0] + "/", open); });
 }
 
 /** docs/33 C2: mount every open row's tree blocks. Called after a repaint (the poll rebuilds
@@ -200,10 +200,10 @@ function mountJsonTrees(d           , onlySeq                         )       {
   // Callers hand a DATASET value in ("4" from data-callseq / data-full), the log stores numbers —
   // normalize once here or `seq !== onlySeq` silently skips every row (found live on 19998).
   if (onlySeq != null) onlySeq = Number(onlySeq);
-  document.querySelectorAll("#tabbody .call.open").forEach(function (rowEl) {
-    var seq = Number(rowEl.getAttribute("data-seq"));
+  document.querySelectorAll("#tabbody .call.open").forEach((rowEl) => {
+    const seq = Number(rowEl.getAttribute("data-seq"));
     if (!seq || (onlySeq != null && seq !== onlySeq)) return;
-    var c = (d.calls || []).find(function (r) { return r.seq === seq; });
+    const c = (d.calls || []).find((r) => { return r.seq === seq; });
     if (!c) return;
     mountBlock(rowEl, d, c, "args", c.args);
     mountBlock(rowEl, d, c, "out", d.callsFull[seq] != null ? d.callsFull[seq] : c.output);
@@ -213,12 +213,12 @@ function mountJsonTrees(d           , onlySeq                         )       {
 /** One block: build the tree when the value parses. A preview that was truncated mid-JSON painted
  *  a pre; once the full reply parses, the out block's pre is upgraded to a tree in place. */
 function mountBlock(rowEl         , d           , c               , kind        , raw               )       {
-  var value = parseJsonBlock(fmtJson(raw || ""));
+  const value = parseJsonBlock(fmtJson(raw || ""));
   if (value == null) return;
-  var slot = rowEl.querySelector             ('[data-jtree="' + kind + ":" + c.seq + '"]');
+  let slot = rowEl.querySelector             ('[data-jtree="' + kind + ":" + c.seq + '"]');
   if (!slot) {
     if (kind !== "out") return; // args are never truncated — no pre to upgrade
-    var pre = rowEl.querySelector("pre[data-out]");
+    const pre = rowEl.querySelector("pre[data-out]");
     if (!pre) return;
     slot = document.createElement("div");
     slot.className = "jtree";
@@ -232,19 +232,19 @@ function mountBlock(rowEl         , d           , c               , kind        
 
 /** docs/33 C1: a block label row — the caption plus the copy affordance for that block. */
 function lblHtml(text        , kind        , seq        )         {
-  var label = kind === "args" ? "Copy arguments" : "Copy result";
+  const label = kind === "args" ? "Copy arguments" : "Copy result";
   return '<div class="call-lbl">' + text +
     '<button class="btn icon" data-copy="' + kind + ":" + seq + '" aria-label="' + label + '" title="' + label + '">' +
     icon("copy") + "</button></div>";
 }
 
 function callHtml(d           , c               )         {
-  var when = new Date(c.at).toLocaleString();
-  var meta = when + "  ·  " + c.via + (c.client ? "  ·  " + c.client : "") + "  ·  " + c.ms + " ms  ·  " + fmtChars(c.chars);
+  const when = new Date(c.at).toLocaleString();
+  const meta = when + "  ·  " + c.via + (c.client ? "  ·  " + c.client : "") + "  ·  " + c.ms + " ms  ·  " + fmtChars(c.chars);
   // A page ships only the head of each reply. Offer the rest instead of leaving a dangling tail.
-  var full = d.callsFull[c.seq];
-  var body = full != null ? full : c.output;
-  var more = c.preview && full == null
+  const full = d.callsFull[c.seq];
+  const body = full != null ? full : c.output;
+  const more = c.preview && full == null
     ? '<div class="form-actions"><button class="btn" data-full="' + c.seq + '">Show full result (' + esc(fmtChars(c.chars)) + ")</button></div>"
     : "";
   return '<div class="call' + (d.callsOpen[c.seq] ? " open" : "") + '" data-seq="' + c.seq + '">' +
@@ -266,7 +266,7 @@ function callHtml(d           , c               )         {
  *  is in flight. The number NEVER shows the target — pending must not pretend to be committed
  *  (docs/32 B1). One builder for the full paint and the in-place chrome patch, so they cannot drift. */
 function callsStatusHtml(d           )         {
-  var page = d.callsPage + 1;
+  const page = d.callsPage + 1;
   return d.callsPendingPage != null
     ? "Page " + page + " · " + '<span class="spin"></span>' + "Loading…"
     : "Page " + page;
@@ -289,18 +289,18 @@ function logsBody(d           )         {
   }
   /* docs/31: server-side search over the stored calls. The input re-renders with the page, but
    * renderCallsOnly swaps the LIVE node back in, so focus and caret survive a result repaint. */
-  var q = d.callsQ || "";
-  var head = '<div class="sec-head"><span class="sec-cap">Tool calls · newest first</span>' +
+  const q = d.callsQ || "";
+  const head = '<div class="sec-head"><span class="sec-cap">Tool calls · newest first</span>' +
     '<input id="callsQ" type="search" placeholder="Search calls" aria-label="Search tool calls"' +
     ' value="' + esc(q) + '">' +
     '<button class="btn icon" id="clMenu" aria-label="More log actions" title="More log actions">' + icon("ellipsis") + "</button></div>";
-  var busy = d.callsPendingPage != null;
-  var body = "", pager = "";
+  const busy = d.callsPendingPage != null;
+  let body = "", pager = "";
   if (d.calls == null) {
     body = callsErrHtml(d); // the very first load failed — the error replaces the shell, not the rows
   } else {
     body = d.calls.length
-      ? '<div class="group">' + d.calls.map(function (c) { return callHtml(d, c); }).join("") + "</div>"
+      ? '<div class="group">' + d.calls.map((c) => { return callHtml(d, c); }).join("") + "</div>"
       : '<div class="group"><div class="row"><span class="rowmsg">' +
         (d.callsPage
           ? "Nothing on this page."
@@ -316,20 +316,20 @@ function logsBody(d           )         {
         '<button class="btn" id="clNext"' + (!busy && d.callsMore ? "" : " disabled") + ">Older</button></div>"
       : "";
   }
-  var errHtml = d.callsError && d.calls != null ? callsErrHtml(d) : "";
+  const errHtml = d.callsError && d.calls != null ? callsErrHtml(d) : "";
   /* One region for rows/pager/error lets a pending switch mark itself busy in place, without
    * touching the search box above it or the stderr section below it (docs/32 B1). */
-  var region = '<div class="calls" id="callsRegion" aria-busy="' + (busy ? "true" : "false") + '">' +
+  const region = '<div class="calls" id="callsRegion" aria-busy="' + (busy ? "true" : "false") + '">' +
     body + pager + errHtml + "</div>";
-  var err = "";
+  let err = "";
   if (d.stderr) {
     err = '<div class="sec-head" style="padding-top:var(--s5)"><span class="sec-cap">Child process stderr</span></div>' +
       '<div class="group"><pre class="logs">' + esc(d.stderr) + "</pre></div>";
   } else if ((d.config && d.config.type) === "proc") {
     /* An empty stderr on a proc answers a different question depending on whether a child exists
        yet. Blank space here reads as "logs went missing" — say which of the three blanks it is. */
-    var st = (rowOf(d.name) || {}             ).lifecycle;
-    var why = st === "idle"
+    const st = (rowOf(d.name) || {}             ).lifecycle;
+    const why = st === "idle"
       ? "No child process yet — a lazy proc starts on the first request (or the Start button). If that start fails, the failure reason and whatever the child printed land here."
       : st === "error"
         ? "The child printed nothing before failing — the failure reason is in this MCP's header and on the Config tab."
@@ -342,10 +342,10 @@ function logsBody(d           )         {
 
 /** Expand/collapse one call without re-rendering: a poll must not close what you just opened. */
 function toggleCall(seq        )       {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
   d.callsOpen[seq] = !d.callsOpen[seq];
-  var node = document.querySelector('#tabbody .call[data-seq="' + seq + '"]');
+  const node = document.querySelector('#tabbody .call[data-seq="' + seq + '"]');
   if (node) node.className = "call" + (d.callsOpen[seq] ? " open" : "");
   if (d.callsOpen[seq]) mountJsonTrees(d, seq); // docs/33 C2: trees build when the row opens
 }
@@ -355,16 +355,16 @@ function toggleCall(seq        )       {
  *  eight arguments would otherwise lose the last four with no way to see them from here. */
 function argLine(args                                   )         {
   if (!args.length) return "";
-  var plain = args.map(function (a) { return a.name; }).join(", ");
-  return '<div class="args" title="' + esc(plain) + '">' + args.map(function (a) {
+  const plain = args.map((a) => { return a.name; }).join(", ");
+  return '<div class="args" title="' + esc(plain) + '">' + args.map((a) => {
     return a.req ? "<b>" + esc(a.name) + "</b>" : esc(a.name);
   }).join(", ") + "</div>";
 }
 
 /** A tool stays one quiet row until the user asks for its complete MCP metadata. */
 function toolDetail(it            , args        )         {
-  var description = it.description || "No description provided.";
-  var schema = it.inputSchema ? JSON.stringify(it.inputSchema, null, 2) : "No input schema provided.";
+  const description = it.description || "No description provided.";
+  const schema = it.inputSchema ? JSON.stringify(it.inputSchema, null, 2) : "No input schema provided.";
   return '<details class="item-detail">' +
     '<summary title="' + esc(description) + '">' +
       '<span class="item-chev">' + icon("chevron-right") + "</span>" +
@@ -380,12 +380,12 @@ function toolDetail(it            , args        )         {
 }
 
 function kindBody(d           , kind        , m                           )         {
-  var kd = d[kind                                     ];
+  const kd = d[kind                                     ];
   // Resources get a master on/off at the top: off empties the list (the capability stays, so the
   // notify stays valid) and tells connected clients to re-list. Symmetric with the per-tool toggle.
-  var resToggle = "";
+  let resToggle = "";
   if (kind === "resources" && kd.loaded) {
-    var on = kd.resourceEnabled !== false;
+    const on = kd.resourceEnabled !== false;
     resToggle = '<div class="row row-act"><div class="row-main"><div class="name">Expose resources</div>' +
       '<div class="desc">' + (on ? "visible to clients" : "hidden — clients see no resources") + "</div></div>" +
       '<button class="sw" role="switch" aria-checked="' + (on ? "true" : "false") +
@@ -399,24 +399,24 @@ function kindBody(d           , kind        , m                           )     
   if (kd.error) {
     // Keep the pager: pageNext/pagePrev push the cursor optimistically, so a failed page used to
     // leave the tab with no way back except the global Refresh (which resets to page one).
-    var errPager = kd.cursors.length > 1
+    const errPager = kd.cursors.length > 1
       ? '<div class="pager"><button class="btn" id="pgPrev">Previous</button><span>Page ' + kd.cursors.length +
         '</span><button class="btn" id="pgNext"' + (kd.nextCursor ? "" : " disabled") + ">Next</button></div>"
       : "";
     return '<div class="group"><div class="row"><span class="rowmsg warn">' + esc(kd.error) +
       "</span></div></div>" + errPager;
   }
-  var rows;
+  let rows;
   if (!kd.items.length && !(kind === "tools" && kd.disabled && kd.disabled.length)) {
     // An empty list still needs the toggle bar above it (resources can be hidden, not just absent),
     // so this is composed into `rows` and the resToggle header is added by the normal return below
     // rather than short-circuiting out of the function.
-    var emptyMsg = kind === "resources" && kd.resourceEnabled === false
+    const emptyMsg = kind === "resources" && kd.resourceEnabled === false
       ? "Resources are hidden — turn them on above to expose them to clients."
       : "No " + kind + ".";
     rows = '<div class="row"><span class="rowmsg">' + esc(emptyMsg) + "</span></div>";
   } else {
-    rows = kd.items.map(function (it) {
+    rows = kd.items.map((it) => {
     if (kind === "resources") {
       // Read mirrors the tools' Try button: a resource is only believable once you have seen its
       // contents, and its URI is the whole input, so no form is needed.
@@ -425,17 +425,17 @@ function kindBody(d           , kind        , m                           )     
         (it.description ? '<div class="desc">' + esc(it.description) + "</div>" : "") + "</div>" +
         '<button class="btn" data-read="' + esc(it.uri) + '" title="Read this resource">Read</button></div>';
     }
-    var args = "";
+    let args = "";
     if (kind === "prompts" && it.arguments && it.arguments.length) {
-      args = argLine(it.arguments.map(function (a) { return { name: a.name, req: !!a.required }; }));
+      args = argLine(it.arguments.map((a) => { return { name: a.name, req: !!a.required }; }));
     }
     if (kind === "tools" && it.inputSchema && it.inputSchema.properties) {
-      var req = it.inputSchema.required || [];
-      args = argLine(Object.keys(it.inputSchema.properties).map(function (k) {
+      const req = it.inputSchema.required || [];
+      args = argLine(Object.keys(it.inputSchema.properties).map((k) => {
         return { name: k, req: req.indexOf(k) >= 0 };
       }));
     }
-    var main = '<div class="name">' + esc(it.name) + "</div>" +
+    const main = '<div class="name">' + esc(it.name) + "</div>" +
       (it.description ? '<div class="desc">' + esc(it.description) + "</div>" : "") + args;
     // Tools get a Try button: it opens Run with this tool already selected, so a tool can be
     // exercised from the list it was found in. A toggle turns the tool off for clients — it drops
@@ -454,7 +454,7 @@ function kindBody(d           , kind        , m                           )     
   // toggle the other way, so a tool can be switched back on from the same place it was switched off.
   if (kind === "tools" && kd.disabled && kd.disabled.length) {
     rows += '<div class="group-cap">Disabled — not shown to clients</div>';
-    rows += kd.disabled.map(function (name) {
+    rows += kd.disabled.map((name) => {
       return '<div class="row row-act muted"><div class="row-main"><div class="name">' + esc(name) + "</div>" +
         '<div class="desc">hidden from tools/list until re-enabled</div></div>' +
         '<button class="sw" role="switch" aria-checked="false" aria-label="Visible to clients" data-toggle="' +
@@ -462,9 +462,9 @@ function kindBody(d           , kind        , m                           )     
     }).join("");
   }
 
-  var page = kd.cursors.length;
-  var pages = kd.total != null ? " of " + Math.max(1, Math.ceil(kd.total / kd.pageSize)) : "";
-  var pager = (page > 1 || kd.nextCursor)
+  const page = kd.cursors.length;
+  const pages = kd.total != null ? " of " + Math.max(1, Math.ceil(kd.total / kd.pageSize)) : "";
+  const pager = (page > 1 || kd.nextCursor)
     ? '<div class="pager"><button class="btn" id="pgPrev"' + (page <= 1 ? " disabled" : "") + ">Previous</button>" +
       "<span>Page " + page + pages + (kd.loading ? ' <span class="spin"></span>' : "") + "</span>" +
       '<button class="btn" id="pgNext"' + (kd.nextCursor ? "" : " disabled") + ">Next</button></div>"

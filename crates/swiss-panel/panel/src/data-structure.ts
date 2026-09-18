@@ -25,7 +25,7 @@ import { renderDbBar } from "./data-sql.js";
 
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
 
-var DB_TABS = [
+const DB_TABS = [
   { id: "data", label: "Data" },
   { id: "form", label: "Form" },
   { id: "columns", label: "Columns" },
@@ -35,59 +35,61 @@ var DB_TABS = [
 ];
 
 function dbSetTab(t: string): void {
-  var d = state.db;
-  if (d!.tab === t) return;
+  const d = state.db;
+  const d_ = d!;
+  if (d_.tab === t) return;
   // docs/22 W5.1: the form opens on the row the keyboard focused, and the grid's focus
   // returns to the form's row — one cursor, two presentations of it.
-  if (t === "form" && d!.focus) d!.formIdx = d!.focus.r;
-  if (t === "data" && d!.formIdx != null) d!.focus = { r: d!.formIdx, c: d!.focus ? d!.focus.c : 0 };
-  d!.tab = t as DbState["tab"];
+  if (t === "form" && d_.focus) d_.formIdx = d_.focus.r;
+  if (t === "data" && d_.formIdx != null) d_.focus = { r: d_.formIdx, c: d_.focus ? d_.focus.c : 0 };
+  d_.tab = t as DbState["tab"];
   renderDbToolbar();
   renderDbFilters();
   renderDbGrid();
   renderDbBar();
-  if (t !== "data" && t !== "form" && d!.conn && d!.table) dbLoadDetail();
+  if (t !== "data" && t !== "form" && d_.conn && d_.table) dbLoadDetail();
 }
 
 // One /schema request chain: a slow answer for the table the user just left must be
 // dropped, or it would paint the OLD table's structure (and rewrite d.schema) over the new
 // one's (docs/22 closeout audit).
-var dbDetailReq = dbReqGuard();
+const dbDetailReq = dbReqGuard();
 
 async function dbLoadDetail(): Promise<void> {
-  var d = state.db;
-  if (!d!.conn || !d!.table) return;
-  d!.detailBusy = true;
+  const d = state.db;
+  const d_ = d!;
+  if (!d_.conn || !d_.table) return;
+  d_.detailBusy = true;
   renderDbGrid();
-  var q = "/api/db/" + encodeURIComponent(d!.conn) + "/schema?table=" + encodeURIComponent(d!.table);
-  if (d!.schema) q += "&schema=" + encodeURIComponent(d!.schema);
-  var token = dbDetailReq.issue();
-  var j = await apiJson<ApiDbTableDetail>(q);
+  let q = "/api/db/" + encodeURIComponent(d_.conn) + "/schema?table=" + encodeURIComponent(d_.table);
+  if (d_.schema) q += "&schema=" + encodeURIComponent(d_.schema);
+  const token = dbDetailReq.issue();
+  const j = await apiJson<ApiDbTableDetail>(q);
   if (!dbDetailReq.accepts(token)) return; // superseded: a newer table owns the detail
-  d!.detailBusy = false;
-  if (!j) { d!.detail = null; renderDbGrid(); return; }
-  d!.detail = j;
-  d!.schema = j.schema;
+  d_.detailBusy = false;
+  if (!j) { d_.detail = null; renderDbGrid(); return; }
+  d_.detail = j;
+  d_.schema = j.schema;
   renderDbGrid();
 }
 
 function dbRenderTabs(ctl: HTMLElement): void {
-  var d = state.db;
-  var seg = el("div", "db-tabs");
+  const d = state.db;
+  const seg = el("div", "db-tabs");
   seg.setAttribute("role", "tablist");
-  DB_TABS.forEach(function (t: { id: string; label: string }): void {
-    var b = el("button", "", t.label);
+  DB_TABS.forEach((t: { id: string; label: string }): void => {
+    const b = el("button", "", t.label);
     b.setAttribute("role", "tab");
-    b.setAttribute("aria-selected", String(d!.tab === t.id));
-    b.onclick = function () { dbSetTab(t.id); };
+    b.setAttribute("aria-selected", String(d?.tab === t.id));
+    b.onclick = () => { dbSetTab(t.id); };
     seg.appendChild(b);
   });
   ctl.appendChild(seg);
   // The Table menu: rename / truncate / drop, guarded by typed confirms server- AND client-side.
   if (!dbIsRedis()) {
-    var tblBtn = el("button", "btn", "Table \u25be");
+    const tblBtn = el("button", "btn", "Table \u25be");
     tblBtn.title = "Rename, truncate or drop this table";
-    tblBtn.onclick = function (e: MouseEvent): void { e.stopPropagation(); dbTableMenu(tblBtn); };
+    tblBtn.onclick = (e: MouseEvent): void => { e.stopPropagation(); dbTableMenu(tblBtn); };
     ctl.appendChild(tblBtn);
   }
 }
@@ -95,29 +97,30 @@ function dbRenderTabs(ctl: HTMLElement): void {
 /** The Structure tabs reuse the grid wrapper: Columns/Indexes/FKs render as plain tables,
  *  DDL as a monospace block. */
 function renderDbDetailGrid(wrap: HTMLElement): void {
-  var d = state.db;
-  if (d!.detailBusy) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
-  if (!d!.detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
-  var det = d!.detail;
-  if (d!.tab === "ddl") {
+  const d = state.db;
+  const d_ = d!;
+  if (d_.detailBusy) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+  if (!d_.detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
+  const det = d_.detail;
+  if (d_.tab === "ddl") {
     wrap.appendChild(el("div", "db-detail-meta",
-      (d!.conn && d!.conns.some(function (c: ApiDbConnectionRow): boolean { return c.name === d!.conn && c.dialect === "pg"; })
+      (d_.conn && d_.conns.some((c: ApiDbConnectionRow): boolean => { return c.name === d?.conn && c.dialect === "pg"; })
         ? "Postgres keeps DDL in migration scripts — this sketch is assembled from the catalog."
         : "From SHOW CREATE TABLE.")));
-    var pre = el("pre", "db-ddl db-sql-hl");
+    const pre = el("pre", "db-ddl db-sql-hl");
     pre.style.position = "static"; // undo the overlay absolute positioning — this is a plain block
     pre.innerHTML = dbHighlightSql(dbAlignDdl(det.ddl || "(no DDL)"));
     wrap.appendChild(pre);
     return;
   }
-  var tbl = el("table", "db-grid");
-  var thead = el("thead");
-  var hr = el("tr");
-  var spec: DbDetailSpec;
-  if (d!.tab === "columns") {
+  const tbl = el("table", "db-grid");
+  const thead = el("thead");
+  const hr = el("tr");
+  let spec: DbDetailSpec;
+  if (d_.tab === "columns") {
     spec = {
       head: ["Column", "Type", "Nullable", "Default", "Key", "Comment"],
-      row: function (c: ApiDbColumn) {
+      row: (c: ApiDbColumn) => {
         return [c.name, c.dataType, c.nullable ? "YES" : "NO",
           c.defaultValue == null ? "—" : String(c.defaultValue),
           c.isPrimaryKey ? "PRI" : "",
@@ -128,10 +131,10 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
       rows: det.columns,
       meta: det.columns.length + " columns · primary key: " + (det.primaryKey.join(", ") || "none"),
     };
-  } else if (d!.tab === "indexes") {
+  } else if (d_.tab === "indexes") {
     spec = {
       head: ["Index", "Unique", "Primary", "Columns"],
-      row: function (x: { name: string; unique: boolean; primary: boolean; columns: string[]; definition?: string }) {
+      row: (x: { name: string; unique: boolean; primary: boolean; columns: string[]; definition?: string }) => {
         return [x.name, x.unique ? "yes" : "no", x.primary ? "yes" : "no",
           (x.columns && x.columns.length ? x.columns.join(", ") : "") || (x.definition || "")];
       },
@@ -141,7 +144,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
   } else {
     spec = {
       head: ["Constraint", "Column", "References"],
-      row: function (f: ApiDbFkRow) {
+      row: (f: ApiDbFkRow) => {
         // docs/22 W5.2: the target name carries its fk — the renderer draws it as a link
         // (read-only navigation; the grid header's arrow is the filtered jump).
         return [f.name, f.column, { text: f.refSchema + "." + f.refTable + " (" + f.refColumn + ")", fk: f }];
@@ -153,16 +156,17 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
   // docs/22 W4.6: the tab's own create action rides the meta line (the W3.3 idiom) —
   // the same sheet family the table list's New table opens, prefilled with this table's
   // old state so the commit diffs against what is already there.
-  var meta = el("div", "db-detail-meta");
+  const meta = el("div", "db-detail-meta");
   meta.appendChild(el("span", "", spec.meta));
   meta.appendChild(el("span", "grow"));
-  if (d!.tab === "columns" || d!.tab === "indexes") {
-    var add = el("button", "btn", d!.tab === "columns" ? "Add column…" : "New index…") as HTMLButtonElement;
+  if (d_.tab === "columns" || d_.tab === "indexes") {
+    const add = el("button", "btn", d_.tab === "columns" ? "Add column…" : "New index…") as HTMLButtonElement;
     add.type = "button";
-    add.onclick = function (): void {
-      openDbDdlSheet(d!.tab === "columns" ? "column" : "index", {
+    add.onclick = (): void => {
+      const d_ = d!;
+      openDbDdlSheet(d_.tab === "columns" ? "column" : "index", {
         dialect: dbDialectOf(),
-        conn: d!.conn!,
+        conn: d_.conn!,
         schema: det.schema || "",
         table: det.table,
         columns: det.columns,
@@ -171,25 +175,26 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
     meta.appendChild(add);
   }
   wrap.appendChild(meta);
-  spec.head.forEach(function (h: string): void { hr.appendChild(el("th", "db-col", h)); });
+  spec.head.forEach((h: string): void => { hr.appendChild(el("th", "db-col", h)); });
   thead.appendChild(hr);
   tbl.appendChild(thead);
-  var tbody = el("tbody");
-  spec.rows.forEach(function (r: unknown): void {
-    var tr = el("tr");
-    spec.row(r).forEach(function (v: string | { text: unknown; cls?: string; fk?: ApiDbFkRow }): void {
-      var cell = v && typeof v === "object" ? v : { text: v, cls: "" };
-      var td = el("td", "db-cell" + (cell.cls ? " " + cell.cls : ""));
+  const tbody = el("tbody");
+  spec.rows.forEach((r: unknown): void => {
+    const tr = el("tr");
+    spec.row(r).forEach((v: string | { text: unknown; cls?: string; fk?: ApiDbFkRow }): void => {
+      const cell = v && typeof v === "object" ? v : { text: v, cls: "" };
+      const td = el("td", "db-cell" + (cell.cls ? " " + cell.cls : ""));
+      const fk_ = cell.fk!;
       if (cell.fk) {
         // docs/22 W5.2: the referenced table opens on click — no filter here, just the
         // navigation (the arrow in the grid header owns the filtered jump).
-        var ref = el("button", "db-fk-ref") as HTMLButtonElement;
+        const ref = el("button", "db-fk-ref") as HTMLButtonElement;
         ref.type = "button";
         ref.textContent = String(cell.text);
-        ref.title = "Open " + (cell.fk!.refSchema ? cell.fk!.refSchema + "." : "") + cell.fk!.refTable;
-        ref.onclick = function () {
+        ref.title = "Open " + (fk_.refSchema ? fk_.refSchema + "." : "") + fk_.refTable;
+        ref.onclick = () => {
           if (!dbOkToDrop()) return;
-          dbOpenTable({ name: cell.fk!.refTable, schema: cell.fk!.refSchema || null as unknown as string });
+          dbOpenTable({ name: cell.fk!.refTable, schema: cell.fk?.refSchema || null as unknown as string });
         };
         td.appendChild(ref);
       } else td.textContent = String(cell.text);
@@ -205,7 +210,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
    names padded to a common width, types padded to a common width, so NOT NULL / DEFAULT
    line up down the page. Works on MySQL SHOW CREATE TABLE output and the Postgres sketch
    alike — both are one-definition-per-line already; this only adds the alignment. */
-var DDL_MOD_WORDS = new Set((
+const DDL_MOD_WORDS = new Set((
   "NOT NULL DEFAULT AUTO_INCREMENT PRIMARY UNIQUE REFERENCES COMMENT CHARACTER COLLATE " +
   "GENERATED CHECK CONSTRAINT NULLS FIRST AFTER STORAGE INVISIBLE VISIBLE ON USING WITH"
 ).split(" "));
@@ -213,22 +218,22 @@ var DDL_MOD_WORDS = new Set((
 /** One column-definition line: quoted name, then type tokens, then modifiers. Returns null
  *  for lines that are not column definitions (PRIMARY KEY, KEY, CONSTRAINT, tail, etc). */
 function dbParseColumnLine(line: string): { indent: string; name: string; type: string; mods: string; comma: boolean } | null {
-  var m = /^(\s*)([`"][^`"]+[`"])\s+(.*?)(,?)\s*$/.exec(line);
+  const m = /^(\s*)([`"][^`"]+[`"])\s+(.*?)(,?)\s*$/.exec(line);
   if (!m) return null;
-  var rest = m[3];
-  var tokens = rest.split(/\s+/).filter(Boolean);
-  var typeParts: string[] = [];
-  var i = 0;
+  const rest = m[3];
+  const tokens = rest.split(/\s+/).filter(Boolean);
+  const typeParts: string[] = [];
+  let i = 0;
   while (i < tokens.length) {
-    var t = tokens[i];
-    var upper = t.toUpperCase().replace(/\(.*$/, "");
+    const t = tokens[i];
+    const upper = t.toUpperCase().replace(/\(.*$/, "");
     if (typeParts.length && DDL_MOD_WORDS.has(upper)) break;
     typeParts.push(t);
     i++;
     // swallow a parenthesized argument list that follows the type word (varchar(32), decimal(10,2))
     if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(t) && tokens[i] && /^\(/.test(tokens[i])) {
       // merge a split "(...)" spanning several tokens (spaces inside parens are rare but legal)
-      var depth = 0, merged = "";
+      let depth = 0, merged = "";
       while (i < tokens.length) {
         merged += tokens[i];
         depth += (tokens[i].match(/\(/g) || []).length - (tokens[i].match(/\)/g) || []).length;
@@ -240,26 +245,26 @@ function dbParseColumnLine(line: string): { indent: string; name: string; type: 
       typeParts[typeParts.length - 1] = t + merged.replace(/\s+\)/g, ")").replace(/\(\s+/g, "(");
     }
   }
-  var mods = tokens.slice(i).join(" ");
+  const mods = tokens.slice(i).join(" ");
   if (!typeParts.length) return null;
   return { indent: m[1], name: m[2], type: typeParts.join(" "), mods: mods, comma: m[4] === "," };
 }
 
 function dbAlignDdl(ddl: string | null): string {
   if (!ddl) return ddl!;
-  var lines = ddl.split(/\r?\n/);
-  var parsed = lines.map(function (l) { return dbParseColumnLine(l); });
-  var wName = 0, wType = 0;
-  parsed.forEach(function (p) {
+  const lines = ddl.split(/\r?\n/);
+  const parsed = lines.map((l) => { return dbParseColumnLine(l); });
+  let wName = 0, wType = 0;
+  parsed.forEach((p) => {
     if (!p) return;
     if (p.name.length > wName) wName = p.name.length;
     if (p.type.length > wType) wType = p.type.length;
   });
   if (!wName) return ddl; // nothing recognized — leave the DDL exactly as the server sent it
-  return lines.map(function (l, i) {
-    var p = parsed[i];
+  return lines.map((l, i) => {
+    const p = parsed[i];
     if (!p) return l.replace(/^\s{4}/, "  "); // constraints and the tail: gentle 2-space re-indent
-    var out = "  " + p.name.padEnd(wName + 2) + p.type.padEnd(wType + 2) + p.mods.replace(/\s+/g, " ").trim();
+    const out = "  " + p.name.padEnd(wName + 2) + p.type.padEnd(wType + 2) + p.mods.replace(/\s+/g, " ").trim();
     return out.replace(/\s+$/, "") + ",";
   }).join("\n");
 }

@@ -34,33 +34,34 @@ import { popupMenu } from "./menu.js";
    refused or failed command stops the run and the operator re-commits the rest. */
 
 function dbIsRedis(): boolean {
-  var d = state.db;
-  var c = d!.conns.find(function (x: ApiDbConnectionRow): boolean { return x.name === d!.conn; });
+  const d = state.db;
+  const c = d?.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === d?.conn; });
   return !!c && c.dialect === "redis";
 }
 
 // One SCAN page in flight (docs/22 closeout audit): More re-entering while a page loads
 // re-sent the SAME cursor and appended that page twice. A reset (grep, type filter, refresh)
 // still goes through — it restarts the walk from cursor 0 and supersedes.
-var dbKeysLoading = false;
+let dbKeysLoading = false;
 
 // One /keys request chain (docs/22 closeout B3): a slow More answer landing after a reset
 // spliced its old-cursor page into the FRESH walk and dragged the cursor backward, so later
 // pages shifted under the user (a key quietly went missing from the list). Responses apply
 // only while their token is still the newest request.
-var dbKeysReq = dbReqGuard();
+const dbKeysReq = dbReqGuard();
 
 async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
-  var d = state.db;
-  if (!d!.conn) return;
+  const d = state.db;
+  const d_ = d!;
+  if (!d_.conn) return;
   if (!reset && dbKeysLoading) return; // the More double-click: the page is already on its way
-  if (reset) { d!.redis = null; d!.redisKey = null; }
-  var q = "/api/db/" + encodeURIComponent(d!.conn) + "/keys?count=200";
-  if (d!.grep) q += "&pattern=" + encodeURIComponent(d!.grep);
-  if (d!.redisType) q += "&type=" + encodeURIComponent(d!.redisType);
-  if (d!.redis && d!.redis.cursor && d!.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d!.redis.cursor);
-  var token = dbKeysReq.issue();
-  var j: ApiDbRedisKeysResponse | null;
+  if (reset) { d_.redis = null; d_.redisKey = null; }
+  let q = "/api/db/" + encodeURIComponent(d_.conn) + "/keys?count=200";
+  if (d_.grep) q += "&pattern=" + encodeURIComponent(d_.grep);
+  if (d_.redisType) q += "&type=" + encodeURIComponent(d_.redisType);
+  if (d_.redis && d_.redis.cursor && d_.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d_.redis.cursor);
+  const token = dbKeysReq.issue();
+  let j: ApiDbRedisKeysResponse | null;
   dbKeysLoading = true;
   try {
     j = await apiJson<ApiDbRedisKeysResponse>(q);
@@ -72,13 +73,13 @@ async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
     // docs/22 closeout B1: apiJson already toasted the server's own text, but a transient
     // toast over a list that still says "no keys" reads as an empty keyspace. Mark the
     // failure so the list paints it (renderDbTables), keeping the last good page.
-    d!.redisError = true;
+    d_.redisError = true;
     renderDbTables();
     return;
   }
-  d!.redisError = false;
-  d!.redis = {
-    keys: (d!.redis && !reset ? d!.redis!.keys : []).concat(j.keys || []),
+  d_.redisError = false;
+  d_.redis = {
+    keys: (d_.redis && !reset ? d_.redis?.keys : []).concat(j.keys || []),
     cursor: j.cursor,
     done: !!j.done,
     total: j.total,
@@ -89,24 +90,25 @@ async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
 
 // One /key request chain: a slow answer for the key the user just left must be dropped,
 // or it would flash the PREVIOUS key's value into the pane (docs/22 closeout audit).
-var dbValueReq = dbReqGuard();
+const dbValueReq = dbReqGuard();
 
 async function dbLoadRedisValue(key: string): Promise<void> {
-  var d = state.db;
+  const d = state.db;
   // A fresh key selection is a navigation: drop the command result that owned the pane,
   // or the grid guard would keep rendering it and the value would never show.
-  d!.sqlResult = null;
-  d!.sqlResults = null; d!.sqlTab = 0; // docs/22 W4.3: key navigation closes every result tab
-  d!.sqlBusy = false;
-  d!.redisKey = key;
-  d!.redisValue = null; // drop the previous key's value — never flash stale data
-  d!.redisEdits = null; // and its buffered edits — a different key cannot adopt them
+  const d_ = d!;
+  d_.sqlResult = null;
+  d_.sqlResults = null; d_.sqlTab = 0; // docs/22 W4.3: key navigation closes every result tab
+  d_.sqlBusy = false;
+  d_.redisKey = key;
+  d_.redisValue = null; // drop the previous key's value — never flash stale data
+  d_.redisEdits = null; // and its buffered edits — a different key cannot adopt them
   renderDbGrid();
-  var token = dbValueReq.issue();
-  var j = await apiJson<ApiDbRedisValue>("/api/db/" + encodeURIComponent(d!.conn!) + "/key?key=" + encodeURIComponent(key));
+  const token = dbValueReq.issue();
+  const j = await apiJson<ApiDbRedisValue>("/api/db/" + encodeURIComponent(d_.conn!) + "/key?key=" + encodeURIComponent(key));
   if (!dbValueReq.accepts(token)) return; // superseded: a newer key owns the pane
-  if (!j) { d!.redisKey = null; renderDbGrid(); return; }
-  d!.redisValue = j;
+  if (!j) { d_.redisKey = null; renderDbGrid(); return; }
+  d_.redisValue = j;
   renderDbGrid();
 }
 
@@ -117,7 +119,7 @@ async function dbLoadRedisValue(key: string): Promise<void> {
    add button and the refusals use. `deletable` is false only for list: redis has no command
    that removes one item by index without rewriting the tail, so the buffer offers nothing it
    cannot honor (dbgate's list changeset stops at LSET/RPUSH for the same reason). */
-var DB_REDIS_TYPES: Record<string, DbRedisTypeCfg> = {
+const DB_REDIS_TYPES: Record<string, DbRedisTypeCfg> = {
   hash: { cols: ["field", "value"], edit: ["value"], ins: ["field", "value"], thing: "field", deletable: true, add: "+ Field" },
   zset: { cols: ["member", "score"], edit: ["score"], ins: ["member", "score"], thing: "member", deletable: true, add: "+ Member" },
   list: { cols: ["index", "value"], edit: ["value"], ins: ["value"], thing: "item", deletable: false, add: "+ Row" },
@@ -133,18 +135,19 @@ function dbRedisValidScore(s: string): boolean {
 /** The buffer for the key in view, rebuilt when the key or its type changed. Null when the
  *  view holds no editable container. */
 function dbRedisEdits(): DbRedisEdits | null {
-  var d = state.db;
-  var v = d!.redisValue;
-  if (!d!.redisKey || !v || !DB_REDIS_TYPES[v.type]) return null;
-  if (!d!.redisEdits || d!.redisEdits.key !== d!.redisKey || d!.redisEdits.type !== v.type) {
-    d!.redisEdits = { key: d!.redisKey!, type: v.type, updates: {}, deletes: {}, inserts: [] };
+  const d = state.db;
+  const d_ = d!;
+  const v = d_.redisValue;
+  if (!d_.redisKey || !v || !DB_REDIS_TYPES[v.type]) return null;
+  if (!d_.redisEdits || d_.redisEdits.key !== d_.redisKey || d_.redisEdits.type !== v.type) {
+    d_.redisEdits = { key: d_.redisKey!, type: v.type, updates: {}, deletes: {}, inserts: [] };
   }
-  return d!.redisEdits;
+  return d_.redisEdits;
 }
 
 /** How many changes the bar counts. Pure over the buffer. */
 function dbRedisPendingCount(): number {
-  var b = state.db && state.db.redisEdits;
+  const b = state.db && state.db.redisEdits;
   if (!b) return 0;
   return Object.keys(b.updates).length + Object.keys(b.deletes).length + b.inserts.length;
 }
@@ -158,10 +161,10 @@ function dbRedisPendingCount(): number {
 function dbRedisCommands(key: string, type: string, buf: { updates: Record<string, unknown>; deletes: Record<string, unknown>; inserts: Record<string, unknown>[] }): { verb: string; args: unknown[] }[] {
   // A zset score goes on the wire as a number — except redis' own inf spellings, which JSON
   // cannot number and travel as the strings ZADD accepts verbatim.
-  var scoreArg = function (s: string): string | number { return s === "inf" || s === "-inf" ? s : Number(s); };
-  var addrOf: Record<string, string> = { hash: "field", zset: "member", set: "member" };
-  var addr = addrOf[type];
-  var i: number, ins: Record<string, unknown>;
+  const scoreArg = (s: string): string | number => { return s === "inf" || s === "-inf" ? s : Number(s); };
+  const addrOf: Record<string, string> = { hash: "field", zset: "member", set: "member" };
+  const addr = addrOf[type];
+  let i: number, ins: Record<string, unknown>;
   for (i = 0; i < buf.inserts.length; i++) {
     ins = buf.inserts[i];
     if (addr && !String(ins[addr] == null ? "" : ins[addr]).trim()) {
@@ -172,15 +175,15 @@ function dbRedisCommands(key: string, type: string, buf: { updates: Record<strin
     }
   }
   if (type === "zset") {
-    Object.keys(buf.updates).forEach(function (m: string): void {
+    Object.keys(buf.updates).forEach((m: string): void => {
       if (!dbRedisValidScore(String(buf.updates[m]))) {
         throw new Error('not a valid score for "' + m + '": use a number, or inf / -inf');
       }
     });
   }
-  var out: { verb: string; args: unknown[] }[] = [];
-  var push = function (verb: string, args: unknown[]): void { out.push({ verb: verb, args: args }); };
-  Object.keys(buf.updates).forEach(function (a: string): void {
+  const out: { verb: string; args: unknown[] }[] = [];
+  const push = (verb: string, args: unknown[]): void => { out.push({ verb: verb, args: args }); };
+  Object.keys(buf.updates).forEach((a: string): void => {
     if (type === "hash") push("HSET", [key, a, buf.updates[a]]);
     else if (type === "zset") push("ZADD", [key, scoreArg(buf.updates[a] as string), a]);
     else if (type === "list") push("LSET", [key, Number(a), buf.updates[a]]);
@@ -192,7 +195,7 @@ function dbRedisCommands(key: string, type: string, buf: { updates: Record<strin
     else if (type === "list") push("RPUSH", [key, ins.value]);
     else if (type === "set") push("SADD", [key, ins.member]);
   }
-  Object.keys(buf.deletes).forEach(function (a) {
+  Object.keys(buf.deletes).forEach((a) => {
     if (type === "hash") push("HDEL", [key, a]);
     else if (type === "zset") push("ZREM", [key, a]);
     else if (type === "set") push("SREM", [key, a]);
@@ -203,7 +206,7 @@ function dbRedisCommands(key: string, type: string, buf: { updates: Record<strin
 /** One command as the preview shows it — dbgate's convertRedisCallListToScript shape: verb,
  *  then args with STRINGS double-quoted (inner quotes escaped) and numbers plain. Pure. */
 function dbRedisCommandText(cmd: { verb: string; args: unknown[] }): string {
-  return cmd.verb + " " + cmd.args.map(function (a: unknown): string {
+  return cmd.verb + " " + cmd.args.map((a: unknown): string => {
     return typeof a === "number" ? String(a) : '"' + String(a).replace(/"/g, '\\"') + '"';
   }).join(" ");
 }
@@ -212,11 +215,11 @@ function dbRedisCommandText(cmd: { verb: string; args: unknown[] }): string {
  *  member / index string), `cells` the per-column text with buffered edits applied, the
  *  flags the pending state the row paints. Pure. */
 function dbRedisEntries(v: ApiDbRedisValue, buf: DbRedisEdits): { addr: string; deleted: boolean; updated: boolean; cells: Record<string, unknown> }[] {
-  var out: { addr: string; deleted: boolean; updated: boolean; cells: Record<string, unknown> }[] = [];
-  var val = v.value as Record<string, unknown> || {};
+  const out: { addr: string; deleted: boolean; updated: boolean; cells: Record<string, unknown> }[] = [];
+  const val = v.value as Record<string, unknown> || {};
   if (v.type === "hash" || v.type === "zset") {
-    Object.keys(val).forEach(function (a: string): void {
-      var upd = buf.updates[a];
+    Object.keys(val).forEach((a: string): void => {
+      const upd = buf.updates[a];
       out.push({
         addr: a,
         deleted: !!buf.deletes[a],
@@ -227,13 +230,13 @@ function dbRedisEntries(v: ApiDbRedisValue, buf: DbRedisEdits): { addr: string; 
       });
     });
   } else if (v.type === "list") {
-    (v.value as unknown[] || []).forEach(function (item: unknown, i: number): void {
-      var a = String(i);
-      var upd = buf.updates[a];
+    (v.value as unknown[] || []).forEach((item: unknown, i: number): void => {
+      const a = String(i);
+      const upd = buf.updates[a];
       out.push({ addr: a, deleted: false, updated: upd != null, cells: { index: a, value: upd != null ? upd : String(item) } });
     });
   } else if (v.type === "set") {
-    (v.value as unknown[] || []).forEach(function (m: unknown): void {
+    (v.value as unknown[] || []).forEach((m: unknown): void => {
       out.push({ addr: String(m), deleted: !!buf.deletes[m as string], updated: false, cells: { member: String(m) } });
     });
   }
@@ -241,30 +244,31 @@ function dbRedisEntries(v: ApiDbRedisValue, buf: DbRedisEdits): { addr: string; 
 }
 
 function dbRenderRedisValue(wrap: HTMLElement): void {
-  var d = state.db;
-  if (!d!.redisKey) {
+  const d = state.db;
+  const d_ = d!;
+  if (!d_.redisKey) {
     // The shared empty state (docs/18 V7).
     wrap.innerHTML = emptyHtml({ icon: "database", title: "Select a key", hint: "Pick a key on the left to view its value." });
     return;
   }
-  var v = d!.redisValue;
-  if (!v) { wrap.appendChild(el("div", "db-hint", "Loading " + d!.redisKey + "…")); return; }
-  var meta = el("div", "db-detail-meta");
+  const v = d_.redisValue;
+  if (!v) { wrap.appendChild(el("div", "db-hint", "Loading " + d_.redisKey + "…")); return; }
+  const meta = el("div", "db-detail-meta");
   meta.appendChild(document.createTextNode(v.key + " · " + v.type + " · "));
   meta.appendChild(dbRedisTtl(v));
   if (v.length != null) meta.appendChild(document.createTextNode(" · " + v.length + " entries"));
   if (v.truncated) meta.appendChild(document.createTextNode(" · truncated"));
   meta.appendChild(el("span", "grow"));
-  var cfg = DB_REDIS_TYPES[v.type];
+  const cfg = DB_REDIS_TYPES[v.type];
   if (cfg) {
     // One add action per view; it buffers a row, never touches redis directly.
-    var add = el("button", "btn", cfg.add) as HTMLButtonElement;
+    const add = el("button", "btn", cfg.add) as HTMLButtonElement;
     add.title = "Buffer a new " + cfg.thing + " — applied only on Commit";
-    add.onclick = function (): void {
-      var b = dbRedisEdits();
+    add.onclick = (): void => {
+      const b = dbRedisEdits();
       if (!b) return;
-      var ins: Record<string, unknown> = {};
-      cfg.ins.forEach(function (c) { ins[c] = c === "score" ? "0" : ""; });
+      const ins: Record<string, unknown> = {};
+      cfg.ins.forEach((c) => { ins[c] = c === "score" ? "0" : ""; });
       b.inserts.push(ins);
       renderDbGrid();
       renderDbBar();
@@ -274,13 +278,13 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   // docs/22 W1.3: the key's own actions ride the value header. Rename takes a one-input
   // sheet, Delete is last and red and demands the key name typed back — the same confirm
   // vocabulary as the table DDL ops. Everything runs through the guarded /command console.
-  var more = el("button", "btn icon") as HTMLButtonElement;
+  const more = el("button", "btn icon") as HTMLButtonElement;
   more.type = "button";
   more.innerHTML = icon("ellipsis");
   more.title = "Rename or delete this key";
   // stopPropagation or the document-level click closer (connect.js) eats the menu the same
   // click opened — every other popupMenu trigger does the same.
-  more.onclick = function (e: MouseEvent): void { e.stopPropagation(); dbRedisKeyMenu(more); };
+  more.onclick = (e: MouseEvent): void => { e.stopPropagation(); dbRedisKeyMenu(more); };
   meta.appendChild(more);
   wrap.appendChild(meta);
   if (v.type === "none") {
@@ -291,7 +295,7 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   if (cfg) { dbRedisTypedTable(wrap, v, cfg); return; }
   if (v.type === "string") { dbRedisStringEditor(wrap, v); return; }
   // Stream and module types stay read-only — their commands have no field grid (docs/22 W3.3).
-  var pre = el("pre", "db-ddl");
+  const pre = el("pre", "db-ddl");
   pre.style.position = "static";
   pre.style.margin = "var(--s2)";
   pre.textContent = typeof v.value === "string" ? v.value : JSON.stringify(v.value, null, 2);
@@ -301,33 +305,34 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
 /** The TTL readout is itself the control (docs/22 W3.3): click to edit in place, Enter runs
  *  EXPIRE — or PERSIST when emptied — through the guarded console, then the key re-reads. */
 function dbRedisTtl(v: ApiDbRedisValue): HTMLElement {
-  var d = state.db;
-  var btn = el("button", "db-ttl", v.ttl! < 0 ? "no expiry" : v.ttl! + "s") as HTMLButtonElement;
+  const d = state.db;
+  const btn = el("button", "db-ttl", v.ttl! < 0 ? "no expiry" : v.ttl! + "s") as HTMLButtonElement;
   btn.type = "button";
   btn.title = "Change the TTL — Enter applies EXPIRE, empty removes it (PERSIST)";
-  btn.onclick = function () {
-    var input = el("input", "db-ttl-in") as HTMLInputElement;
+  btn.onclick = () => {
+    const input = el("input", "db-ttl-in") as HTMLInputElement;
     input.value = v.ttl! < 0 ? "" : String(v.ttl);
     input.placeholder = "seconds";
     btn.replaceWith(input);
     input.focus();
     input.select();
-    var ran = false;
+    let ran = false;
     function apply() {
       if (ran) return;
       ran = true;
-      var secs: string = input.value.trim();
-      if (secs && !/^\d+$/.test(secs)) { toast("TTL must be a whole number of seconds", true); dbLoadRedisValue(d!.redisKey!); return; }
-      var line = secs ? "EXPIRE " + d!.redisKey + " " + secs : "PERSIST " + d!.redisKey;
-      void dbRedisCommand(line).then(function (j: unknown): void {
+      const secs: string = input.value.trim();
+      const d_ = d!;
+      if (secs && !/^\d+$/.test(secs)) { toast("TTL must be a whole number of seconds", true); dbLoadRedisValue(d_.redisKey!); return; }
+      const line = secs ? "EXPIRE " + d_.redisKey + " " + secs : "PERSIST " + d_.redisKey;
+      void dbRedisCommand(line).then((j: unknown): void => {
         if (j) toast(secs ? "TTL set to " + secs + "s" : "TTL removed");
-        dbLoadRedisValue(d!.redisKey!);
+        dbLoadRedisValue(d?.redisKey!);
       });
     }
-    input.onkeydown = function (e: KeyboardEvent): void {
+    input.onkeydown = (e: KeyboardEvent): void => {
       e.stopPropagation();
       if (e.key === "Enter") { e.preventDefault(); apply(); }
-      else if (e.key === "Escape") { e.preventDefault(); ran = true; dbLoadRedisValue(d!.redisKey!); }
+      else if (e.key === "Escape") { e.preventDefault(); ran = true; dbLoadRedisValue(d?.redisKey!); }
     };
     input.onblur = apply;
   };
@@ -338,38 +343,38 @@ function dbRedisTtl(v: ApiDbRedisValue): HTMLElement {
  *  struck rows, the narrow ✕/↩ control column), pointing at the redis buffer instead of the
  *  SQL edit buffer. */
 function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTypeCfg): void {
-  var d = state.db;
-  var b = dbRedisEdits();
+  const d = state.db;
+  const b = dbRedisEdits();
   if (!b) return;
-  var tbl = el("table", "db-grid");
-  var thead = el("thead");
-  var hr = el("tr");
+  const tbl = el("table", "db-grid");
+  const thead = el("thead");
+  const hr = el("tr");
   hr.appendChild(el("th", "db-rowctl", ""));
-  cfg.cols.forEach(function (c: string): void {
-    var th = el("th", "db-col", c);
+  cfg.cols.forEach((c: string): void => {
+    const th = el("th", "db-col", c);
     th.classList.add("db-rowctl"); // no sort affordance on a typed value table
     hr.appendChild(th);
   });
   thead.appendChild(hr);
   tbl.appendChild(thead);
-  var tbody = el("tbody");
+  const tbody = el("tbody");
 
   // Buffered inserts first, so they read as "the row you are about to add".
-  b.inserts.forEach(function (ins: Record<string, unknown>, i: number): void {
-    var tr = el("tr", "db-ins");
-    tr.appendChild(dbRedisRowCtl(function (): void {
-      b!.inserts.splice(i, 1);
+  b.inserts.forEach((ins: Record<string, unknown>, i: number): void => {
+    const tr = el("tr", "db-ins");
+    tr.appendChild(dbRedisRowCtl((): void => {
+      b?.inserts.splice(i, 1);
       renderDbGrid();
       renderDbBar();
     }, false, false));
-    cfg.cols.forEach(function (c: string): void {
-      var editable = cfg.ins.indexOf(c) >= 0;
-      var filled = editable && ins[c] != null && String(ins[c]) !== "";
-      var td = el("td", "db-cell db-cell-edit" + (filled ? " db-dirty" : ""));
+    cfg.cols.forEach((c: string): void => {
+      const editable = cfg.ins.indexOf(c) >= 0;
+      const filled = editable && ins[c] != null && String(ins[c]) !== "";
+      const td = el("td", "db-cell db-cell-edit" + (filled ? " db-dirty" : ""));
       td.textContent = ins[c] == null ? "" : String(ins[c]);
       if (editable) {
         td.title = "Double-click to edit";
-        td.ondblclick = function (): void {
+        td.ondblclick = (): void => {
           dbRedisCellEdit(td, i, "insert", c, ins[c] == null ? "" : String(ins[c]));
         };
       }
@@ -378,16 +383,16 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
     tbody.appendChild(tr);
   });
 
-  dbRedisEntries(v, b).forEach(function (entry: { addr: string; deleted: boolean; updated: boolean; cells: Record<string, unknown> }): void {
-    var tr = el("tr", entry.deleted ? "db-del" : "");
-    tr.appendChild(dbRedisRowCtl(function () { dbRedisToggleDelete(entry.addr); }, cfg.deletable, entry.deleted));
-    cfg.cols.forEach(function (c: string): void {
-      var editable = cfg.edit.indexOf(c) >= 0 && !entry.deleted;
-      var td = el("td", "db-cell" + (entry.updated && cfg.edit.indexOf(c) >= 0 ? " db-dirty" : "") + (editable ? " db-cell-edit" : ""));
+  dbRedisEntries(v, b).forEach((entry: { addr: string; deleted: boolean; updated: boolean; cells: Record<string, unknown> }): void => {
+    const tr = el("tr", entry.deleted ? "db-del" : "");
+    tr.appendChild(dbRedisRowCtl(() => { dbRedisToggleDelete(entry.addr); }, cfg.deletable, entry.deleted));
+    cfg.cols.forEach((c: string): void => {
+      const editable = cfg.edit.indexOf(c) >= 0 && !entry.deleted;
+      const td = el("td", "db-cell" + (entry.updated && cfg.edit.indexOf(c) >= 0 ? " db-dirty" : "") + (editable ? " db-cell-edit" : ""));
       td.textContent = entry.cells[c] == null ? "" : String(entry.cells[c]);
       td.title = td.textContent || ""; // long values truncate in the cell; the full text is one hover away
       if (editable) {
-        td.ondblclick = function (): void {
+        td.ondblclick = (): void => {
           // -1, never an insert index: save() reads >= 0 as "this is a buffered insert row",
         // and a 0 here once made every existing-row edit vanish into inserts[0] (caught live).
         dbRedisCellEdit(td, -1, entry.addr, c, String(entry.cells[c]));
@@ -406,9 +411,9 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
  *  (HDEL / ZREM / SREM on Commit) or removes a buffered insert, ↩ undoes a delete. A type
  *  with no honest delete command (list) gets no control at all. */
 function dbRedisRowCtl(onClick: () => void, deletable: boolean, deleted: boolean): HTMLElement {
-  var td = el("td", "db-rowctl");
+  const td = el("td", "db-rowctl");
   if (!deletable && !deleted) return td;
-  var b2 = el("button", "db-act", deleted ? "↩" : "✕") as HTMLButtonElement;
+  const b2 = el("button", "db-act", deleted ? "↩" : "✕") as HTMLButtonElement;
   b2.type = "button";
   b2.title = deleted ? "Undo this buffered delete" : "Buffer a delete — applied only on Commit";
   b2.onclick = onClick;
@@ -417,7 +422,7 @@ function dbRedisRowCtl(onClick: () => void, deletable: boolean, deleted: boolean
 }
 
 function dbRedisToggleDelete(addr: string): void {
-  var b = dbRedisEdits();
+  const b = dbRedisEdits();
   if (!b) return;
   if (b.deletes[addr]) delete b.deletes[addr];
   else {
@@ -431,15 +436,15 @@ function dbRedisToggleDelete(addr: string): void {
 /* The one inline cell editor at a time — the row grid's db-inline-edit vocabulary (overlay
    sized to the cell, Enter saves, Esc cancels, an outside click commits) writing to the
    redis buffer. */
-var dbRedisEditor: { ta: HTMLTextAreaElement; save: () => void } | null = null; // { ta, save } — close() must be able to unhook the dismiss too
+let dbRedisEditor: { ta: HTMLTextAreaElement; save: () => void } | null = null; // { ta, save } — close() must be able to unhook the dismiss too
 
 function dbRedisCellEdit(td: HTMLElement, insertIdx: number, addr: string, col: string, current: string): void {
   dbRedisEditorClose();
-  var wrap = $("dbGridWrap");
+  const wrap = $("dbGridWrap");
   if (!wrap) return;
-  var wrapRect = wrap.getBoundingClientRect();
-  var rect = td.getBoundingClientRect();
-  var ta = el("textarea", "db-inline-edit") as HTMLTextAreaElement;
+  const wrapRect = wrap.getBoundingClientRect();
+  const rect = td.getBoundingClientRect();
+  const ta = el("textarea", "db-inline-edit") as HTMLTextAreaElement;
   ta.rows = 1;
   ta.spellcheck = false;
   ta.value = current;
@@ -454,9 +459,9 @@ function dbRedisCellEdit(td: HTMLElement, insertIdx: number, addr: string, col: 
     ta.style.height = Math.min(Math.max(ta.scrollHeight, 22), 320) + "px";
   }
   function save(): void {
-    var raw = ta.value;
+    const raw = ta.value;
     dbRedisEditorClose();
-    var b = dbRedisEdits();
+    const b = dbRedisEdits();
     if (!b) return;
     if (col === "score" && !dbRedisValidScore(raw)) {
       toast("A score is a number, or inf / -inf", true);
@@ -464,7 +469,7 @@ function dbRedisCellEdit(td: HTMLElement, insertIdx: number, addr: string, col: 
       return;
     }
     if (insertIdx >= 0) {
-      var ins = b.inserts[insertIdx];
+      const ins = b.inserts[insertIdx];
       if (ins) ins[col] = raw;
     } else if (raw === current) {
       delete b.updates[addr]; // back to the stored value: not a change
@@ -475,7 +480,7 @@ function dbRedisCellEdit(td: HTMLElement, insertIdx: number, addr: string, col: 
     renderDbBar();
   }
   ta.oninput = autoSize;
-  ta.onkeydown = function (e: KeyboardEvent): void {
+  ta.onkeydown = (e: KeyboardEvent): void => {
     e.stopPropagation();
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
     else if (e.key === "Escape") { e.preventDefault(); dbRedisEditorClose(); renderDbGrid(); }
@@ -493,7 +498,7 @@ function dbRedisCellEdit(td: HTMLElement, insertIdx: number, addr: string, col: 
    closeout audit). */
 function dbRedisDismiss(ev: MouseEvent): void {
   if (!dbRedisEditor) return;
-  var ta = dbRedisEditor.ta;
+  const ta = dbRedisEditor.ta;
   if (ev.target === ta || ta.contains(ev.target as Node)) return;
   dbRedisEditor.save();
 }
@@ -510,27 +515,28 @@ function dbRedisEditorClose(): void {
  *  pipeline (a value keeps its spaces: pipeline args bind as separate strings, which the
  *  whitespace-splitting /command console can never promise). */
 function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
-  var d = state.db;
-  var row = el("div", "db-redis-str-row");
-  var ta = el("textarea", "db-redis-str") as HTMLTextAreaElement;
+  const d = state.db;
+  const row = el("div", "db-redis-str-row");
+  const ta = el("textarea", "db-redis-str") as HTMLTextAreaElement;
   ta.rows = 3;
   ta.spellcheck = false;
   ta.value = typeof v.value === "string" ? v.value : "";
-  var set = el("button", "btn primary", "Set") as HTMLButtonElement;
+  const set = el("button", "btn primary", "Set") as HTMLButtonElement;
   set.type = "button";
   async function go(): Promise<void> {
-    var value = ta.value;
+    const value = ta.value;
     if (value === ta.dataset.orig) { toast("Unchanged"); return; }
-    var j = await apiJson("/api/db/" + encodeURIComponent(d!.conn!) + "/redis-pipeline", {
+    const d_ = d!;
+    const j = await apiJson("/api/db/" + encodeURIComponent(d_.conn!) + "/redis-pipeline", {
       method: "POST",
-      body: JSON.stringify({ commands: [["SET", d!.redisKey!, value]] }),
+      body: JSON.stringify({ commands: [["SET", d_.redisKey!, value]] }),
     });
     if (!j) return;
-    toast("Set " + d!.redisKey);
-    dbLoadRedisValue(d!.redisKey!);
+    toast("Set " + d_.redisKey);
+    dbLoadRedisValue(d_.redisKey!);
   }
-  set.onclick = function (): void { void go(); };
-  ta.onkeydown = function (e: KeyboardEvent): void {
+  set.onclick = (): void => { void go(); };
+  ta.onkeydown = (e: KeyboardEvent): void => {
     e.stopPropagation();
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void go(); }
   };
@@ -544,51 +550,53 @@ function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
  *  preview printed (dbRedisCommands), so the two cannot drift. A refusal keeps the buffer —
  *  the toast already said which command and why. */
 async function dbRedisCommit(): Promise<void> {
-  var d = state.db;
-  var b = dbRedisEdits();
+  const d = state.db;
+  const b = dbRedisEdits();
   if (!b) return;
-  var cmds: { verb: string; args: unknown[] }[];
+  let cmds: { verb: string; args: unknown[] }[];
+  const d_ = d!;
   try {
-    cmds = dbRedisCommands(d!.redisKey!, b.type, b);
+    cmds = dbRedisCommands(d_.redisKey!, b.type, b);
   } catch (err) {
     toast(errText(err), true);
     return;
   }
   if (!cmds.length) return;
-  if (!confirm("Commit " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") + " to " + d!.redisKey + "?\n" +
+  if (!confirm("Commit " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") + " to " + d_.redisKey + "?\n" +
       "One pipelined round trip, every command guard-checked. Redis has no transaction here — a failed command stops the run.")) return;
-  var j = await apiJson("/api/db/" + encodeURIComponent(d!.conn!) + "/redis-pipeline", {
+  const j = await apiJson("/api/db/" + encodeURIComponent(d_.conn!) + "/redis-pipeline", {
     method: "POST",
-    body: JSON.stringify({ commands: cmds.map(function (c: { verb: string; args: unknown[] }): unknown[] { return [c.verb as unknown].concat(c.args); }) }),
+    body: JSON.stringify({ commands: cmds.map((c: { verb: string; args: unknown[] }): unknown[] => { return [c.verb as unknown].concat(c.args); }) }),
   });
   if (!j) return;
   toast("Committed " + cmds.length + " command" + (cmds.length > 1 ? "s" : ""));
-  d!.redisEdits = null;
-  d!.sqlPreview = false;
-  var key = d!.redisKey;
+  d_.redisEdits = null;
+  d_.sqlPreview = false;
+  const key = d_.redisKey;
   // Awaited: deleting a hash's last field (or a set's last member) deletes the KEY, and the
   // re-read's "type none" answer IS the signal — checking before it answered read null and
   // the list refresh never ran, so the sidebar kept offering a key that is gone (docs/22
   // closeout audit).
   await dbLoadRedisValue(key!);
-  if (d!.redisKey === key && d!.redisValue && d!.redisValue.type === "none") dbLoadKeys(true);
+  if (d_.redisKey === key && d_.redisValue && d_.redisValue.type === "none") dbLoadKeys(true);
 }
 
 /** Drop the buffer without a single command — the twin of the row grid's Discard. */
 function dbRedisDiscard(): void {
-  var d = state.db;
-  var n = dbRedisPendingCount();
+  const d = state.db;
+  const n = dbRedisPendingCount();
   if (!n) return;
   if (!confirm("Discard " + n + " buffered change" + (n > 1 ? "s" : "") + "? Nothing has been written to redis.")) return;
-  d!.redisEdits = null;
-  d!.sqlPreview = false;
+  const d_ = d!;
+  d_.redisEdits = null;
+  d_.sqlPreview = false;
   renderDbGrid();
   renderDbBar();
 }
 
 function dbRedisKeyMenu(anchorEl: HTMLElement): void {
   popupMenu(anchorEl.getBoundingClientRect(), [
-    { label: "Rename\u2026", fn: function (): void { dbRedisRenameSheet(state.db!.redisKey!); } },
+    { label: "Rename\u2026", fn: (): void => { dbRedisRenameSheet(state.db?.redisKey!); } },
     { sep: true },
     { label: "Delete\u2026", danger: true, fn: dbRedisDeleteKey },
   ]);
@@ -596,7 +604,7 @@ function dbRedisKeyMenu(anchorEl: HTMLElement): void {
 
 /** One guarded console command; null means the toast already said why. */
 async function dbRedisCommand(line: string): Promise<unknown> {
-  return apiJson("/api/db/" + encodeURIComponent(state.db!.conn!) + "/command", {
+  return apiJson("/api/db/" + encodeURIComponent(state.db?.conn!) + "/command", {
     method: "POST",
     body: JSON.stringify({ command: line }),
   });
@@ -616,14 +624,14 @@ function dbRedisKeySheet(cfg: { title: string; label: string; value?: string; pl
         '<button class="btn primary" id="dbKeyGo">' + esc(cfg.primary) + "</button></div>" +
     "</div>";
   $("sheet").hidden = false;
-  var input = $<HTMLInputElement>("dbKeyIn");
+  const input = $<HTMLInputElement>("dbKeyIn");
   input.value = cfg.value || "";
   input.placeholder = cfg.placeholder || "";
   $("dbKeyCancel").onclick = closeSheet;
-  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
-  function go(): void { var v: string = input.value.trim(); closeSheet(); cfg.submit(v); }
+  $("sheet").onclick = (e: MouseEvent): void => { if (e.target === $("sheet")) closeSheet(); };
+  function go(): void { const v: string = input.value.trim(); closeSheet(); cfg.submit(v); }
   $("dbKeyGo").onclick = go;
-  input.onkeydown = function (e: KeyboardEvent): void {
+  input.onkeydown = (e: KeyboardEvent): void => {
     if (e.key === "Enter") { e.preventDefault(); go(); }
   };
   input.focus();
@@ -636,10 +644,10 @@ function dbRedisRenameSheet(key: string): void {
     label: "New name",
     value: key,
     primary: "Rename",
-    submit: async function (to: string): Promise<void> {
-      var d = state.db;
+    submit: async (to: string): Promise<void> => {
+      const d = state.db;
       if (!to || to === key) return;
-      var j = await dbRedisCommand("RENAME " + key + " " + to);
+      const j = await dbRedisCommand("RENAME " + key + " " + to);
       if (!j) return;
       toast("Renamed to " + to);
       d!.redisKey = to;
@@ -652,15 +660,16 @@ function dbRedisRenameSheet(key: string): void {
 /* Deleting a key is the one destructive act the redis side has — the same typed-name confirm
    the table DROP/TRUNCATE use (a W1 audit follow-up), with the key's own words. */
 function dbRedisDeleteKey(): void {
-  var d = state.db;
-  var key = d!.redisKey!;
-  dbTypedConfirm({ what: "DELETE (permanently)", name: key, kind: "key" }, function (): void {
-    void dbRedisCommand("DEL " + key).then(async function (j: unknown): Promise<void> {
+  const d = state.db;
+  const key = d?.redisKey!;
+  dbTypedConfirm({ what: "DELETE (permanently)", name: key, kind: "key" }, (): void => {
+    void dbRedisCommand("DEL " + key).then(async (j: unknown): Promise<void> => {
       if (!j) return;
       toast("Deleted " + key);
-      d!.redisKey = null;
-      d!.redisValue = null;
-      d!.redisEdits = null;
+      const d_ = d!;
+      d_.redisKey = null;
+      d_.redisValue = null;
+      d_.redisEdits = null;
       await dbLoadKeys(true);
       renderDbGrid();
     });

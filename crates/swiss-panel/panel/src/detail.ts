@@ -30,15 +30,15 @@ async function act(name: string, verb: string): Promise<void> {
   patchSidebar(); patchDetailHead();
   // docs/28 D2: the wire keeps the stop/start verbs; the panel says disable/enable — a stop
   // that survives a boot and refuses every client is a disable, and the word owed it.
-  var shown = verb === "stop" ? "disable" : verb === "start" ? "enable" : verb;
+  const shown = verb === "stop" ? "disable" : verb === "start" ? "enable" : verb;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/" + verb, { method: "POST" });
-    var j = await r.json();
+    const r = await api("/api/mcps/" + encodeURIComponent(name) + "/" + verb, { method: "POST" });
+    const j = await r.json();
     if (!r.ok) {
       state.lastAction[name] = { msg: shown + " failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
       toast(name + ": " + (j.error || "failed"), true);
     } else {
-      var state_word = j.lifecycle === "stopped" ? "disabled" : j.lifecycle;
+      const state_word = j.lifecycle === "stopped" ? "disabled" : j.lifecycle;
       state.lastAction[name] = { msg: shown + " → " + (state_word || "ok"), err: false, at: now() };
       toast(name + ": " + state.lastAction[name].msg);
     }
@@ -49,7 +49,7 @@ async function act(name: string, verb: string): Promise<void> {
   await loadList();
   // The server rebuilt on start/restart, so any cached page list is stale.
   if (state.detail && state.detail.name === name) {
-    KINDS.forEach(function (k) { state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
+    KINDS.forEach((k) => { state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
     renderPane();
     loadMeta(name);
     if (KINDS.indexOf(state.detail.tab) >= 0) loadPage(name, state.detail.tab);
@@ -57,10 +57,10 @@ async function act(name: string, verb: string): Promise<void> {
 }
 
 async function renameMcp(name: string): Promise<void> {
-  var next = prompt("Rename '" + name + "' to:", name);
+  let next = prompt("Rename '" + name + "' to:", name);
   if (!next || next.trim() === name) return;
   next = next.trim();
-  var ok = await apiJson("/api/mcps/" + encodeURIComponent(name) + "/rename", { method: "POST", body: JSON.stringify({ name: next }) });
+  const ok = await apiJson("/api/mcps/" + encodeURIComponent(name) + "/rename", { method: "POST", body: JSON.stringify({ name: next }) });
   if (!ok) return;
   if (state.selected === name) state.selected = next;
   if (state.detail && state.detail.name === name) state.detail.name = next;
@@ -72,10 +72,10 @@ async function renameMcp(name: string): Promise<void> {
 async function removeMcp(name: string): Promise<void> {
   // Config-sourced MCPs are removed from gateway.config.json too (server-side), so the confirm
   // says so — "removes it permanently" alone used to hide that the file edit is part of it.
-  var fromConfig = !!(state.detail && state.detail.source === "config");
+  const fromConfig = !!(state.detail && state.detail.source === "config");
   if (!confirm("Delete '" + name + "'?\n\nThis stops it and removes it permanently" +
       (fromConfig ? ", including its entry in gateway.config.json." : "."))) return;
-  var ok = await apiJson("/api/mcps/" + encodeURIComponent(name), { method: "DELETE" });
+  const ok = await apiJson("/api/mcps/" + encodeURIComponent(name), { method: "DELETE" });
   if (!ok) return;
   if (state.selected === name) { state.selected = null; state.detail = null; }
   toast("Deleted " + name);
@@ -90,28 +90,28 @@ async function removeMcp(name: string): Promise<void> {
  *  (credentials stored, MCP auto-started) or the flow errors. Status rides the pane's
  *  lastAction note; renderPane is skipped while a config edit is open, so a status update
  *  never eats a form the user is filling in. */
-function pause(ms: number): Promise<void> { return new Promise(function (res): void { setTimeout(res, ms); }); }
+function pause(ms: number): Promise<void> { return new Promise((res): void => { setTimeout(res, ms); }); }
 
 async function authorizeMcp(name: string): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.name !== name || d.oauthBusy) return;
   d.oauthBusy = true;
-  var note = function (msg: string, err?: boolean): void {
+  const note = (msg: string, err?: boolean): void => {
     state.lastAction[name] = { msg: msg, err: !!err, at: now() };
     if (!state.detail || state.detail.editing) return;
     renderPane();
   };
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/authorize", { method: "POST" });
-    var j = await r.json().catch(function () { return {}; });
+    const r = await api("/api/mcps/" + encodeURIComponent(name) + "/authorize", { method: "POST" });
+    const j = await r.json().catch(() => { return {}; });
     if (!r.ok) { note("authorize failed: " + (j.error || "HTTP " + r.status), true); return; }
     note("authorize: preparing the consent page…");
-    var opened = false;
+    let opened = false;
     // 100 polls x 3s = 5 min, the server flow's own callback cap.
-    for (var i = 0; i < 100; i++) {
+    for (let i = 0; i < 100; i++) {
       if (i > 0) await pause(3000);
-      var p = await api("/api/mcps/" + encodeURIComponent(name) + "/authorize");
-      var s = await p.json().catch(function () { return {}; });
+      const p = await api("/api/mcps/" + encodeURIComponent(name) + "/authorize");
+      const s = await p.json().catch(() => { return {}; });
       if (s.status === "authorization_required" && s.authorizationUrl && !opened) {
         opened = true;
         window.open(s.authorizationUrl, "_blank");
@@ -146,7 +146,7 @@ function pageState(): KindPageState {
 function openDetail(name: string): void {
   if (state.detail && state.detail.name === name) return;
   state.selected = name;
-  var d: FreshDetail = {
+  const d: FreshDetail = {
     name: name, tab: "tools", config: null, source: undefined, editing: false, editType: null, editVals: null,
     // OAuth (docs/24 D5): the detail's auth state ("authorized" | "needs-auth" | undefined),
     // and whether an authorize flow this panel started is still polling.
@@ -174,7 +174,7 @@ function openDetail(name: string): void {
     callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
     callsTree: {}, // docs/33 C2: per-seq JSON tree expansion, survives the poll repaint
   };
-  KINDS.forEach(function (k) { d[k] = pageState(); });
+  KINDS.forEach((k) => { d[k] = pageState(); });
   state.detail = d as unknown as McpDetail;
   state.menuOpen = false;
   patchSidebar();
@@ -187,21 +187,22 @@ async function loadMeta(name: string): Promise<void> {
   // Compare the detail OBJECT, not its name: leaving an MCP and coming back builds a fresh detail
   // under the same name, and a slow response from the first visit would otherwise write into the
   // second one. loadPage already does it this way.
-  var d = state.detail;
+  const d = state.detail;
+  const d_ = d!;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/details");
+    const r = await api("/api/mcps/" + encodeURIComponent(name) + "/details");
     if (!r.ok) return;
-    var j = await r.json();
+    const j = await r.json();
     if (state.detail !== d) return;
-    d!.config = j.config || null;
-    d!.source = j.source;
-    d!.tunnels = j.tunnels || [];
-    d!.oauth = j.oauth;
-    if (d!.editing) return; // never rebuild a form the user is filling in
+    d_.config = j.config || null;
+    d_.source = j.source;
+    d_.tunnels = j.tunnels || [];
+    d_.oauth = j.oauth;
+    if (d_.editing) return; // never rebuild a form the user is filling in
     // The pane header grows an Authorize button the moment the config is an OAuth one (an
     // http def that says so, or the figma type that implies it), so the pane re-renders for
     // those MCPs too — not only when the config tab is open.
-    if (d!.tab === "config" || (d!.config && (d!.config.auth === "oauth" || d!.config.type === "figma"))) renderPane();
+    if (d_.tab === "config" || (d_.config && (d_.config.auth === "oauth" || d_.config.type === "figma"))) renderPane();
   } catch (e) { /* handled */ }
 }
 
@@ -214,24 +215,24 @@ async function loadMeta(name: string): Promise<void> {
  * switch in mid-transaction — and its failures are silent: the poll says nothing the user asked
  * for, so it takes nothing away either. */
 async function loadCalls(name: string, isPoll?: boolean): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.name !== name) return;
   // A poll dispatched while a FOREGROUND load still hangs would take the newest generation
   // for itself; the foreground failure would then land as "stale" and be reported to nobody.
   // The poll is a courtesy refresh — skipping one cycle costs 6 s, a swallowed failure costs
   // the user's trust (found live: a hung re-entry load during a server stop).
   if (isPoll && (d.callsPage > 0 || d.callsPendingPage != null || d.callsActive > 0)) return;
-  var target = d.callsPendingPage != null ? d.callsPendingPage : d.callsPage;
-  var gen = ++d.callsRequest;
+  const target = d.callsPendingPage != null ? d.callsPendingPage : d.callsPage;
+  const gen = ++d.callsRequest;
   d.callsActive = (d.callsActive || 0) + 1;
   // A page switch rides this request; take its anchor intent now, so a request issued later (a
   // new needle) can never spend an anchor that belonged to this one (docs/32 B2).
-  var sw: { dir: string | null; fromKey?: boolean; pagerTop?: number } | null = null;
+  let sw: { dir: string | null; fromKey?: boolean; pagerTop?: number } | null = null;
   if (d.callsPendingPage === target && d.callsSwitch) { sw = d.callsSwitch; d.callsSwitch = null; }
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/calls?page=" + target +
+    const r = await api("/api/mcps/" + encodeURIComponent(name) + "/calls?page=" + target +
       (d.callsQ ? "&q=" + encodeURIComponent(d.callsQ) : ""));
-    var j = await r.json().catch(function () { return {}; });
+    const j = await r.json().catch(() => { return {}; });
     // A revisit built a new detail object (see loadMeta), or a newer request superseded this
     // one — either way this response is stale and must not commit.
     if (state.detail !== d || gen !== d.callsRequest) return;
@@ -272,9 +273,9 @@ function callsLoadFailed(d: McpDetail, target: number, status: number, sw: { dir
  *  rows stay on screen, marked busy, and the request carries the target page (docs/32 B1). */
 function callsPageStep(delta: number, opts?: { fromKey?: boolean }): void {
   opts = opts || {};
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.callsPendingPage != null) return; // one switch at a time
-  var next = d.callsPage + delta;
+  const next = d.callsPage + delta;
   if (next < 0 || (delta > 0 && !d.callsMore)) return;
   callsBegin(d, next, delta < 0 ? "newer" : "older", !!opts.fromKey);
 }
@@ -283,7 +284,7 @@ function callsPageStep(delta: number, opts?: { fromKey?: boolean }): void {
  *  through the same anchor contract, with the direction the failed switch had. */
 function callsRetry(opts?: { fromKey?: boolean }): void {
   opts = opts || {};
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.callsPendingPage != null || d.callsRetryTarget == null) return;
   callsBegin(d, d.callsRetryTarget, d.callsRetryDir, !!opts.fromKey);
 }
@@ -296,7 +297,7 @@ function callsBegin(d: McpDetail, target: number, dir: string | null, fromKey: b
   d.callsErrStatus = "";
   d.callsRetryTarget = null;
   d.callsPendingPage = target;
-  var pager = $("clPager");
+  const pager = $("clPager");
   d.callsSwitch = (pager && pager.getBoundingClientRect)
     ? { dir: dir, fromKey: fromKey, pagerTop: pager.getBoundingClientRect().top }
     : null; // without a pager on screen there is nothing to hold still (the very first load)
@@ -309,19 +310,19 @@ function callsBegin(d: McpDetail, target: number, dir: string | null, fromKey: b
  *  on the equivalent button, falling to the other direction at a boundary. Never scrollIntoView:
  *  that drags the whole app shell (docs/32 B2). */
 function restoreCallsAnchor(sw: { dir: string | null; fromKey?: boolean; pagerTop?: number }, d: McpDetail): void {
-  var pane = $("pane");
-  var pager = $("clPager");
+  const pane = $("pane");
+  const pager = $("clPager");
   if (pane && pager && pager.getBoundingClientRect) {
     pane.scrollTop += pager.getBoundingClientRect().top - sw.pagerTop!;
   }
   if (!sw.fromKey) return; // a mouse switch leaves focus alone — never steal the search box
   // Which button may take focus comes from the COMMITTED state, never from a node property:
   // the fresh markup in a real browser, and the same truth everywhere else.
-  var newerOk = d.callsPage > 0;
-  var olderOk = d.callsMore;
-  var pickOk = sw.dir === "newer" ? newerOk : olderOk;
-  var otherOk = sw.dir === "newer" ? olderOk : newerOk;
-  var to = pickOk ? (sw.dir === "newer" ? $("clPrev") : $("clNext"))
+  const newerOk = d.callsPage > 0;
+  const olderOk = d.callsMore;
+  const pickOk = sw.dir === "newer" ? newerOk : olderOk;
+  const otherOk = sw.dir === "newer" ? olderOk : newerOk;
+  const to = pickOk ? (sw.dir === "newer" ? $("clPrev") : $("clNext"))
     : otherOk ? (sw.dir === "newer" ? $("clNext") : $("clPrev"))
     : $("clStatus");
   if (to && to.focus) to.focus();
@@ -331,38 +332,38 @@ function restoreCallsAnchor(sw: { dir: string | null; fromKey?: boolean; pagerTo
  *  the PAINTED dom without repainting: a pending switch or a failed one must not detach the
  *  rows, the search input or the scroll position (docs/32 B1). */
 function patchCallsChrome(d: McpDetail): void {
-  var busy = d.callsPendingPage != null;
-  var region = $("callsRegion");
+  const busy = d.callsPendingPage != null;
+  const region = $("callsRegion");
   if (region && region.setAttribute) region.setAttribute("aria-busy", busy ? "true" : "false");
-  var status = $("clStatus");
+  const status = $("clStatus");
   if (status) status.innerHTML = callsStatusHtml(d);
-  var prev = $<HTMLButtonElement>("clPrev"), next = $<HTMLButtonElement>("clNext");
+  const prev = $<HTMLButtonElement>("clPrev"), next = $<HTMLButtonElement>("clNext");
   if (prev) prev.disabled = busy || d.callsPage <= 0;
   if (next) next.disabled = busy || !d.callsMore;
   // The error block is idempotent — drop whatever is there, then insert when an error is set.
   // A new switch (pending or Retry) takes the old error away; a failure puts it back at the end
   // of the region — after the pager when one is painted, after the rows on a single-page log
   // that has none. The full repaint composes the same order (logs.js: body + pager + err).
-  var err = $("clErr");
+  const err = $("clErr");
   if (err && err.remove) err.remove();
   if (d.callsError) {
-    var regionEl = $("callsRegion");
+    const regionEl = $("callsRegion");
     if (regionEl && regionEl.insertAdjacentHTML) regionEl.insertAdjacentHTML("beforeend", callsErrHtml(d));
-    var retry = $("clRetry");
+    const retry = $("clRetry");
     // The same keyboard contract as the painted wiring (run-history): a Retry driven by
     // Enter/Space (detail === 0) owes the user their focus back once the retry commits.
-    if (retry) retry.onclick = function (ev) { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
+    if (retry) retry.onclick = (ev) => { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
   }
 }
 
 /** Fetch one reply in full — the log page ships only the first 2 KB of each. */
 async function showFullResult(seq: number): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
+    const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
-    var j = await r.json();
+    const j = await r.json();
     if (!state.detail || state.detail.name !== d.name || !j.call) return;
     if (j.call.bodyGone) {
       // Only the newest replies keep their payload; say which part is missing rather than showing a
@@ -372,21 +373,21 @@ async function showFullResult(seq: number): Promise<void> {
     }
     d.callsFull[seq] = j.call.output;
     mountJsonTrees(d, seq); // docs/33 C2: a full reply that parses upgrades/refreshes the tree
-    var pre = document.querySelector('#tabbody .call[data-seq="' + seq + '"] pre[data-out]');
+    const pre = document.querySelector('#tabbody .call[data-seq="' + seq + '"] pre[data-out]');
     if (pre) pre.textContent = fmtJson(j.call.output);
-    var btn = document.querySelector('#tabbody [data-full="' + seq + '"]');
+    const btn = document.querySelector('#tabbody [data-full="' + seq + '"]');
     if (btn) btn.remove();
   } catch (e) { toast("request failed", true); }
 }
 
 async function clearCalls(): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
   // docs/32 B4: one mis-click removes the index AND the stored full replies, and nothing can
   // undo it — so the confirm names both costs, and a cancelled confirm fires no request at all.
   if (!confirm("Clear all recorded tool calls for \u201C" + d.name + "\u201D? This removes the call history and stored full replies. The MCP configuration is not changed.")) return;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls", { method: "DELETE" });
+    const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls", { method: "DELETE" });
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
     // The clear is part of the same transaction space as the paging loads: bump the generation so
     // a response that left before the DELETE (a poll, a parked switch — confirm blocks the event
@@ -409,18 +410,18 @@ async function clearCalls(): Promise<void> {
 }
 
 async function loadPage(name: string, kind: string): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.name !== name) return;
-  var kd = d[kind as "tools" | "resources" | "prompts"];
+  const kd = d[kind as "tools" | "resources" | "prompts"];
   if (!kd || kd.loading) return;
   kd.loading = true;
   kd.error = null;
   if (d.tab === kind) renderPane();
   try {
-    var cursor = kd.cursors[kd.cursors.length - 1];
-    var url = "/api/mcps/" + encodeURIComponent(name) + "/" + kind + (cursor ? "?cursor=" + encodeURIComponent(cursor) : "");
-    var r = await api(url);
-    var j = await r.json().catch(function () { return {}; });
+    const cursor = kd.cursors[kd.cursors.length - 1];
+    const url = "/api/mcps/" + encodeURIComponent(name) + "/" + kind + (cursor ? "?cursor=" + encodeURIComponent(cursor) : "");
+    const r = await api(url);
+    const j = await r.json().catch(() => { return {}; });
     if (r.ok) {
       kd.items = j[kind] || [];
       kd.nextCursor = j.nextCursor;
@@ -443,7 +444,7 @@ async function loadPage(name: string, kind: string): Promise<void> {
 }
 
 function showTab(tab: string): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
   d.tab = tab;
   d.editing = false;
@@ -458,21 +459,23 @@ function showTab(tab: string): void {
   if (tab === "logs" && d.callsPendingPage == null) loadCalls(d.name);
 }
 function pageNext(): void {
-  var d = state.detail, kd = d && d[d.tab as "tools" | "resources" | "prompts"];
+  const d = state.detail, kd = d && d[d.tab as "tools" | "resources" | "prompts"];
   if (!kd || !kd.nextCursor || kd.loading) return;
   kd.cursors.push(kd.nextCursor);
-  loadPage(d!.name, d!.tab);
+  const d_ = d!;
+  loadPage(d_.name, d_.tab);
 }
 function pagePrev(): void {
-  var d = state.detail, kd = d && d[d.tab as "tools" | "resources" | "prompts"];
+  const d = state.detail, kd = d && d[d.tab as "tools" | "resources" | "prompts"];
   if (!kd || kd.cursors.length <= 1 || kd.loading) return;
   kd.cursors.pop();
-  loadPage(d!.name, d!.tab);
+  const d_ = d!;
+  loadPage(d_.name, d_.tab);
 }
 
 /* --- config edit ------------------------------------------------------------------------------ */
 function startEdit(): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || !d.config) return;
   d.editing = true;
   d.editMode = "edit";
@@ -483,7 +486,7 @@ function startEdit(): void {
 // docs/28 D1: the same form, another verb — Save parks the current def as a revision and
 // installs the new one under the SAME name. The operator's rollback lives one click away.
 function startReplace(): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || !d.config) return;
   d.editing = true;
   d.editMode = "replace";
@@ -502,12 +505,12 @@ function cancelEdit(): void {
 
 /* --- def revisions (docs/28 D1) ---------------------------------------------------------------- */
 async function loadRevisions(name: string): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.name !== name) return;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/revisions");
+    const r = await api("/api/mcps/" + encodeURIComponent(name) + "/revisions");
     if (!r.ok) return;
-    var j = await r.json();
+    const j = await r.json();
     if (state.detail !== d) return; // a revisit built a new detail object — see loadMeta
     d.revisions = j.revisions || [];
     if (d.tab === "config" && !d.editing) renderPane();
@@ -515,19 +518,19 @@ async function loadRevisions(name: string): Promise<void> {
 }
 
 async function saveReplace(): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
-  var type = d.editType || (d.config && d.config.type as string) || "proc";
-  var fields = readFields(type, "e-");
-  var body = Object.assign({ type: type }, fields);
+  const type = d.editType || (d.config && d.config.type as string) || "proc";
+  const fields = readFields(type, "e-");
+  const body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body);
   translatePg(type, body); // docs/30: the pg form's pieces become one url
-  var noteEl = $<HTMLInputElement>("e-note");
+  const noteEl = $<HTMLInputElement>("e-note");
   if (noteEl) body.note = noteEl.value;
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
-  var name = d.name;
-  var restore = function () {
+  const name = d.name;
+  const restore = () => {
     if (!state.detail || state.detail !== d) return;
     d.editing = true;
     d.editType = type;
@@ -537,8 +540,8 @@ async function saveReplace(): Promise<void> {
   d.editing = false;
   renderPane(); patchSidebar();
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/replace", { method: "POST", body: JSON.stringify(body) });
-    var j = await r.json();
+    const r = await api("/api/mcps/" + encodeURIComponent(name) + "/replace", { method: "POST", body: JSON.stringify(body) });
+    const j = await r.json();
     if (!r.ok) {
       state.lastAction[name] = { msg: "replace failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
       toast(j.error || "replace failed", true);
@@ -549,7 +552,7 @@ async function saveReplace(): Promise<void> {
       // The swap stands even when the new def will not start; the panel must say so, not hide it.
       if (j.restartError) toast(name + " failed to start: " + j.restartError, true);
       if (state.detail === d) d.editVals = null;
-      KINDS.forEach(function (k) { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
+      KINDS.forEach((k) => { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
       loadMeta(name);
       loadRevisions(name);
     }
@@ -564,16 +567,16 @@ async function saveReplace(): Promise<void> {
 }
 
 async function restoreRevision(index: number): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
   if (!confirm("Restore revision " + (index + 1) + "?\n\nThe current def is parked as a new revision first — this is reversible too.")) return;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index + "/restore", { method: "POST", body: "{}" });
-    var j = await r.json();
+    const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index + "/restore", { method: "POST", body: "{}" });
+    const j = await r.json();
     if (!r.ok) { toast(j.error || "restore failed", true); return; }
     toast(d.name + ": revision " + (index + 1) + " restored");
     if (j.restartError) toast(d.name + " failed to start: " + j.restartError, true);
-    KINDS.forEach(function (k) { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
+    KINDS.forEach((k) => { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
     loadMeta(d.name);
     loadRevisions(d.name);
     await loadList();
@@ -582,7 +585,7 @@ async function restoreRevision(index: number): Promise<void> {
 }
 
 async function deleteRevision(index: number): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
   if (!confirm("Delete parked revision " + (index + 1) + "? This only drops the snapshot — the live def is untouched.")) return;
   if (!await apiJson("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index, { method: "DELETE" })) return;
@@ -593,9 +596,9 @@ async function deleteRevision(index: number): Promise<void> {
  *  both types share (description, host, password) survives the switch. A masked secret carried into
  *  a type that never stored one is dropped server-side by unmaskBody, never saved as dots. */
 function changeEditType(t: string): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
-  var prev = d.editType || (d.config && d.config.type as string) || "proc";
+  const prev = d.editType || (d.config && d.config.type as string) || "proc";
   d.editVals = Object.assign({}, d.editVals, readFields(prev, "e-"));
   d.editType = t;
   renderPane();
@@ -609,15 +612,15 @@ function changeEditType(t: string): void {
  */
 async function runConnTest(p: string): Promise<void> {
   // p is the form's id prefix: "e-" for the inline editor, "a-" for the Add sheet.
-  var d = state.detail;
-  var type = p === "a-" ? $<HTMLSelectElement>("a-type").value : (d && (d.editType || (d.config && d.config.type as string))) || "proc";
-  var body = Object.assign({ type: type }, readFields(type, p));
+  const d = state.detail;
+  const type = p === "a-" ? $<HTMLSelectElement>("a-type").value : (d && (d.editType || (d.config && d.config.type as string))) || "proc";
+  const body = Object.assign({ type: type }, readFields(type, p));
   translatePg(type, body); // docs/30: pg's split fields travel as the url the server tests
   delete body.autostart; // a boot-time switch, not a credential — irrelevant to a connection test
   // figma implies OAuth the way a checked auth box states it: no keyless test exists for either.
-  var wantsOauth = type === "figma" || (type === "http" && body.auth === true);
+  const wantsOauth = type === "figma" || (type === "http" && body.auth === true);
   delete body.auth; delete body.oauthClientName; // a credential question, not a connectivity one
-  var btn = $<HTMLButtonElement>(p + "test"), out = $(p + "test-out");
+  const btn = $<HTMLButtonElement>(p + "test"), out = $(p + "test-out");
   if (!btn || !out) return;
   // A keyless handshake cannot test an OAuth remote: its endpoint answers 401 until the flow
   // runs, and the flow needs the MCP saved first (credentials are name-keyed). Say so rather
@@ -640,8 +643,8 @@ async function runConnTest(p: string): Promise<void> {
   out.textContent = "connecting with these exact values — ${ENV} refs expand server-side…";
   out.style.color = "";
   try {
-    var r = await api("/api/mcpdefs/test", { method: "POST", body: JSON.stringify(body) });
-    var j = await r.json();
+    const r = await api("/api/mcpdefs/test", { method: "POST", body: JSON.stringify(body) });
+    const j = await r.json();
     if (j.ok) {
       // For a rest target any HTTP answer is reachable — show which one came back (404 from the
       // base path is fine; the tools live under their own paths).
@@ -661,19 +664,19 @@ async function runConnTest(p: string): Promise<void> {
 }
 
 async function saveEdit(): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
-  var type = d.editType || (d.config && d.config.type as string) || "proc";
-  var fields = readFields(type, "e-");
-  var body = Object.assign({ type: type }, fields);
+  const type = d.editType || (d.config && d.config.type as string) || "proc";
+  const fields = readFields(type, "e-");
+  const body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body); // the auth checkbox is the def auth string (docs/24 D1)
   translatePg(type, body); // docs/30: the pg form's pieces become one url
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
-  var name = d.name;
+  const name = d.name;
   // Rendering the pane destroys the form, so hold on to what was typed: a save the server rejects
   // used to cost the user the whole form, with nothing to do but reopen it and retype.
-  var restore = function () {
+  const restore = () => {
     if (!state.detail || state.detail !== d) return;
     d.editing = true;
     d.editType = type;
@@ -683,8 +686,8 @@ async function saveEdit(): Promise<void> {
   d.editing = false;
   renderPane(); patchSidebar();
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
-    var j = await r.json();
+    const r = await api("/api/mcps/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
+    const j = await r.json();
     if (!r.ok) {
       state.lastAction[name] = { msg: "edit failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
       toast(j.error || "edit failed", true);
@@ -693,7 +696,7 @@ async function saveEdit(): Promise<void> {
       state.lastAction[name] = { msg: "config saved → restarted", err: false, at: now() };
       toast(name + ": config saved, restarted");
       if (state.detail === d) d.editVals = null;
-      KINDS.forEach(function (k) { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
+      KINDS.forEach((k) => { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
       loadMeta(name);
     }
   } catch (e) {

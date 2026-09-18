@@ -35,9 +35,9 @@ import { act } from "./detail.js";
    the columns they hid. The helpers are pure (or storage-only) so the key format, the parse's
    tolerance of a corrupt entry and the clamp pin without a DOM. The grid reloads the config on
    every page load — a rename or a second tab's change is picked up, never cached stale. */
-var DB_GRID_PREFIX = "mcp_gateway_db_grid_";
-var DB_COL_MIN = 48;  // narrower than the header's own name line and nothing reads
-var DB_COL_MAX = 1200; // wider than the grid itself — a runaway drag helps nobody
+const DB_GRID_PREFIX = "mcp_gateway_db_grid_";
+const DB_COL_MIN = 48;  // narrower than the header's own name line and nothing reads
+const DB_COL_MAX = 1200; // wider than the grid itself — a runaway drag helps nobody
 
 function dbGridConfigKey(conn        , schema        , table        )         {
   return DB_GRID_PREFIX + conn + "_" + (schema ? schema + "." : "") + table;
@@ -48,26 +48,26 @@ function dbGridConfigKey(conn        , schema        , table        )         {
  *  is never an acceptable consequence. Widths outside the clamp are dropped, not clamped —
  *  a hand-edited 0 was never a width the user dragged. */
 function dbGridConfigParse(raw               )               {
-  var out               = { widths: {}, hidden: [] };
+  const out               = { widths: {}, hidden: [] };
   if (!raw) return out;
   try {
-    var j = JSON.parse(raw);
+    const j = JSON.parse(raw);
     if (!j || typeof j !== "object") return out;
     if (j.widths && typeof j.widths === "object") {
-      Object.keys(j.widths).forEach(function (k        )       {
-        var n = Number(j.widths[k]);
+      Object.keys(j.widths).forEach((k        )       => {
+        const n = Number(j.widths[k]);
         if (isFinite(n) && n >= DB_COL_MIN && n <= DB_COL_MAX) out.widths[k] = Math.round(n);
       });
     }
     if (Array.isArray(j.hidden)) {
-      out.hidden = j.hidden.filter(function (h         ) { return typeof h === "string" && h; })            ;
+      out.hidden = j.hidden.filter((h         ) => { return typeof h === "string" && h; })            ;
     }
   } catch (e) { /* fresh config, see above */ }
   return out;
 }
 
 function dbGridConfigLoad(key        )               {
-  var raw                = null;
+  let raw                = null;
   try { raw = localStorage.getItem(key); } catch (e) { /* private mode: defaults */ }
   return dbGridConfigParse(raw);
 }
@@ -79,32 +79,35 @@ function dbGridConfigSave(key        , cfg              )       {
 /** The columns the grid shows after the config's hidden list. Pure. */
 function dbGridVisibleColumns(columns               , hidden                      )                {
   if (!hidden || !hidden.length) return columns.slice();
-  var drop                          = {};
-  hidden.forEach(function (h        )       { drop[h] = true; });
-  return columns.filter(function (c             )          { return !drop[c.name]; });
+  const drop                          = {};
+  hidden.forEach((h        )       => { drop[h] = true; });
+  return columns.filter((c             )          => { return !drop[c.name]; });
 }
 
 /** The config's key for the table currently open (null when nothing is open). */
 function dbGridKeyNow()                {
-  var d = state.db;
-  return d .conn && d .table ? dbGridConfigKey(d .conn, d .schema , d .table) : null;
+  const d = state.db;
+  const d_ = d ;
+  return d_.conn && d_.table ? dbGridConfigKey(d_.conn, d_.schema , d_.table) : null;
 }
 
 /** Hide one column (the header menu) / bring every hidden column back, writing through to
  *  storage so the choice survives a reload. */
 function dbHideColumn(name        )       {
-  var d = state.db;
-  if (d .gridCfg.hidden.indexOf(name) < 0) d .gridCfg.hidden.push(name);
-  var key = dbGridKeyNow();
-  if (key) dbGridConfigSave(key, d .gridCfg);
+  const d = state.db;
+  const d_ = d ;
+  if (d_.gridCfg.hidden.indexOf(name) < 0) d_.gridCfg.hidden.push(name);
+  const key = dbGridKeyNow();
+  if (key) dbGridConfigSave(key, d_.gridCfg);
   renderDbGrid();
 }
 
 function dbShowAllColumns()       {
-  var d = state.db;
-  d .gridCfg.hidden = [];
-  var key = dbGridKeyNow();
-  if (key) dbGridConfigSave(key, d .gridCfg);
+  const d = state.db;
+  const d_ = d ;
+  d_.gridCfg.hidden = [];
+  const key = dbGridKeyNow();
+  if (key) dbGridConfigSave(key, d_.gridCfg);
   renderDbGrid();
 }
 
@@ -116,13 +119,13 @@ function dbShowAllColumns()       {
 function dbColResizeStart(e            , name        , th             , cells                         )       {
   e.preventDefault();
   e.stopPropagation();
-  var d = state.db;
-  var startX = e.clientX;
-  var startW = th.getBoundingClientRect().width;
-  var lastW = startW;
+  const d = state.db;
+  const startX = e.clientX;
+  const startW = th.getBoundingClientRect().width;
+  let lastW = startW;
   function move(ev            )       {
     lastW = Math.max(DB_COL_MIN, Math.min(DB_COL_MAX, Math.round(startW + ev.clientX - startX)));
-    for (var i = 0; i < cells.length; i++) {
+    for (let i = 0; i < cells.length; i++) {
       cells[i].style.width = lastW + "px";
       cells[i].style.maxWidth = lastW + "px";
     }
@@ -130,10 +133,11 @@ function dbColResizeStart(e            , name        , th             , cells   
   function up()       {
     document.removeEventListener("mousemove", move);
     document.removeEventListener("mouseup", up);
+    const d_ = d ;
     if (lastW !== Math.round(startW)) {
-      d .gridCfg.widths[name] = lastW;
-      var key = dbGridKeyNow();
-      if (key) dbGridConfigSave(key, d .gridCfg);
+      d_.gridCfg.widths[name] = lastW;
+      const key = dbGridKeyNow();
+      if (key) dbGridConfigSave(key, d_.gridCfg);
     }
   }
   document.addEventListener("mousemove", move);
@@ -152,11 +156,11 @@ function dbColResizeStart(e            , name        , th             , cells   
  *  Windows clipboards speak them); a trailing newline ends the last row rather than opening
  *  an empty one. Pure. */
 function dbTsvRows(text        )             {
-  var t = String(text == null ? "" : text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const t = String(text == null ? "" : text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (!t) return [];
-  var rows = t.split("\n");
+  const rows = t.split("\n");
   if (rows.length > 1 && rows[rows.length - 1] === "") rows.pop();
-  return rows.map(function (r        )           { return r.split("\t"); });
+  return rows.map((r        )           => { return r.split("\t"); });
 }
 
 /** Move the focus cell one key at a time, clamped to the grid's bounds. Pure. */
@@ -172,8 +176,9 @@ function dbKbdMove(r        , c        , key        , maxR        , maxC        
 
 /** The grid row count the keyboard walks: buffered inserts first, then the page's rows. */
 function dbGridRowsCount()         {
-  var d = state.db;
-  return (d .data ? d .inserts.length + d .data.rows.length : 0);
+  const d = state.db;
+  const d_ = d ;
+  return (d_.data ? d_.inserts.length + d_.data.rows.length : 0);
 }
 
 /** Focus (or move) the focus cell and paint the ring — a single selection the keyboard owns.
@@ -183,17 +188,18 @@ function dbGridRowsCount()         {
  * LIVE cells by their data-r/data-c address; a full repaint happens only on data changes
  * (edit, paste, commit, paging). */
 function dbFocusCell(r        , c        )       {
-  var d = state.db;
-  var maxR = dbGridRowsCount() - 1;
-  var maxC = dbGridVisibleColumns(d .data ? d .data.columns : [], (d .gridCfg || { hidden: [] }).hidden).length - 1;
-  d .focus = { r: Math.max(0, Math.min(maxR, r)), c: Math.max(0, Math.min(maxC, c)) };
-  var wrap = $("dbGridWrap");
+  const d = state.db;
+  const maxR = dbGridRowsCount() - 1;
+  const d_ = d ;
+  const maxC = dbGridVisibleColumns(d_.data ? d_.data.columns : [], (d_.gridCfg || { hidden: [] }).hidden).length - 1;
+  d_.focus = { r: Math.max(0, Math.min(maxR, r)), c: Math.max(0, Math.min(maxC, c)) };
+  const wrap = $("dbGridWrap");
   if (!wrap) return;
-  var old = wrap.querySelector("td.db-focus");
+  const old = wrap.querySelector("td.db-focus");
   if (old) old.classList.remove("db-focus");
-  var td = wrap.querySelector('td[data-r="' + d .focus.r + '"][data-c="' + d .focus.c + '"]');
+  const td = wrap.querySelector('td[data-r="' + d_.focus.r + '"][data-c="' + d_.focus.c + '"]');
   if (td) td.classList.add("db-focus");
-  var kbd = $("dbKbd");
+  const kbd = $("dbKbd");
   // preventScroll: the input sits at the end of the scrolled content, so a plain focus()
   // would drag the pane to the bottom and then scrollIntoView would snap the clicked
   // row to the top - the pane must stay where the user's click left it.
@@ -204,7 +210,7 @@ function dbFocusCell(r        , c        )       {
 /** Open the focused cell's editor the way a double-click does. seed (a typed character)
  *  replaces the current text; without one the editor starts from the cell's value. */
 function dbFocusEdit(seed                )       {
-  var td = document.querySelector("#dbGridWrap td.db-focus")                                                               ;
+  const td = document.querySelector("#dbGridWrap td.db-focus")                                                               ;
   if (!td || !td.dbKbdEdit) return;
   td.dbKbdEdit(seed == null ? null : String(seed));
 }
@@ -213,21 +219,22 @@ function dbFocusEdit(seed                )       {
  *  an insert cell reverts to the column default on empty, an update collapses back when the
  *  pasted text equals the original. */
 function dbPasteCell(kind        , key        , i        , column        , meta            , raw        )       {
-  var d = state.db;
+  const d = state.db;
+  const d_ = d ;
   if (kind === "insert") {
-    var ins = d .inserts[i];
-    if (raw === "") delete ins .values[column];
-    else ins .values[column] = raw;
+    const ins = d_.inserts[i] ;   // a paste only targets a row that still exists
+    if (raw === "") delete ins.values[column];
+    else ins.values[column] = raw;
     return;
   }
-  var row = d .data .rows[i];
+  const row = d_.data?.rows[i];
   // meta.pk is already the pk VALUES map the caller built (same object dbSaveInlineEdit
   // stores); running it through dbPkVals again would forEach over an object and throw.
-  var upd = d .updates[key] || (d .updates[key] = { pk: meta.pk                           , changes: {} });
-  var origTxt = meta.orig == null ? "" : String(meta.orig);
+  const upd = d_.updates[key] || (d_.updates[key] = { pk: meta.pk                           , changes: {} });
+  const origTxt = meta.orig == null ? "" : String(meta.orig);
   if (raw === origTxt) {
     delete upd.changes[column];
-    if (!Object.keys(upd.changes).length) delete d .updates[key];
+    if (!Object.keys(upd.changes).length) delete d_.updates[key];
   } else {
     upd.changes[column] = raw;
   }
@@ -246,8 +253,8 @@ function dbPasteCell(kind        , key        , i        , column        , meta 
  *  edit, dialog, paste, delete button) goes through here so the commit payload and the
  *  SQL preview keep one shape. */
 function dbRowAddr(pkCols          , columns               , row                         )                          {
-  var out                          = {};
-  columns.forEach(function (c             )       { out[c.name] = row[c.name]; });
+  const out                          = {};
+  columns.forEach((c             )       => { out[c.name] = row[c.name]; });
   return out;
 }
 
@@ -257,8 +264,8 @@ function dbSameJson(a                                , b                        
   if (a === b) return true;
   if (a == null || b == null || typeof a !== "object" || typeof b !== "object") return false;
   if (Array.isArray(a) !== Array.isArray(b)) return false;
-  var ka = Object.keys(a), kb = Object.keys(b);
-  return ka.length === kb.length && ka.every(function (k        )          { return dbSameJson(a[k]                                  , b[k]                                  ); });
+  const ka = Object.keys(a), kb = Object.keys(b);
+  return ka.length === kb.length && ka.every((k        )          => { return dbSameJson(a[k]                                  , b[k]                                  ); });
 }
 
 /** docs/22 W4.2: a lost edit race answers 409 naming the moved columns — but the POST
@@ -268,29 +275,29 @@ function dbSameJson(a                                , b                        
  *  keeps the buffer and apiJson already toasts the body's error text with the column
  *  names; what only the grid can do is remember WHICH buffered row and columns lost, so
  *  the next render paints those cells red until the buffer for them changes. */
-(function () {
+(() => {
   // The module also loads where no DOM exists (the Node vitest suite imports the grid
   // module for its state shape) — touching window at module level breaks that import
   // with a ReferenceError, so the observer only arms where a window with fetch is real.
   if (typeof window === "undefined" || !window.fetch) return;
-  var orig = window.fetch;
+  const orig = window.fetch;
   window.fetch = function (                                  input             , init              )                    {
-    return orig.apply(this, arguments                                                     ).then(function (r          )           {
+    return orig.apply(this, arguments                                                     ).then((r          )           => {
       try {
-        var path = typeof input === "string" ? input : (input && input.url) || "";
+        const path = typeof input === "string" ? input : (input && input.url) || "";
         if (/\/edits(\?|$)/.test(path)) {
-          var d = state.db;
+          let d = state.db;
           if (r.status === 409) {
-            r.clone().json().then(function (j                                                               )       {
+            r.clone().json().then((j                                                               )       => {
               d = state.db;
-              var cols = (j && j.conflictColumns) || [];
+              const cols = (j && j.conflictColumns) || [];
               if (!d || !d.updates || !cols.length || !j || !j.row) return;
-              var hit = Object.keys(d .updates).filter(function (k) {
+              const hit = Object.keys(d?.updates).filter((k) => {
                 return dbSameJson(d .updates[k].pk, j.row );
               })[0];
               if (hit) { d .conflict = { key: hit, columns: cols }; renderDbGrid(); }
-            }).catch(function () { /* an observation never breaks the panel */ });
-          } else if (d && d .conflict) {
+            }).catch(() => { /* an observation never breaks the panel */ });
+          } else if (d && d?.conflict) {
             d .conflict = null; // a clean answer (or a different failure) clears the marks
             renderDbGrid();
           }
@@ -302,37 +309,38 @@ function dbSameJson(a                                , b                        
 })();
 
 function dbPasteApply(text        , r0        , c0        )       {
-  var d = state.db;
-  if (!d .data || !d .data.editable) {
-    toast("This table is not editable (" + (d .data && d .data.editNote ? d .data.editNote : "no primary key") + ") — paste needs the edit buffer", true);
+  const d = state.db;
+  const d_ = d ;
+  if (!d_.data || !d_.data.editable) {
+    toast("This table is not editable (" + (d_.data && d_.data.editNote ? d_.data.editNote : "no primary key") + ") — paste needs the edit buffer", true);
     return;
   }
-  var cfg = d .gridCfg || { widths: {}, hidden: [] };
-  var cols = dbGridVisibleColumns(d .data .columns, cfg.hidden);
-  var rows = dbTsvRows(text);
+  const cfg = d_.gridCfg || { widths: {}, hidden: [] };
+  const cols = dbGridVisibleColumns(d_.data?.columns, cfg.hidden);
+  const rows = dbTsvRows(text);
   if (!rows.length || !cols.length) return;
-  var pkCols = d .data .primaryKey || [];
-  var keyOf = function (row                         , i        )         { return pkCols.length ? dbPkKey(pkCols, row) : String(i); };
-  for (var i = 0; i < rows.length; i++) {
-    var target = r0 + i;
-    for (var j = 0; j < rows[i].length; j++) {
-      var colIdx = c0 + j;
+  const pkCols = d_.data?.primaryKey || [];
+  const keyOf = (row                         , i        )         => { return pkCols.length ? dbPkKey(pkCols, row) : String(i); };
+  for (let i = 0; i < rows.length; i++) {
+    const target = r0 + i;
+    for (let j = 0; j < rows[i].length; j++) {
+      const colIdx = c0 + j;
       if (colIdx >= cols.length) break;
-      var col = cols[colIdx].name;
-      var raw = rows[i][j];
-      var insertsBefore = d .inserts.length;
+      const col = cols[colIdx].name;
+      const raw = rows[i][j];
+      const insertsBefore = d_.inserts.length;
       if (target < insertsBefore) {
         dbPasteCell("insert", null                     , target, col, null                         , raw);
       } else {
-        var ri = target - d .inserts.length;
-        if (ri < d .data.rows.length) {
-          var row = d .data .rows[ri];
-          var key = keyOf(row, ri);
-          dbPasteCell("update", key, ri, col, { pk: dbRowAddr(pkCols, d .data .columns, row), orig: row[col] }, raw);
+        const ri = target - d_.inserts.length;
+        if (ri < d_.data.rows.length) {
+          const row = d_.data?.rows[ri];
+          const key = keyOf(row, ri);
+          dbPasteCell("update", key, ri, col, { pk: dbRowAddr(pkCols, d_.data?.columns, row), orig: row[col] }, raw);
         } else {
           // Past the page: the paste row becomes a NEW buffered insert, values in column order.
-          d .inserts.push({ values: {} });
-          dbPasteCell("insert", null                     , d .inserts.length - 1, col, null                         , raw);
+          d_.inserts.push({ values: {} });
+          dbPasteCell("insert", null                     , d_.inserts.length - 1, col, null                         , raw);
         }
       }
     }
@@ -344,24 +352,25 @@ function dbPasteApply(text        , r0        , c0        )       {
 /** Ctrl+C: the checked rows as CSV (the row menu's Copy), or — with nothing checked — the
  *  focused row alone, which is what a grid hand expects Ctrl+C to grab. */
 function dbCopyChecked()       {
-  var d = state.db;
-  var sel = dbSelectedForCopy();
+  const d = state.db;
+  const sel = dbSelectedForCopy();
   if (sel && sel.rows && sel.rows.length) {
     // Same shape the row menu's Copy-as-CSV builds (data-csv keeps dbRowsCsv private): a
     // header line plus one quoted line per checked row.
-    var lines = [sel.cols.map(dbCopyCsvCell).join(",")];
-    sel.rows.forEach(function (r                         )       { lines.push(sel.cols.map(function (cn        )         { return dbCopyCsvCell(r[cn]); }).join(",")); });
+    const lines = [sel.cols.map(dbCopyCsvCell).join(",")];
+    sel.rows.forEach((r                         )       => { lines.push(sel.cols.map((cn        )         => { return dbCopyCsvCell(r[cn]); }).join(",")); });
     dbCopyText(lines.join("\n"));
     return;
   }
-  if (!d .focus || !d .data) return;
-  var nIns = d .inserts.length;
-  if (d .focus.r < nIns) return; // a buffered insert has no committed row to copy
-  var row = d .data .rows[d .focus.r - nIns];
-  var pkCols = d .data .primaryKey || [];
-  var key = pkCols.length ? dbPkKey(pkCols, row) : String(d .focus.r - nIns);
-  var full = dbRowForCopy(row, key);
-  var line = d .data .columns.map(function (c             )         {
+  const d_ = d ;
+  if (!d_.focus || !d_.data) return;
+  const nIns = d_.inserts.length;
+  if (d_.focus.r < nIns) return; // a buffered insert has no committed row to copy
+  const row = d_.data?.rows[d_.focus.r - nIns];
+  const pkCols = d_.data?.primaryKey || [];
+  const key = pkCols.length ? dbPkKey(pkCols, row) : String(d_.focus.r - nIns);
+  const full = dbRowForCopy(row, key);
+  const line = d_.data?.columns.map((c             )         => {
     return dbCopyCsvCell(full == null ? null : full[c.name]);
   }).join(",");
   dbCopyText(line);
@@ -370,42 +379,43 @@ function dbCopyChecked()       {
 // One /data request chain: a slow answer for the table (or page) the user just left must be
 // dropped, or it would repaint the grid — and rewrite d.schema — from the OLD table (docs/22
 // closeout audit).
-var dbDataReq = dbReqGuard();
+const dbDataReq = dbReqGuard();
 
 async function dbLoadData(keepOffset          )                {
-  var d = state.db;
-  if (!d .conn || !d .table) return;
-  if (!keepOffset) d .offset = 0;
-  d .loading = true;
+  const d = state.db;
+  const d_ = d ;
+  if (!d_.conn || !d_.table) return;
+  if (!keepOffset) d_.offset = 0;
+  d_.loading = true;
   renderDbToolbar(); renderDbGrid();
-  var q = "/api/db/" + encodeURIComponent(d .conn) + "/data?table=" + encodeURIComponent(d .table) +
-    "&offset=" + d .offset + "&limit=" + d .pageSize;
-  if (d .schema) q += "&schema=" + encodeURIComponent(d .schema);
-  if (d .order) q += "&order=" + encodeURIComponent(d .order) + "&dir=" + d .dir;
-  if (d .filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d .filters));
-  var token = dbDataReq.issue();
-  var j = await apiJson               (q);
+  let q = "/api/db/" + encodeURIComponent(d_.conn) + "/data?table=" + encodeURIComponent(d_.table) +
+    "&offset=" + d_.offset + "&limit=" + d_.pageSize;
+  if (d_.schema) q += "&schema=" + encodeURIComponent(d_.schema);
+  if (d_.order) q += "&order=" + encodeURIComponent(d_.order) + "&dir=" + d_.dir;
+  if (d_.filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d_.filters));
+  const token = dbDataReq.issue();
+  const j = await apiJson               (q);
   if (!dbDataReq.accepts(token)) return; // superseded: a newer load owns the pane and the flag
-  d .loading = false;
+  d_.loading = false;
   if (!j) { renderDbToolbar(); renderDbGrid(); return; }
   // A Commit that emptied the last page (or a filter that shrank the set) can leave this
   // offset past the end of what remains: an empty page with rows behind it is one page
   // back — re-fetch there instead of painting an empty grid whose footer reads "51–50 of
   // 50" (docs/22 closeout audit).
-  if (!j.rows.length && d .offset > 0) {
-    d .offset = Math.max(0, d .offset - d .pageSize);
+  if (!j.rows.length && d_.offset > 0) {
+    d_.offset = Math.max(0, d_.offset - d_.pageSize);
     dbLoadData(true);
     return;
   }
-  d .data = j;
-  d .schema = j.schema;
+  d_.data = j;
+  d_.schema = j.schema;
   // The grid config reloads with every page: a rename (new key) or a second tab's hide lands
   // on the next paint instead of a cached opinion (docs/22 W2.1).
-  d .gridCfg = dbGridConfigLoad(dbGridKeyNow() );
+  d_.gridCfg = dbGridConfigLoad(dbGridKeyNow() );
   dbDropEdits(); // a fresh page is a fresh baseline — buffered edits never survive a reload
   // A filter naming a column that no longer exists would 400 on every reload — drop it instead.
-  var names = d .data .columns.map(function (c             )         { return c.name; });
-  d .filters = d .filters.filter(function (f              )          { return names.indexOf(f.column) >= 0; });
+  const names = d_.data?.columns.map((c             )         => { return c.name; });
+  d_.filters = d_.filters.filter((f              )          => { return names.indexOf(f.column) >= 0; });
   renderDbToolbar(); renderDbGrid(); renderDbBar(); renderDbFilters();
 }
 
@@ -413,32 +423,33 @@ async function dbLoadData(keepOffset          )                {
    busy state: the format menu is gone by the time the download starts, so the button is the
    only place left on screen that can say "working". */
 async function dbExportTable(btn                   , fmt        )                {
-  var d2 = state.db;
-  var name = fmt === "json" ? "NDJSON" : fmt === "sql" ? "SQL dump" : "CSV";
-  if (!confirm("Export " + (d2 .schema ? d2 .schema + "." : "") + d2 .table + " as " + name +
+  const d2 = state.db;
+  const name = fmt === "json" ? "NDJSON" : fmt === "sql" ? "SQL dump" : "CSV";
+  const d2_ = d2 ;
+  if (!confirm("Export " + (d2_.schema ? d2_.schema + "." : "") + d2_.table + " as " + name +
       "?\nCapped at 100,000 rows — filter first if you need less.")) return;
-  var q = "/api/db/" + encodeURIComponent(d2 .conn ) + "/export?table=" + encodeURIComponent(d2 .table ) +
+  let q = "/api/db/" + encodeURIComponent(d2_.conn ) + "/export?table=" + encodeURIComponent(d2_.table ) +
     "&format=" + fmt;
-  if (d2 .schema) q += "&schema=" + encodeURIComponent(d2 .schema);
+  if (d2_.schema) q += "&schema=" + encodeURIComponent(d2_.schema);
   // The grid's filters ride along: the download and the grid describe the same filtered
   // set, and the exported row count is the filtered total.
-  if (d2 .filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d2 .filters));
+  if (d2_.filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d2_.filters));
   btn.disabled = true;
   btn.textContent = "Exporting\u2026";
   try {
-    var resp = await fetch(q);
+    const resp = await fetch(q);
     if (!resp.ok) { toast("Export failed: HTTP " + resp.status, true); return; }
-    var blob = await resp.blob();
-    var disp = resp.headers.get("Content-Disposition") || "";
-    var m = /filename="([^"]+)"/.exec(disp);
-    var a = document.createElement("a");
+    const blob = await resp.blob();
+    const disp = resp.headers.get("Content-Disposition") || "";
+    const m = /filename="([^"]+)"/.exec(disp);
+    const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = m ? m[1] : "export." + fmt;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-    var rows = resp.headers.get("X-Export-Rows");
+    setTimeout(() => { URL.revokeObjectURL(a.href); }, 1000);
+    const rows = resp.headers.get("X-Export-Rows");
     toast("Exported " + (rows != null ? Number(rows).toLocaleString() + " rows" : ""));
   } catch (e) {
     toast("Export failed", true);
@@ -449,33 +460,35 @@ async function dbExportTable(btn                   , fmt        )               
 }
 
 function renderDbToolbar()       {
-  var d = state.db;
-  var head = $("dbHead");
+  const d = state.db;
+  const head = $("dbHead");
   if (!head) return;
   head.innerHTML = "";
-  var left = el("div", "db-head-left");
-  if (d .sqlResult) {
-    left.appendChild(el("h2", "db-title pane-title", d .sqlResult.explained ? "Execution plan" : (dbIsRedis() ? "Command reply" : "SQL results")));
-    left.appendChild(el("div", "db-meta", d .sqlResult.rowCount + " row" + (d .sqlResult.rowCount === 1 ? "" : "s") +
-      (d .sqlResult.note ? " · " + d .sqlResult.note : "") +
-      (d .sqlResult.elapsedMs != null ? " · " + d .sqlResult.elapsedMs + " ms" : "")));
+  const left = el("div", "db-head-left");
+  const d_ = d ;
+  if (d_.sqlResult) {
+    left.appendChild(el("h2", "db-title pane-title", d_.sqlResult.explained ? "Execution plan" : (dbIsRedis() ? "Command reply" : "SQL results")));
+    left.appendChild(el("div", "db-meta", d_.sqlResult.rowCount + " row" + (d_.sqlResult.rowCount === 1 ? "" : "s") +
+      (d_.sqlResult.note ? " · " + d_.sqlResult.note : "") +
+      (d_.sqlResult.elapsedMs != null ? " · " + d_.sqlResult.elapsedMs + " ms" : "")));
     // docs/22 W4.3: one tab per statement reply, in the pane's segmented-control vocabulary
     // (.db-tabs — the same strip the Structure tabs use). Eight fit the pane; past that the
     // strip scrolls sideways instead of wrapping. Switching only repoints the active result;
     // every tab keeps its own checked-row keys (dbResultKey namespaces d.sel by tab), so a
     // Shift-range or a copy never crosses tabs.
-    if ((d .sqlResults || []).length > 1) {
-      var seg = el("div", "db-tabs");
+    if ((d_.sqlResults || []).length > 1) {
+      const seg = el("div", "db-tabs");
       seg.setAttribute("role", "tablist");
-      d .sqlResults .forEach(function (r              , ti        )       {
-        var b = el("button", "", r.tabLabel || "Result " + (ti + 1));
+      d_.sqlResults?.forEach((r              , ti        )       => {
+        const b = el("button", "", r.tabLabel || "Result " + (ti + 1));
         b.setAttribute("role", "tab");
-        b.setAttribute("aria-selected", ti === d .sqlTab ? "true" : "false");
-        b.onclick = function () {
-          if (d .sqlTab === ti) return;
-          d .sqlTab = ti;
-          d .sqlResult = d .sqlResults [ti];
-          d .selAnchor = -1; // a Shift-range never spans tabs
+        b.setAttribute("aria-selected", ti === d?.sqlTab ? "true" : "false");
+        b.onclick = () => {
+          const d_ = d ;
+          if (d_.sqlTab === ti) return;
+          d_.sqlTab = ti;
+          d_.sqlResult = d_.sqlResults [ti];
+          d_.selAnchor = -1; // a Shift-range never spans tabs
           renderDbToolbar();
           renderDbGrid();
         };
@@ -483,148 +496,153 @@ function renderDbToolbar()       {
       });
       left.appendChild(seg);
     }
-  } else if (d .data) {
-    left.appendChild(el("h2", "db-title pane-title", (d .data.schema ? d .data.schema + "." : "") + d .data.table));
-    var bits = [d .data.total.toLocaleString() + " rows"];
+  } else if (d_.data) {
+    left.appendChild(el("h2", "db-title pane-title", (d_.data.schema ? d_.data.schema + "." : "") + d_.data.table));
+    const bits = [d_.data.total.toLocaleString() + " rows"];
     // docs/22 W4.1: a keyless table edits by every-column addressing — the server's note
     // says how, and it belongs in the editable branch now (this same line used to explain
     // why such a table could not be edited at all).
-    var pkCols0 = d .data.primaryKey || [];
-    bits.push(d .data.editable
-      ? (pkCols0.length ? "editable — changes buffer until Commit" : "editable — " + (d .data.editNote || "rows are addressed by all columns"))
-      : (d .data.editNote || "browsing only"));
+    const pkCols0 = d_.data.primaryKey || [];
+    bits.push(d_.data.editable
+      ? (pkCols0.length ? "editable — changes buffer until Commit" : "editable — " + (d_.data.editNote || "rows are addressed by all columns"))
+      : (d_.data.editNote || "browsing only"));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (dbIsRedis()) {
-    left.appendChild(el("h2", "db-title pane-title", d .redisKey ? d .redisKey : "Keys"));
-    var conn2 = d .conns.find(function (c                    )          { return c.name === d .conn; });
+    left.appendChild(el("h2", "db-title pane-title", d_.redisKey ? d_.redisKey : "Keys"));
+    const conn2 = d_.conns.find((c                    )          => { return c.name === d?.conn; });
     left.appendChild(el("div", "db-meta",
       (conn2 ? conn2.label : "") +
-      (d .redis && d .redis.total != null ? " · " + Number(d .redis.total).toLocaleString() + " keys" : "") +
+      (d_.redis && d_.redis.total != null ? " · " + Number(d_.redis.total).toLocaleString() + " keys" : "") +
       " · browsing · edit values in place or run commands"));
   } else {
     left.appendChild(el("h2", "db-title pane-title", "Data"));
-    left.appendChild(el("div", "db-meta", d .conn ? (d .table ? "Loading…" : "Select a table on the left") : "No database MCP registered"));
+    left.appendChild(el("div", "db-meta", d_.conn ? (d_.table ? "Loading…" : "Select a table on the left") : "No database MCP registered"));
   }
   head.appendChild(left);
 
-  var ctl = el("div", "db-head-ctl");
-  var nosql = dbIsRedis();
-  if (d .data && !d .sqlResult && !nosql) dbRenderTabs(ctl);
-  if (d .sqlResult) {
-    var back = el("button", "btn", dbIsRedis() ? "Back to keys" : "Back to table");
-    back.onclick = function () {
-      d .sqlResult = null;
-      d .sqlResults = null; d .sqlTab = 0; // docs/22 W4.3: leaving the results closes every tab
+  const ctl = el("div", "db-head-ctl");
+  const nosql = dbIsRedis();
+  if (d_.data && !d_.sqlResult && !nosql) dbRenderTabs(ctl);
+  if (d_.sqlResult) {
+    const back = el("button", "btn", dbIsRedis() ? "Back to keys" : "Back to table");
+    back.onclick = () => {
+      const d_ = d ;
+      d_.sqlResult = null;
+      d_.sqlResults = null; d_.sqlTab = 0; // docs/22 W4.3: leaving the results closes every tab
       dbClearSel(); // "q"-prefixed query keys must not leak into the table grid
       renderDbToolbar(); renderDbGrid();
     };
     ctl.appendChild(back);
-  } else if (d .data) {
+  } else if (d_.data) {
     // Row-grid controls: page size, pager, refresh, insert, CSV. Rendered on EVERY tab but hidden
     // with visibility (keeps the width) off the Data tab, so the tab segment never shifts.
-    var dataCtl = el("div", "db-data-ctl");
-    if (d .tab !== "data") dataCtl.style.visibility = "hidden";
-    var size = el("select", "db-pagesize")                     ;
+    const dataCtl = el("div", "db-data-ctl");
+    if (d_.tab !== "data") dataCtl.style.visibility = "hidden";
+    const size = el("select", "db-pagesize")                     ;
     size.title = "Rows per page";
-    DB_PAGE_SIZES.forEach(function (n        )       {
-      var o = el("option", "", String(n))                     ;
+    DB_PAGE_SIZES.forEach((n        )       => {
+      const o = el("option", "", String(n))                     ;
       o.value = String(n);
-      o.selected = n === d .pageSize;
+      o.selected = n === d?.pageSize;
       size.appendChild(o);
     });
     size.onchange = (e) => {
       const t = e.currentTarget                     ;
-      if (!dbOkToDrop()) { t.value = String(d .pageSize); return; }
-      d .pageSize = Number(t.value);
-      d .offset = 0;
+      const d_ = d ;
+      if (!dbOkToDrop()) { t.value = String(d_.pageSize); return; }
+      d_.pageSize = Number(t.value);
+      d_.offset = 0;
       dbDropEdits();
       dbLoadData(true);
     };
     dataCtl.appendChild(size);
 
-    var first = d .offset + 1;
-    var to = d .offset + d .data.rows.length;
+    const first = d_.offset + 1;
+    const to = d_.offset + d_.data.rows.length;
     dataCtl.appendChild(el("span", "db-pageinfo",
-      d .data.total ? first.toLocaleString() + "–" + to.toLocaleString() + " of " + d .data.total.toLocaleString() : "0 rows"));
-    var prev = el("button", "btn icon")                     ;
+      d_.data.total ? first.toLocaleString() + "–" + to.toLocaleString() + " of " + d_.data.total.toLocaleString() : "0 rows"));
+    const prev = el("button", "btn icon")                     ;
     prev.innerHTML = icon("chevron-left");
     prev.title = "Previous page";
-    prev.disabled = d .offset === 0;
-    prev.onclick = function () {
+    prev.disabled = d_.offset === 0;
+    prev.onclick = () => {
       if (!dbOkToDrop()) return;
-      d .offset = Math.max(0, d .offset - d .pageSize);
+      const d_ = d ;
+      d_.offset = Math.max(0, d_.offset - d_.pageSize);
       dbDropEdits();
       dbLoadData(true);
     };
-    var next = el("button", "btn icon")                     ;
+    const next = el("button", "btn icon")                     ;
     next.innerHTML = icon("chevron-right");
     next.title = "Next page";
     // docs/22 W1.9: the limit+1 probe answers "is there another page" from the rows actually
     // fetched; the old offset-vs-total arithmetic stays as the fallback when the flag is absent.
-    next.disabled = d .data.nextPage != null ? !d .data.nextPage : to >= d .data.total;
-    next.onclick = function () {
+    next.disabled = d_.data.nextPage != null ? !d_.data.nextPage : to >= d_.data.total;
+    next.onclick = () => {
       if (!dbOkToDrop()) return;
-      d .offset += d .pageSize;
+      const d_ = d ;
+      d_.offset += d_.pageSize;
       dbDropEdits();
       dbLoadData(true);
     };
     dataCtl.appendChild(prev);
     dataCtl.appendChild(next);
 
-    var refresh = el("button", "btn", "Refresh")                     ;
+    const refresh = el("button", "btn", "Refresh")                     ;
     refresh.title = "Reload this page (drops buffered edits)";
-    refresh.onclick = function ()       {
+    refresh.onclick = ()       => {
       if (!dbOkToDrop()) return;
       dbDropEdits();
       dbLoadData(true);
     };
     dataCtl.appendChild(refresh);
 
-    if (d .data.editable) {
-      var addRow = el("button", "btn", "+ Row")                     ;
+    if (d_.data.editable) {
+      const addRow = el("button", "btn", "+ Row")                     ;
       addRow.title = "Buffer a new row — inserted only on Commit";
-      addRow.onclick = function ()       {
-        d .inserts.push({ values: {} });
+      addRow.onclick = ()       => {
+        d?.inserts.push({ values: {} });
         renderDbGrid(); renderDbBar();
       };
       dataCtl.appendChild(addRow);
     }
 
-    var csv = el("button", "btn", "CSV")                     ;
+    const csv = el("button", "btn", "CSV")                     ;
     csv.title = "Download the current page as CSV";
     csv.onclick = dbExportCsv;
     dataCtl.appendChild(csv);
 
-    var exp = el("button", "btn", "Export…");
+    const exp = el("button", "btn", "Export…");
     exp.title = "Export the whole table as CSV, NDJSON, or SQL dump (capped at 100k rows)";
     exp.onclick = (ev            )       => {
       // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
       // and without this the very click that opens the menu also tears it down.
       ev.stopPropagation();
       popupMenu((ev.currentTarget                     ).getBoundingClientRect(), [
-        { label: "Export CSV…", fn: function ()       { dbExportTable(exp, "csv"); } },
-        { label: "Export NDJSON…", fn: function ()       { dbExportTable(exp, "json"); } },
-        { label: "Export SQL dump…", fn: function ()       { dbExportTable(exp, "sql"); } },
+        { label: "Export CSV…", fn: ()       => { dbExportTable(exp, "csv"); } },
+        { label: "Export NDJSON…", fn: ()       => { dbExportTable(exp, "json"); } },
+        { label: "Export SQL dump…", fn: ()       => { dbExportTable(exp, "sql"); } },
       ]);
     };
     dataCtl.appendChild(exp);
 
-    if (d .data.editable) {
-      var imp = el("button", "btn", "Import\u2026")                     ;
+    if (d_.data.editable) {
+      const imp = el("button", "btn", "Import\u2026")                     ;
       imp.title = "Insert CSV rows in one transaction";
       imp.onclick = dbOpenImport;
       dataCtl.appendChild(imp);
     }
     ctl.appendChild(dataCtl);
   }
-  var sql = el("button", "btn", d .sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL"))                     ;
+  const sql = el("button", "btn", d_.sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL"))                     ;
   sql.title = nosql ? "Run one command (SET, GET, DEL, HGETALL, TTL, TYPE…)" : "SQL console — statements split on ; get a tab each";
-  sql.onclick = function ()       {
-    d .sqlOpen = !d .sqlOpen;
-    var con = $("dbConsole");
-    if (con) con.hidden = !d .sqlOpen;
-    sql.textContent = d .sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL");
-    if (d .sqlOpen && $("dbSql")) $("dbSql").focus();
+  sql.onclick = ()       => {
+    const d_ = d ;
+    d_.sqlOpen = !d_.sqlOpen;
+    const con = $("dbConsole");
+    if (con) con.hidden = !d_.sqlOpen;
+    sql.textContent = d_.sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL");
+    if (d_.sqlOpen && $("dbSql")) $("dbSql").focus();
   };
   ctl.appendChild(sql);
   head.appendChild(ctl);
@@ -633,11 +651,12 @@ function renderDbToolbar()       {
 /** docs/22 W1.4: fill the console with one generated stats statement and run it, so the SQL
  *  is on screen (and in history) rather than hidden behind a one-off request. */
 function dbRunColumnStats(column        , kind        )       {
-  var d = state.db;
-  var dialect = (d .conns.find(function (c                    )          { return c.name === d .conn; }) || {}                        ).dialect || "mysql";
-  var sql        ;
+  const d = state.db;
+  const d_ = d ;
+  const dialect = (d_.conns.find((c                    )          => { return c.name === d?.conn; }) || {}                        ).dialect || "mysql";
+  let sql        ;
   try {
-    sql = dbStatsSql(dialect, d .schema , d .table , column, kind);
+    sql = dbStatsSql(dialect, d_.schema , d_.table , column, kind);
   } catch (err) { toast(errText(err), true); return; }
   dbFillConsole(sql);
   void dbRunSql();
@@ -649,9 +668,9 @@ function dbRunColumnStats(column        , kind        )       {
 function dbPaintCell(td                      , v         , has         , colType         )                {
   if (!has || v === undefined) return null; // nothing set yet (an insert stub cell)
   if (v === null) { td.appendChild(el("span", "db-null", "NULL")); return null; }
-  var view = dbCellView(v, colType);
+  const view = dbCellView(v, colType);
   if (view.href) {
-    var a = el("a", "db-link", view.text);
+    const a = el("a", "db-link", view.text);
     a.href = view.href;
     a.target = "_blank";
     a.rel = "noopener noreferrer"; // a data grid can point anywhere; the panel vouches for none of it
@@ -664,7 +683,7 @@ function dbPaintCell(td                      , v         , has         , colType
 
 /* --- column header hover card -------------------------------------------------------------------- */
 
-var dbTip                                                                              = { node: null, timer: 0 };
+const dbTip                                                                              = { node: null, timer: 0 };
 
 function dbTipHide()       {
   // Cancel a pending show too (docs/22 closeout audit): dbTipHide is what a grid rebuild
@@ -679,14 +698,14 @@ function dbTipHide()       {
  *  the sort hint. Fixed under the th and clamped to the viewport; pointer-events none so it can
  *  never steal the hover it is explaining. */
 function dbTipShow(th             , c             )       {
-  var tip = el("div", "db-tip");
+  const tip = el("div", "db-tip");
   tip.appendChild(el("div", "t-name", c.name));
   tip.appendChild(el("div", "t-type", c.dataType + (c.nullable ? " · nullable" : " · not null") +
     (c.isPrimaryKey ? " · primary key" : "")));
   if (c.comment) tip.appendChild(el("div", "t-comment", c.comment ));
   tip.appendChild(el("div", "t-hint", "Click sorts: ascending → descending → off"));
   document.body.appendChild(tip);
-  var r = th.getBoundingClientRect();
+  const r = th.getBoundingClientRect();
   tip.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tip.offsetWidth - 8)) + "px";
   tip.style.top = (r.bottom + 6) + "px";
   dbTip.node = tip;
@@ -698,11 +717,12 @@ document.addEventListener("scroll", dbTipHide, true);
 
 
 function renderDbGrid()       {
-  var d = state.db;
-  var wrap = $("dbGridWrap");
+  const d = state.db;
+  const wrap = $("dbGridWrap");
   if (!wrap) return;
-  var con = $("dbConsole");
-  if (con) con.hidden = !d .sqlOpen;
+  const con = $("dbConsole");
+  const d_ = d ;
+  if (con) con.hidden = !d_.sqlOpen;
   // Full rebuild inside a scrolled pane. The wrap carries overflow-anchor:none (views.css):
   // Chrome's scroll anchoring otherwise re-picks its anchor when this wipe destroys the old
   // one and compensates by scrolling, which snaps the row the user just clicked to the top.
@@ -712,48 +732,48 @@ function renderDbGrid()       {
   // docs/22 W4.2: conflict marks live exactly as long as the buffered change they name —
   // reverting the cell, dropping the buffer or reloading the table clears them (a new
   // commit answer re-sets or clears them in the fetch observer above).
-  if (d .conflict) {
-    var cu = d .updates && d .updates[d .conflict.key];
-    var live = !!cu && d .conflict.columns.some(function (c) {
+  if (d_.conflict) {
+    const cu = d_.updates && d_.updates[d_.conflict.key];
+    const live = !!cu && d_.conflict.columns.some((c) => {
       return Object.prototype.hasOwnProperty.call(cu.changes, c);
     });
-    if (!live) d .conflict = null;
+    if (!live) d_.conflict = null;
   }
 
-  if (d .sqlResult || d .sqlBusy) { renderDbResultGrid(wrap); return; }
+  if (d_.sqlResult || d_.sqlBusy) { renderDbResultGrid(wrap); return; }
   if (dbIsRedis()) { dbRenderRedisValue(wrap); return; }
   // docs/22 W5.1: the Form tab paints the same rows as the grid, one record at a time.
-  if (d .tab === "form") { renderDbFormView(wrap); return; }
-  if (d .tab !== "data") { renderDbDetailGrid(wrap); return; }
-  if (!d .conn) { wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first.")); return; }
-  if (!d .table || !d .data) {
-    if (d .table) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+  if (d_.tab === "form") { renderDbFormView(wrap); return; }
+  if (d_.tab !== "data") { renderDbDetailGrid(wrap); return; }
+  if (!d_.conn) { wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first.")); return; }
+  if (!d_.table || !d_.data) {
+    if (d_.table) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
     // The shared empty state (docs/18 V7); "Loading…" stays a quiet one-liner.
     wrap.innerHTML = emptyHtml({ icon: "database", title: "Select a table", hint: "Pick a table on the left to browse its rows." });
     return;
   }
-  if (d .loading) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+  if (d_.loading) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
 
-  var pkCols = d .data.primaryKey || [];
-  var editable = d .data.editable;
+  const pkCols = d_.data.primaryKey || [];
+  const editable = d_.data.editable;
   // docs/22 W2.1: the per-connection grid config picks the columns the table shows and the
   // width each dragged column keeps. A config older than a column set (columns added since)
   // simply misses those names — an unknown width is no width, an unknown hidden name hides
   // nothing.
-  var cfg = d .gridCfg || { widths: {}, hidden: [] };
-  var cols = dbGridVisibleColumns(d .data .columns, cfg.hidden);
-  var widthOf = function (c             , cell             )       {
-    var w = cfg.widths[c.name];
+  const cfg = d_.gridCfg || { widths: {}, hidden: [] };
+  const cols = dbGridVisibleColumns(d_.data?.columns, cfg.hidden);
+  const widthOf = (c             , cell             )       => {
+    const w = cfg.widths[c.name];
     if (w) { cell.style.width = w + "px"; cell.style.maxWidth = w + "px"; }
   };
 
-  var tbl = el("table", "db-grid");
-  var thead = el("thead");
-  var hr = el("tr");
-  var keyOf = function (row                         , i        )         { return pkCols.length ? dbPkKey(pkCols, row) : String(i); };
-  var thAll = el("th", "db-rowctl");
-  var allOn = d .data .rows.length > 0 && d .data .rows.every(function (row                         , i        )          { return !!d .sel[keyOf(row, i)]; });
-  var cbAll = document.createElement("input");
+  const tbl = el("table", "db-grid");
+  const thead = el("thead");
+  const hr = el("tr");
+  const keyOf = (row                         , i        )         => { return pkCols.length ? dbPkKey(pkCols, row) : String(i); };
+  const thAll = el("th", "db-rowctl");
+  const allOn = d_.data?.rows.length > 0 && d_.data?.rows.every((row                         , i        )          => { return !!d?.sel[keyOf(row, i)]; });
+  const cbAll = document.createElement("input");
   cbAll.type = "checkbox";
   cbAll.className = "db-selbox";
   cbAll.checked = allOn;
@@ -765,11 +785,12 @@ function renderDbGrid()       {
   // One caption line under every column name when ANY column carries a comment: the meaning is
   // then ON the grid instead of hidden behind a hover, and giving every header the line (empty
   // where there is nothing to say) keeps the header row one even height.
-  var hasComments = cols.some(function (c             )          { return !!c.comment; });
-  cols.forEach(function (c             )       {
-    var sorted = c.name === d .order;
-    var th = el("th", "db-col" + (sorted ? " db-sorted" + (d .dir === "desc" ? " db-sorted-desc" : "") : ""));
-    var main = el("div", "db-col-main");
+  const hasComments = cols.some((c             )          => { return !!c.comment; });
+  cols.forEach((c             )       => {
+    const d_ = d ;
+    const sorted = c.name === d_.order;
+    const th = el("th", "db-col" + (sorted ? " db-sorted" + (d_.dir === "desc" ? " db-sorted-desc" : "") : ""));
+    const main = el("div", "db-col-main");
     main.appendChild(el("span", "db-col-name", c.name));
     if (c.isPrimaryKey) main.appendChild(el("span", "db-key", "⚿"));
     main.appendChild(el("span", "db-col-type", c.dataType));
@@ -778,17 +799,17 @@ function renderDbGrid()       {
     // filter, the same channel a typed filter or W1.5's cell menu uses. The detail (and its
     // foreignKeys) loads with the table; until it answers there is no arrow, which is the
     // honest state — and a table with no FKs never draws one.
-    var fk = ((d .detail && d .detail.foreignKeys) || []).filter(function (f            )          { return f.column === c.name; })[0];
+    const fk = ((d_.detail && d_.detail.foreignKeys) || []).filter((f            )          => { return f.column === c.name; })[0];
     if (fk) {
-      var jump = el("button", "db-col-fk")                     ;
+      const jump = el("button", "db-col-fk")                     ;
       jump.type = "button";
       jump.setAttribute("aria-label", "Jump to referenced row");
       jump.title = "Open " + (fk.refSchema ? fk.refSchema + "." : "") + fk.refTable +
         " filtered to this column's value in the focused row";
       jump.innerHTML = icon("arrow-right");
-      jump.onclick = function (ev            )       {
+      jump.onclick = (ev            )       => {
         ev.stopPropagation(); // the header click sorts; this click jumps
-        var v = dbFocusedColumnValue(state.db, c.name);
+        const v = dbFocusedColumnValue(state.db, c.name);
         if (v === undefined) {
           toast("Click a cell in " + c.name + " first — the jump uses that row's value", true);
           return;
@@ -806,30 +827,31 @@ function renderDbGrid()       {
     if (hasComments) th.appendChild(el("div", "db-col-comment", c.comment || ""));
     // docs/22 W2.1: the resize grip hugs the header's right edge. It owns mousedown and click
     // so a drag neither sorts the column nor fights the hover card for the pointer.
-    var grip = el("span", "db-col-grip");
+    const grip = el("span", "db-col-grip");
     grip.title = "Drag to resize";
-    grip.onmousedown = function (ev            )       {
-      var idx = Array.prototype.indexOf.call(hr.children, th);
-      var cells = [th]                            ;
-      var trs = tbl.querySelectorAll("tbody tr");
-      for (var r = 0; r < trs.length; r++) if (trs[r].children[idx]) cells.push(trs[r].children[idx]                          );
+    grip.onmousedown = (ev            )       => {
+      const idx = Array.prototype.indexOf.call(hr.children, th);
+      const cells = [th]                            ;
+      const trs = tbl.querySelectorAll("tbody tr");
+      for (let r = 0; r < trs.length; r++) if (trs[r].children[idx]) cells.push(trs[r].children[idx]                          );
       dbColResizeStart(ev, c.name, th, cells                                      );
     };
-    grip.onclick = function (ev            )       { ev.stopPropagation(); };
+    grip.onclick = (ev            )       => { ev.stopPropagation(); };
     th.appendChild(grip);
     widthOf(c, th);
-    th.onmouseenter = function ()       {
+    th.onmouseenter = ()       => {
       clearTimeout(dbTip.timer);
-      dbTip.timer = setTimeout(function ()       { dbTipShow(th, c); }, 260);
+      dbTip.timer = setTimeout(()       => { dbTipShow(th, c); }, 260);
     };
-    th.onmouseleave = function ()       { clearTimeout(dbTip.timer); dbTipHide(); };
-    th.onclick = function ()       {
+    th.onmouseleave = ()       => { clearTimeout(dbTip.timer); dbTipHide(); };
+    th.onclick = ()       => {
       dbTipHide();
       if (!dbOkToDrop()) return;
-      var next = dbNextSort(d .order, d .dir, c.name);
-      d .order = next ? next.order : null;
-      d .dir = next ? next.dir : "asc";
-      d .offset = 0;
+      const d_ = d ;
+      const next = dbNextSort(d_.order, d_.dir, c.name);
+      d_.order = next ? next.order : null;
+      d_.dir = next ? next.dir : "asc";
+      d_.offset = 0;
       dbDropEdits();
       dbLoadData(true);
     };
@@ -842,13 +864,14 @@ function renderDbGrid()       {
       // docs/22 W2.1: hiding lives in the same menu, one separator down, and the recovery
       // entry ("Show all columns") appears exactly while something is hidden — one place for
       // both directions.
-      var items             = [
-        { label: "Value distribution\u2026", fn: function ()       { dbRunColumnStats(c.name, "dist"); } },
-        { label: "Numeric stats\u2026", fn: function ()       { dbRunColumnStats(c.name, "num"); } },
+      const items             = [
+        { label: "Value distribution\u2026", fn: ()       => { dbRunColumnStats(c.name, "dist"); } },
+        { label: "Numeric stats\u2026", fn: ()       => { dbRunColumnStats(c.name, "num"); } },
         { sep: true },
-        { label: "Hide column", fn: function ()       { dbHideColumn(c.name); } },
+        { label: "Hide column", fn: ()       => { dbHideColumn(c.name); } },
       ];
-      if (d .gridCfg && d .gridCfg.hidden.length) {
+      const d_ = d ;
+      if (d_.gridCfg && d_.gridCfg.hidden.length) {
         items.push({ label: "Show all columns", fn: dbShowAllColumns });
       }
       popupMenu((e.currentTarget               ).getBoundingClientRect(), items);
@@ -858,19 +881,19 @@ function renderDbGrid()       {
   thead.appendChild(hr);
   tbl.appendChild(thead);
 
-  var tbody = el("tbody");
+  const tbody = el("tbody");
 
   // docs/22 W2.1: a table with every column hidden still has to read as a place, not a
   // collapsed box — one quiet row says what happened and carries the way back. Rows and
   // buffered inserts are not drawn under it: with no visible column there is nothing to show
   // or edit. (The header keeps the select-all corner for shape.)
   if (!cols.length) {
-    var trh = el("tr");
-    var tdh = el("td", "db-grid-hiddenall");
-    var inner = el("div");
+    const trh = el("tr");
+    const tdh = el("td", "db-grid-hiddenall");
+    const inner = el("div");
     inner.appendChild(el("span", "", "Every column of " +
-      (d .schema ? d .schema + "." : "") + d .table + " is hidden."));
-    var showAll = el("button", "btn", "Show all columns")                     ;
+      (d_.schema ? d_.schema + "." : "") + d_.table + " is hidden."));
+    const showAll = el("button", "btn", "Show all columns")                     ;
     showAll.onclick = dbShowAllColumns;
     inner.appendChild(showAll);
     tdh.appendChild(inner);
@@ -882,48 +905,49 @@ function renderDbGrid()       {
   }
 
   // Buffered inserts first, so they read as "the row you are about to add".
-  d .inserts.forEach(function (ins          , i        )       {
-    var tr = el("tr", "db-ins");
-    var rc = el("td", "db-rowctl");
-    var rm = el("button", "db-act", "✕")                     ;
+  d_.inserts.forEach((ins          , i        )       => {
+    const tr = el("tr", "db-ins");
+    const rc = el("td", "db-rowctl");
+    const rm = el("button", "db-act", "✕")                     ;
     rm.title = "Remove this buffered insert";
-    rm.onclick = function ()       {
-      d .inserts.splice(i, 1);
+    rm.onclick = ()       => {
+      d?.inserts.splice(i, 1);
       renderDbGrid(); renderDbBar();
     };
     rc.appendChild(rm);
     tr.appendChild(rc);
-    cols.forEach(function (c             , ci        )       {
-      var has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
-      var td = el("td", "db-cell")                                                                        ;
+    cols.forEach((c             , ci        )       => {
+      const has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
+      const td = el("td", "db-cell")                                                                        ;
       // The cell's grid address: the focus ring moves between live cells by it (P0-B).
       td.setAttribute("data-r", i                     );
       td.setAttribute("data-c", ci                     );
       widthOf(c, td);
-      var long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
+      const long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
       // docs/22 W2.2: one click puts the keyboard's focus cell here; the ring marks it.
       // preventDefault (P0-A): the mousedown's default focus move lands on <body> AFTER
       // dbFocusCell focused #dbKbd, and arrows/Enter/F2/typing/Esc/Ctrl+C/paste would all
       // go nowhere. Click and dblclick still fire — preventing the default does not
       // suppress them.
-      td.onmousedown = function (ev            )       { ev.preventDefault(); dbFocusCell(i, ci); };
-      if (d .focus && d .focus.r === i && d .focus.c === ci) td.classList.add("db-focus");
+      td.onmousedown = (ev            )       => { ev.preventDefault(); dbFocusCell(i, ci); };
+      const d_ = d ;
+      if (d_.focus && d_.focus.r === i && d_.focus.c === ci) td.classList.add("db-focus");
       if (editable) {
         td.classList.add("db-cell-edit");
         td.title = long || "Double-click to edit · right-click for dialog/copy";
-        (function (col        , present         )       {
-          td.ondblclick = function ()       {
-            var cur = present ? dbCellText(ins.values[col]) : "";
+        ((col        , present         )       => {
+          td.ondblclick = ()       => {
+            const cur = present ? dbCellText(ins.values[col]) : "";
             dbEditCellEnter("insert", null                     , i, col, {}              , td, cur == null ? "" : cur);
           };
-          td.dbKbdEdit = function (seed               )       {
-            var cur = seed != null ? seed : present ? dbCellText(ins.values[col]) : "";
+          td.dbKbdEdit = (seed               )       => {
+            const cur = seed != null ? seed : present ? dbCellText(ins.values[col]) : "";
             dbEditCellEnter("insert", null                     , i, col, {}              , td, cur == null ? "" : cur);
           };
           // docs/22 closeout B2: the editInDialog callback is dbCellMenu's FIFTH parameter —
           // a stray null before it parked the callback in an unread sixth slot, so the insert
           // row's menu never offered the dialog path a data row's menu always had.
-          td.oncontextmenu = function (e            )       { dbCellMenu(e, null, null                     , col, function ()       { dbOpenCellEditor("insert", null                     , i, col, {}              ); }); };
+          td.oncontextmenu = (e            )       => { dbCellMenu(e, null, null                     , col, ()       => { dbOpenCellEditor("insert", null                     , i, col, {}              ); }); };
         })(c.name, has);
       }
       tr.appendChild(td);
@@ -931,76 +955,80 @@ function renderDbGrid()       {
     tbody.appendChild(tr);
   });
 
-  d .data .rows.forEach(function (row                         , rowIdx        )       {
-    var key = keyOf(row, rowIdx);
-    var deleted = !!d .deletes[key];
-    var upd = d .updates[key];
-    var tr = el("tr", (deleted ? "db-del " : "") + (d .sel[key] ? "db-sel" : ""));
-    var rc = el("td", "db-rowctl");
-    var cb = document.createElement("input");
+  d_.data?.rows.forEach((row                         , rowIdx        )       => {
+    const key = keyOf(row, rowIdx);
+    const d_ = d ;
+    const deleted = !!d_.deletes[key];
+    const upd = d_.updates[key];
+    const tr = el("tr", (deleted ? "db-del " : "") + (d_.sel[key] ? "db-sel" : ""));
+    const rc = el("td", "db-rowctl");
+    const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.className = "db-selbox";
-    cb.checked = !!d .sel[key];
+    cb.checked = !!d_.sel[key];
     cb.title = "Select row for copy (Shift-click for a range)";
     cb.onclick = (e            )       => { e.stopPropagation(); };
     cb.onchange = (ev                                )       => {
-      if (ev.shiftKey && d .selAnchor >= 0 && d .selAnchor !== rowIdx) {
-        var a = Math.min(d .selAnchor, rowIdx);
-        var b2 = Math.max(d .selAnchor, rowIdx);
-        for (var k = a; k <= b2; k++) d .sel[keyOf(d .data .rows[k], k)] = true;
-      } else if ((ev.currentTarget                    ).checked) d .sel[key] = true;
-      else delete d .sel[key];
-      d .selAnchor = rowIdx;
+      const d_ = d ;
+      if (ev.shiftKey && d_.selAnchor >= 0 && d_.selAnchor !== rowIdx) {
+        const a = Math.min(d_.selAnchor, rowIdx);
+        const b2 = Math.max(d_.selAnchor, rowIdx);
+        for (let k = a; k <= b2; k++) d_.sel[keyOf(d_.data .rows[k], k)] = true;
+      } else if ((ev.currentTarget                    ).checked) d_.sel[key] = true;
+      else delete d_.sel[key];
+      d_.selAnchor = rowIdx;
       renderDbToolbar(); renderDbGrid();
     };
     rc.appendChild(cb);
     if (editable) {
-      var b = el("button", "db-act", deleted ? "↩" : "✕")                     ;
+      const b = el("button", "db-act", deleted ? "↩" : "✕")                     ;
       b.title = deleted ? "Undo this buffered delete" : "Buffer a delete — applied only on Commit";
-      b.onclick = function ()       {
-        if (deleted) delete d .deletes[key];
+      b.onclick = ()       => {
+        const d_ = d ;
+        if (deleted) delete d_.deletes[key];
         else {
-          d .deletes[key] = dbRowAddr(pkCols, d .data .columns, row);
-          delete d .updates[key]; // a deleted row's cell edits are moot
+          d_.deletes[key] = dbRowAddr(pkCols, d_.data .columns, row);
+          delete d_.updates[key]; // a deleted row's cell edits are moot
         }
         renderDbGrid(); renderDbBar();
       };
       rc.appendChild(b);
     }
     tr.appendChild(rc);
-    cols.forEach(function (c             , ci        )       {
-      var orig = row[c.name];
-      var pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
-      var v = pending ? upd.changes[c.name] : orig;
+    cols.forEach((c             , ci        )       => {
+      const orig = row[c.name];
+      const pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
+      const v = pending ? upd.changes[c.name] : orig;
       // docs/22 W4.2: the cells a lost commit race named stay red while their buffered
       // change is still pending — amber says "differs from the loaded row", red says
       // "the server refused this change; the row moved under it".
-      var lost = pending && !!d .conflict && d .conflict.key === key && d .conflict.columns.indexOf(c.name) >= 0;
-      var td = el("td", "db-cell" + (pending ? " db-dirty" : "") + (lost ? " db-conflict" : ""))                                                                        ;
+      const d_ = d ;
+      const lost = pending && !!d_.conflict && d_.conflict.key === key && d_.conflict.columns.indexOf(c.name) >= 0;
+      const td = el("td", "db-cell" + (pending ? " db-dirty" : "") + (lost ? " db-conflict" : ""))                                                                        ;
       // docs/22 W2.2: same focus wiring as insert cells; the row index counts the inserts
       // above. The address rides the cell so the ring can move without a rebuild (P0-B).
-      var gridRow = d .inserts.length + rowIdx;
+      const gridRow = d_.inserts.length + rowIdx;
       td.setAttribute("data-r", gridRow                     );
       td.setAttribute("data-c", ci                     );
       widthOf(c, td);
-      var long = dbPaintCell(td, v, true, c.dataType);
-      td.onmousedown = function (ev            )       { ev.preventDefault(); dbFocusCell(gridRow, ci); }; // P0-A: see the insert cells
-      if (d .focus && d .focus.r === gridRow && d .focus.c === ci) td.classList.add("db-focus");
+      const long = dbPaintCell(td, v, true, c.dataType);
+      td.onmousedown = (ev            )       => { ev.preventDefault(); dbFocusCell(gridRow, ci); }; // P0-A: see the insert cells
+      if (d_.focus && d_.focus.r === gridRow && d_.focus.c === ci) td.classList.add("db-focus");
       if (editable && !deleted) {
         td.classList.add("db-cell-edit");
         td.title = long || "Double-click to edit · right-click for dialog/copy";
-        (function (col        , orig         )       {
-          var meta             = { pk: dbRowAddr(pkCols, d .data .columns, row), orig: orig };
-          td.ondblclick = function ()       {
-            var cur = dbCellText(orig);
+        ((col        , orig         )       => {
+          const meta             = { pk: dbRowAddr(pkCols, d .data .columns, row), orig: orig };
+          td.ondblclick = ()       => {
+            const cur = dbCellText(orig);
             dbEditCellEnter("update", key, -1, col, meta, td, cur == null ? "" : cur);
           };
-          td.dbKbdEdit = function (seed               )       {
-            var cur = seed != null ? seed : dbCellText(orig);
+          td.dbKbdEdit = (seed               )       => {
+            const cur = seed != null ? seed : dbCellText(orig);
             dbEditCellEnter("update", key, -1, col, meta, td, cur == null ? "" : cur);
           };
-          td.oncontextmenu = function (e            )       {
-            dbCellMenu(e, row, key, col, function ()       { dbOpenCellEditor("update", key, -1, col, meta); });
+          td.oncontextmenu = (e            )       => {
+            dbCellMenu(e, row, key, col, ()       => { dbOpenCellEditor("update", key, -1, col, meta); });
           };
         })(c.name, orig);
       }
@@ -1016,17 +1044,18 @@ function renderDbGrid()       {
   // the scrolling wrap and owns keydown + paste — arrows/Enter/F2/Esc/Home/End/typing,
   // Ctrl+C, and TSV paste. Every focus() call on it must pass preventScroll: it lives at
   // the end of the scrolled content, and a plain focus() drags the pane to the bottom.
-  var kbd = el("input", "db-kbd")                    ;
+  const kbd = el("input", "db-kbd")                    ;
   kbd.type = "text";
   kbd.id = "dbKbd";
   kbd.tabIndex = -1;
   kbd.setAttribute("aria-label", "Data grid keyboard navigation");
-  kbd.onkeydown = function (ev               )       {
-    var d = state.db;
-    if (!d .data) return;
-    var maxR = dbGridRowsCount() - 1;
-    var maxC = cols.length - 1;
-    if (!d .focus) {
+  kbd.onkeydown = (ev               )       => {
+    const d = state.db;
+    const d_ = d ;
+    if (!d_.data) return;
+    const maxR = dbGridRowsCount() - 1;
+    const maxC = cols.length - 1;
+    if (!d_.focus) {
       if (ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "ArrowLeft" ||
         ev.key === "ArrowRight" || ev.key === "Home" || ev.key === "End") {
         ev.preventDefault();
@@ -1037,7 +1066,7 @@ function renderDbGrid()       {
     if (ev.key === "ArrowUp" || ev.key === "ArrowDown" || ev.key === "ArrowLeft" ||
       ev.key === "ArrowRight" || ev.key === "Home" || ev.key === "End") {
       ev.preventDefault();
-      var m = dbKbdMove(d .focus.r, d .focus.c, ev.key, maxR, maxC);
+      const m = dbKbdMove(d_.focus.r, d_.focus.c, ev.key, maxR, maxC);
       dbFocusCell(m.r, m.c); // moves the ring on the live grid — no rebuild mid-navigation
       return;
     }
@@ -1052,9 +1081,9 @@ function renderDbGrid()       {
       // ring leaves by class move, not a rebuild (P0-B); blur leaves the keyboard exactly
       // where the rebuild used to drop it.
       ev.preventDefault();
-      d .focus = null;
-      var wrapEsc = $("dbGridWrap");
-      var ring = wrapEsc ? wrapEsc.querySelector("td.db-focus") : null;
+      d_.focus = null;
+      const wrapEsc = $("dbGridWrap");
+      const ring = wrapEsc ? wrapEsc.querySelector("td.db-focus") : null;
       if (ring) ring.classList.remove("db-focus");
       const kb = ev.currentTarget               ;
       if (kb.blur) kb.blur();
@@ -1071,29 +1100,31 @@ function renderDbGrid()       {
       dbFocusEdit(ev.key);
     }
   };
-  kbd.onpaste = function (ev                )       {
-    var d = state.db;
-    if (!d .data) return;
-    var text = ev.clipboardData ? ev.clipboardData.getData("text/plain") : "";
+  kbd.onpaste = (ev                )       => {
+    const d = state.db;
+    const d_ = d ;
+    if (!d_.data) return;
+    const text = ev.clipboardData ? ev.clipboardData.getData("text/plain") : "";
     if (!text) return;
     ev.preventDefault();
-    dbPasteApply(text, d .focus ? d .focus.r : 0, d .focus ? d .focus.c : 0);
+    dbPasteApply(text, d_.focus ? d_.focus.r : 0, d_.focus ? d_.focus.c : 0);
   };
   wrap.appendChild(kbd);
 }
 
 function renderDbResultGrid(wrap             )       {
-  var d = state.db;
-  if (d .sqlBusy) { wrap.appendChild(el("div", "db-hint", "Running…")); return; }
-  var res = d .sqlResult;
+  const d = state.db;
+  const d_ = d ;
+  if (d_.sqlBusy) { wrap.appendChild(el("div", "db-hint", "Running…")); return; }
+  const res = d_.sqlResult;
   if (!res) { wrap.appendChild(el("div", "db-hint", "Run a query to see rows here.")); return; }
-  var tab = d .sqlTab || 0; // docs/22 W4.3: this grid is one tab of the strip — its selection keys are that tab's
-  var tbl = el("table", "db-grid");
-  var thead = el("thead");
-  var hr = el("tr");
-  var thAll2 = el("th", "db-rowctl");
-  var allOn2 = res.rows.length > 0 && res.rows.every(function (_                         , i        )          { return !!d .sel[dbResultKey(tab, i)]; });
-  var cbAll2 = document.createElement("input");
+  const tab = d_.sqlTab || 0; // docs/22 W4.3: this grid is one tab of the strip — its selection keys are that tab's
+  const tbl = el("table", "db-grid");
+  const thead = el("thead");
+  const hr = el("tr");
+  const thAll2 = el("th", "db-rowctl");
+  const allOn2 = res.rows.length > 0 && res.rows.every((_                         , i        )          => { return !!d?.sel[dbResultKey(tab, i)]; });
+  const cbAll2 = document.createElement("input");
   cbAll2.type = "checkbox";
   cbAll2.className = "db-selbox";
   cbAll2.checked = allOn2;
@@ -1102,39 +1133,40 @@ function renderDbResultGrid(wrap             )       {
   cbAll2.onchange = (e) => { dbSelAll((e.currentTarget                    ).checked); };
   thAll2.appendChild(cbAll2);
   hr.appendChild(thAll2);
-  res.columns.forEach(function (c        )       { hr.appendChild(el("th", "db-col", c)); });
+  res.columns.forEach((c        )       => { hr.appendChild(el("th", "db-col", c)); });
   thead.appendChild(hr);
   tbl.appendChild(thead);
-  var tbody = el("tbody");
-  res.rows.forEach(function (row                         , i        )       {
-    var qkey = dbResultKey(tab, i);
-    var tr = el("tr", d .sel[qkey] ? "db-sel" : "");
-    var rc2 = el("td", "db-rowctl");
-    var cb2 = document.createElement("input");
+  const tbody = el("tbody");
+  res.rows.forEach((row                         , i        )       => {
+    const qkey = dbResultKey(tab, i);
+    const tr = el("tr", d?.sel[qkey] ? "db-sel" : "");
+    const rc2 = el("td", "db-rowctl");
+    const cb2 = document.createElement("input");
     cb2.type = "checkbox";
     cb2.className = "db-selbox";
-    cb2.checked = !!d .sel[qkey];
+    cb2.checked = !!d?.sel[qkey];
     cb2.title = "Select row for copy (Shift-click for a range)";
     cb2.onclick = (e            )       => { e.stopPropagation(); };
     cb2.onchange = (ev                                )       => {
-      if (ev.shiftKey && d .selAnchor >= 0 && d .selAnchor !== i) {
-        var a2 = Math.min(d .selAnchor, i);
-        var b3 = Math.max(d .selAnchor, i);
-        for (var k2 = a2; k2 <= b3; k2++) d .sel[dbResultKey(tab, k2)] = true;
-      } else if ((ev.currentTarget                    ).checked) d .sel[qkey] = true;
-      else delete d .sel[qkey];
-      d .selAnchor = i;
+      const d_ = d ;
+      if (ev.shiftKey && d_.selAnchor >= 0 && d_.selAnchor !== i) {
+        const a2 = Math.min(d_.selAnchor, i);
+        const b3 = Math.max(d_.selAnchor, i);
+        for (let k2 = a2; k2 <= b3; k2++) d_.sel[dbResultKey(tab, k2)] = true;
+      } else if ((ev.currentTarget                    ).checked) d_.sel[qkey] = true;
+      else delete d_.sel[qkey];
+      d_.selAnchor = i;
       renderDbToolbar(); renderDbGrid();
     };
     rc2.appendChild(cb2);
     rc2.appendChild(document.createTextNode(String(i + 1)));
     tr.appendChild(rc2);
-    res .columns.forEach(function (c        )       {
-      var td = el("td", "db-cell");
-      td.oncontextmenu = function (e            )       { dbResultCellMenu(e, row, c); };
+    res?.columns.forEach((c        )       => {
+      const td = el("td", "db-cell");
+      td.oncontextmenu = (e            )       => { dbResultCellMenu(e, row, c); };
       // No column types on a result grid: dbCellView still words booleans, folds long JSON,
       // links URLs and right-aligns JS numbers off the value alone.
-      var v = row[c];
+      const v = row[c];
       dbPaintCell(td, v === undefined ? null : v, true);
       tr.appendChild(td);
     });

@@ -35,30 +35,30 @@ import { copyText } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, groupOf as makeGroupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
 
-var painted = ""; // structural signature of the drawn list; a change means the rows move
-var collapsed: Record<string, boolean> = {}; // the secrets fold map, loaded once before the first paint
-var draggingRow: string | null = null; // the row name a gesture carries (the component reads it via cfg.drag)
-var draggingGroup: string | null = null; // the group name a header grip carries
+let painted = ""; // structural signature of the drawn list; a change means the rows move
+let collapsed: Record<string, boolean> = {}; // the secrets fold map, loaded once before the first paint
+let draggingRow: string | null = null; // the row name a gesture carries (the component reads it via cfg.drag)
+let draggingGroup: string | null = null; // the group name a header grip carries
 
 /** The rendering group of one name: the stored label while its group lives, else the first
  *  group — the sink rule. An older gateway answers no groups at all: everything reads as
  *  the single default group, which the component draws as no divider at all. */
 function groupOfName(name: string): string {
-  var g = secrets.memberGroups && secrets.memberGroups[name];
+  const g = secrets.memberGroups && secrets.memberGroups[name];
   return (secrets.groups || []).indexOf(g) >= 0 ? g : (secrets.groups || ["default"])[0];
 }
 
 function signature(): string {
   return (secrets.groups || []).join("\n") + "\u0000" +
-    secrets.list.map(function (n: string): string { return n + "\u0001" + groupOfName(n); }).join("\n");
+    secrets.list.map((n: string): string => { return n + "\u0001" + groupOfName(n); }).join("\n");
 }
 
 /** The in-page copy of GET /api/secrets. On an older gateway the route 404s: apiJson toasts
  *  once and we draw the empty page — the same degradation every host page already has. */
-var secrets: { list: string[]; rev: number; loaded: boolean; groups: string[]; memberGroups: Record<string, string>; order?: string[] } = { list: [], rev: 0, loaded: false, groups: ["default"], memberGroups: {} };
+let secrets: { list: string[]; rev: number; loaded: boolean; groups: string[]; memberGroups: Record<string, string>; order?: string[] } = { list: [], rev: 0, loaded: false, groups: ["default"], memberGroups: {} };
 
 async function loadSecrets(): Promise<void> {
-  var j = await apiJson<{ secrets?: string[]; rev?: number; groups?: string[]; secretGroups?: Record<string, string>; order?: string[] }>("/api/secrets");
+  const j = await apiJson<{ secrets?: string[]; rev?: number; groups?: string[]; secretGroups?: Record<string, string>; order?: string[] }>("/api/secrets");
   if (!j) return;
   secrets.list = j.secrets || [];
   secrets.rev = j.rev || 0;
@@ -72,14 +72,14 @@ async function loadSecrets(): Promise<void> {
 /** Rank by the stored order (docs/26): names the list mentions keep their slot, everything
  *  else lands after them in name order — the same rule the tunnels store ranks by. */
 function applyOrder(): void {
-  var rank: Record<string, number> = {};
-  (secrets.order || []).forEach(function (n: string, i: number): void {
+  const rank: Record<string, number> = {};
+  (secrets.order || []).forEach((n: string, i: number): void => {
     if (!(n in rank)) rank[n] = i;
   });
-  var unranked = secrets.order ? secrets.order.length : 0;
-  secrets.list.sort(function (a: string, b: string): number {
-    var ra = a in rank ? rank[a] : unranked;
-    var rb = b in rank ? rank[b] : unranked;
+  const unranked = secrets.order ? secrets.order.length : 0;
+  secrets.list.sort((a: string, b: string): number => {
+    const ra = a in rank ? rank[a] : unranked;
+    const rb = b in rank ? rank[b] : unranked;
     return ra === rb ? a.localeCompare(b) : ra - rb;
   });
 }
@@ -111,35 +111,35 @@ function skCfg(): GroupCfg<string> {
     names: secrets.groups || ["default"],
     collapsed: collapsed,
     noun: "secret",
-    addTitle: function (g: string): string { return "Store a secret into " + g; },
-    onAdd: function (g: string): void {
+    addTitle: (g: string): string => { return "Store a secret into " + g; },
+    onAdd: (g: string): void => {
       // The + points at the inline form: pick the group it names and put the cursor in the
       // name box — the sheet scopes open a modal; this page's flow was always inline.
-      var sel = $<HTMLSelectElement>("skGroup");
+      const sel = $<HTMLSelectElement>("skGroup");
       if (sel) sel.value = g;
       $<HTMLInputElement>("skName").focus();
     },
-    reload: function (): Promise<void> { return loadSecrets().then(paintGroups); },
+    reload: (): Promise<void> => { return loadSecrets().then(paintGroups); },
     render: paintGroups,
-    afterDrag: function () { paintGroups(); }, // the catch-up rebuild a deferred poll owes
+    afterDrag: () => { paintGroups(); }, // the catch-up rebuild a deferred poll owes
     drag: {
-      get: function (): string | null { return draggingRow; },
-      set: function (v: string | null): void { draggingRow = v; },
+      get: (): string | null => { return draggingRow; },
+      set: (v: string | null): void => { draggingRow = v; },
     },
     dragGroup: {
-      get: function (): string | null { return draggingGroup; },
-      set: function (v: string | null): void { draggingGroup = v; },
+      get: (): string | null => { return draggingGroup; },
+      set: (v: string | null): void => { draggingGroup = v; },
     },
-    rowsById: function (): string[] { return secrets.list; },
-    rowId: function (r: string): string { return r; },
+    rowsById: (): string[] => { return secrets.list; },
+    rowId: (r: string): string => { return r; },
     groupOfRow: groupOfName,
-    rowsHtml: function (g: GroupSlice<string>): string { return g.rows.map(rowHtml).join(""); },
-    rowSel: function (r: string): string {
-      var v = window.CSS && CSS.escape ? CSS.escape(r) : r;
+    rowsHtml: (g: GroupSlice<string>): string => { return g.rows.map(rowHtml).join(""); },
+    rowSel: (r: string): string => {
+      const v = window.CSS && CSS.escape ? CSS.escape(r) : r;
       return '[data-secret="' + v + '"]';
     },
     onMoveRow: moveSecretRow,
-    onAssign: function (id: string, g: string | null): void { void moveSecretGroup(id, g); },
+    onAssign: (id: string, g: string | null): void => { void moveSecretGroup(id, g); },
   };
 }
 
@@ -148,14 +148,14 @@ function skCfg(): GroupCfg<string> {
  *  reload that follows it is not optional polish. */
 function moveSecretRow(id: string, target: string, before: boolean): void {
   if (!id || !target || id === target) return;
-  var from = secrets.list.indexOf(id);
+  const from = secrets.list.indexOf(id);
   if (from < 0) return;
   secrets.list.splice(from, 1);
-  var to = secrets.list.indexOf(target);
+  const to = secrets.list.indexOf(target);
   if (to < 0) return; // target vanished mid-drag — leave everything where it is
   secrets.list.splice(before ? to : to + 1, 0, id);
   paintGroups();
-  void saveOrder("secrets", secrets.list.slice()).then(function (j: unknown): void {
+  void saveOrder("secrets", secrets.list.slice()).then((j: unknown): void => {
     if (j) loadSecrets().then(paintGroups); // the order PUT bumped the rev — resync it
   });
 }
@@ -172,7 +172,7 @@ async function moveSecretGroup(id: string, group: string | null): Promise<void> 
 /** (Re)build the groups region only — the store form lives outside it, so a repaint never
  *  wipes a half-typed value, the one place a value is ever typed. */
 function paintGroups(): void {
-  var host = $("skGroups");
+  const host = $("skGroups");
   if (!host) return;
   painted = signature();
   host.innerHTML = "";
@@ -180,11 +180,11 @@ function paintGroups(): void {
     host.innerHTML = emptyHtml({ icon: "key", title: "No secrets yet", hint: "Store a credential once, reference it everywhere as ${secret://name}." });
     return;
   }
-  slice(secrets.list, secrets.groups || ["default"], groupOfName).forEach(function (g: GroupSlice<string>): void {
+  slice(secrets.list, secrets.groups || ["default"], groupOfName).forEach((g: GroupSlice<string>): void => {
     host.appendChild(mountGroup(skCfg(), g));
   });
   refreshGroupSelect();
-  var chip = $("countChip");
+  const chip = $("countChip");
   if (chip) chip.textContent = countText();
 }
 
@@ -199,13 +199,13 @@ function patch(): void {
  * next store would assign into a 400. The selection survives while its group lives; a dead
  * one falls back to the scope's last-used, else the first group. */
 function refreshGroupSelect(): void {
-  var sel = $<HTMLSelectElement>("skGroup");
+  const sel = $<HTMLSelectElement>("skGroup");
   if (!sel) return;
-  var names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
-  var wanted = sel.value && names.indexOf(sel.value) >= 0
+  const names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
+  const wanted = sel.value && names.indexOf(sel.value) >= 0
     ? sel.value
     : resolveDefaultGroup(names, lastGroup("secrets"));
-  var next = names.map(function (n: string): string {
+  const next = names.map((n: string): string => {
     return '<option value="' + esc(n) + '"' + (n === wanted ? " selected" : "") + ">" + esc(n) + "</option>";
   }).join("");
   if (sel.innerHTML !== next) sel.innerHTML = next;
@@ -213,10 +213,10 @@ function refreshGroupSelect(): void {
 
 /** The Group select of the store form: the scope's groups, the last-used one selected. */
 function groupSelectHtml(): string {
-  var names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
-  var picked = resolveDefaultGroup(names, lastGroup("secrets"));
+  const names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
+  const picked = resolveDefaultGroup(names, lastGroup("secrets"));
   return '<select class="v v-sk-group" id="skGroup" title="The group this secret lists under">' +
-    names.map(function (n: string): string {
+    names.map((n: string): string => {
       return '<option value="' + esc(n) + '"' + (n === picked ? " selected" : "") + ">" + esc(n) + "</option>";
     }).join("") + "</select>";
 }
@@ -240,19 +240,19 @@ function render(): void {
     '<div id="skGroups"></div>' +
   "</div>";
   paintGroups();
-  var chip = $("countChip");
+  const chip = $("countChip");
   if (chip) chip.textContent = countText();
   wire();
 }
 
 function wire(): void {
-  $("pane").onclick = async function (event: MouseEvent): Promise<void> {
-    var hit = targetEl(event)?.closest<HTMLElement>("[data-skcopy],[data-skmore],#skStore,#skNewGroup");
+  $("pane").onclick = async (event: MouseEvent): Promise<void> => {
+    const hit = targetEl(event)?.closest<HTMLElement>("[data-skcopy],[data-skmore],#skStore,#skNewGroup");
     if (!hit) return;
     if (hit.id === "skStore") { await storeSecret(); return; }
     if (hit.id === "skNewGroup") {
-      newGroupFlow("secrets", secrets.groups || ["default"], function (): Promise<void> {
-        return loadSecrets().then(function (): void { render(); });
+      newGroupFlow("secrets", secrets.groups || ["default"], (): Promise<void> => {
+        return loadSecrets().then((): void => { render(); });
       });
       return;
     }
@@ -260,9 +260,9 @@ function wire(): void {
     if (hit.dataset.skmore) {
       // The opening click must not reach document (menu.js closes on outside clicks).
       event.stopPropagation();
-      var name = hit.dataset.skmore;
+      const name = hit.dataset.skmore;
       popupMenu(hit.getBoundingClientRect(), [
-        { label: "Delete", danger: true, fn: function (): void { void removeSecret(name!); } },
+        { label: "Delete", danger: true, fn: (): void => { void removeSecret(name!); } },
       ]);
     }
   };
@@ -273,12 +273,12 @@ function wire(): void {
  *  The selected group follows the name in one family write — an older gateway without the
  *  family keeps the first-group default, which is where the select's only option lands. */
 async function storeSecret(): Promise<void> {
-  var name = ($<HTMLInputElement>("skName").value || "").trim();
-  var value = $<HTMLInputElement>("skValue").value || "";
+  const name = ($<HTMLInputElement>("skName").value || "").trim();
+  const value = $<HTMLInputElement>("skValue").value || "";
   if (!name || !value) { toast("a secret needs both a name and a value", true); return; }
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) { toast("names are lowercase kebab: a-z, 0-9, dashes", true); return; }
-  var picked = $("skGroup") ? $<HTMLSelectElement>("skGroup").value : null;
-  var j = await apiJson<unknown>("/api/secrets/" + encodeURIComponent(name), {
+  const picked = $("skGroup") ? $<HTMLSelectElement>("skGroup").value : null;
+  const j = await apiJson<unknown>("/api/secrets/" + encodeURIComponent(name), {
     method: "PUT",
     body: JSON.stringify({ value: value, rev: secrets.rev }),
   });
@@ -297,7 +297,7 @@ async function storeSecret(): Promise<void> {
  *  honestly until it is re-stored. */
 async function removeSecret(name: string): Promise<void> {
   if (!confirm('Delete secret "' + name + '"? Everything referencing ${secret://' + name + "} starts failing until it is re-stored.")) return;
-  var j = await apiJson<unknown>("/api/secrets/" + encodeURIComponent(name) + "?rev=" + secrets.rev, { method: "DELETE" });
+  const j = await apiJson<unknown>("/api/secrets/" + encodeURIComponent(name) + "?rev=" + secrets.rev, { method: "DELETE" });
   if (!j) return;
   await loadSecrets();
   paintGroups();
@@ -312,7 +312,7 @@ export async function mount() {
 export async function refresh() { await loadSecrets(); render(); }
 export async function poll() { await loadSecrets(); patch(); }
 export function countText() {
-  var n = secrets.list.length;
+  const n = secrets.list.length;
   return n + (n === 1 ? " secret" : " secrets");
 }
 export function unmount() { painted = ""; }

@@ -24,52 +24,52 @@ function argFieldsHtml(tool            , idPrefix         , values              
   // idPrefix keeps the ids unique when the fields are embedded next to the Run view's own
   // (the jobs editor reuses this builder inside its sheet under a "ja-" prefix), and
   // `values` prefills them from an existing definition's action.input.
-  var pfx = idPrefix || "r-arg-";
-  var have = values || {};
-  var schema = tool.inputSchema || {};
-  var props                                 = schema.properties || {};
-  var required = schema.required || [];
-  var keys = Object.keys(props);
+  const pfx = idPrefix || "r-arg-";
+  const have = values || {};
+  const schema = tool.inputSchema || {};
+  const props                                 = schema.properties || {};
+  const required = schema.required || [];
+  const keys = Object.keys(props);
   if (!keys.length) return '<div class="hint">This tool takes no arguments.</div>';
-  return keys.map(function (k) {
-    var p = props[k] || {};
-    var id = pfx + k;
-    var kind = p.type === "array" ? "array"
+  return keys.map((k) => {
+    const p = props[k] || {};
+    const id = pfx + k;
+    const kind = p.type === "array" ? "array"
       : p.type === "object" ? "object"
       : p.type === "boolean" ? "boolean"
       : (p.type === "number" || p.type === "integer") ? "number" : "string";
     // Not escaped with the key: the star is markup, so it is concatenated after esc(k), never into it.
-    var star = required.indexOf(k) >= 0 ? ' <span class="req-star">*</span>' : "";
-    var hint = p.description ? '<div class="hint">' + esc(p.description) + "</div>" : "";
+    const star = required.indexOf(k) >= 0 ? ' <span class="req-star">*</span>' : "";
+    const hint = p.description ? '<div class="hint">' + esc(p.description) + "</div>" : "";
     // esc() on the id too: the key comes from the tool's own inputSchema, and a proc MCP's child
     // controls that completely — an unescaped key like `x" autofocus onfocus="…` breaks out of the
     // attribute and runs on render. getElementById still matches, because the browser decodes the
     // entities back to the raw key when it parses the attribute.
-    var attrs = ' id="' + esc(id) + '" data-arg="' + esc(k) + '" data-kind="' + kind + '"';
+    let attrs = ' id="' + esc(id) + '" data-arg="' + esc(k) + '" data-kind="' + kind + '"';
     if (kind === "boolean") {
       // Name and star in one span: .check is a flex row with an 8px gap, so a bare text node would
       // leave the star floating a gap away from the name it belongs to.
-      var chk = have[k] ? " checked" : "";
+      const chk = have[k] ? " checked" : "";
       return '<div><label class="check"><input type="checkbox"' + attrs + chk + "><span>" + esc(k) + star +
         "</span></label>" + hint + "</div>";
     }
     // A constrained field renders as a dropdown rather than a free-text box that shows the allowed
     // values nowhere. The blank first option keeps "leave this argument out" reachable.
     if (Array.isArray(p.enum) && p.enum.length) {
-      var opts = '<option value=""></option>' + p.enum .map(function (v         )         {
+      const opts = '<option value=""></option>' + p.enum?.map((v         )         => {
         return '<option value="' + esc(v          ) + '"' + (have[k] === v ? " selected" : "") + '>' + esc(v          ) + "</option>";
       }).join("");
       return '<div><label class="field"><span>' + esc(k) + star + "  ·  " + esc(kind) + "</span>" +
         "<select" + attrs + ">" + opts + "</select></label>" + hint + "</div>";
     }
-    var area = kind === "array" || kind === "object" || k === "sql";
-    var itemType = kind === "array" && p.items && p.items.type ? String(p.items.type) : "";
+    const area = kind === "array" || kind === "object" || k === "sql";
+    const itemType = kind === "array" && p.items && p.items.type ? String(p.items.type) : "";
     if (itemType) attrs += ' data-items="' + esc(itemType) + '"';
-    var ph = k === "sql" ? "SELECT 1"
+    const ph = k === "sql" ? "SELECT 1"
       : kind === "array" ? "one value per line" + (itemType ? " (" + itemType + ")" : "")
       : kind === "object" ? "{ }" : "";
-    var prefilled = have[k] == null ? "" : kind === "object" || kind === "array" ? JSON.stringify(have[k], null, 1) : String(have[k]);
-    var input = area
+    const prefilled = have[k] == null ? "" : kind === "object" || kind === "array" ? JSON.stringify(have[k], null, 1) : String(have[k]);
+    const input = area
       ? "<textarea" + attrs + ' placeholder="' + esc(ph) + '">' + esc(prefilled) + "</textarea>"
       : '<input type="text"' + attrs + ' placeholder="' + esc(ph) + '" value="' + esc(prefilled) + '">';
     return '<div><label class="field"><span>' + esc(k) + star + "  ·  " + esc(kind) + "</span>" + input + "</label>" + hint + "</div>";
@@ -77,23 +77,23 @@ function argFieldsHtml(tool            , idPrefix         , values              
 }
 
 function readRunArgs(tool            , idPrefix         )                          {
-  var pfx = idPrefix || "r-arg-";
-  var out                          = {};
-  var props = (tool && tool.inputSchema && tool.inputSchema.properties) || {};
-  Object.keys(props).forEach(function (k) {
-    var node = $                  (pfx + k);
+  const pfx = idPrefix || "r-arg-";
+  const out                          = {};
+  const props = (tool && tool.inputSchema && tool.inputSchema.properties) || {};
+  Object.keys(props).forEach((k) => {
+    const node = $                  (pfx + k);
     if (!node) return;
-    var kind = node.dataset.kind;
+    const kind = node.dataset.kind;
     if (kind === "boolean") { if (node.checked) out[k] = true; return; }
-    var raw = node.value.trim();
+    const raw = node.value.trim();
     if (raw === "") return;
-    if (kind === "number") { var n = Number(raw); if (!isNaN(n)) out[k] = n; return; }
+    if (kind === "number") { const n = Number(raw); if (!isNaN(n)) out[k] = n; return; }
     if (kind === "array") {
       // Coerce each line to the declared item type: a schema saying items are numbers and getting
       // ["1","2"] is rejected by any server that validates its input.
-      var itemType = node.dataset.items || "";
-      out[k] = raw.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean).map(function (s) {
-        if (itemType === "number" || itemType === "integer") { var n = Number(s); return isNaN(n) ? s : n; }
+      const itemType = node.dataset.items || "";
+      out[k] = raw.split(/\r?\n/).map((s) => { return s.trim(); }).filter(Boolean).map((s) => {
+        if (itemType === "number" || itemType === "integer") { const n = Number(s); return isNaN(n) ? s : n; }
         if (itemType === "boolean") return s === "true" ? true : s === "false" ? false : s;
         return s;
       });
@@ -105,11 +105,11 @@ function readRunArgs(tool            , idPrefix         )                       
   // A required argument left blank is refused HERE, with the field focused, instead of being
   // sent and coming back as "-32603: sql is required" from the far side. The red * already says
   // it is required; the form should act on that before the call leaves the browser.
-  var required = (tool && tool.inputSchema && tool.inputSchema.required) || [];
-  for (var i = 0; i < required.length; i++) {
-    var rk = required[i];
+  const required = (tool && tool.inputSchema && tool.inputSchema.required) || [];
+  for (let i = 0; i < required.length; i++) {
+    const rk = required[i];
     if (!(rk in props) || out[rk] !== undefined) continue;
-    var missing = $(pfx + rk);
+    const missing = $(pfx + rk);
     if (missing && typeof missing.focus === "function") missing.focus();
     throw new Error("`" + rk + "` is required");
   }
@@ -120,19 +120,19 @@ function runBody(d           , m                           )         {
   if (m.lifecycle !== "started") {
     return '<div class="group"><div class="row"><span class="rowmsg">Not started — start it to run a tool.</span></div></div>';
   }
-  var kd = d.tools;
+  const kd = d.tools;
   if (kd.loading && !kd.loaded) return '<div class="note"><span class="spin"></span> Loading tools…</div>';
   if (kd.error) return '<div class="group"><div class="row"><span class="rowmsg warn">' + esc(kd.error) + "</span></div></div>";
-  var tools = kd.items || [];
+  const tools = kd.items || [];
   if (!tools.length) return '<div class="group"><div class="row"><span class="rowmsg">This MCP exposes no tools.</span></div></div>';
 
-  var current                    = null;
-  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i]              ;
+  let current                    = null;
+  for (let i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i]              ;
   if (!current) current = tools[0]              ;
   d.run.tool = current.name;
 
-  var opts = tools.map(function (t) {
-    return '<option value="' + esc(t.name) + '"' + (t.name === current .name ? " selected" : "") + ">" + esc(t.name) + "</option>";
+  const opts = tools.map((t) => {
+    return '<option value="' + esc(t.name) + '"' + (t.name === current?.name ? " selected" : "") + ">" + esc(t.name) + "</option>";
   }).join("");
 
   return '<div class="group"><div class="form">' +

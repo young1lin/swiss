@@ -23,8 +23,8 @@
    test/admin-terminal.test.ts, not by clicking. The DOM/xterm/WS wiring stays in
    views/terminal.js; everything a test needs to trust lives here. */
 
-var PTY_MIN = 1;
-var PTY_MAX = 1000;   // the bounds swiss-host enforces on both axes — a 0-column PTY is
+const PTY_MIN = 1;
+const PTY_MAX = 1000;   // the bounds swiss-host enforces on both axes — a 0-column PTY is
                       // undefined behaviour on the far side, so the panel clamps BEFORE
                       // the gateway has to refuse (docs/14 §8)
 
@@ -37,7 +37,7 @@ export function streamUrl(id: string, ticket: string): string {
   /* Absolute, always: the WebSocket constructor rejects a relative URL with a SyntaxError
      before any connection is attempted. The page origin decides ws/wss; outside a browser
      (node tests) there is no location and the bare path comes back, which keeps this pure. */
-  var base = "";
+  let base = "";
   if (typeof location !== "undefined" && location && location.host) {
     base = (location.protocol === "https:" ? "wss://" : "ws://") + location.host;
   }
@@ -68,14 +68,14 @@ export function frameStatus(frame: { t?: string; message?: unknown; code?: numbe
  *  a session that left it is past its grace window, timed out, or was deleted, and no
  *  ticket will ever bring it back (docs/14 §6.7). */
 export function sessionAlive(listing: unknown, id: string): boolean {
-  return Array.isArray(listing) && listing.some(function (s) { return s && s.id === id; });
+  return Array.isArray(listing) && listing.some((s) => { return s && s.id === id; });
 }
 
 /** Clamp the fit addon's proposal to the PTY bounds before it is SENT, so an honest
  *  resize never becomes a 400. Unknown/absent values fall back to the classics. */
 export function clampGeometry(cols: unknown, rows: unknown): { cols: number; rows: number } {
   function axis(v: unknown, fallback: number): number {
-    var n = Math.round(Number(v));
+    let n = Math.round(Number(v));
     if (!isFinite(n)) n = fallback;
     return Math.min(Math.max(n, PTY_MIN), PTY_MAX);
   }
@@ -85,7 +85,7 @@ export function clampGeometry(cols: unknown, rows: unknown): { cols: number; row
 /** The resize control frame as the wire wants it: one small JSON object, the only text
  *  the client is allowed to mean anything with (docs/14 §8). */
 export function resizeFrame(cols: unknown, rows: unknown): string {
-  var g = clampGeometry(cols, rows);
+  const g = clampGeometry(cols, rows);
   return JSON.stringify({ t: "resize", cols: g.cols, rows: g.rows });
 }
 
@@ -95,25 +95,25 @@ export function resizeFrame(cols: unknown, rows: unknown): string {
  *  empty list (docs/14 §4). Returns { rows, note } — note is the one-line story under
  *  the picker when there is nothing remote to pick. */
 export function targetRows(reply: ApiTerminalTargets | null | undefined): { rows: { id: string; label: string; state?: string }[]; note: string; reason: string; localOff: boolean } {
-  var rows: { id: string; label: string; state?: string }[] = [];
-  var note = "";
-  var r = reply || {} as ApiTerminalTargets;
+  const rows: { id: string; label: string; state?: string }[] = [];
+  let note = "";
+  const r = reply || {} as ApiTerminalTargets;
   if (r.local && r.local.enabled) {
     rows.push({ id: "local", label: "local · " + localShellLabel(r.local) });
   }
-  var remote = r.remote || {} as ApiTerminalTargets["remote"];
-  var targets = Array.isArray(remote.targets) ? remote.targets : [];
-  targets.forEach(function (t) {
+  const remote = r.remote || {} as ApiTerminalTargets["remote"];
+  const targets = Array.isArray(remote.targets) ? remote.targets : [];
+  targets.forEach((t) => {
     if (!t || !t.id) return;
-    var where = t.host ? t.host + (t.port && t.port !== 22 ? ":" + t.port : "") : t.id;
-    var who = t.username ? t.username + "@" : "";
+    const where = t.host ? t.host + (t.port && t.port !== 22 ? ":" + t.port : "") : t.id;
+    const who = t.username ? t.username + "@" : "";
     rows.push({
       id: String(t.id),
       label: (t.label || t.id) + " · " + who + where,
       state: t.state || "",
     });
   });
-  var reason = remote.presence === "absent" && remote.reason ? String(remote.reason) : "";
+  const reason = remote.presence === "absent" && remote.reason ? String(remote.reason) : "";
   if (!rows.length) {
     note = reason
       || "no terminal targets — connect a tunnel first, or enable the local shell in the plugin config";
@@ -121,7 +121,7 @@ export function targetRows(reply: ApiTerminalTargets | null | undefined): { rows
   /* localOff turns the empty bar's line into the clickable "turn it on" that opens the
      settings sheet (docs/15 §2.1); reason rides along separately so the tunnels story
      stays visible next to it instead of being buried in the note. */
-  var localOff = !!(r.local && r.local.enabled === false);
+  const localOff = !!(r.local && r.local.enabled === false);
   return { rows: rows, note: note, reason: reason, localOff: localOff };
 }
 
@@ -130,11 +130,11 @@ export function targetRows(reply: ApiTerminalTargets | null | undefined): { rows
  *  full path in a dropdown is noise, not a name. Windows paths compare
  *  case-insensitively and either slash counts, because a config value may carry both. */
 export function localShellLabel(local: { shell?: unknown; shells?: unknown } | null | undefined): string {
-  var l = local || {} as { shell?: unknown; shells?: unknown };
-  var program = String(l.shell || "");
-  var shells = Array.isArray(l.shells) ? l.shells : [];
-  for (var i = 0; i < shells.length; i++) {
-    var c = shells[i];
+  const l = local || {} as { shell?: unknown; shells?: unknown };
+  const program = String(l.shell || "");
+  const shells = Array.isArray(l.shells) ? l.shells : [];
+  for (let i = 0; i < shells.length; i++) {
+    const c = shells[i];
     if (c && typeof c.program === "string" && sameProgram(c.program, program)) {
       return String(c.label || baseName(program)) || "shell";
     }
@@ -148,7 +148,7 @@ function sameProgram(a: string, b: string): boolean {
 }
 
 function baseName(p: unknown): string {
-  var parts = String(p || "").split(/[\\/]/);
+  const parts = String(p || "").split(/[\\/]/);
   return parts[parts.length - 1] || "";
 }
 
@@ -157,9 +157,9 @@ function baseName(p: unknown): string {
  *  shell string is omitted rather than sent as "" — that is how "the platform default"
  *  stays expressible. */
 export function withLocalConfig(config: Record<string, unknown> | null | undefined, enabled: unknown, shell: unknown): Record<string, unknown> {
-  var out: Record<string, unknown> = Object.assign({}, config || {});
-  var local: { enabled: boolean; shell?: string } = { enabled: !!enabled };
-  var s = String(shell == null ? "" : shell).trim();
+  const out: Record<string, unknown> = Object.assign({}, config || {});
+  const local: { enabled: boolean; shell?: string } = { enabled: !!enabled };
+  const s = String(shell == null ? "" : shell).trim();
   if (s) local.shell = s;
   out.local = local;
   return out;
@@ -178,7 +178,7 @@ export function configPutBody(config: Record<string, unknown> | null | undefined
 export function sessionLabel(session: ApiTerminalSessionRow | null | undefined): string {
   if (!session) return "?";
   if (session.label) return String(session.label);
-  var t = session.target || "?";
+  const t = session.target || "?";
   return t === "local" ? "local" : t;
 }
 
@@ -192,7 +192,7 @@ export function sessionLabel(session: ApiTerminalSessionRow | null | undefined):
  *  one it stays the interrupt a flooding program is counting on. */
 export function keyAction(ev: { type?: string; key?: string; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean } | null | undefined, hasSelection: boolean): string | null {
   if (!ev || ev.type !== "keydown") return null;
-  var key = String(ev.key || "").toLowerCase();
+  const key = String(ev.key || "").toLowerCase();
   /* Alt-combos the terminal page owns while a terminal holds focus (Windows Terminal's
      tab jumps). Judged BEFORE the blanket Alt pass-through below so Alt+V and friends
      stay untouched: only digits, the horizontal arrows and Alt+W are ours. The
@@ -230,15 +230,15 @@ export function keyAction(ev: { type?: string; key?: string; ctrlKey?: boolean; 
 
 /** Font sizes the zoom steps through: the default, the floor below which cells stop
  *  being glyphs, and a ceiling that still fits a prompt on a laptop. */
-export var FONT_DEFAULT = 13;
-export var FONT_MIN = 8;
-export var FONT_MAX = 32;
+export const FONT_DEFAULT = 13;
+export const FONT_MIN = 8;
+export const FONT_MAX = 32;
 
 /** The next font size for one zoom action, clamped: "zoom-in" | "zoom-out" | "zoom-reset";
  *  anything else — or a size that is not a number — comes back as the default, so a
  *  corrupt stored value can never wedge the terminal at 0px. */
 export function nextFontSize(current: unknown, action: string): number {
-  var size = readFontSize(current);
+  const size = readFontSize(current);
   if (action === "zoom-in") return Math.min(FONT_MAX, size + 1);
   if (action === "zoom-out") return Math.max(FONT_MIN, size - 1);
   return FONT_DEFAULT;
@@ -247,7 +247,7 @@ export function nextFontSize(current: unknown, action: string): number {
 /** A stored font size back into a usable one: an integer inside the bounds, or the
  *  default. localStorage hands back strings, and older panels stored nothing. */
 export function readFontSize(raw: unknown): number {
-  var n = Math.round(Number(raw));
+  const n = Math.round(Number(raw));
   if (!isFinite(n) || n < FONT_MIN || n > FONT_MAX) return FONT_DEFAULT;
   return n;
 }
@@ -275,9 +275,9 @@ export function mouseAction(ev: { button?: number; shiftKey?: boolean } | null |
  *  fall through. Seven of nine explored reference terminals converged on exactly
  *  this order (docs/22 consensus 1). */
 export function tabLabel(session: ApiTerminalSessionRow | null | undefined, shellTitle: unknown, customTitle: unknown): string {
-  var custom = customTitle == null ? "" : String(customTitle).trim();
+  const custom = customTitle == null ? "" : String(customTitle).trim();
   if (custom) return custom;
-  var shell = shellTitle == null ? "" : String(shellTitle).trim();
+  const shell = shellTitle == null ? "" : String(shellTitle).trim();
   if (shell) return shell;
   return sessionLabel(session);
 }
@@ -287,7 +287,7 @@ export function tabLabel(session: ApiTerminalSessionRow | null | undefined, shel
  *  count as pinned — a wrongly-pinned terminal merely scrolls; a wrongly-unpinned
  *  one yanks the user's scrollback, which is the failure this exists to prevent. */
 export function isPinned(viewportY: unknown, baseY: unknown): boolean {
-  var v = Number(viewportY), b = Number(baseY);
+  const v = Number(viewportY), b = Number(baseY);
   if (!isFinite(v) || !isFinite(b)) return true;
   return v >= b - 1;
 }
@@ -297,15 +297,15 @@ export function isPinned(viewportY: unknown, baseY: unknown): boolean {
  *  first: pasting "ls\n" is how every paste ends and is not a second command. The
  *  caller gates on the alternate screen (vim) where multiline is the norm. */
 export function embeddedNewlines(text: unknown): number {
-  var s = String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\n$/, "");
-  var n = 0;
-  for (var i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
+  const s = String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\n$/, "");
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
   return n;
 }
 
 /** A stored bell mode back into a usable one: "badge" (default — a bell must be
  *  VISIBLE by default, the repo's defaults-on rule), "badge-sound", or "off". */
-export var BELL_BADGE = "badge", BELL_BADGE_SOUND = "badge-sound", BELL_OFF = "off";
+export const BELL_BADGE = "badge", BELL_BADGE_SOUND = "badge-sound", BELL_OFF = "off";
 export function readBellMode(raw: unknown): string {
   return raw === BELL_BADGE_SOUND || raw === BELL_OFF ? raw : BELL_BADGE;
 }

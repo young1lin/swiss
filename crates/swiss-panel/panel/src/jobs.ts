@@ -42,7 +42,7 @@ import { argFieldsHtml, readRunArgs } from "./run.js";
 import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
 import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
 
-var probed: boolean | null = null; // null = not probed yet; then the cached boolean answer for this page load
+let probed: boolean | null = null; // null = not probed yet; then the cached boolean answer for this page load
 
 /** One boot probe. Raw api(), never apiJson: a 404/503 here is a feature signal, not an error
  *  worth a toast. A network failure assumes present — the first real load reports properly. */
@@ -51,7 +51,7 @@ async function probeJobs(): Promise<boolean | null> {
   try { probed = (await api("/api/jobs")).ok; }
   catch (e) { probed = true; }
   if (!probed) {
-    var b = document.querySelector('#railNav [data-view="jobs"]') as HTMLElement | null;
+    const b = document.querySelector('#railNav [data-view="jobs"]') as HTMLElement | null;
     if (b) b.hidden = true; // base.css [hidden]: the tab leaves the seg, and the hash gate in
   }                          // main.js waits for this probe before entering the view
   return probed;
@@ -67,16 +67,16 @@ function jobGroupOfRow(j: ApiJobRow): string {
 
 /** Persist the on-screen order: the family's order route for the jobs scope, ids in a row. */
 function saveJobOrder(): void {
-  void saveOrder("jobs", state.jobs.data.map(function (j: ApiJobRow): string { return j.name; }));
+  void saveOrder("jobs", state.jobs.data.map((j: ApiJobRow): string => { return j.name; }));
 }
 
 /** Move one row to just before/after another, re-render, persist. */
 function moveJobRow(id: string, target: string, before: boolean): void {
   if (!id || !target || id === target) return;
-  var rows = state.jobs.data;
-  var item = rows.filter(function (r: ApiJobRow): boolean { return r.name === id; })[0];
+  const rows = state.jobs.data;
+  const item = rows.filter((r: ApiJobRow): boolean => { return r.name === id; })[0];
   if (!item) return;
-  var to = rows.findIndex(function (r: ApiJobRow): boolean { return r.name === target; });
+  const to = rows.findIndex((r: ApiJobRow): boolean => { return r.name === target; });
   if (to < 0) return; // target vanished mid-drag — leave everything where it is
   rows.splice(rows.indexOf(item), 1);
   rows.splice(before ? to : to + 1, 0, item);
@@ -87,26 +87,26 @@ function moveJobRow(id: string, target: string, before: boolean): void {
 /** Put one job in a group. Applied locally first so the row jumps immediately, then persisted
  *  — a reject takes the server's word for it. */
 async function assignJobGroup(id: string, group: string | null): Promise<void> {
-  var row = state.jobs.data.filter(function (r: ApiJobRow): boolean { return r.name === id; })[0];
+  const row = state.jobs.data.filter((r: ApiJobRow): boolean => { return r.name === id; })[0];
   if (!row) return;
-  var names = jobGroupsList();
+  const names = jobGroupsList();
   if (jobGroupOfRow(row) === (group || names[0])) return;
   row.group = group;
   renderJobs();
-  var j = await assignMember("jobs", id, group);
+  const j = await assignMember("jobs", id, group);
   if (!j) { await loadJobs(); return; }
   row.group = j.group; // the canonical name the server stored
   renderJobs();
 }
 
 function renderJobs(): void {
-  var rows = state.jobs.data;
+  const rows = state.jobs.data;
   // The structural signature the poll compares against: the group names, then every row as
   // name+group in order — any add/remove/reorder/regroup means a rebuild is due; dots and
   // labels alone never justify one.
   state.jobs.painted = jobGroupsList().join("\n") + "\u0000" +
-    rows.map(function (j: ApiJobRow): string { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
-  var body = rows.length
+    rows.map((j: ApiJobRow): string => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
+  const body = rows.length
     ? '<div id="jobGroups"></div>'
     : emptyHtml({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands the gateway runs on this machine. Add one with New." });
   // .wide + .pane-head + .tun-foot: the Tunnels view's exact frame — the rows are the same
@@ -127,8 +127,8 @@ function renderJobs(): void {
   if (rows.length) {
     // One group per slice — the component owns the header band and the empty line (docs/20
     // G4). Empty groups keep their place: that is how you drag the first job into one.
-    var host = $("jobGroups");
-    slice(rows, jobGroupsList(), jobGroupOfRow).forEach(function (g: GroupSlice<ApiJobRow>): void {
+    const host = $("jobGroups");
+    slice(rows, jobGroupsList(), jobGroupOfRow).forEach((g: GroupSlice<ApiJobRow>): void => {
       host.appendChild(mountGroup(jobCfg(), g));
     });
   }
@@ -144,32 +144,32 @@ function jobCfg(): GroupCfg<ApiJobRow> {
     names: jobGroupsList(),
     collapsed: state.jobs.collapsed,
     noun: "job",
-    addTitle: function (g: string): string { return "Add a job to " + g; },
-    onAdd: function (g: string): void {
+    addTitle: (g: string): string => { return "Add a job to " + g; },
+    onAdd: (g: string): void => {
       state.jobs.pendingGroup = g; // a real name now — the sheet's save lands the job in it
       openJobSheet(null);
     },
-    reload: function (): Promise<void> { return loadJobs(); },
+    reload: (): Promise<void> => { return loadJobs(); },
     render: renderJobs,
-    afterDrag: function (): void { renderJobs(); }, // the catch-up rebuild a deferred poll owes
+    afterDrag: (): void => { renderJobs(); }, // the catch-up rebuild a deferred poll owes
     drag: {
-      get: function (): string | null { return state.jobs.dragging; },
-      set: function (v: string | null): void { state.jobs.dragging = v; },
+      get: (): string | null => { return state.jobs.dragging; },
+      set: (v: string | null): void => { state.jobs.dragging = v; },
     },
     dragGroup: {
-      get: function (): string | null { return state.jobs.draggingGroup; },
-      set: function (v: string | null): void { state.jobs.draggingGroup = v; },
+      get: (): string | null => { return state.jobs.draggingGroup; },
+      set: (v: string | null): void => { state.jobs.draggingGroup = v; },
     },
-    rowId: function (r: ApiJobRow): string { return r.name; },
-    rowSel: function (r: ApiJobRow): string {
-      var v = window.CSS && CSS.escape ? CSS.escape(r.name) : r.name;
+    rowId: (r: ApiJobRow): string => { return r.name; },
+    rowSel: (r: ApiJobRow): string => {
+      const v = window.CSS && CSS.escape ? CSS.escape(r.name) : r.name;
       return '[data-job="' + v + '"]';
     },
-    rowsById: function (): ApiJobRow[] { return state.jobs.data; },
+    rowsById: (): ApiJobRow[] => { return state.jobs.data; },
     groupOfRow: jobGroupOfRow,
-    rowsHtml: function (g: GroupSlice<ApiJobRow>): string { return g.rows.map(jobRowHtml).join(""); },
+    rowsHtml: (g: GroupSlice<ApiJobRow>): string => { return g.rows.map(jobRowHtml).join(""); },
     onMoveRow: moveJobRow,
-    onAssign: function (id: string, g: string | null): void { void assignJobGroup(id, g); },
+    onAssign: (id: string, g: string | null): void => { void assignJobGroup(id, g); },
   };
 }
 
@@ -177,75 +177,76 @@ function jobCfg(): GroupCfg<ApiJobRow> {
  *  Never structure — and never a rebuild mid-drag, which would cancel the gesture. */
 function patchJobs(): void {
   if (state.view !== "jobs") return;
-  var pane = $("pane");
-  var sig = jobGroupsList().join("\n") + "\u0000" +
-    state.jobs.data.map(function (j: ApiJobRow): string { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
+  const pane = $("pane");
+  const sig = jobGroupsList().join("\n") + "\u0000" +
+    state.jobs.data.map((j: ApiJobRow): string => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n");
   if (!pane.querySelector(".group") || sig !== state.jobs.painted) {
     if (!state.jobs.dragging && !state.jobs.draggingGroup) renderJobs();
     return;
   }
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-job]"), function (row: Element): void {
-    var j = null as ApiJobRow | null;
-    state.jobs.data.forEach(function (cand: ApiJobRow): void { if (cand.name === row.getAttribute("data-job")) j = cand; });
+  Array.prototype.forEach.call(pane.querySelectorAll("[data-job]"), (row: Element): void => {
+    let j = null as ApiJobRow | null;
+    state.jobs.data.forEach((cand: ApiJobRow): void => { if (cand.name === row.getAttribute("data-job")) j = cand; });
     if (!j) return;
-    var busy = state.jobs.busy[j.name];
-    var dot = row.querySelector(".dot") as HTMLElement | null;
-    var word = busy ? "starting" : jobDotClass(j!);
+    const busy = state.jobs.busy[j.name];
+    const dot = row.querySelector(".dot") as HTMLElement | null;
+    const word = busy ? "starting" : jobDotClass(j!);
     // Title and class move together (docs/18 V6): the poll never rebuilds the list, so a
     // title left behind by an earlier state would lie one hover later.
     if (dot) { dot.className = "dot " + word; dot.title = dotTitle(word); }
     // Rendered as (possibly empty) spans at build time so the patch can always fill them.
-    var last = row.querySelector("[data-last]");
-    if (last) last.textContent = j!.lastRunAt
-      ? "\u00b7 last " + whenLabel(j!.lastRunAt) + (j!.lastOk === false ? " \u00b7 failed" : "") : "";
-    var next = row.querySelector("[data-next]");
-    if (next) next.textContent = j!.enabled && j!.nextDueAt ? "\u00b7 next " + whenLabel(j!.nextDueAt) : "";
-    var run = row.querySelector("[data-run]") as HTMLButtonElement | null;
-    if (run) { run.disabled = !!busy || !!j!.running; run.textContent = busy ? "\u2026" : "Run now"; }
+    const last = row.querySelector("[data-last]");
+    if (last) last.textContent = j?.lastRunAt
+      ? "\u00b7 last " + whenLabel(j?.lastRunAt) + (j?.lastOk === false ? " \u00b7 failed" : "") : "";
+    const next = row.querySelector("[data-next]");
+    if (next) next.textContent = j?.enabled && j?.nextDueAt ? "\u00b7 next " + whenLabel(j?.nextDueAt) : "";
+    const run = row.querySelector("[data-run]") as HTMLButtonElement | null;
+    if (run) { run.disabled = !!busy || !!j?.running; run.textContent = busy ? "\u2026" : "Run now"; }
   });
   // Group counts move with rows: a count that only refreshed on rebuild would disagree with
   // the patched dots beside it for the rest of the poll.
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-group]"), function (grp: HTMLElement): void {
-    var n = state.jobs.data.filter(function (j: ApiJobRow): boolean { return jobGroupOfRow(j) === grp.dataset.group; }).length;
-    var badge = grp.querySelector(".grp-n");
+  Array.prototype.forEach.call(pane.querySelectorAll("[data-group]"), (grp: HTMLElement): void => {
+    const n = state.jobs.data.filter((j: ApiJobRow): boolean => { return jobGroupOfRow(j) === grp.dataset.group; }).length;
+    const badge = grp.querySelector(".grp-n");
     if (badge) badge.textContent = String(n);
   });
-  var foot = pane.querySelector("[data-foot]");
+  const foot = pane.querySelector("[data-foot]");
   if (foot) foot.textContent = jobsChipText();
 }
 
 function jobByName(name: string | null): ApiJobRow | null {
-  var out: ApiJobRow | null = null;
-  state.jobs.data.forEach(function (j: ApiJobRow): void { if (j.name === name) out = j; });
+  let out: ApiJobRow | null = null;
+  state.jobs.data.forEach((j: ApiJobRow): void => { if (j.name === name) out = j; });
   return out;
 }
 
 function wireJobs(): void {
-  $("jobNew").onclick = function (): void { openJobSheet(null); };
-  $("jobNewAdv").onclick = function (): void { void openV2Sheet(null); };
-  if ($("jobNewGroup")) $("jobNewGroup").onclick = function (): void {
-    newGroupFlow("jobs", jobGroupsList(), function () { return loadJobs(); });
+  $("jobNew").onclick = (): void => { openJobSheet(null); };
+  $("jobNewAdv").onclick = (): void => { void openV2Sheet(null); };
+  if ($("jobNewGroup")) $("jobNewGroup").onclick = (): void => {
+    newGroupFlow("jobs", jobGroupsList(), () => { return loadJobs(); });
   };
-  Array.prototype.forEach.call($("pane").querySelectorAll("[data-job]"), function (row: Element): void {
-    var job = jobByName(row.getAttribute("data-job"));
+  Array.prototype.forEach.call($("pane").querySelectorAll("[data-job]"), (row: Element): void => {
+    const job = jobByName(row.getAttribute("data-job"));
     if (!job) return;
-    row.querySelector<HTMLButtonElement>("[data-run]")!.onclick = function (): void { void runJob(job!.name); };
-    var more = row.querySelector("[data-more]") as HTMLButtonElement | null;
-    if (more) more.onclick = function (ev: MouseEvent): void {
+    row.querySelector<HTMLButtonElement>("[data-run]")!.onclick = (): void => { void runJob(job?.name); };
+    const more = row.querySelector("[data-more]") as HTMLButtonElement | null;
+    if (more) more.onclick = (ev: MouseEvent): void => {
       // The overflow half of the row (docs/18 V5): the rare verbs and the destructive one.
       // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
       // and without this the very click that opens the menu also tears it down.
       ev.stopPropagation();
-      popupMenu(more!.getBoundingClientRect(), [
-        { label: "Edit", fn: function () {
+      popupMenu(more?.getBoundingClientRect(), [
+        { label: "Edit", fn: () => {
             // A definition the v1 shape cannot spell (docs/11 §7.1: editableInV1 false) goes
             // straight to the advanced sheet — the v1 form would silently drop its fields.
-            if (job!.editableInV1 === false) void openV2Sheet(job!);
-            else openJobSheet(job!);
+            const job_ = job!;
+            if (job_.editableInV1 === false) void openV2Sheet(job_);
+            else openJobSheet(job_);
           } },
-        { label: "History", fn: function (): void { void openRunsSheet(job!.name); } },
+        { label: "History", fn: (): void => { void openRunsSheet(job?.name); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: function (): void { deleteJob(job!); } },
+        { label: "Delete", danger: true, fn: (): void => { deleteJob(job!); } },
       ]);
     };
   });
@@ -259,24 +260,24 @@ function wireJobs(): void {
 async function runJob(name: string): Promise<void> {
   state.jobs.busy[name] = true;
   patchJobs();
-  var j = await apiJson<{ runId?: number }>("/api/jobs/" + encodeURIComponent(name) + "/run", {
+  const j = await apiJson<{ runId?: number }>("/api/jobs/" + encodeURIComponent(name) + "/run", {
     method: "POST",
     body: JSON.stringify({ async: true }),
   });
   if (!j || j.runId == null) { delete state.jobs.busy[name]; patchJobs(); return; }
-  var runId = j.runId;
+  const runId = j.runId;
   // Bounded poll: queued -> running -> terminal. The job's own timeoutMs bounds the run; the
   // poll gives up after 30 minutes and lets the history sheet tell the rest of the story.
-  for (var i = 0; i < 1800; i++) {
-    await new Promise(function (res) { setTimeout(res, 1000); });
+  for (let i = 0; i < 1800; i++) {
+    await new Promise((res) => { setTimeout(res, 1000); });
     // The coordinator's run view is FLAT ({runId, state, ms, …}) — only the sync door wraps
     // its record in {run}. Reading v.run here left the button on "…" for the full 30-minute
     // poll after a 40 ms echo had long finished.
-    var v = await apiJson<{ runId?: number; state?: string; ms?: number; error?: string }>("/api/runs/" + runId);
+    const v = await apiJson<{ runId?: number; state?: string; ms?: number; error?: string }>("/api/runs/" + runId);
     if (!v || !v.state) continue;
     if (v.state === "queued" || v.state === "running") continue;
     delete state.jobs.busy[name];
-    var ok = v.state === "succeeded";
+    const ok = v.state === "succeeded";
     toast(name + ": " + v.state + (v.ms != null ? " in " + v.ms + " ms" : "") +
       (v.error ? " \u2014 " + v.error : ""), !ok);
     await loadJobs();
@@ -289,8 +290,8 @@ async function runJob(name: string): Promise<void> {
 
 function deleteJob(job: ApiJobRow): void {
   if (!confirm('Delete job "' + job.name + '"? The job stops; its run history stays on disk.')) return;
-  void (async function () {
-    var j = await apiJson<unknown>("/api/jobs/" + encodeURIComponent(job.name), { method: "DELETE" });
+  void (async () => {
+    const j = await apiJson<unknown>("/api/jobs/" + encodeURIComponent(job.name), { method: "DELETE" });
     if (!j) return;
     toast("Deleted " + job.name);
     await loadJobs();
@@ -311,14 +312,14 @@ function deleteJob(job: ApiJobRow): void {
  *  break never silently means a second command — one job supervises one process. */
 function joinCommand(text: string): string { return text.trim().replace(/\s*\n+\s*/g, " "); }
 
-var DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function two(n: number): string { return (n < 10 ? "0" : "") + n; }
 
 /** cronstrue, with the two checks of our own: exactly five fields (the API is a 5-field cron;
  *  cronstrue also speaks 6-7 field dialects, whose descriptions would lie about what saves),
  *  and a missing global means the vendor file was not served — say that, not a TypeError. */
-var cronstrueLib: { toString: (expr: string, opts?: { throwExceptionOnParseError?: boolean }) => string } | null = null;
+let cronstrueLib: { toString: (expr: string, opts?: { throwExceptionOnParseError?: boolean }) => string } | null = null;
 
 /** cronstrue, loaded once through the vendored shim (docs/14 §2: UMD bundles arrive as
  *  classic scripts, not imports). Sheets call ensureCronstrue with their own re-say as the
@@ -326,10 +327,10 @@ var cronstrueLib: { toString: (expr: string, opts?: { throwExceptionOnParseError
  *  throwing a TypeError about it. */
 function ensureCronstrue(ready?: (lib: { toString: (expr: string, opts?: { throwExceptionOnParseError?: boolean }) => string }) => void): void {
   if (cronstrueLib) { if (ready) ready(cronstrueLib); return; }
-  loadCronstrue().then(function (lib: { toString: (expr: string, opts?: { throwExceptionOnParseError?: boolean }) => string }): void {
+  loadCronstrue().then((lib: { toString: (expr: string, opts?: { throwExceptionOnParseError?: boolean }) => string }): void => {
     cronstrueLib = lib;
     if (ready) ready(lib);
-  }, function () { /* the say-line's own complaint covers the failure */ });
+  }, () => { /* the say-line's own complaint covers the failure */ });
 }
 
 function describeCron(expr: string): string {
@@ -342,31 +343,31 @@ function describeCron(expr: string): string {
  *  as its preset; anything else lands in the raw-cron mode rather than being flattened into a
  *  schedule the presets only almost express. */
 function schedFromJob(v: { name: string; command: string; everySec?: string | number | null; cron?: string | null; timeoutMs?: string | number | null; cwd?: string | null; env?: Record<string, string>; enabled?: boolean }): JobSched {
-  var every = v.everySec == null || v.everySec === "" ? null : Number(v.everySec);
+  const every = v.everySec == null || v.everySec === "" ? null : Number(v.everySec);
   if (every) {
     // The largest unit that divides the interval evenly, so "7200" reads back as 2 hours.
     if (every % 3600 === 0) return { mode: "interval", every: every / 3600, unit: "hours" };
     if (every % 60 === 0) return { mode: "interval", every: every / 60, unit: "minutes" };
     return { mode: "interval", every: every, unit: "seconds" };
   }
-  var cron = v.cron || "", m: RegExpMatchArray | null;
+  const cron = v.cron || ""; let m: RegExpMatchArray | null;
   if ((m = cron.match(/^(\d+) (\d+) \* \* \*$/))) {
     return { mode: "daily", time: two(+m[2]) + ":" + two(+m[1]) };
   }
   if ((m = cron.match(/^(\d+) (\d+) \* \* (.+)$/)) && m[4] !== "*") {
-    var days: number[] = [], ok = true;
-    m[4].split(",").forEach(function (part: string): void {
-      var r = part.split("-");
-      var a = +r[0], b = +r[r.length - 1];
+    const days: number[] = []; let ok = true;
+    m[4].split(",").forEach((part: string): void => {
+      const r = part.split("-");
+      let a = +r[0], b = +r[r.length - 1];
       if (isNaN(a) || isNaN(b) || a < 0 || b > 7) { ok = false; return; }
       a = a % 7; b = b % 7; // cron's 7 is Sunday again
-      for (var d = a; ; d = (d + 1) % 7) {
+      for (let d = a; ; d = (d + 1) % 7) {
         if (days.indexOf(d) < 0) days.push(d);
         if (d === b) break;
       }
     });
     if (ok) {
-      days.sort(function (a: number, b: number): number { return a - b; });
+      days.sort((a: number, b: number): number => { return a - b; });
       return { mode: "weekly", time: two(+m[2]) + ":" + two(+m[1]), days: days };
     }
   }
@@ -380,18 +381,19 @@ function schedFromJob(v: { name: string; command: string; everySec?: string | nu
 /** Validate the builder state and produce what saves: {everySec}|{cron} plus the sentence the
  *  preview shows. Throws the field-level complaint; the sheet prints it, the save toasts it. */
 function schedToBody(s: JobSched): { body: { everySec?: number; cron?: string }; say: string } {
+  const unit_ = s.unit!;
   if (s.mode === "interval") {
-    if (!(s.every! > 0)) throw new Error("the interval needs a number of " + s.unit! + " (at least 1)");
-    var mult = s.unit === "hours" ? 3600 : s.unit === "minutes" ? 60 : 1;
+    if (!(s.every! > 0)) throw new Error("the interval needs a number of " + unit_ + " (at least 1)");
+    const mult = s.unit === "hours" ? 3600 : s.unit === "minutes" ? 60 : 1;
     // The unit options are plural ("hours"); the sentence singularises for "every 1 hour".
-    var unit = s.every === 1 ? s.unit!.replace(/s$/, "") : s.unit!;
+    const unit = s.every === 1 ? unit_.replace(/s$/, "") : unit_;
     return { body: { everySec: s.every! * mult }, say: "Every " + s.every + " " + unit + "." };
   }
-  var t = /^(\d{1,2}):(\d{2})$/.exec(s.time || "");
+  const t = /^(\d{1,2}):(\d{2})$/.exec(s.time || "");
   if (!t) throw new Error("the time must be HH:MM (24-hour)");
-  var hh = +t[1], mm = +t[2];
+  const hh = +t[1], mm = +t[2];
   if (hh > 23 || mm > 59) throw new Error("the time must be a real time of day");
-  var expr;
+  let expr;
   if (s.mode === "daily") expr = mm + " " + hh + " * * *";
   else if (s.mode === "weekly") {
     if (!s.days || !s.days.length) throw new Error("weekly needs at least one day picked");
@@ -409,15 +411,15 @@ function schedToBody(s: JobSched): { body: { everySec?: number; cron?: string };
 
 /* The live builder state of whichever v1 sheet is open — saveJob reads it back; the sheet's
    own closures keep it current on every input. */
-var schedState: JobSched | null = null;
+let schedState: JobSched | null = null;
 
 function openJobSheet(job: ApiJobRow | null): void {
-  var editing = !!job;
-  var v = job || { name: "", command: "", everySec: "", cron: "", timeoutMs: "", cwd: "", env: {}, enabled: true };
-  var sched = schedFromJob(v);
+  const editing = !!job;
+  const v = job || { name: "", command: "", everySec: "", cron: "", timeoutMs: "", cwd: "", env: {}, enabled: true };
+  const sched = schedFromJob(v);
   schedState = sched;
   // The Group promise of a header "+", consumed here: the select is the truth from now on.
-  var picked: string | null = null;
+  let picked: string | null = null;
   if (!editing) {
     picked = state.jobs.pendingGroup != null ? state.jobs.pendingGroup
       : resolveDefaultGroup(jobGroupsList(), lastGroup("jobs"));
@@ -425,7 +427,7 @@ function openJobSheet(job: ApiJobRow | null): void {
   }
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit job" : "New job") + '">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Edit " + esc(job!.name) : "New job in " + esc(picked!)) + "</h2></div>" +
+      '<div class="sheet-head"><h2>' + (editing ? "Edit " + esc(job?.name) : "New job in " + esc(picked!)) + "</h2></div>" +
       '<div class="sheet-body">' +
         // The name IS the identity (the PUT path is the job), so it is fixed once created.
         '<label class="field"><span>Name</span><input id="jf-name" value="' + esc(v.name || "") + '"' +
@@ -436,7 +438,7 @@ function openJobSheet(job: ApiJobRow | null): void {
         '<div class="hint">One command — a job supervises one process, not a shell script. Pipes and redirections need "cmd /c \u2026" (Windows) or "sh -c \u2026" (Unix) around them. ${ENV} refs expand at run time; several steps belong in a script the command runs, or in several jobs.</div>' +
         '<div class="sheet-cap">Schedule</div>' +
         '<div class="sched" id="jf-sched">' +
-          '<div class="seg" role="tablist">' + ["interval", "daily", "weekly", "monthly", "cron"].map(function (m) {
+          '<div class="seg" role="tablist">' + ["interval", "daily", "weekly", "monthly", "cron"].map((m) => {
             return '<button type="button" role="tab" data-mode="' + m + '" aria-selected="' + (sched.mode === m) + '">' + m + "</button>";
           }).join("") + "</div>" +
           '<div id="jf-sched-fields"></div>' +
@@ -459,9 +461,9 @@ function openJobSheet(job: ApiJobRow | null): void {
     "</div>";
   $("sheet").hidden = false;
   $("jf-cancel").onclick = closeSheet;
-  $("jf-advanced").onclick = function (): void { void openV2Sheet(job); };
-  $("jf-save").onclick = function (): void { void saveJob(job); };
-  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
+  $("jf-advanced").onclick = (): void => { void openV2Sheet(job); };
+  $("jf-save").onclick = (): void => { void saveJob(job); };
+  $("sheet").onclick = (e: MouseEvent): void => { if (e.target === $("sheet")) closeSheet(); };
 
   /* The builder's two-way wire: field edits flow into the state and the sentence re-says
      itself; a mode switch re-renders the mode's fields from the state it is switching to. */
@@ -475,8 +477,8 @@ function openJobSheet(job: ApiJobRow | null): void {
       sched.time = $<HTMLInputElement>("jf-at").value || "";
       if (sched.mode === "weekly") {
         sched.days = [];
-        Array.prototype.forEach.call(document.querySelectorAll("#jf-days button.on"), function (b: Element): void {
-          sched.days!.push(+b.getAttribute("data-dow")!);
+        Array.prototype.forEach.call(document.querySelectorAll("#jf-days button.on"), (b: Element): void => {
+          sched.days?.push(+b.getAttribute("data-dow")!);
         });
       } else if (sched.mode === "monthly") {
         sched.day = Number($<HTMLInputElement>("jf-md").value) || 0;
@@ -486,7 +488,7 @@ function openJobSheet(job: ApiJobRow | null): void {
   }
 
   function say(): void {
-    var el = $("jf-say");
+    const el = $("jf-say");
     el.className = "sched-say";
     el.textContent = "";
     try { el.textContent = schedToBody(sched).say; }
@@ -494,24 +496,24 @@ function openJobSheet(job: ApiJobRow | null): void {
   }
 
   function renderFields(): void {
-    var html = "";
+    let html = "";
     if (sched.mode === "interval") {
       html = '<div class="two">' +
         '<label class="field"><span>Run every</span><input id="jf-ev" type="number" min="1" value="' + (sched.every || "") + '" autocomplete="off"></label>' +
         '<label class="field"><span>Unit</span><select id="jf-ev-u">' +
-          ["seconds", "minutes", "hours"].map(function (u: string): string {
+          ["seconds", "minutes", "hours"].map((u: string): string => {
             return '<option value="' + u + '"' + (sched.unit === u ? " selected" : "") + ">" + u + "</option>";
           }).join("") + "</select></label></div>";
     } else if (sched.mode === "cron") {
       html = '<label class="field"><span>Cron expression (local time)</span><input id="jf-cron-in" value="' + esc(sched.cron || "") + '" placeholder="30 3 * * *" autocomplete="off"></label>' +
         '<div class="hint">Five fields: minute hour day-of-month month day-of-week.</div>';
     } else {
-      var at = '<label class="field"><span>At</span><input id="jf-at" type="time" value="' + esc(sched.time || "08:00") + '"></label>';
+      const at = '<label class="field"><span>At</span><input id="jf-at" type="time" value="' + esc(sched.time || "08:00") + '"></label>';
       if (sched.mode === "daily") html = at;
       if (sched.mode === "weekly") {
         html = '<label class="field"><span>On</span><div class="days" id="jf-days">' +
-          DOW_LABELS.map(function (d: string, i: number): string {
-            var on = sched.days && sched.days.indexOf(i) >= 0;
+          DOW_LABELS.map((d: string, i: number): string => {
+            const on = sched.days && sched.days.indexOf(i) >= 0;
             return '<button type="button" data-dow="' + i + '" class="' + (on ? "on" : "") + '" aria-pressed="' + on + '">' + d + "</button>";
           }).join("") + "</div></label>" + at;
       }
@@ -522,12 +524,12 @@ function openJobSheet(job: ApiJobRow | null): void {
       }
     }
     $("jf-sched-fields").innerHTML = html;
-    Array.prototype.forEach.call($("jf-sched-fields").querySelectorAll("input, select"), function (el2: HTMLElement): void {
+    Array.prototype.forEach.call($("jf-sched-fields").querySelectorAll("input, select"), (el2: HTMLElement): void => {
       el2.oninput = readFields;
       el2.onchange = readFields;
     });
-    Array.prototype.forEach.call(document.querySelectorAll("#jf-days button"), function (b: HTMLButtonElement): void {
-      b.onclick = function (): void {
+    Array.prototype.forEach.call(document.querySelectorAll("#jf-days button"), (b: HTMLButtonElement): void => {
+      b.onclick = (): void => {
         b.classList.toggle("on");
         b.setAttribute("aria-pressed", b.classList.contains("on") ? "true" : "false");
         readFields();
@@ -536,29 +538,29 @@ function openJobSheet(job: ApiJobRow | null): void {
     say();
   }
 
-  Array.prototype.forEach.call($("jf-sched").querySelectorAll("[data-mode]"), function (b: HTMLElement): void {
-    b.onclick = function (): void {
+  Array.prototype.forEach.call($("jf-sched").querySelectorAll("[data-mode]"), (b: HTMLElement): void => {
+    b.onclick = (): void => {
       readFields();
-      var next = b.getAttribute("data-mode");
+      const next = b.getAttribute("data-mode");
       // Switching keeps what the modes share and fills a sane opening state for what they do
       // not, so the schedule the user was shaping stays shapeable.
       if (next !== "interval" && !sched.time) sched.time = "08:00";
       if (next === "weekly" && !sched.days) sched.days = [1];
       if (next === "monthly" && !sched.day) sched.day = 1;
       sched.mode = next as JobSched["mode"];
-      Array.prototype.forEach.call($("jf-sched").querySelectorAll("[data-mode]"), function (b2: HTMLElement): void {
+      Array.prototype.forEach.call($("jf-sched").querySelectorAll("[data-mode]"), (b2: HTMLElement): void => {
         b2.setAttribute("aria-selected", b2.getAttribute("data-mode") === next ? "true" : "false");
       });
       renderFields();
     };
   });
   renderFields();
-  ensureCronstrue(function (): void { say(); }); // the sentence appears the moment the library does
-  var cmdSay = $("jf-cmd-say");
+  ensureCronstrue((): void => { say(); }); // the sentence appears the moment the library does
+  const cmdSay = $("jf-cmd-say");
   function sayCommand(): void {
     cmdSay.className = "sched-say cmd-say";
     cmdSay.textContent = "";
-    var joined = joinCommand($<HTMLTextAreaElement>("jf-command").value);
+    const joined = joinCommand($<HTMLTextAreaElement>("jf-command").value);
     if (joined) cmdSay.textContent = "Saves as: " + joined;
   }
   $<HTMLTextAreaElement>("jf-command").oninput = sayCommand;
@@ -568,32 +570,32 @@ function openJobSheet(job: ApiJobRow | null): void {
 
 async function saveJob(existing: ApiJobRow | null): Promise<void> {
   // On edit the name input is disabled, so it still carries the identity the URL needs.
-  var name = $<HTMLInputElement>("jf-name").value.trim();
+  const name = $<HTMLInputElement>("jf-name").value.trim();
   // The preview under the box has been showing this exact join all along.
-  var command = joinCommand($<HTMLTextAreaElement>("jf-command").value);
+  const command = joinCommand($<HTMLTextAreaElement>("jf-command").value);
   if (!name) { toast("Name is required", true); return; }
   if (!command) { toast("Command is required", true); return; }
   // The builder produces (and has already said) the schedule: the same sentence it showed is
   // what saves, and the same complaint it printed is what toasts here.
-  var sched: { body: { everySec?: number; cron?: string }; say: string };
+  let sched: { body: { everySec?: number; cron?: string }; say: string };
   try { sched = schedToBody(schedState!); } catch (err) { toast(errText(err), true); return; }
-  var body: Record<string, unknown> = { name: name, command: command, enabled: $<HTMLInputElement>("jf-enabled").checked };
+  const body: Record<string, unknown> = { name: name, command: command, enabled: $<HTMLInputElement>("jf-enabled").checked };
   if (sched.body.everySec != null) body.everySec = sched.body.everySec;
   else body.cron = sched.body.cron;
   // Minutes in the sheet, milliseconds on the wire — nobody should ever have to type 600000.
-  var mins = Number($<HTMLInputElement>("jf-timeout").value);
+  const mins = Number($<HTMLInputElement>("jf-timeout").value);
   if (mins > 0) body.timeoutMs = Math.round(mins * 60000);
-  var cwd = $<HTMLInputElement>("jf-cwd").value.trim();
+  const cwd = $<HTMLInputElement>("jf-cwd").value.trim();
   if (cwd) body.cwd = cwd;
   // The env box: every line a KEY=value the run will be handed. A bad line stops the
   // save — a job quietly running WITHOUT a variable the user believes it has is the
   // worst kind of wrong.
-  var parsed = parseEnvLines($<HTMLTextAreaElement>("jf-env").value);
+  const parsed = parseEnvLines($<HTMLTextAreaElement>("jf-env").value);
   if (parsed.error) { toast(parsed.error, true); return; }
   if (Object.keys(parsed.env!).length) body.env = parsed.env!;
-  var j = await apiJson("/api/jobs/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
+  const j = await apiJson("/api/jobs/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
   if (!j) return;
-  var picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
+  const picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
   closeSheet();
   if (!existing && picked) {
     // The select the sheet carried is where the new job lands (docs/20 G4). A gateway
@@ -610,12 +612,12 @@ async function saveJob(existing: ApiJobRow | null): Promise<void> {
 /** The live action list, fetched once per sheet open: the action input form is generated from
  *  each capability's own schema (docs/10 §7), exactly like the Run view's argument fields. */
 async function fetchActions(): Promise<ApiMcpTool[]> {
-  var j = await apiJson<{ actions?: ApiMcpTool[] }>("/api/actions");
+  const j = await apiJson<{ actions?: ApiMcpTool[] }>("/api/actions");
   return (j && j.actions) || [];
 }
 
 function actionByType(actions: ApiMcpTool[], type: string): ApiMcpTool | null {
-  for (var i = 0; i < actions.length; i++) if (actions[i].type === type) return actions[i];
+  for (let i = 0; i < actions.length; i++) if (actions[i].type === type) return actions[i];
   return null;
 }
 
@@ -625,31 +627,31 @@ function actionByType(actions: ApiMcpTool[], type: string): ApiMcpTool | null {
  * owns onto the definition object it loaded, so unknown-but-legal fields ride along, and the
  * JSON textarea is always the definition itself — the two editors are one object. */
 async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
-  var editing = !!job;
-  var row = await apiJson<{ config?: JobConfigRow }>("/api/plugins/jobs/config");
+  const editing = !!job;
+  const row = await apiJson<{ config?: JobConfigRow }>("/api/plugins/jobs/config");
   if (!row) return;
-  var config = row.config || {};
-  var defs = config.definitions || {};
-  var name = editing ? job!.name : "";
-  var base = editing ? defs[name] : defTemplate("new-job");
-  var actions = await fetchActions();
-  var form = v2ToForm(base);
+  const config = row.config || {};
+  const defs = config.definitions || {};
+  const name = editing ? job?.name : "";
+  const base = editing ? defs[name] : defTemplate("new-job");
+  const actions = await fetchActions();
+  const form = v2ToForm(base);
   // The row's own groups list is the truth for this sheet: what the config PUT will carry.
   // A header "+" promise is consumed here; the select is the truth from then on.
-  var rowGroups = config.groups && config.groups.length ? config.groups : ["default"];
-  var picked: string | null = null;
+  const rowGroups = config.groups && config.groups.length ? config.groups : ["default"];
+  let picked: string | null = null;
   if (!editing) {
     picked = state.jobs.pendingGroup != null ? state.jobs.pendingGroup
       : resolveDefaultGroup(rowGroups, lastGroup("jobs"));
     state.jobs.pendingGroup = null;
   }
 
-  var actionOpts = actions.map(function (a: ApiMcpTool): string {
+  const actionOpts = actions.map((a: ApiMcpTool): string => {
     return '<option value="' + esc(a.type) + '"' + (a.type === form.actionType ? " selected" : "") + ">" +
       esc(a.type) + (a.title && a.title !== a.type ? " \u2014 " + esc(a.title) : "") + "</option>";
   }).join("");
-  var current = actionByType(actions, form.actionType);
-  var inputFields = current
+  const current = actionByType(actions, form.actionType);
+  const inputFields = current
     ? argFieldsHtml({ inputSchema: current.schema as ToolInputSchema } as ApiMcpTool, "ja-", (base.action && base.action.input) || {})
     : '<div class="hint">This action type is not registered right now (its plugin is off) — edit its input in the JSON below.</div>';
 
@@ -665,7 +667,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
         "</div>" +
         '<div class="two">' +
           '<label class="field"><span>trigger</span><select id="jv-kind">' +
-            ["interval", "cron", "manual"].map(function (k) {
+            ["interval", "cron", "manual"].map((k) => {
               return '<option value="' + k + '"' + (form.kind === k ? " selected" : "") + ">" + k + "</option>";
             }).join("") + "</select></label>" +
           '<label class="field"><span>first firing</span><span class="hint">one schedule per definition</span></label>' +
@@ -673,7 +675,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
         '<div class="two" id="jv-interval-row">' +
           '<label class="field"><span>everyMs</span><input id="jv-every" value="' + esc(form.everyMs) + '" placeholder="3600000" autocomplete="off"></label>' +
           '<label class="field"><span>firstRun</span><select id="jv-first">' +
-            ["aligned", "immediate"].map(function (f) {
+            ["aligned", "immediate"].map((f) => {
               return '<option value="' + f + '"' + (form.firstRun === f ? " selected" : "") + ">" + f + "</option>";
             }).join("") + "</select></label>" +
         "</div>" +
@@ -685,11 +687,11 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
         "</div>" +
         '<div class="two">' +
           '<label class="field"><span>overlap</span><select id="jv-overlap">' +
-            ["skip", "queue-one"].map(function (o) {
+            ["skip", "queue-one"].map((o) => {
               return '<option value="' + o + '"' + (form.overlap === o ? " selected" : "") + ">" + o + "</option>";
             }).join("") + "</select></label>" +
           '<label class="field"><span>misfire</span><select id="jv-misfire">' +
-            ["skip", "run-once"].map(function (m) {
+            ["skip", "run-once"].map((m) => {
               return '<option value="' + m + '"' + (form.misfire === m ? " selected" : "") + ">" + m + "</option>";
             }).join("") + "</select></label>" +
         "</div>" +
@@ -699,18 +701,18 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
         "</div>" +
         '<div class="two">' +
           '<label class="field"><span>retry.backoff</span><select id="jv-rback">' +
-            ["fixed", "exponential"].map(function (b) {
+            ["fixed", "exponential"].map((b) => {
               return '<option value="' + b + '"' + (form.retryBackoff === b ? " selected" : "") + ">" + b + "</option>";
             }).join("") + "</select></label>" +
           '<span class="field"><span>retry.retryOn</span><span style="display:flex;gap:var(--s2)">' +
-            ["failure", "timeout"].map(function (r) {
+            ["failure", "timeout"].map((r) => {
               return '<label class="check"><input type="checkbox" data-retryon="' + r + '"' +
                 (form.retryOn.indexOf(r) >= 0 ? " checked" : "") + ">" + r + "</label>";
             }).join("") + "</span></span>" +
         "</div>" +
         '<div class="two">' +
           '<label class="field"><span>output.capture</span><select id="jv-capture">' +
-            ["tail", "none"].map(function (c) {
+            ["tail", "none"].map((c) => {
               return '<option value="' + c + '"' + (form.capture === c ? " selected" : "") + ">" + c + "</option>";
             }).join("") + "</select></label>" +
           '<label class="field"><span>output.maxBytes</span><input id="jv-maxbytes" value="' + esc(form.maxBytes) + '" placeholder="16384" autocomplete="off"></label>' +
@@ -729,13 +731,13 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
 
   // The one definition object both editors work on. `dirty` marks JSON as hand-edited:
   // from then on the textarea wins, until Form -> JSON rebuilds it from the form again.
-  var def = JSON.parse(JSON.stringify(base)) as JobDef;
-  var dirty = false;
-  var jsonBox = $<HTMLTextAreaElement>("jv-json");
+  let def = JSON.parse(JSON.stringify(base)) as JobDef;
+  let dirty = false;
+  const jsonBox = $<HTMLTextAreaElement>("jv-json");
   jsonBox.value = JSON.stringify(def, null, 2) + "\n";
 
   function syncTriggerRows(): void {
-    var kind = $<HTMLSelectElement>("jv-kind").value;
+    const kind = $<HTMLSelectElement>("jv-kind").value;
     $("jv-interval-row").style.display = kind === "interval" ? "" : "none";
     $("jv-cron-row").style.display = kind === "cron" ? "" : "none";
   }
@@ -744,9 +746,9 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
 
   // The raw cron field gets the same one-sentence answer as the builder: whatever mode a
   // definition came from, the expression on screen is the schedule that will fire.
-  var jvSay = $("jv-cron-say");
+  const jvSay = $("jv-cron-say");
   function sayV2(): void {
-    var expr = $<HTMLInputElement>("jv-cron").value.trim();
+    const expr = $<HTMLInputElement>("jv-cron").value.trim();
     jvSay.className = "sched-say";
     jvSay.textContent = "";
     try { if (expr) jvSay.textContent = describeCron(expr) + "."; }
@@ -754,19 +756,19 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   }
   $<HTMLInputElement>("jv-cron").oninput = sayV2;
   sayV2();
-  ensureCronstrue(function (): void { sayV2(); });
+  ensureCronstrue((): void => { sayV2(); });
 
   // Switching the action type rebuilds the input form from that capability's schema.
-  $<HTMLSelectElement>("jv-action").onchange = function (): void {
-    var next = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
+  $<HTMLSelectElement>("jv-action").onchange = (): void => {
+    const next = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
     $("jv-inputs").innerHTML = next
       ? argFieldsHtml({ inputSchema: next.schema } as ApiMcpTool, "ja-", {})
       : '<div class="hint">Not registered — edit the input in the JSON below.</div>';
   };
 
   function formValues(): JobFormValues {
-    var retryOn: string[] = [];
-    Array.prototype.forEach.call(document.querySelectorAll("[data-retryon]"), function (cb: HTMLInputElement): void {
+    const retryOn: string[] = [];
+    Array.prototype.forEach.call(document.querySelectorAll("[data-retryon]"), (cb: HTMLInputElement): void => {
       if (cb.checked) retryOn.push(cb.getAttribute("data-retryon")!);
     });
     return {
@@ -791,14 +793,14 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   }
 
   function formToDef(): JobDef {
-    var currentAction = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
-    var input = currentAction
+    const currentAction = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
+    const input = currentAction
       ? readRunArgs({ inputSchema: currentAction.schema as ToolInputSchema } as ApiMcpTool, "ja-")
       : (def.action && def.action.input) || {};
     return formToV2(formValues(), def, input);
   }
 
-  var formToJson = function (): void {
+  const formToJson = (): void => {
     try {
       def = formToDef();
       jsonBox.value = JSON.stringify(def, null, 2) + "\n";
@@ -809,14 +811,14 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   };
   $<HTMLButtonElement>("jv-form-to-json").onclick = formToJson;
 
-  jsonBox.oninput = function (): void { dirty = true; };
+  jsonBox.oninput = (): void => { dirty = true; };
 
   $<HTMLButtonElement>("jv-cancel").onclick = closeSheet;
-  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
-  $<HTMLButtonElement>("jv-save").onclick = function (): void { void save(); };
+  $("sheet").onclick = (e: MouseEvent): void => { if (e.target === $("sheet")) closeSheet(); };
+  $<HTMLButtonElement>("jv-save").onclick = (): void => { void save(); };
 
   async function save(): Promise<void> {
-    var id = editing ? name : $<HTMLInputElement>("jv-id").value.trim();
+    const id = editing ? name : $<HTMLInputElement>("jv-id").value.trim();
     if (!id || !/^[\w.-]+$/.test(id)) { toast("id is required (letters, digits, -, _, .)", true); return; }
     if (dirty) {
       // The JSON textarea is the source of truth once hand-edited.
@@ -830,15 +832,15 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
     }
     // A fresh GET right before the PUT: the whole-row CAS (docs/11 §7.2) wants the newest
     // revision, and a concurrent edit anywhere in the row must not be silently overwritten.
-    var fresh = await apiJson<{ config?: JobConfigRow; revision?: number }>("/api/plugins/jobs/config");
+    const fresh = await apiJson<{ config?: JobConfigRow; revision?: number }>("/api/plugins/jobs/config");
     if (!fresh) return;
-    var cfg = fresh.config || {};
-    var definitions = cfg.definitions || {};
+    const cfg = fresh.config || {};
+    const definitions = cfg.definitions || {};
     if (!editing) {
       // The group the sheet promised: a definition key, so the whole-row CAS carries it and
       // no second request is needed (docs/20 G4). A "group" typed straight into the JSON
       // wins over the select - the textarea is the truth once hand-edited.
-      var g = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
+      const g = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
       if (g) {
         if (def.group == null) def.group = g;
         rememberGroup("jobs", g);
@@ -846,7 +848,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
     }
     definitions[id] = def;
     cfg.definitions = definitions;
-    var reply = await apiJson<unknown>("/api/plugins/jobs/config", {
+    const reply = await apiJson<unknown>("/api/plugins/jobs/config", {
       method: "PUT",
       body: JSON.stringify({ revision: fresh.revision, config: cfg }),
     });
@@ -867,16 +869,16 @@ async function openRunsSheet(name: string, cursor?: string | null): Promise<void
   if (!cursor || !state.jobs.hist || state.jobs.hist.name !== name) {
     state.jobs.hist = { name: name, runs: [] };
   }
-  var j = await apiJson<{ runs?: ApiJobRunRecord[]; nextBefore?: string }>("/api/jobs/" + encodeURIComponent(name) + "/runs?limit=20" +
+  const j = await apiJson<{ runs?: ApiJobRunRecord[]; nextBefore?: string }>("/api/jobs/" + encodeURIComponent(name) + "/runs?limit=20" +
     (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
   if (!j) return;
-  state.jobs.hist!.runs = state.jobs.hist!.runs.concat(j.runs || []);
+  state.jobs.hist!.runs = state.jobs.hist?.runs.concat(j.runs || []);
   renderRunsSheet(j.nextBefore || null);
 }
 
 function renderRunsSheet(nextBefore?: string | null): void {
-  var hist = state.jobs.hist;
-  var rows = hist!.runs.map(function (r: ApiJobRunRecord): string {
+  const hist = state.jobs.hist;
+  const rows = hist?.runs.map((r: ApiJobRunRecord): string => {
     return '<div class="call">' +
       '<button class="call-sum" type="button">' +
         '<span class="dot ' + (r.ok ? "up" : "down") + '"></span>' +
@@ -893,7 +895,7 @@ function renderRunsSheet(nextBefore?: string | null): void {
   }).join("");
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="Run history">' +
-      '<div class="sheet-head"><h2>Runs — ' + esc(hist!.name) + "</h2></div>" +
+      '<div class="sheet-head"><h2>Runs — ' + esc(hist?.name) + "</h2></div>" +
       '<div class="sheet-body">' +
         // One card holding every run, so the rows stack flush instead of each taking the
         // sheet's field gap — forty runs read as one list, not forty islands.
@@ -907,13 +909,13 @@ function renderRunsSheet(nextBefore?: string | null): void {
     "</div>";
   $("sheet").hidden = false;
   $("jr-done").onclick = closeSheet;
-  var more = $("jr-more");
-  if (more) more.onclick = function (): void { void openRunsSheet(hist!.name, nextBefore); };
-  $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
+  const more = $("jr-more");
+  if (more) more.onclick = (): void => { void openRunsSheet(hist!.name, nextBefore); };
+  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
   // The Traffic expand idiom: clicking the summary toggles the raw output beneath it.
-  Array.prototype.forEach.call($("sheet").querySelectorAll(".call-sum"), function (b) {
-    b.onclick = function () {
-      var body = b.parentElement.querySelector(".call-body");
+  Array.prototype.forEach.call($("sheet").querySelectorAll(".call-sum"), (b) => {
+    b.onclick = () => {
+      const body = b.parentElement.querySelector(".call-body");
       if (!body) return;
       body.hidden = !body.hidden;
       // .open is what turns the chevron — the Logs and Traffic rows key on it, not on `hidden`.

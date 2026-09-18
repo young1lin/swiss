@@ -48,9 +48,9 @@ import { navRows, nudgeSelected } from "./sidebar.js";
    function object itself (maybeReloadPanel._warned), typed by a Function augmentation. */
 let warnedNewPanel = false;
 function maybeReloadPanel(newVersion: string): void {
-  var typing = isTyping();
-  var busy = !$("sheet").hidden || state.menuOpen;
-  var edits = pageHasPendingChanges();
+  const typing = isTyping();
+  const busy = !$("sheet").hidden || state.menuOpen;
+  const edits = pageHasPendingChanges();
   if (typing || busy || edits) {
     if (!warnedNewPanel) {
       warnedNewPanel = true;
@@ -74,17 +74,17 @@ function showApp(): void {
  *  secrets) for the management view. */
 async function loadInfo(): Promise<void> {
   try {
-    var r = await api("/api/info");
+    const r = await api("/api/info");
     if (r.ok) {
       state.info = await r.json();
       // First sight records the stamp; a LATER, DIFFERENT one means the panel was rebuilt —
       // reload in place when nothing unsaved would be lost (checked in maybeReloadPanel).
-      if (state.panelVersion === null) state.panelVersion = state.info!.panelVersion || null;
-      else if (state.info!.panelVersion && state.info!.panelVersion !== state.panelVersion) {
-        maybeReloadPanel(state.info!.panelVersion!);
+      if (state.panelVersion === null) state.panelVersion = state.info?.panelVersion || null;
+      else if (state.info?.panelVersion && state.info?.panelVersion !== state.panelVersion) {
+        maybeReloadPanel(state.info?.panelVersion!);
       }
     }
-    var t = await api("/api/tokens");
+    const t = await api("/api/tokens");
     if (t.ok) state.tokens = (await t.json()).tokens || [];
   } catch (e) { /* the token list just stays empty */ }
 }
@@ -94,14 +94,14 @@ async function loadInfo(): Promise<void> {
    half of it. The preference is per-browser (localStorage), not gateway state — it describes this
    screen, and the same gateway is read from other screens with other lighting. */
 function themePref(): "light" | "dark" | "auto" {
-  try { var v = localStorage.getItem(THEME_KEY); return v === "light" || v === "dark" ? v : "auto"; }
+  try { const v = localStorage.getItem(THEME_KEY); return v === "light" || v === "dark" ? v : "auto"; }
   catch (e) { return "auto"; }
 }
 function prefersDark(): boolean {
   return !!(window.matchMedia as unknown && matchMedia("(prefers-color-scheme: dark)").matches);
 }
 function applyTheme(): void {
-  var p = themePref();
+  const p = themePref();
   document.documentElement.setAttribute("data-theme", p === "dark" || (p === "auto" && prefersDark()) ? "dark" : "light");
 }
 function setTheme(p: string): void {
@@ -113,16 +113,16 @@ function setTheme(p: string): void {
    (click → dark), a sun on the dark one (click → light). "Auto" stays the untouched default (no
    stored preference): the first explicit click pins the choice for this browser. */
 function paintThemeBtn(): void {
-  var dark = document.documentElement.getAttribute("data-theme") === "dark";
-  var b = $("themeBtn");
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  const b = $("themeBtn");
   // The sprite swap (docs/18 V2): switch the referenced symbol, not the button's HTML.
-  var use = b.querySelector("use");
+  const use = b.querySelector("use");
   if (use) use.setAttribute("href", dark ? "#i-sun" : "#i-moon");
   b.title = dark ? "Switch to light" : "Switch to dark";
 }
-$("themeBtn").onclick = function (e) {
+$("themeBtn").onclick = (e) => {
   e.stopPropagation();
-  var dark = document.documentElement.getAttribute("data-theme") === "dark";
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
   setTheme(dark ? "light" : "dark");
   paintThemeBtn();
 };
@@ -132,8 +132,8 @@ paintThemeBtn();
 initSelects();
 // Only matters while the preference is "auto"; a fixed choice is not the OS's business.
 if (window.matchMedia as unknown) {
-  var mq = matchMedia("(prefers-color-scheme: dark)");
-  var onOsChange = function () { if (themePref() === "auto") { applyTheme(); paintThemeBtn(); } };
+  const mq = matchMedia("(prefers-color-scheme: dark)");
+  const onOsChange = () => { if (themePref() === "auto") { applyTheme(); paintThemeBtn(); } };
   if (mq.addEventListener) mq.addEventListener("change", onOsChange);
   else if (mq.addListener) mq.addListener(onOsChange);   // Safari < 14
 }
@@ -154,10 +154,10 @@ function poll(): void {
 }
 
 setInterval(poll, 6000);
-document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") poll(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") poll(); });
 // Closing the page with buffered (uncommitted) edits would lose them silently; the native
 // dialog is the only hook available for beforeunload, so it is plain by necessity.
-window.addEventListener("beforeunload", function (e) {
+window.addEventListener("beforeunload", (e) => {
   if (pageHasPendingChanges()) {
     e.preventDefault(); // Chrome needs this; the returnValue fallback covers the rest
     e.returnValue = "";
@@ -174,15 +174,15 @@ initImmersive(); // the context bar's focus control: the page body can take the 
 
 /* Keyboard: arrows move through the sidebar, / focuses search, Escape closes the sheet/menu,
    then the history popover, and leaves immersive mode last — the outermost layer goes last. */
-document.addEventListener("keydown", function (e) {
+document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (!$("sheet").hidden) { closeSheet(); return; }
     if (state.menuOpen) { closeMenu(); return; }
-    var hd = state.detail;
+    const hd = state.detail;
     if (hd && hd.run && hd.run.histOpen) { histClose(); return; }
     if (immersiveOn()) { exitImmersive(); return; }
   }
-  var typing = isTyping();
+  const typing = isTyping();
   if (typing) return;
   if (e.key === "r") { refreshNow(); return; }
   if (!pageUsesSidebar()) return;
@@ -196,11 +196,11 @@ document.addEventListener("keydown", function (e) {
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   // navRows, not visibleMcps: the arrows walk what is actually on screen, so a folded group is
   // stepped over rather than selected into.
-  var rows = navRows();
+  const rows = navRows();
   if (!rows.length) return;
   e.preventDefault();
-  var i = rows.findIndex(function (m) { return m.name === state.selected; });
-  var nextIndex = e.key === "ArrowDown" ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1);
+  const i = rows.findIndex((m) => { return m.name === state.selected; });
+  let nextIndex = e.key === "ArrowDown" ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1);
   if (i < 0) nextIndex = 0;
   openDetail(rows[nextIndex].name);
 });

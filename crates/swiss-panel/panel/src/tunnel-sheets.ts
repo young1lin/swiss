@@ -24,7 +24,7 @@ import { groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from ".
 
 async function loadKeys(): Promise<ApiTunnelsKeysResponse> {
   if (state.tun.keys) return state.tun.keys;
-  var j = await apiJson<ApiTunnelsKeysResponse>("/api/tunnels/keys");
+  const j = await apiJson<ApiTunnelsKeysResponse>("/api/tunnels/keys");
   state.tun.keys = j || { keys: [], defaultPath: "" };
   return state.tun.keys!;
 }
@@ -37,12 +37,12 @@ async function loadKeys(): Promise<ApiTunnelsKeysResponse> {
  *  connection (this one excluded); the backend stays the single source of truth for cycles,
  *  its 400 lands inline in the sheet, and the panel does not pre-walk chains. */
 function advancedConnHtml(d: ConnSheetDraft, editing: boolean): string {
-  var chips = "";
+  let chips = "";
   if (d.proxy) chips += ' <span class="tag">proxy</span>';
   if (d.jump) chips += ' <span class="tag">via ' + esc(tunConnName(d.jump)) + "</span>";
-  var opts = '<option value="">None</option>' + tunData().connections
-    .filter(function (c: ApiTunnelConnectionRow): boolean { return !editing || c.id !== d.id; })
-    .map(function (c: ApiTunnelConnectionRow): string {
+  const opts = '<option value="">None</option>' + tunData().connections
+    .filter((c: ApiTunnelConnectionRow): boolean => { return !editing || c.id !== d.id; })
+    .map((c: ApiTunnelConnectionRow): string => {
       return '<option value="' + esc(c.id) + '"' + (d.jump === c.id ? " selected" : "") + ">" + esc(c.name) + "</option>";
     })
     .join("");
@@ -68,15 +68,15 @@ function advancedConnHtml(d: ConnSheetDraft, editing: boolean): string {
 }
 
 function openConnSheet(def: ApiTunnelConnectionRow | null): void {
-  var editing = !!def;
-  var d: ConnSheetDraft = def || { name: "", host: "", port: 22, username: "", authType: "key", keyPath: "", passphrase: "", password: "" };
+  const editing = !!def;
+  const d: ConnSheetDraft = def || { name: "", host: "", port: 22, username: "", authType: "key", keyPath: "", passphrase: "", password: "" };
   // Creating: a Group select names where the row lands (the header +'s group preselected, the
   // last-used one when the top New opened this). Editing: no field - moving a connection is
   // the list's gesture (drag / row menu), not a property of its definition.
-  var names = tunGroupsList();
-  var initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("conns"));
+  const names = tunGroupsList();
+  const initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("conns"));
   state.tun.pendingGroup = null; // consumed: the select is the truth from here
-  var groupField = editing ? "" : groupFieldHtml(names, initial);
+  const groupField = editing ? "" : groupFieldHtml(names, initial);
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit connection" : "New connection") + '">' +
       '<div class="sheet-head"><h2 id="t-title">' + (editing ? "Edit connection" : "New SSH connection in " + esc(initial)) + "</h2></div>" +
@@ -100,9 +100,9 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
     "</div>";
   $("sheet").hidden = false;
 
-  var paint = async function (): Promise<void> {
-    var keys = await loadKeys();
-    var isKey = $<HTMLSelectElement>("c-auth").value === "key";
+  const paint = async (): Promise<void> => {
+    const keys = await loadKeys();
+    const isKey = $<HTMLSelectElement>("c-auth").value === "key";
     $("c-auth-fields").innerHTML = isKey
       ? '<div class="with-btn">' +
           '<label class="field"><span>Private key path</span><input id="c-keypath" value="' + esc(d.keyPath || "") +
@@ -117,13 +117,13 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
     if ($("c-browse")) $<HTMLButtonElement>("c-browse").onclick = openKeyPicker;
   };
   void paint();
-  $<HTMLSelectElement>("c-auth").onchange = function (): void { void paint(); };
-  if ($("g-sel")) $<HTMLSelectElement>("g-sel").onchange = function (): void {
+  $<HTMLSelectElement>("c-auth").onchange = (): void => { void paint(); };
+  if ($("g-sel")) $<HTMLSelectElement>("g-sel").onchange = (): void => {
     $("t-title").textContent = "New SSH connection in " + $<HTMLSelectElement>("g-sel").value;
   };
   $<HTMLButtonElement>("c-cancel").onclick = closeSheet;
-  $<HTMLButtonElement>("c-save").onclick = function (): void { void saveConn(def!); };
-  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
+  $<HTMLButtonElement>("c-save").onclick = (): void => { void saveConn(def!); };
+  $("sheet").onclick = (e: MouseEvent): void => { if (e.target === $("sheet")) closeSheet(); };
   $<HTMLInputElement>("c-name").focus();
 }
 
@@ -133,27 +133,27 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
  * reach any folder the gateway process can read — not just ~/.ssh. Folders navigate; files pick.
  */
 async function openKeyPicker(): Promise<void> {
-  var target = $<HTMLInputElement>("c-keypath");
+  const target = $<HTMLInputElement>("c-keypath");
   // Start in the current key's folder if one is set, otherwise let the backend default to ~/.ssh.
-  var cur = target.value && target.value.trim() ? target.value.trim().replace(/[/\\][^/\\]*$/, "") : "";
+  let cur = target.value && target.value.trim() ? target.value.trim().replace(/[/\\][^/\\]*$/, "") : "";
 
-  var back = el("div", "backdrop");
+  const back = el("div", "backdrop");
   back.style.zIndex = "60";
-  var picker = el("div", "sheet");
+  const picker = el("div", "sheet");
   picker.setAttribute("role", "dialog");
   picker.setAttribute("aria-modal", "true");
   picker.setAttribute("aria-label", "Choose a private key file");
   back.appendChild(picker);
   document.body.appendChild(back);
-  var close = function (): void { document.body.removeChild(back); target.focus(); };
-  back.onclick = function (e: MouseEvent): void { if (e.target === back) close(); };
+  const close = (): void => { document.body.removeChild(back); target.focus(); };
+  back.onclick = (e: MouseEvent): void => { if (e.target === back) close(); };
 
   async function render(): Promise<void> {
-    var j = await apiJson<ApiTunnelsBrowseResponse>("/api/tunnels/browse" + (cur ? "?dir=" + encodeURIComponent(cur) : ""));
+    const j = await apiJson<ApiTunnelsBrowseResponse>("/api/tunnels/browse" + (cur ? "?dir=" + encodeURIComponent(cur) : ""));
     if (!j) { toast("Could not read that folder", true); return; }
     cur = j.dir; // normalize to the resolved path the server returned
-    var dirs = j.entries.filter(function (e: ApiTunnelsBrowseEntry): boolean { return e.dir; });
-    var files = j.entries.filter(function (e: ApiTunnelsBrowseEntry): boolean { return !e.dir; });
+    const dirs = j.entries.filter((e: ApiTunnelsBrowseEntry): boolean => { return e.dir; });
+    const files = j.entries.filter((e: ApiTunnelsBrowseEntry): boolean => { return !e.dir; });
     picker.innerHTML =
       '<div class="sheet-head"><h2>Choose a private key</h2></div>' +
       '<div class="sheet-body">' +
@@ -164,29 +164,29 @@ async function openKeyPicker(): Promise<void> {
         '</div>' +
         (j.error ? '<div class="hint">' + esc(j.error) + '</div>' : '') +
         '<div class="keylist">' +
-          dirs.map(function (e: ApiTunnelsBrowseEntry): string { return '<button class="is-dir" data-dir="' + esc(e.path) + '">📁 ' + esc(e.name) + '</button>'; }).join("") +
-          files.map(function (e: ApiTunnelsBrowseEntry): string { return '<button data-file="' + esc(e.path) + '">📄 ' + esc(e.name) + '</button>'; }).join("") +
+          dirs.map((e: ApiTunnelsBrowseEntry): string => { return '<button class="is-dir" data-dir="' + esc(e.path) + '">📁 ' + esc(e.name) + '</button>'; }).join("") +
+          files.map((e: ApiTunnelsBrowseEntry): string => { return '<button data-file="' + esc(e.path) + '">📄 ' + esc(e.name) + '</button>'; }).join("") +
         '</div>' +
       '</div>' +
       '<div class="sheet-foot"><button class="btn" data-close>Cancel</button></div>';
     picker.querySelector<HTMLButtonElement>("[data-close]")!.onclick = close;
-    if (j.parent) picker.querySelector<HTMLButtonElement>("#b-up")!.onclick = function (): void { cur = j!.parent!; void render(); };
-    var go = function (): void { cur = $<HTMLInputElement>("b-path").value.trim(); void render(); };
+    if (j.parent) picker.querySelector<HTMLButtonElement>("#b-up")!.onclick = (): void => { cur = j?.parent!; void render(); };
+    const go = (): void => { cur = $<HTMLInputElement>("b-path").value.trim(); void render(); };
     picker.querySelector<HTMLButtonElement>("#b-go")!.onclick = go;
-    picker.querySelector<HTMLInputElement>("#b-path")!.onkeydown = function (ev: KeyboardEvent): void { if (ev.key === "Enter") go(); };
-    Array.prototype.forEach.call(picker.querySelectorAll("[data-dir]"), function (b: HTMLElement): void {
-      b.onclick = function (): void { cur = b.getAttribute("data-dir")!; void render(); };
+    picker.querySelector<HTMLInputElement>("#b-path")!.onkeydown = (ev: KeyboardEvent): void => { if (ev.key === "Enter") go(); };
+    Array.prototype.forEach.call(picker.querySelectorAll("[data-dir]"), (b: HTMLElement): void => {
+      b.onclick = (): void => { cur = b.getAttribute("data-dir")!; void render(); };
     });
-    Array.prototype.forEach.call(picker.querySelectorAll("[data-file]"), function (b: HTMLElement): void {
-      b.onclick = function (): void { target.value = b.getAttribute("data-file")!; close(); };
+    Array.prototype.forEach.call(picker.querySelectorAll("[data-file]"), (b: HTMLElement): void => {
+      b.onclick = (): void => { target.value = b.getAttribute("data-file")!; close(); };
     });
   }
   void render();
 }
 
 async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> {
-  var authType = $<HTMLSelectElement>("c-auth").value;
-  var body: Record<string, unknown> = {
+  const authType = $<HTMLSelectElement>("c-auth").value;
+  const body: Record<string, unknown> = {
     name: $<HTMLInputElement>("c-name").value.trim(),
     host: $<HTMLInputElement>("c-host").value.trim(),
     port: Number($<HTMLInputElement>("c-port").value) || 22,
@@ -205,28 +205,28 @@ async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> 
   // both land as "no value"). An untouched proxyPassword input still carries the mask
   // sentinel the row brought in; echoing it back unchanged is what keeps the stored secret
   // (unmask_conn restores it server-side), exactly the MCP sheet's sentinel habit.
-  var proxy = $<HTMLInputElement>("c-proxy").value.trim();
+  const proxy = $<HTMLInputElement>("c-proxy").value.trim();
   if (proxy) body.proxy = proxy;
-  var proxyUser = $<HTMLInputElement>("c-proxy-user").value.trim();
+  const proxyUser = $<HTMLInputElement>("c-proxy-user").value.trim();
   if (proxyUser) body.proxyUsername = proxyUser;
-  var proxyPass = $<HTMLInputElement>("c-proxy-pass").value;
+  const proxyPass = $<HTMLInputElement>("c-proxy-pass").value;
   if (proxyPass) body.proxyPassword = proxyPass;
-  var jump = $<HTMLSelectElement>("c-jump").value;
+  const jump = $<HTMLSelectElement>("c-jump").value;
   if (jump) body.jump = jump;
   // Read the sheet's Group before closeSheet wipes it: a create lands in the picked group
   // (remembered as this scope's last-used), the same pre-join the MCP sheet does.
-  var picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
+  const picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
   // api() rather than apiJson: a refused save (the §1.3 family — a bad proxy URL, a jump
   // cycle, proxy and jump together) must land INLINE beside the fields that caused it, not
   // only in a toast, and the sheet stays open so the fix is a keystroke away.
-  var j: { error?: string; connection?: ApiTunnelConnectionRow };
+  let j: { error?: string; connection?: ApiTunnelConnectionRow };
   try {
-    var r = await api(existing
+    const r = await api(existing
       ? "/api/tunnels/connections/" + encodeURIComponent(existing.id)
       : "/api/tunnels/connections", { method: existing ? "PUT" : "POST", body: JSON.stringify(body) });
-    j = await r.json().catch(function (): object { return {}; }) as { error?: string; connection?: ApiTunnelConnectionRow };
+    j = await r.json().catch((): object => { return {}; }) as { error?: string; connection?: ApiTunnelConnectionRow };
     if (!r.ok) {
-      var err = $("c-err");
+      const err = $("c-err");
       if (err) {
         err.hidden = false;
         err.textContent = j.error || "HTTP " + r.status;
@@ -241,27 +241,27 @@ async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> 
   if (picked) rememberGroup("conns", picked);
   closeSheet();
   await loadTunnels();
-  if (!existing && picked && j!.connection && j!.connection.id) await assignTunScoped("conns", j!.connection.id, picked);
+  if (!existing && picked && j?.connection && j?.connection.id) await assignTunScoped("conns", j?.connection.id, picked);
   toast((existing ? "Saved " : "Added ") + body.name);
 }
 
 /* --- rule sheet ------------------------------------------------------------------------------- */
 
 function openRuleSheet(def: ApiTunnelRuleRow | null): void {
-  var d = tunData();
+  const d = tunData();
   if (!d.connections.length) { toast("Add an SSH connection first", true); return; }
-  var editing = !!def;
-  var r: RuleSheetDraft = def || {
+  const editing = !!def;
+  const r: RuleSheetDraft = def || {
     name: "", connectionId: d.connections[0].id, localPort: "", targetHost: "127.0.0.1", targetPort: "",
     remark: "", autoReconnect: false, reconnectInterval: 10, mcps: [],
   };
   // Same contract as the connection sheet: a Group select on create only, preselected from
   // the header + that opened this, else the scope's last-used group.
-  var names = tunGroupsList();
-  var initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("rules"));
+  const names = tunGroupsList();
+  const initial = state.tun.pendingGroup || resolveDefaultGroup(names, lastGroup("rules"));
   state.tun.pendingGroup = null;
-  var groupField = editing ? "" : groupFieldHtml(names, initial);
-  var opts = d.connections.map(function (c: ApiTunnelConnectionRow): string {
+  const groupField = editing ? "" : groupFieldHtml(names, initial);
+  const opts = d.connections.map((c: ApiTunnelConnectionRow): string => {
     return '<option value="' + esc(c.id) + '"' + (c.id === r.connectionId ? " selected" : "") + ">" + esc(c.name) + "</option>";
   }).join("");
   $("sheet").innerHTML =
@@ -292,49 +292,49 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
 
   paintMcpPicks(r.mcps || [], []);
   // For a new rule, the suggestion is the point: type 5433 and the matching MCP checks itself.
-  var suggest = async function (): Promise<void> {
-    var port = Number($<HTMLInputElement>("r-lport").value);
+  const suggest = async (): Promise<void> => {
+    const port = Number($<HTMLInputElement>("r-lport").value);
     if (!port) return;
-    var j = await apiJson<ApiTunnelsSuggestResponse>("/api/tunnels/suggest/" + port);
+    const j = await apiJson<ApiTunnelsSuggestResponse>("/api/tunnels/suggest/" + port);
     if (!j) return;
-    var checked = editing ? readMcpPicks() : j.mcps as string[];
+    const checked = editing ? readMcpPicks() : j.mcps as string[];
     paintMcpPicks(checked, j.mcps as string[]);
   };
   if (!editing) $<HTMLInputElement>("r-lport").onchange = suggest;
   else void suggest(); // editing: keep the stored choice, but label what matches
-  if ($("g-sel")) $<HTMLSelectElement>("g-sel").onchange = function (): void {
+  if ($("g-sel")) $<HTMLSelectElement>("g-sel").onchange = (): void => {
     $("t-title").textContent = "New forwarding rule in " + $<HTMLSelectElement>("g-sel").value;
   };
   $<HTMLButtonElement>("r-cancel").onclick = closeSheet;
-  $<HTMLButtonElement>("r-save").onclick = function (): void { void saveRule(def!); };
-  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
+  $<HTMLButtonElement>("r-save").onclick = (): void => { void saveRule(def!); };
+  $("sheet").onclick = (e: MouseEvent): void => { if (e.target === $("sheet")) closeSheet(); };
   $<HTMLInputElement>("r-name").focus();
 }
 
 function paintMcpPicks(checked: string[], suggested: string[]): void {
-  var names = tunData().mcps || [];
+  const names = tunData().mcps || [];
   if (!names.length) {
     $("r-mcps").innerHTML = '<div class="hint">No MCPs registered.</div>';
     return;
   }
-  $("r-mcps").innerHTML = names.map(function (n: string): string {
-    var on = checked.indexOf(n) >= 0;
-    var hint = suggested.indexOf(n) >= 0 ? ' <span class="hint">(matches this local port)</span>' : "";
+  $("r-mcps").innerHTML = names.map((n: string): string => {
+    const on = checked.indexOf(n) >= 0;
+    const hint = suggested.indexOf(n) >= 0 ? ' <span class="hint">(matches this local port)</span>' : "";
     return '<label class="check"><input type="checkbox" data-mcp="' + esc(n) + '"' + (on ? " checked" : "") + ">" +
       esc(n) + hint + "</label>";
   }).join("");
 }
 
 function readMcpPicks(): string[] {
-  var out: string[] = [];
-  Array.prototype.forEach.call($("r-mcps").querySelectorAll("[data-mcp]"), function (b: HTMLInputElement): void {
+  const out: string[] = [];
+  Array.prototype.forEach.call($("r-mcps").querySelectorAll("[data-mcp]"), (b: HTMLInputElement): void => {
     if (b.checked) out.push(b.dataset.mcp!);
   });
   return out;
 }
 
 async function saveRule(existing: ApiTunnelRuleRow): Promise<void> {
-  var body = {
+  const body = {
     name: $<HTMLInputElement>("r-name").value.trim(),
     connectionId: $<HTMLSelectElement>("r-conn").value,
     localPort: Number($<HTMLInputElement>("r-lport").value),
@@ -346,15 +346,15 @@ async function saveRule(existing: ApiTunnelRuleRow): Promise<void> {
     mcps: readMcpPicks(),
   };
   if (!body.targetPort) body.targetPort = body.localPort;
-  var picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
-  var j = existing
+  const picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
+  const j = existing
     ? await apiJson<ApiTunnelRuleMutation>("/api/tunnels/rules/" + encodeURIComponent(existing.id), { method: "PUT", body: JSON.stringify(body) })
     : await apiJson<ApiTunnelRuleMutation>("/api/tunnels/rules", { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
   if (picked) rememberGroup("rules", picked);
   closeSheet();
   await loadTunnels();
-  var row = j.rule || {} as ApiTunnelRuleRow;
+  const row = j.rule || {} as ApiTunnelRuleRow;
   // A create lands in the picked group, not wherever the header + promised.
   if (!existing && picked && row.id) await assignTunScoped("rules", row.id, picked);
   toast((existing ? "Saved " : "Added ") + body.name + (row.state && row.state !== "stopped" ? " (" + row.state + ")" : ""));

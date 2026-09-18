@@ -26,14 +26,14 @@
      a page because its plugin row is missing - a page that cannot be reached is worse than
      a group with an ugly name. */
 function groupPages(pages: PageDescriptor[], plugins: ApiPluginRow[] | null | undefined, fallbackLabels: Record<string, string> | null | undefined): PageGroup[] {
-  var byId = new Map((plugins || []).map(function (p) { return [p.id, p]; }));
-  var groups = new Map<string, PageGroup>();
-  pages.forEach(function (page) {
-    var gid = page.pluginId || page.id;
-    var group = groups.get(gid);
+  const byId = new Map((plugins || []).map((p) => { return [p.id, p]; }));
+  const groups = new Map<string, PageGroup>();
+  pages.forEach((page) => {
+    const gid = page.pluginId || page.id;
+    let group = groups.get(gid);
     if (!group) {
-      var known = byId.get(gid);
-      var label = (known && known.label) || (fallbackLabels && fallbackLabels[gid]) || page.label;
+      const known = byId.get(gid);
+      const label = (known && known.label) || (fallbackLabels && fallbackLabels[gid]) || page.label;
       group = { id: gid, label: label, order: page.order, pages: [] };
       groups.set(gid, group);
     }
@@ -41,45 +41,45 @@ function groupPages(pages: PageDescriptor[], plugins: ApiPluginRow[] | null | un
     group.pages.push(page);
   });
   return Array.from(groups.values())
-    .map(function (g) { g.pages.sort(function (a, b) { return a.order - b.order; }); return g; })
-    .sort(function (a, b) { return a.order - b.order; });
+    .map((g) => { g.pages.sort((a, b) => { return a.order - b.order; }); return g; })
+    .sort((a, b) => { return a.order - b.order; });
 }
 
 function createPageRegistry(importer?: (entry: string) => Promise<PageModule>) {
-  var entries = new Map<string, PageDescriptor>();
-  var modules = new Map<string, { entry: string; promise: Promise<PageModule> }>();
-  importer = importer || function (entry: string) { return import(entry); };
+  let entries = new Map<string, PageDescriptor>();
+  const modules = new Map<string, { entry: string; promise: Promise<PageModule> }>();
+  importer = importer || ((entry: string) => { return import(entry); });
   function valid(page: PageInput): PageDescriptor {
     if (!page || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(page.id || "")) throw new Error("Invalid page id");
     if (typeof page.label !== "string" || !page.label) throw new Error("Page label is required");
-    var entryOk = /^\/admin\/(?:js\/views|plugins)\/[a-zA-Z0-9_./-]+\.js$/.test(page.entry || "") && (page.entry || "").indexOf("..") === -1;
+    const entryOk = /^\/admin\/(?:js\/views|plugins)\/[a-zA-Z0-9_./-]+\.js$/.test(page.entry || "") && (page.entry || "").indexOf("..") === -1;
     if (!entryOk) throw new Error("Page entry must be a local admin module");
     return Object.assign({}, page, { order: Number.isFinite(page.order) ? page.order : 0 }) as PageDescriptor;
   }
-  function listSorted(): PageDescriptor[] { return Array.from(entries.values()).sort(function (a, b) { return a.order - b.order; }); }
+  function listSorted(): PageDescriptor[] { return Array.from(entries.values()).sort((a, b) => { return a.order - b.order; }); }
   return {
-    replace: function (pages: PageInput[]) {
+    replace: (pages: PageInput[]) => {
       if (!Array.isArray(pages)) throw new Error("Pages must be an array");
-      var next = new Map();
-      pages.forEach(function (page) {
+      const next = new Map();
+      pages.forEach((page) => {
         page = valid(page);
         if (next.has(page.id)) throw new Error("Duplicate page: " + page.id);
         next.set(page.id, page);
       });
       entries = next;
-      modules.forEach(function (cached, id) {
+      modules.forEach((cached, id) => {
         if (!entries.has(id) || entries.get(id)!.entry !== cached.entry) modules.delete(id);
       });
     },
-    get: function (id: string) { return entries.get(id); },
+    get: (id: string) => { return entries.get(id); },
     list: listSorted,
-    groups: function (plugins: ApiPluginRow[] | null | undefined, fallbackLabels?: Record<string, string>) { return groupPages(listSorted(), plugins, fallbackLabels); },
-    load: function (id: string) {
-      var page = entries.get(id);
+    groups: (plugins: ApiPluginRow[] | null | undefined, fallbackLabels?: Record<string, string>) => { return groupPages(listSorted(), plugins, fallbackLabels); },
+    load: (id: string) => {
+      const page = entries.get(id);
       if (!page) return Promise.reject(new Error("Unknown page: " + id));
-      var cached = modules.get(id);
+      const cached = modules.get(id);
       if (cached) return cached.promise;
-      var promise = Promise.resolve().then(function () { return importer(page!.entry); }).catch(function (error) {
+      const promise = Promise.resolve().then(() => { return importer(page?.entry); }).catch((error) => {
         if (modules.get(id) && modules.get(id)!.promise === promise) modules.delete(id);
         throw error;
       });

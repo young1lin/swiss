@@ -36,16 +36,16 @@ function tunGroupOfRow(r: ApiTunnelConnectionRow | ApiTunnelRuleRow): string {
 /** Persist the current order of the list on screen. The family's order route is per-scope,
  *  so only the tab being dragged over is sent. */
 function saveTunOrder(): void {
-  void saveOrder(tunScope(), tunRows().map(function (r: ApiTunnelConnectionRow | ApiTunnelRuleRow): string { return r.id; }));
+  void saveOrder(tunScope(), tunRows().map((r: ApiTunnelConnectionRow | ApiTunnelRuleRow): string => { return r.id; }));
 }
 
 /** Move one row to just before/after another in its list, re-render, persist. */
 function moveTunRow(id: string, target: string, before: boolean): void {
   if (!id || !target || id === target) return;
-  var rows = tunRows() as (ApiTunnelConnectionRow | ApiTunnelRuleRow)[];
-  var item = rows.filter(function (r: ApiTunnelConnectionRow | ApiTunnelRuleRow): boolean { return r.id === id; })[0];
+  const rows = tunRows() as (ApiTunnelConnectionRow | ApiTunnelRuleRow)[];
+  const item = rows.filter((r: ApiTunnelConnectionRow | ApiTunnelRuleRow): boolean => { return r.id === id; })[0];
   if (!item) return;
-  var to = rows.findIndex(function (r: ApiTunnelConnectionRow | ApiTunnelRuleRow): boolean { return r.id === target; });
+  const to = rows.findIndex((r: ApiTunnelConnectionRow | ApiTunnelRuleRow): boolean => { return r.id === target; });
   if (to < 0) return; // target vanished mid-drag — leave everything where it is
   rows.splice(rows.indexOf(item), 1);
   rows.splice(before ? to : to + 1, 0, item);
@@ -56,16 +56,16 @@ function moveTunRow(id: string, target: string, before: boolean): void {
 /** Put one row in a group. Applied locally first so the row jumps immediately, then persisted
  *  — a reject takes the server's word for it. Scope is the family's own word ("conns"|"rules"). */
 async function assignTunScoped(scope: string, id: string, group: string | null): Promise<void> {
-  var rows = scope === "rules" ? tunData().rules : tunData().connections;
-  var row = rows.filter(function (r: ApiTunnelConnectionRow | ApiTunnelRuleRow): boolean { return r.id === id; })[0];
+  const rows = scope === "rules" ? tunData().rules : tunData().connections;
+  const row = rows.filter((r: ApiTunnelConnectionRow | ApiTunnelRuleRow): boolean => { return r.id === id; })[0];
   if (!row) return;
-  var names = scope === "rules" ? tunData().ruleGroups : tunData().connGroups;
+  const names = scope === "rules" ? tunData().ruleGroups : tunData().connGroups;
   if (makeGroupOf(names || [])(row) === (group || (names || [])[0])) return;
   row.group = group;
   renderTunnels();
-  var j = await assignMember(scope, id, group);
+  const j = await assignMember(scope, id, group);
   if (!j) { await loadTunnels(); return; }
-  row.group = j!.group; // the canonical name the server stored
+  row.group = j?.group; // the canonical name the server stored
   renderTunnels();
 }
 
@@ -88,22 +88,22 @@ function tunDescHtml(isConns: boolean): string {
 /** The one count builder: the context bar's chip AND the page footer read the same words,
  *  or the two would drift apart between polls (the mcpChipText lesson). */
 function tunnelsCountText(scope: string): string {
-  var d = tunData();
+  const d = tunData();
   if (scope === "rules") {
-    var active = d.rules.filter(function (r: ApiTunnelRuleRow): boolean { return r.state === "up"; }).length;
+    const active = d.rules.filter((r: ApiTunnelRuleRow): boolean => { return r.state === "up"; }).length;
     return d.rules.length + " rule" + (d.rules.length === 1 ? "" : "s") + ", " + active + " active";
   }
-  var connected = d.connections.filter(function (c: ApiTunnelConnectionRow): boolean { return c.state === "connected"; }).length;
+  const connected = d.connections.filter((c: ApiTunnelConnectionRow): boolean => { return c.state === "connected"; }).length;
   return d.connections.length + " connection" + (d.connections.length === 1 ? "" : "s") + ", " + connected + " connected";
 }
 
 function renderTunnels(): void {
-  var d = tunData();
-  var isConns = state.tun.tab === "conns";
+  const d = tunData();
+  const isConns = state.tun.tab === "conns";
   // The page's actions, right-aligned in the body header (pane-actions is the panel's own
   // vocabulary for exactly this slot). Rules carry the bulk start/stop pair; connections
   // carry only New — Test lives on each row.
-  var acts =
+  let acts =
     '<button class="btn primary" id="' + (isConns ? "tNewConn" : "tNewRule") + '">New</button>' +
     '<button class="btn" id="tNewGroup">New group</button>';
   if (!isConns) {
@@ -114,10 +114,10 @@ function renderTunnels(): void {
   // One group per slice — the component owns the header band, the indent and the empty line
   // now (docs/20 §4.1). Empty groups keep their place: that is how you drag the first row into
   // one (or use its +).
-  var cfg = tunCfg();
-  var grouped = slice(tunRows(), tunGroupsList(), tunGroupOfRow);
-  var list = isConns ? d.connections : d.rules;
-  var foot = tunnelsCountText(isConns ? "conns" : "rules");
+  const cfg = tunCfg();
+  const grouped = slice(tunRows(), tunGroupsList(), tunGroupOfRow);
+  const list = isConns ? d.connections : d.rules;
+  const foot = tunnelsCountText(isConns ? "conns" : "rules");
 
   // .wide for the same reason as the traffic log: a rule row is name + route + who it serves +
   // three buttons. .pane-desc keeps its own 60ch cap, so the prose does not stretch with it.
@@ -127,8 +127,8 @@ function renderTunnels(): void {
     '<div id="tunGroups"></div>' +
     '<div class="tun-foot">' + esc(foot) + "</div>" +
   "</div>";
-  var host = $("tunGroups");
-  if (list.length) grouped.forEach(function (g: GroupSlice<ApiTunnelConnectionRow | ApiTunnelRuleRow>): void { host.appendChild(mountGroup(cfg, g)); });
+  const host = $("tunGroups");
+  if (list.length) grouped.forEach((g: GroupSlice<ApiTunnelConnectionRow | ApiTunnelRuleRow>): void => { host.appendChild(mountGroup(cfg, g)); });
   else host.innerHTML = isConns
     ? emptyHtml({ icon: "plug", title: "No SSH connections", hint: "Add one with New, then point a forwarding rule at it." })
     : emptyHtml({ icon: "plug", title: "No forwarding rules", hint: "Add one with New. Each rule binds a local port and forwards it over SSH." });
@@ -142,70 +142,70 @@ function tunCfg(): GroupCfg<ApiTunnelConnectionRow | ApiTunnelRuleRow> {
     scope: tunScope(),
     density: "page",
     names: tunGroupsList(),
-    collapsed: state.tun!.collapsed![state.tun.tab] || {},
+    collapsed: state.tun?.collapsed![state.tun.tab] || {},
     noun: "row",
-    addTitle: function (g: string): string {
+    addTitle: (g: string): string => {
       return (state.tun.tab === "conns" ? "Add an SSH connection to " : "Add a forwarding rule to ") + g;
     },
-    onAdd: function (g: string): void {
+    onAdd: (g: string): void => {
       state.tun.pendingGroup = g; // a real name now — the sheet's save lands the row in it
       if (state.tun.tab === "conns") openConnSheet(null); else openRuleSheet(null);
     },
-    reload: function (): Promise<void> { return loadTunnels(); },
+    reload: (): Promise<void> => { return loadTunnels(); },
     render: renderTunnels,
-    afterDrag: function (): void { renderTunnels(); }, // the catch-up rebuild a deferred poll owes
+    afterDrag: (): void => { renderTunnels(); }, // the catch-up rebuild a deferred poll owes
     drag: {
-      get: function (): string | null { return state.tun.dragging; },
-      set: function (v: string | null): void { state.tun.dragging = v; },
+      get: (): string | null => { return state.tun.dragging; },
+      set: (v: string | null): void => { state.tun.dragging = v; },
     },
     dragGroup: {
-      get: function (): string | null { return state.tun.draggingGroup; },
-      set: function (v: string | null): void { state.tun.draggingGroup = v; },
+      get: (): string | null => { return state.tun.draggingGroup; },
+      set: (v: string | null): void => { state.tun.draggingGroup = v; },
     },
-    rowId: function (r: ApiTunnelConnectionRow | ApiTunnelRuleRow): string { return r.id; },
-    rowSel: function (r: ApiTunnelConnectionRow | ApiTunnelRuleRow): string {
-      var v = window.CSS && CSS.escape ? CSS.escape(r.id) : r.id;
+    rowId: (r: ApiTunnelConnectionRow | ApiTunnelRuleRow): string => { return r.id; },
+    rowSel: (r: ApiTunnelConnectionRow | ApiTunnelRuleRow): string => {
+      const v = window.CSS && CSS.escape ? CSS.escape(r.id) : r.id;
       return state.tun.tab === "conns" ? '[data-conn="' + v + '"]' : '[data-rule="' + v + '"]';
     },
     rowsById: tunRows,
     groupOfRow: tunGroupOfRow,
-    rowsHtml: function (g: GroupSlice<ApiTunnelConnectionRow | ApiTunnelRuleRow>): string {
+    rowsHtml: (g: GroupSlice<ApiTunnelConnectionRow | ApiTunnelRuleRow>): string => {
       return g.rows.map(state.tun.tab === "conns" ? connRowHtml as unknown as (r: ApiTunnelConnectionRow | ApiTunnelRuleRow) => string : ruleRowHtml as unknown as (r: ApiTunnelConnectionRow | ApiTunnelRuleRow) => string).join("");
     },
     onMoveRow: moveTunRow,
-    onAssign: function (id: string, g: string | null): void { void assignTunScoped(tunScope(), id, g); },
+    onAssign: (id: string, g: string | null): void => { void assignTunScoped(tunScope(), id, g); },
   } as GroupCfg<ApiTunnelConnectionRow | ApiTunnelRuleRow>;
 }
 
 /** Poll-safe update: dots, reasons, button labels and the footer. Never structure. */
 function patchTunnels() {
   if (!isTunnelsView(state.view)) return;
-  var d = tunData();
-  var rows = state.tun.tab === "conns" ? d.connections : d.rules;
-  var attr = state.tun.tab === "conns" ? "data-conn" : "data-rule";
-  var nodes = $("pane").querySelectorAll("[" + attr + "]");
+  const d = tunData();
+  const rows = state.tun.tab === "conns" ? d.connections : d.rules;
+  const attr = state.tun.tab === "conns" ? "data-conn" : "data-rule";
+  const nodes = $("pane").querySelectorAll("[" + attr + "]");
   // A row appeared or vanished (another tab, or a reconnect that deleted nothing) — structure
   // changed, so a patch cannot express it. Never mid-drag: a rebuild there cancels the gesture.
   if (nodes.length !== rows.length) {
     if (!state.tun.dragging && !state.tun.draggingGroup) renderTunnels();
     return;
   }
-  for (var i = 0; i < rows.length; i++) {
-    var row = rows[i];
-    var node = $("pane").querySelector("[" + attr + '="' + (window.CSS && CSS.escape ? CSS.escape(row.id) : row.id) + '"]');
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const node = $("pane").querySelector("[" + attr + '="' + (window.CSS && CSS.escape ? CSS.escape(row.id) : row.id) + '"]');
     if (!node) { if (!state.tun.dragging && !state.tun.draggingGroup) renderTunnels(); return; }
-    var busy = state.tun.busy[row.id];
-    var dot = node.querySelector("[data-dot]") as HTMLElement | null;
-    var live = state.tun.tab === "conns" ? (row.state === "connected" ? "up" : row.state) : row.state;
+    const busy = state.tun.busy[row.id];
+    const dot = node.querySelector("[data-dot]") as HTMLElement | null;
+    const live = state.tun.tab === "conns" ? (row.state === "connected" ? "up" : row.state) : row.state;
     // Title and class move together (docs/18 V6): the poll only patches, and a dot whose
     // class moved but whose title stayed would keep explaining the previous state.
     if (dot) { dot.className = "dot " + (busy ? "starting" : live); dot.title = dotTitle(busy ? "starting" : live, null, row.reason); }
-    var reason = node.querySelector("[data-reason]");
+    const reason = node.querySelector("[data-reason]");
     if (reason && reason.textContent !== (row.reason || "")) reason.textContent = row.reason || "";
-    var act = node.querySelector("[data-act]") as HTMLButtonElement | null;
+    const act = node.querySelector("[data-act]") as HTMLButtonElement | null;
     if (act) {
-      var running = row.state === "up" || row.state === "starting" || row.state === "reconnecting";
-      var label = busy ? "…" : running ? "Stop" : "Start";
+      const running = row.state === "up" || row.state === "starting" || row.state === "reconnecting";
+      const label = busy ? "…" : running ? "Stop" : "Start";
       if (act.textContent !== label) {
         act.textContent = label;
         act.className = "btn" + (running ? "" : " primary");
@@ -216,60 +216,60 @@ function patchTunnels() {
   }
   // Group counts move with rows: a count that only refreshed on rebuild would disagree with
   // the patched dots beside it for the rest of the poll.
-  Array.prototype.forEach.call($("pane").querySelectorAll("[data-group]"), function (grp) {
-    var n = rows.filter(function (r) { return tunGroupOfRow(r) === grp.dataset.group; }).length;
-    var badge = grp.querySelector(".grp-n");
+  Array.prototype.forEach.call($("pane").querySelectorAll("[data-group]"), (grp) => {
+    const n = rows.filter((r) => { return tunGroupOfRow(r) === grp.dataset.group; }).length;
+    const badge = grp.querySelector(".grp-n");
     if (badge) badge.textContent = String(n);
   });
-  var foot = $("pane").querySelector(".tun-foot");
+  const foot = $("pane").querySelector(".tun-foot");
   if (foot) foot.textContent = tunnelsCountText(state.tun.tab === "conns" ? "conns" : "rules");
 }
 
 function wireTunnels() {
-  var pane = $("pane");
+  const pane = $("pane");
   // The top New carries no group promise; the sheet falls back to the scope's last-used.
-  if ($("tNewConn")) $("tNewConn").onclick = function () { openConnSheet(null); };
-  if ($("tNewRule")) $("tNewRule").onclick = function () { openRuleSheet(null); };
-  if ($("tNewGroup")) $("tNewGroup").onclick = function () {
-    newGroupFlow(tunScope(), tunGroupsList(), function () { return loadTunnels(); });
+  if ($("tNewConn")) $("tNewConn").onclick = () => { openConnSheet(null); };
+  if ($("tNewRule")) $("tNewRule").onclick = () => { openRuleSheet(null); };
+  if ($("tNewGroup")) $("tNewGroup").onclick = () => {
+    newGroupFlow(tunScope(), tunGroupsList(), () => { return loadTunnels(); });
   };
   if ($("tStartAll")) $("tStartAll").onclick = startAllRules;
-  if ($("tStopAll")) $("tStopAll").onclick = function () { stopAllRules(false); };
+  if ($("tStopAll")) $("tStopAll").onclick = () => { stopAllRules(false); };
 
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-rule]"), function (node) {
-    var id = node.dataset.rule;
-    var rule = tunData().rules.filter(function (r) { return r.id === id; })[0];
-    var act = node.querySelector("[data-act]");
-    if (act) act.onclick = function (): void { ruleAct(id, act.dataset.act); };
-    var ruleMore = node.querySelector("[data-more]");
-    if (ruleMore) ruleMore.onclick = function (ev: MouseEvent): void {
+  Array.prototype.forEach.call(pane.querySelectorAll("[data-rule]"), (node) => {
+    const id = node.dataset.rule;
+    const rule = tunData().rules.filter((r) => { return r.id === id; })[0];
+    const act = node.querySelector("[data-act]");
+    if (act) act.onclick = (): void => { ruleAct(id, act.dataset.act); };
+    const ruleMore = node.querySelector("[data-more]");
+    if (ruleMore) ruleMore.onclick = (ev: MouseEvent): void => {
       // The overflow half of the row (docs/18 V5). Force free appears only when a port is
       // actually held — it is a remedy, not a standing action. stopPropagation first:
       // connect.js closes open menus on clicks that reach document (the group-head menu
       // above does the same).
       ev.stopPropagation();
-      var items: MenuItem[] = [
-        { label: "Edit", fn: function (): void { openRuleSheet(rule); } },
-        { label: "Copy local port", fn: function (): void { copyText(String(rule.localPort), "Local port"); } },
+      const items: MenuItem[] = [
+        { label: "Edit", fn: (): void => { openRuleSheet(rule); } },
+        { label: "Copy local port", fn: (): void => { copyText(String(rule.localPort), "Local port"); } },
       ];
-      if (rule.portOwner) items.push({ label: "Force free " + rule.localPort, fn: function (): void { forceFreePort(rule.localPort, id); } });
-      items.push({ sep: true }, { label: "Delete", danger: true, fn: function (): void { deleteRule(rule, false); } });
+      if (rule.portOwner) items.push({ label: "Force free " + rule.localPort, fn: (): void => { forceFreePort(rule.localPort, id); } });
+      items.push({ sep: true }, { label: "Delete", danger: true, fn: (): void => { deleteRule(rule, false); } });
       popupMenu(ruleMore.getBoundingClientRect(), items);
     };
   });
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-conn]"), function (node: HTMLElement): void {
-    var id = node.dataset.conn;
-    var conn = tunData().connections.filter(function (c: ApiTunnelConnectionRow): boolean { return c.id === id; })[0];
-    node.querySelector<HTMLButtonElement>("[data-test]")!.onclick = function (): void { testConn(id!); };
-    var connMore = node.querySelector("[data-more]") as HTMLButtonElement | null;
-    if (connMore) connMore.onclick = function (ev: MouseEvent): void {
+  Array.prototype.forEach.call(pane.querySelectorAll("[data-conn]"), (node: HTMLElement): void => {
+    const id = node.dataset.conn;
+    const conn = tunData().connections.filter((c: ApiTunnelConnectionRow): boolean => { return c.id === id; })[0];
+    node.querySelector<HTMLButtonElement>("[data-test]")!.onclick = (): void => { testConn(id!); };
+    const connMore = node.querySelector("[data-more]") as HTMLButtonElement | null;
+    if (connMore) connMore.onclick = (ev: MouseEvent): void => {
       // Same as the rule rows above: the opening click must not reach document.
       ev.stopPropagation();
-      popupMenu(connMore!.getBoundingClientRect(), [
-        { label: "Edit", fn: function (): void { openConnSheet(conn!); } },
-        { label: "Copy host", fn: function (): void { copyText(conn!.host + ":" + conn!.port, "Host"); } },
+      popupMenu(connMore?.getBoundingClientRect(), [
+        { label: "Edit", fn: (): void => { openConnSheet(conn!); } },
+        { label: "Copy host", fn: (): void => { copyText(conn?.host + ":" + conn?.port, "Host"); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: function (): void { deleteConn(conn!); } },
+        { label: "Delete", danger: true, fn: (): void => { deleteConn(conn!); } },
       ]);
     };
   });
@@ -290,14 +290,14 @@ async function withTunBusy(id: string, verb: string, fn: () => Promise<unknown>)
 /* --- rule actions ----------------------------------------------------------------------------- */
 
 async function ruleAct(id: string, verb: string): Promise<void> {
-  await withTunBusy(id, verb, async function (): Promise<void> {
-    var r = await api("/api/tunnels/rules/" + encodeURIComponent(id) + "/" + verb, { method: "POST" });
-    var j = await r.json().catch(function (): object { return {}; }) as { confirmRequired?: boolean; dependents?: string[]; error?: string; ok?: boolean };
+  await withTunBusy(id, verb, async (): Promise<void> => {
+    const r = await api("/api/tunnels/rules/" + encodeURIComponent(id) + "/" + verb, { method: "POST" });
+    const j = await r.json().catch((): object => { return {}; }) as { confirmRequired?: boolean; dependents?: string[]; error?: string; ok?: boolean };
     // 409 means an MCP is using this tunnel. Tell the user who, then obey them.
     if (r.status === 409 && j.confirmRequired) {
-      if (!confirm(j.dependents!.join(", ") + " depend" + (j.dependents!.length === 1 ? "s" : "") +
+      if (!confirm(j.dependents?.join(", ") + " depend" + (j.dependents?.length === 1 ? "s" : "") +
           " on this tunnel.\n\nStop it anyway?")) return;
-      var forced = await apiJson<unknown>("/api/tunnels/rules/" + encodeURIComponent(id) + "/stop?force=1", { method: "POST" });
+      const forced = await apiJson<unknown>("/api/tunnels/rules/" + encodeURIComponent(id) + "/stop?force=1", { method: "POST" });
       if (forced) toast("Stopped");
       return;
     }
@@ -308,20 +308,20 @@ async function ruleAct(id: string, verb: string): Promise<void> {
 }
 
 async function startAllRules(): Promise<void> {
-  var j = await apiJson<{ results?: { ok?: boolean; name?: string; error?: string }[] }>("/api/tunnels/start-all", { method: "POST" });
+  const j = await apiJson<{ results?: { ok?: boolean; name?: string; error?: string }[] }>("/api/tunnels/start-all", { method: "POST" });
   await loadTunnels();
   if (!j) return;
-  var failed = (j.results || []).filter(function (x: { ok?: boolean }): boolean { return !x.ok; });
+  const failed = (j.results || []).filter((x: { ok?: boolean }): boolean => { return !x.ok; });
   toast(failed.length
     ? (j.results!.length - failed.length) + " started, " + failed.length + " failed: " + failed[0]!.name + " — " + failed[0]!.error
-    : j.results!.length + " tunnels started", failed.length > 0);
+    : j.results?.length + " tunnels started", failed.length > 0);
 }
 
 async function stopAllRules(force?: boolean): Promise<void> {
-  var r = await api("/api/tunnels/stop-all" + (force ? "?force=1" : ""), { method: "POST" });
-  var j = await r.json().catch(function (): object { return {}; }) as { confirmRequired?: boolean; dependents?: string[]; error?: string; results?: unknown[] };
+  const r = await api("/api/tunnels/stop-all" + (force ? "?force=1" : ""), { method: "POST" });
+  const j = await r.json().catch((): object => { return {}; }) as { confirmRequired?: boolean; dependents?: string[]; error?: string; results?: unknown[] };
   if (r.status === 409 && j.confirmRequired) {
-    if (!confirm("These MCPs are using tunnels you are about to stop:\n\n" + j.dependents!.join(", ") +
+    if (!confirm("These MCPs are using tunnels you are about to stop:\n\n" + j.dependents?.join(", ") +
         "\n\nStop them anyway?")) return;
     return stopAllRules(true);
   }
@@ -332,10 +332,10 @@ async function stopAllRules(force?: boolean): Promise<void> {
 
 async function deleteRule(rule: ApiTunnelRuleRow, force?: boolean): Promise<void> {
   if (!force && !confirm('Delete forwarding rule "' + rule.name + '"?')) return;
-  var r = await api("/api/tunnels/rules/" + encodeURIComponent(rule.id) + (force ? "?force=1" : ""), { method: "DELETE" });
-  var j = await r.json().catch(function (): object { return {}; }) as { confirmRequired?: boolean; dependents?: string[]; error?: string };
+  const r = await api("/api/tunnels/rules/" + encodeURIComponent(rule.id) + (force ? "?force=1" : ""), { method: "DELETE" });
+  const j = await r.json().catch((): object => { return {}; }) as { confirmRequired?: boolean; dependents?: string[]; error?: string };
   if (r.status === 409 && j.confirmRequired) {
-    if (!confirm(j.dependents!.join(", ") + " depend on this tunnel.\n\nDelete it anyway?")) return;
+    if (!confirm(j.dependents?.join(", ") + " depend on this tunnel.\n\nDelete it anyway?")) return;
     return deleteRule(rule, true);
   }
   await loadTunnels();
@@ -345,12 +345,12 @@ async function deleteRule(rule: ApiTunnelRuleRow, force?: boolean): Promise<void
 
 /** Kill whatever holds a local port. Confirmed here because it can kill a process doing real work. */
 async function forceFreePort(port: number, ruleId: string): Promise<void> {
-  var d = tunData();
-  var rule = d.rules.filter(function (r: ApiTunnelRuleRow): boolean { return r.id === ruleId; })[0];
-  var owner = rule && rule.portOwner;
+  const d = tunData();
+  const rule = d.rules.filter((r: ApiTunnelRuleRow): boolean => { return r.id === ruleId; })[0];
+  const owner = rule && rule.portOwner;
   if (!confirm("Port " + port + " is held by pid " + (owner ? owner.pid + " (" + owner.name + ")" : "?") +
       ".\n\nForce-kill that process? It may be doing real work.")) return;
-  var j = await apiJson<{ killed: { pid: number; name: string } }>("/api/tunnels/port/" + port + "/free", { method: "POST" });
+  const j = await apiJson<{ killed: { pid: number; name: string } }>("/api/tunnels/port/" + port + "/free", { method: "POST" });
   if (!j) { await loadTunnels(); return; }
   toast("Killed pid " + j.killed.pid + " (" + j.killed.name + ")");
   await ruleAct(ruleId, "start");
@@ -359,14 +359,14 @@ async function forceFreePort(port: number, ruleId: string): Promise<void> {
 /* --- connection actions ------------------------------------------------------------------------ */
 
 async function testConn(id: string): Promise<void> {
-  await withTunBusy(id, "test", async function (): Promise<void> {
-    var j = await apiJson<{ ok?: boolean; ms?: number; banner?: string; kind?: string; fingerprint?: string; error?: string }>("/api/tunnels/connections/" + encodeURIComponent(id) + "/test", { method: "POST" });
+  await withTunBusy(id, "test", async (): Promise<void> => {
+    const j = await apiJson<{ ok?: boolean; ms?: number; banner?: string; kind?: string; fingerprint?: string; error?: string }>("/api/tunnels/connections/" + encodeURIComponent(id) + "/test", { method: "POST" });
     if (!j) return;
     if (j.ok) { toast("Connected in " + j.ms + " ms" + (j.banner ? " — " + j.banner : "")); return; }
     // A changed host key is the one failure with an action attached.
     if (j.kind === "hostkey" && j.fingerprint) {
       if (confirm(j.error + "\n\nTrust the new key?")) {
-        var t = await apiJson<unknown>("/api/tunnels/connections/" + encodeURIComponent(id) + "/trust", { method: "POST" });
+        const t = await apiJson<unknown>("/api/tunnels/connections/" + encodeURIComponent(id) + "/trust", { method: "POST" });
         if (t) toast("Host key trusted — test again");
       }
       return;
@@ -377,7 +377,7 @@ async function testConn(id: string): Promise<void> {
 
 async function deleteConn(conn: ApiTunnelConnectionRow): Promise<void> {
   if (!confirm('Delete SSH connection "' + conn.name + '"?')) return;
-  var j = await apiJson<unknown>("/api/tunnels/connections/" + encodeURIComponent(conn.id), { method: "DELETE" });
+  const j = await apiJson<unknown>("/api/tunnels/connections/" + encodeURIComponent(conn.id), { method: "DELETE" });
   await loadTunnels();
   if (j) toast("Deleted " + conn.name);
 }

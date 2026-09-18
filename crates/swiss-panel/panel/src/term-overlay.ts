@@ -21,11 +21,11 @@
    touches the PTY stream: resize geometry, the copy scissors, reconnect states. */
 
 export function createOverlay(holder: HTMLElement): { show(text: string, ms?: number): void; dispose(): void } {
-  var el: HTMLDivElement | null = null;
-  var fade: ReturnType<typeof setTimeout> | null = null;
-  var hide: ReturnType<typeof setTimeout> | null = null;
+  let el: HTMLDivElement | null = null;
+  let fade: ReturnType<typeof setTimeout> | null = null;
+  let hide: ReturnType<typeof setTimeout> | null = null;
   return {
-    show: function (text: string, ms?: number): void {
+    show: (text: string, ms?: number): void => {
       if (!el) {
         el = document.createElement("div");
         el.className = "term-overlay";
@@ -38,14 +38,14 @@ export function createOverlay(holder: HTMLElement): { show(text: string, ms?: nu
       el.classList.add("on");
       if (hide) clearTimeout(hide);
       if (fade) clearTimeout(fade);
-      hide = setTimeout(function () {
-        el!.classList.remove("on");
-        fade = setTimeout(function () {
+      hide = setTimeout(() => {
+        el?.classList.remove("on");
+        fade = setTimeout(() => {
           if (el && el.parentNode) el.parentNode.removeChild(el);
         }, 220);
       }, ms || 900);
     },
-    dispose: function (): void {
+    dispose: (): void => {
       if (hide) clearTimeout(hide);
       if (fade) clearTimeout(fade);
       if (el && el.parentNode) el.parentNode.removeChild(el);

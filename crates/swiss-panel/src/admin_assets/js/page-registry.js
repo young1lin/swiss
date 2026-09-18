@@ -19,7 +19,7 @@ import { createPageRegistry } from "./page-core.js";
 import { glyphHtml, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
-var legacy                   = [
+const legacy                   = [
   { id: "mcps", pluginId: "mcp", label: "MCPs", sidebar: true },
   { id: "traffic", pluginId: "mcp", label: "Traffic" },
   { id: "tokens", pluginId: "mcp", label: "Token" },
@@ -27,31 +27,31 @@ var legacy                   = [
   { id: "tunnel-forwards", pluginId: "tunnels", label: "Port Forwards" },
   { id: "data", pluginId: "data", label: "Data" },
   { id: "jobs", pluginId: "jobs", label: "Jobs" },
-].map(function (p, i) { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
-var management                 = { id: "plugins", pluginId: "host", label: "Plugins", order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
+].map((p, i) => { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
+const management                 = { id: "plugins", pluginId: "host", label: "Plugins", order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
 /* These pages are host-owned like management: every plugin may depend on the vault, while System
  * controls the one running process rather than any individual plugin. */
-var vaultPage                 = { id: "secrets", pluginId: "host", label: "Secrets", order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
-var systemPage                 = { id: "system", pluginId: "host", label: "System", order: 1002, path: "#system", entry: "/admin/js/views/system.js" };
+const vaultPage                 = { id: "secrets", pluginId: "host", label: "Secrets", order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
+const systemPage                 = { id: "system", pluginId: "host", label: "System", order: 1002, path: "#system", entry: "/admin/js/views/system.js" };
 /* Group labels used when the host serves no plugin inventory (an older gateway answers 404 on
    /api/plugins), plus the one group that has no inventory row at all: the management page is
    synthesized here, not contributed by a plugin. */
-var GROUP_LABELS = { mcp: "MCP", tunnels: "Tunnels", data: "Data", jobs: "Jobs", host: "Settings" };
-var registry = createPageRegistry();
+const GROUP_LABELS = { mcp: "MCP", tunnels: "Tunnels", data: "Data", jobs: "Jobs", host: "Settings" };
+const registry = createPageRegistry();
 registry.replace(legacy);
-var inventory                            = null;
-var active                                                                         = null;
-var sequence = 0;
-var boot                       = null;
-var polling = false;
+let inventory                            = null;
+let active                                                                         = null;
+let sequence = 0;
+let boot                       = null;
+let polling = false;
 
 function pluginInventory()                            { return inventory; }
 function pageHasPendingChanges() { return !!(active && active.module.hasPendingChanges && active.module.hasPendingChanges()); }
 function pageUsesSidebar() { return layoutOf(registry.get(state.view)) === "resource"; }
 function currentPageCount() { return active && active.module.countText ? active.module.countText() : ""; }
-function pluginFor(page                )                                  { return inventory && (inventory.plugins || []).find(function (p) { return p.id === page.pluginId; }); }
+function pluginFor(page                )                                  { return inventory && (inventory.plugins || []).find((p) => { return p.id === page.pluginId; }); }
 function unavailable(page                )                      {
-  var plugin = pluginFor(page);
+  const plugin = pluginFor(page);
   return plugin && (plugin.enabled === false || ["disabled", "failed", "waitingDependency", "not-built"].indexOf(plugin.state) >= 0) ? plugin : null;
 }
 
@@ -70,7 +70,7 @@ function layoutOf(page                                   )         {
 
 function currentGroups()              { return registry.groups(inventory && inventory.plugins, GROUP_LABELS); }
 function currentGroup()                        {
-  return currentGroups().find(function (g) { return g.pages.some(function (p) { return p.id === state.view; }); });
+  return currentGroups().find((g) => { return g.pages.some((p) => { return p.id === state.view; }); });
 }
 
 /* --- the plugin rail: global navigation (level one) ----------------------------------------------
@@ -79,10 +79,10 @@ function currentGroup()                        {
    and data-view (the group's lowest-order page) so the deep selector in jobs.js keeps
    matching, and clicks delegate on [data-view]. */
 function railSeat(g           )         {
-  var active = g.pages.some(function (p) { return p.id === state.view; });
-  var offPlugin = unavailable(g.pages[0]);
-  var allOff = g.pages.every(function (p) { return !!unavailable(p); });
-  var title = g.label + (allOff && offPlugin ? " — " + (offPlugin.lastError || "Plugin disabled") : "");
+  const active = g.pages.some((p) => { return p.id === state.view; });
+  const offPlugin = unavailable(g.pages[0]);
+  const allOff = g.pages.every((p) => { return !!unavailable(p); });
+  const title = g.label + (allOff && offPlugin ? " — " + (offPlugin.lastError || "Plugin disabled") : "");
   return '<button class="rail-btn" data-group="' + esc(g.id) + '" data-view="' + esc(g.pages[0].id) + '"' +
     (active ? ' aria-current="true"' : "") + (allOff ? ' aria-disabled="true"' : "") +
     ' title="' + esc(title) + '">' + glyphHtml(g) +
@@ -96,13 +96,13 @@ function moreSeat() {
 }
 
 function paintPluginRail()       {
-  var nav = $("railNav");
+  const nav = $("railNav");
   nav.innerHTML = pinnedGroups(currentGroups()).map(railSeat).join("") + moreSeat();
-  nav.onclick = function (event) {
-    var target = event.target               ;
-    var more = target.closest             (".rail-more");
+  nav.onclick = (event) => {
+    const target = event.target               ;
+    const more = target.closest             (".rail-more");
     if (more) { openPluginPalette(decoratedGroups(), navigatePage, paintPluginRail); return; }
-    var button = target.closest             ("[data-view]");
+    const button = target.closest             ("[data-view]");
     if (button) void navigatePage(button.dataset.view );
   };
 }
@@ -110,11 +110,11 @@ function paintPluginRail()       {
 /* Groups carrying their availability, for the palette: it is navigation for EVERY plugin,
  * including the ones the host currently refuses to serve - they stay reachable, marked. */
 function decoratedGroups() {
-  return currentGroups().map(function (g) {
-    var bad = unavailable(g.pages[0]);
+  return currentGroups().map((g) => {
+    const bad = unavailable(g.pages[0]);
     return {
       id: g.id, label: g.label, pages: g.pages,
-      off: g.pages.length > 0 && g.pages.every(function (p) { return !!unavailable(p); }),
+      off: g.pages.length > 0 && g.pages.every((p) => { return !!unavailable(p); }),
       offDetail: bad ? (bad.lastError || "Plugin disabled") : "",
     };
   });
@@ -131,8 +131,8 @@ function decoratedGroups() {
  *  unavailable ones marked. Factored out of the click handler so the contract (order, the
  *  pick column, the · off marker) is testable without a menu. */
 function pageMenuItems(current           )                     {
-  return current.pages.map(function (p) {
-    var po = unavailable(p);
+  return current.pages.map((p) => {
+    const po = unavailable(p);
     return {
       label: p.label + (po ? " · off" : ""),
       title: po ? (po.lastError || "Plugin disabled") : undefined,
@@ -143,50 +143,51 @@ function pageMenuItems(current           )                     {
 }
 
 function paintPluginContext()       {
-  var bar = $("ctxBar");
-  var btn = $("pageBtn");
-  var loc = $("pageLoc");
-  var current = currentGroup();
-  var page = registry.get(state.view);
+  const bar = $("ctxBar");
+  const btn = $("pageBtn");
+  const loc = $("pageLoc");
+  const current = currentGroup();
+  const page = registry.get(state.view);
   /* No page to name (an empty registry during boot) is the one case with nothing to draw;
    * every real navigation lands in a group and keeps the bar. Focus mode keeps its minimal
    * bar in normal flow because #expandBtn lives inside it; hiding the parent would strand
    * the exit with Esc as the only way out. An obvious exit beats an empty bar flashing for
    * one boot frame. */
-  var show = !!(current && page);
-  var immersive = document.body && document.body.classList && document.body.classList.contains("immersive");
+  const show = !!(current && page);
+  const immersive = document.body && document.body.classList && document.body.classList.contains("immersive");
   bar.hidden = !show && !immersive;
   if (!show) {
     btn.hidden = true; btn.onclick = null;
     loc.hidden = true;
     return;
   }
-  var off = unavailable(page );
-  if (current .pages.length >= 2) {
+  const off = unavailable(page );
+  const current_ = current ;
+  if (current_.pages.length >= 2) {
     btn.hidden = false;
     loc.hidden = true;
     btn.innerHTML =
-      '<span class="ctx-plugin">' + esc(current .label) + "</span>" +
+      '<span class="ctx-plugin">' + esc(current_.label) + "</span>" +
       '<span class="ctx-sep">/</span>' +
-      '<span class="ctx-page">' + esc(page .label) + "</span>" +
+      '<span class="ctx-page">' + esc(page?.label) + "</span>" +
       icon("chevron-right");
-    btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current .label + " page";
-    btn.onclick = function (ev) {
+    btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current_.label + " page";
+    btn.onclick = (ev) => {
       ev.stopPropagation();
       btn.setAttribute("aria-expanded", "true");
-      var items = pageMenuItems(current ).map(function (it, i) {
-        var p = current .pages[i];
-        it.fn = function () { btn.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
+      const items = pageMenuItems(current ).map((it, i) => {
+        const p = current?.pages[i];
+        it.fn = () => { btn.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
         return it                  ;
       });
       /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
        * top level), so it loads HERE, at interaction time - the shell's own module graph stays
        * DOM-free at eval, which the pure-helper suites (plugins.js) import it under. */
-      import("./menu.js").then(function (menu) { menu.popupMenu(btn.getBoundingClientRect(), items); });
+      import("./menu.js").then((menu) => { menu.popupMenu(btn.getBoundingClientRect(), items); });
       /* The menu also closes without an item click (document click, Escape); a one-shot
        * listener puts the flag back whenever that lands. */
-      setTimeout(function () {
-        document.addEventListener("click", function () { btn.setAttribute("aria-expanded", "false"); }, { once: true });
+      setTimeout(() => {
+        document.addEventListener("click", () => { btn.setAttribute("aria-expanded", "false"); }, { once: true });
       });
     };
   } else {
@@ -197,7 +198,7 @@ function paintPluginContext()       {
     btn.onclick = null;
     btn.setAttribute("aria-expanded", "false");
     loc.hidden = false;
-    loc.innerHTML = '<span class="ctx-page">' + esc(current .label) + "</span>";
+    loc.innerHTML = '<span class="ctx-page">' + esc(current_.label) + "</span>";
     loc.title = off ? (off.lastError || "Plugin disabled") : "";
   }
 }
@@ -208,15 +209,15 @@ function paintNavigation()       {
 }
 
 async function reloadPluginInventory()                                     {
-  var response = await api("/api/plugins");
+  const response = await api("/api/plugins");
   if (response.status === 404) {
     inventory = null;
     registry.replace(legacy);
   } else {
     if (!response.ok) throw new Error("Cannot load plugin inventory: HTTP " + response.status);
-    var next                                                                                    = await response.json();
-    var pages = next.pages || (next.plugins || []).flatMap(function (p) { return p.pages || []; });
-    registry.replace(pages.filter(function (p) { return ["plugins", "secrets", "system"].indexOf(p.id) < 0; })
+    const next                                                                                    = await response.json();
+    const pages = next.pages || (next.plugins || []).flatMap((p) => { return p.pages || []; });
+    registry.replace(pages.filter((p) => { return ["plugins", "secrets", "system"].indexOf(p.id) < 0; })
       .concat([management, vaultPage, systemPage]                   ));
     inventory = next;
   }
@@ -226,14 +227,14 @@ async function reloadPluginInventory()                                     {
 
 function initPages()                {
   if (boot) return boot;
-  boot = (async function () {
+  boot = (async () => {
     try { await reloadPluginInventory(); }
     catch (error) { toast(errText(error), true); paintNavigation(); }
-    var wanted = (location.hash || "#mcps").replace(/^#\/?/, "");
+    let wanted = (location.hash || "#mcps").replace(/^#\/?/, "");
     if (!registry.get(wanted)) wanted = registry.list()[0] && registry.list()[0].id;
     if (wanted) await navigatePage(wanted, true);
-    window.addEventListener("hashchange", function () {
-      var id = location.hash.replace(/^#\/?/, "");
+    window.addEventListener("hashchange", () => {
+      const id = location.hash.replace(/^#\/?/, "");
       if (registry.get(id)) void navigatePage(id);
     });
   })();
@@ -241,15 +242,15 @@ function initPages()                {
 }
 
 async function navigatePage(id        , force          )                {
-  var page = registry.get(id);
+  const page = registry.get(id);
   if (!page || (!force && active && active.id === id)) return;
   if (active && active.module.canLeave && !active.module.canLeave()) {
     history.replaceState(null, "", "#" + active.id);
     return;
   }
-  var ticket = ++sequence;
-  var module            ;
-  var off = unavailable(page);
+  const ticket = ++sequence;
+  let module            ;
+  const off = unavailable(page);
   try { module = off ? {} : await registry.load(id); }
   catch (error) { toast(errText(error), true); return; }
   if (ticket !== sequence) return;
@@ -257,7 +258,7 @@ async function navigatePage(id        , force          )                {
     active.controller.abort();
     if (active.module.unmount) await active.module.unmount();
   }
-  var controller = new AbortController();
+  const controller = new AbortController();
   state.view = id;
   active = { id: id, module: module, controller: controller };
   /* The resource sidebar belongs to the resource layout alone; every other layout gets the

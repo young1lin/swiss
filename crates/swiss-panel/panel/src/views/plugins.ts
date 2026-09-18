@@ -35,14 +35,14 @@
 import { $, api, apiJson, emptyHtml, esc, targetEl, toast } from "../util.js";
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
 
-var busy: Record<string, boolean> = {}; // plugin id -> true while its own toggle is in flight
-var painted = ""; // the structural signature of the drawn list; a change means rebuild
-var autostart: { enabled: boolean; detail?: string; command?: string } | null = null; // { enabled, detail, command } from /api/autostart; null = old gateway
-var autostartBusy = false; // true while the OS registration write is in flight
+let busy: Record<string, boolean> = {}; // plugin id -> true while its own toggle is in flight
+let painted = ""; // the structural signature of the drawn list; a change means rebuild
+let autostart: { enabled: boolean; detail?: string; command?: string } | null = null; // { enabled, detail, command } from /api/autostart; null = old gateway
+let autostartBusy = false; // true while the OS registration write is in flight
 
 function inv(): ApiPluginsResponse { return pluginInventory() || { plugins: [], revision: 0 } as unknown as ApiPluginsResponse; }
 function rows(): ApiPluginRow[] { return inv().plugins || []; }
-function signature(): string { return rows().map(function (p: ApiPluginRow): string { return p.id; }).join("\n"); }
+function signature(): string { return rows().map((p: ApiPluginRow): string => { return p.id; }).join("\n"); }
 
 function dotClass(p: ApiPluginRow): string {
   if (busy[p.id] || p.state === "starting") return "starting";
@@ -66,7 +66,7 @@ function stateLabel(p: ApiPluginRow): string {
  *  row always carries the (empty) span so poll-patch has its anchor either way.
  *  Exported pure for the suite: no DOM, just the row JSON in and badge HTML out. */
 export function requiresBadge(p: ApiPluginRow): string {
-  var requires = p.requires || [];
+  const requires = p.requires || [];
   if (!requires.length) return "";
   if (p.requiresMet === false) {
     return '· needs ' + esc(requires.join(", ")) + ' <span class="warn">(no provider)</span>';
@@ -78,7 +78,7 @@ export function requiresBadge(p: ApiPluginRow): string {
  *  error) — version rides the row title, the state word is the dot's job — and the toggle
  *  is the panel's switch, the control every other row-level on/off uses. Exported pure. */
 export function rowHtml(p: ApiPluginRow): string {
-  var pages = (p.pages || []).join(", ");
+  const pages = (p.pages || []).join(", ");
   return '<div class="tun-row" data-plugin="' + esc(p.id) + '"' +
       (p.version ? ' title="v' + esc(p.version) + '"' : "") + ">" +
       '<span class="dot ' + esc(dotClass(p)) + '" data-dot title="' + esc(stateLabel(p)) + '"></span>' +
@@ -120,17 +120,17 @@ export function startupRowHtml(a: { enabled: boolean; detail?: string; command?:
 }
 
 function chipText(): string {
-  var all = rows();
-  var on = all.filter(function (p: ApiPluginRow): boolean { return p.enabled; }).length;
-  var failed = all.filter(function (p: ApiPluginRow): boolean { return p.state === "failed"; }).length;
+  const all = rows();
+  const on = all.filter((p: ApiPluginRow): boolean => { return p.enabled; }).length;
+  const failed = all.filter((p: ApiPluginRow): boolean => { return p.state === "failed"; }).length;
   return all.length + (all.length === 1 ? " plugin" : " plugins") + " · " + on + " on" +
     (failed ? " · " + failed + " failed" : "");
 }
 
 function render(): void {
   painted = signature();
-  var all = rows();
-  var body = all.length
+  const all = rows();
+  const body = all.length
     ? '<div class="group">' + all.map(rowHtml).join("") + "</div>"
     : emptyHtml({ icon: "power", title: "No plugins", hint: "This gateway reports an empty inventory." });
   // No location title: the context bar already says "Settings / Plugins".
@@ -152,40 +152,40 @@ function render(): void {
 
 /** Poll-safe update: dots, the state word, the error tail and the button. Never structure. */
 function patch(): void {
-  var pane = $("pane");
+  const pane = $("pane");
   if (!pane.querySelector(".group") || signature() !== painted) { render(); return; }
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-plugin]"), function (row: Element): void {
-    var p = null as ApiPluginRow | null;
-    rows().forEach(function (cand: ApiPluginRow): void { if (cand.id === row.getAttribute("data-plugin")) p = cand; });
+  Array.prototype.forEach.call(pane.querySelectorAll("[data-plugin]"), (row: Element): void => {
+    let p = null as ApiPluginRow | null;
+    rows().forEach((cand: ApiPluginRow): void => { if (cand.id === row.getAttribute("data-plugin")) p = cand; });
     if (!p) return;
-    var dot = row.querySelector("[data-dot]") as HTMLElement | null;
+    const dot = row.querySelector("[data-dot]") as HTMLElement | null;
     // Class and title in one pass (docs/18 V6): the poll patches, never rebuilds, so the
     // title must follow the class or it keeps explaining the state before the last change.
     if (dot) { dot.className = "dot " + dotClass(p); dot.title = stateLabel(p); }
-    var err = row.querySelector("[data-err]") as HTMLElement | null;
+    const err = row.querySelector("[data-err]") as HTMLElement | null;
     if (err) err.innerHTML = p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "";
-    var reqs = row.querySelector("[data-reqs]") as HTMLElement | null;
+    const reqs = row.querySelector("[data-reqs]") as HTMLElement | null;
     if (reqs) reqs.innerHTML = requiresBadge(p);
-    var button = row.querySelector("[data-toggle]") as HTMLButtonElement | null;
+    const button = row.querySelector("[data-toggle]") as HTMLButtonElement | null;
     if (button) {
       button.disabled = !!busy[p.id];
       button.setAttribute("aria-checked", p.enabled ? "true" : "false");
     }
-    var name = row.querySelector(".tun-name") as HTMLElement | null;
+    const name = row.querySelector(".tun-name") as HTMLElement | null;
     if (name) name.innerHTML = esc(p.label || p.id) + (p.enabled ? "" : ' <span class="via">· off</span>');
   });
-  var foot = pane.querySelector("[data-foot-text]") as HTMLElement | null;
+  const foot = pane.querySelector("[data-foot-text]") as HTMLElement | null;
   if (foot) foot.textContent = chipText();
 }
 
 function wire(): void {
-  var pane = $("pane");
-  pane.onclick = function (event: MouseEvent): void {
-    var asButton = targetEl(event)?.closest("[data-autostart-toggle]");
+  const pane = $("pane");
+  pane.onclick = (event: MouseEvent): void => {
+    const asButton = targetEl(event)?.closest("[data-autostart-toggle]");
     if (asButton) { void toggleAutostart(); return; }
-    var button = targetEl(event)?.closest("[data-toggle]");
+    const button = targetEl(event)?.closest("[data-toggle]");
     if (!button) return;
-    var prow = button.closest("[data-plugin]");
+    const prow = button.closest("[data-plugin]");
     if (prow) void toggle(prow.getAttribute("data-plugin"));
   };
 }
@@ -194,7 +194,7 @@ function wire(): void {
  *  404 and leaves autostart null — the section stays hidden, an old binary never grows a
  *  dead control. */
 async function loadAutostart(): Promise<void> {
-  var r = await api("/api/autostart");
+  const r = await api("/api/autostart");
   if (r.ok) autostart = await r.json() as { enabled: boolean; detail?: string; command?: string };
 }
 
@@ -203,7 +203,7 @@ async function loadAutostart(): Promise<void> {
 async function toggleAutostart(): Promise<void> {
   if (!autostart || autostartBusy) return;
   autostartBusy = true;
-  var j = await apiJson<{ enabled: boolean; detail?: string; command?: string }>("/api/autostart", {
+  const j = await apiJson<{ enabled: boolean; detail?: string; command?: string }>("/api/autostart", {
     method: "PUT",
     body: JSON.stringify({ enabled: !autostart.enabled }),
   });
@@ -217,17 +217,18 @@ async function toggleAutostart(): Promise<void> {
  *  what the click should have done. The revision goes with the request so a stale list is
  *  refused rather than applied. */
 async function toggle(id: string | null): Promise<void> {
-  var p = null as ApiPluginRow | null;
-  rows().forEach(function (cand: ApiPluginRow): void { if (cand.id === id) p = cand; });
-  if (!p || busy[id!]) return;
-  var action = p.enabled ? "disable" : "enable";
-  busy[id!] = true;
+  let p = null as ApiPluginRow | null;
+  rows().forEach((cand: ApiPluginRow): void => { if (cand.id === id) p = cand; });
+  const id_ = id!;
+  if (!p || busy[id_]) return;
+  const action = p.enabled ? "disable" : "enable";
+  busy[id_] = true;
   patch();
-  var reply = await apiJson<{ plugin?: ApiPluginRow }>("/api/plugins/" + encodeURIComponent(id!) + "/" + action, {
+  const reply = await apiJson<{ plugin?: ApiPluginRow }>("/api/plugins/" + encodeURIComponent(id_) + "/" + action, {
     method: "POST",
     body: JSON.stringify({ revision: inv().revision }),
   });
-  delete busy[id!];
+  delete busy[id_];
   // Reload either way: a refused write means our copy is stale, and a successful one changed
   // the page list the tab strip is drawn from.
   try { await reloadPluginInventory(); }

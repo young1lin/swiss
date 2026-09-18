@@ -51,14 +51,88 @@ export default tseslint.config(
     },
   },
   plugins: { "@typescript-eslint": tseslint.plugin },
-  rules: {
-    /* R0: docs/37 D10 - the any budget is zero; the regex guard in panel-no-any.test.ts
-     * retires in favor of this. */
-    "@typescript-eslint/no-explicit-any": "error",
-    /* R0 (warn until R3): the panel has a large share of un-awaited apiJson() calls;
-     * the warnings inventory is the R3 worklist. */
-    "@typescript-eslint/no-floating-promises": "warn",
   },
+  {
+    /* The src rule set proper (docs/37 R0-R2). The suite gets its own block below: R2's
+     * mechanical sweep scoped itself to the emitted tree, and the suite's idioms are a
+     * separate budget. */
+    files: ["src/**/*.ts"],
+    rules: {
+      /* R0: docs/37 D10 - the any budget is zero; the regex guard in panel-no-any.test.ts
+       * retires in favor of this. */
+      "@typescript-eslint/no-explicit-any": "error",
+      /* R0 (warn until R3): the panel has a large share of un-awaited apiJson() calls;
+       * the warnings inventory is the R3 worklist. */
+      "@typescript-eslint/no-floating-promises": "warn",
+      /* R2: block scope and const-first everywhere; the var/function-expression era ended
+       * with docs/37. The four survivors are exempt by position, not by rule: the fetch
+       * wrapper needs this+arguments, and three self-removing document listeners keep
+       * their names (no-var cannot see them - they are function expressions). */
+      "no-var": "error",
+      "prefer-const": "error",
+      /* R2: the assertion budget. 1,193 sites came into the migration; 326 survive (121 of
+       * them are a function's single boundary assertion on the Data pane state - the honest
+       * shape until R4 splits PanelState). The files below still carry survivors, so they
+       * warn; the exact per-file counts are frozen by test/non-null-ratchet.test.ts, which
+       * fails on any growth. Clean files get the full error. */
+      "@typescript-eslint/no-non-null-assertion": "error",
+    },
+  },
+  {
+    /* The suite is the acceptance spec, not shipped code: R2's mechanical sweep (var,
+     * arrows, assertions) scoped itself to src/ - the emitted tree - and the suite keeps
+     * its own idioms (var-free is coming with R3's consistent-type-imports pass). The
+     * any budget stays visible as warnings, same as before R2 split the scopes. */
+    files: ["test/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "warn",
+      "@typescript-eslint/no-floating-promises": "warn",
+    },
+  },
+  {
+    /* R2 assertion-budget carriers (docs/37 M5): the rule warns here instead of erroring
+     * so the tree stays green while the counts burn down; test/non-null-ratchet.test.ts
+     * freezes each file's exact count and fails on growth, so "warn" here is not a free
+     * pass. A file that reaches zero loses its line here and its protection upgrades to
+     * the error above. Files absent from this list get no survivors at all. */
+    files: [
+      "src/add-sheet.ts",
+      "src/menu.ts",
+      "src/sidebar.ts",
+      "src/views/plugins.ts",
+      "src/views/secrets.ts",
+      "src/views/tokens.ts",
+      "src/detail.ts",
+      "src/main.ts",
+      "src/page-core.ts",
+      "src/page-registry.ts",
+      "src/pane.ts",
+      "src/run-history.ts",
+      "src/tunnel-sheets.ts",
+      "src/views/remote.ts",
+      "src/views/terminal-settings.ts",
+      "src/views/terminal.ts",
+      "src/data-activity.ts",
+      "src/data-browsers.ts",
+      "src/data-ddl.ts",
+      "src/data-filters.ts",
+      "src/data-form.ts",
+      "src/data-structure.ts",
+      "src/data-suggest.ts",
+      "src/dropdown.ts",
+      "src/groups.ts",
+      "src/jobs.ts",
+      "src/tunnels.ts",
+      "src/data-cell.ts",
+      "src/data-edit.ts",
+      "src/data-grid.ts",
+      "src/data-sql.ts",
+      "src/data-view.ts",
+      "src/data-csv.ts",
+    ],
+    rules: {
+      "@typescript-eslint/no-non-null-assertion": "warn",
+    },
   },
   {
     /* The suite mocks heavily and its anys are a separate budget from D10 (which scoped

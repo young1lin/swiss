@@ -20,7 +20,7 @@ import { $, esc } from "./util.js";
 /* `description` leads every type: it is what the MCP client is told this endpoint is for, and with
    several instances of the same engine behind identical tool sets, it is the only thing that says
    which application's data is on the other end. */
-var DESC_FIELD            = {
+const DESC_FIELD            = {
   k: "description", label: "Description",
   ph: "What this MCP is for — e.g. the order service's Redis, used by the checkout backend",
   hint: "Describes the MCP itself. Sent to clients as the server's instructions, together with the connection target.",
@@ -29,16 +29,16 @@ var DESC_FIELD            = {
    defaults OFF (its child is the one expensive idle thing here, so it starts on first request and
    is reaped when idle); every other type defaults ON. readFields returns it as `autostart`;
    submitAdd/saveEdit translate it to `lazy` before the server sees it. */
-var AUTOSTART_PROC            = {
+const AUTOSTART_PROC            = {
   k: "autostart", label: "Start automatically at boot", bool: true, def: false,
   hint: "Off by default: the first client request spawns the child, and an idle one is reaped after 10 min (idleMs tunes). Adding it here still starts it now.",
 };
-var AUTOSTART_EAGER            = {
+const AUTOSTART_EAGER            = {
   k: "autostart", label: "Start automatically at boot", bool: true, def: true,
   hint: "Off: idle at boot — the first client request starts it.",
 };
-var TESTABLE_TYPES           = ["mysql", "mariadb", "redis", "pg", "http", "rest"];
-var TYPE_FIELDS                              = {
+const TESTABLE_TYPES           = ["mysql", "mariadb", "redis", "pg", "http", "rest"];
+const TYPE_FIELDS                              = {
   proc: [
     DESC_FIELD,
     { k: "command", label: "Command", ph: "npx -y @modelcontextprotocol/server-git   ·   uvx mcp-server-git" },
@@ -179,7 +179,7 @@ var TYPE_FIELDS                              = {
     AUTOSTART_EAGER,
   ],
 };
-var TYPE_LABELS                         = {
+const TYPE_LABELS                         = {
   proc: "proc — spawn a command and proxy it",
   mysql: "mysql — in-process driver",
   redis: "redis — in-process driver",
@@ -191,14 +191,14 @@ var TYPE_LABELS                         = {
 };
 
 function envToText(env                                           )         {
-  return env ? Object.keys(env).map(function (k) { return k + "=" + env[k]; }).join("\n") : "";
+  return env ? Object.keys(env).map((k) => { return k + "=" + env[k]; }).join("\n") : "";
 }
 function envToObj(text                           )                         {
-  var o                         = {};
-  String(text || "").split(/\r?\n/).forEach(function (line) {
+  const o                         = {};
+  String(text || "").split(/\r?\n/).forEach((line) => {
     line = line.trim();
     if (!line || line.startsWith("#")) return;
-    var i = line.indexOf("=");
+    const i = line.indexOf("=");
     if (i < 0) return;
     o[line.slice(0, i).trim()] = line.slice(i + 1).trim();
   });
@@ -207,20 +207,20 @@ function envToObj(text                           )                         {
 
 /** Render one field. `p` prefixes element ids so the Add sheet and the inline editor can coexist. */
 function fieldHtml(spec           , val         , p        )         {
-  var id = p + spec.k;
+  const id = p + spec.k;
   if (spec.bool) {
-    var on = val === undefined ? !!spec.def : !!val && val !== "false";
+    const on = val === undefined ? !!spec.def : !!val && val !== "false";
     return '<div class="fld"><label class="check"><input type="checkbox" id="' + id + '"' + (on ? " checked" : "") + '>' +
       esc(spec.label) + "</label>" + (spec.hint ? '<div class="hint">' + esc(spec.hint) + "</div>" : "") + "</div>";
   }
   /* `json` fields hold an authored structure (a rest MCP's tool declarations) rather than a value or a
      KEY=VALUE map, so they round-trip as pretty-printed JSON. */
-  var v = val == null ? "" : spec.json ? JSON.stringify(val, null, 2) : (typeof val === "object" ? envToText(val                          ) : String(val));
+  const v = val == null ? "" : spec.json ? JSON.stringify(val, null, 2) : (typeof val === "object" ? envToText(val                          ) : String(val));
   // A password field is pre-filled with the mask sentinel, and the server keeps the stored secret
   // only while that sentinel comes back untouched. Password-manager autofill silently replacing it
   // would overwrite the real credential on save, with nothing to distinguish that from an edit.
-  var fill = /pass|secret|token|key|url|credential/i.test(spec.k) ? ' autocomplete="off" spellcheck="false"' : "";
-  var body = spec.area
+  const fill = /pass|secret|token|key|url|credential/i.test(spec.k) ? ' autocomplete="off" spellcheck="false"' : "";
+  const body = spec.area
     ? "<textarea id=\"" + id + '"' + fill + (spec.ph ? ' placeholder="' + esc(spec.ph) + '"' : "") + ">" + esc(v) + "</textarea>"
     : '<input type="text" id="' + id + '" value="' + esc(v) + '"' + fill + (spec.ph ? ' placeholder="' + esc(spec.ph) + '"' : "") + ">";
   return '<div class="fld"><label class="field"><span>' + esc(spec.label) + "</span>" + body + "</label>" +
@@ -229,8 +229,8 @@ function fieldHtml(spec           , val         , p        )         {
 
 /** Lay a type's fields out, pairing the ones marked `half` into two columns. */
 function fieldsHtml(type        , vals                                            , p        )         {
-  var specs = TYPE_FIELDS[type] || [];
-  var out = "", i = 0;
+  const specs = TYPE_FIELDS[type] || [];
+  let out = "", i = 0;
   while (i < specs.length) {
     if (specs[i].half && specs[i + 1] && specs[i + 1].half) {
       out += '<div class="two">' + fieldHtml(specs[i], vals && vals[specs[i].k], p) +
@@ -263,19 +263,19 @@ function translateOauth(body                         )                          
  *     would otherwise claim), so refs are lifted out to placeholders before the split;
  *   - the mask sentinel in a url password — the server restores it from the stored def.
  * Params render one k=v per line; the url keeps them &-joined. */
-var PG_PARTS = ["host", "port", "user", "password", "database", "params"];
+const PG_PARTS = ["host", "port", "user", "password", "database", "params"];
 function parsePgUrl(url                           )                    {
-  var refs           = [];
-  var s = String(url || "").replace(/\$\{[^}]*\}/g, function (r) {
+  const refs           = [];
+  const s = String(url || "").replace(/\$\{[^}]*\}/g, (r) => {
     refs.push(r);
     return "\u0001" + (refs.length - 1) + "\u0001";
   });
   /* The lifted placeholders are \u0001 + digits + \u0001 — none of :@/? — so the url grammar
    * below can stay plain; the refs ride through whatever slot they sit in. */
-  var m = /^postgres(?:ql)?:\/\/(?:([^:@/]*)(?::([^@]*))?@)?([^:/?]*)(?::(\d+))?\/([^?]*)(?:\?(.*))?$/.exec(s);
+  const m = /^postgres(?:ql)?:\/\/(?:([^:@/]*)(?::([^@]*))?@)?([^:/?]*)(?::(\d+))?\/([^?]*)(?:\?(.*))?$/.exec(s);
   if (!m) return null;
-  var back = function (v        )         {
-    return v.replace(/\u0001(\d+)\u0001/g, function (_        , i        )         { return refs[+i] || ""; });
+  const back = (v        )         => {
+    return v.replace(/\u0001(\d+)\u0001/g, (_        , i        )         => { return refs[+i] || ""; });
   };
   return {
     host: back(m[3] || ""),
@@ -287,9 +287,9 @@ function parsePgUrl(url                           )                    {
   };
 }
 function pgUrlFrom(p                                                                                                 )         {
-  var auth = p.user ? p.user + (p.password ? ":" + p.password : "") + "@" : "";
-  var port = p.port ? ":" + p.port : "";
-  var q = p.params ? "?" + String(p.params).split(/\r?\n/).map(function (l) { return l.trim(); })
+  const auth = p.user ? p.user + (p.password ? ":" + p.password : "") + "@" : "";
+  const port = p.port ? ":" + p.port : "";
+  const q = p.params ? "?" + String(p.params).split(/\r?\n/).map((l) => { return l.trim(); })
     .filter(Boolean).join("&") : "";
   return "postgresql://" + auth + (p.host || "") + port + "/" + (p.database || "") + q;
 }
@@ -300,7 +300,7 @@ function pgUrlFrom(p                                                            
  *  ref, old experience beats lost data. */
 function translatePg(type        , body                         )                          {
   if (type !== "pg") { delete body.__pgRaw; return body; }
-  var hasParts = PG_PARTS.some(function (k) { return body[k] !== undefined; });
+  const hasParts = PG_PARTS.some((k) => { return body[k] !== undefined; });
   if (!hasParts && body.__pgRaw != null) {
     body.url = String(body.__pgRaw);
   } else {
@@ -309,21 +309,21 @@ function translatePg(type        , body                         )               
       password: body.password          , database: body.database          , params: body.params          ,
     });
   }
-  PG_PARTS.forEach(function (k) { delete body[k]; });
+  PG_PARTS.forEach((k) => { delete body[k]; });
   delete body.__pgRaw;
   return body;
 }
 
 function readFields(type        , p        )                          {
-  var o                          = {};
+  const o                          = {};
   /* docs/30: the unparseable-url fallback renders its own textarea (#e-pgraw / #a-pgraw);
      every submit path reads through readFields, so the raw value boards here like any field. */
-  if (type === "pg") { var raw = $                  (p + "pgraw"); if (raw) o.__pgRaw = raw.value; }
-  (TYPE_FIELDS[type] || []).forEach(function (f) {
-    var node = $                  (p + f.k);
+  if (type === "pg") { const raw = $                  (p + "pgraw"); if (raw) o.__pgRaw = raw.value; }
+  (TYPE_FIELDS[type] || []).forEach((f) => {
+    const node = $                  (p + f.k);
     if (!node) return;
     if (f.bool) { o[f.k] = node.checked; return; }
-    var raw = node.value;
+    const raw = node.value;
     if (f.kv) { o[f.k] = envToObj(raw); return; }
     /* Malformed JSON is sent through as the raw string on purpose: the server answers with what is
        wrong with it, which is a better message than anything this form could invent. */

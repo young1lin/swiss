@@ -27,42 +27,42 @@ import { mountGroup } from "./groups.js";
    built on it needs no second menu idiom. */
 function popupMenu(anchor: { left: number; top: number; bottom: number }, items: MenuItem[]): void {
   closeMenu();
-  var node = document.createElement("div");
+  const node = document.createElement("div");
   node.className = "menu float";
   node.id = "menu";
-  items.forEach(function (it) {
+  items.forEach((it) => {
     if (it.sep) { node.appendChild(document.createElement("hr")); return; }
-    var cls = (it.pick ? "pick" : "") + (it.on ? " on" : "") + (it.danger ? " danger" : "");
-    var b = document.createElement("button");
+    const cls = (it.pick ? "pick" : "") + (it.on ? " on" : "") + (it.danger ? " danger" : "");
+    const b = document.createElement("button");
     b.type = "button";
     b.className = cls.trim();
     b.textContent = it.label;
     if (it.title && b.title !== undefined) b.title = it.title;
-    b.onclick = function (ev) { ev.stopPropagation(); closeMenu(); it.fn(); };
+    b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); it.fn(); };
     node.appendChild(b);
   });
   document.body.appendChild(node);
   // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
   // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
   // The clamp itself is clampMenuPos — shared with the ctx menus (docs/22 closeout audit).
-  var r = node.getBoundingClientRect();
-  var pos = clampMenuPos(anchor, r.width, r.height, window.innerWidth, window.innerHeight);
+  const r = node.getBoundingClientRect();
+  const pos = clampMenuPos(anchor, r.width, r.height, window.innerWidth, window.innerHeight);
   node.style.left = pos.left + "px";
   // Below the button, unless that would run off the bottom — then above it.
   node.style.top = pos.top + "px";
   state.menuOpen = true;
   // Roles and keys (guarded: the vitest micro-DOM has neither querySelectorAll nor focus).
   if (node.setAttribute) node.setAttribute("role", "menu");
-  var buttons = typeof node.querySelectorAll === "function"
+  const buttons = typeof node.querySelectorAll === "function"
     ? Array.prototype.slice.call(node.querySelectorAll<HTMLButtonElement>("button")) : [];
-  buttons.forEach(function (b) { if (b.setAttribute) b.setAttribute("role", "menuitem"); });
+  buttons.forEach((b) => { if (b.setAttribute) b.setAttribute("role", "menuitem"); });
   if (buttons[0] && typeof buttons[0].focus === "function") buttons[0].focus();
   if (typeof node.addEventListener === "function") {
-    node.addEventListener("keydown", function (ev) {
-      var i = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    node.addEventListener("keydown", (ev) => {
+      const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
       if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
         ev.preventDefault();
-        var n = ev.key === "ArrowDown" ? i + 1 : i - 1;
+        let n = ev.key === "ArrowDown" ? i + 1 : i - 1;
         if (n < 0) n = buttons.length - 1;
         if (n >= buttons.length) n = 0;
         if (buttons[n] && typeof buttons[n].focus === "function") buttons[n].focus();
@@ -81,7 +81,7 @@ function popupMenu(anchor: { left: number; top: number; bottom: number }, items:
  *  factored out so the ctx menus (data-csv.js) and the Table menu (data-edit.js) clamp the
  *  same way instead of landing off-screen at an edge. Pure. */
 function clampMenuPos(anchor: { left: number; top: number; bottom: number }, w: number, h: number, vw: number, vh: number): { left: number; top: number } {
-  var below = anchor.bottom + 4;
+  const below = anchor.bottom + 4;
   return {
     left: Math.max(8, Math.min(anchor.left, vw - w - 8)),
     top: below + h > vh - 8 ? Math.max(8, anchor.top - h - 4) : below,
@@ -94,12 +94,12 @@ function clampMenuPos(anchor: { left: number; top: number; bottom: number }, w: 
 function tooltipOf(m: ApiMcpRow): string {
   // Idle is the one state word that names no behaviour of its own (docs/18 V6): a lazy proc
   // has no child yet and wakes on the first request — say that, so a hollow ring explains itself.
-  var stateWord = state.busy[m.name] ? state.busy[m.name] + "…"
+  const stateWord = state.busy[m.name] ? state.busy[m.name] + "…"
     : m.state === "idle" ? "idle — lazy: no child yet, wakes on the first request"
     : m.state === "stopped" ? "disabled"
     : m.state;
   // docs/24: the endpoint path shown to the operator carries the /mcp/ domain prefix.
-  var bits = ["/mcp/" + m.name, m.type, m.source, stateWord];
+  const bits = ["/mcp/" + m.name, m.type, m.source, stateWord];
   if (m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.description) bits.unshift(m.description);
   if (m.reason) bits.push(m.reason);
@@ -114,28 +114,28 @@ function tooltipOf(m: ApiMcpRow): string {
  *  replace the DOM under the pointer and silently cancel it. Attribute patching never moves nodes,
  *  so rows stay live; dragend triggers one catch-up rebuild. */
 function patchSidebar(): void {
-  var list = $("list");
-  var groups = groupedMcps();
-  var rows = visibleMcps();
+  const list = $("list");
+  const groups = groupedMcps();
+  const rows = visibleMcps();
   // The rebuild key covers everything structural: which groups exist, what is in each, and which are
   // folded shut. Dot colour, latency and selection are patched below and stay out of it on purpose.
-  var sig = groups.map(function (g) {
+  const sig = groups.map((g) => {
     return g.name + "\u0001" + (state.collapsed[g.name] && !state.filter.trim() ? "c" : "o") + "\u0001" +
-      g.rows.map(function (m) { return m.name; }).join("\u0000");
+      g.rows.map((m) => { return m.name; }).join("\u0000");
   }).join("\u0002");
 
   if (list.dataset.sig !== sig && !state.dragging && !state.draggingGroup) {
     list.innerHTML = "";
-    var cfg = sideCfg();
-    groups.forEach(function (g) { list.appendChild(mountGroup(cfg, g)); });
+    const cfg = sideCfg();
+    groups.forEach((g) => { list.appendChild(mountGroup(cfg, g)); });
     list.dataset.sig = sig;
   }
-  rows.forEach(function (m) {
-    var node = list.querySelector<HTMLElement>('[data-name="' + (window.CSS && CSS.escape ? CSS.escape(m.name) : m.name) + '"]');
+  rows.forEach((m) => {
+    const node = list.querySelector<HTMLElement>('[data-name="' + (window.CSS && CSS.escape ? CSS.escape(m.name) : m.name) + '"]');
     if (!node) return;
-    var busyVerb = state.busy[m.name];
-    var word = busyVerb ? "starting" : m.state;
-    var dot = node.querySelector<HTMLElement>(".dot");
+    const busyVerb = state.busy[m.name];
+    const word = busyVerb ? "starting" : m.state;
+    const dot = node.querySelector<HTMLElement>(".dot");
     if (dot) {
       dot.className = "dot " + word;
       // The title rides the same patch pass as the class (docs/18 V6): the poll never
@@ -145,8 +145,8 @@ function patchSidebar(): void {
     }
     // Patched rather than set at build time: an Edit that switches an MCP from npx to http keeps the
     // same name, so the row is never rebuilt and the trailing label would otherwise go stale.
-    var tagEl = node.querySelector<HTMLElement>(".side-type")!;
-    var tag = m.tag || m.type || "";
+    const tagEl = node.querySelector<HTMLElement>(".side-type")!;
+    const tag = m.tag || m.type || "";
     // docs/29: a mapped tag renders its glyph (the word rides the aria-label); anything else
     // keeps the text chip exactly as before. innerHTML, not textContent — icon() is markup.
     tagEl.innerHTML = tag ? typeTagHtml(tag) : "";
@@ -156,8 +156,8 @@ function patchSidebar(): void {
     node.setAttribute("aria-selected", state.selected === m.name ? "true" : "false");
   });
 
-  var up = 0, bad = 0;
-  state.mcps.forEach(function (m) {
+  let up = 0, bad = 0;
+  state.mcps.forEach((m) => {
     if (m.state === "up") up++;
     else if (m.state === "down" || m.state === "error") bad++;
   });
@@ -168,7 +168,7 @@ function patchSidebar(): void {
   }
   // Group headers name the sections now, so the standing "MCPS" caption is noise; it earns its line
   // only while a search is on, where the match count is the useful part.
-  var cap = $("sideCap");
+  const cap = $("sideCap");
   cap.textContent = rows.length + " matching";
   cap.hidden = !state.filter;
 }

@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-var TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
-var THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
-var KINDS = ["tools", "resources", "prompts"];
+const TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
+const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
+const KINDS = ["tools", "resources", "prompts"];
 /* Mirrors DEFAULT_GROUP in managed.ts: the name a group list starts from — an ordinary group
    the user can rename or delete, whose only privilege is being the initial FIRST entry (the
    slot unassigned MCPs render under). The server now stores it like any other name. */
-var DEFAULT_GROUP = "default";
+const DEFAULT_GROUP = "default";
 
-var state             = {
+const state             = {
   mcps: [],          // rows from /api/mcps (each carries .group)
   groups: [],        // group names in sidebar order — the FIRST entry is the sink slot for unassigned rows
   collapsed: {},     // mcps fold map; group name -> true. Panel-only, so it lives in localStorage (groups.js)
@@ -76,13 +76,13 @@ var state             = {
 
 function $                                     (id        )    { return document.getElementById(id)     ; }
 function el                                       (tag   , cls         , text                )                           {
-  var n = document.createElement(tag);
+  const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (text != null) n.textContent = text;
   return n;
 }
 function esc(s         )         {
-  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c                               ];
   });
 }
@@ -101,7 +101,7 @@ function icon(name        , label         )         {
  *  remote MCPs, the command's first word for proc ones — arbitrary words appear (node, python,
  *  echo…), so this is a whitelist and everything outside it falls back to text. The icon
  *  carries the word as its aria-label: a screen reader hears the type the chip no longer spells. */
-var TYPE_ICONS                         = {
+const TYPE_ICONS                         = {
   mysql: "mysql", mariadb: "mariadb", redis: "redis", pg: "pg", postgres: "pg",
   http: "globe", https: "globe", rest: "plug",
   figma: "figma", "zai-vision": "zai",
@@ -110,7 +110,7 @@ var TYPE_ICONS                         = {
   proc: "terminal",
 };
 function typeTagHtml(tag        )         {
-  var name = TYPE_ICONS[tag];
+  const name = TYPE_ICONS[tag];
   if (!name) return esc(tag);
   return icon(name, tag);
 }
@@ -120,7 +120,7 @@ function typeTagHtml(tag        )         {
  *  the black frame with its own tokens. The action button carries data-empty-action so the
  *  owning view can wire it without inventing per-view ids. */
 function emptyHtml(opts                )         {
-  var action = opts.action
+  const action = opts.action
     ? '<button class="btn ghost" data-empty-action="' + esc(opts.action) + '">' + esc(opts.action) + "</button>"
     : "";
   return '<div class="empty"><div>' +
@@ -149,9 +149,9 @@ function dotTitle(word        , latencyMs                , reason         )     
  *  pure time becomes ambiguous the moment a list spans midnight). Run-history had this logic as
  *  histWhen; Traffic rows now share it instead of printing bare times on pages days old. */
 function whenLabel(iso                 )         {
-  var d = new Date(iso);
+  const d = new Date(iso);
   if (isNaN(d.getTime())) return String(iso);
-  var day = 24 * 60 * 60 * 1000;
+  const day = 24 * 60 * 60 * 1000;
   return (Date.now() - d.getTime() >= day)
     ? d.toLocaleString()
     : d.toLocaleTimeString();
@@ -165,12 +165,12 @@ function whenLabel(iso                 )         {
    object itself (toast._t), which needed a global Function augmentation to type. */
 let toastTimer                                       = null;
 function toast(msg        , isErr          )       {
-  var t = $("toast");
+  const t = $("toast");
   t.textContent = msg;
   t.className = "toast" + (isErr ? " err" : "");
   t.hidden = false;
   if (toastTimer !== null) clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { t.hidden = true; }, 3400);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 3400);
 }
 
 /** The catch-side reader (docs/37 M5): every handler once read e.message off an any-typed
@@ -208,10 +208,10 @@ async function api(path        , opts              )                    {
  *  write state while accepts(token) holds — a slow answer that lands after a newer request
  *  started is dropped silently instead of overwriting what the newer one painted. Pure. */
 function dbReqGuard()                                                       {
-  var seq = 0;
+  let seq = 0;
   return {
-    issue: function () { return ++seq; },
-    accepts: function (token) { return token === seq; },
+    issue: () => { return ++seq; },
+    accepts: (token) => { return token === seq; },
   };
 }
 
@@ -219,8 +219,8 @@ function dbReqGuard()                                                       {
  *  mutation repeated the same fetch → parse → toast dance, so the dance lives here once. */
 async function apiJson             (path        , opts              )                    {
   try {
-    var r = await api(path, opts);
-    var j                     = await r.json().catch(function () { return {}; });
+    const r = await api(path, opts);
+    const j                     = await r.json().catch(() => { return {}; });
     if (!r.ok) { toast(j.error || "HTTP " + r.status, true); return null; }
     return j                ;
   } catch (e) {

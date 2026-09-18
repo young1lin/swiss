@@ -34,10 +34,10 @@ import { closeSheet } from "./add-sheet.js";
  *  truncation word. The WIRE stays uncapped on purpose — the whole hex string is the
  *  value's exact address (the keyless-table md5 digests the decoded bytes, W4b) — so the
  *  sheet caps its own view, never the value it was handed. */
-var DB_VALUE_HEX_MAX = 512;
+const DB_VALUE_HEX_MAX = 512;
 
 function dbValueJsonLike(s: unknown): boolean {
-  var t = String(s == null ? "" : s).trim();
+  const t = String(s == null ? "" : s).trim();
   return t.startsWith("{") || t.startsWith("[");
 }
 
@@ -59,13 +59,13 @@ function dbValueKind(value: unknown): "hex" | "url" | "json" | "text" {
  *  the real byte count (hex chars / 2, never the character count) and the truncated flag
  *  that reuses the redis value view's word ("\u00b7 truncated"). Pure. */
 function dbHexPreview(value: string, maxBytes: number): { text: string; bytes: number; truncated: boolean } {
-  var hex = String(value).replace(/^\\x/, "");
-  var bytes = Math.floor(hex.length / 2);
-  var truncated = bytes > maxBytes;
-  var show = truncated ? hex.slice(0, maxBytes * 2) : hex;
-  var pairs = show.match(/.{2}/g) || [];
-  var lines: string[] = [];
-  for (var i = 0; i < pairs.length; i += 16) lines.push(pairs.slice(i, i + 16).join(" "));
+  const hex = String(value).replace(/^\\x/, "");
+  const bytes = Math.floor(hex.length / 2);
+  const truncated = bytes > maxBytes;
+  const show = truncated ? hex.slice(0, maxBytes * 2) : hex;
+  const pairs = show.match(/.{2}/g) || [];
+  const lines: string[] = [];
+  for (let i = 0; i < pairs.length; i += 16) lines.push(pairs.slice(i, i + 16).join(" "));
   return { text: lines.join("\n"), bytes: bytes, truncated: truncated };
 }
 
@@ -76,17 +76,17 @@ function dbHexPreview(value: string, maxBytes: number): { text: string; bytes: n
 function dbJsonNode(v: Record<string, unknown>, isOpen: boolean): string {
   if (v === null || v === undefined) return '<span class="db-val-v db-null">null</span>';
   if (Array.isArray(v) || typeof v === "object") {
-    var isArr = Array.isArray(v);
-    var keys = isArr ? v as unknown as unknown[] : Object.keys(v);
-    var summary = isArr ? (keys.length ? "[ " + keys.length + " ]" : "[ ]")
+    const isArr = Array.isArray(v);
+    const keys = isArr ? v as unknown as unknown[] : Object.keys(v);
+    const summary = isArr ? (keys.length ? "[ " + keys.length + " ]" : "[ ]")
       : (keys.length ? "{ " + keys.length + " }" : "{ }");
-    var inner = "";
+    let inner = "";
     if (isArr) {
-      keys.forEach(function (x: unknown) {
+      keys.forEach((x: unknown) => {
         inner += '<div class="db-val-row">' + dbJsonNode(x as Record<string, unknown>, false) + "</div>";
       });
     } else {
-      keys.forEach(function (k: unknown): void {
+      keys.forEach((k: unknown): void => {
         inner += '<div class="db-val-row"><span class="db-val-k">' + esc(k as string) + "</span>" + dbJsonNode(v[k as string] as Record<string, unknown>, false) + "</div>";
       });
     }
@@ -101,13 +101,13 @@ function dbJsonTreeHtml(v: unknown): string { return dbJsonNode(v as Record<stri
  *  too. `where` is the caption the caller knows (table for grid cells, "SQL result" for
  *  console results). */
 function dbOpenValueSheet(column: string, value: unknown, where: string | null | undefined): void {
-  var kind = dbValueKind(value);
-  var body;
+  const kind = dbValueKind(value);
+  let body;
   if (kind === "json") {
-    var parsed = typeof value === "object" ? value : JSON.parse(value as string);
+    const parsed = typeof value === "object" ? value : JSON.parse(value as string);
     body = '<div class="db-val-tree">' + dbJsonTreeHtml(parsed) + "</div>";
   } else if (kind === "hex") {
-    var p = dbHexPreview(value as string, DB_VALUE_HEX_MAX);
+    const p = dbHexPreview(value as string, DB_VALUE_HEX_MAX);
     body = '<div class="db-val-meta">' + p.bytes.toLocaleString() + " bytes" +
       (p.truncated ? " \u00b7 truncated" : "") + "</div>" +
       '<pre class="db-val-pre">' + esc(p.text) + "</pre>";
@@ -128,16 +128,16 @@ function dbOpenValueSheet(column: string, value: unknown, where: string | null |
         '<button class="btn primary" id="dbValClose">Close</button></div>' +
     "</div>";
   $("sheet").hidden = false;
-  var onKey = function (e: KeyboardEvent): void {
+  const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") { closeValueSheet(); }
   };
-  var closeValueSheet = function (): void {
+  const closeValueSheet = (): void => {
     document.removeEventListener("keydown", onKey);
     closeSheet();
   };
   $("dbValClose").onclick = closeValueSheet;
   document.addEventListener("keydown", onKey);
-  $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeValueSheet(); };
+  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeValueSheet(); };
 }
 
 export { DB_VALUE_HEX_MAX, dbHexPreview, dbJsonTreeHtml, dbOpenValueSheet, dbValueKind };
