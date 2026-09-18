@@ -24,7 +24,7 @@ import { histOpen, renderCallsOnly } from "./run-history.js";
 import { rowOf } from "./sidebar.js";
 
 /* --- lifecycle actions ------------------------------------------------------------------------ */
-async function act(name, verb) {
+async function act(name: string, verb: string): Promise<void> {
   if (state.busy[name]) return;
   state.busy[name] = verb;
   patchSidebar(); patchDetailHead();
@@ -49,14 +49,14 @@ async function act(name, verb) {
   await loadList();
   // The server rebuilt on start/restart, so any cached page list is stale.
   if (state.detail && state.detail.name === name) {
-    KINDS.forEach(function (k) { state.detail[k] = pageState(); });
+    KINDS.forEach(function (k) { state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
     renderPane();
     loadMeta(name);
     if (KINDS.indexOf(state.detail.tab) >= 0) loadPage(name, state.detail.tab);
   }
 }
 
-async function renameMcp(name) {
+async function renameMcp(name: string): Promise<void> {
   var next = prompt("Rename '" + name + "' to:", name);
   if (!next || next.trim() === name) return;
   next = next.trim();
@@ -69,7 +69,7 @@ async function renameMcp(name) {
   renderPane();
 }
 
-async function removeMcp(name) {
+async function removeMcp(name: string): Promise<void> {
   // Config-sourced MCPs are removed from gateway.config.json too (server-side), so the confirm
   // says so — "removes it permanently" alone used to hide that the file edit is part of it.
   var fromConfig = !!(state.detail && state.detail.source === "config");
@@ -90,13 +90,13 @@ async function removeMcp(name) {
  *  (credentials stored, MCP auto-started) or the flow errors. Status rides the pane's
  *  lastAction note; renderPane is skipped while a config edit is open, so a status update
  *  never eats a form the user is filling in. */
-function pause(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+function pause(ms: number): Promise<void> { return new Promise(function (res): void { setTimeout(res, ms); }); }
 
-async function authorizeMcp(name) {
+async function authorizeMcp(name: string): Promise<void> {
   var d = state.detail;
   if (!d || d.name !== name || d.oauthBusy) return;
   d.oauthBusy = true;
-  var note = function (msg, err) {
+  var note = function (msg: string, err?: boolean): void {
     state.lastAction[name] = { msg: msg, err: !!err, at: now() };
     if (!state.detail || state.detail.editing) return;
     renderPane();
@@ -139,14 +139,14 @@ async function authorizeMcp(name) {
 }
 
 /* --- detail data ------------------------------------------------------------------------------ */
-function pageState() {
+function pageState(): KindPageState {
   return { items: [], nextCursor: undefined, total: undefined, pageSize: 50, cursors: [""], loading: false, loaded: false, error: null };
 }
 
-function openDetail(name) {
+function openDetail(name: string): void {
   if (state.detail && state.detail.name === name) return;
   state.selected = name;
-  var d = {
+  var d: FreshDetail = {
     name: name, tab: "tools", config: null, source: undefined, editing: false, editType: null, editVals: null,
     // OAuth (docs/24 D5): the detail's auth state ("authorized" | "needs-auth" | undefined),
     // and whether an authorize flow this panel started is still polling.
@@ -175,15 +175,15 @@ function openDetail(name) {
     callsTree: {}, // docs/33 C2: per-seq JSON tree expansion, survives the poll repaint
   };
   KINDS.forEach(function (k) { d[k] = pageState(); });
-  state.detail = d;
+  state.detail = d as unknown as McpDetail;
   state.menuOpen = false;
   patchSidebar();
   renderPane();
   loadMeta(name);
-  if (rowOf(name) && rowOf(name).lifecycle === "started") loadPage(name, "tools");
+  if (rowOf(name) && rowOf(name)!.lifecycle === "started") loadPage(name, "tools");
 }
 
-async function loadMeta(name) {
+async function loadMeta(name: string): Promise<void> {
   // Compare the detail OBJECT, not its name: leaving an MCP and coming back builds a fresh detail
   // under the same name, and a slow response from the first visit would otherwise write into the
   // second one. loadPage already does it this way.
@@ -193,15 +193,15 @@ async function loadMeta(name) {
     if (!r.ok) return;
     var j = await r.json();
     if (state.detail !== d) return;
-    d.config = j.config || null;
-    d.source = j.source;
-    d.tunnels = j.tunnels || [];
-    d.oauth = j.oauth;
-    if (d.editing) return; // never rebuild a form the user is filling in
+    d!.config = j.config || null;
+    d!.source = j.source;
+    d!.tunnels = j.tunnels || [];
+    d!.oauth = j.oauth;
+    if (d!.editing) return; // never rebuild a form the user is filling in
     // The pane header grows an Authorize button the moment the config is an OAuth one (an
     // http def that says so, or the figma type that implies it), so the pane re-renders for
     // those MCPs too — not only when the config tab is open.
-    if (d.tab === "config" || (d.config && (d.config.auth === "oauth" || d.config.type === "figma"))) renderPane();
+    if (d!.tab === "config" || (d!.config && (d!.config.auth === "oauth" || d!.config.type === "figma"))) renderPane();
   } catch (e) { /* handled */ }
 }
 
@@ -213,7 +213,7 @@ async function loadMeta(name) {
  * docs/32 B3: the poll (isPoll) refreshes the LIVE page only — never an offset page, never a
  * switch in mid-transaction — and its failures are silent: the poll says nothing the user asked
  * for, so it takes nothing away either. */
-async function loadCalls(name, isPoll) {
+async function loadCalls(name: string, isPoll?: boolean): Promise<void> {
   var d = state.detail;
   if (!d || d.name !== name) return;
   // A poll dispatched while a FOREGROUND load still hangs would take the newest generation
@@ -226,7 +226,7 @@ async function loadCalls(name, isPoll) {
   d.callsActive = (d.callsActive || 0) + 1;
   // A page switch rides this request; take its anchor intent now, so a request issued later (a
   // new needle) can never spend an anchor that belonged to this one (docs/32 B2).
-  var sw = null;
+  var sw: { dir: string | null; fromKey?: boolean; pagerTop?: number } | null = null;
   if (d.callsPendingPage === target && d.callsSwitch) { sw = d.callsSwitch; d.callsSwitch = null; }
   try {
     var r = await api("/api/mcps/" + encodeURIComponent(name) + "/calls?page=" + target +
@@ -257,7 +257,7 @@ async function loadCalls(name, isPoll) {
 /** A foreground load failed: the committed page, its rows, the open expansions and the scroll
  *  position all stay exactly as they are; the failure says so in place and offers the same
  *  target again (docs/32 B1). */
-function callsLoadFailed(d, target, status, sw) {
+function callsLoadFailed(d: McpDetail, target: number, status: number, sw: { dir: string | null } | null): void {
   d.callsPendingPage = null;
   d.callsSwitch = null;
   d.callsError = "Could not load calls.";
@@ -270,7 +270,7 @@ function callsLoadFailed(d, target, status, sw) {
 
 /** Newer/Older: begin a page switch. Nothing committed changes until the response lands — the
  *  rows stay on screen, marked busy, and the request carries the target page (docs/32 B1). */
-function callsPageStep(delta, opts) {
+function callsPageStep(delta: number, opts?: { fromKey?: boolean }): void {
   opts = opts || {};
   var d = state.detail;
   if (!d || d.callsPendingPage != null) return; // one switch at a time
@@ -281,7 +281,7 @@ function callsPageStep(delta, opts) {
 
 /** Retry of a failed foreground load: the same target again, through the same transaction — and
  *  through the same anchor contract, with the direction the failed switch had. */
-function callsRetry(opts) {
+function callsRetry(opts?: { fromKey?: boolean }): void {
   opts = opts || {};
   var d = state.detail;
   if (!d || d.callsPendingPage != null || d.callsRetryTarget == null) return;
@@ -291,7 +291,7 @@ function callsRetry(opts) {
 /** Begin a switch toward a target page. The anchor — the pager's viewport top, the direction,
  *  and whether a keyboard drove the action — rides the REQUEST (not the detail), so an anchor
  *  can never be spent by a response it did not belong to (docs/32 B2). */
-function callsBegin(d, target, dir, fromKey) {
+function callsBegin(d: McpDetail, target: number, dir: string | null, fromKey: boolean): void {
   d.callsError = "";
   d.callsErrStatus = "";
   d.callsRetryTarget = null;
@@ -308,11 +308,11 @@ function callsBegin(d, target, dir, fromKey) {
  *  clicked is where their hand and eye already are — and hand keyboard drivers their focus back
  *  on the equivalent button, falling to the other direction at a boundary. Never scrollIntoView:
  *  that drags the whole app shell (docs/32 B2). */
-function restoreCallsAnchor(sw, d) {
+function restoreCallsAnchor(sw: { dir: string | null; fromKey?: boolean; pagerTop?: number }, d: McpDetail): void {
   var pane = $("pane");
   var pager = $("clPager");
   if (pane && pager && pager.getBoundingClientRect) {
-    pane.scrollTop += pager.getBoundingClientRect().top - sw.pagerTop;
+    pane.scrollTop += pager.getBoundingClientRect().top - sw.pagerTop!;
   }
   if (!sw.fromKey) return; // a mouse switch leaves focus alone — never steal the search box
   // Which button may take focus comes from the COMMITTED state, never from a node property:
@@ -330,13 +330,13 @@ function restoreCallsAnchor(sw, d) {
 /** Sync the pager chrome — busy state, both buttons, the status cell, the error block — onto
  *  the PAINTED dom without repainting: a pending switch or a failed one must not detach the
  *  rows, the search input or the scroll position (docs/32 B1). */
-function patchCallsChrome(d) {
+function patchCallsChrome(d: McpDetail): void {
   var busy = d.callsPendingPage != null;
   var region = $("callsRegion");
   if (region && region.setAttribute) region.setAttribute("aria-busy", busy ? "true" : "false");
   var status = $("clStatus");
   if (status) status.innerHTML = callsStatusHtml(d);
-  var prev = $("clPrev"), next = $("clNext");
+  var prev = $<HTMLButtonElement>("clPrev"), next = $<HTMLButtonElement>("clNext");
   if (prev) prev.disabled = busy || d.callsPage <= 0;
   if (next) next.disabled = busy || !d.callsMore;
   // The error block is idempotent — drop whatever is there, then insert when an error is set.
@@ -356,7 +356,7 @@ function patchCallsChrome(d) {
 }
 
 /** Fetch one reply in full — the log page ships only the first 2 KB of each. */
-async function showFullResult(seq) {
+async function showFullResult(seq: number): Promise<void> {
   var d = state.detail;
   if (!d) return;
   try {
@@ -379,7 +379,7 @@ async function showFullResult(seq) {
   } catch (e) { toast("request failed", true); }
 }
 
-async function clearCalls() {
+async function clearCalls(): Promise<void> {
   var d = state.detail;
   if (!d) return;
   // docs/32 B4: one mis-click removes the index AND the stored full replies, and nothing can
@@ -408,10 +408,10 @@ async function clearCalls() {
   } catch (e) { toast("request failed", true); }
 }
 
-async function loadPage(name, kind) {
+async function loadPage(name: string, kind: string): Promise<void> {
   var d = state.detail;
   if (!d || d.name !== name) return;
-  var kd = d[kind];
+  var kd = d[kind as "tools" | "resources" | "prompts"];
   if (!kd || kd.loading) return;
   kd.loading = true;
   kd.error = null;
@@ -442,13 +442,13 @@ async function loadPage(name, kind) {
   if (state.detail === d && (d.tab === kind || (d.tab === "run" && kind === "tools"))) renderPane();
 }
 
-function showTab(tab) {
+function showTab(tab: string): void {
   var d = state.detail;
   if (!d) return;
   d.tab = tab;
   d.editing = false;
   renderPane();
-  if (KINDS.indexOf(tab) >= 0 && !d[tab].loaded && !d[tab].loading) loadPage(d.name, tab);
+  if (KINDS.indexOf(tab) >= 0 && !d[tab as "tools" | "resources" | "prompts"].loaded && !d[tab as "tools" | "resources" | "prompts"].loading) loadPage(d.name, tab);
   // The config tab's revision list (docs/28 D1) rides along with the tab, not the poll.
   if (tab === "config") loadRevisions(d.name);
   // Run needs the tool list to build its argument form.
@@ -457,41 +457,41 @@ function showTab(tab) {
   // request for the same target on top of the one in flight.
   if (tab === "logs" && d.callsPendingPage == null) loadCalls(d.name);
 }
-function pageNext() {
-  var d = state.detail, kd = d && d[d.tab];
+function pageNext(): void {
+  var d = state.detail, kd = d && d[d.tab as "tools" | "resources" | "prompts"];
   if (!kd || !kd.nextCursor || kd.loading) return;
   kd.cursors.push(kd.nextCursor);
-  loadPage(d.name, d.tab);
+  loadPage(d!.name, d!.tab);
 }
-function pagePrev() {
-  var d = state.detail, kd = d && d[d.tab];
+function pagePrev(): void {
+  var d = state.detail, kd = d && d[d.tab as "tools" | "resources" | "prompts"];
   if (!kd || kd.cursors.length <= 1 || kd.loading) return;
   kd.cursors.pop();
-  loadPage(d.name, d.tab);
+  loadPage(d!.name, d!.tab);
 }
 
 /* --- config edit ------------------------------------------------------------------------------ */
-function startEdit() {
+function startEdit(): void {
   var d = state.detail;
   if (!d || !d.config) return;
   d.editing = true;
   d.editMode = "edit";
-  d.editType = d.config.type || "proc";
+  d.editType = d.config.type as string || "proc";
   d.editVals = null; // start from what is stored
   renderPane();
 }
 // docs/28 D1: the same form, another verb — Save parks the current def as a revision and
 // installs the new one under the SAME name. The operator's rollback lives one click away.
-function startReplace() {
+function startReplace(): void {
   var d = state.detail;
   if (!d || !d.config) return;
   d.editing = true;
   d.editMode = "replace";
-  d.editType = d.config.type || "proc";
+  d.editType = d.config.type as string || "proc";
   d.editVals = null;
   renderPane();
 }
-function cancelEdit() {
+function cancelEdit(): void {
   if (!state.detail) return;
   state.detail.editing = false;
   state.detail.editMode = null;
@@ -501,7 +501,7 @@ function cancelEdit() {
 }
 
 /* --- def revisions (docs/28 D1) ---------------------------------------------------------------- */
-async function loadRevisions(name) {
+async function loadRevisions(name: string): Promise<void> {
   var d = state.detail;
   if (!d || d.name !== name) return;
   try {
@@ -514,16 +514,16 @@ async function loadRevisions(name) {
   } catch (e) { /* handled */ }
 }
 
-async function saveReplace() {
+async function saveReplace(): Promise<void> {
   var d = state.detail;
   if (!d) return;
-  var type = d.editType || (d.config && d.config.type) || "proc";
+  var type = d.editType || (d.config && d.config.type as string) || "proc";
   var fields = readFields(type, "e-");
   var body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body);
   translatePg(type, body); // docs/30: the pg form's pieces become one url
-  var noteEl = $("e-note");
+  var noteEl = $<HTMLInputElement>("e-note");
   if (noteEl) body.note = noteEl.value;
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
   var name = d.name;
@@ -549,7 +549,7 @@ async function saveReplace() {
       // The swap stands even when the new def will not start; the panel must say so, not hide it.
       if (j.restartError) toast(name + " failed to start: " + j.restartError, true);
       if (state.detail === d) d.editVals = null;
-      KINDS.forEach(function (k) { if (state.detail) state.detail[k] = pageState(); });
+      KINDS.forEach(function (k) { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
       loadMeta(name);
       loadRevisions(name);
     }
@@ -563,7 +563,7 @@ async function saveReplace() {
   renderPane();
 }
 
-async function restoreRevision(index) {
+async function restoreRevision(index: number): Promise<void> {
   var d = state.detail;
   if (!d) return;
   if (!confirm("Restore revision " + (index + 1) + "?\n\nThe current def is parked as a new revision first — this is reversible too.")) return;
@@ -573,7 +573,7 @@ async function restoreRevision(index) {
     if (!r.ok) { toast(j.error || "restore failed", true); return; }
     toast(d.name + ": revision " + (index + 1) + " restored");
     if (j.restartError) toast(d.name + " failed to start: " + j.restartError, true);
-    KINDS.forEach(function (k) { if (state.detail) state.detail[k] = pageState(); });
+    KINDS.forEach(function (k) { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
     loadMeta(d.name);
     loadRevisions(d.name);
     await loadList();
@@ -581,7 +581,7 @@ async function restoreRevision(index) {
   } catch (e) { toast("restore request failed", true); }
 }
 
-async function deleteRevision(index) {
+async function deleteRevision(index: number): Promise<void> {
   var d = state.detail;
   if (!d) return;
   if (!confirm("Delete parked revision " + (index + 1) + "? This only drops the snapshot — the live def is untouched.")) return;
@@ -592,10 +592,10 @@ async function deleteRevision(index) {
 /** Switching type re-renders the form, so read what is in it first and carry it across — a field
  *  both types share (description, host, password) survives the switch. A masked secret carried into
  *  a type that never stored one is dropped server-side by unmaskBody, never saved as dots. */
-function changeEditType(t) {
+function changeEditType(t: string): void {
   var d = state.detail;
   if (!d) return;
-  var prev = d.editType || (d.config && d.config.type) || "proc";
+  var prev = d.editType || (d.config && d.config.type as string) || "proc";
   d.editVals = Object.assign({}, d.editVals, readFields(prev, "e-"));
   d.editType = t;
   renderPane();
@@ -607,17 +607,17 @@ function changeEditType(t) {
  * driver connection with exactly these credentials — the same adapter and ping the health probe
  * uses. Nothing is saved: this is "will these values work", asked before committing them.
  */
-async function runConnTest(p) {
+async function runConnTest(p: string): Promise<void> {
   // p is the form's id prefix: "e-" for the inline editor, "a-" for the Add sheet.
   var d = state.detail;
-  var type = p === "a-" ? $("a-type").value : (d && (d.editType || (d.config && d.config.type))) || "proc";
+  var type = p === "a-" ? $<HTMLSelectElement>("a-type").value : (d && (d.editType || (d.config && d.config.type as string))) || "proc";
   var body = Object.assign({ type: type }, readFields(type, p));
   translatePg(type, body); // docs/30: pg's split fields travel as the url the server tests
   delete body.autostart; // a boot-time switch, not a credential — irrelevant to a connection test
   // figma implies OAuth the way a checked auth box states it: no keyless test exists for either.
   var wantsOauth = type === "figma" || (type === "http" && body.auth === true);
   delete body.auth; delete body.oauthClientName; // a credential question, not a connectivity one
-  var btn = $(p + "test"), out = $(p + "test-out");
+  var btn = $<HTMLButtonElement>(p + "test"), out = $<HTMLElement>(p + "test-out");
   if (!btn || !out) return;
   // A keyless handshake cannot test an OAuth remote: its endpoint answers 401 until the flow
   // runs, and the flow needs the MCP saved first (credentials are name-keyed). Say so rather
@@ -660,10 +660,10 @@ async function runConnTest(p) {
   }
 }
 
-async function saveEdit() {
+async function saveEdit(): Promise<void> {
   var d = state.detail;
   if (!d) return;
-  var type = d.editType || (d.config && d.config.type) || "proc";
+  var type = d.editType || (d.config && d.config.type as string) || "proc";
   var fields = readFields(type, "e-");
   var body = Object.assign({ type: type }, fields);
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
@@ -693,7 +693,7 @@ async function saveEdit() {
       state.lastAction[name] = { msg: "config saved → restarted", err: false, at: now() };
       toast(name + ": config saved, restarted");
       if (state.detail === d) d.editVals = null;
-      KINDS.forEach(function (k) { if (state.detail) state.detail[k] = pageState(); });
+      KINDS.forEach(function (k) { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
       loadMeta(name);
     }
   } catch (e) {

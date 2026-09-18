@@ -29,7 +29,7 @@ interface LastAction {
 
 /** One paged tools/resources/prompts listing (detail.ts pageState; /api/mcps/:name/:kind). */
 interface KindPageState {
-  items: ApiMcpTool[] | ApiMcpResource[] | ApiMcpPrompt[];
+  items: ApiMcpItem[];
   nextCursor: string | undefined;
   total: number | undefined;
   pageSize: number;
@@ -37,6 +37,9 @@ interface KindPageState {
   loading: boolean;
   loaded: boolean;
   error: string | null;
+  /* tools-only: rows hidden from clients, and the resources master switch. */
+  disabled?: string[];
+  resourceEnabled?: boolean;
 }
 
 /** The detail pane's run tab (detail.ts openDetail): the selected tool, its last result, and
@@ -63,8 +66,15 @@ interface McpDetail {
   config: Record<string, unknown> | null;
   source?: string;
   editing: boolean;
+  /* editMode ("edit" | "replace") joins the edit state at startEdit time, not in the openDetail
+   *  literal; revisions join on the config tab's first load. */
+  editMode?: string | null;
   editType: string | null;
   editVals: Record<string, unknown> | null;
+  revisions?: { at?: string; note?: string; [key: string]: unknown }[];
+  /* /details' tunnel forwards for this MCP (the config tab chips count them); absent when the
+   *  host sends none. */
+  tunnels?: unknown[];
   oauth?: "authorized" | "needs-auth";
   oauthBusy: boolean;
   run: McpRunState;
@@ -73,17 +83,19 @@ interface McpDetail {
   callsOpen: Record<string, boolean>;
   callsPage: number;
   callsMore: boolean;
-  callsFull: Record<string, ApiMcpCallFull>;
+  /* The panel stores just the full output string per seq (the wire row is parsed on arrival). */
+  callsFull: Record<string, string>;
   callsQ: string;
   callsPendingPage: number | null;
   callsError: string;
   callsErrStatus: string;
   callsRetryTarget: number | null;
   callsRetryDir: string | null;
-  callsSwitch: { dir: string } | null;
+  /* A page switch's anchor intent (docs/32 B2): direction, keyboard drive, pager top. */
+  callsSwitch: { dir: string | null; fromKey?: boolean; pagerTop?: number } | null;
   callsRequest: number;
   callsActive: number;
-  callsTree: Record<string, unknown>;
+  callsTree: Record<string, Record<string, boolean>>;
   tools: KindPageState;
   resources: KindPageState;
   prompts: KindPageState;

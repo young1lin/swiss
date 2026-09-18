@@ -29,7 +29,7 @@ import { fmtJson } from "./logs.js";
 /** Identity for grouping moved server-side (traffic.ts folds clients itself); the panel-side
  *  copy had no callers left. */
 /** Relative "x ago"; refreshes every poll (6s) because renderTraffic re-runs while the view is open. */
-function ago(iso) {
+function ago(iso: string): string {
   var ms = Date.now() - new Date(iso).getTime();
   if (ms < 5000) return "just now";
   if (ms < 60000) return Math.round(ms / 1000) + "s ago";
@@ -46,11 +46,11 @@ function ago(iso) {
  * keep in mind while reading the rest of this section: a row has no `.body`/`.response` until it is
  * expanded (see toggleTraffic), and `state.trafficClients` is the whole ring's fold, not this page's.
  */
-async function loadTraffic() {
+async function loadTraffic(): Promise<void> {
   var q = "/api/traffic?page=" + (state.trafficPage || 0) +
     (state.trafficFilter !== "all" ? "&actions=1" : "") +
     (state.trafficClient ? "&client=" + encodeURIComponent(state.trafficClient) : "");
-  var j = await apiJson(q);
+  var j = await apiJson<ApiTrafficPage>(q);
   if (!j) return;
   state.traffic = j.entries || [];
   state.trafficClients = j.clients || [];
@@ -68,18 +68,18 @@ async function loadTraffic() {
 }
 
 /** Re-query after anything that changes which rows the server should return. */
-function trafficReload(resetPage) {
+function trafficReload(resetPage?: boolean): void {
   if (resetPage) state.trafficPage = 0;
   state.trafficSig = null;
   void loadTraffic();
 }
-function trafficPageStep(delta) {
+function trafficPageStep(delta: number): void {
   var next = (state.trafficPage || 0) + delta;
   if (next < 0 || (delta > 0 && !state.trafficMore)) return;
   state.trafficPage = next;
   trafficReload(false);
 }
-function trafficRow(e) {
+function trafficRow(e: ApiTrafficRow): string {
   var meta = (e.clientName ? e.clientName + (e.clientVersion ? " " + e.clientVersion : "") : "—") +
     "  ·  /" + e.mcp + "  ·  " + (e.ok ? "ok" : "err") + "  ·  " + e.ms + "ms  ·  " + whenLabel(e.at);
   // Collapsed: method + a one-line params preview + meta. Expanded (chevron): the raw request JSON.
@@ -98,7 +98,7 @@ function trafficRow(e) {
   "</div>";
 }
 
-function trafficBodyHtml(e) {
+function trafficBodyHtml(e: { seq: number }): string {
   var full = state.trafficFull[e.seq];
   if (!full) return '<div class="note"><span class="spin"></span> Loading…</div>';
   if (full.gone) return '<div class="note">This interaction has rolled out of the buffer.</div>';
@@ -109,22 +109,22 @@ function trafficBodyHtml(e) {
 }
 
 /** Fetch one interaction's raw request and reply, then paint it into the already-open row. */
-async function loadTrafficBody(seq) {
+async function loadTrafficBody(seq: number): Promise<void> {
   if (state.trafficFull[seq]) return;
   var j = await apiJson("/api/traffic/" + encodeURIComponent(seq));
   // A 404 means the ring rolled past it while the row sat there; say so rather than spin forever.
-  state.trafficFull[seq] = j || { gone: true };
+  state.trafficFull[seq] = j || { gone: true } as ApiTrafficFull;
   var node = document.querySelector('#pane .call[data-tseq="' + seq + '"] .call-body');
   if (node) node.innerHTML = trafficBodyHtml({ seq: seq });
 }
 /** Expand/collapse one row's raw JSON in place — a poll must not close what you just opened. */
-function toggleTraffic(seq) {
+function toggleTraffic(seq: number): void {
   state.trafficOpen[seq] = !state.trafficOpen[seq];
   var node = document.querySelector('#pane .call[data-tseq="' + seq + '"]');
   if (node) node.className = "call" + (state.trafficOpen[seq] ? " open" : "");
   if (state.trafficOpen[seq]) void loadTrafficBody(seq);
 }
-function renderTraffic() {
+function renderTraffic(): void {
   // `entries` is one page; `clients`, `total` and `all` describe the whole ring (server-computed).
   var entries = state.traffic || [];
   var clients = state.trafficClients || [];
@@ -207,22 +207,22 @@ function renderTraffic() {
   // Every control below re-queries rather than re-filtering in place: the server owns the filter now,
   // so a page of "actions only for claude-code" can only come from asking for exactly that.
   $("trFilter").querySelectorAll("button").forEach(function (b) {
-    b.onclick = function () { state.trafficFilter = b.dataset.filter; trafficReload(true); };
+    b.onclick = function () { state.trafficFilter = b.dataset.filter as "actions" | "all"; trafficReload(true); };
   });
-  $("pane").querySelectorAll("[data-ckey]").forEach(function (row) {
+  $("pane").querySelectorAll<HTMLElement>("[data-ckey]").forEach(function (row) {
     row.onclick = function () {
-      state.trafficClient = state.trafficClient === row.dataset.ckey ? null : row.dataset.ckey;
+      state.trafficClient = state.trafficClient === row.dataset.ckey ? null : row.dataset.ckey as string;
       trafficReload(true);
     };
     row.onkeydown = function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); row.click(); } };
   });
   var tp = $("trPrev"); if (tp) tp.onclick = function () { trafficPageStep(-1); };
   var tn = $("trNext"); if (tn) tn.onclick = function () { trafficPageStep(1); };
-  $("pane").querySelectorAll("[data-tog]").forEach(function (s) {
-    s.onclick = function () { toggleTraffic(s.dataset.tog); };
-    s.onkeydown = function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleTraffic(s.dataset.tog); } };
+  $("pane").querySelectorAll<HTMLElement>("[data-tog]").forEach(function (s) {
+    s.onclick = function () { toggleTraffic(s.dataset.tog as unknown as number); };
+    s.onkeydown = function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleTraffic(s.dataset.tog as unknown as number); } };
   });
-  var cclr = $("pane").querySelector("[data-cclr]");
+  var cclr = $("pane").querySelector<HTMLElement>("[data-cclr]");
   if (cclr) cclr.onclick = function (ev) { ev.stopPropagation(); state.trafficClient = null; trafficReload(true); };
   var clr = $("trClear");
   if (clr) clr.onclick = async function () {

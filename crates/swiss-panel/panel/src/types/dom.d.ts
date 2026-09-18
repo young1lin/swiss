@@ -162,6 +162,27 @@ interface GroupCfg<Row extends GroupedRow> {
   filtered: boolean;
 }
 
+/* connect.ts's document-click guard probes e.target.closest; lib.dom types a click target
+ *  as bare EventTarget, which declares no closest, and D9 forbids the parenthesised cast
+ *  an in-place fix would need. Optional so concrete elements keep their required method. */
+interface EventTarget {
+  closest?: (selector: string) => Element | null;
+}
+
+
+/* A JSON-tree node (logs.ts buildJsonTree/jtNode): an object whose every value is more
+ *  tree material - arrays arrive the same way, narrowed by Array.isArray at the branch.
+ *  The index signature is what lets the tree index val[k] with no parenthesised cast. */
+interface JtBox {
+  [key: string]: unknown;
+}
+
+/* detail.ts openDetail builds the detail object as one literal and then stamps the three
+ *  kind pages onto it (KINDS.forEach); this is the literal's shape - everything but the
+ *  kind keys, plus the index the forEach writes through. Cast back to McpDetail at the
+ *  state assignment, once all three are in. */
+type FreshDetail = Omit<McpDetail, "tools" | "resources" | "prompts"> & { [key: string]: unknown };
+
 /* The search box's oninput reads this.value in place (main.ts). The DOM declares oninput
  *  on GlobalEventHandlers with a this-param that has no value, and every in-place fix is a
  *  token change docs/36 D9 forbids; this override drops the this-param so the handler's

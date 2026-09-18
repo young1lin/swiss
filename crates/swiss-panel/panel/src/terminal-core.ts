@@ -28,12 +28,12 @@ var PTY_MAX = 1000;   // the bounds swiss-host enforces on both axes — a 0-col
                       // undefined behaviour on the far side, so the panel clamps BEFORE
                       // the gateway has to refuse (docs/14 §8)
 
-export function targetsUrl() { return "/api/terminal/targets"; }
-export function sessionsUrl() { return "/api/terminal/sessions"; }
-export function sessionUrl(id) { return sessionsUrl() + "/" + encodeURIComponent(id); }
-export function ticketUrl(id) { return sessionUrl(id) + "/ticket"; }
-export function resizeUrl(id) { return sessionUrl(id) + "/resize"; }
-export function streamUrl(id, ticket) {
+export function targetsUrl(): string { return "/api/terminal/targets"; }
+export function sessionsUrl(): string { return "/api/terminal/sessions"; }
+export function sessionUrl(id: string): string { return sessionsUrl() + "/" + encodeURIComponent(id); }
+export function ticketUrl(id: string): string { return sessionUrl(id) + "/ticket"; }
+export function resizeUrl(id: string): string { return sessionUrl(id) + "/resize"; }
+export function streamUrl(id: string, ticket: string): string {
   /* Absolute, always: the WebSocket constructor rejects a relative URL with a SyntaxError
      before any connection is attempted. The page origin decides ws/wss; outside a browser
      (node tests) there is no location and the bare path comes back, which keeps this pure. */
@@ -47,14 +47,14 @@ export function streamUrl(id, ticket) {
 /** Reconnect pacing after a socket drops. Quick first retry (a lid-close round trip is
  *  short), then doubling to a cap — inside the server's 60 s grace the socket keeps
  *  trying without hammering the mint route. attempt is 0-based. */
-export function nextReconnectDelay(attempt) {
+export function nextReconnectDelay(attempt: number): number {
   if (!(attempt >= 0)) attempt = 0;
   return Math.min(500 * Math.pow(2, attempt), 5000);
 }
 
 /** What the status line says for a server text frame. null = not a control frame we
  *  narrate (binary is the terminal's own bytes; they need no caption). */
-export function frameStatus(frame) {
+export function frameStatus(frame: { t?: string; message?: unknown; code?: number | null } | null | undefined): string | null {
   if (!frame || typeof frame !== "object") return null;
   if (frame.t === "stalled") return "stalled — the client is not accepting output";
   if (frame.t === "error") return frame.message ? String(frame.message) : "closed";
@@ -67,14 +67,14 @@ export function frameStatus(frame) {
 /** True while the session is still in the gateway's listing — the listing is the truth:
  *  a session that left it is past its grace window, timed out, or was deleted, and no
  *  ticket will ever bring it back (docs/14 §6.7). */
-export function sessionAlive(listing, id) {
+export function sessionAlive(listing: unknown, id: string): boolean {
   return Array.isArray(listing) && listing.some(function (s) { return s && s.id === id; });
 }
 
 /** Clamp the fit addon's proposal to the PTY bounds before it is SENT, so an honest
  *  resize never becomes a 400. Unknown/absent values fall back to the classics. */
-export function clampGeometry(cols, rows) {
-  function axis(v, fallback) {
+export function clampGeometry(cols: unknown, rows: unknown): { cols: number; rows: number } {
+  function axis(v: unknown, fallback: number): number {
     var n = Math.round(Number(v));
     if (!isFinite(n)) n = fallback;
     return Math.min(Math.max(n, PTY_MIN), PTY_MAX);
@@ -84,7 +84,7 @@ export function clampGeometry(cols, rows) {
 
 /** The resize control frame as the wire wants it: one small JSON object, the only text
  *  the client is allowed to mean anything with (docs/14 §8). */
-export function resizeFrame(cols, rows) {
+export function resizeFrame(cols: unknown, rows: unknown): string {
   var g = clampGeometry(cols, rows);
   return JSON.stringify({ t: "resize", cols: g.cols, rows: g.rows });
 }
@@ -94,14 +94,14 @@ export function resizeFrame(cols, rows) {
  *  with the reason the gateway sent — "the tunnels plugin is disabled", never a bare
  *  empty list (docs/14 §4). Returns { rows, note } — note is the one-line story under
  *  the picker when there is nothing remote to pick. */
-export function targetRows(reply) {
-  var rows = [];
+export function targetRows(reply: ApiTerminalTargets | null | undefined): { rows: { id: string; label: string; state?: string }[]; note: string; reason: string; localOff: boolean } {
+  var rows: { id: string; label: string; state?: string }[] = [];
   var note = "";
-  var r = reply || {};
+  var r = reply || {} as ApiTerminalTargets;
   if (r.local && r.local.enabled) {
     rows.push({ id: "local", label: "local · " + localShellLabel(r.local) });
   }
-  var remote = r.remote || {};
+  var remote = r.remote || {} as ApiTerminalTargets["remote"];
   var targets = Array.isArray(remote.targets) ? remote.targets : [];
   targets.forEach(function (t) {
     if (!t || !t.id) return;
@@ -129,8 +129,8 @@ export function targetRows(reply) {
  *  knows it ("PowerShell 7"); anything else falls back to the program's file name — a
  *  full path in a dropdown is noise, not a name. Windows paths compare
  *  case-insensitively and either slash counts, because a config value may carry both. */
-export function localShellLabel(local) {
-  var l = local || {};
+export function localShellLabel(local: { shell?: unknown; shells?: unknown } | null | undefined): string {
+  var l = local || {} as { shell?: unknown; shells?: unknown };
   var program = String(l.shell || "");
   var shells = Array.isArray(l.shells) ? l.shells : [];
   for (var i = 0; i < shells.length; i++) {
@@ -142,12 +142,12 @@ export function localShellLabel(local) {
   return baseName(program) || "shell";
 }
 
-function sameProgram(a, b) {
+function sameProgram(a: string, b: string): boolean {
   if (!b) return false;
   return a.split(/[\\/]/).join("/").toLowerCase() === b.split(/[\\/]/).join("/").toLowerCase();
 }
 
-function baseName(p) {
+function baseName(p: unknown): string {
   var parts = String(p || "").split(/[\\/]/);
   return parts[parts.length - 1] || "";
 }
@@ -156,9 +156,9 @@ function baseName(p) {
  *  so a save cannot silently drop a limit someone else set (docs/15 §2.1). An empty
  *  shell string is omitted rather than sent as "" — that is how "the platform default"
  *  stays expressible. */
-export function withLocalConfig(config, enabled, shell) {
-  var out = Object.assign({}, config || {});
-  var local = { enabled: !!enabled };
+export function withLocalConfig(config: Record<string, unknown> | null | undefined, enabled: unknown, shell: unknown): Record<string, unknown> {
+  var out: Record<string, unknown> = Object.assign({}, config || {});
+  var local: { enabled: boolean; shell?: string } = { enabled: !!enabled };
   var s = String(shell == null ? "" : shell).trim();
   if (s) local.shell = s;
   out.local = local;
@@ -168,14 +168,14 @@ export function withLocalConfig(config, enabled, shell) {
 /** The PUT body for /api/plugins/terminal/config: the config above plus the revision the
  *  GET carried, so a save that raced another panel loses loudly (409) instead of
  *  overwriting it. */
-export function configPutBody(config, revision, enabled, shell) {
+export function configPutBody(config: Record<string, unknown> | null | undefined, revision: unknown, enabled: unknown, shell: unknown): { config: Record<string, unknown>; revision: unknown } {
   return { config: withLocalConfig(config, enabled, shell), revision: revision };
 }
 
 /** The picker's label for a session tab: short, monospace-friendly, stable. The listing
  *  rows carry the connection's label ("jdoe-demo"); without it a remote tab would show
  *  the raw connection UUID, which is noise, not a name. */
-export function sessionLabel(session) {
+export function sessionLabel(session: ApiTerminalSessionRow | null | undefined): string {
   if (!session) return "?";
   if (session.label) return String(session.label);
   var t = session.target || "?";
@@ -190,7 +190,7 @@ export function sessionLabel(session) {
  *  deciding on those would fire every action twice. Ctrl+C is the load-bearing
  *  asymmetry — with a selection it copies (and must NOT reach the shell as ^C), without
  *  one it stays the interrupt a flooding program is counting on. */
-export function keyAction(ev, hasSelection) {
+export function keyAction(ev: { type?: string; key?: string; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean; metaKey?: boolean } | null | undefined, hasSelection: boolean): string | null {
   if (!ev || ev.type !== "keydown") return null;
   var key = String(ev.key || "").toLowerCase();
   /* Alt-combos the terminal page owns while a terminal holds focus (Windows Terminal's
@@ -237,7 +237,7 @@ export var FONT_MAX = 32;
 /** The next font size for one zoom action, clamped: "zoom-in" | "zoom-out" | "zoom-reset";
  *  anything else — or a size that is not a number — comes back as the default, so a
  *  corrupt stored value can never wedge the terminal at 0px. */
-export function nextFontSize(current, action) {
+export function nextFontSize(current: unknown, action: string): number {
   var size = readFontSize(current);
   if (action === "zoom-in") return Math.min(FONT_MAX, size + 1);
   if (action === "zoom-out") return Math.max(FONT_MIN, size - 1);
@@ -246,7 +246,7 @@ export function nextFontSize(current, action) {
 
 /** A stored font size back into a usable one: an integer inside the bounds, or the
  *  default. localStorage hands back strings, and older panels stored nothing. */
-export function readFontSize(raw) {
+export function readFontSize(raw: unknown): number {
   var n = Math.round(Number(raw));
   if (!isFinite(n) || n < FONT_MIN || n > FONT_MAX) return FONT_DEFAULT;
   return n;
@@ -254,7 +254,7 @@ export function readFontSize(raw) {
 
 /** What a Ctrl+wheel over the terminal means: "zoom-in" scrolling up, "zoom-out"
  *  scrolling down, null for a plain scroll (which stays xterm's scrollback). */
-export function wheelAction(ev) {
+export function wheelAction(ev: { ctrlKey?: boolean; deltaY?: number } | null | undefined): string | null {
   if (!ev || !ev.ctrlKey || !ev.deltaY) return null;
   return ev.deltaY < 0 ? "zoom-in" : "zoom-out";
 }
@@ -263,7 +263,7 @@ export function wheelAction(ev) {
  *  away, and Shift+right-click keeps the browser's context menu as the escape hatch. Only
  *  button === 2 is judged — the wiring subscribes to contextmenu, whose button is the one
  *  that opened it. */
-export function mouseAction(ev, hasSelection) {
+export function mouseAction(ev: { button?: number; shiftKey?: boolean } | null | undefined, hasSelection: boolean): string | null {
   if (!ev || ev.button !== 2) return null;
   if (ev.shiftKey) return "menu";
   return hasSelection ? "copy" : "paste";
@@ -274,7 +274,7 @@ export function mouseAction(ev, hasSelection) {
  *  opened on. An EMPTY shell title is the shell resetting its title, not a label —
  *  fall through. Seven of nine explored reference terminals converged on exactly
  *  this order (docs/22 consensus 1). */
-export function tabLabel(session, shellTitle, customTitle) {
+export function tabLabel(session: ApiTerminalSessionRow | null | undefined, shellTitle: unknown, customTitle: unknown): string {
   var custom = customTitle == null ? "" : String(customTitle).trim();
   if (custom) return custom;
   var shell = shellTitle == null ? "" : String(shellTitle).trim();
@@ -286,7 +286,7 @@ export function tabLabel(session, shellTitle, customTitle) {
  *  within one line of the base means the user is riding the bottom. Unknown values
  *  count as pinned — a wrongly-pinned terminal merely scrolls; a wrongly-unpinned
  *  one yanks the user's scrollback, which is the failure this exists to prevent. */
-export function isPinned(viewportY, baseY) {
+export function isPinned(viewportY: unknown, baseY: unknown): boolean {
   var v = Number(viewportY), b = Number(baseY);
   if (!isFinite(v) || !isFinite(b)) return true;
   return v >= b - 1;
@@ -296,7 +296,7 @@ export function isPinned(viewportY, baseY) {
  *  normal paste. CRLF and lone CR both count as one. One trailing newline is stripped
  *  first: pasting "ls\n" is how every paste ends and is not a second command. The
  *  caller gates on the alternate screen (vim) where multiline is the norm. */
-export function embeddedNewlines(text) {
+export function embeddedNewlines(text: unknown): number {
   var s = String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\n$/, "");
   var n = 0;
   for (var i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++;
@@ -306,18 +306,18 @@ export function embeddedNewlines(text) {
 /** A stored bell mode back into a usable one: "badge" (default — a bell must be
  *  VISIBLE by default, the repo's defaults-on rule), "badge-sound", or "off". */
 export var BELL_BADGE = "badge", BELL_BADGE_SOUND = "badge-sound", BELL_OFF = "off";
-export function readBellMode(raw) {
+export function readBellMode(raw: unknown): string {
   return raw === BELL_BADGE_SOUND || raw === BELL_OFF ? raw : BELL_BADGE;
 }
 
 /** Copy-on-select preference. Defaults ON (iTerm2's stance; the ✂ overlay makes the
  *  copy visible so it is not a surprise) — "off" is the escape hatch. */
-export function readCopyOnSelect(raw) {
+export function readCopyOnSelect(raw: unknown): boolean {
   return raw === "off" ? false : true;
 }
 
 /** Trailing whitespace trimmed from a selection before it hits the clipboard: spaces
  *  and tabs at line ends, plus the final newline a rectangular drag usually grabs. */
-export function trimSelection(text) {
+export function trimSelection(text: unknown): string {
   return String(text == null ? "" : text).replace(/[ \t]+(?=\n)/g, "").replace(/\s+$/, "");
 }
