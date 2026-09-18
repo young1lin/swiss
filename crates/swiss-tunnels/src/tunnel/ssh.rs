@@ -619,7 +619,7 @@ impl SshConnection {
         Ok(())
     }
 
-    // --- non-interactive exec and SFTP (docs/32 §11, §20) ---------------------------------------
+    // --- non-interactive exec and SFTP (docs/34 §11, §20) ---------------------------------------
 
     /// The live handle clone every operation below starts with: connected-state check and
     /// Arc bump in one place, identical to open_channel/open_shell above.
@@ -643,7 +643,7 @@ impl SshConnection {
     /// Run one non-interactive command over a session channel, streaming stdout/stderr
     /// into `events` AS THEY ARRIVE (never read-to-end), and return the exit status.
     ///
-    /// Cancellation is cooperative and real (docs/32 §19): on cancel the channel is
+    /// Cancellation is cooperative and real (docs/34 §19): on cancel the channel is
     /// closed from this side, a bounded drain collects whatever the far side flushes,
     /// and the operation resolves as canceled — no future-dropping pretence. The
     /// `hold` lease travels with this future, so the connection reference lives
@@ -771,7 +771,7 @@ impl SshConnection {
         result
     }
 
-    /// Open one SFTP session over this connection (docs/32 §20): a session channel, the
+    /// Open one SFTP session over this connection (docs/34 §20): a session channel, the
     /// "sftp" subsystem request, then russh-sftp's handshake over the channel stream.
     /// One SFTP session per operation keeps lifetimes obvious; the connection itself is
     /// still shared and refcounted underneath.
@@ -1160,7 +1160,7 @@ fn is_already_exists(err: &russh_sftp::client::error::Error) -> bool {
 }
 
 /// One streaming remote read over SFTP. Owns the file handle, the SFTP session and the
-/// connection lease: all three live exactly as long as the reader (docs/32 §29).
+/// connection lease: all three live exactly as long as the reader (docs/34 §29).
 struct SftpRead {
     file: russh_sftp::client::fs::File,
     _session: Arc<russh_sftp::client::SftpSession>,

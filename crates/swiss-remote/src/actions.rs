@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The three remote capabilities (docs/32): remote.exec, remote.sync, remote.pull.
+//! The three remote capabilities (docs/34): remote.exec, remote.sync, remote.pull.
 //! One file because they share the resolve-stream-report skeleton, and none of them
 //! is large enough alone to deserve a module of plumbing.
 //!
@@ -175,7 +175,7 @@ fn object_of(input: &Value) -> Result<Map<String, Value>, ActionError> {
 
 // --- remote.exec --------------------------------------------------------------------------
 
-/// Run one command on a target, streaming output (docs/32). THE action of this
+/// Run one command on a target, streaming output (docs/34). THE action of this
 /// plugin: argv arrives as an array and crosses the transport as argv - the quoting
 /// into a POSIX command string happens once, inside the tunnels crate, through its
 /// tested quote_posix. Nothing here ever builds a shell command itself.
@@ -433,7 +433,7 @@ impl Action for RemoteExecAction {
 
 const SYNC_FIELDS: [&str; 5] = ["target", "source", "exclude", "verbose", "to"];
 
-/// Upload a local tree to the target workspace (docs/32 §20). One-way, no deletes:
+/// Upload a local tree to the target workspace (docs/34 §20). One-way, no deletes:
 /// changed files (by size) stream up; up-to-date files are skipped; the summary
 /// line is the last thing the run prints.
 pub struct RemoteSyncAction {
@@ -605,7 +605,7 @@ impl Action for RemoteSyncAction {
 
 const PULL_FIELDS: [&str; 4] = ["target", "remote", "to", "verbose"];
 
-/// Download a file or a whole directory tree from the target workspace (docs/32
+/// Download a file or a whole directory tree from the target workspace (docs/34
 /// §20): the remote path is statted first - a file streams chunk by chunk into a
 /// local path (default: the same relative path under the current directory), a
 /// directory walks down recursively. The remote path is workspace-relative;
@@ -1167,7 +1167,7 @@ mod tests {
             .validate_input(&json!({ "target": "dev", "argv": ["make"], "cwd": "build" }))
             .is_ok());
         // An absolute cwd is an explicit path the caller typed in full - ssh-level
-        // trust; only `..` is refused in either form (docs/32 superset rule).
+        // trust; only `..` is refused in either form (docs/34 superset rule).
         assert!(action
             .validate_input(
                 &json!({ "target": "dev", "argv": ["make"], "cwd": "/home/dev/app" })

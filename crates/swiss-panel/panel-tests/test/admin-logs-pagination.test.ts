@@ -147,7 +147,7 @@ function fakeDetail(name = "redis") {
     // docs/32 B1 fields, seeded the way openDetail builds them — the generation counter must
     // start at a number, or every response would look stale to it.
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
-    callsRetryDir: null, callsSwitch: null, callsRequest: 0,
+    callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
   } as any;
 }
 
@@ -280,6 +280,29 @@ describe("docs/32 B3: history pages hold still, errors are honest", () => {
     expect(requests.length, "no poll while a switch is mid-transaction").toBe(0);
   });
 
+  it("the poll never races a foreground load in flight — a stolen generation would swallow the failure", async () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: PAGE0.slice(0, 3), more: false }); // single page, no pager
+    detail.showTab("logs"); // the re-entry foreground load parks, unresolved
+    expect(requests.filter((r) => r.url.includes("/calls?")).length).toBe(1);
+    const mcps = await import("../../src/admin_assets/js/views/mcps.js");
+    const list = { mcps: [{ ...ROW }], groups: ["default"] };
+    const p = mcps.poll();
+    await ok(list, 1); // the list half (parked behind the re-entry load) resolves; the calls half must not have fired at all
+    await p;
+    expect(
+      requests.filter((r) => r.url.includes("/calls?")).length,
+      "no poll load while a foreground load is in flight",
+    ).toBe(1);
+    await net(0); // the foreground load dies — its failure is still the newest word
+    expect(d.callsError).toBe("Could not load calls.");
+    expect(d.calls, "the committed rows stay").toEqual(PAGE0.slice(0, 3));
+    expect(
+      byId.get("callsRegion")!.inserted.filter(([, html]) => html.includes("clErr")).length,
+      "the strip lands — the poll never stole the generation",
+    ).toBe(1);
+  });
+
   it("a poll failure is silent: rows stay, no error block appears", async () => {
     const d = fakeDetail();
     mountLogs(d);
@@ -316,7 +339,7 @@ describe("docs/32 B3: history pages hold still, errors are honest", () => {
     expect(d.callsPage).toBe(0);
     expect(d.calls).toEqual(PAGE0);
     expect(d.callsError).toBe("Could not load calls.");
-    expect(byId.get("clPager")!.inserted.length).toBe(1);
+    expect(byId.get("callsRegion")!.inserted.length).toBe(1);
   });
 
   it("a new needle supersedes a pending switch: the debounce clears it and returns to page 0", async () => {
@@ -416,9 +439,9 @@ describe("docs/32 B1: a page switch is a transaction", () => {
     expect(d.callsError).toBe("Could not load calls.");
     expect(d.callsRetryTarget).toBe(1);
     expect(tb.paints.length, "the failure also patches in place").toBe(1);
-    const inserts = byId.get("clPager")!.inserted;
+    const inserts = byId.get("callsRegion")!.inserted;
     expect(inserts.length).toBe(1);
-    expect(inserts[0][0]).toBe("afterend");
+    expect(inserts[0][0]).toBe("beforeend");
     expect(inserts[0][1]).toContain("Could not load calls.");
     expect(inserts[0][1]).toContain(">Retry</button>");
     expect(byId.get("clStatus")!.innerHTML).toContain("Page 1");
@@ -541,5 +564,80 @@ describe("docs/32 B4: the toolbar ellipsis, Clear logs behind a confirm", () => 
     expect(d.callsPendingPage).toBeNull();
     expect(byId.get("toast")!.textContent).toBe("Call log cleared");
     expect(tb.innerHTML).toContain("No calls yet");
+  });
+});
+
+describe("docs/32 review fixes: the clear transaction and the error strip's edges", () => {
+  /** The popup menu popupMenu appends to <body> — its last child. */
+  function lastMenu() {
+    const body = (globalThis as unknown as { document: typeof doc }).document.body;
+    return body.children[body.children.length - 1];
+  }
+
+  it("a response parked before Clear lands after the DELETE and must not repaint the cleared log", async () => {
+    const d = fakeDetail();
+    const tb = mountLogs(d);
+    clickOlder(); // page-1 switch in flight — its GET parks first
+    confirmAnswer = true;
+    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
+    await new Promise((r) => setTimeout(r, 0));
+    // parked order: the switch's GET first, the DELETE behind it — the DELETE answers now.
+    await ok({}, 1);
+    expect(d.calls).toEqual([]);
+    expect(tb.innerHTML).toContain("No calls yet");
+    await ok({ calls: PAGE1, more: true, stderr: "" }, 0); // the pre-clear switch lands LAST
+    expect(d.calls, "a stale answer never repaints a cleared log").toEqual([]);
+    expect(d.callsPage).toBe(0);
+    expect(d.callsPendingPage).toBeNull();
+    expect(tb.innerHTML).toContain("No calls yet");
+  });
+
+  it("a foreground failure with committed rows and no pager (single page) still shows the strip in the region", async () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: PAGE0.slice(0, 3), more: false });
+    expect(byId.get("clPager")).toBeUndefined(); // a single-page log paints no pager
+    detail.showTab("logs"); // re-entry reload — a foreground load over committed rows
+    expect(requests.length).toBe(1);
+    await http({ error: "boom" }, 0, 500);
+    expect(d.callsError).toBe("Could not load calls.");
+    expect(d.calls, "the committed rows stay").toEqual(PAGE0.slice(0, 3));
+    const inserts = byId.get("callsRegion")!.inserted;
+    expect(inserts.filter(([, html]) => html.includes("clErr")).length, "the strip lands inside the region").toBe(1);
+    expect(inserts[inserts.length - 1][1]).toContain(">Retry</button>");
+  });
+
+  it("the patch-wired Retry honors the keyboard contract too: focus returns on commit", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    clickOlder();
+    await http({ error: "boom" }, 0, 500);
+    byId.get("clRetry")!.onclick!({ detail: 0 }); // Enter on the focused Retry
+    await ok({ calls: PAGE1, more: true, stderr: "" }, 0);
+    expect(byId.get("clNext")!.focused, "a keyboard Retry gets its focus back").toBe(1);
+    expect(byId.get("clPrev")!.focused).toBe(0);
+  });
+
+  it("two consecutive failures never stack a second error strip", async () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    clickOlder();
+    await http({ error: "boom" }, 0, 500);
+    byId.get("clRetry")!.onclick!({ detail: 1 });
+    await http({ error: "boom" }, 0, 500);
+    const strips = byId.get("callsRegion")!.inserted.filter(([, html]) => html.includes('id="clErr"'));
+    expect(strips.length, "one strip per failure, never stacked").toBe(2);
+    expect(byId.get("callsRegion")!.inserted.length).toBe(2);
+  });
+
+  it("the ellipsis toggles its menu closed like the house overflow button", () => {
+    const d = fakeDetail();
+    mountLogs(d);
+    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    expect(util.state.menuOpen).toBe(true);
+    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    expect(util.state.menuOpen, "a second click dismisses, not reopens").toBe(false);
+    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    expect(util.state.menuOpen, "a third click opens again").toBe(true);
   });
 });

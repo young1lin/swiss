@@ -99,7 +99,7 @@ pub trait SshLike: Send + Sync {
         hold: Box<dyn Send + 'static>,
     ) -> ConnFuture<'_, Result<(), TunnelError>>;
     /// Run one non-interactive command to completion over a session channel
-    /// (docs/32 §11), streaming stdout/stderr into `events` as they arrive and
+    /// (docs/34 §11), streaming stdout/stderr into `events` as they arrive and
     /// honouring `cancel` by closing the channel. `hold` is the operation's
     /// reference on this client, owned by the returned future.
     fn exec(
@@ -177,7 +177,7 @@ impl SshLike for SshConnection {
         Box::pin(async move { SshConnection::open_shell(self, size, endpoint, hold).await })
     }
     /// Run one non-interactive command to completion over a session channel
-    /// (docs/32 §11), streaming stdout/stderr into `events` as they arrive and
+    /// (docs/34 §11), streaming stdout/stderr into `events` as they arrive and
     /// honouring `cancel` by closing the channel. `hold` is the operation's
     /// reference on this client, owned by the returned future.
     fn exec(
@@ -238,7 +238,7 @@ impl SshLike for SshConnection {
 }
 
 /// One operation's reference on an SSH client, released when the operation ends
-/// (docs/32 §10).
+/// (docs/34 §10).
 ///
 /// Born as the shell session's guard (docs/14 T2) and generalized when remote exec and
 /// SFTP needed the same discipline: whatever the operation — a rule, a PTY, an exec, a
@@ -755,7 +755,7 @@ impl TunnelManager {
     }
 
     /// Dial (or reuse) one connection and hand back the client TOGETHER with its
-    /// operation-scoped lease (docs/32 §10): the remote capability's entry point, used
+    /// operation-scoped lease (docs/34 §10): the remote capability's entry point, used
     /// by exec and by every SFTP operation. The caller moves the lease into whatever
     /// owns the operation — the exec future or the file reader/writer — so the reference
     /// lives exactly as long as the work does.
@@ -1807,7 +1807,7 @@ mod tests {
         ended: AtomicU32,
         /// Interactive shells opened on this client (docs/14 T2).
         shells: AtomicU32,
-        /// Non-interactive execs run on this client (docs/32).
+        /// Non-interactive execs run on this client (docs/34).
         execs: AtomicU32,
         /// The exit status the next fake exec reports.
         exec_exit: AtomicI32,
@@ -4049,7 +4049,7 @@ mod tests {
         assert_eq!(session.next_event().await, Some(PtyEvent::Data(vec![0x03])));
     }
 
-    // --- remote execution leases + provider (docs/32) --------------------------------------
+    // --- remote execution leases + provider (docs/34) --------------------------------------
 
     use swiss_host::services::action::CancelSource;
     use swiss_host::services::remote::{

@@ -59,7 +59,7 @@ use swiss_core::util::now_ms;
 /// many recent outcomes, each with its already-capped output).
 const FINISHED_RING: usize = 32;
 
-/// The live-output ceiling while a run is active (docs/32 §17). 256 KiB is a few hundred
+/// The live-output ceiling while a run is active (docs/34 §17). 256 KiB is a few hundred
 /// build lines either side of "now" — enough for a follower to see progress, small
 /// enough that a dozen concurrent runs cost single-digit megabytes worst case.
 pub const MAX_LIVE_OUTPUT_BYTES: usize = 256 * 1024;
@@ -629,7 +629,7 @@ impl RunCoordinator {
 
     /// Bookkeeping when a run reaches its terminal state: leave the active set, enter the
     /// bounded finished ring, dispatch whatever was waiting for the freed slot.
-    /// One bounded read of a run's live output (docs/32 §17): the text from `after`
+    /// One bounded read of a run's live output (docs/34 §17): the text from `after`
     /// onward, the cursor to poll with next, and the run's state so a follower can stop
     /// polling the moment it goes terminal. None when the id is unknown — a run whose
     /// history has rotated out of the finished ring is gone, not empty.
@@ -925,7 +925,7 @@ async fn drive_action(
         );
     };
     let deadline = tokio::time::Instant::now() + Duration::from_millis(request.timeout_ms.max(1));
-    // The single execution seam (docs/32 §16): every action runs through
+    // The single execution seam (docs/34 §16): every action runs through
     // execute_with_context; actions that predate it simply never touch the sink.
     let ctx = ActionContext {
         cancel: cancel.handle(),
@@ -1319,7 +1319,7 @@ mod tests {
         assert_eq!(next.done.await.expect("view").state, RunState::Succeeded);
     }
 
-    // --- live output (docs/32 §17) -------------------------------------------------------
+    // --- live output (docs/34 §17) -------------------------------------------------------
 
     /// An action that appends to the live sink in bursts and finishes: the
     /// streaming-aware seam without any process or network in the way.

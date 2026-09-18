@@ -1,4 +1,4 @@
-# 32 - Agent-Friendly Remote Execution (SSH Gateway)
+# 34 - Agent-Friendly Remote Execution (SSH Gateway)
 
 Phase R1-R5, implemented 2026-10. The goal: let an AI agent (or a human at a terminal) run
 commands, upload source trees, and pull artifacts back on the machines the Tunnels plugin

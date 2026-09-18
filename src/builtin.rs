@@ -339,7 +339,7 @@ struct TunnelsInstance {
     /// The interactive-shell provider this instance registers (docs/14 T2). One per
     /// INSTANCE: a stopped instance drains ITS sessions, never the next one's.
     shells: Arc<swiss_tunnels::tunnel::shell::TunnelShells>,
-    /// The remote-execution transport this instance registers (docs/32 §9). Same
+    /// The remote-execution transport this instance registers (docs/34 §9). Same
     /// manager, same connection inventory, same refcounting — a remote exec shares the
     /// client a tunnel or a terminal already holds.
     remote: Arc<swiss_tunnels::tunnel::remote::TunnelRemote>,
@@ -404,7 +404,7 @@ impl PluginInstance for TunnelsInstance {
         // window, and the warning names how many were closed over. The window is short on
         // purpose — an attached terminal does not hand itself back (docs/14 §4).
         //
-        // The remote transport withdraws FIRST (docs/32 §28): it must reject new
+        // The remote transport withdraws FIRST (docs/34 §28): it must reject new
         // operations before anything closes, but it does NOT get a drain window — a
         // remote exec is a RUN with its own deadline and its own cancel path, and the
         // connections closing underneath turn any survivor into an honestly-failed run.

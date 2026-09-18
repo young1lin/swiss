@@ -68,7 +68,7 @@ pub enum TestAuth {
     RejectAll,
 }
 
-/// What the fake exec server answers one exec request with (docs/32 §11):
+/// What the fake exec server answers one exec request with (docs/34 §11):
 /// channel success, stdout, stderr, then — when `exit` is set — the exit status
 /// and channel close. A None `exit` is a WEDGED command: the handler returns, the
 /// channel stays open, and the client must cancel or hit its deadline. (The stall
@@ -86,7 +86,7 @@ pub struct ExecScript {
 /// forward direct-tcpip channels to the address the client asked for.
 struct TestHandler {
     auth: TestAuth,
-    /// When set, session-channel exec requests answer with this script (docs/32 §11
+    /// When set, session-channel exec requests answer with this script (docs/34 §11
     /// tests): channel success, stdout, stderr, an optional stall, then the exit
     /// status. A None handler ignores exec requests entirely.
     exec: Option<ExecScript>,
@@ -248,7 +248,7 @@ pub async fn spawn_ssh_server() -> u16 {
     spawn_ssh_server_with(TestAuth::AcceptAll).await
 }
 
-/// The same server whose session channels answer exec requests per `script` (docs/32
+/// The same server whose session channels answer exec requests per `script` (docs/34
 /// §11): the full russh client path — connect, session channel, exec request, streaming
 /// Data/ExtendedData, exit status — with no real shell anywhere.
 pub async fn spawn_exec_ssh_server(script: ExecScript) -> u16 {

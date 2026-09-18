@@ -313,7 +313,7 @@ pub enum FailureKind {
     Port,
     Config,
     /// An in-flight remote operation was canceled through its handle — never retried,
-    /// and mapped to RemoteError::Canceled at the transport seam (docs/32).
+    /// and mapped to RemoteError::Canceled at the transport seam (docs/34).
     Canceled,
 }
 

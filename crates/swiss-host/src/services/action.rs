@@ -272,7 +272,7 @@ pub trait Action: Send + Sync {
         cancel: CancelHandle,
     ) -> Result<ActionOutcome, ActionError>;
 
-    /// The streaming-aware entry point (docs/32 §16): same contract as [Action::execute]
+    /// The streaming-aware entry point (docs/34 §16): same contract as [Action::execute]
     /// plus a live output sink. The DEFAULT delegates to `execute`, so every existing
     /// action keeps working unchanged and migrates at its own pace; the run coordinator
     /// calls only this one. An action that produces output incrementally overrides this,

@@ -73,7 +73,7 @@ pub struct RuntimeServices {
     /// start; the consumer (Terminal) takes a session-scoped lease per open PTY. Same
     /// reason for living here as the catalog — the seat outlives both plugins.
     pub shells: Arc<ShellRegistry>,
-    /// The remote-execution transport capability (docs/32): the provider (Tunnels)
+    /// The remote-execution transport capability (docs/34): the provider (Tunnels)
     /// registers on start; the consumer (Remote) takes run-scoped leases per exec or
     /// file operation. Same seat-outlives-plugins reason as the two above.
     pub remote: Arc<RemoteTransportRegistry>,

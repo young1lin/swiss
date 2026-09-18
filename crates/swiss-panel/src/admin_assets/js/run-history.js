@@ -19,7 +19,8 @@ import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
 import { popupMenu } from "./menu.js";
-import { fmtChars, fmtJson, logsBody, toggleCall } from "./logs.js";
+import { closeMenu } from "./pane.js";
+import { copyLogText, fmtChars, fmtJson, logsBody, mountJsonTrees, toggleCall } from "./logs.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
 import { rowOf } from "./sidebar.js";
@@ -584,6 +585,8 @@ function wireTabBody(d, m) {
   var clMenu = $("clMenu");
   if (clMenu) clMenu.onclick = function (ev) {
     ev.stopPropagation();
+    // The house toggle idiom (pane.js toggleMenu): a second click dismisses instead of reopening.
+    if (state.menuOpen) { closeMenu(); return; }
     popupMenu(clMenu.getBoundingClientRect(), [
       { label: "Clear logs…", danger: true, fn: function () { void clearCalls(); } },
     ]);
@@ -629,6 +632,21 @@ function wireTabBody(d, m) {
   var clPrev = $("clPrev"); if (clPrev) clPrev.onclick = function (ev) { callsPageStep(-1, { fromKey: !!ev && ev.detail === 0 }); };
   var clNext = $("clNext"); if (clNext) clNext.onclick = function (ev) { callsPageStep(1, { fromKey: !!ev && ev.detail === 0 }); };
   var clRetry = $("clRetry"); if (clRetry) clRetry.onclick = function (ev) { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
+  // docs/33 C1: block copy buttons. The text comes from the CALL ROW, not the painted DOM —
+  // a truncated preview or a highlighted render still copies the full pretty payload.
+  document.querySelectorAll("#tabbody [data-copy]").forEach(function (b) {
+    b.onclick = function () {
+      var nd = state.detail;
+      if (!nd) return;
+      var parts = String(b.dataset.copy || "").split(":");
+      var seq = Number(parts[1]);
+      var c = (nd.calls || []).find(function (r) { return r.seq === seq; });
+      if (!c) return;
+      var text = parts[0] === "args" ? fmtJson(c.args || "")
+        : fmtJson(nd.callsFull[seq] != null ? nd.callsFull[seq] : c.output);
+      void copyLogText(text || "");
+    };
+  });
   document.querySelectorAll("#tabbody [data-callseq]").forEach(function (s) {
     s.onclick = function () { toggleCall(s.dataset.callseq); };
     s.onkeydown = function (ev) {
@@ -772,6 +790,7 @@ function renderCallsOnly() {
   }
   body.dataset.callsig = sig;
   wireTabBody(d, rowOf(d.name) || {});
+  mountJsonTrees(d); // docs/33 C2: open rows get their trees back, expansion restored
 }
 
 export { applyRunHistory, configBody, fillRunArgs, histButtonLabel, histClose, histOpen, histPreview, histRowsHtml, histSearchTimer, histToggle, histViewHtml, histWhen, loadRunHistory, queueHistSearch, readResource, renderCallsOnly, renderHistoryOnly, renderRunResult, runTool, toggleResources, toggleTool, tryTool, tunnelDepsHtml, wireHistRows, wireTabBody };

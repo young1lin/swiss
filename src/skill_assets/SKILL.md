@@ -33,7 +33,7 @@ Editing remote files (no PTY - pick by scope):
 A repository can carry `.swiss/remote.json` (plain JSON, no secrets) naming targets and
 actions like `build`; `swiss remote exec build -- make` then resolves through it.
 workspaceRoot is a guardrail, not a sandbox - the command runs as the SSH login user.
-sudo passes through like any command (no PTY, so it needs NOPASSWD or -n). Full contract: docs/32.
+sudo passes through like any command (no PTY, so it needs NOPASSWD or -n). Full contract: docs/34.
 
 Everything else the gateway does (MCPs, databases, jobs, panel): ask the user, or check
 `swiss --help` and the panel at http://127.0.0.1:19999.

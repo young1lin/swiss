@@ -19,7 +19,7 @@ import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* The Remote Targets page (docs/32 R6): one table of alias rows plus an Add/Edit sheet.
+/* The Remote Targets page (docs/34 R6): one table of alias rows plus an Add/Edit sheet.
    The suite pins the view module contract under the same hand-rolled DOM the Token page
    suite uses: what mount paints (rows, endpoint labels, count chip), the empty state,
    and that the sheet saves through POST /api/remote/targets with the typed fields -

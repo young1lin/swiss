@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The remote plugin's factory (docs/32): descriptor, config validation, and the
+//! The remote plugin's factory (docs/34): descriptor, config validation, and the
 //! instance that owns the remote system's lifetime.
 //!
 //! A plugin built purely on the public contracts, like the terminal plugin before
@@ -25,7 +25,7 @@
 //! on stop. The transport itself belongs to the tunnels plugin - this plugin
 //! declares NO capability requirement on purpose: the target table must stay
 //! writable while tunnels is off, and the exec actions say honestly what is
-//! missing (docs/32).
+//! missing (docs/34).
 
 use std::sync::Arc;
 
@@ -101,7 +101,7 @@ impl PluginFactory for RemotePlugin {
                 "properties": {},
                 "additionalProperties": false
             }),
-            // The targets page (docs/32 R6): the CLI stays the primary client,
+            // The targets page (docs/34 R6): the CLI stays the primary client,
             // but a target no longer needs a terminal to exist. Before the
             // plugins page's 1000, after Terminal's 70.
             pages: vec![PageDescriptor {
@@ -118,7 +118,7 @@ impl PluginFactory for RemotePlugin {
             // The targets/routes have nothing to re-read; a config PUT does not
             // restart the instance.
             restart_on_config_change: false,
-            // NOT ["remote-transport"] (docs/32): the target table must be
+            // NOT ["remote-transport"] (docs/34): the target table must be
             // editable while tunnels is off - an unmet requirement would park
             // the whole plugin in waitingDependency and lock the table. Exec
             // actions answer honestly when the transport is missing.
@@ -170,12 +170,12 @@ impl PluginInstance for RemoteInstance {
         // One system for the whole plugin: the sealed target table and the
         // remote capabilities registered into the shared action registry - a
         // remote.exec IS a run through the coordinator, not a new job system
-        // (docs/32).
+        // (docs/34).
         let system = RemoteSystem::open(self.services.clone(), self.targets_path.clone());
         swiss_remote::actions::register_all(system.clone(), &self.services.actions)?;
         self.state.install(system.clone());
 
-        // R7 (docs/32): the same table as an MCP under /mcp/remote - five thin
+        // R7 (docs/34): the same table as an MCP under /mcp/remote - five thin
         // tools that run the actions just registered through the same
         // coordinator, so a model can drive a target with no shell. Plugin-owned
         // on purpose: the entry mounts here and comes down with stop(), so

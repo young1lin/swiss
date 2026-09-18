@@ -15,7 +15,7 @@
  */
 
 /* ================================================================================================
-   Remote Targets - the remote plugin page (#remote), docs/32 R6.
+   Remote Targets - the remote plugin page (#remote), docs/34 R6.
 
    A hairline card of house rows: dot (endpoint state) + alias + mono root sub-line +
    monochrome chips for endpoint and capabilities + one overflow menu. The CLI
@@ -151,7 +151,7 @@ async function save() {
     endpoint: $("rm-endpoint").value,
     workspaceRoot: $("rm-root").value.trim(),
     capabilities: caps,
-    // The one shell the surface speaks today (docs/32): the route requires it, and a
+    // The one shell the surface speaks today (docs/34): the route requires it, and a
     // select with a single honest option would be decoration.
     shell: "posix",
   };

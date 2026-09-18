@@ -16,7 +16,7 @@
 
 import { $, KINDS, api, apiJson, now, state, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
-import { callsErrHtml, callsStatusHtml, fmtJson } from "./logs.js";
+import { callsErrHtml, callsStatusHtml, fmtJson, mountJsonTrees } from "./logs.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { loadList } from "./polling.js";
@@ -171,7 +171,8 @@ function openDetail(name) {
     calls: null, stderr: "", callsOpen: {},
     callsPage: 0, callsMore: false, callsFull: {}, callsQ: "",
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
-    callsRetryDir: null, callsSwitch: null, callsRequest: 0,
+    callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
+    callsTree: {}, // docs/33 C2: per-seq JSON tree expansion, survives the poll repaint
   };
   KINDS.forEach(function (k) { d[k] = pageState(); });
   state.detail = d;
@@ -215,9 +216,14 @@ async function loadMeta(name) {
 async function loadCalls(name, isPoll) {
   var d = state.detail;
   if (!d || d.name !== name) return;
-  if (isPoll && (d.callsPage > 0 || d.callsPendingPage != null)) return;
+  // A poll dispatched while a FOREGROUND load still hangs would take the newest generation
+  // for itself; the foreground failure would then land as "stale" and be reported to nobody.
+  // The poll is a courtesy refresh — skipping one cycle costs 6 s, a swallowed failure costs
+  // the user's trust (found live: a hung re-entry load during a server stop).
+  if (isPoll && (d.callsPage > 0 || d.callsPendingPage != null || d.callsActive > 0)) return;
   var target = d.callsPendingPage != null ? d.callsPendingPage : d.callsPage;
   var gen = ++d.callsRequest;
+  d.callsActive = (d.callsActive || 0) + 1;
   // A page switch rides this request; take its anchor intent now, so a request issued later (a
   // new needle) can never spend an anchor that belonged to this one (docs/32 B2).
   var sw = null;
@@ -243,6 +249,8 @@ async function loadCalls(name, isPoll) {
   } catch (e) {
     if (state.detail !== d || gen !== d.callsRequest) return;
     if (!isPoll) callsLoadFailed(d, target, 0, sw);
+  } finally {
+    d.callsActive -= 1; // every exit path settles its own in-flight mark
   }
 }
 
@@ -332,16 +340,18 @@ function patchCallsChrome(d) {
   if (prev) prev.disabled = busy || d.callsPage <= 0;
   if (next) next.disabled = busy || !d.callsMore;
   // The error block is idempotent — drop whatever is there, then insert when an error is set.
-  // A new switch (pending or Retry) takes the old error away; a failure puts it back beside the
-  // pager, where the click that failed happened.
+  // A new switch (pending or Retry) takes the old error away; a failure puts it back at the end
+  // of the region — after the pager when one is painted, after the rows on a single-page log
+  // that has none. The full repaint composes the same order (logs.js: body + pager + err).
   var err = $("clErr");
   if (err && err.remove) err.remove();
   if (d.callsError) {
-    var html = callsErrHtml(d);
-    var pager = $("clPager");
-    if (pager && pager.insertAdjacentHTML) pager.insertAdjacentHTML("afterend", html);
+    var regionEl = $("callsRegion");
+    if (regionEl && regionEl.insertAdjacentHTML) regionEl.insertAdjacentHTML("beforeend", callsErrHtml(d));
     var retry = $("clRetry");
-    if (retry) retry.onclick = callsRetry;
+    // The same keyboard contract as the painted wiring (run-history): a Retry driven by
+    // Enter/Space (detail === 0) owes the user their focus back once the retry commits.
+    if (retry) retry.onclick = function (ev) { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
   }
 }
 
@@ -361,6 +371,7 @@ async function showFullResult(seq) {
       return;
     }
     d.callsFull[seq] = j.call.output;
+    mountJsonTrees(d, seq); // docs/33 C2: a full reply that parses upgrades/refreshes the tree
     var pre = document.querySelector('#tabbody .call[data-seq="' + seq + '"] pre[data-out]');
     if (pre) pre.textContent = fmtJson(j.call.output);
     var btn = document.querySelector('#tabbody [data-full="' + seq + '"]');
@@ -377,6 +388,10 @@ async function clearCalls() {
   try {
     var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls", { method: "DELETE" });
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
+    // The clear is part of the same transaction space as the paging loads: bump the generation so
+    // a response that left before the DELETE (a poll, a parked switch — confirm blocks the event
+    // loop, not the network) lands stale and cannot repaint rows over the emptied log.
+    d.callsRequest++;
     d.calls = [];
     d.callsOpen = {};
     d.callsFull = {};
