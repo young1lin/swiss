@@ -77,17 +77,17 @@ function openMenuFor(sel                   , trig                   )       {
   menu.style.minWidth = trig.offsetWidth + "px";
   const items                      = [];
   let mark                           = null;
-  Array.prototype.forEach.call(sel.options, function (o) {
+  Array.prototype.forEach.call(sel.options, (o) => {
     const b = el("button", "pick" + (o.selected ? " on" : ""));
     b.type = "button";
     b.setAttribute("role", "option");
     b.setAttribute("aria-selected", String(o.selected));
     b.title = o.textContent;
     b.textContent = o.textContent;
-    b.onclick = function () {
+    b.onclick = () => {
       descs();
       if (sel.value !== o.value) {
-        valDesc .set.call(sel, o.value);
+        valDesc?.set.call(sel, o.value);
         paint(sel, trig);
         // Native change events do not fire on programmatic assignment; the panel's handlers are
         // onchange/addEventListener on the select, and a dispatched event reaches both.
@@ -129,13 +129,13 @@ function buildTrigger(sel                   , ownClasses        )               
   trig.appendChild(el("span", "dd-label"));
   trig.appendChild(el("span", "dd-chev"));
 
-  trig.onclick = function () {
+  trig.onclick = () => {
     if (trig.disabled) return;
     if (openState && openState.trig === trig) closeMenu();
     else openMenuFor(sel, trig);
   };
   // The keyboard contract of a native select, on the trigger: open on Enter/Space/arrows.
-  trig.onkeydown = function (e) {
+  trig.onkeydown = (e) => {
     if (trig.disabled) return;
     if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
@@ -160,27 +160,27 @@ function styleSelect(sel                                      )       {
   // Programmatic writes must reach the face. The instance-level overrides shadow the prototype
   // accessors, so every existing "sel.value = x" / "sel.innerHTML = …" repaints the label.
   Object.defineProperty(sel, "value", {
-    get: function () { return valDesc .get.call(sel); },
-    set: function (v) { valDesc .set.call(sel, v); paint(sel, trig); },
+    get: () => { return valDesc?.get.call(sel); },
+    set: (v) => { valDesc?.set.call(sel, v); paint(sel, trig); },
     configurable: true,
   });
   Object.defineProperty(sel, "selectedIndex", {
-    get: function () { return idxDesc .get.call(sel); },
-    set: function (v) { idxDesc .set.call(sel, v); paint(sel, trig); },
+    get: () => { return idxDesc?.get.call(sel); },
+    set: (v) => { idxDesc?.set.call(sel, v); paint(sel, trig); },
     configurable: true,
   });
   Object.defineProperty(sel, "disabled", {
-    get: function () { return disDesc .get.call(sel); },
-    set: function (v) { disDesc .set.call(sel, v); paint(sel, trig); },
+    get: () => { return disDesc?.get.call(sel); },
+    set: (v) => { disDesc?.set.call(sel, v); paint(sel, trig); },
     configurable: true,
   });
   Object.defineProperty(sel, "innerHTML", {
-    get: function () { return htmlDesc .get.call(sel); },
-    set: function (v) { htmlDesc .set.call(sel, v); paint(sel, trig); },
+    get: () => { return htmlDesc?.get.call(sel); },
+    set: (v) => { htmlDesc?.set.call(sel, v); paint(sel, trig); },
     configurable: true,
   });
   const origAdd = sel.appendChild.bind(sel);
-  sel.appendChild = function (node) { origAdd(node); paint(sel, trig); return node; };
+  sel.appendChild = (node) => { origAdd(node); paint(sel, trig); return node; };
   trigs.set(sel, trig);
 }
 
@@ -189,7 +189,7 @@ function styleSelect(sel                                      )       {
  *  Node of the panel boot test, which has no MutationObserver and no body to observe. */
 function initSelects()       {
   Array.prototype.forEach.call(document.querySelectorAll("select"), styleSelect);
-  if (typeof MutationObserver !== "undefined" && document.body) new MutationObserver(function (muts) {
+  if (typeof MutationObserver !== "undefined" && document.body) new MutationObserver((muts) => {
     for (const m of muts) {
       for (const n of m.addedNodes                        ) {
         if (n.nodeType !== 1) continue;
@@ -208,10 +208,10 @@ function initSelects()       {
   }).observe(document.body, { childList: true, subtree: true });
 
   // One open dropdown at a time, closed by any click outside it or by Escape/Tab.
-  document.addEventListener("mousedown", function (e) {
+  document.addEventListener("mousedown", (e) => {
     if (openState && !openState.menu.contains(e.target        ) && e.target !== openState.trig) closeMenu();
   });
-  document.addEventListener("keydown", function (e) {
+  document.addEventListener("keydown", (e) => {
     if (!openState) return;
     if (e.key === "Escape" || e.key === "Tab") { closeMenu(); openState.trig.focus(); e.preventDefault(); return; }
     const items = openState.items;

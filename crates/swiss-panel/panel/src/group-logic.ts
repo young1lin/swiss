@@ -31,8 +31,8 @@ import { DEFAULT_GROUP } from "./util.js";
  *  FIRST group - that slot is the sink for unassigned rows, whatever it is called (mirrors
  *  the server's one rule, docs/20 2.1). */
 function groupOf(names: string[]): (row: GroupedRow | null | undefined) => string {
-  var first = names[0] || DEFAULT_GROUP;
-  return function (row) {
+  const first = names[0] || DEFAULT_GROUP;
+  return (row) => {
     return row && row.group && names.indexOf(row.group) >= 0 ? row.group : first;
   };
 }
@@ -41,8 +41,8 @@ function groupOf(names: string[]): (row: GroupedRow | null | undefined) => strin
  *  order the caller already sorted by. Empty groups keep their slot - you have to be able
  *  to see a group you just made. */
 function slice<Row>(rows: Row[], names: string[], fn: (row: Row) => string): GroupSlice<Row>[] {
-  return names.map(function (name) {
-    return { name: name, rows: rows.filter(function (r) { return fn(r) === name; }) };
+  return names.map((name) => {
+    return { name: name, rows: rows.filter((r) => { return fn(r) === name; }) };
   });
 }
 
@@ -52,7 +52,7 @@ function slice<Row>(rows: Row[], names: string[], fn: (row: Row) => string): Gro
  *  the server's sink. Tunnels once hard-coded 'default' here, which stayed wrong after the
  *  first group was renamed. Pure so the wording is pinned by tests, not by typing. */
 function deleteConfirmMsg(name: string, names: string[], count: number, noun: string): string {
-  var sink = names.filter(function (g) { return g !== name; })[0];
+  const sink = names.filter((g) => { return g !== name; })[0];
   return "Delete group '" + name + "'?\n\nIts " + count + " " + noun + (count === 1 ? "" : "s") +
     " move to '" + sink + "'. Nothing is removed.";
 }

@@ -26,35 +26,35 @@ import { $ } from "./util.js";
  * deep output mutations. This still is not browser F11 — Terminal fills the Swiss window,
  * while browser fullscreen remains the user's own action. Every mode change dispatches resize
  * so xterm refits and the gateway receives the new rows and columns (docs/14 §8). */
-var IMMERSIVE = "immersive";
-var DOCKED = "immersive-docked";
-var appZoneNode                     = null;
-var appZoneHome                     = null;
-var paneObserver                          = null;
+const IMMERSIVE = "immersive";
+const DOCKED = "immersive-docked";
+let appZoneNode                     = null;
+let appZoneHome                     = null;
+let paneObserver                          = null;
 
 function immersiveOn()          { return document.body.classList.contains(IMMERSIVE); }
 
 function focusSlot()                     {
-  var pane = $("pane");
+  const pane = $("pane");
   return pane && pane.querySelector ? pane.querySelector("[data-shell-focus-slot]") : null;
 }
 
 function placeAppZone()       {
   appZoneNode = appZoneNode || $("appZone");
   appZoneHome = appZoneHome || $("ctxBar");
-  var slot = immersiveOn() ? focusSlot() : null;
-  var target = slot || appZoneHome;
-  var movable = !!(appZoneNode && target && target.appendChild);
+  const slot = immersiveOn() ? focusSlot() : null;
+  const target = slot || appZoneHome;
+  const movable = !!(appZoneNode && target && target.appendChild);
   if (movable && appZoneNode.parentNode !== target) target.appendChild(appZoneNode);
   document.body.classList.toggle(DOCKED, !!(slot && movable));
 }
 
 /** Repaint the shell-owned control for Focus or Terminal fullscreen. Guarded for tests. */
 function paintImmersive()       {
-  var on = immersiveOn();
-  var docked = document.body.classList.contains(DOCKED);
-  var terminal = !!focusSlot();
-  var btn = $("expandBtn");
+  const on = immersiveOn();
+  const docked = document.body.classList.contains(DOCKED);
+  const terminal = !!focusSlot();
+  const btn = $("expandBtn");
   if (!btn) return;
   btn.title = on
     ? (docked ? "Exit Terminal fullscreen (Esc)" : "Exit focus mode (Esc)")
@@ -71,7 +71,7 @@ function syncLayout()       {
 }
 
 function toggleImmersive()       {
-  var on = !immersiveOn();
+  const on = !immersiveOn();
   document.body.classList.toggle(IMMERSIVE, on);
   syncLayout();
   window.dispatchEvent(new Event("resize"));
@@ -83,9 +83,9 @@ function initImmersive()       {
   appZoneNode = $("appZone");
   appZoneHome = $("ctxBar");
   $("expandBtn").onclick = toggleImmersive;
-  var pane = $("pane");
+  const pane = $("pane");
   if (pane && typeof MutationObserver === "function") {
-    paneObserver = new MutationObserver(function () {
+    paneObserver = new MutationObserver(() => {
       syncLayout();
       if (immersiveOn()) window.dispatchEvent(new Event("resize"));
     });

@@ -24,31 +24,31 @@ import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
 /* --- rendering: detail pane ------------------------------------------------------------------- */
 /** True when the user is typing inside the pane; a poll must never re-render over that. */
 function paneHasFocus(): boolean {
-  var a = document.activeElement;
+  const a = document.activeElement;
   return !!a && $("pane").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
 }
 
 function patchDetailHead(): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
-  var m = rowOf(d.name);
-  var dot = document.querySelector<HTMLElement>("#pane .pane-sub .dot");
-  var txt = document.querySelector<HTMLElement>("#pane .pane-sub .sub-text");
-  var primary = $<HTMLButtonElement>("primaryBtn");
+  const m = rowOf(d.name);
+  const dot = document.querySelector<HTMLElement>("#pane .pane-sub .dot");
+  const txt = document.querySelector<HTMLElement>("#pane .pane-sub .sub-text");
+  const primary = $<HTMLButtonElement>("primaryBtn");
   if (!m || !dot || !txt) return;
-  var busyVerb = state.busy[d.name];
+  const busyVerb = state.busy[d.name];
   dot.className = "dot " + (busyVerb ? "starting" : m.state);
   txt.textContent = headSubtitle(m);
   if (primary) {
-    var started = m.lifecycle === "started";
+    const started = m.lifecycle === "started";
     primary.textContent = busyVerb ? "…" : (started ? "Disable" : "Enable");
     primary.disabled = !!busyVerb;
-    primary.onclick = function () { act(d!.name, started ? "stop" : "start"); };
+    primary.onclick = () => { act(d?.name, started ? "stop" : "start"); };
   }
 }
 
 function headSubtitle(m: ApiMcpRow | PhantomMcpRow): string {
-  var bits = [];
+  const bits = [];
   if (state.busy[m.name]) bits.push(state.busy[m.name] + "…");
   else bits.push(m.state === "stopped" ? "disabled" : m.state); // docs/28 D2: the honest word
   bits.push(m.type);
@@ -64,29 +64,29 @@ function headSubtitle(m: ApiMcpRow | PhantomMcpRow): string {
 function renderPane(): void {
   // Every non-MCP page owns its pane, including pages contributed by future plugins.
   if (state.view !== "mcps") return;
-  var pane = $("pane");
-  var d = state.detail;
+  const pane = $("pane");
+  const d = state.detail;
   if (!d) {
     // The shared empty state (docs/18 V7), and the one place it carries an action: the pane's
     // own "add" answers the question the empty screen just asked.
     pane.innerHTML = state.mcps.length
       ? emptyHtml({ icon: "mcp", title: "Select an MCP", hint: "Its tools, resources and configuration appear here." })
       : emptyHtml({ icon: "mcp", title: "No MCPs registered", hint: "Add one with the + on a group header.", action: "Add an MCP" });
-    var addBtn = pane.querySelector<HTMLElement>("[data-empty-action]");
-    if (addBtn) addBtn.onclick = function () { openSheet(null); };
+    const addBtn = pane.querySelector<HTMLElement>("[data-empty-action]");
+    if (addBtn) addBtn.onclick = () => { openSheet(null); };
     return;
   }
-  var m: ApiMcpRow | PhantomMcpRow = rowOf(d.name) || { name: d.name, state: "unknown", type: "?", source: "?", lifecycle: "stopped" };
-  var started = m.lifecycle === "started";
-  var busyVerb = state.busy[d.name];
-  var menuWasOpen = state.menuOpen; // reopened at the end; see the note there
+  const m: ApiMcpRow | PhantomMcpRow = rowOf(d.name) || { name: d.name, state: "unknown", type: "?", source: "?", lifecycle: "stopped" };
+  const started = m.lifecycle === "started";
+  const busyVerb = state.busy[d.name];
+  const menuWasOpen = state.menuOpen; // reopened at the end; see the note there
   // The history popover lives on <body>, so a pane rebuild leaves it stranded over whatever tab
   // replaced Run. wireTabBody reopens it when the rebuilt pane IS the Run tab; otherwise drop it.
-  if (d.tab !== "run" && d.run && d.run.histOpen) { d.run.histOpen = false; var stray = $("r-hist-pop"); if (stray) stray.remove(); }
+  if (d.tab !== "run" && d.run && d.run.histOpen) { d.run.histOpen = false; const stray = $("r-hist-pop"); if (stray) stray.remove(); }
 
   // The title is the MCP's identity, so it is set in the sans face. The mount path is a value you
   // copy, so it keeps the monospace one — down in the status line, where it costs nothing.
-  var head =
+  const head =
     '<div class="pane-head">' +
       "<div>" +
         '<h1 class="pane-title">' + esc(d.name) + "</h1>" +
@@ -114,17 +114,18 @@ function renderPane(): void {
       "</div>" +
     "</div>";
 
-  var tabs = KINDS.concat(["run", "config", "logs"]);
-  var seg = '<div class="seg" role="tablist">' + tabs.map(function (t) {
-    var kd = KINDS.indexOf(t) >= 0 ? d![t as "tools" | "resources" | "prompts"] : null;
-    var count = kd && kd.loaded ? '<span class="seg-n">' + (kd.total != null ? kd.total : kd.items.length) + "</span>" : "";
-    var label = t.charAt(0).toUpperCase() + t.slice(1);
-    return '<button role="tab" data-tab="' + t + '" aria-selected="' + (d!.tab === t ? "true" : "false") + '">' + label + count + "</button>";
+  const tabs = KINDS.concat(["run", "config", "logs"]);
+  const seg = '<div class="seg" role="tablist">' + tabs.map((t) => {
+    const d_ = d!;
+    const kd = KINDS.indexOf(t) >= 0 ? d_[t as "tools" | "resources" | "prompts"] : null;
+    const count = kd && kd.loaded ? '<span class="seg-n">' + (kd.total != null ? kd.total : kd.items.length) + "</span>" : "";
+    const label = t.charAt(0).toUpperCase() + t.slice(1);
+    return '<button role="tab" data-tab="' + t + '" aria-selected="' + (d_.tab === t ? "true" : "false") + '">' + label + count + "</button>";
   }).join("") + "</div>";
 
-  var reason = m.reason ? '<div class="note err">' + esc(m.reason) + "</div>" : "";
-  var la = state.lastAction[d.name];
-  var actionNote = la ? '<div class="note' + (la.err ? " err" : "") + '">' + esc(la.at + " · " + la.msg) + "</div>" : "";
+  const reason = m.reason ? '<div class="note err">' + esc(m.reason) + "</div>" : "";
+  const la = state.lastAction[d.name];
+  const actionNote = la ? '<div class="note' + (la.err ? " err" : "") + '">' + esc(la.at + " · " + la.msg) + "</div>" : "";
 
   // One column holds the lot — header, tab bar, body, notes — so the measure is applied once and
   // they all share a left edge. Capping each of them individually looked identical until the pane
@@ -141,44 +142,45 @@ function renderPane(): void {
     '<div id="tabbody">' + tabBody(d, m) + "</div>" + reason + actionNote + "</div>";
 
   // Wire up (no inline handlers — names can contain characters that break string-built onclicks).
-  $("primaryBtn").onclick = function () { act(d!.name, started ? "stop" : "start"); };
-  var oauthBtn = $("oauthBtn");
-  if (oauthBtn) oauthBtn.onclick = function () { void authorizeMcp(d!.name); };
-  $("menuBtn").onclick = function (ev) { ev.stopPropagation(); toggleMenu(d!, m); };
-  pane.querySelectorAll<HTMLButtonElement>(".seg button").forEach(function (b) {
-    b.onclick = function () { showTab(b.dataset.tab!); };
+  $("primaryBtn").onclick = () => { act(d?.name, started ? "stop" : "start"); };
+  const oauthBtn = $("oauthBtn");
+  if (oauthBtn) oauthBtn.onclick = () => { void authorizeMcp(d?.name); };
+  $("menuBtn").onclick = (ev) => { ev.stopPropagation(); toggleMenu(d!, m); };
+  pane.querySelectorAll<HTMLButtonElement>(".seg button").forEach((b) => {
+    b.onclick = () => { showTab(b.dataset.tab!); };
   });
-  wireTabBody(d!, m);
+  const d_ = d!;
+  wireTabBody(d_, m);
   // A late tools/list response re-renders the pane; without this the ... menu you opened a moment
   // ago would just disappear. The menu is state, so it is restored like any other.
-  if (menuWasOpen) openMenu(d!, m);
+  if (menuWasOpen) openMenu(d_, m);
 }
 
 /** The overflow menu is attached and removed on its own, without re-rendering the pane — otherwise
  *  opening it would rebuild (and clear) a config form that was mid-edit. */
 function toggleMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
-  var wasOpen = state.menuOpen;
+  const wasOpen = state.menuOpen;
   closeMenu();
   if (wasOpen) return;
   openMenu(d, m);
 }
 function openMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
-  var host = document.querySelector<HTMLElement>("#pane .pane-actions");
+  const host = document.querySelector<HTMLElement>("#pane .pane-actions");
   if (!host) return;
   // Re-resolve the row from live state instead of trusting the one renderPane closed over. The 6s
   // poll's loadList() REPLACES state.mcps wholesale, and it only patches the header afterwards — so
   // the captured object is orphaned from that moment on. The menu reads two things off it that
   // change (which group the MCP is in, and whether it is config-sourced), and with a stale object
   // the group tick stayed on whatever it was when the pane was last rendered.
-  var live = rowOf(d.name) || m;
+  const live = rowOf(d.name) || m;
   host.insertAdjacentHTML("beforeend", menuHtml(live));
   state.menuOpen = true;
   wireMenu(d, live);
 }
 function closeMenu(): void {
-  var node = $("menu");
+  const node = $("menu");
   if (node) node.remove();
-  document.querySelectorAll(".ctx-menu").forEach(function (m) { m.remove(); });
+  document.querySelectorAll(".ctx-menu").forEach((m) => { m.remove(); });
   state.menuOpen = false;
 }
 
@@ -186,9 +188,9 @@ function closeMenu(): void {
  *  one on its own. The group section is a pick list with a tick, not a submenu — a submenu built from
  *  a string is more machinery than four lines of choices are worth. */
 function menuHtml(m: ApiMcpRow | PhantomMcpRow): string {
-  var current = groupOf(m);
+  const current = groupOf(m);
   // The server's list is complete (default included) and already in sidebar order.
-  var picks = state.groups.map(function (g) {
+  const picks = state.groups.map((g) => {
     return '<button class="pick' + (g === current ? " on" : "") + '" data-grp="' + esc(g) + '">' + esc(g) + "</button>";
   }).join("");
   return '<div class="menu" id="menu">' +
@@ -211,19 +213,19 @@ function menuHtml(m: ApiMcpRow | PhantomMcpRow): string {
     "</div>";
 }
 function wireMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
-  $("menu").querySelectorAll<HTMLButtonElement>("button").forEach(function (b) {
-    b.onclick = function (ev) {
+  $("menu").querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
+    b.onclick = (ev) => {
       ev.stopPropagation();
       closeMenu();
       if (b.dataset.grp !== undefined) {
         assignGroup(d.name, b.dataset.grp); // every name in the menu is a real group now
         return;
       }
-      var a = b.dataset.act as string;
+      const a = b.dataset.act as string;
       if (a === "new-group") {
         // Make the group, then put this MCP straight into it — otherwise "New group…" from an MCP's
         // own menu would create an empty group and leave the MCP where it was.
-        openGroupSheet(null, async function (name: string) {
+        openGroupSheet(null, async (name: string) => {
           if (!await saveGroups(state.groups.concat([name]))) return false;
           assignGroup(d.name, name);
           return true;

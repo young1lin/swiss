@@ -52,19 +52,19 @@ function quitSheetHtml() {
 }
 
 function openQuitSheet() {
-  var sheet = $("sheet");
+  const sheet = $("sheet");
   sheet.hidden = false;
   sheet.innerHTML = quitSheetHtml();
   $("quit-cancel").onclick = closeSheet;
-  $("quit-confirm").onclick = function () { void requestQuit(); };
-  sheet.onclick = function (event) { if (event.target === sheet) closeSheet(); };
+  $("quit-confirm").onclick = () => { void requestQuit(); };
+  sheet.onclick = (event) => { if (event.target === sheet) closeSheet(); };
   $("quit-cancel").focus();
 }
 
 async function requestQuit() {
-  var button = $                   ("quit-confirm");
+  const button = $                   ("quit-confirm");
   if (button) { button.disabled = true; button.textContent = "Quitting…"; }
-  var stopped = await apiJson("/api/shutdown", { method: "POST" });
+  const stopped = await apiJson("/api/shutdown", { method: "POST" });
   if (!stopped) {
     if (button) { button.disabled = false; button.textContent = "Quit swiss"; }
     return;

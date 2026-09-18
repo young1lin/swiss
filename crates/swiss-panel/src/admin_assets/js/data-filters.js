@@ -22,7 +22,7 @@ import { dbDropEdits, dbOkToDrop } from "./data-view.js";
 /* --- SQL syntax highlighting -------------------------------------------------------------------- */
 /* A tiny tokenizer, not a parser: keywords, strings, numbers, comments, functions, identifiers.
    Everything is escaped on the way out, so a query full of <script> tags stays inert text. */
-var SQL_KEYWORDS = new Set((
+const SQL_KEYWORDS = new Set((
   "select from where group by order having limit offset fetch insert into values update set delete " +
   "create table drop alter rename add column constraint primary key foreign references index unique " +
   "not null default as on join left right inner outer full cross natural using with recursive union " +
@@ -32,19 +32,19 @@ var SQL_KEYWORDS = new Set((
   "window rows range cast coalesce true false null current_date current_timestamp database"
 ).split(" "));
 
-var SQL_TOKEN_RE = /(--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_$]*)|(\s+)|([^\sA-Za-z0-9_$]+)/g;
+const SQL_TOKEN_RE = /(--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_$]*)|(\s+)|([^\sA-Za-z0-9_$]+)/g;
 
 function dbHighlightSql(sql        )         {
-  var out = "";
-  var m                        ;
+  let out = "";
+  let m                        ;
   SQL_TOKEN_RE.lastIndex = 0;
   while ((m = SQL_TOKEN_RE.exec(sql)) !== null) {
-    var tok = m[0];
+    const tok = m[0];
     if (m[1]) out += '<span class="c">' + esc(tok) + "</span>";
     else if (m[2]) out += '<span class="s">' + esc(tok) + "</span>";
     else if (m[3]) out += '<span class="n">' + esc(tok) + "</span>";
     else if (m[4]) {
-      var lower = tok.toLowerCase();
+      const lower = tok.toLowerCase();
       if (SQL_KEYWORDS.has(lower)) out += '<span class="k">' + esc(tok) + "</span>";
       else if (sql[SQL_TOKEN_RE.lastIndex] === "(") out += '<span class="f">' + esc(tok) + "</span>";
       else if (/^_?[A-Z][A-Za-z0-9_]*$/.test(tok)) out += '<span class="i">' + esc(tok) + "</span>";
@@ -57,7 +57,7 @@ function dbHighlightSql(sql        )         {
 
 /** Keep the highlighted layer under the textarea: same text, same scroll. */
 function dbSqlPaint()       {
-  var ta = $                     ("dbSql"), hl = $("dbSqlHl");
+  const ta = $                     ("dbSql"), hl = $("dbSqlHl");
   if (!ta || !hl) return;
   hl.innerHTML = dbHighlightSql(ta.value) + "\n";
   hl.scrollTop = ta.scrollTop;
@@ -66,7 +66,7 @@ function dbSqlPaint()       {
 /* --- field-level filters ------------------------------------------------------------------------ */
 /* The ops mirror the server's whitelist (BROWSE_FILTER_OPS in dbbrowser.ts): every value is a
    bound parameter server-side, so a filter input is just text — never SQL. */
-var DB_FILTER_OPS = [
+const DB_FILTER_OPS = [
   { op: "eq", label: "=" }, { op: "ne", label: "≠" },
   { op: "gt", label: ">" }, { op: "gte", label: "≥" },
   { op: "lt", label: "<" }, { op: "lte", label: "≤" },
@@ -83,7 +83,7 @@ function dbValueless(op        )          { return op === "isNull" || op === "is
  * Returns whether it ran: a REFUSED discard gate leaves everything untouched, and the row
  * editors below restore their select from that answer (docs/22 closeout audit). */
 function dbApplyFilters()          {
-  var d = state.db;
+  const d = state.db;
   if (!dbOkToDrop()) { renderDbFilters(); return false; }
   d .offset = 0;
   dbDropEdits();
@@ -92,24 +92,25 @@ function dbApplyFilters()          {
 }
 
 function renderDbFilters()       {
-  var d = state.db;
-  var box = $("dbFilters");
+  const d = state.db;
+  const box = $("dbFilters");
   if (!box) return;
   box.innerHTML = "";
+  const d_ = d ;
   if (dbIsRedis()) {
     // The redis filter is a glob PATTERN fed to SCAN's MATCH — server-side, cursor-safe.
-    var rf = el("div", "db-filter");
-    var ri = el("input");
+    const rf = el("div", "db-filter");
+    const ri = el("input");
     ri.type = "search";
     ri.placeholder = "Key pattern, e.g. session:*";
-    ri.value = d .grep || "";
+    ri.value = d_.grep || "";
     ri.style.width = "220px";
     ri.title = "SCAN MATCH pattern — applies on Enter";
-    var t2                                      ;
+    let t2                                      ;
     ri.oninput = (e) => {
-      var v = (e.currentTarget                    ).value;
+      const v = (e.currentTarget                    ).value;
       clearTimeout(t2 );
-      t2 = setTimeout(function ()       { d .grep = v; dbLoadKeys(true); }, 400);
+      t2 = setTimeout(()       => { d .grep = v; dbLoadKeys(true); }, 400);
     };
     ri.onkeydown = (e) => {
       e.stopPropagation();
@@ -118,32 +119,32 @@ function renderDbFilters()       {
     rf.appendChild(ri);
     // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
     // it, and "" keeps the request byte-identical to the unfiltered one.
-    var rt = el("select");
+    const rt = el("select");
     rt.title = "Key type";
-    [""].concat(["string", "hash", "list", "set", "zset", "stream"]).forEach(function (t        )       {
-      var o = el("option", "", t || "All types")                     ;
+    [""].concat(["string", "hash", "list", "set", "zset", "stream"]).forEach((t        )       => {
+      const o = el("option", "", t || "All types")                     ;
       o.value = t;
-      o.selected = (d .redisType || "") === t;
+      o.selected = (d?.redisType || "") === t;
       rt.appendChild(o);
     });
     rt.onchange = (e) => { d .redisType = (e.currentTarget                     ).value; dbLoadKeys(true); };
     rf.appendChild(rt);
-    if (d .redis && d .redis.total != null) {
+    if (d_.redis && d_.redis.total != null) {
       rf.appendChild(el("span", "db-filter-hint",
-        (d .redis .keys ? d .redis .keys.length.toLocaleString() : "0") + " shown · " +
-        Number(d .redis .total).toLocaleString() + " in keyspace"));
+        (d_.redis?.keys ? d_.redis?.keys.length.toLocaleString() : "0") + " shown · " +
+        Number(d_.redis?.total).toLocaleString() + " in keyspace"));
     }
     box.appendChild(rf);
     return;
   }
-  if (!d .data || d .tab !== "data") return; // filters belong to the row grid only
-  var cols = d .data .columns.map(function (c                  )         { return c.name; });
-  d .filters.forEach(function (f              , i        )       {
-    var row = el("div", "db-filter");
-    var cs = el("select");
+  if (!d_.data || d_.tab !== "data") return; // filters belong to the row grid only
+  const cols = d_.data?.columns.map((c                  )         => { return c.name; });
+  d_.filters.forEach((f              , i        )       => {
+    const row = el("div", "db-filter");
+    const cs = el("select");
     cs.title = "Column";
-    cols.forEach(function (c        )       {
-      var o = el("option", "", c)                     ;
+    cols.forEach((c        )       => {
+      const o = el("option", "", c)                     ;
       o.value = c;
       o.selected = c === f.column;
       cs.appendChild(o);
@@ -152,20 +153,20 @@ function renderDbFilters()       {
     // and restore (plus one re-render, because the refused ask already repainted the mutated
     // row) instead of keeping a column change the user just said no to.
     cs.onchange = (e) => {
-      var from = f.column;
+      const from = f.column;
       f.column = (e.currentTarget                     ).value;
       if (!dbApplyFilters()) { f.column = from; renderDbFilters(); }
     };
-    var os = el("select");
+    const os = el("select");
     os.title = "Operator";
-    DB_FILTER_OPS.forEach(function (op                               )       {
-      var o = el("option", "", op.label)                     ;
+    DB_FILTER_OPS.forEach((op                               )       => {
+      const o = el("option", "", op.label)                     ;
       o.value = op.op;
       o.selected = op.op === f.op;
       os.appendChild(o);
     });
     os.onchange = (e) => {
-      var from = f.op;
+      const from = f.op;
       f.op = (e.currentTarget                     ).value;
       if (dbValueless(f.op)) {
         // nothing to type — apply at once, through the same restore-on-refusal gate
@@ -175,7 +176,7 @@ function renderDbFilters()       {
     row.appendChild(cs);
     row.appendChild(os);
     if (!dbValueless(f.op)) {
-      var vi = el("input");
+      const vi = el("input");
       vi.type = "text";
       // The list operators say what they want right in the box (docs/22 W1.2).
       vi.placeholder = f.op === "in" || f.op === "notIn" ? "1,2,3" : (f.op === "between" ? "lo,hi" : "value");
@@ -188,28 +189,29 @@ function renderDbFilters()       {
       vi.onchange = (e) => { f.value = (e.currentTarget                    ).value; };
       row.appendChild(vi);
     }
-    var rm = el("button", "db-act", "✕")                     ;
+    const rm = el("button", "db-act", "✕")                     ;
     rm.title = "Remove this filter";
-    rm.onclick = function () {
+    rm.onclick = () => {
       // docs/22 closeout B6: remove goes through the same gate as every other row change —
       // a REFUSED discard must leave the row on screen, not silently swallow it.
-      d .filters.splice(i, 1);
-      if (!dbApplyFilters()) { d .filters.splice(i, 0, f); renderDbFilters(); }
+      const d_ = d ;
+      d_.filters.splice(i, 1);
+      if (!dbApplyFilters()) { d_.filters.splice(i, 0, f); renderDbFilters(); }
     };
     row.appendChild(rm);
     box.appendChild(row);
   });
-  var add = el("button", "btn db-filter-add", "+ Filter");
+  const add = el("button", "btn db-filter-add", "+ Filter");
   add.title = "Filter rows by a column value (server-side)";
-  add.onclick = function () {
-    var d2 = state.db;
-    d2 .filters.push({ column: cols[0] || "", op: "eq", value: "" });
+  add.onclick = () => {
+    const d2 = state.db;
+    d2?.filters.push({ column: cols[0] || "", op: "eq", value: "" });
     renderDbFilters();
-    var inputs = box.querySelectorAll                  ("input");
+    const inputs = box.querySelectorAll                  ("input");
     if (inputs.length) inputs[inputs.length - 1].focus();
   };
   box.appendChild(add);
-  if (d .filters.length) {
+  if (d_.filters.length) {
     box.appendChild(el("span", "db-filter-hint", "Enter applies · terms stack with AND · filtered total shown above"));
   }
 }

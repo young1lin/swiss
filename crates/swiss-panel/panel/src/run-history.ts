@@ -37,7 +37,7 @@ function histWhen(iso: string): string {
  *  closed control explains itself without looking like a form value. */
 function histButtonLabel(d: McpDetail, tool: string): string {
   if (d.run.histTool !== tool) return "↺ Past runs…"; // never loaded, or a fetch in flight
-  var n = (d.run.hist || []).length;
+  const n = (d.run.hist || []).length;
   return n ? "↺ Past runs (" + n + ")" : "↺ No past runs";
 }
 
@@ -47,13 +47,13 @@ function histButtonLabel(d: McpDetail, tool: string): string {
  *  preview — the full text is what the right pane is for. */
 function histRowsHtml(d: McpDetail, tool: string): string {
   if (d.run.histTool !== tool) return '<div class="hist-empty">loading…</div>';
-  var list = d.run.hist as unknown as ApiMcpCallRow[] || [];
+  const list = d.run.hist as unknown as ApiMcpCallRow[] || [];
   if (!list.length) {
     return d.run.histQ
       ? '<div class="hist-empty">No runs whose arguments contain ' + esc('"' + d.run.histQ + '"') + ".</div>"
       : '<div class="hist-empty">No runs of this tool recorded yet.</div>';
   }
-  return list.map(function (h) {
+  return list.map((h) => {
     return '<button type="button" class="hist-row" data-seq="' + h.seq + '" title="' +
       esc(h.args || "(no arguments)") + '">' + esc(h.args || "(no arguments)") + "</button>";
   }).join("");
@@ -65,7 +65,7 @@ function histRowsHtml(d: McpDetail, tool: string): string {
 function histViewHtml(c: ApiMcpCallRow): string {
   // The identity line: status dot (the panel's universal up/down mark), when, who, how long —
   // not prose glued with dots, so each fact keeps its own weight and nothing runs together.
-  var head = '<div class="hist-head">' +
+  const head = '<div class="hist-head">' +
     '<span class="dot ' + (c.ok ? "up" : "down") + '"></span>' +
     "<span>" + esc(histWhen(c.at)) + "</span>" +
     "<span>·</span>" +
@@ -73,7 +73,7 @@ function histViewHtml(c: ApiMcpCallRow): string {
     '<span class="grow"></span>' +
     (c.ms != null ? "<span>" + esc(c.ms + " ms") + "</span>" : "") +
     "</div>";
-  var out = head +
+  let out = head +
     '<div class="call-lbl">Arguments</div><pre class="logs">' +
     esc(fmtJson(c.args) || "(none)") + "</pre>";
   out += '<div class="call-lbl">' + (c.ok ? "Result" : "Error") + "</div>" +
@@ -88,28 +88,28 @@ function histViewHtml(c: ApiMcpCallRow): string {
 /** Open/close the popover. Opening does not steal focus from the form — the rows are reachable
  *  with the mouse, or with Tab once the control itself has focus. */
 function histToggle(): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.tab !== "run" || !d.run.tool) return;
   d.run.histOpen ? histClose() : histOpen();
 }
 function histOpen(): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.tab !== "run" || !d.run.tool) return;
   histClose(); // a pane rebuild can leave a stray popover behind under the same id
-  var btn = $<HTMLButtonElement>("r-hist");
+  const btn = $<HTMLButtonElement>("r-hist");
   if (!btn || btn.disabled) return;
   d.run.histOpen = true;
   btn.setAttribute("aria-expanded", "true");
   // Appended to <body> and position:fixed — inside the form it was clipped by the .group card's
   // overflow:hidden (the panel's existing pattern: .menu.float and the sheet both do this).
-  var r = btn.getBoundingClientRect();
-  var pop = document.createElement("div");
+  const r = btn.getBoundingClientRect();
+  const pop = document.createElement("div");
   pop.className = "hist-pop";
   pop.id = "r-hist-pop";
   pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - Math.min(780, window.innerWidth * .92) - 8)) + "px";
   // Drop below the button; flip above when that would run off the bottom of the viewport.
-  var below = r.bottom + 6;
-  var est = Math.min(340, window.innerHeight - 24);
+  const below = r.bottom + 6;
+  const est = Math.min(340, window.innerHeight - 24);
   pop.style.top = (below + est > window.innerHeight ? Math.max(8, r.top - est - 6) : below) + "px";
   // Left pane: the filter box pinned above the rows it narrows. The input is NOT rebuilt while
   // typing — only #r-hist-list's innerHTML is swapped (renderHistoryOnly), so focus survives.
@@ -123,14 +123,14 @@ function histOpen(): void {
     "</div>";
   document.body.appendChild(pop);
   wireHistRows(d);
-  var box = $<HTMLInputElement>("r-hist-q");
+  const box = $<HTMLInputElement>("r-hist-q");
   if (box) {
     box.value = d.run.histQ || "";
-    box.oninput = function () { queueHistSearch(d!); };
+    box.oninput = () => { queueHistSearch(d!); };
     // The box is where the hand already is — one ArrowDown lands on the first row, no mouse needed.
-    box.onkeydown = function (ev) {
+    box.onkeydown = (ev) => {
       if (ev.key === "ArrowDown") {
-        var first = document.querySelector<HTMLElement>("#r-hist-pop .hist-row");
+        const first = document.querySelector<HTMLElement>("#r-hist-pop .hist-row");
         if (first) { ev.preventDefault(); first.focus(); }
       }
     };
@@ -139,9 +139,9 @@ function histOpen(): void {
 function histClose(): void {
   window.clearTimeout(histSearchTimer!);
   histSearchTimer = null;
-  var pop = $("r-hist-pop");
+  const pop = $("r-hist-pop");
   if (pop) pop.remove();
-  var d = state.detail;
+  const d = state.detail;
   if (d && d.run) {
     d.run.histOpen = false;
     d.run.histSelSeq = null;
@@ -155,19 +155,19 @@ function histClose(): void {
       }
     }
   }
-  var btn = $<HTMLButtonElement>("r-hist");
+  const btn = $<HTMLButtonElement>("r-hist");
   if (btn) btn.setAttribute("aria-expanded", "false");
 }
 
 /** Typing in the filter re-asks the server for this tool's runs containing the text — the match
  *  happens there against the FULL stored arguments, so a hit past the 96-char preview still shows.
  *  Debounced: one scan per pause in typing, not one per keystroke. */
-var histSearchTimer = null as number | null;
+let histSearchTimer = null as number | null;
 function queueHistSearch(d: McpDetail): void {
-  var box = $<HTMLInputElement>("r-hist-q");
+  const box = $<HTMLInputElement>("r-hist-q");
   d.run.histQ = box ? box.value.trim() : "";
   window.clearTimeout(histSearchTimer!);
-  histSearchTimer = window.setTimeout(function () {
+  histSearchTimer = window.setTimeout(() => {
     if (state.detail !== d || !d.run.histOpen) return;
     d.run.histTool = null; // the loaded list answers the old query — force the refetch
     void loadRunHistory(d.name, d.run.tool);
@@ -177,17 +177,17 @@ function queueHistSearch(d: McpDetail): void {
 /** Hover/focus a row: show that run in full in the right pane. Entries are cached by seq, and the
  *  seq guard drops a reply that lost the race to a newer hover. */
 async function histPreview(seq: number): Promise<void> {
-  var d = state.detail;
-  var view = $("r-hist-view");
+  const d = state.detail;
+  const view = $("r-hist-view");
   if (!d || d.tab !== "run" || !d.run.histOpen || !view) return;
   d.run.histSelSeq = seq;
-  var full = d.run.histFull[seq];
+  let full = d.run.histFull[seq];
   if (!full) {
     view.innerHTML = '<div class="hist-empty"><span class="spin"></span> loading…</div>';
     try {
-      var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
+      const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
       if (!r.ok) throw new Error("HTTP " + r.status);
-      var j = await r.json();
+      const j = await r.json();
       if (!j.call || state.detail !== d) return;
       full = d.run.histFull[seq] = j.call;
     } catch (e) {
@@ -204,15 +204,15 @@ async function histPreview(seq: number): Promise<void> {
  *  re-wires the tab does not refetch. Set d.run.histTool = null first to force a refresh (right
  *  after a run, or on each debounced keystroke in the filter). */
 async function loadRunHistory(name: string, tool: string | null): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.name !== name || d.run.histTool === tool || d.run.histLoading) return;
   d.run.histLoading = true;
-  var q = d.run.histQ || "";
+  const q = d.run.histQ || "";
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(name) + "/tool-history?tool=" +
+    const r = await api("/api/mcps/" + encodeURIComponent(name) + "/tool-history?tool=" +
       encodeURIComponent(tool as string) + "&limit=300" + (q ? "&q=" + encodeURIComponent(q) : ""));
     if (r.ok) {
-      var j = await r.json();
+      const j = await r.json();
       // A revisit built a new detail object, or the query moved on (a newer keystroke, or the close
       // that reset it) — a stale reply would narrow the list to something nobody asked for. Drop it.
       if (state.detail === d && d.run.histQ === q) {
@@ -237,9 +237,9 @@ async function loadRunHistory(name: string, tool: string | null): Promise<void> 
 /** Repaint only the control's label and (if open) the popover's rows, never the form around it —
  *  the same discipline as renderRunResult, so the SQL being edited survives a post-run refresh. */
 function renderHistoryOnly(): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.tab !== "run" || !d.run.tool) return;
-  var btn = $<HTMLButtonElement>("r-hist");
+  const btn = $<HTMLButtonElement>("r-hist");
   if (btn) {
     btn.textContent = histButtonLabel(d, d.run.tool);
     // "No history at all" disables the control — but a filter that matched nothing must not: the
@@ -247,7 +247,7 @@ function renderHistoryOnly(): void {
     btn.disabled = !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length;
     if (btn.disabled && d.run.histOpen) histClose();
   }
-  var list = $("r-hist-list");
+  const list = $("r-hist-list");
   if (list && d.run.histOpen) {
     list.innerHTML = histRowsHtml(d, d.run.tool);
     wireHistRows(d);
@@ -257,16 +257,16 @@ function renderHistoryOnly(): void {
 
 /** A run was picked: fetch its full arguments by seq, then write them into the form. */
 async function applyRunHistory(seq: number): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || !d.run.tool) return;
-  var tools = d.tools.items || [];
-  var toolDef = null as ApiMcpTool | null;
-  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i] as ApiMcpTool;
+  const tools = d.tools.items || [];
+  let toolDef = null as ApiMcpTool | null;
+  for (let i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i] as ApiMcpTool;
   if (!toolDef) return;
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
+    const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
-    var j = await r.json();
+    const j = await r.json();
     if (!j.call) return;
     d.run.histFull[seq] = j.call; // the pick just fetched it — a hover later is free
     // Arguments over 4 KB were stored clipped (argsText's overflow marker), so they are no longer
@@ -284,10 +284,10 @@ async function applyRunHistory(seq: number): Promise<void> {
 function wireHistRows(d: McpDetail): void {
   // NOTE: the popover lives on <body> (histOpen), not inside #tabbody — selecting from #tabbody
   // here is why hover never fired: the rows existed, the wiring found none of them.
-  document.querySelectorAll<HTMLElement>("#r-hist-pop .hist-row").forEach(function (row) {
-    row.onclick = function () { void applyRunHistory(Number(row.dataset.seq)); };
-    row.onmouseenter = function () { void histPreview(Number(row.dataset.seq)); };
-    row.onfocus = function () { void histPreview(Number(row.dataset.seq)); };
+  document.querySelectorAll<HTMLElement>("#r-hist-pop .hist-row").forEach((row) => {
+    row.onclick = () => { void applyRunHistory(Number(row.dataset.seq)); };
+    row.onmouseenter = () => { void histPreview(Number(row.dataset.seq)); };
+    row.onfocus = () => { void histPreview(Number(row.dataset.seq)); };
   });
 }
 
@@ -295,17 +295,17 @@ function wireHistRows(d: McpDetail): void {
  *  the call does not mention are cleared, so nothing stale survives a refill; keys the schema no
  *  longer knows are dropped (the tool would reject them anyway). */
 function fillRunArgs(tool: ApiMcpTool, args: Record<string, unknown>): void {
-  var props = (tool.inputSchema && tool.inputSchema.properties) || {};
-  Object.keys(props).forEach(function (k) {
-    var node = $<HTMLInputElement>("r-arg-" + k);
+  const props = (tool.inputSchema && tool.inputSchema.properties) || {};
+  Object.keys(props).forEach((k) => {
+    const node = $<HTMLInputElement>("r-arg-" + k);
     if (!node) return;
-    var kind = node.dataset.kind;
+    const kind = node.dataset.kind;
     if (kind === "boolean") { node.checked = args[k] === true; return; }
-    var v = args[k];
+    const v = args[k];
     if (v === undefined || v === null) { node.value = ""; return; }
     if (kind === "number") { node.value = String(v); return; }
     if (kind === "array") {
-      node.value = (Array.isArray(v) ? v : [v]).map(function (x) {
+      node.value = (Array.isArray(v) ? v : [v]).map((x) => {
         return x !== null && typeof x === "object" ? JSON.stringify(x) : String(x);
       }).join("\n");
       return;
@@ -316,13 +316,13 @@ function fillRunArgs(tool: ApiMcpTool, args: Record<string, unknown>): void {
 }
 
 async function runTool(): Promise<void> {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.run.running) return;
-  var tools = d.tools.items || [];
-  var toolDef = null as ApiMcpTool | null;
-  for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i] as ApiMcpTool;
+  const tools = d.tools.items || [];
+  let toolDef = null as ApiMcpTool | null;
+  for (let i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) toolDef = tools[i] as ApiMcpTool;
   if (!toolDef) return;
-  var args;
+  let args;
   try {
     args = readRunArgs(toolDef);
   } catch (err) {
@@ -331,15 +331,15 @@ async function runTool(): Promise<void> {
     return;
   }
   d.run.running = true;
-  var btn = $<HTMLButtonElement>("runBtn");
+  const btn = $<HTMLButtonElement>("runBtn");
   if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
-  var meta = $("runMeta");
+  const meta = $("runMeta");
   if (meta) meta.innerHTML = '<span class="spin"></span>';
   try {
-    var r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/call", {
+    const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/call", {
       method: "POST", body: JSON.stringify({ tool: d.run.tool, arguments: args }),
     });
-    var j = await r.json().catch(function () { return {}; });
+    const j = await r.json().catch(() => { return {}; });
     d.run.result = {
       ok: !!j.ok && !j.isError,
       text: j.text != null && j.text !== "" ? j.text : (j.error || "(no output)"),
@@ -358,20 +358,20 @@ async function runTool(): Promise<void> {
 
 /** Update only the output and the meta line — never the form, so the SQL you typed survives a run. */
 function renderRunResult(): void {
-  var d = state.detail;
-  var running = !!(d && d.run.running);
-  var btn = $<HTMLButtonElement>("runBtn");
+  const d = state.detail;
+  const running = !!(d && d.run.running);
+  const btn = $<HTMLButtonElement>("runBtn");
   // Also called right after a pane rebuild, which may land mid-run — keep the button honest.
   if (btn) { btn.disabled = running; btn.textContent = running ? "Running…" : "Run"; }
-  var out = $("runOut"), meta = $("runMeta");
+  const out = $("runOut"), meta = $("runMeta");
   if (!out || !d) return;
-  var res = d.run.result as McpRunResult | null;
+  const res = d.run.result as McpRunResult | null;
   if (!res) { out.textContent = ""; if (meta) meta.textContent = ""; return; }
   // Formatted for reading; the size in the meta line is the real (compact) reply.
   out.textContent = fmtJson(res.text);
   out.className = "logs" + (res.ok ? "" : " err");
   if (meta) {
-    var bytes = new TextEncoder().encode(res.text).length;
+    const bytes = new TextEncoder().encode(res.text).length;
     meta.textContent = (res.ok ? "ok" : "error") + "  ·  " + (res.ms != null ? res.ms + " ms" : "") +
       "  ·  " + (bytes < 1024 ? bytes + " B" : (bytes / 1024).toFixed(1) + " KB");
   }
@@ -380,8 +380,8 @@ function renderRunResult(): void {
 function configFieldLabel(type: string, key: string): string {
   if (key === "type") return "Type";
   if (key === "lazy") return "Startup";
-  var fields = TYPE_FIELDS[type] || [];
-  var found = fields.find(function (f) { return f.k === key || (key === "lazy" && f.k === "autostart"); });
+  const fields = TYPE_FIELDS[type] || [];
+  const found = fields.find((f) => { return f.k === key || (key === "lazy" && f.k === "autostart"); });
   return found ? found.label : key;
 }
 
@@ -393,11 +393,11 @@ function configValue(key: string, value: unknown): string {
 }
 
 function configTarget(c: McpConfigLike): string {
-  var type = c.type || "proc";
+  const type = c.type || "proc";
   if (type === "mysql" || type === "mariadb" || type === "redis") {
-    var host = c.host || "default host";
-    var target = host + (c.port != null ? ":" + c.port : "");
-    var scope = type === "redis" ? c.db : c.database;
+    const host = c.host || "default host";
+    const target = host + (c.port != null ? ":" + c.port : "");
+    const scope = type === "redis" ? c.db : c.database;
     return scope != null && scope !== "" ? target + " / " + scope : target;
   }
   if (type === "proc") return c.command || "Command not configured";
@@ -410,18 +410,18 @@ function configTarget(c: McpConfigLike): string {
 
 function configBody(d: McpDetail): string {
   if (d.editing) {
-    var type = d.editType || (d.config && d.config.type) as string || "proc";
+    const type = d.editType || (d.config && d.config.type) as string || "proc";
     // Stored values for the MCP's own type, nothing for a different one — then whatever the user has
     // already typed on top, so a type switch or a rejected save doesn't empty the form.
-    var vals = Object.assign({}, type === ((d.config && d.config.type) || "proc") ? d.config : {}, d.editVals || {});
+    const vals = Object.assign({}, type === ((d.config && d.config.type) || "proc") ? d.config : {}, d.editVals || {});
     // docs/30: a pg def stores one url; the form edits the pieces. Split it here (once, the same
     // parser the submit path mirrors) — an unparseable url falls back to a raw field and rides
     // through save untouched (__pgRaw), because old experience beats lost data.
     if (type === "pg" && vals.url !== undefined) {
-      var pgParts = parsePgUrl(vals.url as string) as PgUrlParts & Record<string, string>;
+      const pgParts = parsePgUrl(vals.url as string) as PgUrlParts & Record<string, string>;
       if (pgParts) {
         delete vals.url;
-        Object.keys(pgParts).forEach(function (k) { if (vals[k] === undefined) vals[k] = pgParts[k]; });
+        Object.keys(pgParts).forEach((k) => { if (vals[k] === undefined) vals[k] = pgParts[k]; });
       } else {
         vals.__pgRaw = vals.url;
         delete vals.url;
@@ -431,11 +431,11 @@ function configBody(d: McpDetail): string {
     // def with no lazy at all gets the type's default (proc off, everything else on).
     if (vals.lazy !== undefined) vals.autostart = !vals.lazy;
     else if (vals.autostart === undefined) vals.autostart = type !== "proc";
-    var opts = Object.keys(TYPE_FIELDS).map(function (t) {
+    const opts = Object.keys(TYPE_FIELDS).map((t) => {
       return '<option value="' + t + '"' + (t === type ? " selected" : "") + ">" + esc(TYPE_LABELS[t] || t) + "</option>";
     }).join("");
-    var replacing = d.editMode === "replace";
-    var pgRaw = type === "pg" && vals.__pgRaw !== undefined
+    const replacing = d.editMode === "replace";
+    const pgRaw = type === "pg" && vals.__pgRaw !== undefined
       ? '<label class="field"><span>Connection URL</span>' +
         '<textarea id="e-pgraw" rows="2">' + esc(vals.__pgRaw) + "</textarea>" +
         '<div class="hint">A whole-value \${...} ref (or a url that did not decompose) — it is kept whole.' +
@@ -458,33 +458,33 @@ function configBody(d: McpDetail): string {
       '<div class="hint" id="e-test-out" hidden></div>' +
       "</div></div>";
   }
-  var c = d.config;
+  const c = d.config;
   if (!c) return '<div class="note"><span class="spin"></span> Loading…</div>';
-  var type = c.type as string || "proc";
-  var settings = Object.keys(c).reduce(function (all, key) {
-    var value = c![key];
+  const type = c.type as string || "proc";
+  const settings = Object.keys(c).reduce((all, key) => {
+    const value = c?.[key];
     if (value == null || value === "") return all;
     all.push({ key: key, label: configFieldLabel(type, key), text: configValue(key, value) });
     return all;
   }, [] as { key: string; label: string; text: string }[]);
-  var rows = settings.map(function (setting) {
-    var title = setting.text.replace(/\r?\n/g, " · ");
+  const rows = settings.map((setting) => {
+    const title = setting.text.replace(/\r?\n/g, " · ");
     return '<div class="config-row"><span class="config-label">' + esc(setting.label) +
       '</span><span class="config-value" title="' + esc(title) + '">' + esc(setting.text) + "</span></div>";
   }).join("");
-  var label = TYPE_LABELS[type] || type;
-  var split = label.indexOf(" — ");
-  var kind = split >= 0 ? label.slice(split + 3) : "MCP adapter";
-  var target = configTarget(c as McpConfigLike);
-  var badges = [];
+  const label = TYPE_LABELS[type] || type;
+  const split = label.indexOf(" — ");
+  const kind = split >= 0 ? label.slice(split + 3) : "MCP adapter";
+  const target = configTarget(c as McpConfigLike);
+  const badges = [];
   if (c.lazy !== undefined) badges.push(c.lazy ? "Starts on demand" : "Starts at boot");
   if (c.exposeResources !== undefined) badges.push(c.exposeResources ? "Resources on" : "Resources off");
   if (c.exposePrompts !== undefined) badges.push(c.exposePrompts ? "Prompts on" : "Prompts off");
   if (c.auth === "oauth") badges.push("OAuth managed");
-  var badgeHtml = badges.length ? '<div class="config-badges">' + badges.map(function (badge) {
+  const badgeHtml = badges.length ? '<div class="config-badges">' + badges.map((badge) => {
     return '<span class="tag">' + esc(badge) + "</span>";
   }).join("") + "</div>" : "";
-  var summary = '<div class="group config-summary">' +
+  const summary = '<div class="group config-summary">' +
     '<div class="config-head"><div class="config-identity">' +
       '<div class="config-kind"><span class="tag">' + esc(type) + "</span><span>" + esc(kind) + "</span></div>" +
       '<div class="config-target" title="' + esc(target) + '">' + esc(target) + "</div>" +
@@ -493,22 +493,22 @@ function configBody(d: McpDetail): string {
     '<details class="config-more"><summary><span>All settings</span><span class="config-count">' + settings.length +
       (settings.length === 1 ? ' value' : ' values') + '</span><span class="config-chev">' + icon("chevron-right") + "</span></summary>" +
       '<div class="config-rows">' + rows + "</div></details></div>";
-  var note = d.source === "config"
+  const note = d.source === "config"
     ? '<div class="note">Defined in gateway.config.json. Edits are saved as an override in managed.json; ' +
       "<code>${ENV}</code> references are kept as references, so no credential is written to disk.</div>"
     : "";
-  var revs = d.revisions as McpRevisionRow[] || [];
+  const revs = d.revisions as McpRevisionRow[] || [];
   // Parked definition snapshots stay available without making an empty shelf a permanent section.
-  var revRows = revs.length
-    ? revs.map(function (r, i) {
-        var when = r.at ? new Date(r.at).toLocaleString() : "";
+  const revRows = revs.length
+    ? revs.map((r, i) => {
+        const when = r.at ? new Date(r.at).toLocaleString() : "";
         return '<div class="row"><span class="k">' + esc(TYPE_LABELS[r.type] || r.type || "?") + "</span>" +
           '<span class="v wrap">' + esc((r.note || "(no note)") + (when ? " · " + when : "")) +
           ' <button class="btn" data-restore="' + i + '">Restore</button>' +
           ' <button class="btn danger" data-revdel="' + i + '">Delete</button></span></div>';
       }).join("")
     : '<div class="row"><span class="rowmsg">None yet — replacing a definition parks the outgoing settings here.</span></div>';
-  var revBlock = '<details class="config-revisions"><summary><span>Saved revisions (' + revs.length + ")</span>" +
+  const revBlock = '<details class="config-revisions"><summary><span>Saved revisions (' + revs.length + ")</span>" +
     '<span class="config-chev">' + icon("chevron-right") + "</span></summary>" +
     '<div class="config-revision-body"><div class="config-revision-intro">' +
       '<span>Swap the adapter definition while keeping the current one available for restore.</span>' +
@@ -526,10 +526,10 @@ function configBody(d: McpDetail): string {
  * already there. Nothing restarts an MCP on its own.
  */
 function tunnelDepsHtml(d: McpDetail): string {
-  var t = d.tunnels as McpTunnelDepRow[] | null | undefined;
+  const t = d.tunnels as McpTunnelDepRow[] | null | undefined;
   if (!t || !t.length) return "";
-  var rows = t.map(function (x) {
-    var dot = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "";
+  const rows = t.map((x) => {
+    const dot = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "";
     return '<div class="row"><span class="k">tunnel</span><span class="v">' +
       '<span class="dot ' + dot + '" style="display:inline-block;margin-right:6px"></span>' +
       esc(x.name) + " · " + esc(String(x.localPort)) + " &rarr; " + esc(x.targetHost + ":" + x.targetPort) +
@@ -544,61 +544,61 @@ function tunnelDepsHtml(d: McpDetail): string {
 }
 
 function wireTabBody(d: McpDetail, m: unknown): void {
-  var prev = $("pgPrev"); if (prev) prev.onclick = pagePrev;
-  var next = $("pgNext"); if (next) next.onclick = pageNext;
-  var edit = $("c-edit"); if (edit) edit.onclick = startEdit;
-  var replaceBtn = $("c-replace"); if (replaceBtn) replaceBtn.onclick = startReplace;
-  var save = $("e-save"); if (save) save.onclick = d.editMode === "replace" ? saveReplace : saveEdit;
-  document.querySelectorAll<HTMLElement>("#tabbody [data-restore]").forEach(function (b) {
-    b.onclick = function () { void restoreRevision(Number(b.dataset.restore)); };
+  const prev = $("pgPrev"); if (prev) prev.onclick = pagePrev;
+  const next = $("pgNext"); if (next) next.onclick = pageNext;
+  const edit = $("c-edit"); if (edit) edit.onclick = startEdit;
+  const replaceBtn = $("c-replace"); if (replaceBtn) replaceBtn.onclick = startReplace;
+  const save = $("e-save"); if (save) save.onclick = d.editMode === "replace" ? saveReplace : saveEdit;
+  document.querySelectorAll<HTMLElement>("#tabbody [data-restore]").forEach((b) => {
+    b.onclick = () => { void restoreRevision(Number(b.dataset.restore)); };
   });
-  document.querySelectorAll<HTMLElement>("#tabbody [data-revdel]").forEach(function (b) {
-    b.onclick = function () { void deleteRevision(Number(b.dataset.revdel)); };
+  document.querySelectorAll<HTMLElement>("#tabbody [data-revdel]").forEach((b) => {
+    b.onclick = () => { void deleteRevision(Number(b.dataset.revdel)); };
   });
-  var cancel = $("e-cancel"); if (cancel) cancel.onclick = cancelEdit;
-  var testBtn = $("e-test"); if (testBtn) testBtn.onclick = function () { void runConnTest("e-"); };
-  var type = $<HTMLSelectElement>("e-type"); if (type) type.onchange = function () { changeEditType(type.value); };
+  const cancel = $("e-cancel"); if (cancel) cancel.onclick = cancelEdit;
+  const testBtn = $("e-test"); if (testBtn) testBtn.onclick = () => { void runConnTest("e-"); };
+  const type = $<HTMLSelectElement>("e-type"); if (type) type.onchange = () => { changeEditType(type.value); };
 
   // Tools list → Try
-  document.querySelectorAll<HTMLElement>("#tabbody [data-try]").forEach(function (b) {
-    b.onclick = function () { tryTool(b.dataset.try as string); };
+  document.querySelectorAll<HTMLElement>("#tabbody [data-try]").forEach((b) => {
+    b.onclick = () => { tryTool(b.dataset.try as string); };
   });
 
   // Resources list → Read
-  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-read]").forEach(function (b) {
-    b.onclick = function () { void readResource(b.dataset.read as string, b); };
+  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-read]").forEach((b) => {
+    b.onclick = () => { void readResource(b.dataset.read as string, b); };
   });
 
   // Tools list → on/off toggle
-  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-toggle]").forEach(function (b) {
-    b.onclick = function () { void toggleTool(b.dataset.toggle as string, b.dataset.on === "1", b); };
+  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-toggle]").forEach((b) => {
+    b.onclick = () => { void toggleTool(b.dataset.toggle as string, b.dataset.on === "1", b); };
   });
 
   // Resources → master on/off
-  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-restog]").forEach(function (b) {
-    b.onclick = function () { void toggleResources(b.dataset.restog === "1", b); };
+  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-restog]").forEach((b) => {
+    b.onclick = () => { void toggleResources(b.dataset.restog === "1", b); };
   });
 
   // Logs tab
   // docs/32 B4: Clear lives behind the toolbar's ellipsis menu — a destructive action does not
   // get a standing button in the filter row. The house popupMenu (menu.js) carries the item.
-  var clMenu = $("clMenu");
-  if (clMenu) clMenu.onclick = function (ev) {
+  const clMenu = $("clMenu");
+  if (clMenu) clMenu.onclick = (ev) => {
     ev.stopPropagation();
     // The house toggle idiom (pane.js toggleMenu): a second click dismisses instead of reopening.
     if (state.menuOpen) { closeMenu(); return; }
     popupMenu(clMenu.getBoundingClientRect(), [
-      { label: "Clear logs…", danger: true, fn: function () { void clearCalls(); } },
+      { label: "Clear logs…", danger: true, fn: () => { void clearCalls(); } },
     ]);
   };
   // The search box (docs/31): debounced server-side reload; Escape clears at once. Property
   // assignment, not addEventListener — renderCallsOnly may re-wire the SAME live node.
-  var q = $<HTMLInputElement>("callsQ");
+  const q = $<HTMLInputElement>("callsQ");
   if (q) {
-    q.oninput = function () {
+    q.oninput = () => {
       clearTimeout(d.callsQTimer);
-      d.callsQTimer = setTimeout(function () {
-        var nd = state.detail;
+      d.callsQTimer = setTimeout(() => {
+        const nd = state.detail;
         if (!nd || nd.name !== d.name) return;
         // docs/32 B3: a new needle supersedes any switch in flight — target page 0, the
         // pending switch cancelled, its error taken down.
@@ -612,7 +612,7 @@ function wireTabBody(d: McpDetail, m: unknown): void {
         loadCalls(nd.name);
       }, 300);
     };
-    q.onkeydown = function (ev) {
+    q.onkeydown = (ev) => {
       if (ev.key !== "Escape" || !q.value) return;
       ev.preventDefault();
       clearTimeout(d.callsQTimer);
@@ -629,42 +629,42 @@ function wireTabBody(d: McpDetail, m: unknown): void {
   }
   // docs/32 B2: a keyboard activation (Enter/Space on a focused button) carries detail === 0 —
   // that action owes the user focus back on the equivalent button once the switch commits.
-  var clPrev = $("clPrev"); if (clPrev) clPrev.onclick = function (ev) { callsPageStep(-1, { fromKey: !!ev && ev.detail === 0 }); };
-  var clNext = $("clNext"); if (clNext) clNext.onclick = function (ev) { callsPageStep(1, { fromKey: !!ev && ev.detail === 0 }); };
-  var clRetry = $("clRetry"); if (clRetry) clRetry.onclick = function (ev) { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
+  const clPrev = $("clPrev"); if (clPrev) clPrev.onclick = (ev) => { callsPageStep(-1, { fromKey: !!ev && ev.detail === 0 }); };
+  const clNext = $("clNext"); if (clNext) clNext.onclick = (ev) => { callsPageStep(1, { fromKey: !!ev && ev.detail === 0 }); };
+  const clRetry = $("clRetry"); if (clRetry) clRetry.onclick = (ev) => { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
   // docs/33 C1: block copy buttons. The text comes from the CALL ROW, not the painted DOM —
   // a truncated preview or a highlighted render still copies the full pretty payload.
-  document.querySelectorAll<HTMLElement>("#tabbody [data-copy]").forEach(function (b) {
-    b.onclick = function () {
-      var nd = state.detail;
+  document.querySelectorAll<HTMLElement>("#tabbody [data-copy]").forEach((b) => {
+    b.onclick = () => {
+      const nd = state.detail;
       if (!nd) return;
-      var parts = String(b.dataset.copy || "").split(":");
-      var seq = Number(parts[1]);
-      var c = (nd.calls || []).find(function (r) { return r.seq === seq; });
+      const parts = String(b.dataset.copy || "").split(":");
+      const seq = Number(parts[1]);
+      const c = (nd.calls || []).find((r) => { return r.seq === seq; });
       if (!c) return;
-      var text = parts[0] === "args" ? fmtJson(c.args || "")
+      const text = parts[0] === "args" ? fmtJson(c.args || "")
         : fmtJson(nd.callsFull[seq] != null ? nd.callsFull[seq] : c.output);
       void copyLogText(text || "");
     };
   });
-  document.querySelectorAll<HTMLElement>("#tabbody [data-callseq]").forEach(function (s) {
-    s.onclick = function () { toggleCall(s.dataset.callseq as unknown as number); };
-    s.onkeydown = function (ev) {
+  document.querySelectorAll<HTMLElement>("#tabbody [data-callseq]").forEach((s) => {
+    s.onclick = () => { toggleCall(s.dataset.callseq as unknown as number); };
+    s.onkeydown = (ev) => {
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleCall(s.dataset.callseq as unknown as number); }
     };
   });
-  document.querySelectorAll<HTMLElement>("#tabbody [data-full]").forEach(function (b) {
-    b.onclick = function (ev) { ev.stopPropagation(); showFullResult(b.dataset.full as unknown as number); };
+  document.querySelectorAll<HTMLElement>("#tabbody [data-full]").forEach((b) => {
+    b.onclick = (ev) => { ev.stopPropagation(); showFullResult(b.dataset.full as unknown as number); };
   });
 
   // Run tab
-  var toolSel = $<HTMLSelectElement>("r-tool");
+  const toolSel = $<HTMLSelectElement>("r-tool");
   if (toolSel) {
-    toolSel.onchange = function () { d.run.tool = toolSel.value; d.run.result = null; renderPane(); };
+    toolSel.onchange = () => { d.run.tool = toolSel.value; d.run.result = null; renderPane(); };
   }
-  var histBtn = $<HTMLButtonElement>("r-hist");
+  const histBtn = $<HTMLButtonElement>("r-hist");
   if (histBtn) {
-    histBtn.onclick = function () { histToggle(); };
+    histBtn.onclick = () => { histToggle(); };
     // Same guard as renderHistoryOnly: a filter that matched nothing is a search in progress, not
     // an empty history — the control stays clickable so the popover (and its empty state) can open.
     histBtn.disabled = !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length;
@@ -678,12 +678,12 @@ function wireTabBody(d: McpDetail, m: unknown): void {
   // Loading here rather than in showTab: the tool the Run tab will show is only settled once the
   // form is built (runBody falls back to the first tool when none was preselected via Try).
   if (d.tab === "run" && d.run.tool) loadRunHistory(d.name, d.run.tool);
-  var runBtn = $("runBtn");
+  const runBtn = $("runBtn");
   if (runBtn) {
     runBtn.onclick = runTool;
     // Ctrl/Cmd+Enter runs, so a SQL textarea can be submitted without reaching for the mouse.
-    document.querySelectorAll<HTMLElement>("#tabbody textarea, #tabbody input[type=text]").forEach(function (f) {
-      f.addEventListener("keydown", function (ev) {
+    document.querySelectorAll<HTMLElement>("#tabbody textarea, #tabbody input[type=text]").forEach((f) => {
+      f.addEventListener("keydown", (ev) => {
         if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); runTool(); }
       });
     });
@@ -693,7 +693,7 @@ function wireTabBody(d: McpDetail, m: unknown): void {
 
 /** Jump from the Tools list into Run with that tool preselected. */
 function tryTool(name: string): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d) return;
   d.run.tool = name;
   d.run.result = null;
@@ -705,14 +705,14 @@ function tryTool(name: string): void {
 async function toggleResources(currentlyOn: boolean, btn: HTMLButtonElement): Promise<void> {
   if (!state.selected) return;
   btn.disabled = true;
-  var j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(state.selected) + "/resources-toggle", {
+  const j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(state.selected) + "/resources-toggle", {
     method: "POST",
     body: JSON.stringify({ enabled: !currentlyOn }),
   });
   btn.disabled = false;
   if (!j) return;
   if (j.unchanged) { toast("Already " + (currentlyOn ? "on" : "off")); return; }
-  var d = state.detail;
+  const d = state.detail;
   if (d) { d.resources.loaded = false; d.resources.cursors = []; void loadPage(d.name, "resources"); }
 }
 
@@ -721,7 +721,7 @@ async function toggleResources(currentlyOn: boolean, btn: HTMLButtonElement): Pr
 async function toggleTool(name: string, currentlyOn: boolean, btn: HTMLButtonElement): Promise<void> {
   if (!state.selected) return;
   btn.disabled = true;
-  var j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(state.selected) + "/tools/" + encodeURIComponent(name), {
+  const j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(state.selected) + "/tools/" + encodeURIComponent(name), {
     method: "POST",
     body: JSON.stringify({ enabled: !currentlyOn }),
   });
@@ -729,16 +729,16 @@ async function toggleTool(name: string, currentlyOn: boolean, btn: HTMLButtonEle
   if (!j) return;
   if (j.unchanged) { toast("Already " + (currentlyOn ? "on" : "off")); return; }
   // Reload the tools page so the row moves between the enabled list and the disabled group.
-  var d = state.detail;
+  const d = state.detail;
   if (d) { d.tools.loaded = false; d.tools.cursors = []; void loadPage(d.name, "tools"); }
 }
 
 /** Read one resource and show its contents. Read-only, so a sheet with no form is the whole UI. */
 async function readResource(uri: string, btn: HTMLButtonElement | null): Promise<void> {
   if (!state.selected) return;
-  var label = btn ? btn.textContent : "";
+  const label = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "…"; }
-  var j = await apiJson<ApiMcpResourceRead>("/api/mcps/" + encodeURIComponent(state.selected) + "/resource", {
+  const j = await apiJson<ApiMcpResourceRead>("/api/mcps/" + encodeURIComponent(state.selected) + "/resource", {
     method: "POST",
     body: JSON.stringify({ uri: uri }),
   });
@@ -755,34 +755,34 @@ async function readResource(uri: string, btn: HTMLButtonElement | null): Promise
     "</div>";
   $("sheet").hidden = false;
   $("rd-close").onclick = closeSheet;
-  $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
+  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
 }
 
 /** Repaint only the Logs tab body, so a poll doesn't rebuild the pane (or the header, or the menu).
  *  Expanded rows survive because `callsOpen` is state, not DOM. */
 function renderCallsOnly(): void {
-  var d = state.detail;
+  const d = state.detail;
   if (!d || d.tab !== "logs") return;
-  var body = $("tabbody");
+  const body = $("tabbody");
   if (!body) return;
   // Repaint only when the log actually changed — otherwise a 6 s poll would scroll an open result
   // back to the top while it is being read. The needle counts too (docs/31): a cleared or changed
   // search must repaint even when the row count happens to stay the same.
-  var calls = d.calls || [];
+  const calls = d.calls || [];
   // The page, a pending switch and the error state are part of the picture now (docs/32 B1):
   // a commit or a failure must repaint even when the row count happens to stay the same.
-  var sig = (calls.length ? calls[0].seq : 0) + ":" + calls.length + ":" + d.stderr.length + ":" + (d.callsQ || "") +
+  const sig = (calls.length ? calls[0].seq : 0) + ":" + calls.length + ":" + d.stderr.length + ":" + (d.callsQ || "") +
     ":p" + d.callsPage + ":w" + (d.callsPendingPage == null ? "-" : d.callsPendingPage) + ":e" + (d.callsError || "");
   if (body.dataset.callsig === sig) return;
   // Keep the search box the user is typing into: the fresh markup carries a rebuilt input, and the
   // live node (focus, caret, IME state) is swapped back into its place. innerHTML detaching the
   // old node blurs it — focus and caret are restored explicitly after the swap, or the next
   // keystroke after a result repaint would land nowhere.
-  var liveQ = document.getElementById("callsQ") as HTMLInputElement & { selectionStart: number };
-  var hadFocus = !!(liveQ && document.activeElement === liveQ);
-  var caret = hadFocus ? liveQ.selectionStart : null;
+  const liveQ = document.getElementById("callsQ") as HTMLInputElement & { selectionStart: number };
+  const hadFocus = !!(liveQ && document.activeElement === liveQ);
+  const caret = hadFocus ? liveQ.selectionStart : null;
   body.innerHTML = logsBody(d);
-  var freshQ = document.getElementById("callsQ");
+  const freshQ = document.getElementById("callsQ");
   if (liveQ && freshQ && liveQ !== freshQ) freshQ.replaceWith(liveQ);
   if (hadFocus && liveQ) {
     liveQ.focus();

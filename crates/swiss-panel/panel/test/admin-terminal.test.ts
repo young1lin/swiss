@@ -464,7 +464,7 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
     // tier 1: the empty state teaches the headline keys
     expect(view).toContain('<p class="term-keys-hint"><kbd>Ctrl+Shift+F</kbd>');
     // tier 2: one first-attach hint, stored so it never returns
-    expect(view).toContain('var HINT_KEY = "swiss.terminal.hint"');
+    expect(view).toContain('const HINT_KEY = "swiss.terminal.hint"');
     expect(view).toContain('localStorage.setItem(HINT_KEY, "1")');
     // tier 3: the ? reference button in the bar, the sheet it opens, the key that opens it
     expect(view).toContain('id="term-help"');

@@ -45,23 +45,23 @@ function endpointUrl(name        )         {
  */
 async function resolveSecret()                         {
   await refreshTokens();
-  var list = state.tokens || [];
+  const list = state.tokens || [];
 
   if (!list.length) {
-    var made = await apiJson                 ("/api/tokens", { method: "POST", body: JSON.stringify({ label: "default" }) });
+    const made = await apiJson                 ("/api/tokens", { method: "POST", body: JSON.stringify({ label: "default" }) });
     if (!made) return null;
     await refreshTokens();
     return useToken(made.id, made.secret);
   }
 
-  var pick = pickCopyToken(list, rememberedTokenId());
+  const pick = pickCopyToken(list, rememberedTokenId());
   if (!pick) return null;
   if (state.activeSecret && rememberedTokenId() === pick.id) return state.activeSecret;
   return fetchSecret(pick.id);
 }
 
 async function fetchSecret(id        )                         {
-  var j = await apiJson                ("/api/tokens/" + encodeURIComponent(id) + "/secret");
+  const j = await apiJson                ("/api/tokens/" + encodeURIComponent(id) + "/secret");
   if (!j) return null;
   return useToken(j.id, j.secret);
 }
@@ -75,9 +75,9 @@ function useToken(id        , secret        )         {
 
 /** Copy a connect command for one MCP, embedding the active token secret. */
 async function copyConn(name        , kind        )                {
-  var secret = await resolveSecret();
+  const secret = await resolveSecret();
   if (!secret) return;
-  var text = kind === "claude" ? claudeSnippet(name, secret)
+  const text = kind === "claude" ? claudeSnippet(name, secret)
     : kind === "codex" ? codexSnippet(name, secret) : mcpJsonSnippet(name, secret);
   copyText(text, kind === "claude" ? "Claude Code command" : kind === "codex" ? "Codex block" : ".mcp.json entry");
 }
@@ -98,7 +98,7 @@ function codexSnippet(name        , secret        )         {
 
 /** A `.mcp.json` entry for project-scoped Claude Code; the secret is inline. */
 function mcpJsonSnippet(name        , secret        )         {
-  var entry                                                                                    = {};
+  const entry                                                                                    = {};
   entry[name] = { type: "http", url: endpointUrl(name), headers: { Authorization: "Bearer " + secret } };
   return JSON.stringify({ mcpServers: entry }, null, 2);
 }
@@ -116,7 +116,7 @@ async function copyText(text        , label        )                {
 
 /** Fallback for a browser that withholds the async clipboard (or a non-secure origin). */
 function legacyCopy(text        )       {
-  var ta = document.createElement("textarea");
+  const ta = document.createElement("textarea");
   ta.value = text;
   ta.setAttribute("readonly", "");
   ta.style.position = "fixed";
@@ -126,13 +126,13 @@ function legacyCopy(text        )       {
   try { document.execCommand("copy"); } catch (e) { /* nothing else to try */ }
   document.body.removeChild(ta);
 }
-document.addEventListener("click", function (e) {
+document.addEventListener("click", (e) => {
   if (state.menuOpen) closeMenu();
   // The Run history popover closes on any click outside itself AND outside the popover — the
   // popover sits on <body>, so clicking its scrollbar or the preview pane must not count as "outside".
   // A row click closes it through applyRunHistory, its own handler.
-  var inHist = targetEl(e)?.closest(".hist-wrap, .hist-pop");
-  var d = state.detail;
+  const inHist = targetEl(e)?.closest(".hist-wrap, .hist-pop");
+  const d = state.detail;
   if (!inHist && d && d.tab === "run" && d.run.histOpen) histClose();
 });
 

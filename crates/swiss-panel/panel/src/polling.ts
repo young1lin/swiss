@@ -25,9 +25,9 @@ import { triggerSummary } from "./jobs-v2.js";
 /* --- polling ---------------------------------------------------------------------------------- */
 async function loadList(): Promise<void> {
   try {
-    var r = await api("/api/mcps");
+    const r = await api("/api/mcps");
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
-    var j: ApiMcpListResponse = await r.json();
+    const j: ApiMcpListResponse = await r.json();
     state.mcps = j.mcps || [];
     state.groups = j.groups || [];
     if (state.selected && !rowOf(state.selected)) { state.selected = null; state.detail = null; }
@@ -39,7 +39,7 @@ async function loadList(): Promise<void> {
 
 async function loadMemory(tree?: boolean): Promise<void> {
   try {
-    var r = await api("/api/memory" + (tree ? "?tree=1" : ""));
+    const r = await api("/api/memory" + (tree ? "?tree=1" : ""));
     if (!r.ok) return;
     state.mem = await r.json();
     renderMemory();
@@ -47,10 +47,10 @@ async function loadMemory(tree?: boolean): Promise<void> {
 }
 
 function renderMemory(): void {
-  var m = state.mem;
+  const m = state.mem;
   if (!m) return;
-  var chip = $("memChip");
-  var total = m.childrenMb ? Math.round((m.gatewayMb + m.childrenMb) * 10) / 10 : m.gatewayMb;
+  const chip = $("memChip");
+  const total = m.childrenMb ? Math.round((m.gatewayMb + m.childrenMb) * 10) / 10 : m.gatewayMb;
   chip.textContent = total + " MB" + (m.processCount > 1 ? " · " + m.processCount + " procs" : "");
   chip.title = "gateway RSS " + m.gatewayMb + " MB (heap " + m.heapUsedMb + "/" + m.heapTotalMb +
     " MB, external " + m.externalMb + " MB)" +
@@ -115,8 +115,8 @@ function setView(v: string): Promise<void> { return navigatePage(v); }
  *  drifted: patchSidebar counted "· N down" and this one did not, so the chip lost and regained
  *  that segment every 6s poll versus every view switch. */
 function mcpChipText(): string {
-  var up = 0, bad = 0;
-  state.mcps.forEach(function (m) {
+  let up = 0, bad = 0;
+  state.mcps.forEach((m) => {
     if (m.state === "up") up++;
     else if (m.state === "down" || m.state === "error") bad++;
   });
@@ -127,11 +127,11 @@ function updateCountChip(): void { $("countChip").textContent = currentPageCount
 
 /** `patchOnly` is what the poll passes: refresh the data, then patch rather than rebuild. */
 async function loadTunnels(patchOnly?: boolean): Promise<void> {
-  var j = await apiJson<ApiTunnelsResponse>("/api/tunnels");
+  const j = await apiJson<ApiTunnelsResponse>("/api/tunnels");
   if (!j) return;
   state.tun.data = j;
   if (isTunnelsView(state.view)) {
-    var { patchTunnels, renderTunnels } = await import("./tunnels.js");
+    const { patchTunnels, renderTunnels } = await import("./tunnels.js");
     if (state.tun.dragging) return; // a rebuild under the pointer would cancel the drag; patch later
     if (patchOnly && $("pane").querySelector(".tun-foot")) patchTunnels();
     else renderTunnels();
@@ -161,15 +161,15 @@ function jobDotClass(j: ApiJobRow): string {
 }
 
 function jobRowHtml(j: ApiJobRow): string {
-  var busy = state.jobs.busy[j.name];
+  const busy = state.jobs.busy[j.name];
   // The v2 identity (docs/11 §7.1): the title is the human name when one is set, the id
   // stays beside it because every action still addresses the id.
-  var title = j.title && j.title !== j.name ? esc(j.title) + ' <span class="via">· ' + esc(j.name) + "</span>" : esc(j.name);
-  var labels = (j.labels || []).length
-    ? ' <span class="via">' + j.labels!.map(function (l: string): string { return "#" + esc(l); }).join(" ") + "</span>"
+  const title = j.title && j.title !== j.name ? esc(j.title) + ' <span class="via">· ' + esc(j.name) + "</span>" : esc(j.name);
+  const labels = (j.labels || []).length
+    ? ' <span class="via">' + j.labels?.map((l: string): string => { return "#" + esc(l); }).join(" ") + "</span>"
     : "";
   // data-last/data-next always render (possibly empty) so patchJobs can always fill them in.
-  var word = busy ? "starting" : jobDotClass(j);
+  const word = busy ? "starting" : jobDotClass(j);
   return '<div class="tun-row" data-job="' + esc(j.name) + '">' +
       '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word)) + '"></span>' +
       '<div class="tun-main">' +
@@ -192,9 +192,9 @@ function jobRowHtml(j: ApiJobRow): string {
 }
 
 function jobsChipText(): string {
-  var rows = state.jobs.data;
-  var on = rows.filter(function (j) { return j.enabled; }).length;
-  var failing = rows.filter(function (j) { return j.enabled && j.lastOk === false; }).length;
+  const rows = state.jobs.data;
+  const on = rows.filter((j) => { return j.enabled; }).length;
+  const failing = rows.filter((j) => { return j.enabled && j.lastOk === false; }).length;
   return rows.length + (rows.length === 1 ? " job" : " jobs") + " · " + on + " on" +
     (failing ? " · " + failing + " failing" : "");
 }
@@ -202,12 +202,12 @@ function jobsChipText(): string {
 /** `patchOnly` is what the poll passes: refresh the data, then patch rather than rebuild —
  *  the same contract as loadTunnels. */
 async function loadJobs(patchOnly?: boolean): Promise<void> {
-  var j = await apiJson<ApiJobsResponse>("/api/jobs");
+  const j = await apiJson<ApiJobsResponse>("/api/jobs");
   if (!j) return;
   state.jobs.data = j.jobs || [];
   state.jobs.groups = j.groups && j.groups.length ? j.groups : ["default"];
   if (state.view === "jobs") {
-    var { patchJobs, renderJobs } = await import("./jobs.js");
+    const { patchJobs, renderJobs } = await import("./jobs.js");
     if (patchOnly && $("pane").querySelector("[data-foot]")) patchJobs();
     else renderJobs();
   }
@@ -216,10 +216,10 @@ async function loadJobs(patchOnly?: boolean): Promise<void> {
 
 /** `18989 → 127.0.0.1:18989   via bastion · serves pg-app ●` */
 function ruleSubHtml(r: ApiTunnelRuleRow): string {
-  var out = esc(String(r.localPort)) + " &rarr; " + esc(r.targetHost + ":" + r.targetPort);
+  let out = esc(String(r.localPort)) + " &rarr; " + esc(r.targetHost + ":" + r.targetPort);
   out += ' <span class="via">via ' + esc(r.connectionName) + "</span>";
   if (r.mcpRows && r.mcpRows.length) {
-    out += ' <span class="via">· serves </span>' + r.mcpRows.map(function (m) {
+    out += ' <span class="via">· serves </span>' + r.mcpRows.map((m) => {
       // A known MCP's dot keeps its own one-word title (docs/18 V6); an unknown name paints
       // no state, so it takes no title either — the hover falls through to the span around
       // it, which already answers with "no MCP named …".
@@ -234,9 +234,9 @@ function ruleSubHtml(r: ApiTunnelRuleRow): string {
 }
 
 function ruleRowHtml(r: ApiTunnelRuleRow): string {
-  var busy = state.tun.busy[r.id];
-  var word = busy ? "starting" : r.state;
-  var running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
+  const busy = state.tun.busy[r.id];
+  const word = busy ? "starting" : r.state;
+  const running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
   return '<div class="tun-row" draggable="true" data-rule="' + esc(r.id) + '">' +
       '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word, null, r.reason)) + '"></span>' +
       '<div class="tun-main">' +
@@ -260,7 +260,7 @@ function ruleRowHtml(r: ApiTunnelRuleRow): string {
  *  the raw id when the target is missing — deleting a jump in use is refused, so this is a
  *  stale-tab guard, and an id says more than an empty tag. */
 function tunConnName(id: string): string {
-  var hit = tunData().connections.filter(function (c) { return c.id === id; })[0];
+  const hit = tunData().connections.filter((c) => { return c.id === id; })[0];
   return hit ? hit.name : id;
 }
 
@@ -269,15 +269,15 @@ function tunConnName(id: string): string {
  *  so it rides the sub-line as the monochrome tag — the same form the sheet's Advanced
  *  summary uses, one word for the same fact in both places. */
 function connBadges(c: ApiTunnelConnectionRow): string {
-  var out = "";
+  let out = "";
   if (c.proxy) out += ' <span class="tag">proxy</span>';
   if (c.jump) out += ' <span class="tag">via ' + esc(tunConnName(c.jump)) + "</span>";
   return out;
 }
 
 function connRowHtml(c: ApiTunnelConnectionRow): string {
-  var busy = state.tun.busy[c.id];
-  var word = busy ? "starting" : c.state === "connected" ? "up" : c.state;
+  const busy = state.tun.busy[c.id];
+  const word = busy ? "starting" : c.state === "connected" ? "up" : c.state;
   return '<div class="tun-row" draggable="true" data-conn="' + esc(c.id) + '">' +
       '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word, null, c.reason)) + '"></span>' +
       '<div class="tun-main">' +

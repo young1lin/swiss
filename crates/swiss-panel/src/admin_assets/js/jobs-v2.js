@@ -26,14 +26,14 @@
  * v2 `trigger` object with a fallback to the v1 flat fields, so the same row renders on a
  * gateway that predates the v2 listing. */
 function triggerSummary(j           )         {
-  var t = j.trigger;
+  const t = j.trigger;
   if (!t || !t.kind) {
     // v1 spelling: everySec | cron directly on the row.
     return j.cron ? "cron " + j.cron : j.everySec ? "every " + j.everySec + " s" : "no schedule";
   }
   if (t.kind === "cron") return "cron " + (t.expression || "");
   if (t.kind === "interval") {
-    var secs = t.everyMs != null && t.everyMs % 1000 === 0 ? t.everyMs / 1000 : t.everyMs + " ms";
+    const secs = t.everyMs != null && t.everyMs % 1000 === 0 ? t.everyMs / 1000 : t.everyMs + " ms";
     return "every " + secs + " s" + (t.firstRun === "immediate" ? " \u00b7 immediate" : "");
   }
   return "manual";
@@ -42,7 +42,7 @@ function triggerSummary(j           )         {
 /** The history meta line for one run record (docs/11 §7.3): what happened, in one glance.
  * Outcome records say why they are not runs; attempts carry their retry position. */
 function historyMeta(r                                                                                                     )         {
-  var parts = [r.trigger || "?"];
+  const parts = [r.trigger || "?"];
   if (r.outcome && r.outcome !== "ran") {
     parts.push(r.outcome + (r.reason ? " (" + r.reason + ")" : ""));
     if (r.missedCount != null) parts.push(r.missedCount + " more missed");
@@ -73,9 +73,9 @@ function defTemplate(id        )         {
  * definition keys are NOT read here; they survive through the `base` object formToV2
  * writes onto. */
 function v2ToForm(def        )                {
-  var t = def.trigger || {}                                  ;
-  var retry = def.retry || {}                                ;
-  var output = def.output || {}                                 ;
+  const t = def.trigger || {}                                  ;
+  const retry = def.retry || {}                                ;
+  const output = def.output || {}                                 ;
   return {
     title: def.title || "",
     labels: (def.labels || []).join(", "),
@@ -108,9 +108,9 @@ function cloneJson(v         )          {
  * losing a key here deletes configuration). Keys the form leaves at their default are
  * written explicitly: explicit defaults parse identically and keep the JSON editor honest. */
 function formToV2(form               , base        , actionInput                         )         {
-  var def = cloneJson(base)           || {};
+  const def = cloneJson(base)           || {};
   if (form.title) def.title = form.title; else delete def.title;
-  var labels = form.labels.split(",").map(function (s        )         { return s.trim(); }).filter(Boolean);
+  const labels = form.labels.split(",").map((s        )         => { return s.trim(); }).filter(Boolean);
   if (labels.length) def.labels = labels; else delete def.labels;
   if (form.disabled) def.disabled = true; else delete def.disabled;
   if (form.kind === "cron") {
@@ -123,7 +123,7 @@ function formToV2(form               , base        , actionInput                
   if (form.timeoutMs !== "") def.timeoutMs = Number(form.timeoutMs) || 0; else delete def.timeoutMs;
   def.overlap = form.overlap;
   def.misfire = form.misfire;
-  var max = Number(form.retryMax) || 0;
+  const max = Number(form.retryMax) || 0;
   if (max > 1) {
     def.retry = {
       maxAttempts: max,
@@ -154,7 +154,7 @@ export { cloneJson, defTemplate, envToLines, formToV2, historyMeta, parseEnvLine
 function envToLines(env                                           )         {
   if (!env || typeof env !== "object") return "";
   return Object.keys(env)
-    .map(function (k        )         { return k + "=" + env[k]; })
+    .map((k        )         => { return k + "=" + env[k]; })
     .join("\n");
 }
 
@@ -163,16 +163,16 @@ function envToLines(env                                           )         {
  * silent drop here would mean a job that runs WITHOUT a variable the user believes it
  * has, which is the worst kind of wrong. */
 function parseEnvLines(text        )                                                        {
-  var env                         = {};
-  var lines = String(text == null ? "" : text).split(/\r?\n/);
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].trim();
+  const env                         = {};
+  const lines = String(text == null ? "" : text).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
     if (!line) continue;
-    var eq = line.indexOf("=");
+    const eq = line.indexOf("=");
     if (eq <= 0) {
       return { env: null, error: "line " + (i + 1) + ": expected KEY=value, got \"" + line + "\"" };
     }
-    var key = line.slice(0, eq);
+    const key = line.slice(0, eq);
     if (key.indexOf("\u0000") >= 0) {
       return { env: null, error: "line " + (i + 1) + ": the key contains a NUL character" };
     }

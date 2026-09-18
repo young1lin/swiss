@@ -24,7 +24,7 @@ export function unmount() {
   state.db = null;
   // Take the workspace framing back off (data-view.js's renderDbView adds it) so the next
   // page — whatever it is — starts from the pane's ordinary padding.
-  var pane = $("pane");
+  const pane = $("pane");
   if (pane) pane.classList.remove("db-host");
 }
 /* The context bar's count chip. It used to return "Data", which the location label one slot
@@ -32,8 +32,8 @@ export function unmount() {
    in the dropdown's own words (dbConnLabel, one builder for both), and renders nothing when
    no connection is selected rather than repeating the page name. */
 export function countText() {
-  var d = state.db;
+  const d = state.db;
   if (!d || !d.conn) return "";
-  var c = (d.conns || []).find(function (x) { return x.name === d!.conn; });
+  const c = (d.conns || []).find((x) => { return x.name === d?.conn; });
   return c ? dbConnLabel(c) : "";
 }

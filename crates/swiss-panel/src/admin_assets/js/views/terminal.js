@@ -48,46 +48,46 @@ import { closeSheet } from "../add-sheet.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
-var FONT = 'ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace';
+const FONT = 'ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace';
 
-var packages                                   = null;             // the vendored constructors, loaded once per module lifetime
-export var targets                            = null;       // the last /api/terminal/targets reply (a live binding: terminal-settings.js reads it)
-export var sessions                          = [];        // the last listing (rows without local state; exported as a live binding too)
-var models              = [];       // sessions this mount has wired a terminal for
-var active                = null;     // the session id whose terminal is on stage
-var epoch = 0;         // mount generation: loops and sockets from an older mount stop
-var seq = 0;           // temp ids for sessions opened but not yet answered
-var fitTimer                                       = null;
+let packages                                   = null;             // the vendored constructors, loaded once per module lifetime
+export let targets                            = null;       // the last /api/terminal/targets reply (a live binding: terminal-settings.js reads it)
+export let sessions                          = [];        // the last listing (rows without local state; exported as a live binding too)
+let models              = [];       // sessions this mount has wired a terminal for
+let active                = null;     // the session id whose terminal is on stage
+let epoch = 0;         // mount generation: loops and sockets from an older mount stop
+let seq = 0;           // temp ids for sessions opened but not yet answered
+let fitTimer                                       = null;
 /* The terminal's own font size, zoomed with Ctrl+=/-/0 or Ctrl+wheel and remembered
    per browser — a preference about this screen, not gateway state, so localStorage
    like the theme. Read once at module load; a blocked store just means 13px. */
-var FONT_SIZE_KEY = "swiss.terminal.fontSize";
-var fontSize = readFontSize(readStoredFontSize());
+const FONT_SIZE_KEY = "swiss.terminal.fontSize";
+let fontSize = readFontSize(readStoredFontSize());
 /* Sessions the user dismissed. The gateway keeps a closed row in the listing until its
    grace window lapses; without this set, every repaint would resurrect a tab the user
    has already closed, and dismissing would look decorative. Cleared of ids the listing
    no longer carries so it cannot grow without bound. */
-var dismissed = new Set        ();
+let dismissed = new Set        ();
 /* P0 preferences (docs/22 §2.3/§2.4): a bell must be VISIBLE by default and a
    selection must reach the clipboard by default — both remember their mode per
    browser, like the font size, because they are preferences about this screen. */
-var BELL_KEY = "swiss.terminal.bell";
-var COPYSEL_KEY = "swiss.terminal.copyOnSelect";
+const BELL_KEY = "swiss.terminal.bell";
+const COPYSEL_KEY = "swiss.terminal.copyOnSelect";
 function storedPref(key        ) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 
 /* One-shot guidance (docs/22 P0 guidance layer): the first attach is the one moment a
    newcomer is guaranteed to be looking at the terminal, so it carries one sentence of
    orientation and never appears again. */
-var HINT_KEY = "swiss.terminal.hint";
-var bellMode = readBellMode(storedPref(BELL_KEY));
-var copyOnSelect = readCopyOnSelect(storedPref(COPYSEL_KEY));
-var bellAudio                      = null;   // the AudioContext, created by the first audible bell
+const HINT_KEY = "swiss.terminal.hint";
+const bellMode = readBellMode(storedPref(BELL_KEY));
+const copyOnSelect = readCopyOnSelect(storedPref(COPYSEL_KEY));
+let bellAudio                      = null;   // the AudioContext, created by the first audible bell
 
 function load() {
   if (!packages) {
     packages = Promise.all([
       loadXterm(), loadFitAddon(), loadUnicode11Addon(), loadWebLinksAddon(), loadWebglAddon(),
-    ]).then(function (got) {
+    ]).then((got) => {
       /* Key names are the CONSTRUCTORS wireTerminal news up (got.Terminal, got.FitAddon,
          got.Unicode11Addon, got.WebLinksAddon, got.WebglAddon) - a mismatch here is
          "X is not a constructor" at first Open, which is exactly how it once shipped. */
@@ -97,9 +97,9 @@ function load() {
   return packages;
 }
 
-function sleep(ms        ) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function sleep(ms        ) { return new Promise((r) => { setTimeout(r, ms); }); }
 
-function model(id               ) { return models.find(function (m) { return m.id === id; }) || null; }
+function model(id               ) { return models.find((m) => { return m.id === id; }) || null; }
 
 /* The status foot under the surface: a state dot that answers before the words do,
    then one sentence for whichever session is on stage. The tone classes come from the
@@ -113,14 +113,14 @@ function statusTone(text        ) {
 }
 
 function paintStatus() {
-  var line = $("term-status");
+  const line = $("term-status");
   if (!line) return;
-  var m = model(active);
-  var text = m ? m.status : "";
+  const m = model(active);
+  const text = m ? m.status : "";
   line.hidden = false;   // the foot always caps the card; an empty strip is still its shape
   line.textContent = "";
   if (text) {
-    var dot = document.createElement("span");
+    const dot = document.createElement("span");
     dot.className = "term-dot " + statusTone(text);
     line.appendChild(dot);
     line.appendChild(document.createTextNode(text));
@@ -128,7 +128,7 @@ function paintStatus() {
   /* A zoomed terminal says so, and how to get back - the size is remembered across
      reloads, so without this line a 20px terminal next week would look like a bug. */
   if (fontSize !== FONT_DEFAULT) {
-    var zoom = document.createElement("span");
+    const zoom = document.createElement("span");
     zoom.className = "term-zoom";
     zoom.textContent = fontSize + "px \u00b7 Ctrl+0 resets";
     line.appendChild(zoom);
@@ -144,15 +144,15 @@ function paintStatus() {
 let paintTabsLast                = null;
 
 function paintTabs() {
-  var bar = $("term-tabs");
+  const bar = $("term-tabs");
   if (!bar) return;
-  var all = tabList();
-  var any = all.length > 0;
+  const all = tabList();
+  const any = all.length > 0;
   bar.hidden = !any;
   /* Rebuilding identical markup rips the nodes out mid-double-click (see select) and
      would destroy an open rename input; same string in, same string out - skip. */
-  var html = all.map(function (m) {
-    var label = esc(tabLabel(m                                    , m.shellTitle, m.customTitle)) + (m.gone ? " · closed" : "");
+  const html = all.map((m) => {
+    const label = esc(tabLabel(m                                    , m.shellTitle, m.customTitle)) + (m.gone ? " · closed" : "");
     return '<button role="tab" data-act="select" data-id="' + esc(m.id) + '"' +
       ' aria-selected="' + String(m.id === active) + '" title="' + label + '">' +
       '<span class="term-tab-label">' + label + "</span>" +
@@ -166,15 +166,15 @@ function paintTabs() {
 }
 
 function paintStage() {
-  var stage = $("term-stage");
+  const stage = $("term-stage");
   if (!stage) return;
-  var empty = $("term-empty");
+  const empty = $("term-empty");
   if (!model(active)) {
     if (empty) empty.hidden = false;
   } else if (empty) {
     empty.hidden = true;
   }
-  Array.prototype.forEach.call(stage.querySelectorAll("[data-term]"), function (holder) {
+  Array.prototype.forEach.call(stage.querySelectorAll("[data-term]"), (holder) => {
     holder.hidden = holder.getAttribute("data-term") !== active;
   });
 }
@@ -189,7 +189,7 @@ function setFontSize(size        ) {
   if (size === fontSize) return;
   fontSize = size;
   try { localStorage.setItem(FONT_SIZE_KEY, String(size)); } catch (e) { /* per-tab only */ }
-  models.forEach(function (m) {
+  models.forEach((m) => {
     if (!m.term) return;
     m.term.options.fontSize = size;
     /* A zoom across odd sizes can leave the WebGL glyph atlas half-rasterized; one
@@ -204,8 +204,8 @@ function setFontSize(size        ) {
    be the interrupt again. writeText works on http://127.0.0.1 (a potentially-trustworthy
    origin); the rare refusal gets a sentence rather than silence. */
 function copySelection(term               ) {
-  var text = term.getSelection();
-  navigator.clipboard.writeText(text).catch(function () {
+  const text = term.getSelection();
+  navigator.clipboard.writeText(text).catch(() => {
     toast("could not write the selection to the clipboard", true);
   });
   term.clearSelection();
@@ -224,11 +224,11 @@ function beep() {
     /* The legacy vendor spelling, cast locally: no lib declares webkitAudioContext and the
        global Window augmentation is retired (docs/37 M3). The || keeps the runtime honest -
        a browser with neither name throws here exactly as it always did. */
-    var audioCtor = window.AudioContext ||
+    const audioCtor = window.AudioContext ||
       (window                                                         ).webkitAudioContext                                   ;
     bellAudio = bellAudio || new audioCtor();
-    var osc = bellAudio.createOscillator();
-    var gain = bellAudio.createGain();
+    const osc = bellAudio.createOscillator();
+    const gain = bellAudio.createGain();
     osc.frequency.value = 880;
     gain.gain.value = 0.05;
     osc.connect(gain);
@@ -244,12 +244,12 @@ function beep() {
    pinned, the saved line when not. Capture-before-write matters because an rAF can
    flip the pin mid-write (Tabby's rule, docs/22 §2.10). */
 function writeTerm(m           , bytes            ) {
-  var term = m.term                 ;
+  const term = m.term                 ;
   if (!term) return;
-  var b = term.buffer.active;
-  var was = m.pinned;
-  var y = b.viewportY;
-  term.write(bytes, function () {
+  const b = term.buffer.active;
+  const was = m.pinned;
+  const y = b.viewportY;
+  term.write(bytes, () => {
     if (!m.term) return;
     if (was && m.toBottom) m.toBottom();
     else if (!was) term.scrollToLine(Math.min(y, term.buffer.active.baseY));
@@ -261,10 +261,10 @@ function writeTerm(m           , bytes            ) {
 function paintJump(m           ) {
   if (!m.holder) return;
   if (!m.jump) {
-    var chip = document.createElement("button");
+    const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "term-jump";
-    chip.addEventListener("click", function () {
+    chip.addEventListener("click", () => {
       m.unseen = 0;
       if (m.toBottom) m.toBottom();
       paintJump(m);
@@ -279,11 +279,11 @@ function paintJump(m           ) {
 /* The tab inventory paintTabs and the Alt-shortcuts agree on: wired models first
    (their order IS the tab order), then live listing rows not opened yet. */
 function tabList() {
-  var known = models.map(function (m) { return m.id; });
-  var extra = sessions.filter(function (s) {
+  const known = models.map((m) => { return m.id; });
+  const extra = sessions.filter((s) => {
     return s && s.id && known.indexOf(s.id) < 0 && !dismissed.has(s.id);
   });
-  return models.concat(extra.map(function (s) {
+  return models.concat(extra.map((s) => {
     return { id: s.id, target: s.target, label: s.label, status: "", gone: false }             ;
   }));
 }
@@ -292,16 +292,16 @@ function tabList() {
    Ctrl+Tab and Ctrl+Shift+W for itself — no page can have them — so Alt carries the
    set; the web-panel reality desktop terminals do not face. */
 function jumpTab(at        ) {
-  var all = tabList();
+  const all = tabList();
   if (at < 0 || at >= all.length) return;
   select(all[at].id);
 }
 
 function cycleTab(dir        ) {
-  var all = tabList();
+  const all = tabList();
   if (all.length < 2) return;
-  var at = -1;
-  for (var i = 0; i < all.length; i++) if (all[i].id === active) { at = i; break; }
+  let at = -1;
+  for (let i = 0; i < all.length; i++) if (all[i].id === active) { at = i; break; }
   if (at < 0) return;
   select(all[(at + dir + all.length) % all.length].id);
 }
@@ -310,15 +310,15 @@ function cycleTab(dir        ) {
    Escape cancels, blur commits (docs/22 consensus 1 + §2.5). A custom title outranks
    the shell's OSC title until it is emptied. */
 function startRename(id        ) {
-  var m = model(id)             ;
-  var bar = $("term-tabs");
+  const m = model(id)             ;
+  const bar = $("term-tabs");
   if (!m || !bar) return;
-  var btn = Array.prototype.find.call(bar.children, function (c) {
+  const btn = Array.prototype.find.call(bar.children, (c) => {
     return c.getAttribute("data-id") === id;
   });
-  var labelEl = btn && btn.querySelector(".term-tab-label");
+  const labelEl = btn && btn.querySelector(".term-tab-label");
   if (!labelEl || btn.querySelector(".term-rename")) return;
-  var input = document.createElement("input");
+  const input = document.createElement("input");
   input.className = "term-rename";
   input.id = "term-rename";   // the a11y auditor wants a name on every form field
   input.maxLength = 40;
@@ -327,8 +327,8 @@ function startRename(id        ) {
   labelEl.parentNode.replaceChild(input, labelEl);
   input.focus();
   input.select();
-  var settled = false;
-  var done = function (commit         ) {
+  let settled = false;
+  const done = (commit         ) => {
     if (settled) return;
     settled = true;
     if (commit) m.customTitle = input.value.trim() || null;
@@ -340,12 +340,12 @@ function startRename(id        ) {
     paintTabs();
     if (m.term) m.term.focus();   // the repaint ate the input that held the focus
   };
-  input.addEventListener("keydown", function (ev) {
+  input.addEventListener("keydown", (ev) => {
     ev.stopPropagation();   // the terminal's key gate must not see rename typing
     if (ev.key === "Enter") done(true);
     else if (ev.key === "Escape") done(false);
   });
-  input.addEventListener("blur", function () { done(true); });
+  input.addEventListener("blur", () => { done(true); });
 }
 
 /* --- Ctrl+Shift+F find bar (docs/22 P1) ------------------------------------------------ */
@@ -355,7 +355,7 @@ function startRename(id        ) {
    through onDidChangeResults, async and ~200 ms debounced INSIDE it; adding another
    debounce on top is the classic integrator mistake — don't. Plain substring search
    only (regex off): a pasted "[" stays a "[" and never throws. */
-var FIND_DECOR = {
+const FIND_DECOR = {
   matchOverviewRuler: "#427ab3",
   matchBackground: "rgba(66,122,179,0.35)",
   activeMatchBackground: "#cfae00",
@@ -366,16 +366,16 @@ function findBar() { return $("term-find"); }
 function findInput() { return $                  ("term-find-q"); }
 
 function paintFindCount(res                                                                 ) {
-  var el = $("term-find-count");
+  const el = $("term-find-count");
   if (!el) return;
   el.textContent = !res ? "" : res.resultCount ? (res.resultIndex + 1) + "/" + res.resultCount : "no results";
 }
 
 function runFind(back         ) {
-  var m = model(active);
+  const m = model(active);
   if (!m || !m.search) return;
-  var input = findInput();
-  var q = input ? input.value : "";
+  const input = findInput();
+  const q = input ? input.value : "";
   if (!q) { m.search.clearDecorations(); paintFindCount(null); return; }
   try {
     /* findNext/findPrevious SELECT the match they move to, which fires
@@ -384,7 +384,7 @@ function runFind(back         ) {
        (fresh-eyes audit B3). The selection change fires synchronously inside the
        call, so a try/finally bracket is exactly the right width. */
     m.suppressSelect = true;
-    var moved = back ? m.search.findPrevious(q, { decorations: FIND_DECOR })
+    const moved = back ? m.search.findPrevious(q, { decorations: FIND_DECOR })
                      : m.search.findNext(q, { decorations: FIND_DECOR });
     if (!moved) paintFindCount(null);
   } catch (e) { /* only reachable with regex on; the guard stays because search must never kill the page */ }
@@ -392,9 +392,9 @@ function runFind(back         ) {
 }
 
 function closeFind() {
-  var bar = findBar();
+  const bar = findBar();
   if (bar) bar.hidden = true;
-  var m = model(active);
+  const m = model(active);
   if (m && m.search) m.search.clearDecorations();
   paintFindCount(null);
   if (m && m.term) m.term.focus();
@@ -405,11 +405,11 @@ function closeFind() {
    new surfaces invented. kbd is monospace because a key is a value you would copy
    (design rule 1). */
 function openHelpSheet() {
-  var row = function (keys        , what        ) {
+  const row = (keys        , what        ) => {
     return '<div class="term-key-row"><span class="term-key-k">' + keys + "</span><span>" + what + "</span></div>";
   };
-  var cap = function (title        ) { return '<div class="term-key-cap">' + title + "</div>"; };
-  var k = function (t        ) { return "<kbd>" + t + "</kbd>"; };
+  const cap = (title        ) => { return '<div class="term-key-cap">' + title + "</div>"; };
+  const k = (t        ) => { return "<kbd>" + t + "</kbd>"; };
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="Terminal shortcuts">' +
       '<div class="sheet-head"><h2>Terminal shortcuts</h2></div>' +
@@ -436,14 +436,14 @@ function openHelpSheet() {
       '<div class="sheet-foot"><span class="grow"></span><button class="btn" id="th-close">Close</button></div>' +
     "</div>";
   $("sheet").hidden = false;
-  var onKey = function (ev               ) { if (ev.key === "Escape") close(); };
-  var close = function () {
+  const onKey = (ev               ) => { if (ev.key === "Escape") close(); };
+  const close = () => {
     document.removeEventListener("keydown", onKey, true);
     closeSheet();
   };
   document.addEventListener("keydown", onKey, true);
   $("th-close").onclick = close;
-  $("sheet").onclick = function (ev) { if (ev.target === $("sheet")) close(); };
+  $("sheet").onclick = (ev) => { if (ev.target === $("sheet")) close(); };
 }
 
 /* Ctrl+Shift+F while the terminal page is staged, even when the terminal itself does
@@ -455,8 +455,8 @@ function openHelpSheet() {
    checking defaultPrevented - a document-capture call on top would double-fire
    openFind, whose toggle then closes the bar again (fresh-eyes audit B2). */
 function pageFindShortcut(ev               ) {
-  var el = targetEl(ev);
-  var tag = el && el.tagName;
+  const el = targetEl(ev);
+  const tag = el && el.tagName;
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
   if (el && el.closest(".term-holder")) return;   // xterm owns keys in here
   if (!$("term-find")) return;   // some other page is staged
@@ -472,34 +472,34 @@ function pageFindShortcut(ev               ) {
 }
 
 function wireFindBar() {
-  var bar = findBar();
-  var input = findInput();
+  const bar = findBar();
+  const input = findInput();
   if (!bar || !input) return;
-  input.addEventListener("keydown", function (ev) {
+  input.addEventListener("keydown", (ev) => {
     ev.stopPropagation();   // typing a query is not terminal input
     if (ev.key === "Enter") { ev.preventDefault(); runFind(ev.shiftKey); }
     else if (ev.key === "Escape") { ev.preventDefault(); closeFind(); }
   });
   /* Typing searches immediately (VS Code's behavior) — Enter then WALKS the matches. */
-  input.addEventListener("input", function () { runFind(false); });
-  $("term-find-prev").addEventListener("click", function () { runFind(true); });
-  $("term-find-next").addEventListener("click", function () { runFind(false); });
+  input.addEventListener("input", () => { runFind(false); });
+  $("term-find-prev").addEventListener("click", () => { runFind(true); });
+  $("term-find-next").addEventListener("click", () => { runFind(false); });
   $("term-find-x").addEventListener("click", closeFind);
 }
 
 async function openFind() {
-  var m = model(active);
+  const m = model(active);
   if (!m || !m.term) return;
-  var bar = findBar();
+  const bar = findBar();
   if (!bar) return;
   if (!bar.hidden && document.activeElement === findInput()) { closeFind(); return; }   // toggle
   bar.hidden = false;
   if (!m.search) {
     try {
-      var cls = await loadSearchAddon();
+      const cls = await loadSearchAddon();
       if (!m.term || m.gone) { closeFind(); return; }   // closed while the class loaded
       m.search = new cls();
-      m.search.onDidChangeResults(function (res) { paintFindCount(res); });
+      m.search.onDidChangeResults((res) => { paintFindCount(res); });
       m.term.loadAddon(m.search);
     } catch (e) {
       toast("could not load the search addon: " + errText(e), true);
@@ -507,7 +507,7 @@ async function openFind() {
       return;
     }
   }
-  var input = findInput();
+  const input = findInput();
   input.focus();
   input.select();
   runFind(false);   // searching on open makes "open, type" work with zero extra keys
@@ -516,20 +516,20 @@ async function openFind() {
 function wireTerminal(m           ) {
   if (m.term) return Promise.resolve();
   // The promise is module-cached, so a rejected load retries naturally on the next wire.
-  return load().then(function (got) {
-    var term = new got.Terminal({
+  return load().then((got) => {
+    const term = new got.Terminal({
       fontFamily: FONT,
       fontSize: fontSize,
       scrollback: 5000,
       allowProposedApi: true,   // terminal.unicode (the Unicode11 table) is a proposed API
       theme: termTheme(),
     });
-    var holder = document.createElement("div");
+    const holder = document.createElement("div");
     holder.className = "term-holder";
     holder.setAttribute("data-term", m.id);
     $("term-stage").appendChild(holder);
     term.open(holder);
-    var fit = new got.FitAddon();
+    const fit = new got.FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new got.Unicode11Addon());
     term.unicode.activeVersion = "11";
@@ -538,22 +538,22 @@ function wireTerminal(m           ) {
     // a machine without WebGL must still get a terminal - the DOM renderer is the
     // fallback, and a lost GL context falls back to it mid-session the same way.
     try {
-      var gl = new got.WebglAddon();
-      gl.onContextLoss(function () { gl.dispose (); });
+      const gl = new got.WebglAddon();
+      gl.onContextLoss(() => { gl.dispose (); });
       term.loadAddon(gl);
       m.gl = gl;   // kept for clearTextureAtlas() after a font zoom
     } catch (e) { /* the DOM renderer stays */ }
-    term.onData(function (text) { sendInput(m, text); });
+    term.onData((text) => { sendInput(m, text); });
     /* OSC 0/2 from the shell (vim, ssh, pwsh prompts) drives this tab's label unless the
        user renamed it (docs/22 consensus 1). ConPTY forwards the sequence; a shell that
        never emits one simply keeps its session label. */
-    term.onTitleChange(function (title) {
+    term.onTitleChange((title) => {
       m.shellTitle = title == null ? null : String(title);
       paintTabs();
     });
     /* BEL: a badge on the tab, cleared by selecting it; an optional oscillator beep —
        xterm 5.5 has no bell sound of its own (verified, docs/22 §3). */
-    term.onBell(function () {
+    term.onBell(() => {
       if (m.gone) return;
       m.bell = true;
       paintTabs();
@@ -562,11 +562,11 @@ function wireTerminal(m           ) {
     /* Copy-on-select rides the same clipboard path as Ctrl+C; the \u2702 overlay is the
        feedback that keeps the copy from being a surprise (ttyd's lesson). suppressSelect
        is set while search navigation moves the selection programmatically. */
-    term.onSelectionChange(function () {
+    term.onSelectionChange(() => {
       if (!copyOnSelect || m.suppressSelect) return;
-      var text = term.getSelection();
+      const text = term.getSelection();
       if (!text) return;
-      navigator.clipboard.writeText(trimSelection(text)).catch(function () { /* gesture context missing: keep silent */ });
+      navigator.clipboard.writeText(trimSelection(text)).catch(() => { /* gesture context missing: keep silent */ });
       if (m.overlay) m.overlay.show("\u2702", 500);
     });
     /* Windows Terminal's key story, not xterm's Linux default (docs/15 §1): without this
@@ -576,8 +576,8 @@ function wireTerminal(m           ) {
        listener xterm already installs, so the text rides onData to the shell exactly as
        a Ctrl+Shift+V always did (verified on 19998 before this was written). Deliberately
        no navigator.clipboard.readText() here — the native event needs no permission prompt. */
-    term.attachCustomKeyEventHandler(function (ev) {
-      var action = keyAction(ev, term.hasSelection());
+    term.attachCustomKeyEventHandler((ev) => {
+      const action = keyAction(ev, term.hasSelection());
       if (action === "paste") return false;   // no preventDefault: the browser paste IS the payload
       if (action === "copy") { copySelection(term); return false; }
       if (action === "zoom-in" || action === "zoom-out" || action === "zoom-reset") {
@@ -605,26 +605,26 @@ function wireTerminal(m           ) {
     });
     /* Ctrl+wheel zooms the terminal, not the page; a plain wheel stays scrollback.
        Not passive: preventDefault is the whole point when Ctrl is down. */
-    holder.addEventListener("wheel", function (ev) {
-      var action = wheelAction(ev);
+    holder.addEventListener("wheel", (ev) => {
+      const action = wheelAction(ev);
       if (!action) return;
       ev.preventDefault();
       setFontSize(nextFontSize(fontSize, action));
     }, { passive: false });
     /* Right-click pastes, or copies a selection away; Shift+right-click keeps the
        browser's menu as the escape hatch (docs/15 §1). */
-    holder.addEventListener("contextmenu", function (ev) {
-      var action = mouseAction(ev, term.hasSelection());
+    holder.addEventListener("contextmenu", (ev) => {
+      const action = mouseAction(ev, term.hasSelection());
       if (action === "menu") return;
       ev.preventDefault();
       if (action === "copy") { copySelection(term); term.focus(); return; }
       /* term.paste() is xterm's public API and rides the same bracketed-paste path as
          the keyboard. readText may prompt for clipboard access once; a refusal must not
          strand the click silently. */
-      navigator.clipboard.readText().then(function (text) {
+      navigator.clipboard.readText().then((text) => {
         term.paste(text);
         term.focus();   // the click landed on the surface, not the keyboard focus
-      }).catch(function () {
+      }).catch(() => {
         toast("the browser refused to read the clipboard — use Ctrl+V", true);
         term.focus();
       });
@@ -638,19 +638,19 @@ function wireTerminal(m           ) {
        rides the PUBLIC API: writeTerm captures the viewport before each write and
        restores it after (bottom when pinned, the saved line when not), and pin state
        comes only from the wheel — capture phase, decided immediately, re-read in rAF. */
-    m.toBottom = function () {
+    m.toBottom = () => {
       m.pinned = true;
       if (m.term) m.term.scrollToBottom();
     };
-    holder.addEventListener("wheel", function (ev) {
+    holder.addEventListener("wheel", (ev) => {
       if (ev.deltaY < 0) m.pinned = false;   // leaving the bottom is a decision, made now
-      requestAnimationFrame(function () {
+      requestAnimationFrame(() => {
         if (!m.term) return;
-        var b = m.term.buffer.active;
+        const b = m.term.buffer.active;
         m.pinned = isPinned(b.viewportY, b.baseY);
       });
     }, { capture: true, passive: true });
-    term.onLineFeed(function () {
+    term.onLineFeed(() => {
       if (m.pinned) return;
       m.unseen += 1;   // the chip is for the reader who scrolled away, not the rider
       paintJump(m);
@@ -659,15 +659,15 @@ function wireTerminal(m           ) {
        — the moment right after quitting vim where the reader must land on the bottom
        again (Wave's trick, docs/22 §2.10). Both handlers only observe; false lets xterm
        keep processing. */
-    term.parser.registerCsiHandler({ prefix: "?", params: [2026], final: "h" }, function () {
+    term.parser.registerCsiHandler({ prefix: "?", params: [2026], final: "h" }, () => {
       m.sync2026 = Date.now();
       return false;
     });
-    term.parser.registerCsiHandler({ prefix: "?", params: [2026], final: "l" }, function () {
+    term.parser.registerCsiHandler({ prefix: "?", params: [2026], final: "l" }, () => {
       if (Date.now() - m.sync2026 < 2000) m.repaint2026 = true;
       return false;
     });
-    term.parser.registerCsiHandler({ params: [3], final: "J" }, function () {
+    term.parser.registerCsiHandler({ params: [3], final: "J" }, () => {
       if (m.repaint2026) {
         m.repaint2026 = false;
         if (m.toBottom) m.toBottom();
@@ -678,15 +678,15 @@ function wireTerminal(m           ) {
        holder sees the paste BEFORE xterm's textarea listener, and stopPropagation keeps
        xterm out of it entirely. Only a paste that would type Enter mid-text asks; the
        alternate screen (vim) never does — multiline is the norm there. */
-    holder.addEventListener("paste", function (ev) {
-      var text = ev.clipboardData && ev.clipboardData.getData("text/plain");
+    holder.addEventListener("paste", (ev) => {
+      const text = ev.clipboardData && ev.clipboardData.getData("text/plain");
       if (typeof text !== "string" || !text) return;
-      var lines = embeddedNewlines(text);
+      const lines = embeddedNewlines(text);
       if (!lines) return;
       if (term.buffer.active.type === "alternate") return;
       ev.preventDefault();
       ev.stopPropagation();
-      var preview = text.length > 1000 ? text.slice(0, 1000) + "\u2026" : text;
+      const preview = text.length > 1000 ? text.slice(0, 1000) + "\u2026" : text;
       if (window.confirm("Paste " + (lines + 1) + " lines into the shell?\n\n" + preview)) {
         term.paste(text);
       }
@@ -713,7 +713,7 @@ function termTheme() {
   };
 }
 
-var encoder = null                          ;
+let encoder = null                          ;
 function sendInput(m           , text        ) {
   if (!m.ws || m.ws.readyState !== 1) {
     /* Keystrokes typed while the FIRST socket is still coming up ride exactly once
@@ -731,22 +731,22 @@ function sendInput(m           , text        ) {
    so a refused one arrives as onclose with an HTTP story - the reconnect loop then finds
    the session either alive (mint again) or gone (say so). */
 function connect(m           , ticket        ) {
-  var ws = new WebSocket(streamUrl(m.id, ticket));
+  const ws = new WebSocket(streamUrl(m.id, ticket));
   ws.binaryType = "arraybuffer";   // default would wrap every frame in a Blob
   m.ws = ws;
   m.status = "connecting\u2026";
   paintStatus();
-  var my = epoch;
-  ws.onopen = function () {
+  const my = epoch;
+  ws.onopen = () => {
     if (my !== epoch) return;
     m.attempt = 0;
     m.status = "attached";
     paintStatus();
     if (m.buffered && m.buffered.length) {
       encoder = encoder || new TextEncoder();
-      var queued = m.buffered;
+      const queued = m.buffered;
       m.buffered = null;   // the pre-launch queue rides once, then never again
-      queued.forEach(function (t) { ws.send(encoder.encode(t)); });
+      queued.forEach((t) => { ws.send(encoder.encode(t)); });
     }
     if (m.term) {
       /* A re-attach must not leak the previous attach's mouse-tracking or
@@ -758,25 +758,25 @@ function connect(m           , ticket        ) {
        sentence of orientation. The attached pill has cleared by then. */
     if (!storedPref(HINT_KEY)) {
       try { localStorage.setItem(HINT_KEY, "1"); } catch (e) { /* per-tab only */ }
-      setTimeout(function () {
+      setTimeout(() => {
         if (m.overlay) m.overlay.show("double-click a tab to rename · ? lists everything", 6000);
       }, 900);
     }
     }
     scheduleFit();
   };
-  ws.onmessage = function (event) {
+  ws.onmessage = (event) => {
     if (my !== epoch) return;
     if (typeof event.data === "string") {
-      var frame = null;
+      let frame = null;
       try { frame = JSON.parse(event.data); } catch (e) { return; }
-      var story = frameStatus(frame);
+      const story = frameStatus(frame);
       if (story) { m.status = story; paintStatus(); }
     } else if (m.term) {
       writeTerm(m, new Uint8Array(event.data));
     }
   };
-  ws.onclose = function () {
+  ws.onclose = () => {
     m.ws = null;
     if (my !== epoch || m.userClosed || m.gone) return;
     void reconnect(m);
@@ -789,7 +789,7 @@ function connect(m           , ticket        ) {
    toast about on every round. */
 async function reconnect(m           ) {
   if (m.userClosed || m.gone) return;
-  var my = epoch;
+  const my = epoch;
   m.status = "reconnecting\u2026";
   paintStatus();
   for (;;) {
@@ -797,21 +797,21 @@ async function reconnect(m           ) {
     m.attempt += 1;
     if (my !== epoch || m.userClosed || m.gone) return;
 
-    var listed = await api(sessionsUrl());
+    const listed = await api(sessionsUrl());
     if (my !== epoch) return;
     if (listed.status === 503) { return gone(m, "the terminal plugin is not running"); }
     if (!listed.ok) { continue; }
-    var listing = await listed.json().catch(function () { return []; });
+    const listing = await listed.json().catch(() => { return []; });
     if (!sessionAlive(listing, m.id)) {
       return gone(m, "the session closed while the socket was down (grace window, idle or stall timeout)");
     }
 
-    var minted = await api(ticketUrl(m.id), { method: "POST" });
+    const minted = await api(ticketUrl(m.id), { method: "POST" });
     if (my !== epoch) return;
     if (minted.status === 404) { return gone(m, "the session closed while the socket was down"); }
     if (minted.status === 503) { return gone(m, "the terminal plugin is not running"); }
     if (!minted.ok) { continue; }
-    var body = await minted.json().catch(function () { return {}; });
+    const body = await minted.json().catch(() => { return {}; });
     if (body.ticket) { connect(m, body.ticket); return; }
   }
 }
@@ -828,12 +828,12 @@ function gone(m           , story        ) {
    panel's window may have changed during exactly that gap. */
 function fitNow() {
   fitTimer = null;
-  var m = model(active);
+  const m = model(active);
   if (!m || !m.fit || !m.term) return;
-  var dims = null;
+  let dims = null;
   try { dims = m.fit.proposeDimensions(); } catch (e) { return; }
   if (!dims || !dims.cols || !dims.rows) return;
-  var g = clampGeometry(dims.cols, dims.rows);
+  const g = clampGeometry(dims.cols, dims.rows);
   m.fit.fit();
   if (m.gone || !m.id || m.id.indexOf("pending-") === 0) return;
   if (g.cols === m.sentCols && g.rows === m.sentRows) return;
@@ -860,26 +860,26 @@ function select(id        ) {
      double-click makes the second land on a fresh node - no dblclick ever fires,
      and rename lives on dblclick. Just take the focus back. */
   if (id === active) {
-    var cur = model(id);
+    const cur = model(id);
     /* Answering the bell must not repaint the bar either - same dblclick rule as
        above - so the badge node is dropped surgically instead. */
     if (cur && cur.bell) {
       cur.bell = false;
-      var barEl = $("term-tabs");
-      var dot = barEl && barEl.querySelector('button[data-id="' + id + '"] .term-tab-bell');
+      const barEl = $("term-tabs");
+      const dot = barEl && barEl.querySelector('button[data-id="' + id + '"] .term-tab-bell');
       if (dot) dot.remove();
     }
     if (cur && cur.term) cur.term.focus();
     return;
   }
   active = id;
-  var seen = model(id);
+  const seen = model(id);
   if (seen && seen.bell) seen.bell = false;   // selecting a tab answers its bell
   paintTabs();
   paintStage();
-  var m = model(id)             ;
+  let m = model(id)             ;
   if (!m) {
-    var row = sessions.find(function (s) { return s && s.id === id; });
+    const row = sessions.find((s) => { return s && s.id === id; });
     if (!row) return;
     // label from the listing row: without it the tab falls back to the raw target
     // UUID - exactly what a second page adopting this session used to show.
@@ -892,15 +892,15 @@ function select(id        ) {
     models.push(m);
     paintTabs();
   }
-  void wireTerminal(m).then(function () {
+  void wireTerminal(m).then(() => {
     if (active !== m.id) return;
     paintStage();
     if (!m.ws && !m.gone && !m.userClosed) void resume(m);
     scheduleFit();
     if (m.term) m.term.focus(); // switching tabs types into the one you switched to
-    var fb = findBar();   // an open find bar follows the tab: its matches belong to a buffer
+    const fb = findBar();   // an open find bar follows the tab: its matches belong to a buffer
     if (fb && !fb.hidden) { if (m.search) runFind(false); else paintFindCount(null); }
-  }).catch(function (error) {
+  }).catch((error) => {
     toast(String(error && error.message || error), true);
   });
 }
@@ -908,25 +908,25 @@ function select(id        ) {
 /* Attach to a session that already exists (returning to the page, or a session opened
    in another browser tab): mint a ticket and connect. */
 async function resume(m           ) {
-  var my = epoch;
-  var minted = await api(ticketUrl(m.id), { method: "POST" });
+  const my = epoch;
+  const minted = await api(ticketUrl(m.id), { method: "POST" });
   if (my !== epoch || m.ws || m.gone || m.userClosed) return;
   if (minted.status === 404 || minted.status === 503) { return gone(m, minted.status === 503 ? "the terminal plugin is not running" : "the session is gone"); }
   if (!minted.ok) { m.status = "could not reach the gateway"; paintStatus(); return; }
-  var body = await minted.json().catch(function () { return {}; });
+  const body = await minted.json().catch(() => { return {}; });
   if (body.ticket) connect(m, body.ticket);
 }
 
 /* Open a fresh session: create the terminal first so fit can measure a real container,
    then open with the measured geometry. */
 async function openSession() {
-  var pick = $                   ("term-target");
+  const pick = $                   ("term-target");
   if (!pick || !pick.value) return;
-  var my = epoch;
+  const my = epoch;
   // The short tab label comes from the picker row ("jdoe-demo"), not the target id -
   // a remote session without this showed its raw connection UUID on the tab.
-  var row = targetRows(targets).rows.find(function (r) { return r.id === pick.value; });
-  var m            = {
+  const row = targetRows(targets).rows.find((r) => { return r.id === pick.value; });
+  const m            = {
     id: "pending-" + (++seq), target: pick.value, label: row ? String(row.label).split(" \u00b7 ")[0] : "",
     status: "opening\u2026",
     attempt: 0, userClosed: false, gone: false, sentCols: 0, sentRows: 0,
@@ -951,15 +951,15 @@ async function openSession() {
   }
   if (my !== epoch) return;
   paintStage();
-  var g = { cols: 80, rows: 24 };
+  let g = { cols: 80, rows: 24 };
   try {
-    var dims = m.fit .proposeDimensions();
+    const dims = m.fit?.proposeDimensions();
     if (dims && dims.cols && dims.rows) g = clampGeometry(dims.cols, dims.rows);
-    m.fit .fit();
+    m.fit?.fit();
   } catch (e) { /* the defaults already stand */ }
   m.status = "opening\u2026";
   paintStatus();
-  var reply = await apiJson                   (sessionsUrl(), {
+  const reply = await apiJson                   (sessionsUrl(), {
     method: "POST",
     body: JSON.stringify({ target: m.target, cols: g.cols, rows: g.rows }),
   });
@@ -979,10 +979,10 @@ async function openSession() {
      and forgetting it kills the status line AND hides the holder for every fresh
      open: model(active) stops resolving, paintStatus paints "", and paintStage's
      data-term match hides all holders. Found by the browser gate's status trail. */
-  var wasActive = active === m.id;
+  const wasActive = active === m.id;
   m.id = String(reply.id);
   if (wasActive) active = m.id;
-  m.holder .setAttribute("data-term", m.id);
+  m.holder?.setAttribute("data-term", m.id);
   paintTabs();
   paintStage();
   if (reply.ticket) connect(m, reply.ticket);
@@ -996,11 +996,11 @@ async function openSession() {
    the stream before it closes); a closed one is only removed locally - the session is
    already gone, a DELETE would just be a 404. */
 async function closeSession(id        ) {
-  var m = model(id);
+  const m = model(id);
   dismissed.add(id);   // stays dismissed until the listing itself drops the row
   if (m && m.term) { m.term.dispose(); m.term = null; }   // same guard as the open-failure path
   if (m && m.holder) { m.holder.remove(); }
-  models = models.filter(function (x) { return x.id !== id; });
+  models = models.filter((x) => { return x.id !== id; });
   if (active === id) active = models.length ? models[models.length - 1].id : null;
   paintTabs();
   paintStage();
@@ -1015,19 +1015,19 @@ async function closeSession(id        ) {
    foot. No pane-head, no description paragraph — the nav tab already says Terminal,
    and every real web terminal spends its top row on tabs, not on prose. */
 function render() {
-  var pane = $("pane");
+  const pane = $("pane");
   if (!pane) return;
   // term-host turns the pane into the definite-height flex column the page fills exactly
   // (views.css); unmount() takes it back off so no other page inherits the layout.
   pane.classList.add("term-host");
-  var pick = targetRows(targets);
+  const pick = targetRows(targets);
   pane.innerHTML = '<div class="term-page">' +
     '<div class="term-bar">' +
       '<div class="term-tabs" id="term-tabs" role="tablist" aria-label="Sessions" hidden></div>' +
       '<div class="term-ctl">' +
         (pick.rows.length
           ? '<select id="term-target" class="term-pick" aria-label="Target">' +
-            pick.rows.map(function (r) {
+            pick.rows.map((r) => {
               return '<option value="' + esc(r.id) + '">' + esc(r.label) + (r.state ? " (" + esc(r.state) + ")" : "") + "</option>";
             }).join("") + "</select>" +
             /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
@@ -1071,33 +1071,33 @@ function render() {
 
   wireFindBar();
   document.addEventListener("keydown", pageFindShortcut, true);
-  var button = $("term-new");
-  if (button) button.onclick = function () { void openSession(); };
-  var gear = $("term-set");
-  if (gear) gear.onclick = function () { void openLocalSheet(); };
-  var help = $("term-help");
+  const button = $("term-new");
+  if (button) button.onclick = () => { void openSession(); };
+  const gear = $("term-set");
+  if (gear) gear.onclick = () => { void openLocalSheet(); };
+  const help = $("term-help");
   if (help) help.onclick = openHelpSheet;
-  var off = $("term-off");
-  if (off) off.onclick = function () { void openLocalSheet(); };
-  var tabs = $("term-tabs");
+  const off = $("term-off");
+  if (off) off.onclick = () => { void openLocalSheet(); };
+  const tabs = $("term-tabs");
   if (tabs) {
-    tabs.onclick = function (event) {
-      var closer = targetEl(event)?.closest('[data-act="close"]');
+    tabs.onclick = (event) => {
+      const closer = targetEl(event)?.closest('[data-act="close"]');
       if (closer) { void closeSession(closer.getAttribute("data-id") ); return; }
-      var tab = targetEl(event)?.closest('[data-act="select"]');
+      const tab = targetEl(event)?.closest('[data-act="select"]');
       if (tab) select(tab.getAttribute("data-id") );
     };
-    tabs.ondblclick = function (event) {
-      var tab = targetEl(event)?.closest('[data-act="select"]');
+    tabs.ondblclick = (event) => {
+      const tab = targetEl(event)?.closest('[data-act="select"]');
       if (tab) startRename(tab.getAttribute("data-id") );
     };
-    tabs.onauxclick = function (event) {
+    tabs.onauxclick = (event) => {
       if (event.button !== 1) return;   // middle-click closes (Tabby / native terminals)
-      var tab = targetEl(event)?.closest('[data-act="select"]');
+      const tab = targetEl(event)?.closest('[data-act="select"]');
       if (tab) void closeSession(tab.getAttribute("data-id") );
     };
-    tabs.oncontextmenu = function (event) {
-      var tab = targetEl(event)?.closest('[data-act="select"]');
+    tabs.oncontextmenu = (event) => {
+      const tab = targetEl(event)?.closest('[data-act="select"]');
       if (!tab) return;
       event.preventDefault();   // the browser menu has nothing to say about a session tab
       startRename(tab.getAttribute("data-id") );
@@ -1112,22 +1112,22 @@ function render() {
   paintTabs();
   paintStage();
   if (!active && sessions.length) select(sessions[0].id);
-  else if (!active) { var empty = $("term-empty"); if (empty) empty.hidden = false; }
+  else if (!active) { const empty = $("term-empty"); if (empty) empty.hidden = false; }
 }
 
 export async function reload() {   // exported for terminal-settings.js (a save refreshes the page through it)
-  var t = await apiJson                    (targetsUrl());
+  const t = await apiJson                    (targetsUrl());
   if (t) targets = t;
-  var r = await api(sessionsUrl());
+  const r = await api(sessionsUrl());
   if (r.status === 503) {
     sessions = [];
   } else if (r.ok) {
-    var body = await r.json().catch(function () { return []; });
+    const body = await r.json().catch(() => { return []; });
     sessions = Array.isArray(body) ? body : [];
   }
   // A dismissed id the listing no longer carries will never come back; forget it.
-  var listed = new Set(sessions.map(function (s) { return s && s.id; }));
-  for (var d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
+  const listed = new Set(sessions.map((s) => { return s && s.id; }));
+  for (const d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
   render();
 }
 
@@ -1138,7 +1138,7 @@ export async function reload() {   // exported for terminal-settings.js (a save 
    its WebGL context for the life of the tab. The gateway sessions themselves stay -
    re-entry adopts them again; only the client-side resources are released here. */
 function releaseModels() {
-  models.forEach(function (m) {
+  models.forEach((m) => {
     if (m.ws) { try { m.ws.close(); } catch (e) { /* already gone */ } }
     if (m.term) { try { m.term.dispose(); } catch (e) { /* already gone */ } }
     if (m.holder) { m.holder.remove(); }
@@ -1161,13 +1161,13 @@ export async function refresh() { await reload(); }
  *  attached dot, and let a staged-but-unwired listing row stay honest. */
 export async function poll() {
   if (!$("term-stage")) return;
-  var r = await api(sessionsUrl());
+  const r = await api(sessionsUrl());
   if (r.status === 503) return;   // the navigation chrome already carries the story
   if (!r.ok) return;
-  var body = await r.json().catch(function () { return []; });
+  const body = await r.json().catch(() => { return []; });
   sessions = Array.isArray(body) ? body : [];
-  var listed = new Set(sessions.map(function (s) { return s && s.id; }));
-  for (var d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
+  const listed = new Set(sessions.map((s) => { return s && s.id; }));
+  for (const d of Array.from(dismissed)) if (!listed.has(d)) dismissed.delete(d);
   paintTabs();
 }
 
@@ -1177,12 +1177,12 @@ export function countText() {
 
 export function unmount() {
   epoch += 1;
-  var pane = $("pane");
+  const pane = $("pane");
   if (pane) pane.classList.remove("term-host");
   if (fitTimer) { clearTimeout(fitTimer); fitTimer = null; }
   window.removeEventListener("resize", scheduleFit);
   document.removeEventListener("keydown", pageFindShortcut, true);
-  models.forEach(function (m) {
+  models.forEach((m) => {
     if (m.ws) { try { m.ws.close(); } catch (e) { /* already gone */ } }
     if (m.term) { try { m.term.dispose(); } catch (e) { /* already gone */ } m.term = null; }   // disposes attached addons, search included
     if (m.overlay) m.overlay.dispose();

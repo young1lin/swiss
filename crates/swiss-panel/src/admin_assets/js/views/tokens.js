@@ -37,23 +37,23 @@ import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
 
-var painted = ""; // structural signature of the drawn list; a change means the rows move
-var collapsed                          = {}; // the tokens fold map, loaded once before the first paint
+let painted = ""; // structural signature of the drawn list; a change means the rows move
+let collapsed                          = {}; // the tokens fold map, loaded once before the first paint
 
 /** Same rule as src/token.ts `pickCopyToken` — remembered id, else the `default` label, else first. */
 function pickCopyToken(list               , remembered               )                     {
   if (!list.length) return null;
   if (remembered) {
-    var hit = list.filter(function (t             )          { return t.id === remembered; })[0];
+    const hit = list.filter((t             )          => { return t.id === remembered; })[0];
     if (hit) return hit;
   }
-  return list.filter(function (t             )          { return t.label === "default"; })[0] || list[0] || null;
+  return list.filter((t             )          => { return t.label === "default"; })[0] || list[0] || null;
 }
 
 async function refreshTokens()                {
-  var r = await api("/api/tokens");
+  const r = await api("/api/tokens");
   if (!r.ok) return;
-  var j = await r.json()                     ;
+  const j = await r.json()                     ;
   state.tokens = j.tokens || [];
   // The two lists (docs/20 G7). An older gateway answers neither: the single default group,
   // which the component draws as no divider at all.
@@ -67,20 +67,20 @@ function rememberedTokenId()                {
 
 /** One `claude mcp add` line per MCP, embedding the given secret — a whole client setup in one copy. */
 function connectAll(secret        )         {
-  return (state.mcps || []).map(function (m           )         { return claudeSnippet(m.name, secret); }).join("\n");
+  return (state.mcps || []).map((m           )         => { return claudeSnippet(m.name, secret); }).join("\n");
 }
 
 /** The rendering group of one token: the stored label while its group lives, else the first
  *  group — the sink rule (docs/20 §2.1). */
 function groupOfToken(t             )         {
-  var g = state.tokenMembers && state.tokenMembers[t.id];
+  const g = state.tokenMembers && state.tokenMembers[t.id];
   return (state.tokenGroups || []).indexOf(g ) >= 0 ? g  : (state.tokenGroups || ["default"])[0];
 }
 
 function signature()         {
-  return (state.tokens || []).map(function (t             )         { return t.id + ":" + t.label + ":" + (t.createdAt || 0); }).join("\n") +
+  return (state.tokens || []).map((t             )         => { return t.id + ":" + t.label + ":" + (t.createdAt || 0); }).join("\n") +
     "\u0000" + (state.tokenGroups || []).join("\n") + "\u0000" +
-    (state.tokens || []).map(function (t             )         { return t.id + "\u0001" + groupOfToken(t); }).join("\n");
+    (state.tokens || []).map((t             )         => { return t.id + "\u0001" + groupOfToken(t); }).join("\n");
 }
 
 /** Which token the copy actions embed is real state the user should be able to see and change,
@@ -92,8 +92,8 @@ function inUse()                     { return pickCopyToken(state.tokens || [], 
  *  buttons stay delegated on #pane (wire), so the groups component rebuilding a card never
  *  rewires them. */
 function rowHtml(t             )         {
-  var mine = inUse();
-  var used = mine && t.id === mine.id;
+  const mine = inUse();
+  const used = mine && t.id === mine.id;
   return '<div class="row" data-token="' + esc(t.id) + '"><div class="row-main">' +
     '<div class="name">' + esc(t.label) + (used ? ' <span class="tag">copies use this</span>' : "") + "</div>" +
     '<div class="desc">id ' + esc(t.id) + (t.createdAt ? " · created " + new Date(t.createdAt).toLocaleString() : "") + "</div>" +
@@ -104,7 +104,7 @@ function rowHtml(t             )         {
 }
 
 function rowsHtml()         {
-  var list = state.tokens || [];
+  const list = state.tokens || [];
   return list.length ? list.map(rowHtml).join("") : '<div class="row"><span class="rowmsg">No tokens.</span></div>';
 }
 
@@ -118,22 +118,22 @@ function tkCfg()                        {
     names: state.tokenGroups || ["default"],
     collapsed: collapsed,
     noun: "token",
-    addTitle: function (g        )         { return "Create a token in " + g; },
-    onAdd: function (g        )       {
+    addTitle: (g        )         => { return "Create a token in " + g; },
+    onAdd: (g        )       => {
       // The + points at the inline form: pick the group it names and put the cursor in the
       // label box — the sheet scopes open a modal; this page's flow was always inline.
-      var sel = $                   ("tkGroup");
+      const sel = $                   ("tkGroup");
       if (sel) sel.value = g;
       $                  ("tkLabel").focus();
     },
-    reload: function ()                { return refreshTokens().then(paintGroups); },
+    reload: ()                => { return refreshTokens().then(paintGroups); },
     render: paintGroups,
     draggable: false,
-    rowsById: function ()                { return state.tokens || []; },
+    rowsById: ()                => { return state.tokens || []; },
     groupOfRow: groupOfToken,
-    rowsHtml: function (g                         )         { return g.rows.map(rowHtml).join(""); },
-    rowSel: function (r             )         {
-      var v = window.CSS && CSS.escape ? CSS.escape(r.id) : r.id;
+    rowsHtml: (g                         )         => { return g.rows.map(rowHtml).join(""); },
+    rowSel: (r             )         => {
+      const v = window.CSS && CSS.escape ? CSS.escape(r.id) : r.id;
       return '[data-token="' + v + '"]';
     },
   };
@@ -143,13 +143,13 @@ function tkCfg()                        {
  *  delete that the poll reports must not leave a chosen-but-dead option in the box — the
  *  next create would assign into a 400. The selection survives while its group lives. */
 function refreshGroupSelect()       {
-  var sel = $                   ("tkGroup");
+  const sel = $                   ("tkGroup");
   if (!sel) return;
-  var names = state.tokenGroups && state.tokenGroups.length ? state.tokenGroups : ["default"];
-  var wanted = sel.value && names.indexOf(sel.value) >= 0
+  const names = state.tokenGroups && state.tokenGroups.length ? state.tokenGroups : ["default"];
+  const wanted = sel.value && names.indexOf(sel.value) >= 0
     ? sel.value
     : resolveDefaultGroup(names, lastGroup("tokens"));
-  var next = names.map(function (n        )         {
+  const next = names.map((n        )         => {
     return '<option value="' + esc(n) + '"' + (n === wanted ? " selected" : "") + ">" + esc(n) + "</option>";
   }).join("");
   if (sel.innerHTML !== next) sel.innerHTML = next;
@@ -158,17 +158,17 @@ function refreshGroupSelect()       {
 /** (Re)build the groups region only — the create form and the secret box live outside it, so
  *  a repaint never wipes a half-typed label or the one chance to copy a secret. */
 function paintGroups()       {
-  var host = $("tkGroups");
+  const host = $("tkGroups");
   if (!host) return;
   painted = signature();
   host.innerHTML = "";
-  var list = state.tokens || [];
+  const list = state.tokens || [];
   if (!list.length) {
     host.innerHTML = emptyHtml({ icon: "key", title: "No tokens", hint: "One token per client — create one, then copy its connect command." });
     refreshGroupSelect();
     return;
   }
-  slice(list, state.tokenGroups || ["default"], groupOfToken).forEach(function (g                         )       {
+  slice(list, state.tokenGroups || ["default"], groupOfToken).forEach((g                         )       => {
     host.appendChild(mountGroup(tkCfg(), g));
   });
   refreshGroupSelect();
@@ -177,10 +177,10 @@ function paintGroups()       {
 
 /** The Group select of the create form: the scope's groups, the last-used one selected. */
 function groupSelectHtml()         {
-  var names = state.tokenGroups && state.tokenGroups.length ? state.tokenGroups : ["default"];
-  var picked = resolveDefaultGroup(names, lastGroup("tokens"));
+  const names = state.tokenGroups && state.tokenGroups.length ? state.tokenGroups : ["default"];
+  const picked = resolveDefaultGroup(names, lastGroup("tokens"));
   return '<select class="v" id="tkGroup" title="The group this token lists under">' +
-    names.map(function (n        )         {
+    names.map((n        )         => {
       return '<option value="' + esc(n) + '"' + (n === picked ? " selected" : "") + ">" + esc(n) + "</option>";
     }).join("") + "</select>";
 }
@@ -188,7 +188,7 @@ function groupSelectHtml()         {
 /** The once-only secret box: shown after a create or rotate, kept in state so a poll or the
  *  explicit refresh cannot lose the one chance to copy it. */
 function secretHtml()         {
-  var secret = state.tokenViewSecret;
+  const secret = state.tokenViewSecret;
   return secret
     ? '<div class="group" style="margin-top:var(--s4)"><div class="row"><div class="row-main">' +
         '<div class="name">New secret — copy now, shown only once</div>' +
@@ -230,7 +230,7 @@ function patch()       {
 
 /** Rotate: a new secret at once (the old one stops working), shown in the once-only box. */
 async function rotateToken(id        )                {
-  var r = await apiJson                 ("/api/tokens/" + encodeURIComponent(id) + "/rotate", { method: "POST" });
+  const r = await apiJson                 ("/api/tokens/" + encodeURIComponent(id) + "/rotate", { method: "POST" });
   if (!r) return;
   await refreshTokens();
   state.tokenViewSecret = r.secret;
@@ -241,7 +241,7 @@ async function rotateToken(id        )                {
 /** Revoke after an explicit confirm; a revoked in-use token also clears the copy choice. */
 async function revokeToken(id        )                {
   if (!confirm("Revoke this token? Clients using it stop working immediately.")) return;
-  var d = await apiJson         ("/api/tokens/" + encodeURIComponent(id), { method: "DELETE" });
+  const d = await apiJson         ("/api/tokens/" + encodeURIComponent(id), { method: "DELETE" });
   if (!d) return;
   if (rememberedTokenId() === id) {
     state.activeSecret = null;
@@ -252,15 +252,15 @@ async function revokeToken(id        )                {
 }
 
 function wire()       {
-  $("pane").onclick = async function (event            )                {
-    var button = targetEl(event)?.closest             ("[data-tkuse],[data-tkmore],#tkCreate,#tkCopySecret,#tkCopyConn,#tkNewGroup");
+  $("pane").onclick = async (event            )                => {
+    const button = targetEl(event)?.closest             ("[data-tkuse],[data-tkmore],#tkCreate,#tkCopySecret,#tkCopyConn,#tkNewGroup");
     if (!button) return;
     if (button.id === "tkCreate") {
-      var j = await apiJson                 ("/api/tokens", { method: "POST", body: JSON.stringify({ label: $                  ("tkLabel").value }) });
+      const j = await apiJson                 ("/api/tokens", { method: "POST", body: JSON.stringify({ label: $                  ("tkLabel").value }) });
       if (!j) return;
       // The selected group follows the new id in one family write; an older gateway without
       // the family keeps the first-group default (the select's only option).
-      var picked = $("tkGroup") ? $                   ("tkGroup").value : null;
+      const picked = $("tkGroup") ? $                   ("tkGroup").value : null;
       if (picked && j.id) {
         rememberGroup("tokens", picked);
         await assignMember("tokens", j.id, picked);
@@ -271,8 +271,8 @@ function wire()       {
       return;
     }
     if (button.id === "tkNewGroup") {
-      newGroupFlow("tokens", state.tokenGroups || ["default"], function ()                {
-        return refreshTokens().then(function ()       { render(); });
+      newGroupFlow("tokens", state.tokenGroups || ["default"], ()                => {
+        return refreshTokens().then(()       => { render(); });
       });
       return;
     }
@@ -285,11 +285,11 @@ function wire()       {
     if (button.dataset.tkmore) {
       // The opening click must not reach document (menu.js closes on outside clicks).
       event.stopPropagation();
-      var id = button.dataset.tkmore;
+      const id = button.dataset.tkmore;
       popupMenu(button.getBoundingClientRect(), [
-        { label: "Rotate secret", fn: function ()       { void rotateToken(id ); } },
+        { label: "Rotate secret", fn: ()       => { void rotateToken(id ); } },
         { sep: true },
-        { label: "Revoke", danger: true, fn: function ()       { void revokeToken(id ); } },
+        { label: "Revoke", danger: true, fn: ()       => { void revokeToken(id ); } },
       ]);
     }
   };
@@ -304,7 +304,7 @@ export async function mount()                {
 export async function refresh()                { await refreshTokens(); render(); }
 export async function poll()                { await refreshTokens(); patch(); }
 export function countText()         {
-  var n = (state.tokens || []).length;
+  const n = (state.tokens || []).length;
   return n + (n === 1 ? " token" : " tokens");
 }
 export function unmount()       { painted = ""; }

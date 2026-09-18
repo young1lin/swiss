@@ -27,10 +27,10 @@
    ================================================================================================ */
 import { el, esc, icon } from "./util.js";
 
-var PIN_KEY = "swiss.rail.pinned";
+const PIN_KEY = "swiss.rail.pinned";
 /* How many seats the rail shows before the "..." seat. The palette is the real list; the
  * rail is the shortlist, so the limit is about the rail's height, not the host's capacity. */
-var RAIL_LIMIT = 7;
+const RAIL_LIMIT = 7;
 
 /* Built-in plugins get the sprite glyph they already own. The remote plugin reuses the mark
  * its MCP type chip already wears (i-remote), the way terminal and plug serve both their seat
@@ -39,8 +39,8 @@ var RAIL_LIMIT = 7;
  * broken glyph, one seat in a row of drawings that is suddenly type. This is panel-side
  * chrome data, deliberately NOT a descriptor field: adding icon metadata to the wire would
  * tax every plugin author for a panel nicety. */
-var GLYPHS: Record<string, string> = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear" };
-var DEFAULT_GLYPH = "puzzle";
+const GLYPHS: Record<string, string> = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear" };
+const DEFAULT_GLYPH = "puzzle";
 
 function pluginGlyph(group: PaletteGroup | PageGroup): string | null { return GLYPHS[group.id] || null; }
 
@@ -52,8 +52,8 @@ function glyphHtml(group: PaletteGroup | PageGroup): string {
 
 function loadPins() {
   try {
-    var v = JSON.parse(localStorage.getItem(PIN_KEY) as string);
-    return Array.isArray(v) ? v.filter(function (x) { return typeof x === "string"; }) : null;
+    const v = JSON.parse(localStorage.getItem(PIN_KEY) as string);
+    return Array.isArray(v) ? v.filter((x) => { return typeof x === "string"; }) : null;
   } catch (e) { return null; }
 }
 function savePins(ids: string[]): void {
@@ -65,33 +65,33 @@ function savePins(ids: string[]): void {
 /** The default shortlist: the first RAIL_LIMIT groups, in group order - the order the host
  *  already decided. Pure so the default is pinnable by a test. */
 function defaultPinIds(groups: { id: string }[]): string[] {
-  return groups.slice(0, RAIL_LIMIT).map(function (g) { return g.id; });
+  return groups.slice(0, RAIL_LIMIT).map((g) => { return g.id; });
 }
 
 /** The rail's slice of the groups: the pinned ones, in GROUP order (pinning picks a seat,
  *  it does not reorder the rail). `pins` is optional so tests can pass an explicit list;
  *  without it the store is read - null (never set / unreadable) means the default. */
 function pinnedGroups(groups: PageGroup[], pins?: string[] | null): PageGroup[] {
-  var p = pins === undefined ? loadPins() : pins;
+  const p = pins === undefined ? loadPins() : pins;
   if (!p) return groups.slice(0, RAIL_LIMIT);
-  return groups.filter(function (g) { return p!.indexOf(g.id) >= 0; });
+  return groups.filter((g) => { return p?.indexOf(g.id) >= 0; });
 }
 
 /** The palette's sections given a query: Pinned first, then All plugins, each filtered by
  *  the query against label and id. Empty sections drop out. Pure: groups + pins + query in,
  *  sections out. */
 function paletteRows(groups: PaletteGroup[], pins: string[], query: string): PaletteSection[] {
-  var q = String(query || "").trim().toLowerCase();
-  var match = function (g: PaletteGroup): boolean {
+  const q = String(query || "").trim().toLowerCase();
+  const match = (g: PaletteGroup): boolean => {
     return !q || String(g.label).toLowerCase().indexOf(q) >= 0 || String(g.id).toLowerCase().indexOf(q) >= 0;
   };
-  var pinned: PaletteGroup[] = [];
-  var rest: PaletteGroup[] = [];
-  groups.forEach(function (g) { (pins.indexOf(g.id) >= 0 ? pinned : rest).push(g); });
+  const pinned: PaletteGroup[] = [];
+  const rest: PaletteGroup[] = [];
+  groups.forEach((g) => { (pins.indexOf(g.id) >= 0 ? pinned : rest).push(g); });
   return [
     { section: "Pinned", groups: pinned.filter(match) },
     { section: "All plugins", groups: rest.filter(match) },
-  ].filter(function (s) { return s.groups.length; });
+  ].filter((s) => { return s.groups.length; });
 }
 
 /* --- the overlay -------------------------------------------------------------------------------- */
@@ -102,44 +102,44 @@ function paletteRows(groups: PaletteGroup[], pins: string[], query: string): Pal
  *  and focus returns to the "..." seat so the keyboard path does not dead-end. */
 function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Promise<void>, onchange?: () => void): void {
   closePluginPalette();
-  var pins = loadPins() || defaultPinIds(groups);
+  let pins = loadPins() || defaultPinIds(groups);
 
-  var back = el("div", "palette-back");
-  var card = el("div", "palette");
+  const back = el("div", "palette-back");
+  const card = el("div", "palette");
   card.setAttribute("role", "dialog");
   card.setAttribute("aria-label", "Plugins");
   back.appendChild(card);
 
-  var input = el("input");
+  const input = el("input");
   input.type = "search";
   input.placeholder = "Search plugins…";
   input.setAttribute("aria-label", "Search plugins");
   card.appendChild(input);
 
-  var list = el("div", "palette-list");
+  const list = el("div", "palette-list");
   card.appendChild(list);
 
   function rowButton(g: PaletteGroup): HTMLButtonElement {
-    var b = el("button", "pal-row" + (g.off ? " off" : ""));
+    const b = el("button", "pal-row" + (g.off ? " off" : ""));
     b.type = "button";
     b.innerHTML = glyphHtml(g) +
       '<span class="pal-name">' + esc(g.label) + (g.off ? ' <span class="pal-off">· off</span>' : "") + "</span>";
     b.title = g.off ? (g.offDetail || "Plugin disabled") : "Open " + g.label;
-    b.onclick = function (ev) { ev.stopPropagation(); closePluginPalette(); go(g.pages[0].id); };
+    b.onclick = (ev) => { ev.stopPropagation(); closePluginPalette(); go(g.pages[0].id); };
     return b;
   }
 
   function pinButton(g: PaletteGroup): HTMLButtonElement {
-    var pinned = pins.indexOf(g.id) >= 0;
-    var p = el("button", "pal-pin");
+    const pinned = pins.indexOf(g.id) >= 0;
+    const p = el("button", "pal-pin");
     p.type = "button";
     p.innerHTML = icon("star", (pinned ? "Unpin " : "Pin ") + g.label);
     p.className = "pal-pin" + (pinned ? " on" : "");
     p.setAttribute("aria-pressed", String(pinned));
     p.title = pinned ? "Remove from the rail" : "Pin to the rail";
-    p.onclick = function (ev) {
+    p.onclick = (ev) => {
       ev.stopPropagation();
-      pins = pins.indexOf(g.id) >= 0 ? pins.filter(function (x) { return x !== g.id; }) : pins.concat([g.id]);
+      pins = pins.indexOf(g.id) >= 0 ? pins.filter((x) => { return x !== g.id; }) : pins.concat([g.id]);
       savePins(pins);
       render();
       if (onchange) onchange();
@@ -149,10 +149,10 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
 
   function render() {
     list.innerHTML = "";
-    paletteRows(groups, pins, input.value).forEach(function (section) {
+    paletteRows(groups, pins, input.value).forEach((section) => {
       list.appendChild(el("div", "pal-section", section.section));
-      section.groups.forEach(function (g) {
-        var holder = el("div", "pal-item");
+      section.groups.forEach((g) => {
+        const holder = el("div", "pal-item");
         holder.appendChild(rowButton(g));
         holder.appendChild(pinButton(g));
         list.appendChild(holder);
@@ -162,39 +162,39 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
   }
 
   input.oninput = render;
-  input.onkeydown = function (ev) {
-    var rows: HTMLButtonElement[] = Array.prototype.slice.call(list.querySelectorAll<HTMLButtonElement>(".pal-row"));
-    var i = rows.indexOf(document.activeElement as HTMLButtonElement);
+  input.onkeydown = (ev) => {
+    const rows: HTMLButtonElement[] = Array.prototype.slice.call(list.querySelectorAll<HTMLButtonElement>(".pal-row"));
+    const i = rows.indexOf(document.activeElement as HTMLButtonElement);
     if (ev.key === "Escape") { ev.preventDefault(); closePluginPalette(); return; }
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
       ev.preventDefault();
-      var n = ev.key === "ArrowDown" ? i + 1 : i - 1;
+      let n = ev.key === "ArrowDown" ? i + 1 : i - 1;
       if (i < 0) n = ev.key === "ArrowDown" ? 0 : rows.length - 1; /* from the input */
       if (n < 0) n = 0;
       if (n >= rows.length) n = rows.length - 1;
       if (rows[n]) rows[n].focus();
     } else if (ev.key === "Enter" && i < 0) {
       ev.preventDefault();
-      var first = list.querySelector<HTMLButtonElement>(".pal-row");
+      const first = list.querySelector<HTMLButtonElement>(".pal-row");
       if (first) first.click();
     }
   };
-  list.addEventListener("keydown", function (ev) {
+  list.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape") return;
     ev.preventDefault();
     closePluginPalette();
   });
 
-  back.onclick = function (ev) { if (ev.target === back) closePluginPalette(); };
+  back.onclick = (ev) => { if (ev.target === back) closePluginPalette(); };
   document.body.appendChild(back);
   render();
   input.focus();
 }
 
 function closePluginPalette(): void {
-  var back = document.querySelector(".palette-back");
+  const back = document.querySelector(".palette-back");
   if (back) back.remove();
-  var more = document.getElementById("railMore");
+  const more = document.getElementById("railMore");
   if (more && typeof more.focus === "function") more.focus();
 }
 
