@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiJobRow, ApiJobsResponse, ApiMcpListResponse, ApiTunnelConnectionRow, ApiTunnelRuleRow, ApiTunnelsResponse } from "./types/api.js";
 import { $, api, apiJson, dotTitle, esc, icon, state, toast, whenLabel } from "./util.js";
 import { currentPageCount, navigatePage, refreshPage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
@@ -69,13 +70,13 @@ function renderMemory(): void {
 /** The chip's click: re-read memory with the child walk, nothing else. The chip shows a
  *  number, so a click asks for the number — reloading the active view under the pointer
  *  (focus, scroll, an expanded row) is a side effect nobody asked for. */
-function refreshMemoryNow(): void { loadMemory(true); }
+function refreshMemoryNow(): void { void loadMemory(true); }
 
 /** The panel's ONE explicit view refresh (the r key — the chip's click is memory-only, see
  *  refreshMemoryNow): re-read memory with the child walk, and reload the active view. On
  *  Data this key is the only manual reload there is — its poll deliberately leaves the
  *  paged-in lists alone, so without this the view could never be forced up to date. */
-function refreshNow(): void { loadMemory(true); void refreshPage(); }
+function refreshNow(): void { void loadMemory(true); void refreshPage(); }
 
 /* ================================================================================================
    Tunnels

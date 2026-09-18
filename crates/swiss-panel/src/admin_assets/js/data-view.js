@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+                                                                                                                           
+                                                              
 import { $, apiJson, dbReqGuard, el, icon, state } from "./util.js";
 import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisPendingCount } from "./data-browsers.js";
@@ -168,10 +170,10 @@ async function loadDbView()                {
   renderDbToolbar(); renderDbFilters(); renderDbGrid();
   // A refresh re-fetches what is MISSING, not what is already on screen — reloading keys would
   // throw away the pages the user paged in with "More".
-  if (d_.conn && dbIsRedis()) { if (!d_.redis) dbLoadKeys(true); else renderDbTables(); }
-  else if (d_.conn) { if (!d_.tables.length) dbLoadTables(); else renderDbTables(); }
+  if (d_.conn && dbIsRedis()) { if (!d_.redis) void dbLoadKeys(true); else renderDbTables(); }
+  else if (d_.conn) { if (!d_.tables.length) void dbLoadTables(); else renderDbTables(); }
   else renderDbTables();
-  if (d_.table && !d_.data && !dbIsRedis()) dbLoadData(true);
+  if (d_.table && !d_.data && !dbIsRedis()) void dbLoadData(true);
 }
 
 function renderDbView()       {
@@ -256,8 +258,8 @@ function renderDbView()       {
     // the connection this view just left behind.
     const chip = $("countChip");
     if (chip) chip.textContent = currentPageCount();
-    if (dbIsRedis()) dbLoadKeys(true);
-    else dbLoadTables();
+    if (dbIsRedis()) void dbLoadKeys(true);
+    else void dbLoadTables();
   };
   // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
   // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
@@ -273,8 +275,8 @@ function renderDbView()       {
       if (!state.db) return;
       const d = state.db ;
       d.grep = v; d.tablesPage = 0;
-      if (dbIsRedis()) dbLoadKeys(true);
-      else dbLoadTables();
+      if (dbIsRedis()) void dbLoadKeys(true);
+      else void dbLoadTables();
     }, 300);
   };
   $                   ("dbSort").onchange = (e) => {
@@ -283,7 +285,7 @@ function renderDbView()       {
     d_.sort = (e.currentTarget                     ).value;
     d_.tablesPage = 0;
     if (dbIsRedis()) renderDbTables(); // keys sort in place over what has been scanned
-    else dbLoadTables();
+    else void dbLoadTables();
   };
   $("dbSortDir").onclick = ()       => {
     const d = state.db;
@@ -292,7 +294,7 @@ function renderDbView()       {
     dbPaintSort();
     d_.tablesPage = 0;
     if (dbIsRedis()) renderDbTables();
-    else dbLoadTables();
+    else void dbLoadTables();
   };
   // The schema picker (pg only): picking one re-requests the table list inside that schema.
   // The wiring itself lives in dbWireSchemaSelect so a RE-CREATED picker (dbPaintSchemaOptions
@@ -313,20 +315,20 @@ function renderDbView()       {
   // list owns (arrows / Tab / Enter / Esc) and leaves Ctrl+Enter to run the block.
   $                     ("dbSql").addEventListener("keydown", dbSuggestKeys);
   $                     ("dbSql").onkeydown = (e               )       => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); dbRunSql(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void dbRunSql(); }
   };
   dbSqlPaint();
   dbSyncKind();
   // wrapped: onclick hands the handler the click EVENT, and dbRunSql's first parameter is
   // `explain` — an event object is truthy, so a plain Run has been quietly running EXPLAIN.
-  $                   ("dbSqlRun").onclick = ()       => { dbRunSql(false); };
+  $                   ("dbSqlRun").onclick = ()       => { void dbRunSql(false); };
   $                   ("dbSqlExplain").onclick = (ev            )       => {
     // stopPropagation: connect.js closes any open menu on clicks that reach document, and
     // without it the click that opens the menu also tears it down (same as the Export menu).
     ev.stopPropagation();
     popupMenu((ev.currentTarget                     ).getBoundingClientRect(), [
-      { label: "Explain", fn: ()       => { dbRunSql("plan"); } },
-      { label: "Explain ANALYZE", fn: ()       => { dbRunSql("analyze"); } },
+      { label: "Explain", fn: ()       => { void dbRunSql("plan"); } },
+      { label: "Explain ANALYZE", fn: ()       => { void dbRunSql("analyze"); } },
     ]);
   };
   $                   ("dbSqlHistory").onchange = (e) => {
@@ -639,7 +641,7 @@ function renderDbTables()       {
       // Switching keys drops the typed-value buffer (docs/22 W3.3): a different key cannot
       // adopt another key's fields, so the same guard the table switch uses asks first.
       b.onclick = ()       => {
-        if (k.key === d?.redisKey || dbOkToDrop()) dbLoadRedisValue(k.key);
+        if (k.key === d?.redisKey || dbOkToDrop()) void dbLoadRedisValue(k.key);
       };
       box.appendChild(b);
     });
@@ -651,7 +653,7 @@ function renderDbTables()       {
       if (rr && !rr.done) {
         const more = el("button", "btn", "More");
         more.title = "Continue the SCAN";
-        more.onclick = ()       => { dbLoadKeys(false); };
+        more.onclick = ()       => { void dbLoadKeys(false); };
         foot2.appendChild(more);
       }
     }
@@ -693,12 +695,12 @@ function renderDbTables()       {
   prev.innerHTML = icon("chevron-left");
   prev.title = "Previous page of tables";
   prev.disabled = d_.tablesPage === 0;
-  prev.onclick = ()       => { d .tablesPage--; dbLoadTables(); };
+  prev.onclick = ()       => { d .tablesPage--; void dbLoadTables(); };
   const next = el("button", "btn icon")                     ;
   next.innerHTML = icon("chevron-right");
   next.title = "Next page of tables";
   next.disabled = !d_.more;
-  next.onclick = ()       => { d .tablesPage++; dbLoadTables(); };
+  next.onclick = ()       => { d .tablesPage++; void dbLoadTables(); };
   foot.appendChild(prev);
   foot.appendChild(next);
 }
@@ -726,7 +728,7 @@ function dbWireSchemaSelect(sel                   )       {
     if (t.value === d_.schemaFilter) return;
     d_.schemaFilter = t.value;
     d_.tablesPage = 0;
-    dbLoadTables();
+    void dbLoadTables();
   };
 }
 
@@ -809,10 +811,10 @@ function dbOpenTable(t               )       {
   d_.sqlResults = null; d_.sqlTab = 0; // docs/22 W4.3: opening a table closes every result tab
   dbDropEdits();
   renderDbTables();
-  dbLoadData();
+  void dbLoadData();
   // docs/22 W5.2: the detail rides along with every open — the FK columns' header arrows
   // read it, and the Structure tabs were going to ask for it on their first click anyway.
-  dbLoadDetail();
+  void dbLoadDetail();
 }
 
 /** docs/22 W5.2: the FK jump's payload — one describe_table FK row plus the focused row's
@@ -853,8 +855,8 @@ function dbFkOpen(fk            , value         )       {
   d_.sqlResult = null; d_.sqlResults = null; d_.sqlTab = 0;
   dbDropEdits();
   renderDbTables();
-  dbLoadData();
-  dbLoadDetail(); // the target table's own FK arrows arrive with its detail
+  void dbLoadData();
+  void dbLoadDetail(); // the target table's own FK arrows arrive with its detail
 }
 
 export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };

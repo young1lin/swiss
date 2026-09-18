@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { FieldSpec, PgUrlParts } from "./types/dom.js";
 import { $, esc } from "./util.js";
 
 /* --- field schemas ---------------------------------------------------------------------------- */

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+                                                  
+                                                                 
 import { $, KINDS, api, apiJson, now, state, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
 import { callsErrHtml, callsStatusHtml, fmtJson, mountJsonTrees } from "./logs.js";
@@ -51,8 +53,8 @@ async function act(name        , verb        )                {
   if (state.detail && state.detail.name === name) {
     KINDS.forEach((k) => { state.detail [k                                     ] = pageState(); });
     renderPane();
-    loadMeta(name);
-    if (KINDS.indexOf(state.detail.tab) >= 0) loadPage(name, state.detail.tab);
+    void loadMeta(name);
+    if (KINDS.indexOf(state.detail.tab) >= 0) void loadPage(name, state.detail.tab);
   }
 }
 
@@ -120,7 +122,7 @@ async function authorizeMcp(name        )                {
         state.lastAction[name] = { msg: "authorized · " + (s.tools != null ? s.tools + " tools" : "MCP started"), err: false, at: now() };
         toast(name + ": authorized");
         await loadList();
-        loadMeta(name);
+        void loadMeta(name);
         if (state.detail && !state.detail.editing) renderPane();
         return;
       } else if (s.status === "error") {
@@ -179,8 +181,8 @@ function openDetail(name        )       {
   state.menuOpen = false;
   patchSidebar();
   renderPane();
-  loadMeta(name);
-  if (rowOf(name) && rowOf(name) .lifecycle === "started") loadPage(name, "tools");
+  void loadMeta(name);
+  if (rowOf(name) && rowOf(name) .lifecycle === "started") void loadPage(name, "tools");
 }
 
 async function loadMeta(name        )                {
@@ -302,7 +304,7 @@ function callsBegin(d           , target        , dir               , fromKey   
     ? { dir: dir, fromKey: fromKey, pagerTop: pager.getBoundingClientRect().top }
     : null; // without a pager on screen there is nothing to hold still (the very first load)
   patchCallsChrome(d);
-  loadCalls(d.name);
+  void loadCalls(d.name);
 }
 
 /** After a committed switch: put the pager back where it was on screen — the button the user
@@ -449,28 +451,28 @@ function showTab(tab        )       {
   d.tab = tab;
   d.editing = false;
   renderPane();
-  if (KINDS.indexOf(tab) >= 0 && !d[tab                                     ].loaded && !d[tab                                     ].loading) loadPage(d.name, tab);
+  if (KINDS.indexOf(tab) >= 0 && !d[tab                                     ].loaded && !d[tab                                     ].loading) void loadPage(d.name, tab);
   // The config tab's revision list (docs/28 D1) rides along with the tab, not the poll.
-  if (tab === "config") loadRevisions(d.name);
+  if (tab === "config") void loadRevisions(d.name);
   // Run needs the tool list to build its argument form.
-  if (tab === "run" && !d.tools.loaded && !d.tools.loading) loadPage(d.name, "tools");
+  if (tab === "run" && !d.tools.loaded && !d.tools.loading) void loadPage(d.name, "tools");
   // docs/32 B3: a pending switch already owns the tab; re-entering it must not fire a second
   // request for the same target on top of the one in flight.
-  if (tab === "logs" && d.callsPendingPage == null) loadCalls(d.name);
+  if (tab === "logs" && d.callsPendingPage == null) void loadCalls(d.name);
 }
 function pageNext()       {
   const d = state.detail, kd = d && d[d.tab                                     ];
   if (!kd || !kd.nextCursor || kd.loading) return;
   kd.cursors.push(kd.nextCursor);
   const d_ = d ;
-  loadPage(d_.name, d_.tab);
+  void loadPage(d_.name, d_.tab);
 }
 function pagePrev()       {
   const d = state.detail, kd = d && d[d.tab                                     ];
   if (!kd || kd.cursors.length <= 1 || kd.loading) return;
   kd.cursors.pop();
   const d_ = d ;
-  loadPage(d_.name, d_.tab);
+  void loadPage(d_.name, d_.tab);
 }
 
 /* --- config edit ------------------------------------------------------------------------------ */
@@ -553,8 +555,8 @@ async function saveReplace()                {
       if (j.restartError) toast(name + " failed to start: " + j.restartError, true);
       if (state.detail === d) d.editVals = null;
       KINDS.forEach((k) => { if (state.detail) state.detail [k                                     ] = pageState(); });
-      loadMeta(name);
-      loadRevisions(name);
+      void loadMeta(name);
+      void loadRevisions(name);
     }
   } catch (e) {
     state.lastAction[name] = { msg: "replace request failed", err: true, at: now() };
@@ -577,8 +579,8 @@ async function restoreRevision(index        )                {
     toast(d.name + ": revision " + (index + 1) + " restored");
     if (j.restartError) toast(d.name + " failed to start: " + j.restartError, true);
     KINDS.forEach((k) => { if (state.detail) state.detail [k                                     ] = pageState(); });
-    loadMeta(d.name);
-    loadRevisions(d.name);
+    void loadMeta(d.name);
+    void loadRevisions(d.name);
     await loadList();
     renderPane();
   } catch (e) { toast("restore request failed", true); }
@@ -590,7 +592,7 @@ async function deleteRevision(index        )                {
   if (!confirm("Delete parked revision " + (index + 1) + "? This only drops the snapshot — the live def is untouched.")) return;
   if (!await apiJson("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index, { method: "DELETE" })) return;
   toast("Revision " + (index + 1) + " deleted");
-  loadRevisions(d.name);
+  void loadRevisions(d.name);
 }
 /** Switching type re-renders the form, so read what is in it first and carry it across — a field
  *  both types share (description, host, password) survives the switch. A masked secret carried into
@@ -697,7 +699,7 @@ async function saveEdit()                {
       toast(name + ": config saved, restarted");
       if (state.detail === d) d.editVals = null;
       KINDS.forEach((k) => { if (state.detail) state.detail [k                                     ] = pageState(); });
-      loadMeta(name);
+      void loadMeta(name);
     }
   } catch (e) {
     state.lastAction[name] = { msg: "edit request failed", err: true, at: now() };

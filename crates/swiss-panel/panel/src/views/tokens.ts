@@ -32,6 +32,8 @@
    dropped anywhere. A group is a folder a token sits in; the "copies use this" marker is
    real state about the COPY actions, untouched by which folder the token sits in.
    ================================================================================================ */
+import type { ApiMcpRow, ApiTokenCreated, ApiTokenRow, ApiTokensResponse } from "../types/api.js";
+import type { GroupCfg, GroupSlice } from "../types/dom.js";
 import { $, TOKEN_ID_KEY, api, apiJson, emptyHtml, esc, icon, state, targetEl } from "../util.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { popupMenu } from "../menu.js";
@@ -276,8 +278,8 @@ function wire(): void {
       });
       return;
     }
-    if (button.id === "tkCopySecret") { copyText(state.tokenViewSecret!, "Token secret"); return; }
-    if (button.id === "tkCopyConn") { copyText(connectAll(state.tokenViewSecret!), "Connect commands"); return; }
+    if (button.id === "tkCopySecret") { void copyText(state.tokenViewSecret!, "Token secret"); return; }
+    if (button.id === "tkCopyConn") { void copyText(connectAll(state.tokenViewSecret!), "Connect commands"); return; }
     if (button.dataset.tkuse) {
       if (await fetchSecret(button.dataset.tkuse)) render();
       return;

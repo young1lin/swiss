@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiMcpRow } from "../src/types/api.js";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";

@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { PageGroup } from "../src/types/dom.js";
 import { describe, it, expect } from "vitest";
 import {
   defaultPinIds,

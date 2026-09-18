@@ -23,6 +23,7 @@
    scopes is a rule worth pinning in a test. groups.js re-exports everything so callers keep
    one import; this file is where they live.
    ================================================================================================ */
+import type { GroupSlice, GroupedRow } from "./types/dom.js";
 import { DEFAULT_GROUP } from "./util.js";
 
 /* --- membership --------------------------------------------------------------------------------- */

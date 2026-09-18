@@ -29,6 +29,8 @@
    row's body follows its output on a short timer while it is open; when the run ends the
    next poll moves the row from the live list into the record with the same run id.
    ================================================================================================ */
+import type { ApiRemoteRunOutput, ApiRemoteRunsResponse, ApiRemoteTargetsResponse, ApiRunOutputChunk } from "../types/api.js";
+import type { ApiRemoteRunRow, RemoteLiveBody, RemoteRunBody, RemoteRunInput } from "../types/runs.js";
 import { $, apiJson, emptyHtml, esc, icon, targetEl, toast, whenLabel } from "../util.js";
 
 const PAGE = 20;

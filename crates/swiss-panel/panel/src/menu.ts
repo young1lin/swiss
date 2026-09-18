@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ApiMcpRow } from "./types/api.js";
+import type { MenuItem } from "./types/dom.js";
 import { $, dotTitle, state, typeTagHtml } from "./util.js";
 import { closeMenu } from "./pane.js";
 import { groupOf, groupedMcps, rowOf, sideCfg, visibleMcps } from "./sidebar.js";

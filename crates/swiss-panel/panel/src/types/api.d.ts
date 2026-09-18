@@ -24,14 +24,14 @@
 /* --- host chrome (src/adminapi.rs) -------------------------------------------------------------- */
 
 /** GET /api/info - adminapi.rs:533, the boot handshake (token env name + panel stamp). */
-interface ApiInfoResponse {
+export interface ApiInfoResponse {
   tokenEnv: string;
   panelVersion: string;
   build: Record<string, unknown>;
 }
 
 /** GET /api/memory - swiss-host/src/mem.rs; polled for the footer readout. */
-interface ApiMemoryInfo {
+export interface ApiMemoryInfo {
   gatewayMb: number;
   heapUsedMb: number;
   heapTotalMb: number;
@@ -44,7 +44,7 @@ interface ApiMemoryInfo {
 }
 
 /** GET /api/autostart - src/autostart.rs AutoStartState::to_json. */
-interface ApiAutoStartResponse {
+export interface ApiAutoStartResponse {
   enabled: boolean;
   detail: string;
   command: string;
@@ -53,14 +53,14 @@ interface ApiAutoStartResponse {
 /* --- MCP (src/adminapi.rs, swiss-mcp) ------------------------------------------------------------ */
 
 /** GET /api/mcps - adminapi.rs:997: both lists the sidebar renders, groups in sidebar order. */
-interface ApiMcpListResponse {
+export interface ApiMcpListResponse {
   mcps: ApiMcpRow[];
   groups: string[];
 }
 
 /** One MCP row - adminapi.rs:949 builds it; latency/lastCheck/reason/startedAt/oauth are
  *  absent until first value (the Node undefined-drop the comment at adminapi.rs:972 names). */
-interface ApiMcpRow {
+export interface ApiMcpRow {
   name: string;
   source: string;
   type: string;
@@ -80,7 +80,7 @@ interface ApiMcpRow {
 }
 
 /** GET /api/mcps/{name}/details - adminapi.rs get_details; config is the masked def. */
-interface ApiMcpDetails {
+export interface ApiMcpDetails {
   name: string;
   source: string;
   type: string;
@@ -96,7 +96,7 @@ interface ApiMcpDetails {
 /** GET /api/mcps/{name}/{kind} (tools|resources|prompts) - adminapi.rs:2321: the page lives
  *  under the kind's own key; nextCursor/total are absent until the page carries them, and
  *  disabledTools (tools) / resourceEnabled (resources) ride their kinds only. */
-interface ApiMcpKindPage {
+export interface ApiMcpKindPage {
   pageSize: number;
   nextCursor?: string;
   total?: number;
@@ -107,10 +107,18 @@ interface ApiMcpKindPage {
   resourceEnabled?: boolean;
 }
 
+/** The v2 view's trigger as def.rs trigger_json spells it: one discriminated union,
+ *  exactly the three kinds the Rust side constructs. firstRun is Option - null when the
+ *  interval rule leaves it to the default. */
+export type ApiJobTrigger =
+  | { kind: "manual" }
+  | { kind: "interval"; everyMs: number; firstRun: string | null }
+  | { kind: "cron"; expression: string; timezone: string };
+
 /** A tools/list item, passed through from the MCP as-is - only the fields the panel renders. */
 /** A tool's input schema as the panel reads it (the JSON-Schema subset that drives the Run
  *  form's generated argument fields: properties, required, enum, array item types). */
-interface ToolSchemaProp {
+export interface ToolSchemaProp {
   type?: string;
   description?: string;
   enum?: unknown[];
@@ -118,13 +126,13 @@ interface ToolSchemaProp {
   [key: string]: unknown;
 }
 
-interface ToolInputSchema {
+export interface ToolInputSchema {
   properties?: Record<string, ToolSchemaProp>;
   required?: string[];
   [key: string]: unknown;
 }
 
-interface ApiMcpTool {
+export interface ApiMcpTool {
   name: string;
   description?: string;
   inputSchema?: ToolInputSchema;
@@ -134,7 +142,7 @@ interface ApiMcpTool {
 /** One kind-page row, the three capabilities fused for the shared renderer (logs.ts kindBody):
  *  uri marks a resource, arguments a prompt, inputSchema a tool - the renderer branches on
  *  the kind, so one shape carries all three without a union at every property. */
-interface ApiMcpItem {
+export interface ApiMcpItem {
   name?: string;
   uri?: string;
   description?: string;
@@ -144,7 +152,7 @@ interface ApiMcpItem {
 }
 
 /** A resources/list item (uri is the identity). */
-interface ApiMcpResource {
+export interface ApiMcpResource {
   uri: string;
   name: string;
   description?: string;
@@ -153,7 +161,7 @@ interface ApiMcpResource {
 }
 
 /** A prompts/list item. */
-interface ApiMcpPrompt {
+export interface ApiMcpPrompt {
   name: string;
   description?: string;
   arguments?: { name: string; description?: string; required?: boolean }[];
@@ -161,7 +169,7 @@ interface ApiMcpPrompt {
 }
 
 /** GET /api/mcps/{name}/calls - swiss-mcp/src/calls.rs read_calls. */
-interface ApiMcpCallPage {
+export interface ApiMcpCallPage {
   calls: ApiMcpCallRow[];
   page: number;
   pageSize: number;
@@ -170,7 +178,7 @@ interface ApiMcpCallPage {
 
 /** One recorded tool call - swiss-mcp/src/calls.rs CallEntry (camelCase serde). client,
  *  preview, body and bodyGone are absent-not-null. */
-interface ApiMcpCallRow {
+export interface ApiMcpCallRow {
   seq: number;
   at: string;
   tool: string;
@@ -187,12 +195,12 @@ interface ApiMcpCallRow {
 }
 
 /** GET /api/mcps/{name}/calls/{seq} - read_call: the same CallEntry with the full reply. */
-type ApiMcpCallFull = ApiMcpCallRow;
+export type ApiMcpCallFull = ApiMcpCallRow;
 
 /* --- traffic (swiss-mcp/src/traffic.rs) --------------------------------------------------------- */
 
 /** GET /api/traffic - traffic.rs read_traffic: one newest-first page of the ring. */
-interface ApiTrafficPage {
+export interface ApiTrafficPage {
   entries: ApiTrafficRow[];
   /* The whole ring's client fold rides every page (the panel keeps one state, not two). */
   clients?: ApiTrafficClientRow[];
@@ -205,7 +213,7 @@ interface ApiTrafficPage {
 
 /** One interaction row - traffic.rs TrafficEntry (camelCase serde) minus body/response
  *  (a page strips both) plus hasResponse. */
-interface ApiTrafficRow {
+export interface ApiTrafficRow {
   seq: number;
   at: string;
   mcp: string;
@@ -220,7 +228,7 @@ interface ApiTrafficRow {
 }
 
 /** GET /api/traffic/{seq} - traffic.rs read_traffic_entry: the raw redacted bodies, on expand. */
-interface ApiTrafficFull {
+export interface ApiTrafficFull {
   /* gone: the ring rolled past this seq - the panel stores this marker for a 404 so the
    *  row says so instead of spinning forever. */
   gone?: boolean;
@@ -229,7 +237,7 @@ interface ApiTrafficFull {
 }
 
 /** One folded client of the ring - traffic.rs read_clients (sorted by lastSeq). */
-interface ApiTrafficClientRow {
+export interface ApiTrafficClientRow {
   key: string;
   label: string;
   tokens: string[];
@@ -242,14 +250,14 @@ interface ApiTrafficClientRow {
 /* --- tokens and the secret vault (src/adminapi.rs, swiss-host/src/token.rs) ---------------------- */
 
 /** A token as the API ever shows it - swiss-host/src/token.rs PublicToken (no secret). */
-interface ApiTokenRow {
+export interface ApiTokenRow {
   id: string;
   label: string;
   createdAt: string;
 }
 
 /** GET /api/tokens - adminapi.rs:572: the management list plus the group scopes' names. */
-interface ApiTokensResponse {
+export interface ApiTokensResponse {
   tokens: ApiTokenRow[];
   tokenEnv: string;
   groups: string[];
@@ -257,7 +265,7 @@ interface ApiTokensResponse {
 }
 
 /** POST /api/tokens - adminapi.rs:595: the one reply that carries a fresh secret. */
-interface ApiTokenCreated {
+export interface ApiTokenCreated {
   id: string;
   label: string;
   secret: string;
@@ -265,7 +273,7 @@ interface ApiTokenCreated {
 }
 
 /** GET /api/tokens/{id}/secret - adminapi.rs:615 (copy-command support, never a listing). */
-interface ApiTokenSecret {
+export interface ApiTokenSecret {
   id: string;
   label: string;
   secret: string;
@@ -273,7 +281,7 @@ interface ApiTokenSecret {
 
 /** GET /api/secrets - adminapi.rs:661: names and labels only; values never leave the vault
  *  (docs/19 D5). secretGroups is name -> sink-resolved group label. */
-interface ApiSecretsResponse {
+export interface ApiSecretsResponse {
   secrets: string[];
   rev: number;
   groups: string[];
@@ -282,41 +290,41 @@ interface ApiSecretsResponse {
 }
 
 /** PUT/DELETE /api/secrets/{name} - adminapi.rs:716: the new rev after the write. */
-interface ApiSecretWriteResponse {
+export interface ApiSecretWriteResponse {
   rev: number;
 }
 
 /* --- the group-scope family (src/adminapi.rs:817+, swiss-host/src/groups.rs) --------------------- */
 
 /** PUT /api/groups/{scope} - set the whole list; a dropped group's members fall to the first. */
-interface ApiGroupsSetResponse {
+export interface ApiGroupsSetResponse {
   groups: string[];
 }
 
 /** POST /api/groups/{scope}/rename - moved counts the explicit members that rode along. */
-interface ApiGroupsRenameResponse {
+export interface ApiGroupsRenameResponse {
   groups: string[];
   moved: number;
 }
 
 /** PUT /api/groups/{scope}/members/{id} - group is null when the explicit entry was removed. */
-interface ApiGroupAssignResponse {
+export interface ApiGroupAssignResponse {
   group: string | null;
 }
 
 /** PUT /api/groups/{scope}/order - adminapi.rs:917: the flat order as now stored. */
-interface ApiGroupsOrderResponse {
+export interface ApiGroupsOrderResponse {
   order: string[];
 }
 
 /* --- runs and actions (swiss-host/src/services/api.rs, runs.rs) ---------------------------------- */
 
 /** GET /api/actions - services/api.rs:74: live capabilities, stopped providers absent. */
-interface ApiActionsResponse {
+export interface ApiActionsResponse {
   actions: ApiActionRow[];
 }
 
-interface ApiActionRow {
+export interface ApiActionRow {
   type: string;
   title: string;
   provider: string;
@@ -325,14 +333,14 @@ interface ApiActionRow {
 }
 
 /** GET /api/runs - services/api.rs:83. */
-interface ApiRunsResponse {
+export interface ApiRunsResponse {
   runs: ApiRunRow[];
   capacity: { maxConcurrentRuns: number; maxQueuedRuns: number };
 }
 
 /** One run - swiss-host/src/services/runs.rs:312 RunView::to_json (the fields after endedAt
  *  are absent until they exist). output rides only the single-run GET. */
-interface ApiRunRow {
+export interface ApiRunRow {
   runId: number;
   owner: string;
   label: string;
@@ -354,14 +362,14 @@ interface ApiRunRow {
 }
 
 /** POST /api/runs - services/api.rs:150: 202 with the queued run's row. */
-interface ApiRunSubmitted {
+export interface ApiRunSubmitted {
   runId: number;
   run: ApiRunRow;
 }
 
 /** GET /api/runs/{id}/output - services/api.rs run_output: the byte-cursor chunk the live
  *  reader and the run-history sheet share. */
-interface ApiRunOutputChunk {
+export interface ApiRunOutputChunk {
   runId: number;
   state: string;
   cursor: number;
@@ -374,7 +382,7 @@ interface ApiRunOutputChunk {
 /* --- jobs (swiss-jobs/src/jobs) ----------------------------------------------------------------- */
 
 /** GET /api/jobs - jobs/mod.rs:1230 all_views + the scope's group names. */
-interface ApiJobsResponse {
+export interface ApiJobsResponse {
   jobs: ApiJobRow[];
   groups: string[];
 }
@@ -382,7 +390,7 @@ interface ApiJobsResponse {
 /** One job row - def.rs:1103 to_v1_view + def.rs:1231 v2_view_fields + mod.rs:1200 runtime
  *  facts. everySec is absent for sub-second intervals; cron absent unless cron-triggered;
  *  v2 triggers leave both schedule fields absent rather than rounding a lie. */
-interface ApiJobRow {
+export interface ApiJobRow {
   name: string;
   /* The v2 identity (docs/11 section 7.1): a human title and free-form labels on top of
    *  the id; optional because a v1-era config carries neither. */
@@ -396,8 +404,11 @@ interface ApiJobRow {
   cwd?: string;
   env?: Record<string, string>;
   editableInV1: boolean;
-  trigger?: { kind: string; everyMs?: number; expression?: string; firstRun?: string; [key: string]: unknown };
-  action?: { type: string; [key: string]: unknown };
+  /* trigger/action are the VIEW shapes swiss-jobs def.rs trigger_json/action_json emit,
+   * field-for-field (docs/37 M9 closed these two; the config-file spellings the v2 sheet
+   * PUTs stay open in types/state.d.ts JobDef - unknown action fields must ride along). */
+  trigger?: ApiJobTrigger;
+  action?: { type: string; input: Record<string, unknown>; schemaVersion: number };
   source: string;
   group: string | null;
   actionAvailable: boolean;
@@ -409,14 +420,14 @@ interface ApiJobRow {
 }
 
 /** GET /api/jobs/{name}/runs - jobs/api.rs:263; nextBefore pages backwards. */
-interface ApiJobRunsResponse {
+export interface ApiJobRunsResponse {
   runs: ApiJobRunRecord[];
   nextBefore?: number;
 }
 
 /** One recorded job run - jobs/api.rs ran_record: output is the clipped preview; runId is
  *  absent when the run never produced a tracked run (e.g. a refusal). */
-interface ApiJobRunRecord {
+export interface ApiJobRunRecord {
   at: string;
   trigger: string;
   ok: boolean;
@@ -443,7 +454,7 @@ interface ApiJobRunRecord {
 
 /** GET /api/tunnels - tunnel/api.rs:409 manager.rows() + the two scope group lists + the
  *  live MCP name list (for the suggestion picker). */
-interface ApiTunnelsResponse {
+export interface ApiTunnelsResponse {
   connections: ApiTunnelConnectionRow[];
   rules: ApiTunnelRuleRow[];
   ruleGroups: string[];
@@ -454,7 +465,7 @@ interface ApiTunnelsResponse {
 /** One connection row - tunnel/manager.rs rows(): live fields layered on types.rs
  *  SshConnDef::to_json(). Secrets ride masked (proxyPassword) or absent (passphrase,
  *  password); group/reason/hostKey and the proxy/jump fields are absent when unset. */
-interface ApiTunnelConnectionRow {
+export interface ApiTunnelConnectionRow {
   id: string;
   name: string;
   host: string;
@@ -478,7 +489,7 @@ interface ApiTunnelConnectionRow {
 
 /** One rule row - tunnel/manager.rs rule_row_of(): types.rs RuleDef::to_json() plus the
  *  live runtime columns. portOwner is absent while the local port is free. */
-interface ApiTunnelRuleRow {
+export interface ApiTunnelRuleRow {
   id: string;
   name: string;
   connectionId: string;
@@ -505,13 +516,13 @@ interface ApiTunnelRuleRow {
 }
 
 /** GET /api/tunnels/keys - tunnel/api.rs:437: private keys found under ~/.ssh. */
-interface ApiTunnelsKeysResponse {
+export interface ApiTunnelsKeysResponse {
   keys: { path: string; name: string }[];
   defaultPath: string;
 }
 
 /** GET /api/tunnels/browse - tunnel/api.rs DirListing::to_json; error set on a bad dir. */
-interface ApiTunnelsBrowseResponse {
+export interface ApiTunnelsBrowseResponse {
   dir: string;
   parent?: string | null;
   entries: ApiTunnelsBrowseEntry[];
@@ -519,31 +530,31 @@ interface ApiTunnelsBrowseResponse {
 }
 
 /** One row of that listing: a folder or a candidate key file. */
-interface ApiTunnelsBrowseEntry {
+export interface ApiTunnelsBrowseEntry {
   name: string;
   path: string;
   dir: boolean;
 }
 
 /** GET /api/tunnels/suggest/{port} - tunnel/api.rs:473: MCPs pointing at this local port. */
-interface ApiTunnelsSuggestResponse {
+export interface ApiTunnelsSuggestResponse {
   port: number;
   mcps: unknown[];
 }
 
 /** POST/PUT /api/tunnels/connections - the masked echo the sheet reads back once. */
-interface ApiTunnelConnMutation {
+export interface ApiTunnelConnMutation {
   connection: ApiTunnelConnectionRow;
 }
 
 /** POST/PUT /api/tunnels/rules - the created/updated rule echoed back. */
-interface ApiTunnelRuleMutation {
+export interface ApiTunnelRuleMutation {
   rule?: ApiTunnelRuleRow;
 }
 
 /* The connection sheet's working copy (tunnel-sheets openConnSheet): the row when editing,
  *  the seed literal when creating. port-target fields are strings only in the seed. */
-interface ConnSheetDraft {
+export interface ConnSheetDraft {
   id?: string;
   name: string;
   host: string;
@@ -561,7 +572,7 @@ interface ConnSheetDraft {
 
 /* The rule sheet's working copy (openRuleSheet): same idea - the row, or the seed with
  *  empty string ports where a saved row carries numbers. */
-interface RuleSheetDraft {
+export interface RuleSheetDraft {
   id?: string;
   name: string;
   connectionId: string;
@@ -577,11 +588,11 @@ interface RuleSheetDraft {
 /* --- the Data browser (swiss-data/src/dbbrowser_api.rs, dbbrowser.rs) --------------------------- */
 
 /** GET /api/db - dbbrowser_api.rs:97 browsable_connections (ordered like the sidebar). */
-interface ApiDbConnectionsResponse {
+export interface ApiDbConnectionsResponse {
   connections: ApiDbConnectionRow[];
 }
 
-interface ApiDbConnectionRow {
+export interface ApiDbConnectionRow {
   name: string;
   dialect: string;
   label: string;
@@ -590,7 +601,7 @@ interface ApiDbConnectionRow {
 }
 
 /** GET /api/db/{name}/tables - dbbrowser_api.rs list_tables route. */
-interface ApiDbTablesResponse {
+export interface ApiDbTablesResponse {
   tables: ApiDbTableRow[];
   total: number;
   page: number;
@@ -598,7 +609,7 @@ interface ApiDbTablesResponse {
   more: boolean;
 }
 
-interface ApiDbTableRow {
+export interface ApiDbTableRow {
   schema: string;
   name: string;
   /* optional: the FK column's jump (data-structure) opens a table with name+schema only */
@@ -608,7 +619,7 @@ interface ApiDbTableRow {
 }
 
 /** GET /api/db/{name}/data - dbbrowser_api.rs read_table route (the stub at :1196 spells it). */
-interface ApiDbDataPage {
+export interface ApiDbDataPage {
   schema: string;
   table: string;
   columns: ApiDbColumn[];
@@ -623,7 +634,7 @@ interface ApiDbDataPage {
   editNote?: string;
 }
 
-interface ApiDbColumn {
+export interface ApiDbColumn {
   name: string;
   dataType: string;
   nullable: boolean;
@@ -633,7 +644,7 @@ interface ApiDbColumn {
 }
 
 /** GET /api/db/{name}/schema - describe_table: the Structure tabs' detail (W5.2's FK jump). */
-interface ApiDbTableDetail {
+export interface ApiDbTableDetail {
   schema: string;
   table: string;
   columns: ApiDbColumn[];
@@ -644,7 +655,7 @@ interface ApiDbTableDetail {
 }
 
 /** One FK of the Structure tab's Foreign Keys list; the target name carries the jump. */
-interface ApiDbFkRow {
+export interface ApiDbFkRow {
   name: string;
   column: string;
   refSchema: string;
@@ -654,7 +665,7 @@ interface ApiDbFkRow {
 
 /** One console statement's reply - dbbrowser_api.rs query route; elapsedMs is attached by
  *  the :744 helper. Used for sqlResult AND each entry of sqlResults. */
-interface DbQueryReply {
+export interface DbQueryReply {
   columns: string[];
   rows: Record<string, unknown>[];
   rowCount: number;
@@ -668,17 +679,20 @@ interface DbQueryReply {
 
 /** GET /api/db/{name}/key - one redis key's typed value view: type plus the type's own
  *  payload (value for string, entries for containers), the key's own name, length and ttl. */
-interface ApiDbRedisValue {
+export interface ApiDbRedisValue {
   key: string;
   type: string;
   value?: unknown;
   length?: number | null;
   ttl?: number;
+  /* open by construction (docs/37 M9 keep): the value half is the redis type's own
+   * payload - string / list / hash / set / zset each shape it differently - so only the
+   * envelope is closed and the payload rides as unknown. */
   [key: string]: unknown;
 }
 
 /** GET /api/db/{name}/keys - the redis SCAN page (one page of the key grid). */
-interface ApiDbRedisKeysResponse {
+export interface ApiDbRedisKeysResponse {
   keys: ApiDbRedisKeyRow[];
   /* redis cursors travel as strings (big unsigned numbers the panel compares against "0"). */
   cursor: string;
@@ -686,21 +700,23 @@ interface ApiDbRedisKeysResponse {
   total: number;
 }
 
-interface ApiDbRedisKeyRow {
+export interface ApiDbRedisKeyRow {
   key: string;
   type: string;
   ttl?: number;
+  /* open by keep (docs/37 M9): SCAN rows are built key-by-key from driver maps; the
+   * panel reads the three listed fields and tolerates a driver adding one. */
   [key: string]: unknown;
 }
 
 /** GET /api/db/{name}/activity - the 5s Activity poll while the pane is open. */
-interface ApiDbActivityReply {
+export interface ApiDbActivityReply {
   rows: ApiDbActivityRow[];
 }
 
 /** One pg_stat_activity-style session row (swiss-data activity.rs); own marks the row this
  *  panel's own polling session is, seconds feeds the duration column. */
-interface ApiDbActivityRow {
+export interface ApiDbActivityRow {
   pid: number;
   user?: string | null;
   state?: string | null;
@@ -709,29 +725,31 @@ interface ApiDbActivityRow {
   seconds?: number | null;
   query?: string | null;
   own?: boolean;
+  /* open by keep (docs/37 M9): pg_stat_activity columns differ per engine (mysql shows
+   * different state fields than pg); the listed fields are the rendered ones. */
   [key: string]: unknown;
 }
 
 /** POST /api/db/{conn}/completion - one candidate the console's suggest list shows. */
-interface ApiDbCompletionItem {
+export interface ApiDbCompletionItem {
   label: string;
   kind: string;
   detail?: string;
 }
 
-interface ApiDbCompletionReply {
+export interface ApiDbCompletionReply {
   items: ApiDbCompletionItem[];
 }
 
 /* --- remote (swiss-remote/src/api.rs, target.rs) ------------------------------------------------ */
 
 /** GET /api/remote/targets - api.rs:295: rows are target.rs:171 to_json. */
-interface ApiRemoteTargetsResponse {
+export interface ApiRemoteTargetsResponse {
   targets: ApiRemoteTargetRow[];
   groups: string[];
 }
 
-interface ApiRemoteTargetRow {
+export interface ApiRemoteTargetRow {
   id: string;
   label: string;
   endpoint: string;
@@ -743,14 +761,14 @@ interface ApiRemoteTargetRow {
 }
 
 /** GET /api/remote/endpoints - api.rs:262: the transport's live endpoints + presence. */
-interface ApiRemoteEndpointsResponse {
+export interface ApiRemoteEndpointsResponse {
   presence: string;
   provider: string | null;
   endpoints: { id: string; label: string; state: string }[];
 }
 
 /** GET /api/remote/runs - api.rs:145: the history page. Active rows carry the run's input. */
-interface ApiRemoteRunsResponse {
+export interface ApiRemoteRunsResponse {
   runs: ApiRunRow[];
   active: (ApiRunRow & { input?: Record<string, unknown> })[];
   limits: { maxAgeMs: number; maxTotalBytes: number; maxRuns: number; maxOutputBytes: number };
@@ -759,7 +777,7 @@ interface ApiRemoteRunsResponse {
 }
 
 /** GET /api/remote/runs/{id}/output - api.rs run_output: the shared chunk shape + total. */
-interface ApiRemoteRunOutput {
+export interface ApiRemoteRunOutput {
   runId: number;
   cursor: number;
   nextCursor: number;
@@ -772,7 +790,7 @@ interface ApiRemoteRunOutput {
 /* --- terminal (src/plugins/terminal_api.rs, swiss-terminal) ------------------------------------- */
 
 /** GET /api/terminal/targets - terminal/session.rs TargetsView (camelCase serde). */
-interface ApiTerminalTargets {
+export interface ApiTerminalTargets {
   local: {
     enabled: boolean;
     shell: string;
@@ -786,10 +804,10 @@ interface ApiTerminalTargets {
 }
 
 /** GET /api/terminal/sessions - terminal_api.rs list_sessions: a bare array of SessionView. */
-type ApiTerminalSessionsResponse = ApiTerminalSessionRow[];
+export type ApiTerminalSessionsResponse = ApiTerminalSessionRow[];
 
 /** terminal/session.rs SessionView. recording is null when the session is not recorded. */
-interface ApiTerminalSessionRow {
+export interface ApiTerminalSessionRow {
   id: string;
   target: string;
   label: string;
@@ -800,21 +818,21 @@ interface ApiTerminalSessionRow {
 }
 
 /** POST /api/terminal/sessions - session.rs Opened: the id plus the one-time ticket. */
-interface ApiTerminalOpened {
+export interface ApiTerminalOpened {
   id: string;
   ticket: string;
   recording: string | null;
 }
 
 /** POST /api/terminal/sessions/{id}/ticket - a fresh one-time ticket. */
-interface ApiTerminalTicket {
+export interface ApiTerminalTicket {
   ticket: string;
 }
 
 /* --- plugins (swiss-host/src/host) -------------------------------------------------------------- */
 
 /** GET /api/plugins - engine.rs:457 inventory: rows plus every contributed page. */
-interface ApiPluginsResponse {
+export interface ApiPluginsResponse {
   revision: number;
   plugins: ApiPluginRow[];
   pages: ApiPluginPage[];
@@ -822,7 +840,7 @@ interface ApiPluginsResponse {
 
 /** engine.rs:471 row() - lastError when there is one, requires/requiresMet as a pair and
  *  only when the plugin needs anything. */
-interface ApiPluginRow {
+export interface ApiPluginRow {
   id: string;
   kind: string;
   label: string;
@@ -837,7 +855,7 @@ interface ApiPluginRow {
 }
 
 /** host/descriptor.rs:55 PageDescriptor::to_json - the page registry's wire shape. */
-interface ApiPluginPage {
+export interface ApiPluginPage {
   id: string;
   pluginId: string;
   label: string;
@@ -849,7 +867,7 @@ interface ApiPluginPage {
 }
 
 /** GET /api/plugins/{id}/config - host/api.rs get_config. */
-interface ApiPluginConfigResponse {
+export interface ApiPluginConfigResponse {
   revision: number;
   config: Record<string, unknown>;
   schema: Record<string, unknown> | null;
@@ -857,14 +875,14 @@ interface ApiPluginConfigResponse {
 
 /** PUT /api/plugins/{id}/config - host/api.rs put_config: applied:false means the running
  *  instance has not taken the row yet; error carries the apply failure when it has not. */
-interface ApiPluginConfigPutResponse extends ApiPluginConfigResponse {
+export interface ApiPluginConfigPutResponse extends ApiPluginConfigResponse {
   warnings: string[];
   applied: boolean;
   error?: string;
 }
 
 /** PUT /api/plugins/{id} (enable/disable) - {revision, plugin: row}. */
-interface ApiPluginToggleResponse {
+export interface ApiPluginToggleResponse {
   revision: number;
   plugin: ApiPluginRow;
 }
@@ -874,11 +892,11 @@ interface ApiPluginToggleResponse {
 /** The one error shape every route answers with - adminapi.rs admin_error. */
 /** POST /api/mcpdefs/import - the .mcp.json importer's answer: what landed (rows by name)
  *  and what was refused (reasons live server-side; the toast counts only). */
-interface ApiMcpDefsImportResponse {
+export interface ApiMcpDefsImportResponse {
   imported?: { name: string }[];
   skipped?: unknown[];
 }
 
-interface ApiErrorBody {
+export interface ApiErrorBody {
   error: string;
 }

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ApiDbConnectionRow, ApiDbRedisKeysResponse, ApiDbRedisValue } from "./types/api.js";
+import type { DbRedisEdits, DbRedisTypeCfg } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, emptyHtml, errText, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
@@ -322,17 +324,17 @@ function dbRedisTtl(v: ApiDbRedisValue): HTMLElement {
       ran = true;
       const secs: string = input.value.trim();
       const d_ = d!;
-      if (secs && !/^\d+$/.test(secs)) { toast("TTL must be a whole number of seconds", true); dbLoadRedisValue(d_.redisKey!); return; }
+      if (secs && !/^\d+$/.test(secs)) { toast("TTL must be a whole number of seconds", true); void dbLoadRedisValue(d_.redisKey!); return; }
       const line = secs ? "EXPIRE " + d_.redisKey + " " + secs : "PERSIST " + d_.redisKey;
       void dbRedisCommand(line).then((j: unknown): void => {
         if (j) toast(secs ? "TTL set to " + secs + "s" : "TTL removed");
-        dbLoadRedisValue(d?.redisKey!);
+        void dbLoadRedisValue(d?.redisKey!);
       });
     }
     input.onkeydown = (e: KeyboardEvent): void => {
       e.stopPropagation();
       if (e.key === "Enter") { e.preventDefault(); apply(); }
-      else if (e.key === "Escape") { e.preventDefault(); ran = true; dbLoadRedisValue(d?.redisKey!); }
+      else if (e.key === "Escape") { e.preventDefault(); ran = true; void dbLoadRedisValue(d?.redisKey!); }
     };
     input.onblur = apply;
   };
@@ -533,7 +535,7 @@ function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
     });
     if (!j) return;
     toast("Set " + d_.redisKey);
-    dbLoadRedisValue(d_.redisKey!);
+    void dbLoadRedisValue(d_.redisKey!);
   }
   set.onclick = (): void => { void go(); };
   ta.onkeydown = (e: KeyboardEvent): void => {
@@ -578,7 +580,7 @@ async function dbRedisCommit(): Promise<void> {
   // the list refresh never ran, so the sidebar kept offering a key that is gone (docs/22
   // closeout audit).
   await dbLoadRedisValue(key!);
-  if (d_.redisKey === key && d_.redisValue && d_.redisValue.type === "none") dbLoadKeys(true);
+  if (d_.redisKey === key && d_.redisValue && d_.redisValue.type === "none") void dbLoadKeys(true);
 }
 
 /** Drop the buffer without a single command — the twin of the row grid's Discard. */
@@ -652,7 +654,7 @@ function dbRedisRenameSheet(key: string): void {
       toast("Renamed to " + to);
       d!.redisKey = to;
       await dbLoadKeys(true);
-      dbLoadRedisValue(to);
+      void dbLoadRedisValue(to);
     },
   });
 }

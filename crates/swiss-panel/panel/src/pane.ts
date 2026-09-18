@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+import type { ApiMcpRow } from "./types/api.js";
+import type { PhantomMcpRow } from "./types/dom.js";
+import type { McpDetail } from "./types/state.js";
 import { $, KINDS, emptyHtml, esc, icon, state } from "./util.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
@@ -43,7 +46,7 @@ function patchDetailHead(): void {
     const started = m.lifecycle === "started";
     primary.textContent = busyVerb ? "…" : (started ? "Disable" : "Enable");
     primary.disabled = !!busyVerb;
-    primary.onclick = () => { act(d?.name, started ? "stop" : "start"); };
+    primary.onclick = () => { void act(d?.name, started ? "stop" : "start"); };
   }
 }
 
@@ -142,7 +145,7 @@ function renderPane(): void {
     '<div id="tabbody">' + tabBody(d, m) + "</div>" + reason + actionNote + "</div>";
 
   // Wire up (no inline handlers — names can contain characters that break string-built onclicks).
-  $("primaryBtn").onclick = () => { act(d?.name, started ? "stop" : "start"); };
+  $("primaryBtn").onclick = () => { void act(d?.name, started ? "stop" : "start"); };
   const oauthBtn = $("oauthBtn");
   if (oauthBtn) oauthBtn.onclick = () => { void authorizeMcp(d?.name); };
   $("menuBtn").onclick = (ev) => { ev.stopPropagation(); toggleMenu(d!, m); };
@@ -218,7 +221,7 @@ function wireMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
       ev.stopPropagation();
       closeMenu();
       if (b.dataset.grp !== undefined) {
-        assignGroup(d.name, b.dataset.grp); // every name in the menu is a real group now
+        void assignGroup(d.name, b.dataset.grp); // every name in the menu is a real group now
         return;
       }
       const a = b.dataset.act as string;
@@ -227,20 +230,20 @@ function wireMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
         // own menu would create an empty group and leave the MCP where it was.
         openGroupSheet(null, async (name: string) => {
           if (!await saveGroups(state.groups.concat([name]))) return false;
-          assignGroup(d.name, name);
+          void assignGroup(d.name, name);
           return true;
         });
         return;
       }
-      if (a === "restart") act(d.name, "restart");
-      else if (a === "stop" || a === "start") act(d.name, a); // docs/28 D3: Disable/Enable beside Restart
-      else if (a === "rename") renameMcp(d.name);
-      else if (a === "delete") removeMcp(d.name);
+      if (a === "restart") void act(d.name, "restart");
+      else if (a === "stop" || a === "start") void act(d.name, a); // docs/28 D3: Disable/Enable beside Restart
+      else if (a === "rename") void renameMcp(d.name);
+      else if (a === "delete") void removeMcp(d.name);
       else if (a === "edit") { d.tab = "config"; startEdit(); }
-      else if (a === "cp-url") copyText(endpointUrl(d.name), "Endpoint URL");
-      else if (a === "cp-claude") copyConn(d.name, "claude");
-      else if (a === "cp-codex") copyConn(d.name, "codex");
-      else if (a === "cp-json") copyConn(d.name, "json");
+      else if (a === "cp-url") void copyText(endpointUrl(d.name), "Endpoint URL");
+      else if (a === "cp-claude") void copyConn(d.name, "claude");
+      else if (a === "cp-codex") void copyConn(d.name, "codex");
+      else if (a === "cp-json") void copyConn(d.name, "json");
     };
   });
 }

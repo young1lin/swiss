@@ -25,6 +25,8 @@
 /** The row's schedule text (docs/11 §3.3): one line naming when the job fires. Reads the
  * v2 `trigger` object with a fallback to the v1 flat fields, so the same row renders on a
  * gateway that predates the v2 listing. */
+import type { ApiJobRow, ApiJobRunRecord } from "./types/api.js";
+import type { JobDef, JobFormValues } from "./types/state.js";
 function triggerSummary(j: ApiJobRow): string {
   const t = j.trigger;
   if (!t || !t.kind) {

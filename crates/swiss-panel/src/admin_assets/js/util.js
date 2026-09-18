@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+                                                     
+                                                   
 const TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
 const KINDS = ["tools", "resources", "prompts"];

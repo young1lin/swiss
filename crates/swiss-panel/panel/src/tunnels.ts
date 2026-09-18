@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+import type { ApiTunnelConnectionRow, ApiTunnelRuleRow } from "./types/api.js";
+import type { GroupCfg, GroupSlice, MenuItem } from "./types/dom.js";
 import { $, api, apiJson, dotTitle, emptyHtml, esc, state, toast } from "./util.js";
 import { copyText } from "./connect.js";
 import { popupMenu } from "./menu.js";
@@ -234,13 +236,13 @@ function wireTunnels() {
     newGroupFlow(tunScope(), tunGroupsList(), () => { return loadTunnels(); });
   };
   if ($("tStartAll")) $("tStartAll").onclick = startAllRules;
-  if ($("tStopAll")) $("tStopAll").onclick = () => { stopAllRules(false); };
+  if ($("tStopAll")) $("tStopAll").onclick = () => { void stopAllRules(false); };
 
   Array.prototype.forEach.call(pane.querySelectorAll("[data-rule]"), (node) => {
     const id = node.dataset.rule;
     const rule = tunData().rules.filter((r) => { return r.id === id; })[0];
     const act = node.querySelector("[data-act]");
-    if (act) act.onclick = (): void => { ruleAct(id, act.dataset.act); };
+    if (act) act.onclick = (): void => { void ruleAct(id, act.dataset.act); };
     const ruleMore = node.querySelector("[data-more]");
     if (ruleMore) ruleMore.onclick = (ev: MouseEvent): void => {
       // The overflow half of the row (docs/18 V5). Force free appears only when a port is
@@ -250,26 +252,26 @@ function wireTunnels() {
       ev.stopPropagation();
       const items: MenuItem[] = [
         { label: "Edit", fn: (): void => { openRuleSheet(rule); } },
-        { label: "Copy local port", fn: (): void => { copyText(String(rule.localPort), "Local port"); } },
+        { label: "Copy local port", fn: (): void => { void copyText(String(rule.localPort), "Local port"); } },
       ];
-      if (rule.portOwner) items.push({ label: "Force free " + rule.localPort, fn: (): void => { forceFreePort(rule.localPort, id); } });
-      items.push({ sep: true }, { label: "Delete", danger: true, fn: (): void => { deleteRule(rule, false); } });
+      if (rule.portOwner) items.push({ label: "Force free " + rule.localPort, fn: (): void => { void forceFreePort(rule.localPort, id); } });
+      items.push({ sep: true }, { label: "Delete", danger: true, fn: (): void => { void deleteRule(rule, false); } });
       popupMenu(ruleMore.getBoundingClientRect(), items);
     };
   });
   Array.prototype.forEach.call(pane.querySelectorAll("[data-conn]"), (node: HTMLElement): void => {
     const id = node.dataset.conn;
     const conn = tunData().connections.filter((c: ApiTunnelConnectionRow): boolean => { return c.id === id; })[0];
-    node.querySelector<HTMLButtonElement>("[data-test]")!.onclick = (): void => { testConn(id!); };
+    node.querySelector<HTMLButtonElement>("[data-test]")!.onclick = (): void => { void testConn(id!); };
     const connMore = node.querySelector("[data-more]") as HTMLButtonElement | null;
     if (connMore) connMore.onclick = (ev: MouseEvent): void => {
       // Same as the rule rows above: the opening click must not reach document.
       ev.stopPropagation();
       popupMenu(connMore?.getBoundingClientRect(), [
         { label: "Edit", fn: (): void => { openConnSheet(conn!); } },
-        { label: "Copy host", fn: (): void => { copyText(conn?.host + ":" + conn?.port, "Host"); } },
+        { label: "Copy host", fn: (): void => { void copyText(conn?.host + ":" + conn?.port, "Host"); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: (): void => { deleteConn(conn!); } },
+        { label: "Delete", danger: true, fn: (): void => { void deleteConn(conn!); } },
       ]);
     };
   });

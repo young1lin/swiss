@@ -61,15 +61,23 @@ export default tseslint.config(
       /* R0: docs/37 D10 - the any budget is zero; the regex guard in panel-no-any.test.ts
        * retires in favor of this. */
       "@typescript-eslint/no-explicit-any": "error",
-      /* R0 (warn until R3): the panel has a large share of un-awaited apiJson() calls;
-       * the warnings inventory is the R3 worklist. */
-      "@typescript-eslint/no-floating-promises": "warn",
+      /* R3: every fire-and-forget now carries a visible void (the handler meant it),
+       * and every awaited path awaits. The warn inventory closed with M8/M9. */
+      "@typescript-eslint/no-floating-promises": "error",
       /* R2: block scope and const-first everywhere; the var/function-expression era ended
        * with docs/37. The four survivors are exempt by position, not by rule: the fetch
        * wrapper needs this+arguments, and three self-removing document listeners keep
        * their names (no-var cannot see them - they are function expressions). */
       "no-var": "error",
       "prefer-const": "error",
+      /* R3 (warn until the R4 window): dead branches surfaced with M9's reconciliation -
+       * 550 sites, each a micro-audit (redundant guard vs a type that over-promises a
+       * wire field). The warning inventory is the burn-down list; it flips to error with
+       * R4's state split, which touches most of these guards anyway. */
+      "@typescript-eslint/no-unnecessary-condition": "warn",
+      /* R3: type-only imports carry their own keyword - the 92 import type lines M8
+       * wrote are the seed; this keeps every later type import honest. */
+      "@typescript-eslint/consistent-type-imports": ["error", { prefer: "type-imports", fixStyle: "separate-type-imports" }],
       /* R2: the assertion budget. 1,193 sites came into the migration; 326 survive (121 of
        * them are a function's single boundary assertion on the Data pane state - the honest
        * shape until R4 splits PanelState). The files below still carry survivors, so they

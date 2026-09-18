@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { ApiPluginRow } from "../src/types/api.js";
 import { describe, expect, it } from "vitest";
 import { createPageRegistry, groupPages } from "../src/page-core.js";
 

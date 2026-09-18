@@ -82,6 +82,9 @@ type XtermWebLinksAddonCtor = new () => XtermAddon;
 
 interface XtermFitAddon extends XtermAddon {
   fit(): void;
+  /* Present in the served addon-fit.js (verified) though missing from the 0.10.0
+     typings mirror; the resize/open paths read it and tolerate undefined. */
+  proposeDimensions(): { cols: number; rows: number } | undefined;
 }
 
 interface XtermWebglAddon extends XtermAddon {

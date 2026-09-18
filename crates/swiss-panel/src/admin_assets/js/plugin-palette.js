@@ -25,6 +25,7 @@
    openPluginPalette builds the one overlay. The caller passes the "go" callback (navigatePage)
    and an "onchange" repaint callback, so this module never imports the shell back.
    ================================================================================================ */
+                                                                              
 import { el, esc, icon } from "./util.js";
 
 const PIN_KEY = "swiss.rail.pinned";
@@ -125,7 +126,7 @@ function openPluginPalette(groups                , go                           
     b.innerHTML = glyphHtml(g) +
       '<span class="pal-name">' + esc(g.label) + (g.off ? ' <span class="pal-off">· off</span>' : "") + "</span>";
     b.title = g.off ? (g.offDetail || "Plugin disabled") : "Open " + g.label;
-    b.onclick = (ev) => { ev.stopPropagation(); closePluginPalette(); go(g.pages[0].id); };
+    b.onclick = (ev) => { ev.stopPropagation(); closePluginPalette(); void go(g.pages[0].id); };
     return b;
   }
 

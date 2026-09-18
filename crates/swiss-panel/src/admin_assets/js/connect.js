@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 
+                                                                                 
+                                                    
+                                                  
 import { TOKEN_ID_KEY, apiJson, state, targetEl, toast } from "./util.js";
 import { kindBody, logsBody } from "./logs.js";
 import { closeMenu } from "./pane.js";
@@ -79,7 +82,7 @@ async function copyConn(name        , kind        )                {
   if (!secret) return;
   const text = kind === "claude" ? claudeSnippet(name, secret)
     : kind === "codex" ? codexSnippet(name, secret) : mcpJsonSnippet(name, secret);
-  copyText(text, kind === "claude" ? "Claude Code command" : kind === "codex" ? "Codex block" : ".mcp.json entry");
+  void copyText(text, kind === "claude" ? "Claude Code command" : kind === "codex" ? "Codex block" : ".mcp.json entry");
 }
 
 /** `claude mcp add` — one line, secret embedded. Runs in any shell (cmd, PowerShell, bash, zsh). */

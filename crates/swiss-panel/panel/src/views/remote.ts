@@ -30,6 +30,9 @@
    gateway without them answers the single default group the component draws as no
    divider at all.
    ================================================================================================ */
+import type { ApiRemoteEndpointsResponse, ApiRemoteTargetsResponse } from "../types/api.js";
+import type { GroupCfg } from "../types/dom.js";
+import type { RemoteEndpointRow, RemoteTargetBody, RemoteTargetRow } from "../types/runs.js";
 import { $, apiJson, emptyHtml, esc, icon, targetEl, toast } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
 import { popupMenu } from "../menu.js";
@@ -199,7 +202,7 @@ function moveRow(id: string, targetId: string, before: boolean): void {
   targets.splice(before ? to : to + 1, 0, item);
   painted = ""; // the optimistic move changed the structure the signature would compare
   paint();
-  saveOrder("targets", targets.map((r) => { return r.id; }));
+  void saveOrder("targets", targets.map((r) => { return r.id; }));
 }
 
 /** Put one row in a group after a drop-into: applied locally first so the row jumps
@@ -336,7 +339,7 @@ export async function mount() {
       popupMenu(more.getBoundingClientRect(), [
         { label: "Edit", fn: () => { openSheet(t!); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: () => { removeTarget(t?.id); } },
+        { label: "Delete", danger: true, fn: () => { void removeTarget(t?.id); } },
       ]);
     }
   };

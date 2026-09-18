@@ -25,7 +25,9 @@
  *  with NO label/fn (tunnels.ts:256 was the strict-mode error that proved it), an action
  *  is label+fn with optional styling flags. pick/on drive the checked-mark row styles
  *  (danger reds the item); menu.ts never reads a field the arm does not carry. */
-interface MenuItemAction {
+import type { ApiMcpRow } from "./api.js";
+import type { McpDetail } from "./state.js";
+export interface MenuItemAction {
   label: string;
   fn: (ev?: MouseEvent) => void;
   danger?: boolean;
@@ -35,15 +37,15 @@ interface MenuItemAction {
   sep?: never;
 }
 
-interface MenuItemSep {
+export interface MenuItemSep {
   sep: true;
 }
 
-type MenuItem = MenuItemSep | MenuItemAction;
+export type MenuItem = MenuItemSep | MenuItemAction;
 
 /** A switcher-menu item before its click handler is attached (pageMenuItems' output): the
  *  caller binds fn per item (page-registry) before popupMenu takes over. */
-interface PageMenuItemSpec {
+export interface PageMenuItemSpec {
   label: string;
   title?: string;
   pick?: boolean;
@@ -53,7 +55,7 @@ interface PageMenuItemSpec {
 
 /** The module contract every page entry exports (docs/13): mount owns the pane while
  *  mounted; the optional hooks are called by the shell exactly when present. */
-interface PageModule {
+export interface PageModule {
   mount?: (ctx: { signal: AbortSignal }) => void | Promise<void>;
   unmount?: () => void | Promise<void>;
   poll?: () => void | Promise<void>;
@@ -71,7 +73,7 @@ interface PageModule {
  *  client-side pages, order normalised to a finite number. pluginId/path/sidebar/layout ride
  *  when the contributing side sent them (ApiPluginPage's shape); the index signature keeps
  *  the passthrough honest instead of enumerating the world. */
-interface PageDescriptor {
+export interface PageDescriptor {
   id: string;
   label: string;
   entry: string;
@@ -86,7 +88,7 @@ interface PageDescriptor {
 /** What replace() accepts - the unvalidated wire/input form valid() checks and throws on.
  *  Fixed optional fields only: an index signature would reject the ApiPluginPage interface
  *  (interfaces carry no implicit index signatures), and the wire rows all land here. */
-interface PageInput {
+export interface PageInput {
   id?: string;
   label?: string;
   entry?: string;
@@ -98,7 +100,7 @@ interface PageInput {
 }
 
 /** One sidebar page group - page-registry's groupPages output (grouped by plugin). */
-interface PageGroup {
+export interface PageGroup {
   id: string;
   label: string;
   order: number;
@@ -109,19 +111,19 @@ interface PageGroup {
 /** A grouped list's slice (group-logic slice): every group in stored order, each holding its
  *  members in the caller's flat order. Empty groups keep their slot - a group you just made
  *  has to stay visible. */
-interface GroupSlice<Row> {
+export interface GroupSlice<Row> {
   name: string;
   rows: Row[];
 }
 
 /** A row carrying the one field grouping reads: the stored group name (absent when unset). */
-interface GroupedRow {
+export interface GroupedRow {
   group?: string | null;
 }
 
 /** The phantom row a pane renders when the selected MCP has no live registry row yet: the
  *  fields every renderer reads, absent the ones only a real row carries. */
-type PhantomMcpRow = Partial<ApiMcpRow> & { name: string; state: string; type: string; source: string; lifecycle: string };
+export type PhantomMcpRow = Partial<ApiMcpRow> & { name: string; state: string; type: string; source: string; lifecycle: string };
 
 /** The one grouped-list component's configuration (groups.ts mountGroup, docs/20 section 4):
  *  everything a scope owns - row markup, ids, its own moves - while the component owns the
@@ -130,7 +132,7 @@ type PhantomMcpRow = Partial<ApiMcpRow> & { name: string; state: string; type: s
 /* drag/dragGroup/rowId/onMoveRow/onAssign are optional: scopes without the row-drag
  *  contract (tokens: creation time is the order) omit them and gate everything behind
  *  draggable: false, so the wiring that would read them never runs. */
-interface GroupCfg<Row> {
+export interface GroupCfg<Row> {
   scope: string;
   density: "side" | "page";
   names: string[];
@@ -160,7 +162,7 @@ interface GroupCfg<Row> {
 /* A JSON-tree node (logs.ts buildJsonTree/jtNode): an object whose every value is more
  *  tree material - arrays arrive the same way, narrowed by Array.isArray at the branch.
  *  The index signature is what lets the tree index val[k] with no parenthesised cast. */
-interface JtBox {
+export interface JtBox {
   [key: string]: unknown;
 }
 
@@ -168,11 +170,11 @@ interface JtBox {
  *  kind pages onto it (KINDS.forEach); this is the literal's shape - everything but the
  *  kind keys, plus the index the forEach writes through. Cast back to McpDetail at the
  *  state assignment, once all three are in. */
-type FreshDetail = Omit<McpDetail, "tools" | "resources" | "prompts"> & { [key: string]: unknown };
+export type FreshDetail = Omit<McpDetail, "tools" | "resources" | "prompts"> & { [key: string]: unknown };
 
 /** One form field's schema (fields.ts TYPE_FIELDS rows): k is the def key, bool/num/area/
  *  kv/json pick the input kind, half pairs it into two columns, def is the checkbox default. */
-interface FieldSpec {
+export interface FieldSpec {
   k: string;
   label: string;
   ph?: string;
@@ -187,7 +189,7 @@ interface FieldSpec {
 }
 
 /** A pg url decomposed into the form's parts (fields.ts parsePgUrl; docs/30). */
-interface PgUrlParts {
+export interface PgUrlParts {
   host: string;
   port: string;
   user: string;
@@ -198,7 +200,7 @@ interface PgUrlParts {
 
 /** A registry group decorated with plugin availability (page-registry's decoratedGroups
  *  output, the palette's rows): off = every page's plugin is currently unavailable. */
-interface PaletteGroup {
+export interface PaletteGroup {
   id: string;
   label: string;
   pages: PageDescriptor[];
@@ -207,12 +209,12 @@ interface PaletteGroup {
 }
 
 /** One palette section (plugin-palette paletteRows): Pinned / All plugins, empties dropped. */
-interface PaletteSection {
+export interface PaletteSection {
   section: string;
   groups: PaletteGroup[];
 }
 
-interface EmptyStateSpec {
+export interface EmptyStateSpec {
   icon: string;
   title: string;
   hint?: string;

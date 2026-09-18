@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+                                                                      
 import { $, apiJson, el, errText, esc, state, targetEl, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -188,7 +189,7 @@ function dbOpenImport()       {
     toast("Imported " + j.inserted + " row" + (j.inserted > 1 ? "s" : "") + (j.note ? " \u2014 " + j.note : ""));
     closeSheet();
     dbDropEdits();
-    dbLoadData(true);
+    void dbLoadData(true);
   };
   $("sheet").onclick = (e            )       => { if (e.target === $("sheet")) closeSheet(); };
 }
