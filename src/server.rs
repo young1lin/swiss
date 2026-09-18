@@ -285,17 +285,22 @@ pub async fn run_gateway() -> Result<(), String> {
         terminal_state.clone(),
     )))
     .expect("the terminal plugin registers");
-    // The remote plugin (docs/34): CLI-first, no page, and deliberately no capability
-    // requirement - the target table must stay editable while tunnels is off. The
-    // registry + call log ride along so the plugin can mount its builtin remote
-    // MCP under /mcp/remote (R7) on the same surfaces every other MCP uses.
-    host.register(Arc::new(crate::plugins::remote::RemotePlugin::new(
+    // The remote plugin (docs/34): the #remote targets page, the /api/remote routes,
+    // the actions and the builtin remote MCP (R7) - and deliberately no capability
+    // requirement, so the target table stays editable while tunnels is off. The
+    // registry + call log ride along so the plugin can mount /mcp/remote on the
+    // same surfaces every other MCP uses.
+    let remote_plugin = Arc::new(crate::plugins::remote::RemotePlugin::new(
         services.clone(),
         remote_state.clone(),
         registry.clone(),
         call_log.clone(),
-    )))
-    .expect("the remote plugin registers");
+    ));
+    // The targets scope joins the docs/20 family over the SAME sealed table the plugin
+    // serves (docs/34 R8) - registered at the composition point like conns/rules, so a
+    // stopped remote plugin does not take its grouping off the air.
+    swiss_remote::register_remote_scopes(&ctx.group_scopes, &remote_plugin.system());
+    host.register(remote_plugin).expect("the remote plugin registers");
     // The capability probe the inventory's requiresMet answers through (docs/12 W3): one
     // closure over the shared services, so "connection-catalog" tracks the catalog's real
     // presence as MCP starts and stops.

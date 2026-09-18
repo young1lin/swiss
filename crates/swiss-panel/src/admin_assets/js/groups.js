@@ -17,8 +17,8 @@
 /* ================================================================================================
    Groups - the one grouped-list component (docs/20 §4).
 
-   Six scopes (mcps, conns, rules, jobs, secrets, tokens), two densities (the sidebar tree and
-   the page card list), one anatomy: a tree-node header - chevron, folder glyph, name in mixed
+   Seven scopes (mcps, conns, rules, jobs, secrets, tokens, targets), two densities (the sidebar
+   tree and the page card list), one anatomy: a tree-node header - chevron, folder glyph, name in mixed
    case, count - on a transparent ground (hover lifts it), with + always visible and the
    ellipsis and the drag grip on hover, and members indented one full tree gutter (24-32px of
    text) behind a 1px guide line that drops from the chevron column. Before this module the sidebar and the Tunnels

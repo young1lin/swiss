@@ -120,10 +120,38 @@ swiss run logs 17 -f; swiss run cancel 17
 ## Explicitly not this phase
 
 - **The panel page (R6) shipped after the first cut**: #remote lists targets with an Add/Edit sheet over the same /api/remote routes (crates/swiss-panel/src/admin_assets/js/views/remote.js).
-- **R7: the MCP adapter** - the actions already appear in `GET /api/actions` with schemas;
-  an MCP tool wrapper is additive and NOT built now.
+- **R7: the MCP adapter shipped**: five thin tools over /mcp/remote (swiss-mcp's
+  adapters/remote.rs), dispatching these actions by name through the same run
+  coordinator - a model can drive a target with no shell.
+- **R8: the targets group family shipped** (see below).
 - No second SSH client, no separate daemon, no sync delete, no shell pseudo-terminal, no
   multi-crate dependency edges between peers (the host seat is the only path).
+
+## R8 - the targets group family (docs/20's seventh scope)
+
+The target list is a group scope exactly like conns and rules: one scope word
+(`targets`), the family's four routes (`PUT /api/groups/targets`,
+`.../members/{id}`, `.../rename`, `.../order`), registered at the composition point
+(swiss's server.rs) over the plugin's ONE system - so grouping outlives plugin
+start/stop the way the tunnel scopes outlive a stopped tunnels plugin. The scope
+implementation lives in `crates/swiss-remote/src/groups.rs`; the store carries the
+names-plus-row-membership model tunnels.json uses, sealed in the same
+`remote.json`:
+
+```json
+{ "groups": ["default", "prod"], "targets": [ { "id": "build", "group": "prod", ... } ] }
+```
+
+A pre-R8 file (a bare row array) still opens: no groups, one undivided list - exactly
+the page it always was. The write door canonicalizes a row's group against the live
+names (unknown group is a named error), a demoted first group pins its unpinned rows
+to the name, and the scope's order is array order in the file.
+
+The panel renders the list through the shared groups component (page density, drag
+both ways): a row drag reorders the flat list, a drop into another group moves the
+row, and the Add/Edit sheet carries the family's Group select - one POST, the row is
+born into its group. The names ride with the rows in the one `GET /api/remote/targets`
+response, so the page paints from a single read.
 
 ## Where the tests live
 
@@ -133,6 +161,8 @@ swiss run logs 17 -f; swiss run cancel 17
 - `swiss-remote`: target validation/store, project binding discovery, all three actions
   (streaming, tail bounds, cancel outcome, sudo passes through, unknown target, honest
   no-transport error, sync skip/upload, pull round-trip), `/api/remote` route policy, and
-  the submit-to-output E2E chain through the REAL host run routes.
+  the submit-to-output E2E chain through the REAL host run routes. The group contract:
+  store family semantics (pin/rename/reorder/legacy shape), the scope unit test, and the
+  root integration test `the_family_serves_the_targets_scope` (tests/adminapi.rs).
 - Root: plugin lifecycle (start registers/stop withdraws and unregisters), CLI parsing
   (the `--` contract, durations, env pairs).

@@ -73,6 +73,10 @@ pub struct RemoteTarget {
     pub capabilities: Vec<String>,
     /// Per-target default deadline for runs, when the caller gives none.
     pub default_timeout_ms: Option<u64>,
+    /// The docs/20 rendering group this target lists under (R8). None means "the
+    /// first group, whatever it is called" - the sink rule every scope shares; the
+    /// canonical spelling is stored, matched case-insensitively like every scope.
+    pub group: Option<String>,
 }
 
 /// A slug for target ids: lowercase, digits, inner dashes.
@@ -173,6 +177,7 @@ impl RemoteTarget {
             "shell": self.shell,
             "capabilities": self.capabilities,
             "defaultTimeoutMs": self.default_timeout_ms,
+            "group": self.group,
         })
     }
 
@@ -199,6 +204,7 @@ impl RemoteTarget {
             "shell",
             "capabilities",
             "defaultTimeoutMs",
+            "group",
         ];
         for key in obj.keys() {
             if !known.contains(&key.as_str()) {
@@ -252,6 +258,18 @@ impl RemoteTarget {
             }
             Some(_) => return Err("target.defaultTimeoutMs must be a positive integer".into()),
         };
+        let group = match obj.get("group") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            Some(_) => return Err("target.group must be a group name or null".into()),
+        };
         let target = RemoteTarget {
             id,
             label,
@@ -260,10 +278,28 @@ impl RemoteTarget {
             shell: text("shell")?,
             capabilities,
             default_timeout_ms,
+            group,
         };
         validate(&target)?;
         Ok(target)
     }
+}
+
+/// Store a row's explicit group under its canonical spelling, refusing a name the
+/// group list does not carry - the same word-for-word rule the family's member PUT
+/// enforces, applied at the row door (Add/Edit) so a typo fails at save, not at render.
+fn canonicalize_group(
+    target: &mut RemoteTarget,
+    groups: &swiss_host::groups::Groups,
+) -> Result<(), String> {
+    if let Some(name) = target.group.clone() {
+        let canonical = groups
+            .canonical(&name)
+            .ok_or_else(|| format!("unknown group: {name}"))?
+            .to_string();
+        target.group = Some(canonical);
+    }
+    Ok(())
 }
 
 /// The sealed target table. `open` reads (a missing file is an empty table, not an
@@ -271,29 +307,56 @@ impl RemoteTarget {
 pub struct TargetStore {
     path: PathBuf,
     targets: Vec<RemoteTarget>,
+    /// The ordered group names (docs/34 R8). Membership lives on the rows themselves -
+    /// the tunnels.json shape - so this model holds names only and the members map
+    /// stays empty by construction.
+    groups: swiss_host::groups::Groups,
 }
 
 impl TargetStore {
     pub fn open(path: PathBuf) -> Self {
-        let targets = match read_secure_json(&path) {
-            Ok(Some(Value::Array(rows))) => rows
-                .iter()
-                .filter_map(|row| match RemoteTarget::from_json(row) {
-                    Ok(t) => Some(t),
-                    Err(err) => {
-                        // One bad row must not take the table down (the same rule as
-                        // every load path here): drop it, say so, keep the rest.
-                        swiss_core::log::warn(
-                            "dropping an invalid remote target",
-                            Some(json!({ "err": err })),
-                        );
-                        None
-                    }
-                })
-                .collect(),
-            _ => Vec::new(),
+        // Two shapes on disk: the object R8 writes ({ groups, targets }) and the bare
+        // row array every earlier build sealed. The array reads as "no groups", which
+        // renders exactly as the pre-groups page did - one undivided list.
+        let raw = read_secure_json(&path).ok().flatten();
+        let (names, rows) = match &raw {
+            Some(Value::Array(rows)) => (Vec::new(), rows.clone()),
+            Some(Value::Object(obj)) => (
+                obj.get("groups")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+                obj.get("targets")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            _ => (Vec::new(), Vec::new()),
         };
-        TargetStore { path, targets }
+        let targets = rows
+            .iter()
+            .filter_map(|row| match RemoteTarget::from_json(row) {
+                Ok(t) => Some(t),
+                Err(err) => {
+                    // One bad row must not take the table down (the same rule as
+                    // every load path here): drop it, say so, keep the rest.
+                    swiss_core::log::warn(
+                        "dropping an invalid remote target",
+                        Some(json!({ "err": err })),
+                    );
+                    None
+                }
+            })
+            .collect();
+        let names: Vec<String> = names
+            .iter()
+            .filter_map(|n| n.as_str().map(str::to_string))
+            .collect();
+        TargetStore {
+            path,
+            targets,
+            groups: swiss_host::groups::Groups::from_parts(names, std::collections::BTreeMap::new()),
+        }
     }
 
     pub fn list(&self) -> &[RemoteTarget] {
@@ -308,17 +371,18 @@ impl TargetStore {
         self.targets.iter().any(|t| t.endpoint == endpoint)
     }
 
-    pub fn add(&mut self, target: RemoteTarget) -> Result<(), String> {
+    pub fn add(&mut self, mut target: RemoteTarget) -> Result<(), String> {
         validate(&target)?;
         if self.get(&target.id).is_some() {
             return Err(format!("target {} already exists", target.id));
         }
+        canonicalize_group(&mut target, &self.groups)?;
         self.targets.push(target);
         self.save()
     }
 
     /// Replace a row wholesale; the id itself cannot change (it IS the key).
-    pub fn update(&mut self, id: &str, target: RemoteTarget) -> Result<(), String> {
+    pub fn update(&mut self, id: &str, mut target: RemoteTarget) -> Result<(), String> {
         if target.id != id {
             return Err(format!(
                 "cannot rename target {id} to {} - remove and re-add instead",
@@ -326,6 +390,7 @@ impl TargetStore {
             ));
         }
         validate(&target)?;
+        canonicalize_group(&mut target, &self.groups)?;
         let slot = self
             .targets
             .iter_mut()
@@ -344,9 +409,126 @@ impl TargetStore {
         self.save()
     }
 
+    // --- groups (docs/34 R8: the targets scope of the docs/20 family) ---------------------------
+
+    /// The ordered group names, exactly as the family's PUT answers them.
+    pub fn group_names(&self) -> Vec<String> {
+        self.groups.names()
+    }
+
+    /// The rendering group of one target: its explicit row group while that name lives,
+    /// else the first group - the sink rule every scope shares.
+    pub fn group_of(&self, id: &str) -> String {
+        let explicit = self
+            .targets
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.group.as_deref())
+            .and_then(|g| self.groups.canonical(g));
+        explicit.unwrap_or_else(|| {
+            self.group_names()
+                .first()
+                .cloned()
+                .unwrap_or_else(|| swiss_host::groups::DEFAULT_GROUP.to_string())
+        })
+    }
+
+    /// Replace the whole group-name list: create, reorder and delete are all "here is
+    /// the new list". Row-side bookkeeping mirrors tunnels.json exactly (docs/20 §2.2):
+    /// a demoted first group pins its default members to the name so nobody silently
+    /// re-homes, and a group dropped by omission loses its rows' explicit entries.
+    pub fn set_group_names(&mut self, next: &[String]) -> Result<Vec<String>, String> {
+        let before = self.groups.names();
+        let clean = self.groups.set_names(next.to_vec())?;
+        if let Some(first) = swiss_host::groups::demoted_first(&before, &clean) {
+            // The NEW list's spelling, not the old one: a replace may respell the
+            // group while demoting it, and the panel buckets rows by exact string.
+            let pinned = clean
+                .iter()
+                .find(|n| n.eq_ignore_ascii_case(&first))
+                .cloned()
+                .unwrap_or(first);
+            for row in &mut self.targets {
+                if row.group.is_none() {
+                    row.group = Some(pinned.clone());
+                }
+            }
+        }
+        for row in &mut self.targets {
+            if let Some(g) = &row.group {
+                if !clean.iter().any(|n| n.eq_ignore_ascii_case(g)) {
+                    row.group = None;
+                }
+            }
+        }
+        self.save()?;
+        Ok(self.groups.names())
+    }
+
+    /// Rename in place: the slot is kept and the rows' explicit entries ride along
+    /// (the count is what a rename toast and a delete-confirm report).
+    pub fn rename_group(&mut self, from: &str, to: &str) -> Result<(Vec<String>, usize), String> {
+        let (names, _) = self.groups.rename(from, to)?;
+        let old_name = from.trim();
+        let new_name = to.trim();
+        let mut moved = 0usize;
+        for row in &mut self.targets {
+            if row
+                .group
+                .as_deref()
+                .is_some_and(|g| g.eq_ignore_ascii_case(old_name))
+            {
+                row.group = Some(new_name.to_string());
+                moved += 1;
+            }
+        }
+        self.save()?;
+        Ok((names, moved))
+    }
+
+    /// Put one target in a group. None means "no explicit group" - it renders in the
+    /// first group, whatever that is called. The canonical casing is stored, and
+    /// answered (the shape every scope's member PUT returns).
+    pub fn set_target_group(&mut self, id: &str, group: Option<&str>) -> Result<String, String> {
+        let new_group = match group.map(str::trim) {
+            None | Some("") => None,
+            Some(name) => Some(
+                self.groups
+                    .canonical(name)
+                    .ok_or_else(|| format!("unknown group: {name}"))?
+                    .to_string(),
+            ),
+        };
+        let row = self
+            .targets
+            .iter_mut()
+            .find(|t| t.id == id)
+            .ok_or_else(|| format!("unknown target: {id}"))?;
+        row.group = new_group.clone();
+        self.save()?;
+        Ok(new_group.unwrap_or_else(|| {
+            self.group_names()
+                .first()
+                .cloned()
+                .unwrap_or_else(|| swiss_host::groups::DEFAULT_GROUP.to_string())
+        }))
+    }
+
+    /// Impose a full order on the target list (array order in the file is the order,
+    /// exactly the tunnels.json contract). Rows the caller omitted keep their relative
+    /// order after the mentioned ones, so a stale panel reorder drops nothing.
+    pub fn reorder(&mut self, ids: &[String]) -> Result<(), String> {
+        let rank = |id: &str| -> usize {
+            ids.iter().position(|x| x == id).unwrap_or(ids.len())
+        };
+        self.targets.sort_by_key(|t| rank(&t.id));
+        self.save()
+    }
+
     fn save(&self) -> Result<(), String> {
         let rows: Vec<Value> = self.targets.iter().map(RemoteTarget::to_json).collect();
-        write_secure_json(&self.path, &Value::Array(rows))
+        let doc = json!({ "groups": self.groups.names(), "targets": rows });
+        write_secure_json(&self.path, &doc)
             .map_err(|err| format!("could not write {}: {err}", self.path.display()))
     }
 }
@@ -413,6 +595,7 @@ mod tests {
             shell: "posix".into(),
             capabilities: vec!["exec".into(), "sync".into()],
             default_timeout_ms: None,
+            group: None,
         }
     }
 
@@ -523,6 +706,7 @@ mod tests {
                     shell: "posix".into(),
                     capabilities: vec!["exec".into(), "files".into(), "sync".into()],
                     default_timeout_ms: Some(3_600_000),
+                    group: None,
                 })
                 .expect("add");
             assert!(
@@ -571,5 +755,107 @@ mod tests {
         );
         assert!(safe_join("/data/ws", "../etc/passwd").is_err());
         assert!(safe_join("/data/ws", "a/../../..").is_err());
+    }
+
+    /// The docs/34 R8 group contract on the one sealed table: names, membership,
+    /// pinning and order - the same word-for-word semantics tunnels.json carries
+    /// (docs/20 §2.2), asserted through a reopen so persistence is part of the proof.
+    #[test]
+    fn groups_follow_the_family_contract_and_survive_a_reopen() {
+        let dir = scratch();
+        let path = dir.join("remote.json");
+        let mut store = TargetStore::open(path.clone());
+        store.add(target("build")).expect("add");
+        store.add(target("flash")).expect("add");
+
+        // Two groups appear; the pre-groups rows had none, so they stay unpinned.
+        assert_eq!(
+            store.set_group_names(&["default".into(), "prod".into()]).unwrap(),
+            ["default".to_string(), "prod".to_string()]
+        );
+        assert_eq!(store.group_names().len(), 2);
+
+        // Assignment canonicalizes the casing, refuses unknown names and ids.
+        assert_eq!(
+            store.set_target_group("build", Some("PROD")).unwrap(),
+            "prod"
+        );
+        assert!(store.set_target_group("build", Some("ghost")).is_err());
+        assert!(store.set_target_group("ghost", None).is_err());
+        assert_eq!(store.group_of("build"), "prod");
+        assert_eq!(store.group_of("flash"), "default", "the sink group");
+
+        // A demoted first group pins its default members to the name (docs/20 §2.2).
+        store
+            .set_group_names(&["prod".into(), "default".into()])
+            .expect("demote");
+        assert_eq!(
+            store.get("flash").unwrap().group.as_deref(),
+            Some("default"),
+            "the unpinned row was pinned by the demote"
+        );
+        assert_eq!(store.group_of("flash"), "default", "and still renders there");
+
+        // Rename carries the explicit members and counts them.
+        assert_eq!(store.rename_group("prod", "Production").unwrap().1, 1);
+        assert_eq!(store.group_of("build"), "Production");
+
+        // Order: the array order the panel saved, omitted rows keep relative order.
+        store.reorder(&["flash".into()]).expect("reorder");
+        assert_eq!(
+            store.list().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            vec!["flash", "build"]
+        );
+
+        // A group dropped by omission loses its rows' explicit entries.
+        store
+            .set_group_names(&["default".into()])
+            .expect("collapse");
+        assert_eq!(store.get("build").unwrap().group, None);
+
+        let reopened = TargetStore::open(path.clone());
+        assert_eq!(reopened.group_names(), vec!["default".to_string()]);
+        assert_eq!(reopened.get("build").unwrap().group, None);
+        assert_eq!(
+            reopened.list().iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            vec!["flash", "build"],
+            "the reorder survived the reopen"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A row written with an unknown group name is refused at the door, not at render.
+    #[test]
+    fn an_unknown_group_on_a_row_write_is_refused() {
+        let dir = scratch();
+        let mut store = TargetStore::open(dir.join("remote.json"));
+        let mut row = target("build");
+        row.group = Some("nowhere".into());
+        assert!(
+            store.add(row).is_err(),
+            "an add carrying a group the list does not carry is a named error"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The pre-R8 file shape - a bare array of rows - still opens: it reads as "no
+    /// groups", which renders as one undivided list, exactly the page it always was.
+    #[test]
+    fn a_legacy_bare_array_opens_as_an_ungrouped_table() {
+        let dir = scratch();
+        let path = dir.join("remote.json");
+        swiss_core::secure::statefile::write_secure_json(
+            &path,
+            &json!([{ "id": "legacy", "label": "legacy", "endpoint": "conn-1",
+               "workspaceRoot": "/data/ws", "shell": "posix", "capabilities": ["exec"] }]),
+        )
+        .expect("legacy write");
+        let reopened = TargetStore::open(path.clone());
+        assert_eq!(reopened.list().len(), 1);
+        // The model never carries zero groups: a legacy file answers the single
+        // default group, which the page draws as no divider at all.
+        assert_eq!(reopened.group_names(), vec!["default".to_string()]);
+        assert_eq!(reopened.group_of("legacy"), "default");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

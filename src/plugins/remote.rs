@@ -53,8 +53,12 @@ pub struct RemotePlugin {
     services: Arc<RuntimeServices>,
     /// The slot the instance publishes the system into; the routes read the same one.
     state: Arc<RemoteState>,
-    /// Where the sealed target table lives; overridden in tests.
-    targets_path: std::path::PathBuf,
+    /// The one system for the whole factory lifetime: the sealed target table, opened
+    /// once here (not per start) so the targets group scope can register over it at
+    /// the composition point and outlive start/stop - the same shape as the tunnel
+    /// scopes over tunnels.json (docs/34 R8). A restart installs the SAME Arc; stop
+    /// only withdraws it from the routes' slot.
+    system: Arc<RemoteSystem>,
     /// The app's MCP registry, where the instance mounts its builtin entry (R7).
     registry: Arc<Registry>,
     /// The app's one call log, shared with every adapter so the Logs tab sees
@@ -70,18 +74,33 @@ impl RemotePlugin {
         call_log: Arc<CallLog>,
     ) -> Self {
         RemotePlugin {
+            system: RemoteSystem::open(
+                services.clone(),
+                swiss_core::paths::data_path(&["remote.json"]),
+            ),
             services,
             state,
-            targets_path: swiss_core::paths::data_path(&["remote.json"]),
             registry,
             call_log,
         }
     }
 
+    /// The system the targets group scope registers over (docs/34 R8): the SAME
+    /// sealed table the plugin serves, so /api/groups/targets and /api/remote
+    /// targets can never disagree about what is on disk.
+    pub fn system(&self) -> Arc<RemoteSystem> {
+        self.system.clone()
+    }
+
     #[cfg(test)]
-    fn with_targets_path(mut self, path: std::path::PathBuf) -> Self {
-        self.targets_path = path;
-        self
+    fn with_targets_path(self, path: std::path::PathBuf) -> Self {
+        RemotePlugin {
+            system: RemoteSystem::open(self.services.clone(), path),
+            services: self.services,
+            state: self.state,
+            registry: self.registry,
+            call_log: self.call_log,
+        }
     }
 }
 
@@ -140,7 +159,7 @@ impl PluginFactory for RemotePlugin {
         Ok(Arc::new(RemoteInstance {
             state: self.state.clone(),
             services: self.services.clone(),
-            targets_path: self.targets_path.clone(),
+            system: self.system.clone(),
             registry: self.registry.clone(),
             call_log: self.call_log.clone(),
         }))
@@ -150,7 +169,7 @@ impl PluginFactory for RemotePlugin {
 struct RemoteInstance {
     state: Arc<RemoteState>,
     services: Arc<RuntimeServices>,
-    targets_path: std::path::PathBuf,
+    system: Arc<RemoteSystem>,
     registry: Arc<Registry>,
     call_log: Arc<CallLog>,
 }
@@ -167,11 +186,12 @@ fn mcp_is_ours(registry: &Arc<Registry>) -> bool {
 #[async_trait]
 impl PluginInstance for RemoteInstance {
     async fn start(self: Arc<Self>, _scope: &mut PluginScope) -> Result<(), String> {
-        // One system for the whole plugin: the sealed target table and the
+        // The factory's one system (docs/34 R8): the sealed target table and the
         // remote capabilities registered into the shared action registry - a
         // remote.exec IS a run through the coordinator, not a new job system
-        // (docs/34).
-        let system = RemoteSystem::open(self.services.clone(), self.targets_path.clone());
+        // (docs/34). Reused across restarts so the group scope and the routes
+        // always see the same table.
+        let system = self.system.clone();
         swiss_remote::actions::register_all(system.clone(), &self.services.actions)?;
         self.state.install(system.clone());
 
