@@ -103,7 +103,7 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
   var paint = async function (): Promise<void> {
     var keys = await loadKeys();
     var isKey = $<FilterSelect>("c-auth").value === "key";
-    $<HTMLElement>("c-auth-fields").innerHTML = isKey
+    $("c-auth-fields").innerHTML = isKey
       ? '<div class="with-btn">' +
           '<label class="field"><span>Private key path</span><input id="c-keypath" value="' + esc(d.keyPath || "") +
             '" placeholder="' + esc(keys.defaultPath) + '" autocomplete="off" spellcheck="false"></label>' +
@@ -119,7 +119,7 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
   void paint();
   $<FilterSelect>("c-auth").onchange = function (): void { void paint(); };
   if ($("g-sel")) $<FilterSelect>("g-sel").onchange = function (): void {
-    $<HTMLElement>("t-title").textContent = "New SSH connection in " + $<FilterSelect>("g-sel").value;
+    $("t-title").textContent = "New SSH connection in " + $<FilterSelect>("g-sel").value;
   };
   $<ActionButton>("c-cancel").onclick = closeSheet;
   $<ActionButton>("c-save").onclick = function (): void { void saveConn(def!); };
@@ -226,7 +226,7 @@ async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> 
       : "/api/tunnels/connections", { method: existing ? "PUT" : "POST", body: JSON.stringify(body) });
     j = await r.json().catch(function (): object { return {}; }) as { error?: string; connection?: ApiTunnelConnectionRow };
     if (!r.ok) {
-      var err = $<HTMLElement>("c-err");
+      var err = $("c-err");
       if (err) {
         err.hidden = false;
         err.textContent = j.error || "HTTP " + r.status;
@@ -303,7 +303,7 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
   if (!editing) $<FilterInput>("r-lport").onchange = suggest;
   else void suggest(); // editing: keep the stored choice, but label what matches
   if ($("g-sel")) $<FilterSelect>("g-sel").onchange = function (): void {
-    $<HTMLElement>("t-title").textContent = "New forwarding rule in " + $<FilterSelect>("g-sel").value;
+    $("t-title").textContent = "New forwarding rule in " + $<FilterSelect>("g-sel").value;
   };
   $<ActionButton>("r-cancel").onclick = closeSheet;
   $<ActionButton>("r-save").onclick = function (): void { void saveRule(def!); };
@@ -314,10 +314,10 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
 function paintMcpPicks(checked: string[], suggested: string[]): void {
   var names = tunData().mcps || [];
   if (!names.length) {
-    $<HTMLElement>("r-mcps").innerHTML = '<div class="hint">No MCPs registered.</div>';
+    $("r-mcps").innerHTML = '<div class="hint">No MCPs registered.</div>';
     return;
   }
-  $<HTMLElement>("r-mcps").innerHTML = names.map(function (n: string): string {
+  $("r-mcps").innerHTML = names.map(function (n: string): string {
     var on = checked.indexOf(n) >= 0;
     var hint = suggested.indexOf(n) >= 0 ? ' <span class="hint">(matches this local port)</span>' : "";
     return '<label class="check"><input type="checkbox" data-mcp="' + esc(n) + '"' + (on ? " checked" : "") + ">" +
@@ -327,7 +327,7 @@ function paintMcpPicks(checked: string[], suggested: string[]): void {
 
 function readMcpPicks(): string[] {
   var out: string[] = [];
-  Array.prototype.forEach.call($<HTMLElement>("r-mcps").querySelectorAll("[data-mcp]"), function (b: HTMLInputElement): void {
+  Array.prototype.forEach.call($("r-mcps").querySelectorAll("[data-mcp]"), function (b: HTMLInputElement): void {
     if (b.checked) out.push(b.dataset.mcp!);
   });
   return out;

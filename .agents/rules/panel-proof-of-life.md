@@ -23,12 +23,16 @@ visible control was clicked with real pointer events and answered. vitest green 
 
 ## The checklist (all of it, every panel change)
 
-1. **Read the house idiom before writing wiring.** One existing view that already does the
-   thing is the spec: sheets -> `js/add-sheet.js` + `views/terminal-settings.js`
-   (`$("sheet").hidden = false` BEFORE innerHTML; `closeSheet` comes from add-sheet.js);
-   empty states -> `util.js emptyHtml`; icons -> the `i-*` sprite via `icon(name)`.
+1. **Edit `panel/src/*.ts`, never hand-edit `js/`** — the served tree is emitted
+   (`npm run build` in `crates/swiss-panel/panel`). Read the house idiom before writing
+   wiring: one existing view that already does the thing is the spec — sheets ->
+   `panel/src/add-sheet.ts` + `panel/src/views/terminal-settings.ts`
+   (`$("sheet").hidden = false` BEFORE innerHTML; `closeSheet` comes from add-sheet);
+   empty states -> `util.ts emptyHtml`; icons -> the `i-*` sprite via `icon(name)`.
    Never invent a parallel mechanism.
-2. **`node --check` + full vitest run.** Catches syntax and pure-function regressions.
+2. **`npm run check` in `crates/swiss-panel/panel`** (typecheck ×2 + lint + emit
+   freshness + vitest). Catches syntax, link-time import errors and pure-function
+   regressions.
 3. **Rebuild and restart 19998** (`scripts/test-instance.ps1 -Stop`, build with
    `CARGO_TARGET_DIR=target-test`, then `-Fresh`). Never verify against a stale binary.
 4. **Real-browser walk on a fresh page load.** Using browser automation with REAL clicks

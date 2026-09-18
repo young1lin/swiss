@@ -158,7 +158,7 @@ function refreshGroupSelect()       {
 /** (Re)build the groups region only — the create form and the secret box live outside it, so
  *  a repaint never wipes a half-typed label or the one chance to copy a secret. */
 function paintGroups()       {
-  var host = $             ("tkGroups");
+  var host = $("tkGroups");
   if (!host) return;
   painted = signature();
   host.innerHTML = "";
@@ -172,7 +172,7 @@ function paintGroups()       {
     host.appendChild(mountGroup(tkCfg(), g));
   });
   refreshGroupSelect();
-  $             ("countChip").textContent = countText();
+  $("countChip").textContent = countText();
 }
 
 /** The Group select of the create form: the scope's groups, the last-used one selected. */

@@ -617,7 +617,7 @@ async function runConnTest(p: string): Promise<void> {
   // figma implies OAuth the way a checked auth box states it: no keyless test exists for either.
   var wantsOauth = type === "figma" || (type === "http" && body.auth === true);
   delete body.auth; delete body.oauthClientName; // a credential question, not a connectivity one
-  var btn = $<HTMLButtonElement>(p + "test"), out = $<HTMLElement>(p + "test-out");
+  var btn = $<HTMLButtonElement>(p + "test"), out = $(p + "test-out");
   if (!btn || !out) return;
   // A keyless handshake cannot test an OAuth remote: its endpoint answers 401 until the flow
   // runs, and the flow needs the MCP saved first (credentials are name-keyed). Say so rather

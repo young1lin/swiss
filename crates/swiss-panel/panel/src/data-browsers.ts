@@ -435,7 +435,7 @@ var dbRedisEditor: { ta: HTMLTextAreaElement; save: () => void } | null = null; 
 
 function dbRedisCellEdit(td: HTMLElement, insertIdx: number, addr: string, col: string, current: string): void {
   dbRedisEditorClose();
-  var wrap = $<HTMLElement>("dbGridWrap");
+  var wrap = $("dbGridWrap");
   if (!wrap) return;
   var wrapRect = wrap.getBoundingClientRect();
   var rect = td.getBoundingClientRect();
@@ -615,14 +615,14 @@ function dbRedisKeySheet(cfg: { title: string; label: string; value?: string; pl
         '<button class="btn" id="dbKeyCancel">Cancel</button>' +
         '<button class="btn primary" id="dbKeyGo">' + esc(cfg.primary) + "</button></div>" +
     "</div>";
-  $<HTMLElement>("sheet").hidden = false;
+  $("sheet").hidden = false;
   var input = $<FilterInput>("dbKeyIn");
   input.value = cfg.value || "";
   input.placeholder = cfg.placeholder || "";
-  $<HTMLElement>("dbKeyCancel").onclick = closeSheet;
-  $<HTMLElement>("sheet").onclick = function (e: MouseEvent): void { if (e.target === $<HTMLElement>("sheet")) closeSheet(); };
+  $("dbKeyCancel").onclick = closeSheet;
+  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
   function go(): void { var v: string = input.value.trim(); closeSheet(); cfg.submit(v); }
-  $<HTMLElement>("dbKeyGo").onclick = go;
+  $("dbKeyGo").onclick = go;
   input.onkeydown = function (e: KeyboardEvent): void {
     if (e.key === "Enter") { e.preventDefault(); go(); }
   };

@@ -75,7 +75,7 @@ function dbOpenImport(): void {
         '<button class="btn" id="dbImpCancel">Cancel</button>' +
         '<button class="btn primary" id="dbImpRun">Import (one transaction)</button></div>' +
     "</div>";
-  $<HTMLElement>("sheet").hidden = false;
+  $("sheet").hidden = false;
 
   function parse(): void {
     var text = $<FilterInput>("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -90,7 +90,7 @@ function dbOpenImport(): void {
   }
 
   function paint(): void {
-    var mapBox = $<HTMLElement>("dbImpMap");
+    var mapBox = $("dbImpMap");
     mapBox.innerHTML = "";
     if (!header.length) return;
     var names = d!.data!.columns.map(function (c: ApiDbColumn): string { return c.name; });
@@ -117,7 +117,7 @@ function dbOpenImport(): void {
   }
 
   function preview(): void {
-    var box = $<HTMLElement>("dbImpPreview");
+    var box = $("dbImpPreview");
     box.innerHTML = "";
     if (!header.length) return;
     var mapped: number = mapping.filter(Boolean).length;
@@ -148,7 +148,7 @@ function dbOpenImport(): void {
       ? "Rows that match an existing key update it; the rest insert \u2014 still one transaction."
       : "Every row inserts \u2014 a duplicate key aborts the whole file.";
   }
-  $<HTMLElement>("dbImpMode").onclick = function (e: MouseEvent): void {
+  $("dbImpMode").onclick = function (e: MouseEvent): void {
     var b: HTMLElement | null = e.target && e.target.closest ? e.target.closest("button[data-mode]") as HTMLElement : null;
     if (b) setMode(b.dataset.mode!);
   };
@@ -159,7 +159,7 @@ function dbOpenImport(): void {
     rd.onload = function (): void { $<FilterInput>("dbImpText").value = String(rd.result); parse(); };
     rd.readAsText(f);
   };
-  $<HTMLElement>("dbImpCancel").onclick = closeSheet;
+  $("dbImpCancel").onclick = closeSheet;
   $<ActionButton>("dbImpRun").onclick = async function (): Promise<void> {
     if (!header.length || !lines.length) { toast("Paste or upload a CSV first", true); return; }
     if (!mapping.some(Boolean)) { toast("Map at least one column", true); return; }
@@ -187,7 +187,7 @@ function dbOpenImport(): void {
     dbDropEdits();
     dbLoadData(true);
   };
-  $<HTMLElement>("sheet").onclick = function (e: MouseEvent): void { if (e.target === $<HTMLElement>("sheet")) closeSheet(); };
+  $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
 }
 /* --- copy to clipboard -------------------------------------------------------------------------- */
 /* Right-click a cell: copy the value, or the whole row as JSON / CSV / INSERT. Values are taken

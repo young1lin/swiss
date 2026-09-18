@@ -152,7 +152,7 @@ function renderDbRedisBar(d         , bar             , n        )       {
 
 function renderDbBar()       {
   var d = state.db;
-  var bar = $             ("dbBar");
+  var bar = $("dbBar");
   if (!bar) return;
   var redis = dbIsRedis();
   var n = redis ? dbRedisPendingCount() : dbPending();
@@ -233,7 +233,7 @@ function dbFillConsole(sql        )       {
   var d = state.db;
   d .sqlText = sql;
   d .sqlOpen = true;
-  var con = $             ("dbConsole");
+  var con = $("dbConsole");
   if (con) con.hidden = false;
   var ta = $                     ("dbSql");
   if (ta) ta.value = sql;
@@ -291,10 +291,10 @@ async function dbCommit()                {
   // the user back to the top, away from the row they just committed. Capture before the
   // reload, restore after it lands; a superseding load owns the pane by then and a stale
   // restore is a harmless scroll to where the user was anyway.
-  var wrap = $             ("dbGridWrap");
+  var wrap = $("dbGridWrap");
   var scrollTop = wrap ? wrap.scrollTop : 0;
   void dbLoadData(true).then(function ()       {
-    var w2 = $             ("dbGridWrap");
+    var w2 = $("dbGridWrap");
     if (w2) w2.scrollTop = scrollTop;
   });
 }
@@ -335,7 +335,7 @@ function dbHistoryPush(sql        )       {
 }
 
 function dbHistoryRender()       {
-  var sel = $             ("dbSqlHistory");
+  var sel = $("dbSqlHistory");
   if (!sel) return;
   sel.innerHTML = "";
   var head = el("option", "", "History")                     ;

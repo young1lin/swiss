@@ -486,7 +486,7 @@ function openJobSheet(job                  )       {
   }
 
   function say()       {
-    var el = $             ("jf-say");
+    var el = $("jf-say");
     el.className = "sched-say";
     el.textContent = "";
     try { el.textContent = schedToBody(sched).say; }
@@ -554,7 +554,7 @@ function openJobSheet(job                  )       {
   });
   renderFields();
   ensureCronstrue(function ()       { say(); }); // the sentence appears the moment the library does
-  var cmdSay = $             ("jf-cmd-say");
+  var cmdSay = $("jf-cmd-say");
   function sayCommand()       {
     cmdSay.className = "sched-say cmd-say";
     cmdSay.textContent = "";
@@ -736,15 +736,15 @@ async function openV2Sheet(job                  )                {
 
   function syncTriggerRows()       {
     var kind = $              ("jv-kind").value;
-    $             ("jv-interval-row").style.display = kind === "interval" ? "" : "none";
-    $             ("jv-cron-row").style.display = kind === "cron" ? "" : "none";
+    $("jv-interval-row").style.display = kind === "interval" ? "" : "none";
+    $("jv-cron-row").style.display = kind === "cron" ? "" : "none";
   }
   syncTriggerRows();
   $              ("jv-kind").onchange = syncTriggerRows;
 
   // The raw cron field gets the same one-sentence answer as the builder: whatever mode a
   // definition came from, the expression on screen is the schedule that will fire.
-  var jvSay = $             ("jv-cron-say");
+  var jvSay = $("jv-cron-say");
   function sayV2()       {
     var expr = $             ("jv-cron").value.trim();
     jvSay.className = "sched-say";
@@ -759,7 +759,7 @@ async function openV2Sheet(job                  )                {
   // Switching the action type rebuilds the input form from that capability's schema.
   $              ("jv-action").onchange = function ()       {
     var next = actionByType(actions, $              ("jv-action").value);
-    $             ("jv-inputs").innerHTML = next
+    $("jv-inputs").innerHTML = next
       ? argFieldsHtml({ inputSchema: next.schema }              , "ja-", {})
       : '<div class="hint">Not registered — edit the input in the JSON below.</div>';
   };

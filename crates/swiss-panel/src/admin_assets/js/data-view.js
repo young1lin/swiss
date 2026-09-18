@@ -171,7 +171,7 @@ async function loadDbView()                {
 }
 
 function renderDbView()       {
-  var pane = $             ("pane");
+  var pane = $("pane");
   // db-host turns the pane into a full-bleed workspace body (layout "workspace", docs/13
   // D5 as revised): no pane padding, no measure — the explorer divides its own space.
   // views/data.js takes the class back off on unmount so no other page inherits it.
@@ -247,7 +247,7 @@ function renderDbView()       {
     // The page-bar count chip names the connection (views/data.js countText) and is otherwise
     // written only on navigation — the switch has to rewrite it here or the bar keeps naming
     // the connection this view just left behind.
-    var chip = $             ("countChip");
+    var chip = $("countChip");
     if (chip) chip.textContent = currentPageCount();
     if (dbIsRedis()) dbLoadKeys(true);
     else dbLoadTables();
@@ -275,7 +275,7 @@ function renderDbView()       {
     if (dbIsRedis()) renderDbTables(); // keys sort in place over what has been scanned
     else dbLoadTables();
   };
-  $             ("dbSortDir").onclick = function ()       {
+  $("dbSortDir").onclick = function ()       {
     var d = state.db;
     d .sortDir = d .sortDir === "asc" ? "desc" : "asc";
     dbPaintSort();
@@ -291,7 +291,7 @@ function renderDbView()       {
   $                ("dbSql").value = state.db .sqlText;
   $                ("dbSql").oninput = function ()       { state.db .sqlText = this.value; dbSqlPaint(); dbSuggestOnInput.call(this); };
   $                ("dbSql").onscroll = function ()       {
-    var hl = $             ("dbSqlHl");
+    var hl = $("dbSqlHl");
     if (hl) { hl.scrollTop = this.scrollTop; hl.scrollLeft = this.scrollLeft; }
     dbSuggestHide(); // the caret's point scrolled with the text; a list pinned to stale
     // coordinates would point at the wrong word. The next keystroke reopens it in place.
@@ -411,7 +411,7 @@ function dbSortOptions()                             {
 
 function dbPaintSort()       {
   var d = state.db;
-  var sel = $              ("dbSort"), dir = $             ("dbSortDir");
+  var sel = $              ("dbSort"), dir = $("dbSortDir");
   if (!sel || !dir) return;
   var opts = dbSortOptions();
   if (!opts.some(function (o                          )          { return o.v === d .sort; })) d .sort = opts[0].v; // kind switched
@@ -447,9 +447,9 @@ function dbRedisCompare(a                  , b                  )         {
    switch — it used to run once, at mount, before /api/db had even answered, so it never saw a
    redis connection. */
 function dbSyncKind()       {
-  var grep = $             ("dbGrep"), sql = $                ("dbSql"), explain = $             ("dbSqlExplain"), hint = $             ("dbSqlHint");
+  var grep = $             ("dbGrep"), sql = $                ("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
   if (!grep || !sql || !explain || !hint) return;
-  var fmt = $             ("dbSqlFormat");
+  var fmt = $("dbSqlFormat");
   dbPaintSort();
   if (dbIsRedis()) {
     grep.placeholder = "Filter keys"; grep.setAttribute("aria-label", "Filter keys");
@@ -473,9 +473,9 @@ function dbSyncKind()       {
   // connection (or none) hides the button rather than the menu hiding its one item. The
   // list band rides the same condition — redis keys are not tables, and there is nothing to
   // create without a connection.
-  var more = $             ("dbMore");
+  var more = $("dbMore");
   if (more) more.hidden = !state.db .conn || dbIsRedis();
-  var listHead = $             ("dbListHead");
+  var listHead = $("dbListHead");
   if (listHead) listHead.hidden = !state.db .conn || dbIsRedis();
 }
 
@@ -539,7 +539,7 @@ var dbTablesReq = dbReqGuard();
 async function dbLoadTables()                {
   var d = state.db;
   if (!d .conn) return;
-  var box = $             ("dbTables");
+  var box = $("dbTables");
   if (box) { box.innerHTML = ""; box.appendChild(el("div", "db-hint", "Loading…")); }
   var q = "/api/db/" + encodeURIComponent(d .conn) + "/tables?page=" + d .tablesPage;
   if (d .grep) q += "&grep=" + encodeURIComponent(d .grep);
@@ -548,7 +548,7 @@ async function dbLoadTables()                {
   var token = dbTablesReq.issue();
   var j = await apiJson                     (q);
   if (!dbTablesReq.accepts(token)) return; // superseded: a newer page/filter owns the list
-  if (!j) { if ($             ("dbTables")) $             ("dbTables").innerHTML = ""; return; }
+  if (!j) { if ($("dbTables")) $("dbTables").innerHTML = ""; return; }
   d .tables = j.tables || [];
   d .tablesTotal = j.total || 0;
   d .tablesLimit = j.limit || 200;
@@ -587,7 +587,7 @@ function dbFilterMatches(tokens        , name         )          {
 
 function renderDbTables()       {
   var d = state.db;
-  var box = $             ("dbTables");
+  var box = $("dbTables");
   if (!box) return;
   box.innerHTML = "";
   dbPaintSchemaOptions();
@@ -619,7 +619,7 @@ function renderDbTables()       {
       };
       box.appendChild(b);
     });
-    var foot2 = $             ("dbTablesPager");
+    var foot2 = $("dbTablesPager");
     if (foot2) {
       foot2.innerHTML = "";
       var shown = rr ? rr.keys.length : 0;
@@ -659,7 +659,7 @@ function renderDbTables()       {
   } else {
     d .tables.forEach(function (t               )       { box.appendChild(dbTableRow(t)); });
   }
-  var foot = $             ("dbTablesPager");
+  var foot = $("dbTablesPager");
   if (!foot) return;
   foot.innerHTML = "";
   var from = d .tablesTotal ? d .tablesPage * d .tablesLimit + 1 : 0;
@@ -723,7 +723,7 @@ function dbPaintSchemaOptions()       {
     sel = el("select")                ;
     sel.id = "dbSchema";
     sel.setAttribute("aria-label", "Schema");
-    var conn = $             ("dbConn");
+    var conn = $("dbConn");
     if (conn && conn.parentNode) conn.parentNode.insertBefore(sel, conn.nextSibling);
     dbWireSchemaSelect(sel);
   }

@@ -231,7 +231,7 @@ interface ActionButton extends HTMLButtonElement {
    *  that read `this` (menu geometry) stay unchecked any - lib's own onclick declaration
    *  would force this: GlobalEventHandlers, which has no getBoundingClientRect and breaks
    *  assignability both ways. */
-  onclick: ((ev?: MouseEvent) => any) | null;
+  onclick: ((ev?: MouseEvent) => unknown) | null;
 }
 
 /* The same this-value read on selects (data-filters.ts column/operator pickers). */

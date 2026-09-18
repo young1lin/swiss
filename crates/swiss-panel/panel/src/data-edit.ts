@@ -161,7 +161,7 @@ function dbOpenInlineEdit(kind: string, key: string, i: number, column: string, 
   var d = state.db;
   if (dbInlineEdit) dbCloseInlineEdit();
   var rect = td.getBoundingClientRect();
-  var wrap = $<HTMLElement>("dbGridWrap");
+  var wrap = $("dbGridWrap");
   var wrapRect = wrap ? wrap.getBoundingClientRect() : { left: 0, top: 0 };
   var ta = el("textarea", "db-inline-edit") as HTMLTextAreaElement;
   ta.rows = 1;

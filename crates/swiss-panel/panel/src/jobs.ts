@@ -486,7 +486,7 @@ function openJobSheet(job: ApiJobRow | null): void {
   }
 
   function say(): void {
-    var el = $<HTMLElement>("jf-say");
+    var el = $("jf-say");
     el.className = "sched-say";
     el.textContent = "";
     try { el.textContent = schedToBody(sched).say; }
@@ -554,7 +554,7 @@ function openJobSheet(job: ApiJobRow | null): void {
   });
   renderFields();
   ensureCronstrue(function (): void { say(); }); // the sentence appears the moment the library does
-  var cmdSay = $<HTMLElement>("jf-cmd-say");
+  var cmdSay = $("jf-cmd-say");
   function sayCommand(): void {
     cmdSay.className = "sched-say cmd-say";
     cmdSay.textContent = "";
@@ -736,15 +736,15 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
 
   function syncTriggerRows(): void {
     var kind = $<FilterSelect>("jv-kind").value;
-    $<HTMLElement>("jv-interval-row").style.display = kind === "interval" ? "" : "none";
-    $<HTMLElement>("jv-cron-row").style.display = kind === "cron" ? "" : "none";
+    $("jv-interval-row").style.display = kind === "interval" ? "" : "none";
+    $("jv-cron-row").style.display = kind === "cron" ? "" : "none";
   }
   syncTriggerRows();
   $<FilterSelect>("jv-kind").onchange = syncTriggerRows;
 
   // The raw cron field gets the same one-sentence answer as the builder: whatever mode a
   // definition came from, the expression on screen is the schedule that will fire.
-  var jvSay = $<HTMLElement>("jv-cron-say");
+  var jvSay = $("jv-cron-say");
   function sayV2(): void {
     var expr = $<FilterInput>("jv-cron").value.trim();
     jvSay.className = "sched-say";
@@ -759,7 +759,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   // Switching the action type rebuilds the input form from that capability's schema.
   $<FilterSelect>("jv-action").onchange = function (): void {
     var next = actionByType(actions, $<FilterSelect>("jv-action").value);
-    $<HTMLElement>("jv-inputs").innerHTML = next
+    $("jv-inputs").innerHTML = next
       ? argFieldsHtml({ inputSchema: next.schema } as ApiMcpTool, "ja-", {})
       : '<div class="hint">Not registered — edit the input in the JSON below.</div>';
   };
