@@ -96,7 +96,7 @@ function row(t) {
     '<div class="row row-act" data-rmrow="' + esc(t.id) + '">' + endpointDot(t.endpoint) +
       '<div class="row-main">' +
         '<div class="name"><a href="#remote" class="rowname" data-rmedit="' + esc(t.id) + '">' + esc(t.id) + "</a>" + label + "</div>" +
-        '<div class="sub mono">' + esc(t.workspaceRoot || "") + "</div>" +
+        '<div class="rm-sub">' + esc(t.workspaceRoot || "") + "</div>" +
       "</div>" +
       '<div class="row-chips">' + chip(endpointLabel(t.endpoint)) + caps + "</div>" +
       '<button class="btn ghost icon" data-rmmore="' + esc(t.id) + '" aria-label="Actions for ' + esc(t.id) + '" title="Actions for ' + esc(t.id) + '">' + icon("ellipsis") + "</button>" +
@@ -151,18 +151,29 @@ function paint() {
 
 function render() {
   painted = signature();
+  // The body header is the family's (tunnels/secrets): task prose + status line on the
+  // left, actions right-aligned in pane-actions - no location title (the context bar
+  // already says Remote Targets) and no invented classes.
   var head =
-    '<div class="page-head"><h2>Targets</h2><div class="head-actions">' +
-    '<button class="btn" id="rmNewGroup">New group</button>' +
-    '<button class="btn primary" id="rmAdd">Add target</button>' +
-    "</div></div>" +
-    '<p class="quiet">' + esc(presence) + " · " + endpoints.length + " endpoint" +
-    (endpoints.length === 1 ? "" : "s") + " served by tunnels</p>";
+    '<div class="wide">' +
+      '<div class="pane-head"><div>' +
+        '<div class="pane-desc">Machines the gateway can run commands on, reached over Tunnels SSH connections. This page and the CLI (swiss remote …) write the same table through the same routes; drag a row to reorder or to move it between groups.</div>' +
+        '<div class="pane-sub">' + esc(presence) + " · " + endpoints.length + " endpoint" +
+          (endpoints.length === 1 ? "" : "s") + " served by tunnels</div>" +
+      "</div>" +
+      '<div class="pane-actions">' +
+        '<button class="btn primary" id="rmAdd">Add target</button>' +
+        '<button class="btn" id="rmNewGroup">New group</button>' +
+      "</div></div>" +
+      '<div id="rmGroups"></div>' +
+    "</div>";
+  $("pane").innerHTML = head;
   if (!targets.length) {
-    $("pane").innerHTML = head + emptyHtml({ icon: "globe", title: "No targets yet", hint: "Add a target to run commands on the machines the Tunnels connections reach." });
+    // The empty state takes the groups slot (the tunnels page's shape): the header and
+    // its actions stay above it, so Add target is one click away.
+    $("rmGroups").innerHTML = emptyHtml({ icon: "globe", title: "No targets yet", hint: "Add a target to run commands on the machines the Tunnels connections reach." });
     $("countChip").textContent = "";
   } else {
-    $("pane").innerHTML = head + '<div id="rmGroups"></div>';
     $("countChip").textContent = targets.length + " target" + (targets.length === 1 ? "" : "s");
     paint();
   }

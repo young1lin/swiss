@@ -454,6 +454,27 @@
     .cli-n { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--f-label); color: var(--text-2); }
     .cli-x { width: 25px; } /* the clear button's width, reserved so counts stay aligned */
 
+    /* --- remote targets (docs/34 R6 + R8) ------------------------------------------------------- */
+    /* The row is one visual unit - endpoint dot, alias + path, chips at the end - so it
+       centres, unlike the .k/.v config rows baseline alignment was tuned for (against a
+       two-line main column, baseline drops the chips below the name). */
+    .row[data-rmrow] { align-items: center; }
+    /* The trailing chip cluster: endpoint + capabilities. Without a rule of its own the
+       chips hugged the path text as inline text - the right edge is where they belong. */
+    .row-chips { margin-left: auto; flex: none; display: flex; align-items: center; gap: var(--s1); }
+    /* The workspace path is an address, not a sentence: the tunnels sub-line's exact
+       treatment (label size, secondary colour, mono, one line, ellipsis at the edge). */
+    .rm-sub {
+      font-family: var(--mono); font-size: var(--f-label); color: var(--text-2);
+      line-height: 1.35; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* The drag affordances every draggable row carries: the same four rules .tun-row has
+       (the groups component toggles the classes; only the row selector is ours). */
+    .row[data-rmrow][draggable="true"] { cursor: grab; }
+    .row[data-rmrow].dragging { opacity: 0.55; }
+    .row[data-rmrow].drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+    .row[data-rmrow].drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+
     /* --- data view (the DBeaver-style browser) --------------------------------------------------- */
     .pane > .db-root { max-width: none; }
     /* A workspace body (docs/13 D5 as revised): the pane drops its padding and measure so
