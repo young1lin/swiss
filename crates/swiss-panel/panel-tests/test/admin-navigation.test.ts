@@ -190,6 +190,14 @@ describe("the plugin context bar (page navigation)", () => {
     expect(byId("pageBtn").innerHTML).toContain('ctx-page">Token</span>');
   });
 
+  it("synthesizes System under Settings instead of giving a destructive action permanent chrome", async () => {
+    await paint("system", inventory);
+    expect(byId("railNav").innerHTML).toContain('data-group="host" data-view="plugins" aria-current="true"');
+    expect(byId("pageBtn").hidden).toBe(false);
+    expect(byId("pageBtn").innerHTML).toContain('ctx-plugin">Settings</span>');
+    expect(byId("pageBtn").innerHTML).toContain('ctx-page">System</span>');
+  });
+
   it("tunnels is a two-page group: #tunnels is SSH Connections, #tunnel-forwards is Port Forwards", async () => {
     const tunnelsPages = inventory.pages.filter((p) => p.pluginId === "tunnels").sort((a, b) => a.order - b.order);
     expect(tunnelsPages.map((p) => p.label)).toEqual(["SSH Connections", "Port Forwards"]);

@@ -29,9 +29,10 @@ var legacy = [
   { id: "jobs", pluginId: "jobs", label: "Jobs" },
 ].map(function (p, i) { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
 var management = { id: "plugins", pluginId: "host", label: "Plugins", order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
-/* The vault is host-owned like the management page (every plugin may depend on it, docs/19 D6),
- * so it is synthesized here too — the Settings group's second page: Plugins | Secrets. */
+/* These pages are host-owned like management: every plugin may depend on the vault, while System
+ * controls the one running process rather than any individual plugin. */
 var vaultPage = { id: "secrets", pluginId: "host", label: "Secrets", order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
+var systemPage = { id: "system", pluginId: "host", label: "System", order: 1002, path: "#system", entry: "/admin/js/views/system.js" };
 /* Group labels used when the host serves no plugin inventory (an older gateway answers 404 on
    /api/plugins), plus the one group that has no inventory row at all: the management page is
    synthesized here, not contributed by a plugin. */
@@ -215,7 +216,8 @@ async function reloadPluginInventory() {
     if (!response.ok) throw new Error("Cannot load plugin inventory: HTTP " + response.status);
     var next = await response.json();
     var pages = next.pages || (next.plugins || []).flatMap(function (p) { return p.pages || []; });
-    registry.replace(pages.filter(function (p) { return p.id !== "plugins" && p.id !== "secrets"; }).concat([management, vaultPage]));
+    registry.replace(pages.filter(function (p) { return ["plugins", "secrets", "system"].indexOf(p.id) < 0; })
+      .concat([management, vaultPage, systemPage]));
     inventory = next;
   }
   paintNavigation();
