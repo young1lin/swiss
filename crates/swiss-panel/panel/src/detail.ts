@@ -24,6 +24,7 @@ import { patchDetailHead, renderPane } from "./pane.js";
 import { loadList } from "./polling.js";
 import { histOpen, renderCallsOnly } from "./run-history.js";
 import { rowOf } from "./sidebar.js";
+import { setMenuOpen } from "./ui-state.js";
 
 /* --- lifecycle actions ------------------------------------------------------------------------ */
 async function act(name: string, verb: string): Promise<void> {
@@ -178,7 +179,7 @@ function openDetail(name: string): void {
   };
   KINDS.forEach((k) => { d[k] = pageState(); });
   state.detail = d as unknown as McpDetail;
-  state.menuOpen = false;
+  setMenuOpen(false);
   patchSidebar();
   renderPane();
   void loadMeta(name);

@@ -27,19 +27,12 @@ const DEFAULT_GROUP = "default";
 const state             = {
   mcps: [],          // rows from /api/mcps (each carries .group)
   groups: [],        // group names in sidebar order — the FIRST entry is the sink slot for unassigned rows
-  collapsed: {},     // mcps fold map; group name -> true. Panel-only, so it lives in localStorage (groups.js)
   selected: null,    // selected MCP name
-  filter: "",
   detail: null,      // { name, tab, config, source, editing, editType, tools:{...}, calls, ... }
   busy: {},          // name -> verb in flight
   lastAction: {},    // name -> { msg, err, at }
   mem: null,
-  menuOpen: false,
   info: null,        // { tokenEnv } from /api/info — the env var name
-  view: "mcps",      // "mcps" | "tunnels" | "traffic" | "data" | "jobs" — the toolbar switcher
-  panelVersion: null, // admin.html mtime stamp from /api/info; a change means a new build landed
-  addGroup: null,     // sidebar group a header "+" targets for the next created MCP (add-sheet.js)
-  draggingGroup: null, // name of the GROUP HEADER being dragged — polls must not rebuild under it either
   db: null,           // the whole Data view state (data-view.js builds/owns it; redisValue rides on it)
   tun: {             // tunnel view state; `data` is the last /api/tunnels response
     tab: "conns",    // "conns" | "rules"

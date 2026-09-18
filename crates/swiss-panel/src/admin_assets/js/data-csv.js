@@ -22,6 +22,7 @@ import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
 import { dbOpenValueSheet } from "./data-value.js";
 import { dbClearSel, dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
 import { clampMenuPos } from "./menu.js";
+import { setMenuOpen } from "./ui-state.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.
@@ -313,11 +314,11 @@ function dbCellMenu(e            , row                                , key     
   const pos1 = clampMenuPos({ left: e.clientX, top: e.clientY, bottom: e.clientY }, box1.width, box1.height, window.innerWidth, window.innerHeight);
   menu.style.left = pos1.left + "px";
   menu.style.top = pos1.top + "px";
-  state.menuOpen = true;
-  function closeMenu2() { menu.remove(); state.menuOpen = false; }
+  setMenuOpen(true);
+  function closeMenu2() { menu.remove(); setMenuOpen(false); }
   setTimeout(() => {
     document.addEventListener("mousedown", function h(ev) {
-      if (!menu.contains(ev.target        )) { menu.remove(); state.menuOpen = false; document.removeEventListener("mousedown", h); }
+      if (!menu.contains(ev.target        )) { menu.remove(); setMenuOpen(false); document.removeEventListener("mousedown", h); }
     });
   }, 0);
 }
@@ -460,11 +461,11 @@ function dbResultCellMenu(e            , row                                , co
   const pos2 = clampMenuPos({ left: e.clientX, top: e.clientY, bottom: e.clientY }, box2.width, box2.height, window.innerWidth, window.innerHeight);
   menu.style.left = pos2.left + "px";
   menu.style.top = pos2.top + "px";
-  state.menuOpen = true;
-  function closeMenu() { menu.remove(); state.menuOpen = false; }
+  setMenuOpen(true);
+  function closeMenu() { menu.remove(); setMenuOpen(false); }
   setTimeout(() => {
     document.addEventListener("mousedown", function h(ev) {
-      if (!menu.contains(ev.target        )) { menu.remove(); state.menuOpen = false; document.removeEventListener("mousedown", h); }
+      if (!menu.contains(ev.target        )) { menu.remove(); setMenuOpen(false); document.removeEventListener("mousedown", h); }
     });
   }, 0);
 }

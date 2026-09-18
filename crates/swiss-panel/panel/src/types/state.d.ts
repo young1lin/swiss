@@ -387,22 +387,12 @@ export interface DbState {
 export interface PanelState {
   mcps: ApiMcpRow[];
   groups: string[];
-  collapsed: Record<string, boolean>;
   selected: string | null;
-  filter: string;
   detail: McpDetail | null;
   busy: Record<string, string>;
   lastAction: Record<string, LastAction>;
   mem: ApiMemoryInfo | null;
-  menuOpen: boolean;
   info: ApiInfoResponse | null;
-  view: string;
-  panelVersion: string | null;
-  addGroup: string | null;
-  draggingGroup: string | null;
-  /* Not in the boot literal: the sidebar's row-drag slot (sideCfg's drag.set creates it on
-   *  first use, the same optimistic pattern as the tokens keys below). */
-  dragging?: string | null;
   db: DbState | null;
   tun: TunState;
   jobs: JobsState;

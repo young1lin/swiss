@@ -45,8 +45,8 @@ function fakeEl(): FakeEl {
 const els = new Map<string, FakeEl>();
 let responder: (path: string) => Promise<{ status: number; ok: boolean; json: () => Promise<unknown> }>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let registry: any; // page-registry.js and util.js are plain JS modules
-let state: { view: string };
+let registry: any; // the whole page-registry surface, reached loosely: this suite pokes internals
+let setCurrentView: (id: string) => void;
 
 const jsonResponse = (status: number, body?: unknown) => ({
   status,
@@ -76,7 +76,7 @@ const inventory = {
 };
 
 const paint = async (view: string, body: unknown, status = 200) => {
-  state.view = view;
+  setCurrentView(view);
   responder = () => Promise.resolve(jsonResponse(status, body));
   await registry.reloadPluginInventory();
 };
@@ -110,8 +110,7 @@ beforeAll(async () => {
     if (prevFetch) Object.defineProperty(globalThis, "fetch", prevFetch);
     else delete (globalThis as Record<string, unknown>).fetch;
   });
-  const util = await import("../src/util.js");
-  state = (util as { state: { view: string } }).state;
+  ({ setCurrentView } = await import("../src/ui-state.js"));
   registry = await import("../src/page-registry.js");
 });
 

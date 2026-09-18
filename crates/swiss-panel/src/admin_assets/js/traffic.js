@@ -15,8 +15,9 @@
  */
 
                                                                                                          
-import { $, apiJson, esc, icon, state, whenLabel } from "./util.js";
+import { $, apiJson, esc, icon, whenLabel } from "./util.js";
 import { fmtJson } from "./logs.js";
+import { currentView } from "./ui-state.js";
 
 /* The traffic domain owns its state (docs/37 R4, slice 2 of 7): ONE page of interactions, the
  * ring-wide client fold, the query that produced them (filter, client, page) and the per-row
@@ -89,7 +90,7 @@ async function loadTraffic()                {
   traffic.total = j.total || 0;
   traffic.all = j.totalUnfiltered || 0;
   traffic.more = !!j.more;
-  if (state.view !== "traffic") return;
+  if (currentView() !== "traffic") return;
   // Skip the rebuild when nothing changed: a 6s poll would otherwise collapse every expanded row and
   // reset scroll while you are reading one. Filter/refresh/view-entry call renderTraffic() directly.
   const sig = (traffic.rows.length ? traffic.rows[0].seq : 0) + ":" + traffic.rows.length +

@@ -31,7 +31,7 @@
    beyond its name.
    ================================================================================================ */
 import type { GroupCfg, GroupSlice } from "../types/dom.js";
-import { $, apiJson, emptyHtml, esc, icon, state, targetEl, toast } from "../util.js";
+import { $, apiJson, emptyHtml, esc, icon, targetEl, toast } from "../util.js";
 import { copyText } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, groupOf as makeGroupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";

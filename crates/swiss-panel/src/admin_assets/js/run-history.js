@@ -29,6 +29,7 @@ import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
 import { rowOf } from "./sidebar.js";
 import { ago } from "./traffic.js";
+import { menuIsOpen } from "./ui-state.js";
 
 /* --- Run history: the refill control in the actions row ------------------------------------------ */
 /** When an entry ran. Reuses ago() inside a day; past that, ago's time-of-day would be ambiguous,
@@ -590,7 +591,7 @@ function wireTabBody(d           , m         )       {
   if (clMenu) clMenu.onclick = (ev) => {
     ev.stopPropagation();
     // The house toggle idiom (pane.js toggleMenu): a second click dismisses instead of reopening.
-    if (state.menuOpen) { closeMenu(); return; }
+    if (menuIsOpen()) { closeMenu(); return; }
     popupMenu(clMenu.getBoundingClientRect(), [
       { label: "Clear logs…", danger: true, fn: () => { void clearCalls(); } },
     ]);

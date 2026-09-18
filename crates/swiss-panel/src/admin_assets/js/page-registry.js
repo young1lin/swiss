@@ -16,9 +16,10 @@
 
                                                                                       
                                                                                                               
-import { $, api, errText, esc, icon, state, toast } from "./util.js";
+import { $, api, errText, esc, icon, toast } from "./util.js";
 import { createPageRegistry } from "./page-core.js";
 import { glyphHtml, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
+import { currentView, setCurrentView } from "./ui-state.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
 const legacy                   = [
@@ -49,7 +50,7 @@ let polling = false;
 
 function pluginInventory()                            { return inventory; }
 function pageHasPendingChanges() { return !!(active && active.module.hasPendingChanges && active.module.hasPendingChanges()); }
-function pageUsesSidebar() { return layoutOf(registry.get(state.view)) === "resource"; }
+function pageUsesSidebar() { return layoutOf(registry.get(currentView())) === "resource"; }
 function currentPageCount() { return active && active.module.countText ? active.module.countText() : ""; }
 function pluginFor(page                )                                  { return inventory && (inventory.plugins || []).find((p) => { return p.id === page.pluginId; }); }
 function unavailable(page                )                      {
@@ -72,7 +73,7 @@ function layoutOf(page                                   )         {
 
 function currentGroups()              { return registry.groups(inventory && inventory.plugins, GROUP_LABELS); }
 function currentGroup()                        {
-  return currentGroups().find((g) => { return g.pages.some((p) => { return p.id === state.view; }); });
+  return currentGroups().find((g) => { return g.pages.some((p) => { return p.id === currentView(); }); });
 }
 
 /* --- the plugin rail: global navigation (level one) ----------------------------------------------
@@ -81,7 +82,7 @@ function currentGroup()                        {
    and data-view (the group's lowest-order page) so the deep selector in jobs.js keeps
    matching, and clicks delegate on [data-view]. */
 function railSeat(g           )         {
-  const active = g.pages.some((p) => { return p.id === state.view; });
+  const active = g.pages.some((p) => { return p.id === currentView(); });
   const offPlugin = unavailable(g.pages[0]);
   const allOff = g.pages.every((p) => { return !!unavailable(p); });
   const title = g.label + (allOff && offPlugin ? " — " + (offPlugin.lastError || "Plugin disabled") : "");
@@ -139,7 +140,7 @@ function pageMenuItems(current           )                     {
       label: p.label + (po ? " · off" : ""),
       title: po ? (po.lastError || "Plugin disabled") : undefined,
       pick: true,
-      on: p.id === state.view,
+      on: p.id === currentView(),
     };
   });
 }
@@ -149,7 +150,7 @@ function paintPluginContext()       {
   const btn = $("pageBtn");
   const loc = $("pageLoc");
   const current = currentGroup();
-  const page = registry.get(state.view);
+  const page = registry.get(currentView());
   /* No page to name (an empty registry during boot) is the one case with nothing to draw;
    * every real navigation lands in a group and keeps the bar. Focus mode keeps its minimal
    * bar in normal flow because #expandBtn lives inside it; hiding the parent would strand
@@ -261,7 +262,7 @@ async function navigatePage(id        , force          )                {
     if (active.module.unmount) await active.module.unmount();
   }
   const controller = new AbortController();
-  state.view = id;
+  setCurrentView(id);
   active = { id: id, module: module, controller: controller };
   /* The resource sidebar belongs to the resource layout alone; every other layout gets the
    * full body width (a "page" wraps its content in the pane's padding, a "workspace" is

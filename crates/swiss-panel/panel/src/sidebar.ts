@@ -22,6 +22,7 @@ import { act, openDetail, removeMcp, renameMcp } from "./detail.js";
 import { patchSidebar, popupMenu } from "./menu.js";
 import { loadList } from "./polling.js";
 import { assignMember, groupOf as makeGroupOf, newGroupFlow, saveGroupNames, saveOrder, slice } from "./groups.js";
+import { draggingGroupName, draggingRow, foldMap, listFilter, setDraggingGroupName, setDraggingRow } from "./ui-state.js";
 
 /* --- rendering: sidebar ----------------------------------------------------------------------- */
 /** The MCP side of the mcps scope: row rendering, the flat order and the glue between the
@@ -32,7 +33,7 @@ function rowOf(name: string): ApiMcpRow | undefined {
   return state.mcps.find((m) => { return m.name === name; });
 }
 function visibleMcps(): ApiMcpRow[] {
-  const f = state.filter.trim().toLowerCase();
+  const f = listFilter().trim().toLowerCase();
   if (!f) return state.mcps;
   return state.mcps.filter((m) => {
     return m.name.toLowerCase().indexOf(f) >= 0
@@ -54,7 +55,7 @@ function groupedMcps(): GroupSlice<ApiMcpRow>[] {
   const fn = makeGroupOf(state.groups);
   const rows = visibleMcps();
   const sliced = slice(rows, state.groups, fn);
-  return state.filter.trim() ? sliced.filter((g) => { return g.rows.length; }) : sliced;
+  return listFilter().trim() ? sliced.filter((g) => { return g.rows.length; }) : sliced;
 }
 
 /** Rows in the order the eye sees them: group by group, skipping what is folded shut. Arrow-key
@@ -62,7 +63,7 @@ function groupedMcps(): GroupSlice<ApiMcpRow>[] {
 function navRows(): ApiMcpRow[] {
   let out: ApiMcpRow[] = [];
   groupedMcps().forEach((g) => {
-    if (!state.collapsed[g.name] || state.filter.trim()) out = out.concat(g.rows);
+    if (!foldMap()[g.name] || listFilter().trim()) out = out.concat(g.rows);
   });
   return out;
 }
@@ -165,7 +166,7 @@ function sideCfg(): GroupCfg<ApiMcpRow> {
     scope: "mcps",
     density: "side",
     names: state.groups,
-    collapsed: state.collapsed,
+    collapsed: foldMap(),
     noun: "MCP",
     addTitle: (g) => { return "Add an MCP to " + g; },
     onAdd: (g) => { openSheet(g); },
@@ -173,12 +174,12 @@ function sideCfg(): GroupCfg<ApiMcpRow> {
     render: patchSidebar,
     afterDrag: patchSidebar, // the catch-up rebuild after a drag ends
     drag: {
-      get: () => { return state.dragging; },
-      set: (v) => { state.dragging = v; },
+      get: () => { return draggingRow(); },
+      set: (v) => { setDraggingRow(v); },
     },
     dragGroup: {
-      get: () => { return state.draggingGroup; },
-      set: (v) => { state.draggingGroup = v; },
+      get: () => { return draggingGroupName(); },
+      set: (v) => { setDraggingGroupName(v); },
     },
     rowNode: sideRowNode,
     rowId: (m) => { return m.name; },
@@ -186,7 +187,7 @@ function sideCfg(): GroupCfg<ApiMcpRow> {
     groupOfRow: groupOf,
     onMoveRow: moveRow,
     onAssign: assignGroup,
-    filtered: !!state.filter.trim(),
+    filtered: !!listFilter().trim(),
   };
 }
 

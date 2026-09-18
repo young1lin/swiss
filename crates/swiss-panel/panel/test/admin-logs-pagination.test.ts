@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
 
 /* docs/32 B1 — the Logs pager becomes a transaction. The suite drives the REAL module graph
    (wireTabBody -> callsPageStep -> loadCalls -> renderCallsOnly) under the FakeNode micro-DOM,
@@ -183,7 +184,7 @@ beforeEach(() => {
   util.state.selected = null;
   util.state.mcps = [];
   util.state.groups = ["default"];
-  util.state.menuOpen = false;
+  setMenuOpen(false);
 });
 
 describe("docs/32 B2: the pager is the scroll anchor, focus follows the action", () => {
@@ -634,10 +635,10 @@ describe("docs/32 review fixes: the clear transaction and the error strip's edge
     const d = fakeDetail();
     mountLogs(d);
     byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
-    expect(util.state.menuOpen).toBe(true);
+    expect(menuIsOpen()).toBe(true);
     byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
-    expect(util.state.menuOpen, "a second click dismisses, not reopens").toBe(false);
+    expect(menuIsOpen(), "a second click dismisses, not reopens").toBe(false);
     byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
-    expect(util.state.menuOpen, "a third click opens again").toBe(true);
+    expect(menuIsOpen(), "a third click opens again").toBe(true);
   });
 });
