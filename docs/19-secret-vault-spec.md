@@ -120,7 +120,7 @@ Infisical `infisical://…`——新一代密钥平台清一色 **URI scheme 型
 2. MCP proc：args、env（同一 `resolve_def` 路径）；
 3. 隧道：connection 的 password / keyPassphrase、rule 的字段（ssh.rs 连接时）；
 4. job：command、env 值（runner.rs 运行时）；
-5. 面板的 MCP Test 端点（/api/mcps/test，服务端展开后真连一次）；
+5. 面板的 MCP Test 端点（/api/mcpdefs/test，服务端展开后真连一次）；
 6. mcpmatch：匹配前按值比较（resolve 失败按不匹配处理）。
 
 **失败语义**：

@@ -1060,8 +1060,14 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     // Import a client `.mcp.json` (Claude Code / Cursor / OpenCode). Stdio entries become proc
     // MCPs, remote URLs become http MCPs. Names already in use get -1, -2 rather than being
     // overwritten.
+    //
+    // /api/mcpdefs/*, not /api/mcps/*: these act on a def payload, before any name exists, and
+    // a static segment under /api/mcps would shadow the {name} routes — axum prefers the
+    // static match, so an MCP actually named "test" or "import" could no longer be edited or
+    // deleted (the terminal 404 "no route for DELETE /api/mcps/test"). The Node build's router
+    // fell through by method; axum's does not, so def-level actions keep their own namespace.
     r = r.route(
-        "/api/mcps/import",
+        "/api/mcpdefs/import",
         post(
             |State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
                 let body = body.0;
@@ -1112,7 +1118,9 @@ pub fn mount(_ctx: Arc<AppContext>) -> Router<Arc<AppContext>> {
     //   answer counts as reachable — the base path itself need not serve anything — a network
     //   error does not.
     r = r.route(
-        "/api/mcps/test",
+        // Same namespace rule as import above: /api/mcpdefs/test, never a static segment
+        // under /api/mcps (an MCP named "test" would shadow its own edit/delete routes).
+        "/api/mcpdefs/test",
         post(|State(ctx): State<Arc<AppContext>>, body: crate::reply::NodeBody| async move {
             const TESTABLE_TYPES: [&str; 5] = ["mysql", "redis", "pg", "http", "rest"];
             const TEST_TIMEOUT_MS: u64 = 5000;
