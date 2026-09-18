@@ -19,7 +19,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 /* Integration: the row overflow menus (docs/18 V5) against the document-level click closer in
    connect.js. Regression (2026-09-12): the Jobs/Tunnels row ellipsis wired popupMenu WITHOUT
    stopping propagation, so the very click that opened the menu bubbled on to document, where
-   connect.js's closer saw state.menuOpen and tore the menu down — a click, no menu, no error.
+   connect.js's closer saw the menu latch and tore the menu down — a click, no menu, no error.
    The pane's own overflow button and the tunnel group-head menus never had this because they
    call ev.stopPropagation() first.
 
@@ -210,8 +210,8 @@ function click(node: FakeNode) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let mods: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let state: any;
 let tunState: any;
+let jobState: any;
 
 const JOB_RUNS_URL = "/api/jobs/env-check/runs";
 
@@ -237,8 +237,8 @@ beforeAll(async () => {
     tunnels: await import("../src/tunnels.js"),
     util: await import("../src/util.js"),
   };
-  state = mods.util.state;
   tunState = await import("../src/tunnel-state.js");
+  jobState = await import("../src/job-state.js");
 });
 
 describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
@@ -272,9 +272,9 @@ describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
     row.appendChild(actionButton("data-run"));
     row.appendChild(actionButton("data-more"));
     pane.appendChild(row);
-    // jobByName() reads state.jobs.data — the payload loadJobs stores.
-    state.jobs.data = [{ name: "env-check", cron: "5 * * * *", enabled: true, editableInV1: true }];
-    state.jobs.busy = {};
+    // jobByName() reads the jobs domain rows — the payload loadJobs stores.
+    jobState.setJobRows([{ name: "env-check", cron: "5 * * * *", enabled: true, editableInV1: true }]);
+    jobState.clearJobBusy("env-check");
     mods.jobs.wireJobs();
     return row;
   }

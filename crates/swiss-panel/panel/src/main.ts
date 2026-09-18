@@ -42,6 +42,7 @@ import { navRows, nudgeSelected } from "./sidebar.js";
 import { loadTokens } from "./views/tokens.js";
 import { knownPanelVersion, menuIsOpen, setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
 import { setTunFolds } from "./tunnel-state.js";
+import { setJobFolds } from "./job-state.js";
 
 
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
@@ -209,7 +210,7 @@ document.addEventListener("keydown", (e) => {
 
 setFoldMap(loadCollapsed("mcps")); // before the first paint, so folded groups never flash open
 setTunFolds(loadCollapsed("conns"), loadCollapsed("rules")); // same, per tunnels page scope
-state.jobs.collapsed = loadCollapsed("jobs"); // the jobs scope's own fold map (docs/20 G4)
+setJobFolds(loadCollapsed("jobs")); // the jobs scope's own fold map (docs/20 G4)
 showApp();
 // Ask for the child walk on the very first paint too, so the chip never shows a gateway-only total
 // that a poll silently corrects 6s later.

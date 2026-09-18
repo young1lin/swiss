@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-import { $, state } from "../util.js";
+import { $ } from "../util.js";
 import { jobsChipText, loadJobs } from "../polling.js";
 import { probeJobs } from "../jobs.js";
 import { pluginInventory } from "../page-registry.js";
+import { clearJobsView } from "../job-state.js";
 
 /** On a gateway without the jobs subsystem (no inventory API and a failed probe) the view says
  *  so once instead of parking on its loading placeholder — the row the tab could still show. */
@@ -34,4 +35,4 @@ export async function mount() {
 export function refresh() { return loadJobs(); }
 export function poll() { return loadJobs(true); }
 export function countText() { return jobsChipText(); }
-export function unmount() { state.jobs.data = []; state.jobs.hist = null; state.jobs.painted = ""; }
+export function unmount() { clearJobsView(); }

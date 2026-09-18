@@ -20,7 +20,7 @@
    over from the boot literal in util.ts and the per-view factories (data-view's dbFreshState,
    the tun/jobs literals) — the shape lives here now, the WHY stays with the field. */
 
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableDetail, ApiDbTableRow, ApiInfoResponse, ApiJobRow, ApiJobRunRecord, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo, DbQueryReply } from "./api.js";
+import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableDetail, ApiDbTableRow, ApiInfoResponse, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -109,19 +109,6 @@ export interface McpDetail {
   tools: KindPageState;
   resources: KindPageState;
   prompts: KindPageState;
-}
-
-/** The Jobs view's slice (util.ts boot literal; jobs.js renders it, polling.js loads it). */
-export interface JobsState {
-  data: ApiJobRow[];
-  groups: string[];
-  collapsed: Record<string, boolean>;
-  busy: Record<string, boolean>;
-  painted: string;
-  hist: { name: string; runs: ApiJobRunRecord[] } | null;
-  dragging: string | null;
-  draggingGroup: string | null;
-  pendingGroup: string | null;
 }
 
 /* The jobs plugin's config row (jobs.ts openV2Sheet): the definitions map plus the groups
@@ -379,5 +366,4 @@ export interface PanelState {
   mem: ApiMemoryInfo | null;
   info: ApiInfoResponse | null;
   db: DbState | null;
-  jobs: JobsState;
 }
