@@ -99,26 +99,26 @@ function renderDbFilters(): void {
   if (dbIsRedis()) {
     // The redis filter is a glob PATTERN fed to SCAN's MATCH — server-side, cursor-safe.
     var rf = el("div", "db-filter");
-    var ri = el("input") as FilterInput;
+    var ri = el("input");
     ri.type = "search";
     ri.placeholder = "Key pattern, e.g. session:*";
     ri.value = d!.grep || "";
     ri.style.width = "220px";
     ri.title = "SCAN MATCH pattern — applies on Enter";
     var t2: ReturnType<typeof setTimeout> | null;
-    ri.oninput = function () {
-      var v = this.value;
+    ri.oninput = (e) => {
+      var v = (e.currentTarget as HTMLInputElement).value;
       clearTimeout(t2!);
       t2 = setTimeout(function (): void { d!.grep = v; dbLoadKeys(true); }, 400);
     };
-    ri.onkeydown = function (e) {
+    ri.onkeydown = (e) => {
       e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); clearTimeout(t2!); d!.grep = this.value; dbLoadKeys(true); }
+      if (e.key === "Enter") { e.preventDefault(); clearTimeout(t2!); d!.grep = (e.currentTarget as HTMLInputElement).value; dbLoadKeys(true); }
     };
     rf.appendChild(ri);
     // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
     // it, and "" keeps the request byte-identical to the unfiltered one.
-    var rt = el("select") as FilterSelect;
+    var rt = el("select");
     rt.title = "Key type";
     [""].concat(["string", "hash", "list", "set", "zset", "stream"]).forEach(function (t: string): void {
       var o = el("option", "", t || "All types") as HTMLOptionElement;
@@ -126,7 +126,7 @@ function renderDbFilters(): void {
       o.selected = (d!.redisType || "") === t;
       rt.appendChild(o);
     });
-    rt.onchange = function (): void { d!.redisType = this.value; dbLoadKeys(true); };
+    rt.onchange = (e) => { d!.redisType = (e.currentTarget as HTMLSelectElement).value; dbLoadKeys(true); };
     rf.appendChild(rt);
     if (d!.redis && d!.redis.total != null) {
       rf.appendChild(el("span", "db-filter-hint",
@@ -140,7 +140,7 @@ function renderDbFilters(): void {
   var cols = d!.data!.columns.map(function (c: { name: string }): string { return c.name; });
   d!.filters.forEach(function (f: DbFilterTerm, i: number): void {
     var row = el("div", "db-filter");
-    var cs = el("select") as FilterSelect;
+    var cs = el("select");
     cs.title = "Column";
     cols.forEach(function (c: string): void {
       var o = el("option", "", c) as HTMLOptionElement;
@@ -151,12 +151,12 @@ function renderDbFilters(): void {
     // docs/22 closeout audit: a refused discard must leave the row as it was — assign, ask,
     // and restore (plus one re-render, because the refused ask already repainted the mutated
     // row) instead of keeping a column change the user just said no to.
-    cs.onchange = function () {
+    cs.onchange = (e) => {
       var from = f.column;
-      f.column = this.value;
+      f.column = (e.currentTarget as HTMLSelectElement).value;
       if (!dbApplyFilters()) { f.column = from; renderDbFilters(); }
     };
-    var os = el("select") as FilterSelect;
+    var os = el("select");
     os.title = "Operator";
     DB_FILTER_OPS.forEach(function (op: { op: string; label: string }): void {
       var o = el("option", "", op.label) as HTMLOptionElement;
@@ -164,9 +164,9 @@ function renderDbFilters(): void {
       o.selected = op.op === f.op;
       os.appendChild(o);
     });
-    os.onchange = function () {
+    os.onchange = (e) => {
       var from = f.op;
-      f.op = this.value;
+      f.op = (e.currentTarget as HTMLSelectElement).value;
       if (dbValueless(f.op)) {
         // nothing to type — apply at once, through the same restore-on-refusal gate
         if (!dbApplyFilters()) { f.op = from; renderDbFilters(); }
@@ -175,17 +175,17 @@ function renderDbFilters(): void {
     row.appendChild(cs);
     row.appendChild(os);
     if (!dbValueless(f.op)) {
-      var vi = el("input") as FilterInput;
+      var vi = el("input");
       vi.type = "text";
       // The list operators say what they want right in the box (docs/22 W1.2).
       vi.placeholder = f.op === "in" || f.op === "notIn" ? "1,2,3" : (f.op === "between" ? "lo,hi" : "value");
       vi.title = "Enter applies";
       vi.value = f.value as string || "";
-      vi.onkeydown = function (e) {
+      vi.onkeydown = (e) => {
         e.stopPropagation();
-        if (e.key === "Enter") { e.preventDefault(); f.value = this.value; dbApplyFilters(); }
+        if (e.key === "Enter") { e.preventDefault(); f.value = (e.currentTarget as HTMLInputElement).value; dbApplyFilters(); }
       };
-      vi.onchange = function () { f.value = this.value; };
+      vi.onchange = (e) => { f.value = (e.currentTarget as HTMLInputElement).value; };
       row.appendChild(vi);
     }
     var rm = el("button", "db-act", "✕") as HTMLButtonElement;

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { $, apiJson, el, state, toast } from "./util.js";
+import { $, apiJson, el, errText, state, toast } from "./util.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbOpenCellEditor } from "./data-cell.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -38,7 +38,7 @@ function dbGenerateSql(kind        )       {
   try {
     sql = dbTemplateSql(kind, dialect, d .schema , d .table ,
       d .data .columns.map(function (c             )         { return c.name; }), d .data .primaryKey || []);
-  } catch (err) { toast(String(err), true); return; }
+  } catch (err) { toast(errText(err), true); return; }
   dbFillConsole(sql);
 }
 

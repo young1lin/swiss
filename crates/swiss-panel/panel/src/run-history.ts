@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { $, api, apiJson, esc, icon, state, toast } from "./util.js";
+import { $, api, apiJson, errText, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, loadRevisions, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
@@ -123,7 +123,7 @@ function histOpen(): void {
     "</div>";
   document.body.appendChild(pop);
   wireHistRows(d);
-  var box = $<FilterInput>("r-hist-q");
+  var box = $<HTMLInputElement>("r-hist-q");
   if (box) {
     box.value = d.run.histQ || "";
     box.oninput = function () { queueHistSearch(d!); };
@@ -164,7 +164,7 @@ function histClose(): void {
  *  Debounced: one scan per pause in typing, not one per keystroke. */
 var histSearchTimer = null as number | null;
 function queueHistSearch(d: McpDetail): void {
-  var box = $<FilterInput>("r-hist-q");
+  var box = $<HTMLInputElement>("r-hist-q");
   d.run.histQ = box ? box.value.trim() : "";
   window.clearTimeout(histSearchTimer!);
   histSearchTimer = window.setTimeout(function () {
@@ -326,7 +326,7 @@ async function runTool(): Promise<void> {
   try {
     args = readRunArgs(toolDef);
   } catch (err) {
-    d.run.result = { ok: false, text: err.message, ms: 0 };
+    d.run.result = { ok: false, text: errText(err), ms: 0 };
     renderRunResult();
     return;
   }
@@ -557,7 +557,7 @@ function wireTabBody(d: McpDetail, m: unknown): void {
   });
   var cancel = $("e-cancel"); if (cancel) cancel.onclick = cancelEdit;
   var testBtn = $("e-test"); if (testBtn) testBtn.onclick = function () { void runConnTest("e-"); };
-  var type = $<FilterSelect>("e-type"); if (type) type.onchange = function () { changeEditType(type.value); };
+  var type = $<HTMLSelectElement>("e-type"); if (type) type.onchange = function () { changeEditType(type.value); };
 
   // Tools list → Try
   document.querySelectorAll<HTMLElement>("#tabbody [data-try]").forEach(function (b) {
@@ -593,7 +593,7 @@ function wireTabBody(d: McpDetail, m: unknown): void {
   };
   // The search box (docs/31): debounced server-side reload; Escape clears at once. Property
   // assignment, not addEventListener — renderCallsOnly may re-wire the SAME live node.
-  var q = $<FilterInput>("callsQ");
+  var q = $<HTMLInputElement>("callsQ");
   if (q) {
     q.oninput = function () {
       clearTimeout(d.callsQTimer);
@@ -658,7 +658,7 @@ function wireTabBody(d: McpDetail, m: unknown): void {
   });
 
   // Run tab
-  var toolSel = $<FilterSelect>("r-tool");
+  var toolSel = $<HTMLSelectElement>("r-tool");
   if (toolSel) {
     toolSel.onchange = function () { d.run.tool = toolSel.value; d.run.result = null; renderPane(); };
   }
@@ -778,7 +778,7 @@ function renderCallsOnly(): void {
   // live node (focus, caret, IME state) is swapped back into its place. innerHTML detaching the
   // old node blurs it — focus and caret are restored explicitly after the swap, or the next
   // keystroke after a result repaint would land nowhere.
-  var liveQ = document.getElementById("callsQ") as FilterInput & { selectionStart: number };
+  var liveQ = document.getElementById("callsQ") as HTMLInputElement & { selectionStart: number };
   var hadFocus = !!(liveQ && document.activeElement === liveQ);
   var caret = hadFocus ? liveQ.selectionStart : null;
   body.innerHTML = logsBody(d);

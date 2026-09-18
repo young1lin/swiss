@@ -56,7 +56,7 @@ function dbSuggestHide()       {
 
 /** The input hook (debounced): a caret over no word closes the list at once — a debounce that
  *  kept a dead list on screen would be a lie about what is being completed. */
-function dbSuggestOnInput()       {
+function dbSuggestOnInput(                         )       {
   clearTimeout(dbSuggestTimer );
   var d = state.db;
   if (!d || !d.conn || dbIsRedis()) { dbSuggestHide(); return; }

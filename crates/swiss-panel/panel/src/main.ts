@@ -27,7 +27,7 @@
    lives in its own module next to this one; /admin/js/* is served with no-store, so editing any of
    them reaches the browser on the next reload — no build, no gateway restart.
    ================================================================================================ */
-import { $, THEME_KEY, api, state, toast } from "./util.js";
+import { $, THEME_KEY, api, isTyping, state, toast } from "./util.js";
 import { loadCollapsed } from "./groups.js";
 import { closeSheet } from "./add-sheet.js";
 import { initSelects } from "./dropdown.js";
@@ -44,13 +44,16 @@ import { navRows, nudgeSelected } from "./sidebar.js";
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
  *  when the reload cannot destroy work: no buffered data-view edits, no open sheet, nothing
  *  being typed. Otherwise say so once and keep checking on later polls. */
+/* One-shot guard for the version toast, module-scoped (docs/37 M3): it once rode on the
+   function object itself (maybeReloadPanel._warned), typed by a Function augmentation. */
+let warnedNewPanel = false;
 function maybeReloadPanel(newVersion: string): void {
-  var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+  var typing = isTyping();
   var busy = !$("sheet").hidden || state.menuOpen;
   var edits = pageHasPendingChanges();
   if (typing || busy || edits) {
-    if (!maybeReloadPanel._warned) {
-      maybeReloadPanel._warned = true;
+    if (!warnedNewPanel) {
+      warnedNewPanel = true;
       toast("A new panel version is ready — it will load once you finish editing");
     }
     return;
@@ -166,7 +169,7 @@ window.addEventListener("beforeunload", function (e) {
 // refreshMemoryNow — a reading is not a reload button); the ONE explicit view refresh left
 // is the r key below, which keeps Data's manual reload alive.
 
-$<FilterInput>("filter").oninput = function () { state.filter = this.value; patchSidebar(); };
+$<HTMLInputElement>("filter").oninput = (e) => { state.filter = (e.currentTarget as HTMLInputElement).value; patchSidebar(); };
 initImmersive(); // the context bar's focus control: the page body can take the whole window
 
 /* Keyboard: arrows move through the sidebar, / focuses search, Escape closes the sheet/menu,
@@ -179,7 +182,7 @@ document.addEventListener("keydown", function (e) {
     if (hd && hd.run && hd.run.histOpen) { histClose(); return; }
     if (immersiveOn()) { exitImmersive(); return; }
   }
-  var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
+  var typing = isTyping();
   if (typing) return;
   if (e.key === "r") { refreshNow(); return; }
   if (!pageUsesSidebar()) return;

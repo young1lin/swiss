@@ -85,7 +85,7 @@ describe("the table-list grep debounce vs an unmounted view (docs/22 closeout au
     const grep = byId.dbGrep;
     expect(grep.oninput, "the grep box is wired").toBeTruthy();
     grep.value = "abc";
-    grep.oninput.call(grep);
+    grep.oninput({ currentTarget: grep }); // docs/37 M4: the handler reads e.currentTarget
     const fired = timers.filter((t) => t.ms === 300);
     expect(fired.length, "the input scheduled its 300ms debounce").toBeGreaterThan(0);
     const cb = fired[fired.length - 1].fn;
@@ -101,7 +101,7 @@ describe("the table-list grep debounce vs an unmounted view (docs/22 closeout au
     util.state.db!.conn = "c";
     const grep = byId.dbGrep;
     grep.value = "xyz";
-    grep.oninput.call(grep);
+    grep.oninput({ currentTarget: grep });
     const cb = timers[timers.length - 1].fn;
     expect(() => cb()).not.toThrow();
     expect(util.state.db!.grep, "the debounce still applies the grep while mounted").toBe("xyz");

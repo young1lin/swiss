@@ -252,20 +252,21 @@ function wireDbDdlSheet()       {
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeDbDdlSheet(); };
   // Enter submits the primary from any text input, the way every one-input sheet does.
   $("sheet").onkeydown = function (e               )       {
-    if (e.key === "Enter" && e.target && e.target.tagName === "INPUT" && e.target.type !== "checkbox") {
+    var tgt = e.target                           ;
+    if (e.key === "Enter" && tgt && tgt.tagName === "INPUT" && tgt.type !== "checkbox") {
       e.preventDefault();
       void commitDbDdl();
     }
   };
   var retitle = function ()       {
     if (S .dialect === "pg" && kind === "table") {
-      $("ddl-title").textContent = "New table in " + $              ("ddl-schema").value;
+      $("ddl-title").textContent = "New table in " + $                   ("ddl-schema").value;
     }
   };
   if (kind === "table") {
     if (S .dialect === "pg") {
-      $              ("ddl-schema").onchange = function ()       {
-        S .schema = this.value;
+      $                   ("ddl-schema").onchange = (e) => {
+        S .schema = (e.currentTarget                     ).value;
         retitle();
         scheduleDbDdlPreview();
       };
@@ -274,15 +275,15 @@ function wireDbDdlSheet()       {
     // The name and comment wire for EVERY dialect — mysql tables need the model write just
     // as much as pg ones (caught live: the handlers once sat in the pg-only branch and a
     // mysql sheet never left its quiet hint).
-    $             ("ddl-table").oninput = function ()       { S .table = this.value; scheduleDbDdlPreview(); };
-    $             ("ddl-table").value = S .table;
-    $             ("ddl-comment").oninput = function ()       { S .comment = this.value; scheduleDbDdlPreview(); };
-    $             ("ddl-table").focus();
+    $                  ("ddl-table").oninput = (e) => { S .table = (e.currentTarget                    ).value; scheduleDbDdlPreview(); };
+    $                  ("ddl-table").value = S .table;
+    $                  ("ddl-comment").oninput = (e) => { S .comment = (e.currentTarget                    ).value; scheduleDbDdlPreview(); };
+    $                  ("ddl-table").focus();
   } else if (kind === "index") {
     // the name input's own handler lives with the column picker it tracks (below)
-    $             ("ddl-unique").onchange = function ()       { S .unique = this.checked; scheduleDbDdlPreview(); };
-    $             ("ddl-index").focus();
-    $             ("ddl-index").select();
+    $                  ("ddl-unique").onchange = (e) => { S .unique = (e.currentTarget                    ).checked; scheduleDbDdlPreview(); };
+    $                  ("ddl-index").focus();
+    $                  ("ddl-index").select();
   }
   // Both grid kinds can grow a row — table and column alike (the wiring once sat in an
   // else branch the table kind never reached, caught live on 19998).
@@ -290,7 +291,7 @@ function wireDbDdlSheet()       {
     $                   ("ddl-add-row").onclick = function ()       {
       S .rows.push({ name: "", type: "", nullable: true, default: "", comment: "", isNew: true });
       renderDbDdlRows();
-      var last = $("ddl-grid").querySelectorAll             ("tbody tr:last-child input[data-k=name]")[0];
+      var last = $("ddl-grid").querySelectorAll                  ("tbody tr:last-child input[data-k=name]")[0];
       if (last) last.focus();
     };
   }
@@ -306,7 +307,7 @@ function renderDbDdlRows()       {
     var tr = el("tr");
     var mk = function (k        , value        , ph         )                       {
       var td = el("td");
-      var input = document.createElement("input")               ;
+      var input = document.createElement("input");
       input.type = "text";
       input.value = value == null ? "" : value;
       input.dataset.k = k;
@@ -314,8 +315,8 @@ function renderDbDdlRows()       {
       if (ph) input.placeholder = ph;
       if (k === "type") input.setAttribute("list", "ddl-types");
       if (!r.isNew) input.disabled = true;
-      input.oninput = function ()       {
-        r[k                                           ] = this.value;
+      input.oninput = (e) => {
+        r[k                                           ] = (e.currentTarget                    ).value;
         scheduleDbDdlPreview();
       };
       td.appendChild(input);
@@ -324,13 +325,13 @@ function renderDbDdlRows()       {
     tr.appendChild(mk("name", r.name, "id"));
     tr.appendChild(mk("type", r.type, "int"));
     var tdn = el("td");
-    var cb = document.createElement("input")               ;
+    var cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = !!r.nullable;
     cb.dataset.i = String(i);
     cb.setAttribute("aria-label", "Nullable");
     if (!r.isNew) cb.disabled = true;
-    cb.onchange = function ()       { r.nullable = this.checked; scheduleDbDdlPreview(); };
+    cb.onchange = (e) => { r.nullable = (e.currentTarget                    ).checked; scheduleDbDdlPreview(); };
     tdn.appendChild(cb);
     tr.appendChild(tdn);
     tr.appendChild(mk("default", r.default, "0"));
@@ -359,17 +360,18 @@ function renderDbDdlColPick()       {
   S .oldColumns.forEach(function (c             )       {
     var label = document.createElement("label");
     label.className = "check";
-    var cb = document.createElement("input")               ;
+    var cb = document.createElement("input");
     cb.type = "checkbox";
     cb.value = c.name;
-    cb.onchange = function ()       {
+    cb.onchange = (e) => {
+      const t = e.currentTarget                    ;
       var at = S .indexCols.indexOf(c.name);
-      if (this.checked && at < 0) S .indexCols.push(c.name);
-      if (!this.checked && at >= 0) S .indexCols.splice(at, 1);
+      if (t.checked && at < 0) S .indexCols.push(c.name);
+      if (!t.checked && at >= 0) S .indexCols.splice(at, 1);
       // The suggestion follows the picks until the user edits it by hand.
       if (!S .indexTouched) {
         S .indexName = dbDdlIndexSuggestion(S .table, S .indexCols);
-        var name = $             ("ddl-index");
+        var name = $                  ("ddl-index");
         if (name) name.value = S .indexName;
       }
       scheduleDbDdlPreview();
@@ -378,9 +380,9 @@ function renderDbDdlColPick()       {
     label.appendChild(document.createTextNode(c.name));
     box.appendChild(label);
   });
-  var nameInput = $             ("ddl-index");
+  var nameInput = $                  ("ddl-index");
   if (nameInput) {
-    nameInput.oninput = function ()       { S .indexName = this.value; S .indexTouched = true; scheduleDbDdlPreview(); };
+    nameInput.oninput = (e) => { S .indexName = (e.currentTarget                    ).value; S .indexTouched = true; scheduleDbDdlPreview(); };
   }
 }
 

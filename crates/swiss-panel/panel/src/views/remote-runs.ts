@@ -29,7 +29,7 @@
    row's body follows its output on a short timer while it is open; when the run ends the
    next poll moves the row from the live list into the record with the same run id.
    ================================================================================================ */
-import { $, apiJson, emptyHtml, esc, icon, toast, whenLabel } from "../util.js";
+import { $, apiJson, emptyHtml, esc, icon, targetEl, toast, whenLabel } from "../util.js";
 
 var PAGE = 20;
 var LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
@@ -282,7 +282,7 @@ function render(): void {
     "</div>";
   $("pane").innerHTML = head;
   paintList();
-  var sel = $<FilterSelect>("rrTarget");
+  var sel = $<HTMLSelectElement>("rrTarget");
   if (sel) sel.onchange = function () {
     target = sel.value;
     cursors = [null];
@@ -332,15 +332,15 @@ export async function mount() {
   if (!(await load())) return;
   render();
   $("pane").onclick = function (event: MouseEvent): void {
-    var tog = event.target!.closest!<HTMLElement>("[data-rtog]");
+    var tog = targetEl(event)?.closest<HTMLElement>("[data-rtog]");
     if (tog) { toggle(Number(tog.dataset.rtog)); return; }
-    var more = event.target!.closest!<HTMLElement>("[data-rmore]");
+    var more = targetEl(event)?.closest<HTMLElement>("[data-rmore]");
     if (more) { void loadBody(Number(more.dataset.rmore), true); return; }
-    var cancel = event.target!.closest!<HTMLElement>("[data-rcancel]");
+    var cancel = targetEl(event)?.closest<HTMLElement>("[data-rcancel]");
     if (cancel) { void cancelRun(Number(cancel.dataset.rcancel)); return; }
-    if (event.target!.closest!("#rrClear")) { void clearAll(); return; }
-    if (event.target!.closest!("#rrPrev")) { void step(-1); return; }
-    if (event.target!.closest!("#rrNext")) { void step(1); }
+    if (targetEl(event)?.closest("#rrClear")) { void clearAll(); return; }
+    if (targetEl(event)?.closest("#rrPrev")) { void step(-1); return; }
+    if (targetEl(event)?.closest("#rrNext")) { void step(1); }
   };
 }
 

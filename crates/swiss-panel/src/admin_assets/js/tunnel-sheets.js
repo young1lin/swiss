@@ -102,7 +102,7 @@ function openConnSheet(def                               )       {
 
   var paint = async function ()                {
     var keys = await loadKeys();
-    var isKey = $              ("c-auth").value === "key";
+    var isKey = $                   ("c-auth").value === "key";
     $("c-auth-fields").innerHTML = isKey
       ? '<div class="with-btn">' +
           '<label class="field"><span>Private key path</span><input id="c-keypath" value="' + esc(d.keyPath || "") +
@@ -114,17 +114,17 @@ function openConnSheet(def                               )       {
         '<div class="hint">Defaults to <code>' + esc(keys.defaultPath) + "</code> when left empty.</div>"
       : '<label class="field"><span>Password</span>' +
           '<input id="c-pass" type="password" value="' + esc(d.password || "") + '" placeholder="Enter the password" autocomplete="off"></label>';
-    if ($("c-browse")) $              ("c-browse").onclick = openKeyPicker;
+    if ($("c-browse")) $                   ("c-browse").onclick = openKeyPicker;
   };
   void paint();
-  $              ("c-auth").onchange = function ()       { void paint(); };
-  if ($("g-sel")) $              ("g-sel").onchange = function ()       {
-    $("t-title").textContent = "New SSH connection in " + $              ("g-sel").value;
+  $                   ("c-auth").onchange = function ()       { void paint(); };
+  if ($("g-sel")) $                   ("g-sel").onchange = function ()       {
+    $("t-title").textContent = "New SSH connection in " + $                   ("g-sel").value;
   };
-  $              ("c-cancel").onclick = closeSheet;
-  $              ("c-save").onclick = function ()       { void saveConn(def ); };
+  $                   ("c-cancel").onclick = closeSheet;
+  $                   ("c-save").onclick = function ()       { void saveConn(def ); };
   $("sheet").onclick = function (e            )       { if (e.target === $("sheet")) closeSheet(); };
-  $             ("c-name").focus();
+  $                  ("c-name").focus();
 }
 
 /**
@@ -133,7 +133,7 @@ function openConnSheet(def                               )       {
  * reach any folder the gateway process can read — not just ~/.ssh. Folders navigate; files pick.
  */
 async function openKeyPicker()                {
-  var target = $             ("c-keypath");
+  var target = $                  ("c-keypath");
   // Start in the current key's folder if one is set, otherwise let the backend default to ~/.ssh.
   var cur = target.value && target.value.trim() ? target.value.trim().replace(/[/\\][^/\\]*$/, "") : "";
 
@@ -171,9 +171,9 @@ async function openKeyPicker()                {
       '<div class="sheet-foot"><button class="btn" data-close>Cancel</button></div>';
     picker.querySelector                   ("[data-close]") .onclick = close;
     if (j.parent) picker.querySelector                   ("#b-up") .onclick = function ()       { cur = j .parent ; void render(); };
-    var go = function ()       { cur = $             ("b-path").value.trim(); void render(); };
+    var go = function ()       { cur = $                  ("b-path").value.trim(); void render(); };
     picker.querySelector                   ("#b-go") .onclick = go;
-    picker.querySelector             ("#b-path") .onkeydown = function (ev               )       { if (ev.key === "Enter") go(); };
+    picker.querySelector                  ("#b-path") .onkeydown = function (ev               )       { if (ev.key === "Enter") go(); };
     Array.prototype.forEach.call(picker.querySelectorAll("[data-dir]"), function (b             )       {
       b.onclick = function ()       { cur = b.getAttribute("data-dir") ; void render(); };
     });
@@ -185,19 +185,19 @@ async function openKeyPicker()                {
 }
 
 async function saveConn(existing                               )                {
-  var authType = $              ("c-auth").value;
+  var authType = $                   ("c-auth").value;
   var body                          = {
-    name: $             ("c-name").value.trim(),
-    host: $             ("c-host").value.trim(),
-    port: Number($             ("c-port").value) || 22,
-    username: $             ("c-user").value.trim(),
+    name: $                  ("c-name").value.trim(),
+    host: $                  ("c-host").value.trim(),
+    port: Number($                  ("c-port").value) || 22,
+    username: $                  ("c-user").value.trim(),
     authType: authType,
   };
   if (authType === "key") {
-    body.keyPath = $             ("c-keypath").value.trim() || (state.tun.keys && state.tun.keys.defaultPath) || "";
-    body.passphrase = $             ("c-pass").value;
+    body.keyPath = $                  ("c-keypath").value.trim() || (state.tun.keys && state.tun.keys.defaultPath) || "";
+    body.passphrase = $                  ("c-pass").value;
   } else {
-    body.password = $             ("c-pass").value;
+    body.password = $                  ("c-pass").value;
   }
   // docs/27 §4: the Advanced fields are optional — a key rides the payload only while the
   // sheet holds a value; empty means unset, and clearing a stored value sends nothing (the
@@ -205,17 +205,17 @@ async function saveConn(existing                               )                
   // both land as "no value"). An untouched proxyPassword input still carries the mask
   // sentinel the row brought in; echoing it back unchanged is what keeps the stored secret
   // (unmask_conn restores it server-side), exactly the MCP sheet's sentinel habit.
-  var proxy = $             ("c-proxy").value.trim();
+  var proxy = $                  ("c-proxy").value.trim();
   if (proxy) body.proxy = proxy;
-  var proxyUser = $             ("c-proxy-user").value.trim();
+  var proxyUser = $                  ("c-proxy-user").value.trim();
   if (proxyUser) body.proxyUsername = proxyUser;
-  var proxyPass = $             ("c-proxy-pass").value;
+  var proxyPass = $                  ("c-proxy-pass").value;
   if (proxyPass) body.proxyPassword = proxyPass;
-  var jump = $              ("c-jump").value;
+  var jump = $                   ("c-jump").value;
   if (jump) body.jump = jump;
   // Read the sheet's Group before closeSheet wipes it: a create lands in the picked group
   // (remembered as this scope's last-used), the same pre-join the MCP sheet does.
-  var picked = $("g-sel") ? $              ("g-sel").value : null;
+  var picked = $("g-sel") ? $                   ("g-sel").value : null;
   // api() rather than apiJson: a refused save (the §1.3 family — a bad proxy URL, a jump
   // cycle, proxy and jump together) must land INLINE beside the fields that caused it, not
   // only in a toast, and the sheet stays open so the fix is a keystroke away.
@@ -293,22 +293,22 @@ function openRuleSheet(def                         )       {
   paintMcpPicks(r.mcps || [], []);
   // For a new rule, the suggestion is the point: type 5433 and the matching MCP checks itself.
   var suggest = async function ()                {
-    var port = Number($             ("r-lport").value);
+    var port = Number($                  ("r-lport").value);
     if (!port) return;
     var j = await apiJson                           ("/api/tunnels/suggest/" + port);
     if (!j) return;
     var checked = editing ? readMcpPicks() : j.mcps            ;
     paintMcpPicks(checked, j.mcps            );
   };
-  if (!editing) $             ("r-lport").onchange = suggest;
+  if (!editing) $                  ("r-lport").onchange = suggest;
   else void suggest(); // editing: keep the stored choice, but label what matches
-  if ($("g-sel")) $              ("g-sel").onchange = function ()       {
-    $("t-title").textContent = "New forwarding rule in " + $              ("g-sel").value;
+  if ($("g-sel")) $                   ("g-sel").onchange = function ()       {
+    $("t-title").textContent = "New forwarding rule in " + $                   ("g-sel").value;
   };
-  $              ("r-cancel").onclick = closeSheet;
-  $              ("r-save").onclick = function ()       { void saveRule(def ); };
+  $                   ("r-cancel").onclick = closeSheet;
+  $                   ("r-save").onclick = function ()       { void saveRule(def ); };
   $("sheet").onclick = function (e            )       { if (e.target === $("sheet")) closeSheet(); };
-  $             ("r-name").focus();
+  $                  ("r-name").focus();
 }
 
 function paintMcpPicks(checked          , suggested          )       {
@@ -335,18 +335,18 @@ function readMcpPicks()           {
 
 async function saveRule(existing                  )                {
   var body = {
-    name: $             ("r-name").value.trim(),
-    connectionId: $              ("r-conn").value,
-    localPort: Number($             ("r-lport").value),
-    targetHost: $             ("r-thost").value.trim() || "127.0.0.1",
-    targetPort: Number($             ("r-tport").value),
-    remark: $             ("r-remark").value.trim(),
-    autoReconnect: $             ("r-auto").checked,
-    reconnectInterval: Number($             ("r-interval").value) || 10,
+    name: $                  ("r-name").value.trim(),
+    connectionId: $                   ("r-conn").value,
+    localPort: Number($                  ("r-lport").value),
+    targetHost: $                  ("r-thost").value.trim() || "127.0.0.1",
+    targetPort: Number($                  ("r-tport").value),
+    remark: $                  ("r-remark").value.trim(),
+    autoReconnect: $                  ("r-auto").checked,
+    reconnectInterval: Number($                  ("r-interval").value) || 10,
     mcps: readMcpPicks(),
   };
   if (!body.targetPort) body.targetPort = body.localPort;
-  var picked = $("g-sel") ? $              ("g-sel").value : null;
+  var picked = $("g-sel") ? $                   ("g-sel").value : null;
   var j = existing
     ? await apiJson                       ("/api/tunnels/rules/" + encodeURIComponent(existing.id), { method: "PUT", body: JSON.stringify(body) })
     : await apiJson                       ("/api/tunnels/rules", { method: "POST", body: JSON.stringify(body) });

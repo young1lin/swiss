@@ -30,7 +30,7 @@
    folder names, not credentials — they are the one thing about a secret a listing may say
    beyond its name.
    ================================================================================================ */
-import { $, apiJson, emptyHtml, esc, icon, state, toast } from "../util.js";
+import { $, apiJson, emptyHtml, esc, icon, state, targetEl, toast } from "../util.js";
 import { copyText } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, groupOf as makeGroupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
@@ -115,9 +115,9 @@ function skCfg()                   {
     onAdd: function (g        )       {
       // The + points at the inline form: pick the group it names and put the cursor in the
       // name box — the sheet scopes open a modal; this page's flow was always inline.
-      var sel = $              ("skGroup");
+      var sel = $                   ("skGroup");
       if (sel) sel.value = g;
-      $             ("skName").focus();
+      $                  ("skName").focus();
     },
     reload: function ()                { return loadSecrets().then(paintGroups); },
     render: paintGroups,
@@ -199,7 +199,7 @@ function patch()       {
  * next store would assign into a 400. The selection survives while its group lives; a dead
  * one falls back to the scope's last-used, else the first group. */
 function refreshGroupSelect()       {
-  var sel = $              ("skGroup");
+  var sel = $                   ("skGroup");
   if (!sel) return;
   var names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
   var wanted = sel.value && names.indexOf(sel.value) >= 0
@@ -247,7 +247,7 @@ function render()       {
 
 function wire()       {
   $("pane").onclick = async function (event            )                {
-    var hit = event.target && event.target.closest ? event.target.closest             ("[data-skcopy],[data-skmore],#skStore,#skNewGroup") : null;
+    var hit = targetEl(event)?.closest             ("[data-skcopy],[data-skmore],#skStore,#skNewGroup");
     if (!hit) return;
     if (hit.id === "skStore") { await storeSecret(); return; }
     if (hit.id === "skNewGroup") {
@@ -273,11 +273,11 @@ function wire()       {
  *  The selected group follows the name in one family write — an older gateway without the
  *  family keeps the first-group default, which is where the select's only option lands. */
 async function storeSecret()                {
-  var name = ($             ("skName").value || "").trim();
-  var value = $             ("skValue").value || "";
+  var name = ($                  ("skName").value || "").trim();
+  var value = $                  ("skValue").value || "";
   if (!name || !value) { toast("a secret needs both a name and a value", true); return; }
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) { toast("names are lowercase kebab: a-z, 0-9, dashes", true); return; }
-  var picked = $("skGroup") ? $              ("skGroup").value : null;
+  var picked = $("skGroup") ? $                   ("skGroup").value : null;
   var j = await apiJson         ("/api/secrets/" + encodeURIComponent(name), {
     method: "PUT",
     body: JSON.stringify({ value: value, rev: secrets.rev }),
@@ -287,7 +287,7 @@ async function storeSecret()                {
     rememberGroup("secrets", picked);
     await assignMember("secrets", name, picked);
   }
-  $             ("skValue").value = "";
+  $                  ("skValue").value = "";
   await loadSecrets();
   paintGroups();
   toast("stored — reference it as ${secret://" + name + "}");

@@ -15,11 +15,10 @@
  */
 
 /* The terminal view's own ambient shapes (docs/36 D6/D7): the per-session model
-   views/terminal.ts wires, the vendored-package bundle its load() caches, and the
-   narrow surface augmentations its zero-token reads need - the fit addon's
-   proposeDimensions (types/vendor.d.ts declares only what an earlier pass called), the
-   legacy webkitAudioContext spelling beep() falls back to, and the paintTabs.last memo,
-   which rides the Function-property idiom types/dom.d.ts established for toast._t. */
+   views/terminal.ts wires and the vendored-package bundle its load() caches. The
+   surface augmentations this file once carried (Window.webkitAudioContext, the
+   Function-property memo) are retired - docs/37 M3 - in favour of local casts and
+   module-scoped state in views/terminal.ts. */
 
 /** One wired session. The literals in select()/openSession() build the core fields; the
  *  rest join at their first real value (wireTerminal, connect, paintJump) and are
@@ -70,20 +69,6 @@ interface TerminalPackages {
    nothing when the terminal is not measurable yet. */
 interface XtermFitAddon {
   proposeDimensions(): { cols: number; rows: number } | undefined;
-}
-
-/* The legacy vendor spelling of the AudioContext global beep() tries second. Declared
-   required so the "window.AudioContext || window.webkitAudioContext" pick stays one
-   constructor type; the || keeps the runtime honest either way. */
-interface Window {
-  webkitAudioContext: typeof AudioContext;
-}
-
-/* paintTabs memoizes its last markup on ITSELF (paintTabs.last) and resets it to null
-   whenever the bar's DOM was replaced out from under it - the same module-scoped
-   singleton idiom types/dom.d.ts describes for toast._t. */
-interface Function {
-  last?: string | null;
 }
 
 /* --- the Local shell settings sheet (views/terminal-settings.ts) -------------------------------- */

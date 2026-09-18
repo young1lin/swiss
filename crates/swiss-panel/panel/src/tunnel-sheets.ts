@@ -102,7 +102,7 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
 
   var paint = async function (): Promise<void> {
     var keys = await loadKeys();
-    var isKey = $<FilterSelect>("c-auth").value === "key";
+    var isKey = $<HTMLSelectElement>("c-auth").value === "key";
     $("c-auth-fields").innerHTML = isKey
       ? '<div class="with-btn">' +
           '<label class="field"><span>Private key path</span><input id="c-keypath" value="' + esc(d.keyPath || "") +
@@ -114,17 +114,17 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
         '<div class="hint">Defaults to <code>' + esc(keys.defaultPath) + "</code> when left empty.</div>"
       : '<label class="field"><span>Password</span>' +
           '<input id="c-pass" type="password" value="' + esc(d.password || "") + '" placeholder="Enter the password" autocomplete="off"></label>';
-    if ($("c-browse")) $<ActionButton>("c-browse").onclick = openKeyPicker;
+    if ($("c-browse")) $<HTMLButtonElement>("c-browse").onclick = openKeyPicker;
   };
   void paint();
-  $<FilterSelect>("c-auth").onchange = function (): void { void paint(); };
-  if ($("g-sel")) $<FilterSelect>("g-sel").onchange = function (): void {
-    $("t-title").textContent = "New SSH connection in " + $<FilterSelect>("g-sel").value;
+  $<HTMLSelectElement>("c-auth").onchange = function (): void { void paint(); };
+  if ($("g-sel")) $<HTMLSelectElement>("g-sel").onchange = function (): void {
+    $("t-title").textContent = "New SSH connection in " + $<HTMLSelectElement>("g-sel").value;
   };
-  $<ActionButton>("c-cancel").onclick = closeSheet;
-  $<ActionButton>("c-save").onclick = function (): void { void saveConn(def!); };
+  $<HTMLButtonElement>("c-cancel").onclick = closeSheet;
+  $<HTMLButtonElement>("c-save").onclick = function (): void { void saveConn(def!); };
   $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
-  $<FilterInput>("c-name").focus();
+  $<HTMLInputElement>("c-name").focus();
 }
 
 /**
@@ -133,7 +133,7 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
  * reach any folder the gateway process can read — not just ~/.ssh. Folders navigate; files pick.
  */
 async function openKeyPicker(): Promise<void> {
-  var target = $<FilterInput>("c-keypath");
+  var target = $<HTMLInputElement>("c-keypath");
   // Start in the current key's folder if one is set, otherwise let the backend default to ~/.ssh.
   var cur = target.value && target.value.trim() ? target.value.trim().replace(/[/\\][^/\\]*$/, "") : "";
 
@@ -171,9 +171,9 @@ async function openKeyPicker(): Promise<void> {
       '<div class="sheet-foot"><button class="btn" data-close>Cancel</button></div>';
     picker.querySelector<HTMLButtonElement>("[data-close]")!.onclick = close;
     if (j.parent) picker.querySelector<HTMLButtonElement>("#b-up")!.onclick = function (): void { cur = j!.parent!; void render(); };
-    var go = function (): void { cur = $<FilterInput>("b-path").value.trim(); void render(); };
+    var go = function (): void { cur = $<HTMLInputElement>("b-path").value.trim(); void render(); };
     picker.querySelector<HTMLButtonElement>("#b-go")!.onclick = go;
-    picker.querySelector<FilterInput>("#b-path")!.onkeydown = function (ev: KeyboardEvent): void { if (ev.key === "Enter") go(); };
+    picker.querySelector<HTMLInputElement>("#b-path")!.onkeydown = function (ev: KeyboardEvent): void { if (ev.key === "Enter") go(); };
     Array.prototype.forEach.call(picker.querySelectorAll("[data-dir]"), function (b: HTMLElement): void {
       b.onclick = function (): void { cur = b.getAttribute("data-dir")!; void render(); };
     });
@@ -185,19 +185,19 @@ async function openKeyPicker(): Promise<void> {
 }
 
 async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> {
-  var authType = $<FilterSelect>("c-auth").value;
+  var authType = $<HTMLSelectElement>("c-auth").value;
   var body: Record<string, unknown> = {
-    name: $<FilterInput>("c-name").value.trim(),
-    host: $<FilterInput>("c-host").value.trim(),
-    port: Number($<FilterInput>("c-port").value) || 22,
-    username: $<FilterInput>("c-user").value.trim(),
+    name: $<HTMLInputElement>("c-name").value.trim(),
+    host: $<HTMLInputElement>("c-host").value.trim(),
+    port: Number($<HTMLInputElement>("c-port").value) || 22,
+    username: $<HTMLInputElement>("c-user").value.trim(),
     authType: authType,
   };
   if (authType === "key") {
-    body.keyPath = $<FilterInput>("c-keypath").value.trim() || (state.tun.keys && state.tun.keys.defaultPath) || "";
-    body.passphrase = $<FilterInput>("c-pass").value;
+    body.keyPath = $<HTMLInputElement>("c-keypath").value.trim() || (state.tun.keys && state.tun.keys.defaultPath) || "";
+    body.passphrase = $<HTMLInputElement>("c-pass").value;
   } else {
-    body.password = $<FilterInput>("c-pass").value;
+    body.password = $<HTMLInputElement>("c-pass").value;
   }
   // docs/27 §4: the Advanced fields are optional — a key rides the payload only while the
   // sheet holds a value; empty means unset, and clearing a stored value sends nothing (the
@@ -205,17 +205,17 @@ async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> 
   // both land as "no value"). An untouched proxyPassword input still carries the mask
   // sentinel the row brought in; echoing it back unchanged is what keeps the stored secret
   // (unmask_conn restores it server-side), exactly the MCP sheet's sentinel habit.
-  var proxy = $<FilterInput>("c-proxy").value.trim();
+  var proxy = $<HTMLInputElement>("c-proxy").value.trim();
   if (proxy) body.proxy = proxy;
-  var proxyUser = $<FilterInput>("c-proxy-user").value.trim();
+  var proxyUser = $<HTMLInputElement>("c-proxy-user").value.trim();
   if (proxyUser) body.proxyUsername = proxyUser;
-  var proxyPass = $<FilterInput>("c-proxy-pass").value;
+  var proxyPass = $<HTMLInputElement>("c-proxy-pass").value;
   if (proxyPass) body.proxyPassword = proxyPass;
-  var jump = $<FilterSelect>("c-jump").value;
+  var jump = $<HTMLSelectElement>("c-jump").value;
   if (jump) body.jump = jump;
   // Read the sheet's Group before closeSheet wipes it: a create lands in the picked group
   // (remembered as this scope's last-used), the same pre-join the MCP sheet does.
-  var picked = $("g-sel") ? $<FilterSelect>("g-sel").value : null;
+  var picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
   // api() rather than apiJson: a refused save (the §1.3 family — a bad proxy URL, a jump
   // cycle, proxy and jump together) must land INLINE beside the fields that caused it, not
   // only in a toast, and the sheet stays open so the fix is a keystroke away.
@@ -293,22 +293,22 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
   paintMcpPicks(r.mcps || [], []);
   // For a new rule, the suggestion is the point: type 5433 and the matching MCP checks itself.
   var suggest = async function (): Promise<void> {
-    var port = Number($<FilterInput>("r-lport").value);
+    var port = Number($<HTMLInputElement>("r-lport").value);
     if (!port) return;
     var j = await apiJson<ApiTunnelsSuggestResponse>("/api/tunnels/suggest/" + port);
     if (!j) return;
     var checked = editing ? readMcpPicks() : j.mcps as string[];
     paintMcpPicks(checked, j.mcps as string[]);
   };
-  if (!editing) $<FilterInput>("r-lport").onchange = suggest;
+  if (!editing) $<HTMLInputElement>("r-lport").onchange = suggest;
   else void suggest(); // editing: keep the stored choice, but label what matches
-  if ($("g-sel")) $<FilterSelect>("g-sel").onchange = function (): void {
-    $("t-title").textContent = "New forwarding rule in " + $<FilterSelect>("g-sel").value;
+  if ($("g-sel")) $<HTMLSelectElement>("g-sel").onchange = function (): void {
+    $("t-title").textContent = "New forwarding rule in " + $<HTMLSelectElement>("g-sel").value;
   };
-  $<ActionButton>("r-cancel").onclick = closeSheet;
-  $<ActionButton>("r-save").onclick = function (): void { void saveRule(def!); };
+  $<HTMLButtonElement>("r-cancel").onclick = closeSheet;
+  $<HTMLButtonElement>("r-save").onclick = function (): void { void saveRule(def!); };
   $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
-  $<FilterInput>("r-name").focus();
+  $<HTMLInputElement>("r-name").focus();
 }
 
 function paintMcpPicks(checked: string[], suggested: string[]): void {
@@ -335,18 +335,18 @@ function readMcpPicks(): string[] {
 
 async function saveRule(existing: ApiTunnelRuleRow): Promise<void> {
   var body = {
-    name: $<FilterInput>("r-name").value.trim(),
-    connectionId: $<FilterSelect>("r-conn").value,
-    localPort: Number($<FilterInput>("r-lport").value),
-    targetHost: $<FilterInput>("r-thost").value.trim() || "127.0.0.1",
-    targetPort: Number($<FilterInput>("r-tport").value),
-    remark: $<FilterInput>("r-remark").value.trim(),
-    autoReconnect: $<FilterInput>("r-auto").checked,
-    reconnectInterval: Number($<FilterInput>("r-interval").value) || 10,
+    name: $<HTMLInputElement>("r-name").value.trim(),
+    connectionId: $<HTMLSelectElement>("r-conn").value,
+    localPort: Number($<HTMLInputElement>("r-lport").value),
+    targetHost: $<HTMLInputElement>("r-thost").value.trim() || "127.0.0.1",
+    targetPort: Number($<HTMLInputElement>("r-tport").value),
+    remark: $<HTMLInputElement>("r-remark").value.trim(),
+    autoReconnect: $<HTMLInputElement>("r-auto").checked,
+    reconnectInterval: Number($<HTMLInputElement>("r-interval").value) || 10,
     mcps: readMcpPicks(),
   };
   if (!body.targetPort) body.targetPort = body.localPort;
-  var picked = $("g-sel") ? $<FilterSelect>("g-sel").value : null;
+  var picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
   var j = existing
     ? await apiJson<ApiTunnelRuleMutation>("/api/tunnels/rules/" + encodeURIComponent(existing.id), { method: "PUT", body: JSON.stringify(body) })
     : await apiJson<ApiTunnelRuleMutation>("/api/tunnels/rules", { method: "POST", body: JSON.stringify(body) });

@@ -14,20 +14,17 @@
  * limitations under the License.
  */
 
-/* Small cross-module DOM shapes, ambient globals on purpose (docs/36 D6/D9). These are
+/* Small cross-module DOM shapes, ambient globals on purpose (docs/36 D6). These are
    panel-side conventions, not API shapes - menu items and empty states are built by one
-   module and read by many, so the shape lives where both sides can see it. */
+   module and read by many, so the shape lives where both sides can see it. The built-in
+   augmentations this file once carried (Function, EventTarget, RegExp) are retired by
+   docs/37 M3: handlers read e.currentTarget, guards narrow with instanceof, and the
+   module-scoped singletons live in their modules now. */
 
 /** One popupMenu row - menu.ts:25. The union is load-bearing: a separator is { sep: true }
  *  with NO label/fn (tunnels.ts:256 was the strict-mode error that proved it), an action
  *  is label+fn with optional styling flags. pick/on drive the checked-mark row styles
  *  (danger reds the item); menu.ts never reads a field the arm does not carry. */
-/* The grid's column headers: oncontextmenu redeclared without lib.dom's this-param so the
-   handler's this is the th itself (popupMenu anchors on this.getBoundingClientRect). */
-interface MenuTh extends HTMLElement {
-  oncontextmenu: ((ev: MouseEvent) => unknown) | null;
-}
-
 interface MenuItemAction {
   label: string;
   fn: (ev?: MouseEvent) => void;
@@ -70,18 +67,6 @@ interface PageModule {
 /** One empty state - util.ts emptyHtml opts (docs/18 V7): every view's nothing-here is
  *  this shape. action, when present, renders the ghost button and names the data-empty-action
  *  the owning view wires. */
-/** util.ts's toast keeps its auto-hide timer on ITSELF (toast._t) - the Node-era idiom
- *  for a module-scoped singleton timer. Describing it as a property of Function is the one
- *  zero-token way: a module-side interface declaration would emit a stray semicolon through
- *  ts-blank-space, and docs/36 D9 holds the emitted bytes to whitespace-identical. _t is
- *  unusual enough that this augmentation describes exactly one thing in the tree. */
-interface Function {
-  _t?: ReturnType<typeof setTimeout>;
-  /* main.ts stamps one-shot guards on two module functions; the type is Function so the
-   *  property is visible without changing the call sites (the toast._t pattern above). */
-  _warned?: boolean;
-}
-
 /** One page descriptor as the registry stores it after valid(): the server rows plus the
  *  client-side pages, order normalised to a finite number. pluginId/path/sidebar/layout ride
  *  when the contributing side sent them (ApiPluginPage's shape); the index signature keeps
@@ -172,24 +157,6 @@ interface GroupCfg<Row> {
   filtered?: boolean;
 }
 
-/* connect.ts's document-click guard probes e.target.closest; lib.dom types a click target
- *  as bare EventTarget, which declares no closest, and D9 forbids the parenthesised cast
- *  an in-place fix would need. Optional so concrete elements keep their required method. */
-interface EventTarget {
-  /* Generic form so a call site can name the row kind it queried
-   *  (target.closest<HTMLElement>(...)) and read dataset/handlers off it with no
-   *  parenthesised cast: ts-blank-space emits parentheses for (x as T).member, which the
-   *  line-for-line emit gate forbids. Optional: many targets have no closest at all. */
-  closest?: { <E extends Element = Element>(selector: string): E | null };
-  /* The DDL sheet's Enter guard reads tagName/type off the (untyped) key event's target.
-   *  tagName stays string-optional (Element narrows it back to required); type must be
-   *  unknown because SVG elements declare their own required `type` members, which an
-   *  optional string here would clash with (interface merges need assignable members). */
-  tagName?: string;
-  type?: unknown;
-}
-
-
 /* A JSON-tree node (logs.ts buildJsonTree/jtNode): an object whose every value is more
  *  tree material - arrays arrive the same way, narrowed by Array.isArray at the branch.
  *  The index signature is what lets the tree index val[k] with no parenthesised cast. */
@@ -202,49 +169,6 @@ interface JtBox {
  *  kind keys, plus the index the forEach writes through. Cast back to McpDetail at the
  *  state assignment, once all three are in. */
 type FreshDetail = Omit<McpDetail, "tools" | "resources" | "prompts"> & { [key: string]: unknown };
-
-/* The search box's oninput reads this.value in place (main.ts). The DOM declares oninput
- *  on GlobalEventHandlers with a this-param that has no value, and every in-place fix is a
- *  token change docs/36 D9 forbids; this override drops the this-param so the handler's
- *  this is loosely typed (see noImplicitThis in tsconfig) and the read stands as written. */
-interface FilterInput extends HTMLInputElement {
-  oninput: ((ev: Event) => unknown) | null;
-  /* shiftKey: the grid's select-boxes read it from the change event (Shift-click ranges);
-     optional so the redeclaration stays assignable to HTMLElement's own handler type. */
-  onchange: ((ev: Event & { shiftKey?: boolean }) => unknown) | null;
-  onkeydown: ((ev: KeyboardEvent) => unknown) | null;
-}
-
-/* The console's textarea: handlers read this.value / this.scrollTop inside oninput, onscroll
-   and onkeydown - the same redeclare-without-this-param trick as FilterInput. */
-interface FilterTextArea extends HTMLTextAreaElement {
-  oninput: ((ev: Event) => unknown) | null;
-  onscroll: ((ev: Event) => unknown) | null;
-  onkeydown: ((ev: KeyboardEvent) => unknown) | null;
-}
-
-/* A button whose click handler mutates the button itself (this.disabled / this.textContent):
-   redeclaring onclick without the GlobalEventHandlers this-param restores this-typing. */
-interface ActionButton extends HTMLButtonElement {
-  /* ev optional, no this-param: several sheets invoke a wired handler bare as a "run the
-   *  primary now" shorthand (jobs.ts save path), and with noImplicitThis off the handlers
-   *  that read `this` (menu geometry) stay unchecked any - lib's own onclick declaration
-   *  would force this: GlobalEventHandlers, which has no getBoundingClientRect and breaks
-   *  assignability both ways. */
-  onclick: ((ev?: MouseEvent) => unknown) | null;
-}
-
-/* The same this-value read on selects (data-filters.ts column/operator pickers). */
-interface FilterSelect extends HTMLSelectElement {
-  onchange: ((ev: Event) => unknown) | null;
-}
-
-/* main.ts's typing guard tests `document.activeElement && document.activeElement.tagName`,
- *  a string | null; the runtime coerces null to "null" and the pattern still answers no,
- *  so the panel-side overload accepts what the expression actually is. */
-interface RegExp {
-  test(s: string | null): boolean;
-}
 
 /** One form field's schema (fields.ts TYPE_FIELDS rows): k is the def key, bool/num/area/
  *  kv/json pick the input kind, half pairs it into two columns, def is the checkbox default. */

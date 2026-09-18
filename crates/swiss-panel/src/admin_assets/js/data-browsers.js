@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { $, apiJson, dbReqGuard, el, emptyHtml, esc, icon, state, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyHtml, errText, esc, icon, state, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -306,7 +306,7 @@ function dbRedisTtl(v                 )              {
   btn.type = "button";
   btn.title = "Change the TTL — Enter applies EXPIRE, empty removes it (PERSIST)";
   btn.onclick = function () {
-    var input = el("input", "db-ttl-in")               ;
+    var input = el("input", "db-ttl-in")                    ;
     input.value = v.ttl  < 0 ? "" : String(v.ttl);
     input.placeholder = "seconds";
     btn.replaceWith(input);
@@ -551,7 +551,7 @@ async function dbRedisCommit()                {
   try {
     cmds = dbRedisCommands(d .redisKey , b.type, b);
   } catch (err) {
-    toast(String(err && err.message ? err.message : err), true);
+    toast(errText(err), true);
     return;
   }
   if (!cmds.length) return;
@@ -616,7 +616,7 @@ function dbRedisKeySheet(cfg                                                    
         '<button class="btn primary" id="dbKeyGo">' + esc(cfg.primary) + "</button></div>" +
     "</div>";
   $("sheet").hidden = false;
-  var input = $             ("dbKeyIn");
+  var input = $                  ("dbKeyIn");
   input.value = cfg.value || "";
   input.placeholder = cfg.placeholder || "";
   $("dbKeyCancel").onclick = closeSheet;

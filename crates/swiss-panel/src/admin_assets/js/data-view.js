@@ -220,14 +220,15 @@ function renderDbView()       {
       '<div class="db-bar" id="dbBar" hidden></div>' +
     '</div>';
   pane.appendChild(root);
-  $              ("dbConn").onchange = function ()       {
-    if (this.value === state.db .conn) return;
-    if (!dbOkToDrop()) { this.value = state.db .conn; return; }
+  $                   ("dbConn").onchange = (e) => {
+    const t = e.currentTarget                     ;
+    if (t.value === state.db .conn) return;
+    if (!dbOkToDrop()) { t.value = state.db .conn || ""; return; }
     // The Activity page belongs to ONE connection's server; the switch leaves it behind —
     // restore the normal pane (and stop its poll) before the state it reads changes.
     if (state.db .activity) dbActivityClose();
     var d = state.db;
-    d .conn = this.value; d .table = null; d .schema = null; d .data = null;
+    d .conn = t.value; d .table = null; d .schema = null; d .data = null;
     d .tables = []; d .tablesPage = 0; d .order = null; d .sqlResult = null;
     d .sqlResults = null; d .sqlTab = 0; // docs/22 W4.3: no stale tabs across a connection switch
     d .schemaFilter = ""; // a schema pick was made against the other connection's catalog
@@ -239,7 +240,7 @@ function renderDbView()       {
     // silently filters the new list down to nothing. Reset it and the box that shows it.
     d .grep = "";
     d .redisType = ""; // same reasoning: a type filter is chosen against a key list, not inherited
-    var gb = $             ("dbGrep");
+    var gb = $                  ("dbGrep");
     if (gb) gb.value = "";
     dbDropEdits();
     dbSyncKind();
@@ -254,10 +255,10 @@ function renderDbView()       {
   };
   // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
   // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
-  $             ("dbGrep").value = state.db .grep || "";
+  $                  ("dbGrep").value = state.db .grep || "";
   var t                                           ;
-  $             ("dbGrep").oninput = function ()       {
-    var v = this.value;
+  $                  ("dbGrep").oninput = (e) => {
+    var v = (e.currentTarget                    ).value;
     clearTimeout(t);
     t = setTimeout(function ()       {
       // Leaving the view frees state.db (views/data.js unmount); a debounce pending across
@@ -268,9 +269,9 @@ function renderDbView()       {
       else dbLoadTables();
     }, 300);
   };
-  $              ("dbSort").onchange = function ()       {
+  $                   ("dbSort").onchange = (e) => {
     var d = state.db;
-    d .sort = this.value;
+    d .sort = (e.currentTarget                     ).value;
     d .tablesPage = 0;
     if (dbIsRedis()) renderDbTables(); // keys sort in place over what has been scanned
     else dbLoadTables();
@@ -286,21 +287,22 @@ function renderDbView()       {
   // The schema picker (pg only): picking one re-requests the table list inside that schema.
   // The wiring itself lives in dbWireSchemaSelect so a RE-CREATED picker (dbPaintSchemaOptions
   // removes the select for non-pg connections and brings it back for pg) gets it too.
-  var schemaSel = $              ("dbSchema");
+  var schemaSel = $                   ("dbSchema");
   if (schemaSel) dbWireSchemaSelect(schemaSel);
-  $                ("dbSql").value = state.db .sqlText;
-  $                ("dbSql").oninput = function ()       { state.db .sqlText = this.value; dbSqlPaint(); dbSuggestOnInput.call(this); };
-  $                ("dbSql").onscroll = function ()       {
+  $                     ("dbSql").value = state.db .sqlText;
+  $                     ("dbSql").oninput = (e) => { const t = e.currentTarget                       ; state.db .sqlText = t.value; dbSqlPaint(); dbSuggestOnInput.call(t); };
+  $                     ("dbSql").onscroll = (e) => {
+    const t = e.currentTarget                       ;
     var hl = $("dbSqlHl");
-    if (hl) { hl.scrollTop = this.scrollTop; hl.scrollLeft = this.scrollLeft; }
+    if (hl) { hl.scrollTop = t.scrollTop; hl.scrollLeft = t.scrollLeft; }
     dbSuggestHide(); // the caret's point scrolled with the text; a list pinned to stale
     // coordinates would point at the wrong word. The next keystroke reopens it in place.
   };
-  $                ("dbSql").addEventListener("blur", dbSuggestHide);
+  $                     ("dbSql").addEventListener("blur", dbSuggestHide);
   // The suggest hook runs beside the Run shortcut: it only ever consumes the keys the open
   // list owns (arrows / Tab / Enter / Esc) and leaves Ctrl+Enter to run the block.
-  $                ("dbSql").addEventListener("keydown", dbSuggestKeys);
-  $                ("dbSql").onkeydown = function (e               )       {
+  $                     ("dbSql").addEventListener("keydown", dbSuggestKeys);
+  $                     ("dbSql").onkeydown = function (e               )       {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); dbRunSql(); }
   };
   dbSqlPaint();
@@ -308,25 +310,26 @@ function renderDbView()       {
   // wrapped: onclick hands the handler the click EVENT, and dbRunSql's first parameter is
   // `explain` — an event object is truthy, so a plain Run has been quietly running EXPLAIN.
   $                   ("dbSqlRun").onclick = function ()       { dbRunSql(false); };
-  $              ("dbSqlExplain").onclick = function (ev             )       {
+  $                   ("dbSqlExplain").onclick = (ev            )       => {
     // stopPropagation: connect.js closes any open menu on clicks that reach document, and
     // without it the click that opens the menu also tears it down (same as the Export menu).
-    ev .stopPropagation();
-    popupMenu(this.getBoundingClientRect(), [
+    ev.stopPropagation();
+    popupMenu((ev.currentTarget                     ).getBoundingClientRect(), [
       { label: "Explain", fn: function ()       { dbRunSql("plan"); } },
       { label: "Explain ANALYZE", fn: function ()       { dbRunSql("analyze"); } },
     ]);
   };
-  $              ("dbSqlHistory").onchange = function ()       {
-    if (this.value === "") return;
+  $                   ("dbSqlHistory").onchange = (e) => {
+    const t = e.currentTarget                     ;
+    if (t.value === "") return;
     // docs/22 W5.4: "f"+i is a favorite, a plain index history — both land in the console.
-    var fav = this.value.charAt(0) === "f";
-    var sql = fav ? state.db .favorites [Number(this.value.slice(1))]
-      : state.db .history [Number(this.value)];
-    this.value = ""; // back to the label, so the same entry can be picked again
+    var fav = t.value.charAt(0) === "f";
+    var sql = fav ? state.db .favorites [Number(t.value.slice(1))]
+      : state.db .history [Number(t.value)];
+    t.value = ""; // back to the label, so the same entry can be picked again
     if (sql == null) return;
     state.db .sqlText = sql;
-    var ta = $                ("dbSql");
+    var ta = $                     ("dbSql");
     if (ta) { ta.value = sql; dbSqlPaint(); ta.focus(); }
   };
   // docs/22 W5.4: the star saves the console text to the favorites group; Format re-indents
@@ -343,7 +346,7 @@ function renderDbView()       {
       var d = state.db;
       if (!d .sqlText || !d .sqlText.trim()) return;
       d .sqlText = dbFormatSql(d .sqlText);
-      var ta = $                ("dbSql");
+      var ta = $                     ("dbSql");
       if (ta) { ta.value = d .sqlText; dbSqlPaint(); ta.focus(); }
     };
   }
@@ -367,13 +370,13 @@ function renderDbView()       {
       });
     };
   }
-  var dbMore = $              ("dbMore");
+  var dbMore = $                   ("dbMore");
   dbMore.innerHTML = icon("ellipsis");
-  dbMore.onclick = function (e             )       {
+  dbMore.onclick = (e            )       => {
     // stopPropagation: the document click closes popup menus — the opening click must not.
-    e .stopPropagation();
+    e.stopPropagation();
     var d = state.db;
-    popupMenu(this.getBoundingClientRect(), [
+    popupMenu((e.currentTarget                     ).getBoundingClientRect(), [
       { label: d .activity ? "Close activity" : "Activity…", fn: dbActivityToggle },
     ]);
   };
@@ -411,7 +414,7 @@ function dbSortOptions()                             {
 
 function dbPaintSort()       {
   var d = state.db;
-  var sel = $              ("dbSort"), dir = $("dbSortDir");
+  var sel = $                   ("dbSort"), dir = $("dbSortDir");
   if (!sel || !dir) return;
   var opts = dbSortOptions();
   if (!opts.some(function (o                          )          { return o.v === d .sort; })) d .sort = opts[0].v; // kind switched
@@ -447,7 +450,7 @@ function dbRedisCompare(a                  , b                  )         {
    switch — it used to run once, at mount, before /api/db had even answered, so it never saw a
    redis connection. */
 function dbSyncKind()       {
-  var grep = $             ("dbGrep"), sql = $                ("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
+  var grep = $                  ("dbGrep"), sql = $                     ("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
   if (!grep || !sql || !explain || !hint) return;
   var fmt = $("dbSqlFormat");
   dbPaintSort();
@@ -489,7 +492,7 @@ function dbConnLabel(c                    )         {
 
 function renderDbSide()       {
   var d = state.db;
-  var sel = $              ("dbConn");
+  var sel = $                   ("dbConn");
   if (!sel) return;
   sel.innerHTML = "";
   if (!d .conns.length) {
@@ -693,11 +696,12 @@ function dbTableRow(t               )              {
 }
 
 /** The schema picker's one behavior: a pick re-requests the table list inside that schema. */
-function dbWireSchemaSelect(sel              )       {
-  sel.onchange = function ()       {
+function dbWireSchemaSelect(sel                   )       {
+  sel.onchange = (e) => {
+    const t = e.currentTarget                     ;
     var d = state.db;
-    if (this.value === d .schemaFilter) return;
-    d .schemaFilter = this.value;
+    if (t.value === d .schemaFilter) return;
+    d .schemaFilter = t.value;
     d .tablesPage = 0;
     dbLoadTables();
   };
@@ -712,7 +716,7 @@ function dbWireSchemaSelect(sel              )       {
  *  redis page offering a schema dropdown; hidden options are state residue even unseen. */
 function dbPaintSchemaOptions()       {
   var d = state.db;
-  var sel = $              ("dbSchema");
+  var sel = $                   ("dbSchema");
   if (!d .conn || !dbIsPg()) {
     if (sel) sel.remove();
     return;
@@ -720,7 +724,7 @@ function dbPaintSchemaOptions()       {
   if (!sel) {
     // Coming back to pg after a non-pg connection removed it: re-create it in the sidebar,
     // right after the connection picker, wired like the mount path wires it.
-    sel = el("select")                ;
+    sel = el("select")                     ;
     sel.id = "dbSchema";
     sel.setAttribute("aria-label", "Schema");
     var conn = $("dbConn");

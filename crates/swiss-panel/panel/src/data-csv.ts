@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { $, apiJson, el, esc, state, toast } from "./util.js";
+import { $, apiJson, el, errText, esc, state, targetEl, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
@@ -78,7 +78,7 @@ function dbOpenImport(): void {
   $("sheet").hidden = false;
 
   function parse(): void {
-    var text = $<FilterInput>("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    var text = $<HTMLInputElement>("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     var rows = text.split("\n").filter(function (l: string): boolean { return l.trim() !== ""; });
     if (!rows.length) { header = []; lines = []; mapping = []; paint(); return; }
     header = dbParseCsvLine(rows[0]);
@@ -98,7 +98,7 @@ function dbOpenImport(): void {
       var row = el("div", "db-console-row");
       row.style.marginBottom = "2px";
       row.appendChild(el("span", "db-filter-hint", "CSV " + String.fromCharCode(34) + h + String.fromCharCode(34) + " \u2192 "));
-      var sel = el("select") as FilterSelect;
+      var sel = el("select");
       sel.style.width = "auto";
       var skip = el("option", "", "(skip)") as HTMLOptionElement;
       skip.value = "";
@@ -109,7 +109,7 @@ function dbOpenImport(): void {
         o.selected = n === mapping[i];
         sel.appendChild(o);
       });
-      sel.onchange = function (): void { mapping[i] = this.value || null; preview(); };
+      sel.onchange = (e) => { mapping[i] = (e.currentTarget as HTMLSelectElement).value || null; preview(); };
       row.appendChild(sel);
       mapBox.appendChild(row);
     });
@@ -137,7 +137,7 @@ function dbOpenImport(): void {
     box.appendChild(pre);
   }
 
-  $<FilterInput>("dbImpText").oninput = parse;
+  $<HTMLInputElement>("dbImpText").oninput = parse;
   function setMode(m: string): void {
     mode = m;
     $("dbImpMode").querySelectorAll("button").forEach(function (b) {
@@ -149,25 +149,26 @@ function dbOpenImport(): void {
       : "Every row inserts \u2014 a duplicate key aborts the whole file.";
   }
   $("dbImpMode").onclick = function (e: MouseEvent): void {
-    var b: HTMLElement | null = e.target && e.target.closest ? e.target.closest("button[data-mode]") as HTMLElement : null;
+    var b: HTMLElement | null = targetEl(e)?.closest<HTMLElement>("button[data-mode]") ?? null;
     if (b) setMode(b.dataset.mode!);
   };
-  $<FilterInput>("dbImpFile").onchange = function (): void {
-    var f = this.files && this.files[0];
-    if (!f) return;
+  $<HTMLInputElement>("dbImpFile").onchange = (e) => {
+    var f = (e.currentTarget as HTMLInputElement).files;
+    if (!f || !f[0]) return;
     var rd = new FileReader();
-    rd.onload = function (): void { $<FilterInput>("dbImpText").value = String(rd.result); parse(); };
-    rd.readAsText(f);
+    rd.onload = function (): void { $<HTMLInputElement>("dbImpText").value = String(rd.result); parse(); };
+    rd.readAsText(f[0]);
   };
   $("dbImpCancel").onclick = closeSheet;
-  $<ActionButton>("dbImpRun").onclick = async function (): Promise<void> {
+  $<HTMLButtonElement>("dbImpRun").onclick = async (e): Promise<void> => {
     if (!header.length || !lines.length) { toast("Paste or upload a CSV first", true); return; }
     if (!mapping.some(Boolean)) { toast("Map at least one column", true); return; }
     var upsert = mode === "upsert";
     if (!confirm((upsert ? "Upsert " : "Insert ") + lines.length.toLocaleString() + " rows into " +
         (d!.schema ? d!.schema + "." : "") + d!.table! + " in ONE transaction? A failure rolls the whole file back.")) return;
-    this.disabled = true;
-    this.textContent = "Importing\u2026";
+    const t = e.currentTarget as HTMLButtonElement;
+    t.disabled = true;
+    t.textContent = "Importing\u2026";
     var j = await apiJson<{ inserted: number; note?: string }>("/api/db/" + encodeURIComponent(d!.conn!) + "/import", {
       method: "POST",
       // mode rides the payload only when upsert — a default import stays byte-identical to
@@ -293,7 +294,7 @@ function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: str
         var table = (d!.schema ? q(d!.schema) + "." : "") + q(d!.table!);
         dbCopyText("INSERT INTO " + table + " (" + cols.map(q).join(", ") + ") VALUES (" +
           cols.map(function (n: string): string { return lit(full![n]); }).join(", ") + ");");
-      } catch (err) { toast(String(err), true); }
+      } catch (err) { toast(errText(err), true); }
     });
   }
   document.body.appendChild(menu);
