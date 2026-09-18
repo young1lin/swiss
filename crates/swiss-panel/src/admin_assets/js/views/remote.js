@@ -15,21 +15,35 @@
  */
 
 /* ================================================================================================
-   Remote Targets - the remote plugin page (#remote), docs/34 R6.
+   Remote Targets - the remote plugin page (#remote), docs/34 R6 + R8.
 
    A hairline card of house rows: dot (endpoint state) + alias + mono root sub-line +
-   monochrome chips for endpoint and capabilities + one overflow menu. The CLI
+   monospace chips for endpoint and capabilities + one overflow menu. The CLI
    (swiss remote ...) and this page write the SAME rows through the same routes; the
    page exists so a target never needs a terminal to exist.
+
+   Groups (docs/34 R8): the list renders through the groups component as the seventh
+   scope of the docs/20 family - page density, drag ON both ways. A row drag reorders
+   the flat list (the scope's order route); a drop into another group moves the row
+   (the member route). The group names ride with the rows in ONE /api/remote/targets
+   response, and an older gateway without them answers the single default group the
+   component draws as no divider at all.
    ================================================================================================ */
 import { $, apiJson, emptyHtml, esc, icon, toast } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
 import { popupMenu } from "../menu.js";
+import { assignMember, groupFieldHtml, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
 
 var targets = [];
 var endpoints = [];
 var presence = "";
+var groupNames = ["default"];
 var editing = null; // the id an open sheet is editing, null when adding
+var pendingGroup = null; // the group whose header + opened the sheet; the select still wins
+var dragging = null; // in-flight row drag: a poll must not rebuild under it
+var draggingGroup = null; // in-flight group drag, same rule
+var painted = ""; // structural signature of the drawn list; a poll that changes nothing repaints nothing
+var collapsed = {}; // the groups fold map, loaded once before the first paint
 
 async function load() {
   var e = await apiJson("/api/remote/endpoints");
@@ -38,7 +52,16 @@ async function load() {
   presence = e.presence || "none";
   endpoints = e.endpoints || [];
   targets = t.targets || [];
+  // The names arrive with the rows (docs/34 R8); an older gateway answers neither,
+  // and the single default group renders as no divider at all.
+  groupNames = t.groups && t.groups.length ? t.groups : ["default"];
   return true;
+}
+
+/** Full reload after a group-list mutation: refetch, then rebuild the whole page. */
+async function reload() {
+  if (!(await load())) return;
+  render();
 }
 
 function endpointLabel(id) {
@@ -54,11 +77,12 @@ function endpointDot(id) {
   return '<span class="dot ' + cls + '" title="endpoint ' + esc(st) + '"></span>';
 }
 
-var painted = ""; // structural signature of the drawn list; a poll that changes nothing repaints nothing
-
 function signature() {
   return presence + "\u0000" + endpoints.map(function (e) { return e.id + "=" + e.state; }).join(",") + "\u0000" +
-    targets.map(function (t) { return [t.id, t.endpoint, t.workspaceRoot, (t.capabilities || []).join("+")].join("|"); }).join("\n");
+    groupNames.join(",") + "\u0000" +
+    targets.map(function (t) {
+      return [t.id, t.endpoint, t.workspaceRoot, (t.capabilities || []).join("+"), t.group || ""].join("|");
+    }).join("\n");
 }
 
 function chip(text) {
@@ -69,7 +93,7 @@ function row(t) {
   var caps = (t.capabilities || []).map(chip).join("");
   var label = t.label ? ' <span class="text-3">' + esc(t.label) + "</span>" : "";
   return (
-    '<div class="row row-act">' + endpointDot(t.endpoint) +
+    '<div class="row row-act" data-rmrow="' + esc(t.id) + '">' + endpointDot(t.endpoint) +
       '<div class="row-main">' +
         '<div class="name"><a href="#remote" class="rowname" data-rmedit="' + esc(t.id) + '">' + esc(t.id) + "</a>" + label + "</div>" +
         '<div class="sub mono">' + esc(t.workspaceRoot || "") + "</div>" +
@@ -80,20 +104,99 @@ function row(t) {
   );
 }
 
+/** The groups component's cfg (docs/20): this page's nouns, rows and moves. */
+function cfg() {
+  return {
+    scope: "targets",
+    density: "page",
+    names: groupNames,
+    collapsed: collapsed,
+    noun: "target",
+    addTitle: function (g) { return "Add a remote target to " + g; },
+    onAdd: function (g) {
+      pendingGroup = g; // a real name now - the sheet's Group select starts on it
+      openSheet(null);
+    },
+    reload: function () { return reload(); },
+    render: paint,
+    afterDrag: function () { paint(); }, // the catch-up rebuild a deferred poll owes
+    drag: {
+      get: function () { return dragging; },
+      set: function (v) { dragging = v; },
+    },
+    dragGroup: {
+      get: function () { return draggingGroup; },
+      set: function (v) { draggingGroup = v; },
+    },
+    rowsHtml: function (g) { return g.rows.map(row).join(""); },
+    rowId: function (r) { return r.id; },
+    // Ids are validated slugs (a-z 0-9 -), so a bare attribute selector is safe.
+    rowSel: function (r) { return '[data-rmrow="' + r.id + '"]'; },
+    rowsById: function () { return targets; },
+    groupOfRow: groupOf(groupNames),
+    onMoveRow: moveRow,
+    onAssign: function (id, g) { void assign(id, g); },
+  };
+}
+
+/** Paint the groups region only - the head, the quiet line and the chip stay put. */
+function paint() {
+  var region = $("rmGroups");
+  if (!region) return;
+  region.innerHTML = "";
+  slice(targets, groupNames, groupOf(groupNames)).forEach(function (g) {
+    region.appendChild(mountGroup(cfg(), g));
+  });
+}
+
 function render() {
   painted = signature();
   var head =
-    '<div class="page-head"><h2>Targets</h2>' +
-    '<button class="btn primary" id="rmAdd">Add target</button></div>' +
+    '<div class="page-head"><h2>Targets</h2><div class="head-actions">' +
+    '<button class="btn" id="rmNewGroup">New group</button>' +
+    '<button class="btn primary" id="rmAdd">Add target</button>' +
+    "</div></div>" +
     '<p class="quiet">' + esc(presence) + " · " + endpoints.length + " endpoint" +
     (endpoints.length === 1 ? "" : "s") + " served by tunnels</p>";
   if (!targets.length) {
     $("pane").innerHTML = head + emptyHtml({ icon: "globe", title: "No targets yet", hint: "Add a target to run commands on the machines the Tunnels connections reach." });
     $("countChip").textContent = "";
   } else {
-    $("pane").innerHTML = head + '<div class="group">' + targets.map(row).join("") + "</div>";
+    $("pane").innerHTML = head + '<div id="rmGroups"></div>';
     $("countChip").textContent = targets.length + " target" + (targets.length === 1 ? "" : "s");
+    paint();
   }
+}
+
+/** Flat reorder after a row drag: applied locally so the row jumps immediately, then
+ *  the scope's order route - a reject takes the server's word for it. */
+function moveRow(id, targetId, before) {
+  if (!id || !targetId || id === targetId) return;
+  var item = targets.filter(function (r) { return r.id === id; })[0];
+  if (!item) return;
+  var to = targets.findIndex(function (r) { return r.id === targetId; });
+  if (to < 0) return; // target vanished mid-drag - leave everything where it is
+  targets.splice(targets.indexOf(item), 1);
+  targets.splice(before ? to : to + 1, 0, item);
+  painted = ""; // the optimistic move changed the structure the signature would compare
+  paint();
+  saveOrder("targets", targets.map(function (r) { return r.id; }));
+}
+
+/** Put one row in a group after a drop-into: applied locally first so the row jumps
+ *  immediately, then the member PUT - the server's canonical spelling wins. */
+async function assign(id, group) {
+  var row = targets.filter(function (r) { return r.id === id; })[0];
+  if (!row) return;
+  if (groupOf(groupNames)(row) === (group || groupNames[0])) return;
+  row.group = group;
+  painted = "";
+  paint();
+  var j = await assignMember("targets", id, group);
+  if (!j) { await reload(); return; }
+  row.group = j.group; // the canonical name the server stored
+  painted = "";
+  paint();
 }
 
 /* The Add/Edit sheet. Same shape as every sheet: #sheet unhidden BEFORE innerHTML,
@@ -106,6 +209,12 @@ function openSheet(target) {
       return '<option value="' + esc(e.id) + '"' + sel + ">" + esc(e.label || e.id) + "</option>";
     })
     .join("");
+  // The Group select is where the row lands: the group whose + opened the sheet
+  // preselects, the last used one otherwise, and a value the user changed wins.
+  var groupSel = target
+    ? groupOf(groupNames)(target)
+    : pendingGroup || lastGroup("targets") || groupNames[0];
+  pendingGroup = null;
   var caps = ["exec", "sync", "files"];
   var capBoxes = caps
     .map(function (c) {
@@ -120,6 +229,7 @@ function openSheet(target) {
           '<input id="rm-id" placeholder="build"></label>' +
         '<label class="field"><span>Label (optional)</span><input id="rm-label"></label>' +
         '<label class="field"><span>Endpoint (a Tunnels connection)</span><select id="rm-endpoint">' + endpointOptions + "</select></label>" +
+        groupFieldHtml(groupNames, groupSel) +
         '<label class="field"><span>Workspace root (absolute POSIX path)</span><input id="rm-root" placeholder="/data/ws/proj"></label>' +
         '<div class="field"><span>Capabilities</span><div>' + capBoxes + "</div></div>" +
       "</div>" +
@@ -149,6 +259,9 @@ async function save() {
   var body = {
     label: $("rm-label").value.trim(),
     endpoint: $("rm-endpoint").value,
+    // The group the select shows - the row is born INTO it server-side (docs/34 R8),
+    // one write, no second assign round-trip.
+    group: $("g-sel") ? $("g-sel").value : null,
     workspaceRoot: $("rm-root").value.trim(),
     capabilities: caps,
     // The one shell the surface speaks today (docs/34): the route requires it, and a
@@ -164,25 +277,27 @@ async function save() {
   else body.id = $("rm-id").value.trim();
   var j = await apiJson(url, { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
+  if (body.group) rememberGroup("targets", body.group);
   closeSheet();
-  await load();
-  render();
+  await reload();
 }
 
 async function removeTarget(id) {
   if (!confirm("Delete target " + id + "? The Tunnels connection and any files on the machine are not touched.")) return;
   var d = await apiJson("/api/remote/targets/" + encodeURIComponent(id), { method: "DELETE" });
   if (!d) return;
-  await load();
-  render();
+  await reload();
 }
 
 export async function mount() {
+  collapsed = loadCollapsed("targets");
   if (!(await load())) return;
   render();
   $("pane").onclick = function (event) {
     var add = event.target.closest("#rmAdd");
-    if (add) { openSheet(null); return; }
+    if (add) { pendingGroup = null; openSheet(null); return; }
+    var newGroup = event.target.closest("#rmNewGroup");
+    if (newGroup) { void newGroupFlow("targets", groupNames, reload); return; }
     var edit = event.target.closest("[data-rmedit]");
     if (edit) {
       var hit = targets.find(function (t) { return t.id === edit.dataset.rmedit; });
@@ -206,6 +321,9 @@ export async function mount() {
 
 export async function refresh() {
   if (!(await load())) return;
+  // Never rebuild under an in-flight gesture: the groups component finishes the drag
+  // on nodes it captured, and afterDrag() runs the catch-up paint (docs/20).
+  if (dragging || draggingGroup) return;
   // A poll that changed nothing repaints nothing: the pane keeps its nodes (and a
   // sheet the user may be typing into stays put, the same discipline as Tokens).
   if (signature() === painted) return;

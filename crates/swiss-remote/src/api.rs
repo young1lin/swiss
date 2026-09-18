@@ -1,6 +1,7 @@
 //! The /api/remote management surface (docs/34): which endpoints the transport
-//! can see, and the target table CRUD. No panel page in this phase - the CLI is
-//! the primary client - but the shapes are the same ones any page would read.
+//! can see, and the target table CRUD. The CLI and the #remote targets page are
+//! both primary clients - they drive the SAME routes - and the group list rides
+//! with the rows so the page paints the docs/20 grouped list from one response.
 //!
 //! ## State: one slot the plugin lifecycle owns
 //!
@@ -119,14 +120,19 @@ async fn list_targets(State(state): State<Arc<RemoteState>>) -> Response {
     let Some(system) = state.live() else {
         return not_running();
     };
-    let rows = system.with_store(|store| {
-        store
-            .list()
-            .iter()
-            .map(RemoteTarget::to_json)
-            .collect::<Vec<_>>()
+    let (rows, groups) = system.with_store(|store| {
+        (
+            store
+                .list()
+                .iter()
+                .map(RemoteTarget::to_json)
+                .collect::<Vec<_>>(),
+            store.group_names(),
+        )
     });
-    admin_json(StatusCode::OK, json!({ "targets": rows }))
+    // The group list rides with the rows (docs/34 R8): the panel reads ONE response
+    // to paint the grouped page, exactly like /api/tunnels carries connGroups.
+    admin_json(StatusCode::OK, json!({ "targets": rows, "groups": groups }))
 }
 
 async fn get_target(State(state): State<Arc<RemoteState>>, Path(id): Path<String>) -> Response {
@@ -316,6 +322,40 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["id"], "build");
     }
+    #[tokio::test]
+    async fn the_list_carries_the_group_names_and_rows_can_join() {
+        let (_state, system, router) = app();
+        // The names ride with the rows (docs/34 R8): one response paints the grouped
+        // page, and an ungrouped table answers the single default group.
+        let (status, body) = get_json(&router, "/api/remote/targets").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["groups"], json!(["default"]));
+
+        // A group exists (the family PUT owns that); a row can be born INTO it, and
+        // the casing the caller typed is canonicalized at the door.
+        system
+            .with_store(|s| s.set_group_names(&["default".into(), "prod".into()]))
+            .expect("groups");
+        let mut born = row("build", "conn-1");
+        born["group"] = json!("PROD");
+        let (status, _body) = send(&router, "POST", "/api/remote/targets", born).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = get_json(&router, "/api/remote/targets/build").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["group"], json!("prod"), "the canonical spelling");
+
+        // A group the list does not carry is a named 400, not a silent drop.
+        let mut stray = row("flash", "conn-1");
+        stray["group"] = json!("ghost");
+        let (status, body) = send(&router, "POST", "/api/remote/targets", stray).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"].as_str().unwrap().contains("unknown group"),
+            "{}",
+            body["error"]
+        );
+    }
+
     #[tokio::test]
     async fn an_unknown_endpoint_is_refused_while_the_transport_serves() {
         let (_state, _system, router) = app();

@@ -28,11 +28,14 @@
 //! coordinator's own cancel, and live output is the run output endpoint added with the
 //! ActionContext seam.
 //!
-//! No MCP adapter in this phase (docs/34 §2): the CLI and the /api/remote routes are
-//! the surfaces; the MCP adapter is a later, deliberate step.
+//! The MCP adapter shipped with R7 (docs/34): five thin tools over /mcp/remote in
+//! swiss-mcp, dispatching these actions BY NAME through the shared run coordinator.
+//! The targets list is the seventh scope of the docs/20 group family (R8): the
+//! register_remote_scopes seat below plugs the sealed table into /api/groups/targets.
 
 pub mod actions;
 pub mod api;
+pub mod groups;
 pub mod project;
 pub mod sync;
 pub mod target;
@@ -41,6 +44,7 @@ use std::sync::{Arc, Mutex};
 
 use swiss_host::services::RuntimeServices;
 
+pub use groups::register_remote_scopes;
 use target::TargetStore;
 
 /// The shared seat the routes and actions read through: the sealed target table plus
@@ -454,6 +458,7 @@ pub(crate) mod testing {
                     shell: "posix".into(),
                     capabilities: vec!["exec".into(), "files".into(), "sync".into()],
                     default_timeout_ms: None,
+                    group: None,
                 })
                 .expect("the dev target adds");
         });

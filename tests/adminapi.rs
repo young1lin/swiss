@@ -2378,6 +2378,115 @@ async fn the_family_serves_the_tunnel_scopes() {
     assert_eq!(body["error"], json!("unknown member: nope"));
 }
 
+/// setup(), plus the targets scope registered over a scratch sealed table - the way
+/// server.rs composes it over the remote plugin's one system (docs/34 R8). What comes
+/// back is the system handle, for asserting what actually landed on disk.
+fn setup_with_remote() -> (Harness, Arc<swiss_remote::RemoteSystem>) {
+    sandbox();
+    let dir = std::env::temp_dir().join(format!(
+        "swiss-adminapi-remote-{}",
+        swiss_core::util::random_hex(8)
+    ));
+    std::fs::create_dir_all(&dir).expect("create the scratch directory");
+    let system = swiss_remote::RemoteSystem::open(
+        swiss_host::services::RuntimeServices::new(),
+        dir.join("remote.json"),
+    );
+    system
+        .with_store(|s| {
+            s.add(swiss_remote::target::RemoteTarget {
+                id: "build".into(),
+                label: "Build box".into(),
+                endpoint: "conn-1".into(),
+                workspace_root: "/data/ws".into(),
+                shell: "posix".into(),
+                capabilities: vec!["exec".into()],
+                default_timeout_ms: None,
+                group: None,
+            })
+            .map(|_| ())
+        })
+        .expect("seed");
+    let calls = Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls")));
+    let registry = Registry::new(60_000, calls.clone());
+    let store = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
+    let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
+    let ctx = AppContext::new(
+        registry.clone(),
+        tokens,
+        store.clone(),
+        calls.clone(),
+        "MCP_GATEWAY_TOKEN",
+        19999,
+    );
+    swiss_remote::register_remote_scopes(&ctx.group_scopes, &system);
+    (
+        Harness {
+            app: build_app(ctx, None),
+            registry,
+            store,
+            calls,
+            path: dir,
+        },
+        system,
+    )
+}
+
+/// The seventh scope (docs/34 R8): targets answers the same family routes the tunnel
+/// scopes do, over the one sealed table, while the remote plugin itself is not even
+/// registered here - grouping outlives start/stop by construction.
+#[tokio::test]
+async fn the_family_serves_the_targets_scope() {
+    let (h, system) = setup_with_remote();
+
+    // The whole-list mutation, on the scope word the family owns.
+    let (status, body) = h
+        .put("/api/groups/targets", json!({ "groups": ["default", "prod"] }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["groups"], json!(["default", "prod"]));
+
+    // Assignment is by target id, answers the canonical casing, and lands in the file.
+    let (status, body) = h
+        .put("/api/groups/targets/members/build", json!({ "group": "PROD" }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "group": "prod" }));
+    assert_eq!(
+        system.with_store(|s| s.group_of("build")),
+        "prod",
+        "the sealed table answers the same word the family answered"
+    );
+
+    // Rename counts the explicit members that rode along.
+    let (status, body) = h
+        .post(
+            "/api/groups/targets/rename",
+            json!({ "from": "prod", "to": "Production" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["groups"], json!(["default", "Production"]));
+    assert_eq!(body["moved"], 1);
+
+    // The scope's flat order is array order in the file.
+    let (status, body) = h
+        .put(
+            "/api/groups/targets/order",
+            json!({ "order": ["build"] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["order"], json!(["build"]));
+
+    // Unknown member is the family's 404, with the family's wording.
+    let (status, body) = h
+        .put("/api/groups/targets/members/ghost", json!({ "group": null }))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], json!("unknown member: ghost"));
+}
+
 #[tokio::test]
 async fn the_retired_mcp_group_and_order_routes_are_gone() {
     let (h, _) = setup_with_tunnels();

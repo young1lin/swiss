@@ -1387,6 +1387,7 @@ mod tests {
                     shell: "posix".into(),
                     capabilities: vec!["exec".into()],
                     default_timeout_ms: None,
+                    group: None,
                 })
             })
             .expect("target adds");

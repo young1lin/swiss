@@ -133,7 +133,7 @@ opt-level z, not linking). Keep `target` warm; a 4-minute full build
 means fingerprints were invalidated, not that everyday work costs 4 minutes.
 
 **`--workspace` is not optional.** Without it cargo selects the root package alone — a small
-minority of the suite — and the eight member crates, where most of the tests live, are never
+minority of the suite — and the nine member crates, where most of the tests live, are never
 even built. The run still reports ok. Exact counts rot; the shape does not: only a green
 `--workspace` run means "the suite passed". The same applies to clippy. `swiss start` / `stop` / `status` / `logs` / `token`
 are the CLI; `swiss token` manages the bearer token; `SWISS_TOKEN` pins it, and the Node-era
