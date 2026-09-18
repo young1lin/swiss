@@ -25,11 +25,11 @@ import { popupMenu } from "./menu.js";
    sessions page: the entry point is hidden for it. */
 
 var DB_ACTIVITY_POLL_MS = 5000;
-var dbActivityTimer = null;
+var dbActivityTimer                                        = null;
 
 /** Seconds as the compact duration the table shows — "42s", "1m 12s", "2h 05m", "3d 04h".
  *  Pure so the column's formatting can be pinned without a DOM. */
-function dbActivityDuration(secs) {
+function dbActivityDuration(secs                           )         {
   var s = Math.max(0, Math.floor(Number(secs) || 0));
   if (s < 60) return s + "s";
   var m = Math.floor(s / 60);
@@ -41,17 +41,17 @@ function dbActivityDuration(secs) {
 
 /** Draw the section into the (fresh) right pane and start the poll. "close" is the view's own
  *  close action — passed in so this module never imports data-view back. */
-function dbActivityPane(close) {
+function dbActivityPane(close            )       {
   var d = state.db;
-  var main = document.querySelector(".db-main");
+  var main = document.querySelector             (".db-main");
   if (!main) return;
   main.innerHTML = "";
-  var conn = d.conns.find(function (c) { return c.name === d.conn; });
+  var conn = d .conns.find(function (c) { return c.name === d .conn; });
   var head = el("div", "db-head");
   var left = el("div", "db-head-left");
   left.appendChild(el("h2", "db-title pane-title", "Activity"));
   left.appendChild(el("div", "db-meta",
-    (conn ? conn.label : d.conn) + " · refreshes every 5s while this page is open"));
+    (conn ? conn.label : d .conn) + " · refreshes every 5s while this page is open"));
   head.appendChild(left);
   var ctl = el("div", "db-head-ctl");
   var btn = el("button", "btn", "Close");
@@ -72,10 +72,10 @@ async function dbActivityLoad() {
   var d = state.db;
   var wrap = $("dbActivityWrap");
   if (!d || !d.conn || !wrap) return;
-  var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/activity");
+  var j = await apiJson                    ("/api/db/" + encodeURIComponent(d.conn ) + "/activity");
   // A view that closed mid-flight leaves the timer to self-clear and the DOM alone.
   if (!j || !$("dbActivityWrap")) return;
-  d.activityRows = j.rows || [];
+  d .activityRows = j.rows || [];
   dbActivityRender();
 }
 
@@ -83,7 +83,7 @@ function dbActivityRender() {
   var d = state.db;
   var wrap = $("dbActivityWrap");
   if (!wrap) return;
-  var rows = d.activityRows || [];
+  var rows = d .activityRows || [];
   wrap.innerHTML = "";
   if (!rows.length) {
     wrap.appendChild(el("div", "db-hint", "No sessions — the server reports none."));
@@ -98,7 +98,7 @@ function dbActivityRender() {
   thead.appendChild(hr);
   tbl.appendChild(thead);
   var tbody = el("tbody");
-  rows.forEach(function (r) {
+  rows.forEach(function (r                  ) {
     var tr = el("tr", r.own ? "db-act-own" : "");
     var pid = el("td", "db-cell tnum", String(r.pid == null ? "" : r.pid));
     pid.title = "pid " + r.pid;
@@ -128,7 +128,7 @@ function dbActivityRender() {
     more.type = "button";
     more.title = "Cancel or terminate this session";
     more.innerHTML = icon("ellipsis");
-    more.onclick = function (e) { e.stopPropagation(); dbActivityMenu(more, r); };
+    more.onclick = function (e            )       { e.stopPropagation(); dbActivityMenu(more, r); };
     ctl.appendChild(more);
     tr.appendChild(ctl);
     tbody.appendChild(tr);
@@ -139,16 +139,16 @@ function dbActivityRender() {
 
 /** pgadmin's pair, in the panel's menu words: Cancel interrupts the running statement and
  *  keeps the session; Terminate (red, last) closes the session itself. */
-function dbActivityMenu(anchorEl, row) {
+function dbActivityMenu(anchorEl             , row                  )       {
   popupMenu(anchorEl.getBoundingClientRect(), [
     { label: "Cancel query", fn: function () { void dbActivityKill(row, "cancel"); } },
     { label: "Terminate session", danger: true, fn: function () { void dbActivityKill(row, "terminate"); } },
   ]);
 }
 
-async function dbActivityKill(row, mode) {
+async function dbActivityKill(row                  , mode        )                {
   var d = state.db;
-  var j = await apiJson("/api/db/" + encodeURIComponent(d.conn) + "/activity-kill", {
+  var j = await apiJson                      ("/api/db/" + encodeURIComponent(d .conn ) + "/activity-kill", {
     method: "POST",
     body: JSON.stringify({ pid: row.pid, mode: mode }),
   });

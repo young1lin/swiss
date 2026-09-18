@@ -32,9 +32,9 @@ import { dbPkKey } from "./data-view.js";
 /** One row's fields as the form paints them: the buffered value where a change is pending,
  *  the original where it is not. An insert's UNSET column is undefined (the column default),
  *  never null — the two mean different things on INSERT. Pure. */
-function dbFormRowFields(columns, row, key, updates, insert) {
-  var upd = insert ? null : (updates[key] || null);
-  return (columns || []).map(function (c) {
+function dbFormRowFields(columns: ApiDbColumn[], row: Record<string, unknown> | null, key: string | null, updates: Record<string, DbBufferedUpdate>, insert: { values: Record<string, unknown> } | null): DbFormField[] {
+  var upd = insert ? null : (updates[key as string] || null);
+  return (columns || []).map(function (c: ApiDbColumn): DbFormField {
     if (insert) {
       var has = Object.prototype.hasOwnProperty.call(insert.values, c.name);
       return { name: c.name, type: c.dataType || "", orig: undefined,
@@ -43,7 +43,7 @@ function dbFormRowFields(columns, row, key, updates, insert) {
     var pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
     var orig = row ? row[c.name] : undefined;
     return { name: c.name, type: c.dataType || "", orig: orig,
-      value: pending ? upd.changes[c.name] : orig, pending: pending };
+      value: pending ? upd!.changes[c.name] : orig, pending: pending };
   });
 }
 
@@ -52,7 +52,7 @@ function dbFormRowFields(columns, row, key, updates, insert) {
  *  change and drops the emptied entry; a NULL collapses only against a NULL original. An
  *  insert's empty text is the dialog's "back to the column default". Mutates the given
  *  state object only. */
-function dbFormWrite(d, kind, key, i, column, meta, v) {
+function dbFormWrite(d: DbState, kind: string, key: string, i: number, column: string, meta: DbCellMeta, v: unknown): void {
   if (kind === "insert") {
     var ins = d.inserts[i];
     if (!ins) return;
@@ -61,7 +61,7 @@ function dbFormWrite(d, kind, key, i, column, meta, v) {
     return;
   }
   var e = d.updates[key];
-  if (!e) e = d.updates[key] = { pk: meta.pk, changes: {} };
+  if (!e) e = d.updates[key] = { pk: meta.pk as Record<string, unknown>, changes: {} };
   var orig = meta.orig;
   var back = v === orig ||
     (v === null && (orig === null || orig === undefined)) ||
@@ -75,10 +75,10 @@ function dbFormWrite(d, kind, key, i, column, meta, v) {
 /** One field's value cell: the control vocabulary is W2's — an input for short values, the
  *  boolean toggle and NULL button from the cell dialog, and long text opening the edit
  *  sheet (never an inline overlay: a form row is not a grid cell). */
-function dbFormField(d, val, f, ctx) {
+function dbFormField(d: DbState, val: HTMLElement, f: DbFormField, ctx: { kind: "update" | "insert"; key: string | null; i: number; editable: boolean; pkAddr: Record<string, unknown> }): void {
   var meta = { pk: ctx.pkAddr, orig: f.orig };
-  function write(v) {
-    dbFormWrite(d, ctx.kind, ctx.key, ctx.i, f.name, meta, v);
+  function write(v: unknown): void {
+    dbFormWrite(d, ctx.kind, ctx.key as string, ctx.i, f.name, meta, v);
     renderDbGrid();
     renderDbBar();
   }
@@ -86,7 +86,7 @@ function dbFormField(d, val, f, ctx) {
   if (!ctx.editable) {
     if (f.value === undefined) { val.appendChild(el("span", "db-fold", "default")); return; }
     if (f.value === null) { val.appendChild(el("span", "db-null", "NULL")); return; }
-    val.appendChild(el("span", "db-form-text", dbCellText(f.value)));
+    val.appendChild(el("span", "db-form-text", dbCellText(f.value)!));
     return;
   }
 
@@ -94,7 +94,7 @@ function dbFormField(d, val, f, ctx) {
   if (isBool) {
     var on = f.value === true || f.value === 1 ||
       String(f.value).toLowerCase() === "true" || f.value === "1";
-    var bb = el("button", "btn", on ? "TRUE" : "FALSE");
+    var bb = el("button", "btn", on ? "TRUE" : "FALSE") as HTMLButtonElement;
     bb.type = "button";
     bb.title = "Toggle this boolean — buffered like any cell edit";
     bb.onclick = function () { write(on ? "0" : "1"); };
@@ -106,10 +106,10 @@ function dbFormField(d, val, f, ctx) {
       var box = el("div", "db-form-long");
       box.textContent = text;
       box.title = "Open the editor sheet";
-      box.onclick = function () { dbOpenCellEditor(ctx.kind, ctx.key, ctx.i, f.name, meta); };
+      box.onclick = function (): void { dbOpenCellEditor(ctx.kind, ctx.key as string, ctx.i, f.name, meta); };
       val.appendChild(box);
     } else {
-      var inp = el("input", "db-form-input");
+      var inp = el("input", "db-form-input") as FilterInput;
       inp.type = "text";
       inp.value = text == null ? "" : text;
       inp.placeholder = f.value === undefined ? "default" : f.value === null ? "NULL — type to replace" : "";
@@ -122,7 +122,7 @@ function dbFormField(d, val, f, ctx) {
     }
   }
 
-  var nb = el("button", "btn", f.value === null ? "NULL (set)" : "Set NULL");
+  var nb = el("button", "btn", f.value === null ? "NULL (set)" : "Set NULL") as HTMLButtonElement;
   nb.type = "button";
   nb.title = "Buffer NULL for this column";
   nb.onclick = function () {
@@ -136,68 +136,68 @@ function dbFormField(d, val, f, ctx) {
 
 /** The Form tab's body. Same entry guards and row order as the grid (buffered inserts in
  *  front of the page's rows); the chevron stepper in the head walks between them. */
-function renderDbFormView(wrap) {
+function renderDbFormView(wrap: HTMLElement): void {
   var d = state.db;
-  if (!d.conn) {
+  if (!d!.conn) {
     wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first."));
     return;
   }
-  if (!d.table || !d.data) {
-    wrap.appendChild(el("div", "db-hint", d.table
-      ? "Loading " + d.table + "\u2026"
+  if (!d!.table || !d!.data) {
+    wrap.appendChild(el("div", "db-hint", d!.table
+      ? "Loading " + d!.table + "\u2026"
       : "Select a table to see one record as a form."));
     return;
   }
-  if (d.loading) { wrap.appendChild(el("div", "db-hint", "Loading\u2026")); return; }
-  var nIns = d.inserts.length;
-  var total = nIns + d.data.rows.length;
+  if (d!.loading) { wrap.appendChild(el("div", "db-hint", "Loading\u2026")); return; }
+  var nIns = d!.inserts.length;
+  var total = nIns + d!.data!.rows.length;
   if (!total) { wrap.appendChild(el("div", "db-hint", "No rows on this page.")); return; }
-  var idx = Math.max(0, Math.min(total - 1, d.formIdx || 0));
-  d.formIdx = idx;
+  var idx = Math.max(0, Math.min(total - 1, d!.formIdx || 0));
+  d!.formIdx = idx;
 
   var head = el("div", "db-form-head");
-  var prev = el("button", "btn icon");
+  var prev = el("button", "btn icon") as HTMLButtonElement;
   prev.type = "button";
   prev.innerHTML = icon("chevron-left");
   prev.title = "Previous record";
   prev.setAttribute("aria-label", "Previous record");
   prev.disabled = idx === 0;
-  prev.onclick = function () { d.formIdx = idx - 1; renderDbGrid(); };
-  var next = el("button", "btn icon");
+  prev.onclick = function (): void { d!.formIdx = idx - 1; renderDbGrid(); };
+  var next = el("button", "btn icon") as HTMLButtonElement;
   next.type = "button";
   next.innerHTML = icon("chevron-right");
   next.title = "Next record";
   next.setAttribute("aria-label", "Next record");
   next.disabled = idx === total - 1;
-  next.onclick = function () { d.formIdx = idx + 1; renderDbGrid(); };
+  next.onclick = function (): void { d!.formIdx = idx + 1; renderDbGrid(); };
   var isIns = idx < nIns;
   head.appendChild(prev);
   head.appendChild(el("span", "db-form-pos", isIns
     ? "New row " + (idx + 1) + " of " + nIns + " \u00b7 buffered"
-    : "Row " + (idx - nIns + 1) + " of " + d.data.rows.length + " on this page"));
+    : "Row " + (idx - nIns + 1) + " of " + d!.data!.rows.length + " on this page"));
   head.appendChild(next);
 
-  var pkCols = d.data.primaryKey || [];
-  var columns = d.data.columns || [];
-  var editable = !!d.data.editable;
-  var ins = isIns ? d.inserts[idx] : null;
+  var pkCols = d!.data!.primaryKey || [];
+  var columns = d!.data!.columns || [];
+  var editable = !!d!.data!.editable;
+  var ins = isIns ? d!.inserts[idx] : null;
   var ri = isIns ? -1 : idx - nIns;
-  var row = isIns ? null : d.data.rows[ri];
-  var key = isIns ? null : (pkCols.length ? dbPkKey(pkCols, row) : String(ri));
-  var deleted = !isIns && !!d.deletes[key];
+  var row = isIns ? null : d!.data!.rows[ri];
+  var key = isIns ? null : (pkCols.length ? dbPkKey(pkCols, row!) : String(ri));
+  var deleted = !isIns && !!d!.deletes[key as string];
 
   // The record's own actions ride the head's right end — the grid rowctl vocabulary.
   if (editable) {
-    var act = el("button", "db-act", isIns ? "\u2715" : deleted ? "\u21a9" : "\u2715");
+    var act = el("button", "db-act", isIns ? "\u2715" : deleted ? "\u21a9" : "\u2715") as HTMLButtonElement;
     act.type = "button";
     act.title = isIns ? "Remove this buffered insert"
       : deleted ? "Undo this buffered delete" : "Buffer a delete \u2014 applied only on Commit";
-    act.onclick = function () {
-      if (isIns) d.inserts.splice(idx, 1);
-      else if (deleted) delete d.deletes[key];
+    act.onclick = function (): void {
+      if (isIns) d!.inserts.splice(idx, 1);
+      else if (deleted) delete d!.deletes[key as string];
       else {
-        d.deletes[key] = dbRowAddr(pkCols, columns, row);
-        delete d.updates[key]; // a deleted row's cell edits are moot
+        d!.deletes[key as string] = dbRowAddr(pkCols, columns, row!);
+        delete d!.updates[key as string]; // a deleted row's cell edits are moot
       }
       renderDbGrid();
       renderDbBar();
@@ -207,20 +207,20 @@ function renderDbFormView(wrap) {
   }
   wrap.appendChild(head);
 
-  var fields = dbFormRowFields(columns, row, key, d.updates, ins);
+  var fields = dbFormRowFields(columns, row, key, d!.updates, ins);
   var form = el("div", "db-form" + (deleted ? " db-del" : "") + (isIns ? " db-ins" : ""));
-  fields.forEach(function (f) {
+  fields.forEach(function (f: DbFormField): void {
     var fr = el("div", "db-form-row" + (f.pending ? " db-dirty" : ""));
     var lab = el("div", "db-form-label");
     lab.appendChild(el("div", "db-form-name", f.name));
     if (f.type) lab.appendChild(el("div", "db-col-type", f.type));
     var val = el("div", "db-form-val");
-    dbFormField(d, val, f, {
+    dbFormField(d!, val, f, {
       kind: isIns ? "insert" : "update",
       key: key,
       i: isIns ? idx : -1,
       editable: editable && (isIns || !deleted),
-      pkAddr: isIns ? {} : dbRowAddr(pkCols, columns, row),
+      pkAddr: isIns ? {} : dbRowAddr(pkCols, columns, row!),
     });
     fr.appendChild(lab);
     fr.appendChild(val);

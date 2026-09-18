@@ -36,13 +36,13 @@ import { closeSheet } from "./add-sheet.js";
  *  sheet caps its own view, never the value it was handed. */
 var DB_VALUE_HEX_MAX = 512;
 
-function dbValueJsonLike(s) {
+function dbValueJsonLike(s         )          {
   var t = String(s == null ? "" : s).trim();
   return t.startsWith("{") || t.startsWith("[");
 }
 
 /** Which of the four presentations a value opens as. Pure; the sheet is a thin wrapper. */
-function dbValueKind(value) {
+function dbValueKind(value         )                                  {
   if (typeof value === "string") {
     if (/^\\x[0-9a-fA-F]*$/.test(value)) return "hex";
     if (/^https?:\/\//i.test(value)) return "url";
@@ -58,13 +58,13 @@ function dbValueKind(value) {
 /** The first maxBytes of the \\x wire form as a spaced hex dump, 16 bytes per line, with
  *  the real byte count (hex chars / 2, never the character count) and the truncated flag
  *  that reuses the redis value view's word ("\u00b7 truncated"). Pure. */
-function dbHexPreview(value, maxBytes) {
+function dbHexPreview(value        , maxBytes        )                                                      {
   var hex = String(value).replace(/^\\x/, "");
   var bytes = Math.floor(hex.length / 2);
   var truncated = bytes > maxBytes;
   var show = truncated ? hex.slice(0, maxBytes * 2) : hex;
   var pairs = show.match(/.{2}/g) || [];
-  var lines = [];
+  var lines           = [];
   for (var i = 0; i < pairs.length; i += 16) lines.push(pairs.slice(i, i + 16).join(" "));
   return { text: lines.join("\n"), bytes: bytes, truncated: truncated };
 }
@@ -73,21 +73,21 @@ function dbHexPreview(value, maxBytes) {
  *  nested closed — so a deep document opens to its top level and expands on demand. Object
  *  keys are identity (text face); values are values you would copy (mono). Everything is
  *  escaped on the way out: a document full of tags stays inert text. Pure. */
-function dbJsonNode(v, isOpen) {
+function dbJsonNode(v                         , isOpen         )         {
   if (v === null || v === undefined) return '<span class="db-val-v db-null">null</span>';
   if (Array.isArray(v) || typeof v === "object") {
     var isArr = Array.isArray(v);
-    var keys = isArr ? v : Object.keys(v);
+    var keys = isArr ? v                         : Object.keys(v);
     var summary = isArr ? (keys.length ? "[ " + keys.length + " ]" : "[ ]")
       : (keys.length ? "{ " + keys.length + " }" : "{ }");
     var inner = "";
     if (isArr) {
-      keys.forEach(function (x) {
-        inner += '<div class="db-val-row">' + dbJsonNode(x, false) + "</div>";
+      keys.forEach(function (x         ) {
+        inner += '<div class="db-val-row">' + dbJsonNode(x                           , false) + "</div>";
       });
     } else {
-      keys.forEach(function (k) {
-        inner += '<div class="db-val-row"><span class="db-val-k">' + esc(k) + "</span>" + dbJsonNode(v[k], false) + "</div>";
+      keys.forEach(function (k         )       {
+        inner += '<div class="db-val-row"><span class="db-val-k">' + esc(k          ) + "</span>" + dbJsonNode(v[k          ]                           , false) + "</div>";
       });
     }
     return '<details class="db-val-node"' + (isOpen ? " open" : "") + "><summary>" + summary + "</summary>" + inner + "</details>";
@@ -95,25 +95,25 @@ function dbJsonNode(v, isOpen) {
   return '<span class="db-val-v">' + esc(JSON.stringify(v)) + "</span>";
 }
 
-function dbJsonTreeHtml(v) { return dbJsonNode(v, true); }
+function dbJsonTreeHtml(v         )         { return dbJsonNode(v                           , true); }
 
 /** Open the read-only viewer. One primary action (Close); Escape and the backdrop close
  *  too. `where` is the caption the caller knows (table for grid cells, "SQL result" for
  *  console results). */
-function dbOpenValueSheet(column, value, where) {
+function dbOpenValueSheet(column        , value         , where                           )       {
   var kind = dbValueKind(value);
   var body;
   if (kind === "json") {
-    var parsed = typeof value === "object" ? value : JSON.parse(value);
+    var parsed = typeof value === "object" ? value : JSON.parse(value          );
     body = '<div class="db-val-tree">' + dbJsonTreeHtml(parsed) + "</div>";
   } else if (kind === "hex") {
-    var p = dbHexPreview(value, DB_VALUE_HEX_MAX);
+    var p = dbHexPreview(value          , DB_VALUE_HEX_MAX);
     body = '<div class="db-val-meta">' + p.bytes.toLocaleString() + " bytes" +
       (p.truncated ? " \u00b7 truncated" : "") + "</div>" +
       '<pre class="db-val-pre">' + esc(p.text) + "</pre>";
   } else if (kind === "url") {
-    body = '<pre class="db-val-pre"><a class="db-link" href="' + esc(value) +
-      '" target="_blank" rel="noopener noreferrer">' + esc(value) + "</a></pre>";
+    body = '<pre class="db-val-pre"><a class="db-link" href="' + esc(value          ) +
+      '" target="_blank" rel="noopener noreferrer">' + esc(value          ) + "</a></pre>";
   } else {
     body = '<pre class="db-val-pre">' + esc(String(value)) + "</pre>";
   }
@@ -128,10 +128,10 @@ function dbOpenValueSheet(column, value, where) {
         '<button class="btn primary" id="dbValClose">Close</button></div>' +
     "</div>";
   $("sheet").hidden = false;
-  var onKey = function (e) {
+  var onKey = function (e               )       {
     if (e.key === "Escape") { closeValueSheet(); }
   };
-  var closeValueSheet = function () {
+  var closeValueSheet = function ()       {
     document.removeEventListener("keydown", onKey);
     closeSheet();
   };

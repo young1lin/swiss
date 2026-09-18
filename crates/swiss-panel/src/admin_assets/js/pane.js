@@ -146,7 +146,7 @@ function renderPane()       {
   if (oauthBtn) oauthBtn.onclick = function () { void authorizeMcp(d .name); };
   $("menuBtn").onclick = function (ev) { ev.stopPropagation(); toggleMenu(d , m); };
   pane.querySelectorAll                   (".seg button").forEach(function (b) {
-    b.onclick = function () { showTab(b.dataset.tab); };
+    b.onclick = function () { showTab(b.dataset.tab ); };
   });
   wireTabBody(d , m);
   // A late tools/list response re-renders the pane; without this the ... menu you opened a moment

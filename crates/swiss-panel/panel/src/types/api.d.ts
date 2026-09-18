@@ -548,7 +548,8 @@ interface ApiDbTablesResponse {
 interface ApiDbTableRow {
   schema: string;
   name: string;
-  type: string;
+  /* optional: the FK column's jump (data-structure) opens a table with name+schema only */
+  type?: string;
   approxRows?: number;
   size?: string;
 }
@@ -565,6 +566,8 @@ interface ApiDbDataPage {
   nextPage: boolean;
   primaryKey: string[];
   editable: boolean;
+  /* the server's own sentence when editable is false ("no primary key" and friends). */
+  editNote?: string;
 }
 
 interface ApiDbColumn {
@@ -583,8 +586,17 @@ interface ApiDbTableDetail {
   columns: ApiDbColumn[];
   primaryKey: string[];
   indexes: { name: string; unique: boolean; primary: boolean; columns: string[] }[];
-  foreignKeys: unknown[];
+  foreignKeys: ApiDbFkRow[];
   ddl: string;
+}
+
+/** One FK of the Structure tab's Foreign Keys list; the target name carries the jump. */
+interface ApiDbFkRow {
+  name: string;
+  column: string;
+  refSchema: string;
+  refTable: string;
+  refColumn: string;
 }
 
 /** One console statement's reply - dbbrowser_api.rs query route; elapsedMs is attached by
@@ -594,12 +606,29 @@ interface DbQueryReply {
   rows: Record<string, unknown>[];
   rowCount: number;
   elapsedMs?: number;
+  /* the panel's own annotations on a stored result (not on the wire): the console flags an
+   *  EXPLAIN-prefixed run and names each result tab; note carries the reply's shape hint. */
+  explained?: boolean;
+  tabLabel?: string;
+  note?: string;
+}
+
+/** GET /api/db/{name}/key - one redis key's typed value view: type plus the type's own
+ *  payload (value for string, entries for containers), the key's own name, length and ttl. */
+interface ApiDbRedisValue {
+  key: string;
+  type: string;
+  value?: unknown;
+  length?: number | null;
+  ttl?: number;
+  [key: string]: unknown;
 }
 
 /** GET /api/db/{name}/keys - the redis SCAN page (one page of the key grid). */
 interface ApiDbRedisKeysResponse {
   keys: ApiDbRedisKeyRow[];
-  cursor: number;
+  /* redis cursors travel as strings (big unsigned numbers the panel compares against "0"). */
+  cursor: string;
   done: boolean;
   total: number;
 }
@@ -607,12 +636,38 @@ interface ApiDbRedisKeysResponse {
 interface ApiDbRedisKeyRow {
   key: string;
   type: string;
+  ttl?: number;
   [key: string]: unknown;
 }
 
 /** GET /api/db/{name}/activity - the 5s Activity poll while the pane is open. */
 interface ApiDbActivityReply {
-  rows: { pid: number; [key: string]: unknown }[];
+  rows: ApiDbActivityRow[];
+}
+
+/** One pg_stat_activity-style session row (swiss-data activity.rs); own marks the row this
+ *  panel's own polling session is, seconds feeds the duration column. */
+interface ApiDbActivityRow {
+  pid: number;
+  user?: string | null;
+  state?: string | null;
+  wait?: string | null;
+  blockedBy?: string | number | null;
+  seconds?: number | null;
+  query?: string | null;
+  own?: boolean;
+  [key: string]: unknown;
+}
+
+/** POST /api/db/{conn}/completion - one candidate the console's suggest list shows. */
+interface ApiDbCompletionItem {
+  label: string;
+  kind: string;
+  detail?: string;
+}
+
+interface ApiDbCompletionReply {
+  items: ApiDbCompletionItem[];
 }
 
 /* --- remote (swiss-remote/src/api.rs, target.rs) ------------------------------------------------ */

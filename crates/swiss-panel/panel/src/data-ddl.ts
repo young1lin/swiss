@@ -47,7 +47,7 @@ var DB_DDL_TYPES_PG = [
   "int[]",
 ];
 
-function dbDdlTypeOptions(dialect) {
+function dbDdlTypeOptions(dialect: string): string[] {
   return DB_DDL_TYPES_COMMON.concat(dialect === "pg" ? DB_DDL_TYPES_PG : DB_DDL_TYPES_MYSQL);
 }
 
@@ -56,13 +56,13 @@ function dbDdlTypeOptions(dialect) {
  *  different facts), removed (old names the form no longer lists). The W4.6 minimal set
  *  commits ONLY the added bucket; the other two are classified anyway so nothing can
  *  silently pretend it ran. Rows without a name are nothing yet. Pure. */
-function dbDdlDiffColumns(oldCols, rows) {
-  var oldByName = {};
-  (oldCols || []).forEach(function (c) { oldByName[c.name] = c; });
-  var names = {};
-  var added = [];
-  var changed = [];
-  (rows || []).forEach(function (r) {
+function dbDdlDiffColumns(oldCols: ApiDbColumn[] | null | undefined, rows: DdlRow[] | null | undefined): { added: DdlRow[]; changed: DdlRow[]; removed: ApiDbColumn[] } {
+  var oldByName: Record<string, ApiDbColumn> = {};
+  (oldCols || []).forEach(function (c: ApiDbColumn): void { oldByName[c.name] = c; });
+  var names: Record<string, boolean> = {};
+  var added: DdlRow[] = [];
+  var changed: DdlRow[] = [];
+  (rows || []).forEach(function (r: DdlRow): void {
     var name = (r.name || "").trim();
     if (!name) return;
     names[name] = true;
@@ -74,7 +74,7 @@ function dbDdlDiffColumns(oldCols, rows) {
       && (r.comment || "").trim() === (o.comment == null ? "" : String(o.comment)).trim();
     if (!same) changed.push(r);
   });
-  var removed = (oldCols || []).filter(function (c) { return !names[c.name]; });
+  var removed = (oldCols || []).filter(function (c: ApiDbColumn): boolean { return !names[c.name]; });
   return { added: added, changed: changed, removed: removed };
 }
 
@@ -82,17 +82,17 @@ function dbDdlDiffColumns(oldCols, rows) {
  *  when there is nothing to preview yet — the sheet shows its quiet hint instead of calling
  *  the server. Only rows that carry a name ride along; a half-filled row still goes, so the
  *  server's refusal (shown verbatim) names what is missing. Pure over the form object. */
-function dbDdlFormPayload(kind, form) {
-  var col = function (r) {
-    var o = { name: r.name, type: r.type, nullable: !!r.nullable };
+function dbDdlFormPayload(kind: string, form: { schema: string; table: string; comment: string; columns: DdlRow[]; oldColumns: ApiDbColumn[]; index: string; indexColumns: string[]; unique: boolean }): DbDdlPayload | null {
+  var col = function (r: DdlRow): { name?: string; type?: string; nullable?: boolean; default?: string; comment?: string } {
+    var o: { name?: string; type?: string; nullable?: boolean; default?: string; comment?: string } = { name: r.name, type: r.type, nullable: !!r.nullable };
     if (r.default) o.default = r.default;
     if (r.comment) o.comment = r.comment;
     return o;
   };
-  var base = {};
+  var base: DbDdlPayload = {};
   if (form.schema) base.schema = form.schema;
   if (kind === "index") {
-    var cols = (form.indexColumns || []).filter(Boolean);
+    var cols: string[] = (form.indexColumns || []).filter(Boolean);
     if (!form.table || !form.index || !cols.length) return null;
     base.table = form.table;
     base.index = form.index;
@@ -102,7 +102,7 @@ function dbDdlFormPayload(kind, form) {
   }
   if (!form.table) return null;
   base.table = form.table;
-  var rows = (form.columns || []).filter(function (r) { return (r.name || "").trim(); });
+  var rows: DdlRow[] = (form.columns || []).filter(function (r: DdlRow) { return (r.name || "").trim(); });
   if (kind === "table") {
     if (!rows.length) return null;
     base.columns = rows.map(col);
@@ -120,7 +120,7 @@ function dbDdlFormPayload(kind, form) {
 /** A conventional index name (adminer's spelling): table, the column run, _idx — lower-cased
  *  and capped under the identifier whitelist's 64, so the suggestion itself always passes it.
  *  Pure. */
-function dbDdlIndexSuggestion(table, cols) {
+function dbDdlIndexSuggestion(table: unknown, cols: string[]): string {
   var run = cols.length ? "_" + cols.join("_") : "";
   return (String(table) + run + "_idx").toLowerCase().slice(0, 63);
 }
@@ -136,16 +136,16 @@ var DDL_QUIET = {
 };
 
 /** One sheet's whole mutable context; rebuilt per open, nulled on close. */
-var S = null;
+var S: DdlSheetState | null = null;
 
 /** Open one W4.6 sheet. ctx = { kind, dialect, conn, schema, schemas, table, columns } —
  *  kind "table" creates fresh (schema select for pg), "column"/"index" prefill the table's
  *  old state (docs/22 W4.6: same form, prefilled, commit diffs). */
-function openDbDdlSheet(kind, ctx) {
+function openDbDdlSheet(kind: "table" | "column" | "index", ctx: { dialect: string; conn: string; schema?: string; schemas?: string[]; table?: string; columns?: ApiDbColumn[] }): void {
   closeDbDdlSheet();
-  var rows = [];
+  var rows: DdlRow[] = [];
   if (kind === "column") {
-    rows = (ctx.columns || []).map(function (c) {
+    rows = (ctx.columns || []).map(function (c: ApiDbColumn): DdlRow {
       return {
         name: c.name, type: c.dataType, nullable: c.nullable,
         default: c.defaultValue == null ? "" : String(c.defaultValue),
@@ -173,27 +173,27 @@ function openDbDdlSheet(kind, ctx) {
 function closeDbDdlSheet() {
   if (S && S.timer) clearTimeout(S.timer);
   S = null;
-  var host = $("sheet");
+  var host = $<HTMLElement>("sheet");
   if (host) { host.hidden = true; host.innerHTML = ""; }
 }
 
 /** Rebuild the whole sheet DOM from S. Called on open and on row add/remove only — keystrokes
  *  write straight into S (and schedule a preview) so an input never loses focus to a re-render. */
-function paintDbDdlSheet() {
-  var kind = S.kind;
-  var title = DDL_TITLE[kind] + (S.table ? " in " + S.table : "");
+function paintDbDdlSheet(): void {
+  var kind = S!.kind;
+  var title = DDL_TITLE[kind] + (S!.table ? " in " + S!.table : "");
   var html =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(DDL_TITLE[kind]) + '">' +
       '<div class="sheet-head"><h2 id="ddl-title">' + esc(title) + "</h2></div>" +
       '<div class="sheet-body">';
-  if (kind === "table" && S.dialect === "pg") {
+  if (kind === "table" && S!.dialect === "pg") {
     // docs/22 W1.1: a Postgres catalog is many schemas, so the new table says where it goes
     // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
-    var schemas = S.schemas.slice();
-    if (schemas.indexOf(S.schema) < 0) schemas.unshift(S.schema);
+    var schemas = S!.schemas.slice();
+    if (schemas.indexOf(S!.schema) < 0) schemas.unshift(S!.schema);
     html += '<label class="field"><span>Schema</span><select id="ddl-schema">' +
-      schemas.map(function (s) {
-        return '<option value="' + esc(s) + '"' + (s === S.schema ? " selected" : "") + ">" + esc(s) + "</option>";
+      schemas.map(function (s: string): string {
+        return '<option value="' + esc(s) + '"' + (s === S!.schema ? " selected" : "") + ">" + esc(s) + "</option>";
       }).join("") + "</select></label>";
   }
   if (kind === "table") {
@@ -204,7 +204,7 @@ function paintDbDdlSheet() {
   }
   if (kind === "index") {
     html += '<div class="two">' +
-        '<label class="field"><span>Index name</span><input id="ddl-index" autocomplete="off" spellcheck="false" value="' + esc(S.indexName) + '"></label>' +
+        '<label class="field"><span>Index name</span><input id="ddl-index" autocomplete="off" spellcheck="false" value="' + esc(S!.indexName) + '"></label>' +
         '<label class="check" style="align-self:end;padding-bottom:6px"><input type="checkbox" id="ddl-unique">Unique</label>' +
       "</div>" +
       '<div class="field"><span>Columns</span><div id="ddl-cols" class="db-ddl-colpick"></div></div>';
@@ -214,12 +214,12 @@ function paintDbDdlSheet() {
       '<table class="db-ddl-grid" id="ddl-grid"><colgroup>' +
         '<col style="width:22%"><col style="width:24%"><col style="width:56px"><col style="width:20%"><col style="width:28%"><col style="width:26px">' +
       "</colgroup><thead><tr>" +
-        ["Name", "Type", "Null", "Default", "Comment", ""].map(function (h) {
+        ["Name", "Type", "Null", "Default", "Comment", ""].map(function (h: string): string {
           return "<th>" + esc(h) + "</th>";
         }).join("") +
       "</tr></thead><tbody></tbody></table>" +
       '<button class="btn ghost" id="ddl-add-row" type="button">Add column</button>' +
-      '<datalist id="ddl-types">' + dbDdlTypeOptions(S.dialect).map(function (t) {
+      '<datalist id="ddl-types">' + dbDdlTypeOptions(S!.dialect).map(function (t: string): string {
         return '<option value="' + esc(t) + '"></option>';
       }).join("") + "</datalist></div>";
   }
@@ -233,7 +233,7 @@ function paintDbDdlSheet() {
           esc(kind === "table" ? "Create table" : kind === "column" ? "Add column" : "Create index") +
         "</button></div>" +
     "</div>";
-  var host = $("sheet");
+  var host = $<HTMLElement>("sheet");
   host.innerHTML = html;
   host.hidden = false;
   wireDbDdlSheet();
@@ -246,26 +246,26 @@ function paintDbDdlSheet() {
 }
 
 /* Every input writes into S directly — S is the model; the DOM is a view of it. */
-function wireDbDdlSheet() {
-  var kind = S.kind;
+function wireDbDdlSheet(): void {
+  var kind = S!.kind;
   $("ddl-cancel").onclick = closeDbDdlSheet;
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeDbDdlSheet(); };
   // Enter submits the primary from any text input, the way every one-input sheet does.
-  $("sheet").onkeydown = function (e) {
+  $("sheet").onkeydown = function (e: KeyboardEvent): void {
     if (e.key === "Enter" && e.target && e.target.tagName === "INPUT" && e.target.type !== "checkbox") {
       e.preventDefault();
       void commitDbDdl();
     }
   };
-  var retitle = function () {
-    if (S.dialect === "pg" && kind === "table") {
-      $("ddl-title").textContent = "New table in " + $("ddl-schema").value;
+  var retitle = function (): void {
+    if (S!.dialect === "pg" && kind === "table") {
+      $<HTMLElement>("ddl-title").textContent = "New table in " + $<FilterSelect>("ddl-schema").value;
     }
   };
   if (kind === "table") {
-    if (S.dialect === "pg") {
-      $("ddl-schema").onchange = function () {
-        S.schema = this.value;
+    if (S!.dialect === "pg") {
+      $<FilterSelect>("ddl-schema").onchange = function (): void {
+        S!.schema = this.value;
         retitle();
         scheduleDbDdlPreview();
       };
@@ -274,39 +274,39 @@ function wireDbDdlSheet() {
     // The name and comment wire for EVERY dialect — mysql tables need the model write just
     // as much as pg ones (caught live: the handlers once sat in the pg-only branch and a
     // mysql sheet never left its quiet hint).
-    $("ddl-table").oninput = function () { S.table = this.value; scheduleDbDdlPreview(); };
-    $("ddl-table").value = S.table;
-    $("ddl-comment").oninput = function () { S.comment = this.value; scheduleDbDdlPreview(); };
-    $("ddl-table").focus();
+    $<FilterInput>("ddl-table").oninput = function (): void { S!.table = this.value; scheduleDbDdlPreview(); };
+    $<FilterInput>("ddl-table").value = S!.table;
+    $<FilterInput>("ddl-comment").oninput = function (): void { S!.comment = this.value; scheduleDbDdlPreview(); };
+    $<FilterInput>("ddl-table").focus();
   } else if (kind === "index") {
     // the name input's own handler lives with the column picker it tracks (below)
-    $("ddl-unique").onchange = function () { S.unique = this.checked; scheduleDbDdlPreview(); };
-    $("ddl-index").focus();
-    $("ddl-index").select();
+    $<FilterInput>("ddl-unique").onchange = function (): void { S!.unique = this.checked; scheduleDbDdlPreview(); };
+    $<FilterInput>("ddl-index").focus();
+    $<FilterInput>("ddl-index").select();
   }
   // Both grid kinds can grow a row — table and column alike (the wiring once sat in an
   // else branch the table kind never reached, caught live on 19998).
   if (kind !== "index") {
-    $("ddl-add-row").onclick = function () {
-      S.rows.push({ name: "", type: "", nullable: true, default: "", comment: "", isNew: true });
+    $<HTMLButtonElement>("ddl-add-row").onclick = function (): void {
+      S!.rows.push({ name: "", type: "", nullable: true, default: "", comment: "", isNew: true });
       renderDbDdlRows();
-      var last = $("ddl-grid").querySelectorAll("tbody tr:last-child input[data-k=name]")[0];
+      var last = $<HTMLElement>("ddl-grid").querySelectorAll<FilterInput>("tbody tr:last-child input[data-k=name]")[0];
       if (last) last.focus();
     };
   }
-  $("ddl-commit").onclick = function () { void commitDbDdl(); };
+  $<HTMLButtonElement>("ddl-commit").onclick = function (): void { void commitDbDdl(); };
 }
 
 /** The mini-grid's rows. Old (prefilled) rows render disabled — only ADD is in the W4.6
  *  minimal set — so the diff's added bucket is exactly the editable rows. */
-function renderDbDdlRows() {
-  var body = $("ddl-grid").querySelector("tbody");
-  body.innerHTML = "";
-  S.rows.forEach(function (r, i) {
+function renderDbDdlRows(): void {
+  var body = $<HTMLElement>("ddl-grid").querySelector<HTMLElement>("tbody");
+  body!.innerHTML = "";
+  S!.rows.forEach(function (r: DdlRow, i: number): void {
     var tr = el("tr");
-    var mk = function (k, value, ph) {
+    var mk = function (k: string, value: string, ph?: string): HTMLTableCellElement {
       var td = el("td");
-      var input = document.createElement("input");
+      var input = document.createElement("input") as FilterInput;
       input.type = "text";
       input.value = value == null ? "" : value;
       input.dataset.k = k;
@@ -314,8 +314,8 @@ function renderDbDdlRows() {
       if (ph) input.placeholder = ph;
       if (k === "type") input.setAttribute("list", "ddl-types");
       if (!r.isNew) input.disabled = true;
-      input.oninput = function () {
-        r[k] = this.value;
+      input.oninput = function (): void {
+        r[k as "name" | "type" | "default" | "comment"] = this.value;
         scheduleDbDdlPreview();
       };
       td.appendChild(input);
@@ -324,53 +324,53 @@ function renderDbDdlRows() {
     tr.appendChild(mk("name", r.name, "id"));
     tr.appendChild(mk("type", r.type, "int"));
     var tdn = el("td");
-    var cb = document.createElement("input");
+    var cb = document.createElement("input") as FilterInput;
     cb.type = "checkbox";
     cb.checked = !!r.nullable;
     cb.dataset.i = String(i);
     cb.setAttribute("aria-label", "Nullable");
     if (!r.isNew) cb.disabled = true;
-    cb.onchange = function () { r.nullable = this.checked; scheduleDbDdlPreview(); };
+    cb.onchange = function (): void { r.nullable = this.checked; scheduleDbDdlPreview(); };
     tdn.appendChild(cb);
     tr.appendChild(tdn);
     tr.appendChild(mk("default", r.default, "0"));
     tr.appendChild(mk("comment", r.comment, ""));
     var tdx = el("td");
-    var rm = el("button", "btn icon");
+    var rm = el("button", "btn icon") as HTMLButtonElement;
     rm.type = "button";
     rm.innerHTML = icon("x", "Remove column");
     rm.dataset.i = String(i);
     if (!r.isNew) { rm.disabled = true; rm.title = "Only new columns can be removed here"; }
-    rm.onclick = function () {
-      S.rows.splice(i, 1);
+    rm.onclick = function (): void {
+      S!.rows.splice(i, 1);
       renderDbDdlRows();
       scheduleDbDdlPreview();
     };
     tdx.appendChild(rm);
     tr.appendChild(tdx);
-    body.appendChild(tr);
+    body!.appendChild(tr);
   });
 }
 
 /** The index sheet's column picker: one check per existing column, in the table's order. */
-function renderDbDdlColPick() {
-  var box = $("ddl-cols");
+function renderDbDdlColPick(): void {
+  var box = $<HTMLElement>("ddl-cols");
   box.innerHTML = "";
-  S.oldColumns.forEach(function (c) {
+  S!.oldColumns.forEach(function (c: ApiDbColumn): void {
     var label = document.createElement("label");
     label.className = "check";
-    var cb = document.createElement("input");
+    var cb = document.createElement("input") as FilterInput;
     cb.type = "checkbox";
     cb.value = c.name;
-    cb.onchange = function () {
-      var at = S.indexCols.indexOf(c.name);
-      if (this.checked && at < 0) S.indexCols.push(c.name);
-      if (!this.checked && at >= 0) S.indexCols.splice(at, 1);
+    cb.onchange = function (): void {
+      var at = S!.indexCols.indexOf(c.name);
+      if (this.checked && at < 0) S!.indexCols.push(c.name);
+      if (!this.checked && at >= 0) S!.indexCols.splice(at, 1);
       // The suggestion follows the picks until the user edits it by hand.
-      if (!S.indexTouched) {
-        S.indexName = dbDdlIndexSuggestion(S.table, S.indexCols);
-        var name = $("ddl-index");
-        if (name) name.value = S.indexName;
+      if (!S!.indexTouched) {
+        S!.indexName = dbDdlIndexSuggestion(S!.table, S!.indexCols);
+        var name = $<FilterInput>("ddl-index");
+        if (name) name.value = S!.indexName;
       }
       scheduleDbDdlPreview();
     };
@@ -378,50 +378,50 @@ function renderDbDdlColPick() {
     label.appendChild(document.createTextNode(c.name));
     box.appendChild(label);
   });
-  var nameInput = $("ddl-index");
+  var nameInput = $<FilterInput>("ddl-index");
   if (nameInput) {
-    nameInput.oninput = function () { S.indexName = this.value; S.indexTouched = true; scheduleDbDdlPreview(); };
+    nameInput.oninput = function (): void { S!.indexName = this.value; S!.indexTouched = true; scheduleDbDdlPreview(); };
   }
 }
 
 /* --- the preview: live, server-built, error text verbatim ---------------------------------------- */
 
-function paintDbDdlPreviewQuiet() {
-  var pre = $("ddl-pre");
+function paintDbDdlPreviewQuiet(): void {
+  var pre = $<HTMLElement>("ddl-pre");
   if (!pre) return;
-  pre.textContent = DDL_QUIET[S.kind];
+  pre.textContent = DDL_QUIET[S!.kind];
   pre.classList.add("db-ddl-quiet");
-  $("ddl-commit").disabled = true;
-  S.lastSql = null;
-  S.lastPayload = null;
+  $<HTMLButtonElement>("ddl-commit").disabled = true;
+  S!.lastSql = null;
+  S!.lastPayload = null;
 }
 
-function paintDbDdlPreviewSql(sql) {
-  var pre = $("ddl-pre");
+function paintDbDdlPreviewSql(sql: string): void {
+  var pre = $<HTMLElement>("ddl-pre");
   pre.classList.remove("db-ddl-quiet");
   pre.innerHTML = dbHighlightSql(sql);
-  $("ddl-commit").disabled = false;
+  $<HTMLButtonElement>("ddl-commit").disabled = false;
 }
 
-function paintDbDdlPreviewError(message) {
-  var pre = $("ddl-pre");
+function paintDbDdlPreviewError(message: string): void {
+  var pre = $<HTMLElement>("ddl-pre");
   pre.classList.remove("db-ddl-quiet");
   // The server's own refusal, unpainted: it names the field and the rule (kept verbatim from the error text).
   pre.textContent = message;
-  $("ddl-commit").disabled = true;
-  S.lastSql = null;
-  S.lastPayload = null;
+  $<HTMLButtonElement>("ddl-commit").disabled = true;
+  S!.lastSql = null;
+  S!.lastPayload = null;
 }
 
-function scheduleDbDdlPreview() {
+function scheduleDbDdlPreview(): void {
   if (!S) return;
-  clearTimeout(S.timer);
-  S.timer = setTimeout(function () { void refreshDbDdlPreview(); }, 250);
+  clearTimeout(S.timer!);
+  S.timer = setTimeout(function (): void { void refreshDbDdlPreview(); }, 250);
 }
 
 /** Read the form, ask the server for the statements, paint them. The payload read here is
  *  the very object Commit posts — one builder, one input, preview = commit. */
-async function refreshDbDdlPreview() {
+async function refreshDbDdlPreview(): Promise<void> {
   // Escape closes the sheet through main.js's own closeSheet(), which this module cannot
   // see — a still-pending timer then finds its DOM gone. The guard turns that into a no-op.
   if (!S || !$("ddl-pre")) return;
@@ -433,7 +433,7 @@ async function refreshDbDdlPreview() {
   var payload = dbDdlFormPayload(S.kind, form);
   if (!payload) { paintDbDdlPreviewQuiet(); return; }
   var seq = ++S.seq;
-  var r;
+  var r: Response;
   try {
     r = await api("/api/db/" + encodeURIComponent(S.conn) + "/ddl-preview", {
       method: "POST",
@@ -457,11 +457,11 @@ async function refreshDbDdlPreview() {
 
 /** Commit posts the previewed (op, payload) to /ddl. Refreshed first so the text on screen
  *  and the payload posted can never be two different drafts (the 250 ms debounce window). */
-async function commitDbDdl() {
+async function commitDbDdl(): Promise<void> {
   if (!S) return;
   await refreshDbDdlPreview();
   if (!S || !S.lastSql || !S.lastPayload) return;
-  var btn = $("ddl-commit");
+  var btn = $<HTMLButtonElement>("ddl-commit");
   btn.disabled = true;
   var j = await apiJson("/api/db/" + encodeURIComponent(S.conn) + "/ddl", {
     method: "POST",
@@ -470,7 +470,7 @@ async function commitDbDdl() {
   if (!S) return; // the sheet closed while the request was in flight
   if (!j) { btn.disabled = false; return; } // apiJson already toasted the refusal
   var kind = S.kind;
-  var table = S.lastPayload.table;
+  var table: string = S.lastPayload.table!;
   var schema = S.lastPayload.schema || "";
   closeDbDdlSheet();
   if (kind === "table") {

@@ -22,6 +22,12 @@
  *  with NO label/fn (tunnels.ts:256 was the strict-mode error that proved it), an action
  *  is label+fn with optional styling flags. pick/on drive the checked-mark row styles
  *  (danger reds the item); menu.ts never reads a field the arm does not carry. */
+/* The grid's column headers: oncontextmenu redeclared without lib.dom's this-param so the
+   handler's this is the th itself (popupMenu anchors on this.getBoundingClientRect). */
+interface MenuTh extends HTMLElement {
+  oncontextmenu: ((ev: MouseEvent) => unknown) | null;
+}
+
 interface MenuItemAction {
   label: string;
   fn: (ev?: MouseEvent) => void;
@@ -167,6 +173,12 @@ interface GroupCfg<Row extends GroupedRow> {
  *  an in-place fix would need. Optional so concrete elements keep their required method. */
 interface EventTarget {
   closest?: (selector: string) => Element | null;
+  /* The DDL sheet's Enter guard reads tagName/type off the (untyped) key event's target.
+   *  tagName stays string-optional (Element narrows it back to required); type must be
+   *  unknown because SVG elements declare their own required `type` members, which an
+   *  optional string here would clash with (interface merges need assignable members). */
+  tagName?: string;
+  type?: unknown;
 }
 
 
@@ -189,6 +201,29 @@ type FreshDetail = Omit<McpDetail, "tools" | "resources" | "prompts"> & { [key: 
  *  this is loosely typed (see noImplicitThis in tsconfig) and the read stands as written. */
 interface FilterInput extends HTMLInputElement {
   oninput: ((ev: Event) => unknown) | null;
+  /* shiftKey: the grid's select-boxes read it from the change event (Shift-click ranges);
+     optional so the redeclaration stays assignable to HTMLElement's own handler type. */
+  onchange: ((ev: Event & { shiftKey?: boolean }) => unknown) | null;
+  onkeydown: ((ev: KeyboardEvent) => unknown) | null;
+}
+
+/* The console's textarea: handlers read this.value / this.scrollTop inside oninput, onscroll
+   and onkeydown - the same redeclare-without-this-param trick as FilterInput. */
+interface FilterTextArea extends HTMLTextAreaElement {
+  oninput: ((ev: Event) => unknown) | null;
+  onscroll: ((ev: Event) => unknown) | null;
+  onkeydown: ((ev: KeyboardEvent) => unknown) | null;
+}
+
+/* A button whose click handler mutates the button itself (this.disabled / this.textContent):
+   redeclaring onclick without the GlobalEventHandlers this-param restores this-typing. */
+interface ActionButton extends HTMLButtonElement {
+  onclick: ((ev: PointerEvent) => any) | null;
+}
+
+/* The same this-value read on selects (data-filters.ts column/operator pickers). */
+interface FilterSelect extends HTMLSelectElement {
+  onchange: ((ev: Event) => unknown) | null;
 }
 
 /* main.ts's typing guard tests `document.activeElement && document.activeElement.tagName`,

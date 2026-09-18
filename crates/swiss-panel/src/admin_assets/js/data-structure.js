@@ -34,19 +34,19 @@ var DB_TABS = [
   { id: "ddl", label: "DDL" },
 ];
 
-function dbSetTab(t) {
+function dbSetTab(t        )       {
   var d = state.db;
-  if (d.tab === t) return;
+  if (d .tab === t) return;
   // docs/22 W5.1: the form opens on the row the keyboard focused, and the grid's focus
   // returns to the form's row — one cursor, two presentations of it.
-  if (t === "form" && d.focus) d.formIdx = d.focus.r;
-  if (t === "data" && d.formIdx != null) d.focus = { r: d.formIdx, c: d.focus ? d.focus.c : 0 };
-  d.tab = t;
+  if (t === "form" && d .focus) d .formIdx = d .focus.r;
+  if (t === "data" && d .formIdx != null) d .focus = { r: d .formIdx, c: d .focus ? d .focus.c : 0 };
+  d .tab = t                  ;
   renderDbToolbar();
   renderDbFilters();
   renderDbGrid();
   renderDbBar();
-  if (t !== "data" && t !== "form" && d.conn && d.table) dbLoadDetail();
+  if (t !== "data" && t !== "form" && d .conn && d .table) dbLoadDetail();
 }
 
 // One /schema request chain: a slow answer for the table the user just left must be
@@ -54,31 +54,31 @@ function dbSetTab(t) {
 // one's (docs/22 closeout audit).
 var dbDetailReq = dbReqGuard();
 
-async function dbLoadDetail() {
+async function dbLoadDetail()                {
   var d = state.db;
-  if (!d.conn || !d.table) return;
-  d.detailBusy = true;
+  if (!d .conn || !d .table) return;
+  d .detailBusy = true;
   renderDbGrid();
-  var q = "/api/db/" + encodeURIComponent(d.conn) + "/schema?table=" + encodeURIComponent(d.table);
-  if (d.schema) q += "&schema=" + encodeURIComponent(d.schema);
+  var q = "/api/db/" + encodeURIComponent(d .conn) + "/schema?table=" + encodeURIComponent(d .table);
+  if (d .schema) q += "&schema=" + encodeURIComponent(d .schema);
   var token = dbDetailReq.issue();
-  var j = await apiJson(q);
+  var j = await apiJson                  (q);
   if (!dbDetailReq.accepts(token)) return; // superseded: a newer table owns the detail
-  d.detailBusy = false;
-  if (!j) { d.detail = null; renderDbGrid(); return; }
-  d.detail = j;
-  d.schema = j.schema;
+  d .detailBusy = false;
+  if (!j) { d .detail = null; renderDbGrid(); return; }
+  d .detail = j;
+  d .schema = j.schema;
   renderDbGrid();
 }
 
-function dbRenderTabs(ctl) {
+function dbRenderTabs(ctl             )       {
   var d = state.db;
   var seg = el("div", "db-tabs");
   seg.setAttribute("role", "tablist");
-  DB_TABS.forEach(function (t) {
+  DB_TABS.forEach(function (t                               )       {
     var b = el("button", "", t.label);
     b.setAttribute("role", "tab");
-    b.setAttribute("aria-selected", String(d.tab === t.id));
+    b.setAttribute("aria-selected", String(d .tab === t.id));
     b.onclick = function () { dbSetTab(t.id); };
     seg.appendChild(b);
   });
@@ -87,21 +87,21 @@ function dbRenderTabs(ctl) {
   if (!dbIsRedis()) {
     var tblBtn = el("button", "btn", "Table \u25be");
     tblBtn.title = "Rename, truncate or drop this table";
-    tblBtn.onclick = function (e) { e.stopPropagation(); dbTableMenu(tblBtn); };
+    tblBtn.onclick = function (e            )       { e.stopPropagation(); dbTableMenu(tblBtn); };
     ctl.appendChild(tblBtn);
   }
 }
 
 /** The Structure tabs reuse the grid wrapper: Columns/Indexes/FKs render as plain tables,
  *  DDL as a monospace block. */
-function renderDbDetailGrid(wrap) {
+function renderDbDetailGrid(wrap             )       {
   var d = state.db;
-  if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
-  if (!d.detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
-  var det = d.detail;
-  if (d.tab === "ddl") {
+  if (d .detailBusy) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+  if (!d .detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
+  var det = d .detail;
+  if (d .tab === "ddl") {
     wrap.appendChild(el("div", "db-detail-meta",
-      (d.conn && d.conns.some(function (c) { return c.name === d.conn && c.dialect === "pg"; })
+      (d .conn && d .conns.some(function (c                    )          { return c.name === d .conn && c.dialect === "pg"; })
         ? "Postgres keeps DDL in migration scripts — this sketch is assembled from the catalog."
         : "From SHOW CREATE TABLE.")));
     var pre = el("pre", "db-ddl db-sql-hl");
@@ -113,11 +113,11 @@ function renderDbDetailGrid(wrap) {
   var tbl = el("table", "db-grid");
   var thead = el("thead");
   var hr = el("tr");
-  var spec;
-  if (d.tab === "columns") {
+  var spec              ;
+  if (d .tab === "columns") {
     spec = {
       head: ["Column", "Type", "Nullable", "Default", "Key", "Comment"],
-      row: function (c) {
+      row: function (c             ) {
         return [c.name, c.dataType, c.nullable ? "YES" : "NO",
           c.defaultValue == null ? "—" : String(c.defaultValue),
           c.isPrimaryKey ? "PRI" : "",
@@ -128,10 +128,10 @@ function renderDbDetailGrid(wrap) {
       rows: det.columns,
       meta: det.columns.length + " columns · primary key: " + (det.primaryKey.join(", ") || "none"),
     };
-  } else if (d.tab === "indexes") {
+  } else if (d .tab === "indexes") {
     spec = {
       head: ["Index", "Unique", "Primary", "Columns"],
-      row: function (x) {
+      row: function (x                                                                                             ) {
         return [x.name, x.unique ? "yes" : "no", x.primary ? "yes" : "no",
           (x.columns && x.columns.length ? x.columns.join(", ") : "") || (x.definition || "")];
       },
@@ -141,7 +141,7 @@ function renderDbDetailGrid(wrap) {
   } else {
     spec = {
       head: ["Constraint", "Column", "References"],
-      row: function (f) {
+      row: function (f            ) {
         // docs/22 W5.2: the target name carries its fk — the renderer draws it as a link
         // (read-only navigation; the grid header's arrow is the filtered jump).
         return [f.name, f.column, { text: f.refSchema + "." + f.refTable + " (" + f.refColumn + ")", fk: f }];
@@ -156,13 +156,13 @@ function renderDbDetailGrid(wrap) {
   var meta = el("div", "db-detail-meta");
   meta.appendChild(el("span", "", spec.meta));
   meta.appendChild(el("span", "grow"));
-  if (d.tab === "columns" || d.tab === "indexes") {
-    var add = el("button", "btn", d.tab === "columns" ? "Add column…" : "New index…");
+  if (d .tab === "columns" || d .tab === "indexes") {
+    var add = el("button", "btn", d .tab === "columns" ? "Add column…" : "New index…")                     ;
     add.type = "button";
-    add.onclick = function () {
-      openDbDdlSheet(d.tab === "columns" ? "column" : "index", {
+    add.onclick = function ()       {
+      openDbDdlSheet(d .tab === "columns" ? "column" : "index", {
         dialect: dbDialectOf(),
-        conn: d.conn,
+        conn: d .conn ,
         schema: det.schema || "",
         table: det.table,
         columns: det.columns,
@@ -171,25 +171,25 @@ function renderDbDetailGrid(wrap) {
     meta.appendChild(add);
   }
   wrap.appendChild(meta);
-  spec.head.forEach(function (h) { hr.appendChild(el("th", "db-col", h)); });
+  spec.head.forEach(function (h        )       { hr.appendChild(el("th", "db-col", h)); });
   thead.appendChild(hr);
   tbl.appendChild(thead);
   var tbody = el("tbody");
-  spec.rows.forEach(function (r) {
+  spec.rows.forEach(function (r         )       {
     var tr = el("tr");
-    spec.row(r).forEach(function (v) {
+    spec.row(r).forEach(function (v                                                           )       {
       var cell = v && typeof v === "object" ? v : { text: v, cls: "" };
       var td = el("td", "db-cell" + (cell.cls ? " " + cell.cls : ""));
       if (cell.fk) {
         // docs/22 W5.2: the referenced table opens on click — no filter here, just the
         // navigation (the arrow in the grid header owns the filtered jump).
-        var ref = el("button", "db-fk-ref");
+        var ref = el("button", "db-fk-ref")                     ;
         ref.type = "button";
         ref.textContent = String(cell.text);
-        ref.title = "Open " + (cell.fk.refSchema ? cell.fk.refSchema + "." : "") + cell.fk.refTable;
+        ref.title = "Open " + (cell.fk .refSchema ? cell.fk .refSchema + "." : "") + cell.fk .refTable;
         ref.onclick = function () {
           if (!dbOkToDrop()) return;
-          dbOpenTable({ name: cell.fk.refTable, schema: cell.fk.refSchema || null });
+          dbOpenTable({ name: cell.fk .refTable, schema: cell.fk .refSchema || null                      });
         };
         td.appendChild(ref);
       } else td.textContent = String(cell.text);
@@ -212,12 +212,12 @@ var DDL_MOD_WORDS = new Set((
 
 /** One column-definition line: quoted name, then type tokens, then modifiers. Returns null
  *  for lines that are not column definitions (PRIMARY KEY, KEY, CONSTRAINT, tail, etc). */
-function dbParseColumnLine(line) {
+function dbParseColumnLine(line        )                                                                                      {
   var m = /^(\s*)([`"][^`"]+[`"])\s+(.*?)(,?)\s*$/.exec(line);
   if (!m) return null;
   var rest = m[3];
   var tokens = rest.split(/\s+/).filter(Boolean);
-  var typeParts = [];
+  var typeParts           = [];
   var i = 0;
   while (i < tokens.length) {
     var t = tokens[i];
@@ -245,8 +245,8 @@ function dbParseColumnLine(line) {
   return { indent: m[1], name: m[2], type: typeParts.join(" "), mods: mods, comma: m[4] === "," };
 }
 
-function dbAlignDdl(ddl) {
-  if (!ddl) return ddl;
+function dbAlignDdl(ddl               )         {
+  if (!ddl) return ddl ;
   var lines = ddl.split(/\r?\n/);
   var parsed = lines.map(function (l) { return dbParseColumnLine(l); });
   var wName = 0, wType = 0;
