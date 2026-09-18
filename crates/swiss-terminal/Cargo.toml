@@ -18,7 +18,7 @@ thiserror = "2"
 
 [dev-dependencies]
 # test-utils pins the scratch MCP_GATEWAY_HOME for this crate's test binary, so a recording
-# test can never write into the real ~/.mcp-gateway/terminal.
+# test can never write into the real ~/.swiss/terminal.
 swiss-core = { path = "../swiss-core", features = ["test-utils"] }
 # test-util: the pausable clock. A 30-minute idle timeout and a 60-second reconnect grace
 # are asserted in microseconds instead of being trusted to a comment.

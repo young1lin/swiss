@@ -16,7 +16,7 @@
 
 //! The asciicast v2 recorder (docs/14 §6.4).
 //!
-//! One file per session at `~/.mcp-gateway/terminal/<sessionId>.cast`, one JSON value per
+//! One file per session at `~/.swiss/terminal/<sessionId>.cast`, one JSON value per
 //! line: a header object, then `[elapsed, "o", "text"]` for every chunk the shell wrote.
 //! That is the whole format, which is the point of choosing it — `asciinema play` and
 //! every web player already read it, so the gateway ships no player of its own and the

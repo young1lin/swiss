@@ -25,7 +25,8 @@ $Health98 = "http://127.0.0.1:19998/health"
 Write-Output "=== [0] launcher env (this very shell) ==="
 Write-Output ("NO_COLOR=[" + $env:NO_COLOR + "] WT_SESSION=[" + $env:WT_SESSION + "] CLAUDECODE=[" + $env:CLAUDECODE + "]")
 
-$prodCfg = Join-Path $env:USERPROFILE ".mcp-gateway\gateway.config.json"
+$prodHome = if (Test-Path (Join-Path $env:USERPROFILE ".swiss\gateway.config.json")) { ".swiss" } else { ".mcp-gateway" }
+$prodCfg = Join-Path $env:USERPROFILE "$prodHome\gateway.config.json"
 $prodBefore = (Get-Item $prodCfg).LastWriteTimeUtc
 Write-Output ("=== [1] prod config mtime BEFORE: " + $prodBefore.ToString("o"))
 

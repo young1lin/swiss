@@ -45,7 +45,7 @@ const TOKEN: &str = "admin-tok-0123456789abcdef";
 
 /// Point the whole test binary at a scratch data dir and one deterministic master key, before
 /// anything can read either. The call log lives on disk under the data dir, and the state files
-/// are sealed — without this the suite would write into the operator's real `~/.mcp-gateway` and
+/// are sealed — without this the suite would write into the operator's real `~/.swiss` and
 /// would need DPAPI (or a machine id) to seal with.
 fn sandbox() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();

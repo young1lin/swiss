@@ -962,7 +962,7 @@ mod tests {
 
     /// The call log every registry test drives: the test binary's shared scratch instance.
     /// Delete/rename follow it, and a unit test must never write into the real
-    /// `~/.mcp-gateway`.
+    /// `~/.swiss`.
     fn use_temp_call_log() -> Arc<crate::calls::CallLog> {
         crate::calls::test_log()
     }

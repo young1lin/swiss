@@ -53,7 +53,7 @@ Each rule is a security or correctness boundary, not style. Verify by reading, n
 | Dependency weight | Manifest changes carry the justification and minimal features; `cargo tree -d` judged per [swiss-dependency-review](../swiss-dependency-review/SKILL.md) |
 
 Also standard hygiene: LF everywhere, code comments in English, no secrets or `*.log`/
-`master.key`/state files staged (including `~/.mcp-gateway/terminal/*.cast` recordings, which
+`master.key`/state files staged (including `~/.swiss/terminal/*.cast` recordings, which
 echo typed passwords), no unrelated refactors bundled — and commit messages carry the
 justifications this repo requires in them (dependency weight; any measured reason for
 `multi_thread`).

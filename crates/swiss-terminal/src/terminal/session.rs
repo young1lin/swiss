@@ -303,7 +303,7 @@ pub struct TerminalSessions {
 }
 
 impl TerminalSessions {
-    /// `dir` is where recordings go — `~/.mcp-gateway/terminal` in the gateway, a scratch
+    /// `dir` is where recordings go — `~/.swiss/terminal` in the gateway, a scratch
     /// directory in tests.
     pub fn new(
         config: TerminalConfig,

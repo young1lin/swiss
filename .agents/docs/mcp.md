@@ -138,7 +138,7 @@ One file holds all panel-mutable state (managed.rs:1-2, 573-663):
 - The `lazy` key hangs on every type: the panel's Start automatically checkbox writes its inverse; proc is lazy by default, the other types opt in explicitly (`is_lazy`, registry.rs:81-92).
 - **Credential expansion timing**: `make_adapter(def, …)` expands a `resolve_def(def)` clone internally — the def in the registry and on disk forever stays a `${ENV_VAR}`/`secret://` reference; on panel echo `mask_def` swaps credential fields for sentinels and passwords inside URLs for `••••••••@` (crates/swiss-host/src/mask.rs:16-150), and on the PUT back `unmask_body` restores unchanged sentinels to the stored values — the browser never receives credentials, and editing unrelated fields cannot break them either.
 
-### Runtime files (data directory = ~/.mcp-gateway, docs/05)
+### Runtime files (data directory = ~/.swiss, docs/05)
 
 - `logs/calls/<mcp>.jsonl` (index rows: metadata + 2KB preview) + `logs/calls/bodies/<mcp>/<seq>.txt` (full text beyond the preview, latest 50 kept per MCP, calls.rs:11-16, 74-92); CallLog is an instance (S2 instantiation, held by AppContext, src/server.rs:71-77).
 - `logs/traffic.jsonl` (the traffic tail, 2MB/1MB byte budgets, traffic.rs:623-630).

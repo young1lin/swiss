@@ -16,7 +16,7 @@
 #
 # One script, one rule: live verification of this repo runs on an instance whose state lives
 # in its OWN home (%LOCALAPPDATA%\swiss-test-home), so a save on 19998 can never write the
-# user's production config in ~\.mcp-gateway (the 2026-09-11 footgun).
+# user's production config in ~\.swiss (the 2026-09-11 footgun).
 #
 # Why copying master.key works: every state file is AES-256-GCM sealed under a master key
 # that is itself DPAPI-protected for the CURRENT USER (docs/05 "The master key"). A copy of
@@ -51,7 +51,8 @@ $ErrorActionPreference = 'Stop'
 # a 19997 instance and a 19998 instance sharing one home would race each other's saves.
 $HomeName = if ($Port -eq 19998) { 'swiss-test-home' } else { "swiss-test-home-p$Port" }
 $TestHome = Join-Path $env:LOCALAPPDATA $HomeName
-$ProdHome = Join-Path $env:USERPROFILE '.mcp-gateway'
+# ~\.swiss since the 2026-09-18 rename; ~\.mcp-gateway until the next production start moves it.
+$ProdHome = if ((Test-Path (Join-Path $env:USERPROFILE '.swiss')) -and (Get-ChildItem (Join-Path $env:USERPROFILE '.swiss') -Force | Select-Object -First 1)) { Join-Path $env:USERPROFILE '.swiss' } else { Join-Path $env:USERPROFILE '.mcp-gateway' }
 $Exe = Join-Path $PSScriptRoot '..\target-test\release\swiss.exe'
 $HealthUrl = "http://127.0.0.1:$Port/health"
 

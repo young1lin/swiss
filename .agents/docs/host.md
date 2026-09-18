@@ -69,7 +69,7 @@ The panel is the static asset tree embedded in crates/swiss-panel (edited direct
 
 ## Configuration and Storage
 
-**Home directory** (crates/swiss-core/src/paths.rs:15-20): `$SWISS_HOME → $MCP_GATEWAY_HOME → ~/.mcp-gateway`, the new name first with the old name as fallback; the 19998 test instance points SWISS_HOME at %LOCALAPPDATA%\swiss-test-home (docs/16 H2).
+**Home directory** (crates/swiss-core/src/paths.rs): `$SWISS_HOME → $MCP_GATEWAY_HOME → ~/.swiss`, the new name first with the old name as fallback; a pre-rename `~/.mcp-gateway` keeps serving until `migrate_legacy_home` (called by `swiss start`/`restart` and at `serve` boot) renames it whole to `~/.swiss` — refused while a daemon's pid file in it names a live process; the 19998 test instance points SWISS_HOME at %LOCALAPPDATA%\swiss-test-home (docs/16 H2).
 
 **The full state-file family** (all sealed, all written atomically via tmp+rename, atomic_json.rs):
 
