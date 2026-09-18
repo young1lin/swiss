@@ -20,12 +20,12 @@
    shadow, nothing focusable. It is the feedback channel a terminal needs that never
    touches the PTY stream: resize geometry, the copy scissors, reconnect states. */
 
-export function createOverlay(holder) {
-  var el = null;
-  var fade = null;
-  var hide = null;
+export function createOverlay(holder: HTMLElement): { show(text: string, ms?: number): void; dispose(): void } {
+  var el: HTMLDivElement | null = null;
+  var fade: ReturnType<typeof setTimeout> | null = null;
+  var hide: ReturnType<typeof setTimeout> | null = null;
   return {
-    show: function (text, ms) {
+    show: function (text: string, ms?: number): void {
       if (!el) {
         el = document.createElement("div");
         el.className = "term-overlay";
@@ -39,13 +39,13 @@ export function createOverlay(holder) {
       if (hide) clearTimeout(hide);
       if (fade) clearTimeout(fade);
       hide = setTimeout(function () {
-        el.classList.remove("on");
+        el!.classList.remove("on");
         fade = setTimeout(function () {
           if (el && el.parentNode) el.parentNode.removeChild(el);
         }, 220);
       }, ms || 900);
     },
-    dispose: function () {
+    dispose: function (): void {
       if (hide) clearTimeout(hide);
       if (fade) clearTimeout(fade);
       if (el && el.parentNode) el.parentNode.removeChild(el);

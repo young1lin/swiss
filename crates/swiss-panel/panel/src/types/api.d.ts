@@ -108,10 +108,38 @@ interface ApiMcpKindPage {
 }
 
 /** A tools/list item, passed through from the MCP as-is - only the fields the panel renders. */
+/** A tool's input schema as the panel reads it (the JSON-Schema subset that drives the Run
+ *  form's generated argument fields: properties, required, enum, array item types). */
+interface ToolSchemaProp {
+  type?: string;
+  description?: string;
+  enum?: unknown[];
+  items?: { type?: string };
+  [key: string]: unknown;
+}
+
+interface ToolInputSchema {
+  properties?: Record<string, ToolSchemaProp>;
+  required?: string[];
+  [key: string]: unknown;
+}
+
 interface ApiMcpTool {
   name: string;
   description?: string;
-  inputSchema?: Record<string, unknown>;
+  inputSchema?: ToolInputSchema;
+  [key: string]: unknown;
+}
+
+/** One kind-page row, the three capabilities fused for the shared renderer (logs.ts kindBody):
+ *  uri marks a resource, arguments a prompt, inputSchema a tool - the renderer branches on
+ *  the kind, so one shape carries all three without a union at every property. */
+interface ApiMcpItem {
+  name?: string;
+  uri?: string;
+  description?: string;
+  arguments?: { name: string; required?: boolean }[];
+  inputSchema?: ToolInputSchema;
   [key: string]: unknown;
 }
 
@@ -166,6 +194,8 @@ type ApiMcpCallFull = ApiMcpCallRow;
 /** GET /api/traffic - traffic.rs read_traffic: one newest-first page of the ring. */
 interface ApiTrafficPage {
   entries: ApiTrafficRow[];
+  /* The whole ring's client fold rides every page (the panel keeps one state, not two). */
+  clients?: ApiTrafficClientRow[];
   total: number;
   totalUnfiltered: number;
   page: number;
@@ -191,7 +221,10 @@ interface ApiTrafficRow {
 
 /** GET /api/traffic/{seq} - traffic.rs read_traffic_entry: the raw redacted bodies, on expand. */
 interface ApiTrafficFull {
-  body: string;
+  /* gone: the ring rolled past this seq - the panel stores this marker for a 404 so the
+   *  row says so instead of spinning forever. */
+  gone?: boolean;
+  body?: string;
   response?: string;
 }
 

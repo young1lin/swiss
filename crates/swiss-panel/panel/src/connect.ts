@@ -27,10 +27,10 @@ import { pickCopyToken, refreshTokens, rememberedTokenId } from "./views/tokens.
  * token (fetched once into state.token). Each copied command embeds the token, so paste = ready — no
  * separate step of exporting the token in whatever shell the command lands in.
  */
-function tokenEnv() {
+function tokenEnv(): string {
   return (state.info && state.info.tokenEnv) || "SWISS_TOKEN";
 }
-function endpointUrl(name) {
+function endpointUrl(name: string): string {
   // docs/24: /mcp/ is the MCP plugin's domain — every client URL this panel can produce
   // goes through this one builder, so the prefix lives here and nowhere else.
   return location.origin + "/mcp/" + name;
@@ -43,12 +43,12 @@ function endpointUrl(name) {
  * IDE browser cannot answer `prompt()`, and a cancelled prompt used to look like a copy failure).
  * When there are no tokens at all it creates `default` rather than sending you to another panel.
  */
-async function resolveSecret() {
+async function resolveSecret(): Promise<string | null> {
   await refreshTokens();
   var list = state.tokens || [];
 
   if (!list.length) {
-    var made = await apiJson("/api/tokens", { method: "POST", body: JSON.stringify({ label: "default" }) });
+    var made = await apiJson<ApiTokenCreated>("/api/tokens", { method: "POST", body: JSON.stringify({ label: "default" }) });
     if (!made) return null;
     await refreshTokens();
     return useToken(made.id, made.secret);
@@ -60,21 +60,21 @@ async function resolveSecret() {
   return fetchSecret(pick.id);
 }
 
-async function fetchSecret(id) {
-  var j = await apiJson("/api/tokens/" + encodeURIComponent(id) + "/secret");
+async function fetchSecret(id: string): Promise<string | null> {
+  var j = await apiJson<ApiTokenSecret>("/api/tokens/" + encodeURIComponent(id) + "/secret");
   if (!j) return null;
   return useToken(j.id, j.secret);
 }
 
 /** Remember which token the copy actions embed — by id, so a rotate is picked up automatically. */
-function useToken(id, secret) {
+function useToken(id: string, secret: string): string {
   state.activeSecret = secret;
   try { localStorage.setItem(TOKEN_ID_KEY, id); } catch (e) { /* blocked — this session still works */ }
   return secret;
 }
 
 /** Copy a connect command for one MCP, embedding the active token secret. */
-async function copyConn(name, kind) {
+async function copyConn(name: string, kind: string): Promise<void> {
   var secret = await resolveSecret();
   if (!secret) return;
   var text = kind === "claude" ? claudeSnippet(name, secret)
@@ -83,13 +83,13 @@ async function copyConn(name, kind) {
 }
 
 /** `claude mcp add` — one line, secret embedded. Runs in any shell (cmd, PowerShell, bash, zsh). */
-function claudeSnippet(name, secret) {
+function claudeSnippet(name: string, secret: string): string {
   return 'claude mcp add --transport http -s user ' + name + " " + endpointUrl(name) +
     ' --header "Authorization: Bearer ' + secret + '"';
 }
 
 /** Codex has no one-line add for an HTTP server, so copy this block into ~/.codex/config.toml. */
-function codexSnippet(name, secret) {
+function codexSnippet(name: string, secret: string): string {
   return "[mcp_servers." + name + "]\n" +
     'type = "http"\n' +
     'url = "' + endpointUrl(name) + '"\n' +
@@ -97,13 +97,13 @@ function codexSnippet(name, secret) {
 }
 
 /** A `.mcp.json` entry for project-scoped Claude Code; the secret is inline. */
-function mcpJsonSnippet(name, secret) {
-  var entry = {};
+function mcpJsonSnippet(name: string, secret: string): string {
+  var entry: Record<string, { type: string; url: string; headers: { Authorization: string } }> = {};
   entry[name] = { type: "http", url: endpointUrl(name), headers: { Authorization: "Bearer " + secret } };
   return JSON.stringify({ mcpServers: entry }, null, 2);
 }
 
-async function copyText(text, label) {
+async function copyText(text: string, label: string): Promise<void> {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
     else legacyCopy(text);
@@ -115,7 +115,7 @@ async function copyText(text, label) {
 }
 
 /** Fallback for a browser that withholds the async clipboard (or a non-secure origin). */
-function legacyCopy(text) {
+function legacyCopy(text: string): void {
   var ta = document.createElement("textarea");
   ta.value = text;
   ta.setAttribute("readonly", "");
@@ -136,7 +136,7 @@ document.addEventListener("click", function (e) {
   if (!inHist && d && d.tab === "run" && d.run.histOpen) histClose();
 });
 
-function tabBody(d, m) {
+function tabBody(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): string {
   if (d.tab === "run") return runBody(d, m);
   if (d.tab === "config") return configBody(d);
   if (d.tab === "logs") return logsBody(d);

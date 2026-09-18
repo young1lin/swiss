@@ -31,31 +31,31 @@ import { el } from "./util.js";
 
 // Prototype accessors, resolved lazily: importing this module under a DOM-stubbed Node (the
 // panel boot test) must not throw on a browser global that only exists where a select does.
-let valDesc = null, idxDesc = null, disDesc = null, htmlDesc = null;
+let valDesc                                                 = null, idxDesc                                                 = null, disDesc                                                   = null, htmlDesc                                                 = null;
 function descs() {
   if (valDesc) return;
   const proto = HTMLSelectElement.prototype;
-  valDesc = Object.getOwnPropertyDescriptor(proto, "value");
-  idxDesc = Object.getOwnPropertyDescriptor(proto, "selectedIndex");
-  disDesc = Object.getOwnPropertyDescriptor(proto, "disabled");
-  htmlDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+  valDesc = Object.getOwnPropertyDescriptor(proto, "value")                                           ;
+  idxDesc = Object.getOwnPropertyDescriptor(proto, "selectedIndex")                                           ;
+  disDesc = Object.getOwnPropertyDescriptor(proto, "disabled")                                             ;
+  htmlDesc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML")                                           ;
 }
 
-let openState = null; // { menu, trig, sel, items, active }
+let openState                                                                                                            = null; // { menu, trig, sel, items, active }
 
 // A styled select's face, by select: removal handling needs it (below).
-const trigs = new WeakMap();
+const trigs = new WeakMap                                      ();
 
 /** A styled select that leaves the DOM takes its face with it. The trigger sits BESIDE the
  *  select ("afterend"), so removing the select alone orphans a live-looking dropdown —
  *  docs/22 closeout B7 caught one on a redis page still showing the previous pg connection's
  *  schema pick, because the view removes the select when the connection kind changes. */
-function dropTrig(sel) {
+function dropTrig(sel                   )       {
   const t = trigs.get(sel);
   if (t && t.parentNode) t.parentNode.removeChild(t);
 }
 
-function closeMenu() {
+function closeMenu()       {
   if (!openState) return;
   openState.menu.remove();
   openState.trig.setAttribute("aria-expanded", "false");
@@ -63,20 +63,20 @@ function closeMenu() {
 }
 
 /** The trigger's label mirrors the selected option's text (not its value). */
-function paint(sel, trig) {
+function paint(sel                   , trig                   )       {
   descs();
   const opt = sel.options && sel.options[sel.selectedIndex];
-  trig.querySelector(".dd-label").textContent = opt ? opt.textContent : "";
-  trig.disabled = disDesc.get.call(sel);
+  trig.querySelector             (".dd-label") .textContent = opt ? opt.textContent : "";
+  trig.disabled = disDesc .get.call(sel);
 }
 
-function openMenuFor(sel, trig) {
+function openMenuFor(sel                   , trig                   )       {
   closeMenu();
   const menu = el("div", "menu float dd-menu");
   menu.setAttribute("role", "listbox");
   menu.style.minWidth = trig.offsetWidth + "px";
-  const items = [];
-  let mark = null;
+  const items                      = [];
+  let mark                           = null;
   Array.prototype.forEach.call(sel.options, function (o) {
     const b = el("button", "pick" + (o.selected ? " on" : ""));
     b.type = "button";
@@ -87,7 +87,7 @@ function openMenuFor(sel, trig) {
     b.onclick = function () {
       descs();
       if (sel.value !== o.value) {
-        valDesc.set.call(sel, o.value);
+        valDesc .set.call(sel, o.value);
         paint(sel, trig);
         // Native change events do not fire on programmatic assignment; the panel's handlers are
         // onchange/addEventListener on the select, and a dispatched event reaches both.
@@ -117,13 +117,13 @@ function openMenuFor(sel, trig) {
   (mark || items[0]).focus();
 }
 
-function buildTrigger(sel, ownClasses) {
+function buildTrigger(sel                   , ownClasses        )                    {
   // Carry the select's own classes over: the per-view sizing rules (.db-pagesize, …) then shape
   // the trigger exactly as they shaped the select it stands in for.
   const trig = el("button", "dd" + (ownClasses ? " " + ownClasses : ""));
   trig.type = "button";
   if (sel.title) trig.title = sel.title;
-  if (sel.getAttribute("aria-label")) trig.setAttribute("aria-label", sel.getAttribute("aria-label"));
+  if (sel.getAttribute("aria-label")) trig.setAttribute("aria-label", sel.getAttribute("aria-label")          );
   trig.setAttribute("aria-haspopup", "listbox");
   trig.setAttribute("aria-expanded", "false");
   trig.appendChild(el("span", "dd-label"));
@@ -146,7 +146,7 @@ function buildTrigger(sel, ownClasses) {
 }
 
 /** Take over one select. Idempotent; skips multi-selects, which have no dropdown face. */
-function styleSelect(sel) {
+function styleSelect(sel                                      )       {
   descs();
   if (!sel || !valDesc || sel.multiple || sel.dataset.ddDone) return; // no DOM select here — a stub
   sel.dataset.ddDone = "1";
@@ -160,23 +160,23 @@ function styleSelect(sel) {
   // Programmatic writes must reach the face. The instance-level overrides shadow the prototype
   // accessors, so every existing "sel.value = x" / "sel.innerHTML = …" repaints the label.
   Object.defineProperty(sel, "value", {
-    get: function () { return valDesc.get.call(sel); },
-    set: function (v) { valDesc.set.call(sel, v); paint(sel, trig); },
+    get: function () { return valDesc .get.call(sel); },
+    set: function (v) { valDesc .set.call(sel, v); paint(sel, trig); },
     configurable: true,
   });
   Object.defineProperty(sel, "selectedIndex", {
-    get: function () { return idxDesc.get.call(sel); },
-    set: function (v) { idxDesc.set.call(sel, v); paint(sel, trig); },
+    get: function () { return idxDesc .get.call(sel); },
+    set: function (v) { idxDesc .set.call(sel, v); paint(sel, trig); },
     configurable: true,
   });
   Object.defineProperty(sel, "disabled", {
-    get: function () { return disDesc.get.call(sel); },
-    set: function (v) { disDesc.set.call(sel, v); paint(sel, trig); },
+    get: function () { return disDesc .get.call(sel); },
+    set: function (v) { disDesc .set.call(sel, v); paint(sel, trig); },
     configurable: true,
   });
   Object.defineProperty(sel, "innerHTML", {
-    get: function () { return htmlDesc.get.call(sel); },
-    set: function (v) { htmlDesc.set.call(sel, v); paint(sel, trig); },
+    get: function () { return htmlDesc .get.call(sel); },
+    set: function (v) { htmlDesc .set.call(sel, v); paint(sel, trig); },
     configurable: true,
   });
   const origAdd = sel.appendChild.bind(sel);
@@ -187,19 +187,19 @@ function styleSelect(sel) {
 /** Style everything already in the DOM, then watch for selects the views create later. Every
  *  global this wires is feature-detected: the module must import cleanly under the DOM-stubbed
  *  Node of the panel boot test, which has no MutationObserver and no body to observe. */
-function initSelects() {
+function initSelects()       {
   Array.prototype.forEach.call(document.querySelectorAll("select"), styleSelect);
   if (typeof MutationObserver !== "undefined" && document.body) new MutationObserver(function (muts) {
     for (const m of muts) {
-      for (const n of m.addedNodes) {
+      for (const n of m.addedNodes                        ) {
         if (n.nodeType !== 1) continue;
-        if (n.tagName === "SELECT") styleSelect(n);
+        if (n.tagName === "SELECT") styleSelect(n                     );
         else if (n.querySelectorAll) Array.prototype.forEach.call(n.querySelectorAll("select"), styleSelect);
       }
       // docs/22 closeout B7: a removed styled select must not leave its trigger behind.
-      for (const n of m.removedNodes) {
+      for (const n of m.removedNodes                        ) {
         if (n.nodeType !== 1) continue;
-        if (n.tagName === "SELECT") dropTrig(n);
+        if (n.tagName === "SELECT") dropTrig(n                     );
         else if (n.querySelectorAll) Array.prototype.forEach.call(n.querySelectorAll("select"), dropTrig);
       }
     }
@@ -209,13 +209,13 @@ function initSelects() {
 
   // One open dropdown at a time, closed by any click outside it or by Escape/Tab.
   document.addEventListener("mousedown", function (e) {
-    if (openState && !openState.menu.contains(e.target) && e.target !== openState.trig) closeMenu();
+    if (openState && !openState.menu.contains(e.target        ) && e.target !== openState.trig) closeMenu();
   });
   document.addEventListener("keydown", function (e) {
     if (!openState) return;
     if (e.key === "Escape" || e.key === "Tab") { closeMenu(); openState.trig.focus(); e.preventDefault(); return; }
     const items = openState.items;
-    const i = items.indexOf(document.activeElement);
+    const i = items.indexOf(document.activeElement                     );
     if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1 + items.length) % items.length].focus(); }
     if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
   });

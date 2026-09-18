@@ -20,14 +20,14 @@ import { histButtonLabel } from "./run-history.js";
 /* --- Run: invoke a tool from the panel -------------------------------------------------------- */
 /** Argument inputs generated from the tool's own inputSchema, so this works for any MCP the gateway
  *  hosts — including a proc child whose tools the gateway knows nothing about. */
-function argFieldsHtml(tool, idPrefix, values) {
+function argFieldsHtml(tool: ApiMcpTool, idPrefix?: string, values?: Record<string, unknown>): string {
   // idPrefix keeps the ids unique when the fields are embedded next to the Run view's own
   // (the jobs editor reuses this builder inside its sheet under a "ja-" prefix), and
   // `values` prefills them from an existing definition's action.input.
   var pfx = idPrefix || "r-arg-";
   var have = values || {};
   var schema = tool.inputSchema || {};
-  var props = schema.properties || {};
+  var props: Record<string, ToolSchemaProp> = schema.properties || {};
   var required = schema.required || [];
   var keys = Object.keys(props);
   if (!keys.length) return '<div class="hint">This tool takes no arguments.</div>';
@@ -56,8 +56,8 @@ function argFieldsHtml(tool, idPrefix, values) {
     // A constrained field renders as a dropdown rather than a free-text box that shows the allowed
     // values nowhere. The blank first option keeps "leave this argument out" reachable.
     if (Array.isArray(p.enum) && p.enum.length) {
-      var opts = '<option value=""></option>' + p.enum.map(function (v) {
-        return '<option value="' + esc(v) + '"' + (have[k] === v ? " selected" : "") + '>' + esc(v) + "</option>";
+      var opts = '<option value=""></option>' + p.enum!.map(function (v: unknown): string {
+        return '<option value="' + esc(v as string) + '"' + (have[k] === v ? " selected" : "") + '>' + esc(v as string) + "</option>";
       }).join("");
       return '<div><label class="field"><span>' + esc(k) + star + "  ·  " + esc(kind) + "</span>" +
         "<select" + attrs + ">" + opts + "</select></label>" + hint + "</div>";
@@ -76,12 +76,12 @@ function argFieldsHtml(tool, idPrefix, values) {
   }).join("");
 }
 
-function readRunArgs(tool, idPrefix) {
+function readRunArgs(tool: ApiMcpTool, idPrefix?: string): Record<string, unknown> {
   var pfx = idPrefix || "r-arg-";
-  var out = {};
+  var out: Record<string, unknown> = {};
   var props = (tool && tool.inputSchema && tool.inputSchema.properties) || {};
   Object.keys(props).forEach(function (k) {
-    var node = $(pfx + k);
+    var node = $<HTMLInputElement>(pfx + k);
     if (!node) return;
     var kind = node.dataset.kind;
     if (kind === "boolean") { if (node.checked) out[k] = true; return; }
@@ -116,7 +116,7 @@ function readRunArgs(tool, idPrefix) {
   return out;
 }
 
-function runBody(d, m) {
+function runBody(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): string {
   if (m.lifecycle !== "started") {
     return '<div class="group"><div class="row"><span class="rowmsg">Not started — start it to run a tool.</span></div></div>';
   }
@@ -126,13 +126,13 @@ function runBody(d, m) {
   var tools = kd.items || [];
   if (!tools.length) return '<div class="group"><div class="row"><span class="rowmsg">This MCP exposes no tools.</span></div></div>';
 
-  var current = null;
+  var current: ApiMcpTool | null = null;
   for (var i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i];
   if (!current) current = tools[0];
   d.run.tool = current.name;
 
   var opts = tools.map(function (t) {
-    return '<option value="' + esc(t.name) + '"' + (t.name === current.name ? " selected" : "") + ">" + esc(t.name) + "</option>";
+    return '<option value="' + esc(t.name) + '"' + (t.name === current!.name ? " selected" : "") + ">" + esc(t.name) + "</option>";
   }).join("");
 
   return '<div class="group"><div class="form">' +

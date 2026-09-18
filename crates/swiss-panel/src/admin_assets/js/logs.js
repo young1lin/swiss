@@ -18,7 +18,7 @@ import { esc, icon, state, toast } from "./util.js";
 import { rowOf } from "./sidebar.js";
 
 /* --- Logs: what was called, with what, and what came back ------------------------------------- */
-function fmtChars(n) {
+function fmtChars(n        )         {
   return n < 1000 ? n + " chars" : (n / 1000).toFixed(1) + "k chars";
 }
 
@@ -30,7 +30,7 @@ function fmtChars(n) {
  * note from the gateway is kept out of the parse and re-appended. Anything that is not JSON (a plain
  * string, an error message, a clipped log entry) is shown exactly as it arrived.
  */
-function fmtJson(text) {
+function fmtJson(text                           )         {
   if (!text) return "";
   var body = text, tail = "";
   var cut = text.lastIndexOf("\n\n[");
@@ -46,7 +46,7 @@ function fmtJson(text) {
 
 /** docs/33 C1: the house clipboard idiom (connect.js copyText, data-csv dbCopyText) for the log
  *  blocks: async clipboard first, the textarea fallback second, one quiet toast either way. */
-function legacyCopy(text) {
+function legacyCopy(text        )       {
   var ta = document.createElement("textarea");
   ta.value = text;
   ta.setAttribute("readonly", "");
@@ -57,7 +57,7 @@ function legacyCopy(text) {
   try { document.execCommand("copy"); } catch (e) { /* nothing else to try */ }
   document.body.removeChild(ta);
 }
-async function copyLogText(text) {
+async function copyLogText(text        )                {
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text);
@@ -71,7 +71,7 @@ async function copyLogText(text) {
 
 /** docs/33 C2: a block is tree material only when it is a JSON object or array. Plain strings,
  *  error text and a truncated payload that no longer parses keep the C1 pre. */
-function parseJsonBlock(text) {
+function parseJsonBlock(text        )          {
   if (!text) return null;
   var trimmed = text.trim();
   if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return null;
@@ -83,26 +83,26 @@ function parseJsonBlock(text) {
    to what the operator actually opened. Expansion lives in the caller's `open` map (path -> bool)
    — the 6-second repaint rebuilds the tree from it and the open nodes survive. Containers shallower
    than depth 2 record an initial `true` once, so defaults and explicit toggles share one truth. */
-function jtDiv(cls) { var n = document.createElement("div"); n.className = cls; return n; }
-function jtSpan(cls, text) { var n = document.createElement("span"); n.className = cls; n.textContent = text; return n; }
-function jtBtn(cls, title) {
+function jtDiv(cls        )                 { var n = document.createElement("div"); n.className = cls; return n; }
+function jtSpan(cls        , text        )                  { var n = document.createElement("span"); n.className = cls; n.textContent = text; return n; }
+function jtBtn(cls        , title        )                    {
   var b = document.createElement("button");
   b.type = "button"; b.className = "btn icon " + cls; b.title = title;
   b.setAttribute("aria-label", title);
   return b;
 }
-function jtSummary(v) {
+function jtSummary(v         )         {
   if (Array.isArray(v)) return v.length ? "[" + v.length + "]" : "[]";
-  var n = Object.keys(v).length;
+  var n = Object.keys(v                           ).length;
   return n ? "{" + n + "}" : "{}";
 }
-function jtCopyText(v) {
+function jtCopyText(v         )         {
   if (v !== null && typeof v === "object") return JSON.stringify(v, null, 2);
   if (typeof v === "string") return v; // the scalar text, unquoted
   return String(v);
 }
 
-function jtNode(parentEl, key, val, path, open) {
+function jtNode(parentEl             , key                 , val       , path        , open                         )       {
   var isObj = val !== null && typeof val === "object";
   if (isObj && open[path] === undefined) open[path] = false; // top-level shape first; details on demand
   var row = jtDiv("jt-row" + (isObj && open[path] ? " open" : ""));
@@ -121,10 +121,10 @@ function jtNode(parentEl, key, val, path, open) {
     var renderKids = function () {
       while (kids.firstChild) kids.removeChild(kids.firstChild);
       if (!open[path]) return;
-      var entries = Array.isArray(val)
-        ? val.map(function (v, i) { return [i, v]; })
-        : Object.keys(val).map(function (k) { return [k, val[k]]; });
-      entries.forEach(function (e) { jtNode(kids, e[0], e[1], path + e[0] + "/", open); });
+      var entries                               = Array.isArray(val)
+        ? val.map(function (v       , i        )                    { return [i, v]; })
+        : Object.keys(val).map(function (k        )                    { return [k, val[k]]; });
+      entries.forEach(function (e) { jtNode(kids, e[0], e[1]         , path + e[0] + "/", open); });
     };
     var setChevronLabel = function () {
       var label = (open[path] ? "Collapse " : "Expand ") + String(key);
@@ -166,7 +166,7 @@ function jtNode(parentEl, key, val, path, open) {
  *  escaped pre for everything else (plain strings, error text, a payload truncated mid-JSON).
  *  C1's pre highlighter is gone with the tree here: a pre that reached hlJson could never have
  *  parsed, so hlJson could only ever return its input — dead code, deleted, not kept. */
-function blockHtml(raw, kind, seq, ok) {
+function blockHtml(raw                           , kind        , seq        , ok         )         {
   var pretty = fmtJson(raw);
   if (parseJsonBlock(pretty) != null) return '<div class="jtree" data-jtree="' + kind + ":" + seq + '"></div>';
   return '<pre class="logs' + (ok ? "" : " err") + '"' + (kind === "out" ? ' data-out="' + seq + '"' : "") + ">" +
@@ -176,26 +176,26 @@ function blockHtml(raw, kind, seq, ok) {
 /** Build the tree into `host` (a .jtree slot). Rebuildable any number of times.
  *  The root is the block itself, so painting a second synthetic root row only wastes a line. Show
  *  its immediate fields and keep every nested container folded until the operator asks for it. */
-function buildJsonTree(host, value, open) {
+function buildJsonTree(host             , value       , open                          )       {
   open = open || {};
   // Keep BOTH classes: jtree is the container chrome (ground, radius, max-height), jtree-in marks
   // the built state. Assigning only one would strip the other (found live on 19998).
   host.className = "jtree jtree-in";
   while (host.firstChild) host.removeChild(host.firstChild);
-  var entries = Array.isArray(value)
-    ? value.map(function (v, i) { return [i, v]; })
-    : Object.keys(value).map(function (k) { return [k, value[k]]; });
+  var entries                               = Array.isArray(value)
+    ? value.map(function (v       , i        )                    { return [i, v]; })
+    : Object.keys(value).map(function (k        )                    { return [k, value[k]]; });
   if (!entries.length) {
     host.appendChild(jtSpan("jt-empty", Array.isArray(value) ? "[]" : "{}"));
     return;
   }
-  entries.forEach(function (e) { jtNode(host, e[0], e[1], "/" + e[0] + "/", open); });
+  entries.forEach(function (e) { jtNode(host, e[0], e[1]         , "/" + e[0] + "/", open); });
 }
 
 /** docs/33 C2: mount every open row's tree blocks. Called after a repaint (the poll rebuilds
  *  the DOM every 6s on page 0), when a row first opens, and when a full reply lands. Expansion
  *  comes back from d.callsTree, so the operator's open nodes survive all three. */
-function mountJsonTrees(d, onlySeq) {
+function mountJsonTrees(d           , onlySeq                         )       {
   if (typeof document === "undefined" || !document.querySelectorAll) return;
   // Callers hand a DATASET value in ("4" from data-callseq / data-full), the log stores numbers —
   // normalize once here or `seq !== onlySeq` silently skips every row (found live on 19998).
@@ -212,10 +212,10 @@ function mountJsonTrees(d, onlySeq) {
 
 /** One block: build the tree when the value parses. A preview that was truncated mid-JSON painted
  *  a pre; once the full reply parses, the out block's pre is upgraded to a tree in place. */
-function mountBlock(rowEl, d, c, kind, raw) {
+function mountBlock(rowEl         , d           , c               , kind        , raw               )       {
   var value = parseJsonBlock(fmtJson(raw || ""));
   if (value == null) return;
-  var slot = rowEl.querySelector('[data-jtree="' + kind + ":" + c.seq + '"]');
+  var slot = rowEl.querySelector             ('[data-jtree="' + kind + ":" + c.seq + '"]');
   if (!slot) {
     if (kind !== "out") return; // args are never truncated — no pre to upgrade
     var pre = rowEl.querySelector("pre[data-out]");
@@ -227,18 +227,18 @@ function mountBlock(rowEl, d, c, kind, raw) {
   }
   if (!d.callsTree) d.callsTree = {};
   if (!d.callsTree[c.seq]) d.callsTree[c.seq] = {};
-  buildJsonTree(slot, value, d.callsTree[c.seq]);
+  buildJsonTree(slot, value         , d.callsTree[c.seq]);
 }
 
 /** docs/33 C1: a block label row — the caption plus the copy affordance for that block. */
-function lblHtml(text, kind, seq) {
+function lblHtml(text        , kind        , seq        )         {
   var label = kind === "args" ? "Copy arguments" : "Copy result";
   return '<div class="call-lbl">' + text +
     '<button class="btn icon" data-copy="' + kind + ":" + seq + '" aria-label="' + label + '" title="' + label + '">' +
     icon("copy") + "</button></div>";
 }
 
-function callHtml(d, c) {
+function callHtml(d           , c               )         {
   var when = new Date(c.at).toLocaleString();
   var meta = when + "  ·  " + c.via + (c.client ? "  ·  " + c.client : "") + "  ·  " + c.ms + " ms  ·  " + fmtChars(c.chars);
   // A page ships only the head of each reply. Offer the rest instead of leaving a dangling tail.
@@ -265,7 +265,7 @@ function callHtml(d, c) {
 /** The pager's status cell: the committed page number, with the pending suffix while a switch
  *  is in flight. The number NEVER shows the target — pending must not pretend to be committed
  *  (docs/32 B1). One builder for the full paint and the in-place chrome patch, so they cannot drift. */
-function callsStatusHtml(d) {
+function callsStatusHtml(d           )         {
   var page = d.callsPage + 1;
   return d.callsPendingPage != null
     ? "Page " + page + " · " + '<span class="spin"></span>' + "Loading…"
@@ -274,7 +274,7 @@ function callsStatusHtml(d) {
 
 /** A failed foreground load, in place: the sentence and the way out, nothing else. The HTTP
  *  status is the only secondary text — a response body never lands in the panel (docs/32 B1). */
-function callsErrHtml(d) {
+function callsErrHtml(d           )         {
   // The sentence is set once, in the state field (detail.js callsLoadFailed) — the html renders
   // the field, so the copy cannot drift between the two.
   return '<div class="calls-err" id="clErr" role="status"><span>' + esc(d.callsError || "Could not load calls.") + "</span>" +
@@ -282,7 +282,7 @@ function callsErrHtml(d) {
     '<button class="btn" id="clRetry">Retry</button></div>';
 }
 
-function logsBody(d) {
+function logsBody(d           )         {
   if (d.calls == null && !d.callsError) {
     /* First open, before anything is there to keep in place (docs/32 B1). */
     return '<div class="note"><span class="spin"></span> Loading calls…</div>';
@@ -328,7 +328,7 @@ function logsBody(d) {
   } else if ((d.config && d.config.type) === "proc") {
     /* An empty stderr on a proc answers a different question depending on whether a child exists
        yet. Blank space here reads as "logs went missing" — say which of the three blanks it is. */
-    var st = (rowOf(d.name) || {}).lifecycle;
+    var st = (rowOf(d.name) || {}             ).lifecycle;
     var why = st === "idle"
       ? "No child process yet — a lazy proc starts on the first request (or the Start button). If that start fails, the failure reason and whatever the child printed land here."
       : st === "error"
@@ -341,7 +341,7 @@ function logsBody(d) {
 }
 
 /** Expand/collapse one call without re-rendering: a poll must not close what you just opened. */
-function toggleCall(seq) {
+function toggleCall(seq        )       {
   var d = state.detail;
   if (!d) return;
   d.callsOpen[seq] = !d.callsOpen[seq];
@@ -353,7 +353,7 @@ function toggleCall(seq) {
 /** One truncated line of argument names, required ones in bold. `args` is [{ name, req }].
  *  The title carries the full list, because the line is clipped rather than wrapped and a tool with
  *  eight arguments would otherwise lose the last four with no way to see them from here. */
-function argLine(args) {
+function argLine(args                                   )         {
   if (!args.length) return "";
   var plain = args.map(function (a) { return a.name; }).join(", ");
   return '<div class="args" title="' + esc(plain) + '">' + args.map(function (a) {
@@ -362,7 +362,7 @@ function argLine(args) {
 }
 
 /** A tool stays one quiet row until the user asks for its complete MCP metadata. */
-function toolDetail(it, args) {
+function toolDetail(it            , args        )         {
   var description = it.description || "No description provided.";
   var schema = it.inputSchema ? JSON.stringify(it.inputSchema, null, 2) : "No input schema provided.";
   return '<details class="item-detail">' +
@@ -379,8 +379,8 @@ function toolDetail(it, args) {
     "</div></details>";
 }
 
-function kindBody(d, kind, m) {
-  var kd = d[kind];
+function kindBody(d           , kind        , m                           )         {
+  var kd = d[kind                                     ];
   // Resources get a master on/off at the top: off empties the list (the capability stays, so the
   // notify stays valid) and tells connected clients to re-list. Symmetric with the per-tool toggle.
   var resToggle = "";
