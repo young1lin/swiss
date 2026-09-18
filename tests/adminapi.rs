@@ -1443,6 +1443,40 @@ async fn deletes_a_config_mcp_even_when_no_config_file_holds_it() {
 }
 
 #[tokio::test]
+async fn an_mcp_named_test_or_import_stays_deletable_and_editable() {
+    // The collection-level actions ("test this def", "import defs") used to sit at
+    // /api/mcps/test and /api/mcps/import — static segments at the {name} position of the
+    // router. axum prefers a static match over the parameter, so DELETE /api/mcps/test landed
+    // on the POST-only test route and fell to the terminal 404 ("no route for DELETE
+    // /api/mcps/test"): an MCP named "test" (or "import") could be created but never edited
+    // or deleted. Those actions now live under /api/mcpdefs/*, a namespace no MCP name can
+    // shadow; this test pins the per-name verbs for both poisoned words.
+    //
+    // echo, not the http def the sighting came with: the shadow is about the NAME, and an
+    // http add fires a real outbound handshake whose traffic row would leak into the
+    // process-global ring other tests count.
+    let h = setup();
+    for name in ["test", "import"] {
+        let (status, body) = h
+            .post("/api/mcps", json!({ "name": name, "type": "echo" }))
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "create {name}: {body}");
+
+        // PUT (edit) rides the same shadowed path as DELETE; both must reach the handlers.
+        let (status, body) = h
+            .put(&format!("/api/mcps/{name}"), json!({ "type": "echo" }))
+            .await;
+        assert_eq!(status, StatusCode::OK, "edit {name}: {body}");
+
+        let (status, body) = h.delete(&format!("/api/mcps/{name}")).await;
+        assert_eq!(status, StatusCode::OK, "delete {name}: {body}");
+        assert_eq!(body["deleted"], json!(true));
+        assert!(!h.registry.has(name), "the registry drops {name}");
+        assert!(!h.store.has(name), "the managed store drops {name}");
+    }
+}
+
+#[tokio::test]
 async fn persists_added_mcps_to_managed_json() {
     let h = setup();
     h.post("/api/mcps", json!({ "name": "persist1", "type": "echo" }))
@@ -2539,7 +2573,7 @@ async fn imports_stdio_and_http_entries_suffixes_collisions_and_skips_this_gatew
 
     let (status, body) = h
         .post(
-            "/api/mcps/import",
+            "/api/mcpdefs/import",
             json!({
                 "mcpServers": {
                     "redis": { "type": "http", "url": "https://example.invalid/a" },
@@ -2571,7 +2605,7 @@ async fn imports_a_name_the_root_once_reserved_without_renaming() {
     let h = setup();
     let (status, body) = h
         .post(
-            "/api/mcps/import",
+            "/api/mcpdefs/import",
             json!({
                 "mcpServers": {
                     "health": { "type": "http", "url": "https://example.invalid/h" },
@@ -2590,7 +2624,7 @@ async fn imports_a_name_the_root_once_reserved_without_renaming() {
 async fn imports_without_credentials_like_every_other_api_route() {
     let h = setup();
     let (status, _) = h
-        .post("/api/mcps/import", json!({ "mcpServers": {} }))
+        .post("/api/mcpdefs/import", json!({ "mcpServers": {} }))
         .await;
     assert_eq!(status, StatusCode::OK);
 }
@@ -2808,14 +2842,14 @@ async fn an_mcp_builder_refuses_a_missing_vault_reference() {
 
 #[tokio::test]
 async fn the_rest_connection_test_fails_honestly_on_a_missing_vault_reference() {
-    // The rest branch of /api/mcps/test resolves the WHOLE def before its one plain GET
+    // The rest branch of /api/mcpdefs/test resolves the WHOLE def before its one plain GET
     // (docs/19 D4): a missing vault reference answers ok:false naming the JSON path — no
     // request is made, no reference text ships anywhere.
     let _guard = VAULT_LOCK.lock().await;
     let h = setup();
     let (status, body) = h
         .post(
-            "/api/mcps/test",
+            "/api/mcpdefs/test",
             json!({
                 "type": "rest",
                 "baseUrl": "https://example.test/api",

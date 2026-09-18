@@ -603,7 +603,7 @@ function changeEditType(t) {
 
 /**
  * Test connection — the DB types' form carries this beside Save. It POSTs the form's CURRENT
- * values (env refs intact) to /api/mcps/test, which expands them server-side and opens a real
+ * values (env refs intact) to /api/mcpdefs/test, which expands them server-side and opens a real
  * driver connection with exactly these credentials — the same adapter and ping the health probe
  * uses. Nothing is saved: this is "will these values work", asked before committing them.
  */
@@ -640,7 +640,7 @@ async function runConnTest(p) {
   out.textContent = "connecting with these exact values — ${ENV} refs expand server-side…";
   out.style.color = "";
   try {
-    var r = await api("/api/mcps/test", { method: "POST", body: JSON.stringify(body) });
+    var r = await api("/api/mcpdefs/test", { method: "POST", body: JSON.stringify(body) });
     var j = await r.json();
     if (j.ok) {
       // For a rest target any HTTP answer is reachable — show which one came back (404 from the

@@ -113,7 +113,7 @@ async function submitImport(input) {
   try { text = await f.text(); } catch (e) { toast("Could not read file", true); return; }
   var json;
   try { json = JSON.parse(text); } catch (e) { toast("Not valid JSON", true); return; }
-  var j = await apiJson("/api/mcps/import", { method: "POST", body: JSON.stringify(json) });
+  var j = await apiJson("/api/mcpdefs/import", { method: "POST", body: JSON.stringify(json) });
   if (!j) return;
   closeSheet();
   var n = (j.imported || []).length;
