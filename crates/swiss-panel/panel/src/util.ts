@@ -36,17 +36,6 @@ const state: PanelState = {
   mem: null,
   menuOpen: false,
   info: null,        // { tokenEnv } from /api/info — the env var name
-  traffic: [],       // ONE PAGE of interactions from /api/traffic — no .body/.response on a row
-  trafficClients: [],       // every client in the ring, folded server-side (not just this page)
-  trafficFilter: "actions", // "actions" (tools/call, resources/read, …) or "all" (incl. protocol)
-  trafficClient: null,      // a clientKey to narrow the activity log, or null
-  trafficPage: 0,           // 0-based, newest first
-  trafficMore: false,       // is there an older page?
-  trafficTotal: 0,          // rows matching the current filter, across all pages
-  trafficAll: 0,            // rows in the ring before filtering — the "n of m" readout
-  trafficOpen: {},          // seq -> expanded: shows the raw request JSON for that interaction
-  trafficFull: {},          // seq -> { body, response }, fetched on first expand (cf. d.callsFull)
-  trafficSig: null,         // data signature; a poll skips re-render when unchanged (keeps expansion)
   view: "mcps",      // "mcps" | "tunnels" | "traffic" | "data" | "jobs" — the toolbar switcher
   panelVersion: null, // admin.html mtime stamp from /api/info; a change means a new build landed
   addGroup: null,     // sidebar group a header "+" targets for the next created MCP (add-sheet.js)
