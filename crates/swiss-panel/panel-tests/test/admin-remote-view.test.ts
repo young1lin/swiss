@@ -190,10 +190,14 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(byId("countChip").textContent).toBe("1 target");
   });
 
-  it("an empty table draws the empty state, not a bare table", async () => {
+  it("an empty table draws the empty state in the groups slot, under the standing header", async () => {
     serve([]);
     await view.mount();
-    expect(paneEl.innerHTML).toContain("No targets yet");
+    // The tunnels page's shape: the header and its actions stay above the empty state
+    // (Add target stays one click away), and the empty state takes the groups slot.
+    expect(drawn()).toContain("No targets yet");
+    expect(paneEl.innerHTML).toContain('id="rmAdd"');
+    expect(paneEl.innerHTML).toContain('id="rmNewGroup"');
     expect(byId("countChip").textContent).toBe("");
   });
 
