@@ -22,7 +22,7 @@ import { kindBody, logsBody } from "./logs.js";
 import { closeMenu } from "./pane.js";
 import { configBody, histClose } from "./run-history.js";
 import { runBody } from "./run.js";
-import { pickCopyToken, refreshTokens, rememberedTokenId } from "./views/tokens.js";
+import { activeTokenSecret, pickCopyToken, refreshTokens, rememberedTokenId, setActiveTokenSecret, tokenRows } from "./views/tokens.js";
 
 /* --- connecting a client ---------------------------------------------------------------------- */
 /**
@@ -48,7 +48,7 @@ function endpointUrl(name        )         {
  */
 async function resolveSecret()                         {
   await refreshTokens();
-  const list = state.tokens || [];
+  const list = tokenRows();
 
   if (!list.length) {
     const made = await apiJson                 ("/api/tokens", { method: "POST", body: JSON.stringify({ label: "default" }) });
@@ -59,7 +59,8 @@ async function resolveSecret()                         {
 
   const pick = pickCopyToken(list, rememberedTokenId());
   if (!pick) return null;
-  if (state.activeSecret && rememberedTokenId() === pick.id) return state.activeSecret;
+  const rememberedSecret = activeTokenSecret();
+  if (rememberedSecret && rememberedTokenId() === pick.id) return rememberedSecret;
   return fetchSecret(pick.id);
 }
 
@@ -71,7 +72,7 @@ async function fetchSecret(id        )                         {
 
 /** Remember which token the copy actions embed — by id, so a rotate is picked up automatically. */
 function useToken(id        , secret        )         {
-  state.activeSecret = secret;
+  setActiveTokenSecret(secret);
   try { localStorage.setItem(TOKEN_ID_KEY, id); } catch (e) { /* blocked — this session still works */ }
   return secret;
 }

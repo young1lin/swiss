@@ -396,8 +396,6 @@ export interface PanelState {
   mem: ApiMemoryInfo | null;
   menuOpen: boolean;
   info: ApiInfoResponse | null;
-  tokens: ApiTokenRow[];
-  activeSecret: string | null;
   traffic: ApiTrafficRow[];
   trafficClients: ApiTrafficClientRow[];
   trafficFilter: "actions" | "all";
@@ -419,7 +417,4 @@ export interface PanelState {
   db: DbState | null;
   tun: TunState;
   jobs: JobsState;
-  tokenGroups?: string[];
-  tokenMembers?: Record<string, string>;
-  tokenViewSecret?: string | null;
 }

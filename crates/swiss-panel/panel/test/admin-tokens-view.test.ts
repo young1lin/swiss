@@ -170,12 +170,12 @@ describe("the Token page (MCP group)", () => {
   });
 
   it("the once-only secret box appears with its copy actions once a secret exists", async () => {
-    state.tokenViewSecret = "s3cr3t-oneshot";
+    view.setTokenViewSecret("s3cr3t-oneshot");
     await view.refresh(); // an explicit refresh must keep the box alive
     expect(paneEl.innerHTML).toContain("shown only once");
     expect(paneEl.innerHTML).toContain("Copy secret");
     expect(paneEl.innerHTML).toContain("Copy connect commands (all MCPs)");
-    state.tokenViewSecret = null;
+    view.setTokenViewSecret(null);
   });
 
   it("countText pluralizes honestly", async () => {
