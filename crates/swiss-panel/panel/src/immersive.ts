@@ -28,18 +28,18 @@ import { $ } from "./util.js";
  * so xterm refits and the gateway receives the new rows and columns (docs/14 §8). */
 var IMMERSIVE = "immersive";
 var DOCKED = "immersive-docked";
-var appZoneNode = null;
-var appZoneHome = null;
-var paneObserver = null;
+var appZoneNode: HTMLElement | null = null;
+var appZoneHome: HTMLElement | null = null;
+var paneObserver: MutationObserver | null = null;
 
-function immersiveOn() { return document.body.classList.contains(IMMERSIVE); }
+function immersiveOn(): boolean { return document.body.classList.contains(IMMERSIVE); }
 
-function focusSlot() {
+function focusSlot(): HTMLElement | null {
   var pane = $("pane");
   return pane && pane.querySelector ? pane.querySelector("[data-shell-focus-slot]") : null;
 }
 
-function placeAppZone() {
+function placeAppZone(): void {
   appZoneNode = appZoneNode || $("appZone");
   appZoneHome = appZoneHome || $("ctxBar");
   var slot = immersiveOn() ? focusSlot() : null;
@@ -50,7 +50,7 @@ function placeAppZone() {
 }
 
 /** Repaint the shell-owned control for Focus or Terminal fullscreen. Guarded for tests. */
-function paintImmersive() {
+function paintImmersive(): void {
   var on = immersiveOn();
   var docked = document.body.classList.contains(DOCKED);
   var terminal = !!focusSlot();
@@ -65,21 +65,21 @@ function paintImmersive() {
   btn.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-' + (on ? "collapse" : "expand") + '"></use></svg>';
 }
 
-function syncLayout() {
+function syncLayout(): void {
   placeAppZone();
   paintImmersive();
 }
 
-function toggleImmersive() {
+function toggleImmersive(): void {
   var on = !immersiveOn();
   document.body.classList.toggle(IMMERSIVE, on);
   syncLayout();
   window.dispatchEvent(new Event("resize"));
 }
 
-function exitImmersive() { if (immersiveOn()) toggleImmersive(); }
+function exitImmersive(): void { if (immersiveOn()) toggleImmersive(); }
 
-function initImmersive() {
+function initImmersive(): void {
   appZoneNode = $("appZone");
   appZoneHome = $("ctxBar");
   $("expandBtn").onclick = toggleImmersive;

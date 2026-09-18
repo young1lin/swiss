@@ -98,6 +98,9 @@ interface TunState {
   dragging: string | null;
   draggingGroup: string | null;
   pendingGroup: string | null;
+  /* The two tunnels scopes' fold maps, loaded in main.ts before the first paint (the
+   *  per-scope localStorage keys, docs/20). */
+  collapsed: { conns: Record<string, boolean>; rules: Record<string, boolean> };
 }
 
 /** The Jobs view's slice (util.ts boot literal; jobs.js renders it, polling.js loads it). */
@@ -111,6 +114,9 @@ interface JobsState {
   dragging: string | null;
   draggingGroup: string | null;
   pendingGroup: string | null;
+  /* The two tunnels scopes' fold maps, loaded in main.ts before the first paint (the
+   *  per-scope localStorage keys, docs/20). */
+  collapsed: { conns: Record<string, boolean>; rules: Record<string, boolean> };
 }
 
 /** One buffered row update in the Data grid (data-view.ts): pk identifies the row, changes
@@ -217,6 +223,9 @@ interface PanelState {
   panelVersion: string | null;
   addGroup: string | null;
   draggingGroup: string | null;
+  /* Not in the boot literal: the sidebar's row-drag slot (sideCfg's drag.set creates it on
+   *  first use, the same optimistic pattern as the tokens keys below). */
+  dragging?: string | null;
   db: DbState | null;
   tun: TunState;
   jobs: JobsState;

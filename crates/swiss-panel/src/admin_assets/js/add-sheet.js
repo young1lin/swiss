@@ -26,7 +26,7 @@ import { newGroup } from "./sidebar.js";
  * `group` (the pane's empty-state button) resolves to the last group used in this scope
  * while it still exists. Either way the select is the truth: the title retitles with it, and
  * submit joins whatever it says, so a changed pick wins over the promise that opened it. */
-function openSheet(group) {
+function openSheet(group               )       {
   var names = state.groups && state.groups.length ? state.groups : [DEFAULT_GROUP];
   var initial = group || resolveDefaultGroup(names, lastGroup("mcps"));
   state.addGroup = initial;
@@ -53,22 +53,22 @@ function openSheet(group) {
         '<button class="btn primary" id="a-save">Add</button></div>' +
     "</div>";
   $("sheet").hidden = false;
-  var paint = function () {
-    $("a-fields").innerHTML = fieldsHtml($("a-type").value, {}, "a-");
+  var paint = function ()       {
+    $("a-fields").innerHTML = fieldsHtml($                   ("a-type").value, {}, "a-");
     // The test button exists only for the types that have something to test.
     var tb = $("a-test");
-    if (tb) tb.hidden = TESTABLE_TYPES.indexOf($("a-type").value) < 0;
+    if (tb) tb.hidden = TESTABLE_TYPES.indexOf($                   ("a-type").value) < 0;
   };
   paint();
   $("a-type").onchange = paint;
   $("g-sel").onchange = function () {
-    $("a-title").textContent = addTitle("Add an", "MCP", $("g-sel").value);
+    $("a-title").textContent = addTitle("Add an", "MCP", $                   ("g-sel").value);
   };
   $("a-cancel").onclick = closeSheet;
   $("a-test").onclick = function () { void runConnTest("a-"); };
   $("a-save").onclick = submitAdd;
   $("a-import").onclick = function () { $("a-file").click(); };
-  $("a-file").onchange = function () { void submitImport($("a-file")); };
+  $("a-file").onchange = function () { void submitImport($                  ("a-file")); };
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
   $("a-name").focus();
 }
@@ -79,7 +79,7 @@ function closeSheet() { $("sheet").hidden = true; $("sheet").innerHTML = ""; }
  *  creating. `submit` gets the typed name and resolves true on success; the sheet closes on
  *  true and stays open on false, so a server refusal (a duplicate name) is readable next to
  *  what was typed instead of dismissing the work. */
-function openGroupSheet(def, submit) {
+function openGroupSheet(def               , submit                                              )       {
   var editing = !!def;
   $("sheet").innerHTML =
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Rename group" : "New group") + '">' +
@@ -93,7 +93,7 @@ function openGroupSheet(def, submit) {
     "</div>";
   $("sheet").hidden = false;
   var save = async function () {
-    var name = $("g-name").value.trim();
+    var name = $                  ("g-name").value.trim();
     if (!name) { toast("Name is required", true); return; }
     if (name === def) { closeSheet(); return; } // a rename that changed nothing is a cancel
     if (await submit(name)) closeSheet();
@@ -103,17 +103,17 @@ function openGroupSheet(def, submit) {
   $("sheet").onclick = function (e) { if (e.target === $("sheet")) closeSheet(); };
   $("g-name").onkeydown = function (ev) { if (ev.key === "Enter") { ev.preventDefault(); void save(); } };
   $("g-name").focus();
-  if (editing) $("g-name").select();
+  if (editing) $                  ("g-name").select();
 }
 
-async function submitImport(input) {
+async function submitImport(input                  )                {
   var f = input && input.files && input.files[0];
   if (!f) return;
   var text;
   try { text = await f.text(); } catch (e) { toast("Could not read file", true); return; }
   var json;
   try { json = JSON.parse(text); } catch (e) { toast("Not valid JSON", true); return; }
-  var j = await apiJson("/api/mcpdefs/import", { method: "POST", body: JSON.stringify(json) });
+  var j = await apiJson                          ("/api/mcpdefs/import", { method: "POST", body: JSON.stringify(json) });
   if (!j) return;
   closeSheet();
   var n = (j.imported || []).length;
@@ -124,19 +124,19 @@ async function submitImport(input) {
   if (state.selected) openDetail(state.selected);
 }
 
-async function submitAdd() {
-  var type = $("a-type").value;
-  var body = Object.assign({ name: $("a-name").value.trim(), type: type, enabled: $("a-start").checked }, readFields(type, "a-"));
+async function submitAdd()                {
+  var type = $                   ("a-type").value;
+  var body                                                                           = Object.assign({ name: $                  ("a-name").value.trim(), type: type, enabled: $                  ("a-start").checked }, readFields(type, "a-"));
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body); // the auth checkbox is the def's auth string (docs/24 D1)
   translatePg(type, body); // docs/30: the pg form's pieces become one url
   if (!body.name) { toast("Name is required", true); return; }
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
   // The select wins over the + that opened the sheet — a changed pick is the pick.
-  if ($("g-sel")) state.addGroup = $("g-sel").value;
-  var j = await apiJson("/api/mcps", { method: "POST", body: JSON.stringify(body) });
+  if ($("g-sel")) state.addGroup = $                   ("g-sel").value;
+  var j = await apiJson                        ("/api/mcps", { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
-  rememberGroup("mcps", state.addGroup);
+  rememberGroup("mcps", state.addGroup );
   closeSheet();
   toast("Added " + body.name + " (" + (j.lifecycle || "stopped") + ")");
   state.selected = body.name;

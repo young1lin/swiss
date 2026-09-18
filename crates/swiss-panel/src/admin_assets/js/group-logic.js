@@ -30,7 +30,7 @@ import { DEFAULT_GROUP } from "./util.js";
 /** The group a row renders under: its stored group while that group still exists, else the
  *  FIRST group - that slot is the sink for unassigned rows, whatever it is called (mirrors
  *  the server's one rule, docs/20 2.1). */
-function groupOf(names) {
+function groupOf(names          )                                                 {
   var first = names[0] || DEFAULT_GROUP;
   return function (row) {
     return row && row.group && names.indexOf(row.group) >= 0 ? row.group : first;
@@ -40,7 +40,7 @@ function groupOf(names) {
 /** The list's shape: the groups in their stored order, each holding its members in the flat
  *  order the caller already sorted by. Empty groups keep their slot - you have to be able
  *  to see a group you just made. */
-function slice(rows, names, fn) {
+function slice                        (rows       , names          , fn                      )                    {
   return names.map(function (name) {
     return { name: name, rows: rows.filter(function (r) { return fn(r) === name; }) };
   });
@@ -51,7 +51,7 @@ function slice(rows, names, fn) {
 /** The delete confirm names where the members go: the FIRST group that remains - that slot is
  *  the server's sink. Tunnels once hard-coded 'default' here, which stayed wrong after the
  *  first group was renamed. Pure so the wording is pinned by tests, not by typing. */
-function deleteConfirmMsg(name, names, count, noun) {
+function deleteConfirmMsg(name        , names          , count        , noun        )         {
   var sink = names.filter(function (g) { return g !== name; })[0];
   return "Delete group '" + name + "'?\n\nIts " + count + " " + noun + (count === 1 ? "" : "s") +
     " move to '" + sink + "'. Nothing is removed.";
@@ -59,7 +59,7 @@ function deleteConfirmMsg(name, names, count, noun) {
 
 /** A create title that says where the new thing goes ("Add an MCP to learn"). The group is
  *  part of the promise the + made; a sheet that opens unnamed breaks it. */
-function addTitle(verb, noun, group) {
+function addTitle(verb        , noun        , group        )         {
   return verb + " " + noun + " to " + group;
 }
 
@@ -69,7 +69,7 @@ function addTitle(verb, noun, group) {
  *  as a drop target, not to teach the whole flow - the head's + already does that - so it
  *  stays two words plus at most the drop affordance. Pure so the wording is pinned by tests
  *  like the delete confirm's is. */
-function emptyLineText(canDrop) {
+function emptyLineText(canDrop         )         {
   return canDrop ? "No items — drop here or press +" : "No items";
 }
 
@@ -78,7 +78,7 @@ function emptyLineText(canDrop) {
 /** The localStorage key for a scope's last-used group ("the one I picked last time I added
  *  something here"). Same prefix as the collapse keys, so a 'clear panel state' that sweeps
  * swiss.groups.* takes both. */
-function lastGroupKey(scope) {
+function lastGroupKey(scope        )         {
   return "swiss.groups." + scope + ".last";
 }
 
@@ -86,7 +86,7 @@ function lastGroupKey(scope) {
  *  empty state): the group used last in this scope, while it still exists - a remembered
  *  name whose group was deleted or renamed is not a promise anybody made - else the first
  *  slot, the sink. Reading localStorage stays with the caller; this is the policy. */
-function resolveDefaultGroup(names, lastUsed) {
+function resolveDefaultGroup(names          , lastUsed                           )         {
   return lastUsed && names.indexOf(lastUsed) >= 0 ? lastUsed : names[0] || DEFAULT_GROUP;
 }
 

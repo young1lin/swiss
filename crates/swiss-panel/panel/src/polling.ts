@@ -23,11 +23,11 @@ import { triggerSummary } from "./jobs-v2.js";
 
 
 /* --- polling ---------------------------------------------------------------------------------- */
-async function loadList() {
+async function loadList(): Promise<void> {
   try {
     var r = await api("/api/mcps");
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
-    var j = await r.json();
+    var j: ApiMcpListResponse = await r.json();
     state.mcps = j.mcps || [];
     state.groups = j.groups || [];
     if (state.selected && !rowOf(state.selected)) { state.selected = null; state.detail = null; }
@@ -37,7 +37,7 @@ async function loadList() {
   } catch (e) { /* handled */ }
 }
 
-async function loadMemory(tree) {
+async function loadMemory(tree?: boolean): Promise<void> {
   try {
     var r = await api("/api/memory" + (tree ? "?tree=1" : ""));
     if (!r.ok) return;
@@ -46,7 +46,7 @@ async function loadMemory(tree) {
   } catch (e) { /* handled */ }
 }
 
-function renderMemory() {
+function renderMemory(): void {
   var m = state.mem;
   if (!m) return;
   var chip = $("memChip");
@@ -69,13 +69,13 @@ function renderMemory() {
 /** The chip's click: re-read memory with the child walk, nothing else. The chip shows a
  *  number, so a click asks for the number — reloading the active view under the pointer
  *  (focus, scroll, an expanded row) is a side effect nobody asked for. */
-function refreshMemoryNow() { loadMemory(true); }
+function refreshMemoryNow(): void { loadMemory(true); }
 
 /** The panel's ONE explicit view refresh (the r key — the chip's click is memory-only, see
  *  refreshMemoryNow): re-read memory with the child walk, and reload the active view. On
  *  Data this key is the only manual reload there is — its poll deliberately leaves the
  *  paged-in lists alone, so without this the view could never be forced up to date. */
-function refreshNow() { loadMemory(true); void refreshPage(); }
+function refreshNow(): void { loadMemory(true); void refreshPage(); }
 
 /* ================================================================================================
    Tunnels
@@ -91,30 +91,30 @@ function refreshNow() { loadMemory(true); void refreshPage(); }
    state.tun.tab to its scope; there is no page-local tab control anymore.
    ================================================================================================ */
 
-function tunData() {
+function tunData(): ApiTunnelsResponse {
   return state.tun.data || { connections: [], rules: [], ruleGroups: [], connGroups: [], mcps: [] };
 }
 
 /** Either tunnels page id — the render/patch guards and nothing else. */
-function isTunnelsView(v) { return v === "tunnels" || v === "tunnel-forwards"; }
+function isTunnelsView(v: string | null): boolean { return v === "tunnels" || v === "tunnel-forwards"; }
 
 /** Which tunnel scope is on screen — the /api/groups/{scope} family's own word. The wire keys
  *  stay ruleGroups/connGroups (docs/20 §3); this maps the mounted page to its scope. */
-function tunScope() { return state.tun.tab === "conns" ? "conns" : "rules"; }
-function tunRows() { return state.tun.tab === "conns" ? tunData().connections : tunData().rules; }
-function tunGroupsList() {
+function tunScope(): "conns" | "rules" { return state.tun.tab === "conns" ? "conns" : "rules"; }
+function tunRows(): ApiTunnelConnectionRow[] | ApiTunnelRuleRow[] { return state.tun.tab === "conns" ? tunData().connections : tunData().rules; }
+function tunGroupsList(): string[] {
   return state.tun.tab === "conns" ? tunData().connGroups || [] : tunData().ruleGroups || [];
 }
 
 /** The jobs scope's group names (docs/20 G4) — /api/jobs carries them at its top level. */
-function jobGroupsList() { return state.jobs.groups || ["default"]; }
+function jobGroupsList(): string[] { return state.jobs.groups || ["default"]; }
 
-function setView(v) { return navigatePage(v); }
+function setView(v: string): Promise<void> { return navigatePage(v); }
 
 /** The MCP chip text — ONE builder (menu.js's patchSidebar reuses it). The two copies had
  *  drifted: patchSidebar counted "· N down" and this one did not, so the chip lost and regained
  *  that segment every 6s poll versus every view switch. */
-function mcpChipText() {
+function mcpChipText(): string {
   var up = 0, bad = 0;
   state.mcps.forEach(function (m) {
     if (m.state === "up") up++;
@@ -123,11 +123,11 @@ function mcpChipText() {
   return state.mcps.length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
 }
 
-function updateCountChip() { $("countChip").textContent = currentPageCount(); }
+function updateCountChip(): void { $("countChip").textContent = currentPageCount(); }
 
 /** `patchOnly` is what the poll passes: refresh the data, then patch rather than rebuild. */
-async function loadTunnels(patchOnly) {
-  var j = await apiJson("/api/tunnels");
+async function loadTunnels(patchOnly?: boolean): Promise<void> {
+  var j = await apiJson<ApiTunnelsResponse>("/api/tunnels");
   if (!j) return;
   state.tun.data = j;
   if (isTunnelsView(state.view)) {
@@ -153,20 +153,20 @@ async function loadTunnels(patchOnly) {
 
 /** The row dot: running beats everything, off is idle, a recorded failure is down, and a job that
  *  never ran yet is idle rather than up — no run has ever succeeded. */
-function jobDotClass(j) {
+function jobDotClass(j: ApiJobRow): string {
   if (j.running) return "starting";
   if (!j.enabled) return "idle";
   if (j.lastOk === false) return "down";
   return j.lastRunAt ? "up" : "idle";
 }
 
-function jobRowHtml(j) {
+function jobRowHtml(j: ApiJobRow): string {
   var busy = state.jobs.busy[j.name];
   // The v2 identity (docs/11 §7.1): the title is the human name when one is set, the id
   // stays beside it because every action still addresses the id.
   var title = j.title && j.title !== j.name ? esc(j.title) + ' <span class="via">· ' + esc(j.name) + "</span>" : esc(j.name);
   var labels = (j.labels || []).length
-    ? ' <span class="via">' + j.labels.map(function (l) { return "#" + esc(l); }).join(" ") + "</span>"
+    ? ' <span class="via">' + j.labels!.map(function (l: string): string { return "#" + esc(l); }).join(" ") + "</span>"
     : "";
   // data-last/data-next always render (possibly empty) so patchJobs can always fill them in.
   var word = busy ? "starting" : jobDotClass(j);
@@ -191,7 +191,7 @@ function jobRowHtml(j) {
     "</div>";
 }
 
-function jobsChipText() {
+function jobsChipText(): string {
   var rows = state.jobs.data;
   var on = rows.filter(function (j) { return j.enabled; }).length;
   var failing = rows.filter(function (j) { return j.enabled && j.lastOk === false; }).length;
@@ -201,8 +201,8 @@ function jobsChipText() {
 
 /** `patchOnly` is what the poll passes: refresh the data, then patch rather than rebuild —
  *  the same contract as loadTunnels. */
-async function loadJobs(patchOnly) {
-  var j = await apiJson("/api/jobs");
+async function loadJobs(patchOnly?: boolean): Promise<void> {
+  var j = await apiJson<ApiJobsResponse>("/api/jobs");
   if (!j) return;
   state.jobs.data = j.jobs || [];
   state.jobs.groups = j.groups && j.groups.length ? j.groups : ["default"];
@@ -215,7 +215,7 @@ async function loadJobs(patchOnly) {
 }
 
 /** `18989 → 127.0.0.1:18989   via bastion · serves pg-app ●` */
-function ruleSubHtml(r) {
+function ruleSubHtml(r: ApiTunnelRuleRow): string {
   var out = esc(String(r.localPort)) + " &rarr; " + esc(r.targetHost + ":" + r.targetPort);
   out += ' <span class="via">via ' + esc(r.connectionName) + "</span>";
   if (r.mcpRows && r.mcpRows.length) {
@@ -233,7 +233,7 @@ function ruleSubHtml(r) {
   return out;
 }
 
-function ruleRowHtml(r) {
+function ruleRowHtml(r: ApiTunnelRuleRow): string {
   var busy = state.tun.busy[r.id];
   var word = busy ? "starting" : r.state;
   var running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
@@ -259,7 +259,7 @@ function ruleRowHtml(r) {
  *  resolves it because this list is the one place both ids and names live. Falls back to
  *  the raw id when the target is missing — deleting a jump in use is refused, so this is a
  *  stale-tab guard, and an id says more than an empty tag. */
-function tunConnName(id) {
+function tunConnName(id: string): string {
   var hit = tunData().connections.filter(function (c) { return c.id === id; })[0];
   return hit ? hit.name : id;
 }
@@ -268,14 +268,14 @@ function tunConnName(id) {
  *  jump is part of the row's identity ("this one dials through clash / through bastion"),
  *  so it rides the sub-line as the monochrome tag — the same form the sheet's Advanced
  *  summary uses, one word for the same fact in both places. */
-function connBadges(c) {
+function connBadges(c: ApiTunnelConnectionRow): string {
   var out = "";
   if (c.proxy) out += ' <span class="tag">proxy</span>';
   if (c.jump) out += ' <span class="tag">via ' + esc(tunConnName(c.jump)) + "</span>";
   return out;
 }
 
-function connRowHtml(c) {
+function connRowHtml(c: ApiTunnelConnectionRow): string {
   var busy = state.tun.busy[c.id];
   var word = busy ? "starting" : c.state === "connected" ? "up" : c.state;
   return '<div class="tun-row" draggable="true" data-conn="' + esc(c.id) + '">' +

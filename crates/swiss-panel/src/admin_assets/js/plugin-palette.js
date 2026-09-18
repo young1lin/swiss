@@ -39,12 +39,12 @@ var RAIL_LIMIT = 7;
  * broken glyph, one seat in a row of drawings that is suddenly type. This is panel-side
  * chrome data, deliberately NOT a descriptor field: adding icon metadata to the wire would
  * tax every plugin author for a panel nicety. */
-var GLYPHS = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear" };
+var GLYPHS                         = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear" };
 var DEFAULT_GLYPH = "puzzle";
 
-function pluginGlyph(group) { return GLYPHS[group.id] || null; }
+function pluginGlyph(group                          )                { return GLYPHS[group.id] || null; }
 
-function glyphHtml(group) {
+function glyphHtml(group                          )         {
   return icon(pluginGlyph(group) || DEFAULT_GLYPH);
 }
 
@@ -52,11 +52,11 @@ function glyphHtml(group) {
 
 function loadPins() {
   try {
-    var v = JSON.parse(localStorage.getItem(PIN_KEY));
+    var v = JSON.parse(localStorage.getItem(PIN_KEY)          );
     return Array.isArray(v) ? v.filter(function (x) { return typeof x === "string"; }) : null;
   } catch (e) { return null; }
 }
-function savePins(ids) {
+function savePins(ids          )       {
   try { localStorage.setItem(PIN_KEY, JSON.stringify(ids)); } catch (e) { /* full or blocked */ }
 }
 
@@ -64,29 +64,29 @@ function savePins(ids) {
 
 /** The default shortlist: the first RAIL_LIMIT groups, in group order - the order the host
  *  already decided. Pure so the default is pinnable by a test. */
-function defaultPinIds(groups) {
+function defaultPinIds(groups                  )           {
   return groups.slice(0, RAIL_LIMIT).map(function (g) { return g.id; });
 }
 
 /** The rail's slice of the groups: the pinned ones, in GROUP order (pinning picks a seat,
  *  it does not reorder the rail). `pins` is optional so tests can pass an explicit list;
  *  without it the store is read - null (never set / unreadable) means the default. */
-function pinnedGroups(groups, pins) {
+function pinnedGroups(groups             , pins                  )              {
   var p = pins === undefined ? loadPins() : pins;
   if (!p) return groups.slice(0, RAIL_LIMIT);
-  return groups.filter(function (g) { return p.indexOf(g.id) >= 0; });
+  return groups.filter(function (g) { return p .indexOf(g.id) >= 0; });
 }
 
 /** The palette's sections given a query: Pinned first, then All plugins, each filtered by
  *  the query against label and id. Empty sections drop out. Pure: groups + pins + query in,
  *  sections out. */
-function paletteRows(groups, pins, query) {
+function paletteRows(groups                , pins          , query        )                   {
   var q = String(query || "").trim().toLowerCase();
-  var match = function (g) {
+  var match = function (g              )          {
     return !q || String(g.label).toLowerCase().indexOf(q) >= 0 || String(g.id).toLowerCase().indexOf(q) >= 0;
   };
-  var pinned = [];
-  var rest = [];
+  var pinned                 = [];
+  var rest                 = [];
   groups.forEach(function (g) { (pins.indexOf(g.id) >= 0 ? pinned : rest).push(g); });
   return [
     { section: "Pinned", groups: pinned.filter(match) },
@@ -100,7 +100,7 @@ function paletteRows(groups, pins, query) {
  *  groups: registry groups (each may carry .off - every page unavailable). go(id) navigates;
  *  onchange() repaints the rail after a pin toggle. Escape or a click on the backdrop closes,
  *  and focus returns to the "..." seat so the keyboard path does not dead-end. */
-function openPluginPalette(groups, go, onchange) {
+function openPluginPalette(groups                , go                                      , onchange             )       {
   closePluginPalette();
   var pins = loadPins() || defaultPinIds(groups);
 
@@ -119,7 +119,7 @@ function openPluginPalette(groups, go, onchange) {
   var list = el("div", "palette-list");
   card.appendChild(list);
 
-  function rowButton(g) {
+  function rowButton(g              )                    {
     var b = el("button", "pal-row" + (g.off ? " off" : ""));
     b.type = "button";
     b.innerHTML = glyphHtml(g) +
@@ -129,7 +129,7 @@ function openPluginPalette(groups, go, onchange) {
     return b;
   }
 
-  function pinButton(g) {
+  function pinButton(g              )                    {
     var pinned = pins.indexOf(g.id) >= 0;
     var p = el("button", "pal-pin");
     p.type = "button";
@@ -163,8 +163,8 @@ function openPluginPalette(groups, go, onchange) {
 
   input.oninput = render;
   input.onkeydown = function (ev) {
-    var rows = Array.prototype.slice.call(list.querySelectorAll(".pal-row"));
-    var i = rows.indexOf(document.activeElement);
+    var rows                      = Array.prototype.slice.call(list.querySelectorAll                   (".pal-row"));
+    var i = rows.indexOf(document.activeElement                     );
     if (ev.key === "Escape") { ev.preventDefault(); closePluginPalette(); return; }
     if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
       ev.preventDefault();
@@ -175,7 +175,7 @@ function openPluginPalette(groups, go, onchange) {
       if (rows[n]) rows[n].focus();
     } else if (ev.key === "Enter" && i < 0) {
       ev.preventDefault();
-      var first = list.querySelector(".pal-row");
+      var first = list.querySelector                   (".pal-row");
       if (first) first.click();
     }
   };
@@ -191,7 +191,7 @@ function openPluginPalette(groups, go, onchange) {
   input.focus();
 }
 
-function closePluginPalette() {
+function closePluginPalette()       {
   var back = document.querySelector(".palette-back");
   if (back) back.remove();
   var more = document.getElementById("railMore");

@@ -44,7 +44,7 @@ import { navRows, nudgeSelected } from "./sidebar.js";
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
  *  when the reload cannot destroy work: no buffered data-view edits, no open sheet, nothing
  *  being typed. Otherwise say so once and keep checking on later polls. */
-function maybeReloadPanel(newVersion) {
+function maybeReloadPanel(newVersion: string): void {
   var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement && document.activeElement.tagName);
   var busy = !$("sheet").hidden || state.menuOpen;
   var edits = pageHasPendingChanges();
@@ -62,23 +62,23 @@ function maybeReloadPanel(newVersion) {
 /* --- boot -------------------------------------------------------------------------------------- */
 /** The panel has no login: the gateway only ever accepts loopback requests, so reaching this page
  *  at all already means you are on the machine it serves. Nothing to sign in to — just start. */
-function showApp() {
+function showApp(): void {
   void initPages();
   loadInfo();
 }
 
 /** Host facts the panel needs once: the token's env var name, and the named-token list (no
  *  secrets) for the management view. */
-async function loadInfo() {
+async function loadInfo(): Promise<void> {
   try {
     var r = await api("/api/info");
     if (r.ok) {
       state.info = await r.json();
       // First sight records the stamp; a LATER, DIFFERENT one means the panel was rebuilt —
       // reload in place when nothing unsaved would be lost (checked in maybeReloadPanel).
-      if (state.panelVersion === null) state.panelVersion = state.info.panelVersion || null;
-      else if (state.info.panelVersion && state.info.panelVersion !== state.panelVersion) {
-        maybeReloadPanel(state.info.panelVersion);
+      if (state.panelVersion === null) state.panelVersion = state.info!.panelVersion || null;
+      else if (state.info!.panelVersion && state.info!.panelVersion !== state.panelVersion) {
+        maybeReloadPanel(state.info!.panelVersion!);
       }
     }
     var t = await api("/api/tokens");
@@ -90,18 +90,18 @@ async function loadInfo() {
    turns dark at sunset the right answer changes twice a day and a toggle can only ever be wrong
    half of it. The preference is per-browser (localStorage), not gateway state — it describes this
    screen, and the same gateway is read from other screens with other lighting. */
-function themePref() {
+function themePref(): "light" | "dark" | "auto" {
   try { var v = localStorage.getItem(THEME_KEY); return v === "light" || v === "dark" ? v : "auto"; }
   catch (e) { return "auto"; }
 }
-function prefersDark() {
-  return !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+function prefersDark(): boolean {
+  return !!(window.matchMedia as unknown && matchMedia("(prefers-color-scheme: dark)").matches);
 }
-function applyTheme() {
+function applyTheme(): void {
   var p = themePref();
   document.documentElement.setAttribute("data-theme", p === "dark" || (p === "auto" && prefersDark()) ? "dark" : "light");
 }
-function setTheme(p) {
+function setTheme(p: string): void {
   try { if (p === "auto") localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, p); }
   catch (e) { /* the choice still applies to this page load */ }
   applyTheme();
@@ -109,7 +109,7 @@ function setTheme(p) {
 /* One click, one flip: the button shows what clicking switches TO — a moon on the light theme
    (click → dark), a sun on the dark one (click → light). "Auto" stays the untouched default (no
    stored preference): the first explicit click pins the choice for this browser. */
-function paintThemeBtn() {
+function paintThemeBtn(): void {
   var dark = document.documentElement.getAttribute("data-theme") === "dark";
   var b = $("themeBtn");
   // The sprite swap (docs/18 V2): switch the referenced symbol, not the button's HTML.
@@ -128,7 +128,7 @@ paintThemeBtn();
 // whatever the views create later (observed), so no view ever opts in or out.
 initSelects();
 // Only matters while the preference is "auto"; a fixed choice is not the OS's business.
-if (window.matchMedia) {
+if (window.matchMedia as unknown) {
   var mq = matchMedia("(prefers-color-scheme: dark)");
   var onOsChange = function () { if (themePref() === "auto") { applyTheme(); paintThemeBtn(); } };
   if (mq.addEventListener) mq.addEventListener("change", onOsChange);
@@ -143,7 +143,7 @@ if (window.matchMedia) {
    20s, deduped while in flight, and skipped outright when no proc MCP is running — so a 6s poll costs
    at most one transient powershell per 20s, and nothing at all when there are no children. Polling
    still pauses when the tab is hidden: nobody is looking. */
-function poll() {
+function poll(): void {
   if (document.visibilityState !== "visible") return;
   loadMemory(true);
   loadInfo();
@@ -166,7 +166,7 @@ window.addEventListener("beforeunload", function (e) {
 // refreshMemoryNow — a reading is not a reload button); the ONE explicit view refresh left
 // is the r key below, which keeps Data's manual reload alive.
 
-$("filter").oninput = function () { state.filter = this.value; patchSidebar(); };
+$<FilterInput>("filter").oninput = function () { state.filter = this.value; patchSidebar(); };
 initImmersive(); // the context bar's focus control: the page body can take the whole window
 
 /* Keyboard: arrows move through the sidebar, / focuses search, Escape closes the sheet/menu,
