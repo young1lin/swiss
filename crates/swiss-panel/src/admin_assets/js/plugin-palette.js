@@ -32,19 +32,20 @@ var PIN_KEY = "swiss.rail.pinned";
  * rail is the shortlist, so the limit is about the rail's height, not the host's capacity. */
 var RAIL_LIMIT = 7;
 
-/* Built-in plugins get the sprite glyph they already own. A third-party plugin the sprite has
- * never heard of falls back to its INITIAL - identity by name, not a mystery box icon. This is
- * panel-side chrome data, deliberately NOT a descriptor field: adding icon metadata to the
- * wire would tax every plugin author for a panel nicety. */
-var GLYPHS = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", host: "gear" };
+/* Built-in plugins get the sprite glyph they already own. The remote plugin reuses the mark
+ * its MCP type chip already wears (i-remote), the way terminal and plug serve both their seat
+ * and their type chip. A plugin the map has never heard of falls back to the PUZZLE piece -
+ * the universal plugin mark - so every seat reads as an icon; an initial letter reads as a
+ * broken glyph, one seat in a row of drawings that is suddenly type. This is panel-side
+ * chrome data, deliberately NOT a descriptor field: adding icon metadata to the wire would
+ * tax every plugin author for a panel nicety. */
+var GLYPHS = { mcp: "mcp", tunnels: "plug", data: "database", jobs: "clock", terminal: "terminal", remote: "remote", host: "gear" };
+var DEFAULT_GLYPH = "puzzle";
 
 function pluginGlyph(group) { return GLYPHS[group.id] || null; }
 
 function glyphHtml(group) {
-  var name = pluginGlyph(group);
-  return name
-    ? '<svg class="ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>'
-    : '<span class="rail-glyph" aria-hidden="true">' + esc((group.label || group.id || "?").trim().charAt(0).toUpperCase()) + "</span>";
+  return icon(pluginGlyph(group) || DEFAULT_GLYPH);
 }
 
 /* --- pin state (localStorage) ------------------------------------------------------------------- */

@@ -67,11 +67,20 @@ describe("the palette rows", () => {
 });
 
 describe("seat glyphs", () => {
-  it("built-ins use the sprite; unknown plugins fall back to their initial", () => {
+  it("built-ins use the sprite, and the remote plugin wears its own mark", () => {
     expect(pluginGlyph({ id: "mcp", label: "MCP" })).toBe("mcp");
     expect(glyphHtml({ id: "mcp", label: "MCP" })).toContain("#i-mcp");
+    expect(pluginGlyph({ id: "remote", label: "Remote" })).toBe("remote");
+    expect(glyphHtml({ id: "remote", label: "Remote" })).toContain("#i-remote");
+  });
+
+  it("an unknown plugin falls back to the default puzzle glyph, never a letter", () => {
+    // A seat is a row of drawn icons; an initial letter reads as a broken glyph (the
+    // "Remote shows a bare R" sighting). The puzzle piece is the universal plugin mark.
     expect(pluginGlyph({ id: "kubernetes", label: "Kubernetes" })).toBe(null);
-    expect(glyphHtml({ id: "kubernetes", label: "Kubernetes" })).toContain('class="rail-glyph"');
-    expect(glyphHtml({ id: "kubernetes", label: "Kubernetes" })).toContain(">K</span>");
+    const html = glyphHtml({ id: "kubernetes", label: "Kubernetes" });
+    expect(html).toContain("#i-puzzle");
+    expect(html).not.toContain("rail-glyph");
+    expect(html).not.toContain(">K<");
   });
 });
