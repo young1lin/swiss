@@ -69,4 +69,23 @@ export default tseslint.config(
       "@typescript-eslint/no-explicit-any": "warn",
     },
   },
+  {
+    /* R1 (docs/37 M3): no augmenting built-in interfaces in the shape library. These five
+     * names are the ones docs/36 D9 once forced in (Function for toast._t/_warned and
+     * paintTabs.last, EventTarget for closest/tagName, RegExp for test(string | null),
+     * Window for webkitAudioContext) - each bent the whole program's types around one
+     * call site. Narrow at the call site (targetEl, casts) or keep module state instead. */
+    files: ["src/types/**/*.d.ts"],
+    rules: {
+      /* One exact-match selector per name: esquery's regex literals choke on the parens
+       * an alternation needs, and exact equality says precisely "this interface IS the
+       * built-in" anyway. */
+      "no-restricted-syntax": ["error",
+        ...["Function", "EventTarget", "RegExp", "Window", "Element", "Array", "String", "Number", "Boolean", "Object", "Promise"].map((name) => ({
+          selector: "TSInterfaceDeclaration[id.name='" + name + "']",
+          message: "Global built-in augmentation (docs/37 M3): narrow at the call site or keep the state module-scoped.",
+        })),
+      ],
+    },
+  },
 );

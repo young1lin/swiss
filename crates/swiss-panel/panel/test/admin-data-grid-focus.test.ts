@@ -171,7 +171,7 @@ describe("the grid's keyboard focus ring (docs/22 closeout audit P0-B)", () => {
     wrap.appendChild(marker);
     queryAll(wrap, 'td[data-r="0"][data-c="0"]')[0].onmousedown({ preventDefault: () => {} });
     const kbd = byId.dbKbd;
-    kbd.onkeydown({ key: "Escape", preventDefault: () => {}, ctrlKey: false, metaKey: false, altKey: false });
+    kbd.onkeydown({ key: "Escape", currentTarget: kbd, preventDefault: () => {}, ctrlKey: false, metaKey: false, altKey: false }); // docs/37 M4: Esc reads e.currentTarget for its blur
     expect(d.focus).toBeNull();
     expect(queryAll(wrap, "td.db-focus").length, "the ring is gone").toBe(0);
     expect(wrap.children.includes(marker), "no rebuild on Esc").toBe(true);

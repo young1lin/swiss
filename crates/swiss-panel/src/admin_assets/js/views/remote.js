@@ -30,7 +30,7 @@
    gateway without them answers the single default group the component draws as no
    divider at all.
    ================================================================================================ */
-import { $, apiJson, emptyHtml, esc, icon, toast } from "../util.js";
+import { $, apiJson, emptyHtml, esc, icon, targetEl, toast } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, groupFieldHtml, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
@@ -317,17 +317,17 @@ export async function mount() {
   if (!(await load())) return;
   render();
   $("pane").onclick = function (event            )       {
-    var add = event.target .closest ("#rmAdd");
+    var add = targetEl(event)?.closest("#rmAdd");
     if (add) { pendingGroup = null; openSheet(null); return; }
-    var newGroup = event.target .closest ("#rmNewGroup");
+    var newGroup = targetEl(event)?.closest("#rmNewGroup");
     if (newGroup) { void newGroupFlow("targets", groupNames, reload); return; }
-    var edit = event.target .closest              ("[data-rmedit]");
+    var edit = targetEl(event)?.closest             ("[data-rmedit]");
     if (edit) {
       var hit = targets.find(function (t) { return t.id === edit .dataset.rmedit; });
       if (hit) openSheet(hit);
       return;
     }
-    var more = event.target .closest              ("[data-rmmore]");
+    var more = targetEl(event)?.closest             ("[data-rmmore]");
     if (more) {
       // The opening click must not reach document (menu.js closes on outside clicks).
       event.stopPropagation();

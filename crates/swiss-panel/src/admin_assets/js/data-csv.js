@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { $, apiJson, el, esc, state, toast } from "./util.js";
+import { $, apiJson, el, errText, esc, state, targetEl, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
@@ -78,7 +78,7 @@ function dbOpenImport()       {
   $("sheet").hidden = false;
 
   function parse()       {
-    var text = $             ("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    var text = $                  ("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     var rows = text.split("\n").filter(function (l        )          { return l.trim() !== ""; });
     if (!rows.length) { header = []; lines = []; mapping = []; paint(); return; }
     header = dbParseCsvLine(rows[0]);
@@ -98,7 +98,7 @@ function dbOpenImport()       {
       var row = el("div", "db-console-row");
       row.style.marginBottom = "2px";
       row.appendChild(el("span", "db-filter-hint", "CSV " + String.fromCharCode(34) + h + String.fromCharCode(34) + " \u2192 "));
-      var sel = el("select")                ;
+      var sel = el("select");
       sel.style.width = "auto";
       var skip = el("option", "", "(skip)")                     ;
       skip.value = "";
@@ -109,7 +109,7 @@ function dbOpenImport()       {
         o.selected = n === mapping[i];
         sel.appendChild(o);
       });
-      sel.onchange = function ()       { mapping[i] = this.value || null; preview(); };
+      sel.onchange = (e) => { mapping[i] = (e.currentTarget                     ).value || null; preview(); };
       row.appendChild(sel);
       mapBox.appendChild(row);
     });
@@ -137,7 +137,7 @@ function dbOpenImport()       {
     box.appendChild(pre);
   }
 
-  $             ("dbImpText").oninput = parse;
+  $                  ("dbImpText").oninput = parse;
   function setMode(m        )       {
     mode = m;
     $("dbImpMode").querySelectorAll("button").forEach(function (b) {
@@ -149,25 +149,26 @@ function dbOpenImport()       {
       : "Every row inserts \u2014 a duplicate key aborts the whole file.";
   }
   $("dbImpMode").onclick = function (e            )       {
-    var b                     = e.target && e.target.closest ? e.target.closest("button[data-mode]")                : null;
+    var b                     = targetEl(e)?.closest             ("button[data-mode]") ?? null;
     if (b) setMode(b.dataset.mode );
   };
-  $             ("dbImpFile").onchange = function ()       {
-    var f = this.files && this.files[0];
-    if (!f) return;
+  $                  ("dbImpFile").onchange = (e) => {
+    var f = (e.currentTarget                    ).files;
+    if (!f || !f[0]) return;
     var rd = new FileReader();
-    rd.onload = function ()       { $             ("dbImpText").value = String(rd.result); parse(); };
-    rd.readAsText(f);
+    rd.onload = function ()       { $                  ("dbImpText").value = String(rd.result); parse(); };
+    rd.readAsText(f[0]);
   };
   $("dbImpCancel").onclick = closeSheet;
-  $              ("dbImpRun").onclick = async function ()                {
+  $                   ("dbImpRun").onclick = async (e)                => {
     if (!header.length || !lines.length) { toast("Paste or upload a CSV first", true); return; }
     if (!mapping.some(Boolean)) { toast("Map at least one column", true); return; }
     var upsert = mode === "upsert";
     if (!confirm((upsert ? "Upsert " : "Insert ") + lines.length.toLocaleString() + " rows into " +
         (d .schema ? d .schema + "." : "") + d .table  + " in ONE transaction? A failure rolls the whole file back.")) return;
-    this.disabled = true;
-    this.textContent = "Importing\u2026";
+    const t = e.currentTarget                     ;
+    t.disabled = true;
+    t.textContent = "Importing\u2026";
     var j = await apiJson                                     ("/api/db/" + encodeURIComponent(d .conn ) + "/import", {
       method: "POST",
       // mode rides the payload only when upsert — a default import stays byte-identical to
@@ -293,7 +294,7 @@ function dbCellMenu(e            , row                                , key     
         var table = (d .schema ? q(d .schema) + "." : "") + q(d .table );
         dbCopyText("INSERT INTO " + table + " (" + cols.map(q).join(", ") + ") VALUES (" +
           cols.map(function (n        )         { return lit(full [n]); }).join(", ") + ");");
-      } catch (err) { toast(String(err), true); }
+      } catch (err) { toast(errText(err), true); }
     });
   }
   document.body.appendChild(menu);

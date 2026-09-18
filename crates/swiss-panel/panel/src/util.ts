@@ -161,13 +161,39 @@ function whenLabel(iso: string | number): string {
 // key per scope, because a group named "prod" in two lists folding together would be a
 // coincidence, not a feature.
 
+/* The toast's auto-hide timer, module-scoped (docs/37 M3): it once rode on the function
+   object itself (toast._t), which needed a global Function augmentation to type. */
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 function toast(msg: string, isErr?: boolean): void {
   var t = $("toast");
   t.textContent = msg;
   t.className = "toast" + (isErr ? " err" : "");
   t.hidden = false;
-  clearTimeout(toast._t);
-  toast._t = setTimeout(function () { t.hidden = true; }, 3400);
+  if (toastTimer !== null) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.hidden = true; }, 3400);
+}
+
+/** The catch-side reader (docs/37 M5): every handler once read e.message off an any-typed
+ *  catch variable; unknown is the honest type and this is the one narrowing it takes. */
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** True while the focused element is an input, textarea or select - the typing guards
+ *  (auto-reload, keyboard shortcuts) must not fire mid-keystroke. No active element is
+ *  "not typing": the ?? "" keeps the null-coercion era's answer for the null case. */
+function isTyping(): boolean {
+  return /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "");
+}
+
+/** event.target narrowed to Element or null (docs/37 M3): the global EventTarget
+ *  augmentation is retired, and this is the one narrowing every delegated click handler
+ *  shares - the old `target && target.closest && ...` probe as a helper. The duck check,
+ *  not instanceof: the suite runs under node with no DOM globals, and a Window or document
+ *  target (no closest) must answer null exactly as the inline probe always did. */
+function targetEl(e: Event): Element | null {
+  const t = e.target as Element | null;
+  return t && typeof t.closest === "function" ? t : null;
 }
 
 
@@ -206,4 +232,4 @@ async function apiJson<T = unknown>(path: string, opts?: RequestInit): Promise<T
   }
 }
 
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, esc, icon, now, state, toast, typeTagHtml, TYPE_ICONS, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, errText, esc, icon, isTyping, now, state, targetEl, toast, typeTagHtml, TYPE_ICONS, whenLabel };

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { $, apiJson, dbReqGuard, el, state, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, errText, state, toast } from "./util.js";
 import {
   dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisPendingCount,
@@ -143,7 +143,7 @@ function renderDbRedisBar(d         , bar             , n        )       {
         ", one pipelined round trip — each guard-checked before the socket is touched\n" +
         cmds.map(dbRedisCommandText).join("\n");
     } catch (e) {
-      pre.textContent = String(e && e.message ? e.message : e);
+      pre.textContent = errText(e);
     }
     bar.style.flexWrap = "wrap";
     bar.appendChild(pre);
@@ -205,7 +205,7 @@ function renderDbBar()       {
       pre.innerHTML = dbHighlightSql("-- " + stmts.length + " statement" + (stmts.length > 1 ? "s" : "") +
         ", executed inside BEGIN ... COMMIT\n" + stmts.join("\n"));
     } catch (e) {
-      pre.textContent = String(e && e.message ? e.message : e);
+      pre.textContent = errText(e);
     }
     bar.style.flexWrap = "wrap";
     bar.appendChild(pre);

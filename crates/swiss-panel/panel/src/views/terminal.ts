@@ -29,7 +29,7 @@
    rows) lives in ../terminal-core.js and is pinned by test/admin-terminal.test.ts;
    the Local shell settings sheet lives in ./terminal-settings.js.
    ================================================================================================ */
-import { $, api, apiJson, esc, icon, toast } from "../util.js";
+import { $, api, apiJson, errText, esc, icon, targetEl, toast } from "../util.js";
 import { loadXterm } from "../vendor/xterm/xterm-5.5.0/index.js";
 import { loadFitAddon } from "../vendor/xterm/addon-fit-0.10.0/index.js";
 import { loadUnicode11Addon } from "../vendor/xterm/addon-unicode11-0.8.0/index.js";
@@ -138,6 +138,11 @@ function paintStatus() {
 /* The session tabs. A tab exists for every wired model plus every live listing row the
    user has not opened yet; a closed session keeps its tab (the scrollback is readable)
    until dismissed. */
+/* paintTabs' last-markup memo, module-scoped (docs/37 M3): it once rode on the function
+   object itself (paintTabs.last), typed by a Function augmentation. Null means "the bar's
+   DOM was replaced under us - repaint even if the markup is textually equal". */
+let paintTabsLast: string | null = null;
+
 function paintTabs() {
   var bar = $("term-tabs");
   if (!bar) return;
@@ -155,8 +160,8 @@ function paintTabs() {
       ' <span class="term-tab-x" data-act="close" data-id="' + esc(m.id) + '" title="Close session" role="button">\u00d7</span>' +
       "</button>";
   }).join("");
-  if (html === paintTabs.last) return;
-  paintTabs.last = html;
+  if (html === paintTabsLast) return;
+  paintTabsLast = html;
   bar.innerHTML = html;
 }
 
@@ -216,7 +221,12 @@ function copySelection(term: XtermTerminal) {
    first audible bell and left alone afterwards — an idle one costs nothing. */
 function beep() {
   try {
-    bellAudio = bellAudio || new (window.AudioContext || window.webkitAudioContext)();
+    /* The legacy vendor spelling, cast locally: no lib declares webkitAudioContext and the
+       global Window augmentation is retired (docs/37 M3). The || keeps the runtime honest -
+       a browser with neither name throws here exactly as it always did. */
+    var audioCtor = window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext as typeof AudioContext | undefined;
+    bellAudio = bellAudio || new audioCtor();
     var osc = bellAudio.createOscillator();
     var gain = bellAudio.createGain();
     osc.frequency.value = 880;
@@ -326,7 +336,7 @@ function startRename(id: string) {
        model - Escape, or a commit equal to the current label - would recompute the
        identical string and the skip would strand this input inside the tab forever
        (fresh-eyes audit B1b). Reset the memo; the repaint then always runs. */
-    paintTabs.last = null;
+    paintTabsLast = null;
     paintTabs();
     if (m.term) m.term.focus();   // the repaint ate the input that held the focus
   };
@@ -445,10 +455,10 @@ function openHelpSheet() {
    checking defaultPrevented - a document-capture call on top would double-fire
    openFind, whose toggle then closes the bar again (fresh-eyes audit B2). */
 function pageFindShortcut(ev: KeyboardEvent) {
-  var el = ev.target;
+  var el = targetEl(ev);
   var tag = el && el.tagName;
   if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-  if (el && el.closest && el.closest(".term-holder")) return;   // xterm owns keys in here
+  if (el && el.closest(".term-holder")) return;   // xterm owns keys in here
   if (!$("term-find")) return;   // some other page is staged
   if (ev.key === "?") {          // the reference sheet - "?" asks a question
     ev.preventDefault();
@@ -492,7 +502,7 @@ async function openFind() {
       m.search.onDidChangeResults(function (res) { paintFindCount(res); });
       m.term.loadAddon(m.search);
     } catch (e) {
-      toast("could not load the search addon: " + String(e && e.message || e), true);
+      toast("could not load the search addon: " + errText(e), true);
       closeFind();
       return;
     }
@@ -932,7 +942,7 @@ async function openSession() {
   } catch (e) {
     /* A vendored package that failed to load must say so - a silently vanishing tab teaches
        the user that Open is decorative. */
-    toast("could not load the terminal packages: " + String(e && e.message || e), true);
+    toast("could not load the terminal packages: " + errText(e), true);
     models.splice(models.indexOf(m), 1);
     active = null;
     paintTabs();
@@ -1072,22 +1082,22 @@ function render() {
   var tabs = $("term-tabs");
   if (tabs) {
     tabs.onclick = function (event) {
-      var closer = event.target!.closest!('[data-act="close"]');
+      var closer = targetEl(event)?.closest('[data-act="close"]');
       if (closer) { void closeSession(closer.getAttribute("data-id")!); return; }
-      var tab = event.target!.closest!('[data-act="select"]');
+      var tab = targetEl(event)?.closest('[data-act="select"]');
       if (tab) select(tab.getAttribute("data-id")!);
     };
     tabs.ondblclick = function (event) {
-      var tab = event.target!.closest!('[data-act="select"]');
+      var tab = targetEl(event)?.closest('[data-act="select"]');
       if (tab) startRename(tab.getAttribute("data-id")!);
     };
     tabs.onauxclick = function (event) {
       if (event.button !== 1) return;   // middle-click closes (Tabby / native terminals)
-      var tab = event.target!.closest!('[data-act="select"]');
+      var tab = targetEl(event)?.closest('[data-act="select"]');
       if (tab) void closeSession(tab.getAttribute("data-id")!);
     };
     tabs.oncontextmenu = function (event) {
-      var tab = event.target!.closest!('[data-act="select"]');
+      var tab = targetEl(event)?.closest('[data-act="select"]');
       if (!tab) return;
       event.preventDefault();   // the browser menu has nothing to say about a session tab
       startRename(tab.getAttribute("data-id")!);
@@ -1098,7 +1108,7 @@ function render() {
      so the memo from the previous paint is a lie here. Without this reset, a
      settings save (reload -> render) with unchanged models skips the repaint and
      blanks the bar (fresh-eyes audit B1a). */
-  paintTabs.last = null;
+  paintTabsLast = null;
   paintTabs();
   paintStage();
   if (!active && sessions.length) select(sessions[0].id);

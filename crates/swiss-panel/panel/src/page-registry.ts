@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { $, api, esc, icon, state, toast } from "./util.js";
+import { $, api, errText, esc, icon, state, toast } from "./util.js";
 import { createPageRegistry } from "./page-core.js";
 import { glyphHtml, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
 
@@ -100,9 +100,9 @@ function paintPluginRail(): void {
   nav.innerHTML = pinnedGroups(currentGroups()).map(railSeat).join("") + moreSeat();
   nav.onclick = function (event) {
     var target = event.target as HTMLElement;
-    var more = target.closest ? target.closest(".rail-more") as HTMLElement | null : null;
+    var more = target.closest<HTMLElement>(".rail-more");
     if (more) { openPluginPalette(decoratedGroups(), navigatePage, paintPluginRail); return; }
-    var button = target.closest ? target.closest("[data-view]") as HTMLElement | null : null;
+    var button = target.closest<HTMLElement>("[data-view]");
     if (button) void navigatePage(button.dataset.view!);
   };
 }
@@ -228,7 +228,7 @@ function initPages(): Promise<void> {
   if (boot) return boot;
   boot = (async function () {
     try { await reloadPluginInventory(); }
-    catch (error) { toast(error.message, true); paintNavigation(); }
+    catch (error) { toast(errText(error), true); paintNavigation(); }
     var wanted = (location.hash || "#mcps").replace(/^#\/?/, "");
     if (!registry.get(wanted)) wanted = registry.list()[0] && registry.list()[0].id;
     if (wanted) await navigatePage(wanted, true);
@@ -251,7 +251,7 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
   var module: PageModule;
   var off = unavailable(page);
   try { module = off ? {} : await registry.load(id); }
-  catch (error) { toast(error.message, true); return; }
+  catch (error) { toast(errText(error), true); return; }
   if (ticket !== sequence) return;
   if (active) {
     active.controller.abort();
@@ -270,7 +270,7 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
     ? '<div class="empty"><div><h2>' + esc(page.label) + ' unavailable</h2><p class="hint">' + esc(off.lastError || "This plugin is disabled. Manage it in Plugins.") + '</p></div></div>'
     : '<div class="empty">Loading ' + esc(page.label) + "…</div>";
   try { if (module.mount) await module.mount({ signal: controller.signal }); }
-  catch (error) { if (ticket === sequence && error.name !== "AbortError") toast(error.message, true); }
+  catch (error) { if (ticket === sequence && error instanceof Error && error.name !== "AbortError") toast(errText(error), true); }
   if (ticket === sequence) $("countChip").textContent = currentPageCount();
 }
 
@@ -278,13 +278,13 @@ async function pollPage(): Promise<void> {
   if (polling || !active || !active.module.poll) return;
   polling = true;
   try { await active.module.poll(); }
-  catch (error) { toast(error.message, true); }
+  catch (error) { toast(errText(error), true); }
   finally { polling = false; }
 }
 async function refreshPage(): Promise<void> {
   if (!active) return;
   try { if (active.module.refresh) await active.module.refresh(); else if (active.module.poll) await active.module.poll(); }
-  catch (error) { toast(error.message, true); }
+  catch (error) { toast(errText(error), true); }
 }
 
 export { currentPageCount, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };

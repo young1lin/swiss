@@ -33,7 +33,7 @@
    (action input built from GET /api/actions, run.js's builder) plus a JSON editor, round-tripping
    losslessly so fields this form does not know survive the save.
    ================================================================================================ */
-import { $, api, apiJson, dotTitle, emptyHtml, esc, icon, state, toast, whenLabel } from "./util.js";
+import { $, api, apiJson, dotTitle, emptyHtml, errText, esc, icon, state, toast, whenLabel } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { assignMember, groupFieldHtml, groupOf as makeGroupOf, lastGroup, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "./groups.js";
 import { popupMenu } from "./menu.js";
@@ -467,19 +467,19 @@ function openJobSheet(job: ApiJobRow | null): void {
      itself; a mode switch re-renders the mode's fields from the state it is switching to. */
   function readFields(): void {
     if (sched.mode === "interval") {
-      sched.every = Number($<FilterInput>("jf-ev").value) || 0;
-      sched.unit = $<FilterSelect>("jf-ev-u").value;
+      sched.every = Number($<HTMLInputElement>("jf-ev").value) || 0;
+      sched.unit = $<HTMLSelectElement>("jf-ev-u").value;
     } else if (sched.mode === "cron") {
-      sched.cron = $<FilterInput>("jf-cron-in").value;
+      sched.cron = $<HTMLInputElement>("jf-cron-in").value;
     } else {
-      sched.time = $<FilterInput>("jf-at").value || "";
+      sched.time = $<HTMLInputElement>("jf-at").value || "";
       if (sched.mode === "weekly") {
         sched.days = [];
         Array.prototype.forEach.call(document.querySelectorAll("#jf-days button.on"), function (b: Element): void {
           sched.days!.push(+b.getAttribute("data-dow")!);
         });
       } else if (sched.mode === "monthly") {
-        sched.day = Number($<FilterInput>("jf-md").value) || 0;
+        sched.day = Number($<HTMLInputElement>("jf-md").value) || 0;
       }
     }
     say();
@@ -490,7 +490,7 @@ function openJobSheet(job: ApiJobRow | null): void {
     el.className = "sched-say";
     el.textContent = "";
     try { el.textContent = schedToBody(sched).say; }
-    catch (err) { el.className = "sched-say bad"; el.textContent = err.message || String(err); }
+    catch (err) { el.className = "sched-say bad"; el.textContent = errText(err); }
   }
 
   function renderFields(): void {
@@ -558,42 +558,42 @@ function openJobSheet(job: ApiJobRow | null): void {
   function sayCommand(): void {
     cmdSay.className = "sched-say cmd-say";
     cmdSay.textContent = "";
-    var joined = joinCommand($<FilterTextArea>("jf-command").value);
+    var joined = joinCommand($<HTMLTextAreaElement>("jf-command").value);
     if (joined) cmdSay.textContent = "Saves as: " + joined;
   }
-  $<FilterTextArea>("jf-command").oninput = sayCommand;
+  $<HTMLTextAreaElement>("jf-command").oninput = sayCommand;
   sayCommand();
-  $<FilterTextArea>("jf-command").focus();
+  $<HTMLTextAreaElement>("jf-command").focus();
 }
 
 async function saveJob(existing: ApiJobRow | null): Promise<void> {
   // On edit the name input is disabled, so it still carries the identity the URL needs.
-  var name = $<FilterInput>("jf-name").value.trim();
+  var name = $<HTMLInputElement>("jf-name").value.trim();
   // The preview under the box has been showing this exact join all along.
-  var command = joinCommand($<FilterTextArea>("jf-command").value);
+  var command = joinCommand($<HTMLTextAreaElement>("jf-command").value);
   if (!name) { toast("Name is required", true); return; }
   if (!command) { toast("Command is required", true); return; }
   // The builder produces (and has already said) the schedule: the same sentence it showed is
   // what saves, and the same complaint it printed is what toasts here.
   var sched: { body: { everySec?: number; cron?: string }; say: string };
-  try { sched = schedToBody(schedState!); } catch (err) { toast(String(err.message || err), true); return; }
-  var body: Record<string, unknown> = { name: name, command: command, enabled: $<FilterInput>("jf-enabled").checked };
+  try { sched = schedToBody(schedState!); } catch (err) { toast(errText(err), true); return; }
+  var body: Record<string, unknown> = { name: name, command: command, enabled: $<HTMLInputElement>("jf-enabled").checked };
   if (sched.body.everySec != null) body.everySec = sched.body.everySec;
   else body.cron = sched.body.cron;
   // Minutes in the sheet, milliseconds on the wire — nobody should ever have to type 600000.
-  var mins = Number($<FilterInput>("jf-timeout").value);
+  var mins = Number($<HTMLInputElement>("jf-timeout").value);
   if (mins > 0) body.timeoutMs = Math.round(mins * 60000);
-  var cwd = $<FilterInput>("jf-cwd").value.trim();
+  var cwd = $<HTMLInputElement>("jf-cwd").value.trim();
   if (cwd) body.cwd = cwd;
   // The env box: every line a KEY=value the run will be handed. A bad line stops the
   // save — a job quietly running WITHOUT a variable the user believes it has is the
   // worst kind of wrong.
-  var parsed = parseEnvLines($<FilterTextArea>("jf-env").value);
+  var parsed = parseEnvLines($<HTMLTextAreaElement>("jf-env").value);
   if (parsed.error) { toast(parsed.error, true); return; }
   if (Object.keys(parsed.env!).length) body.env = parsed.env!;
   var j = await apiJson("/api/jobs/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
   if (!j) return;
-  var picked = $("g-sel") ? $<FilterSelect>("g-sel").value : null;
+  var picked = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
   closeSheet();
   if (!existing && picked) {
     // The select the sheet carried is where the new job lands (docs/20 G4). A gateway
@@ -731,34 +731,34 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   // from then on the textarea wins, until Form -> JSON rebuilds it from the form again.
   var def = JSON.parse(JSON.stringify(base)) as JobDef;
   var dirty = false;
-  var jsonBox = $<FilterTextArea>("jv-json");
+  var jsonBox = $<HTMLTextAreaElement>("jv-json");
   jsonBox.value = JSON.stringify(def, null, 2) + "\n";
 
   function syncTriggerRows(): void {
-    var kind = $<FilterSelect>("jv-kind").value;
+    var kind = $<HTMLSelectElement>("jv-kind").value;
     $("jv-interval-row").style.display = kind === "interval" ? "" : "none";
     $("jv-cron-row").style.display = kind === "cron" ? "" : "none";
   }
   syncTriggerRows();
-  $<FilterSelect>("jv-kind").onchange = syncTriggerRows;
+  $<HTMLSelectElement>("jv-kind").onchange = syncTriggerRows;
 
   // The raw cron field gets the same one-sentence answer as the builder: whatever mode a
   // definition came from, the expression on screen is the schedule that will fire.
   var jvSay = $("jv-cron-say");
   function sayV2(): void {
-    var expr = $<FilterInput>("jv-cron").value.trim();
+    var expr = $<HTMLInputElement>("jv-cron").value.trim();
     jvSay.className = "sched-say";
     jvSay.textContent = "";
     try { if (expr) jvSay.textContent = describeCron(expr) + "."; }
-    catch (err) { jvSay.className = "sched-say bad"; jvSay.textContent = err.message || String(err); }
+    catch (err) { jvSay.className = "sched-say bad"; jvSay.textContent = errText(err); }
   }
-  $<FilterInput>("jv-cron").oninput = sayV2;
+  $<HTMLInputElement>("jv-cron").oninput = sayV2;
   sayV2();
   ensureCronstrue(function (): void { sayV2(); });
 
   // Switching the action type rebuilds the input form from that capability's schema.
-  $<FilterSelect>("jv-action").onchange = function (): void {
-    var next = actionByType(actions, $<FilterSelect>("jv-action").value);
+  $<HTMLSelectElement>("jv-action").onchange = function (): void {
+    var next = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
     $("jv-inputs").innerHTML = next
       ? argFieldsHtml({ inputSchema: next.schema } as ApiMcpTool, "ja-", {})
       : '<div class="hint">Not registered — edit the input in the JSON below.</div>';
@@ -770,61 +770,62 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
       if (cb.checked) retryOn.push(cb.getAttribute("data-retryon")!);
     });
     return {
-      title: $<FilterInput>("jv-title").value.trim(),
-      labels: $<FilterInput>("jv-labels").value,
-      disabled: $<FilterInput>("jv-disabled").checked,
-      kind: $<FilterSelect>("jv-kind").value,
-      everyMs: $<FilterInput>("jv-every").value.trim(),
-      firstRun: $<FilterSelect>("jv-first").value,
-      cron: $<FilterInput>("jv-cron").value.trim(),
-      timeoutMs: $<FilterInput>("jv-timeout").value.trim(),
-      overlap: $<FilterSelect>("jv-overlap").value,
-      misfire: $<FilterSelect>("jv-misfire").value,
-      retryMax: $<FilterInput>("jv-rmax").value.trim(),
-      retryDelayMs: $<FilterInput>("jv-rdelay").value.trim(),
-      retryBackoff: $<FilterSelect>("jv-rback").value,
+      title: $<HTMLInputElement>("jv-title").value.trim(),
+      labels: $<HTMLInputElement>("jv-labels").value,
+      disabled: $<HTMLInputElement>("jv-disabled").checked,
+      kind: $<HTMLSelectElement>("jv-kind").value,
+      everyMs: $<HTMLInputElement>("jv-every").value.trim(),
+      firstRun: $<HTMLSelectElement>("jv-first").value,
+      cron: $<HTMLInputElement>("jv-cron").value.trim(),
+      timeoutMs: $<HTMLInputElement>("jv-timeout").value.trim(),
+      overlap: $<HTMLSelectElement>("jv-overlap").value,
+      misfire: $<HTMLSelectElement>("jv-misfire").value,
+      retryMax: $<HTMLInputElement>("jv-rmax").value.trim(),
+      retryDelayMs: $<HTMLInputElement>("jv-rdelay").value.trim(),
+      retryBackoff: $<HTMLSelectElement>("jv-rback").value,
       retryOn: retryOn,
-      capture: $<FilterSelect>("jv-capture").value,
-      maxBytes: $<FilterInput>("jv-maxbytes").value.trim(),
-      actionType: $<FilterSelect>("jv-action").value,
+      capture: $<HTMLSelectElement>("jv-capture").value,
+      maxBytes: $<HTMLInputElement>("jv-maxbytes").value.trim(),
+      actionType: $<HTMLSelectElement>("jv-action").value,
     };
   }
 
   function formToDef(): JobDef {
-    var currentAction = actionByType(actions, $<FilterSelect>("jv-action").value);
+    var currentAction = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
     var input = currentAction
       ? readRunArgs({ inputSchema: currentAction.schema as ToolInputSchema } as ApiMcpTool, "ja-")
       : (def.action && def.action.input) || {};
     return formToV2(formValues(), def, input);
   }
 
-  $<ActionButton>("jv-form-to-json").onclick = function (): void {
+  var formToJson = function (): void {
     try {
       def = formToDef();
       jsonBox.value = JSON.stringify(def, null, 2) + "\n";
       dirty = false;
     } catch (e) {
-      toast(String(e.message || e), true);
+      toast(errText(e), true);
     }
   };
+  $<HTMLButtonElement>("jv-form-to-json").onclick = formToJson;
 
   jsonBox.oninput = function (): void { dirty = true; };
 
-  $<ActionButton>("jv-cancel").onclick = closeSheet;
+  $<HTMLButtonElement>("jv-cancel").onclick = closeSheet;
   $("sheet").onclick = function (e: MouseEvent): void { if (e.target === $("sheet")) closeSheet(); };
-  $<ActionButton>("jv-save").onclick = function (): void { void save(); };
+  $<HTMLButtonElement>("jv-save").onclick = function (): void { void save(); };
 
   async function save(): Promise<void> {
-    var id = editing ? name : $<FilterInput>("jv-id").value.trim();
+    var id = editing ? name : $<HTMLInputElement>("jv-id").value.trim();
     if (!id || !/^[\w.-]+$/.test(id)) { toast("id is required (letters, digits, -, _, .)", true); return; }
     if (dirty) {
       // The JSON textarea is the source of truth once hand-edited.
       try { def = JSON.parse(jsonBox.value) as JobDef; }
-      catch (e) { toast("definition JSON does not parse: " + (e.message || e), true); return; }
+      catch (e) { toast("definition JSON does not parse: " + errText(e), true); return; }
     } else {
       // Form -> def (and the box): that click IS what save means for the form path. A read
       // error here toasts on its own; the dirty flag stays set, so save stops for a fix.
-      $<ActionButton>("jv-form-to-json").onclick!();
+      formToJson();
       if (dirty) return;
     }
     // A fresh GET right before the PUT: the whole-row CAS (docs/11 §7.2) wants the newest
@@ -837,7 +838,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
       // The group the sheet promised: a definition key, so the whole-row CAS carries it and
       // no second request is needed (docs/20 G4). A "group" typed straight into the JSON
       // wins over the select - the textarea is the truth once hand-edited.
-      var g = $("g-sel") ? $<FilterSelect>("g-sel").value : null;
+      var g = $("g-sel") ? $<HTMLSelectElement>("g-sel").value : null;
       if (g) {
         if (def.group == null) def.group = g;
         rememberGroup("jobs", g);

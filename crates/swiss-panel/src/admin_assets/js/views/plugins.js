@@ -32,7 +32,7 @@
    is the OS (a registry Run value, a LaunchAgent, a systemd user unit), not the gateway, so the
    toggle reads and writes /api/autostart with no revision to race on.
    ================================================================================================ */
-import { $, api, apiJson, emptyHtml, esc, toast } from "../util.js";
+import { $, api, apiJson, emptyHtml, esc, targetEl, toast } from "../util.js";
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
 
 var busy                          = {}; // plugin id -> true while its own toggle is in flight
@@ -181,9 +181,9 @@ function patch()       {
 function wire()       {
   var pane = $("pane");
   pane.onclick = function (event            )       {
-    var asButton = event.target .closest ("[data-autostart-toggle]");
+    var asButton = targetEl(event)?.closest("[data-autostart-toggle]");
     if (asButton) { void toggleAutostart(); return; }
-    var button = event.target .closest ("[data-toggle]");
+    var button = targetEl(event)?.closest("[data-toggle]");
     if (!button) return;
     var prow = button.closest("[data-plugin]");
     if (prow) void toggle(prow.getAttribute("data-plugin"));

@@ -109,14 +109,14 @@ function dbFormField(d: DbState, val: HTMLElement, f: DbFormField, ctx: { kind: 
       box.onclick = function (): void { dbOpenCellEditor(ctx.kind, ctx.key as string, ctx.i, f.name, meta); };
       val.appendChild(box);
     } else {
-      var inp = el("input", "db-form-input") as FilterInput;
+      var inp = el("input", "db-form-input");
       inp.type = "text";
       inp.value = text == null ? "" : text;
       inp.placeholder = f.value === undefined ? "default" : f.value === null ? "NULL — type to replace" : "";
       inp.spellcheck = false;
-      inp.onchange = function () { write(this.value); };
-      inp.onkeydown = function (ev) {
-        if (ev.key === "Escape") { this.value = text == null ? "" : text; this.blur(); }
+      inp.onchange = (e) => { write((e.currentTarget as HTMLInputElement).value); };
+      inp.onkeydown = (ev) => {
+        if (ev.key === "Escape") { const t = ev.currentTarget as HTMLInputElement; t.value = text == null ? "" : text; t.blur(); }
       };
       val.appendChild(inp);
     }

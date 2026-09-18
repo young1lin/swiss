@@ -54,11 +54,21 @@ describe("docs/33 C1+C2: the block body division — tree when it parses, pre wh
 
 /* docs/33 C2 — the tree builder is a pure DOM function; the discovery glue (querySelectorAll
    over the painted tabbody) is one line and is proven live on 19998 per the panel rules. */
+/* The fake node's declared shape doubles as the literal methods' this-type (noImplicitThis
+   came back with docs/37 M3 - a bare Record literal leaves this unknown). */
+interface FakeElNode extends Record<string, unknown> {
+  children: unknown[];
+  className: string;
+  attrs: Record<string, string>;
+  removed: boolean;
+  _text: string;
+  textContent: string;
+}
 function el(tag: string): Record<string, unknown> {
-  return {
-    tag, children: [] as unknown[], className: "", title: "", innerHTML: "",
+  const node: FakeElNode = {
+    tag, children: [], className: "", title: "", innerHTML: "",
     dataset: {} as Record<string, string>, style: {} as Record<string, string>,
-    attrs: {} as Record<string, string>, removed: false, _text: "",
+    attrs: {}, removed: false, _text: "",
     set textContent(v: string) { this._text = String(v); },
     get textContent() {
       return this._text + (this.children as { textContent: string }[]).map((c) => c.textContent).join("");
@@ -70,6 +80,7 @@ function el(tag: string): Record<string, unknown> {
     get firstChild() { return (this.children as unknown[])[0] || null; },
     remove() { this.removed = true; },
   };
+  return node;
 }
 function rowsOf(node: Record<string, unknown>): Record<string, unknown>[] {
   return (node.children as Record<string, unknown>[]).filter((c) => c.tag === "div");

@@ -98,7 +98,9 @@ describe("a refused discard leaves the filter row exactly as it was (docs/22 clo
     const { d, selects } = renderFilterRow();
     const [cs] = selects;
     cs.value = "b";
-    cs.onchange.call(cs);
+    // docs/37 M4: handlers read e.currentTarget now (the DOM contract), not this - the
+    // event the browser would have delivered carries currentTarget = the select itself.
+    cs.onchange({ currentTarget: cs });
     expect(d.filters[0].column, "the row keeps its column").toBe("a");
   });
 
@@ -106,7 +108,7 @@ describe("a refused discard leaves the filter row exactly as it was (docs/22 clo
     const { d, selects } = renderFilterRow();
     const os = selects[1];
     os.value = "isNull";
-    os.onchange.call(os); // isNull applies at once — through the discard gate
+    os.onchange({ currentTarget: os }); // isNull applies at once — through the discard gate
     expect(d.filters[0].op, "the row keeps its operator").toBe("eq");
   });
 

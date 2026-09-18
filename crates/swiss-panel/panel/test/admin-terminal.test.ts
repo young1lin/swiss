@@ -427,9 +427,11 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
 
   it("resets the paintTabs memo wherever the DOM changed outside paintTabs", () => {
     // B1a: render() rebuilt the pane (fresh empty bar); B1b: done() replaced a node
-    const resets = view.match(/paintTabs\.last = null/g) ?? [];
+    // docs/37 M3: the memo moved from the function object (paintTabs.last) to a
+    // module-scoped paintTabsLast - the reset contract is the same.
+    const resets = view.match(/paintTabsLast = null/g) ?? [];
     expect(resets.length).toBeGreaterThanOrEqual(2);
-    expect(view).toContain("if (html === paintTabs.last) return;");
+    expect(view).toContain("if (html === paintTabsLast) return;");
   });
 
   it("keeps the page-level Ctrl+Shift+F out of the terminal's own key path", () => {

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { TOKEN_ID_KEY, apiJson, state, toast } from "./util.js";
+import { TOKEN_ID_KEY, apiJson, state, targetEl, toast } from "./util.js";
 import { kindBody, logsBody } from "./logs.js";
 import { closeMenu } from "./pane.js";
 import { configBody, histClose } from "./run-history.js";
@@ -131,7 +131,7 @@ document.addEventListener("click", function (e) {
   // The Run history popover closes on any click outside itself AND outside the popover — the
   // popover sits on <body>, so clicking its scrollbar or the preview pane must not count as "outside".
   // A row click closes it through applyRunHistory, its own handler.
-  var inHist = e.target && e.target.closest && e.target.closest(".hist-wrap, .hist-pop");
+  var inHist = targetEl(e)?.closest(".hist-wrap, .hist-pop");
   var d = state.detail;
   if (!inHist && d && d.tab === "run" && d.run.histOpen) histClose();
 });

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { $, apiJson, dbReqGuard, el, emptyHtml, icon, state, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyHtml, errText, icon, state, toast } from "./util.js";
 import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
@@ -274,7 +274,7 @@ function dbSameJson(a: Record<string, unknown> | null, b: Record<string, unknown
   // with a ReferenceError, so the observer only arms where a window with fetch is real.
   if (typeof window === "undefined" || !window.fetch) return;
   var orig = window.fetch;
-  window.fetch = function (input: RequestInfo, init?: RequestInit): Promise<Response> {
+  window.fetch = function (this: Window & typeof globalThis, input: RequestInfo, init?: RequestInit): Promise<Response> {
     return orig.apply(this, arguments as unknown as [RequestInfo, RequestInit | undefined]).then(function (r: Response): Response {
       try {
         var path = typeof input === "string" ? input : (input && input.url) || "";
@@ -524,7 +524,7 @@ function renderDbToolbar(): void {
     // with visibility (keeps the width) off the Data tab, so the tab segment never shifts.
     var dataCtl = el("div", "db-data-ctl");
     if (d!.tab !== "data") dataCtl.style.visibility = "hidden";
-    var size = el("select", "db-pagesize") as FilterSelect;
+    var size = el("select", "db-pagesize") as HTMLSelectElement;
     size.title = "Rows per page";
     DB_PAGE_SIZES.forEach(function (n: number): void {
       var o = el("option", "", String(n)) as HTMLOptionElement;
@@ -532,9 +532,10 @@ function renderDbToolbar(): void {
       o.selected = n === d!.pageSize;
       size.appendChild(o);
     });
-    size.onchange = function () {
-      if (!dbOkToDrop()) { this.value = String(d!.pageSize); return; }
-      d!.pageSize = Number(this.value);
+    size.onchange = (e) => {
+      const t = e.currentTarget as HTMLSelectElement;
+      if (!dbOkToDrop()) { t.value = String(d!.pageSize); return; }
+      d!.pageSize = Number(t.value);
       d!.offset = 0;
       dbDropEdits();
       dbLoadData(true);
@@ -594,13 +595,13 @@ function renderDbToolbar(): void {
     csv.onclick = dbExportCsv;
     dataCtl.appendChild(csv);
 
-    var exp = el("button", "btn", "Export…") as ActionButton;
+    var exp = el("button", "btn", "Export…");
     exp.title = "Export the whole table as CSV, NDJSON, or SQL dump (capped at 100k rows)";
-    exp.onclick = function (ev?: MouseEvent): void {
+    exp.onclick = (ev: MouseEvent): void => {
       // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
       // and without this the very click that opens the menu also tears it down.
-      ev!.stopPropagation();
-      popupMenu(this.getBoundingClientRect(), [
+      ev.stopPropagation();
+      popupMenu((ev.currentTarget as HTMLButtonElement).getBoundingClientRect(), [
         { label: "Export CSV…", fn: function (): void { dbExportTable(exp, "csv"); } },
         { label: "Export NDJSON…", fn: function (): void { dbExportTable(exp, "json"); } },
         { label: "Export SQL dump…", fn: function (): void { dbExportTable(exp, "sql"); } },
@@ -637,7 +638,7 @@ function dbRunColumnStats(column: string, kind: string): void {
   var sql: string;
   try {
     sql = dbStatsSql(dialect, d!.schema!, d!.table!, column, kind);
-  } catch (err) { toast(String(err), true); return; }
+  } catch (err) { toast(errText(err), true); return; }
   dbFillConsole(sql);
   void dbRunSql();
 }
@@ -752,13 +753,13 @@ function renderDbGrid(): void {
   var keyOf = function (row: Record<string, unknown>, i: number): string { return pkCols.length ? dbPkKey(pkCols, row) : String(i); };
   var thAll = el("th", "db-rowctl");
   var allOn = d!.data!.rows.length > 0 && d!.data!.rows.every(function (row: Record<string, unknown>, i: number): boolean { return !!d!.sel[keyOf(row, i)]; });
-  var cbAll = document.createElement("input") as FilterInput;
+  var cbAll = document.createElement("input");
   cbAll.type = "checkbox";
   cbAll.className = "db-selbox";
   cbAll.checked = allOn;
   cbAll.title = "Select every row on this page (for copy)";
-  cbAll.onclick = function (e) { e.stopPropagation(); };
-  cbAll.onchange = function (): void { dbSelAll(this.checked); };
+  cbAll.onclick = (e) => { e.stopPropagation(); };
+  cbAll.onchange = (e) => { dbSelAll((e.currentTarget as HTMLInputElement).checked); };
   thAll.appendChild(cbAll);
   hr.appendChild(thAll);
   // One caption line under every column name when ANY column carries a comment: the meaning is
@@ -767,7 +768,7 @@ function renderDbGrid(): void {
   var hasComments = cols.some(function (c: ApiDbColumn): boolean { return !!c.comment; });
   cols.forEach(function (c: ApiDbColumn): void {
     var sorted = c.name === d!.order;
-    var th = el("th", "db-col" + (sorted ? " db-sorted" + (d!.dir === "desc" ? " db-sorted-desc" : "") : "")) as MenuTh;
+    var th = el("th", "db-col" + (sorted ? " db-sorted" + (d!.dir === "desc" ? " db-sorted-desc" : "") : ""));
     var main = el("div", "db-col-main");
     main.appendChild(el("span", "db-col-name", c.name));
     if (c.isPrimaryKey) main.appendChild(el("span", "db-key", "⚿"));
@@ -835,7 +836,7 @@ function renderDbGrid(): void {
     // docs/22 W1.4: the header's own right-click runs this column's stats — top values or
     // COUNT/MIN/MAX/AVG. The statement is generated behind the identifier gate and lands in
     // the console (visible, in history) with its result in the standing result grid.
-    th.oncontextmenu = function (e: MouseEvent): void {
+    th.oncontextmenu = (e: MouseEvent): void => {
       e.preventDefault();
       dbTipHide();
       // docs/22 W2.1: hiding lives in the same menu, one separator down, and the recovery
@@ -850,7 +851,7 @@ function renderDbGrid(): void {
       if (d!.gridCfg && d!.gridCfg.hidden.length) {
         items.push({ label: "Show all columns", fn: dbShowAllColumns });
       }
-      popupMenu(this.getBoundingClientRect(), items);
+      popupMenu((e.currentTarget as HTMLElement).getBoundingClientRect(), items);
     };
     hr.appendChild(th);
   });
@@ -936,18 +937,18 @@ function renderDbGrid(): void {
     var upd = d!.updates[key];
     var tr = el("tr", (deleted ? "db-del " : "") + (d!.sel[key] ? "db-sel" : ""));
     var rc = el("td", "db-rowctl");
-    var cb = document.createElement("input") as FilterInput;
+    var cb = document.createElement("input");
     cb.type = "checkbox";
     cb.className = "db-selbox";
     cb.checked = !!d!.sel[key];
     cb.title = "Select row for copy (Shift-click for a range)";
-    cb.onclick = function (e: MouseEvent): void { e.stopPropagation(); };
-    cb.onchange = function (ev): void {
+    cb.onclick = (e: MouseEvent): void => { e.stopPropagation(); };
+    cb.onchange = (ev: Event & { shiftKey?: boolean }): void => {
       if (ev.shiftKey && d!.selAnchor >= 0 && d!.selAnchor !== rowIdx) {
         var a = Math.min(d!.selAnchor, rowIdx);
         var b2 = Math.max(d!.selAnchor, rowIdx);
         for (var k = a; k <= b2; k++) d!.sel[keyOf(d!.data!.rows[k], k)] = true;
-      } else if (this.checked) d!.sel[key] = true;
+      } else if ((ev.currentTarget as HTMLInputElement).checked) d!.sel[key] = true;
       else delete d!.sel[key];
       d!.selAnchor = rowIdx;
       renderDbToolbar(); renderDbGrid();
@@ -1015,7 +1016,7 @@ function renderDbGrid(): void {
   // the scrolling wrap and owns keydown + paste — arrows/Enter/F2/Esc/Home/End/typing,
   // Ctrl+C, and TSV paste. Every focus() call on it must pass preventScroll: it lives at
   // the end of the scrolled content, and a plain focus() drags the pane to the bottom.
-  var kbd = el("input", "db-kbd") as FilterInput;
+  var kbd = el("input", "db-kbd") as HTMLInputElement;
   kbd.type = "text";
   kbd.id = "dbKbd";
   kbd.tabIndex = -1;
@@ -1055,7 +1056,8 @@ function renderDbGrid(): void {
       var wrapEsc = $("dbGridWrap");
       var ring = wrapEsc ? wrapEsc.querySelector("td.db-focus") : null;
       if (ring) ring.classList.remove("db-focus");
-      if (this.blur) this.blur();
+      const kb = ev.currentTarget as HTMLElement;
+      if (kb.blur) kb.blur();
       return;
     }
     if ((ev.ctrlKey || ev.metaKey) && (ev.key === "c" || ev.key === "C")) {
@@ -1091,13 +1093,13 @@ function renderDbResultGrid(wrap: HTMLElement): void {
   var hr = el("tr");
   var thAll2 = el("th", "db-rowctl");
   var allOn2 = res.rows.length > 0 && res.rows.every(function (_: Record<string, unknown>, i: number): boolean { return !!d!.sel[dbResultKey(tab, i)]; });
-  var cbAll2 = document.createElement("input") as FilterInput;
+  var cbAll2 = document.createElement("input");
   cbAll2.type = "checkbox";
   cbAll2.className = "db-selbox";
   cbAll2.checked = allOn2;
   cbAll2.title = "Select every result row (for copy)";
-  cbAll2.onclick = function (e: MouseEvent): void { e.stopPropagation(); };
-  cbAll2.onchange = function (): void { dbSelAll(this.checked); };
+  cbAll2.onclick = (e: MouseEvent): void => { e.stopPropagation(); };
+  cbAll2.onchange = (e) => { dbSelAll((e.currentTarget as HTMLInputElement).checked); };
   thAll2.appendChild(cbAll2);
   hr.appendChild(thAll2);
   res.columns.forEach(function (c: string): void { hr.appendChild(el("th", "db-col", c)); });
@@ -1108,18 +1110,18 @@ function renderDbResultGrid(wrap: HTMLElement): void {
     var qkey = dbResultKey(tab, i);
     var tr = el("tr", d!.sel[qkey] ? "db-sel" : "");
     var rc2 = el("td", "db-rowctl");
-    var cb2 = document.createElement("input") as FilterInput;
+    var cb2 = document.createElement("input");
     cb2.type = "checkbox";
     cb2.className = "db-selbox";
     cb2.checked = !!d!.sel[qkey];
     cb2.title = "Select row for copy (Shift-click for a range)";
-    cb2.onclick = function (e: MouseEvent): void { e.stopPropagation(); };
-    cb2.onchange = function (ev): void {
+    cb2.onclick = (e: MouseEvent): void => { e.stopPropagation(); };
+    cb2.onchange = (ev: Event & { shiftKey?: boolean }): void => {
       if (ev.shiftKey && d!.selAnchor >= 0 && d!.selAnchor !== i) {
         var a2 = Math.min(d!.selAnchor, i);
         var b3 = Math.max(d!.selAnchor, i);
         for (var k2 = a2; k2 <= b3; k2++) d!.sel[dbResultKey(tab, k2)] = true;
-      } else if (this.checked) d!.sel[qkey] = true;
+      } else if ((ev.currentTarget as HTMLInputElement).checked) d!.sel[qkey] = true;
       else delete d!.sel[qkey];
       d!.selAnchor = i;
       renderDbToolbar(); renderDbGrid();

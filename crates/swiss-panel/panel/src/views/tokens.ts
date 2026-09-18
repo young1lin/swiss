@@ -32,7 +32,7 @@
    dropped anywhere. A group is a folder a token sits in; the "copies use this" marker is
    real state about the COPY actions, untouched by which folder the token sits in.
    ================================================================================================ */
-import { $, TOKEN_ID_KEY, api, apiJson, emptyHtml, esc, icon, state } from "../util.js";
+import { $, TOKEN_ID_KEY, api, apiJson, emptyHtml, esc, icon, state, targetEl } from "../util.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
@@ -122,9 +122,9 @@ function tkCfg(): GroupCfg<ApiTokenRow> {
     onAdd: function (g: string): void {
       // The + points at the inline form: pick the group it names and put the cursor in the
       // label box — the sheet scopes open a modal; this page's flow was always inline.
-      var sel = $<FilterSelect>("tkGroup");
+      var sel = $<HTMLSelectElement>("tkGroup");
       if (sel) sel.value = g;
-      $<FilterInput>("tkLabel").focus();
+      $<HTMLInputElement>("tkLabel").focus();
     },
     reload: function (): Promise<void> { return refreshTokens().then(paintGroups); },
     render: paintGroups,
@@ -143,7 +143,7 @@ function tkCfg(): GroupCfg<ApiTokenRow> {
  *  delete that the poll reports must not leave a chosen-but-dead option in the box — the
  *  next create would assign into a 400. The selection survives while its group lives. */
 function refreshGroupSelect(): void {
-  var sel = $<FilterSelect>("tkGroup");
+  var sel = $<HTMLSelectElement>("tkGroup");
   if (!sel) return;
   var names = state.tokenGroups && state.tokenGroups.length ? state.tokenGroups : ["default"];
   var wanted = sel.value && names.indexOf(sel.value) >= 0
@@ -253,14 +253,14 @@ async function revokeToken(id: string): Promise<void> {
 
 function wire(): void {
   $("pane").onclick = async function (event: MouseEvent): Promise<void> {
-    var button = event.target && event.target.closest ? event.target.closest<HTMLElement>("[data-tkuse],[data-tkmore],#tkCreate,#tkCopySecret,#tkCopyConn,#tkNewGroup") : null;
+    var button = targetEl(event)?.closest<HTMLElement>("[data-tkuse],[data-tkmore],#tkCreate,#tkCopySecret,#tkCopyConn,#tkNewGroup");
     if (!button) return;
     if (button.id === "tkCreate") {
-      var j = await apiJson<ApiTokenCreated>("/api/tokens", { method: "POST", body: JSON.stringify({ label: $<FilterInput>("tkLabel").value }) });
+      var j = await apiJson<ApiTokenCreated>("/api/tokens", { method: "POST", body: JSON.stringify({ label: $<HTMLInputElement>("tkLabel").value }) });
       if (!j) return;
       // The selected group follows the new id in one family write; an older gateway without
       // the family keeps the first-group default (the select's only option).
-      var picked = $("tkGroup") ? $<FilterSelect>("tkGroup").value : null;
+      var picked = $("tkGroup") ? $<HTMLSelectElement>("tkGroup").value : null;
       if (picked && j.id) {
         rememberGroup("tokens", picked);
         await assignMember("tokens", j.id, picked);
