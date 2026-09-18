@@ -13,7 +13,7 @@ The core rule is:
 
 Before changing UI, read the repository `AGENTS.md` and the relevant existing panel code. Do not design from screenshots alone when source is available.
 
-This skill also absorbs the former `swiss-design` skill: the design language, the token names, the fifteen rules and the component vocabulary now live in §15–§18. Historical references elsewhere to "swiss-design rule N" mean §16 below.
+This skill also absorbs the former `swiss-design` skill: the design language, the token names, the twenty rules and the component vocabulary now live in §15–§19. Historical references elsewhere to "swiss-design rule N" mean §16 below.
 
 ## 1. Fixed information hierarchy
 
@@ -242,7 +242,7 @@ Use the existing Swiss visual system before inventing new tokens.
 - Keep controls compact but visibly interactive.
 - Do not introduce Unicode icon substitutes if an existing sprite/icon is available.
 
-A page should visually feel like another tool inside Swiss, not a separate embedded application. The concrete token names, the fifteen design rules and the component vocabulary live in §15–§18.
+A page should visually feel like another tool inside Swiss, not a separate embedded application. The concrete token names, the twenty design rules and the component vocabulary live in §15–§19.
 
 ## 10. Responsive behavior
 
@@ -327,6 +327,8 @@ One process, one loopback port, one panel. The panel is the product's face and i
 
 The idiom is a management UI in the Apple System Settings / Linear lineage: a source list beside a detail pane for the thing with many instances (MCP), a left-aligned page under a measure for the rest, grouped inset lists, one primary action per view with the rest behind `⋯`, a five-step type ramp, a 4pt grid, hairlines instead of shadows. Restraint is the style. Not glass, not gradients, not large radii, not a second accent.
 
+The taste behind it, in one paragraph (docs/35 is the worked example): **a thing on screen is one surface with one edge.** A container is a band over its rows, not a label plus a line plus a card; a page is header, form, list with a full step of air between them, never a stack of blocks touching; the controls of one kind sit in one column so the eye finds them once. Whatever the user does most — click `+`, pick up a group, read a row — is reachable without hovering to discover it, and whatever they do rarely or destructively waits behind `⋯`. The page teaches by its structure; prose that explains a gesture is a sign the structure failed.
+
 **Tokens, by name (never by literal):** type `--f-title 22 / --f-head 15 / --f-body 13 / --f-label 12 / --f-caption 11`; spacing `--s1..--s8` (4/8/12/16/20/24/32); radii `--r-card 8 / --r-row 6 / --r-btn 6 / --r-pill`; surfaces `--bg --sidebar --bar --card --field`; text `--text --text-2 --text-3`; lines `--sep --sep-soft`; `--hover`; `--accent`; state `--green --red --amber`; measures `--measure 920 / --measure-wide 1180`. Dark is the same names under `:root[data-theme="dark"]` — write a rule once, in tokens, and it is themed.
 
 ## 16. The rules
@@ -346,6 +348,11 @@ The idiom is a management UI in the Apple System Settings / Linear lineage: a so
 13. **Motion is 150ms ease or nothing**, and nothing under `prefers-reduced-motion`. Chevrons rotate; nothing slides, bounces or fades in.
 14. **Copy is English, short, declarative.** Titles name the thing ("Tunnels"), descriptions say what it does in one sentence, hints say what to do next. No exclamation marks, no "please", no emoji. Confirmations state consequences and what is *not* destroyed: "Its 3 jobs move to 'default'. Nothing is removed."
 15. **Selection is a bar and a tint**, not a floating card: 2px `--accent` on the leading edge over an 8% accent tint; the selected name goes 600, not blue.
+16. **One surface, one edge.** A container is drawn once — a band over its members, a ring around a card — never as a label *and* a rail *and* a box that the reader must reassemble into one thing. If a group needs a folder glyph or a guide line to be recognised as a group, its surface is wrong; fix the surface, do not add a hint.
+17. **Air is a token step, never zero.** Between the page header and what follows, and between a form and the list it feeds, `--s5`; between sibling cards `--s4`; between a band and its first member `--s1`. Two blocks touching means one of them has no rule — the Token page's `.two` outside a sheet was exactly that — so find the missing rule rather than nudge a margin.
+18. **Trailing controls share one column.** A row's last glyph and its band's last glyph sit at the same x (`.btn.icon`'s 32px box on both), so every `⋯` on a page is found once. Actions gather at the right edge; nothing trails halfway across a row.
+19. **The frequent gesture needs no discovery.** Anything done often — add, collapse, pick up and move — is reachable from the visible surface the user is already looking at, at the size a hand hits: the whole band drags, `+` is always shown. Hover-only affordances are for the rare (`⋯`), never for the primary way to do something. A control that must be hunted for is a control the user will report as missing.
+20. **Structure teaches; prose confirms.** A description is at most two sentences saying what the page is and who else writes to it. It never explains an interaction ("drag a row to reorder") — if the list does not make that obvious, the list is the bug. Placeholders are sentence case and name the value ("Label, e.g. claude-code"), and a form must never say *optional* about a field the store will refuse.
 
 ## 17. Component vocabulary
 
@@ -358,7 +365,8 @@ Use these words in specs and class names; if a design needs a word not here, add
 | **context bar** | The always-present second row: `Plugin / [Page ▾]` switcher (or single-page location text), count chip, Focus at right | `index.html #ctxBar`, `js/page-registry.js`, `base.css .ctxbar` |
 | **pane** | The content area under the bars | `views.css .pane` |
 | **sidebar** | The 248px source list beside a detail pane | `base.css .side*` |
-| **group** (`.grp`) | A user-named, ordered, collapsible container of rows: a header band (draggable whole) with `+` and `⋯`, over the members; 28px in the sidebar, 36px on the card it is at page density | docs/20 §4, docs/35, §19, `js/groups.js` |
+| **band** (`.grp-head`) | A container's header: `--sep-soft`, `--r-row` corners, chevron + name + count, `+` and `⋯` at its end; draggable whole. The word for "this is where a group starts" | rule 16.16, `base.css` groups section |
+| **group** (`.grp`) | A user-named, ordered, collapsible container of rows: a band over the members; 28px in the sidebar, 36px on the card it is at page density | docs/20 §4, docs/35, §19, `js/groups.js` |
 | **inline form** (`.inline-form`) | Create-in-place instead of a sheet (Tokens, Secrets): ONE row of fields + the Group select + the one primary, `--s5` of air before the list; New group lives in the page header's `pane-actions` | docs/35 §3, `views.css .inline-form` |
 | **section** | A product-named division of a page: uppercase caption, optional actions at right | `.sec-head`, `.sec-cap` |
 | **card** (`.group` in CSS — historical) | A hairline-ringed white surface holding rows | `views.css .group` |
@@ -387,7 +395,7 @@ Use these words in specs and class names; if a design needs a word not here, add
 
 ## 19. Reference anatomy: the grouped list page (docs/35, 2026-09-18)
 
-The one shape every grouped page is built from. Copy it; do not reinterpret it.
+The one shape every grouped page is built from; rules 16.16–16.20 are what it obeys. Copy it; do not reinterpret it.
 
 ```text
 Page body (Content template, §6A) — .wide measure
