@@ -18,7 +18,7 @@
                                                
 import { $, dotTitle, state, typeTagHtml } from "./util.js";
 import { closeMenu } from "./pane.js";
-import { groupOf, groupedMcps, rowOf, sideCfg, visibleMcps } from "./sidebar.js";
+import { groupedMcps, sideCfg, visibleMcps } from "./sidebar.js";
 import { mountGroup } from "./groups.js";
 import { currentView, draggingGroupName, draggingRow, foldMap, listFilter, setMenuOpen } from "./ui-state.js";
 

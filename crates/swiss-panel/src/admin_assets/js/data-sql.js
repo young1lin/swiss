@@ -111,7 +111,7 @@ function dbPendingSql()           {
 /** The redis arm of the bar (docs/22 W3.3): same slot, same words, same Discard, with
  *  "Commands" in place of "SQL" and one pipeline in place of the transaction. The command
  *  list is the very list Commit posts — the preview is the payload, not a paraphrase. */
-function renderDbRedisBar(d         , bar             , n        )       {
+function renderDbRedisBar(d         , bar             )       {
   const b = d.redisEdits ;
   const u = Object.keys(b.updates).length;
   const del = Object.keys(b.deletes).length;
@@ -167,7 +167,7 @@ function renderDbBar()       {
   bar.style.flexWrap = "nowrap";
   bar.innerHTML = "";
   if (redis) {
-    renderDbRedisBar(d_, bar, n);
+    renderDbRedisBar(d_, bar);
     return;
   }
   const u = Object.keys(d_.updates).length;

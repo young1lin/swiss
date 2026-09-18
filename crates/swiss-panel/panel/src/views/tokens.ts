@@ -137,11 +137,6 @@ function rowHtml(t: ApiTokenRow): string {
     "</div></div>";
 }
 
-function rowsHtml(): string {
-  const list = tokenRows();
-  return list.length ? list.map(rowHtml).join("") : '<div class="row"><span class="rowmsg">No tokens.</span></div>';
-}
-
 /** The tokens scope's cfg for mountGroup. No drag contract: creation time is the order, the
  *  order route is a 400 — the grip still reorders GROUPS (that is set_names, allowed), but
  *  nothing can drop a row anywhere. */

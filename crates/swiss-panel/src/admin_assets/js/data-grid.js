@@ -22,13 +22,12 @@ import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
 import { dbEditCellEnter } from "./data-edit.js";
-import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
+import { renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { renderDbFormView } from "./data-form.js";
-import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbPkVals, dbResultKey } from "./data-view.js";
+import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
 import { popupMenu } from "./menu.js";
-import { act } from "./detail.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
 
@@ -230,7 +229,6 @@ function dbPasteCell(kind        , key        , i        , column        , meta 
     else ins.values[column] = raw;
     return;
   }
-  const row = d_.data?.rows[i];
   // meta.pk is already the pk VALUES map the caller built (same object dbSaveInlineEdit
   // stores); running it through dbPkVals again would forEach over an object and throw.
   const upd = d_.updates[key] || (d_.updates[key] = { pk: meta.pk                           , changes: {} });
@@ -284,7 +282,7 @@ function dbSameJson(a                                , b                        
   // with a ReferenceError, so the observer only arms where a window with fetch is real.
   if (typeof window === "undefined" || !window.fetch) return;
   const orig = window.fetch;
-  window.fetch = function (                                  input             , init              )                    {
+  window.fetch = function (                                  input             , _init              )                    {
     return orig.apply(this, arguments                                                     ).then((r          )           => {
       try {
         const path = typeof input === "string" ? input : (input && input.url) || "";

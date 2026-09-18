@@ -40,7 +40,7 @@ import { loadWebglAddon } from "../vendor/xterm/addon-webgl-0.18.0/index.js";
 import {
   FONT_DEFAULT, clampGeometry, embeddedNewlines, frameStatus, isPinned, keyAction, mouseAction,
   nextFontSize, nextReconnectDelay, readBellMode, readCopyOnSelect, readFontSize, resizeFrame,
-  resizeUrl, sessionAlive, sessionLabel, sessionsUrl, streamUrl, tabLabel, targetRows,
+  resizeUrl, sessionAlive, sessionsUrl, streamUrl, tabLabel, targetRows,
   targetsUrl, ticketUrl, trimSelection, wheelAction,
 } from "../terminal-core.js";
 import { createOverlay } from "../term-overlay.js";

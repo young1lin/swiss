@@ -34,7 +34,7 @@
 import { $, apiJson, emptyHtml, esc, icon, targetEl, toast } from "../util.js";
 import { copyText } from "../connect.js";
 import { popupMenu } from "../menu.js";
-import { assignMember, groupOf as makeGroupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
+import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the secrets fold map, loaded once before the first paint
