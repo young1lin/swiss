@@ -106,7 +106,7 @@ var TYPE_ICONS = {
   http: "globe", https: "globe", rest: "plug",
   figma: "figma", "zai-vision": "zai",
   npx: "package", uvx: "package", docker: "docker",
-  remote: "server",
+  remote: "remote",
   proc: "terminal",
 };
 function typeTagHtml(tag) {

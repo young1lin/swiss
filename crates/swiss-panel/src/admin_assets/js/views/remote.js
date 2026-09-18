@@ -22,7 +22,7 @@
    (swiss remote ...) and this page write the SAME rows through the same routes; the
    page exists so a target never needs a terminal to exist.
    ================================================================================================ */
-import { $, apiJson, emptyHtml, esc, toast } from "../util.js";
+import { $, apiJson, emptyHtml, esc, icon, toast } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
 import { popupMenu } from "../menu.js";
 
@@ -75,7 +75,7 @@ function row(t) {
         '<div class="sub mono">' + esc(t.workspaceRoot || "") + "</div>" +
       "</div>" +
       '<div class="row-chips">' + chip(endpointLabel(t.endpoint)) + caps + "</div>" +
-      '<button class="ic" data-rmmore="' + esc(t.id) + '" aria-label="Actions for ' + esc(t.id) + '">&#8943;</button>' +
+      '<button class="btn ghost icon" data-rmmore="' + esc(t.id) + '" aria-label="Actions for ' + esc(t.id) + '" title="Actions for ' + esc(t.id) + '">' + icon("ellipsis") + "</button>" +
     "</div>"
   );
 }
