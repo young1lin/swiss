@@ -30,8 +30,9 @@
    folder names, not credentials — they are the one thing about a secret a listing may say
    beyond its name.
    ================================================================================================ */
-import { $, apiJson, emptyHtml, esc, state, toast } from "../util.js";
+import { $, apiJson, emptyHtml, esc, icon, state, toast } from "../util.js";
 import { copyText } from "../connect.js";
+import { popupMenu } from "../menu.js";
 import { assignMember, groupOf as makeGroupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
 
 var painted = ""; // structural signature of the drawn list; a change means the rows move
@@ -83,15 +84,16 @@ function applyOrder() {
   });
 }
 
-/** One secret's row. The buttons stay delegated on #pane (wire), so the groups component
- *  rebuilding a card never rewires them. */
+/** One secret's row: the one button (Copy ref) and the overflow menu holding Delete - red
+ *  never sits on a row (design rule 4). The buttons stay delegated on #pane (wire), so the
+ *  groups component rebuilding a card never rewires them. */
 function rowHtml(name) {
   return '<div class="row" data-secret="' + esc(name) + '"><div class="row-main">' +
     '<div class="name">' + esc(name) + "</div>" +
     '<div class="desc"><code>${secret://' + esc(name) + '}</code> — substituted at run time wherever a credential is used</div>' +
     "</div>" + '<div class="row-act">' +
       '<button class="btn" data-skcopy="' + esc(name) + '">Copy ref</button> ' +
-      '<button class="btn danger" data-skdel="' + esc(name) + '">Delete</button>' +
+      '<button class="btn ghost icon" data-skmore="' + esc(name) + '" aria-label="Actions for ' + esc(name) + '" title="Delete">' + icon("ellipsis") + "</button>" +
     "</div></div>";
 }
 
@@ -225,13 +227,15 @@ function render() {
   $("pane").innerHTML = '<div class="wide">' +
     '<div class="pane-head"><div>' +
       '<div class="pane-desc">Device-bound vault (docs/19). A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: <code>${secret://name}</code> in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed.</div>' +
-    "</div></div>" +
-    '<div class="vault-store">' +
-      '<input class="v v-sk-name" id="skName" placeholder="name — lowercase kebab (a-z 0-9 -)">' +
-      '<input class="v v-sk-value" id="skValue" type="password" placeholder="value — write-only, never shown again">' +
+    "</div>" +
+      '<div class="pane-actions"><button class="btn" id="skNewGroup">New group</button></div>' +
+    "</div>" +
+    // The inline create form (docs/35 §3): one row, the Group select beside the primary.
+    '<div class="inline-form">' +
+      '<input class="v" id="skName" placeholder="Name — lowercase kebab (a-z 0-9 -)">' +
+      '<input class="v grow" id="skValue" type="password" placeholder="Value — write-only, never shown again">' +
       groupSelectHtml() +
       '<button class="btn primary" id="skStore">Store</button>' +
-      '<button class="btn" id="skNewGroup">New group</button>' +
     "</div>" +
     '<div id="skGroups"></div>' +
   "</div>";
@@ -243,7 +247,7 @@ function render() {
 
 function wire() {
   $("pane").onclick = async function (event) {
-    var hit = event.target && event.target.closest ? event.target.closest("[data-skcopy],[data-skdel],#skStore,#skNewGroup") : null;
+    var hit = event.target && event.target.closest ? event.target.closest("[data-skcopy],[data-skmore],#skStore,#skNewGroup") : null;
     if (!hit) return;
     if (hit.id === "skStore") { await storeSecret(); return; }
     if (hit.id === "skNewGroup") {
@@ -253,7 +257,14 @@ function wire() {
       return;
     }
     if (hit.dataset.skcopy) { copyText("${secret://" + hit.dataset.skcopy + "}", "Reference"); return; }
-    if (hit.dataset.skdel) { await removeSecret(hit.dataset.skdel); return; }
+    if (hit.dataset.skmore) {
+      // The opening click must not reach document (menu.js closes on outside clicks).
+      event.stopPropagation();
+      var name = hit.dataset.skmore;
+      popupMenu(hit.getBoundingClientRect(), [
+        { label: "Delete", danger: true, fn: function () { void removeSecret(name); } },
+      ]);
+    }
   };
 }
 

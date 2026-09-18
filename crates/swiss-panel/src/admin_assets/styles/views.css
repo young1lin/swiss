@@ -352,11 +352,14 @@
     .sheet-head h2 { font-size: var(--f-head); font-weight: 650; margin: 0; letter-spacing: -0.01em; }
     .sheet-body { padding: var(--s4) var(--s5); display: grid; gap: var(--s3); max-height: 66vh; overflow-y: auto; }
     .sheet-foot { display: flex; justify-content: flex-end; gap: var(--s2); padding: var(--s3) var(--s5); border-top: 1px solid var(--sep-soft); background: color-mix(in srgb, var(--bg) 60%, var(--card)); }
-    /* The vault's store row: name, write-only value, one button — one quiet line, like the
-       Token page's create row. */
-    .vault-store { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
-    .vault-store .v-sk-name { flex: 1 1 180px; }
-    .vault-store .v-sk-value { flex: 2 1 260px; }
+    /* The inline create form (docs/35 §3): Tokens and Secrets create in place, not in a sheet.
+       ONE row - the fields, the Group select, the one primary - and a full step of air before
+       the list; New group lives in the header's pane-actions like every other grouped page.
+       The Token page used to pour these into a .two with no rule outside a sheet: a full-width
+       input, its buttons wrapped under it, the list glued straight onto them. */
+    .inline-form { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; margin-bottom: var(--s5); }
+    .inline-form > input { flex: 1 1 200px; min-width: 0; }
+    .inline-form > input.grow { flex: 2 1 260px; }
     /* An input beside its button (the Tokens sheet's "label + Create"): .two is the form's own
        two-column grid, and outside a .form it was two stacked full-width blocks. */
     .sheet-body > .two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }

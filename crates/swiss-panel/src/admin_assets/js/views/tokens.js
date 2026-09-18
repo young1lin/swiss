@@ -32,8 +32,9 @@
    dropped anywhere. A group is a folder a token sits in; the "copies use this" marker is
    real state about the COPY actions, untouched by which folder the token sits in.
    ================================================================================================ */
-import { $, TOKEN_ID_KEY, api, apiJson, emptyHtml, esc, state } from "../util.js";
+import { $, TOKEN_ID_KEY, api, apiJson, emptyHtml, esc, icon, state } from "../util.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
+import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
 
 var painted = ""; // structural signature of the drawn list; a change means the rows move
@@ -86,8 +87,10 @@ function signature() {
  *  rather than "whichever one you touched last". With no prior "Use", copies use `default`. */
 function inUse() { return pickCopyToken(state.tokens || [], rememberedTokenId()); }
 
-/** One token's row. The buttons stay delegated on #pane (wire), so the groups component
- *  rebuilding a card never rewires them. */
+/** One token's row: one button (Use, absent on the token copies already use) and the
+ *  overflow menu with Rotate and Revoke - red never sits on a row (design rule 4). The
+ *  buttons stay delegated on #pane (wire), so the groups component rebuilding a card never
+ *  rewires them. */
 function rowHtml(t) {
   var mine = inUse();
   var used = mine && t.id === mine.id;
@@ -96,8 +99,7 @@ function rowHtml(t) {
     '<div class="desc">id ' + esc(t.id) + (t.createdAt ? " · created " + new Date(t.createdAt).toLocaleString() : "") + "</div>" +
     '</div><div class="row-act">' +
       (used ? "" : '<button class="btn" data-tkuse="' + esc(t.id) + '">Use</button> ') +
-      '<button class="btn" data-tkrot="' + esc(t.id) + '">Rotate</button> ' +
-      '<button class="btn danger" data-tkdel="' + esc(t.id) + '">Revoke</button>' +
+      '<button class="btn ghost icon" data-tkmore="' + esc(t.id) + '" aria-label="Actions for ' + esc(t.label) + '" title="Rotate or revoke">' + icon("ellipsis") + "</button>" +
     "</div></div>";
 }
 
@@ -204,11 +206,13 @@ function render() {
   $("pane").innerHTML = '<div class="wide">' +
     '<div class="pane-head"><div>' +
       '<div class="pane-desc">One token per client. Copied connect commands use the <code>default</code> token unless you click Use. The Traffic tab attributes every request to its token, and to the name the client announces during initialize. A secret is shown once — on create or rotate.</div>' +
-    "</div></div>" +
-    '<div class="two"><input id="tkLabel" placeholder="label, e.g. claude-code">' +
+    "</div>" +
+      '<div class="pane-actions"><button class="btn" id="tkNewGroup">New group</button></div>' +
+    "</div>" +
+    // The inline create form (docs/35 §3): one row, the Group select beside the primary.
+    '<div class="inline-form"><input id="tkLabel" placeholder="Label, e.g. claude-code">' +
       groupSelectHtml() +
-      '<button class="btn primary" id="tkCreate">Create</button>' +
-      '<button class="btn" id="tkNewGroup">New group</button></div>' +
+      '<button class="btn primary" id="tkCreate">Create</button></div>' +
     '<div id="tkGroups"></div>' +
     secretHtml() +
   "</div>";
@@ -224,9 +228,32 @@ function patch() {
   paintGroups(); // repaints the rows, the Group select's options and the chip
 }
 
+/** Rotate: a new secret at once (the old one stops working), shown in the once-only box. */
+async function rotateToken(id) {
+  var r = await apiJson("/api/tokens/" + encodeURIComponent(id) + "/rotate", { method: "POST" });
+  if (!r) return;
+  await refreshTokens();
+  state.tokenViewSecret = r.secret;
+  if (rememberedTokenId() === r.id) useToken(r.id, r.secret);
+  render();
+}
+
+/** Revoke after an explicit confirm; a revoked in-use token also clears the copy choice. */
+async function revokeToken(id) {
+  if (!confirm("Revoke this token? Clients using it stop working immediately.")) return;
+  var d = await apiJson("/api/tokens/" + encodeURIComponent(id), { method: "DELETE" });
+  if (!d) return;
+  if (rememberedTokenId() === id) {
+    state.activeSecret = null;
+    try { localStorage.removeItem(TOKEN_ID_KEY); } catch (e) { /* blocked */ }
+  }
+  await refreshTokens();
+  render();
+}
+
 function wire() {
   $("pane").onclick = async function (event) {
-    var button = event.target && event.target.closest ? event.target.closest("[data-tkuse],[data-tkrot],[data-tkdel],#tkCreate,#tkCopySecret,#tkCopyConn,#tkNewGroup") : null;
+    var button = event.target && event.target.closest ? event.target.closest("[data-tkuse],[data-tkmore],#tkCreate,#tkCopySecret,#tkCopyConn,#tkNewGroup") : null;
     if (!button) return;
     if (button.id === "tkCreate") {
       var j = await apiJson("/api/tokens", { method: "POST", body: JSON.stringify({ label: $("tkLabel").value }) });
@@ -255,26 +282,15 @@ function wire() {
       if (await fetchSecret(button.dataset.tkuse)) render();
       return;
     }
-    if (button.dataset.tkrot) {
-      var r = await apiJson("/api/tokens/" + encodeURIComponent(button.dataset.tkrot) + "/rotate", { method: "POST" });
-      if (!r) return;
-      await refreshTokens();
-      state.tokenViewSecret = r.secret;
-      if (rememberedTokenId() === r.id) useToken(r.id, r.secret);
-      render();
-      return;
-    }
-    if (button.dataset.tkdel) {
-      if (!confirm("Revoke this token? Clients using it stop working immediately.")) return;
-      var id = button.dataset.tkdel;
-      var d = await apiJson("/api/tokens/" + encodeURIComponent(id), { method: "DELETE" });
-      if (!d) return;
-      if (rememberedTokenId() === id) {
-        state.activeSecret = null;
-        try { localStorage.removeItem(TOKEN_ID_KEY); } catch (e) { /* blocked */ }
-      }
-      await refreshTokens();
-      render();
+    if (button.dataset.tkmore) {
+      // The opening click must not reach document (menu.js closes on outside clicks).
+      event.stopPropagation();
+      var id = button.dataset.tkmore;
+      popupMenu(button.getBoundingClientRect(), [
+        { label: "Rotate secret", fn: function () { void rotateToken(id); } },
+        { sep: true },
+        { label: "Revoke", danger: true, fn: function () { void revokeToken(id); } },
+      ]);
     }
   };
 }

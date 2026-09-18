@@ -17,18 +17,15 @@
 /* ================================================================================================
    Groups - the one grouped-list component (docs/20 §4).
 
-   Seven scopes (mcps, conns, rules, jobs, secrets, tokens, targets), two densities, one
-   anatomy: a header - chevron, name in mixed case, count - with + always visible and the
-   ellipsis on hover, over the members. The densities differ in what CONTAINS the members
-   (docs/35):
+   Seven scopes (mcps, conns, rules, jobs, secrets, tokens, targets), two densities, ONE
+   shape (docs/35): a header BAND - chevron, name in mixed case, count, with + always
+   visible and the ellipsis on hover - over the members. The band is what says "container";
+   there is no folder glyph, no guide line and no second surface. The densities differ only
+   in size and in what the members sit on:
 
-     side  - the sidebar TREE: the head is a tree node (it also wears a folder glyph) on a
-             transparent ground, members indented one tree gutter behind a 1px guide line
-             that drops from the chevron column (docs/20 §4.1).
-     page  - the grouped inset CARD: the .grp is the .group card itself, the head is a 36px
-             band across its top and the rows sit straight under it, full width. The card's
-             edge says where the group starts and ends - at 1180px a transparent head over
-             an indented card never did (its + drifted a screen away from the name).
+     side  - the sidebar: a 28px band, members (.side-row) one grid step in beneath it.
+     page  - the card: the .grp is the .group card itself, a 36px band across its top and
+             the rows straight under it, edge to edge.
 
    The WHOLE head is the drag surface for reordering groups: pick it up by the name, the
    count or the empty band. The two buttons on it opt out at dragstart, so a twitch while
@@ -171,11 +168,10 @@ function mountGroup(cfg, g) {
 
   var head = el("div", "grp-head");
 
-  // The head's leading columns - chevron, (folder), name, count - are the contract base.css
-  // aligns to. In the sidebar tree the chevron column is where the guide line drops and
-  // members sit one full gutter (24-32px of TEXT, not of padding) to the right of the name.
-  // In the page card the chevron sits in the rows' dot column and the name over their
-  // names. aria-expanded says the fold state to assistive tech.
+  // The head's leading columns - chevron, name, count - are the contract base.css aligns
+  // to: the members' dot column sits under the band's name (side) or the chevron sits in
+  // the rows' dot column and the name over their names (page). aria-expanded says the fold
+  // state to assistive tech.
   var toggle = el("button", "grp-toggle");
   toggle.type = "button";
   var folded = !!(cfg.collapsed[g.name] && !cfg.filtered);
@@ -183,15 +179,6 @@ function mountGroup(cfg, g) {
   var chev = el("span", "grp-chev");
   chev.innerHTML = icon("chevron-right");
   toggle.appendChild(chev);
-  // The folder is the "this row is a container" hint a source list gives (Finder, VS Code):
-  // a member can never grow one, so the glyph alone separates parents from children even
-  // before the indent is seen. The card needs none - its edge is the container - and
-  // without it the head's name lines up over the rows' names.
-  if (!page) {
-    var folder = el("span", "grp-folder");
-    folder.innerHTML = icon("folder");
-    toggle.appendChild(folder);
-  }
   toggle.appendChild(el("span", "grp-name", g.name));
   // The count stays visible when folded - 0 versus 3 is exactly how a folded empty group
   // tells itself apart from a folded full one.

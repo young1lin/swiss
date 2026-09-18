@@ -41,7 +41,7 @@ const modules = walkJs(join(admin, "js")).map((p) => readFileSync(p, "utf8"));
 
 describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
   it("the shell carries the sprite with the icons the chrome needs", () => {
-    for (const id of ["i-sun", "i-moon", "i-plus", "i-folder", "i-ellipsis", "i-chevron-right", "i-chevron-left", "i-x", "i-expand", "i-collapse", "i-puzzle"]) {
+    for (const id of ["i-sun", "i-moon", "i-plus", "i-folder-plus", "i-ellipsis", "i-chevron-right", "i-chevron-left", "i-x", "i-expand", "i-collapse", "i-puzzle"]) {
       expect(shell, `symbol ${id}`).toContain(`<symbol id="${id}"`);
     }
     expect(shell).toContain("<svg hidden");
