@@ -435,7 +435,7 @@ var dbRedisEditor                                                       = null; 
 
 function dbRedisCellEdit(td             , insertIdx        , addr        , col        , current        )       {
   dbRedisEditorClose();
-  var wrap = $             ("dbGridWrap");
+  var wrap = $("dbGridWrap");
   if (!wrap) return;
   var wrapRect = wrap.getBoundingClientRect();
   var rect = td.getBoundingClientRect();
@@ -615,14 +615,14 @@ function dbRedisKeySheet(cfg                                                    
         '<button class="btn" id="dbKeyCancel">Cancel</button>' +
         '<button class="btn primary" id="dbKeyGo">' + esc(cfg.primary) + "</button></div>" +
     "</div>";
-  $             ("sheet").hidden = false;
+  $("sheet").hidden = false;
   var input = $             ("dbKeyIn");
   input.value = cfg.value || "";
   input.placeholder = cfg.placeholder || "";
-  $             ("dbKeyCancel").onclick = closeSheet;
-  $             ("sheet").onclick = function (e            )       { if (e.target === $             ("sheet")) closeSheet(); };
+  $("dbKeyCancel").onclick = closeSheet;
+  $("sheet").onclick = function (e            )       { if (e.target === $("sheet")) closeSheet(); };
   function go()       { var v         = input.value.trim(); closeSheet(); cfg.submit(v); }
-  $             ("dbKeyGo").onclick = go;
+  $("dbKeyGo").onclick = go;
   input.onkeydown = function (e               )       {
     if (e.key === "Enter") { e.preventDefault(); go(); }
   };

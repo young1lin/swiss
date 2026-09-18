@@ -152,7 +152,7 @@ function renderDbRedisBar(d: DbState, bar: HTMLElement, n: number): void {
 
 function renderDbBar(): void {
   var d = state.db;
-  var bar = $<HTMLElement>("dbBar");
+  var bar = $("dbBar");
   if (!bar) return;
   var redis = dbIsRedis();
   var n = redis ? dbRedisPendingCount() : dbPending();
@@ -233,7 +233,7 @@ function dbFillConsole(sql: string): void {
   var d = state.db;
   d!.sqlText = sql;
   d!.sqlOpen = true;
-  var con = $<HTMLElement>("dbConsole");
+  var con = $("dbConsole");
   if (con) con.hidden = false;
   var ta = $<HTMLTextAreaElement>("dbSql");
   if (ta) ta.value = sql;
@@ -291,10 +291,10 @@ async function dbCommit(): Promise<void> {
   // the user back to the top, away from the row they just committed. Capture before the
   // reload, restore after it lands; a superseding load owns the pane by then and a stale
   // restore is a harmless scroll to where the user was anyway.
-  var wrap = $<HTMLElement>("dbGridWrap");
+  var wrap = $("dbGridWrap");
   var scrollTop = wrap ? wrap.scrollTop : 0;
   void dbLoadData(true).then(function (): void {
-    var w2 = $<HTMLElement>("dbGridWrap");
+    var w2 = $("dbGridWrap");
     if (w2) w2.scrollTop = scrollTop;
   });
 }
@@ -335,7 +335,7 @@ function dbHistoryPush(sql: string): void {
 }
 
 function dbHistoryRender(): void {
-  var sel = $<HTMLElement>("dbSqlHistory");
+  var sel = $("dbSqlHistory");
   if (!sel) return;
   sel.innerHTML = "";
   var head = el("option", "", "History") as HTMLOptionElement;

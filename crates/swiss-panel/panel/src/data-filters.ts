@@ -57,7 +57,7 @@ function dbHighlightSql(sql: string): string {
 
 /** Keep the highlighted layer under the textarea: same text, same scroll. */
 function dbSqlPaint(): void {
-  var ta = $<HTMLTextAreaElement>("dbSql"), hl = $<HTMLElement>("dbSqlHl");
+  var ta = $<HTMLTextAreaElement>("dbSql"), hl = $("dbSqlHl");
   if (!ta || !hl) return;
   hl.innerHTML = dbHighlightSql(ta.value) + "\n";
   hl.scrollTop = ta.scrollTop;

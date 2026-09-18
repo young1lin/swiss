@@ -75,7 +75,7 @@ function dbOpenImport()       {
         '<button class="btn" id="dbImpCancel">Cancel</button>' +
         '<button class="btn primary" id="dbImpRun">Import (one transaction)</button></div>' +
     "</div>";
-  $             ("sheet").hidden = false;
+  $("sheet").hidden = false;
 
   function parse()       {
     var text = $             ("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -90,7 +90,7 @@ function dbOpenImport()       {
   }
 
   function paint()       {
-    var mapBox = $             ("dbImpMap");
+    var mapBox = $("dbImpMap");
     mapBox.innerHTML = "";
     if (!header.length) return;
     var names = d .data .columns.map(function (c             )         { return c.name; });
@@ -117,7 +117,7 @@ function dbOpenImport()       {
   }
 
   function preview()       {
-    var box = $             ("dbImpPreview");
+    var box = $("dbImpPreview");
     box.innerHTML = "";
     if (!header.length) return;
     var mapped         = mapping.filter(Boolean).length;
@@ -148,7 +148,7 @@ function dbOpenImport()       {
       ? "Rows that match an existing key update it; the rest insert \u2014 still one transaction."
       : "Every row inserts \u2014 a duplicate key aborts the whole file.";
   }
-  $             ("dbImpMode").onclick = function (e            )       {
+  $("dbImpMode").onclick = function (e            )       {
     var b                     = e.target && e.target.closest ? e.target.closest("button[data-mode]")                : null;
     if (b) setMode(b.dataset.mode );
   };
@@ -159,7 +159,7 @@ function dbOpenImport()       {
     rd.onload = function ()       { $             ("dbImpText").value = String(rd.result); parse(); };
     rd.readAsText(f);
   };
-  $             ("dbImpCancel").onclick = closeSheet;
+  $("dbImpCancel").onclick = closeSheet;
   $              ("dbImpRun").onclick = async function ()                {
     if (!header.length || !lines.length) { toast("Paste or upload a CSV first", true); return; }
     if (!mapping.some(Boolean)) { toast("Map at least one column", true); return; }
@@ -187,7 +187,7 @@ function dbOpenImport()       {
     dbDropEdits();
     dbLoadData(true);
   };
-  $             ("sheet").onclick = function (e            )       { if (e.target === $             ("sheet")) closeSheet(); };
+  $("sheet").onclick = function (e            )       { if (e.target === $("sheet")) closeSheet(); };
 }
 /* --- copy to clipboard -------------------------------------------------------------------------- */
 /* Right-click a cell: copy the value, or the whole row as JSON / CSV / INSERT. Values are taken

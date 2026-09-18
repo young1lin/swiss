@@ -172,7 +172,7 @@ async function moveSecretGroup(id        , group               )                
 /** (Re)build the groups region only — the store form lives outside it, so a repaint never
  *  wipes a half-typed value, the one place a value is ever typed. */
 function paintGroups()       {
-  var host = $             ("skGroups");
+  var host = $("skGroups");
   if (!host) return;
   painted = signature();
   host.innerHTML = "";
@@ -184,7 +184,7 @@ function paintGroups()       {
     host.appendChild(mountGroup(skCfg(), g));
   });
   refreshGroupSelect();
-  var chip = $             ("countChip");
+  var chip = $("countChip");
   if (chip) chip.textContent = countText();
 }
 
@@ -240,7 +240,7 @@ function render()       {
     '<div id="skGroups"></div>' +
   "</div>";
   paintGroups();
-  var chip = $             ("countChip");
+  var chip = $("countChip");
   if (chip) chip.textContent = countText();
   wire();
 }

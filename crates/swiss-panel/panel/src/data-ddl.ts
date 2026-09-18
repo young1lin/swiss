@@ -173,7 +173,7 @@ function openDbDdlSheet(kind: "table" | "column" | "index", ctx: { dialect: stri
 function closeDbDdlSheet() {
   if (S && S.timer) clearTimeout(S.timer);
   S = null;
-  var host = $<HTMLElement>("sheet");
+  var host = $("sheet");
   if (host) { host.hidden = true; host.innerHTML = ""; }
 }
 
@@ -233,7 +233,7 @@ function paintDbDdlSheet(): void {
           esc(kind === "table" ? "Create table" : kind === "column" ? "Add column" : "Create index") +
         "</button></div>" +
     "</div>";
-  var host = $<HTMLElement>("sheet");
+  var host = $("sheet");
   host.innerHTML = html;
   host.hidden = false;
   wireDbDdlSheet();
@@ -259,7 +259,7 @@ function wireDbDdlSheet(): void {
   };
   var retitle = function (): void {
     if (S!.dialect === "pg" && kind === "table") {
-      $<HTMLElement>("ddl-title").textContent = "New table in " + $<FilterSelect>("ddl-schema").value;
+      $("ddl-title").textContent = "New table in " + $<FilterSelect>("ddl-schema").value;
     }
   };
   if (kind === "table") {
@@ -290,7 +290,7 @@ function wireDbDdlSheet(): void {
     $<HTMLButtonElement>("ddl-add-row").onclick = function (): void {
       S!.rows.push({ name: "", type: "", nullable: true, default: "", comment: "", isNew: true });
       renderDbDdlRows();
-      var last = $<HTMLElement>("ddl-grid").querySelectorAll<FilterInput>("tbody tr:last-child input[data-k=name]")[0];
+      var last = $("ddl-grid").querySelectorAll<FilterInput>("tbody tr:last-child input[data-k=name]")[0];
       if (last) last.focus();
     };
   }
@@ -300,7 +300,7 @@ function wireDbDdlSheet(): void {
 /** The mini-grid's rows. Old (prefilled) rows render disabled — only ADD is in the W4.6
  *  minimal set — so the diff's added bucket is exactly the editable rows. */
 function renderDbDdlRows(): void {
-  var body = $<HTMLElement>("ddl-grid").querySelector<HTMLElement>("tbody");
+  var body = $("ddl-grid").querySelector<HTMLElement>("tbody");
   body!.innerHTML = "";
   S!.rows.forEach(function (r: DdlRow, i: number): void {
     var tr = el("tr");
@@ -354,7 +354,7 @@ function renderDbDdlRows(): void {
 
 /** The index sheet's column picker: one check per existing column, in the table's order. */
 function renderDbDdlColPick(): void {
-  var box = $<HTMLElement>("ddl-cols");
+  var box = $("ddl-cols");
   box.innerHTML = "";
   S!.oldColumns.forEach(function (c: ApiDbColumn): void {
     var label = document.createElement("label");
@@ -387,7 +387,7 @@ function renderDbDdlColPick(): void {
 /* --- the preview: live, server-built, error text verbatim ---------------------------------------- */
 
 function paintDbDdlPreviewQuiet(): void {
-  var pre = $<HTMLElement>("ddl-pre");
+  var pre = $("ddl-pre");
   if (!pre) return;
   pre.textContent = DDL_QUIET[S!.kind];
   pre.classList.add("db-ddl-quiet");
@@ -397,14 +397,14 @@ function paintDbDdlPreviewQuiet(): void {
 }
 
 function paintDbDdlPreviewSql(sql: string): void {
-  var pre = $<HTMLElement>("ddl-pre");
+  var pre = $("ddl-pre");
   pre.classList.remove("db-ddl-quiet");
   pre.innerHTML = dbHighlightSql(sql);
   $<HTMLButtonElement>("ddl-commit").disabled = false;
 }
 
 function paintDbDdlPreviewError(message: string): void {
-  var pre = $<HTMLElement>("ddl-pre");
+  var pre = $("ddl-pre");
   pre.classList.remove("db-ddl-quiet");
   // The server's own refusal, unpainted: it names the field and the rule (kept verbatim from the error text).
   pre.textContent = message;

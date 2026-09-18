@@ -187,13 +187,13 @@ function dbFocusCell(r        , c        )       {
   var maxR = dbGridRowsCount() - 1;
   var maxC = dbGridVisibleColumns(d .data ? d .data.columns : [], (d .gridCfg || { hidden: [] }).hidden).length - 1;
   d .focus = { r: Math.max(0, Math.min(maxR, r)), c: Math.max(0, Math.min(maxC, c)) };
-  var wrap = $             ("dbGridWrap");
+  var wrap = $("dbGridWrap");
   if (!wrap) return;
   var old = wrap.querySelector("td.db-focus");
   if (old) old.classList.remove("db-focus");
   var td = wrap.querySelector('td[data-r="' + d .focus.r + '"][data-c="' + d .focus.c + '"]');
   if (td) td.classList.add("db-focus");
-  var kbd = $             ("dbKbd");
+  var kbd = $("dbKbd");
   // preventScroll: the input sits at the end of the scrolled content, so a plain focus()
   // would drag the pane to the bottom and then scrollIntoView would snap the clicked
   // row to the top - the pane must stay where the user's click left it.
@@ -450,7 +450,7 @@ async function dbExportTable(btn                   , fmt        )               
 
 function renderDbToolbar()       {
   var d = state.db;
-  var head = $             ("dbHead");
+  var head = $("dbHead");
   if (!head) return;
   head.innerHTML = "";
   var left = el("div", "db-head-left");
@@ -620,10 +620,10 @@ function renderDbToolbar()       {
   sql.title = nosql ? "Run one command (SET, GET, DEL, HGETALL, TTL, TYPE…)" : "SQL console — statements split on ; get a tab each";
   sql.onclick = function ()       {
     d .sqlOpen = !d .sqlOpen;
-    var con = $             ("dbConsole");
+    var con = $("dbConsole");
     if (con) con.hidden = !d .sqlOpen;
     sql.textContent = d .sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL");
-    if (d .sqlOpen && $             ("dbSql")) $             ("dbSql").focus();
+    if (d .sqlOpen && $("dbSql")) $("dbSql").focus();
   };
   ctl.appendChild(sql);
   head.appendChild(ctl);
@@ -698,9 +698,9 @@ document.addEventListener("scroll", dbTipHide, true);
 
 function renderDbGrid()       {
   var d = state.db;
-  var wrap = $             ("dbGridWrap");
+  var wrap = $("dbGridWrap");
   if (!wrap) return;
-  var con = $             ("dbConsole");
+  var con = $("dbConsole");
   if (con) con.hidden = !d .sqlOpen;
   // Full rebuild inside a scrolled pane. The wrap carries overflow-anchor:none (views.css):
   // Chrome's scroll anchoring otherwise re-picks its anchor when this wipe destroys the old

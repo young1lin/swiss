@@ -103,7 +103,7 @@ function openConnSheet(def                               )       {
   var paint = async function ()                {
     var keys = await loadKeys();
     var isKey = $              ("c-auth").value === "key";
-    $             ("c-auth-fields").innerHTML = isKey
+    $("c-auth-fields").innerHTML = isKey
       ? '<div class="with-btn">' +
           '<label class="field"><span>Private key path</span><input id="c-keypath" value="' + esc(d.keyPath || "") +
             '" placeholder="' + esc(keys.defaultPath) + '" autocomplete="off" spellcheck="false"></label>' +
@@ -119,7 +119,7 @@ function openConnSheet(def                               )       {
   void paint();
   $              ("c-auth").onchange = function ()       { void paint(); };
   if ($("g-sel")) $              ("g-sel").onchange = function ()       {
-    $             ("t-title").textContent = "New SSH connection in " + $              ("g-sel").value;
+    $("t-title").textContent = "New SSH connection in " + $              ("g-sel").value;
   };
   $              ("c-cancel").onclick = closeSheet;
   $              ("c-save").onclick = function ()       { void saveConn(def ); };
@@ -226,7 +226,7 @@ async function saveConn(existing                               )                
       : "/api/tunnels/connections", { method: existing ? "PUT" : "POST", body: JSON.stringify(body) });
     j = await r.json().catch(function ()         { return {}; })                                                           ;
     if (!r.ok) {
-      var err = $             ("c-err");
+      var err = $("c-err");
       if (err) {
         err.hidden = false;
         err.textContent = j.error || "HTTP " + r.status;
@@ -303,7 +303,7 @@ function openRuleSheet(def                         )       {
   if (!editing) $             ("r-lport").onchange = suggest;
   else void suggest(); // editing: keep the stored choice, but label what matches
   if ($("g-sel")) $              ("g-sel").onchange = function ()       {
-    $             ("t-title").textContent = "New forwarding rule in " + $              ("g-sel").value;
+    $("t-title").textContent = "New forwarding rule in " + $              ("g-sel").value;
   };
   $              ("r-cancel").onclick = closeSheet;
   $              ("r-save").onclick = function ()       { void saveRule(def ); };
@@ -314,10 +314,10 @@ function openRuleSheet(def                         )       {
 function paintMcpPicks(checked          , suggested          )       {
   var names = tunData().mcps || [];
   if (!names.length) {
-    $             ("r-mcps").innerHTML = '<div class="hint">No MCPs registered.</div>';
+    $("r-mcps").innerHTML = '<div class="hint">No MCPs registered.</div>';
     return;
   }
-  $             ("r-mcps").innerHTML = names.map(function (n        )         {
+  $("r-mcps").innerHTML = names.map(function (n        )         {
     var on = checked.indexOf(n) >= 0;
     var hint = suggested.indexOf(n) >= 0 ? ' <span class="hint">(matches this local port)</span>' : "";
     return '<label class="check"><input type="checkbox" data-mcp="' + esc(n) + '"' + (on ? " checked" : "") + ">" +
@@ -327,7 +327,7 @@ function paintMcpPicks(checked          , suggested          )       {
 
 function readMcpPicks()           {
   var out           = [];
-  Array.prototype.forEach.call($             ("r-mcps").querySelectorAll("[data-mcp]"), function (b                  )       {
+  Array.prototype.forEach.call($("r-mcps").querySelectorAll("[data-mcp]"), function (b                  )       {
     if (b.checked) out.push(b.dataset.mcp );
   });
   return out;
