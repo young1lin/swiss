@@ -46,9 +46,9 @@ The load-bearing rules in AGENTS.md own the details; the ones a new capability m
   `&RawValue`. The runtime is `current_thread`; no `unsafe`; no `.unwrap()` on anything
   touching config, network, database or filesystem.
 - **The panel is edited here, directly.** Panel JS/HTML/CSS lives in
-  `crates/swiss-panel/src/admin_assets/` — plain ES modules, no bundler, no build step;
+  `crates/swiss-panel/panel/src/*.ts` with the emit committed under `src/admin_assets/js` (ADR-024) — run `npm run build` there after editing, still no bundler;
   [swiss-ui-design](../swiss-ui-design/SKILL.md) owns its language and checklists. A panel
-  change ships with its vitest case in `crates/swiss-panel/panel-tests/`, and every `/api/*`
+  change ships with its vitest case in `crates/swiss-panel/panel/test/`, and every `/api/*`
   response stays shape-identical to what the panel reads — a shape change ships on both sides in
   one commit.
 

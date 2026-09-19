@@ -8,11 +8,16 @@
 > mcp.md, tunnels.md, jobs.md, host.md) and the authoritative docs/. Re-verify a detail
 > against the code before relying on it.
 
-> swiss-panel is the only one of the eight crates with no Rust business logic: the Rust side is just `crates/swiss-panel/src/admin.rs` (248 lines — rust-embed embedding, asset serving, the version stamp, SHA-1); everything else is static assets under `src/admin_assets/`, **edited directly in this repo since ADR-016** (2026-09-13): 1 index.html + 2 CSS + 51 own ES modules (~13 600 lines) + vendored xterm.js/cronstrue. The panel's JavaScript is the spec for the admin API: every `/api/*` response shape must match what the panel reads field for field, and a shape change ships on both sides in one commit. Acceptance suite: `crates/swiss-panel/panel-tests/` (46 vitest files, 402 tests).
+> swiss-panel is the only one of the eight crates with no Rust business logic: the Rust side is just `crates/swiss-panel/src/admin.rs` (248 lines — rust-embed embedding, asset serving, the version stamp, SHA-1). The panel is **authored in TypeScript** in `crates/swiss-panel/panel/src/*.ts` since ADR-024 (docs/36): ts-blank-space erases the types line-for-line and the emit is COMMITTED under `src/admin_assets/js/` — no bundler, no minify, `cargo build` needs no node. That tree carries 1 index.html + 2 CSS + ~60 own modules + vendored xterm.js/cronstrue. The panel's code is the spec for the admin API: every `/api/*` response shape must match what the panel reads field for field, and a shape change ships on both sides in one commit. Gate: `npm run check` in `crates/swiss-panel/panel/` — typecheck ×2 + eslint + emit-freshness + the vitest suite in `panel/test/`.
 
-## Asset inventory (counts refreshed 2026-09-14)
+## Asset inventory (counts refreshed 2026-10-24)
 
-| File | Lines | Role |
+Since ADR-024 every `js/*.js` row below is the COMMITTED EMIT of a TypeScript source with the
+same path under `crates/swiss-panel/panel/src/` (`js/foo.js` ← `panel/src/foo.ts`, line counts
+track the source; edit the source, run `npm run build` there, commit both). CSS, `index.html`
+and `js/vendor/**` have no TypeScript twin and are still edited in place.
+
+| File (emit ← panel/src twin) | Lines | Role |
 | --- | --- | --- |
 | `index.html` | 114 | The only HTML shell: the theme pre-paint script, the SVG icon sprite, the rail/context-bar/shell skeleton, the shell-owned app zone, `#sheet`/`#toast` mounts, the module entry |
 | `logo.svg` | 6 | favicon and brand mark |
@@ -116,7 +121,7 @@ The detailed per-view notes survive in the sibling files and are NOT duplicated 
 | File | Role |
 | --- | --- |
 | crates/swiss-panel/src/admin.rs | Embedding (rust-embed), asset serving (mime whitelist + path guard), the version stamp (hand-written SHA-1) |
-| crates/swiss-panel/panel-tests/ | The panel's vitest acceptance suite (35 files / 328 tests; dev-only node dependency, no build step) |
+| crates/swiss-panel/panel/ | The panel's TypeScript sources (`panel/src/*.ts`), the `npm run check` gate (typecheck ×2 + eslint + emit-freshness + vitest in `panel/test/`) and the emit tooling; dev-only node dependency, never an exe build step |
 | src/app.rs:230-279,482 | The `/` and `/admin/{*path}` routes (no-store), loopback-guard mounting |
 | src/adminapi.rs:1-9,382-394 | The /api no-gate declaration, `/api/info`'s tokenEnv/panelVersion/build |
 | src/builtin.rs:36-46,109-115 | Page-descriptor construction and the built-in plugin page table (the authoritative source of order) |

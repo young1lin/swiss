@@ -8,7 +8,7 @@ swiss serves on `127.0.0.1:19999`: every MCP server an AI client needs, on HTTP 
 `/mcp/<name>`, plus database browsing, SSH tunnels, scheduled jobs and a web terminal — one
 static binary, one admin panel, no script runtime, no `node_modules`, no npx wrapper. It began
 as a rewrite of an earlier Node.js gateway (retired; ADR-016) and now owns every layer, the
-panel included: plain ES modules under `crates/swiss-panel/src/admin_assets/`, served straight
+panel included: TypeScript in `crates/swiss-panel/panel/src` erased to plain ES modules committed under `crates/swiss-panel/src/admin_assets/` (ADR-024), served straight
 from the binary with no bundler and no build step.
 
 **Why it exists:** memory. The old build measured 113.8 MB RSS on a typical workload; the same
@@ -78,7 +78,7 @@ over shared Action/Run/process services, configuration-driven Jobs, and eight cr
 still link into one `swiss` binary.
 
 The gates: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`
-and the vitest suite in `crates/swiss-panel/panel-tests/`. `--workspace` is load-bearing:
+and the vitest suite in `crates/swiss-panel/panel/test/`. `--workspace` is load-bearing:
 without it cargo selects the root package alone, runs a small minority of the suite, and
 still reports ok.
 
@@ -118,7 +118,8 @@ still reports ok.
 | [`docs/31-mcp-logs-search-spec.md`](docs/31-mcp-logs-search-spec.md) | MCP Logs gains debounced server-side search across tool, full stored arguments and stored reply text, with filtered paging and focus/caret preservation. **Shipped** |
 | [`docs/32-mcp-logs-browsing-spec.md`](docs/32-mcp-logs-browsing-spec.md) | MCP Logs paging becomes transactional and scroll-anchored, older pages stop drifting under the six-second poll, failures get an honest Retry, and Clear logs moves behind a confirmed danger action. **Draft — awaiting operator review** |
 | [`docs/34-agent-remote-execution-spec.md`](docs/34-agent-remote-execution-spec.md) | Agent-friendly remote execution R1-R8: the `swiss-remote` peer crate (targets, `remote.exec/sync/pull/cat/write` actions, `/api/remote`, `.swiss/remote.json` bindings), the host `RemoteTransportRegistry` seat with live bounded run output (`GET /api/runs/{id}/output` cursor), the tunnels-side implementation (exec channel + SFTP + one tested `quote_posix`), the `swiss remote` / `swiss run` CLI with hard `--` argv passthrough, the #remote targets page (grouped, docs/20's seventh scope with drag), and five MCP tools over `/mcp/remote`. **Shipped** |
-| [`docs/37-panel-modern-typescript-spec.md`](docs/37-panel-modern-typescript-spec.md) | The panel becomes genuinely modern TypeScript: docs/36's D9 (not one token may change) is withdrawn because it forced the type system to bend around untouched 2015-era JS — five global built-in augmentations, 37 open index signatures, two disabled strict sub-flags, 1,041 non-null assertions. R0-R6 retire `var`, the `this`-reading handlers, the invented DOM interfaces and the 35-field global state bag, move rendering to construction plus event delegation, and install an eslint ratchet as the machine gate that replaces the byte-identical diff. **Draft — awaiting operator review** |
+| [`docs/36-panel-typescript-spec.md`](docs/36-panel-typescript-spec.md) | The panel's source of truth moves to TypeScript in `crates/swiss-panel/panel/src`, erased line-for-line by ts-blank-space with the emit committed under `src/admin_assets/js` (no bundler, no node at exe build), plus the `npm run check` gate (typecheck ×2 + lint + emit-freshness + vitest). Shipped as the R0 ladder's foundation; ADR-024 |
+| [`docs/37-panel-modern-typescript-spec.md`](docs/37-panel-modern-typescript-spec.md) | The panel becomes genuinely modern TypeScript: docs/36's D9 (not one token may change) is withdrawn because it forced the type system to bend around untouched 2015-era JS — five global built-in augmentations, 37 open index signatures, two disabled strict sub-flags, 1,041 non-null assertions. R0-R6 retire `var`, the `this`-reading handlers, the invented DOM interfaces and the 35-field global state bag, move rendering to construction plus event delegation, and install an eslint ratchet as the machine gate that replaces the byte-identical diff. **Shipped** — R0-R6 complete: zero innerHTML writes in panel/src, views answer one delegated listener, the ratchet row is a plain error with no allowlist; ADR-024/025 |
 
 Everything docs/09 and docs/10 designed is now code, and each document's status header names
 the commit that landed it. None of it changed the sealed formats — wire compatibility is

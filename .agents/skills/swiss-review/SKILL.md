@@ -48,7 +48,7 @@ Each rule is a security or correctness boundary, not style. Verify by reading, n
 | No `unsafe` for memory numbers | `unsafe` belongs at the Windows FFI boundary (`platform/`), nowhere else |
 | No subprocess where a syscall exists | No new `Command::new("powershell")` (or equivalent) without a very good excuse |
 | No `.unwrap()` on config/net/db/fs | One failing MCP must never take down the other seven |
-| Panel change discipline | Panel edits happen directly in `crates/swiss-panel/src/admin_assets/`; every panel change ships its vitest case in `crates/swiss-panel/panel-tests/`; `/api/*` response shapes unchanged — a shape change ships on both sides in one commit |
+| Panel change discipline | Panel sources are `crates/swiss-panel/panel/src/*.ts` with the emit committed under `src/admin_assets/js` (ADR-024); every panel change ships its vitest case in `crates/swiss-panel/panel/test/` and a fresh emit; `/api/*` response shapes unchanged — a shape change ships on both sides in one commit |
 | Plugin contract respected | New capability contributed a descriptor/action/page; no new match arm in the host; no peer-to-peer crate edge ([swiss-add-plugin](../swiss-add-plugin/SKILL.md)) |
 | Dependency weight | Manifest changes carry the justification and minimal features; `cargo tree -d` judged per [swiss-dependency-review](../swiss-dependency-review/SKILL.md) |
 

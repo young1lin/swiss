@@ -137,6 +137,26 @@ jobs:
           path: dist-bin/*
           if-no-files-found: error
 
+  # The panel's own gate (docs/37 R6): the five Rust builds above do not need node —
+  # the committed emit is what ships — so the TypeScript side is proved here, standalone,
+  # on the platform npm is fastest on. Kept independent: no Rust job depends on it and it
+  # depends on none of them.
+  panel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/swiss-panel/panel/package-lock.json
+      - name: npm ci
+        run: npm ci
+        working-directory: crates/swiss-panel/panel
+      - name: npm run check
+        run: npm run check
+        working-directory: crates/swiss-panel/panel
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build

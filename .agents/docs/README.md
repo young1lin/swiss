@@ -23,7 +23,7 @@ tunnels.json); for the workload where the Node build measured 113.8 MB RSS, the 
 | Auth | **The panel and /api/* are entirely unauthenticated**: the loopback guard (any non-local Host/Origin gets 403) is the entire security boundary ("The gate: there is none"); the Bearer token belongs to MCP endpoints only (the tokenEnv-named variable wins; SWISS_TOKEN / the legacy name MCP_GATEWAY_TOKEN both honored) |
 | Credentials | config stores only ${ENV_VAR} or secret:// vault references, expanded only at adapter build time; the panel round-trips sentinel masks; vault values go in but never out |
 | State files | AES-256-GCM + HKDF-derived per-file keys; master.key through DPAPI (each build opens the other's files; format frozen) |
-| Panel | crates/swiss-panel/src/admin_assets/, edited directly in this repo (ADR-016); vitest suite at crates/swiss-panel/panel-tests/; a SHA-1 version stamp drives /api/info self-reload |
+| Panel | crates/swiss-panel/panel/src/*.ts with the emit committed under src/admin_assets/js (ADR-024); gate: npm run check in crates/swiss-panel/panel/; a SHA-1 version stamp drives /api/info self-reload |
 | Build | cargo build --release; tests/clippy must go --workspace; deploys run through scripts/deploy.ps1 |
 
 ## Architecture (crate dependency edges are the architecture)
@@ -66,7 +66,7 @@ swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-
 5. **Errors are values, not panics**: the {error} envelope, absent-not-null, dot-path error pointers, 409 + structured confirmation; a single point of failure is isolated into one log line; no unwrap on config/network/db/fs.
 6. **Memory discipline is a constant, not a config**: a 64KB catch-up buffer, 8MB recordings, a 32-entry history ring, proc lazy by default + 10 min reaping, RawValue pass-through on forwarding paths, direct Win32 calls with zero powershell, exports capped at 100k rows.
 7. **Strong cancel semantics**: biased select, first wins; when cancel returns, the child has already been reaped and the readers joined.
-8. **The panel is the spec**: admin_assets is edited directly here (ADR-016); a panel change ships with its vitest case in crates/swiss-panel/panel-tests/; where docs and code conflict, code wins, but discovered debt gets fixed in the docs.
+8. **The panel is the spec**: panel TypeScript in crates/swiss-panel/panel/src with the emit committed (ADR-024); a panel change ships with its vitest case in crates/swiss-panel/panel/test/; where docs and code conflict, code wins, but discovered debt gets fixed in the docs.
 9. **Honesty principle**: every wrapper comment states item by item what disable really does and does not do; a missing capability gets a 503 naming who is missing; memory numbers are honest (childrenPending, not a confident 0).
 10. **Test culture**: a behavior change gets its failing test first; a ported module ports its vitest cases too; clocks are injected, never slept on; a skipped guard test must be called out.
 

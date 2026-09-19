@@ -26,7 +26,7 @@
  *   R2  no-var, prefer-const; no-non-null-assertion -> error with a per-file allowlist
  *   R3  consistent-type-imports, no-unnecessary-condition; floating-promises -> error
  *   R4  no-restricted-imports: no importing the mutable state out of util.js
- *   R5  no-restricted-properties: innerHTML (allowlist: static skeletons)
+ *   R5  no-restricted-syntax: no innerHTML WRITES (landed with zero survivors - no allowlist)
  *
  * Only rules the tree already passes are on; each stage flips its row in one commit so the
  * ratchet only ever tightens. No prettier: this house hand-aligns its comments and the
@@ -107,6 +107,14 @@ export default tseslint.config(
           importNames: ["state"],
           message: "state lives in its domain slice (mcp-state / ui-state / traffic / tunnel-state / job-state / db-state), not in util.js — docs/37 R4.",
         }],
+      }],
+      /* R5 (docs/37 section 9): no innerHTML WRITES anywhere in src - the string builders
+       * retired with the last of them, so the machine gate needs no allowlist. The selector
+       * matches ANY `.innerHTML =` / `.innerHTML +=` (no-restricted-properties would only
+       * see variables named element); reads stay legal. */
+      "no-restricted-syntax": ["error", {
+        selector: "AssignmentExpression[left.type='MemberExpression'][left.property.name='innerHTML'], UpdateExpression[argument.type='MemberExpression'][argument.property.name='innerHTML']",
+        message: "innerHTML writes are retired (docs/37 R5) - build with h()/frag() and mount with fill(), or iconNode()/emptyNode() for the shared shapes.",
       }],
     },
   },

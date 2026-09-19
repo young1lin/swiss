@@ -74,6 +74,15 @@ if (-not $SkipGates) {
     Phase 'cargo clippy --workspace --all-targets -- -D warnings'
     cargo clippy --workspace --all-targets -- -D warnings
     if ($LASTEXITCODE -ne 0) { Fail "clippy failed - production left untouched" }
+    # The panel's own gate (docs/37 R6): typecheck + lint + emit-freshness + vitest, run
+    # where its package.json lives. A stale emit is a failure here, so a deploy can never
+    # serve a panel whose committed JS predates its TypeScript sources.
+    Phase 'panel: npm run check (crates/swiss-panel/panel)'
+    Push-Location 'crates\swiss-panel\panel'
+    npm run check
+    $panelCode = $LASTEXITCODE
+    Pop-Location
+    if ($panelCode -ne 0) { Fail "panel check failed - production left untouched" }
 } else {
     Phase "gates SKIPPED (-SkipGates)"
 }

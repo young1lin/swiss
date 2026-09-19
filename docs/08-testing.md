@@ -228,6 +228,24 @@ Node-sealed fixtures is `tests/envelope_compat.rs`, and the RSS guard is `tests/
 - **Golden `/api/*` responses.** The panel is not adapted to the port, so response shape is a
   contract — see ADR-009.
 
+## The panel's own suite
+
+The panel is authored in TypeScript (ADR-024, docs/36): sources in
+`crates/swiss-panel/panel/src/*.ts`, emit committed under `crates/swiss-panel/src/admin_assets/js/`.
+Its acceptance suite lives in `crates/swiss-panel/panel/test/` and runs behind ONE command:
+`npm run check` from `crates/swiss-panel/panel/`.
+
+- `tsc` typecheck of the sources AND of the emit (they must agree - the emit is committed),
+- eslint with the house ratchet (docs/37 section 9: no-var, the non-null whitelist, the
+  innerHTML whitelist),
+- `build:check` emit freshness (a stale committed emit fails the gate),
+- the vitest suite (every admin-*.test.ts file; the suites carry hand-rolled DOMs that follow
+  the view layer's node-building idioms, docs/37 section 7).
+
+node is a dev-only dependency of that directory - `cargo build` needs none of it, and the Rust
+jobs in CI do not depend on the `panel` job. A panel change is done when `npm run check` is
+green AND the proof-of-life walk on 19998 answered (`.agents/rules/panel-proof-of-life.md`).
+
 ## CI
 
 ```bash
@@ -236,6 +254,9 @@ cargo test --workspace
 cargo tree -d
 cargo build --release   # the shipping binary (ADR-012); record its size
 ```
+
+Plus the panel's own job (docs/37 R6): `npm ci && npm run check` in `crates/swiss-panel/panel/`
+on ubuntu with node 24 — independent of the five Rust build jobs, and none of them depends on it.
 
 Mirror the Node build's rule: **`cargo clippy` and `cargo test` must both be green before a change
 is considered done.**
