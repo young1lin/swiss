@@ -25,6 +25,12 @@ import { fileURLToPath } from "node:url";
    the same hand-rolled DOM the Remote Targets suite uses; document.querySelector answers
    the two selectors the view paints into (a row's body, a live row's <pre>). */
 
+/* docs/37 R5: the view paints with h()/fill(), so the fake DOM is a Node-extending
+   class whose innerHTML READS serialise the built tree, and document.querySelector
+   answers the view's "#pane ..." descendant selectors against that tree. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
 interface FakeEl {
   innerHTML: string;
   textContent: string;
@@ -37,23 +43,139 @@ interface FakeEl {
   closest: (sel: string) => FakeEl | null;
 }
 
+class FakeNode extends NodeStub implements FakeEl {
+  tag: string;
+  attrs: Record<string, string> = {};
+  dataset: Record<string, string> = {};
+  className = "";
+  _text = "";
+  get textContent(): string { return this._text; }
+  set textContent(v: string) { if (v === "") { this.children = []; this._html = ""; } this._text = v; }
+  id = "";
+  type = "button";
+  value = "";
+  hidden = false;
+  checked = false;
+  disabled = false;
+  title = "";
+  style: Record<string, string> = {};
+  children: FakeNode[] = [];
+  onclick: ((ev?: unknown) => void) | null = null;
+  onchange: ((ev?: unknown) => void) | null = null;
+  private _html = "";
+  constructor(tag: string) { super(); this.tag = tag.toUpperCase(); }
+  static fragment(): FakeNode { return new FakeNode("#document-fragment"); }
+  get innerHTML(): string { return this._html || serialize(this); }
+  set innerHTML(v: string) { this._html = v; this.children = []; }
+  querySelector(): FakeEl | null { return null; }
+  querySelectorAll(): FakeEl[] { return []; }
+  appendChild(n: FakeNode): FakeNode {
+    if (n.tag === "#DOCUMENT-FRAGMENT") { n.children.forEach((c) => { this.children.push(c); }); this._html = ""; return n; }
+    this.children.push(n);
+    this._html = "";
+    return n;
+  }
+  append(...nodes: FakeNode[]): void { nodes.forEach((n) => { this.appendChild(n); }); }
+  addEventListener(): void {}
+  removeEventListener(): void {}
+  setAttribute(k: string, v: string): void {
+    this.attrs[k] = v;
+    if (k === "id") this.id = v;
+    if (k.startsWith("data-")) this.dataset[k.slice(5)] = v;
+  }
+  removeAttribute(k: string): void { delete this.attrs[k]; }
+  focus(): void {}
+  click(): void { if (this.onclick) this.onclick({ detail: 1 }); }
+  getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number } {
+    return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  }
+  closest(sel: string): FakeEl | null { return sel.charAt(0) === "#" && this.id === sel.slice(1) ? this : null; }
+}
+
+function serialize(node: FakeNode): string {
+  if (!node.tag || node.tag === "#TEXT") return String(node._text ?? "");
+  const attrs = Object.keys(node.attrs).map((k) => { return " " + k + "=\"" + node.attrs[k] + "\""; }).join("");
+  const id = node.id ? " id=\"" + node.id + "\"" : "";
+  const cls = node.className ? " class=\"" + node.className + "\"" : "";
+  const ttl = node.title ? " title=\"" + node.title + "\"" : "";
+  const dis = node.disabled ? " disabled" : "";
+  const hid = node.hidden ? " hidden" : "";
+  const val = node.value ? " value=\"" + node.value + "\"" : "";
+  const sel = (node as unknown as { selected?: boolean }).selected ? " selected" : "";
+  const kids = node.children.map((c) => { return serialize(c); }).join("");
+  const tag = node.tag.toLowerCase();
+  return "<" + tag + id + cls + ttl + attrs + dis + hid + val + sel + ">" + (kids || node._text) + "</" + tag + ">";
+}
+
 function fakeEl(): FakeEl {
-  return { innerHTML: "", textContent: "", className: "", value: "", disabled: false, onclick: null, onchange: null, dataset: {}, closest: () => null };
+  return new FakeNode("div");
 }
 
 const els = new Map<string, FakeEl>();
+/* The real DOM resolves ids from anywhere; the ids the view reads back after a paint
+   (rrList, rrClear, countChip outside it) must find the node the TREE built, not a
+   fresh stub - paintList fills $({"rrList"}) and the tree must receive it. */
+function findId(root: FakeNode, id: string): FakeNode | null {
+  if (root.id === id) return root;
+  for (const c of root.children) {
+    const hit = findId(c, id);
+    if (hit) return hit;
+  }
+  return null;
+}
 const byId = (id: string): FakeEl => {
+  const pane = els.get("pane") as unknown as FakeNode | undefined;
+  const paintedHit = pane ? findId(pane, id) : null;
+  if (paintedHit) return paintedHit;
   let e = els.get(id);
-  if (!e) { e = fakeEl(); els.set(id, e); }
+  if (!e) { e = fakeEl(); (e as unknown as FakeNode).id = id; els.set(id, e); }
   return e;
 };
-// The nodes the view paints into after mount: keyed by the selector it uses.
+// The nodes the view paints into after mount: resolved against the built tree first
+// (the view's own document.querySelector answer), with a persistent stub as fallback.
 const painted = new Map<string, FakeEl>();
 const node = (sel: string): FakeEl => {
+  const hit = querySel(sel);
+  if (hit) return hit;
   let e = painted.get(sel);
   if (!e) { e = fakeEl(); painted.set(sel, e); }
   return e;
 };
+
+/* Match one selector unit like `div`, `.call[data-rrun="17"]`, `pre[data-rlivepre="18"]`. */
+function unitMatches(n: FakeNode, unit: string): boolean {
+  const m = unit.match(/^([a-z]+)?(?:\.([a-z][\w-]*))?(?:\[data-([\w-]+)="([^"]*)"\])?$/);
+  if (!m) return false;
+  if (m[1] && n.tag.toLowerCase() !== m[1]) return false;
+  if (m[2] && !(" " + n.className + " ").includes(" " + m[2] + " ")) return false;
+  if (m[3]) return n.dataset[m[3]] === m[4];
+  return true;
+}
+/* Every node under `root` matching the unit, at any depth. */
+function descendants(root: FakeNode, unit: string): FakeNode[] {
+  const out: FakeNode[] = [];
+  const walk = (n: FakeNode): void => {
+    for (const c of n.children) {
+      if (unitMatches(c, unit)) out.push(c);
+      walk(c);
+    }
+  };
+  walk(root);
+  return out;
+}
+/* The view's selectors are "#pane <unit> <unit> ..." - resolve the descendant chain
+   against the pane the paint built; anything else keeps the persistent-stub map. */
+function querySel(sel: string): FakeEl | null {
+  if (sel.charAt(0) !== "#" || !sel.startsWith("#pane ")) return node(sel);
+  let layer: FakeNode[] = [byId("pane") as unknown as FakeNode];
+  for (const unit of sel.slice("#pane ".length).trim().split(/\s+/)) {
+    const next: FakeNode[] = [];
+    for (const n of layer) next.push(...descendants(n, unit));
+    layer = next;
+    if (!layer.length) return null;
+  }
+  return layer[0] || null;
+}
 
 let bodyByPath: Record<string, unknown> = {};
 const requests: { path: string; method: string }[] = [];
@@ -66,8 +188,11 @@ beforeAll(async () => {
   Object.assign(globalThis, {
     document: {
       getElementById: byId,
-      createElement: () => fakeEl(),
-      querySelector: (sel: string) => node(sel),
+      createElement: (tag: string) => new FakeNode(tag || "div"),
+      createElementNS: (_ns: string, tag: string) => new FakeNode(tag || "div"),
+      createDocumentFragment: () => FakeNode.fragment(),
+      createTextNode: (text: string) => { const n = new FakeNode("#text"); n.textContent = text; return n; },
+      querySelector: (sel: string) => querySel(sel),
       querySelectorAll: () => [],
       addEventListener() {},
       removeEventListener() {},
@@ -170,7 +295,8 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(list).toContain('class="dot starting" title="running"');
     // The filter lists the targets table; Clear is enabled once something is recorded.
     expect(pane).toContain('<option value="build">build</option>');
-    expect(pane).toContain('id="rrClear">Clear');
+    expect(pane).toContain('id="rrClear"');
+    expect(pane).toContain(">Clear</button>");
     expect(byId("countChip").textContent).toBe("1 run");
     expect(view.countText()).toBe("1 runs");
   });
@@ -179,7 +305,7 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     serve([], []);
     await view.mount();
     expect(byId("rrList").innerHTML).toContain("No runs yet");
-    expect(byId("pane").innerHTML).toContain('id="rrClear" disabled');
+    expect((byId("rrClear") as unknown as FakeNode).disabled).toBe(true);
     expect(byId("countChip").textContent).toBe("");
   });
 
@@ -239,7 +365,8 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     bodyByPath["/api/remote/runs?limit=20&before=17"] = { runs: [{ ...finished, runId: 9 }], active: [], usage: { bytes: 1536, runs: 2 } };
     bodyByPath["/api/remote/runs?limit=20&target=dev"] = { runs: [], active: [], usage: { bytes: 1536, runs: 2 } };
     await view.mount();
-    expect(byId("rrList").innerHTML).toContain('id="rrNext">Older');
+    expect(byId("rrList").innerHTML).toContain('id="rrNext"');
+    expect(byId("rrList").innerHTML).toContain(">Older</button>");
     click({}, "rrNext");
     await settle();
     expect(requests.some((r) => r.path === "/api/remote/runs?limit=20&before=17")).toBe(true);
@@ -250,7 +377,9 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(byId("rrList").innerHTML).toContain('data-rrun="17"');
     const sel = byId("rrTarget");
     sel.value = "dev";
-    (sel.onchange as () => void)();
+    // docs/37 R5: the select carries no per-render handler - #pane's delegated change
+    // listener answers it, so the test fires the pane's dispatcher like a real event.
+    (byId("pane").onchange as (e: { target: FakeEl }) => void)({ target: sel });
     await settle();
     expect(requests.some((r) => r.path === "/api/remote/runs?limit=20&target=dev")).toBe(true);
     expect(byId("rrList").innerHTML).toContain("No runs on this target yet");
