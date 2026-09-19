@@ -15,8 +15,9 @@
  */
 
                                                                            
-import { $, apiJson, el, icon, state, toast } from "./util.js";
+import { $, apiJson, el, icon, toast } from "./util.js";
 import { popupMenu } from "./menu.js";
+import { dbIsMounted, dbView } from "./db-state.js";
 
 /* --- activity monitor (docs/22 W3.2) -------------------------------------------------------------- */
 /* A section page over the right pane: live sessions on the connection's server, one shared
@@ -43,17 +44,16 @@ function dbActivityDuration(secs                           )         {
 /** Draw the section into the (fresh) right pane and start the poll. "close" is the view's own
  *  close action — passed in so this module never imports data-view back. */
 function dbActivityPane(close            )       {
-  const d = state.db;
+  const d = dbView();
   const main = document.querySelector             (".db-main");
   if (!main) return;
   main.innerHTML = "";
-  const d_ = d ;
-  const conn = d_.conns.find((c) => { return c.name === d?.conn; });
+  const conn = d.conns.find((c) => { return c.name === d.conn; });
   const head = el("div", "db-head");
   const left = el("div", "db-head-left");
   left.appendChild(el("h2", "db-title pane-title", "Activity"));
   left.appendChild(el("div", "db-meta",
-    (conn ? conn.label : d_.conn) + " · refreshes every 5s while this page is open"));
+    (conn ? conn.label : d.conn) + " · refreshes every 5s while this page is open"));
   head.appendChild(left);
   const ctl = el("div", "db-head-ctl");
   const btn = el("button", "btn", "Close");
@@ -71,9 +71,9 @@ function dbActivityPane(close            )       {
 }
 
 async function dbActivityLoad() {
-  const d = state.db;
+  const d = dbView();
   const wrap = $("dbActivityWrap");
-  if (!d || !d.conn || !wrap) return;
+  if (!d.conn || !wrap) return;
   const j = await apiJson                    ("/api/db/" + encodeURIComponent(d.conn ) + "/activity");
   // A view that closed mid-flight leaves the timer to self-clear and the DOM alone.
   if (!j || !$("dbActivityWrap")) return;
@@ -82,10 +82,10 @@ async function dbActivityLoad() {
 }
 
 function dbActivityRender() {
-  const d = state.db;
+  const d = dbView();
   const wrap = $("dbActivityWrap");
   if (!wrap) return;
-  const rows = d?.activityRows || [];
+  const rows = d.activityRows || [];
   wrap.innerHTML = "";
   if (!rows.length) {
     wrap.appendChild(el("div", "db-hint", "No sessions — the server reports none."));
@@ -149,8 +149,8 @@ function dbActivityMenu(anchorEl             , row                  )       {
 }
 
 async function dbActivityKill(row                  , mode        )                {
-  const d = state.db;
-  const j = await apiJson                      ("/api/db/" + encodeURIComponent(d?.conn ) + "/activity-kill", {
+  const d = dbView();
+  const j = await apiJson                      ("/api/db/" + encodeURIComponent(d.conn ) + "/activity-kill", {
     method: "POST",
     body: JSON.stringify({ pid: row.pid, mode: mode }),
   });
@@ -166,9 +166,9 @@ async function dbActivityKill(row                  , mode        )              
 function dbActivityPollStart() {
   dbActivityPollStop();
   dbActivityTimer = setInterval(() => {
-    // Self-guarding: the page closed, the view unmounted, or state died — stop instead of
-    // polling into a DOM nobody sees. A hidden tab skips its tick but keeps the timer.
-    if (!state.db || !state.db.activity || !$("dbActivityWrap")) { dbActivityPollStop(); return; }
+    // Self-guarding: the page closed or the view unmounted — stop instead of polling into a
+    // DOM nobody sees. A hidden tab skips its tick but keeps the timer.
+    if (!dbIsMounted() || !dbView().activity || !$("dbActivityWrap")) { dbActivityPollStop(); return; }
     if (document.hidden) return;
     void dbActivityLoad();
   }, DB_ACTIVITY_POLL_MS);

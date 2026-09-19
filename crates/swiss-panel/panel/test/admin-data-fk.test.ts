@@ -109,7 +109,10 @@ describe("dbFocusedColumnValue — the header arrow's row (docs/22 W5.2)", () =>
 
   it("returns undefined (not null) when nothing is focused — null IS a value here", () => {
     expect(view.dbFocusedColumnValue(mk(null), "customer_id")).toBeUndefined();
-    expect(view.dbFocusedColumnValue(null, "customer_id")).toBeUndefined();
+    // The second case this used to pin — a null record, i.e. the view not mounted — is gone
+    // with docs/37 R4: db-state.ts hands out a record that is never null, so there is no
+    // such input to defend against. Asserting it now would only pin a guard against the
+    // impossible. What remains is the real question: focus null, value undefined.
   });
 
   it("returns null for a focused NULL cell — the caller says so, not the helper", () => {

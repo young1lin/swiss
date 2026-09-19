@@ -12,10 +12,12 @@ import * as path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-/* Frozen at R2 commit time (docs/37 M5): 326 total, of which 121 are the single boundary
- * assertion a function carries when it opens the Data pane (const d_ = d!) - the rest are
- * property-level reads (d_.conn!, e.dataTransfer!, regex groups) that die in R4 when
- * PanelState splits into domain states and the nullability moves to where it is checked.
+/* Frozen at R2 commit time (docs/37 M5) at 326, of which 121 were the single boundary
+ * assertion a function carried when it opened the Data pane (const d_ = d!). R4's db slice
+ * collected that debt: db-state.ts owns a record that is never null, so the boundary had
+ * nothing left to assert and the thirteen data-* files fell from 229 to 113 - 207 total.
+ * What survives is property-level (d.conn!, e.dataTransfer!, regex groups); the rest of it
+ * goes with R4's last slice and R5's rendering pass.
  * Keys are paths relative to src/ - the tree has basename twins (jobs.ts and views/jobs.ts)
  * and a basename map would silently count the wrong one. */
 const FROZEN: Record<string, number> = {
@@ -31,27 +33,27 @@ const FROZEN: Record<string, number> = {
   "page-registry.ts": 5,
   "pane.ts": 4,
   "run-history.ts": 3,
-  "tunnel-sheets.ts": 11,
+  "tunnel-sheets.ts": 10,
   "views/remote.ts": 1,
   "views/terminal-settings.ts": 1,
   "views/terminal.ts": 7,
-  "data-activity.ts": 4,
-  "data-browsers.ts": 27,
+  "data-activity.ts": 3,
+  "data-browsers.ts": 16,
   "data-ddl.ts": 13,
-  "data-filters.ts": 8,
-  "data-form.ts": 9,
-  "data-structure.ts": 8,
-  "data-suggest.ts": 6,
+  "data-filters.ts": 6,
+  "data-form.ts": 7,
+  "data-structure.ts": 4,
+  "data-suggest.ts": 5,
   "dropdown.ts": 2,
   "groups.ts": 15,
-  "jobs.ts": 17,
-  "tunnels.ts": 8,
-  "data-cell.ts": 8,
-  "data-edit.ts": 11,
-  "data-grid.ts": 49,
-  "data-sql.ts": 28,
-  "data-view.ts": 36,
-  "data-csv.ts": 22,
+  "jobs.ts": 16,
+  "tunnels.ts": 7,
+  "data-cell.ts": 6,
+  "data-edit.ts": 5,
+  "data-grid.ts": 17,
+  "data-sql.ts": 15,
+  "data-view.ts": 8,
+  "data-csv.ts": 8,
 };
 
 const srcDir = path.resolve(import.meta.dirname, "../src");

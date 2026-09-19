@@ -17,6 +17,8 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbView } from "../src/db-state.js";
+import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), with child-tracking
    nodes so a test can walk the filter row's selects. confirm defaults to REFUSAL: the audit
@@ -67,9 +69,6 @@ const filters = await import(pathToFileURL(join(here, "data-filters.js")).href) 
 const csv = await import(pathToFileURL(join(here, "data-csv.js")).href) as {
   dbPushCellFilter: (column: string, op: string, value: string) => void;
 };
-const util = await import(pathToFileURL(join(here, "util.js")).href) as {
-  state: { db: Record<string, any> };
-};
 
 function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] {
   if (pred(node)) out.push(node);
@@ -79,10 +78,10 @@ function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] 
 
 /** One filter row ("a" = "1") plus a buffered update, so the discard gate asks. */
 function renderFilterRow(): { d: Record<string, any>; selects: Stub[] } {
-  const d = util.state.db;
-  d.conns = [{ name: "c", dialect: "mysql" }];
+  const d = dbView();
+  d.conns = [dbConn("c", "mysql")];
   d.conn = "c"; d.table = "t"; d.tab = "data"; d.sqlResult = null;
-  d.data = { table: "t", columns: [{ name: "a" }, { name: "b" }], rows: [], total: 0, primaryKey: ["a"], editable: false };
+  d.data = dbPage({ table: "t", columns: [dbCol("a"), dbCol("b")], primaryKey: ["a"] });
   d.filters = [{ column: "a", op: "eq", value: "1" }];
   d.updates = { k1: { pk: { a: 1 }, changes: { a: "buffered" } } };
   d.deletes = {}; d.inserts = []; d.sel = {}; d.gridCfg = { widths: {}, hidden: [] };

@@ -1,3 +1,4 @@
+import type { DbState } from "./db-state.js";
 /*
  * Copyright 2026 The swiss authors
  * 
@@ -15,13 +16,14 @@
  */
 
 import type { ApiDbColumn } from "./types/api.js";
-import type { DbBufferedUpdate, DbCellMeta, DbFormField, DbState } from "./types/state.js";
-import { el, icon, state } from "./util.js";
+import type { DbBufferedUpdate, DbCellMeta, DbFormField } from "./types/state.js";
+import { el, icon } from "./util.js";
 import { DB_INLINE_MAX } from "./data-edit.js";
 import { dbCellText, dbOpenCellEditor } from "./data-cell.js";
 import { dbRowAddr, renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbPkKey } from "./data-view.js";
+import { dbView } from "./db-state.js";
 
 /* --- single-record form view (docs/22 W5.1) ------------------------------------------------------ */
 /* dbgate's SqlFormView precedent: one record, one field per line, a stepper for the adjacent
@@ -139,24 +141,23 @@ function dbFormField(d: DbState, val: HTMLElement, f: DbFormField, ctx: { kind: 
 /** The Form tab's body. Same entry guards and row order as the grid (buffered inserts in
  *  front of the page's rows); the chevron stepper in the head walks between them. */
 function renderDbFormView(wrap: HTMLElement): void {
-  const d = state.db;
-  const d_ = d!;
-  if (!d_.conn) {
+  const d = dbView();
+  if (!d.conn) {
     wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first."));
     return;
   }
-  if (!d_.table || !d_.data) {
-    wrap.appendChild(el("div", "db-hint", d_.table
-      ? "Loading " + d_.table + "\u2026"
+  if (!d.table || !d.data) {
+    wrap.appendChild(el("div", "db-hint", d.table
+      ? "Loading " + d.table + "\u2026"
       : "Select a table to see one record as a form."));
     return;
   }
-  if (d_.loading) { wrap.appendChild(el("div", "db-hint", "Loading\u2026")); return; }
-  const nIns = d_.inserts.length;
-  const total = nIns + d_.data?.rows.length;
+  if (d.loading) { wrap.appendChild(el("div", "db-hint", "Loading\u2026")); return; }
+  const nIns = d.inserts.length;
+  const total = nIns + d.data?.rows.length;
   if (!total) { wrap.appendChild(el("div", "db-hint", "No rows on this page.")); return; }
-  const idx = Math.max(0, Math.min(total - 1, d_.formIdx || 0));
-  d_.formIdx = idx;
+  const idx = Math.max(0, Math.min(total - 1, d.formIdx || 0));
+  d.formIdx = idx;
 
   const head = el("div", "db-form-head");
   const prev = el("button", "btn icon") as HTMLButtonElement;
@@ -177,17 +178,17 @@ function renderDbFormView(wrap: HTMLElement): void {
   head.appendChild(prev);
   head.appendChild(el("span", "db-form-pos", isIns
     ? "New row " + (idx + 1) + " of " + nIns + " \u00b7 buffered"
-    : "Row " + (idx - nIns + 1) + " of " + d_.data?.rows.length + " on this page"));
+    : "Row " + (idx - nIns + 1) + " of " + d.data?.rows.length + " on this page"));
   head.appendChild(next);
 
-  const pkCols = d_.data?.primaryKey || [];
-  const columns = d_.data?.columns || [];
-  const editable = !!d_.data?.editable;
-  const ins = isIns ? d_.inserts[idx] : null;
+  const pkCols = d.data?.primaryKey || [];
+  const columns = d.data?.columns || [];
+  const editable = !!d.data?.editable;
+  const ins = isIns ? d.inserts[idx] : null;
   const ri = isIns ? -1 : idx - nIns;
-  const row = isIns ? null : d_.data?.rows[ri];
+  const row = isIns ? null : d.data?.rows[ri];
   const key = isIns ? null : (pkCols.length ? dbPkKey(pkCols, row!) : String(ri));
-  const deleted = !isIns && !!d_.deletes[key as string];
+  const deleted = !isIns && !!d.deletes[key as string];
 
   // The record's own actions ride the head's right end — the grid rowctl vocabulary.
   if (editable) {
@@ -196,12 +197,11 @@ function renderDbFormView(wrap: HTMLElement): void {
     act.title = isIns ? "Remove this buffered insert"
       : deleted ? "Undo this buffered delete" : "Buffer a delete \u2014 applied only on Commit";
     act.onclick = (): void => {
-      const d_ = d!;
-      if (isIns) d_.inserts.splice(idx, 1);
-      else if (deleted) delete d_.deletes[key as string];
+      if (isIns) d.inserts.splice(idx, 1);
+      else if (deleted) delete d.deletes[key as string];
       else {
-        d_.deletes[key as string] = dbRowAddr(pkCols, columns, row!);
-        delete d_.updates[key as string]; // a deleted row's cell edits are moot
+        d.deletes[key as string] = dbRowAddr(pkCols, columns, row!);
+        delete d.updates[key as string]; // a deleted row's cell edits are moot
       }
       renderDbGrid();
       renderDbBar();
@@ -211,7 +211,7 @@ function renderDbFormView(wrap: HTMLElement): void {
   }
   wrap.appendChild(head);
 
-  const fields = dbFormRowFields(columns, row, key, d_.updates, ins);
+  const fields = dbFormRowFields(columns, row, key, d.updates, ins);
   const form = el("div", "db-form" + (deleted ? " db-del" : "") + (isIns ? " db-ins" : ""));
   fields.forEach((f: DbFormField): void => {
     const fr = el("div", "db-form-row" + (f.pending ? " db-dirty" : ""));

@@ -17,6 +17,8 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbIsMounted, dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), with RECORDING
    timers so the 300ms grep debounce can be fired deterministically — the bug is what its
@@ -69,19 +71,13 @@ const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
   renderDbView: () => void;
 };
-const util = await import(pathToFileURL(join(here, "util.js")).href) as {
-  state: { db: Record<string, any> | null };
-};
-// A snapshot of the factory-built state: a test that nulls state.db (the unmount) must be
-// able to give the next test a fresh one, the way loadDbView does on every entry.
-const freshDb = JSON.parse(JSON.stringify(util.state.db)) as Record<string, any>;
-
 describe("the table-list grep debounce vs an unmounted view (docs/22 closeout audit)", () => {
   it("the 300ms callback firing after the view unmounted is a silent no-op, not a TypeError", () => {
+    mountDbView();
     view.renderDbView();
-    expect(util.state.db, "the view mounted its state").toBeTruthy();
-    util.state.db!.conns = [{ name: "c", dialect: "mysql" }];
-    util.state.db!.conn = "c";
+    expect(dbIsMounted(), "the view is mounted").toBe(true);
+    dbView().conns = [dbConn("c", "mysql")];
+    dbView().conn = "c";
     const grep = byId.dbGrep;
     expect(grep.oninput, "the grep box is wired").toBeTruthy();
     grep.value = "abc";
@@ -89,21 +85,23 @@ describe("the table-list grep debounce vs an unmounted view (docs/22 closeout au
     const fired = timers.filter((t) => t.ms === 300);
     expect(fired.length, "the input scheduled its 300ms debounce").toBeGreaterThan(0);
     const cb = fired[fired.length - 1].fn;
-    // The unmount frees state.db; the pending debounce must survive that without throwing.
-    util.state.db = null;
+    // The unmount resets the record and clears the mounted flag; the pending debounce must
+    // survive that without throwing AND without writing a filter nobody can see.
+    unmountDbView();
     expect(() => cb(), "the late callback is a no-op").not.toThrow();
+    expect(dbView().grep, "and it wrote nothing into the reset record").toBe("");
   });
 
   it("with the view still mounted the same callback still applies the grep", () => {
-    util.state.db = JSON.parse(JSON.stringify(freshDb));
+    mountDbView();
     view.renderDbView();
-    util.state.db!.conns = [{ name: "c", dialect: "mysql" }];
-    util.state.db!.conn = "c";
+    dbView().conns = [dbConn("c", "mysql")];
+    dbView().conn = "c";
     const grep = byId.dbGrep;
     grep.value = "xyz";
     grep.oninput({ currentTarget: grep });
     const cb = timers[timers.length - 1].fn;
     expect(() => cb()).not.toThrow();
-    expect(util.state.db!.grep, "the debounce still applies the grep while mounted").toBe("xyz");
+    expect(dbView().grep, "the debounce still applies the grep while mounted").toBe("xyz");
   });
 });

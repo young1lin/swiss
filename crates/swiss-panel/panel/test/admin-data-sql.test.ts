@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
 
 // The panel ships browser ES modules; under Node they evaluate only with DOM globals stubbed —
 // the same technique (and stub surface) as the boot check in admin-panel.test.ts and the sort
@@ -67,14 +68,15 @@ const sql = await import(
   dbCommit: () => Promise<void>;
 };
 
-// The pending-SQL preview and the Commit gate read state.db, so the same worker imports the
-// shared state object util.js owns and points it at a table of the test's choosing.
-const util = await import(
-  pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "util.ts")).href
-) as { state: { db: Record<string, unknown> } };
-
+/* The pending-SQL preview and the Commit gate read the Data view's record, which db-state.ts
+   owns since docs/37 R4. Plain static import, unlike data-sql.ts above: that one dodges tsc
+   because its module graph is browser JS, while this is an ordinary typed module — and a
+   literal specifier is also what keeps this binding the SAME instance data-sql.ts resolves.
+   The unmount/mount pair is the reset, which is what assigning over the whole record did. */
 const setTable = (over: Record<string, unknown> = {}) => {
-  util.state.db = {
+  unmountDbView();
+  mountDbView();
+  Object.assign(dbView(), {
     conn: "mysql",
     conns: [{ name: "mysql", dialect: "mysql" }],
     schema: "",
@@ -84,7 +86,7 @@ const setTable = (over: Record<string, unknown> = {}) => {
     updates: {},
     inserts: [],
     ...over,
-  };
+  });
 };
 
 // docs/22 W0.5: the Explain button offers plain EXPLAIN and EXPLAIN ANALYZE; the prefix is

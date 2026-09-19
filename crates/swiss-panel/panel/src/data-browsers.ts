@@ -16,7 +16,7 @@
 
 import type { ApiDbConnectionRow, ApiDbRedisKeysResponse, ApiDbRedisValue } from "./types/api.js";
 import type { DbRedisEdits, DbRedisTypeCfg } from "./types/state.js";
-import { $, apiJson, dbReqGuard, el, emptyHtml, errText, esc, icon, state, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyHtml, errText, esc, icon, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid } from "./data-grid.js";
@@ -26,6 +26,7 @@ import { renderDbBar } from "./data-sql.js";
 import { dbTypedConfirm } from "./data-edit.js";
 import { renderDbTables } from "./data-view.js";
 import { popupMenu } from "./menu.js";
+import { dbView } from "./db-state.js";
 
 /* --- redis key browser -------------------------------------------------------------------------- */
 /* A redis connection in the picker swaps the table list for a SCAN-paged key list, and the
@@ -36,8 +37,8 @@ import { popupMenu } from "./menu.js";
    refused or failed command stops the run and the operator re-commits the rest. */
 
 function dbIsRedis(): boolean {
-  const d = state.db;
-  const c = d?.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === d?.conn; });
+  const d = dbView();
+  const c = d.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === d.conn; });
   return !!c && c.dialect === "redis";
 }
 
@@ -53,15 +54,14 @@ let dbKeysLoading = false;
 const dbKeysReq = dbReqGuard();
 
 async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
-  const d = state.db;
-  const d_ = d!;
-  if (!d_.conn) return;
+  const d = dbView();
+  if (!d.conn) return;
   if (!reset && dbKeysLoading) return; // the More double-click: the page is already on its way
-  if (reset) { d_.redis = null; d_.redisKey = null; }
-  let q = "/api/db/" + encodeURIComponent(d_.conn) + "/keys?count=200";
-  if (d_.grep) q += "&pattern=" + encodeURIComponent(d_.grep);
-  if (d_.redisType) q += "&type=" + encodeURIComponent(d_.redisType);
-  if (d_.redis && d_.redis.cursor && d_.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d_.redis.cursor);
+  if (reset) { d.redis = null; d.redisKey = null; }
+  let q = "/api/db/" + encodeURIComponent(d.conn) + "/keys?count=200";
+  if (d.grep) q += "&pattern=" + encodeURIComponent(d.grep);
+  if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
+  if (d.redis && d.redis.cursor && d.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d.redis.cursor);
   const token = dbKeysReq.issue();
   let j: ApiDbRedisKeysResponse | null;
   dbKeysLoading = true;
@@ -75,13 +75,13 @@ async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
     // docs/22 closeout B1: apiJson already toasted the server's own text, but a transient
     // toast over a list that still says "no keys" reads as an empty keyspace. Mark the
     // failure so the list paints it (renderDbTables), keeping the last good page.
-    d_.redisError = true;
+    d.redisError = true;
     renderDbTables();
     return;
   }
-  d_.redisError = false;
-  d_.redis = {
-    keys: (d_.redis && !reset ? d_.redis?.keys : []).concat(j.keys || []),
+  d.redisError = false;
+  d.redis = {
+    keys: (d.redis && !reset ? d.redis?.keys : []).concat(j.keys || []),
     cursor: j.cursor,
     done: !!j.done,
     total: j.total,
@@ -95,22 +95,21 @@ async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
 const dbValueReq = dbReqGuard();
 
 async function dbLoadRedisValue(key: string): Promise<void> {
-  const d = state.db;
+  const d = dbView();
   // A fresh key selection is a navigation: drop the command result that owned the pane,
   // or the grid guard would keep rendering it and the value would never show.
-  const d_ = d!;
-  d_.sqlResult = null;
-  d_.sqlResults = null; d_.sqlTab = 0; // docs/22 W4.3: key navigation closes every result tab
-  d_.sqlBusy = false;
-  d_.redisKey = key;
-  d_.redisValue = null; // drop the previous key's value — never flash stale data
-  d_.redisEdits = null; // and its buffered edits — a different key cannot adopt them
+  d.sqlResult = null;
+  d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: key navigation closes every result tab
+  d.sqlBusy = false;
+  d.redisKey = key;
+  d.redisValue = null; // drop the previous key's value — never flash stale data
+  d.redisEdits = null; // and its buffered edits — a different key cannot adopt them
   renderDbGrid();
   const token = dbValueReq.issue();
-  const j = await apiJson<ApiDbRedisValue>("/api/db/" + encodeURIComponent(d_.conn!) + "/key?key=" + encodeURIComponent(key));
+  const j = await apiJson<ApiDbRedisValue>("/api/db/" + encodeURIComponent(d.conn!) + "/key?key=" + encodeURIComponent(key));
   if (!dbValueReq.accepts(token)) return; // superseded: a newer key owns the pane
-  if (!j) { d_.redisKey = null; renderDbGrid(); return; }
-  d_.redisValue = j;
+  if (!j) { d.redisKey = null; renderDbGrid(); return; }
+  d.redisValue = j;
   renderDbGrid();
 }
 
@@ -137,19 +136,18 @@ function dbRedisValidScore(s: string): boolean {
 /** The buffer for the key in view, rebuilt when the key or its type changed. Null when the
  *  view holds no editable container. */
 function dbRedisEdits(): DbRedisEdits | null {
-  const d = state.db;
-  const d_ = d!;
-  const v = d_.redisValue;
-  if (!d_.redisKey || !v || !DB_REDIS_TYPES[v.type]) return null;
-  if (!d_.redisEdits || d_.redisEdits.key !== d_.redisKey || d_.redisEdits.type !== v.type) {
-    d_.redisEdits = { key: d_.redisKey!, type: v.type, updates: {}, deletes: {}, inserts: [] };
+  const d = dbView();
+  const v = d.redisValue;
+  if (!d.redisKey || !v || !DB_REDIS_TYPES[v.type]) return null;
+  if (!d.redisEdits || d.redisEdits.key !== d.redisKey || d.redisEdits.type !== v.type) {
+    d.redisEdits = { key: d.redisKey!, type: v.type, updates: {}, deletes: {}, inserts: [] };
   }
-  return d_.redisEdits;
+  return d.redisEdits;
 }
 
 /** How many changes the bar counts. Pure over the buffer. */
 function dbRedisPendingCount(): number {
-  const b = state.db && state.db.redisEdits;
+  const b = dbView().redisEdits;
   if (!b) return 0;
   return Object.keys(b.updates).length + Object.keys(b.deletes).length + b.inserts.length;
 }
@@ -246,15 +244,14 @@ function dbRedisEntries(v: ApiDbRedisValue, buf: DbRedisEdits): { addr: string; 
 }
 
 function dbRenderRedisValue(wrap: HTMLElement): void {
-  const d = state.db;
-  const d_ = d!;
-  if (!d_.redisKey) {
+  const d = dbView();
+  if (!d.redisKey) {
     // The shared empty state (docs/18 V7).
     wrap.innerHTML = emptyHtml({ icon: "database", title: "Select a key", hint: "Pick a key on the left to view its value." });
     return;
   }
-  const v = d_.redisValue;
-  if (!v) { wrap.appendChild(el("div", "db-hint", "Loading " + d_.redisKey + "…")); return; }
+  const v = d.redisValue;
+  if (!v) { wrap.appendChild(el("div", "db-hint", "Loading " + d.redisKey + "…")); return; }
   const meta = el("div", "db-detail-meta");
   meta.appendChild(document.createTextNode(v.key + " · " + v.type + " · "));
   meta.appendChild(dbRedisTtl(v));
@@ -307,7 +304,7 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
 /** The TTL readout is itself the control (docs/22 W3.3): click to edit in place, Enter runs
  *  EXPIRE — or PERSIST when emptied — through the guarded console, then the key re-reads. */
 function dbRedisTtl(v: ApiDbRedisValue): HTMLElement {
-  const d = state.db;
+  const d = dbView();
   const btn = el("button", "db-ttl", v.ttl! < 0 ? "no expiry" : v.ttl! + "s") as HTMLButtonElement;
   btn.type = "button";
   btn.title = "Change the TTL — Enter applies EXPIRE, empty removes it (PERSIST)";
@@ -323,18 +320,17 @@ function dbRedisTtl(v: ApiDbRedisValue): HTMLElement {
       if (ran) return;
       ran = true;
       const secs: string = input.value.trim();
-      const d_ = d!;
-      if (secs && !/^\d+$/.test(secs)) { toast("TTL must be a whole number of seconds", true); void dbLoadRedisValue(d_.redisKey!); return; }
-      const line = secs ? "EXPIRE " + d_.redisKey + " " + secs : "PERSIST " + d_.redisKey;
+      if (secs && !/^\d+$/.test(secs)) { toast("TTL must be a whole number of seconds", true); void dbLoadRedisValue(d.redisKey!); return; }
+      const line = secs ? "EXPIRE " + d.redisKey + " " + secs : "PERSIST " + d.redisKey;
       void dbRedisCommand(line).then((j: unknown): void => {
         if (j) toast(secs ? "TTL set to " + secs + "s" : "TTL removed");
-        void dbLoadRedisValue(d?.redisKey!);
+        void dbLoadRedisValue(d.redisKey!);
       });
     }
     input.onkeydown = (e: KeyboardEvent): void => {
       e.stopPropagation();
       if (e.key === "Enter") { e.preventDefault(); apply(); }
-      else if (e.key === "Escape") { e.preventDefault(); ran = true; void dbLoadRedisValue(d?.redisKey!); }
+      else if (e.key === "Escape") { e.preventDefault(); ran = true; void dbLoadRedisValue(d.redisKey!); }
     };
     input.onblur = apply;
   };
@@ -516,7 +512,7 @@ function dbRedisEditorClose(): void {
  *  pipeline (a value keeps its spaces: pipeline args bind as separate strings, which the
  *  whitespace-splitting /command console can never promise). */
 function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
-  const d = state.db;
+  const d = dbView();
   const row = el("div", "db-redis-str-row");
   const ta = el("textarea", "db-redis-str") as HTMLTextAreaElement;
   ta.rows = 3;
@@ -527,14 +523,13 @@ function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
   async function go(): Promise<void> {
     const value = ta.value;
     if (value === ta.dataset.orig) { toast("Unchanged"); return; }
-    const d_ = d!;
-    const j = await apiJson("/api/db/" + encodeURIComponent(d_.conn!) + "/redis-pipeline", {
+    const j = await apiJson("/api/db/" + encodeURIComponent(d.conn!) + "/redis-pipeline", {
       method: "POST",
-      body: JSON.stringify({ commands: [["SET", d_.redisKey!, value]] }),
+      body: JSON.stringify({ commands: [["SET", d.redisKey!, value]] }),
     });
     if (!j) return;
-    toast("Set " + d_.redisKey);
-    void dbLoadRedisValue(d_.redisKey!);
+    toast("Set " + d.redisKey);
+    void dbLoadRedisValue(d.redisKey!);
   }
   set.onclick = (): void => { void go(); };
   ta.onkeydown = (e: KeyboardEvent): void => {
@@ -551,53 +546,51 @@ function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
  *  preview printed (dbRedisCommands), so the two cannot drift. A refusal keeps the buffer —
  *  the toast already said which command and why. */
 async function dbRedisCommit(): Promise<void> {
-  const d = state.db;
+  const d = dbView();
   const b = dbRedisEdits();
   if (!b) return;
   let cmds: { verb: string; args: unknown[] }[];
-  const d_ = d!;
   try {
-    cmds = dbRedisCommands(d_.redisKey!, b.type, b);
+    cmds = dbRedisCommands(d.redisKey!, b.type, b);
   } catch (err) {
     toast(errText(err), true);
     return;
   }
   if (!cmds.length) return;
-  if (!confirm("Commit " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") + " to " + d_.redisKey + "?\n" +
+  if (!confirm("Commit " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") + " to " + d.redisKey + "?\n" +
       "One pipelined round trip, every command guard-checked. Redis has no transaction here — a failed command stops the run.")) return;
-  const j = await apiJson("/api/db/" + encodeURIComponent(d_.conn!) + "/redis-pipeline", {
+  const j = await apiJson("/api/db/" + encodeURIComponent(d.conn!) + "/redis-pipeline", {
     method: "POST",
     body: JSON.stringify({ commands: cmds.map((c: { verb: string; args: unknown[] }): unknown[] => { return [c.verb as unknown].concat(c.args); }) }),
   });
   if (!j) return;
   toast("Committed " + cmds.length + " command" + (cmds.length > 1 ? "s" : ""));
-  d_.redisEdits = null;
-  d_.sqlPreview = false;
-  const key = d_.redisKey;
+  d.redisEdits = null;
+  d.sqlPreview = false;
+  const key = d.redisKey;
   // Awaited: deleting a hash's last field (or a set's last member) deletes the KEY, and the
   // re-read's "type none" answer IS the signal — checking before it answered read null and
   // the list refresh never ran, so the sidebar kept offering a key that is gone (docs/22
   // closeout audit).
   await dbLoadRedisValue(key!);
-  if (d_.redisKey === key && d_.redisValue && d_.redisValue.type === "none") void dbLoadKeys(true);
+  if (d.redisKey === key && d.redisValue && d.redisValue.type === "none") void dbLoadKeys(true);
 }
 
 /** Drop the buffer without a single command — the twin of the row grid's Discard. */
 function dbRedisDiscard(): void {
-  const d = state.db;
+  const d = dbView();
   const n = dbRedisPendingCount();
   if (!n) return;
   if (!confirm("Discard " + n + " buffered change" + (n > 1 ? "s" : "") + "? Nothing has been written to redis.")) return;
-  const d_ = d!;
-  d_.redisEdits = null;
-  d_.sqlPreview = false;
+  d.redisEdits = null;
+  d.sqlPreview = false;
   renderDbGrid();
   renderDbBar();
 }
 
 function dbRedisKeyMenu(anchorEl: HTMLElement): void {
   popupMenu(anchorEl.getBoundingClientRect(), [
-    { label: "Rename\u2026", fn: (): void => { dbRedisRenameSheet(state.db?.redisKey!); } },
+    { label: "Rename\u2026", fn: (): void => { dbRedisRenameSheet(dbView().redisKey); } },
     { sep: true },
     { label: "Delete\u2026", danger: true, fn: dbRedisDeleteKey },
   ]);
@@ -605,7 +598,12 @@ function dbRedisKeyMenu(anchorEl: HTMLElement): void {
 
 /** One guarded console command; null means the toast already said why. */
 async function dbRedisCommand(line: string): Promise<unknown> {
-  return apiJson("/api/db/" + encodeURIComponent(state.db?.conn!) + "/command", {
+  // No connection is not an error worth a toast — it is the console being asked to run
+  // against nothing, which the null return already says (docs/37 R4: the assertion this
+  // replaced claimed a selection the record's type never promised).
+  const conn = dbView().conn;
+  if (!conn) return null;
+  return apiJson("/api/db/" + encodeURIComponent(conn) + "/command", {
     method: "POST",
     body: JSON.stringify({ command: line }),
   });
@@ -639,14 +637,17 @@ function dbRedisKeySheet(cfg: { title: string; label: string; value?: string; pl
   input.select();
 }
 
-function dbRedisRenameSheet(key: string): void {
+function dbRedisRenameSheet(key: string | null): void {
+  // The menu that opens this only exists over a selected key, but the record says the
+  // selection is nullable and that is the truth to honour — not an assertion at the call.
+  if (!key) return;
   dbRedisKeySheet({
     title: "Rename key",
     label: "New name",
     value: key,
     primary: "Rename",
     submit: async (to: string): Promise<void> => {
-      const d = state.db;
+      const d = dbView();
       if (!to || to === key) return;
       const j = await dbRedisCommand("RENAME " + key + " " + to);
       if (!j) return;
@@ -661,16 +662,15 @@ function dbRedisRenameSheet(key: string): void {
 /* Deleting a key is the one destructive act the redis side has — the same typed-name confirm
    the table DROP/TRUNCATE use (a W1 audit follow-up), with the key's own words. */
 function dbRedisDeleteKey(): void {
-  const d = state.db;
-  const key = d?.redisKey!;
+  const d = dbView();
+  const key = d.redisKey!;
   dbTypedConfirm({ what: "DELETE (permanently)", name: key, kind: "key" }, (): void => {
     void dbRedisCommand("DEL " + key).then(async (j: unknown): Promise<void> => {
       if (!j) return;
       toast("Deleted " + key);
-      const d_ = d!;
-      d_.redisKey = null;
-      d_.redisValue = null;
-      d_.redisEdits = null;
+      d.redisKey = null;
+      d.redisValue = null;
+      d.redisEdits = null;
       await dbLoadKeys(true);
       renderDbGrid();
     });

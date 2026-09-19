@@ -1,3 +1,4 @@
+                                             
 /*
  * Copyright 2026 The swiss authors
  * 
@@ -15,8 +16,8 @@
  */
 
                                                                                     
-                                                          
-import { $, apiJson, dbReqGuard, el, errText, state, toast } from "./util.js";
+                                                 
+import { $, apiJson, dbReqGuard, el, errText, toast } from "./util.js";
 import {
   dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisPendingCount,
@@ -24,6 +25,7 @@ import {
 import { SQL_TOKEN_RE, dbHighlightSql, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
+import { dbView } from "./db-state.js";
 
 /* --- pending-SQL preview ------------------------------------------------------------------------ */
 /* The exact statements the server will run on Commit, mirrored from buildEditStatements
@@ -60,17 +62,16 @@ function dbStatsSql(dialect        , schema        , table        , column      
 }
 
 function dbPendingSql()           {
-  const d = state.db;
-  const d_ = d ;
-  if (!d_.data) return [];
-  const dialect = (d_.conns.find((c                    )          => { return c.name === d?.conn; }) || {}                        ).dialect || "mysql";
+  const d = dbView();
+  if (!d.data) return [];
+  const dialect = (d.conns.find((c                    )          => { return c.name === d.conn; }) || {}                        ).dialect || "mysql";
   const q = (n        )         => {
     const safe = dbQuoteIdentSafe(n);
     if (!safe) throw new Error("not a valid identifier: " + n);
     return dialect === "mysql" ? "`" + safe + "`" : '"' + safe + '"';
   };
-  const table = (d_.schema ? q(d_.schema ) + "." : "") + q(d_.table );
-  const pkCols = d_.data.primaryKey || [];
+  const table = (d.schema ? q(d.schema ) + "." : "") + q(d.table );
+  const pkCols = d.data.primaryKey || [];
   // docs/22 W4.1 (W4b follow-up): the preview sketches the address the server really builds —
   // pk columns for a pk table, EVERY column for a keyless one (the row buffer carries whole
   // rows there), with the md5 fold the server applies (EDIT_ADDR_MD5_MIN = 64). md5() here is
@@ -78,7 +79,7 @@ function dbPendingSql()           {
   // server computes the real one. A NULL or missing column cannot address anything (col =
   // NULL matches nothing) — the server refuses the row, so the preview says so instead of
   // printing an empty or lying WHERE.
-  const addrCols = pkCols.length ? pkCols : (d_.data.columns || []).map((c             )         => { return c.name; });
+  const addrCols = pkCols.length ? pkCols : (d.data.columns || []).map((c             )         => { return c.name; });
   const addrTerm = (c        , v         )         => {
     if (!pkCols.length && v === null) throw new Error("no primary key: " + c + " is NULL — a row needs a non-NULL value for every column");
     if (!pkCols.length && v === undefined) throw new Error("no primary key: " + c + " is missing — a row needs a value for every column");
@@ -90,15 +91,15 @@ function dbPendingSql()           {
     return addrCols.map((c        )         => { return addrTerm(c, addr[c]); }).join(" AND ");
   };
   const out           = [];
-  Object.keys(d_.deletes).forEach((k        )       => {
+  Object.keys(d.deletes).forEach((k        )       => {
     out.push("DELETE FROM " + table + " WHERE " + rowWhere(d .deletes[k]) + ";");
   });
-  Object.keys(d_.updates).forEach((k        )       => {
+  Object.keys(d.updates).forEach((k        )       => {
     const e = d .updates[k];
     const set = Object.keys(e.changes).map((c        )         => { return q(c) + " = " + dbSqlLiteral(e.changes[c]); }).join(", ");
     out.push("UPDATE " + table + " SET " + set + " WHERE " + rowWhere(e.pk) + ";");
   });
-  d_.inserts.forEach((ins          )       => {
+  d.inserts.forEach((ins          )       => {
     const cols = Object.keys(ins.values);
     if (!cols.length) return;
     out.push("INSERT INTO " + table + " (" + cols.map(q).join(", ") + ") VALUES (" +
@@ -154,38 +155,36 @@ function renderDbRedisBar(d         , bar             )       {
 }
 
 function renderDbBar()       {
-  const d = state.db;
+  const d = dbView();
   const bar = $("dbBar");
   if (!bar) return;
   const redis = dbIsRedis();
   const n = redis ? dbRedisPendingCount() : dbPending();
   // The redis bar owns the same slot (docs/22 W3.3): the typed value view buffers edits the
   // way the row grid does, and its Commit is ONE guarded pipeline instead of a transaction.
-  const d_ = d ;
-  if (!n || (redis ? !d_.redisValue : !d_.data)) { bar.hidden = true; return; }
+  if (!n || (redis ? !d.redisValue : !d.data)) { bar.hidden = true; return; }
   bar.hidden = false;
   bar.style.flexWrap = "nowrap";
   bar.innerHTML = "";
   if (redis) {
-    renderDbRedisBar(d_, bar);
+    renderDbRedisBar(d, bar);
     return;
   }
-  const u = Object.keys(d_.updates).length;
-  const del = Object.keys(d_.deletes).length;
-  const ins = d_.inserts.length;
+  const u = Object.keys(d.updates).length;
+  const del = Object.keys(d.deletes).length;
+  const ins = d.inserts.length;
   const parts           = [];
   if (u) parts.push(u + " update" + (u > 1 ? "s" : ""));
   if (del) parts.push(del + " delete" + (del > 1 ? "s" : ""));
   if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
   // Same addressing honesty as the Commit gate (docs/22 W4b follow-up): the bar names the
   // WHERE the server will build, pk or whole-row.
-  const pkColsB = (d_.data && d_.data.primaryKey) || [];
+  const pkColsB = (d.data && d.data.primaryKey) || [];
   bar.appendChild(el("span", "", parts.join(", ") + " — LOCAL ONLY, not yet in the database. Commit sends them as ONE transaction (rows addressed by " + (pkColsB.length ? "primary key" : "all columns — the table has no primary key") + "); Discard deletes them without a single query."));
-  const sqlBtn = el("button", "btn", d_.sqlPreview ? "Hide SQL" : "SQL")                     ;
+  const sqlBtn = el("button", "btn", d.sqlPreview ? "Hide SQL" : "SQL")                     ;
   sqlBtn.title = "Show the exact statements Commit will run";
   sqlBtn.onclick = ()       => {
-    const d_ = d ;
-    d_.sqlPreview = !d_.sqlPreview;
+    d.sqlPreview = !d.sqlPreview;
     renderDbBar();
   };
   const discard = el("button", "btn", "Discard")                     ;
@@ -199,7 +198,7 @@ function renderDbBar()       {
   bar.appendChild(sqlBtn);
   bar.appendChild(discard);
   bar.appendChild(commitBtn);
-  if (d_.sqlPreview) {
+  if (d.sqlPreview) {
     const pre = el("pre", "db-ddl");
     pre.style.position = "static";
     pre.style.margin = "0";
@@ -235,10 +234,9 @@ function dbApplyReadback(rows                                  , pkCols         
 /** docs/22 W1.4 / W1.10: put a generated statement into the console — visible, editable, and
  *  in history once run, instead of hiding behind a one-off request. */
 function dbFillConsole(sql        )       {
-  const d = state.db;
-  const d_ = d ;
-  d_.sqlText = sql;
-  d_.sqlOpen = true;
+  const d = dbView();
+  d.sqlText = sql;
+  d.sqlOpen = true;
   const con = $("dbConsole");
   if (con) con.hidden = false;
   const ta = $                     ("dbSql");
@@ -248,28 +246,27 @@ function dbFillConsole(sql        )       {
 }
 
 async function dbCommit()                {
-  const d = state.db;
-  const d_ = d ;
-  if (!d_.conn || !d_.table || !d_.data) return;
+  const d = dbView();
+  if (!d.conn || !d.table || !d.data) return;
   const edits                                                                                                                      = [];
-  Object.keys(d_.deletes).forEach((k        )       => { edits.push({ op: "delete", pk: d?.deletes[k] }); });
-  Object.keys(d_.updates).forEach((k        )       => {
+  Object.keys(d.deletes).forEach((k        )       => { edits.push({ op: "delete", pk: d.deletes[k] }); });
+  Object.keys(d.updates).forEach((k        )       => {
     const e = d .updates[k];
     edits.push({ op: "update", pk: e.pk, changes: e.changes });
   });
-  d_.inserts.forEach((ins          )       => { edits.push({ op: "insert", values: ins.values }); });
+  d.inserts.forEach((ins          )       => { edits.push({ op: "insert", values: ins.values }); });
   if (!edits.length) return;
   // The explicit transaction gate: nothing leaves this browser until the user says so HERE too.
   // The summary names the table and counts, because "commit 3 changes" must be a decision, not a reflex.
-  const ups = Object.keys(d_.updates).length, dels = Object.keys(d_.deletes).length, ins = d_.inserts.length;
+  const ups = Object.keys(d.updates).length, dels = Object.keys(d.deletes).length, ins = d.inserts.length;
   const parts           = [];
   if (ups) parts.push(ups + " update" + (ups > 1 ? "s" : ""));
   if (dels) parts.push(dels + " delete" + (dels > 1 ? "s" : ""));
   if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
-  const tableLabel = (d_.schema ? d_.schema + "." : "") + d_.table ;
+  const tableLabel = (d.schema ? d.schema + "." : "") + d.table ;
   // docs/22 W4.1 (W4b follow-up): the gate names the address the server will really use — a
   // keyless table commits with whole-row WHEREs, and the user deserves that in the decision.
-  const pkColsC = (d_.data && d_.data.primaryKey) || [];
+  const pkColsC = (d.data && d.data.primaryKey) || [];
   const addressed = pkColsC.length
     ? "every row is addressed by its primary key"
     : "the table has no primary key — every row is addressed by all its columns";
@@ -277,20 +274,19 @@ async function dbCommit()                {
       "One transaction: " + addressed + ", and any failure rolls the whole batch back.")) {
     return; // cancelled — the buffer stays, nothing was sent
   }
-  const j = await apiJson                                                                      ("/api/db/" + encodeURIComponent(d_.conn ) + "/edits", {
+  const j = await apiJson                                                                      ("/api/db/" + encodeURIComponent(d.conn ) + "/edits", {
     method: "POST",
-    body: JSON.stringify({ table: d_.table, schema: d_.schema, edits: edits }),
+    body: JSON.stringify({ table: d.table, schema: d.schema, edits: edits }),
   });
   if (!j) return; // the server rolled back; the buffer stays exactly as it was
   const affected = (j.results || []).reduce((a        , r                       )         => { return a + (r.affected || 0); }, 0);
   toast("Committed " + edits.length + " change" + (edits.length > 1 ? "s" : "") + " · " + affected + " row" + (affected === 1 ? "" : "s") + " affected");
   // docs/22 W1.7: each update's read-back row lands on the page before the reload, so the
   // committed truth (truncated, defaulted, trigger-rewritten) is what the grid shows next.
-  const pkCols = (d_.data && d_.data.primaryKey) || [];
+  const pkCols = (d.data && d.data.primaryKey) || [];
   (j.results || []).forEach((r                                                      , i        )       => {
-    const d_ = d ;
-    if (r && r.row && edits[i] && edits[i].op === "update" && d_.data && d_.data.rows) {
-      dbApplyReadback(d_.data.rows, pkCols, edits[i].pk , r.row);
+    if (r && r.row && edits[i] && edits[i].op === "update" && d.data && d.data.rows) {
+      dbApplyReadback(d.data.rows, pkCols, edits[i].pk , r.row);
     }
   });
   dbDropEdits();
@@ -322,24 +318,23 @@ function dbWithExplain(sql        , mode        )         {
 /* --- query history (per-browser) ---------------------------------------------------------------- */
 
 function dbHistoryLoad()       {
-  const d = state.db ;
+  const d = dbView();
   try { d.history = JSON.parse(localStorage.getItem(DB_HISTORY_KEY)          ) || []; }
   catch (e) { d.history = []; }
 }
 
 function dbHistorySave()       {
-  try { localStorage.setItem(DB_HISTORY_KEY, JSON.stringify(state.db?.history.slice(0, DB_HISTORY_MAX))); }
+  try { localStorage.setItem(DB_HISTORY_KEY, JSON.stringify(dbView().history.slice(0, DB_HISTORY_MAX))); }
   catch (e) { /* full or blocked — history is a convenience, not state */ }
 }
 
 /** Record a successful run: newest first, a repeat of the current head is a no-op, and the
  *  list stays bounded. */
 function dbHistoryPush(sql        )       {
-  const d = state.db;
-  const d_ = d ;
-  if (d_.history[0] === sql) return;
-  d_.history.unshift(sql);
-  d_.history = d_.history.slice(0, DB_HISTORY_MAX);
+  const d = dbView();
+  if (d.history[0] === sql) return;
+  d.history.unshift(sql);
+  d.history = d.history.slice(0, DB_HISTORY_MAX);
   dbHistorySave();
   dbHistoryRender();
 }
@@ -351,14 +346,13 @@ function dbHistoryRender()       {
   const head = el("option", "", "History")                     ;
   head.value = "";
   sel.appendChild(head);
-  const d = state.db;
+  const d = dbView();
   // docs/22 W5.4: one dropdown, two groups — what ran (history) and what was starred
   // (favorites). The value carries the group: a plain index is history, "f"+i a favorite.
-  const d_ = d ;
-  if (d_.history && d_.history.length) {
+  if (d.history && d.history.length) {
     const og = el("optgroup")                       ;
     og.label = "History";
-    d_.history.forEach((sql        , i        )       => {
+    d.history.forEach((sql        , i        )       => {
       const o = el("option", "", sql.replace(/\s+/g, " ").slice(0, 80))                     ;
       o.value = String(i);
       o.title = sql;
@@ -366,10 +360,10 @@ function dbHistoryRender()       {
     });
     sel.appendChild(og);
   }
-  if (d_.favorites && d_.favorites.length) {
+  if (d.favorites && d.favorites.length) {
     const fg = el("optgroup")                       ;
     fg.label = "Favorites";
-    d_.favorites.forEach((sql        , i        )       => {
+    d.favorites.forEach((sql        , i        )       => {
       const o = el("option", "", dbFavoriteName(sql))                     ;
       o.value = "f" + i;
       o.title = sql;
@@ -388,13 +382,13 @@ const DB_FAV_KEY = "mcp_gateway_db_favorites";
 const DB_FAV_MAX = 50;
 
 function dbFavLoad()       {
-  const d = state.db ;
+  const d = dbView();
   try { d.favorites = JSON.parse(localStorage.getItem(DB_FAV_KEY)          ) || []; }
   catch (e) { d.favorites = []; }
 }
 
 function dbFavSave()       {
-  try { localStorage.setItem(DB_FAV_KEY, JSON.stringify(state.db?.favorites .slice(0, DB_FAV_MAX))); }
+  try { localStorage.setItem(DB_FAV_KEY, JSON.stringify(dbView().favorites.slice(0, DB_FAV_MAX))); }
   catch (e) { /* full or blocked — favorites are a convenience, not state */ }
 }
 
@@ -405,13 +399,12 @@ function dbFavoriteName(sql        )         {
 }
 
 function dbFavPush(sql        )       {
-  const d = state.db;
+  const d = dbView();
   const s = String(sql == null ? "" : sql);
   if (!s.trim()) { toast("Nothing to save \u2014 the console is empty", true); return; }
-  const d_ = d ;
-  d_.favorites = (d_.favorites || []).filter((f        )          => { return f !== s; });
-  d_.favorites.unshift(s);
-  d_.favorites = d_.favorites.slice(0, DB_FAV_MAX);
+  d.favorites = (d.favorites || []).filter((f        )          => { return f !== s; });
+  d.favorites.unshift(s);
+  d.favorites = d.favorites.slice(0, DB_FAV_MAX);
   dbFavSave();
   dbHistoryRender();
   toast("Saved to favorites");
@@ -587,34 +580,33 @@ function dbResultTabLabel(stmt        , rowCount                           )    
 const dbRunReq = dbReqGuard();
 
 async function dbRunSql(explain                 )                { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
-  const d = state.db;
-  const d_ = d ;
-  if (!d_.conn) { toast("No database connection", true); return; }
+  const d = dbView();
+  if (!d.conn) { toast("No database connection", true); return; }
   // docs/22 W1.8: the run covers the block the caret is in — one block per run keeps the
   // single-statement guard honest on multi-part scripts.
   const ta = $                     ("dbSql");
-  const block = dbSubqueryAt(d_.sqlText || "", ta ? ta.selectionStart : null).trim();
+  const block = dbSubqueryAt(d.sqlText || "", ta ? ta.selectionStart : null).trim();
   if (!block) { toast("Type a command first", true); return; }
   // The redis console: one command per run; the server-side guard still refuses what would
   // break the shared connection or the server. Writes (SET, DEL, EXPIRE…) run.
   if (dbIsRedis()) {
     const rtoken = dbRunReq.issue();
-    d_.sqlBusy = true;
+    d.sqlBusy = true;
     renderDbToolbar();
     renderDbGrid();
-    const cj = await apiJson                                                                                        ("/api/db/" + encodeURIComponent(d_.conn ) + "/command", {
+    const cj = await apiJson                                                                                        ("/api/db/" + encodeURIComponent(d.conn ) + "/command", {
       method: "POST",
       body: JSON.stringify({ command: block }),
     });
     if (!dbRunReq.accepts(rtoken)) return; // superseded: a newer run owns the pane and the flag
-    d_.sqlBusy = false;
-    if (!cj) { d_.sqlResult = null; d_.sqlResults = null; d_.sqlTab = 0; renderDbToolbar(); renderDbGrid(); return; }
+    d.sqlBusy = false;
+    if (!cj) { d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; renderDbToolbar(); renderDbGrid(); return; }
     dbClearSel(); // a new result grid starts unselected
-    d_.sqlResult = { columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false,
+    d.sqlResult = { columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false,
       elapsedMs: cj.elapsedMs,
       note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null ? cj.reply.length + " items" : undefined };
-    d_.sqlResults = [d_.sqlResult ]; // docs/22 W4.3: the tab strip reads the list — one reply, one tab
-    d_.sqlTab = 0;
+    d.sqlResults = [d.sqlResult ]; // docs/22 W4.3: the tab strip reads the list — one reply, one tab
+    d.sqlTab = 0;
     dbHistoryPush(block);
     renderDbToolbar();
     renderDbGrid();
@@ -628,9 +620,9 @@ async function dbRunSql(explain                 )                { // falsy runs
   const stmts = dbSplitStatements(block);
   if (!stmts.length) { toast("Type a command first", true); return; }
   const token = dbRunReq.issue();
-  d_.sqlBusy = true;
-  d_.sqlResult = null; // "Running…" paints in place of the previous grid
-  d_.sqlResults = null;
+  d.sqlBusy = true;
+  d.sqlResult = null; // "Running…" paints in place of the previous grid
+  d.sqlResults = null;
   renderDbToolbar();
   renderDbGrid();
   const results                 = [];
@@ -639,9 +631,9 @@ async function dbRunSql(explain                 )                { // falsy runs
     // The plan view runs EXPLAIN (or EXPLAIN ANALYZE) on each statement; dbWithExplain is
     // idempotent, so a query that already explains itself is sent as-is.
     const toSend = explain ? dbWithExplain(stmts[si], explain) : stmts[si];
-    const j = await apiJson              ("/api/db/" + encodeURIComponent(d_.conn ) + "/query", {
+    const j = await apiJson              ("/api/db/" + encodeURIComponent(d.conn ) + "/query", {
       method: "POST",
-      body: JSON.stringify({ sql: toSend, limit: d_.pageSize }),
+      body: JSON.stringify({ sql: toSend, limit: d.pageSize }),
     });
     if (!dbRunReq.accepts(token)) return; // superseded mid-batch: stop quietly, the newer run owns the pane
     if (!j) { ok = false; break; } // apiJson already showed the error; the answered tabs stay
@@ -649,11 +641,11 @@ async function dbRunSql(explain                 )                { // falsy runs
     j.tabLabel = dbResultTabLabel(toSend, j.rowCount);
     results.push(j);
   }
-  d_.sqlBusy = false;
+  d.sqlBusy = false;
   dbClearSel(); // a new result grid starts unselected
-  d_.sqlResults = results;
-  d_.sqlTab = 0;
-  d_.sqlResult = results.length ? results[0] : null;
+  d.sqlResults = results;
+  d.sqlTab = 0;
+  d.sqlResult = results.length ? results[0] : null;
   // The plan of a query is not a query — only whole, real runs are history.
   if (ok && !explain) dbHistoryPush(block);
   renderDbToolbar();

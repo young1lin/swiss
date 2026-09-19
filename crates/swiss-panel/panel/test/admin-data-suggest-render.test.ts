@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
 
 /* DOM-stub technique as admin-data-redis-celledit.test.ts: the suggest list renders through
    util's el()/$, so the globals must exist before the module graph evaluates. fetch is
@@ -56,15 +57,14 @@ Object.assign(globalThis, {
 const mod = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-suggest.ts")).href
 ) as { dbSuggestOnInput: () => void; dbSuggestHide: () => void };
-const util = await import(
-  pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "util.ts")).href
-) as { state: { db: Record<string, any> } };
 
 describe("the suggest list render (docs/22 W3.1)", () => {
   it("a reply draws its rows — not an empty positioned box", async () => {
     // Regression, caught live: render called dbSuggestHide() first, which clears the item
     // list, then drew the list — every box reached the screen with zero rows.
-    util.state.db = { conn: "pg", conns: [{ name: "pg", dialect: "pg" }], tables: ["users"] };
+    unmountDbView();
+    mountDbView();
+    Object.assign(dbView(), { conn: "pg", conns: [{ name: "pg", dialect: "pg" }], tables: ["users"] });
     const wrap = el();
     byId.dbSuggest = undefined as unknown as Stub;
     const ta: any = el("textarea");

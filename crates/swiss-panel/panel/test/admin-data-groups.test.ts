@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
 
 /* The Data sidebar dropdown's grouping (docs/20 G5): every /api/db row carries the group
    its connection lists under, and the dropdown folds its options into one optgroup per
@@ -75,7 +76,12 @@ beforeAll(async () => {
 /** Render the given connection rows through the real renderDbSide and hand back the select. */
 function render(conns: unknown[]): FakeNode {
   sel = node("select");
-  state.db = { conns, conn: "", tables: [], redis: null } as unknown as Record<string, unknown>;
+  // The record is the view's own now (docs/37 R4). Replacing it wholesale is no longer a
+  // seam a test can reach, so each render starts from the fresh literal — which is what
+  // assigning over the whole object used to buy — and then names what it cares about.
+  unmountDbView();
+  mountDbView();
+  Object.assign(dbView(), { conns, conn: "", tables: [], redis: null });
   dataView.renderDbSide();
   return sel;
 }

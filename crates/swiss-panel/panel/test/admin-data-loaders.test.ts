@@ -17,6 +17,8 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbView } from "../src/db-state.js";
+import { dbCol, dbConn } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), plus a fetch stub
    whose responses the TEST resolves by hand — that is the only way to make a slow response
@@ -89,9 +91,6 @@ const edit = await import(pathToFileURL(join(here, "data-edit.js")).href) as {
 const sql = await import(pathToFileURL(join(here, "data-sql.js")).href) as {
   dbCommit: () => Promise<void>;
 };
-const util = await import(pathToFileURL(join(here, "util.js")).href) as {
-  state: { db: Record<string, any> };
-};
 
 /** Let every parked promise chain (apiJson, renders) run to its next await. */
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -107,8 +106,8 @@ const fail = async (body: any, index = 0) => {
 };
 
 function freshDb(): Record<string, any> {
-  const d = util.state.db;
-  d.conns = [{ name: "c", dialect: "mysql" }, { name: "r", dialect: "redis" }];
+  const d = dbView();
+  d.conns = [dbConn("c", "mysql"), dbConn("r", "redis")];
   d.conn = "c"; d.table = null; d.schema = null; d.data = null; d.detail = null;
   d.filters = []; d.offset = 0; d.pageSize = 50; d.order = null; d.dir = "asc";
   d.tab = "data"; d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; d.sqlBusy = false;
@@ -125,8 +124,8 @@ describe("db loader response races (docs/22 closeout audit)", () => {
     const p1 = grid.dbLoadData(true);
     d.table = "t2"; // the user opens another table while t1's page is still in flight
     const p2 = grid.dbLoadData(true);
-    await answer({ table: "t2", schema: "s2", columns: [{ name: "id" }], rows: [{ id: 2 }], total: 1, primaryKey: ["id"], editable: false }, 1); // the newer request answers first
-    await answer({ table: "t1", schema: "s1", columns: [{ name: "id" }], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false }); // the stale one lands last
+    await answer({ table: "t2", schema: "s2", columns: [dbCol("id")], rows: [{ id: 2 }], total: 1, primaryKey: ["id"], editable: false }, 1); // the newer request answers first
+    await answer({ table: "t1", schema: "s1", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false }); // the stale one lands last
     await Promise.all([p1, p2]);
     expect(d.data.table, "the newer table's page stays").toBe("t2");
     expect(d.schema, "the old table never rewrites d.schema").toBe("s2");
@@ -155,11 +154,11 @@ describe("the grid's pager after the set shrinks under it (docs/22 closeout audi
     d.offset = 50; // page 2 of a 50-row set that has since shrunk to 1 row
     const before = requests.length;
     const p = grid.dbLoadData(true);
-    await answer({ table: "t", schema: null, columns: [{ name: "id" }], rows: [], total: 1, primaryKey: ["id"], editable: false });
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [], total: 1, primaryKey: ["id"], editable: false });
     await p;
     expect(requests.length - before, "the loader re-fetched the previous page").toBe(2);
     expect(d.offset).toBe(0);
-    await answer({ table: "t", schema: null, columns: [{ name: "id" }], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false });
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false });
     expect(d.data.rows.length, "the backed-off page shows its row").toBe(1);
   });
 
@@ -168,7 +167,7 @@ describe("the grid's pager after the set shrinks under it (docs/22 closeout audi
     d.offset = 0;
     const before = requests.length;
     const p = grid.dbLoadData(true);
-    await answer({ table: "t", schema: null, columns: [{ name: "id" }], rows: [], total: 0, primaryKey: ["id"], editable: false });
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [], total: 0, primaryKey: ["id"], editable: false });
     await p;
     expect(requests.length - before, "no second fetch for a genuinely empty first page").toBe(1);
     expect(d.data.rows).toEqual([]);
@@ -221,7 +220,7 @@ describe("DROP leaves no trace of the table on the right pane (docs/22 closeout 
     // dropped table's page stayed on screen with no live table behind it.
     const d = freshDb();
     d.table = "t"; d.schema = "s";
-    d.data = { table: "t", schema: "s", columns: [{ name: "id" }], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false };
+    d.data = { table: "t", schema: "s", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false };
     d.sqlResult = { columns: ["reply"], rows: [{ reply: "x" }], rowCount: 1 };
     // A wrap that records its innerHTML paint: the no-table empty state is an innerHTML
     // ASSIGNMENT, so a children-walk can never see it.
@@ -254,7 +253,7 @@ describe("Commit keeps the grid where the user was looking (docs/22 closeout B4)
     // pane snaps to the top and the row the user just committed scrolls out of sight.
     const d = freshDb();
     d.table = "t";
-    d.data = { table: "t", columns: [{ name: "id" }], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true };
+    d.data = { table: "t", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true };
     d.updates = { "[1]": { pk: { id: 1 }, changes: { id: 2 } } };
     // A wrap that behaves like the real one: an innerHTML repaint RESETS scroll to the top.
     let painted = "";
@@ -272,7 +271,7 @@ describe("Commit keeps the grid where the user was looking (docs/22 closeout B4)
     const p = sql.dbCommit();
     await tick();
     await answer({ results: [{ affected: 1 }] }); // the edits transaction
-    await answer({ rows: [{ id: 2 }], total: 1, primaryKey: ["id"], editable: true, columns: [{ name: "id" }] }); // the reload
+    await answer({ rows: [{ id: 2 }], total: 1, primaryKey: ["id"], editable: true, columns: [dbCol("id")] }); // the reload
     await p;
     expect(wrap.scrollTop, "the pane is back where the user was").toBe(220);
   });
