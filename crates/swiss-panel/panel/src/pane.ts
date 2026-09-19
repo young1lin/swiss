@@ -194,18 +194,20 @@ function paneChromeClick(ev: MouseEvent): boolean {
     return true;
   }
   const d = mcpDetail();
-  if (t.id === "menuBtn" && d) {
+  // Buttons are matched by closest(), not t.id: the button's own glyph (svg/use) is what a real
+  // pointer click lands on first, and the icon element does not carry the id.
+  if (t.closest("#menuBtn") && d) {
     ev.stopPropagation();
     toggleMenu(d, rowOf(d.name) || { name: d.name, state: "unknown", type: "?", source: "?", lifecycle: "stopped" });
     return true;
   }
-  if (t.id === "primaryBtn" && d) {
+  if (t.closest("#primaryBtn") && d) {
     const row = rowOf(d.name);
     const started = row ? row.lifecycle === "started" : false;
     void act(d.name, started ? "stop" : "start");
     return true;
   }
-  if (t.id === "oauthBtn" && d) { void authorizeMcp(d.name); return true; }
+  if (t.closest("#oauthBtn") && d) { void authorizeMcp(d.name); return true; }
   const seg = t.closest<HTMLElement>(".seg button");
   if (seg) { showTab(seg.dataset.tab!); return true; }
   const emptyAction = t.closest<HTMLElement>("[data-empty-action]");

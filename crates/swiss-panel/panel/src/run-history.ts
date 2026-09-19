@@ -625,8 +625,9 @@ function paneTabClick(ev: MouseEvent): void {
   // Logs tab
   // docs/32 B4: Clear lives behind the toolbar's ellipsis menu — a destructive action does not
   // get a standing button in the filter row. The house popupMenu (menu.js) carries the item.
-  if (t.id === "clMenu") {
-    const clMenu = t as HTMLElement;
+  const clMenuBtn = t.closest<HTMLElement>("#clMenu");
+  if (clMenuBtn) {
+    const clMenu = clMenuBtn;
     ev.stopPropagation();
     // The house toggle idiom (pane.js toggleMenu): a second click dismisses instead of reopening.
     if (menuIsOpen()) { closeMenu(); return; }
@@ -668,11 +669,15 @@ function paneTabClick(ev: MouseEvent): void {
 function paneTabChange(ev: Event): void {
   const t = targetEl(ev);
   if (!t) return;
-  if (t.id === "e-type") { changeEditType((t as unknown as HTMLSelectElement).value); return; }
-  if (t.id === "r-tool") {
+  // Selects climb too (docs/37 R5): a change event's target is the select itself today, but
+  // matching by closest keeps the dispatcher's one idiom instead of two.
+  const eType = t.closest<HTMLSelectElement>("#e-type");
+  if (eType) { changeEditType(eType.value); return; }
+  const rTool = t.closest<HTMLSelectElement>("#r-tool");
+  if (rTool) {
     const d = mcpDetail();
     if (!d) return;
-    d.run.tool = (t as unknown as HTMLSelectElement).value;
+    d.run.tool = rTool.value;
     d.run.result = null;
     renderPane();
   }

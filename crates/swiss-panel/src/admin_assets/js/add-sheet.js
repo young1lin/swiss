@@ -15,12 +15,12 @@
  */
 
                                                                
-import { $, DEFAULT_GROUP, apiJson, esc, toast } from "./util.js";
-import { fill } from "./h.js";
+import { $, DEFAULT_GROUP, apiJson, toast } from "./util.js";
+import { fill, h } from "./h.js";
 import { openDetail, runConnTest } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsNode, readFields, translateOauth, translatePg } from "./fields.js";
 import { loadList } from "./polling.js";
-import { addTitle, groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
+import { addTitle, groupFieldNode, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { newGroup } from "./sidebar.js";
 import { addGroupTarget, setAddGroupTarget } from "./ui-state.js";
 import { mcpGroups, selectedMcp, setSelectedMcp } from "./mcp-state.js";
@@ -35,28 +35,32 @@ function openSheet(group               )       {
   const initial = group || resolveDefaultGroup(names, lastGroup("mcps"));
   setAddGroupTarget(initial);
   const types = Object.keys(TYPE_FIELDS);
-  const opts = types.map((t) => { return '<option value="' + t + '">' + esc(TYPE_LABELS[t] || t) + "</option>"; }).join("");
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Add an MCP">' +
-      '<div class="sheet-head"><h2 id="a-title">' + esc(addTitle("Add an", "MCP", initial)) + "</h2></div>" +
-      '<div class="sheet-body">' +
-        '<div class="two">' +
-          '<label class="field"><span>Name</span><input id="a-name" placeholder="git-mcp" autocomplete="off"></label>' +
-          '<label class="field"><span>Type</span><select id="a-type">' + opts + "</select></label>" +
-        "</div>" +
-        groupFieldHtml(names, initial) +
-        '<div id="a-fields"></div>' +
-        '<label class="check"><input type="checkbox" id="a-start" checked>Start it now</label>' +
-        '<div class="hint" id="a-test-out" hidden></div>' +
-      "</div>" +
-      '<div class="sheet-foot"><button class="btn" id="a-import">Import .mcp.json</button>' +
-        '<input id="a-file" type="file" accept=".json,application/json" hidden>' +
-        '<span class="grow"></span>' +
-        '<button class="btn" id="a-cancel">Cancel</button>' +
-        '<button class="btn" id="a-test" hidden>Test connection</button>' +
-        '<button class="btn primary" id="a-save">Add</button></div>' +
-    "</div>";
+  // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Add an MCP" } },
+      h("div", { class: "sheet-head" }, h("h2", { id: "a-title" }, addTitle("Add an", "MCP", initial))),
+      h("div", { class: "sheet-body" },
+        h("div", { class: "two" },
+          h("label", { class: "field" },
+            h("span", null, "Name"),
+            h("input", { id: "a-name", placeholder: "git-mcp", autocomplete: "off" })),
+          h("label", { class: "field" },
+            h("span", null, "Type"),
+            h("select", { id: "a-type" }, types.map((t) => {
+              return h("option", { value: t }, TYPE_LABELS[t] || t);
+            })))),
+        groupFieldNode(names, initial),
+        h("div", { id: "a-fields" }),
+        h("label", { class: "check" }, h("input", { type: "checkbox", id: "a-start", checked: true }), "Start it now"),
+        h("div", { class: "hint", id: "a-test-out", hidden: true })),
+      h("div", { class: "sheet-foot" },
+        h("button", { class: "btn", id: "a-import" }, "Import .mcp.json"),
+        h("input", { id: "a-file", type: "file", accept: ".json,application/json", hidden: true }),
+        h("span", { class: "grow" }),
+        h("button", { class: "btn", id: "a-cancel" }, "Cancel"),
+        h("button", { class: "btn", id: "a-test", hidden: true }, "Test connection"),
+        h("button", { class: "btn primary", id: "a-save" }, "Add"))));
   const paint = ()       => {
     fill($("a-fields"), fieldsNode($                   ("a-type").value, {}, "a-"));
     // The test button exists only for the types that have something to test.
@@ -85,17 +89,19 @@ function closeSheet() { $("sheet").hidden = true; $("sheet").innerHTML = ""; }
  *  what was typed instead of dismissing the work. */
 function openGroupSheet(def               , submit                                              )       {
   const editing = !!def;
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Rename group" : "New group") + '">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Rename group" : "New group") + "</h2></div>" +
-      '<div class="sheet-body">' +
-        '<label class="field"><span>Name</span><input id="g-name" value="' + esc(def || "") + '" placeholder="prod" autocomplete="off"></label>' +
-      "</div>" +
-      '<div class="sheet-foot"><span class="grow"></span>' +
-        '<button class="btn" id="g-cancel">Cancel</button>' +
-        '<button class="btn primary" id="g-save">' + (editing ? "Rename" : "Create") + "</button></div>" +
-    "</div>";
+  // The house sheet idiom: visible BEFORE the body is painted.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: editing ? "Rename group" : "New group" } },
+      h("div", { class: "sheet-head" }, h("h2", null, editing ? "Rename group" : "New group")),
+      h("div", { class: "sheet-body" },
+        h("label", { class: "field" },
+          h("span", null, "Name"),
+          h("input", { id: "g-name", value: def || "", placeholder: "prod", autocomplete: "off" }))),
+      h("div", { class: "sheet-foot" },
+        h("span", { class: "grow" }),
+        h("button", { class: "btn", id: "g-cancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "g-save" }, editing ? "Rename" : "Create"))));
   const save = async () => {
     const name = $                  ("g-name").value.trim();
     if (!name) { toast("Name is required", true); return; }

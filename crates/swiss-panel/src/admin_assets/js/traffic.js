@@ -15,7 +15,9 @@
  */
 
                                                                                                          
-import { $, apiJson, esc, icon, whenLabel } from "./util.js";
+import { $, apiJson, iconNode, targetEl, whenLabel } from "./util.js";
+import { fill, frag, h } from "./h.js";
+                                     
 import { fmtJson } from "./logs.js";
 import { currentView } from "./ui-state.js";
 
@@ -112,33 +114,35 @@ function trafficPageStep(delta        )       {
   traffic.page = next;
   trafficReload(false);
 }
-function trafficRow(e               )         {
+function trafficRowNode(e               )         {
   const meta = (e.clientName ? e.clientName + (e.clientVersion ? " " + e.clientVersion : "") : "—") +
     "  ·  /" + e.mcp + "  ·  " + (e.ok ? "ok" : "err") + "  ·  " + e.ms + "ms  ·  " + whenLabel(e.at);
   // Collapsed: method + a one-line params preview + meta. Expanded (chevron): the raw request JSON.
-  return '<div class="call' + (traffic.open[e.seq] ? " open" : "") + '" data-tseq="' + e.seq + '">' +
-    '<div class="call-sum" data-tog="' + e.seq + '" role="button" tabindex="0">' +
-      '<span class="chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
-      '<span class="dot ' + (e.ok ? "up" : "down") + '"></span>' +
-      '<span class="call-tool">' + esc(e.method) + "</span>" +
-      '<span class="call-arg">' + esc(e.params || "") + "</span>" +
-      '<span class="call-meta">' + esc(meta) + "</span>" +
-    "</div>" +
-    // Payload deliberately absent until the row is opened — trafficBodyHtml renders whatever
+  return h("div", { class: "call" + (traffic.open[e.seq] ? " open" : ""), data: { tseq: e.seq } },
+    h("div", { class: "call-sum", data: { tog: e.seq }, role: "button", tabIndex: 0 },
+      h("span", { class: "chev", aria: { hidden: "true" } }, iconNode("chevron-right")),
+      h("span", { class: "dot " + (e.ok ? "up" : "down") }),
+      h("span", { class: "call-tool" }, e.method),
+      h("span", { class: "call-arg" }, e.params || ""),
+      h("span", { class: "call-meta" }, meta)),
+    // Payload deliberately absent until the row is opened — trafficBodyNode renders whatever
     // toggleTraffic has fetched. Building 200 hidden <pre> blocks (two fmtJson round-trips each) was
     // most of what this view cost, and none of it was on screen.
-    '<div class="call-body">' + trafficBodyHtml(e) + "</div>" +
-  "</div>";
+    h("div", { class: "call-body" }, trafficBodyNode(e)));
 }
 
-function trafficBodyHtml(e                 )         {
+function trafficBodyNode(e                 )         {
   const full = traffic.full[e.seq];
-  if (!full) return '<div class="note"><span class="spin"></span> Loading…</div>';
-  if (full.gone) return '<div class="note">This interaction has rolled out of the buffer.</div>';
-  return '<div class="call-lbl">Request</div>' +
-    '<pre class="logs">' + esc(fmtJson(full.body || "")) + "</pre>" +
-    '<div class="call-lbl">Response' + (full.response ? "" : ' <span style="color:var(--text-3)">— none —</span>') + "</div>" +
-    '<pre class="logs">' + (full.response ? esc(fmtJson(full.response)) : '<span style="color:var(--text-3)">no reply captured for this entry</span>') + "</pre>";
+  if (!full) return h("div", { class: "note" }, h("span", { class: "spin" }), " Loading…");
+  if (full.gone) return h("div", { class: "note" }, "This interaction has rolled out of the buffer.");
+  return frag(
+    h("div", { class: "call-lbl" }, "Request"),
+    h("pre", { class: "logs" }, fmtJson(full.body || "")),
+    h("div", { class: "call-lbl" }, "Response",
+      full.response ? null : h("span", { style: "color:var(--text-3)" }, " — none —")),
+    h("pre", { class: "logs" },
+      full.response ? fmtJson(full.response)
+        : h("span", { style: "color:var(--text-3)" }, "no reply captured for this entry")));
 }
 
 /** Fetch one interaction's raw request and reply, then paint it into the already-open row. */
@@ -148,7 +152,7 @@ async function loadTrafficBody(seq        )                {
   // A 404 means the ring rolled past it while the row sat there; say so rather than spin forever.
   traffic.full[seq] = j || { gone: true }                  ;
   const node = document.querySelector('#pane .call[data-tseq="' + seq + '"] .call-body');
-  if (node) node.innerHTML = trafficBodyHtml({ seq: seq });
+  if (node) fill(node               , trafficBodyNode({ seq: seq }));
 }
 /** Expand/collapse one row's raw JSON in place — a poll must not close what you just opened. */
 function toggleTraffic(seq        )       {
@@ -166,109 +170,126 @@ function renderTraffic()       {
   const sel = traffic.client;
 
   // Controls: action/everything toggle + clear. This whole pane is the Traffic view's content.
-  const ctrl = '<div class="sec-head"><span class="sec-cap">Traffic</span>' +
-    '<span style="display:flex;gap:var(--s2);align-items:center">' +
-      '<div class="seg" id="trFilter">' +
-        '<button data-filter="actions" aria-selected="' + (traffic.filter !== "all") + '">Actions</button>' +
-        '<button data-filter="all" aria-selected="' + (traffic.filter === "all") + '">Everything</button>' +
-      "</div>" +
-      '<button class="btn" id="trClear"' + (all ? "" : " disabled") + ">" + (sel ? "Clear client" : "Clear") + "</button>" +
-    "</span></div>";
+  const ctrl = h("div", { class: "sec-head" },
+    h("span", { class: "sec-cap" }, "Traffic"),
+    h("span", { style: "display:flex;gap:var(--s2);align-items:center" },
+      h("div", { class: "seg", id: "trFilter" },
+        h("button", { data: { filter: "actions" }, aria: { selected: traffic.filter !== "all" ? "true" : "false" } }, "Actions"),
+        h("button", { data: { filter: "all" }, aria: { selected: traffic.filter === "all" ? "true" : "false" } }, "Everything")),
+      h("button", { class: "btn", id: "trClear", disabled: !all }, sel ? "Clear client" : "Clear")));
 
   // Clients — who has been talking to the gateway, folded from recorded traffic (stateless: no live
   // connection to query). Click a row to filter the activity log to that client.
-  let clientBlock;
+  let clientBlock        ;
   if (clients.length) {
     // One line per client (docs/18 V4): name, token, paths, last seen, request count — a
     // five-column grid, not a card-per-client with two lines of prose.
-    const head = '<div class="cli-head"><span>Client</span><span>Token</span><span>Paths</span>' +
-      '<span>Last</span><span class="cli-n">Requests</span><span></span></div>';
+    const head = h("div", { class: "cli-head" },
+      h("span", null, "Client"), h("span", null, "Token"), h("span", null, "Paths"),
+      h("span", null, "Last"), h("span", { class: "cli-n" }, "Requests"), h("span"));
     const rows = clients.map((c) => {
       const isSel = sel === c.key;
       const mcps = (c.mcps || []).map((m) => { return "/mcp/" + m; }).join(" ");
       const tokens = c.tokens || [];
       const tokenLine = tokens.length ? tokens.join(", ") : "no token";
-      return '<div class="cli-row' + (isSel ? " sel" : "") + '" data-ckey="' + esc(c.key) + '" role="button" tabindex="0">' +
-        '<span class="cli-name"><code>' + esc(c.label) + "</code></span>" +
-        '<span class="cli-token">' + esc(tokenLine) + "</span>" +
-        '<span class="cli-paths">' + esc(mcps) + "</span>" +
-        '<span class="cli-last">' + esc(ago(c.lastAt)) + "</span>" +
-        '<span class="cli-n">' + c.count.toLocaleString() + "</span>" +
-        (isSel
-          ? '<button class="btn ghost icon" data-cclr title="Stop filtering">' + icon("x") + "</button>"
-          : '<span class="cli-x"></span>') +
-      "</div>";
-    }).join("");
-    clientBlock = '<div class="cap" style="padding-top:var(--s5)">Clients · ' + clients.length + "</div>" +
-      '<div class="group">' + head + rows + "</div>";
+      return h("div", { class: "cli-row" + (isSel ? " sel" : ""), data: { ckey: c.key }, role: "button", tabIndex: 0 },
+        h("span", { class: "cli-name" }, h("code", null, c.label)),
+        h("span", { class: "cli-token" }, tokenLine),
+        h("span", { class: "cli-paths" }, mcps),
+        h("span", { class: "cli-last" }, ago(c.lastAt)),
+        h("span", { class: "cli-n" }, c.count.toLocaleString()),
+        isSel
+          ? h("button", { class: "btn ghost icon", data: { cclr: "" }, title: "Stop filtering" }, iconNode("x"))
+          : h("span", { class: "cli-x" }));
+    });
+    clientBlock = frag(
+      h("div", { class: "cap", style: "padding-top:var(--s5)" }, "Clients · " + clients.length),
+      h("div", { class: "group" }, head, rows));
   } else {
-    clientBlock = '<div class="cap" style="padding-top:var(--s5)">Clients</div>' +
-      '<div class="group"><div class="row"><span class="rowmsg">No clients yet. When a client sends its first request (initialize, tools/list, …) it appears here with the MCPs it is using.</span></div></div>';
+    clientBlock = frag(
+      h("div", { class: "cap", style: "padding-top:var(--s5)" }, "Clients"),
+      h("div", { class: "group" }, h("div", { class: "row" },
+        h("span", { class: "rowmsg" }, "No clients yet. When a client sends its first request (initialize, tools/list, …) it appears here with the MCPs it is using."))));
   }
 
   // Activity log — de-noised by the toggle, narrowed by a selected client.
   const actCap = "Activity · " + (traffic.filter === "all" ? "everything" : "actions only");
   const countTxt = total.toLocaleString() + (total !== all ? " of " + all.toLocaleString() : "") + " interactions";
-  const actHead = '<div class="sec-head" style="padding-top:var(--s5)"><span class="sec-cap">' + esc(actCap) + "</span>" +
-    '<span class="hint">' + esc(countTxt) + "</span></div>";
-  let body;
+  const actHead = h("div", { class: "sec-head", style: "padding-top:var(--s5)" },
+    h("span", { class: "sec-cap" }, actCap),
+    h("span", { class: "hint" }, countTxt));
+  let body        ;
   if (!all) {
-    body = '<div class="group"><div class="row"><span class="rowmsg">No interactions yet. Every JSON-RPC request a client sends — initialize, tools/list, resources/read, tools/call — is recorded here; the clients above are summarized from it.</span></div></div>';
+    body = h("div", { class: "group" }, h("div", { class: "row" },
+      h("span", { class: "rowmsg" }, "No interactions yet. Every JSON-RPC request a client sends — initialize, tools/list, resources/read, tools/call — is recorded here; the clients above are summarized from it.")));
   } else if (!entries.length) {
     const hint = traffic.page
       ? "Nothing on this page."
       : sel
         ? "No activity for this client" + (traffic.filter !== "all" ? " in actions-only view." : ".")
         : (traffic.filter !== "all" ? "No actions yet — switch to Everything to see the protocol handshake." : "No interactions.");
-    body = '<div class="group"><div class="row"><span class="rowmsg">' + esc(hint) + "</span></div></div>";
+    body = h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg" }, hint)));
   } else {
-    body = '<div class="group">' + entries.map(trafficRow).join("") + "</div>";
+    body = h("div", { class: "group" }, entries.map(trafficRowNode));
   }
 
   // Newer/Older, worded and shaped exactly like the tool-call log's pager — same direction, so
   // "Newer" always means toward the top of a newest-first list in both views.
-  const pager = (traffic.page > 0 || traffic.more)
-    ? '<div class="pager"><button class="btn" id="trPrev"' + (traffic.page > 0 ? "" : " disabled") + ">Newer</button>" +
-      "<span>Page " + (traffic.page + 1) + "</span>" +
-      '<button class="btn" id="trNext"' + (traffic.more ? "" : " disabled") + ">Older</button></div>"
-    : "";
+  const pager         = (traffic.page > 0 || traffic.more)
+    ? h("div", { class: "pager" },
+        h("button", { class: "btn", id: "trPrev", disabled: traffic.page <= 0 }, "Newer"),
+        h("span", null, "Page " + (traffic.page + 1)),
+        h("button", { class: "btn", id: "trNext", disabled: !traffic.more }, "Older"))
+    : null;
 
   // Wrapped in .wide: an interaction row is method + params + client + timing on one line, which the
-  // standard measure cannot hold. Wiring below still queries from #pane, so the wrapper is invisible.
-  $("pane").innerHTML = '<div class="wide">' + ctrl + clientBlock + actHead + body + pager + "</div>";
+  // standard measure cannot hold. The wiring below queries nothing: ONE delegated click and ONE
+  // delegated keydown on #pane (docs/37 R5) answer every control, rows and pager included, and a
+  // repaint re-assigns the same properties instead of re-attaching per-row handlers.
+  fill($("pane"), h("div", { class: "wide" }, ctrl, clientBlock, actHead, body, pager));
 
   // Every control below re-queries rather than re-filtering in place: the server owns the filter now,
   // so a page of "actions only for claude-code" can only come from asking for exactly that.
-  $("trFilter").querySelectorAll("button").forEach((b) => {
-    b.onclick = () => { traffic.filter = b.dataset.filter                     ; trafficReload(true); };
-  });
-  $("pane").querySelectorAll             ("[data-ckey]").forEach((row) => {
-    row.onclick = () => {
-      traffic.client = traffic.client === row.dataset.ckey ? null : row.dataset.ckey          ;
+  const pane = $("pane");
+  pane.onclick = (ev            )       => {
+    const t = targetEl(ev);
+    if (!t) return;
+    const fbtn = t.closest             ("[data-filter]");
+    if (fbtn) { traffic.filter = fbtn.dataset.filter                     ; trafficReload(true); return; }
+    if (t.closest("[data-cclr]")) { ev.stopPropagation(); traffic.client = null; trafficReload(true); return; }
+    const crow = t.closest             ("[data-ckey]");
+    if (crow) {
+      traffic.client = traffic.client === crow.dataset.ckey ? null : crow.dataset.ckey          ;
       trafficReload(true);
-    };
-    row.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); row.click(); } };
-  });
-  const tp = $("trPrev"); if (tp) tp.onclick = () => { trafficPageStep(-1); };
-  const tn = $("trNext"); if (tn) tn.onclick = () => { trafficPageStep(1); };
-  $("pane").querySelectorAll             ("[data-tog]").forEach((s) => {
-    s.onclick = () => { toggleTraffic(s.dataset.tog                     ); };
-    s.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleTraffic(s.dataset.tog                     ); } };
-  });
-  const cclr = $("pane").querySelector             ("[data-cclr]");
-  if (cclr) cclr.onclick = (ev) => { ev.stopPropagation(); traffic.client = null; trafficReload(true); };
-  const clr = $("trClear");
-  if (clr) clr.onclick = async () => {
-    // Clear the selected client only when one is filtered ("Clear client"); otherwise clear all.
-    const sel = traffic.client;
-    const url = "/api/traffic" + (sel ? "?client=" + encodeURIComponent(sel) : "");
-    const j = await apiJson(url, { method: "DELETE" });
-    if (!j) return;
-    traffic.open = {};
-    traffic.full = {};
-    traffic.client = null; // the filtered client is gone (or we cleared all); drop the filter
-    trafficReload(true);
+      return;
+    }
+    if (t.id === "trPrev") { trafficPageStep(-1); return; }
+    if (t.id === "trNext") { trafficPageStep(1); return; }
+    const tog = t.closest             ("[data-tog]");
+    if (tog) { toggleTraffic(tog.dataset.tog                     ); return; }
+    if (t.id === "trClear") { void clearTraffic(); }
+  };
+  pane.onkeydown = (ev               )       => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    const t = targetEl(ev);
+    if (!t) return;
+    const crow = t.closest             ("[data-ckey]");
+    if (crow) { ev.preventDefault(); crow.click(); return; }
+    const tog = t.closest             ("[data-tog]");
+    if (tog) { ev.preventDefault(); toggleTraffic(tog.dataset.tog                     ); }
   };
 }
 
-export { ago, loadTraffic, loadTrafficBody, renderTraffic, toggleTraffic, trafficBodyHtml, trafficPageStep, trafficReload, trafficRow };
+/** Clear the selected client only when one is filtered ("Clear client"); otherwise clear all. */
+async function clearTraffic()                {
+  const sel = traffic.client;
+  const url = "/api/traffic" + (sel ? "?client=" + encodeURIComponent(sel) : "");
+  const j = await apiJson(url, { method: "DELETE" });
+  if (!j) return;
+  traffic.open = {};
+  traffic.full = {};
+  traffic.client = null; // the filtered client is gone (or we cleared all); drop the filter
+  trafficReload(true);
+}
+
+export { ago, loadTraffic, loadTrafficBody, renderTraffic, toggleTraffic, trafficBodyNode, trafficPageStep, trafficReload, trafficRowNode };

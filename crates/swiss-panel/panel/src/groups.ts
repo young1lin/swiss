@@ -51,6 +51,7 @@
 import type { ApiGroupAssignResponse, ApiGroupsOrderResponse, ApiGroupsRenameResponse, ApiGroupsSetResponse } from "./types/api.js";
 import type { GroupCfg, GroupSlice, MenuItem } from "./types/dom.js";
 import { apiJson, el, esc, icon, toast } from "./util.js";
+import { h } from "./h.js";
 import { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resolveDefaultGroup, slice } from "./group-logic.js";
 import { openGroupSheet } from "./add-sheet.js";
 import { popupMenu } from "./menu.js";
@@ -122,7 +123,17 @@ function newGroupFlow(scope: string, names: string[], reload: () => Promise<unkn
 }
 /** The Group field of a create sheet: every live group, `sel` selected. The select - not a
  *  hidden promise made by whichever + opened the sheet - is where the row lands, so a value
- *  the user changed wins. #g-sel is the one id every create sheet shares. */
+ *  the user changed wins. #g-sel is the one id every create sheet shares.
+ *
+ *  groupFieldNode is the builder (docs/37 R5); the string twin stays for the views not yet
+ *  converted (jobs, remote, tunnels) and retires with them. */
+function groupFieldNode(names: string[], sel?: string | null): HTMLElement {
+  return h("label", { class: "field" },
+    h("span", null, "Group"),
+    h("select", { id: "g-sel" }, names.map((n) => {
+      return h("option", { value: n, selected: n === sel }, n);
+    })));
+}
 function groupFieldHtml(names: string[], sel?: string | null): string {
   const opts = names.map((n) => {
     return '<option value="' + esc(n) + '"' + (n === sel ? " selected" : "") + ">" + esc(n) + "</option>";
@@ -466,7 +477,7 @@ function deleteFlow<Row>(cfg: GroupCfg<Row>, name: string): void {
 }
 
 export {
-  addTitle, assignMember, deleteConfirmMsg, emptyLineText, groupFieldHtml, groupOf, lastGroup,
+  addTitle, assignMember, deleteConfirmMsg, emptyLineText, groupFieldHtml, groupFieldNode, groupOf, lastGroup,
   lastGroupKey, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, renameGroupApi,
   resolveDefaultGroup, saveCollapsed, saveGroupNames, saveOrder, slice,
 };

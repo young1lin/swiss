@@ -76,7 +76,12 @@ class FakeNode extends NodeStub {
   querySelector() { return null; }
   querySelectorAll() { return []; }
   // targetEl() ducks on closest (docs/37 M3): without it the delegated pane click no-ops.
-  closest(): FakeNode | null { return null; }
+  // The dispatchers climb to the BUTTON (t.closest("#oauthBtn")) because a real pointer click
+  // lands on the glyph, not the button - so self-match by id is the part of closest() this
+  // suite's clicks exercise. The suite's FakeNode tree carries no parent links.
+  closest(sel: string): FakeNode | null {
+    return sel.charAt(0) === "#" && this.id === sel.slice(1) ? this : null;
+  }
   contains() { return false; }
   appendChild(n: FakeNode) { this.children.push(n); return n; }
   append(...nodes: FakeNode[]) { nodes.forEach((n) => { this.appendChild(n); }); }
