@@ -34,10 +34,11 @@
    ================================================================================================ */
                                                                                                   
                                                             
-import { $, TOKEN_ID_KEY, api, apiJson, emptyHtml, esc, icon, state, targetEl } from "../util.js";
+import { $, TOKEN_ID_KEY, api, apiJson, emptyHtml, esc, icon, targetEl } from "../util.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
+import { mcpRows } from "../mcp-state.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the tokens fold map, loaded once before the first paint
@@ -100,7 +101,7 @@ function rememberedTokenId()                {
 
 /** One `claude mcp add` line per MCP, embedding the given secret — a whole client setup in one copy. */
 function connectAll(secret        )         {
-  return (state.mcps || []).map((m           )         => { return claudeSnippet(m.name, secret); }).join("\n");
+  return (mcpRows() || []).map((m           )         => { return claudeSnippet(m.name, secret); }).join("\n");
 }
 
 /** The rendering group of one token: the stored label while its group lives, else the first

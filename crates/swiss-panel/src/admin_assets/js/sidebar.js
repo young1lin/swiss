@@ -16,13 +16,13 @@
 
                                                 
                                                                        
-import { state } from "./util.js";
 import { openSheet } from "./add-sheet.js";
 import { act, openDetail, removeMcp, renameMcp } from "./detail.js";
 import { patchSidebar, popupMenu } from "./menu.js";
 import { loadList } from "./polling.js";
 import { assignMember, groupOf as makeGroupOf, newGroupFlow, saveGroupNames, saveOrder, slice } from "./groups.js";
 import { draggingGroupName, draggingRow, foldMap, listFilter, setDraggingGroupName, setDraggingRow } from "./ui-state.js";
+import { mcpGroups, mcpRows, selectedMcp, setMcpGroups, setMcpRows } from "./mcp-state.js";
 
 /* --- rendering: sidebar ----------------------------------------------------------------------- */
 /** The MCP side of the mcps scope: row rendering, the flat order and the glue between the
@@ -30,12 +30,12 @@ import { draggingGroupName, draggingRow, foldMap, listFilter, setDraggingGroupNa
  *  groups.js now (docs/20); what stayed here is what only the MCP list knows — which row
  *  fields exist, what opening one does, and the chip text. */
 function rowOf(name        )                        {
-  return state.mcps.find((m) => { return m.name === name; });
+  return mcpRows().find((m) => { return m.name === name; });
 }
 function visibleMcps()              {
   const f = listFilter().trim().toLowerCase();
-  if (!f) return state.mcps;
-  return state.mcps.filter((m) => {
+  if (!f) return mcpRows();
+  return mcpRows().filter((m) => {
     return m.name.toLowerCase().indexOf(f) >= 0
       || String(m.type).toLowerCase().indexOf(f) >= 0
       || String(m.tag || "").toLowerCase().indexOf(f) >= 0 // "npx"/"uvx"/"http" finds a launch method
@@ -46,15 +46,15 @@ function visibleMcps()              {
 /** The group a row renders under — the one rule, shared with the server: the stored group
  *  while it exists, else the FIRST group (that slot, never a name, is the sink). */
 function groupOf(m            )         {
-  return makeGroupOf(state.groups)(m);
+  return makeGroupOf(mcpGroups())(m);
 }
 
 /** The sidebar's shape: one flat order sliced by group — which is why moving an MCP between
  *  groups never has to rewrite the ordering. */
 function groupedMcps()                          {
-  const fn = makeGroupOf(state.groups);
+  const fn = makeGroupOf(mcpGroups());
   const rows = visibleMcps();
-  const sliced = slice(rows, state.groups, fn);
+  const sliced = slice(rows, mcpGroups(), fn);
   return listFilter().trim() ? sliced.filter((g) => { return g.rows.length; }) : sliced;
 }
 
@@ -73,20 +73,20 @@ function navRows()              {
 /** Persist the current list order. The server ranks /api/mcps by it and appends unknown names, so
  *  the panel and every other consumer agree on one order. */
 function saveOrderFlat()       {
-  saveOrder("mcps", state.mcps.map((m) => { return m.name; }))
+  saveOrder("mcps", mcpRows().map((m) => { return m.name; }))
     .catch(() => { /* the next reorder retries; the list is already right locally */ });
 }
 
-/** Move 'name' to just before/after 'target' in state.mcps, re-render, persist. Works on the FULL
+/** Move 'name' to just before/after 'target' in mcpRows(), re-render, persist. Works on the FULL
  *  list (not the filtered view), so reordering with a search active does not shuffle the rest. */
 function moveRow(name        , target        , before          )       {
   if (!name || !target || name === target) return;
-  const item = state.mcps.find((m) => { return m.name === name; });
+  const item = mcpRows().find((m) => { return m.name === name; });
   if (!item) return;
-  state.mcps = state.mcps.filter((m) => { return m.name !== name; });
-  const to = state.mcps.findIndex((m) => { return m.name === target; });
-  if (to < 0) state.mcps.push(item); // target vanished mid-drag (deleted by a poll) — land at the end
-  else state.mcps.splice(before ? to : to + 1, 0, item);
+  setMcpRows(mcpRows().filter((m) => { return m.name !== name; }));
+  const to = mcpRows().findIndex((m) => { return m.name === target; });
+  if (to < 0) mcpRows().push(item); // target vanished mid-drag (deleted by a poll) — land at the end
+  else mcpRows().splice(before ? to : to + 1, 0, item);
   patchSidebar();
   saveOrderFlat();
 }
@@ -95,16 +95,16 @@ function moveRow(name        , target        , before          )       {
  *  Deliberately stops at the group edge: a keystroke that silently re-homed an MCP would be a
  *  surprise, and dragging is right there for that. */
 function nudgeSelected(up         )          {
-  const sel = rowOf(state.selected );
+  const sel = rowOf(selectedMcp() );
   if (!sel) return false;
   const g = groupOf(sel);
   const rows = visibleMcps().filter((m) => { return groupOf(m) === g; });
-  const i = rows.findIndex((m) => { return m.name === state.selected; });
+  const i = rows.findIndex((m) => { return m.name === selectedMcp(); });
   const j = up ? i - 1 : i + 1;
   if (i < 0 || j < 0 || j >= rows.length) return false;
-  const a = state.mcps.findIndex((m) => { return m.name === rows[i].name; });
-  const b = state.mcps.findIndex((m) => { return m.name === rows[j].name; });
-  const tmp = state.mcps[a]; state.mcps[a] = state.mcps[b]; state.mcps[b] = tmp;
+  const a = mcpRows().findIndex((m) => { return m.name === rows[i].name; });
+  const b = mcpRows().findIndex((m) => { return m.name === rows[j].name; });
+  const tmp = mcpRows()[a]; mcpRows()[a] = mcpRows()[b]; mcpRows()[b] = tmp;
   patchSidebar();
   saveOrderFlat();
   return true;
@@ -146,7 +146,7 @@ function sideRowNode(m           )                    {
 
 /** The row's right-click menu (docs/28 D3): the three verbs the operator asked to have
  *  within reach — rename, disable/enable by state, delete. The label is read live from
- *  state.mcps (rowOf), never off the row's render-time snapshot, so a poll that flipped the
+ *  mcpRows() (rowOf), never off the row's render-time snapshot, so a poll that flipped the
  *  lifecycle cannot make the menu offer the wrong verb. */
 function rowMenu(name        , anchor                                               )       {
   const m = rowOf(name) || { name: name, lifecycle: "stopped" };
@@ -165,7 +165,7 @@ function sideCfg()                      {
   return {
     scope: "mcps",
     density: "side",
-    names: state.groups,
+    names: mcpGroups(),
     collapsed: foldMap(),
     noun: "MCP",
     addTitle: (g) => { return "Add an MCP to " + g; },
@@ -183,7 +183,7 @@ function sideCfg()                      {
     },
     rowNode: sideRowNode,
     rowId: (m) => { return m.name; },
-    rowsById: () => { return state.mcps; },
+    rowsById: () => { return mcpRows(); },
     groupOfRow: groupOf,
     onMoveRow: moveRow,
     onAssign: assignGroup,
@@ -197,13 +197,13 @@ function sideCfg()                      {
 async function saveGroups(next          )                   {
   const j = await saveGroupNames("mcps", next);
   if (!j) return false;
-  state.groups = j.groups || [];
+  setMcpGroups(j.groups || []);
   await loadList();
   return true;
 }
 
 function newGroup()       {
-  newGroupFlow("mcps", state.groups, () => { return loadList(); });
+  newGroupFlow("mcps", mcpGroups(), () => { return loadList(); });
 }
 
 /** Move one MCP into a group. Applied locally first so the row jumps immediately, then persisted.
@@ -211,7 +211,7 @@ function newGroup()       {
  *  is only sent by the pane's "remove from group" paths, which the server reads as "first group". */
 async function assignGroup(name        , group                )                {
   const m = rowOf(name);
-  if (!m || groupOf(m) === (group || state.groups[0])) return;
+  if (!m || groupOf(m) === (group || mcpGroups()[0])) return;
   m.group = group;
   patchSidebar();
   const j = await assignMember("mcps", name, group);

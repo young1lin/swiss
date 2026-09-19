@@ -16,7 +16,7 @@
 
 import type { FreshDetail } from "./types/dom.js";
 import type { KindPageState, McpDetail } from "./types/state.js";
-import { $, KINDS, api, apiJson, now, state, toast } from "./util.js";
+import { $, KINDS, api, apiJson, now, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
 import { callsErrHtml, callsStatusHtml, fmtJson, mountJsonTrees } from "./logs.js";
 import { patchSidebar } from "./menu.js";
@@ -25,11 +25,12 @@ import { loadList } from "./polling.js";
 import { renderCallsOnly } from "./run-history.js";
 import { rowOf } from "./sidebar.js";
 import { setMenuOpen } from "./ui-state.js";
+import { clearMcpBusy, mcpBusyVerb, mcpDetail, selectedMcp, setLastAction, setMcpBusy, setMcpDetail, setSelectedMcp } from "./mcp-state.js";
 
 /* --- lifecycle actions ------------------------------------------------------------------------ */
 async function act(name: string, verb: string): Promise<void> {
-  if (state.busy[name]) return;
-  state.busy[name] = verb;
+  if (mcpBusyVerb(name)) return;
+  setMcpBusy(name, verb);
   patchSidebar(); patchDetailHead();
   // docs/28 D2: the wire keeps the stop/start verbs; the panel says disable/enable — a stop
   // that survives a boot and refuses every client is a disable, and the word owed it.
@@ -38,24 +39,28 @@ async function act(name: string, verb: string): Promise<void> {
     const r = await api("/api/mcps/" + encodeURIComponent(name) + "/" + verb, { method: "POST" });
     const j = await r.json();
     if (!r.ok) {
-      state.lastAction[name] = { msg: shown + " failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
+      setLastAction(name, { msg: shown + " failed: " + (j.error || "HTTP " + r.status), err: true, at: now() });
       toast(name + ": " + (j.error || "failed"), true);
     } else {
       const state_word = j.lifecycle === "stopped" ? "disabled" : j.lifecycle;
-      state.lastAction[name] = { msg: shown + " → " + (state_word || "ok"), err: false, at: now() };
-      toast(name + ": " + state.lastAction[name].msg);
+      // Record it and say it from the SAME object — reading the row back to quote it was
+      // only ever a way to repeat what this line already knows.
+      const done = { msg: shown + " → " + (state_word || "ok"), err: false, at: now() };
+      setLastAction(name, done);
+      toast(name + ": " + done.msg);
     }
   } catch (e) {
-    state.lastAction[name] = { msg: shown + " request failed", err: true, at: now() };
+    setLastAction(name, { msg: shown + " request failed", err: true, at: now() });
   }
-  delete state.busy[name];
+  clearMcpBusy(name);
   await loadList();
   // The server rebuilt on start/restart, so any cached page list is stale.
-  if (state.detail && state.detail.name === name) {
-    KINDS.forEach((k) => { state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
+  const d = mcpDetail();
+  if (d && d.name === name) {
+    KINDS.forEach((k) => { d[k as "tools" | "resources" | "prompts"] = pageState(); });
     renderPane();
     void loadMeta(name);
-    if (KINDS.indexOf(state.detail.tab) >= 0) void loadPage(name, state.detail.tab);
+    if (KINDS.indexOf(d.tab) >= 0) void loadPage(name, d.tab);
   }
 }
 
@@ -65,8 +70,9 @@ async function renameMcp(name: string): Promise<void> {
   next = next.trim();
   const ok = await apiJson("/api/mcps/" + encodeURIComponent(name) + "/rename", { method: "POST", body: JSON.stringify({ name: next }) });
   if (!ok) return;
-  if (state.selected === name) state.selected = next;
-  if (state.detail && state.detail.name === name) state.detail.name = next;
+  if (selectedMcp() === name) setSelectedMcp(next);
+  const open = mcpDetail();
+  if (open && open.name === name) open.name = next;
   toast("Renamed " + name + " → " + next);
   await loadList();
   renderPane();
@@ -75,12 +81,12 @@ async function renameMcp(name: string): Promise<void> {
 async function removeMcp(name: string): Promise<void> {
   // Config-sourced MCPs are removed from gateway.config.json too (server-side), so the confirm
   // says so — "removes it permanently" alone used to hide that the file edit is part of it.
-  const fromConfig = !!(state.detail && state.detail.source === "config");
+  const fromConfig = mcpDetail()?.source === "config";
   if (!confirm("Delete '" + name + "'?\n\nThis stops it and removes it permanently" +
       (fromConfig ? ", including its entry in gateway.config.json." : "."))) return;
   const ok = await apiJson("/api/mcps/" + encodeURIComponent(name), { method: "DELETE" });
   if (!ok) return;
-  if (state.selected === name) { state.selected = null; state.detail = null; }
+  if (selectedMcp() === name) { setSelectedMcp(null); setMcpDetail(null); }
   toast("Deleted " + name);
   await loadList();
   renderPane();
@@ -96,12 +102,13 @@ async function removeMcp(name: string): Promise<void> {
 function pause(ms: number): Promise<void> { return new Promise((res): void => { setTimeout(res, ms); }); }
 
 async function authorizeMcp(name: string): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.name !== name || d.oauthBusy) return;
   d.oauthBusy = true;
   const note = (msg: string, err?: boolean): void => {
-    state.lastAction[name] = { msg: msg, err: !!err, at: now() };
-    if (!state.detail || state.detail.editing) return;
+    setLastAction(name, { msg: msg, err: !!err, at: now() });
+    const open = mcpDetail();
+    if (!open || open.editing) return;
     renderPane();
   };
   try {
@@ -120,11 +127,12 @@ async function authorizeMcp(name: string): Promise<void> {
         window.open(s.authorizationUrl, "_blank");
         note("authorize: consent page opened — approve it in the browser…");
       } else if (s.status === "approved") {
-        state.lastAction[name] = { msg: "authorized · " + (s.tools != null ? s.tools + " tools" : "MCP started"), err: false, at: now() };
+        setLastAction(name, { msg: "authorized · " + (s.tools != null ? s.tools + " tools" : "MCP started"), err: false, at: now() });
         toast(name + ": authorized");
         await loadList();
         void loadMeta(name);
-        if (state.detail && !state.detail.editing) renderPane();
+        const open = mcpDetail();
+        if (open && !open.editing) renderPane();
         return;
       } else if (s.status === "error") {
         note("authorize failed: " + (s.error || "unknown error"), true);
@@ -137,7 +145,8 @@ async function authorizeMcp(name: string): Promise<void> {
   } catch (e) {
     note("authorize request failed", true);
   } finally {
-    if (state.detail && state.detail.name === name) state.detail.oauthBusy = false;
+    const open = mcpDetail();
+    if (open && open.name === name) open.oauthBusy = false;
   }
 }
 
@@ -147,8 +156,8 @@ function pageState(): KindPageState {
 }
 
 function openDetail(name: string): void {
-  if (state.detail && state.detail.name === name) return;
-  state.selected = name;
+  if (mcpDetail()?.name === name) return;
+  setSelectedMcp(name);
   const d: FreshDetail = {
     name: name, tab: "tools", config: null, source: undefined, editing: false, editType: null, editVals: null,
     // OAuth (docs/24 D5): the detail's auth state ("authorized" | "needs-auth" | undefined),
@@ -178,7 +187,7 @@ function openDetail(name: string): void {
     callsTree: {}, // docs/33 C2: per-seq JSON tree expansion, survives the poll repaint
   };
   KINDS.forEach((k) => { d[k] = pageState(); });
-  state.detail = d as unknown as McpDetail;
+  setMcpDetail(d as unknown as McpDetail);
   setMenuOpen(false);
   patchSidebar();
   renderPane();
@@ -190,13 +199,13 @@ async function loadMeta(name: string): Promise<void> {
   // Compare the detail OBJECT, not its name: leaving an MCP and coming back builds a fresh detail
   // under the same name, and a slow response from the first visit would otherwise write into the
   // second one. loadPage already does it this way.
-  const d = state.detail;
+  const d = mcpDetail();
   const d_ = d!;
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(name) + "/details");
     if (!r.ok) return;
     const j = await r.json();
-    if (state.detail !== d) return;
+    if (mcpDetail() !== d) return;
     d_.config = j.config || null;
     d_.source = j.source;
     d_.tunnels = j.tunnels || [];
@@ -218,7 +227,7 @@ async function loadMeta(name: string): Promise<void> {
  * switch in mid-transaction — and its failures are silent: the poll says nothing the user asked
  * for, so it takes nothing away either. */
 async function loadCalls(name: string, isPoll?: boolean): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.name !== name) return;
   // A poll dispatched while a FOREGROUND load still hangs would take the newest generation
   // for itself; the foreground failure would then land as "stale" and be reported to nobody.
@@ -238,7 +247,7 @@ async function loadCalls(name: string, isPoll?: boolean): Promise<void> {
     const j = await r.json().catch(() => { return {}; });
     // A revisit built a new detail object (see loadMeta), or a newer request superseded this
     // one — either way this response is stale and must not commit.
-    if (state.detail !== d || gen !== d.callsRequest) return;
+    if (mcpDetail() !== d || gen !== d.callsRequest) return;
     if (!r.ok) { if (!isPoll) callsLoadFailed(d, target, r.status, sw); return; }
     d.callsPage = target;
     if (d.callsPendingPage === target) d.callsPendingPage = null;
@@ -251,7 +260,7 @@ async function loadCalls(name: string, isPoll?: boolean): Promise<void> {
     renderCallsOnly();
     if (sw) restoreCallsAnchor(sw, d);
   } catch (e) {
-    if (state.detail !== d || gen !== d.callsRequest) return;
+    if (mcpDetail() !== d || gen !== d.callsRequest) return;
     if (!isPoll) callsLoadFailed(d, target, 0, sw);
   } finally {
     d.callsActive -= 1; // every exit path settles its own in-flight mark
@@ -276,7 +285,7 @@ function callsLoadFailed(d: McpDetail, target: number, status: number, sw: { dir
  *  rows stay on screen, marked busy, and the request carries the target page (docs/32 B1). */
 function callsPageStep(delta: number, opts?: { fromKey?: boolean }): void {
   opts = opts || {};
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.callsPendingPage != null) return; // one switch at a time
   const next = d.callsPage + delta;
   if (next < 0 || (delta > 0 && !d.callsMore)) return;
@@ -287,7 +296,7 @@ function callsPageStep(delta: number, opts?: { fromKey?: boolean }): void {
  *  through the same anchor contract, with the direction the failed switch had. */
 function callsRetry(opts?: { fromKey?: boolean }): void {
   opts = opts || {};
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.callsPendingPage != null || d.callsRetryTarget == null) return;
   callsBegin(d, d.callsRetryTarget, d.callsRetryDir, !!opts.fromKey);
 }
@@ -361,13 +370,13 @@ function patchCallsChrome(d: McpDetail): void {
 
 /** Fetch one reply in full — the log page ships only the first 2 KB of each. */
 async function showFullResult(seq: number): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
     const j = await r.json();
-    if (!state.detail || state.detail.name !== d.name || !j.call) return;
+    if (mcpDetail()?.name !== d.name || !j.call) return;
     if (j.call.bodyGone) {
       // Only the newest replies keep their payload; say which part is missing rather than showing a
       // short result as if it were whole.
@@ -384,7 +393,7 @@ async function showFullResult(seq: number): Promise<void> {
 }
 
 async function clearCalls(): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   // docs/32 B4: one mis-click removes the index AND the stored full replies, and nothing can
   // undo it — so the confirm names both costs, and a cancelled confirm fires no request at all.
@@ -413,7 +422,7 @@ async function clearCalls(): Promise<void> {
 }
 
 async function loadPage(name: string, kind: string): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.name !== name) return;
   const kd = d[kind as "tools" | "resources" | "prompts"];
   if (!kd || kd.loading) return;
@@ -443,11 +452,11 @@ async function loadPage(name: string, kind: string): Promise<void> {
   }
   kd.loading = false;
   // Run builds its form from the tool list, so it also needs a repaint when tools land.
-  if (state.detail === d && (d.tab === kind || (d.tab === "run" && kind === "tools"))) renderPane();
+  if (mcpDetail() === d && (d.tab === kind || (d.tab === "run" && kind === "tools"))) renderPane();
 }
 
 function showTab(tab: string): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   d.tab = tab;
   d.editing = false;
@@ -462,14 +471,14 @@ function showTab(tab: string): void {
   if (tab === "logs" && d.callsPendingPage == null) void loadCalls(d.name);
 }
 function pageNext(): void {
-  const d = state.detail, kd = d && d[d.tab as "tools" | "resources" | "prompts"];
+  const d = mcpDetail(), kd = d && d[d.tab as "tools" | "resources" | "prompts"];
   if (!kd || !kd.nextCursor || kd.loading) return;
   kd.cursors.push(kd.nextCursor);
   const d_ = d!;
   void loadPage(d_.name, d_.tab);
 }
 function pagePrev(): void {
-  const d = state.detail, kd = d && d[d.tab as "tools" | "resources" | "prompts"];
+  const d = mcpDetail(), kd = d && d[d.tab as "tools" | "resources" | "prompts"];
   if (!kd || kd.cursors.length <= 1 || kd.loading) return;
   kd.cursors.pop();
   const d_ = d!;
@@ -478,7 +487,7 @@ function pagePrev(): void {
 
 /* --- config edit ------------------------------------------------------------------------------ */
 function startEdit(): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || !d.config) return;
   d.editing = true;
   d.editMode = "edit";
@@ -489,7 +498,7 @@ function startEdit(): void {
 // docs/28 D1: the same form, another verb — Save parks the current def as a revision and
 // installs the new one under the SAME name. The operator's rollback lives one click away.
 function startReplace(): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || !d.config) return;
   d.editing = true;
   d.editMode = "replace";
@@ -498,30 +507,31 @@ function startReplace(): void {
   renderPane();
 }
 function cancelEdit(): void {
-  if (!state.detail) return;
-  state.detail.editing = false;
-  state.detail.editMode = null;
-  state.detail.editType = null;
-  state.detail.editVals = null;
+  const d = mcpDetail();
+  if (!d) return;
+  d.editing = false;
+  d.editMode = null;
+  d.editType = null;
+  d.editVals = null;
   renderPane();
 }
 
 /* --- def revisions (docs/28 D1) ---------------------------------------------------------------- */
 async function loadRevisions(name: string): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.name !== name) return;
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(name) + "/revisions");
     if (!r.ok) return;
     const j = await r.json();
-    if (state.detail !== d) return; // a revisit built a new detail object — see loadMeta
+    if (mcpDetail() !== d) return; // a revisit built a new detail object — see loadMeta
     d.revisions = j.revisions || [];
     if (d.tab === "config" && !d.editing) renderPane();
   } catch (e) { /* handled */ }
 }
 
 async function saveReplace(): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   const type = d.editType || (d.config && d.config.type as string) || "proc";
   const fields = readFields(type, "e-");
@@ -534,43 +544,43 @@ async function saveReplace(): Promise<void> {
   if (type === "proc" && !body.command) { toast("Command is required", true); return; }
   const name = d.name;
   const restore = () => {
-    if (!state.detail || state.detail !== d) return;
+    if (!mcpDetail() || mcpDetail() !== d) return;
     d.editing = true;
     d.editType = type;
     d.editVals = fields;
   };
-  state.busy[name] = "save";
+  setMcpBusy(name, "save");
   d.editing = false;
   renderPane(); patchSidebar();
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(name) + "/replace", { method: "POST", body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) {
-      state.lastAction[name] = { msg: "replace failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
+      setLastAction(name, { msg: "replace failed: " + (j.error || "HTTP " + r.status), err: true, at: now() });
       toast(j.error || "replace failed", true);
       restore();
     } else {
-      state.lastAction[name] = { msg: "def replaced → revision " + (j.revisions || "?") + " parked", err: false, at: now() };
+      setLastAction(name, { msg: "def replaced → revision " + (j.revisions || "?") + " parked", err: false, at: now() });
       toast(name + ": replaced — previous def parked as revision " + (j.revisions || "?"));
       // The swap stands even when the new def will not start; the panel must say so, not hide it.
       if (j.restartError) toast(name + " failed to start: " + j.restartError, true);
-      if (state.detail === d) d.editVals = null;
-      KINDS.forEach((k) => { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
+      if (mcpDetail() === d) d.editVals = null;
+      KINDS.forEach((k) => { if (mcpDetail()) mcpDetail()![k as "tools" | "resources" | "prompts"] = pageState(); });
       void loadMeta(name);
       void loadRevisions(name);
     }
   } catch (e) {
-    state.lastAction[name] = { msg: "replace request failed", err: true, at: now() };
+    setLastAction(name, { msg: "replace request failed", err: true, at: now() });
     toast("replace request failed", true);
     restore();
   }
-  delete state.busy[name];
+  clearMcpBusy(name);
   await loadList();
   renderPane();
 }
 
 async function restoreRevision(index: number): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   if (!confirm("Restore revision " + (index + 1) + "?\n\nThe current def is parked as a new revision first — this is reversible too.")) return;
   try {
@@ -579,7 +589,7 @@ async function restoreRevision(index: number): Promise<void> {
     if (!r.ok) { toast(j.error || "restore failed", true); return; }
     toast(d.name + ": revision " + (index + 1) + " restored");
     if (j.restartError) toast(d.name + " failed to start: " + j.restartError, true);
-    KINDS.forEach((k) => { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
+    KINDS.forEach((k) => { if (mcpDetail()) mcpDetail()![k as "tools" | "resources" | "prompts"] = pageState(); });
     void loadMeta(d.name);
     void loadRevisions(d.name);
     await loadList();
@@ -588,7 +598,7 @@ async function restoreRevision(index: number): Promise<void> {
 }
 
 async function deleteRevision(index: number): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   if (!confirm("Delete parked revision " + (index + 1) + "? This only drops the snapshot — the live def is untouched.")) return;
   if (!await apiJson("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index, { method: "DELETE" })) return;
@@ -599,7 +609,7 @@ async function deleteRevision(index: number): Promise<void> {
  *  both types share (description, host, password) survives the switch. A masked secret carried into
  *  a type that never stored one is dropped server-side by unmaskBody, never saved as dots. */
 function changeEditType(t: string): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   const prev = d.editType || (d.config && d.config.type as string) || "proc";
   d.editVals = Object.assign({}, d.editVals, readFields(prev, "e-"));
@@ -615,7 +625,7 @@ function changeEditType(t: string): void {
  */
 async function runConnTest(p: string): Promise<void> {
   // p is the form's id prefix: "e-" for the inline editor, "a-" for the Add sheet.
-  const d = state.detail;
+  const d = mcpDetail();
   const type = p === "a-" ? $<HTMLSelectElement>("a-type").value : (d && (d.editType || (d.config && d.config.type as string))) || "proc";
   const body = Object.assign({ type: type }, readFields(type, p));
   translatePg(type, body); // docs/30: pg's split fields travel as the url the server tests
@@ -667,7 +677,7 @@ async function runConnTest(p: string): Promise<void> {
 }
 
 async function saveEdit(): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   const type = d.editType || (d.config && d.config.type as string) || "proc";
   const fields = readFields(type, "e-");
@@ -680,34 +690,34 @@ async function saveEdit(): Promise<void> {
   // Rendering the pane destroys the form, so hold on to what was typed: a save the server rejects
   // used to cost the user the whole form, with nothing to do but reopen it and retype.
   const restore = () => {
-    if (!state.detail || state.detail !== d) return;
+    if (!mcpDetail() || mcpDetail() !== d) return;
     d.editing = true;
     d.editType = type;
     d.editVals = fields;
   };
-  state.busy[name] = "save";
+  setMcpBusy(name, "save");
   d.editing = false;
   renderPane(); patchSidebar();
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) {
-      state.lastAction[name] = { msg: "edit failed: " + (j.error || "HTTP " + r.status), err: true, at: now() };
+      setLastAction(name, { msg: "edit failed: " + (j.error || "HTTP " + r.status), err: true, at: now() });
       toast(j.error || "edit failed", true);
       restore();
     } else {
-      state.lastAction[name] = { msg: "config saved → restarted", err: false, at: now() };
+      setLastAction(name, { msg: "config saved → restarted", err: false, at: now() });
       toast(name + ": config saved, restarted");
-      if (state.detail === d) d.editVals = null;
-      KINDS.forEach((k) => { if (state.detail) state.detail![k as "tools" | "resources" | "prompts"] = pageState(); });
+      if (mcpDetail() === d) d.editVals = null;
+      KINDS.forEach((k) => { if (mcpDetail()) mcpDetail()![k as "tools" | "resources" | "prompts"] = pageState(); });
       void loadMeta(name);
     }
   } catch (e) {
-    state.lastAction[name] = { msg: "edit request failed", err: true, at: now() };
+    setLastAction(name, { msg: "edit request failed", err: true, at: now() });
     toast("edit request failed", true);
     restore();
   }
-  delete state.busy[name];
+  clearMcpBusy(name);
   await loadList();
   renderPane();
 }

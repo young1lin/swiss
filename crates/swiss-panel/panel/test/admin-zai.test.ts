@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { setMcpDetail } from "../src/mcp-state.js";
 
 /* The zai-vision type (the @z_ai/mcp-server port compiled in): the form's contract and the
    metered-API guard. What this suite pins on the browser side:
@@ -86,7 +87,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   byId.clear();
-  util.state.detail = null;
+  setMcpDetail(null);
 });
 
 function fakeDetail(name: string, config: Record<string, unknown> | null) {
@@ -128,7 +129,7 @@ describe("the zai-vision type: the native GLM vision tools", () => {
   });
 
   it("runConnTest answers the honest message without firing a request", async () => {
-    util.state.detail = fakeDetail("zai", { type: "zai-vision", apiKey: "${" + "Z_AI_API_KEY}" });
+    setMcpDetail(fakeDetail("zai", { type: "zai-vision", apiKey: "${" + "Z_AI_API_KEY}" }));
     let fired = 0;
     (globalThis as unknown as Record<string, unknown>).fetch = async () => { fired++; return { ok: true, status: 200, json: async () => ({}) } as never; };
     await detail.runConnTest("e-");

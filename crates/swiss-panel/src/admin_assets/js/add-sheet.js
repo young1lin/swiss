@@ -15,13 +15,14 @@
  */
 
                                                                
-import { $, DEFAULT_GROUP, apiJson, esc, state, toast } from "./util.js";
+import { $, DEFAULT_GROUP, apiJson, esc, toast } from "./util.js";
 import { openDetail, runConnTest } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsHtml, readFields, translateOauth, translatePg } from "./fields.js";
 import { loadList } from "./polling.js";
 import { addTitle, groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { newGroup } from "./sidebar.js";
 import { addGroupTarget, setAddGroupTarget } from "./ui-state.js";
+import { mcpGroups, selectedMcp, setSelectedMcp } from "./mcp-state.js";
 
 /* --- Add sheet -------------------------------------------------------------------------------- */
 /** `group` is the group the new MCP joins — the header + that opened this sheet. A null
@@ -29,7 +30,7 @@ import { addGroupTarget, setAddGroupTarget } from "./ui-state.js";
  * while it still exists. Either way the select is the truth: the title retitles with it, and
  * submit joins whatever it says, so a changed pick wins over the promise that opened it. */
 function openSheet(group               )       {
-  const names = state.groups && state.groups.length ? state.groups : [DEFAULT_GROUP];
+  const names = mcpGroups() && mcpGroups().length ? mcpGroups() : [DEFAULT_GROUP];
   const initial = group || resolveDefaultGroup(names, lastGroup("mcps"));
   setAddGroupTarget(initial);
   const types = Object.keys(TYPE_FIELDS);
@@ -121,9 +122,10 @@ async function submitImport(input                  )                {
   const n = (j.imported || []).length;
   const s = (j.skipped || []).length;
   toast("Imported " + n + (s ? ", skipped " + s : ""));
-  if (j.imported && j.imported[0]) state.selected = j.imported[0].name;
+  if (j.imported && j.imported[0]) setSelectedMcp(j.imported[0].name);
   await loadList();
-  if (state.selected) openDetail(state.selected);
+  const landed = selectedMcp();
+  if (landed) openDetail(landed);
 }
 
 async function submitAdd()                {
@@ -144,7 +146,7 @@ async function submitAdd()                {
   rememberGroup("mcps", addGroupTarget() );
   closeSheet();
   toast("Added " + body.name + " (" + (j.lifecycle || "stopped") + ")");
-  state.selected = body.name;
+  setSelectedMcp(body.name);
   // Join the group whose + opened this sheet, BEFORE the list reload — so the row is drawn in its
   // group once, rather than hopping a moment later. `default` is a real group name now: joining it
   // is an explicit assignment like any other.

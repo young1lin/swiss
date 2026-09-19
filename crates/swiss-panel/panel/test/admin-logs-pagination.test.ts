@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
+import { setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
 
 /* docs/32 B1 — the Logs pager becomes a transaction. The suite drives the REAL module graph
    (wireTabBody -> callsPageStep -> loadCalls -> renderCallsOnly) under the FakeNode micro-DOM,
@@ -158,9 +159,9 @@ function mountLogs(d: any, opts: { rows?: any[]; more?: boolean; q?: string } = 
   d.calls = opts.rows ?? PAGE0;
   d.callsMore = opts.more ?? true;
   d.callsQ = opts.q ?? "";
-  util.state.detail = d;
-  util.state.selected = d.name;
-  util.state.mcps = [];
+  setMcpDetail(d);
+  setSelectedMcp(d.name);
+  setMcpRows([]);
   byId.set("pane", new FakeNode("main"));
   const tb = new FakeNode("div");
   byId.set("tabbody", tb);
@@ -180,10 +181,10 @@ beforeEach(() => {
   confirmTexts.length = 0;
   requests.length = 0;
   parked.length = 0;
-  util.state.detail = null;
-  util.state.selected = null;
-  util.state.mcps = [];
-  util.state.groups = ["default"];
+  setMcpDetail(null);
+  setSelectedMcp(null);
+  setMcpRows([]);
+  setMcpGroups(["default"]);
   setMenuOpen(false);
 });
 
@@ -318,7 +319,7 @@ describe("docs/32 B3: history pages hold still, errors are honest", () => {
   it("a foreground failure of the very first load replaces the spinner, not with rows", async () => {
     const d = fakeDetail();
     d.calls = null;
-    util.state.detail = d;
+    setMcpDetail(d);
     byId.set("pane", new FakeNode("main"));
     const tb = new FakeNode("div");
     byId.set("tabbody", tb);
@@ -488,7 +489,7 @@ describe("docs/32 B1: a page switch is a transaction", () => {
   it("a first open with no rows still paints the loading shell — an empty page must not read as success", () => {
     const d = fakeDetail();
     d.calls = null;
-    util.state.detail = d;
+    setMcpDetail(d);
     byId.set("pane", new FakeNode("main"));
     const tb = new FakeNode("div");
     byId.set("tabbody", tb);

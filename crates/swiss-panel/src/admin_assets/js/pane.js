@@ -17,13 +17,14 @@
                                                 
                                                     
                                                   
-import { $, KINDS, emptyHtml, esc, icon, state } from "./util.js";
+import { $, KINDS, emptyHtml, esc, icon } from "./util.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
 import { act, authorizeMcp, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
 import { wireTabBody } from "./run-history.js";
 import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
 import { currentView, menuIsOpen, setMenuOpen } from "./ui-state.js";
+import { lastActionOf, mcpBusyVerb, mcpDetail, mcpGroups, mcpRows } from "./mcp-state.js";
 
 /* --- rendering: detail pane ------------------------------------------------------------------- */
 /** True when the user is typing inside the pane; a poll must never re-render over that. */
@@ -33,14 +34,14 @@ function paneHasFocus()          {
 }
 
 function patchDetailHead()       {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   const m = rowOf(d.name);
   const dot = document.querySelector             ("#pane .pane-sub .dot");
   const txt = document.querySelector             ("#pane .pane-sub .sub-text");
   const primary = $                   ("primaryBtn");
   if (!m || !dot || !txt) return;
-  const busyVerb = state.busy[d.name];
+  const busyVerb = mcpBusyVerb(d.name);
   dot.className = "dot " + (busyVerb ? "starting" : m.state);
   txt.textContent = headSubtitle(m);
   if (primary) {
@@ -53,7 +54,7 @@ function patchDetailHead()       {
 
 function headSubtitle(m                           )         {
   const bits = [];
-  if (state.busy[m.name]) bits.push(state.busy[m.name] + "…");
+  if (mcpBusyVerb(m.name)) bits.push(mcpBusyVerb(m.name) + "…");
   else bits.push(m.state === "stopped" ? "disabled" : m.state); // docs/28 D2: the honest word
   bits.push(m.type);
   bits.push(m.source);
@@ -69,11 +70,11 @@ function renderPane()       {
   // Every non-MCP page owns its pane, including pages contributed by future plugins.
   if (currentView() !== "mcps") return;
   const pane = $("pane");
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) {
     // The shared empty state (docs/18 V7), and the one place it carries an action: the pane's
     // own "add" answers the question the empty screen just asked.
-    pane.innerHTML = state.mcps.length
+    pane.innerHTML = mcpRows().length
       ? emptyHtml({ icon: "mcp", title: "Select an MCP", hint: "Its tools, resources and configuration appear here." })
       : emptyHtml({ icon: "mcp", title: "No MCPs registered", hint: "Add one with the + on a group header.", action: "Add an MCP" });
     const addBtn = pane.querySelector             ("[data-empty-action]");
@@ -82,7 +83,7 @@ function renderPane()       {
   }
   const m                            = rowOf(d.name) || { name: d.name, state: "unknown", type: "?", source: "?", lifecycle: "stopped" };
   const started = m.lifecycle === "started";
-  const busyVerb = state.busy[d.name];
+  const busyVerb = mcpBusyVerb(d.name);
   const menuWasOpen = menuIsOpen(); // reopened at the end; see the note there
   // The history popover lives on <body>, so a pane rebuild leaves it stranded over whatever tab
   // replaced Run. wireTabBody reopens it when the rebuilt pane IS the Run tab; otherwise drop it.
@@ -128,7 +129,7 @@ function renderPane()       {
   }).join("") + "</div>";
 
   const reason = m.reason ? '<div class="note err">' + esc(m.reason) + "</div>" : "";
-  const la = state.lastAction[d.name];
+  const la = lastActionOf(d.name);
   const actionNote = la ? '<div class="note' + (la.err ? " err" : "") + '">' + esc(la.at + " · " + la.msg) + "</div>" : "";
 
   // One column holds the lot — header, tab bar, body, notes — so the measure is applied once and
@@ -172,7 +173,7 @@ function openMenu(d           , m                           )       {
   const host = document.querySelector             ("#pane .pane-actions");
   if (!host) return;
   // Re-resolve the row from live state instead of trusting the one renderPane closed over. The 6s
-  // poll's loadList() REPLACES state.mcps wholesale, and it only patches the header afterwards — so
+  // poll's loadList() REPLACES mcpRows() wholesale, and it only patches the header afterwards — so
   // the captured object is orphaned from that moment on. The menu reads two things off it that
   // change (which group the MCP is in, and whether it is config-sourced), and with a stale object
   // the group tick stayed on whatever it was when the pane was last rendered.
@@ -194,7 +195,7 @@ function closeMenu()       {
 function menuHtml(m                           )         {
   const current = groupOf(m);
   // The server's list is complete (default included) and already in sidebar order.
-  const picks = state.groups.map((g) => {
+  const picks = mcpGroups().map((g) => {
     return '<button class="pick' + (g === current ? " on" : "") + '" data-grp="' + esc(g) + '">' + esc(g) + "</button>";
   }).join("");
   return '<div class="menu" id="menu">' +
@@ -230,7 +231,7 @@ function wireMenu(d           )       {
         // Make the group, then put this MCP straight into it — otherwise "New group…" from an MCP's
         // own menu would create an empty group and leave the MCP where it was.
         openGroupSheet(null, async (name        ) => {
-          if (!await saveGroups(state.groups.concat([name]))) return false;
+          if (!await saveGroups(mcpGroups().concat([name]))) return false;
           void assignGroup(d.name, name);
           return true;
         });

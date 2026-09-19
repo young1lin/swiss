@@ -15,7 +15,6 @@
  */
 
                                                      
-                                                   
 const TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
 const KINDS = ["tools", "resources", "prompts"];
@@ -24,16 +23,6 @@ const KINDS = ["tools", "resources", "prompts"];
    slot unassigned MCPs render under). The server now stores it like any other name. */
 const DEFAULT_GROUP = "default";
 
-const state             = {
-  mcps: [],          // rows from /api/mcps (each carries .group)
-  groups: [],        // group names in sidebar order — the FIRST entry is the sink slot for unassigned rows
-  selected: null,    // selected MCP name
-  detail: null,      // { name, tab, config, source, editing, editType, tools:{...}, calls, ... }
-  busy: {},          // name -> verb in flight
-  lastAction: {},    // name -> { msg, err, at }
-  mem: null,
-  info: null,        // { tokenEnv } from /api/info — the env var name
-};
 
 function $                                     (id        )    { return document.getElementById(id)     ; }
 function el                                       (tag   , cls         , text                )                           {
@@ -193,4 +182,4 @@ async function apiJson             (path        , opts              )           
   }
 }
 
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, errText, esc, icon, isTyping, now, state, targetEl, toast, typeTagHtml, TYPE_ICONS, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, errText, esc, icon, isTyping, now, targetEl, toast, typeTagHtml, TYPE_ICONS, whenLabel };
