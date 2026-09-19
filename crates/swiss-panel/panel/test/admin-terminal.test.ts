@@ -462,20 +462,21 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
   });
 
   it("carries the three guidance tiers (docs/22 P0 guidance layer)", () => {
-    // tier 1: the empty state teaches the headline keys
-    expect(view).toContain('<p class="term-keys-hint"><kbd>Ctrl+Shift+F</kbd>');
+    // tier 1: the empty state teaches the headline keys (built as nodes, docs/37 R5)
+    expect(view).toContain('h("p", { class: "term-keys-hint" }');
+    expect(view).toContain('h("kbd", null, "Ctrl+Shift+F")');
     // tier 2: one first-attach hint, stored so it never returns
     expect(view).toContain('const HINT_KEY = "swiss.terminal.hint"');
     expect(view).toContain('localStorage.setItem(HINT_KEY, "1")');
     // tier 3: the ? reference button in the bar, the sheet it opens, the key that opens it
-    expect(view).toContain('id="term-help"');
+    expect(view).toContain('id: "term-help"');
     expect(view).toContain("help.onclick = openHelpSheet");
     expect(view).toContain('if (ev.key === "?")');
     expect(view).toContain('"Terminal shortcuts"');
   });
 
   it("draws the gear from the sprite, not a Unicode glyph", () => {
-    expect(view).toContain('+ icon("gear") +');
+    expect(view).toContain('iconNode("gear")');
     expect(view).not.toContain(">\u2699<");
   });
 

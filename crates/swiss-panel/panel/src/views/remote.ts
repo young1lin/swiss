@@ -138,8 +138,6 @@ function cfg(): GroupCfg<RemoteTargetRow> {
     },
     rowNode: rowNode,
     rowId: (r) => { return r.id; },
-    // Ids are validated slugs (a-z 0-9 -), so a bare attribute selector is safe.
-    rowSel: (r) => { return '[data-rmrow="' + r.id + '"]'; },
     rowsById: () => { return targets; },
     groupOfRow: groupOf(groupNames),
     onMoveRow: moveRow,

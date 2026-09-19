@@ -31,7 +31,9 @@
    ================================================================================================ */
                                                                                                     
                                                                              
-import { $, api, apiJson, errText, esc, icon, targetEl, toast } from "../util.js";
+import { $, api, apiJson, errText, iconNode, targetEl, toast } from "../util.js";
+import { fill, frag, h } from "../h.js";
+                                      
 import { loadXterm } from "../vendor/xterm/xterm-5.5.0/index.js";
 import { loadFitAddon } from "../vendor/xterm/addon-fit-0.10.0/index.js";
 import { loadUnicode11Addon } from "../vendor/xterm/addon-unicode11-0.8.0/index.js";
@@ -152,19 +154,21 @@ function paintTabs() {
   const any = all.length > 0;
   bar.hidden = !any;
   /* Rebuilding identical markup rips the nodes out mid-double-click (see select) and
-     would destroy an open rename input; same string in, same string out - skip. */
-  const html = all.map((m) => {
-    const label = esc(tabLabel(m                                    , m.shellTitle, m.customTitle)) + (m.gone ? " · closed" : "");
-    return '<button role="tab" data-act="select" data-id="' + esc(m.id) + '"' +
-      ' aria-selected="' + String(m.id === active) + '" title="' + label + '">' +
-      '<span class="term-tab-label">' + label + "</span>" +
-      (m.bell && !m.gone ? '<span class="term-tab-bell" aria-label="bell">\u25cf</span>' : "") +
-      ' <span class="term-tab-x" data-act="close" data-id="' + esc(m.id) + '" title="Close session" role="button">\u00d7</span>' +
-      "</button>";
-  }).join("");
+     would destroy an open rename input. The memo is the built tree's own outerHTML
+     (docs/37 R5): same tree in, same markup out - skip. */
+  const tabs = all.map((m) => {
+    const label = tabLabel(m                                    , m.shellTitle, m.customTitle) + (m.gone ? " · closed" : "");
+    return h("button", { role: "tab", data: { act: "select", id: m.id },
+        aria: { selected: String(m.id === active) }, title: label },
+      h("span", { class: "term-tab-label" }, label),
+      m.bell && !m.gone ? h("span", { class: "term-tab-bell", aria: { label: "bell" } }, "\u25cf") : null,
+      " ",
+      h("span", { class: "term-tab-x", data: { act: "close", id: m.id }, title: "Close session", role: "button" }, "\u00d7"));
+  });
+  const html = tabs.map((n) => { return n.outerHTML; }).join("");
   if (html === paintTabsLast) return;
   paintTabsLast = html;
-  bar.innerHTML = html;
+  fill(bar, tabs);
 }
 
 function paintStage() {
@@ -407,37 +411,38 @@ function closeFind() {
    new surfaces invented. kbd is monospace because a key is a value you would copy
    (design rule 1). */
 function openHelpSheet() {
+  /* Rows take NODES now (docs/37 R5): a key combo is an element pair, not a string that
+     happens to hold markup. */
   const row = (keys        , what        ) => {
-    return '<div class="term-key-row"><span class="term-key-k">' + keys + "</span><span>" + what + "</span></div>";
+    return h("div", { class: "term-key-row" }, h("span", { class: "term-key-k" }, keys), h("span", null, what));
   };
-  const cap = (title        ) => { return '<div class="term-key-cap">' + title + "</div>"; };
-  const k = (t        ) => { return "<kbd>" + t + "</kbd>"; };
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Terminal shortcuts">' +
-      '<div class="sheet-head"><h2>Terminal shortcuts</h2></div>' +
-      '<div class="sheet-body term-key-body">' +
-        cap("Keys") +
-        row(k("Ctrl+Shift+F"), "find in this session\u2019s buffer") +
-        row(k("Enter") + k("Shift+Enter"), "next / previous match") +
-        row(k("Esc"), "close the find bar") +
-        row(k("Alt+1..9"), "switch to tab 1..9") +
-        row(k("Alt+\u2190") + k("Alt+\u2192"), "previous / next tab") +
-        row(k("Alt+W"), "close the tab") +
-        row(k("Ctrl+0"), "reset the font size (Ctrl+wheel zooms)") +
-        row(k("?"), "this sheet, anywhere on the page") +
-        cap("Mouse") +
-        row("double-click / right-click a tab", "rename it (the name outranks the shell\u2019s title)") +
-        row("middle-click a tab", "close it") +
-        row("drag a selection", "copied on release; Ctrl+C stays the interrupt") +
-        row("scroll up", "stop following output \u2014 a chip counts what you missed") +
-        cap("On by default") +
-        row("bell", "a dot on the tab until you read it") +
-        row("copy-on-select", "a scissors pill confirms each copy") +
-        row("multiline paste", "asks first \u2014 paste whole or not at all") +
-      "</div>" +
-      '<div class="sheet-foot"><span class="grow"></span><button class="btn" id="th-close">Close</button></div>' +
-    "</div>";
+  const cap = (title        ) => { return h("div", { class: "term-key-cap" }, title); };
+  const k = (t        ) => { return h("kbd", null, t); };
+  // Visible before the paint (panel-proof-of-life rule 1).
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Terminal shortcuts" } },
+      h("div", { class: "sheet-head" }, h("h2", null, "Terminal shortcuts")),
+      h("div", { class: "sheet-body term-key-body" },
+        cap("Keys"),
+        row([k("Ctrl+Shift+F")], "find in this session\u2019s buffer"),
+        row([k("Enter"), k("Shift+Enter")], "next / previous match"),
+        row([k("Esc")], "close the find bar"),
+        row([k("Alt+1..9")], "switch to tab 1..9"),
+        row([k("Alt+\u2190"), k("Alt+\u2192")], "previous / next tab"),
+        row([k("Alt+W")], "close the tab"),
+        row([k("Ctrl+0")], "reset the font size (Ctrl+wheel zooms)"),
+        row([k("?")], "this sheet, anywhere on the page"),
+        cap("Mouse"),
+        row("double-click / right-click a tab", "rename it (the name outranks the shell\u2019s title)"),
+        row("middle-click a tab", "close it"),
+        row("drag a selection", "copied on release; Ctrl+C stays the interrupt"),
+        row("scroll up", "stop following output \u2014 a chip counts what you missed"),
+        cap("On by default"),
+        row("bell", "a dot on the tab until you read it"),
+        row("copy-on-select", "a scissors pill confirms each copy"),
+        row("multiline paste", "asks first \u2014 paste whole or not at all")),
+      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }), h("button", { class: "btn", id: "th-close" }, "Close"))));
   const onKey = (ev               ) => { if (ev.key === "Escape") close(); };
   const close = () => {
     document.removeEventListener("keydown", onKey, true);
@@ -1023,53 +1028,56 @@ function render() {
   // (views.css); unmount() takes it back off so no other page inherits the layout.
   pane.classList.add("term-host");
   const pick = targetRows(targets);
-  pane.innerHTML = '<div class="term-page">' +
-    '<div class="term-bar">' +
-      '<div class="term-tabs" id="term-tabs" role="tablist" aria-label="Sessions" hidden></div>' +
-      '<div class="term-ctl">' +
-        (pick.rows.length
-          ? '<select id="term-target" class="term-pick" aria-label="Target">' +
-            pick.rows.map((r) => {
-              return '<option value="' + esc(r.id) + '">' + esc(r.label) + (r.state ? " (" + esc(r.state) + ")" : "") + "</option>";
-            }).join("") + "</select>" +
-            /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
-               picker, not a second loud button — Open session stays the bar's one accent.
-               The gear is the sprite (i-gear), never a Unicode glyph (design rule 9). */
-            '<button class="term-gear" id="term-set" title="Local shell settings" aria-label="Local shell settings">' + icon("gear") + "</button>" +
-            '<button class="btn term-new" id="term-new">Open session</button>'
-          /* Local off and nothing to pick: the line itself is the way in (docs/15
-             §2.1) — a dead-end note that names a setting nobody can reach is how the
-             gap this sheet closes came to exist. The tunnels reason, when there is one,
-             stays readable beside it. */
-          : (pick.localOff
-              ? '<button class="term-off" id="term-off">Local shell is off — turn it on</button>' +
-                (pick.reason ? '<span class="term-none">' + esc(pick.reason) + "</span>" : "")
-              : '<span class="term-none">' + esc(pick.note) + "</span>")) +
-        /* The ? reference button (guidance tier 3): same quiet box as the gear - present
-           in every branch, including the empty ones, where it matters most. The empty slot
-           after it accepts the shell-owned app zone only during Terminal fullscreen; there
-           is no duplicate page-owned fullscreen control (immersive.js). */
-        '<button class="term-gear" id="term-help" title="Shortcuts and gestures" aria-label="Shortcuts and gestures">' + icon("help") + "</button>" +
-      '</div><span class="term-shell-slot" data-shell-focus-slot></span></div>' +
-    '<div class="term-find" id="term-find" hidden>' +
-      '<input id="term-find-q" type="text" placeholder="Find" aria-label="Find in terminal" spellcheck="false" />' +
-      '<span class="term-find-count" id="term-find-count"></span>' +
-      '<button type="button" id="term-find-prev" title="Previous match (Shift+Enter)">\u2191</button>' +
-      '<button type="button" id="term-find-next" title="Next match (Enter)">\u2193</button>' +
-      '<button type="button" id="term-find-x" title="Close (Esc)">\u00d7</button>' +
-    "</div>" +
-    '<div class="term-stage" id="term-stage">' +
-      '<div class="term-empty" id="term-empty" hidden>' +
-        '<div class="term-ghost" aria-hidden="true"><span class="term-ghost-dollar">$</span><span class="term-ghost-cursor"></span></div>' +
-        '<h2>No session yet</h2>' +
-        "<p>Pick a host in the bar above and open one.</p>" +
-        /* The one teaching moment every newcomer sees: three facts, one line, quiet. */
-        '<p class="term-keys-hint"><kbd>Ctrl+Shift+F</kbd> find · <kbd>Alt+1..9</kbd> switch · <kbd>?</kbd> everything</p>' +
-        "<p>A dropped socket does not end a session \u2014 it waits out the grace window and catches up.</p>" +
-      "</div>" +
-    "</div>" +
-    '<div class="term-foot" id="term-status"></div>' +
-    "</div>";
+  fill(pane,
+    h("div", { class: "term-page" },
+      h("div", { class: "term-bar" },
+        h("div", { class: "term-tabs", id: "term-tabs", role: "tablist", aria: { label: "Sessions" }, hidden: true }),
+        h("div", { class: "term-ctl" },
+          pick.rows.length
+            ? h("select", { id: "term-target", class: "term-pick", aria: { label: "Target" } },
+                pick.rows.map((r) => {
+                  return h("option", { value: r.id }, r.label + (r.state ? " (" + r.state + ")" : ""));
+                }),
+                /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
+                   picker, not a second loud button — Open session stays the bar's one accent.
+                   The gear is the sprite (i-gear), never a Unicode glyph (design rule 9). */
+                h("button", { class: "term-gear", id: "term-set", title: "Local shell settings", aria: { label: "Local shell settings" } }, iconNode("gear")),
+                h("button", { class: "btn term-new", id: "term-new" }, "Open session"))
+            /* Local off and nothing to pick: the line itself is the way in (docs/15
+               §2.1) — a dead-end note that names a setting nobody can reach is how the
+               gap this sheet closes came to exist. The tunnels reason, when there is one,
+               stays readable beside it. */
+            : pick.localOff
+              ? frag(
+                  h("button", { class: "term-off", id: "term-off" }, "Local shell is off — turn it on"),
+                  pick.reason ? h("span", { class: "term-none" }, pick.reason) : null)
+              : h("span", { class: "term-none" }, pick.note),
+          /* The ? reference button (guidance tier 3): same quiet box as the gear - present
+             in every branch, including the empty ones, where it matters most. The empty slot
+             after it accepts the shell-owned app zone only during Terminal fullscreen; there
+             is no duplicate page-owned fullscreen control (immersive.js). */
+          h("button", { class: "term-gear", id: "term-help", title: "Shortcuts and gestures", aria: { label: "Shortcuts and gestures" } }, iconNode("help"))),
+        h("span", { class: "term-shell-slot", data: { "shell-focus-slot": "" } }),
+      h("div", { class: "term-find", id: "term-find", hidden: true },
+        h("input", { id: "term-find-q", type: "text", placeholder: "Find", aria: { label: "Find in terminal" }, spellcheck: false }),
+        h("span", { class: "term-find-count", id: "term-find-count" }),
+        h("button", { type: "button", id: "term-find-prev", title: "Previous match (Shift+Enter)" }, "\u2191"),
+        h("button", { type: "button", id: "term-find-next", title: "Next match (Enter)" }, "\u2193"),
+        h("button", { type: "button", id: "term-find-x", title: "Close (Esc)" }, "\u00d7")),
+      h("div", { class: "term-stage", id: "term-stage" },
+        h("div", { class: "term-empty", id: "term-empty", hidden: true },
+          h("div", { class: "term-ghost", aria: { hidden: "true" } },
+            h("span", { class: "term-ghost-dollar" }, "$"),
+            h("span", { class: "term-ghost-cursor" })),
+          h("h2", null, "No session yet"),
+          h("p", null, "Pick a host in the bar above and open one."),
+          /* The one teaching moment every newcomer sees: three facts, one line, quiet. */
+          h("p", { class: "term-keys-hint" },
+            h("kbd", null, "Ctrl+Shift+F"), " find · ",
+            h("kbd", null, "Alt+1..9"), " switch · ",
+            h("kbd", null, "?"), " everything"),
+          h("p", null, "A dropped socket does not end a session \u2014 it waits out the grace window and catches up.")))),
+      h("div", { class: "term-foot", id: "term-status" })));
 
   wireFindBar();
   document.addEventListener("keydown", pageFindShortcut, true);
@@ -1106,10 +1114,10 @@ function render() {
     };
   }
   window.addEventListener("resize", scheduleFit);
-  /* The innerHTML assignment above replaced the whole pane - a fresh, EMPTY tab bar -
-     so the memo from the previous paint is a lie here. Without this reset, a
-     settings save (reload -> render) with unchanged models skips the repaint and
-     blanks the bar (fresh-eyes audit B1a). */
+  /* The fill above replaced the whole pane - a fresh, EMPTY tab bar - so the memo
+     from the previous paint is a lie here. Without this reset, a settings save
+     (reload -> render) with unchanged models skips the repaint and blanks the bar
+     (fresh-eyes audit B1a). */
   paintTabsLast = null;
   paintTabs();
   paintStage();

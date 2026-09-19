@@ -15,11 +15,13 @@
  */
 
 import type { ApiTunnelConnectionRow, ApiTunnelRuleMutation, ApiTunnelRuleRow, ApiTunnelsBrowseEntry, ApiTunnelsBrowseResponse, ApiTunnelsKeysResponse, ApiTunnelsSuggestResponse, ConnSheetDraft, RuleSheetDraft } from "./types/api.js";
-import { $, api, apiJson, el, esc, toast } from "./util.js";
+import { $, api, apiJson, el, toast } from "./util.js";
+import { fill, h } from "./h.js";
+import type { HChild } from "./h.js";
 import { closeSheet } from "./add-sheet.js";
 import { loadTunnels, tunConnName, tunData, tunGroupsList } from "./polling.js";
 import { assignTunScoped } from "./tunnels.js";
-import { groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
+import { groupFieldNode, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { setTunKeys, takeTunPendingGroup, tunKeys } from "./tunnel-state.js";
 
 /* --- connection sheet -------------------------------------------------------------------------- */
@@ -37,38 +39,44 @@ async function loadKeys(): Promise<ApiTunnelsKeysResponse> {
  *  summary chips keep "goes through a proxy / via <jump>" visible without unfolding, so
  *  collapsed never means hidden; with nothing configured the fold is the sheet's only new
  *  line. Native details/summary is the house fold primitive (the data-value JSON tree) —
- *  no open attribute, so the browser starts it folded. The jump dropdown lists every other
+ *  no open property, so the browser starts it folded. The jump dropdown lists every other
  *  connection (this one excluded); the backend stays the single source of truth for cycles,
- *  its 400 lands inline in the sheet, and the panel does not pre-walk chains. */
-function advancedConnHtml(d: ConnSheetDraft, editing: boolean): string {
-  let chips = "";
-  if (d.proxy) chips += ' <span class="tag">proxy</span>';
-  if (d.jump) chips += ' <span class="tag">via ' + esc(tunConnName(d.jump)) + "</span>";
-  const opts = '<option value="">None</option>' + tunData().connections
+ *  its 400 lands inline in the sheet, and the panel does not pre-walk chains.
+ *
+ *  Built, not concatenated (docs/37 R5); returns TWO siblings (the fold and the inline
+ *  error line), which h() flattens into the sheet body. */
+function advancedConnNode(d: ConnSheetDraft, editing: boolean): HChild[] {
+  const chips: HChild[] = [];
+  if (d.proxy) chips.push(" ", h("span", { class: "tag" }, "proxy"));
+  if (d.jump) chips.push(" ", h("span", { class: "tag" }, "via " + tunConnName(d.jump)));
+  const jumpOpts: HChild[] = [h("option", { value: "" }, "None")].concat(tunData().connections
     .filter((c: ApiTunnelConnectionRow): boolean => { return !editing || c.id !== d.id; })
-    .map((c: ApiTunnelConnectionRow): string => {
-      return '<option value="' + esc(c.id) + '"' + (d.jump === c.id ? " selected" : "") + ">" + esc(c.name) + "</option>";
-    })
-    .join("");
-  return '<details class="fold" id="c-advanced">' +
-      "<summary>Advanced" + chips + "</summary>" +
-      '<div class="fold-body">' +
-        '<div class="cap">Proxy</div>' +
-        '<label class="field"><span>Proxy URL</span><input id="c-proxy" value="' + esc(d.proxy || "") +
-          '" placeholder="socks5://127.0.0.1:7890" autocomplete="off" spellcheck="false"></label>' +
-        '<div class="two">' +
-          '<label class="field"><span>Proxy username</span><input id="c-proxy-user" value="' + esc(d.proxyUsername || "") +
-            '" autocomplete="off"></label>' +
-          '<label class="field"><span>Proxy password</span><input id="c-proxy-pass" type="password" value="' +
-            esc(d.proxyPassword || "") + '" autocomplete="off"></label>' +
-        "</div>" +
-        '<div class="hint">Leave empty to connect directly. Credentials never go inside the URL — use the two fields above.</div>' +
-        '<div class="cap">Via connection (jump)</div>' +
-        '<label class="field"><span>Connection</span><select id="c-jump">' + opts + "</select></label>" +
-        '<div class="hint">Dials through the chosen connection before reaching this host (OpenSSH -J). A proxy or a jump, not both — cycles are refused on save.</div>' +
-      "</div>" +
-    "</details>" +
-    '<div class="hint" id="c-err" hidden></div>';
+    .map((c: ApiTunnelConnectionRow) => {
+      return h("option", { value: c.id, selected: d.jump === c.id }, c.name);
+    }));
+  return [
+    h("details", { class: "fold", id: "c-advanced" },
+      h("summary", null, "Advanced", chips),
+      h("div", { class: "fold-body" },
+        h("div", { class: "cap" }, "Proxy"),
+        h("label", { class: "field" },
+          h("span", null, "Proxy URL"),
+          h("input", { id: "c-proxy", value: d.proxy || "", placeholder: "socks5://127.0.0.1:7890", autocomplete: "off", spellcheck: false })),
+        h("div", { class: "two" },
+          h("label", { class: "field" },
+            h("span", null, "Proxy username"),
+            h("input", { id: "c-proxy-user", value: d.proxyUsername || "", autocomplete: "off" })),
+          h("label", { class: "field" },
+            h("span", null, "Proxy password"),
+            h("input", { id: "c-proxy-pass", type: "password", value: d.proxyPassword || "", autocomplete: "off" }))),
+        h("div", { class: "hint" }, "Leave empty to connect directly. Credentials never go inside the URL — use the two fields above."),
+        h("div", { class: "cap" }, "Via connection (jump)"),
+        h("label", { class: "field" },
+          h("span", null, "Connection"),
+          h("select", { id: "c-jump" }, jumpOpts)),
+        h("div", { class: "hint" }, "Dials through the chosen connection before reaching this host (OpenSSH -J). A proxy or a jump, not both — cycles are refused on save."))),
+    h("div", { class: "hint", id: "c-err", hidden: true }),
+  ];
 }
 
 function openConnSheet(def: ApiTunnelConnectionRow | null): void {
@@ -79,44 +87,57 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
   // the list's gesture (drag / row menu), not a property of its definition.
   const names = tunGroupsList();
   const initial = takeTunPendingGroup() || resolveDefaultGroup(names, lastGroup("conns"));
-  const groupField = editing ? "" : groupFieldHtml(names, initial);
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit connection" : "New connection") + '">' +
-      '<div class="sheet-head"><h2 id="t-title">' + (editing ? "Edit connection" : "New SSH connection in " + esc(initial)) + "</h2></div>" +
-      '<div class="sheet-body">' +
-        '<label class="field"><span>Name</span><input id="c-name" value="' + esc(d.name) + '" placeholder="Test server" autocomplete="off"></label>' +
-        groupField +
-        '<div class="two">' +
-          '<label class="field"><span>Host</span><input id="c-host" value="' + esc(d.host) + '" placeholder="e.g. 192.168.1.100" autocomplete="off"></label>' +
-          '<label class="field"><span>Port</span><input id="c-port" value="' + esc(String(d.port || 22)) + '" autocomplete="off"></label>' +
-        "</div>" +
-        '<label class="field"><span>Username</span><input id="c-user" value="' + esc(d.username) + '" placeholder="Enter a username" autocomplete="off"></label>' +
-        '<label class="field"><span>Authentication</span><select id="c-auth">' +
-          '<option value="key"' + (d.authType === "key" ? " selected" : "") + ">key — private key file</option>" +
-          '<option value="password"' + (d.authType === "password" ? " selected" : "") + ">password</option>" +
-        "</select></label>" +
-        '<div id="c-auth-fields"></div>' +
-        advancedConnHtml(d, editing) +
-      "</div>" +
-      '<div class="sheet-foot"><button class="btn" id="c-cancel">Cancel</button>' +
-        '<button class="btn primary" id="c-save">Save</button></div>' +
-    "</div>";
+  const groupField = editing ? null : groupFieldNode(names, initial);
+  // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog",
+        aria: { modal: "true", label: editing ? "Edit connection" : "New connection" } },
+      h("div", { class: "sheet-head" },
+        h("h2", { id: "t-title" }, editing ? "Edit connection" : "New SSH connection in " + initial)),
+      h("div", { class: "sheet-body" },
+        h("label", { class: "field" },
+          h("span", null, "Name"),
+          h("input", { id: "c-name", value: d.name, placeholder: "Test server", autocomplete: "off" })),
+        groupField,
+        h("div", { class: "two" },
+          h("label", { class: "field" },
+            h("span", null, "Host"),
+            h("input", { id: "c-host", value: d.host, placeholder: "e.g. 192.168.1.100", autocomplete: "off" })),
+          h("label", { class: "field" },
+            h("span", null, "Port"),
+            h("input", { id: "c-port", value: String(d.port || 22), autocomplete: "off" }))),
+        h("label", { class: "field" },
+          h("span", null, "Username"),
+          h("input", { id: "c-user", value: d.username, placeholder: "Enter a username", autocomplete: "off" })),
+        h("label", { class: "field" },
+          h("span", null, "Authentication"),
+          h("select", { id: "c-auth" },
+            h("option", { value: "key", selected: d.authType === "key" }, "key — private key file"),
+            h("option", { value: "password", selected: d.authType === "password" }, "password"))),
+        h("div", { id: "c-auth-fields" }),
+        advancedConnNode(d, editing)),
+      h("div", { class: "sheet-foot" },
+        h("button", { class: "btn", id: "c-cancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "c-save" }, "Save"))));
 
   const paint = async (): Promise<void> => {
     const keys = await loadKeys();
     const isKey = $<HTMLSelectElement>("c-auth").value === "key";
-    $("c-auth-fields").innerHTML = isKey
-      ? '<div class="with-btn">' +
-          '<label class="field"><span>Private key path</span><input id="c-keypath" value="' + esc(d.keyPath || "") +
-            '" placeholder="' + esc(keys.defaultPath) + '" autocomplete="off" spellcheck="false"></label>' +
-          '<button class="btn" id="c-browse">Browse…</button>' +
-        "</div>" +
-        '<label class="field"><span>Passphrase (optional)</span>' +
-          '<input id="c-pass" type="password" value="' + esc(d.passphrase || "") + '" placeholder="Leave empty if the key has none" autocomplete="off"></label>' +
-        '<div class="hint">Defaults to <code>' + esc(keys.defaultPath) + "</code> when left empty.</div>"
-      : '<label class="field"><span>Password</span>' +
-          '<input id="c-pass" type="password" value="' + esc(d.password || "") + '" placeholder="Enter the password" autocomplete="off"></label>';
+    fill($("c-auth-fields"),
+      isKey
+        ? [h("div", { class: "with-btn" },
+            h("label", { class: "field" },
+              h("span", null, "Private key path"),
+              h("input", { id: "c-keypath", value: d.keyPath || "", placeholder: keys.defaultPath, autocomplete: "off", spellcheck: false })),
+            h("button", { class: "btn", id: "c-browse" }, "Browse…")),
+          h("label", { class: "field" },
+            h("span", null, "Passphrase (optional)"),
+            h("input", { id: "c-pass", type: "password", value: d.passphrase || "", placeholder: "Leave empty if the key has none", autocomplete: "off" })),
+          h("div", { class: "hint" }, "Defaults to ", h("code", null, keys.defaultPath), " when left empty.")]
+        : [h("label", { class: "field" },
+            h("span", null, "Password"),
+            h("input", { id: "c-pass", type: "password", value: d.password || "", placeholder: "Enter the password", autocomplete: "off" }))]);
     if ($("c-browse")) $<HTMLButtonElement>("c-browse").onclick = openKeyPicker;
   };
   void paint();
@@ -157,21 +178,23 @@ async function openKeyPicker(): Promise<void> {
     cur = j.dir; // normalize to the resolved path the server returned
     const dirs = j.entries.filter((e: ApiTunnelsBrowseEntry): boolean => { return e.dir; });
     const files = j.entries.filter((e: ApiTunnelsBrowseEntry): boolean => { return !e.dir; });
-    picker.innerHTML =
-      '<div class="sheet-head"><h2>Choose a private key</h2></div>' +
-      '<div class="sheet-body">' +
-        '<div class="browse-cwd" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">' +
-          '<button class="btn' + (j.parent ? "" : " disabled") + '" id="b-up"' + (j.parent ? "" : " disabled") + ' title="Up one level">↑ Up</button>' +
-          '<input id="b-path" value="' + esc(j.dir) + '" spellcheck="false" autocomplete="off" style="flex:1">' +
-          '<button class="btn" id="b-go">Go</button>' +
-        '</div>' +
-        (j.error ? '<div class="hint">' + esc(j.error) + '</div>' : '') +
-        '<div class="keylist">' +
-          dirs.map((e: ApiTunnelsBrowseEntry): string => { return '<button class="is-dir" data-dir="' + esc(e.path) + '">📁 ' + esc(e.name) + '</button>'; }).join("") +
-          files.map((e: ApiTunnelsBrowseEntry): string => { return '<button data-file="' + esc(e.path) + '">📄 ' + esc(e.name) + '</button>'; }).join("") +
-        '</div>' +
-      '</div>' +
-      '<div class="sheet-foot"><button class="btn" data-close>Cancel</button></div>';
+    fill(picker,
+      h("div", { class: "sheet-head" }, h("h2", null, "Choose a private key")),
+      h("div", { class: "sheet-body" },
+        h("div", { class: "browse-cwd", style: "display:flex;gap:8px;align-items:center;margin-bottom:8px" },
+          // The disabled class is cosmetic; the disabled PROPERTY is what stops the click.
+          h("button", { class: "btn" + (j.parent ? "" : " disabled"), id: "b-up", disabled: !j.parent, title: "Up one level" }, "↑ Up"),
+          h("input", { id: "b-path", value: j.dir, spellcheck: false, autocomplete: "off", style: "flex:1" }),
+          h("button", { class: "btn", id: "b-go" }, "Go")),
+        j.error ? h("div", { class: "hint" }, j.error) : null,
+        h("div", { class: "keylist" },
+          dirs.map((e: ApiTunnelsBrowseEntry): HTMLElement => {
+            return h("button", { class: "is-dir", data: { dir: e.path } }, "📁 ", e.name);
+          }),
+          files.map((e: ApiTunnelsBrowseEntry): HTMLElement => {
+            return h("button", { data: { file: e.path } }, "📄 ", e.name);
+          }))),
+      h("div", { class: "sheet-foot" }, h("button", { class: "btn", data: { close: "" } }, "Cancel")));
     picker.querySelector<HTMLButtonElement>("[data-close]")!.onclick = close;
     if (j.parent) picker.querySelector<HTMLButtonElement>("#b-up")!.onclick = (): void => { cur = j?.parent!; void render(); };
     const go = (): void => { cur = $<HTMLInputElement>("b-path").value.trim(); void render(); };
@@ -262,35 +285,52 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
   // the header + that opened this, else the scope's last-used group.
   const names = tunGroupsList();
   const initial = takeTunPendingGroup() || resolveDefaultGroup(names, lastGroup("rules"));
-  const groupField = editing ? "" : groupFieldHtml(names, initial);
-  const opts = d.connections.map((c: ApiTunnelConnectionRow): string => {
-    return '<option value="' + esc(c.id) + '"' + (c.id === r.connectionId ? " selected" : "") + ">" + esc(c.name) + "</option>";
-  }).join("");
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit rule" : "New rule") + '">' +
-      '<div class="sheet-head"><h2 id="t-title">' + (editing ? "Edit forwarding rule" : "New forwarding rule in " + esc(initial)) + "</h2></div>" +
-      '<div class="sheet-body">' +
-        '<label class="field"><span>Name</span><input id="r-name" value="' + esc(r.name) + '" placeholder="Test server PostgreSQL" autocomplete="off"></label>' +
-        groupField +
-        '<label class="field"><span>SSH connection</span><select id="r-conn">' + opts + "</select></label>" +
-        '<label class="field"><span>Local port</span><input id="r-lport" value="' + esc(String(r.localPort)) + '" placeholder="5433" autocomplete="off"></label>' +
-        '<div class="two">' +
-          '<label class="field"><span>Target host</span><input id="r-thost" value="' + esc(r.targetHost) + '" placeholder="127.0.0.1" autocomplete="off"></label>' +
-          '<label class="field"><span>Target port</span><input id="r-tport" value="' + esc(String(r.targetPort)) + '" placeholder="5432" autocomplete="off"></label>' +
-        "</div>" +
-        '<label class="field"><span>Remark</span><input id="r-remark" value="' + esc(r.remark || "") + '" placeholder="Optional" autocomplete="off"></label>' +
-        '<div class="cap" style="padding-top:var(--s2)">Serves MCPs</div>' +
-        '<div class="mcp-picks" id="r-mcps"></div>' +
-        '<div class="hint" id="r-mcps-hint">Which MCPs use this tunnel. Shown on both sides, and you are warned before stopping a tunnel an MCP is using — nothing is started or restarted for you.</div>' +
-        '<div class="cap" style="padding-top:var(--s2)">Advanced</div>' +
-        '<label class="check"><input type="checkbox" id="r-auto"' + (r.autoReconnect ? " checked" : "") + ">Reconnect automatically</label>" +
-        '<label class="field"><span>Reconnect interval (seconds)</span><input id="r-interval" value="' + esc(String(r.reconnectInterval || 10)) + '" autocomplete="off"></label>' +
-        '<div class="hint">A dropped tunnel releases its local port first, then retries. Authentication and host-key failures are never retried.</div>' +
-      "</div>" +
-      '<div class="sheet-foot"><button class="btn" id="r-cancel">Cancel</button>' +
-        '<button class="btn primary" id="r-save">Save</button></div>' +
-    "</div>";
+  const groupField = editing ? null : groupFieldNode(names, initial);
+  const connOpts = d.connections.map((c: ApiTunnelConnectionRow): HTMLElement => {
+    return h("option", { value: c.id, selected: c.id === r.connectionId }, c.name);
+  });
+  // The house sheet idiom: visible BEFORE the body is painted.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog",
+        aria: { modal: "true", label: editing ? "Edit rule" : "New rule" } },
+      h("div", { class: "sheet-head" },
+        h("h2", { id: "t-title" }, editing ? "Edit forwarding rule" : "New forwarding rule in " + initial)),
+      h("div", { class: "sheet-body" },
+        h("label", { class: "field" },
+          h("span", null, "Name"),
+          h("input", { id: "r-name", value: r.name, placeholder: "Test server PostgreSQL", autocomplete: "off" })),
+        groupField,
+        h("label", { class: "field" },
+          h("span", null, "SSH connection"),
+          h("select", { id: "r-conn" }, connOpts)),
+        h("label", { class: "field" },
+          h("span", null, "Local port"),
+          h("input", { id: "r-lport", value: String(r.localPort), placeholder: "5433", autocomplete: "off" })),
+        h("div", { class: "two" },
+          h("label", { class: "field" },
+            h("span", null, "Target host"),
+            h("input", { id: "r-thost", value: r.targetHost, placeholder: "127.0.0.1", autocomplete: "off" })),
+          h("label", { class: "field" },
+            h("span", null, "Target port"),
+            h("input", { id: "r-tport", value: String(r.targetPort), placeholder: "5432", autocomplete: "off" }))),
+        h("label", { class: "field" },
+          h("span", null, "Remark"),
+          h("input", { id: "r-remark", value: r.remark || "", placeholder: "Optional", autocomplete: "off" })),
+        h("div", { class: "cap", style: "padding-top:var(--s2)" }, "Serves MCPs"),
+        h("div", { class: "mcp-picks", id: "r-mcps" }),
+        h("div", { class: "hint", id: "r-mcps-hint" }, "Which MCPs use this tunnel. Shown on both sides, and you are warned before stopping a tunnel an MCP is using — nothing is started or restarted for you."),
+        h("div", { class: "cap", style: "padding-top:var(--s2)" }, "Advanced"),
+        h("label", { class: "check" },
+          h("input", { type: "checkbox", id: "r-auto", checked: r.autoReconnect }),
+          "Reconnect automatically"),
+        h("label", { class: "field" },
+          h("span", null, "Reconnect interval (seconds)"),
+          h("input", { id: "r-interval", value: String(r.reconnectInterval || 10), autocomplete: "off" })),
+        h("div", { class: "hint" }, "A dropped tunnel releases its local port first, then retries. Authentication and host-key failures are never retried.")),
+      h("div", { class: "sheet-foot" },
+        h("button", { class: "btn", id: "r-cancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "r-save" }, "Save"))));
 
   paintMcpPicks(r.mcps || [], []);
   // For a new rule, the suggestion is the point: type 5433 and the matching MCP checks itself.
@@ -316,15 +356,15 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
 function paintMcpPicks(checked: string[], suggested: string[]): void {
   const names = tunData().mcps || [];
   if (!names.length) {
-    $("r-mcps").innerHTML = '<div class="hint">No MCPs registered.</div>';
+    fill($("r-mcps"), h("div", { class: "hint" }, "No MCPs registered."));
     return;
   }
-  $("r-mcps").innerHTML = names.map((n: string): string => {
-    const on = checked.indexOf(n) >= 0;
-    const hint = suggested.indexOf(n) >= 0 ? ' <span class="hint">(matches this local port)</span>' : "";
-    return '<label class="check"><input type="checkbox" data-mcp="' + esc(n) + '"' + (on ? " checked" : "") + ">" +
-      esc(n) + hint + "</label>";
-  }).join("");
+  fill($("r-mcps"), names.map((n: string): HTMLElement => {
+    return h("label", { class: "check" },
+      h("input", { type: "checkbox", data: { mcp: n }, checked: checked.indexOf(n) >= 0 }),
+      n,
+      suggested.indexOf(n) >= 0 ? h("span", { class: "hint" }, " (matches this local port)") : null);
+  }));
 }
 
 function readMcpPicks(): string[] {

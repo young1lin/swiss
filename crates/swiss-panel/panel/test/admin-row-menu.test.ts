@@ -36,14 +36,28 @@ interface FakeEvent {
   preventDefault(): void;
 }
 
-class FakeNode {
+/* docs/37 R5: jobs now paints its sheets with h()/fill(), so the micro-DOM needs the
+   Node identity the builder checks, text nodes, fragments that splice on append, and an
+   innerHTML that READS the built tree back as markup (what the assertions grep). */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
+class FakeNode extends NodeStub {
   tag: string;
   attrs: Record<string, string> = {};
   children: FakeNode[] = [];
   parent: FakeNode | null = null;
   className = "";
-  textContent = "";
-  innerHTML = "";
+  isText = false;
+  private _text = "";
+  private _html = "";
+  get textContent(): string { return this._text; }
+  set textContent(v: string) {
+    if (v === "") { this.children = []; this._html = ""; } // fill()'s wipe
+    this._text = v;
+  }
+  get innerHTML(): string { return this._html || serialize(this); }
+  set innerHTML(v: string) { this._html = v; this.children = []; }
   id = "";
   type = "button"; // sheet/form code sets .type on buttons
   onclick: ((ev: FakeEvent) => void) | null = null;
@@ -54,6 +68,7 @@ class FakeNode {
   body: FakeNode | null = null;
 
   constructor(tag: string) {
+    super();
     this.tag = tag.toUpperCase();
   }
 
@@ -73,9 +88,16 @@ class FakeNode {
     return Object.prototype.hasOwnProperty.call(this.attrs, k) ? this.attrs[k] : null;
   }
   appendChild(n: FakeNode) {
+    if (n.tag === "#DOCUMENT-FRAGMENT") {
+      n.children.slice().forEach((c) => { this.appendChild(c); });
+      n.children = [];
+      this._html = "";
+      return n;
+    }
     n.remove();
     n.parent = this;
     this.children.push(n);
+    this._html = "";
     return n;
   }
   removeChild(n: FakeNode) {
@@ -146,6 +168,17 @@ class FakeNode {
   }
 }
 
+function serialize(n: FakeNode): string {
+  if (n.isText) return n.textContent;
+  const attrs = Object.keys(n.attrs).map((k) => { return " " + k + "=\"" + n.attrs[k] + "\""; }).join("");
+  const id = n.id ? " id=\"" + n.id + "\"" : "";
+  const cls = n.className ? " class=\"" + n.className + "\"" : "";
+  const hid = n.hidden ? " hidden" : "";
+  const kids = n.children.map((c) => serialize(c)).join("");
+  const tag = n.tag.toLowerCase();
+  return "<" + tag + id + cls + attrs + hid + ">" + (kids || (n.textContent && !n.children.length ? n.textContent : "")) + "</" + tag + ">";
+}
+
 const doc = new FakeNode("#document");
 const docBody = new FakeNode("body");
 doc.body = docBody;
@@ -180,6 +213,14 @@ doc.appendChild(doc.body);
   return out;
 };
 (doc as unknown as { createElement(t: string): FakeNode }).createElement = (t: string) => new FakeNode(t);
+(doc as unknown as { createElementNS(ns: string, t: string): FakeNode }).createElementNS = (_ns: string, t: string) => new FakeNode(t);
+(doc as unknown as { createDocumentFragment(): FakeNode }).createDocumentFragment = () => new FakeNode("#document-fragment");
+(doc as unknown as { createTextNode(s: string): FakeNode }).createTextNode = (s: string) => {
+  const n = new FakeNode("#text");
+  n.isText = true;
+  n.textContent = s;
+  return n;
+};
 
 const documentCloserCalls: string[] = [];
 
@@ -264,7 +305,7 @@ describe("row overflow menu vs the document click closer (docs/18 V5)", () => {
   }
   const labelsOf = (menu: FakeNode) => menu.querySelectorAll("button").map((b) => b.textContent);
 
-  /** One Jobs row against the real jobRowHtml contract, wired by the real wireJobs. */
+  /** One Jobs row against the real jobRowNode contract, wired by the real wireJobs. */
   function wiredJobRow(): FakeNode {
     const pane = paneNode();
     const row = new FakeNode("div");
