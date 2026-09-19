@@ -18,11 +18,12 @@ import type { DbState } from "./db-state.js";
 import type { ApiDbColumn, ApiDbConnectionRow, ApiDbFkRow, ApiDbTableDetail } from "./types/api.js";
 import type { DbDetailSpec } from "./types/state.js";
 import { apiJson, dbReqGuard, el } from "./util.js";
+import { fill, h } from "./h.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbDialectOf, dbOkToDrop, dbOpenTable } from "./data-view.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbTableMenu } from "./data-edit.js";
-import { dbHighlightSql, renderDbFilters } from "./data-filters.js";
+import { dbHighlightNodes, renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbView } from "./db-state.js";
@@ -77,22 +78,15 @@ async function dbLoadDetail(): Promise<void> {
 
 function dbRenderTabs(ctl: HTMLElement): void {
   const d = dbView();
-  const seg = el("div", "db-tabs");
-  seg.setAttribute("role", "tablist");
-  DB_TABS.forEach((t: { id: string; label: string }): void => {
-    const b = el("button", "", t.label);
-    b.setAttribute("role", "tab");
-    b.setAttribute("aria-selected", String(d.tab === t.id));
-    b.onclick = () => { dbSetTab(t.id); };
-    seg.appendChild(b);
-  });
-  ctl.appendChild(seg);
+  // Tab clicks and the Table menu answer through #pane's delegated listener via their
+  // data-dtab / data-tmenu addresses (docs/37 R5) — no per-render handlers on the strip.
+  ctl.appendChild(h("div", { class: "db-tabs", role: "tablist" },
+    DB_TABS.map((t: { id: string; label: string }) => {
+      return h("button", { role: "tab", data: { dtab: t.id }, aria: { selected: String(d.tab === t.id) } }, t.label);
+    })));
   // The Table menu: rename / truncate / drop, guarded by typed confirms server- AND client-side.
   if (!dbIsRedis()) {
-    const tblBtn = el("button", "btn", "Table \u25be");
-    tblBtn.title = "Rename, truncate or drop this table";
-    tblBtn.onclick = (e: MouseEvent): void => { e.stopPropagation(); dbTableMenu(tblBtn); };
-    ctl.appendChild(tblBtn);
+    ctl.appendChild(h("button", { class: "btn", title: "Rename, truncate or drop this table", data: { tmenu: "" } }, "Table \u25be"));
   }
 }
 
@@ -110,7 +104,7 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
         : "From SHOW CREATE TABLE.")));
     const pre = el("pre", "db-ddl db-sql-hl");
     pre.style.position = "static"; // undo the overlay absolute positioning — this is a plain block
-    pre.innerHTML = dbHighlightSql(dbAlignDdl(det.ddl || "(no DDL)"));
+    fill(pre, dbHighlightNodes(dbAlignDdl(det.ddl || "(no DDL)")));
     wrap.appendChild(pre);
     return;
   }
@@ -161,18 +155,10 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
   meta.appendChild(el("span", "", spec.meta));
   meta.appendChild(el("span", "grow"));
   if (d.tab === "columns" || d.tab === "indexes") {
-    const add = el("button", "btn", d.tab === "columns" ? "Add column…" : "New index…") as HTMLButtonElement;
-    add.type = "button";
-    add.onclick = (): void => {
-      openDbDdlSheet(d.tab === "columns" ? "column" : "index", {
-        dialect: dbDialectOf(),
-        conn: d.conn!,
-        schema: det.schema || "",
-        table: det.table,
-        columns: det.columns,
-      });
-    };
-    meta.appendChild(add);
+    // data-dadd carries the sheet kind; the click handler resolves the live detail for the
+    // sheet's payload (docs/37 R5 — state at event time, not render time).
+    meta.appendChild(h("button", { class: "btn", type: "button", data: { dadd: d.tab === "columns" ? "column" : "index" } },
+      d.tab === "columns" ? "Add column…" : "New index…"));
   }
   wrap.appendChild(meta);
   spec.head.forEach((h: string): void => { hr.appendChild(el("th", "db-col", h)); });
@@ -187,16 +173,13 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
       const fk_ = cell.fk!;
       if (cell.fk) {
         // docs/22 W5.2: the referenced table opens on click — no filter here, just the
-        // navigation (the arrow in the grid header owns the filtered jump).
-        const ref = el("button", "db-fk-ref") as HTMLButtonElement;
-        ref.type = "button";
-        ref.textContent = String(cell.text);
-        ref.title = "Open " + (fk_.refSchema ? fk_.refSchema + "." : "") + fk_.refTable;
-        ref.onclick = () => {
-          if (!dbOkToDrop()) return;
-          dbOpenTable({ name: cell.fk!.refTable, schema: cell.fk?.refSchema || null as unknown as string });
-        };
-        td.appendChild(ref);
+        // navigation (the arrow in the grid header owns the filtered jump). The target rides
+        // data attributes and the click is answered by #pane's delegated listener.
+        td.appendChild(h("button", {
+          class: "db-fk-ref", type: "button",
+          title: "Open " + (fk_.refSchema ? fk_.refSchema + "." : "") + fk_.refTable,
+          data: { refTable: fk_.refTable, refSchema: fk_.refSchema || "" },
+        }, String(cell.text)));
       } else td.textContent = String(cell.text);
       tr.appendChild(td);
     });
@@ -269,4 +252,45 @@ function dbAlignDdl(ddl: string | null): string {
   }).join("\n");
 }
 
-export { DB_TABS, DDL_MOD_WORDS, dbAlignDdl, dbLoadDetail, dbParseColumnLine, dbRenderTabs, dbSetTab, renderDbDetailGrid };
+/** #pane's delegated click for the Structure tab strip and the detail grids (docs/37 R5).
+ *  Behavior note (docs/37 §10.1): the Add-column / New-index payload is built from the LIVE
+ *  d.detail at event time — a detail that reloaded between render and click opens the sheet
+ *  against what is on screen now, not what the button was painted with. */
+function dbStructureClick(t: Element, ev: MouseEvent): boolean {
+  const d = dbView();
+  const tabBtn = t.closest<HTMLElement>("[data-dtab]");
+  if (tabBtn) { dbSetTab(tabBtn.dataset.dtab ?? ""); return true; }
+  const menuBtn = t.closest<HTMLElement>("[data-tmenu]");
+  if (menuBtn) {
+    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
+    // without this the very click that opens the menu also tears it down.
+    ev.stopPropagation();
+    dbTableMenu(menuBtn);
+    return true;
+  }
+  const add = t.closest<HTMLElement>("[data-dadd]");
+  if (add) {
+    const det = d.detail;
+    if (det) {
+      openDbDdlSheet(add.dataset.dadd as "column" | "index", {
+        dialect: dbDialectOf(),
+        conn: d.conn!,
+        schema: det.schema || "",
+        table: det.table,
+        columns: det.columns,
+      });
+    }
+    return true;
+  }
+  const ref = t.closest<HTMLElement>("[data-ref-table]");
+  if (ref) {
+    if (!dbOkToDrop()) return true;
+    // The FK row's schema is null for a same-schema reference; ApiDbTableRow types it string,
+  // so this one cast survives (the same cast the pre-R5 string builder carried).
+  dbOpenTable({ name: ref.dataset.refTable || "", schema: (ref.dataset.refSchema || null) as unknown as string });
+    return true;
+  }
+  return false;
+}
+
+export { DB_TABS, DDL_MOD_WORDS, dbAlignDdl, dbLoadDetail, dbParseColumnLine, dbRenderTabs, dbSetTab, dbStructureClick, renderDbDetailGrid };

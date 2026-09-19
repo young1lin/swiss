@@ -23,26 +23,36 @@ import { dbConn } from "./db-fixtures.js";
 /* docs/22 closeout B7: the schema picker belongs to ONE connection kind. A redis or mysql
    connection must not carry it at all — a hidden native select still shows up in automation
    accessibility trees as a live "Schema" button holding the PREVIOUS pg pick, which read as
-   a redis page offering a schema dropdown. Same DOM-stub technique as the other panel suites. */
+   a redis page offering a schema dropdown. Same DOM-stub technique as the other panel suites.
+   docs/37 R5: the picker carries no per-creation wiring (the pane's delegated change
+   listener resolves it by id), so "wired" is proven by firing dbPaneChange at the re-created
+   select and watching the state move. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
 type Stub = Record<string, any> & { children: Stub[] };
 const el = (tag = "div"): Stub => {
   const n: any = {
     tag, children: [], style: {}, dataset: {}, hidden: false, disabled: false, value: "",
-    textContent: "", className: "", id: "", title: "", type: "", selectedIndex: -1,
+    className: "", id: "", title: "", type: "", selectedIndex: -1,
     classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
     appendChild(c: Stub) { n.children.push(c); return c; },
     removeChild(c: Stub) { n.children = n.children.filter((x: Stub) => x !== c); return c; },
-    remove() {}, contains: () => false, closest: () => null,
-    setAttribute() {}, getAttribute: () => "", removeAttribute() {},
+    remove() {}, contains: () => false,
+    closest(sel: string) { return sel.charAt(0) === "#" && n.id === sel.slice(1) ? n : null; },
+    setAttribute(k: string, v: string) { if (k === "id") n.id = v; if (k.startsWith("data-")) n.dataset[k.slice(5)] = v; },
+    getAttribute: () => "", removeAttribute() {},
     addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
     focus() {}, blur() {}, click() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }),
     querySelector: () => null, querySelectorAll: () => [],
     insertBefore(c: Stub) { n.children.push(c); return c; },
   };
-  Object.defineProperty(n, "innerHTML", {
-    get: () => "", set: (v: string) => { if (v === "") n.children = []; },
+  Object.defineProperty(n, "textContent", {
+    get: (): string => (n as any)._text ?? "",
+    set: (v: string) => { if (v === "") n.children = []; (n as any)._text = v; },
   });
+  Object.setPrototypeOf(n, NodeStub.prototype);
   return n;
 };
 const byId: Record<string, Stub> = {};
@@ -53,7 +63,9 @@ Object.assign(globalThis, {
     // Auto-create keeps module-graph import-time lookups ($("addBtn")…) alive, but dbSchema
     // must NOT auto-create: this suite's whole subject is that element's presence and absence.
     getElementById: (id: string) => (id === "dbSchema" ? byId.dbSchema : (byId[id] ||= el())),
-    createElement: (t: string) => el(t), createTextNode: (s: string) => ({ text: s }),
+    createElement: (t: string) => el(t), createElementNS: (_ns: string, t: string) => el(t),
+    createDocumentFragment: () => el("#document-fragment"),
+    createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
     querySelector: () => null, querySelectorAll: () => [],
     addEventListener: () => {}, removeEventListener: () => {},
   },
@@ -70,6 +82,7 @@ Object.assign(globalThis, {
 const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
   renderDbTables: () => void;
+  dbPaneChange: (ev: { target: Stub }) => void;
 };
 
 /** Mount-like sidebar: a #dbConn select and the skeleton's #dbSchema select, whose remove()
@@ -137,6 +150,10 @@ describe("the schema picker follows the connection kind (docs/22 closeout B7)", 
     view.renderDbTables();
     const sel = byId.dbSchema;
     expect(sel, "the picker is re-created for pg").toBeTruthy();
-    expect(typeof sel.onchange, "it is wired again").toBe("function");
+    // docs/37 R5: "wired" is the pane's delegated change listener finding the re-created
+    // select by id at event time — fire the dispatcher and watch the pick move.
+    sel.value = "";
+    view.dbPaneChange({ target: sel });
+    expect(d.schemaFilter, "the pane's delegated change answered the re-created select").toBe("");
   });
 });

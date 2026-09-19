@@ -40,7 +40,6 @@ const FROZEN: Record<string, number> = {
   "data-activity.ts": 3,
   "data-browsers.ts": 16,
   "data-ddl.ts": 13,
-  "data-filters.ts": 6,
   "data-form.ts": 7,
   "data-structure.ts": 4,
   "data-suggest.ts": 5,

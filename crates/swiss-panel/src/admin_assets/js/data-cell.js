@@ -16,7 +16,8 @@
 
                                                   
                                                    
-import { $, esc, toast } from "./util.js";
+import { $, toast } from "./util.js";
+import { fill, h } from "./h.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
@@ -61,27 +62,26 @@ function dbOpenCellEditor(kind                     , key        , i        , col
   const isBool = /bool/i.test(colMeta.dataType || "");
   dbCellEdit = { kind: kind, key: key, i: i, column: column, meta: meta };
 
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Edit cell">' +
-      '<div class="sheet-head"><div class="db-cell-head">' +
-        "<h2>" + esc(column) + '</h2>' +
-        '<span class="db-cell-where">' + esc((d.schema ? d.schema + "." : "") + d.table +
-          (kind === "update" ? " · PK " + JSON.stringify(meta.pk) : " · new row")) + "</span>" +
-      "</div></div>" +
-      '<div class="sheet-body">' +
-        '<div class="db-console-row" style="margin-bottom:var(--s2)">' +
-          (isBool ? '<button class="btn" id="dbCellBool"></button>' : "") +
-          '<button class="btn" id="dbCellNull"></button>' +
-          (pretty ? '<button class="btn" id="dbCellJson">Format JSON</button>' : "") +
-          '<span class="hint">saves to the local buffer — Commit writes it in one transaction</span>' +
-        "</div>" +
-        '<textarea id="dbCellText" spellcheck="false"></textarea>' +
-      "</div>" +
-      '<div class="sheet-foot"><span class="grow"></span>' +
-        '<button class="btn" id="dbCellCancel">Cancel</button>' +
-        '<button class="btn primary" id="dbCellSave">Save to buffer</button></div>' +
-    "</div>";
+  // docs/37 R5: node sheet, painted AFTER the host is unhidden; per-open wiring below stays
+  // (the sheet idiom — the buttons and their closure state live only while it is open).
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Edit cell" } },
+      h("div", { class: "sheet-head" },
+        h("div", { class: "db-cell-head" },
+          h("h2", null, column),
+          h("span", { class: "db-cell-where" }, (d.schema ? d.schema + "." : "") + d.table +
+            (kind === "update" ? " · PK " + JSON.stringify(meta.pk) : " · new row")))),
+      h("div", { class: "sheet-body" },
+        h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
+          isBool ? h("button", { class: "btn", id: "dbCellBool" }) : null,
+          h("button", { class: "btn", id: "dbCellNull" }),
+          pretty ? h("button", { class: "btn", id: "dbCellJson" }, "Format JSON") : null,
+          h("span", { class: "hint" }, "saves to the local buffer — Commit writes it in one transaction")),
+        h("textarea", { id: "dbCellText", spellcheck: false })),
+      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
+        h("button", { class: "btn", id: "dbCellCancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "dbCellSave" }, "Save to buffer"))));
   const ta = $                     ("dbCellText");
   ta.value = pretty || text;
   let nullState = isNull;

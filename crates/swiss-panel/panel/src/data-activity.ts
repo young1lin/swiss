@@ -15,7 +15,8 @@
  */
 
 import type { ApiDbActivityReply, ApiDbActivityRow } from "./types/api.js";
-import { $, apiJson, el, icon, toast } from "./util.js";
+import { $, apiJson, el, iconNode, toast } from "./util.js";
+import { h } from "./h.js";
 import { popupMenu } from "./menu.js";
 import { dbIsMounted, dbView } from "./db-state.js";
 
@@ -28,6 +29,9 @@ import { dbIsMounted, dbView } from "./db-state.js";
 
 const DB_ACTIVITY_POLL_MS = 5000;
 let dbActivityTimer: ReturnType<typeof setInterval> | null = null;
+// The view's own close action, registered when the section opens — #pane's delegated click
+// reaches it without data-view threading the callback through every dispatcher.
+let dbActivityCloseFn: (() => void) | null = null;
 
 /** Seconds as the compact duration the table shows — "42s", "1m 12s", "2h 05m", "3d 04h".
  *  Pure so the column's formatting can be pinned without a DOM. */
@@ -44,10 +48,11 @@ function dbActivityDuration(secs: number | null | undefined): string {
 /** Draw the section into the (fresh) right pane and start the poll. "close" is the view's own
  *  close action — passed in so this module never imports data-view back. */
 function dbActivityPane(close: () => void): void {
+  dbActivityCloseFn = close;
   const d = dbView();
   const main = document.querySelector<HTMLElement>(".db-main");
   if (!main) return;
-  main.innerHTML = "";
+  main.textContent = "";
   const conn = d.conns.find((c) => { return c.name === d.conn; });
   const head = el("div", "db-head");
   const left = el("div", "db-head-left");
@@ -55,12 +60,9 @@ function dbActivityPane(close: () => void): void {
   left.appendChild(el("div", "db-meta",
     (conn ? conn.label : d.conn) + " · refreshes every 5s while this page is open"));
   head.appendChild(left);
-  const ctl = el("div", "db-head-ctl");
-  const btn = el("button", "btn", "Close");
-  btn.type = "button";
-  btn.onclick = close;
-  ctl.appendChild(btn);
-  head.appendChild(ctl);
+  // The Close button answers through #pane's delegated click via data-actclose (docs/37 R5).
+  head.appendChild(h("div", { class: "db-head-ctl" },
+    h("button", { class: "btn", type: "button", data: { actclose: "" } }, "Close")));
   main.appendChild(head);
   const wrap = el("div", "db-grid-wrap");
   wrap.id = "dbActivityWrap";
@@ -86,7 +88,7 @@ function dbActivityRender() {
   const wrap = $("dbActivityWrap");
   if (!wrap) return;
   const rows = d.activityRows || [];
-  wrap.innerHTML = "";
+  wrap.textContent = "";
   if (!rows.length) {
     wrap.appendChild(el("div", "db-hint", "No sessions — the server reports none."));
     return;
@@ -125,18 +127,39 @@ function dbActivityRender() {
     const q = el("td", "db-cell", String(r.query == null ? "" : r.query));
     q.title = q.textContent;
     tr.appendChild(q);
+    // The per-row menu trigger addresses its row by pid and answers through #pane's
+    // delegated click (docs/37 R5); the row is re-found from live state at event time.
     const ctl = el("td", "db-rowctl");
-    const more = el("button", "db-act-more");
-    more.type = "button";
-    more.title = "Cancel or terminate this session";
-    more.innerHTML = icon("ellipsis");
-    more.onclick = (e: MouseEvent): void => { e.stopPropagation(); dbActivityMenu(more, r); };
-    ctl.appendChild(more);
+    ctl.appendChild(h("button", {
+      class: "db-act-more", type: "button", title: "Cancel or terminate this session",
+      data: { apid: r.pid == null ? "" : String(r.pid) },
+    }, iconNode("ellipsis")));
     tr.appendChild(ctl);
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+}
+
+/** #pane's delegated click for the Activity page (docs/37 R5). Behavior note (docs/37 §10.1):
+ *  the per-row menu re-finds its row from live d.activityRows by pid at event time — a poll
+ *  that repainted the table between render and click can never kill the wrong session. */
+function dbActivityClick(t: Element, ev: MouseEvent): boolean {
+  if (t.closest("[data-actclose]")) {
+    if (dbActivityCloseFn) dbActivityCloseFn();
+    return true;
+  }
+  const more = t.closest<HTMLElement>("[data-apid]");
+  if (more) {
+    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
+    // without this the very click that opens the menu also tears it down.
+    ev.stopPropagation();
+    const pid = Number(more.dataset.apid);
+    const row = (dbView().activityRows || []).filter((r: ApiDbActivityRow): boolean => { return r.pid === pid; })[0];
+    if (row) dbActivityMenu(more, row);
+    return true;
+  }
+  return false;
 }
 
 /** pgadmin's pair, in the panel's menu words: Cancel interrupts the running statement and
@@ -178,4 +201,4 @@ function dbActivityPollStop() {
   if (dbActivityTimer) { clearInterval(dbActivityTimer); dbActivityTimer = null; }
 }
 
-export { dbActivityDuration, dbActivityPane, dbActivityPollStop, dbActivityRender };
+export { dbActivityClick, dbActivityDuration, dbActivityPane, dbActivityPollStop, dbActivityRender };

@@ -22,8 +22,26 @@ import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), with child-tracking
    nodes so a test can walk the filter row's selects. confirm defaults to REFUSAL: the audit
-   case is a user with buffered edits saying "no" to the discard gate. */
+   case is a user with buffered edits saying "no" to the discard gate.
+   docs/37 R5: the rows are built with h()/fill() and carry data-fi/data-fk/data-frm addresses
+   instead of per-render handlers, so the stub extends the Node stub (h() instanceof-checks
+   children), closest self-matches the attribute selectors the dispatchers climb, and the
+   tests fire the exported dispatchers the pane's delegated listeners would call. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
 type Stub = Record<string, any> & { children: Stub[] };
+/* Self-match the selector units the filter dispatchers use: "#id", "[data-x]",
+   '[data-x="v"]' — a comma list matches when any unit does. */
+function selfMatches(n: Stub, selector: string): boolean {
+  return selector.split(",").some((unit) => {
+    const u = unit.trim();
+    if (u.charAt(0) === "#") return n.id === u.slice(1);
+    const m = u.match(/^\[data-([\w-]+)(?:="([^"]*)")?\]$/);
+    if (!m) return false;
+    return typeof n.dataset[m[1]] !== "undefined" && (m[2] === undefined || n.dataset[m[1]] === m[2]);
+  });
+}
 const el = (tag = "div"): Stub => {
   const n: any = {
     tag, children: [], style: {}, dataset: {}, hidden: false, disabled: false, checked: false,
@@ -31,8 +49,10 @@ const el = (tag = "div"): Stub => {
     classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
     appendChild(c: Stub) { n.children.push(c); return c; },
     removeChild(c: Stub) { n.children = n.children.filter((x: Stub) => x !== c); return c; },
-    remove() {}, contains: () => false, closest: () => null,
-    setAttribute() {}, getAttribute: () => "", removeAttribute() {},
+    remove() {}, contains: () => false,
+    closest(sel: string) { return selfMatches(n, sel) ? n : null; },
+    setAttribute(k: string, v: string) { if (k === "id") n.id = v; if (k.startsWith("data-")) n.dataset[k.slice(5)] = v; },
+    getAttribute: () => "", removeAttribute() {},
     addEventListener() {}, removeEventListener() {},
     dispatchEvent: () => true, focus() {}, blur() {}, select() {}, click() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 22, right: 40, bottom: 22 }),
@@ -40,6 +60,7 @@ const el = (tag = "div"): Stub => {
     replaceWith() {}, insertAdjacentHTML() {},
   };
   Object.defineProperty(n, "innerHTML", { get: () => "", set: () => { n.children = []; } });
+  Object.setPrototypeOf(n, NodeStub.prototype);
   return n;
 };
 const byId: Record<string, Stub> = {};
@@ -47,7 +68,9 @@ Object.assign(globalThis, {
   document: {
     documentElement: el(), body: el(), head: el(), hidden: false, visibilityState: "visible",
     activeElement: null,
-    createElement: (t: string) => el(t), createTextNode: (s: string) => ({ text: s }),
+    createElement: (t: string) => el(t), createElementNS: (_ns: string, t: string) => el(t),
+    createDocumentFragment: () => el("#document-fragment"),
+    createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
     getElementById: (id: string) => (byId[id] ||= el()),
     querySelector: () => null, querySelectorAll: () => [],
     addEventListener: () => {}, removeEventListener: () => {},
@@ -65,6 +88,8 @@ Object.assign(globalThis, {
 const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const filters = await import(pathToFileURL(join(here, "data-filters.js")).href) as {
   renderDbFilters: () => void;
+  dbFiltersChange: (t: Stub) => boolean;
+  dbFiltersClick: (t: Stub) => boolean;
 };
 const csv = await import(pathToFileURL(join(here, "data-csv.js")).href) as {
   dbPushCellFilter: (column: string, op: string, value: string) => void;
@@ -97,9 +122,9 @@ describe("a refused discard leaves the filter row exactly as it was (docs/22 clo
     const { d, selects } = renderFilterRow();
     const [cs] = selects;
     cs.value = "b";
-    // docs/37 M4: handlers read e.currentTarget now (the DOM contract), not this - the
-    // event the browser would have delivered carries currentTarget = the select itself.
-    cs.onchange({ currentTarget: cs });
+    // docs/37 R5: the pane's delegated change listener would resolve this select by its
+    // data-fi/data-fk address — the dispatcher is the pane's answer, fired directly.
+    filters.dbFiltersChange(cs);
     expect(d.filters[0].column, "the row keeps its column").toBe("a");
   });
 
@@ -107,15 +132,15 @@ describe("a refused discard leaves the filter row exactly as it was (docs/22 clo
     const { d, selects } = renderFilterRow();
     const os = selects[1];
     os.value = "isNull";
-    os.onchange({ currentTarget: os }); // isNull applies at once — through the discard gate
+    filters.dbFiltersChange(os); // isNull applies at once — through the discard gate
     expect(d.filters[0].op, "the row keeps its operator").toBe("eq");
   });
 
   it("the row's remove button stays after a refused discard (docs/22 closeout B6)", () => {
     const { d } = renderFilterRow();
     const rm = find(byId.dbFilters, (n) => n.tag === "button" && n.title === "Remove this filter")[0];
-    expect(rm, "the remove button is wired").toBeTruthy();
-    rm.onclick();
+    expect(rm, "the remove button carries its data-frm address").toBeTruthy();
+    filters.dbFiltersClick(rm); // the pane's delegated click dispatcher
     expect(d.filters.length, "the refused discard kept the row").toBe(1);
     expect(d.filters[0].column).toBe("a");
   });

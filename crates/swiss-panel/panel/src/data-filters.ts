@@ -15,7 +15,9 @@
  */
 
 import type { DbFilterTerm } from "./types/state.js";
-import { $, el, esc } from "./util.js";
+import { $ } from "./util.js";
+import { fill, h } from "./h.js";
+import type { HChild } from "./h.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbDropEdits, dbOkToDrop } from "./data-view.js";
@@ -23,7 +25,10 @@ import { dbView } from "./db-state.js";
 
 /* --- SQL syntax highlighting -------------------------------------------------------------------- */
 /* A tiny tokenizer, not a parser: keywords, strings, numbers, comments, functions, identifiers.
-   Everything is escaped on the way out, so a query full of <script> tags stays inert text. */
+   The token stream is classified pure (dbSqlTokens) and painted two ways: the node twin
+   dbHighlightNodes builds the highlight layer the console mirrors, where every token is a TEXT
+   NODE or a span wrapping one — a query full of <script> tags stays inert text without a single
+   esc() call (docs/37 R5). */
 const SQL_KEYWORDS = new Set((
   "select from where group by order having limit offset fetch insert into values update set delete " +
   "create table drop alter rename add column constraint primary key foreign references index unique " +
@@ -36,32 +41,38 @@ const SQL_KEYWORDS = new Set((
 
 const SQL_TOKEN_RE = /(--[^\n]*|#[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`)|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_$]*)|(\s+)|([^\sA-Za-z0-9_$]+)/g;
 
-function dbHighlightSql(sql: string): string {
-  let out = "";
+/** The classified token stream: one {text, cls} per token, cls null for unstyled runs. Pure. */
+function dbSqlTokens(sql: string): { text: string; cls: string | null }[] {
+  const out: { text: string; cls: string | null }[] = [];
   let m: RegExpExecArray | null;
   SQL_TOKEN_RE.lastIndex = 0;
   while ((m = SQL_TOKEN_RE.exec(sql)) !== null) {
     const tok = m[0];
-    if (m[1]) out += '<span class="c">' + esc(tok) + "</span>";
-    else if (m[2]) out += '<span class="s">' + esc(tok) + "</span>";
-    else if (m[3]) out += '<span class="n">' + esc(tok) + "</span>";
+    if (m[1]) out.push({ text: tok, cls: "c" });
+    else if (m[2]) out.push({ text: tok, cls: "s" });
+    else if (m[3]) out.push({ text: tok, cls: "n" });
     else if (m[4]) {
       const lower = tok.toLowerCase();
-      if (SQL_KEYWORDS.has(lower)) out += '<span class="k">' + esc(tok) + "</span>";
-      else if (sql[SQL_TOKEN_RE.lastIndex] === "(") out += '<span class="f">' + esc(tok) + "</span>";
-      else if (/^_?[A-Z][A-Za-z0-9_]*$/.test(tok)) out += '<span class="i">' + esc(tok) + "</span>";
-      else out += esc(tok);
+      if (SQL_KEYWORDS.has(lower)) out.push({ text: tok, cls: "k" });
+      else if (sql[SQL_TOKEN_RE.lastIndex] === "(") out.push({ text: tok, cls: "f" });
+      else if (/^_?[A-Z][A-Za-z0-9_]*$/.test(tok)) out.push({ text: tok, cls: "i" });
+      else out.push({ text: tok, cls: null });
     }
-    else out += esc(tok); // whitespace and punctuation, untouched
+    else out.push({ text: tok, cls: null }); // whitespace and punctuation, untouched
   }
   return out;
+}
+
+/** The token stream as highlight nodes — spans for styled tokens, bare strings otherwise. */
+function dbHighlightNodes(sql: string): HChild[] {
+  return dbSqlTokens(sql).map((t): HChild => { return t.cls ? h("span", { class: t.cls }, t.text) : t.text; });
 }
 
 /** Keep the highlighted layer under the textarea: same text, same scroll. */
 function dbSqlPaint(): void {
   const ta = $<HTMLTextAreaElement>("dbSql"), hl = $("dbSqlHl");
   if (!ta || !hl) return;
-  hl.innerHTML = dbHighlightSql(ta.value) + "\n";
+  fill(hl, dbHighlightNodes(ta.value), "\n");
   hl.scrollTop = ta.scrollTop;
   hl.scrollLeft = ta.scrollLeft;
 }
@@ -82,138 +93,190 @@ function dbValueless(op: string): boolean { return op === "isNull" || op === "is
 
 /** Apply the current filter set: back to page one (the filtered set is a different set) and
  *  reload. Buffered edits never survive a reload — the baseline rows change under them.
- * Returns whether it ran: a REFUSED discard gate leaves everything untouched, and the row
- * editors below restore their select from that answer (docs/22 closeout audit). */
+ *  Returns whether it ran: a REFUSED discard gate leaves everything untouched, and the row
+ *  editors below restore their select from that answer (docs/22 closeout audit). */
 function dbApplyFilters(): boolean {
   const d = dbView();
   if (!dbOkToDrop()) { renderDbFilters(); return false; }
-  d!.offset = 0;
+  d.offset = 0;
   dbDropEdits();
   void dbLoadData(true);
   return true;
 }
 
+/* The redis pattern box's debounce (docs/37 R5): one module-level timer, restarted per
+   keystroke by #pane's delegated input listener. */
+let dbKeyPatternTimer: ReturnType<typeof setTimeout> | null = null;
+
 function renderDbFilters(): void {
-  const d = dbView();
   const box = $("dbFilters");
   if (!box) return;
-  box.innerHTML = "";
+  fill(box, dbFiltersNodes());
+}
+
+/** The filter rows as nodes. Every control carries a data-fi/data-fk (or data-frm/data-fadd)
+ *  address instead of a per-render handler — #pane's delegated listeners answer them, and the
+ *  filter object behind a row is resolved from live state at event time. */
+function dbFiltersNodes(): HChild[] {
+  const d = dbView();
   if (dbIsRedis()) {
     // The redis filter is a glob PATTERN fed to SCAN's MATCH — server-side, cursor-safe.
-    const rf = el("div", "db-filter");
-    const ri = el("input");
-    ri.type = "search";
-    ri.placeholder = "Key pattern, e.g. session:*";
-    ri.value = d.grep || "";
-    ri.style.width = "220px";
-    ri.title = "SCAN MATCH pattern — applies on Enter";
-    let t2: ReturnType<typeof setTimeout> | null;
-    ri.oninput = (e) => {
-      const v = (e.currentTarget as HTMLInputElement).value;
-      clearTimeout(t2!);
-      t2 = setTimeout((): void => { d!.grep = v; void dbLoadKeys(true); }, 400);
-    };
-    ri.onkeydown = (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); clearTimeout(t2!); d!.grep = (e.currentTarget as HTMLInputElement).value; void dbLoadKeys(true); }
-    };
-    rf.appendChild(ri);
-    // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
-    // it, and "" keeps the request byte-identical to the unfiltered one.
-    const rt = el("select");
-    rt.title = "Key type";
-    [""].concat(["string", "hash", "list", "set", "zset", "stream"]).forEach((t: string): void => {
-      const o = el("option", "", t || "All types") as HTMLOptionElement;
-      o.value = t;
-      o.selected = (d.redisType || "") === t;
-      rt.appendChild(o);
-    });
-    rt.onchange = (e) => { d!.redisType = (e.currentTarget as HTMLSelectElement).value; void dbLoadKeys(true); };
-    rf.appendChild(rt);
-    if (d.redis && d.redis.total != null) {
-      rf.appendChild(el("span", "db-filter-hint",
-        (d.redis?.keys ? d.redis?.keys.length.toLocaleString() : "0") + " shown · " +
-        Number(d.redis?.total).toLocaleString() + " in keyspace"));
-    }
-    box.appendChild(rf);
-    return;
+    return [h("div", { class: "db-filter" },
+      h("input", {
+        type: "search", placeholder: "Key pattern, e.g. session:*", value: d.grep || "",
+        style: "width:220px", title: "SCAN MATCH pattern — applies on Enter", data: { fkey: "" },
+      }),
+      // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
+      // it, and "" keeps the request byte-identical to the unfiltered one.
+      h("select", { title: "Key type", data: { frtype: "" } },
+        [""].concat(["string", "hash", "list", "set", "zset", "stream"]).map((t: string): HChild => {
+          return h("option", { value: t, selected: (d.redisType || "") === t }, t || "All types");
+        })),
+      d.redis && d.redis.total != null
+        ? h("span", { class: "db-filter-hint" },
+            (d.redis?.keys ? d.redis?.keys.length.toLocaleString() : "0") + " shown · " +
+            Number(d.redis?.total).toLocaleString() + " in keyspace")
+        : null)];
   }
-  if (!d.data || d.tab !== "data") return; // filters belong to the row grid only
+  if (!d.data || d.tab !== "data") return []; // filters belong to the row grid only
   const cols = d.data?.columns.map((c: { name: string }): string => { return c.name; });
-  d.filters.forEach((f: DbFilterTerm, i: number): void => {
-    const row = el("div", "db-filter");
-    const cs = el("select");
-    cs.title = "Column";
-    cols.forEach((c: string): void => {
-      const o = el("option", "", c) as HTMLOptionElement;
-      o.value = c;
-      o.selected = c === f.column;
-      cs.appendChild(o);
-    });
+  const rows: HChild[] = d.filters.map((f: DbFilterTerm, i: number): HChild => {
+    return h("div", { class: "db-filter" },
+      h("select", { title: "Column", data: { fi: String(i), fk: "col" } },
+        cols.map((c: string): HChild => { return h("option", { value: c, selected: c === f.column }, c); })),
+      h("select", { title: "Operator", data: { fi: String(i), fk: "op" } },
+        DB_FILTER_OPS.map((op: { op: string; label: string }): HChild => {
+          return h("option", { value: op.op, selected: op.op === f.op }, op.label);
+        })),
+      !dbValueless(f.op)
+        ? h("input", {
+            type: "text", title: "Enter applies", value: f.value as string || "",
+            // The list operators say what they want right in the box (docs/22 W1.2).
+            placeholder: f.op === "in" || f.op === "notIn" ? "1,2,3" : (f.op === "between" ? "lo,hi" : "value"),
+            data: { fi: String(i), fk: "val" },
+          })
+        : null,
+      h("button", { class: "db-act", title: "Remove this filter", data: { frm: String(i) } }, "✕"));
+  });
+  rows.push(h("button", {
+    class: "btn db-filter-add", title: "Filter rows by a column value (server-side)", data: { fadd: "" },
+  }, "+ Filter"));
+  if (d.filters.length) {
+    rows.push(h("span", { class: "db-filter-hint" }, "Enter applies · terms stack with AND · filtered total shown above"));
+  }
+  return rows;
+}
+
+/* --- #pane's delegated listeners for the filter rows (docs/37 R5) --------------------------------
+   Behavior note (docs/37 §10.1): the refused-discard contract is unchanged but its timing
+   moved — the column and operator handlers used to close over the filter object at render
+   time; the delegated handlers resolve d.filters[i] from LIVE state at event time, so a
+   re-render between paint and click can never restore into a stale object. */
+
+function dbFiltersClick(t: Element): boolean {
+  const d = dbView();
+  const rm = t.closest<HTMLElement>("[data-frm]");
+  if (rm) {
+    const i = Number(rm.dataset.frm);
+    const f = d.filters[i];
+    if (!f) return true; // a stale address (the row set changed under the click) — nothing to do
+    // docs/22 closeout B6: remove goes through the same gate as every other row change —
+    // a REFUSED discard must leave the row on screen, not silently swallow it.
+    d.filters.splice(i, 1);
+    if (!dbApplyFilters()) { d.filters.splice(i, 0, f); renderDbFilters(); }
+    return true;
+  }
+  if (t.closest("[data-fadd]")) {
+    const d2 = dbView();
+    const cols = (d2.data && d2.data.columns || []).map((c: { name: string }): string => { return c.name; });
+    d2.filters.push({ column: cols[0] || "", op: "eq", value: "" });
+    renderDbFilters();
+    const box = $("dbFilters");
+    if (box) {
+      const inputs = box.querySelectorAll("input");
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    }
+    return true;
+  }
+  return false;
+}
+
+function dbFiltersChange(t: Element): boolean {
+  const sel = t.closest<HTMLElement>("[data-fk],[data-frtype]");
+  if (!sel) return false;
+  const d = dbView();
+  if (typeof sel.dataset.frtype !== "undefined") {
+    d.redisType = (sel as HTMLSelectElement).value;
+    void dbLoadKeys(true);
+    return true;
+  }
+  const i = Number(sel.dataset.fi);
+  const f = d.filters[i];
+  if (!f) return false;
+  const value = (sel as HTMLSelectElement).value;
+  if (sel.dataset.fk === "col") {
     // docs/22 closeout audit: a refused discard must leave the row as it was — assign, ask,
     // and restore (plus one re-render, because the refused ask already repainted the mutated
     // row) instead of keeping a column change the user just said no to.
-    cs.onchange = (e) => {
-      const from = f.column;
-      f.column = (e.currentTarget as HTMLSelectElement).value;
-      if (!dbApplyFilters()) { f.column = from; renderDbFilters(); }
-    };
-    const os = el("select");
-    os.title = "Operator";
-    DB_FILTER_OPS.forEach((op: { op: string; label: string }): void => {
-      const o = el("option", "", op.label) as HTMLOptionElement;
-      o.value = op.op;
-      o.selected = op.op === f.op;
-      os.appendChild(o);
-    });
-    os.onchange = (e) => {
-      const from = f.op;
-      f.op = (e.currentTarget as HTMLSelectElement).value;
-      if (dbValueless(f.op)) {
-        // nothing to type — apply at once, through the same restore-on-refusal gate
-        if (!dbApplyFilters()) { f.op = from; renderDbFilters(); }
-      } else renderDbFilters(); // re-render so the value input appears
-    };
-    row.appendChild(cs);
-    row.appendChild(os);
-    if (!dbValueless(f.op)) {
-      const vi = el("input");
-      vi.type = "text";
-      // The list operators say what they want right in the box (docs/22 W1.2).
-      vi.placeholder = f.op === "in" || f.op === "notIn" ? "1,2,3" : (f.op === "between" ? "lo,hi" : "value");
-      vi.title = "Enter applies";
-      vi.value = f.value as string || "";
-      vi.onkeydown = (e) => {
-        e.stopPropagation();
-        if (e.key === "Enter") { e.preventDefault(); f.value = (e.currentTarget as HTMLInputElement).value; dbApplyFilters(); }
-      };
-      vi.onchange = (e) => { f.value = (e.currentTarget as HTMLInputElement).value; };
-      row.appendChild(vi);
-    }
-    const rm = el("button", "db-act", "✕") as HTMLButtonElement;
-    rm.title = "Remove this filter";
-    rm.onclick = () => {
-      // docs/22 closeout B6: remove goes through the same gate as every other row change —
-      // a REFUSED discard must leave the row on screen, not silently swallow it.
-      d.filters.splice(i, 1);
-      if (!dbApplyFilters()) { d.filters.splice(i, 0, f); renderDbFilters(); }
-    };
-    row.appendChild(rm);
-    box.appendChild(row);
-  });
-  const add = el("button", "btn db-filter-add", "+ Filter");
-  add.title = "Filter rows by a column value (server-side)";
-  add.onclick = () => {
-    const d2 = dbView();
-    d2.filters.push({ column: cols[0] || "", op: "eq", value: "" });
-    renderDbFilters();
-    const inputs = box.querySelectorAll<HTMLInputElement>("input");
-    if (inputs.length) inputs[inputs.length - 1].focus();
-  };
-  box.appendChild(add);
-  if (d.filters.length) {
-    box.appendChild(el("span", "db-filter-hint", "Enter applies · terms stack with AND · filtered total shown above"));
+    const from = f.column;
+    f.column = value;
+    if (!dbApplyFilters()) { f.column = from; renderDbFilters(); }
+    return true;
   }
+  if (sel.dataset.fk === "op") {
+    const from = f.op;
+    f.op = value;
+    if (dbValueless(f.op)) {
+      // nothing to type — apply at once, through the same restore-on-refusal gate
+      if (!dbApplyFilters()) { f.op = from; renderDbFilters(); }
+    } else renderDbFilters(); // re-render so the value input appears
+    return true;
+  }
+  if (sel.dataset.fk === "val") f.value = value;
+  return true;
 }
 
-export { DB_FILTER_OPS, SQL_KEYWORDS, SQL_TOKEN_RE, dbApplyFilters, dbHighlightSql, dbSqlPaint, dbValueless, renderDbFilters };
+function dbFiltersInput(t: Element): boolean {
+  const inp = t.closest<HTMLInputElement>("[data-fkey]");
+  if (!inp) return false;
+  const v = inp.value;
+  if (dbKeyPatternTimer !== null) clearTimeout(dbKeyPatternTimer);
+  dbKeyPatternTimer = setTimeout((): void => {
+    dbKeyPatternTimer = null;
+    const d = dbView();
+    d.grep = v;
+    void dbLoadKeys(true);
+  }, 400);
+  return true;
+}
+
+function dbFiltersKeydown(ev: KeyboardEvent, t: Element): boolean {
+  if (ev.key !== "Enter") return false;
+  const pat = t.closest<HTMLInputElement>("[data-fkey]");
+  if (pat) {
+    // Enter applies the pattern at once — the debounce's pending write is superseded.
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (dbKeyPatternTimer !== null) clearTimeout(dbKeyPatternTimer);
+    dbKeyPatternTimer = null;
+    dbView().grep = pat.value;
+    void dbLoadKeys(true);
+    return true;
+  }
+  const vi = t.closest<HTMLInputElement>('[data-fk="val"]');
+  if (vi) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const f = dbView().filters[Number(vi.dataset.fi)];
+    if (f) f.value = vi.value;
+    dbApplyFilters();
+    return true;
+  }
+  return false;
+}
+
+export {
+  DB_FILTER_OPS, SQL_KEYWORDS, SQL_TOKEN_RE, dbApplyFilters, dbFiltersChange, dbFiltersClick,
+  dbFiltersInput, dbFiltersKeydown, dbHighlightNodes, dbSqlPaint, dbSqlTokens, dbValueless,
+  renderDbFilters,
+};

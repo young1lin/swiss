@@ -22,9 +22,15 @@ import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), sharpened where the
    focus-ring behavior needs it: classList REALLY mutates className, setAttribute records
-   attrs, querySelector walks the children tree (tag / .class / [attr="v"] chains), and an
-   innerHTML assignment CLEARS the children — so a full-grid rebuild is observable as the
-   death of a marker node that survived every ring move. */
+   attrs, querySelector walks the children tree (tag / .class / [attr="v"] chains), and a
+   textContent/innerHTML assignment of "" CLEARS the children — so a full-grid rebuild is
+   observable as the death of a marker node that survived every ring move.
+   docs/37 R5: the grid is built with h()/fill() (nodes extend the Node stub — h()
+   instanceof-checks children) and #dbKbd carries no per-render keydown; the pane's
+   delegated listener calls dbGridKeydown, which the arrow/Esc cases fire directly. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
 type Stub = Record<string, any> & { children: Stub[]; attrs: Record<string, string> };
 const matches = (n: Stub, sel: string): boolean => {
   const m = /^([a-z]+)((?:\.[A-Za-z0-9_-]+)*)((?:\[[a-z-]+="[^"]*"\])*)$/i.exec(sel);
@@ -47,9 +53,9 @@ const queryAll = (root: Stub, sel: string, out: Stub[] = []): Stub[] => {
 const el = (tag = "div"): Stub => {
   const n: any = {
     tag, children: [], attrs: {}, style: {}, dataset: {}, hidden: false, disabled: false,
-    checked: false, value: "", textContent: "", className: "", id: "", title: "", rows: 0,
+    checked: false, value: "", className: "", id: "", title: "", rows: 0,
     type: "", selectionStart: 0, scrollHeight: 22, scrollTop: 0, scrollLeft: 0,
-    setAttribute(k: string, v: string) { n.attrs[k] = String(v); if (k === "id") n.id = String(v); },
+    setAttribute(k: string, v: string) { n.attrs[k] = String(v); if (k === "id") n.id = String(v); if (k.startsWith("data-")) n.dataset[k.slice(5)] = String(v); },
     getAttribute(k: string) { return Object.prototype.hasOwnProperty.call(n.attrs, k) ? n.attrs[k] : null; },
     removeAttribute(k: string) { delete n.attrs[k]; },
     classList: {
@@ -68,7 +74,8 @@ const el = (tag = "div"): Stub => {
     },
     appendChild(c: Stub) { (c as any).remove?.(); n.children.push(c); return c; },
     removeChild(c: Stub) { n.children = n.children.filter((x: Stub) => x !== c); return c; },
-    remove() {}, contains: () => false, closest: () => null,
+    remove() {}, contains: () => false,
+    closest(sel: string) { return sel.charAt(0) === "#" && n.id === sel.slice(1) ? n : null; },
     addEventListener() {}, removeEventListener() {},
     dispatchEvent: () => true, focus() {}, blur() {}, select() {}, click() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 22, right: 40, bottom: 22 }),
@@ -80,13 +87,20 @@ const el = (tag = "div"): Stub => {
     get: () => "",
     set: () => { n.children = []; }, // a real innerHTML="" wipes the subtree — the test's oracle
   });
+  Object.defineProperty(n, "textContent", {
+    get: (): string => (n as any)._text ?? "",
+    set: (v: string) => { if (v === "") n.children = []; (n as any)._text = v; }, // the R5 wipe
+  });
+  Object.setPrototypeOf(n, NodeStub.prototype);
   return n;
 };
 const byId: Record<string, Stub> = {};
 const doc: any = {
   documentElement: el(), body: el(), head: el(), hidden: false, visibilityState: "visible",
   activeElement: null,
-  createElement: (t: string) => el(t), createTextNode: (s: string) => ({ text: s }),
+  createElement: (t: string) => el(t), createElementNS: (_ns: string, t: string) => el(t),
+  createDocumentFragment: () => el("#document-fragment"),
+  createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
   getElementById: (id: string) => (byId[id] ||= el()),
   querySelector: (sel: string) => (byId.dbGridWrap ? queryAll(byId.dbGridWrap, sel)[0] ?? null : null),
   querySelectorAll: () => [],
@@ -107,6 +121,7 @@ const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const grid = await import(pathToFileURL(join(here, "data-grid.js")).href) as {
   renderDbGrid: () => void;
   dbFocusCell: (r: number, c: number) => void;
+  dbGridKeydown: (t: Stub, ev: Record<string, unknown>) => boolean;
 };
 
 /** A two-row editable grid, rendered once into a wrap the test holds. */
@@ -156,7 +171,9 @@ describe("the grid's keyboard focus ring (docs/22 closeout audit P0-B)", () => {
     const tdRow1 = queryAll(wrap, 'td[data-r="1"][data-c="0"]')[0];
     tdRow1.onmousedown({ preventDefault: () => {} });
     const kbd = byId.dbKbd;
-    kbd.onkeydown({ key: "ArrowUp", preventDefault: () => {}, ctrlKey: false, metaKey: false, altKey: false });
+    // docs/37 R5: the pane's delegated keydown would hand the dispatcher this input as its
+    // target — fired directly here, same event shape.
+    grid.dbGridKeydown(kbd, { key: "ArrowUp", preventDefault: () => {}, ctrlKey: false, metaKey: false, altKey: false });
     expect(d.focus).toEqual({ r: 0, c: 0 });
     expect(wrap.children.includes(marker), "no rebuild on navigation").toBe(true);
     const tdRow0 = queryAll(wrap, 'td[data-r="0"][data-c="0"]')[0];
@@ -170,7 +187,7 @@ describe("the grid's keyboard focus ring (docs/22 closeout audit P0-B)", () => {
     wrap.appendChild(marker);
     queryAll(wrap, 'td[data-r="0"][data-c="0"]')[0].onmousedown({ preventDefault: () => {} });
     const kbd = byId.dbKbd;
-    kbd.onkeydown({ key: "Escape", currentTarget: kbd, preventDefault: () => {}, ctrlKey: false, metaKey: false, altKey: false }); // docs/37 M4: Esc reads e.currentTarget for its blur
+    grid.dbGridKeydown(kbd, { key: "Escape", preventDefault: () => {}, ctrlKey: false, metaKey: false, altKey: false });
     expect(d.focus).toBeNull();
     expect(queryAll(wrap, "td.db-focus").length, "the ring is gone").toBe(0);
     expect(wrap.children.includes(marker), "no rebuild on Esc").toBe(true);

@@ -22,7 +22,12 @@ import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts): browser ES modules
    need the globals stubbed before they will evaluate under Node. getElementById keeps ONE
    stub per id, so a test can hold the same node the wiring will look up later — the editor
-   lands in $("dbGridWrap") exactly as on a real page. */
+   lands in $("dbGridWrap") exactly as on a real page.
+   docs/37 R5: dbRenderRedisValue builds its rows with h(), so the stub extends the Node
+   stub (h() instanceof-checks every child) and document carries the fragment/text factories. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
 type Stub = Record<string, any> & { children: Stub[] };
 const el = (tag = "div"): Stub => {
   const n: any = {
@@ -32,7 +37,8 @@ const el = (tag = "div"): Stub => {
     appendChild(c: Stub) { n.children.push(c); return c; },
     removeChild(c: Stub) { n.children = n.children.filter((x: Stub) => x !== c); return c; },
     remove() {}, contains: () => false, closest: () => null,
-    setAttribute() {}, getAttribute: () => "", removeAttribute() {},
+    setAttribute(k: string, v: string) { if (k === "id") n.id = v; if (k.startsWith("data-")) n.dataset[k.slice(5)] = v; },
+    getAttribute: () => "", removeAttribute() {},
     addEventListener() {}, removeEventListener() {},
     dispatchEvent: () => true, focus() {}, blur() {}, select() {}, click() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 22, right: 40, bottom: 22 }),
@@ -40,6 +46,7 @@ const el = (tag = "div"): Stub => {
     replaceWith() {}, insertAdjacentHTML() {},
   };
   Object.defineProperty(n, "innerHTML", { get: () => "", set: () => {} });
+  Object.setPrototypeOf(n, NodeStub.prototype);
   return n;
 };
 const byId: Record<string, Stub> = {};
@@ -47,7 +54,9 @@ Object.assign(globalThis, {
   document: {
     documentElement: el(), body: el(), head: el(), hidden: false, visibilityState: "visible",
     activeElement: null,
-    createElement: (t: string) => el(t), createTextNode: (s: string) => ({ text: s }),
+    createElement: (t: string) => el(t), createElementNS: (_ns: string, t: string) => el(t),
+    createDocumentFragment: () => el("#document-fragment"),
+    createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
     getElementById: (id: string) => (byId[id] ||= el()),
     querySelector: () => null, querySelectorAll: () => [],
     addEventListener: () => {}, removeEventListener: () => {},

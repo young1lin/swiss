@@ -20,26 +20,59 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Same DOM-stub technique as admin-data-cellview.test.ts: the panel ships browser ES modules,
 // so the module graph needs the globals stubbed before it will evaluate under Node.
-const el = (): Record<string, unknown> => {
+// docs/37 R5: dbJsonNode builds with h(), so nodes extend a Node stub (h() instanceof-checks
+// children) and the tree cases serialize the built tree with the same escapes the old string
+// builder produced — the assertions stay about INERT TEXT, not about innerHTML.
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
+interface FakeNode {
+  tag: string;
+  className: string;
+  open: boolean;
+  textContent: string;
+  children: FakeNode[];
+  appendChild(c: FakeNode): FakeNode;
+}
+const el = (tag = "div"): FakeNode & Record<string, unknown> => {
   const node: Record<string, unknown> = {
+    tag, className: "", open: false, children: [],
     style: {}, dataset: {}, hidden: false, disabled: false, checked: false, value: "",
     textContent: "", innerHTML: "",
     classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
-    setAttribute: () => {}, getAttribute: () => "", removeAttribute: () => {},
+    setAttribute(k: string, v: string) { if (k === "class") node.className = v; },
+    getAttribute: () => "", removeAttribute: () => {},
     addEventListener: () => {}, removeEventListener: () => {},
-    appendChild: (c: unknown) => c, removeChild: (c: unknown) => c, remove: () => {},
+    appendChild(c: FakeNode) { (node.children as FakeNode[]).push(c); return c; },
+    removeChild: (c: unknown) => c, remove: () => {},
     querySelector: () => null, querySelectorAll: () => [],
     focus: () => {}, blur: () => {}, click: () => {},
     getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
     contains: () => false, closest: () => null, insertAdjacentHTML: () => {},
   };
   node.cloneNode = () => el();
-  return node;
+  Object.setPrototypeOf(node, NodeStub.prototype);
+  return node as FakeNode & Record<string, unknown>;
+};
+/* Serialize like the old string builder did: text escaped, class and the details fold's
+   open flag as attributes — what the assertions below still speak. */
+const escapeHtml = (s: string): string => {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+};
+const serialize = (n: FakeNode): string => {
+  if (n.tag === "#text") return escapeHtml(String(n.textContent));
+  const cls = n.className ? ' class="' + n.className + '"' : "";
+  const open = n.open ? " open" : "";
+  const kids = (n.children || []).map((c) => { return serialize(c); }).join("");
+  return "<" + n.tag + cls + open + ">" + kids + "</" + n.tag + ">";
 };
 const doc = {
   documentElement: el(), body: el(), head: el(),
   hidden: false, visibilityState: "visible", activeElement: null,
-  getElementById: () => el(), createElement: () => el(), createTextNode: () => el(),
+  getElementById: () => el(), createElement: (t: string) => el(t),
+  createElementNS: (_ns: string, t: string) => el(t),
+  createDocumentFragment: () => el("#document-fragment"),
+  createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
   querySelector: () => null, querySelectorAll: () => [],
   addEventListener: () => {}, removeEventListener: () => {},
 };
@@ -57,9 +90,12 @@ const value = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-value.ts")).href
 ) as {
   dbValueKind: (v: unknown, colType: string | null | undefined) => string;
-  dbJsonTreeHtml: (v: unknown) => string;
+  dbJsonTreeNodes: (v: unknown) => unknown;
   dbHexPreview: (v: string, maxBytes: number) => { text: string; bytes: number; truncated: boolean };
 };
+/** docs/37 R5: the tree builder returns nodes; the cases serialize them back to the words
+ *  the sheet's markup has always been asserted in. */
+const html = (v: unknown): string => { return serialize(value.dbJsonTreeNodes(v) as FakeNode); };
 
 /* docs/22 W5.3 — the value sheet. The presenter choice, the hex cap and the JSON tree are
    pure: every rule is value- and column-type-driven, never DOM-dependent, so the intents
@@ -132,43 +168,43 @@ describe("dbHexPreview — first N bytes, the real byte count, the truncated fla
   });
 });
 
-describe("dbJsonTreeHtml — the details-folded tree", () => {
+describe("dbJsonTreeNodes — the details-folded tree", () => {
   it("renders the root open and nested containers closed", () => {
-    var html = value.dbJsonTreeHtml({ a: 1, b: { c: "x" } });
-    expect(html).toContain('<details class="db-val-node" open>');
-    expect(html.match(/<details/g)!.length).toBe(2);
-    expect(html.match(/<details class="db-val-node" open>/g)!.length).toBe(1); // the root only
-    expect(html).toContain('<summary>{ 2 }</summary>');
-    expect(html).toContain('<summary>{ 1 }</summary>');
+    var out = html({ a: 1, b: { c: "x" } });
+    expect(out).toContain('<details class="db-val-node" open>');
+    expect(out.match(/<details/g)!.length).toBe(2);
+    expect(out.match(/<details class="db-val-node" open>/g)!.length).toBe(1); // the root only
+    expect(out).toContain('<summary>{ 2 }</summary>');
+    expect(out).toContain('<summary>{ 1 }</summary>');
   });
 
   it("words arrays as [ n ] and empty containers without a count", () => {
-    var html = value.dbJsonTreeHtml({ list: [1, 2, 3], none: {}, empty: [] });
-    expect(html).toContain("<summary>[ 3 ]</summary>");
-    expect(html).toContain("<summary>{ }</summary>");
-    expect(html).toContain("<summary>[ ]</summary>");
+    var out = html({ list: [1, 2, 3], none: {}, empty: [] });
+    expect(out).toContain("<summary>[ 3 ]</summary>");
+    expect(out).toContain("<summary>{ }</summary>");
+    expect(out).toContain("<summary>[ ]</summary>");
   });
 
-  it("escapes keys and string values — a document full of tags stays inert text", () => {
-    var html = value.dbJsonTreeHtml({ "<k>": "<script>alert(1)</script>" });
-    expect(html).not.toContain("<script>");
-    expect(html).not.toContain("<k>");
-    expect(html).toContain("&lt;k&gt;");
-    expect(html).toContain("&lt;script&gt;");
+  it("keeps keys and string values inert — a document full of tags stays text nodes", () => {
+    var out = html({ "<k>": "<script>alert(1)</script>" });
+    expect(out).not.toContain("<script>");
+    expect(out).not.toContain("<k>");
+    expect(out).toContain("&lt;k&gt;");
+    expect(out).toContain("&lt;script&gt;");
   });
 
   it("renders null with the panel's NULL styling, numbers and booleans plain, strings quoted", () => {
-    var html = value.dbJsonTreeHtml({ a: null, b: 1.5, c: true, d: "hi" });
-    expect(html).toContain('<span class="db-val-v db-null">null</span>');
-    expect(html).toContain('<span class="db-val-v">1.5</span>');
-    expect(html).toContain('<span class="db-val-v">true</span>');
-    expect(html).toContain('<span class="db-val-v">&quot;hi&quot;</span>');
+    var out = html({ a: null, b: 1.5, c: true, d: "hi" });
+    expect(out).toContain('<span class="db-val-v db-null">null</span>');
+    expect(out).toContain('<span class="db-val-v">1.5</span>');
+    expect(out).toContain('<span class="db-val-v">true</span>');
+    expect(out).toContain('<span class="db-val-v">&quot;hi&quot;</span>');
   });
 
   it("array children carry no key row — the indent is the position", () => {
-    var html = value.dbJsonTreeHtml([1, "two"]);
-    expect(html).not.toContain("db-val-k");
-    expect(html).toContain('<span class="db-val-v">1</span>');
-    expect(html).toContain("&quot;two&quot;");
+    var out = html([1, "two"]);
+    expect(out).not.toContain("db-val-k");
+    expect(out).toContain('<span class="db-val-v">1</span>');
+    expect(out).toContain("&quot;two&quot;");
   });
 });

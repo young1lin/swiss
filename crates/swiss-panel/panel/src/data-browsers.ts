@@ -16,7 +16,8 @@
 
 import type { ApiDbConnectionRow, ApiDbRedisKeysResponse, ApiDbRedisValue } from "./types/api.js";
 import type { DbRedisEdits, DbRedisTypeCfg } from "./types/state.js";
-import { $, apiJson, dbReqGuard, el, emptyHtml, errText, esc, icon, toast } from "./util.js";
+import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
+import { fill, h } from "./h.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
 import { renderDbGrid } from "./data-grid.js";
@@ -247,7 +248,7 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   const d = dbView();
   if (!d.redisKey) {
     // The shared empty state (docs/18 V7).
-    wrap.innerHTML = emptyHtml({ icon: "database", title: "Select a key", hint: "Pick a key on the left to view its value." });
+    wrap.appendChild(emptyNode({ icon: "database", title: "Select a key", hint: "Pick a key on the left to view its value." }));
     return;
   }
   const v = d.redisValue;
@@ -260,31 +261,20 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   meta.appendChild(el("span", "grow"));
   const cfg = DB_REDIS_TYPES[v.type];
   if (cfg) {
-    // One add action per view; it buffers a row, never touches redis directly.
-    const add = el("button", "btn", cfg.add) as HTMLButtonElement;
-    add.title = "Buffer a new " + cfg.thing + " — applied only on Commit";
-    add.onclick = (): void => {
-      const b = dbRedisEdits();
-      if (!b) return;
-      const ins: Record<string, unknown> = {};
-      cfg.ins.forEach((c) => { ins[c] = c === "score" ? "0" : ""; });
-      b.inserts.push(ins);
-      renderDbGrid();
-      renderDbBar();
-    };
-    meta.appendChild(add);
+    // One add action per view; it buffers a row, never touches redis directly. data-radd —
+    // the click resolves the live type config at event time (docs/37 R5).
+    meta.appendChild(h("button", {
+      class: "btn", type: "button", title: "Buffer a new " + cfg.thing + " — applied only on Commit", data: { radd: "" },
+    }, cfg.add));
   }
   // docs/22 W1.3: the key's own actions ride the value header. Rename takes a one-input
   // sheet, Delete is last and red and demands the key name typed back — the same confirm
   // vocabulary as the table DDL ops. Everything runs through the guarded /command console.
-  const more = el("button", "btn icon") as HTMLButtonElement;
-  more.type = "button";
-  more.innerHTML = icon("ellipsis");
-  more.title = "Rename or delete this key";
-  // stopPropagation or the document-level click closer (connect.js) eats the menu the same
-  // click opened — every other popupMenu trigger does the same.
-  more.onclick = (e: MouseEvent): void => { e.stopPropagation(); dbRedisKeyMenu(more); };
-  meta.appendChild(more);
+  // stopPropagation lives in the dispatcher (dbRedisClick): connect.js closes any open menu
+  // on clicks that reach document, and without it the same click tears the menu back down.
+  meta.appendChild(h("button", {
+    class: "btn icon", type: "button", title: "Rename or delete this key", data: { rkeymenu: "" },
+  }, iconNode("ellipsis")));
   wrap.appendChild(meta);
   if (v.type === "none") {
     wrap.appendChild(el("div", "db-hint", "Key not found — it may have expired."));
@@ -302,39 +292,15 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
 }
 
 /** The TTL readout is itself the control (docs/22 W3.3): click to edit in place, Enter runs
- *  EXPIRE — or PERSIST when emptied — through the guarded console, then the key re-reads. */
+ *  EXPIRE — or PERSIST when emptied — through the guarded console, then the key re-reads.
+ *  The button carries data-rttl; #pane's delegated click (dbRedisClick) builds the in-place
+ *  input from the LIVE value, so a poll that moved the TTL between render and click seeds
+ *  the editor with what the key says now (docs/37 §10.1). */
 function dbRedisTtl(v: ApiDbRedisValue): HTMLElement {
-  const d = dbView();
-  const btn = el("button", "db-ttl", v.ttl! < 0 ? "no expiry" : v.ttl! + "s") as HTMLButtonElement;
-  btn.type = "button";
-  btn.title = "Change the TTL — Enter applies EXPIRE, empty removes it (PERSIST)";
-  btn.onclick = () => {
-    const input = el("input", "db-ttl-in") as HTMLInputElement;
-    input.value = v.ttl! < 0 ? "" : String(v.ttl);
-    input.placeholder = "seconds";
-    btn.replaceWith(input);
-    input.focus();
-    input.select();
-    let ran = false;
-    function apply() {
-      if (ran) return;
-      ran = true;
-      const secs: string = input.value.trim();
-      if (secs && !/^\d+$/.test(secs)) { toast("TTL must be a whole number of seconds", true); void dbLoadRedisValue(d.redisKey!); return; }
-      const line = secs ? "EXPIRE " + d.redisKey + " " + secs : "PERSIST " + d.redisKey;
-      void dbRedisCommand(line).then((j: unknown): void => {
-        if (j) toast(secs ? "TTL set to " + secs + "s" : "TTL removed");
-        void dbLoadRedisValue(d.redisKey!);
-      });
-    }
-    input.onkeydown = (e: KeyboardEvent): void => {
-      e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); apply(); }
-      else if (e.key === "Escape") { e.preventDefault(); ran = true; void dbLoadRedisValue(d.redisKey!); }
-    };
-    input.onblur = apply;
-  };
-  return btn;
+  return h("button", {
+    class: "db-ttl", type: "button",
+    title: "Change the TTL — Enter applies EXPIRE, empty removes it (PERSIST)", data: { rttl: "" },
+  }, v.ttl! < 0 ? "no expiry" : v.ttl! + "s");
 }
 
 /** The typed table — the row grid's own vocabulary (inserts first, db-dirty cells, db-del
@@ -356,14 +322,12 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
   tbl.appendChild(thead);
   const tbody = el("tbody");
 
-  // Buffered inserts first, so they read as "the row you are about to add".
+  // Buffered inserts first, so they read as "the row you are about to add". The row control
+  // carries its address (data-rins / data-raddr) — #pane's delegated click owns the behavior
+  // (docs/37 R5), resolving the buffer live at event time.
   b.inserts.forEach((ins: Record<string, unknown>, i: number): void => {
     const tr = el("tr", "db-ins");
-    tr.appendChild(dbRedisRowCtl((): void => {
-      b?.inserts.splice(i, 1);
-      renderDbGrid();
-      renderDbBar();
-    }, false, false));
+    tr.appendChild(dbRedisRowCtl(false, false, null, i));
     cfg.cols.forEach((c: string): void => {
       const editable = cfg.ins.indexOf(c) >= 0;
       const filled = editable && ins[c] != null && String(ins[c]) !== "";
@@ -382,7 +346,7 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
 
   dbRedisEntries(v, b).forEach((entry: { addr: string; deleted: boolean; updated: boolean; cells: Record<string, unknown> }): void => {
     const tr = el("tr", entry.deleted ? "db-del" : "");
-    tr.appendChild(dbRedisRowCtl(() => { dbRedisToggleDelete(entry.addr); }, cfg.deletable, entry.deleted));
+    tr.appendChild(dbRedisRowCtl(cfg.deletable, entry.deleted, entry.addr, -1));
     cfg.cols.forEach((c: string): void => {
       const editable = cfg.edit.indexOf(c) >= 0 && !entry.deleted;
       const td = el("td", "db-cell" + (entry.updated && cfg.edit.indexOf(c) >= 0 ? " db-dirty" : "") + (editable ? " db-cell-edit" : ""));
@@ -406,15 +370,16 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
 
 /** The narrow ✕/↩ column the row grid uses, in the value view's words: ✕ buffers a delete
  *  (HDEL / ZREM / SREM on Commit) or removes a buffered insert, ↩ undoes a delete. A type
- *  with no honest delete command (list) gets no control at all. */
-function dbRedisRowCtl(onClick: () => void, deletable: boolean, deleted: boolean): HTMLElement {
+ *  with no honest delete command (list) gets no control at all. The button's address is
+ *  data-raddr (a stored entry) or data-rins (a buffered insert row's index). */
+function dbRedisRowCtl(deletable: boolean, deleted: boolean, addr: string | null, insIdx: number): HTMLElement {
   const td = el("td", "db-rowctl");
   if (!deletable && !deleted) return td;
-  const b2 = el("button", "db-act", deleted ? "↩" : "✕") as HTMLButtonElement;
-  b2.type = "button";
-  b2.title = deleted ? "Undo this buffered delete" : "Buffer a delete — applied only on Commit";
-  b2.onclick = onClick;
-  td.appendChild(b2);
+  td.appendChild(h("button", {
+    class: "db-act", type: "button",
+    title: deleted ? "Undo this buffered delete" : "Buffer a delete — applied only on Commit",
+    data: addr != null ? { raddr: addr } : { rins: String(insIdx) },
+  }, deleted ? "↩" : "✕"));
   return td;
 }
 
@@ -508,37 +473,35 @@ function dbRedisEditorClose(): void {
   }
 }
 
+/** The Set action, shared by the button and the textarea's Ctrl+Enter — state at event
+ *  time (docs/37 R5): the value read is whatever the textarea holds when the click lands. */
+async function dbRedisSetString(ta: HTMLTextAreaElement): Promise<void> {
+  const d = dbView();
+  const value = ta.value;
+  if (value === ta.dataset.orig) { toast("Unchanged"); return; }
+  const j = await apiJson("/api/db/" + encodeURIComponent(d.conn!) + "/redis-pipeline", {
+    method: "POST",
+    body: JSON.stringify({ commands: [["SET", d.redisKey!, value]] }),
+  });
+  if (!j) return;
+  toast("Set " + d.redisKey);
+  void dbLoadRedisValue(d.redisKey!);
+}
+
 /** docs/22 W3.3: a string edits in place — one textarea, one Set, one SET through the
  *  pipeline (a value keeps its spaces: pipeline args bind as separate strings, which the
- *  whitespace-splitting /command console can never promise). */
+ *  whitespace-splitting /command console can never promise). The textarea carries
+ *  data-rstr and the button data-rset; #pane's delegated click/keydown answer both. */
 function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
-  const d = dbView();
   const row = el("div", "db-redis-str-row");
   const ta = el("textarea", "db-redis-str") as HTMLTextAreaElement;
   ta.rows = 3;
   ta.spellcheck = false;
   ta.value = typeof v.value === "string" ? v.value : "";
-  const set = el("button", "btn primary", "Set") as HTMLButtonElement;
-  set.type = "button";
-  async function go(): Promise<void> {
-    const value = ta.value;
-    if (value === ta.dataset.orig) { toast("Unchanged"); return; }
-    const j = await apiJson("/api/db/" + encodeURIComponent(d.conn!) + "/redis-pipeline", {
-      method: "POST",
-      body: JSON.stringify({ commands: [["SET", d.redisKey!, value]] }),
-    });
-    if (!j) return;
-    toast("Set " + d.redisKey);
-    void dbLoadRedisValue(d.redisKey!);
-  }
-  set.onclick = (): void => { void go(); };
-  ta.onkeydown = (e: KeyboardEvent): void => {
-    e.stopPropagation();
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void go(); }
-  };
   ta.dataset.orig = ta.value;
+  ta.setAttribute("data-rstr", "");
   row.appendChild(ta);
-  row.appendChild(set);
+  row.appendChild(h("button", { class: "btn primary", type: "button", data: { rset: "" } }, "Set"));
   wrap.appendChild(row);
 }
 
@@ -612,17 +575,18 @@ async function dbRedisCommand(line: string): Promise<unknown> {
 /** The one-input sheet Rename uses (docs/22 W1.3). `submit(value)` runs after the sheet
  *  closes; it owns its own reload and error handling. */
 function dbRedisKeySheet(cfg: { title: string; label: string; value?: string; placeholder?: string; primary: string; submit: (v: string) => void }): void {
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(cfg.title) + '">' +
-      '<div class="sheet-head"><h2>' + esc(cfg.title) + '</h2></div>' +
-      '<div class="sheet-body">' +
-        '<label class="field"><span>' + esc(cfg.label) + '</span><input id="dbKeyIn" autocomplete="off"></label>' +
-      "</div>" +
-      '<div class="sheet-foot"><span class="grow"></span>' +
-        '<button class="btn" id="dbKeyCancel">Cancel</button>' +
-        '<button class="btn primary" id="dbKeyGo">' + esc(cfg.primary) + "</button></div>" +
-    "</div>";
+  // docs/37 R5: the sheet is a node tree (every remote string lands as a TEXT node — no
+  // esc() anywhere), painted AFTER the host is unhidden so the first paint is never into a
+  // hidden box the user's click seemed to ignore.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: cfg.title } },
+      h("div", { class: "sheet-head" }, h("h2", null, cfg.title)),
+      h("div", { class: "sheet-body" },
+        h("label", { class: "field" }, h("span", null, cfg.label), h("input", { id: "dbKeyIn", autocomplete: "off" }))),
+      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
+        h("button", { class: "btn", id: "dbKeyCancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "dbKeyGo" }, cfg.primary))));
   const input = $<HTMLInputElement>("dbKeyIn");
   input.value = cfg.value || "";
   input.placeholder = cfg.placeholder || "";
@@ -677,8 +641,100 @@ function dbRedisDeleteKey(): void {
   });
 }
 
+/* --- #pane's delegated listeners for the redis value view (docs/37 R5) ----------------------------
+   Behavior notes (docs/37 §10.1): every action resolves its key, buffer and type config
+   from LIVE state at event time — the add-row shape, the TTL editor's seed value and the
+   row-control addresses all re-read dbView(), so a re-read or a key switch between render
+   and click acts on what is on screen now, never on the painted snapshot. */
+
+function dbRedisClick(t: Element, ev: MouseEvent): boolean {
+  const d = dbView();
+  if (t.closest("[data-radd]")) {
+    const v = d.redisValue;
+    const cfg = v ? DB_REDIS_TYPES[v.type] : null;
+    const b = dbRedisEdits();
+    if (!cfg || !b) return true;
+    const ins: Record<string, unknown> = {};
+    cfg.ins.forEach((c: string): void => { ins[c] = c === "score" ? "0" : ""; });
+    b.inserts.push(ins);
+    renderDbGrid();
+    renderDbBar();
+    return true;
+  }
+  const keyMenu = t.closest<HTMLElement>("[data-rkeymenu]");
+  if (keyMenu) {
+    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
+    // without this the very click that opens the menu also tears it down.
+    ev.stopPropagation();
+    dbRedisKeyMenu(keyMenu);
+    return true;
+  }
+  if (t.closest("[data-rttl]")) {
+    const btn = t.closest<HTMLElement>("[data-rttl]");
+  if (!btn) return false;
+    const v = d.redisValue;
+    if (!v) return true;
+    const input = el("input", "db-ttl-in") as HTMLInputElement;
+    input.value = v.ttl! < 0 ? "" : String(v.ttl);
+    input.placeholder = "seconds";
+    btn.replaceWith(input);
+    input.focus();
+    input.select();
+    let ran = false;
+    const apply = (): void => {
+      if (ran) return;
+      ran = true;
+      const secs: string = input.value.trim();
+      if (secs && !/^\d+$/.test(secs)) { toast("TTL must be a whole number of seconds", true); void dbLoadRedisValue(d.redisKey!); return; }
+      const line = secs ? "EXPIRE " + d.redisKey + " " + secs : "PERSIST " + d.redisKey;
+      void dbRedisCommand(line).then((j: unknown): void => {
+        if (j) toast(secs ? "TTL set to " + secs + "s" : "TTL removed");
+        void dbLoadRedisValue(d.redisKey!);
+      });
+    };
+    // Transient in-place overlay, the sheet idiom (docs/37 R5 keeps per-open wiring): the
+    // input lives until Enter/Esc/blur, so it owns its handlers for that lifetime only.
+    input.onkeydown = (e: KeyboardEvent): void => {
+      e.stopPropagation();
+      if (e.key === "Enter") { e.preventDefault(); apply(); }
+      else if (e.key === "Escape") { e.preventDefault(); ran = true; void dbLoadRedisValue(d.redisKey!); }
+    };
+    input.onblur = apply;
+    return true;
+  }
+  const raddr = t.closest<HTMLElement>("[data-raddr]");
+  if (raddr) { dbRedisToggleDelete(raddr.dataset.raddr || ""); return true; }
+  const rins = t.closest<HTMLElement>("[data-rins]");
+  if (rins) {
+    const b = dbRedisEdits();
+    if (b) {
+      b.inserts.splice(Number(rins.dataset.rins), 1);
+      renderDbGrid();
+      renderDbBar();
+    }
+    return true;
+  }
+  if (t.closest("[data-rset]")) {
+    const ta = document.querySelector<HTMLTextAreaElement>("textarea[data-rstr]");
+    if (ta) void dbRedisSetString(ta);
+    return true;
+  }
+  return false;
+}
+
+function dbRedisKeydown(t: Element, ev: KeyboardEvent): boolean {
+  const ta = t.closest<HTMLTextAreaElement>("[data-rstr]");
+  if (!ta) return false;
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
+    ev.preventDefault();
+    ev.stopPropagation();
+    void dbRedisSetString(ta);
+  }
+  return true;
+}
+
 export {
   DB_REDIS_TYPES, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore,
-  dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard, dbRedisEntries,
-  dbRedisPendingCount, dbRenderRedisValue,
+  dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
+  dbRedisEntries, dbRedisKeydown, dbRedisPendingCount, dbRenderRedisValue,
 };

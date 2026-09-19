@@ -18,11 +18,13 @@ import type { DbState } from "./db-state.js";
 import type { ApiDbColumn, ApiDbConnectionRow, DbQueryReply } from "./types/api.js";
 import type { DbInsert } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, errText, toast } from "./util.js";
+import { fill, h } from "./h.js";
+import type { HChild } from "./h.js";
 import {
   dbIsRedis, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisPendingCount,
 } from "./data-browsers.js";
-import { SQL_TOKEN_RE, dbHighlightSql, dbSqlPaint } from "./data-filters.js";
+import { SQL_TOKEN_RE, dbHighlightNodes, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
 import { dbView } from "./db-state.js";
@@ -121,34 +123,25 @@ function renderDbRedisBar(d: DbState, bar: HTMLElement): void {
   if (u) parts.push(u + " update" + (u > 1 ? "s" : ""));
   if (del) parts.push(del + " delete" + (del > 1 ? "s" : ""));
   if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
-  bar.appendChild(el("span", "", parts.join(", ") + " — LOCAL ONLY, not yet in redis. Commit sends them as ONE pipelined round trip (every command guard-checked); Discard deletes them without a single command."));
-  const cmdBtn = el("button", "btn", d.sqlPreview ? "Hide commands" : "Commands") as HTMLButtonElement;
-  cmdBtn.title = "Show the exact commands Commit will run";
-  cmdBtn.onclick = (): void => {
-    d.sqlPreview = !d.sqlPreview;
-    renderDbBar();
-  };
-  const discard = el("button", "btn", "Discard") as HTMLButtonElement;
-  discard.onclick = dbRedisDiscard;
-  const commitBtn = el("button", "btn commit", "Commit (1 pipeline)") as HTMLButtonElement;
-  commitBtn.onclick = (): void => { void dbRedisCommit(); };
-  bar.appendChild(cmdBtn);
-  bar.appendChild(discard);
-  bar.appendChild(commitBtn);
+  bar.appendChild(h("span", null, parts.join(", ") + " — LOCAL ONLY, not yet in redis. Commit sends them as ONE pipelined round trip (every command guard-checked); Discard deletes them without a single command."));
+  // No per-button handlers (docs/37 R5): the buttons carry data-bar addresses and #pane's
+  // delegated click answers them from live state.
+  bar.appendChild(h("button", { class: "btn", title: "Show the exact commands Commit will run", data: { bar: "preview" } },
+    d.sqlPreview ? "Hide commands" : "Commands"));
+  bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, "Discard"));
+  bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, "Commit (1 pipeline)"));
   if (d.sqlPreview) {
-    const pre = el("pre", "db-ddl");
-    pre.style.position = "static";
-    pre.style.margin = "0";
-    pre.style.marginTop = "var(--s2)";
-    pre.style.width = "100%";
+    // The command list is plain text, not SQL — no highlight pass (unlike the SQL bar below).
+    let body: string;
     try {
       const cmds = dbRedisCommands(d.redisKey!, b.type, b);
-      pre.textContent = "-- " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") +
+      body = "-- " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") +
         ", one pipelined round trip — each guard-checked before the socket is touched\n" +
         cmds.map(dbRedisCommandText).join("\n");
     } catch (e) {
-      pre.textContent = errText(e);
+      body = errText(e);
     }
+    const pre = h("pre", { class: "db-ddl", style: "position:static;margin:0;margin-top:var(--s2);width:100%" }, body);
     bar.style.flexWrap = "wrap";
     bar.appendChild(pre);
   }
@@ -165,7 +158,7 @@ function renderDbBar(): void {
   if (!n || (redis ? !d.redisValue : !d.data)) { bar.hidden = true; return; }
   bar.hidden = false;
   bar.style.flexWrap = "nowrap";
-  bar.innerHTML = "";
+  fill(bar);
   if (redis) {
     renderDbRedisBar(d, bar);
     return;
@@ -180,40 +173,57 @@ function renderDbBar(): void {
   // Same addressing honesty as the Commit gate (docs/22 W4b follow-up): the bar names the
   // WHERE the server will build, pk or whole-row.
   const pkColsB = (d.data && d.data.primaryKey) || [];
-  bar.appendChild(el("span", "", parts.join(", ") + " — LOCAL ONLY, not yet in the database. Commit sends them as ONE transaction (rows addressed by " + (pkColsB.length ? "primary key" : "all columns — the table has no primary key") + "); Discard deletes them without a single query."));
-  const sqlBtn = el("button", "btn", d.sqlPreview ? "Hide SQL" : "SQL") as HTMLButtonElement;
-  sqlBtn.title = "Show the exact statements Commit will run";
-  sqlBtn.onclick = (): void => {
-    d.sqlPreview = !d.sqlPreview;
-    renderDbBar();
-  };
-  const discard = el("button", "btn", "Discard") as HTMLButtonElement;
-  discard.onclick = (): void => {
-    if (!confirm("Discard " + n + " buffered change" + (n > 1 ? "s" : "") + "? Nothing has been written.")) return;
-    dbDropEdits();
-    renderDbGrid(); renderDbBar();
-  };
-  const commitBtn = el("button", "btn commit", "Commit (1 transaction)") as HTMLButtonElement;
-  commitBtn.onclick = dbCommit;
-  bar.appendChild(sqlBtn);
-  bar.appendChild(discard);
-  bar.appendChild(commitBtn);
+  bar.appendChild(h("span", null, parts.join(", ") + " — LOCAL ONLY, not yet in the database. Commit sends them as ONE transaction (rows addressed by " + (pkColsB.length ? "primary key" : "all columns — the table has no primary key") + "); Discard deletes them without a single query."));
+  // No per-button handlers (docs/37 R5): data-bar addresses, answered by #pane's delegated
+  // click with the counts read from live state at event time.
+  bar.appendChild(h("button", { class: "btn", title: "Show the exact statements Commit will run", data: { bar: "preview" } },
+    d.sqlPreview ? "Hide SQL" : "SQL"));
+  bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, "Discard"));
+  bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, "Commit (1 transaction)"));
   if (d.sqlPreview) {
-    const pre = el("pre", "db-ddl");
-    pre.style.position = "static";
-    pre.style.margin = "0";
-    pre.style.marginTop = "var(--s2)";
-    pre.style.width = "100%";
+    let body: HChild;
     try {
       const stmts = dbPendingSql();
-      pre.innerHTML = dbHighlightSql("-- " + stmts.length + " statement" + (stmts.length > 1 ? "s" : "") +
+      body = dbHighlightNodes("-- " + stmts.length + " statement" + (stmts.length > 1 ? "s" : "") +
         ", executed inside BEGIN ... COMMIT\n" + stmts.join("\n"));
     } catch (e) {
-      pre.textContent = errText(e);
+      body = errText(e);
     }
     bar.style.flexWrap = "wrap";
-    bar.appendChild(pre);
+    bar.appendChild(h("pre", { class: "db-ddl", style: "position:static;margin:0;margin-top:var(--s2);width:100%" }, body));
   }
+}
+
+/** #pane's delegated click for the edit bar (docs/37 R5). Behavior note (docs/37 §10.1): the
+ *  Discard confirm's count and the preview toggle's label are resolved from LIVE state at
+ *  event time — the render-time closure could ask "Discard 3 changes?" about a buffer a
+ *  keyboard paste had already grown to 4. */
+function dbBarClick(t: Element): boolean {
+  const b = t.closest<HTMLElement>("[data-bar]");
+  if (!b) return false;
+  const d = dbView();
+  const which = b.dataset.bar;
+  if (which === "preview") {
+    d.sqlPreview = !d.sqlPreview;
+    renderDbBar();
+    return true;
+  }
+  if (which === "discard") {
+    const n = dbIsRedis() ? dbRedisPendingCount() : dbPending();
+    if (dbIsRedis()) dbRedisDiscard();
+    else {
+      if (!confirm("Discard " + n + " buffered change" + (n > 1 ? "s" : "") + "? Nothing has been written.")) return true;
+      dbDropEdits();
+      renderDbGrid(); renderDbBar();
+    }
+    return true;
+  }
+  if (which === "commit") {
+    if (dbIsRedis()) void dbRedisCommit();
+    else void dbCommit();
+    return true;
+  }
+  return false;
 }
 
 /** docs/22 W1.7: fold one committed row's read-back into the page's rows. The commit reply
@@ -342,7 +352,7 @@ function dbHistoryPush(sql: string): void {
 function dbHistoryRender(): void {
   const sel = $("dbSqlHistory");
   if (!sel) return;
-  sel.innerHTML = "";
+  sel.textContent = "";
   const head = el("option", "", "History") as HTMLOptionElement;
   head.value = "";
   sel.appendChild(head);
@@ -652,4 +662,4 @@ async function dbRunSql(explain?: string | false): Promise<void> { // falsy runs
   renderDbGrid();
 }
 
-export { dbApplyReadback, dbCommit, dbFavoriteName, dbFavLoad, dbFavPush, dbFormatSql, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRunSql, dbSqlLiteral, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };
+export { dbApplyReadback, dbBarClick, dbCommit, dbFavoriteName, dbFavLoad, dbFavPush, dbFormatSql, dbFillConsole, dbHistoryLoad, dbHistoryPush, dbHistoryRender, dbHistorySave, dbPendingSql, dbQuoteIdentSafe, dbResultTabLabel, dbRunSql, dbSqlLiteral, dbSplitStatements, dbStatsSql, dbSubqueryAt, dbTemplateSql, dbWithExplain, renderDbBar };
