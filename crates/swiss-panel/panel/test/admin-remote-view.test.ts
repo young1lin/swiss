@@ -27,6 +27,69 @@ import { fileURLToPath } from "node:url";
    the docs/20 family wiring: the group names from the same response become headers,
    the sheet's Group select rides the POST body, and the New-group button exists. */
 
+/* docs/37 R5: the view paints with h()/fill() now, so the fake DOM must be a real class
+   extending a Node stub (frag() type-checks with instanceof Node) and innerHTML READS
+   serialise the built tree — the assertions that used to read parsed markup keep their
+   meaning on the tree the paint constructed. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
+class FakeNode extends NodeStub implements FakeEl {
+  tag: string;
+  attrs: Record<string, string> = {};
+  dataset: Record<string, string> = {};
+  className = "";
+  _text = "";
+  get textContent(): string { return this._text; }
+  set textContent(v: string) { if (v === "") { this.children = []; this._html = ""; } this._text = v; }
+  id = "";
+  type = "button";
+  value = "";
+  hidden = false;
+  checked = false;
+  disabled = false;
+  draggable = false;
+  title = "";
+  style: Record<string, string> = {};
+  children: FakeEl[] = [];
+  onclick: ((ev?: unknown) => void) | null = null;
+  classList = { add(): void {}, remove(): void {}, contains: () => false };
+  private _html = "";
+  constructor(tag: string) { super(); this.tag = tag.toUpperCase(); }
+  static fragment(): FakeNode { return new FakeNode("#document-fragment"); }
+  get innerHTML(): string { return this._html || serialize(this); }
+  set innerHTML(v: string) { this._html = v; this.children = []; }
+  querySelector(): FakeEl | null { return null; }
+  querySelectorAll(): FakeEl[] { return []; }
+  appendChild(n: FakeEl): FakeEl { this.children.push(n); this._html = ""; return n; }
+  append(...nodes: FakeEl[]): void { nodes.forEach((n) => { this.appendChild(n); }); }
+  addEventListener(): void {}
+  removeEventListener(): void {}
+  setAttribute(k: string, v: string): void { this.attrs[k] = v; if (k === "id") this.id = v; }
+  removeAttribute(k: string): void { delete this.attrs[k]; }
+  focus(): void {}
+  click(): void { if (this.onclick) this.onclick({ detail: 1 }); }
+  getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number } {
+    return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  }
+  closest(sel: string): FakeEl | null { return sel.charAt(0) === "#" && this.id === sel.slice(1) ? this : null; }
+}
+
+function serialize(node: FakeEl): string {
+  const n = node as unknown as FakeNode;
+  if (!n.tag) return String(n._text ?? "");
+  const attrs = Object.keys(n.attrs).map((k) => { return " " + k + "=\"" + n.attrs[k] + "\""; }).join("");
+  const id = n.id ? " id=\"" + n.id + "\"" : "";
+  const cls = n.className ? " class=\"" + n.className + "\"" : "";
+  const dis = n.disabled ? " disabled" : "";
+  const hid = n.hidden ? " hidden" : "";
+  const val = n.value ? " value=\"" + n.value + "\"" : "";
+  const sel = (n as unknown as { selected?: boolean }).selected ? " selected" : "";
+  const kids = n.children.map((c) => { return serialize(c); }).join("");
+  const tag = n.tag.toLowerCase();
+  return "<" + tag + id + attrs + cls + dis + hid + val + sel + ">" + (kids || n._text) + "</" + tag + ">";
+}
+
 interface FakeEl {
   innerHTML: string;
   textContent: string;
@@ -47,46 +110,22 @@ interface FakeEl {
   querySelectorAll: () => FakeEl[];
   appendChild: (n: FakeEl) => FakeEl;
   addEventListener(): void;
-  setAttribute(): void;
+  setAttribute(k?: string, v?: string): void;
   focus(): void;
   getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number };
   closest(sel?: string): FakeEl | null;
 }
 
 function fakeEl(): FakeEl {
-  const e = {
-    innerHTML: "",
-    textContent: "",
-    hidden: false,
-    onclick: null,
-    className: "",
-    title: "",
-    type: "",
-    value: "",
-    checked: false,
-    disabled: false,
-    draggable: false,
-    style: {},
-    dataset: {},
-    children: [] as FakeEl[],
-  } as FakeEl;
-  e.classList = { add() {}, remove() {}, contains: () => false };
-  e.querySelector = () => null;
-  e.querySelectorAll = () => [];
-  e.appendChild = (n: FakeEl) => { e.children.push(n); return n; };
-  e.addEventListener = () => {};
-  e.setAttribute = () => {};
-  e.focus = () => {};
-  e.getBoundingClientRect = () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 });
-  e.closest = () => null;
-  return e;
+  return new FakeNode("div");
 }
 
 const els = new Map<string, FakeEl>();
 const groupsEl = fakeEl();
 // The region repaints by id, not query, so the tracked element IS the region.
 els.set("rmGroups", groupsEl);
-const paneEl: FakeEl = { ...fakeEl(), querySelector: () => null };
+const paneEl: FakeEl = fakeEl();
+paneEl.querySelector = () => null;
 els.set("pane", paneEl);
 
 let responder: (path: string) => Promise<{ status: number; ok: boolean; json: () => Promise<unknown> }>;
@@ -103,10 +142,13 @@ beforeAll(async () => {
       getElementById: (id: string) => {
         if (id === "rmGroups") return groupsEl;
         let e = els.get(id);
-        if (!e) { e = fakeEl(); els.set(id, e); }
+        if (!e) { e = fakeEl(); (e as unknown as FakeNode).id = id; els.set(id, e); }
         return e;
       },
-      createElement: () => fakeEl(),
+      createElement: (tag: string) => new FakeNode(tag || "div"),
+      createElementNS: (_ns: string, tag: string) => new FakeNode(tag || "div"),
+      createDocumentFragment: () => FakeNode.fragment(),
+      createTextNode: (text: string) => { const n = new FakeNode("#text"); n.textContent = text; return n; },
       querySelector: () => null,
       querySelectorAll: () => [],
       addEventListener() {},
