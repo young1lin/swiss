@@ -8,12 +8,20 @@ import { setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/m
    after a newer one under Node. Assertions never trust a bare logsBody string: they check
    state, issued requests, painted tabbody HTML and the patched pager chrome. */
 
-class FakeNode {
+/* h()/frag() branch on the global Node class (docs/37 R5); under this micro-DOM it is this
+   stub, so a FakeNode IS a Node to the builder. */
+const NodeStub = class {};
+class FakeNode extends NodeStub {
   tag: string;
   attrs: Record<string, string> = {};
   dataset: Record<string, string> = {};
   className = "";
-  textContent = "";
+  _text = "";
+  get textContent(): string { return this._text; }
+  set textContent(v: string) {
+    if (v === "") { this.children = []; this._html = ""; this._text = ""; this.paints.push(""); return; }
+    this._text = v; this.children = [{ text: v } as unknown as FakeNode];
+  }
   id = "";
   type = "button";
   disabled = false;
@@ -37,9 +45,15 @@ class FakeNode {
   paints: string[] = [];
   private _html = "";
   private _rect = { top: 0, left: 0, bottom: 22, right: 40, width: 40, height: 22 };
-  constructor(tag: string) { this.tag = tag.toUpperCase(); }
-  get innerHTML(): string { return this._html; }
-  set innerHTML(v: string) { this._html = v; this.paints.push(v); }
+  constructor(tag: string) { super(); this.tag = tag.toUpperCase(); }
+  static fragment(): FakeNode { const f = new FakeNode("#document-fragment"); f.tag = "#DOCUMENT-FRAGMENT"; return f; }
+  get innerHTML(): string { return this._html || serialize(this); }
+  set innerHTML(v: string) { this._html = v; this.children = []; this.paints.push(v); }
+  /* docs/37 R5: the real renderers now paint with fill() — textContent wipe + appendChild —
+   *  instead of assigning innerHTML. The wipe marks a paint (same count semantics: one paint
+   *  per repaint, none for an in-place chrome patch), and innerHTML READS serialise the live
+   *  children so the substring assertions keep their meaning on the built tree. */
+  get liveText(): string { return serialize(this); }
   getBoundingClientRect() { return this._rect; }
   setRect(top: number) { this._rect = { top, left: 0, bottom: top + 22, right: 40, width: 40, height: 22 }; }
   setAttribute(k: string, v: string) { this.attrs[k] = v; if (k === "id") this.id = v; }
@@ -49,7 +63,20 @@ class FakeNode {
   querySelectorAll(): FakeNode[] { return []; }
   contains(): boolean { return false; }
   closest(): FakeNode | null { return null; }
-  appendChild(n: FakeNode) { this.children.push(n); return n; }
+  appendChild(n: FakeNode) {
+    if (n.tag === "#DOCUMENT-FRAGMENT") { n.children.forEach((c) => { this.children.push(c); }); return n; }
+    this.children.push(n);
+    this._html = ""; // built nodes, not a parsed string — reads serialise instead
+    return n;
+  }
+  append(...nodes: FakeNode[]) {
+    nodes.forEach((n) => {
+      this.appendChild(n);
+      // The error strip moved from insertAdjacentHTML to append (docs/37 R5); record it the
+      // same way so the transaction assertions keep counting strips.
+      this.inserted.push(["beforeend", serialize(n)]);
+    });
+  }
   removeChild(n: FakeNode) { this.children = this.children.filter((c) => c !== n); return n; }
   remove() { this.removed = true; }
   replaceWith(n: FakeNode) { this.replacedBy = n; }
@@ -64,11 +91,25 @@ class FakeNode {
 }
 
 const byId = new Map<string, FakeNode>();
+function serialize(node: FakeNode): string {
+  const raw = node as unknown as { text?: string };
+  if (!node.tag || raw.text != null) return String(raw.text ?? "");
+  const attrs = Object.keys(node.attrs).map((k) => { return " " + k + "=\"" + node.attrs[k] + "\""; }).join("");
+  const id = node.id ? " id=\"" + node.id + "\"" : "";
+  const role = (node as unknown as { role?: string }).role ? " role=\"" + (node as unknown as { role?: string }).role + "\"" : "";
+  const cls = node.className ? " class=\"" + node.className + "\"" : "";
+  const dis = (node as unknown as { disabled?: boolean }).disabled ? " disabled" : "";
+  const val = (node as unknown as { value?: string }).value ? " value=\"" + (node as unknown as { value?: string }).value + "\"" : "";
+  const inner = node.children.map((c) => { return serialize(c); }).join("");
+  return "<" + node.tag.toLowerCase() + id + attrs + role + cls + dis + val + ">" + inner + "</" + node.tag.toLowerCase() + ">";
+}
 const doc = {
   getElementById(id: string) {
     if (!byId.has(id)) byId.set(id, new FakeNode("div"));
     return byId.get(id)!;
   },
+  createDocumentFragment: () => FakeNode.fragment(),
+  createElementNS: () => new FakeNode("svg"),
   createElement: (t: string) => new FakeNode(t),
   createTextNode: (s: string) => ({ text: s }),
   querySelector: (): FakeNode | null => null,
@@ -97,6 +138,7 @@ let util: typeof import("../src/util.js");
 let rh: typeof import("../src/run-history.js");
 
 beforeAll(async () => {
+  (globalThis as unknown as Record<string, unknown>).Node = NodeStub;
   (globalThis as unknown as Record<string, unknown>).document = doc;
   (globalThis as unknown as Record<string, unknown>).window = { addEventListener() {}, innerWidth: 1280, innerHeight: 800 };
   (globalThis as unknown as Record<string, unknown>).localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
@@ -498,7 +540,9 @@ describe("docs/32 B1: a page switch is a transaction", () => {
   });
 
   it("the pager markup carries the docs/32 semantics (nav role, live status)", () => {
-    const html = logs.logsBody({ ...fakeDetail(), calls: PAGE0, callsMore: true });
+    const host = new FakeNode("div");
+    host.appendChild(logs.logsBodyNode({ ...fakeDetail(), calls: PAGE0, callsMore: true }) as unknown as FakeNode);
+    const html = host.innerHTML;
     expect(html).toContain('role="navigation"');
     expect(html).toContain('aria-label="Call log pages"');
     expect(html).toMatch(/id="clStatus"[^>]*aria-live="polite"/);

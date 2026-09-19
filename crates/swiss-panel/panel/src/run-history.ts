@@ -24,7 +24,8 @@ import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, dele
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
 import { popupMenu } from "./menu.js";
 import { closeMenu } from "./pane.js";
-import { copyLogText, fmtChars, fmtJson, logsBody, mountJsonTrees, toggleCall } from "./logs.js";
+import { copyLogText, fmtChars, fmtJson, logsBodyNode, mountJsonTrees, toggleCall } from "./logs.js";
+import { fill } from "./h.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
 import { ago } from "./traffic.js";
@@ -789,7 +790,7 @@ function renderCallsOnly(): void {
   const liveQ = document.getElementById("callsQ") as HTMLInputElement & { selectionStart: number };
   const hadFocus = !!(liveQ && document.activeElement === liveQ);
   const caret = hadFocus ? liveQ.selectionStart : null;
-  body.innerHTML = logsBody(d);
+  fill(body, logsBodyNode(d));
   const freshQ = document.getElementById("callsQ");
   if (liveQ && freshQ && liveQ !== freshQ) freshQ.replaceWith(liveQ);
   if (hadFocus && liveQ) {

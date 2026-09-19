@@ -19,14 +19,17 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The MCP renderers sit in the browser module graph, whose entry modules wire a few DOM
-// handles at import time. These tests exercise pure HTML builders, so a permissive stub is enough.
-function permissive(): unknown {
-  return new Proxy(function () {} as unknown as Record<string, unknown>, {
-    get: () => permissive(),
-    set: () => true,
-    apply: () => permissive(),
-  });
+// @vitest-environment happy-dom
+
+/* The MCP renderers sit in the browser module graph, whose entry modules wire a few DOM
+   handles at import time. docs/37 R5 moved the builders onto real nodes, so the suite runs on
+   a real DOM (happy-dom) with the served shell's id soup in place before the import — the same
+   contract as the other view suites — instead of a permissive proxy the assertions could not
+   read a built tree through. */
+function shellSkeleton(): string {
+  const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "admin_assets", "index.html"), "utf8");
+  const ids = Array.from(html.matchAll(/id="([a-zA-Z0-9_-]+)"/g)).map((m) => m[1]);
+  return Array.from(new Set(ids)).map((id) => '<div id="' + id + '"></div>').join("");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -36,21 +39,11 @@ let history: any;
 
 beforeAll(async () => {
   const g = globalThis as unknown as Record<string, unknown>;
-  g.document = {
-    addEventListener() {},
-    getElementById: () => permissive(),
-    createElement: () => permissive(),
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    body: permissive(),
-    documentElement: permissive(),
-    activeElement: null,
-    hidden: false,
-  };
   g.window = { addEventListener() {}, innerWidth: 1440, innerHeight: 900 };
   g.location = { origin: "http://127.0.0.1:19999" };
   g.localStorage = { getItem: () => null, setItem() {} };
   g.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+  document.body.innerHTML = shellSkeleton();
   logs = await import("../src/logs.js");
   history = await import("../src/run-history.js");
 });
@@ -86,17 +79,19 @@ describe("MCP detail progressive disclosure", () => {
         },
       }]),
     };
-    const html = logs.kindBody(d, "tools", { lifecycle: "started" });
+    const host = document.createElement("div");
+    host.append(logs.kindBodyNode(d, "tools", { lifecycle: "started" }));
 
-    expect(html).toContain('<details class="item-detail">');
-    expect(html).toContain('class="desc item-teaser"');
-    expect(html).toContain('title="' + description + '"');
-    expect(html).toContain('class="item-full"');
-    expect(html).toContain("Full description");
-    expect(html).toContain("Input schema");
-    expect(html).toContain("The SQL statement to execute.");
-    expect(html).toContain('data-try="mysql_query"');
-    expect(html).toContain('data-toggle="mysql_query"');
+    const detail = host.querySelector("details.item-detail")!;
+    expect(detail).not.toBeNull();
+    expect(detail.querySelector(".desc.item-teaser")).not.toBeNull();
+    expect(detail.querySelector("summary")!.getAttribute("title")).toBe(description);
+    expect(detail.querySelector(".item-full")).not.toBeNull();
+    expect(detail.textContent).toContain("Full description");
+    expect(detail.textContent).toContain("Input schema");
+    expect(detail.textContent).toContain("The SQL statement to execute.");
+    expect(host.querySelector('[data-try="mysql_query"]')).not.toBeNull();
+    expect(host.querySelector('[data-toggle="mysql_query"]')).not.toBeNull();
   });
 
   it("turns read-only configuration into a short overview with every setting behind disclosure", () => {

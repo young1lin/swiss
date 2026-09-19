@@ -18,7 +18,8 @@
                                                                  
 import { $, KINDS, api, apiJson, now, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
-import { callsErrHtml, callsStatusHtml, fmtJson, mountJsonTrees } from "./logs.js";
+import { callsErrNode, callsStatusNode, fmtJson, mountJsonTrees } from "./logs.js";
+import { fill } from "./h.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
 import { loadList } from "./polling.js";
@@ -348,7 +349,7 @@ function patchCallsChrome(d           )       {
   const region = $("callsRegion");
   if (region && region.setAttribute) region.setAttribute("aria-busy", busy ? "true" : "false");
   const status = $("clStatus");
-  if (status) status.innerHTML = callsStatusHtml(d);
+  if (status) fill(status, callsStatusNode(d));
   const prev = $                   ("clPrev"), next = $                   ("clNext");
   if (prev) prev.disabled = busy || d.callsPage <= 0;
   if (next) next.disabled = busy || !d.callsMore;
@@ -360,7 +361,7 @@ function patchCallsChrome(d           )       {
   if (err && err.remove) err.remove();
   if (d.callsError) {
     const regionEl = $("callsRegion");
-    if (regionEl && regionEl.insertAdjacentHTML) regionEl.insertAdjacentHTML("beforeend", callsErrHtml(d));
+    if (regionEl) regionEl.append(callsErrNode(d));
     const retry = $("clRetry");
     // The same keyboard contract as the painted wiring (run-history): a Retry driven by
     // Enter/Space (detail === 0) owes the user their focus back once the retry commits.
