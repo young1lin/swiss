@@ -192,12 +192,14 @@ describe("the sprite carries the favorites star", () => {
 /* The live page once crashed on this exact seam: the wiring queried #dbSqlFormat before the
    skeleton carried it (the DOM-stubbed boot test cannot see a missing id — its $() returns a
    node for anything), so the whole Data view died on mount. The skeleton and the wiring are
-   pinned to agree instead. */
+   pinned to agree instead.
+   docs/37 R5: the skeleton is a node tree now — the ids live as h() props and the aria-label
+   as an aria bag entry, which is what the emitted source carries. */
 describe("the console skeleton carries what its wiring queries", () => {
-  it("dbSqlFormat and dbSqlFav exist in the skeleton html", () => {
+  it("dbSqlFormat and dbSqlFav exist in the skeleton tree", () => {
     const src = readFileSync(join(admin, "js", "data-view.js"), "utf8");
-    expect(src).toContain('id="dbSqlFormat"');
-    expect(src).toContain('id="dbSqlFav"');
-    expect(src).toContain('aria-label="Save to favorites"');
+    expect(src).toContain('id: "dbSqlFormat"');
+    expect(src).toContain('id: "dbSqlFav"');
+    expect(src).toContain('label: "Save to favorites"');
   });
 });

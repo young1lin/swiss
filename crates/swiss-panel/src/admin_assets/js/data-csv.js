@@ -15,7 +15,8 @@
  */
 
                                                                       
-import { $, apiJson, el, errText, esc, targetEl, toast } from "./util.js";
+import { $, apiJson, el, errText, targetEl, toast } from "./util.js";
+import { fill, h } from "./h.js";
 import { closeSheet } from "./add-sheet.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbApplyFilters, renderDbFilters } from "./data-filters.js";
@@ -55,30 +56,28 @@ function dbOpenImport()       {
   if (dbPending() && !dbOkToDrop()) return;
   let header           = [], lines           = [], mapping                    = [];
   let mode = "insert"; // docs/22 W4.5: "insert" | "upsert" — the statement form the commit uses
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Import CSV">' +
-      '<div class="sheet-head"><h2>Import CSV into ' + esc((d.schema ? d.schema + "." : "") + d.table ) + "</h2></div>" +
-      '<div class="sheet-body">' +
-        '<div class="db-console-row" style="margin-bottom:var(--s2)">' +
-          '<div class="seg" role="tablist" id="dbImpMode" style="margin-bottom:0">' +
-            '<button type="button" role="tab" data-mode="insert" aria-selected="true">Insert</button>' +
-            '<button type="button" role="tab" data-mode="upsert" aria-selected="false">Upsert</button>' +
-          "</div>" +
-          '<span class="hint" id="dbImpModeSay">Every row inserts \u2014 a duplicate key aborts the whole file.</span>' +
-        "</div>" +
-        '<div class="db-console-row" style="margin-bottom:var(--s2)">' +
-          '<input type="file" id="dbImpFile" accept=".csv,text/csv" style="width:auto">' +
-          '<span class="hint">…or paste below (first row = header)</span>' +
-        "</div>" +
-        '<textarea id="dbImpText" placeholder="id,name\n1,alice\n2,bob" style="min-height:120px"></textarea>' +
-        '<div id="dbImpMap" style="margin-top:var(--s3)"></div>' +
-        '<div id="dbImpPreview" style="margin-top:var(--s3)"></div>' +
-      "</div>" +
-      '<div class="sheet-foot"><span class="grow"></span>' +
-        '<button class="btn" id="dbImpCancel">Cancel</button>' +
-        '<button class="btn primary" id="dbImpRun">Import (one transaction)</button></div>' +
-    "</div>";
+  // docs/37 R5: node sheet, painted AFTER the host is unhidden; the per-open wiring below
+  // stays (the sheet idiom — parse/paint/setMode close over the mapping state).
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Import CSV" } },
+      h("div", { class: "sheet-head" },
+        h("h2", null, "Import CSV into " + (d.schema ? d.schema + "." : "") + d.table )),
+      h("div", { class: "sheet-body" },
+        h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
+          h("div", { class: "seg", role: "tablist", id: "dbImpMode", style: "margin-bottom:0" },
+            h("button", { type: "button", role: "tab", data: { mode: "insert" }, aria: { selected: "true" } }, "Insert"),
+            h("button", { type: "button", role: "tab", data: { mode: "upsert" }, aria: { selected: "false" } }, "Upsert")),
+          h("span", { class: "hint", id: "dbImpModeSay" }, "Every row inserts — a duplicate key aborts the whole file.")),
+        h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
+          h("input", { type: "file", id: "dbImpFile", accept: ".csv,text/csv", style: "width:auto" }),
+          h("span", { class: "hint" }, "…or paste below (first row = header)")),
+        h("textarea", { id: "dbImpText", placeholder: "id,name\n1,alice\n2,bob", style: "min-height:120px" }),
+        h("div", { id: "dbImpMap", style: "margin-top:var(--s3)" }),
+        h("div", { id: "dbImpPreview", style: "margin-top:var(--s3)" })),
+      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
+        h("button", { class: "btn", id: "dbImpCancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "dbImpRun" }, "Import (one transaction)"))));
 
   function parse()       {
     const text = $                  ("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -94,7 +93,7 @@ function dbOpenImport()       {
 
   function paint()       {
     const mapBox = $("dbImpMap");
-    mapBox.innerHTML = "";
+    mapBox.textContent = "";
     if (!header.length) return;
     const names = (d.data?.columns.map((c             )         => { return c.name; }) ?? []);
     header.forEach((h        , i        )       => {
@@ -121,7 +120,7 @@ function dbOpenImport()       {
 
   function preview()       {
     const box = $("dbImpPreview");
-    box.innerHTML = "";
+    box.textContent = "";
     if (!header.length) return;
     const mapped         = mapping.filter(Boolean).length;
     if (!mapped) { box.appendChild(el("div", "hint", "No columns mapped — pick at least one target column.")); return; }

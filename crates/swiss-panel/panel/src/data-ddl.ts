@@ -16,8 +16,10 @@
 
 import type { ApiDbColumn } from "./types/api.js";
 import type { DbDdlPayload, DdlRow, DdlSheetState } from "./types/state.js";
-import { $, api, apiJson, el, esc, icon, toast } from "./util.js";
-import { dbHighlightSql } from "./data-filters.js";
+import { $, api, apiJson, el, iconNode, toast } from "./util.js";
+import { fill, h } from "./h.js";
+import type { HChild } from "./h.js";
+import { dbHighlightNodes } from "./data-filters.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbLoadTables, dbOpenTable } from "./data-view.js";
 import { dbLoadDetail } from "./data-structure.js";
@@ -176,69 +178,73 @@ function closeDbDdlSheet() {
   if (S && S.timer) clearTimeout(S.timer);
   S = null;
   const host = $("sheet");
-  if (host) { host.hidden = true; host.innerHTML = ""; }
+  if (host) { host.hidden = true; host.textContent = ""; }
 }
 
 /** Rebuild the whole sheet DOM from S. Called on open and on row add/remove only — keystrokes
- *  write straight into S (and schedule a preview) so an input never loses focus to a re-render. */
+ *  write straight into S (and schedule a preview) so an input never loses focus to a re-render.
+ *  docs/37 R5: the sheet is a node tree painted AFTER the host is unhidden; per-open wiring
+ *  (wireDbDdlSheet) stays, per the sheet idiom. */
 function paintDbDdlSheet(): void {
   const S_ = S!;
   const kind = S_.kind;
   const title = DDL_TITLE[kind] + (S_.table ? " in " + S_.table : "");
-  let html =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(DDL_TITLE[kind]) + '">' +
-      '<div class="sheet-head"><h2 id="ddl-title">' + esc(title) + "</h2></div>" +
-      '<div class="sheet-body">';
+  const body: (HChild | null)[] = [];
   if (kind === "table" && S_.dialect === "pg") {
     // docs/22 W1.1: a Postgres catalog is many schemas, so the new table says where it goes
     // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
     const schemas = S_.schemas.slice();
     if (schemas.indexOf(S_.schema) < 0) schemas.unshift(S_.schema);
-    html += '<label class="field"><span>Schema</span><select id="ddl-schema">' +
-      schemas.map((s: string): string => {
-        return '<option value="' + esc(s) + '"' + (s === S?.schema ? " selected" : "") + ">" + esc(s) + "</option>";
-      }).join("") + "</select></label>";
+    body.push(h("label", { class: "field" }, h("span", null, "Schema"),
+      h("select", { id: "ddl-schema" }, schemas.map((s: string): HChild => {
+        return h("option", { value: s, selected: s === S_.schema }, s);
+      }))));
   }
   if (kind === "table") {
-    html += '<div class="two">' +
-        '<label class="field"><span>Table name</span><input id="ddl-table" autocomplete="off" spellcheck="false" placeholder="events"></label>' +
-        '<label class="field"><span>Comment (optional)</span><input id="ddl-comment" autocomplete="off" placeholder="' + esc("what this table holds") + '"></label>' +
-      "</div>";
+    body.push(h("div", { class: "two" },
+      h("label", { class: "field" }, h("span", null, "Table name"),
+        h("input", { id: "ddl-table", autocomplete: "off", spellcheck: false, placeholder: "events" })),
+      h("label", { class: "field" }, h("span", null, "Comment (optional)"),
+        h("input", { id: "ddl-comment", autocomplete: "off", placeholder: "what this table holds" }))));
   }
   if (kind === "index") {
-    html += '<div class="two">' +
-        '<label class="field"><span>Index name</span><input id="ddl-index" autocomplete="off" spellcheck="false" value="' + esc(S_.indexName) + '"></label>' +
-        '<label class="check" style="align-self:end;padding-bottom:6px"><input type="checkbox" id="ddl-unique">Unique</label>' +
-      "</div>" +
-      '<div class="field"><span>Columns</span><div id="ddl-cols" class="db-ddl-colpick"></div></div>';
+    body.push(h("div", { class: "two" },
+      h("label", { class: "field" }, h("span", null, "Index name"),
+        h("input", { id: "ddl-index", autocomplete: "off", spellcheck: false, value: S_.indexName })),
+      h("label", { class: "check", style: "align-self:end;padding-bottom:6px" },
+        h("input", { type: "checkbox", id: "ddl-unique" }), "Unique")),
+      h("div", { class: "field" }, h("span", null, "Columns"),
+        h("div", { id: "ddl-cols", class: "db-ddl-colpick" })));
   }
   if (kind !== "index") {
-    html += '<div class="field"><span>Columns</span>' +
-      '<table class="db-ddl-grid" id="ddl-grid"><colgroup>' +
-        '<col style="width:22%"><col style="width:24%"><col style="width:56px"><col style="width:20%"><col style="width:28%"><col style="width:26px">' +
-      "</colgroup><thead><tr>" +
-        ["Name", "Type", "Null", "Default", "Comment", ""].map((h: string): string => {
-          return "<th>" + esc(h) + "</th>";
-        }).join("") +
-      "</tr></thead><tbody></tbody></table>" +
-      '<button class="btn ghost" id="ddl-add-row" type="button">Add column</button>' +
-      '<datalist id="ddl-types">' + dbDdlTypeOptions(S_.dialect).map((t: string): string => {
-        return '<option value="' + esc(t) + '"></option>';
-      }).join("") + "</datalist></div>";
+    body.push(h("div", { class: "field" }, h("span", null, "Columns"),
+      h("table", { class: "db-ddl-grid", id: "ddl-grid" },
+        h("colgroup",
+          h("col", { style: "width:22%" }), h("col", { style: "width:24%" }), h("col", { style: "width:56px" }),
+          h("col", { style: "width:20%" }), h("col", { style: "width:28%" }), h("col", { style: "width:26px" })),
+        h("thead", null, h("tr", null,
+          ["Name", "Type", "Null", "Default", "Comment", ""].map((hd: string): HChild => {
+            return h("th", null, hd);
+          }))),
+        h("tbody")),
+      h("button", { class: "btn ghost", id: "ddl-add-row", type: "button" }, "Add column"),
+      h("datalist", { id: "ddl-types" }, dbDdlTypeOptions(S_.dialect).map((t: string): HChild => {
+        return h("option", { value: t });
+      }))));
   }
-  html +=
-        '<div class="hint" id="ddl-hint">SQL preview — Commit runs these statements verbatim.</div>' +
-        '<pre class="db-ddl" id="ddl-pre"></pre>' +
-      "</div>" +
-      '<div class="sheet-foot"><span class="grow"></span>' +
-        '<button class="btn" id="ddl-cancel" type="button">Cancel</button>' +
-        '<button class="btn primary" id="ddl-commit" type="button" disabled>' +
-          esc(kind === "table" ? "Create table" : kind === "column" ? "Add column" : "Create index") +
-        "</button></div>" +
-    "</div>";
+  body.push(
+    h("div", { class: "hint", id: "ddl-hint" }, "SQL preview — Commit runs these statements verbatim."),
+    h("pre", { class: "db-ddl", id: "ddl-pre" }));
   const host = $("sheet");
-  host.innerHTML = html;
   host.hidden = false;
+  fill(host,
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: DDL_TITLE[kind] } },
+      h("div", { class: "sheet-head" }, h("h2", { id: "ddl-title" }, title)),
+      h("div", { class: "sheet-body" }, body),
+      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
+        h("button", { class: "btn", id: "ddl-cancel", type: "button" }, "Cancel"),
+        h("button", { class: "btn primary", id: "ddl-commit", type: "button", disabled: true },
+          kind === "table" ? "Create table" : kind === "column" ? "Add column" : "Create index"))));
   wireDbDdlSheet();
   // The mini-grid belongs to the table and column kinds only — the index sheet has no
   // #ddl-grid, and rendering rows into it would throw before the picker and the quiet
@@ -306,7 +312,7 @@ function wireDbDdlSheet(): void {
  *  minimal set — so the diff's added bucket is exactly the editable rows. */
 function renderDbDdlRows(): void {
   const body = $("ddl-grid").querySelector<HTMLElement>("tbody");
-  body!.innerHTML = "";
+  body!.textContent = "";
   S?.rows.forEach((r: DdlRow, i: number): void => {
     const tr = el("tr");
     const mk = (k: string, value: string, ph?: string): HTMLTableCellElement => {
@@ -343,7 +349,7 @@ function renderDbDdlRows(): void {
     const tdx = el("td");
     const rm = el("button", "btn icon") as HTMLButtonElement;
     rm.type = "button";
-    rm.innerHTML = icon("x", "Remove column");
+    rm.appendChild(iconNode("x", "Remove column"));
     rm.dataset.i = String(i);
     if (!r.isNew) { rm.disabled = true; rm.title = "Only new columns can be removed here"; }
     rm.onclick = (): void => {
@@ -360,7 +366,7 @@ function renderDbDdlRows(): void {
 /** The index sheet's column picker: one check per existing column, in the table's order. */
 function renderDbDdlColPick(): void {
   const box = $("ddl-cols");
-  box.innerHTML = "";
+  box.textContent = "";
   S?.oldColumns.forEach((c: ApiDbColumn): void => {
     const label = document.createElement("label");
     label.className = "check";
@@ -408,7 +414,7 @@ function paintDbDdlPreviewQuiet(): void {
 function paintDbDdlPreviewSql(sql: string): void {
   const pre = $("ddl-pre");
   pre.classList.remove("db-ddl-quiet");
-  pre.innerHTML = dbHighlightSql(sql);
+  fill(pre, dbHighlightNodes(sql));
   $<HTMLButtonElement>("ddl-commit").disabled = false;
 }
 

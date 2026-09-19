@@ -22,18 +22,26 @@ import { dbCol, dbConn } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), plus a fetch stub
    whose responses the TEST resolves by hand — that is the only way to make a slow response
-   arrive after a newer one under Node. */
+   arrive after a newer one under Node.
+   docs/37 R5: the renders build with h()/fill(), so nodes extend a Node stub (h()
+   instanceof-checks children), textContent="" wipes like the DOM's, and document carries
+   the NS/fragment factories. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
 type Stub = Record<string, any> & { children: Stub[] };
 const el = (tag = "div"): Stub => {
   const n: any = {
     tag, children: [], style: {}, dataset: {}, hidden: false, disabled: false, checked: false,
-    value: "", textContent: "", className: "", id: "", title: "", rows: 0, type: "",
+    value: "", className: "", id: "", title: "", rows: 0, type: "",
     selectionStart: 0, scrollHeight: 22, scrollTop: 0, scrollLeft: 0,
     classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
     appendChild(c: Stub) { n.children.push(c); return c; },
     removeChild(c: Stub) { n.children = n.children.filter((x: Stub) => x !== c); return c; },
-    remove() {}, contains: () => false, closest: () => null,
-    setAttribute() {}, getAttribute: () => "", removeAttribute() {},
+    remove() {}, contains: () => false,
+    closest(sel: string) { return sel.charAt(0) === "#" && n.id === sel.slice(1) ? n : null; },
+    setAttribute(k: string, v: string) { if (k === "id") n.id = v; if (k.startsWith("data-")) n.dataset[k.slice(5)] = v; },
+    getAttribute: () => "", removeAttribute() {},
     addEventListener() {}, removeEventListener() {},
     dispatchEvent: () => true, focus() {}, blur() {}, select() {}, click() {},
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 40, height: 22, right: 40, bottom: 22 }),
@@ -41,6 +49,11 @@ const el = (tag = "div"): Stub => {
     replaceWith() {}, insertAdjacentHTML() {},
   };
   Object.defineProperty(n, "innerHTML", { get: () => "", set: () => {} });
+  Object.defineProperty(n, "textContent", {
+    get: (): string => (n as any)._text ?? "",
+    set: (v: string) => { if (v === "") n.children = []; (n as any)._text = v; },
+  });
+  Object.setPrototypeOf(n, NodeStub.prototype);
   return n;
 };
 const byId: Record<string, Stub> = {};
@@ -62,7 +75,9 @@ Object.assign(globalThis, {
   document: {
     documentElement: el(), body: el(), head: el(), hidden: false, visibilityState: "visible",
     activeElement: null,
-    createElement: (t: string) => el(t), createTextNode: (s: string) => ({ text: s }),
+    createElement: (t: string) => el(t), createElementNS: (_ns: string, t: string) => el(t),
+    createDocumentFragment: () => el("#document-fragment"),
+    createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
     getElementById: (id: string) => (byId[id] ||= el()),
     querySelector: () => null, querySelectorAll: () => [],
     addEventListener: () => {}, removeEventListener: () => {},
@@ -222,14 +237,12 @@ describe("DROP leaves no trace of the table on the right pane (docs/22 closeout 
     d.table = "t"; d.schema = "s";
     d.data = { table: "t", schema: "s", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false };
     d.sqlResult = { columns: ["reply"], rows: [{ reply: "x" }], rowCount: 1 };
-    // A wrap that records its innerHTML paint: the no-table empty state is an innerHTML
-    // ASSIGNMENT, so a children-walk can never see it.
-    let painted = "";
+    // A wrap that keeps what it is given: the no-table empty state is a fill()/emptyNode
+    // APPEND now (docs/37 R5), so the assertion walks the collected text of the tree.
     const wrap: any = {
       style: {}, children: [],
-      get innerHTML() { return painted; },
-      set innerHTML(v: string) { painted = v; },
-      appendChild: (c: any) => c, removeChild: (c: any) => c, remove: () => {},
+      textContent: "",
+      appendChild(c: any) { wrap.children.push(c); return c; }, removeChild: (c: any) => c, remove: () => {},
       addEventListener: () => {}, removeEventListener: () => {},
       querySelector: () => null, querySelectorAll: () => [], contains: () => false,
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }),
@@ -243,7 +256,14 @@ describe("DROP leaves no trace of the table on the right pane (docs/22 closeout 
     expect(d.table).toBeNull();
     expect(d.schema, "the dropped table's schema is gone").toBeNull();
     expect(d.sqlResult, "no result tab survives the drop").toBeNull();
-    expect(painted.includes("Select a table"), "the right pane shows its empty state").toBe(true);
+    const text: string[] = [];
+    const walk = (n: any) => {
+      if (!n) return;
+      if (typeof n.textContent === "string" && n.textContent) text.push(n.textContent);
+      for (const c of n.children || []) walk(c);
+    };
+    walk(wrap);
+    expect(text.some((s) => s.includes("Select a table")), "the right pane shows its empty state").toBe(true);
   });
 });
 
@@ -255,12 +275,13 @@ describe("Commit keeps the grid where the user was looking (docs/22 closeout B4)
     d.table = "t";
     d.data = { table: "t", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true };
     d.updates = { "[1]": { pk: { id: 1 }, changes: { id: 2 } } };
-    // A wrap that behaves like the real one: an innerHTML repaint RESETS scroll to the top.
-    let painted = "";
+    // A wrap that behaves like the real one: a repaint (the textContent wipe that opens
+    // fill(), docs/37 R5) RESETS scroll to the top.
+    let paintedText = "";
     const wrap: any = {
       style: {}, children: [], scrollTop: 0, scrollLeft: 0,
-      get innerHTML() { return painted; },
-      set innerHTML(v: string) { painted = v; wrap.scrollTop = 0; },
+      get textContent() { return paintedText; },
+      set textContent(v: string) { paintedText = v; if (v === "") wrap.scrollTop = 0; },
       appendChild: (c: any) => c, removeChild: (c: any) => c, remove: () => {},
       addEventListener: () => {}, removeEventListener: () => {},
       querySelector: () => null, querySelectorAll: () => [], contains: () => false,

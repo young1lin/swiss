@@ -147,7 +147,6 @@ export default tseslint.config(
       "src/data-activity.ts",
       "src/data-browsers.ts",
       "src/data-ddl.ts",
-      "src/data-filters.ts",
       "src/data-form.ts",
       "src/data-structure.ts",
       "src/data-suggest.ts",

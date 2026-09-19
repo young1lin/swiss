@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-import { $, esc } from "./util.js";
+import { $ } from "./util.js";
+import { fill, h } from "./h.js";
+import type { HChild } from "./h.js";
 import { closeSheet } from "./add-sheet.js";
 
 /* --- value viewer sheet (docs/22 W5.3) ----------------------------------------------------------- */
@@ -69,65 +71,73 @@ function dbHexPreview(value: string, maxBytes: number): { text: string; bytes: n
   return { text: lines.join("\n"), bytes: bytes, truncated: truncated };
 }
 
-/** One JSON node as HTML. Containers fold behind <details> — the root open, everything
- *  nested closed — so a deep document opens to its top level and expands on demand. Object
- *  keys are identity (text face); values are values you would copy (mono). Everything is
- *  escaped on the way out: a document full of tags stays inert text. Pure. */
-function dbJsonNode(v: Record<string, unknown>, isOpen: boolean): string {
-  if (v === null || v === undefined) return '<span class="db-val-v db-null">null</span>';
+/** One JSON node as a node tree (docs/37 R5). Containers fold behind <details> — the root
+ *  open, everything nested closed — so a deep document opens to its top level and expands on
+ *  demand. Object keys are identity (text face); values are values you would copy (mono).
+ *  Every remote string lands as a TEXT node: a document full of tags stays inert text with
+ *  no esc() anywhere. Pure in its inputs (builds nodes only, touches nothing live). */
+function dbJsonNode(v: Record<string, unknown>, isOpen: boolean): HChild {
+  if (v === null || v === undefined) return h("span", { class: "db-val-v db-null" }, "null");
   if (Array.isArray(v) || typeof v === "object") {
     const isArr = Array.isArray(v);
     const keys = isArr ? v as unknown as unknown[] : Object.keys(v);
     const summary = isArr ? (keys.length ? "[ " + keys.length + " ]" : "[ ]")
       : (keys.length ? "{ " + keys.length + " }" : "{ }");
-    let inner = "";
+    const inner: HChild[] = [];
     if (isArr) {
       keys.forEach((x: unknown) => {
-        inner += '<div class="db-val-row">' + dbJsonNode(x as Record<string, unknown>, false) + "</div>";
+        inner.push(h("div", { class: "db-val-row" }, dbJsonNode(x as Record<string, unknown>, false)));
       });
     } else {
       keys.forEach((k: unknown): void => {
-        inner += '<div class="db-val-row"><span class="db-val-k">' + esc(k as string) + "</span>" + dbJsonNode(v[k as string] as Record<string, unknown>, false) + "</div>";
+        inner.push(h("div", { class: "db-val-row" },
+          h("span", { class: "db-val-k" }, String(k)),
+          dbJsonNode(v[k as string] as Record<string, unknown>, false)));
       });
     }
-    return '<details class="db-val-node"' + (isOpen ? " open" : "") + "><summary>" + summary + "</summary>" + inner + "</details>";
+    return h("details", { class: "db-val-node", open: isOpen },
+      h("summary", null, summary),
+      ...inner);
   }
-  return '<span class="db-val-v">' + esc(JSON.stringify(v)) + "</span>";
+  return h("span", { class: "db-val-v" }, JSON.stringify(v));
 }
 
-function dbJsonTreeHtml(v: unknown): string { return dbJsonNode(v as Record<string, unknown>, true); }
+function dbJsonTreeNodes(v: unknown): HChild { return dbJsonNode(v as Record<string, unknown>, true); }
 
 /** Open the read-only viewer. One primary action (Close); Escape and the backdrop close
  *  too. `where` is the caption the caller knows (table for grid cells, "SQL result" for
  *  console results). */
 function dbOpenValueSheet(column: string, value: unknown, where: string | null | undefined): void {
   const kind = dbValueKind(value);
-  let body;
+  let body: HChild;
   if (kind === "json") {
     const parsed = typeof value === "object" ? value : JSON.parse(value as string);
-    body = '<div class="db-val-tree">' + dbJsonTreeHtml(parsed) + "</div>";
+    body = h("div", { class: "db-val-tree" }, dbJsonTreeNodes(parsed));
   } else if (kind === "hex") {
     const p = dbHexPreview(value as string, DB_VALUE_HEX_MAX);
-    body = '<div class="db-val-meta">' + p.bytes.toLocaleString() + " bytes" +
-      (p.truncated ? " \u00b7 truncated" : "") + "</div>" +
-      '<pre class="db-val-pre">' + esc(p.text) + "</pre>";
+    body = h("div", null,
+      h("div", { class: "db-val-meta" },
+        p.bytes.toLocaleString() + " bytes" + (p.truncated ? " \u00b7 truncated" : "")),
+      h("pre", { class: "db-val-pre" }, p.text));
   } else if (kind === "url") {
-    body = '<pre class="db-val-pre"><a class="db-link" href="' + esc(value as string) +
-      '" target="_blank" rel="noopener noreferrer">' + esc(value as string) + "</a></pre>";
+    const s = value as string;
+    body = h("pre", { class: "db-val-pre" },
+      h("a", { class: "db-link", href: s, target: "_blank", rel: "noopener noreferrer" }, s));
   } else {
-    body = '<pre class="db-val-pre">' + esc(String(value)) + "</pre>";
+    body = h("pre", { class: "db-val-pre" }, String(value));
   }
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="View value">' +
-      '<div class="sheet-head"><div class="db-cell-head">' +
-        "<h2>" + esc(column) + "</h2>" +
-        '<span class="db-cell-where">' + esc(where || "") + "</span>" +
-      "</div></div>" +
-      '<div class="sheet-body">' + body + "</div>" +
-      '<div class="sheet-foot"><span class="grow"></span>' +
-        '<button class="btn primary" id="dbValClose">Close</button></div>' +
-    "</div>";
+  // docs/37 R5: node sheet, painted AFTER the host is unhidden (first paint never lands in
+  // a hidden box); per-open button wiring stays, per the sheet idiom.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "View value" } },
+      h("div", { class: "sheet-head" },
+        h("div", { class: "db-cell-head" },
+          h("h2", null, column),
+          h("span", { class: "db-cell-where" }, where || ""))),
+      h("div", { class: "sheet-body" }, body),
+      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
+        h("button", { class: "btn primary", id: "dbValClose" }, "Close"))));
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") { closeValueSheet(); }
   };
@@ -140,4 +150,4 @@ function dbOpenValueSheet(column: string, value: unknown, where: string | null |
   $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeValueSheet(); };
 }
 
-export { DB_VALUE_HEX_MAX, dbHexPreview, dbJsonTreeHtml, dbOpenValueSheet, dbValueKind };
+export { DB_VALUE_HEX_MAX, dbHexPreview, dbJsonNode, dbJsonTreeNodes, dbOpenValueSheet, dbValueKind };

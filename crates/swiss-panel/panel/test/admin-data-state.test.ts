@@ -28,7 +28,12 @@ import { dbConn } from "./db-fixtures.js";
    is now unreachable, so these tests assert the CONTRACT — fresh record on entry, nothing
    buffered after leaving, a second and third entry that work — which is what the user was
    owed all along. Drives the REAL modules under a hand-rolled DOM (same trick as
-   admin-navigation.test.ts). */
+   admin-navigation.test.ts).
+   docs/37 R5: renderDbView builds its skeleton with h()/fill(), so the fake nodes extend a
+   Node stub (h() instanceof-checks every child) and document carries the NS/fragment
+   factories the builders call. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
 
 interface FakeNode {
   children: unknown[];
@@ -75,6 +80,7 @@ function node(): FakeNode {
     focus() {}, blur() {}, closest: () => null,
     querySelector: () => node(), querySelectorAll: () => [],
   } as FakeNode;
+  Object.setPrototypeOf(n, NodeStub.prototype);
   return n;
 }
 
@@ -97,6 +103,8 @@ beforeAll(async () => {
         return e;
       },
       createElement: () => node(),
+      createElementNS: () => node(),
+      createDocumentFragment: () => node(),
       createTextNode: () => node(),
       querySelector: () => null,
       querySelectorAll: () => [],

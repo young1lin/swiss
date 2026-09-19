@@ -17,7 +17,8 @@ import type { DbState } from "./db-state.js";
 
 import type { ApiDbColumn } from "./types/api.js";
 import type { DbBufferedUpdate, DbCellMeta, DbFormField } from "./types/state.js";
-import { el, icon } from "./util.js";
+import { el, iconNode } from "./util.js";
+import { h } from "./h.js";
 import { DB_INLINE_MAX } from "./data-edit.js";
 import { dbCellText, dbOpenCellEditor } from "./data-cell.js";
 import { dbRowAddr, renderDbGrid } from "./data-grid.js";
@@ -78,15 +79,13 @@ function dbFormWrite(d: DbState, kind: string, key: string, i: number, column: s
 
 /** One field's value cell: the control vocabulary is W2's — an input for short values, the
  *  boolean toggle and NULL button from the cell dialog, and long text opening the edit
- *  sheet (never an inline overlay: a form row is not a grid cell). */
+ *  sheet (never an inline overlay: a form row is not a grid cell).
+ *
+ *  docs/37 R5: the controls carry data-ff/data-col addresses and NO handlers — #pane's
+ *  delegated click/change/keydown (dbFormClick and friends) resolve the field's ctx from
+ *  LIVE state at event time, so a toggle writes what the record says now, not what the
+ *  button was painted with. */
 function dbFormField(d: DbState, val: HTMLElement, f: DbFormField, ctx: { kind: "update" | "insert"; key: string | null; i: number; editable: boolean; pkAddr: Record<string, unknown> }): void {
-  const meta = { pk: ctx.pkAddr, orig: f.orig };
-  function write(v: unknown): void {
-    dbFormWrite(d, ctx.kind, ctx.key as string, ctx.i, f.name, meta, v);
-    renderDbGrid();
-    renderDbBar();
-  }
-
   if (!ctx.editable) {
     if (f.value === undefined) { val.appendChild(el("span", "db-fold", "default")); return; }
     if (f.value === null) { val.appendChild(el("span", "db-null", "NULL")); return; }
@@ -98,44 +97,28 @@ function dbFormField(d: DbState, val: HTMLElement, f: DbFormField, ctx: { kind: 
   if (isBool) {
     const on = f.value === true || f.value === 1 ||
       String(f.value).toLowerCase() === "true" || f.value === "1";
-    const bb = el("button", "btn", on ? "TRUE" : "FALSE") as HTMLButtonElement;
-    bb.type = "button";
-    bb.title = "Toggle this boolean — buffered like any cell edit";
-    bb.onclick = () => { write(on ? "0" : "1"); };
-    val.appendChild(bb);
+    val.appendChild(h("button", {
+      class: "btn", type: "button", title: "Toggle this boolean — buffered like any cell edit",
+      data: { ff: "bool", col: f.name, on: on ? "1" : "" },
+    }, on ? "TRUE" : "FALSE"));
   } else {
     const text = f.value === null || f.value === undefined ? null : dbCellText(f.value);
     const long = text != null && (text.length > DB_INLINE_MAX || text.indexOf("\n") >= 0);
     if (long) {
-      const box = el("div", "db-form-long");
-      box.textContent = text;
-      box.title = "Open the editor sheet";
-      box.onclick = (): void => { dbOpenCellEditor(ctx.kind, ctx.key as string, ctx.i, f.name, meta); };
-      val.appendChild(box);
+      val.appendChild(h("div", { class: "db-form-long", title: "Open the editor sheet", data: { ff: "long", col: f.name } }, text));
     } else {
-      const inp = el("input", "db-form-input");
-      inp.type = "text";
-      inp.value = text == null ? "" : text;
-      inp.placeholder = f.value === undefined ? "default" : f.value === null ? "NULL — type to replace" : "";
-      inp.spellcheck = false;
-      inp.onchange = (e) => { write((e.currentTarget as HTMLInputElement).value); };
-      inp.onkeydown = (ev) => {
-        if (ev.key === "Escape") { const t = ev.currentTarget as HTMLInputElement; t.value = text == null ? "" : text; t.blur(); }
-      };
-      val.appendChild(inp);
+      val.appendChild(h("input", {
+        class: "db-form-input", type: "text", value: text == null ? "" : text,
+        placeholder: f.value === undefined ? "default" : f.value === null ? "NULL — type to replace" : "",
+        spellcheck: false, data: { ff: "input", col: f.name },
+      }));
     }
   }
 
-  const nb = el("button", "btn", f.value === null ? "NULL (set)" : "Set NULL") as HTMLButtonElement;
-  nb.type = "button";
-  nb.title = "Buffer NULL for this column";
-  nb.onclick = () => {
-    if (f.value !== null) { write(null); return; }
-    // Setting NULL off goes back to what was there: the original for an update, the default for an insert.
-    if (ctx.kind === "insert") write(undefined);
-    else write(meta.orig == null ? "" : typeof meta.orig === "string" ? meta.orig : String(meta.orig));
-  };
-  val.appendChild(nb);
+  val.appendChild(h("button", {
+    class: "btn", type: "button", title: "Buffer NULL for this column",
+    data: { ff: "null", col: f.name, has: f.value === null ? "1" : "" },
+  }, f.value === null ? "NULL (set)" : "Set NULL"));
 }
 
 /** The Form tab's body. Same entry guards and row order as the grid (buffered inserts in
@@ -159,27 +142,13 @@ function renderDbFormView(wrap: HTMLElement): void {
   const idx = Math.max(0, Math.min(total - 1, d.formIdx || 0));
   d.formIdx = idx;
 
+  // The stepper answers through #pane's delegated click via data-fpg (docs/37 R5).
   const head = el("div", "db-form-head");
-  const prev = el("button", "btn icon") as HTMLButtonElement;
-  prev.type = "button";
-  prev.innerHTML = icon("chevron-left");
-  prev.title = "Previous record";
-  prev.setAttribute("aria-label", "Previous record");
-  prev.disabled = idx === 0;
-  prev.onclick = (): void => { d!.formIdx = idx - 1; renderDbGrid(); };
-  const next = el("button", "btn icon") as HTMLButtonElement;
-  next.type = "button";
-  next.innerHTML = icon("chevron-right");
-  next.title = "Next record";
-  next.setAttribute("aria-label", "Next record");
-  next.disabled = idx === total - 1;
-  next.onclick = (): void => { d!.formIdx = idx + 1; renderDbGrid(); };
+  head.appendChild(h("button", {
+    class: "btn icon", type: "button", title: "Previous record", disabled: idx === 0,
+    aria: { label: "Previous record" }, data: { fpg: "prev" },
+  }, iconNode("chevron-left")));
   const isIns = idx < nIns;
-  head.appendChild(prev);
-  head.appendChild(el("span", "db-form-pos", isIns
-    ? "New row " + (idx + 1) + " of " + nIns + " \u00b7 buffered"
-    : "Row " + (idx - nIns + 1) + " of " + d.data?.rows.length + " on this page"));
-  head.appendChild(next);
 
   const pkCols = d.data?.primaryKey || [];
   const columns = d.data?.columns || [];
@@ -190,24 +159,24 @@ function renderDbFormView(wrap: HTMLElement): void {
   const key = isIns ? null : (pkCols.length ? dbPkKey(pkCols, row!) : String(ri));
   const deleted = !isIns && !!d.deletes[key as string];
 
-  // The record's own actions ride the head's right end — the grid rowctl vocabulary.
+  head.appendChild(el("span", "db-form-pos", isIns
+    ? "New row " + (idx + 1) + " of " + nIns + " \u00b7 buffered"
+    : "Row " + (idx - nIns + 1) + " of " + d.data?.rows.length + " on this page"));
+  head.appendChild(h("button", {
+    class: "btn icon", type: "button", title: "Next record", disabled: idx === total - 1,
+    aria: { label: "Next record" }, data: { fpg: "next" },
+  }, iconNode("chevron-right")));
+
+  // The record's own action rides the head's right end — the grid rowctl vocabulary. The
+  // data-fact click re-derives insert/delete from live state (docs/37 R5).
   if (editable) {
-    const act = el("button", "db-act", isIns ? "\u2715" : deleted ? "\u21a9" : "\u2715") as HTMLButtonElement;
-    act.type = "button";
-    act.title = isIns ? "Remove this buffered insert"
-      : deleted ? "Undo this buffered delete" : "Buffer a delete \u2014 applied only on Commit";
-    act.onclick = (): void => {
-      if (isIns) d.inserts.splice(idx, 1);
-      else if (deleted) delete d.deletes[key as string];
-      else {
-        d.deletes[key as string] = dbRowAddr(pkCols, columns, row!);
-        delete d.updates[key as string]; // a deleted row's cell edits are moot
-      }
-      renderDbGrid();
-      renderDbBar();
-    };
     head.appendChild(el("span", "grow"));
-    head.appendChild(act);
+    head.appendChild(h("button", {
+      class: "db-act", type: "button",
+      title: isIns ? "Remove this buffered insert"
+        : deleted ? "Undo this buffered delete" : "Buffer a delete \u2014 applied only on Commit",
+      data: { fact: "" },
+    }, isIns ? "\u2715" : deleted ? "\u21a9" : "\u2715"));
   }
   wrap.appendChild(head);
 
@@ -233,4 +202,122 @@ function renderDbFormView(wrap: HTMLElement): void {
   wrap.appendChild(form);
 }
 
-export { dbFormField, dbFormRowFields, dbFormWrite, renderDbFormView };
+/* --- #pane's delegated listeners for the form (docs/37 R5) ----------------------------------------
+   Behavior notes (docs/37 §10.1): every control resolves its record and field from LIVE
+   state at event time — the boolean toggle's on/off, the NULL button's back-to-original
+   value and the stepper's bounds all re-read dbView(), so a buffered write that lands
+   between render and click is what the next click acts on. The old per-render closures
+   captured the painted values instead. */
+
+/** The live record context: the same clamp renderDbFormView applies, then the insert/row
+ *  split, key, delete state and pk address — recomputed per event. */
+function dbFormCtx(): {
+  d: DbState; idx: number; isIns: boolean; ins: { values: Record<string, unknown> } | null;
+  ri: number; row: Record<string, unknown> | null; key: string | null; deleted: boolean;
+  pkCols: string[]; columns: ApiDbColumn[]; editable: boolean; pkAddr: Record<string, unknown>;
+} | null {
+  const d = dbView();
+  if (!d.data) return null;
+  const nIns = d.inserts.length;
+  const total = nIns + d.data.rows.length;
+  if (!total) return null;
+  const idx = Math.max(0, Math.min(total - 1, d.formIdx || 0));
+  const isIns = idx < nIns;
+  const pkCols = d.data.primaryKey || [];
+  const columns = d.data.columns || [];
+  const ri = isIns ? -1 : idx - nIns;
+  const row = isIns ? null : d.data.rows[ri];
+  const key = isIns ? null : (pkCols.length ? dbPkKey(pkCols, row!) : String(ri));
+  return {
+    d: d, idx: idx, isIns: isIns, ins: isIns ? d.inserts[idx] : null, ri: ri, row: row,
+    key: key, deleted: !isIns && !!d.deletes[key as string], pkCols: pkCols, columns: columns,
+    editable: !!d.data.editable, pkAddr: isIns ? {} : dbRowAddr(pkCols, columns, row!),
+  };
+}
+
+/** The live field behind a data-col address. */
+function dbFormFieldAt(ctx: NonNullable<ReturnType<typeof dbFormCtx>>, column: string): DbFormField | null {
+  const fields = dbFormRowFields(ctx.columns, ctx.row, ctx.key, ctx.d.updates, ctx.ins);
+  return fields.filter((f: DbFormField): boolean => { return f.name === column; })[0] || null;
+}
+
+function dbFormWriteField(ctx: NonNullable<ReturnType<typeof dbFormCtx>>, f: DbFormField, v: unknown): void {
+  dbFormWrite(ctx.d, ctx.isIns ? "insert" : "update", ctx.key as string, ctx.isIns ? ctx.idx : -1,
+    f.name, { pk: ctx.pkAddr, orig: f.orig }, v);
+  renderDbGrid();
+  renderDbBar();
+}
+
+function dbFormClick(t: Element): boolean {
+  const ctx = dbFormCtx();
+  if (!ctx) return false;
+  const d = ctx.d;
+  const pg = t.closest<HTMLElement>("[data-fpg]");
+  if (pg) {
+    // The rendered disabled state already bounds the walk; the live re-check is belt-only.
+    if (pg.dataset.fpg === "prev" && ctx.idx > 0) d.formIdx = ctx.idx - 1;
+    if (pg.dataset.fpg === "next" && ctx.idx < d.inserts.length + (d.data ? d.data.rows.length : 0) - 1) d.formIdx = ctx.idx + 1;
+    renderDbGrid();
+    return true;
+  }
+  if (t.closest("[data-fact]")) {
+    if (ctx.isIns) d.inserts.splice(ctx.idx, 1);
+    else if (ctx.deleted) delete d.deletes[ctx.key as string];
+    else {
+      d.deletes[ctx.key as string] = dbRowAddr(ctx.pkCols, ctx.columns, ctx.row!);
+      delete d.updates[ctx.key as string]; // a deleted row's cell edits are moot
+    }
+    renderDbGrid();
+    renderDbBar();
+    return true;
+  }
+  const ctl = t.closest<HTMLElement>("[data-ff]");
+  if (!ctl) return false;
+  const f = dbFormFieldAt(ctx, ctl.dataset.col ?? "");
+  if (!f) return true; // the field set changed under the click — nothing to act on
+  const kind = ctx.isIns ? "insert" : "update";
+  if (ctl.dataset.ff === "bool") {
+    const on = f.value === true || f.value === 1 ||
+      String(f.value).toLowerCase() === "true" || f.value === "1";
+    dbFormWriteField(ctx, f, on ? "0" : "1");
+    return true;
+  }
+  if (ctl.dataset.ff === "long") {
+    dbOpenCellEditor(kind, ctx.key as string, ctx.isIns ? ctx.idx : -1, f.name, { pk: ctx.pkAddr, orig: f.orig });
+    return true;
+  }
+  if (ctl.dataset.ff === "null") {
+    if (f.value !== null) { dbFormWriteField(ctx, f, null); return true; }
+    // Setting NULL off goes back to what was there: the original for an update, the default for an insert.
+    if (ctx.isIns) dbFormWriteField(ctx, f, undefined);
+    else dbFormWriteField(ctx, f, f.orig == null ? "" : typeof f.orig === "string" ? f.orig : String(f.orig));
+    return true;
+  }
+  return false;
+}
+
+function dbFormChange(t: Element): boolean {
+  const ctl = t.closest<HTMLInputElement>('[data-ff="input"]');
+  if (!ctl) return false;
+  const ctx = dbFormCtx();
+  if (!ctx) return true;
+  const f = dbFormFieldAt(ctx, ctl.dataset.col ?? "");
+  if (f) dbFormWriteField(ctx, f, ctl.value);
+  return true;
+}
+
+function dbFormKeydown(t: Element, ev: KeyboardEvent): boolean {
+  if (ev.key !== "Escape") return false;
+  const ctl = t.closest<HTMLInputElement>('[data-ff="input"]');
+  if (!ctl) return false;
+  const ctx = dbFormCtx();
+  if (ctx) {
+    const f = dbFormFieldAt(ctx, ctl.dataset.col ?? "");
+    const text = !f || f.value === null || f.value === undefined ? "" : (dbCellText(f.value) ?? "");
+    ctl.value = text;
+  }
+  if (ctl.blur) ctl.blur();
+  return true;
+}
+
+export { dbFormChange, dbFormClick, dbFormCtx, dbFormField, dbFormKeydown, dbFormRowFields, dbFormWrite, renderDbFormView };

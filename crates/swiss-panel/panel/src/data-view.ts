@@ -17,18 +17,23 @@ import type { DbState } from "./db-state.js";
 
 import type { ApiDbConnectionRow, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbTableRow, ApiDbTablesResponse } from "./types/api.js";
 import type { DbFilterTerm } from "./types/state.js";
-import { $, apiJson, dbReqGuard, el, icon } from "./util.js";
+import { $, apiJson, dbReqGuard, el, iconNode, targetEl } from "./util.js";
+import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
-import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisPendingCount } from "./data-browsers.js";
-import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
-import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import { dbFavLoad, dbFavPush, dbFormatSql, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
-import { dbActivityPane, dbActivityPollStop } from "./data-activity.js";
+import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisClick, dbRedisKeydown, dbRedisPendingCount } from "./data-browsers.js";
+import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
+import { dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
+import { dbBarClick, dbFavLoad, dbFavPush, dbFormatSql, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
+import { dbActivityClick, dbActivityPane, dbActivityPollStop } from "./data-activity.js";
 // dbLoadDetail (the Structure tabs' loader) is needed at the table-open path now: the FK
 // jump (docs/22 W5.2) reads the detail's foreignKeys. The cycle data-view <-> data-structure
 // is the same accepted shape as data-grid <-> data-cell — both sides only call across it
 // inside functions, never at module scope.
-import { dbLoadDetail } from "./data-structure.js";
+import { dbLoadDetail, dbStructureClick } from "./data-structure.js";
+// The pane's delegated listeners chain the form view's dispatchers too. data-form already
+// reaches back into data-view for dbPkKey — the same accepted cycle shape as the
+// data-structure edge above: both sides only call across it inside functions.
+import { dbFormChange, dbFormClick, dbFormKeydown } from "./data-form.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
@@ -137,60 +142,258 @@ function renderDbView(): void {
   // D5 as revised): no pane padding, no measure — the explorer divides its own space.
   // views/data.js takes the class back off on unmount so no other page inherits it.
   pane.classList.add("db-host");
-  pane.innerHTML = "";
+  pane.textContent = "";
+  // docs/37 R5: the skeleton is a node tree, and the pane carries ONE delegated listener per
+  // event type (property-assigned, never addEventListener — a repaint re-assigns the same
+  // property instead of stacking). Every control below is addressed by id or a data-*
+  // attribute; nothing is wired per render.
   const root = el("div", "db-root");
-  root.innerHTML =
-    '<div class="db-side">' +
-      '<select id="dbConn" aria-label="Connection"></select>' +
-      '<select id="dbSchema" aria-label="Schema" hidden></select>' +
-      '<input id="dbGrep" type="search" placeholder="Filter tables" aria-label="Filter tables">' +
-      '<div class="db-sortrow">' +
-        '<select id="dbSort" aria-label="Sort by"></select>' +
-        '<button class="btn icon" id="dbSortDir" type="button" title="Sort direction"></button>' +
-      '</div>' +
+  fill(root,
+    h("div", { class: "db-side" },
+      h("select", { id: "dbConn", aria: { label: "Connection" } }),
+      h("select", { id: "dbSchema", aria: { label: "Schema" }, hidden: true }),
+      h("input", { id: "dbGrep", type: "search", placeholder: "Filter tables", aria: { label: "Filter tables" } }),
+      h("div", { class: "db-sortrow" },
+        h("select", { id: "dbSort", aria: { label: "Sort by" } }),
+        h("button", { class: "btn icon", id: "dbSortDir", type: "button", title: "Sort direction" })),
       // docs/22 W4.6: the table list's own header band — the list names itself and carries
       // one persistent dimmed + (the docs/20 §4 container-header glyph) for New table….
-      '<div class="db-list-head" id="dbListHead" hidden>' +
-        '<span class="db-list-title">Tables</span>' +
-        '<button class="btn icon grp-add" id="dbNewTable" type="button" aria-label="New table" title="New table…"></button>' +
-      '</div>' +
-      '<div class="db-tables" id="dbTables"><div class="db-hint">Loading…</div></div>' +
-      '<div class="db-side-foot" id="dbTablesPager"></div>' +
-    '</div>' +
-    '<div class="db-main">' +
-      '<div class="db-headrow">' +
-        '<div class="db-head" id="dbHead"></div>' +
+      h("div", { class: "db-list-head", id: "dbListHead", hidden: true },
+        h("span", { class: "db-list-title" }, "Tables"),
+        h("button", { class: "btn icon grp-add", id: "dbNewTable", type: "button", aria: { label: "New table" }, title: "New table…" }, iconNode("plus"))),
+      h("div", { class: "db-tables", id: "dbTables" }, h("div", { class: "db-hint" }, "Loading…")),
+      h("div", { class: "db-side-foot", id: "dbTablesPager" })),
+    h("div", { class: "db-main" },
+      h("div", { class: "db-headrow" },
+        h("div", { class: "db-head", id: "dbHead" }),
         // Pane-level actions live behind one ⋯ next to the head (docs/22 W3.2); the Activity
         // monitor is the first. Hidden until a SQL connection exists — redis has no sessions.
-        '<button class="btn icon" id="dbMore" type="button" title="More pane actions" hidden></button>' +
-      '</div>' +
-      '<div class="db-filters" id="dbFilters"></div>' +
-      '<div class="db-console" id="dbConsole" hidden>' +
-        '<div class="db-sql-wrap">' +
-          '<pre class="db-sql-hl db-sql-face" id="dbSqlHl" aria-hidden="true"></pre>' +
-          '<textarea class="db-sql-face" id="dbSql" placeholder="SELECT / UPDATE / DELETE … — statements split on ;" spellcheck="false"></textarea>' +
-        '</div>' +
-        '<div class="db-console-row"><button class="btn" id="dbSqlRun">Run</button>' +
-        '<button class="btn" id="dbSqlExplain">Explain</button>' +
-        '<button class="btn" id="dbSqlFormat">Format</button>' +
-        '<select id="dbSqlHistory" title="Query history"><option value="">History</option></select>' +
-        '<button class="btn icon" id="dbSqlFav" type="button" aria-label="Save to favorites"></button>' +
-        '<span class="hint" id="dbSqlHint">statements split on ; · Ctrl+Enter runs</span></div>' +
-      '</div>' +
-      '<div class="db-grid-wrap" id="dbGridWrap"></div>' +
-      '<div class="db-bar" id="dbBar" hidden></div>' +
-    '</div>';
+        h("button", { class: "btn icon", id: "dbMore", type: "button", title: "More pane actions", hidden: true }, iconNode("ellipsis"))),
+      h("div", { class: "db-filters", id: "dbFilters" }),
+      h("div", { class: "db-console", id: "dbConsole", hidden: true },
+        h("div", { class: "db-sql-wrap" },
+          h("pre", { class: "db-sql-hl db-sql-face", id: "dbSqlHl", aria: { hidden: "true" } }),
+          h("textarea", {
+            class: "db-sql-face", id: "dbSql", spellcheck: false,
+            placeholder: "SELECT / UPDATE / DELETE … — statements split on ;",
+          })),
+        h("div", { class: "db-console-row" },
+          h("button", { class: "btn", id: "dbSqlRun" }, "Run"),
+          h("button", { class: "btn", id: "dbSqlExplain" }, "Explain"),
+          h("button", { class: "btn", id: "dbSqlFormat" }, "Format"),
+          h("select", { id: "dbSqlHistory", title: "Query history" }, h("option", { value: "" }, "History")),
+          h("button", { class: "btn icon", id: "dbSqlFav", type: "button", aria: { label: "Save to favorites" }, title: "Save the console text to favorites" }, iconNode("star")),
+          h("span", { class: "hint", id: "dbSqlHint" }, "statements split on ; · Ctrl+Enter runs"))),
+      h("div", { class: "db-grid-wrap", id: "dbGridWrap" }),
+      h("div", { class: "db-bar", id: "dbBar", hidden: true })));
   pane.appendChild(root);
-  $<HTMLSelectElement>("dbConn").onchange = (e) => {
-    const t = e.currentTarget as HTMLSelectElement;
+  pane.onclick = dbPaneClick;
+  pane.oninput = dbPaneInput;
+  pane.onchange = dbPaneChange;
+  pane.onkeydown = dbPaneKeydown;
+  // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
+  // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
+  const db_ = dbView();
+  $<HTMLInputElement>("dbGrep").value = db_.grep || "";
+  $<HTMLTextAreaElement>("dbSql").value = db_.sqlText;
+  // The console keeps two direct hooks that delegation cannot express: onscroll never
+  // bubbles (the highlight layer must mirror the textarea's scroll), and the suggest keydown
+  // must run at the TARGET so it can consume the keys the open list owns before anything
+  // else answers. Everything else — input, Ctrl+Enter — rides the pane's delegated listeners.
+  $<HTMLTextAreaElement>("dbSql").onscroll = (e) => {
+    const t = e.currentTarget as HTMLTextAreaElement;
+    const hl = $("dbSqlHl");
+    if (hl) { hl.scrollTop = t.scrollTop; hl.scrollLeft = t.scrollLeft; }
+    dbSuggestHide(); // the caret's point scrolled with the text; a list pinned to stale
+    // coordinates would point at the wrong word. The next keystroke reopens it in place.
+  };
+  $<HTMLTextAreaElement>("dbSql").addEventListener("blur", dbSuggestHide);
+  $<HTMLTextAreaElement>("dbSql").addEventListener("keydown", dbSuggestKeys);
+  dbSqlPaint();
+  dbSyncKind();
+  dbHistoryLoad();
+  dbFavLoad();
+  dbHistoryRender();
+  renderDbToolbar(); renderDbGrid(); renderDbBar();
+  // The section page replaces the pane's content when (re)entered with it open — closing is
+  // just another rebuild with the flag down, so nothing here needs a special restore path.
+  if (db_.activity && db_.conn && !dbIsRedis()) dbActivityPane(dbActivityClose);
+}
+
+/* --- #pane's four delegated listeners (docs/37 R5) ------------------------------------------------
+   The pane this view owns answers every click/change/input/keydown in it. The chrome
+   dispatcher below handles the sidebar and console; each section module exports its own
+   dispatcher and the chain calls them in order — selectors are disjoint, and the first
+   match wins. Behavior note (docs/37 §10.1): all state is resolved at EVENT time through
+   dbView(), never captured at render time. */
+
+// The sidebar grep's debounce: one module-level timer, restarted per keystroke.
+let dbGrepTimer: ReturnType<typeof setTimeout> | undefined;
+
+function dbPaneClick(ev: MouseEvent): void {
+  const t = targetEl(ev);
+  if (!t) return;
+  if (dbChromeClick(t, ev)) return;
+  if (dbToolbarClick(t, ev)) return;
+  if (dbGridClick(t)) return;
+  if (dbBarClick(t)) return;
+  if (dbFiltersClick(t)) return;
+  if (dbFormClick(t)) return;
+  if (dbStructureClick(t, ev)) return;
+  if (dbRedisClick(t, ev)) return;
+  if (dbActivityClick(t, ev)) return;
+}
+
+function dbPaneInput(ev: Event): void {
+  const t = targetEl(ev);
+  if (!t) return;
+  if (dbChromeInput(t)) return;
+  if (dbFiltersInput(t)) return;
+}
+
+function dbPaneChange(ev: Event): void {
+  const t = targetEl(ev);
+  if (!t) return;
+  if (dbChromeChange(t)) return;
+  if (dbGridChange(t, ev)) return;
+  if (dbFiltersChange(t)) return;
+  if (dbFormChange(t)) return;
+}
+
+function dbPaneKeydown(ev: KeyboardEvent): void {
+  const t = targetEl(ev);
+  if (!t) return;
+  if (dbGridKeydown(t, ev)) return;
+  if (dbChromeKeydown(t, ev)) return;
+  if (dbFiltersKeydown(ev, t)) return;
+  if (dbFormKeydown(t, ev)) return;
+  if (dbRedisKeydown(t, ev)) return;
+}
+
+/** The sidebar + console half of the delegated click. */
+function dbChromeClick(t: Element, ev: MouseEvent): boolean {
+  if (t.closest("#dbSortDir")) {
+    const d = dbView();
+    d.sortDir = d.sortDir === "asc" ? "desc" : "asc";
+    dbPaintSort();
+    d.tablesPage = 0;
+    if (dbIsRedis()) renderDbTables();
+    else void dbLoadTables();
+    return true;
+  }
+  // wrapped: dbRunSql's first parameter is 'explain' — an event object is truthy, so a
+  // plain Run click used to quietly run EXPLAIN (docs/22 W5.4 audit).
+  if (t.closest("#dbSqlRun")) { void dbRunSql(false); return true; }
+  const explainBtn = t.closest<HTMLElement>("#dbSqlExplain");
+  if (explainBtn) {
+    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
+    // without it the click that opens the menu also tears it down (same as the Export menu).
+    ev.stopPropagation();
+    popupMenu(explainBtn.getBoundingClientRect(), [
+      { label: "Explain", fn: (): void => { void dbRunSql("plan"); } },
+      { label: "Explain ANALYZE", fn: (): void => { void dbRunSql("analyze"); } },
+    ]);
+    return true;
+  }
+  if (t.closest("#dbSqlFav")) { dbFavPush(dbView().sqlText); return true; }
+  if (t.closest("#dbSqlFormat")) {
+    const d = dbView();
+    if (!d.sqlText || !d.sqlText.trim()) return true;
+    d.sqlText = dbFormatSql(d.sqlText);
+    const ta = $<HTMLTextAreaElement>("dbSql");
+    if (ta) { ta.value = d.sqlText; dbSqlPaint(); ta.focus(); }
+    return true;
+  }
+  if (t.closest("#dbNewTable")) {
+    const d = dbView();
+    if (!d.conn || dbIsRedis()) return true;
+    openDbDdlSheet("table", {
+      dialect: dbDialectOf(),
+      conn: d.conn,
+      schema: dbIsPg() ? (d.schemaFilter || "public") : "",
+      schemas: dbIsPg() ? dbKnownSchemas() : [],
+    });
+    return true;
+  }
+  const moreBtn = t.closest<HTMLElement>("#dbMore");
+  if (moreBtn) {
+    // stopPropagation: the document click closes popup menus — the opening click must not.
+    ev.stopPropagation();
+    const d = dbView();
+    popupMenu(moreBtn.getBoundingClientRect(), [
+      { label: d.activity ? "Close activity" : "Activity…", fn: dbActivityToggle },
+    ]);
+    return true;
+  }
+  // The redis key list: the row carries the key; the live selection decides the guard.
+  const keyRow = t.closest<HTMLElement>("[data-rkey]");
+  if (keyRow) {
+    const d = dbView();
+    const key = keyRow.dataset.rkey!;
+    // Switching keys drops the typed-value buffer (docs/22 W3.3): a different key cannot
+    // adopt another key's fields, so the same guard the table switch uses asks first.
+    if (key !== d.redisKey && dbOkToDrop()) void dbLoadRedisValue(key);
+    return true;
+  }
+  // A table row: re-find the row in the live list by name+schema and open it.
+  const tblRow = t.closest<HTMLElement>("[data-tname]");
+  if (tblRow) {
+    const d = dbView();
+    const name = tblRow.dataset.tname!;
+    const schema = tblRow.dataset.tschema || null;
+    const row = d.tables.filter((x: ApiDbTableRow): boolean => { return x.name === name && (x.schema || null) === schema; })[0];
+    if (row) dbOpenTable(row);
+    return true;
+  }
+  if (t.closest("[data-keysmore]")) { void dbLoadKeys(false); return true; }
+  const tpg = t.closest<HTMLElement>("[data-tpg]");
+  if (tpg) {
+    const d = dbView();
+    if (tpg.dataset.tpg === "prev") d.tablesPage--;
+    else d.tablesPage++;
+    void dbLoadTables();
+    return true;
+  }
+  return false;
+}
+
+function dbChromeInput(t: Element): boolean {
+  const grep = t.closest<HTMLInputElement>("#dbGrep");
+  if (grep) {
+    const v = grep.value;
+    clearTimeout(dbGrepTimer);
+    dbGrepTimer = setTimeout((): void => {
+      // A debounce pending across an unmount once threw here. The view is gone — the filter
+      // belongs to no one, and writing it into the fresh record would be a lie either way.
+      if (!dbIsMounted()) return;
+      const d = dbView();
+      d.grep = v; d.tablesPage = 0;
+      if (dbIsRedis()) void dbLoadKeys(true);
+      else void dbLoadTables();
+    }, 300);
+    return true;
+  }
+  const ta = t.closest<HTMLTextAreaElement>("#dbSql");
+  if (ta) {
+    dbView().sqlText = ta.value;
+    dbSqlPaint();
+    dbSuggestOnInput.call(ta);
+    return true;
+  }
+  return false;
+}
+
+function dbChromeChange(t: Element): boolean {
+  const connSel = t.closest<HTMLSelectElement>("#dbConn");
+  if (connSel) {
     const db_ = dbView();
-    if (t.value === db_.conn) return;
-    if (!dbOkToDrop()) { t.value = db_.conn || ""; return; }
+    if (connSel.value === db_.conn) return true;
+    if (!dbOkToDrop()) { connSel.value = db_.conn || ""; return true; }
     // The Activity page belongs to ONE connection's server; the switch leaves it behind —
     // restore the normal pane (and stop its poll) before the state it reads changes.
     if (db_.activity) dbActivityClose();
     const d = dbView();
-    d.conn = t.value; d.table = null; d.schema = null; d.data = null;
+    d.conn = connSel.value; d.table = null; d.schema = null; d.data = null;
     d.tables = []; d.tablesPage = 0; d.order = null; d.sqlResult = null;
     d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: no stale tabs across a connection switch
     d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
@@ -214,140 +417,54 @@ function renderDbView(): void {
     if (chip) chip.textContent = currentPageCount();
     if (dbIsRedis()) void dbLoadKeys(true);
     else void dbLoadTables();
-  };
-  // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
-  // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
-  const db_ = dbView();
-  $<HTMLInputElement>("dbGrep").value = db_.grep || "";
-  let t: ReturnType<typeof setTimeout> | undefined;
-  $<HTMLInputElement>("dbGrep").oninput = (e) => {
-    const v = (e.currentTarget as HTMLInputElement).value;
-    clearTimeout(t);
-    t = setTimeout((): void => {
-      // A debounce pending across an unmount once threw here. The view is gone — the filter
-      // belongs to no one, and writing it into the fresh record would be a lie either way.
-      if (!dbIsMounted()) return;
-      const d = dbView();
-      d.grep = v; d.tablesPage = 0;
-      if (dbIsRedis()) void dbLoadKeys(true);
-      else void dbLoadTables();
-    }, 300);
-  };
-  $<HTMLSelectElement>("dbSort").onchange = (e) => {
+    return true;
+  }
+  // The schema picker (pg only): a pick re-requests the table list inside that schema. The
+  // select is removed and re-created by dbPaintSchemaOptions — delegation by id needs no
+  // per-creation wiring, which is why dbWireSchemaSelect is gone (docs/37 R5).
+  const schemaSel = t.closest<HTMLSelectElement>("#dbSchema");
+  if (schemaSel) {
     const d = dbView();
-    d.sort = (e.currentTarget as HTMLSelectElement).value;
+    if (schemaSel.value === d.schemaFilter) return true;
+    d.schemaFilter = schemaSel.value;
+    d.tablesPage = 0;
+    void dbLoadTables();
+    return true;
+  }
+  const sortSel = t.closest<HTMLSelectElement>("#dbSort");
+  if (sortSel) {
+    const d = dbView();
+    d.sort = sortSel.value;
     d.tablesPage = 0;
     if (dbIsRedis()) renderDbTables(); // keys sort in place over what has been scanned
     else void dbLoadTables();
-  };
-  $("dbSortDir").onclick = (): void => {
-    const d = dbView();
-    d.sortDir = d.sortDir === "asc" ? "desc" : "asc";
-    dbPaintSort();
-    d.tablesPage = 0;
-    if (dbIsRedis()) renderDbTables();
-    else void dbLoadTables();
-  };
-  // The schema picker (pg only): picking one re-requests the table list inside that schema.
-  // The wiring itself lives in dbWireSchemaSelect so a RE-CREATED picker (dbPaintSchemaOptions
-  // removes the select for non-pg connections and brings it back for pg) gets it too.
-  const schemaSel = $<HTMLSelectElement>("dbSchema");
-  if (schemaSel) dbWireSchemaSelect(schemaSel);
-  $<HTMLTextAreaElement>("dbSql").value = db_.sqlText;
-  $<HTMLTextAreaElement>("dbSql").oninput = (e) => { const t = e.currentTarget as HTMLTextAreaElement; dbView().sqlText = t.value; dbSqlPaint(); dbSuggestOnInput.call(t); };
-  $<HTMLTextAreaElement>("dbSql").onscroll = (e) => {
-    const t = e.currentTarget as HTMLTextAreaElement;
-    const hl = $("dbSqlHl");
-    if (hl) { hl.scrollTop = t.scrollTop; hl.scrollLeft = t.scrollLeft; }
-    dbSuggestHide(); // the caret's point scrolled with the text; a list pinned to stale
-    // coordinates would point at the wrong word. The next keystroke reopens it in place.
-  };
-  $<HTMLTextAreaElement>("dbSql").addEventListener("blur", dbSuggestHide);
-  // The suggest hook runs beside the Run shortcut: it only ever consumes the keys the open
-  // list owns (arrows / Tab / Enter / Esc) and leaves Ctrl+Enter to run the block.
-  $<HTMLTextAreaElement>("dbSql").addEventListener("keydown", dbSuggestKeys);
-  $<HTMLTextAreaElement>("dbSql").onkeydown = (e: KeyboardEvent): void => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); void dbRunSql(); }
-  };
-  dbSqlPaint();
-  dbSyncKind();
-  // wrapped: onclick hands the handler the click EVENT, and dbRunSql's first parameter is
-  // `explain` — an event object is truthy, so a plain Run has been quietly running EXPLAIN.
-  $<HTMLButtonElement>("dbSqlRun").onclick = (): void => { void dbRunSql(false); };
-  $<HTMLButtonElement>("dbSqlExplain").onclick = (ev: MouseEvent): void => {
-    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
-    // without it the click that opens the menu also tears it down (same as the Export menu).
-    ev.stopPropagation();
-    popupMenu((ev.currentTarget as HTMLButtonElement).getBoundingClientRect(), [
-      { label: "Explain", fn: (): void => { void dbRunSql("plan"); } },
-      { label: "Explain ANALYZE", fn: (): void => { void dbRunSql("analyze"); } },
-    ]);
-  };
-  $<HTMLSelectElement>("dbSqlHistory").onchange = (e) => {
-    const t = e.currentTarget as HTMLSelectElement;
-    if (t.value === "") return;
+    return true;
+  }
+  const hist = t.closest<HTMLSelectElement>("#dbSqlHistory");
+  if (hist) {
+    if (hist.value === "") return true;
     // docs/22 W5.4: "f"+i is a favorite, a plain index history — both land in the console.
-    const fav = t.value.charAt(0) === "f";
+    const fav = hist.value.charAt(0) === "f";
     const db_ = dbView();
-    const sql = fav ? db_.favorites?.[Number(t.value.slice(1))]
-      : db_.history?.[Number(t.value)];
-    t.value = ""; // back to the label, so the same entry can be picked again
-    if (sql == null) return;
+    const sql = fav ? db_.favorites?.[Number(hist.value.slice(1))]
+      : db_.history?.[Number(hist.value)];
+    hist.value = ""; // back to the label, so the same entry can be picked again
+    if (sql == null) return true;
     db_.sqlText = sql;
     const ta = $<HTMLTextAreaElement>("dbSql");
     if (ta) { ta.value = sql; dbSqlPaint(); ta.focus(); }
-  };
-  // docs/22 W5.4: the star saves the console text to the favorites group; Format re-indents
-  // it in place (whitespace only — the run result cannot change).
-  const favBtn = $<HTMLButtonElement>("dbSqlFav");
-  if (favBtn) {
-    favBtn.innerHTML = icon("star");
-    favBtn.title = "Save the console text to favorites";
-    favBtn.onclick = (): void => { dbFavPush(dbView().sqlText); };
+    return true;
   }
-  const fmtBtn = $<HTMLButtonElement>("dbSqlFormat");
-  if (fmtBtn) {
-    fmtBtn.onclick = (): void => {
-      const d = dbView();
-      if (!d.sqlText || !d.sqlText.trim()) return;
-      d.sqlText = dbFormatSql(d.sqlText);
-      const ta = $<HTMLTextAreaElement>("dbSql");
-      if (ta) { ta.value = d.sqlText; dbSqlPaint(); ta.focus(); }
-    };
+  return false;
+}
+
+function dbChromeKeydown(t: Element, ev: KeyboardEvent): boolean {
+  if (!t.closest("#dbSql")) return false;
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
+    ev.preventDefault();
+    void dbRunSql();
   }
-  dbHistoryLoad();
-  dbFavLoad();
-  dbHistoryRender();
-  renderDbToolbar(); renderDbGrid(); renderDbBar();
-  // docs/22 W4.6: the list band's + opens the New table sheet — SQL connections only (the
-  // band itself is hidden for redis and for no-connection in dbSyncKind, with dbMore).
-  const dbNewTable = $<HTMLButtonElement>("dbNewTable");
-  if (dbNewTable) {
-    dbNewTable.innerHTML = icon("plus");
-    dbNewTable.onclick = (): void => {
-      const d = dbView();
-      if (!d.conn || dbIsRedis()) return;
-      openDbDdlSheet("table", {
-        dialect: dbDialectOf(),
-        conn: d.conn,
-        schema: dbIsPg() ? (d.schemaFilter || "public") : "",
-        schemas: dbIsPg() ? dbKnownSchemas() : [],
-      });
-    };
-  }
-  const dbMore = $<HTMLButtonElement>("dbMore");
-  dbMore.innerHTML = icon("ellipsis");
-  dbMore.onclick = (e: MouseEvent): void => {
-    // stopPropagation: the document click closes popup menus — the opening click must not.
-    e.stopPropagation();
-    const d = dbView();
-    popupMenu((e.currentTarget as HTMLButtonElement).getBoundingClientRect(), [
-      { label: d.activity ? "Close activity" : "Activity…", fn: dbActivityToggle },
-    ]);
-  };
-  // The section page replaces the pane's content when (re)entered with it open — closing is
-  // just another rebuild with the flag down, so nothing here needs a special restore path.
-  if (db_.activity && db_.conn && !dbIsRedis()) dbActivityPane(dbActivityClose);
+  return true;
 }
 
 /* The Activity monitor (docs/22 W3.2): one flag drives it. Opening rebuilds the pane with the
@@ -383,7 +500,7 @@ function dbPaintSort(): void {
   if (!sel || !dir) return;
   const opts = dbSortOptions();
   if (!opts.some((o: { v: string; t: string }): boolean => { return o.v === d.sort; })) d.sort = opts[0].v; // kind switched
-  sel.innerHTML = "";
+  sel.textContent = "";
   opts.forEach((o: { v: string; t: string }): void => {
     const op = el("option", "", o.t) as HTMLOptionElement;
     op.value = o.v;
@@ -460,7 +577,7 @@ function renderDbSide(): void {
   const d = dbView();
   const sel = $<HTMLSelectElement>("dbConn");
   if (!sel) return;
-  sel.innerHTML = "";
+  sel.textContent = "";
   if (!d.conns.length) {
     const none = el("option", "", "No database MCPs") as HTMLOptionElement;
     none.value = "";
@@ -509,7 +626,7 @@ async function dbLoadTables(): Promise<void> {
   const d = dbView();
   if (!d.conn) return;
   const box = $("dbTables");
-  if (box) { box.innerHTML = ""; box.appendChild(el("div", "db-hint", "Loading…")); }
+  if (box) { box.textContent = ""; box.appendChild(el("div", "db-hint", "Loading…")); }
   let q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?page=" + d.tablesPage;
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
   if (d.schemaFilter) q += "&schema=" + encodeURIComponent(d.schemaFilter);
@@ -517,7 +634,7 @@ async function dbLoadTables(): Promise<void> {
   const token = dbTablesReq.issue();
   const j = await apiJson<ApiDbTablesResponse>(q);
   if (!dbTablesReq.accepts(token)) return; // superseded: a newer page/filter owns the list
-  if (!j) { if ($("dbTables")) $("dbTables").innerHTML = ""; return; }
+  if (!j) { if ($("dbTables")) $("dbTables").textContent = ""; return; }
   d.tables = j.tables || [];
   d.tablesTotal = j.total || 0;
   d.tablesLimit = j.limit || 200;
@@ -559,7 +676,7 @@ function renderDbTables(): void {
   const d = dbView();
   const box = $("dbTables");
   if (!box) return;
-  box.innerHTML = "";
+  box.textContent = "";
   dbPaintSchemaOptions();
   if (!d.conn) {
     box.appendChild(el("div", "db-hint", "Add a mysql or pg MCP, then browse it here."));
@@ -578,26 +695,24 @@ function renderDbTables(): void {
     sortedKeys.forEach((k: ApiDbRedisKeyRow): void => {
       const b = el("button", "db-table" + (k.key === d.redisKey ? " sel" : ""));
       b.title = k.key; // the row truncates with an ellipsis; the full key is one hover away
+      // docs/37 R5: the key itself is the address — the delegated click (dbChromeClick)
+      // re-reads the live selection and the drop guard at event time.
+      b.dataset.rkey = k.key;
       b.appendChild(el("div", "db-table-name", k.key));
       let meta = k.type;
       if (k.ttl! >= 0) meta += " · ttl " + k.ttl + "s";
       b.appendChild(el("div", "db-table-meta", meta));
-      // Switching keys drops the typed-value buffer (docs/22 W3.3): a different key cannot
-      // adopt another key's fields, so the same guard the table switch uses asks first.
-      b.onclick = (): void => {
-        if (k.key === d.redisKey || dbOkToDrop()) void dbLoadRedisValue(k.key);
-      };
       box.appendChild(b);
     });
     const foot2 = $("dbTablesPager");
     if (foot2) {
-      foot2.innerHTML = "";
+      foot2.textContent = "";
       const shown = rr ? rr.keys.length : 0;
       foot2.appendChild(el("span", "", shown.toLocaleString() + (rr && rr.total != null ? " of " + Number(rr.total).toLocaleString() + " keys" : " keys")));
       if (rr && !rr.done) {
         const more = el("button", "btn", "More");
         more.title = "Continue the SCAN";
-        more.onclick = (): void => { void dbLoadKeys(false); };
+        more.dataset.keysmore = "";
         foot2.appendChild(more);
       }
     }
@@ -631,47 +746,41 @@ function renderDbTables(): void {
   }
   const foot = $("dbTablesPager");
   if (!foot) return;
-  foot.innerHTML = "";
+  foot.textContent = "";
   const from = d.tablesTotal ? d.tablesPage * d.tablesLimit + 1 : 0;
   const to = d.tablesPage * d.tablesLimit + d.tables.length;
   foot.appendChild(el("span", "", from.toLocaleString() + "–" + to.toLocaleString() + " of " + d.tablesTotal.toLocaleString()));
+  // docs/37 R5: the pager rides the delegated click (dbChromeClick's [data-tpg]) — the
+  // page counter it moves is read from dbView() at event time, not from this render.
   const prev = el("button", "btn icon") as HTMLButtonElement;
-  prev.innerHTML = icon("chevron-left");
+  prev.appendChild(iconNode("chevron-left"));
   prev.title = "Previous page of tables";
   prev.disabled = d.tablesPage === 0;
-  prev.onclick = (): void => { d!.tablesPage--; void dbLoadTables(); };
+  prev.dataset.tpg = "prev";
   const next = el("button", "btn icon") as HTMLButtonElement;
-  next.innerHTML = icon("chevron-right");
+  next.appendChild(iconNode("chevron-right"));
   next.title = "Next page of tables";
   next.disabled = !d.more;
-  next.onclick = (): void => { d!.tablesPage++; void dbLoadTables(); };
+  next.dataset.tpg = "next";
   foot.appendChild(prev);
   foot.appendChild(next);
 }
 
-/** One table row, shared by the flat list and every schema group. */
+/** One table row, shared by the flat list and every schema group. docs/37 R5: the name and
+ *  schema are the address — the delegated click (dbChromeClick's [data-tname]) re-finds the
+ *  row in the live list and runs dbOpenTable, whose same-table short-circuit and drop guard
+ *  still hold at event time. */
 function dbTableRow(t: ApiDbTableRow): HTMLElement {
   const d = dbView();
   const b = el("button", "db-table" + (t.name === d.table && t.schema === d.schema ? " sel" : ""));
   b.title = t.name;
+  b.dataset.tname = t.name;
+  b.dataset.tschema = t.schema || "";
   b.appendChild(el("div", "db-table-name", t.name));
   b.appendChild(el("div", "db-table-meta",
     t.type + (t.approxRows != null ? " · ~" + Number(t.approxRows).toLocaleString() + " rows" : "") +
     (t.size ? " · " + t.size : "")));
-  b.onclick = (): void => { dbOpenTable(t); };
   return b;
-}
-
-/** The schema picker's one behavior: a pick re-requests the table list inside that schema. */
-function dbWireSchemaSelect(sel: HTMLSelectElement): void {
-  sel.onchange = (e) => {
-    const t = e.currentTarget as HTMLSelectElement;
-    const d = dbView();
-    if (t.value === d.schemaFilter) return;
-    d.schemaFilter = t.value;
-    d.tablesPage = 0;
-    void dbLoadTables();
-  };
 }
 
 /** The schema picker above the grep box (pg only): "All schemas" plus one option per schema
@@ -690,13 +799,13 @@ function dbPaintSchemaOptions(): void {
   }
   if (!sel) {
     // Coming back to pg after a non-pg connection removed it: re-create it in the sidebar,
-    // right after the connection picker, wired like the mount path wires it.
+    // right after the connection picker. docs/37 R5: no wiring to carry — the pane's
+    // delegated change listener finds the select by id at event time.
     sel = el("select") as HTMLSelectElement;
     sel.id = "dbSchema";
     sel.setAttribute("aria-label", "Schema");
     const conn = $("dbConn");
     if (conn && conn.parentNode) conn.parentNode.insertBefore(sel, conn.nextSibling);
-    dbWireSchemaSelect(sel);
   }
   sel.hidden = false;
   const schemas: string[] = [];
@@ -706,7 +815,7 @@ function dbPaintSchemaOptions(): void {
   const current = d.schemaFilter || "";
   if (current && schemas.indexOf(current) < 0) schemas.push(current);
   schemas.sort();
-  sel.innerHTML = "";
+  sel.textContent = "";
   const all = el("option", "", "All schemas") as HTMLOptionElement;
   all.value = "";
   all.selected = current === "";
@@ -799,4 +908,4 @@ function dbFkOpen(fk: ApiDbFkRow, value: unknown): void {
   void dbLoadDetail(); // the target table's own FK arrows arrive with its detail
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };
