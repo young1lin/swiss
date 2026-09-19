@@ -148,8 +148,10 @@ function groupFieldHtml(names          , sel                )         {
  *    afterDrag()    catch-up render after a drag ends (the loader deferred it)
  *    drag/dragGroup { get, set } - the two in-flight-drag slots; a poll must not rebuild
  *                   under either (the caller's loader checks them)
- *    rowNode(row)   side density: one row element; the component wires click + drag
- *    rowsHtml(g)    page density: the rows as one HTML string, straight into the card body
+ *    rowNode(row)   one row ELEMENT - preferred at both densities; the component wires click
+ *                   + drag on what it hands back (docs/37 R5)
+ *    rowsHtml(g)    page density, pre-R5 only: the rows as one HTML string, parsed into the
+ *                   card body and found again through rowSel. Ignored when rowNode is set.
  *    wireRow(el, row) page density: extra per-row wiring (actions); drag is wired here
  *    rowId(row)     the id a drag carries (name for MCPs, id for tunnels)
  *    rowSel(row)    page density: a selector that finds rowId's node inside the body
@@ -237,7 +239,19 @@ function mountGroup     (cfg               , g                 )              {
   wrap.appendChild(head);
 
   const body = el("div", "grp-body");
-  if (page && g.rows.length) {
+  // rowNode first, at BOTH densities (docs/37 R5). Side density always built nodes; page
+  // density parsed a string and then went looking for each row again with rowSel. A scope
+  // that has been converted to h() simply supplies rowNode and skips that round trip - the
+  // node it just built IS the node to wire, so rowSel and the querySelector go with it. The
+  // rowsHtml branch stays for the scopes R5 has not reached yet and retires with the last one.
+  if (cfg.rowNode) {
+    g.rows.forEach((row) => {
+      const node = cfg.rowNode (row);
+      wireRowDrag(cfg, node, row);
+      if (page && cfg.wireRow) cfg.wireRow(node, row); // the caller's own actions on the row
+      body.appendChild(node);
+    });
+  } else if (page && g.rows.length) {
     body.innerHTML = cfg.rowsHtml (g);
     g.rows.forEach((row) => {
       // rowSel, not a data-id: tunnels address rows by data-conn/data-rule, jobs and secrets
@@ -247,12 +261,6 @@ function mountGroup     (cfg               , g                 )              {
         wireRowDrag(cfg, node, row);
         if (cfg.wireRow) cfg.wireRow(node, row); // the caller's own actions on the row
       }
-    });
-  } else if (cfg.rowNode) {
-    g.rows.forEach((row) => {
-      const node = cfg.rowNode (row);
-      wireRowDrag(cfg, node, row);
-      body.appendChild(node);
     });
   }
   // An empty group is not an empty state - it is a place. One SHORT quiet line keeps the
