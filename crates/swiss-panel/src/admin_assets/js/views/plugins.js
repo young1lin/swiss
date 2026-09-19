@@ -4,7 +4,7 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
  * 
  * Unless required by applicable law or agreed to in writing, software
@@ -33,7 +33,9 @@
    toggle reads and writes /api/autostart with no revision to race on.
    ================================================================================================ */
                                                                         
-import { $, api, apiJson, emptyHtml, esc, targetEl, toast } from "../util.js";
+import { $, api, apiJson, emptyNode, targetEl, toast } from "../util.js";
+import { fill, h } from "../h.js";
+                                      
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
 
 let busy                          = {}; // plugin id -> true while its own toggle is in flight
@@ -65,38 +67,43 @@ function stateLabel(p              )         {
  *  provider)" when it does not — so the build's dependency structure is visible at a glance,
  *  not only in the moment something breaks. Plugins that require nothing say nothing, but the
  *  row always carries the (empty) span so poll-patch has its anchor either way.
- *  Exported pure for the suite: no DOM, just the row JSON in and badge HTML out. */
+ *  Exported pure for the suite: no DOM writes, just the row JSON in and badge children out -
+ *  a string, a text-plus-span pair, or null (docs/37 R5: h() children, so a capability name
+ *  is a text node and cannot close anything). */
 export function requiresBadge(p              )         {
   const requires = p.requires || [];
-  if (!requires.length) return "";
+  if (!requires.length) return null;
   if (p.requiresMet === false) {
-    return '· needs ' + esc(requires.join(", ")) + ' <span class="warn">(no provider)</span>';
+    return ["· needs " + requires.join(", ") + " ", h("span", { class: "warn" }, "(no provider)")];
   }
-  return "· requires " + esc(requires.join(", "));
+  return "· requires " + requires.join(", ");
 }
 
 /** One plugins row (docs/18 V4): dot + name + one grey line (id, pages, requirements,
  *  error) — version rides the row title, the state word is the dot's job — and the toggle
- *  is the panel's switch, the control every other row-level on/off uses. Exported pure. */
-export function rowHtml(p              )         {
+ *  is the panel's switch, the control every other row-level on/off uses. Exported pure;
+ *  built with h() (docs/37 R5), so there is no esc() left in it: every server string here
+ *  is a text node or an attribute value. */
+export function rowNode(p              )              {
   const pages = (p.pages || []).join(", ");
-  return '<div class="tun-row" data-plugin="' + esc(p.id) + '"' +
-      (p.version ? ' title="v' + esc(p.version) + '"' : "") + ">" +
-      '<span class="dot ' + esc(dotClass(p)) + '" data-dot title="' + esc(stateLabel(p)) + '"></span>' +
-      '<div class="tun-main">' +
-        '<div class="tun-name">' + esc(p.label || p.id) +
-          (p.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
-        '<div class="tun-sub"><code>' + esc(p.id) + "</code>" +
-          (pages ? ' <span class="via">· pages: ' + esc(pages) + "</span>" : ' <span class="via">· no page</span>') +
-          '<span class="via" data-reqs>' + requiresBadge(p) + "</span>" +
-          '<span data-err>' + (p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "") + "</span>" +
-        "</div>" +
-      "</div>" +
-      '<div class="tun-acts">' +
-        '<button class="sw" data-toggle role="switch" aria-checked="' + (p.enabled ? "true" : "false") + '"' +
-          ' aria-label="Toggle ' + esc(p.label || p.id) + '"' + (busy[p.id] ? " disabled" : "") + "></button>" +
-      "</div>" +
-    "</div>";
+  return h("div", { class: "tun-row", data: { plugin: p.id }, title: p.version ? "v" + p.version : undefined },
+    h("span", { class: "dot " + dotClass(p), data: { dot: true }, title: stateLabel(p) }),
+    h("div", { class: "tun-main" },
+      h("div", { class: "tun-name" }, p.label || p.id, !p.enabled && [" ", h("span", { class: "via" }, "· off")]),
+      h("div", { class: "tun-sub" },
+        h("code", null, p.id),
+        " ",
+        h("span", { class: "via" }, pages ? "· pages: " + pages : "· no page"),
+        h("span", { class: "via", data: { reqs: true } }, requiresBadge(p)),
+        h("span", { data: { err: true } }, p.lastError && [" ", h("span", { class: "via" }, "· " + p.lastError)]))),
+    h("div", { class: "tun-acts" },
+      h("button", {
+        class: "sw",
+        data: { toggle: true },
+        role: "switch",
+        aria: { checked: p.enabled ? "true" : "false", label: "Toggle " + (p.label || p.id) },
+        disabled: !!busy[p.id],
+      })));
 }
 
 /** The start-at-sign-in row — the same vocabulary as a plugin row (dot + name + one grey
@@ -104,20 +111,20 @@ export function rowHtml(p              )         {
  *  off. The grey line says where the OS registration lives, so the operator can check it
  *  outside the panel; the row title carries the exact command the OS would run. Exported
  *  pure; null (an old gateway without the route) renders nothing. */
-export function startupRowHtml(a                                                                )         {
-  if (!a) return "";
-  return '<div class="tun-row" data-autostart title="' + esc(a.command || "") + '">' +
-    '<span class="dot ' + (a.enabled ? "up" : "idle") + '" title="' + (a.enabled ? "enabled" : "off") + '"></span>' +
-    '<div class="tun-main">' +
-      '<div class="tun-name">Start swiss when you sign in' +
-        (a.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
-      '<div class="tun-sub"><span class="via">' + esc(a.detail || "") + "</span></div>" +
-    "</div>" +
-    '<div class="tun-acts">' +
-      '<button class="sw" data-autostart-toggle role="switch" aria-checked="' + (a.enabled ? "true" : "false") + '"' +
-        ' aria-label="Toggle start at sign-in"></button>' +
-    "</div>" +
-  "</div>";
+export function startupRowNode(a                                                                )                     {
+  if (!a) return null;
+  return h("div", { class: "tun-row", data: { autostart: true }, title: a.command || "" },
+    h("span", { class: "dot " + (a.enabled ? "up" : "idle"), title: a.enabled ? "enabled" : "off" }),
+    h("div", { class: "tun-main" },
+      h("div", { class: "tun-name" }, "Start swiss when you sign in", !a.enabled && [" ", h("span", { class: "via" }, "· off")]),
+      h("div", { class: "tun-sub" }, h("span", { class: "via" }, a.detail || ""))),
+    h("div", { class: "tun-acts" },
+      h("button", {
+        class: "sw",
+        data: { "autostart-toggle": true },
+        role: "switch",
+        aria: { checked: a.enabled ? "true" : "false", label: "Toggle start at sign-in" },
+      })));
 }
 
 function chipText()         {
@@ -131,23 +138,23 @@ function chipText()         {
 function render()       {
   painted = signature();
   const all = rows();
-  const body = all.length
-    ? '<div class="group">' + all.map(rowHtml).join("") + "</div>"
-    : emptyHtml({ icon: "power", title: "No plugins", hint: "This gateway reports an empty inventory." });
+  const startup = startupRowNode(autostart);
   // No location title: the context bar already says "Settings / Plugins".
-  $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div>' +
-      '<div class="pane-desc">What this build is composed of. Disabling one stops its subsystem and takes its pages and API routes off the air until it is enabled again; definitions, logs and state files are left alone.</div>' +
-    "</div></div>" +
-    (autostart
-      ? '<div class="sec-head"><span class="sec-cap">Startup</span></div>' +
-        '<div class="group">' + startupRowHtml(autostart) + "</div>"
-      : "") +
-    '<div class="sec-head"><span class="sec-cap">Installed</span></div>' +
-    body +
-    '<div class="tun-foot" data-foot><span data-foot-text>' + esc(chipText()) + "</span>" +
-      '<span class="tun-foot-rev">revision ' + esc(String(inv().revision)) + "</span></div>" +
-  "</div>";
+  fill($("pane"), h("div", { class: "wide" },
+    h("div", { class: "pane-head" },
+      h("div", null,
+        h("div", { class: "pane-desc" }, "What this build is composed of. Disabling one stops its subsystem and takes its pages and API routes off the air until it is enabled again; definitions, logs and state files are left alone."))),
+    startup && [
+      h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, "Startup")),
+      h("div", { class: "group" }, startup),
+    ],
+    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, "Installed")),
+    all.length
+      ? h("div", { class: "group" }, all.map(rowNode))
+      : emptyNode({ icon: "power", title: "No plugins", hint: "This gateway reports an empty inventory." }),
+    h("div", { class: "tun-foot", data: { foot: true } },
+      h("span", { data: { "foot-text": true } }, chipText()),
+      h("span", { class: "tun-foot-rev" }, "revision " + inv().revision))));
   wire();
 }
 
@@ -164,16 +171,16 @@ function patch()       {
     // title must follow the class or it keeps explaining the state before the last change.
     if (dot) { dot.className = "dot " + dotClass(p); dot.title = stateLabel(p); }
     const err = row.querySelector("[data-err]")                      ;
-    if (err) err.innerHTML = p.lastError ? ' <span class="via">· ' + esc(p.lastError) + "</span>" : "";
+    if (err) fill(err, p.lastError && [" ", h("span", { class: "via" }, "· " + p.lastError)]);
     const reqs = row.querySelector("[data-reqs]")                      ;
-    if (reqs) reqs.innerHTML = requiresBadge(p);
+    if (reqs) fill(reqs, requiresBadge(p));
     const button = row.querySelector("[data-toggle]")                            ;
     if (button) {
       button.disabled = !!busy[p.id];
       button.setAttribute("aria-checked", p.enabled ? "true" : "false");
     }
     const name = row.querySelector(".tun-name")                      ;
-    if (name) name.innerHTML = esc(p.label || p.id) + (p.enabled ? "" : ' <span class="via">· off</span>');
+    if (name) fill(name, p.label || p.id, !p.enabled && [" ", h("span", { class: "via" }, "· off")]);
   });
   const foot = pane.querySelector("[data-foot-text]")                      ;
   if (foot) foot.textContent = chipText();
