@@ -80,7 +80,7 @@ function openSheet(group               )       {
   $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
   $("a-name").focus();
 }
-function closeSheet() { $("sheet").hidden = true; $("sheet").innerHTML = ""; }
+function closeSheet() { $("sheet").hidden = true; fill($("sheet")); }
 
 /** A one-field sheet for group names, so creating a group is the same surface as creating
  *  everything else — not a browser prompt(). `def` is the current name when renaming, null when

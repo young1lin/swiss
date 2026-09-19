@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-import { $ } from "./util.js";
+import { $, iconNode } from "./util.js";
+import { fill } from "./h.js";
 
 /* Focus mode is a shell behavior with one workspace escape hatch. Ordinary pages gain the
  * plugin rail's width and keep a minimal in-flow app bar, so shell controls can never cover
@@ -62,7 +63,7 @@ function paintImmersive(): void {
   if (btn.setAttribute) btn.setAttribute("aria-label", on
     ? (docked ? "Exit Terminal fullscreen" : "Exit focus mode")
     : (terminal ? "Terminal fullscreen" : "Focus mode"));
-  btn.innerHTML = '<svg class="ic" aria-hidden="true"><use href="#i-' + (on ? "collapse" : "expand") + '"></use></svg>';
+  fill(btn, iconNode(on ? "collapse" : "expand"));
 }
 
 function syncLayout(): void {

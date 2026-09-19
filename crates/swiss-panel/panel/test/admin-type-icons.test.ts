@@ -1,39 +1,52 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
-/* docs/29 — the launch-tag glyph map. Pure string building (icon()/esc() from util.js), so no
-   DOM is needed: what is pinned here is the whitelist, the fallback, and the aria label that
-   keeps the word audible when the chip goes graphical. */
+/* docs/29 — the launch-tag glyph map. docs/37 R5: typeTagNode() BUILDS the glyph, so the
+   suite reads the attributes off the returned svg (mapped tags) or the plain string the
+   unmapped fallback hands back. What is pinned here is the whitelist, the fallback, and
+   the aria label that keeps the word audible when the chip goes graphical. */
 let util: typeof import("../src/util.js");
 
 beforeAll(async () => {
+  const anyG = globalThis as unknown as Record<string, unknown>;
+  if (!anyG.document) {
+    const stubSvg = () => {
+      return {
+        attrs: {} as Record<string, string>,
+        kids: [] as unknown[],
+        setAttribute(k: string, v: string) { this.attrs[k] = v; },
+        appendChild(n: unknown) { this.kids.push(n); return n; },
+      };
+    };
+    anyG.document = { createElementNS: () => stubSvg() };
+  }
   util = await import("../src/util.js");
 });
 
-describe("docs/29: typeTagHtml — glyph when mapped, word when not", () => {
+const hrefOf = (n: unknown) => (n as { kids: { attrs: Record<string, string> }[] }).kids[0].attrs.href;
+const attr = (n: unknown, k: string) => (n as { attrs: Record<string, string> }).attrs[k];
+
+describe("docs/29: typeTagNode — glyph when mapped, word when not", () => {
   it("a mapped tag renders its sprite glyph and carries the word as the aria-label", () => {
-    const html = util.typeTagHtml("mysql");
-    expect(html).toContain('href="#i-mysql"');
-    expect(html).toContain('role="img"');
-    expect(html).toContain('aria-label="mysql"');
+    const svg = util.typeTagNode("mysql");
+    expect(hrefOf(svg)).toBe("#i-mysql");
+    expect(attr(svg, "role")).toBe("img");
+    expect(attr(svg, "aria-label")).toBe("mysql");
   });
 
   it("the proc launch words and the in-process drivers map to their marks", () => {
-    expect(util.typeTagHtml("uvx")).toContain("#i-package");
-    expect(util.typeTagHtml("npx")).toContain("#i-package");
-    expect(util.typeTagHtml("docker")).toContain("#i-docker");
-    expect(util.typeTagHtml("mariadb")).toContain("#i-mariadb");
-    expect(util.typeTagHtml("redis")).toContain("#i-redis");
-    expect(util.typeTagHtml("pg")).toContain("#i-pg");
-    expect(util.typeTagHtml("postgres")).toContain("#i-pg");
-    expect(util.typeTagHtml("http")).toContain("#i-globe");
-    expect(util.typeTagHtml("rest")).toContain("#i-plug");
-    expect(util.typeTagHtml("figma")).toContain("#i-figma");
-    expect(util.typeTagHtml("zai-vision")).toContain("#i-zai");
+    const marks: Record<string, string> = {
+      uvx: "#i-package", npx: "#i-package", docker: "#i-docker", mariadb: "#i-mariadb",
+      redis: "#i-redis", pg: "#i-pg", postgres: "#i-pg", http: "#i-globe", rest: "#i-plug",
+      figma: "#i-figma", "zai-vision": "#i-zai",
+    };
+    for (const tag of Object.keys(marks)) expect(hrefOf(util.typeTagNode(tag)), tag).toBe(marks[tag]);
   });
 
-  it("an unmapped tag falls back to the escaped word — the chip users had before", () => {
-    expect(util.typeTagHtml("echo")).toBe("echo");
-    expect(util.typeTagHtml("node")).toBe("node");
-    expect(util.typeTagHtml("<script>")).toBe("&lt;script&gt;");
+  it("an unmapped tag falls back to the plain word — the chip users had before", () => {
+    // docs/37 R5: the fallback is a TEXT NODE now, so the tag string is the string itself;
+    // a tag that looks like markup can never be parsed as markup.
+    expect(util.typeTagNode("echo")).toBe("echo");
+    expect(util.typeTagNode("node")).toBe("node");
+    expect(util.typeTagNode("<script>")).toBe("<script>");
   });
 });

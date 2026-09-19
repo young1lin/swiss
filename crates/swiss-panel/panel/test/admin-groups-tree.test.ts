@@ -71,6 +71,9 @@ beforeAll(async () => {
   Object.assign(globalThis, {
     document: {
       createElement: (tag: string) => fakeNode(tag),
+      // docs/37 R5: the head's glyphs are iconNode() svgs now.
+      createElementNS: (_ns: string, tag: string) => fakeNode(tag),
+      createDocumentFragment: () => fakeNode("#document-fragment"),
       createTextNode: (text: string) => ({ textContent: text }),
       querySelector: () => null,
       querySelectorAll: () => [],
@@ -223,16 +226,19 @@ describe("group head - anatomy", () => {
     expect(side.children[1].children[0].dataset.name).toBe("redis");
     const pageCfg: any = cfg([]);
     pageCfg.density = "page";
-    pageCfg.rowNode = undefined;
-    pageCfg.rowsHtml = () => "<div class='row'></div>";
-    pageCfg.rowSel = () => ".row";
-    pageCfg.wireRow = () => {};
+    // docs/37 R5: the rowsHtml string path retired - the builder's node lands directly,
+    // already wired, at BOTH densities. wireRow still runs at page density only.
+    let wired = 0;
+    pageCfg.rowNode = (row: any) => { const n = fakeNode("div"); n.dataset.name = row.name; return n; };
+    pageCfg.wireRow = () => { wired++; };
     const page = mountGroup(pageCfg, { name: "default", rows: [{ name: "redis" }] });
     expect(page.className).toContain("grp--page");
     const body = page.children[1];
     expect(body.className).toBe("grp-body");
-    expect(body.innerHTML).toBe("<div class='row'></div>");
-    expect(body.children).toHaveLength(0); // no inner card - the .grp is the card
+    expect(body.children).toHaveLength(1); // the built row, appended not parsed
+    expect(body.children[0].dataset.name).toBe("redis");
+    expect(wired).toBe(1); // page density wires the caller's actions
+    expect(side.children[1].children[0].dataset.name).toBe("redis");
   });
 });
 

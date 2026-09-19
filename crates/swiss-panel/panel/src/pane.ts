@@ -17,7 +17,7 @@
 import type { ApiMcpRow } from "./types/api.js";
 import type { PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
-import { $, KINDS, emptyHtml, iconNode, targetEl } from "./util.js";
+import { $, KINDS, emptyNode, iconNode, targetEl } from "./util.js";
 import { fill, h } from "./h.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
@@ -75,9 +75,9 @@ function renderPane(): void {
   if (!d) {
     // The shared empty state (docs/18 V7), and the one place it carries an action: the pane's
     // own "add" answers the question the empty screen just asked.
-    pane.innerHTML = mcpRows().length
-      ? emptyHtml({ icon: "mcp", title: "Select an MCP", hint: "Its tools, resources and configuration appear here." })
-      : emptyHtml({ icon: "mcp", title: "No MCPs registered", hint: "Add one with the + on a group header.", action: "Add an MCP" });
+    fill(pane, emptyNode(mcpRows().length
+      ? { icon: "mcp", title: "Select an MCP", hint: "Its tools, resources and configuration appear here." }
+      : { icon: "mcp", title: "No MCPs registered", hint: "Add one with the + on a group header.", action: "Add an MCP" }));
     const addBtn = pane.querySelector<HTMLElement>("[data-empty-action]");
     if (addBtn) addBtn.onclick = () => { openSheet(null); };
     return;
