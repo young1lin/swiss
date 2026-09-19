@@ -15,14 +15,20 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { dbIsMounted, dbView } from "../src/db-state.js";
+import { dbConn } from "./db-fixtures.js";
 
-/* The Data view's lifecycle bug this suite pins: views/data.js unmount() nulls state.db to
-   free it, but a dynamic import evaluates data-view.js exactly once — the module-top literal
-   that used to build state.db never ran again, so every SECOND entry crashed inside
-   renderDbView's wiring ("Cannot read properties of null (reading 'grep')") and left the
-   rest of the wiring — SQL console Run, cell-edit handlers — dead. The fix: a state factory
-   plus a rebuild at loadDbView's entry. This suite drives the REAL modules under a
-   hand-rolled DOM (same trick as admin-navigation.test.ts): mount, unmount, mount again. */
+/* The Data view's lifecycle contract this suite pins: mount, unmount, mount again, and the
+   view works every time. It was written for a crash — unmount nulled state.db, a dynamic
+   import evaluated data-view.js exactly once, so the module-top literal never ran again and
+   every SECOND entry died inside renderDbView's wiring ("Cannot read properties of null
+   (reading 'grep')"), leaving SQL console Run and the cell-edit handlers dead. docs/37 R4
+   retired the mechanism rather than the symptom: db-state.ts owns the record, unmount resets
+   it instead of nulling it, and "is the view on screen" became a flag of its own. The crash
+   is now unreachable, so these tests assert the CONTRACT — fresh record on entry, nothing
+   buffered after leaving, a second and third entry that work — which is what the user was
+   owed all along. Drives the REAL modules under a hand-rolled DOM (same trick as
+   admin-navigation.test.ts). */
 
 interface FakeNode {
   children: unknown[];
@@ -76,8 +82,6 @@ const els = new Map<string, FakeNode>();
 let responder: (path: string) => Promise<{ status: number; ok: boolean; json(): Promise<unknown> }>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let state: any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let view: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let dataView: any;
@@ -115,40 +119,45 @@ beforeAll(async () => {
     else delete (globalThis as Record<string, unknown>).fetch;
   });
   responder = () => Promise.resolve({ status: 200, ok: true, json: async () => ({ connections: [] }) });
-  state = (await import("../src/util.js")).state;
   dataView = await import("../src/data-view.js");
   view = await import("../src/views/data.js");
 });
 
 describe("the Data view survives unmount and remount", () => {
-  it("mounts, and the state factory has run", async () => {
+  it("mounts, and the record starts from the fresh literal", async () => {
     await view.mount();
-    expect(state.db).not.toBeNull();
-    expect(state.db).toHaveProperty("grep", "");
-    expect(state.db).toHaveProperty("conn", null);
+    expect(dbIsMounted()).toBe(true);
+    expect(dbView().grep).toBe("");
+    expect(dbView().conn).toBeNull();
   });
 
-  it("unmount frees the state — a null state reports no pending changes", async () => {
+  it("unmount resets the record — an unmounted view reports no pending changes", async () => {
+    dbView().inserts = [{ values: { a: 1 } }];
     view.unmount();
-    expect(state.db).toBeNull();
-    // hasPendingChanges runs from the reload guard; it must not read through null.
+    expect(dbIsMounted()).toBe(false);
+    // What nulling it used to buy: the rows, the buffered edits and the results are gone.
+    expect(dbView().inserts).toEqual([]);
+    // hasPendingChanges runs from the reload guard, on a view that is no longer there.
     expect(dataView.dbPending()).toBe(0);
     expect(view.hasPendingChanges()).toBe(false);
   });
 
-  it("mounts AGAIN without crashing, rebuilding the state (the regression)", async () => {
-    // Before the factory+rebuild fix this threw "Cannot read properties of null
-    // (reading 'grep')" inside renderDbView, leaving the SQL console and cell
-    // editing unwired — the "Data is dead after navigating away and back" bug.
+  it("mounts AGAIN without crashing (the regression)", async () => {
+    // The original bug: unmount nulled state.db, and the module-top literal that built it
+    // ran exactly once, so this threw "Cannot read properties of null (reading 'grep')"
+    // inside renderDbView and left the SQL console and cell editing unwired — "Data is
+    // dead after navigating away and back". docs/37 R4 made it unreachable rather than
+    // handled: db-state.ts owns a record that is never absent. This still drives the real
+    // path, because what the user is owed is a working second entry, not a mechanism.
     await expect(view.mount()).resolves.toBeUndefined();
-    expect(state.db).not.toBeNull();
-    expect(state.db).toHaveProperty("grep", "");
+    expect(dbIsMounted()).toBe(true);
+    expect(dbView().grep).toBe("");
   });
 
-  it("re-entering a third time still works (the rebuild is not once-only)", async () => {
+  it("re-entering a third time still works (the reset is not once-only)", async () => {
     view.unmount();
     await view.mount();
-    expect(state.db).not.toBeNull();
+    expect(dbIsMounted()).toBe(true);
   });
 });
 
@@ -179,22 +188,22 @@ describe("the workspace framing class is taken back off on unmount", () => {
 describe("countText names the connection, not the page (docs/18 follow-up)", () => {
   it("mirrors the connection dropdown's label for the selected connection", async () => {
     await view.mount();
-    state.db.conns = [
-      { name: "shop-redis", dialect: "redis" },
-      { name: "pg-app", dialect: "postgres" },
+    dbView().conns = [
+      dbConn("shop-redis", "redis"),
+      dbConn("pg-app", "postgres"),
     ];
-    state.db.conn = "shop-redis";
+    dbView().conn = "shop-redis";
     expect(view.countText()).toBe("shop-redis · redis");
-    state.db.conn = "pg-app";
+    dbView().conn = "pg-app";
     // No read-only suffix anymore: there is no readonly flag anywhere in the picker.
     expect(view.countText()).toBe("pg-app · postgres");
   });
 
-  it("is empty with no connection selected — and after unmount freed the state", async () => {
-    state.db.conn = null;
+  it("is empty with no connection selected — and after unmount reset the record", async () => {
+    dbView().conn = null;
     expect(view.countText()).toBe("");
     view.unmount();
-    expect(state.db).toBeNull();
+    expect(dbIsMounted()).toBe(false);
     expect(view.countText()).toBe("");
   });
 });

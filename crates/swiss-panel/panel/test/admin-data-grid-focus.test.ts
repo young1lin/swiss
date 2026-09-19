@@ -17,6 +17,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbView } from "../src/db-state.js";
+import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), sharpened where the
    focus-ring behavior needs it: classList REALLY mutates className, setAttribute records
@@ -106,20 +108,17 @@ const grid = await import(pathToFileURL(join(here, "data-grid.js")).href) as {
   renderDbGrid: () => void;
   dbFocusCell: (r: number, c: number) => void;
 };
-const util = await import(pathToFileURL(join(here, "util.js")).href) as {
-  state: { db: Record<string, any> };
-};
 
 /** A two-row editable grid, rendered once into a wrap the test holds. */
 function renderTwoRowGrid(): { d: Record<string, any>; wrap: Stub } {
-  const d = util.state.db;
-  d.conns = [{ name: "c", dialect: "mysql" }];
+  const d = dbView();
+  d.conns = [dbConn("c", "mysql")];
   d.conn = "c"; d.table = "t"; d.schema = null;
-  d.data = {
-    table: "t", columns: [{ name: "id" }, { name: "name" }],
+  d.data = dbPage({
+    table: "t", columns: [dbCol("id"), dbCol("name")],
     rows: [{ id: 1, name: "a" }, { id: 2, name: "b" }],
     total: 2, primaryKey: ["id"], editable: true,
-  };
+  });
   d.tab = "data"; d.sqlResult = null; d.sqlBusy = false; d.loading = false;
   d.gridCfg = { widths: {}, hidden: [] }; d.focus = null; d.conflict = null; d.detail = null;
   d.updates = {}; d.deletes = {}; d.inserts = []; d.sel = {};

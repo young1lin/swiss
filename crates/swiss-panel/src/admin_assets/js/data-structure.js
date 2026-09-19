@@ -1,3 +1,4 @@
+                                             
 /*
  * Copyright 2026 The swiss authors
  * 
@@ -15,8 +16,8 @@
  */
 
                                                                                                     
-                                                              
-import { apiJson, dbReqGuard, el, state } from "./util.js";
+                                                     
+import { apiJson, dbReqGuard, el } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbDialectOf, dbOkToDrop, dbOpenTable } from "./data-view.js";
 import { openDbDdlSheet } from "./data-ddl.js";
@@ -24,6 +25,7 @@ import { dbTableMenu } from "./data-edit.js";
 import { dbHighlightSql, renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
+import { dbView } from "./db-state.js";
 
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
 
@@ -37,19 +39,18 @@ const DB_TABS = [
 ];
 
 function dbSetTab(t        )       {
-  const d = state.db;
-  const d_ = d ;
-  if (d_.tab === t) return;
+  const d = dbView();
+  if (d.tab === t) return;
   // docs/22 W5.1: the form opens on the row the keyboard focused, and the grid's focus
   // returns to the form's row — one cursor, two presentations of it.
-  if (t === "form" && d_.focus) d_.formIdx = d_.focus.r;
-  if (t === "data" && d_.formIdx != null) d_.focus = { r: d_.formIdx, c: d_.focus ? d_.focus.c : 0 };
-  d_.tab = t                  ;
+  if (t === "form" && d.focus) d.formIdx = d.focus.r;
+  if (t === "data" && d.formIdx != null) d.focus = { r: d.formIdx, c: d.focus ? d.focus.c : 0 };
+  d.tab = t                  ;
   renderDbToolbar();
   renderDbFilters();
   renderDbGrid();
   renderDbBar();
-  if (t !== "data" && t !== "form" && d_.conn && d_.table) void dbLoadDetail();
+  if (t !== "data" && t !== "form" && d.conn && d.table) void dbLoadDetail();
 }
 
 // One /schema request chain: a slow answer for the table the user just left must be
@@ -58,31 +59,30 @@ function dbSetTab(t        )       {
 const dbDetailReq = dbReqGuard();
 
 async function dbLoadDetail()                {
-  const d = state.db;
-  const d_ = d ;
-  if (!d_.conn || !d_.table) return;
-  d_.detailBusy = true;
+  const d = dbView();
+  if (!d.conn || !d.table) return;
+  d.detailBusy = true;
   renderDbGrid();
-  let q = "/api/db/" + encodeURIComponent(d_.conn) + "/schema?table=" + encodeURIComponent(d_.table);
-  if (d_.schema) q += "&schema=" + encodeURIComponent(d_.schema);
+  let q = "/api/db/" + encodeURIComponent(d.conn) + "/schema?table=" + encodeURIComponent(d.table);
+  if (d.schema) q += "&schema=" + encodeURIComponent(d.schema);
   const token = dbDetailReq.issue();
   const j = await apiJson                  (q);
   if (!dbDetailReq.accepts(token)) return; // superseded: a newer table owns the detail
-  d_.detailBusy = false;
-  if (!j) { d_.detail = null; renderDbGrid(); return; }
-  d_.detail = j;
-  d_.schema = j.schema;
+  d.detailBusy = false;
+  if (!j) { d.detail = null; renderDbGrid(); return; }
+  d.detail = j;
+  d.schema = j.schema;
   renderDbGrid();
 }
 
 function dbRenderTabs(ctl             )       {
-  const d = state.db;
+  const d = dbView();
   const seg = el("div", "db-tabs");
   seg.setAttribute("role", "tablist");
   DB_TABS.forEach((t                               )       => {
     const b = el("button", "", t.label);
     b.setAttribute("role", "tab");
-    b.setAttribute("aria-selected", String(d?.tab === t.id));
+    b.setAttribute("aria-selected", String(d.tab === t.id));
     b.onclick = () => { dbSetTab(t.id); };
     seg.appendChild(b);
   });
@@ -99,14 +99,13 @@ function dbRenderTabs(ctl             )       {
 /** The Structure tabs reuse the grid wrapper: Columns/Indexes/FKs render as plain tables,
  *  DDL as a monospace block. */
 function renderDbDetailGrid(wrap             )       {
-  const d = state.db;
-  const d_ = d ;
-  if (d_.detailBusy) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
-  if (!d_.detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
-  const det = d_.detail;
-  if (d_.tab === "ddl") {
+  const d = dbView();
+  if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+  if (!d.detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
+  const det = d.detail;
+  if (d.tab === "ddl") {
     wrap.appendChild(el("div", "db-detail-meta",
-      (d_.conn && d_.conns.some((c                    )          => { return c.name === d?.conn && c.dialect === "pg"; })
+      (d.conn && d.conns.some((c                    )          => { return c.name === d.conn && c.dialect === "pg"; })
         ? "Postgres keeps DDL in migration scripts — this sketch is assembled from the catalog."
         : "From SHOW CREATE TABLE.")));
     const pre = el("pre", "db-ddl db-sql-hl");
@@ -119,7 +118,7 @@ function renderDbDetailGrid(wrap             )       {
   const thead = el("thead");
   const hr = el("tr");
   let spec              ;
-  if (d_.tab === "columns") {
+  if (d.tab === "columns") {
     spec = {
       head: ["Column", "Type", "Nullable", "Default", "Key", "Comment"],
       row: (c             ) => {
@@ -133,7 +132,7 @@ function renderDbDetailGrid(wrap             )       {
       rows: det.columns,
       meta: det.columns.length + " columns · primary key: " + (det.primaryKey.join(", ") || "none"),
     };
-  } else if (d_.tab === "indexes") {
+  } else if (d.tab === "indexes") {
     spec = {
       head: ["Index", "Unique", "Primary", "Columns"],
       row: (x                                                                                             ) => {
@@ -161,14 +160,13 @@ function renderDbDetailGrid(wrap             )       {
   const meta = el("div", "db-detail-meta");
   meta.appendChild(el("span", "", spec.meta));
   meta.appendChild(el("span", "grow"));
-  if (d_.tab === "columns" || d_.tab === "indexes") {
-    const add = el("button", "btn", d_.tab === "columns" ? "Add column…" : "New index…")                     ;
+  if (d.tab === "columns" || d.tab === "indexes") {
+    const add = el("button", "btn", d.tab === "columns" ? "Add column…" : "New index…")                     ;
     add.type = "button";
     add.onclick = ()       => {
-      const d_ = d ;
-      openDbDdlSheet(d_.tab === "columns" ? "column" : "index", {
+      openDbDdlSheet(d.tab === "columns" ? "column" : "index", {
         dialect: dbDialectOf(),
-        conn: d_.conn ,
+        conn: d.conn ,
         schema: det.schema || "",
         table: det.table,
         columns: det.columns,

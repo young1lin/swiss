@@ -16,7 +16,7 @@
 
                                                                       
                                                    
-import { $, apiJson, el, errText, state, toast } from "./util.js";
+import { $, apiJson, el, errText, toast } from "./util.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbOpenCellEditor } from "./data-cell.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
@@ -25,30 +25,30 @@ import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
+import { dbView } from "./db-state.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user
    retypes the table name — because both destroy data with no transaction to roll back to. */
 /** docs/22 W1.10: build one template for the open table and drop it into the console. */
 function dbGenerateSql(kind        )       {
-  const d = state.db;
-  const d_ = d ;
-  if (!d_.data || !d_.data.columns || !d_.data.columns.length) {
+  const d = dbView();
+  if (!d.data || !d.data.columns || !d.data.columns.length) {
     toast("Open the table first — the template needs its column set", true);
     return;
   }
-  const dialect = (d_.conns.find((c                    )          => { return c.name === d?.conn; }) || {}                        ).dialect || "mysql";
+  const dialect = (d.conns.find((c                    )          => { return c.name === d.conn; }) || {}                        ).dialect || "mysql";
   let sql;
   try {
-    sql = dbTemplateSql(kind, dialect, d_.schema , d_.table ,
-      d_.data?.columns.map((c             )         => { return c.name; }), d_.data?.primaryKey || []);
+    sql = dbTemplateSql(kind, dialect, d.schema , d.table ,
+      d.data?.columns.map((c             )         => { return c.name; }), d.data?.primaryKey || []);
   } catch (err) { toast(errText(err), true); return; }
   dbFillConsole(sql);
 }
 
 function dbTableMenu(anchorEl             )       {
-  const d = state.db;
-  if (!d?.conn || !d?.table) return;
+  const d = dbView();
+  if (!d.conn || !d.table) return;
   const menu = el("div", "ctx-menu");
   function item(label        , fn            )       {
     const b = el("button", "", label)                     ;
@@ -63,19 +63,16 @@ function dbTableMenu(anchorEl             )       {
   });
   menu.appendChild(document.createElement("hr"));
   item("Rename table\u2026", () => {
-    const d_ = d ;
-    const to = prompt("Rename " + (d_.schema ? d_.schema + "." : "") + d_.table + " to:", d_.table );
-    if (!to || to === d_.table) return;
+    const to = prompt("Rename " + (d.schema ? d.schema + "." : "") + d.table + " to:", d.table );
+    if (!to || to === d.table) return;
     if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast("Not a valid table name", true); return; }
     void dbRunDdl("rename", to);
   });
   item("Truncate table\u2026", () => {
-    const d_ = d ;
-    dbTypedConfirm({ what: "TRUNCATE (delete every row)", name: (d_.schema ? d_.schema + "." : "") + d_.table, kind: "table", typed: d_.table }, ()       => { void dbRunDdl("truncate"); });
+    dbTypedConfirm({ what: "TRUNCATE (delete every row)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, ()       => { void dbRunDdl("truncate"); });
   });
   item("Drop table\u2026", () => {
-    const d_ = d ;
-    dbTypedConfirm({ what: "DROP (permanently delete)", name: (d_.schema ? d_.schema + "." : "") + d_.table, kind: "table", typed: d_.table }, ()       => { void dbRunDdl("drop"); });
+    dbTypedConfirm({ what: "DROP (permanently delete)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, ()       => { void dbRunDdl("drop"); });
   });
   document.body.appendChild(menu);
   // docs/22 closeout audit: the Table menu now clamps to the viewport like popupMenu — a
@@ -111,11 +108,10 @@ function dbTypedConfirm(o                                                       
 }
 
 async function dbRunDdl(op        , to         )                {
-  const d = state.db;
-  const d_ = d ;
-  const j = await apiJson                 ("/api/db/" + encodeURIComponent(d_.conn ) + "/ddl", {
+  const d = dbView();
+  const j = await apiJson                 ("/api/db/" + encodeURIComponent(d.conn ) + "/ddl", {
     method: "POST",
-    body: JSON.stringify({ op: op, table: d_.table, schema: d_.schema, to: to }),
+    body: JSON.stringify({ op: op, table: d.table, schema: d.schema, to: to }),
   });
   if (!j) return;
   toast("Ran: " + j.ran);
@@ -124,17 +120,17 @@ async function dbRunDdl(op        , to         )                {
     // result tabs and the view state (order, filters, focus) belong to the dropped table
     // as much as d.data does, and the pane itself needs a repaint — renderDbTables
     // refreshes only the LEFT list (docs/22 closeout audit).
-    d_.table = null; d_.schema = null; d_.data = null; d_.detail = null;
-    d_.sqlResult = null; d_.sqlResults = null; d_.sqlTab = 0; // docs/22 W4.3: every result tab closes
-    d_.tab = "data"; d_.order = null; d_.dir = "asc"; d_.filters = []; d_.focus = null;
+    d.table = null; d.schema = null; d.data = null; d.detail = null;
+    d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: every result tab closes
+    d.tab = "data"; d.order = null; d.dir = "asc"; d.filters = []; d.focus = null;
     dbDropEdits();
   }
-  if (op === "rename" && to) { d_.table = to; d_.data = null; }
+  if (op === "rename" && to) { d.table = to; d.data = null; }
   if (op === "truncate") { dbDropEdits(); }
-  d_.tablesPage = 0;
+  d.tablesPage = 0;
   if (dbIsRedis()) void dbLoadKeys(true);
   else void dbLoadTables();
-  if (d_.table) void dbLoadData(true);
+  if (d.table) void dbLoadData(true);
   else {
     renderDbTables();
     // and the RIGHT pane, whose last paint still shows the dropped table's rows
@@ -211,18 +207,17 @@ function dbSaveInlineEdit()       {
   if (!e) return;
   const raw = e.ta.value;
   dbCloseInlineEdit();
-  const d = state.db;
-  const d_ = d ;
+  const d = dbView();
   if (e.kind === "insert") {
-    const ins = d_.inserts[e.i] ;   // an insert edit only fires for a row that still exists
+    const ins = d.inserts[e.i] ;   // an insert edit only fires for a row that still exists
     if (raw === "") delete ins.values[e.column];
     else ins.values[e.column] = raw;
   } else {
-    const upd = d_.updates[e.key] || (d_.updates[e.key] = { pk: e.meta.pk                           , changes: {} });
+    const upd = d.updates[e.key] || (d.updates[e.key] = { pk: e.meta.pk                           , changes: {} });
     const origTxt = e.meta.orig == null ? "" : String(e.meta.orig);
     if (raw === origTxt) {
       delete upd.changes[e.column];
-      if (!Object.keys(upd.changes).length) delete d_.updates[e.key];
+      if (!Object.keys(upd.changes).length) delete d.updates[e.key];
     } else upd.changes[e.column] = raw;
   }
   renderDbGrid();

@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-import { $, state } from "../util.js";
+import { $ } from "../util.js";
 import { dbConnLabel, dbOkToDrop, dbPending, loadDbView } from "../data-view.js";
+import { dbView, unmountDbView } from "../db-state.js";
 export function mount() { return loadDbView(); }
 export function refresh() { return loadDbView(); }
 export function hasPendingChanges() { return dbPending() > 0; }
 export function canLeave() { return !dbPending() || dbOkToDrop(); }
 export function unmount() {
-  state.db = null;
+  unmountDbView();
   // Take the workspace framing back off (data-view.js's renderDbView adds it) so the next
   // page — whatever it is — starts from the pane's ordinary padding.
   const pane = $("pane");
@@ -32,8 +33,8 @@ export function unmount() {
    in the dropdown's own words (dbConnLabel, one builder for both), and renders nothing when
    no connection is selected rather than repeating the page name. */
 export function countText() {
-  const d = state.db;
-  if (!d || !d.conn) return "";
-  const c = (d.conns || []).find((x) => { return x.name === d?.conn; });
+  const d = dbView();
+  if (!d.conn) return "";
+  const c = d.conns.find((x) => { return x.name === d.conn; });
   return c ? dbConnLabel(c) : "";
 }

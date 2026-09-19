@@ -15,9 +15,10 @@
  */
 
 import type { ApiDbCompletionItem, ApiDbCompletionReply } from "./types/api.js";
-import { $, apiJson, el, state } from "./util.js";
+import { $, apiJson, el } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbSqlPaint } from "./data-filters.js";
+import { dbView } from "./db-state.js";
 
 /* --- SQL completion (docs/22 W3.1) ------------------------------------------------------------------ */
 /* The console's suggestion list. The SERVER builds the candidate set (dialect keywords + table
@@ -59,16 +60,16 @@ function dbSuggestHide(): void {
  *  kept a dead list on screen would be a lie about what is being completed. */
 function dbSuggestOnInput(this: HTMLTextAreaElement): void {
   clearTimeout(dbSuggestTimer!);
-  const d = state.db;
-  if (!d || !d.conn || dbIsRedis()) { dbSuggestHide(); return; }
+  const d = dbView();
+  if (!d.conn || dbIsRedis()) { dbSuggestHide(); return; }
   if (!dbSuggestPrefixAt(this.value, this.selectionStart)) { dbSuggestHide(); return; }
   const ta = this;
   dbSuggestTimer = setTimeout(() => { void dbSuggestFetch(ta); }, SUGGEST_DEBOUNCE_MS);
 }
 
 async function dbSuggestFetch(ta: HTMLTextAreaElement): Promise<void> {
-  const d = state.db;
-  if (!d || !d.conn || dbIsRedis() || !ta.closest(".db-sql-wrap")) { dbSuggestHide(); return; }
+  const d = dbView();
+  if (!d.conn || dbIsRedis() || !ta.closest(".db-sql-wrap")) { dbSuggestHide(); return; }
   const caret = ta.selectionStart!;
   const text = ta.value;
   const prefix = dbSuggestPrefixAt(text, caret);
@@ -152,7 +153,7 @@ function dbSuggestAccept(i: number): void {
   const caret = ta.selectionStart!;
   const start = caret - dbSuggestPrefix.length;
   ta.setRangeText(label, start, caret, "end");
-  state.db!.sqlText = ta.value;
+  dbView().sqlText = ta.value;
   dbSqlPaint();
   dbSuggestHide();
   ta.focus();

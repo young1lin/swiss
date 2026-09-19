@@ -16,10 +16,11 @@
 
 import type { ApiDbColumn } from "./types/api.js";
 import type { DbCellMeta } from "./types/state.js";
-import { $, esc, state, toast } from "./util.js";
+import { $, esc, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
+import { dbView } from "./db-state.js";
 
 /* --- cell editor dialog ------------------------------------------------------------------------- */
 /* Editing happens in a sheet, never inline: an inline input grows its row and reshuffles the
@@ -39,25 +40,24 @@ function dbCellPretty(s: string): string | null {
 }
 
 function dbOpenCellEditor(kind: "update" | "insert", key: string, i: number, column: string, meta: DbCellMeta): void {
-  const d = state.db;
-  const d_ = d!;
-  if (!d_.data || !d_.data.editable) return;
+  const d = dbView();
+  if (!d.data || !d.data.editable) return;
   let isNull = false;
   let text: string | null = "";
   if (kind === "update") {
-    const e = d_.updates[key];
+    const e = d.updates[key];
     const pending = e && Object.prototype.hasOwnProperty.call(e.changes, column);
     const v = pending ? e?.changes[column] : meta.orig;
     isNull = pending ? v === null : meta.orig === null || meta.orig === undefined;
     text = isNull ? "" : dbCellText(v)!;
   } else {
-    const ins = d_.inserts[i]!;   // an insert editor is only opened for a buffered row that still exists
+    const ins = d.inserts[i]!;   // an insert editor is only opened for a buffered row that still exists
     const has = Object.prototype.hasOwnProperty.call(ins.values, column);
     isNull = has ? ins.values[column] === null : false;
     text = has && ins.values[column] !== null ? dbCellText(ins.values[column])! : "";
   }
   const pretty = dbCellJsonLike(text) ? dbCellPretty(text!) : null;
-  const colMeta = d_.data?.columns.find((c: ApiDbColumn): boolean => { return c.name === column; }) || {} as { dataType?: string };
+  const colMeta = d.data?.columns.find((c: ApiDbColumn): boolean => { return c.name === column; }) || {} as { dataType?: string };
   const isBool = /bool/i.test(colMeta.dataType || "");
   dbCellEdit = { kind: kind, key: key, i: i, column: column, meta: meta };
 
@@ -65,7 +65,7 @@ function dbOpenCellEditor(kind: "update" | "insert", key: string, i: number, col
     '<div class="sheet" role="dialog" aria-modal="true" aria-label="Edit cell">' +
       '<div class="sheet-head"><div class="db-cell-head">' +
         "<h2>" + esc(column) + '</h2>' +
-        '<span class="db-cell-where">' + esc((d_.schema ? d_.schema + "." : "") + d_.table +
+        '<span class="db-cell-where">' + esc((d.schema ? d.schema + "." : "") + d.table +
           (kind === "update" ? " · PK " + JSON.stringify(meta.pk) : " · new row")) + "</span>" +
       "</div></div>" +
       '<div class="sheet-body">' +
@@ -147,20 +147,19 @@ function dbCloseCellEditor(): void {
 
 /** Write the dialog result into the local buffer and repaint the grid + bar. */
 function dbSaveCellEdit(v: string | null | undefined): void {
-  const d = state.db;
+  const d = dbView();
   const ed = dbCellEdit;
-  const d_ = d!;
-  if (!ed || !d_.data) return;
+  if (!ed || !d.data) return;
   if (ed.kind === "insert") {
-    const ins = d_.inserts[ed.i]!;   // an insert editor only opens for a row that still exists
+    const ins = d.inserts[ed.i]!;   // an insert editor only opens for a row that still exists
     if (v === undefined) delete ins.values[ed.column];
     else ins.values[ed.column] = v;
   } else {
-    const e = d_.updates[ed.key] || (d_.updates[ed.key] = { pk: ed.meta.pk as Record<string, unknown>, changes: {} });
+    const e = d.updates[ed.key] || (d.updates[ed.key] = { pk: ed.meta.pk as Record<string, unknown>, changes: {} });
     const backToOriginal = v === ed.meta.orig || (v === null && (ed.meta.orig === null || ed.meta.orig === undefined));
     if (backToOriginal) {
       delete e.changes[ed.column];
-      if (!Object.keys(e.changes).length) delete d_.updates[ed.key];
+      if (!Object.keys(e.changes).length) delete d.updates[ed.key];
     } else e.changes[ed.column] = v;
   }
   dbCloseCellEditor();

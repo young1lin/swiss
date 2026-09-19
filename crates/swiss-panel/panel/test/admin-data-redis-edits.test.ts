@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbView } from "../src/db-state.js";
 
 // Same DOM-stub technique as admin-data-grep.test.ts: the panel ships browser ES modules, so
 // the module graph needs the globals stubbed before it will evaluate under Node.
@@ -170,8 +171,8 @@ describe("dbRedisPendingCount", () => {
       pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "util.ts")).href
     ) as { state: { db: Record<string, unknown> } };
     expect(edits.dbRedisPendingCount()).toBe(0);
-    state.db.redisEdits = { key: "k", type: "set", updates: {}, deletes: { a: 1 }, inserts: [{ member: "x" }, { member: "y" }] };
+    dbView().redisEdits = { key: "k", type: "set", updates: {}, deletes: { a: 1 }, inserts: [{ member: "x" }, { member: "y" }] };
     expect(edits.dbRedisPendingCount()).toBe(3);
-    state.db.redisEdits = null;
+    dbView().redisEdits = null;
   });
 });

@@ -33,7 +33,6 @@ const state             = {
   lastAction: {},    // name -> { msg, err, at }
   mem: null,
   info: null,        // { tokenEnv } from /api/info — the env var name
-  db: null,           // the whole Data view state (data-view.js builds/owns it; redisValue rides on it)
 };
 
 function $                                     (id        )    { return document.getElementById(id)     ; }

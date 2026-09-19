@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts): browser ES modules
    need the globals stubbed before they will evaluate under Node. getElementById keeps ONE
@@ -63,10 +64,6 @@ Object.assign(globalThis, {
 const mod = await import(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "data-browsers.ts")).href
 ) as { dbRenderRedisValue: (wrap: Stub) => void };
-const util = await import(
-  pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "util.ts")).href
-) as { state: { db: Record<string, any> } };
-
 function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] {
   if (pred(node)) out.push(node);
   for (const c of node.children || []) find(c, pred, out);
@@ -80,7 +77,9 @@ describe("the typed hash table's inline editor (docs/22 W3.3)", () => {
     // the edit silently vanished and Commit had nothing to post.
     const wrap = el();
     byId.dbGridWrap = wrap;
-    util.state.db = { conn: "r", conns: [{ name: "r", dialect: "redis" }], redisKey: "h", redisValue: { key: "h", type: "hash", value: { f1: "one" }, length: 1 }, redisEdits: null };
+    unmountDbView();
+    mountDbView();
+    Object.assign(dbView(), { conn: "r", conns: [{ name: "r", dialect: "redis" }], redisKey: "h", redisValue: { key: "h", type: "hash", value: { f1: "one" }, length: 1 }, redisEdits: null });
     mod.dbRenderRedisValue(wrap);
     const valueTd = find(wrap, (n) => typeof n.ondblclick === "function" && n.textContent === "one")[0];
     expect(valueTd, "the value cell carries a dblclick").toBeTruthy();
@@ -89,7 +88,11 @@ describe("the typed hash table's inline editor (docs/22 W3.3)", () => {
     expect(editor, "the inline editor opened").toBeTruthy();
     editor.value = "ONE";
     editor.onkeydown({ key: "Enter", preventDefault: () => {}, stopPropagation: () => {} });
-    expect(util.state.db.redisEdits.updates, "the edit landed in updates").toEqual({ f1: "ONE" });
-    expect(util.state.db.redisEdits.inserts, "no phantom insert row").toEqual([]);
+    // The buffer is created lazily by dbRedisEdits(), so prove it exists before reading
+    // through it — an optional chain alone would let a missing buffer pass as an empty one.
+    const edits = dbView().redisEdits;
+    expect(edits, "the edit created the typed-value buffer").toBeTruthy();
+    expect(edits?.updates, "the edit landed in updates").toEqual({ f1: "ONE" });
+    expect(edits?.inserts, "no phantom insert row").toEqual([]);
   });
 });

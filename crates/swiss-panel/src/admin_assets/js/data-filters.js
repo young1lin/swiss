@@ -15,10 +15,11 @@
  */
 
                                                      
-import { $, el, esc, state } from "./util.js";
+import { $, el, esc } from "./util.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbDropEdits, dbOkToDrop } from "./data-view.js";
+import { dbView } from "./db-state.js";
 
 /* --- SQL syntax highlighting -------------------------------------------------------------------- */
 /* A tiny tokenizer, not a parser: keywords, strings, numbers, comments, functions, identifiers.
@@ -84,7 +85,7 @@ function dbValueless(op        )          { return op === "isNull" || op === "is
  * Returns whether it ran: a REFUSED discard gate leaves everything untouched, and the row
  * editors below restore their select from that answer (docs/22 closeout audit). */
 function dbApplyFilters()          {
-  const d = state.db;
+  const d = dbView();
   if (!dbOkToDrop()) { renderDbFilters(); return false; }
   d .offset = 0;
   dbDropEdits();
@@ -93,18 +94,17 @@ function dbApplyFilters()          {
 }
 
 function renderDbFilters()       {
-  const d = state.db;
+  const d = dbView();
   const box = $("dbFilters");
   if (!box) return;
   box.innerHTML = "";
-  const d_ = d ;
   if (dbIsRedis()) {
     // The redis filter is a glob PATTERN fed to SCAN's MATCH — server-side, cursor-safe.
     const rf = el("div", "db-filter");
     const ri = el("input");
     ri.type = "search";
     ri.placeholder = "Key pattern, e.g. session:*";
-    ri.value = d_.grep || "";
+    ri.value = d.grep || "";
     ri.style.width = "220px";
     ri.title = "SCAN MATCH pattern — applies on Enter";
     let t2                                      ;
@@ -125,22 +125,22 @@ function renderDbFilters()       {
     [""].concat(["string", "hash", "list", "set", "zset", "stream"]).forEach((t        )       => {
       const o = el("option", "", t || "All types")                     ;
       o.value = t;
-      o.selected = (d?.redisType || "") === t;
+      o.selected = (d.redisType || "") === t;
       rt.appendChild(o);
     });
     rt.onchange = (e) => { d .redisType = (e.currentTarget                     ).value; void dbLoadKeys(true); };
     rf.appendChild(rt);
-    if (d_.redis && d_.redis.total != null) {
+    if (d.redis && d.redis.total != null) {
       rf.appendChild(el("span", "db-filter-hint",
-        (d_.redis?.keys ? d_.redis?.keys.length.toLocaleString() : "0") + " shown · " +
-        Number(d_.redis?.total).toLocaleString() + " in keyspace"));
+        (d.redis?.keys ? d.redis?.keys.length.toLocaleString() : "0") + " shown · " +
+        Number(d.redis?.total).toLocaleString() + " in keyspace"));
     }
     box.appendChild(rf);
     return;
   }
-  if (!d_.data || d_.tab !== "data") return; // filters belong to the row grid only
-  const cols = d_.data?.columns.map((c                  )         => { return c.name; });
-  d_.filters.forEach((f              , i        )       => {
+  if (!d.data || d.tab !== "data") return; // filters belong to the row grid only
+  const cols = d.data?.columns.map((c                  )         => { return c.name; });
+  d.filters.forEach((f              , i        )       => {
     const row = el("div", "db-filter");
     const cs = el("select");
     cs.title = "Column";
@@ -195,9 +195,8 @@ function renderDbFilters()       {
     rm.onclick = () => {
       // docs/22 closeout B6: remove goes through the same gate as every other row change —
       // a REFUSED discard must leave the row on screen, not silently swallow it.
-      const d_ = d ;
-      d_.filters.splice(i, 1);
-      if (!dbApplyFilters()) { d_.filters.splice(i, 0, f); renderDbFilters(); }
+      d.filters.splice(i, 1);
+      if (!dbApplyFilters()) { d.filters.splice(i, 0, f); renderDbFilters(); }
     };
     row.appendChild(rm);
     box.appendChild(row);
@@ -205,14 +204,14 @@ function renderDbFilters()       {
   const add = el("button", "btn db-filter-add", "+ Filter");
   add.title = "Filter rows by a column value (server-side)";
   add.onclick = () => {
-    const d2 = state.db;
-    d2?.filters.push({ column: cols[0] || "", op: "eq", value: "" });
+    const d2 = dbView();
+    d2.filters.push({ column: cols[0] || "", op: "eq", value: "" });
     renderDbFilters();
     const inputs = box.querySelectorAll                  ("input");
     if (inputs.length) inputs[inputs.length - 1].focus();
   };
   box.appendChild(add);
-  if (d_.filters.length) {
+  if (d.filters.length) {
     box.appendChild(el("span", "db-filter-hint", "Enter applies · terms stack with AND · filtered total shown above"));
   }
 }

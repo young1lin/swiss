@@ -68,7 +68,12 @@ const sql = await import(pathToFileURL(join(admin, "js", "data-sql.js")).href) a
   dbFavoriteName: (sql: string) => string;
   dbFavPush: (sql: string) => void;
 };
-const util = await import(pathToFileURL(join(admin, "js", "util.js")).href) as { state: { db: { favorites: string[] } } };
+/* This suite drives the EMITTED tree, so the record has to come from the emitted tree too:
+   a static import of ../src/db-state.js would be a second, unrelated instance and dbFavPush
+   would look like it did nothing. */
+const dbState = await import(pathToFileURL(join(admin, "js", "db-state.js")).href) as {
+  dbView: () => { favorites: string[] };
+};
 
 // The whitespace-only equivalent the round-trip pins against: the console's own lexer, every
 // token kept verbatim, all whitespace dropped. Two statements are equivalent-for-running
@@ -163,17 +168,17 @@ describe("favorites — localStorage mcp_gateway_db_favorites (docs/22 W5.4)", (
   });
 
   it("saves newest-first, never duplicates, caps at 50", () => {
-    util.state.db.favorites = [];
+    dbState.dbView().favorites = [];
     sql.dbFavPush("select 1");
     sql.dbFavPush("select 2");
-    expect(util.state.db.favorites).toEqual(["select 2", "select 1"]);
+    expect(dbState.dbView().favorites).toEqual(["select 2", "select 1"]);
     sql.dbFavPush("select 1"); // a repeat save moves to the top, never duplicates
-    expect(util.state.db.favorites).toEqual(["select 1", "select 2"]);
+    expect(dbState.dbView().favorites).toEqual(["select 1", "select 2"]);
     for (var i = 0; i < 60; i++) sql.dbFavPush("select " + (100 + i));
-    expect(util.state.db.favorites.length).toBe(50);
-    expect(util.state.db.favorites[0]).toBe("select 159");
+    expect(dbState.dbView().favorites.length).toBe(50);
+    expect(dbState.dbView().favorites[0]).toBe("select 159");
     // and it round-trips through storage under the panel's key
-    expect(store.get("mcp_gateway_db_favorites")).toBe(JSON.stringify(util.state.db.favorites));
+    expect(store.get("mcp_gateway_db_favorites")).toBe(JSON.stringify(dbState.dbView().favorites));
   });
 });
 

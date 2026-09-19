@@ -20,7 +20,7 @@
    over from the boot literal in util.ts and the per-view factories (data-view's dbFreshState,
    the tun/jobs literals) — the shape lives here now, the WHY stays with the field. */
 
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableDetail, ApiDbTableRow, ApiInfoResponse, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo, DbQueryReply } from "./api.js";
+import type { ApiDbColumn, ApiDbFkRow, ApiInfoResponse, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -294,65 +294,6 @@ export interface DbGridConfig {
   hidden: string[];
 }
 
-/** The Data view's whole state — the shape data-view.ts's dbFreshState() factory builds on
- *  every mount (views/data.ts unmount nulls state.db; see the factory comment there). */
-export interface DbState {
-  conns: ApiDbConnectionRow[];
-  conn: string | null;
-  tables: ApiDbTableRow[];
-  tablesTotal: number;
-  tablesPage: number;
-  tablesLimit: number;
-  more: boolean;
-  grep: string;
-  schemaFilter: string;
-  sort: string;
-  sortDir: string;
-  table: string | null;
-  schema: string | null;
-  data: ApiDbDataPage | null;
-  filters: DbFilterTerm[];
-  pageSize: number;
-  offset: number;
-  order: string | null;
-  dir: string;
-  loading: boolean;
-  gridCfg: DbGridConfig;
-  sqlPreview: boolean;
-  updates: Record<string, DbBufferedUpdate>;
-  deletes: Record<string, Record<string, unknown>>;
-  inserts: DbInsert[];
-  sel: Record<string, boolean>;
-  selAnchor: number;
-  focus: { r: number; c: number } | null;
-  sqlOpen: boolean;
-  sqlText: string;
-  sqlResult: DbQueryReply | null;
-  sqlResults: DbQueryReply[] | null;
-  sqlTab: number;
-  sqlBusy: boolean;
-  history: string[];
-  favorites?: string[];
-  tab: string;
-  formIdx: number;
-  /* The SCAN cursor is the wire's string (redis cursors are big unsigned numbers the
-   *  panel compares against "0" - never a JS number). */
-  redis: { keys: ApiDbRedisKeyRow[]; cursor: string; done: boolean; total: number } | null;
-  /* optional: the fresh pageState literal predates the redis value view and favorites. */
-  redisValue?: ApiDbRedisValue | null;
-  redisKey: string | null;
-  redisEdits: DbRedisEdits | null;
-  activity: boolean;
-  activityRows: ApiDbActivityRow[] | null;
-  redisType: string;
-  redisError: boolean;
-  detail: ApiDbTableDetail | null;
-  detailBusy: boolean;
-  /* the 409 observer's mark: which buffered row and columns lost a commit race.
-   * Optional: the dbFreshState literal predates the fetch observer that writes it. */
-  conflict?: { key: string; columns: string[] } | null;
-}
-
 /** The one shared bag, booted by util.ts's literal. tokenGroups/tokenMembers/tokenViewSecret
  *  are optional because the Tokens page creates them on first load — the boot literal (whose
  *  bytes are frozen by docs/36 D9) predates them. */
@@ -365,5 +306,4 @@ export interface PanelState {
   lastAction: Record<string, LastAction>;
   mem: ApiMemoryInfo | null;
   info: ApiInfoResponse | null;
-  db: DbState | null;
 }
