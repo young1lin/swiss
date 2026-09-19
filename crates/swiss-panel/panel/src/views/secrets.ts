@@ -31,7 +31,8 @@
    beyond its name.
    ================================================================================================ */
 import type { GroupCfg, GroupSlice } from "../types/dom.js";
-import { $, apiJson, emptyHtml, esc, icon, targetEl, toast } from "../util.js";
+import { $, apiJson, emptyNode, iconNode, targetEl, toast } from "../util.js";
+import { fill, h } from "../h.js";
 import { copyText } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
@@ -56,7 +57,7 @@ function signature(): string {
 
 /** The in-page copy of GET /api/secrets. On an older gateway the route 404s: apiJson toasts
  *  once and we draw the empty page — the same degradation every host page already has. */
-let secrets: { list: string[]; rev: number; loaded: boolean; groups: string[]; memberGroups: Record<string, string>; order?: string[] } = { list: [], rev: 0, loaded: false, groups: ["default"], memberGroups: {} };
+const secrets: { list: string[]; rev: number; loaded: boolean; groups: string[]; memberGroups: Record<string, string>; order?: string[] } = { list: [], rev: 0, loaded: false, groups: ["default"], memberGroups: {} };
 
 async function loadSecrets(): Promise<void> {
   const j = await apiJson<{ secrets?: string[]; rev?: number; groups?: string[]; secretGroups?: Record<string, string>; order?: string[] }>("/api/secrets");
@@ -87,19 +88,28 @@ function applyOrder(): void {
 
 /** One secret's row: the one button (Copy ref) and the overflow menu holding Delete - red
  *  never sits on a row (design rule 4). The buttons stay delegated on #pane (wire), so the
- *  groups component rebuilding a card never rewires them. */
-function rowHtml(name: string): string {
-  return '<div class="row" data-secret="' + esc(name) + '"><div class="row-main">' +
-    '<div class="name">' + esc(name) + "</div>" +
-    '<div class="desc"><code>${secret://' + esc(name) + '}</code> — substituted at run time wherever a credential is used</div>' +
-    "</div>" + '<div class="row-act">' +
-      '<button class="btn" data-skcopy="' + esc(name) + '">Copy ref</button> ' +
-      '<button class="btn ghost icon" data-skmore="' + esc(name) + '" aria-label="Actions for ' + esc(name) + '" title="Delete">' + icon("ellipsis") + "</button>" +
-    "</div></div>";
-}
-
-function rowsHtml(): string {
-  return secrets.list.length ? secrets.list.map(rowHtml).join("") : "";
+ *  groups component rebuilding a card never rewires them.
+ *
+ *  Built with h() (docs/37 R5), which is why there is no esc() left in here: a name is a
+ *  text node and an attribute value, and neither can close a tag. The literal " " child is
+ *  the space the string version carried between the two buttons - an inline box, so the gap
+ *  is real layout, not formatting. The reference in .desc keeps its <code> element: it is
+ *  the thing a user is meant to recognise on sight. */
+function rowNode(name: string): HTMLElement {
+  return h("div", { class: "row", data: { secret: name } },
+    h("div", { class: "row-main" },
+      h("div", { class: "name" }, name),
+      h("div", { class: "desc" },
+        h("code", null, "${secret://" + name + "}"),
+        " — substituted at run time wherever a credential is used")),
+    h("div", { class: "row-act" },
+      h("button", { class: "btn", data: { skcopy: name } }, "Copy ref"), " ",
+      h("button", {
+        class: "btn ghost icon",
+        data: { skmore: name },
+        aria: { label: "Actions for " + name },
+        title: "Delete",
+      }, iconNode("ellipsis"))));
 }
 
 /** The secrets scope's cfg for mountGroup (docs/26): the full family contract — rows drag
@@ -134,11 +144,11 @@ function skCfg(): GroupCfg<string> {
     rowsById: (): string[] => { return secrets.list; },
     rowId: (r: string): string => { return r; },
     groupOfRow: groupOfName,
-    rowsHtml: (g: GroupSlice<string>): string => { return g.rows.map(rowHtml).join(""); },
-    rowSel: (r: string): string => {
-      const v = window.CSS && CSS.escape ? CSS.escape(r) : r;
-      return '[data-secret="' + v + '"]';
-    },
+    /* rowNode, not rowsHtml + rowSel (docs/37 R5): the component wires the node this builder
+     * hands back, so the round trip through a parsed string and a [data-secret] lookup - and
+     * the CSS.escape that lookup needed because a secret name is arbitrary bytes from the
+     * vault's side - is gone. */
+    rowNode: rowNode,
     onMoveRow: moveSecretRow,
     onAssign: (id: string, g: string | null): void => { void moveSecretGroup(id, g); },
   };
@@ -176,14 +186,13 @@ function paintGroups(): void {
   const host = $("skGroups");
   if (!host) return;
   painted = signature();
-  host.innerHTML = "";
   if (!secrets.list.length) {
-    host.innerHTML = emptyHtml({ icon: "key", title: "No secrets yet", hint: "Store a credential once, reference it everywhere as ${secret://name}." });
+    fill(host, emptyNode({ icon: "key", title: "No secrets yet", hint: "Store a credential once, reference it everywhere as ${secret://name}." }));
     return;
   }
-  slice(secrets.list, secrets.groups || ["default"], groupOfName).forEach((g: GroupSlice<string>): void => {
-    host.appendChild(mountGroup(skCfg(), g));
-  });
+  fill(host, slice(secrets.list, secrets.groups || ["default"], groupOfName).map((g: GroupSlice<string>): HTMLElement => {
+    return mountGroup(skCfg(), g);
+  }));
   refreshGroupSelect();
   const chip = $("countChip");
   if (chip) chip.textContent = countText();
@@ -206,40 +215,45 @@ function refreshGroupSelect(): void {
   const wanted = sel.value && names.indexOf(sel.value) >= 0
     ? sel.value
     : resolveDefaultGroup(names, lastGroup("secrets"));
-  const next = names.map((n: string): string => {
-    return '<option value="' + esc(n) + '"' + (n === wanted ? " selected" : "") + ">" + esc(n) + "</option>";
-  }).join("");
-  if (sel.innerHTML !== next) sel.innerHTML = next;
+  // Only when the option LIST actually moved. The string version compared rendered markup to
+  // decide that; the node version compares the values, which is the thing it meant. Rebuilding
+  // options resets the box, and a poll must not do that under a hand that just picked a group.
+  const shown = Array.from(sel.options).map((o: HTMLOptionElement): string => { return o.value; });
+  const moved = shown.length !== names.length || shown.some((v: string, i: number): boolean => { return v !== names[i]; });
+  if (moved) fill(sel, names.map((n: string): HTMLOptionElement => { return h("option", { value: n }, n); }));
+  sel.value = wanted;
 }
 
-/** The Group select of the store form: the scope's groups, the last-used one selected. */
-function groupSelectHtml(): string {
+/** The Group select of the store form: the scope's groups, the last-used one selected.
+ *  select.value = picked rather than a selected attribute on one option - the property is
+ *  the selection, the attribute was only ever its initial default. */
+function groupSelectNode(): HTMLSelectElement {
   const names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
-  const picked = resolveDefaultGroup(names, lastGroup("secrets"));
-  return '<select class="v v-sk-group" id="skGroup" title="The group this secret lists under">' +
-    names.map((n: string): string => {
-      return '<option value="' + esc(n) + '"' + (n === picked ? " selected" : "") + ">" + esc(n) + "</option>";
-    }).join("") + "</select>";
+  const sel = h("select", { class: "v v-sk-group", id: "skGroup", title: "The group this secret lists under" },
+    names.map((n: string): HTMLOptionElement => { return h("option", { value: n }, n); }));
+  sel.value = resolveDefaultGroup(names, lastGroup("secrets"));
+  return sel;
 }
 
 function render(): void {
   painted = signature();
   // No location title: the context bar already says "Settings / Secrets".
-  $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div>' +
-      '<div class="pane-desc">Device-bound vault (docs/19). A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: <code>${secret://name}</code> in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed.</div>' +
-    "</div>" +
-      '<div class="pane-actions"><button class="btn" id="skNewGroup">New group</button></div>' +
-    "</div>" +
+  fill($("pane"), h("div", { class: "wide" },
+    h("div", { class: "pane-head" },
+      h("div", null,
+        h("div", { class: "pane-desc" },
+          "Device-bound vault (docs/19). A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: ",
+          h("code", null, "${secret://name}"),
+          " in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed.")),
+      h("div", { class: "pane-actions" },
+        h("button", { class: "btn", id: "skNewGroup" }, "New group"))),
     // The inline create form (docs/35 §3): one row, the Group select beside the primary.
-    '<div class="inline-form">' +
-      '<input class="v" id="skName" placeholder="Name — lowercase kebab (a-z 0-9 -)">' +
-      '<input class="v grow" id="skValue" type="password" placeholder="Value — write-only, never shown again">' +
-      groupSelectHtml() +
-      '<button class="btn primary" id="skStore">Store</button>' +
-    "</div>" +
-    '<div id="skGroups"></div>' +
-  "</div>";
+    h("div", { class: "inline-form" },
+      h("input", { class: "v", id: "skName", placeholder: "Name — lowercase kebab (a-z 0-9 -)" }),
+      h("input", { class: "v grow", id: "skValue", type: "password", placeholder: "Value — write-only, never shown again" }),
+      groupSelectNode(),
+      h("button", { class: "btn primary", id: "skStore" }, "Store")),
+    h("div", { id: "skGroups" })));
   paintGroups();
   const chip = $("countChip");
   if (chip) chip.textContent = countText();
@@ -318,11 +332,6 @@ export function countText() {
 }
 export function unmount() { painted = ""; }
 
-/* Exported for the suite (the requiresBadge precedent): the rows markup and the two mutations,
- * so the contract is testable without a DOM that parses HTML. __setVaultForTest restores the
- * pre-first-load state between cases. */
-export { rowsHtml, storeSecret, removeSecret, moveSecretRow };
-export function __setVaultForTest(list: string[], rev: number, order: string[]): void {
-  secrets = { list: list || [], rev: rev || 0, loaded: true, groups: ["default"], memberGroups: {}, order: order || [] };
-  applyOrder();
-}
+/* Exported for the suite (the requiresBadge precedent): the two mutations and the order move,
+ * driven under a fetch stub against the real DOM the view builds. */
+export { storeSecret, removeSecret, moveSecretRow };
