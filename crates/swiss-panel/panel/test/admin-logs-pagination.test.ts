@@ -103,9 +103,26 @@ function serialize(node: FakeNode): string {
   const inner = node.children.map((c) => { return serialize(c); }).join("");
   return "<" + node.tag.toLowerCase() + id + attrs + role + cls + dis + val + ">" + inner + "</" + node.tag.toLowerCase() + ">";
 }
+/* docs/37 R5: nothing walks the fresh tab body assigning handlers any more, so controls are
+   * no longer registered by id as a side effect of wiring. Painted nodes resolve from the tree
+   * the paint built (the real DOM's own answer), the byId cache first like before. */
+let paintedTb: FakeNode | null = null;
+function findInTree(node: FakeNode, id: string): FakeNode | null {
+  const kids = (node as unknown as { children?: FakeNode[] }).children || [];
+  if (node.id === id) return node;
+  for (const c of kids) {
+    const hit = findInTree(c, id);
+    if (hit) return hit;
+  }
+  return null;
+}
 const doc = {
   getElementById(id: string) {
-    if (!byId.has(id)) byId.set(id, new FakeNode("div"));
+    if (!byId.has(id)) {
+      const painted = paintedTb ? findInTree(paintedTb, id) : null;
+      if (painted) byId.set(id, painted);
+      else { byId.set(id, new FakeNode("div")); byId.get(id)!.id = id; }
+    }
     return byId.get(id)!;
   },
   createDocumentFragment: () => FakeNode.fragment(),
@@ -208,12 +225,26 @@ function mountLogs(d: any, opts: { rows?: any[]; more?: boolean; q?: string } = 
   const tb = new FakeNode("div");
   byId.set("tabbody", tb);
   rh.renderCallsOnly();
+  paintedTb = tb;
   return tb;
 }
 
+/** Route a click on a tab-body control through the REAL delegated dispatcher (docs/37 R5):
+ *  #pane's listener answers it - the per-node onclick wiring retired with wireTabBody. */
+function fireTab(idOrNode: string | FakeNode, ev: Record<string, unknown> = { detail: 1 }): void {
+  const what = typeof idOrNode === "string" ? doc.getElementById(idOrNode) : idOrNode;
+  rh.paneTabClick({ target: what, stopPropagation() {}, ...ev } as unknown as MouseEvent);
+}
+function fireInput(what: FakeNode): void {
+  rh.paneTabInput({ target: what } as unknown as Event);
+}
+function fireKey(what: FakeNode, key: string): void {
+  rh.paneTabKeydown({ target: what, key, preventDefault() {} } as unknown as KeyboardEvent);
+}
+
 /** Click Older through the REAL wiring (mouse: detail > 0). */
-function clickOlder() { byId.get("clNext")!.onclick!({ detail: 1 }); }
-function clickNewer() { byId.get("clPrev")!.onclick!({ detail: 1 }); }
+function clickOlder() { fireTab("clNext"); }
+function clickNewer() { fireTab("clPrev"); }
 
 beforeEach(() => {
   byId.clear();
@@ -250,7 +281,7 @@ describe("docs/32 B2: the pager is the scroll anchor, focus follows the action",
   it("a keyboard switch returns focus to the same-direction button", async () => {
     const d = fakeDetail();
     mountLogs(d);
-    byId.get("clNext")!.onclick!({ detail: 0 }); // Enter/Space on a focused button
+    fireTab("clNext", { detail: 0 }); // Enter/Space on a focused button
     await ok({ calls: PAGE1, more: true, stderr: "" }, 0);
     expect(byId.get("clNext")!.focused).toBe(1);
     expect(byId.get("clPrev")!.focused).toBe(0);
@@ -260,7 +291,7 @@ describe("docs/32 B2: the pager is the scroll anchor, focus follows the action",
   it("focus falls to the other direction at a boundary page", async () => {
     const d = fakeDetail();
     mountLogs(d);
-    byId.get("clNext")!.onclick!({ detail: 0 });
+    fireTab("clNext", { detail: 0 });
     await ok({ calls: PAGE1, more: false, stderr: "" }, 0); // Older is done on this page
     expect(byId.get("clNext")!.focused, "the done direction yields focus").toBe(0);
     expect(byId.get("clPrev")!.focused).toBe(1);
@@ -393,7 +424,7 @@ describe("docs/32 B3: history pages hold still, errors are honest", () => {
     expect(d.callsPendingPage).toBe(1);
     const q = byId.get("callsQ")!;
     q.value = "GET";
-    q.oninput!();
+    fireInput(q);
     await new Promise((r) => setTimeout(r, 340)); // the docs/31 debounce
     expect(d.callsPendingPage).toBeNull();
     expect(d.callsPage).toBe(0);
@@ -409,7 +440,7 @@ describe("docs/32 B3: history pages hold still, errors are honest", () => {
     clickOlder();
     const q = byId.get("callsQ")!;
     q.value = "GET";
-    q.onkeydown!({ key: "Escape", preventDefault() {} });
+    fireKey(q, "Escape");
     expect(d.callsQ).toBe("");
     expect(d.callsPendingPage).toBeNull();
     expect(d.callsPage).toBe(0);
@@ -499,8 +530,8 @@ describe("docs/32 B1: a page switch is a transaction", () => {
     mountLogs(d);
     clickOlder();
     await http({ error: "boom" }, 0, 500);
-    byId.get("clRetry")!.onclick!({ detail: 1 });
-    byId.get("clRetry")!.onclick!({ detail: 1 }); // double activation while pending
+    fireTab("clRetry");
+    fireTab("clRetry"); // double activation while pending
     expect(requests.length, "a double Retry fires one request").toBe(2);
     expect(requests[1].url).toContain("page=1");
     expect(d.callsPendingPage).toBe(1);
@@ -568,7 +599,7 @@ describe("docs/32 B4: the toolbar ellipsis, Clear logs behind a confirm", () => 
   it("the menu opens with Clear logs… as its danger item", () => {
     const d = fakeDetail();
     mountLogs(d);
-    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    fireTab("clMenu");
     const menu = lastMenu();
     const items = menu.children.filter((c) => c.tag === "BUTTON");
     expect(items.map((c) => c.textContent)).toEqual(["Clear logs…"]);
@@ -578,7 +609,7 @@ describe("docs/32 B4: the toolbar ellipsis, Clear logs behind a confirm", () => 
   it("a cancelled confirm fires no request at all", async () => {
     const d = fakeDetail();
     mountLogs(d);
-    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    fireTab("clMenu");
     lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
     await new Promise((r) => setTimeout(r, 0));
     expect(requests.length).toBe(0);
@@ -592,7 +623,7 @@ describe("docs/32 B4: the toolbar ellipsis, Clear logs behind a confirm", () => 
     clickOlder(); // a switch in flight — Clear must still win and reset it
     await http({ error: "boom" }, 0, 500); // failed switch leaves an error + Retry target
     confirmAnswer = true;
-    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    fireTab("clMenu");
     lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
     expect(confirmTexts).toEqual([
       "Clear all recorded tool calls for \u201Credis\u201D? This removes the call history and stored full replies. The MCP configuration is not changed.",
@@ -625,7 +656,7 @@ describe("docs/32 review fixes: the clear transaction and the error strip's edge
     const tb = mountLogs(d);
     clickOlder(); // page-1 switch in flight — its GET parks first
     confirmAnswer = true;
-    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    fireTab("clMenu");
     lastMenu().children.find((c) => c.textContent === "Clear logs…")!.onclick!({ stopPropagation() {} });
     await new Promise((r) => setTimeout(r, 0));
     // parked order: the switch's GET first, the DELETE behind it — the DELETE answers now.
@@ -658,7 +689,7 @@ describe("docs/32 review fixes: the clear transaction and the error strip's edge
     mountLogs(d);
     clickOlder();
     await http({ error: "boom" }, 0, 500);
-    byId.get("clRetry")!.onclick!({ detail: 0 }); // Enter on the focused Retry
+    fireTab("clRetry", { detail: 0 }); // Enter on the focused Retry
     await ok({ calls: PAGE1, more: true, stderr: "" }, 0);
     expect(byId.get("clNext")!.focused, "a keyboard Retry gets its focus back").toBe(1);
     expect(byId.get("clPrev")!.focused).toBe(0);
@@ -669,7 +700,7 @@ describe("docs/32 review fixes: the clear transaction and the error strip's edge
     mountLogs(d);
     clickOlder();
     await http({ error: "boom" }, 0, 500);
-    byId.get("clRetry")!.onclick!({ detail: 1 });
+    fireTab("clRetry");
     await http({ error: "boom" }, 0, 500);
     const strips = byId.get("callsRegion")!.inserted.filter(([, html]) => html.includes('id="clErr"'));
     expect(strips.length, "one strip per failure, never stacked").toBe(2);
@@ -679,11 +710,11 @@ describe("docs/32 review fixes: the clear transaction and the error strip's edge
   it("the ellipsis toggles its menu closed like the house overflow button", () => {
     const d = fakeDetail();
     mountLogs(d);
-    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    fireTab("clMenu");
     expect(menuIsOpen()).toBe(true);
-    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    fireTab("clMenu");
     expect(menuIsOpen(), "a second click dismisses, not reopens").toBe(false);
-    byId.get("clMenu")!.onclick!({ detail: 1, stopPropagation() {} });
+    fireTab("clMenu");
     expect(menuIsOpen(), "a third click opens again").toBe(true);
   });
 });

@@ -214,6 +214,10 @@ function runBodyNode(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): HChild {
             type: "button",
             id: "r-hist",
             class: "hist-sel",
+            // Same guard as renderHistoryOnly: a filter that matched nothing is a search in
+            // progress, not an empty history - the control stays clickable so the popover
+            // (and its empty state) can open.
+            disabled: !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length,
             aria: { haspopup: "true", expanded: d.run.histOpen ? "true" : "false" },
             title: "Fill the arguments from a past run — newest first, repeats shown once (up to 300). Type in the box to filter by arguments; hover an entry to read it in full. Secret values stay redacted.",
           }, histButtonLabel(d, current.name))),
@@ -221,42 +225,4 @@ function runBodyNode(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): HChild {
       h("pre", { class: "logs", id: "runOut" })));
 }
 
-/* Kept until pane.ts converts (docs/37 R5, next stage of this view): the pane column is still
-   painted by string concatenation, so the Run body rides the same stated bridge as the Logs
-   bodies. runBody retires with that bridge. */
-function runBody(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): string {
-  if (m.lifecycle !== "started") {
-    return '<div class="group"><div class="row"><span class="rowmsg">Not started — start it to run a tool.</span></div></div>';
-  }
-  const kd = d.tools;
-  if (kd.loading && !kd.loaded) return '<div class="note"><span class="spin"></span> Loading tools…</div>';
-  if (kd.error) return '<div class="group"><div class="row"><span class="rowmsg warn">' + esc(kd.error) + "</span></div></div>";
-  const tools = kd.items || [];
-  if (!tools.length) return '<div class="group"><div class="row"><span class="rowmsg">This MCP exposes no tools.</span></div></div>';
-
-  let current: ApiMcpTool | null = null;
-  for (let i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i] as ApiMcpTool;
-  if (!current) current = tools[0] as ApiMcpTool;
-  d.run.tool = current.name;
-
-  const opts = tools.map((t) => {
-    return '<option value="' + esc(t.name) + '"' + (t.name === current?.name ? " selected" : "") + ">" + esc(t.name) + "</option>";
-  }).join("");
-
-  return '<div class="group"><div class="form">' +
-      '<label class="field"><span>Tool</span><select id="r-tool">' + opts + "</select></label>" +
-      (current.description ? '<div class="hint">' + esc(current.description) + "</div>" : "") +
-      argFieldsHtml(current) +
-      '<div class="form-actions"><button class="btn primary" id="runBtn">Run</button>' +
-        '<div class="hist-wrap">' +
-          '<button type="button" id="r-hist" class="hist-sel" aria-haspopup="true" aria-expanded="' +
-            (d.run.histOpen ? "true" : "false") +
-            '" title="Fill the arguments from a past run — newest first, repeats shown once (up to 300). Type in the box to filter by arguments; hover an entry to read it in full. Secret values stay redacted.">' +
-            esc(histButtonLabel(d, current.name)) + "</button>" +
-        "</div>" +
-        '<span class="run-meta" id="runMeta"></span></div>' +
-      '<pre class="logs" id="runOut"></pre>' +
-    "</div></div>";
-}
-
-export { argFieldsHtml, argFieldsNode, readRunArgs, runBody, runBodyNode };
+export { argFieldsHtml, argFieldsNode, readRunArgs, runBodyNode };

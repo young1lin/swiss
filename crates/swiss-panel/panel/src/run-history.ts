@@ -580,132 +580,172 @@ function tunnelDepsNode(d: McpDetail): HChild {
 }
 
 
-function wireTabBody(d: McpDetail): void {
-  const prev = $("pgPrev"); if (prev) prev.onclick = pagePrev;
-  const next = $("pgNext"); if (next) next.onclick = pageNext;
-  const edit = $("c-edit"); if (edit) edit.onclick = startEdit;
-  const replaceBtn = $("c-replace"); if (replaceBtn) replaceBtn.onclick = startReplace;
-  const save = $("e-save"); if (save) save.onclick = d.editMode === "replace" ? saveReplace : saveEdit;
-  document.querySelectorAll<HTMLElement>("#tabbody [data-restore]").forEach((b) => {
-    b.onclick = () => { void restoreRevision(Number(b.dataset.restore)); };
-  });
-  document.querySelectorAll<HTMLElement>("#tabbody [data-revdel]").forEach((b) => {
-    b.onclick = () => { void deleteRevision(Number(b.dataset.revdel)); };
-  });
-  const cancel = $("e-cancel"); if (cancel) cancel.onclick = cancelEdit;
-  const testBtn = $("e-test"); if (testBtn) testBtn.onclick = () => { void runConnTest("e-"); };
-  const type = $<HTMLSelectElement>("e-type"); if (type) type.onchange = () => { changeEditType(type.value); };
+/* --- pane-level delegation (docs/37 R5) --------------------------------------------------------
+   wireTabBody used to walk the fresh tab body after every paint and assign ~34 handlers; each
+   repaint re-attached them, and several handlers closed over the detail object the render
+   happened under. The tab body's events now ride the ONE listener per event type that
+   renderPane assigns on #pane (paneChromeClick handles the pane chrome; these four handle
+   everything inside #tabbody). Dispatch happens at event time on the live state:
 
-  // Tools list → Try
-  document.querySelectorAll<HTMLElement>("#tabbody [data-try]").forEach((b) => {
-    b.onclick = () => { tryTool(b.dataset.try as string); };
-  });
-
-  // Resources list → Read
-  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-read]").forEach((b) => {
-    b.onclick = () => { void readResource(b.dataset.read as string, b); };
-  });
-
-  // Tools list → on/off toggle
-  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-toggle]").forEach((b) => {
-    b.onclick = () => { void toggleTool(b.dataset.toggle as string, b.dataset.on === "1", b); };
-  });
-
-  // Resources → master on/off
-  document.querySelectorAll<HTMLButtonElement>("#tabbody [data-restog]").forEach((b) => {
-    b.onclick = () => { void toggleResources(b.dataset.restog === "1", b); };
-  });
-
+     - a click resolves mcpDetail() when it lands, so a poll that swapped the store between
+       render and click can no longer fire a handler against an orphaned object;
+     - the e-save verb follows the LIVE editMode, not the render-time one;
+     - the calls-search debounce and its Escape clear resolve the detail at event time; the
+       timer's name check still drops a late fire after the selection moved. */
+function paneTabClick(ev: MouseEvent): void {
+  const t = targetEl(ev);
+  if (!t) return;
+  // Config editing form
+  if (t.id === "e-save") {
+    const d = mcpDetail();
+    if (d) void (d.editMode === "replace" ? saveReplace : saveEdit)();
+    return;
+  }
+  if (t.id === "e-cancel") { cancelEdit(); return; }
+  if (t.id === "e-test") { void runConnTest("e-"); return; }
+  const restore = t.closest<HTMLElement>("[data-restore]");
+  if (restore) { void restoreRevision(Number(restore.dataset.restore)); return; }
+  const revdel = t.closest<HTMLElement>("[data-revdel]");
+  if (revdel) { void deleteRevision(Number(revdel.dataset.revdel)); return; }
+  // Config read view
+  if (t.id === "c-edit") { startEdit(); return; }
+  if (t.id === "c-replace") { startReplace(); return; }
+  // Kind lists pager
+  if (t.id === "pgPrev") { pagePrev(); return; }
+  if (t.id === "pgNext") { pageNext(); return; }
+  // Tools list -> Try, tool/resource toggles, resources -> Read
+  const tryBtn = t.closest<HTMLElement>("[data-try]");
+  if (tryBtn) { tryTool(String(tryBtn.dataset.try)); return; }
+  const readBtn = t.closest<HTMLButtonElement>("[data-read]");
+  if (readBtn) { void readResource(String(readBtn.dataset.read), readBtn); return; }
+  const togBtn = t.closest<HTMLButtonElement>("[data-toggle]");
+  if (togBtn) { void toggleTool(String(togBtn.dataset.toggle), togBtn.dataset.on === "1", togBtn); return; }
+  const resTog = t.closest<HTMLButtonElement>("[data-restog]");
+  if (resTog) { void toggleResources(resTog.dataset.restog === "1", resTog); return; }
   // Logs tab
   // docs/32 B4: Clear lives behind the toolbar's ellipsis menu — a destructive action does not
   // get a standing button in the filter row. The house popupMenu (menu.js) carries the item.
-  const clMenu = $("clMenu");
-  if (clMenu) clMenu.onclick = (ev) => {
+  if (t.id === "clMenu") {
+    const clMenu = t as HTMLElement;
     ev.stopPropagation();
     // The house toggle idiom (pane.js toggleMenu): a second click dismisses instead of reopening.
     if (menuIsOpen()) { closeMenu(); return; }
     popupMenu(clMenu.getBoundingClientRect(), [
-      { label: "Clear logs…", danger: true, fn: () => { void clearCalls(); } },
+      { label: "Clear logs…", danger: true, fn: (): void => { void clearCalls(); } },
     ]);
-  };
-  // The search box (docs/31): debounced server-side reload; Escape clears at once. Property
-  // assignment, not addEventListener — renderCallsOnly may re-wire the SAME live node.
-  const q = $<HTMLInputElement>("callsQ");
-  if (q) {
-    q.oninput = () => {
-      clearTimeout(d.callsQTimer);
-      d.callsQTimer = setTimeout(() => {
-        const nd = mcpDetail();
-        if (!nd || nd.name !== d.name) return;
-        // docs/32 B3: a new needle supersedes any switch in flight — target page 0, the
-        // pending switch cancelled, its error taken down.
-        nd.callsQ = q.value;
-        nd.callsPage = 0;
-        nd.callsPendingPage = null;
-        nd.callsSwitch = null;
-        nd.callsError = "";
-        nd.callsErrStatus = "";
-        nd.calls = null; // the loading state, not the previous needle's rows
-        void loadCalls(nd.name);
-      }, 300);
-    };
-    q.onkeydown = (ev) => {
-      if (ev.key !== "Escape" || !q.value) return;
-      ev.preventDefault();
-      clearTimeout(d.callsQTimer);
-      q.value = "";
-      d.callsQ = "";
-      d.callsPage = 0;
-      d.callsPendingPage = null;
-      d.callsSwitch = null;
-      d.callsError = "";
-      d.callsErrStatus = "";
-      d.calls = null;
-      void loadCalls(d.name);
-    };
+    return;
   }
   // docs/32 B2: a keyboard activation (Enter/Space on a focused button) carries detail === 0 —
   // that action owes the user focus back on the equivalent button once the switch commits.
-  const clPrev = $("clPrev"); if (clPrev) clPrev.onclick = (ev) => { callsPageStep(-1, { fromKey: !!ev && ev.detail === 0 }); };
-  const clNext = $("clNext"); if (clNext) clNext.onclick = (ev) => { callsPageStep(1, { fromKey: !!ev && ev.detail === 0 }); };
-  const clRetry = $("clRetry"); if (clRetry) clRetry.onclick = (ev) => { callsRetry({ fromKey: !!ev && ev.detail === 0 }); };
+  if (t.id === "clPrev") { callsPageStep(-1, { fromKey: ev.detail === 0 }); return; }
+  if (t.id === "clNext") { callsPageStep(1, { fromKey: ev.detail === 0 }); return; }
+  if (t.id === "clRetry") { callsRetry({ fromKey: ev.detail === 0 }); return; }
   // docs/33 C1: block copy buttons. The text comes from the CALL ROW, not the painted DOM —
   // a truncated preview or a highlighted render still copies the full pretty payload.
-  document.querySelectorAll<HTMLElement>("#tabbody [data-copy]").forEach((b) => {
-    b.onclick = () => {
-      const nd = mcpDetail();
-      if (!nd) return;
-      const parts = String(b.dataset.copy || "").split(":");
-      const seq = Number(parts[1]);
-      const c = (nd.calls || []).find((r) => { return r.seq === seq; });
-      if (!c) return;
-      const text = parts[0] === "args" ? fmtJson(c.args || "")
-        : fmtJson(nd.callsFull[seq] != null ? nd.callsFull[seq] : c.output);
-      void copyLogText(text || "");
-    };
-  });
-  document.querySelectorAll<HTMLElement>("#tabbody [data-callseq]").forEach((s) => {
-    s.onclick = () => { toggleCall(s.dataset.callseq as unknown as number); };
-    s.onkeydown = (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleCall(s.dataset.callseq as unknown as number); }
-    };
-  });
-  document.querySelectorAll<HTMLElement>("#tabbody [data-full]").forEach((b) => {
-    b.onclick = (ev) => { ev.stopPropagation(); void showFullResult(b.dataset.full as unknown as number); };
-  });
-
+  const copyBtn = t.closest<HTMLElement>("[data-copy]");
+  if (copyBtn) {
+    const d = mcpDetail();
+    if (!d) return;
+    const parts = String(copyBtn.dataset.copy || "").split(":");
+    const seq = Number(parts[1]);
+    const c = (d.calls || []).find((r) => { return r.seq === seq; });
+    if (!c) return;
+    const text = parts[0] === "args" ? fmtJson(c.args || "")
+      : fmtJson(d.callsFull[seq] != null ? d.callsFull[seq] : c.output);
+    void copyLogText(text || "");
+    return;
+  }
+  // The full-result button sits inside an expandable row — it must not also toggle the row.
+  const fullBtn = t.closest<HTMLElement>("[data-full]");
+  if (fullBtn) { ev.stopPropagation(); void showFullResult(fullBtn.dataset.full as unknown as number); return; }
+  const callRow = t.closest<HTMLElement>("[data-callseq]");
+  if (callRow) { toggleCall(callRow.dataset.callseq as unknown as number); return; }
   // Run tab
-  const toolSel = $<HTMLSelectElement>("r-tool");
-  if (toolSel) {
-    toolSel.onchange = () => { d.run.tool = toolSel.value; d.run.result = null; renderPane(); };
+  if (t.id === "runBtn") { void runTool(); return; }
+  if (t.id === "r-hist") { histToggle(); return; }
+}
+
+function paneTabChange(ev: Event): void {
+  const t = targetEl(ev);
+  if (!t) return;
+  if (t.id === "e-type") { changeEditType((t as unknown as HTMLSelectElement).value); return; }
+  if (t.id === "r-tool") {
+    const d = mcpDetail();
+    if (!d) return;
+    d.run.tool = (t as unknown as HTMLSelectElement).value;
+    d.run.result = null;
+    renderPane();
   }
-  const histBtn = $<HTMLButtonElement>("r-hist");
-  if (histBtn) {
-    histBtn.onclick = () => { histToggle(); };
-    // Same guard as renderHistoryOnly: a filter that matched nothing is a search in progress, not
-    // an empty history — the control stays clickable so the popover (and its empty state) can open.
-    histBtn.disabled = !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length;
+}
+
+/** The calls search box (docs/31): debounced server-side reload. The input node itself carries
+ *  no handler — this dispatcher sees every keystroke from #pane, and renderCallsOnly's swap-back
+ *  of the live #callsQ node needs no re-wiring to keep working. */
+function paneTabInput(ev: Event): void {
+  const t = targetEl(ev);
+  if (!t || t.id !== "callsQ") return;
+  const d = mcpDetail();
+  if (!d) return;
+  const q = t as unknown as HTMLInputElement;
+  clearTimeout(d.callsQTimer);
+  d.callsQTimer = setTimeout(() => {
+    const nd = mcpDetail();
+    if (!nd || nd.name !== d.name) return;
+    // docs/32 B3: a new needle supersedes any switch in flight — target page 0, the
+    // pending switch cancelled, its error taken down.
+    nd.callsQ = q.value;
+    nd.callsPage = 0;
+    nd.callsPendingPage = null;
+    nd.callsSwitch = null;
+    nd.callsError = "";
+    nd.callsErrStatus = "";
+    nd.calls = null; // the loading state, not the previous needle's rows
+    void loadCalls(nd.name);
+  }, 300);
+}
+
+function paneTabKeydown(ev: KeyboardEvent): void {
+  const t = targetEl(ev);
+  if (!t) return;
+  if (t.id === "callsQ") {
+    // Escape clears at once (docs/31): no debounce, no wait.
+    const q = t as unknown as HTMLInputElement;
+    if (ev.key !== "Escape" || !q.value) return;
+    const d = mcpDetail();
+    if (!d) return;
+    ev.preventDefault();
+    clearTimeout(d.callsQTimer);
+    q.value = "";
+    d.callsQ = "";
+    d.callsPage = 0;
+    d.callsPendingPage = null;
+    d.callsSwitch = null;
+    d.callsError = "";
+    d.callsErrStatus = "";
+    d.calls = null;
+    void loadCalls(d.name);
+    return;
   }
+  // docs/32 B2: a call row is focusable (tabindex) — Enter/Space must toggle it like a click.
+  const callRow = t.closest<HTMLElement>("[data-callseq]");
+  if (callRow && (ev.key === "Enter" || ev.key === " ")) {
+    ev.preventDefault();
+    toggleCall(callRow.dataset.callseq as unknown as number);
+    return;
+  }
+  // Ctrl/Cmd+Enter runs, so a SQL textarea can be submitted without reaching for the mouse.
+  // #runBtn only exists on the Run tab, which is the scope the per-field listener had.
+  const field = t as unknown as HTMLElement;
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter" && $("runBtn")
+    && (field.tagName === "TEXTAREA" || (field as unknown as HTMLInputElement).type === "text")) {
+    ev.preventDefault();
+    void runTool();
+  }
+}
+
+/** The non-wiring half of the retired wireTabBody: follow-ups a paint owes, in paint order.
+ *  Called by renderPane after #tabbody is filled. */
+function afterTabPaint(d: McpDetail): void {
   // A pane rebuild drops the popover with the old markup it lived in. If it was open, bring it
   // back over the fresh button; the previewed entry (histSelSeq) is re-shown by histPreview.
   if (d.run.histOpen) {
@@ -713,18 +753,8 @@ function wireTabBody(d: McpDetail): void {
     histOpen();
   }
   // Loading here rather than in showTab: the tool the Run tab will show is only settled once the
-  // form is built (runBody falls back to the first tool when none was preselected via Try).
+  // form is built (runBodyNode falls back to the first tool when none was preselected via Try).
   if (d.tab === "run" && d.run.tool) void loadRunHistory(d.name, d.run.tool);
-  const runBtn = $("runBtn");
-  if (runBtn) {
-    runBtn.onclick = runTool;
-    // Ctrl/Cmd+Enter runs, so a SQL textarea can be submitted without reaching for the mouse.
-    document.querySelectorAll<HTMLElement>("#tabbody textarea, #tabbody input[type=text]").forEach((f) => {
-      f.addEventListener("keydown", (ev) => {
-        if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); void runTool(); }
-      });
-    });
-  }
   if ($("runOut")) renderRunResult();
 }
 
@@ -833,8 +863,10 @@ function renderCallsOnly(): void {
     try { liveQ.setSelectionRange(caret, caret); } catch (err) { /* type=search supports it; guard anyway */ }
   }
   body.dataset.callsig = sig;
-  wireTabBody(d);
+  // No re-wiring here (docs/37 R5): the pager, the copy buttons and the search box answer
+  // through #pane's delegated listeners, which a body repaint never disturbs. The swap-back
+  // of the live #callsQ node needs no re-attached oninput for the same reason.
   mountJsonTrees(d); // docs/33 C2: open rows get their trees back, expansion restored
 }
 
-export { applyRunHistory, configBodyNode, fillRunArgs, histButtonLabel, histClose, histOpen, histPreview, histRowsNode, histSearchTimer, histToggle, histViewNode, histWhen, loadRunHistory, queueHistSearch, readResource, renderCallsOnly, renderHistoryOnly, renderRunResult, runTool, toggleResources, toggleTool, tryTool, tunnelDepsNode, wireTabBody };
+export { applyRunHistory, configBodyNode, fillRunArgs, histButtonLabel, histClose, histOpen, histPreview, histRowsNode, histSearchTimer, histToggle, histViewNode, histWhen, loadRunHistory, queueHistSearch, readResource, renderCallsOnly, renderHistoryOnly, renderRunResult, runTool, toggleResources, toggleTool, tryTool, tunnelDepsNode, paneTabClick, paneTabChange, paneTabInput, paneTabKeydown, afterTabPaint };
