@@ -57,6 +57,7 @@ class FakeNode {
   querySelectorAll() { return []; }
   contains() { return false; }
   appendChild(n: FakeNode) { return n; }
+  append(...nodes: FakeNode[]) { return nodes; }
   removeChild(n: FakeNode) { return n; }
   remove() {}
   addEventListener() {}
@@ -64,12 +65,17 @@ class FakeNode {
 }
 
 const byId = new Map<string, FakeNode>();
+/* docs/37 R5: the tab bodies build real nodes now; the stub learns the four DOM entry points
+   h()/frag() touch. Serialized output is not asserted here — these tests read the pane header. */
 const doc = {
   getElementById(id: string) {
     if (!byId.has(id)) byId.set(id, new FakeNode("div"));
     return byId.get(id)!;
   },
   createElement: (t: string) => new FakeNode(t),
+  createElementNS: () => new FakeNode("svg"),
+  createTextNode: (s: string) => ({ text: s }) as unknown as FakeNode,
+  createDocumentFragment: () => new FakeNode("#document-fragment"),
   querySelector: () => null,
   querySelectorAll: () => [] as FakeNode[],
   body: new FakeNode("body"),
@@ -84,6 +90,7 @@ let detail: typeof import("../src/detail.js");
 let util: typeof import("../src/util.js");
 
 beforeAll(async () => {
+  (globalThis as unknown as Record<string, unknown>).Node = class {};
   (globalThis as unknown as Record<string, unknown>).document = doc;
   (globalThis as unknown as Record<string, unknown>).window = { open: windowOpen, addEventListener() {} };
   fields = await import("../src/fields.js");

@@ -1,6 +1,8 @@
 import type { JtBox } from "../src/types/dom.js";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+// @vitest-environment happy-dom
+
 /* docs/33 — the Logs JSON viewer. Compact wire text is parsed into the restrained tree;
    non-JSON stays plain text. Copy is tested both per block and per node. */
 
@@ -9,6 +11,7 @@ vi.mock("../src/util.js", () => {
   return {
     esc: (s: string) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
     icon: () => "",
+    iconNode: () => document.createElement("span"),
     state: { detail: null },
     toast: (msg: string) => { toasts.push(msg); },
     __toasts: toasts,
@@ -35,21 +38,31 @@ function stub(over: Record<string, unknown> = {}) {
   } as never;
 }
 
+/* docs/37 R5: logsBodyNode paints a real tree — the assertions read the painted DOM (node
+   text, attributes) instead of substring-matching a markup string nobody parsed. */
+function paint(over: Record<string, unknown> = {}): HTMLElement {
+  const host = document.createElement("div");
+  host.append(...[logs.logsBodyNode(stub(over) as never)].flat().filter((n): n is Node => n != null));
+  return host;
+}
+
 describe("docs/33 C1+C2: the block body division — tree when it parses, pre when it does not", () => {
   it("a parseable arguments/result block renders a tree slot, not a pre", () => {
-    const html = logs.logsBody(stub({ calls: [call()], callsOpen: { 7: true } }));
-    expect(html).toContain('data-jtree="args:7"');
-    expect(html).toContain('data-jtree="out:7"');
-    expect(html).not.toMatch(/<pre class="logs/);
+    const host = paint({ calls: [call()], callsOpen: { 7: true } });
+    expect(host.querySelector('[data-jtree="args:7"]')).not.toBeNull();
+    expect(host.querySelector('[data-jtree="out:7"]')).not.toBeNull();
+    expect(host.querySelector("pre.logs")).toBeNull();
   });
 
   it("a non-JSON result keeps a plain escaped pre, an error keeps the red one", () => {
-    const html = logs.logsBody(stub({
+    const host = paint({
       calls: [call({ args: "GET k", output: "upstream said <no>", ok: false })],
       callsOpen: { 7: true },
-    }));
-    expect(html).toMatch(/<pre class="logs">GET k<\/pre>/);
-    expect(html).toMatch(/<pre class="logs err"[^>]*>upstream said &lt;no&gt;/);
+    });
+    expect(host.querySelector("pre.logs")!.textContent).toBe("GET k");
+    const errPre = host.querySelector("pre.logs.err")!;
+    expect(errPre.getAttribute("data-out")).toBe("7");
+    expect(errPre.textContent).toContain("upstream said <no>"); // a text node, not entities
   });
 });
 
@@ -280,11 +293,9 @@ describe("docs/33 C2: buildJsonTree", () => {
 
 describe("docs/33 C1: every block offers copy", () => {
   it("both label rows carry an icon copy button addressing its block", () => {
-    const html = logs.logsBody(stub({ calls: [call()], callsOpen: { 7: true } }));
-    expect(html).toContain('aria-label="Copy arguments"');
-    expect(html).toContain('aria-label="Copy result"');
-    expect(html).toMatch(/data-copy="args:7"/);
-    expect(html).toMatch(/data-copy="out:7"/);
+    const host = paint({ calls: [call()], callsOpen: { 7: true } });
+    expect(host.querySelector('[data-copy="args:7"]')!.getAttribute("aria-label")).toBe("Copy arguments");
+    expect(host.querySelector('[data-copy="out:7"]')!.getAttribute("aria-label")).toBe("Copy result");
   });
 
   it("copyLogText uses the async clipboard and says Copied", async () => {

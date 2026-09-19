@@ -18,7 +18,8 @@
                                                     
                                                   
 import { TOKEN_ID_KEY, apiJson, targetEl, toast } from "./util.js";
-import { kindBody, logsBody } from "./logs.js";
+import { kindBodyNode, logsBodyNode } from "./logs.js";
+import { frag } from "./h.js";
 import { closeMenu } from "./pane.js";
 import { configBody, histClose } from "./run-history.js";
 import { runBody } from "./run.js";
@@ -143,11 +144,21 @@ document.addEventListener("click", (e) => {
   if (!inHist && d && d.tab === "run" && d.run.histOpen) histClose();
 });
 
+/** Staging bridge (docs/37 R5): the Logs/Tools/Resources/Prompts bodies are built as NODES
+ *  now, while pane.ts still paints its column by string concatenation. Serialising a built
+ *  tree is safe — text nodes escape on the way out — and the bridge disappears with pane's own
+ *  conversion, the last piece of this view. */
+function nodeHtml(node      )         {
+  const host = document.createElement("div");
+  host.append(node);
+  return host.innerHTML;
+}
+
 function tabBody(d           , m                           )         {
   if (d.tab === "run") return runBody(d, m);
   if (d.tab === "config") return configBody(d);
-  if (d.tab === "logs") return logsBody(d);
-  return kindBody(d, d.tab, m);
+  if (d.tab === "logs") return nodeHtml(frag(logsBodyNode(d)));
+  return nodeHtml(frag(kindBodyNode(d, d.tab, m)));
 }
 
 export { claudeSnippet, codexSnippet, copyConn, copyText, endpointUrl, fetchSecret, legacyCopy, mcpJsonSnippet, resolveSecret, tabBody, tokenEnv, useToken };
