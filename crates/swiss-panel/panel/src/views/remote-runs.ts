@@ -31,7 +31,9 @@
    ================================================================================================ */
 import type { ApiRemoteRunOutput, ApiRemoteRunsResponse, ApiRemoteTargetsResponse, ApiRunOutputChunk } from "../types/api.js";
 import type { ApiRemoteRunRow, RemoteLiveBody, RemoteRunBody, RemoteRunInput } from "../types/runs.js";
-import { $, apiJson, emptyHtml, esc, icon, targetEl, toast, whenLabel } from "../util.js";
+import { $, apiJson, emptyNode, iconNode, targetEl, toast, whenLabel } from "../util.js";
+import { fill, frag, h } from "../h.js";
+import type { HChild } from "../h.js";
 
 const PAGE = 20;
 const LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
@@ -92,12 +94,12 @@ function fmtMs(ms: number | null | undefined): string {
 }
 
 /** The dot says the state in shape and colour; the title says it in words. */
-function stateDot(r: ApiRemoteRunRow): string {
+function stateDotNode(r: ApiRemoteRunRow): HTMLElement {
   const cls = r.state === "succeeded" ? "up"
     : r.state === "running" ? "starting"
     : r.state === "queued" || r.state === "canceled" ? "idle"
     : "down";
-  return '<span class="dot ' + cls + '" title="' + esc(r.state) + '"></span>';
+  return h("span", { class: "dot " + cls, title: r.state });
 }
 
 /** What ran, as a command line: the argv for an exec, the shape for a sync / pull. An
@@ -128,54 +130,62 @@ function metaOf(r: ApiRemoteRunRow): string {
   return parts.join(" \u00b7 ");
 }
 
-function row(r: ApiRemoteRunRow, isLive: boolean): string {
+function rowNode(r: ApiRemoteRunRow, isLive: boolean): HTMLElement {
   const cwd = r.input && r.input.cwd ? " \u00b7 " + r.input.cwd : "";
-  return '<div class="call' + (open[r.runId] ? " open" : "") + '" data-rrun="' + r.runId + '"' + (isLive ? ' data-rlive="1"' : "") + ">" +
-    '<div class="call-sum" data-rtog="' + r.runId + '" role="button" tabindex="0">' +
-      '<span class="chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
-      stateDot(r) +
-      '<span class="call-tool">' + esc(commandOf(r)) + "</span>" +
-      '<span class="call-arg">' + esc(targetOf(r) + cwd) + "</span>" +
-      '<span class="call-meta">' + esc(metaOf(r)) + "</span>" +
-    "</div>" +
+  const data: Record<string, string | number> = { rrun: r.runId };
+  if (isLive) data.rlive = "1";
+  return h("div", { class: "call" + (open[r.runId] ? " open" : ""), data: data },
+    h("div", { class: "call-sum", data: { rtog: r.runId }, role: "button", tabIndex: 0 },
+      h("span", { class: "chev", aria: { hidden: "true" } }, iconNode("chevron-right")),
+      stateDotNode(r),
+      h("span", { class: "call-tool" }, commandOf(r)),
+      h("span", { class: "call-arg" }, targetOf(r) + cwd),
+      h("span", { class: "call-meta" }, metaOf(r))),
     // The body stays empty until the row opens (the Traffic rule: nothing hidden is
-    // built); bodyHtml paints whatever the fetch brought.
-    '<div class="call-body">' + (open[r.runId] ? bodyHtml(r, isLive) : "") + "</div>" +
-  "</div>";
+    // built); bodyNode paints whatever the fetch brought.
+    h("div", { class: "call-body" }, open[r.runId] ? bodyNode(r, isLive) : null));
 }
 
-function bodyHtml(r: ApiRemoteRunRow, isLive: boolean): string {
+function bodyNode(r: ApiRemoteRunRow, isLive: boolean): HChild {
   if (isLive) {
     const l = live[r.runId];
-    return '<div class="call-lbl rr-live-head"><span>Live output</span>' +
-        (r.state === "running" || r.state === "queued"
-          ? '<button class="btn" data-rcancel="' + r.runId + '">Cancel</button>'
-          : "") +
-      "</div>" +
-      '<pre class="logs" data-rlivepre="' + r.runId + '">' + (l ? esc(l.text) : "") +
-        (l && l.text ? "" : '<span style="color:var(--text-3)">' + (r.state === "queued" ? "Queued - waiting for a free slot." : "No output yet.") + "</span>") +
-      "</pre>";
+    return frag(
+      h("div", { class: "call-lbl rr-live-head" },
+        h("span", null, "Live output"),
+        r.state === "running" || r.state === "queued"
+          ? h("button", { class: "btn", data: { rcancel: r.runId } }, "Cancel")
+          : null),
+      h("pre", { class: "logs", data: { rlivepre: r.runId } },
+        l ? l.text : null,
+        l && l.text ? null
+          : h("span", { style: "color:var(--text-3)" },
+            r.state === "queued" ? "Queued - waiting for a free slot." : "No output yet.")));
   }
   const b = bodies[r.runId];
-  let html = "";
-  if (r.error) html += '<div class="call-lbl">Error</div><pre class="logs err">' + esc(r.error) + "</pre>";
-  if (!b) return html + '<div class="note"><span class="spin"></span> Loading\u2026</div>';
-  if (b.gone) return html + '<div class="note">This run has rolled out of the record.</div>';
-  html += '<div class="call-lbl">Output' + (b.total ? " \u00b7 " + fmtBytes(b.total) : "") + "</div>";
+  const head: HChild[] = [];
+  if (r.error) {
+    head.push(h("div", { class: "call-lbl" }, "Error"), h("pre", { class: "logs err" }, r.error));
+  }
+  if (!b) return frag(head, h("div", { class: "note" }, h("span", { class: "spin" }), " Loading\u2026"));
+  if (b.gone) return frag(head, h("div", { class: "note" }, "This run has rolled out of the record."));
+  head.push(h("div", { class: "call-lbl" }, "Output" + (b.total ? " \u00b7 " + fmtBytes(b.total) : "")));
   if (!b.total) {
-    html += '<pre class="logs"><span style="color:var(--text-3)">No output was produced.</span></pre>';
+    head.push(h("pre", { class: "logs" }, h("span", { style: "color:var(--text-3)" }, "No output was produced.")));
   } else {
-    html += '<pre class="logs">' + esc(b.text) + "</pre>";
+    head.push(h("pre", { class: "logs" }, b.text));
     if (b.next < b.total) {
-      html += '<div class="pager"><button class="btn" data-rmore="' + r.runId + '">Load more</button>' +
-        "<span>" + fmtBytes(b.next) + " of " + fmtBytes(b.total) + "</span></div>";
+      head.push(h("div", { class: "pager" },
+        h("button", { class: "btn", data: { rmore: r.runId } }, "Load more"),
+        h("span", null, fmtBytes(b.next) + " of " + fmtBytes(b.total))));
     }
   }
   if (r.outputCapped && r.tail) {
-    html += '<div class="note">Output capped at ' + fmtBytes(limits ? limits.maxOutputBytes : 0) + " \u2014 the last " + fmtBytes(r.tail.length) + ":</div>" +
-      '<pre class="logs">' + esc(r.tail) + "</pre>";
+    head.push(
+      h("div", { class: "note" },
+        "Output capped at " + fmtBytes(limits ? limits.maxOutputBytes : 0) + " \u2014 the last " + fmtBytes(r.tail.length) + ":"),
+      h("pre", { class: "logs" }, r.tail));
   }
-  return html;
+  return frag(head);
 }
 
 function findRun(id: number): ApiRemoteRunRow | null {
@@ -189,7 +199,7 @@ function isLiveRun(id: number): boolean {
 function repaintBody(id: number): void {
   const r = findRun(id);
   const node = document.querySelector('#pane .call[data-rrun="' + id + '"] .call-body');
-  if (r && node) node.innerHTML = bodyHtml(r, isLiveRun(id));
+  if (r && node) fill(node as HTMLElement, bodyNode(r, isLiveRun(id)));
 }
 
 /** One recorded run's output, from the cursor the previous read ended on (128 KB a read). */
@@ -265,32 +275,22 @@ function render(): void {
   painted = signature();
   const kept = usage.runs + " run" + (usage.runs === 1 ? "" : "s") + " recorded \u00b7 " + fmtBytes(usage.bytes) +
     (limits ? " of " + fmtBytes(limits.maxTotalBytes) + " \u00b7 kept " + Math.round(limits.maxAgeMs / 86400000) + " days" : "");
-  const options = '<option value="">All targets</option>' + targetIds.map((id) => {
-    return '<option value="' + esc(id) + '"' + (id === target ? " selected" : "") + ">" + esc(id) + "</option>";
-  }).join("");
-  const head =
-    '<div class="wide">' +
-      '<div class="pane-head"><div>' +
-        '<div class="pane-desc">Every command, sync and pull run on a remote target, with its output - as the CLI (swiss remote \u2026) and the remote MCP tools ran it.</div>' +
-        '<div class="pane-sub">' + esc(kept) + "</div>" +
-      "</div>" +
-      '<div class="pane-actions">' +
-        '<button class="btn" id="rrClear"' + (usage.runs ? "" : " disabled") + ">Clear</button>" +
-      "</div></div>" +
-      '<div class="sec-head"><span class="sec-cap">Runs</span>' +
-        '<select id="rrTarget" aria-label="Filter by target">' + options + "</select>" +
-      "</div>" +
-      '<div id="rrList"></div>' +
-    "</div>";
-  $("pane").innerHTML = head;
+  const options = [h("option", { value: "" }, "All targets")].concat(targetIds.map((id) => {
+    return h("option", { value: id, selected: id === target }, id);
+  }));
+  fill($("pane"),
+    h("div", { class: "wide" },
+      h("div", { class: "pane-head" },
+        h("div", null,
+          h("div", { class: "pane-desc" }, "Every command, sync and pull run on a remote target, with its output - as the CLI (swiss remote \u2026) and the remote MCP tools ran it."),
+          h("div", { class: "pane-sub" }, kept)),
+        h("div", { class: "pane-actions" },
+          h("button", { class: "btn", id: "rrClear", disabled: !usage.runs }, "Clear"))),
+      h("div", { class: "sec-head" },
+        h("span", { class: "sec-cap" }, "Runs"),
+        h("select", { id: "rrTarget", aria: { label: "Filter by target" } }, options)),
+      h("div", { id: "rrList" })));
   paintList();
-  const sel = $<HTMLSelectElement>("rrTarget");
-  if (sel) sel.onchange = () => {
-    target = sel.value;
-    cursors = [null];
-    page = 0;
-    void refresh();
-  };
   $("countChip").textContent = usage.runs ? usage.runs + " run" + (usage.runs === 1 ? "" : "s") : "";
 }
 
@@ -298,23 +298,29 @@ function paintList(): void {
   const region = $("rrList");
   if (!region) return;
   if (!active.length && !runs.length) {
-    region.innerHTML = page || target
-      ? '<div class="group"><div class="row"><span class="rowmsg">' + (page ? "Nothing on this page." : "No runs on this target yet.") + "</span></div></div>"
-      : emptyHtml({ icon: "history", title: "No runs yet", hint: "Run something on a target - swiss remote exec, or the remote MCP tools - and it is recorded here with its output." });
-    if (page) region.innerHTML += pagerHtml();
+    fill(region,
+      page || target
+        ? h("div", { class: "group" }, h("div", { class: "row" },
+            h("span", { class: "rowmsg" }, page ? "Nothing on this page." : "No runs on this target yet.")))
+        : emptyNode({ icon: "history", title: "No runs yet", hint: "Run something on a target - swiss remote exec, or the remote MCP tools - and it is recorded here with its output." }),
+      page ? pagerNode() : null);
     return;
   }
-  const rows = active.map((r) => { return row(r, true); }).join("") + runs.map((r) => { return row(r, false); }).join("");
-  region.innerHTML = '<div class="group">' + rows + "</div>" + pagerHtml();
+  fill(region,
+    h("div", { class: "group" },
+      active.map((r) => { return rowNode(r, true); }),
+      runs.map((r) => { return rowNode(r, false); })),
+    pagerNode());
 }
 
 // Newer/Older, the Traffic pager's shape: Newer always means toward the top of a
 // newest-first list.
-function pagerHtml(): string {
-  if (!page && !nextBefore) return "";
-  return '<div class="pager"><button class="btn" id="rrPrev"' + (page > 0 ? "" : " disabled") + ">Newer</button>" +
-    "<span>Page " + (page + 1) + "</span>" +
-    '<button class="btn" id="rrNext"' + (nextBefore ? "" : " disabled") + ">Older</button></div>";
+function pagerNode(): HChild {
+  if (!page && !nextBefore) return null;
+  return h("div", { class: "pager" },
+    h("button", { class: "btn", id: "rrPrev", disabled: page <= 0 }, "Newer"),
+    h("span", null, "Page " + (page + 1)),
+    h("button", { class: "btn", id: "rrNext", disabled: !nextBefore }, "Older"));
 }
 
 async function step(delta: number): Promise<void> {
@@ -343,6 +349,16 @@ export async function mount() {
     if (targetEl(event)?.closest("#rrClear")) { void clearAll(); return; }
     if (targetEl(event)?.closest("#rrPrev")) { void step(-1); return; }
     if (targetEl(event)?.closest("#rrNext")) { void step(1); }
+  };
+  // The target filter select - ONE delegated change listener instead of a per-render
+  // assignment (docs/37 R5); the value is read at event time.
+  $("pane").onchange = (event: Event): void => {
+    const sel = targetEl(event)?.closest<HTMLSelectElement>("#rrTarget");
+    if (!sel) return;
+    target = sel.value;
+    cursors = [null];
+    page = 0;
+    void refresh();
   };
 }
 
