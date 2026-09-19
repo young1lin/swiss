@@ -203,12 +203,12 @@ describe("docs/28 D2: the verb is disable, the word is disabled", () => {
   it("the header subtitle and the overflow menu use the operator's word", () => {
     const stopped = { ...ROW, lifecycle: "stopped", state: "stopped" };
     expect(pane.headSubtitle(stopped as never)).toContain("disabled");
-    const html = pane.menuHtml(stopped as never);
-    expect(html).toContain(">Enable</button>");
-    expect(html).toContain('data-act="start"');
-    const startedHtml = pane.menuHtml({ ...ROW } as never);
-    expect(startedHtml).toContain(">Disable</button>");
-    expect(startedHtml).toContain('data-act="stop"');
+    const menu = pane.menuNode(stopped as never);
+    expect(menu.innerHTML).toContain(">Enable</button>");
+    expect(menu.innerHTML).toContain('data-act="start"');
+    const startedMenu = pane.menuNode({ ...ROW } as never);
+    expect(startedMenu.innerHTML).toContain(">Disable</button>");
+    expect(startedMenu.innerHTML).toContain('data-act="stop"');
   });
 });
 

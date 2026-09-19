@@ -28,13 +28,31 @@ import { lastActionOf, mcpDetail, resetMcpState, setMcpDetail, setMcpGroups, set
    auto-creating getElementById (modules like add-sheet.js wire #addBtn at import time), a
    fetch queue, and fake timers for the 3s poll. */
 
-class FakeNode {
+const NodeStub = class {};
+(globalThis as unknown as Record<string, unknown>).Node = NodeStub;
+
+/* docs/37 R5 stage 3: renderPane paints the pane with fill() and assigns ONE delegated click
+   on #pane, so the stub records children (an innerHTML read serialises them) and the header
+   assertions keep seeing the built tree. */
+function serialize(node: FakeNode): string {
+  const raw = node as unknown as { text?: string };
+  if (!node.tag || raw.text != null) return String(raw.text ?? "");
+  const attrs = Object.keys(node.attrs).map((k) => { return " " + k + "=\"" + node.attrs[k] + "\""; }).join("");
+  const id = node.id ? " id=\"" + node.id + "\"" : "";
+  const cls = node.className ? " class=\"" + node.className + "\"" : "";
+  const dis = node.disabled ? " disabled" : "";
+  const inner = node.children.map((c) => { return serialize(c); }).join("");
+  return "<" + node.tag.toLowerCase() + id + attrs + cls + dis + ">" + inner + "</" + node.tag.toLowerCase() + ">";
+}
+class FakeNode extends NodeStub {
   tag: string;
   attrs: Record<string, string> = {};
   dataset: Record<string, string> = {};
   className = "";
   textContent = "";
-  innerHTML = "";
+  _html = "";
+  get innerHTML(): string { return this._html || serialize(this); }
+  set innerHTML(v: string) { this._html = v; this.children = []; }
   id = "";
   type = "button";
   checked = false;
@@ -42,8 +60,10 @@ class FakeNode {
   hidden = false;
   disabled = false;
   style: Record<string, string> = {};
+  children: FakeNode[] = [];
   onclick: ((ev?: unknown) => void) | null = null;
   constructor(tag: string) {
+    super();
     this.tag = tag.toUpperCase();
   }
   setAttribute(k: string, v: string) {
@@ -55,9 +75,11 @@ class FakeNode {
   }
   querySelector() { return null; }
   querySelectorAll() { return []; }
+  // targetEl() ducks on closest (docs/37 M3): without it the delegated pane click no-ops.
+  closest(): FakeNode | null { return null; }
   contains() { return false; }
-  appendChild(n: FakeNode) { return n; }
-  append(...nodes: FakeNode[]) { return nodes; }
+  appendChild(n: FakeNode) { this.children.push(n); return n; }
+  append(...nodes: FakeNode[]) { nodes.forEach((n) => { this.appendChild(n); }); }
   removeChild(n: FakeNode) { return n; }
   remove() {}
   addEventListener() {}
@@ -84,13 +106,24 @@ const doc = {
 };
 const windowOpen = vi.fn();
 
+/** Depth-first walk of the built tree (docs/37 R5): painted nodes are not registered in the
+ *  byId map unless something resolves them by id, so tests locate them structurally. */
+function findInTree(node: FakeNode, pred: (n: FakeNode) => boolean): FakeNode | null {
+  if (pred(node)) return node;
+  const kids = (node as unknown as { children?: FakeNode[] }).children || [];
+  for (const c of kids) {
+    const hit = findInTree(c, pred);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 let fields: typeof import("../src/fields.js");
 let pane: typeof import("../src/pane.js");
 let detail: typeof import("../src/detail.js");
 let util: typeof import("../src/util.js");
 
 beforeAll(async () => {
-  (globalThis as unknown as Record<string, unknown>).Node = class {};
   (globalThis as unknown as Record<string, unknown>).document = doc;
   (globalThis as unknown as Record<string, unknown>).window = { open: windowOpen, addEventListener() {} };
   fields = await import("../src/fields.js");
@@ -278,7 +311,11 @@ describe("the pane header authorize button (docs/24 D5)", () => {
       return { ok: true, status: 200, json: async () => ({ status: "starting" }) } as never;
     };
     pane.renderPane();
-    byId.get("oauthBtn")!.onclick!();
+    // The delegated pane click (docs/37 R5): the button carries no handler of its own and is
+    // never resolved by id through the document stub - find it in the built tree.
+    const btn = findInTree(byId.get("pane")!, (n) => { return n.id === "oauthBtn"; })!;
+    expect(typeof byId.get("pane")!.onclick).toBe("function");
+    byId.get("pane")!.onclick!({ target: btn });
     // The POST fires before the first poll; the flow path is name-keyed. Real timers here, so
     // two microtask/setTimeout rounds are enough for the mocked fetch to settle.
     await new Promise((r) => setTimeout(r, 0));

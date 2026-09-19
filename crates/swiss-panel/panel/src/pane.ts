@@ -17,11 +17,12 @@
 import type { ApiMcpRow } from "./types/api.js";
 import type { PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
-import { $, KINDS, emptyHtml, esc, icon } from "./util.js";
+import { $, KINDS, emptyHtml, iconNode, targetEl } from "./util.js";
+import { fill, h } from "./h.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
 import { act, authorizeMcp, removeMcp, renameMcp, showTab, startEdit } from "./detail.js";
-import { wireTabBody } from "./run-history.js";
+import { afterTabPaint, paneTabChange, paneTabClick, paneTabInput, paneTabKeydown } from "./run-history.js";
 import { assignGroup, groupOf, rowOf, saveGroups } from "./sidebar.js";
 import { currentView, menuIsOpen, setMenuOpen } from "./ui-state.js";
 import { lastActionOf, mcpBusyVerb, mcpDetail, mcpGroups, mcpRows } from "./mcp-state.js";
@@ -48,7 +49,7 @@ function patchDetailHead(): void {
     const started = m.lifecycle === "started";
     primary.textContent = busyVerb ? "…" : (started ? "Disable" : "Enable");
     primary.disabled = !!busyVerb;
-    primary.onclick = () => { void act(d?.name, started ? "stop" : "start"); };
+    // No onclick here (docs/37 R5): #pane's delegated click derives the verb from live state.
   }
 }
 
@@ -91,46 +92,46 @@ function renderPane(): void {
 
   // The title is the MCP's identity, so it is set in the sans face. The mount path is a value you
   // copy, so it keeps the monospace one — down in the status line, where it costs nothing.
-  const head =
-    '<div class="pane-head">' +
-      "<div>" +
-        '<h1 class="pane-title">' + esc(d.name) + "</h1>" +
-        (m.description ? '<div class="pane-desc">' + esc(m.description) + "</div>" : "") +
-        '<div class="pane-sub"><span class="dot ' + esc(busyVerb ? "starting" : m.state) + '"></span>' +
-          '<span class="sub-path">/mcp/' + esc(d.name) + "</span>" +
-          '<span class="sub-text">' + esc(headSubtitle(m)) + "</span></div>" +
-      "</div>" +
-      '<div class="pane-actions">' +
-        // OAuth MCPs get their authorize action in the header (docs/24 D5) — it is the one
-        // action this MCP cannot live without until it runs, and Reauthorize is the anytime
-        // re-consent path after a revoked grant. Disabled while a flow this panel started is
-        // still polling.
-        (d.config && (d.config.auth === "oauth" || d.config.type === "figma")
-          ? '<button class="btn" id="oauthBtn"' + (d.oauthBusy ? " disabled" : "") + ">" +
-            (m.oauth === "authorized" ? "Reauthorize" : "Authorize") + "</button>"
-          : "") +
-        // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
-        // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
-        // docs/28 D2: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
-        // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
-        '<button class="btn' + (started ? "" : " primary") + '" id="primaryBtn"' + (busyVerb ? " disabled" : "") + ">" +
-          (busyVerb ? "…" : started ? "Disable" : "Enable") + "</button>" +
-        '<button class="btn icon" id="menuBtn" aria-label="More actions" title="More actions">' + icon("ellipsis") + "</button>" +
-      "</div>" +
-    "</div>";
+  //
+  // The head is BUILT (docs/37 R5): the MCP's name, description and status line are text nodes,
+  // so a name with markup in it is a name, not a payload.
+  const head = h("div", { class: "pane-head" },
+    h("div", null,
+      h("h1", { class: "pane-title" }, d.name),
+      m.description ? h("div", { class: "pane-desc" }, m.description) : null,
+      h("div", { class: "pane-sub" },
+        h("span", { class: "dot " + (busyVerb ? "starting" : m.state) }),
+        h("span", { class: "sub-path" }, "/mcp/" + d.name),
+        h("span", { class: "sub-text" }, headSubtitle(m)))),
+    h("div", { class: "pane-actions" },
+      // OAuth MCPs get their authorize action in the header (docs/24 D5) — it is the one
+      // action this MCP cannot live without until it runs, and Reauthorize is the anytime
+      // re-consent path after a revoked grant. Disabled while a flow this panel started is
+      // still polling.
+      d.config && (d.config.auth === "oauth" || d.config.type === "figma")
+        ? h("button", { class: "btn", id: "oauthBtn", disabled: !!d.oauthBusy },
+            m.oauth === "authorized" ? "Reauthorize" : "Authorize")
+        : null,
+      // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
+      // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
+      // docs/28 D2: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
+      // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
+      h("button", { class: "btn" + (started ? "" : " primary"), id: "primaryBtn", disabled: !!busyVerb },
+        busyVerb ? "…" : started ? "Disable" : "Enable"),
+      h("button", { class: "btn icon", id: "menuBtn", aria: { label: "More actions" }, title: "More actions" },
+        iconNode("ellipsis"))));
 
   const tabs = KINDS.concat(["run", "config", "logs"]);
-  const seg = '<div class="seg" role="tablist">' + tabs.map((t) => {
-    const d_ = d!;
-    const kd = KINDS.indexOf(t) >= 0 ? d_[t as "tools" | "resources" | "prompts"] : null;
-    const count = kd && kd.loaded ? '<span class="seg-n">' + (kd.total != null ? kd.total : kd.items.length) + "</span>" : "";
-    const label = t.charAt(0).toUpperCase() + t.slice(1);
-    return '<button role="tab" data-tab="' + t + '" aria-selected="' + (d_.tab === t ? "true" : "false") + '">' + label + count + "</button>";
-  }).join("") + "</div>";
+  const seg = h("div", { class: "seg", role: "tablist" }, tabs.map((t) => {
+    const kd = KINDS.indexOf(t) >= 0 ? d[t as "tools" | "resources" | "prompts"] : null;
+    const count = kd && kd.loaded
+      ? h("span", { class: "seg-n" }, String(kd.total != null ? kd.total : kd.items.length))
+      : null;
+    return h("button", { role: "tab", data: { tab: t }, aria: { selected: d.tab === t ? "true" : "false" } },
+      t.charAt(0).toUpperCase() + t.slice(1), count);
+  }));
 
-  const reason = m.reason ? '<div class="note err">' + esc(m.reason) + "</div>" : "";
   const la = lastActionOf(d.name);
-  const actionNote = la ? '<div class="note' + (la.err ? " err" : "") + '">' + esc(la.at + " · " + la.msg) + "</div>" : "";
 
   // One column holds the lot — header, tab bar, body, notes — so the measure is applied once and
   // they all share a left edge. Capping each of them individually looked identical until the pane
@@ -143,22 +144,98 @@ function renderPane(): void {
   // whole page ~220px sideways and back. Changing tabs must not resize the page. The log rows lose
   // nothing structural at the standard measure — .call-arg is a truncating preview, so it just
   // ellipsises earlier, and the full request and reply are one click away in the expanded row.
-  pane.innerHTML = '<div class="col">' + head + seg +
-    '<div id="tabbody">' + tabBody(d, m) + "</div>" + reason + actionNote + "</div>";
+  fill(pane, h("div", { class: "col" },
+    head,
+    seg,
+    h("div", { id: "tabbody" }, tabBody(d, m)),
+    m.reason ? h("div", { class: "note err" }, m.reason) : null,
+    la ? h("div", { class: "note" + (la.err ? " err" : "") }, la.at + " · " + la.msg) : null));
 
-  // Wire up (no inline handlers — names can contain characters that break string-built onclicks).
-  $("primaryBtn").onclick = () => { void act(d?.name, started ? "stop" : "start"); };
-  const oauthBtn = $("oauthBtn");
-  if (oauthBtn) oauthBtn.onclick = () => { void authorizeMcp(d?.name); };
-  $("menuBtn").onclick = (ev) => { ev.stopPropagation(); toggleMenu(d!, m); };
-  pane.querySelectorAll<HTMLButtonElement>(".seg button").forEach((b) => {
-    b.onclick = () => { showTab(b.dataset.tab!); };
-  });
-  const d_ = d!;
-  wireTabBody(d_);
+  // Wire up — ONE delegated claim per event type on the pane (docs/37 R5), assigned (not
+  // addEventListener) so a repaint re-assigns the same property instead of stacking listeners.
+  // The chrome dispatch lives here; everything inside #tabbody is answered by run-history's
+  // dispatchers, which read live state at event time.
+  pane.onclick = (ev: MouseEvent): void => {
+    if (paneChromeClick(ev)) return;
+    paneTabClick(ev);
+  };
+  pane.oninput = paneTabInput;
+  pane.onchange = paneTabChange;
+  pane.onkeydown = paneTabKeydown;
+  afterTabPaint(d);
   // A late tools/list response re-renders the pane; without this the ... menu you opened a moment
   // ago would just disappear. The menu is state, so it is restored like any other.
-  if (menuWasOpen) openMenu(d_, m);
+  if (menuWasOpen) openMenu(d, m);
+}
+
+/** The pane's own chrome, one click at a time (docs/37 R5): header buttons, the tab bar, the
+ *  empty state's action, and the ... menu (wireMenu retired — the menu rides #pane's listener
+ *  like everything else). Returns true when the click was chrome and run-history's tab-body
+ *  dispatch must not see it.
+ *
+ *  Behavior note (docs/37 §10.1): the primary button and the menu's Enable/Disable verb are
+ *  derived from the LIVE row at click time, not from the object renderPane closed over — a
+ *  6 s poll that replaced mcpRows() between render and click can no longer fire Stop at a row
+ *  that already stopped (patchDetailHead patched the label; the closure kept the old verb). */
+function paneChromeClick(ev: MouseEvent): boolean {
+  const t = targetEl(ev);
+  if (!t) return false;
+  // The ... menu is inside #pane — its buttons arrive here first.
+  const pick = t.closest<HTMLElement>(".menu [data-grp]");
+  if (pick) {
+    const d = mcpDetail();
+    if (d) void assignGroup(d.name, String(pick.dataset.grp)); // every name in the menu is a real group now
+    return true;
+  }
+  const mBtn = t.closest<HTMLElement>(".menu [data-act]");
+  if (mBtn) {
+    const d = mcpDetail();
+    if (d) menuAct(d, String(mBtn.dataset.act));
+    return true;
+  }
+  const d = mcpDetail();
+  if (t.id === "menuBtn" && d) {
+    ev.stopPropagation();
+    toggleMenu(d, rowOf(d.name) || { name: d.name, state: "unknown", type: "?", source: "?", lifecycle: "stopped" });
+    return true;
+  }
+  if (t.id === "primaryBtn" && d) {
+    const row = rowOf(d.name);
+    const started = row ? row.lifecycle === "started" : false;
+    void act(d.name, started ? "stop" : "start");
+    return true;
+  }
+  if (t.id === "oauthBtn" && d) { void authorizeMcp(d.name); return true; }
+  const seg = t.closest<HTMLElement>(".seg button");
+  if (seg) { showTab(seg.dataset.tab!); return true; }
+  const emptyAction = t.closest<HTMLElement>("[data-empty-action]");
+  if (emptyAction) { openSheet(null); return true; }
+  return false;
+}
+
+/** The ... menu's actions. The menu closes first, exactly as wireMenu did, so the action runs on
+ *  a pane without the overlay (edit swaps the tab body; new-group opens a sheet over it). */
+function menuAct(d: McpDetail, a: string): void {
+  closeMenu();
+  if (a === "new-group") {
+    // Make the group, then put this MCP straight into it — otherwise "New group…" from an MCP's
+    // own menu would create an empty group and leave the MCP where it was.
+    openGroupSheet(null, async (name: string) => {
+      if (!await saveGroups(mcpGroups().concat([name]))) return false;
+      void assignGroup(d.name, name);
+      return true;
+    });
+    return;
+  }
+  if (a === "restart") void act(d.name, "restart");
+  else if (a === "stop" || a === "start") void act(d.name, a); // docs/28 D3: Disable/Enable beside Restart
+  else if (a === "rename") void renameMcp(d.name);
+  else if (a === "delete") void removeMcp(d.name);
+  else if (a === "edit") { d.tab = "config"; startEdit(); }
+  else if (a === "cp-url") void copyText(endpointUrl(d.name), "Endpoint URL");
+  else if (a === "cp-claude") void copyConn(d.name, "claude");
+  else if (a === "cp-codex") void copyConn(d.name, "codex");
+  else if (a === "cp-json") void copyConn(d.name, "json");
 }
 
 /** The overflow menu is attached and removed on its own, without re-rendering the pane — otherwise
@@ -178,9 +255,10 @@ function openMenu(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): void {
   // change (which group the MCP is in, and whether it is config-sourced), and with a stale object
   // the group tick stayed on whatever it was when the pane was last rendered.
   const live = rowOf(d.name) || m;
-  host.insertAdjacentHTML("beforeend", menuHtml(live));
+  host.append(menuNode(live));
   setMenuOpen(true);
-  wireMenu(d);
+  // No per-menu wiring (docs/37 R5): the menu lives inside #pane, so its buttons answer
+  // through paneChromeClick like every other click in the pane.
 }
 function closeMenu(): void {
   const node = $("menu");
@@ -191,63 +269,32 @@ function closeMenu(): void {
 
 /** Grouped like a macOS menu: connect, then which group it is in, then manage, then the destructive
  *  one on its own. The group section is a pick list with a tick, not a submenu — a submenu built from
- *  a string is more machinery than four lines of choices are worth. */
-function menuHtml(m: ApiMcpRow | PhantomMcpRow): string {
+ *  a string is more machinery than four lines of choices are worth. Built as nodes (docs/37 R5):
+ *  group names are text, and the buttons carry data-grp/data-act for #pane's delegated click. */
+function menuNode(m: ApiMcpRow | PhantomMcpRow): HTMLElement {
   const current = groupOf(m);
   // The server's list is complete (default included) and already in sidebar order.
   const picks = mcpGroups().map((g) => {
-    return '<button class="pick' + (g === current ? " on" : "") + '" data-grp="' + esc(g) + '">' + esc(g) + "</button>";
-  }).join("");
-  return '<div class="menu" id="menu">' +
-    '<div class="menu-cap">Connect a client</div>' +
-    '<button data-act="cp-claude">Copy Claude Code command</button>' +
-    '<button data-act="cp-codex">Copy Codex command</button>' +
-    '<button data-act="cp-json">Copy .mcp.json entry</button>' +
-    '<button data-act="cp-url">Copy endpoint URL</button>' +
-    "<hr>" +
-    '<div class="menu-cap">Group</div>' +
-    picks +
-    '<button data-act="new-group">New group…</button>' +
-    "<hr>" +
-    '<button data-act="' + (m.lifecycle === "started" ? "stop" : "start") + '">' +
-      (m.lifecycle === "started" ? "Disable" : "Enable") + "</button>" +
-    '<button data-act="restart">Restart</button>' +
-    '<button data-act="edit">Edit configuration…</button>' +
-    '<button data-act="rename">Rename…</button>' +
-    '<hr><button class="danger" data-act="delete">Delete</button>' +
-    "</div>";
-}
-function wireMenu(d: McpDetail): void {
-  $("menu").querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
-    b.onclick = (ev) => {
-      ev.stopPropagation();
-      closeMenu();
-      if (b.dataset.grp !== undefined) {
-        void assignGroup(d.name, b.dataset.grp); // every name in the menu is a real group now
-        return;
-      }
-      const a = b.dataset.act as string;
-      if (a === "new-group") {
-        // Make the group, then put this MCP straight into it — otherwise "New group…" from an MCP's
-        // own menu would create an empty group and leave the MCP where it was.
-        openGroupSheet(null, async (name: string) => {
-          if (!await saveGroups(mcpGroups().concat([name]))) return false;
-          void assignGroup(d.name, name);
-          return true;
-        });
-        return;
-      }
-      if (a === "restart") void act(d.name, "restart");
-      else if (a === "stop" || a === "start") void act(d.name, a); // docs/28 D3: Disable/Enable beside Restart
-      else if (a === "rename") void renameMcp(d.name);
-      else if (a === "delete") void removeMcp(d.name);
-      else if (a === "edit") { d.tab = "config"; startEdit(); }
-      else if (a === "cp-url") void copyText(endpointUrl(d.name), "Endpoint URL");
-      else if (a === "cp-claude") void copyConn(d.name, "claude");
-      else if (a === "cp-codex") void copyConn(d.name, "codex");
-      else if (a === "cp-json") void copyConn(d.name, "json");
-    };
+    return h("button", { class: "pick" + (g === current ? " on" : ""), data: { grp: g } }, g);
   });
+  return h("div", { class: "menu", id: "menu" },
+    h("div", { class: "menu-cap" }, "Connect a client"),
+    h("button", { data: { act: "cp-claude" } }, "Copy Claude Code command"),
+    h("button", { data: { act: "cp-codex" } }, "Copy Codex command"),
+    h("button", { data: { act: "cp-json" } }, "Copy .mcp.json entry"),
+    h("button", { data: { act: "cp-url" } }, "Copy endpoint URL"),
+    h("hr"),
+    h("div", { class: "menu-cap" }, "Group"),
+    picks,
+    h("button", { data: { act: "new-group" } }, "New group…"),
+    h("hr"),
+    h("button", { data: { act: m.lifecycle === "started" ? "stop" : "start" } },
+      m.lifecycle === "started" ? "Disable" : "Enable"),
+    h("button", { data: { act: "restart" } }, "Restart"),
+    h("button", { data: { act: "edit" } }, "Edit configuration…"),
+    h("button", { data: { act: "rename" } }, "Rename…"),
+    h("hr"),
+    h("button", { class: "danger", data: { act: "delete" } }, "Delete"));
 }
 
-export { closeMenu, headSubtitle, menuHtml, openMenu, paneHasFocus, patchDetailHead, renderPane, toggleMenu, wireMenu };
+export { closeMenu, headSubtitle, menuNode, openMenu, paneHasFocus, patchDetailHead, renderPane, toggleMenu };
