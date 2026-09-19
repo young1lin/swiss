@@ -14,22 +14,23 @@
  * limitations under the License.
  */
 
-import { KINDS, state } from "../util.js";
+import { KINDS } from "../util.js";
 import { loadList, mcpChipText } from "../polling.js";
 import { loadCalls, loadMeta, loadPage, pageState } from "../detail.js";
 import { renderPane } from "../pane.js";
 import { histClose } from "../run-history.js";
+import { mcpDetail } from "../mcp-state.js";
 export async function mount() { await loadList(); renderPane(); }
 export async function poll() {
   await loadList();
-  const d = state.detail;
+  const d = mcpDetail();
   // docs/32 B3: only page 0 is live — an offset page is a reading position a poll must not
   // drift, and a switch in flight owns the tab until it commits.
   if (d && d.tab === "logs" && d.callsPage === 0 && d.callsPendingPage == null) await loadCalls(d.name, true);
 }
 export async function refresh() {
   await poll();
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   await loadMeta(d.name);
   if (KINDS.indexOf(d.tab) >= 0) { d[d.tab] = pageState(); await loadPage(d.name, d.tab); }

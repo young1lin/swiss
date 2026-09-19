@@ -37,7 +37,11 @@ export interface ApiMemoryInfo {
   heapTotalMb: number;
   externalMb: number;
   processCount: number;
-  childrenPending: number;
+  /* A BOOLEAN on the wire: swiss-host's mem.rs writes json!(true) / json!(false) for "the
+   * child walk could not measure them". R3 typed it `number` and nothing caught it, because
+   * the only reader is a truthy test and the only fixture lived in a test that reached the
+   * value through an `any` — which R4's last slice closed. */
+  childrenPending: boolean;
   at: string;
   childrenMb?: number;
   measuredAt?: string;

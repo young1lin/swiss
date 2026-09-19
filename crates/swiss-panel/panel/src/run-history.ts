@@ -18,7 +18,7 @@ import type { ApiMcpCallRow, ApiMcpTool } from "./types/api.js";
 import type { PgUrlParts } from "./types/dom.js";
 import type { ApiMcpResourceRead, McpConfigLike, McpRevisionRow, McpRunResult, McpTunnelDepRow } from "./types/runs.js";
 import type { McpDetail } from "./types/state.js";
-import { $, api, apiJson, errText, esc, icon, state, toast } from "./util.js";
+import { $, api, apiJson, errText, esc, icon, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
@@ -29,6 +29,7 @@ import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
 import { ago } from "./traffic.js";
 import { menuIsOpen } from "./ui-state.js";
+import { mcpDetail, selectedMcp } from "./mcp-state.js";
 
 /* --- Run history: the refill control in the actions row ------------------------------------------ */
 /** When an entry ran. Reuses ago() inside a day; past that, ago's time-of-day would be ambiguous,
@@ -92,12 +93,12 @@ function histViewHtml(c: ApiMcpCallRow): string {
 /** Open/close the popover. Opening does not steal focus from the form — the rows are reachable
  *  with the mouse, or with Tab once the control itself has focus. */
 function histToggle(): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.tab !== "run" || !d.run.tool) return;
   d.run.histOpen ? histClose() : histOpen();
 }
 function histOpen(): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.tab !== "run" || !d.run.tool) return;
   histClose(); // a pane rebuild can leave a stray popover behind under the same id
   const btn = $<HTMLButtonElement>("r-hist");
@@ -145,7 +146,7 @@ function histClose(): void {
   histSearchTimer = null;
   const pop = $("r-hist-pop");
   if (pop) pop.remove();
-  const d = state.detail;
+  const d = mcpDetail();
   if (d && d.run) {
     d.run.histOpen = false;
     d.run.histSelSeq = null;
@@ -172,7 +173,7 @@ function queueHistSearch(d: McpDetail): void {
   d.run.histQ = box ? box.value.trim() : "";
   window.clearTimeout(histSearchTimer!);
   histSearchTimer = window.setTimeout(() => {
-    if (state.detail !== d || !d.run.histOpen) return;
+    if (mcpDetail() !== d || !d.run.histOpen) return;
     d.run.histTool = null; // the loaded list answers the old query — force the refetch
     void loadRunHistory(d.name, d.run.tool);
   }, 200);
@@ -181,7 +182,7 @@ function queueHistSearch(d: McpDetail): void {
 /** Hover/focus a row: show that run in full in the right pane. Entries are cached by seq, and the
  *  seq guard drops a reply that lost the race to a newer hover. */
 async function histPreview(seq: number): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   const view = $("r-hist-view");
   if (!d || d.tab !== "run" || !d.run.histOpen || !view) return;
   d.run.histSelSeq = seq;
@@ -192,7 +193,7 @@ async function histPreview(seq: number): Promise<void> {
       const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
       if (!r.ok) throw new Error("HTTP " + r.status);
       const j = await r.json();
-      if (!j.call || state.detail !== d) return;
+      if (!j.call || mcpDetail() !== d) return;
       full = d.run.histFull[seq] = j.call;
     } catch (e) {
       if (d.run.histSelSeq === seq) view.innerHTML = '<div class="hist-empty">could not load that run</div>';
@@ -208,7 +209,7 @@ async function histPreview(seq: number): Promise<void> {
  *  re-wires the tab does not refetch. Set d.run.histTool = null first to force a refresh (right
  *  after a run, or on each debounced keystroke in the filter). */
 async function loadRunHistory(name: string, tool: string | null): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.name !== name || d.run.histTool === tool || d.run.histLoading) return;
   d.run.histLoading = true;
   const q = d.run.histQ || "";
@@ -219,7 +220,7 @@ async function loadRunHistory(name: string, tool: string | null): Promise<void> 
       const j = await r.json();
       // A revisit built a new detail object, or the query moved on (a newer keystroke, or the close
       // that reset it) — a stale reply would narrow the list to something nobody asked for. Drop it.
-      if (state.detail === d && d.run.histQ === q) {
+      if (mcpDetail() === d && d.run.histQ === q) {
         d.run.hist = j.entries || [];
         d.run.histTool = tool;
         renderHistoryOnly();
@@ -232,7 +233,7 @@ async function loadRunHistory(name: string, tool: string | null): Promise<void> 
     // and that query's own call was turned away while this one held the loading slot — run it now
     // rather than leave the list answering the old q. Not gated on the popover: a close-during-fetch
     // must still heal the closed label, which would otherwise sit at "Past runs…" forever.
-    if (state.detail === d && d.run.histQ !== q && !d.run.histTool) {
+    if (mcpDetail() === d && d.run.histQ !== q && !d.run.histTool) {
       void loadRunHistory(d.name, d.run.tool);
     }
   }
@@ -241,7 +242,7 @@ async function loadRunHistory(name: string, tool: string | null): Promise<void> 
 /** Repaint only the control's label and (if open) the popover's rows, never the form around it —
  *  the same discipline as renderRunResult, so the SQL being edited survives a post-run refresh. */
 function renderHistoryOnly(): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.tab !== "run" || !d.run.tool) return;
   const btn = $<HTMLButtonElement>("r-hist");
   if (btn) {
@@ -261,7 +262,7 @@ function renderHistoryOnly(): void {
 
 /** A run was picked: fetch its full arguments by seq, then write them into the form. */
 async function applyRunHistory(seq: number): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || !d.run.tool) return;
   const tools = d.tools.items || [];
   let toolDef = null as ApiMcpTool | null;
@@ -320,7 +321,7 @@ function fillRunArgs(tool: ApiMcpTool, args: Record<string, unknown>): void {
 }
 
 async function runTool(): Promise<void> {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.run.running) return;
   const tools = d.tools.items || [];
   let toolDef = null as ApiMcpTool | null;
@@ -362,7 +363,7 @@ async function runTool(): Promise<void> {
 
 /** Update only the output and the meta line — never the form, so the SQL you typed survives a run. */
 function renderRunResult(): void {
-  const d = state.detail;
+  const d = mcpDetail();
   const running = !!(d && d.run.running);
   const btn = $<HTMLButtonElement>("runBtn");
   // Also called right after a pane rebuild, which may land mid-run — keep the button honest.
@@ -602,7 +603,7 @@ function wireTabBody(d: McpDetail): void {
     q.oninput = () => {
       clearTimeout(d.callsQTimer);
       d.callsQTimer = setTimeout(() => {
-        const nd = state.detail;
+        const nd = mcpDetail();
         if (!nd || nd.name !== d.name) return;
         // docs/32 B3: a new needle supersedes any switch in flight — target page 0, the
         // pending switch cancelled, its error taken down.
@@ -640,7 +641,7 @@ function wireTabBody(d: McpDetail): void {
   // a truncated preview or a highlighted render still copies the full pretty payload.
   document.querySelectorAll<HTMLElement>("#tabbody [data-copy]").forEach((b) => {
     b.onclick = () => {
-      const nd = state.detail;
+      const nd = mcpDetail();
       if (!nd) return;
       const parts = String(b.dataset.copy || "").split(":");
       const seq = Number(parts[1]);
@@ -697,7 +698,7 @@ function wireTabBody(d: McpDetail): void {
 
 /** Jump from the Tools list into Run with that tool preselected. */
 function tryTool(name: string): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   d.run.tool = name;
   d.run.result = null;
@@ -707,25 +708,27 @@ function tryTool(name: string): void {
 /** Toggle all of an MCP's resources on/off. Live: the server answers an empty list while off and
  *  pushes notifications/resources/list_changed, so this just fires the change and reloads. */
 async function toggleResources(currentlyOn: boolean, btn: HTMLButtonElement): Promise<void> {
-  if (!state.selected) return;
+  const sel = selectedMcp();
+  if (!sel) return;
   btn.disabled = true;
-  const j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(state.selected) + "/resources-toggle", {
+  const j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(sel) + "/resources-toggle", {
     method: "POST",
     body: JSON.stringify({ enabled: !currentlyOn }),
   });
   btn.disabled = false;
   if (!j) return;
   if (j.unchanged) { toast("Already " + (currentlyOn ? "on" : "off")); return; }
-  const d = state.detail;
+  const d = mcpDetail();
   if (d) { d.resources.loaded = false; d.resources.cursors = []; void loadPage(d.name, "resources"); }
 }
 
 /** Toggle a tool on/off for clients. Live: the server filters the next tools/list and pushes
  *  notifications/tools/list_changed, so this just fires the change and reloads the list. */
 async function toggleTool(name: string, currentlyOn: boolean, btn: HTMLButtonElement): Promise<void> {
-  if (!state.selected) return;
+  const sel = selectedMcp();
+  if (!sel) return;
   btn.disabled = true;
-  const j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(state.selected) + "/tools/" + encodeURIComponent(name), {
+  const j = await apiJson<{ unchanged?: boolean }>("/api/mcps/" + encodeURIComponent(sel) + "/tools/" + encodeURIComponent(name), {
     method: "POST",
     body: JSON.stringify({ enabled: !currentlyOn }),
   });
@@ -733,16 +736,17 @@ async function toggleTool(name: string, currentlyOn: boolean, btn: HTMLButtonEle
   if (!j) return;
   if (j.unchanged) { toast("Already " + (currentlyOn ? "on" : "off")); return; }
   // Reload the tools page so the row moves between the enabled list and the disabled group.
-  const d = state.detail;
+  const d = mcpDetail();
   if (d) { d.tools.loaded = false; d.tools.cursors = []; void loadPage(d.name, "tools"); }
 }
 
 /** Read one resource and show its contents. Read-only, so a sheet with no form is the whole UI. */
 async function readResource(uri: string, btn: HTMLButtonElement | null): Promise<void> {
-  if (!state.selected) return;
+  const sel = selectedMcp();
+  if (!sel) return;
   const label = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "…"; }
-  const j = await apiJson<ApiMcpResourceRead>("/api/mcps/" + encodeURIComponent(state.selected) + "/resource", {
+  const j = await apiJson<ApiMcpResourceRead>("/api/mcps/" + encodeURIComponent(sel) + "/resource", {
     method: "POST",
     body: JSON.stringify({ uri: uri }),
   });
@@ -765,7 +769,7 @@ async function readResource(uri: string, btn: HTMLButtonElement | null): Promise
 /** Repaint only the Logs tab body, so a poll doesn't rebuild the pane (or the header, or the menu).
  *  Expanded rows survive because `callsOpen` is state, not DOM. */
 function renderCallsOnly(): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d || d.tab !== "logs") return;
   const body = $("tabbody");
   if (!body) return;

@@ -16,11 +16,12 @@
 
 import type { ApiMcpRow } from "./types/api.js";
 import type { MenuItem } from "./types/dom.js";
-import { $, dotTitle, state, typeTagHtml } from "./util.js";
+import { $, dotTitle, typeTagHtml } from "./util.js";
 import { closeMenu } from "./pane.js";
 import { groupedMcps, sideCfg, visibleMcps } from "./sidebar.js";
 import { mountGroup } from "./groups.js";
 import { currentView, draggingGroupName, draggingRow, foldMap, listFilter, setMenuOpen } from "./ui-state.js";
+import { mcpBusyVerb, mcpRows, selectedMcp } from "./mcp-state.js";
 
 /* --- a menu anchored to a button ---------------------------------------------------------------
    The pane's overflow menu anchors to .pane-actions; menus raised from the sidebar have no such
@@ -97,7 +98,7 @@ function clampMenuPos(anchor: { left: number; top: number; bottom: number }, w: 
 function tooltipOf(m: ApiMcpRow): string {
   // Idle is the one state word that names no behaviour of its own (docs/18 V6): a lazy proc
   // has no child yet and wakes on the first request — say that, so a hollow ring explains itself.
-  const stateWord = state.busy[m.name] ? state.busy[m.name] + "…"
+  const stateWord = mcpBusyVerb(m.name) ? mcpBusyVerb(m.name) + "…"
     : m.state === "idle" ? "idle — lazy: no child yet, wakes on the first request"
     : m.state === "stopped" ? "disabled"
     : m.state;
@@ -136,7 +137,7 @@ function patchSidebar(): void {
   rows.forEach((m) => {
     const node = list.querySelector<HTMLElement>('[data-name="' + (window.CSS && CSS.escape ? CSS.escape(m.name) : m.name) + '"]');
     if (!node) return;
-    const busyVerb = state.busy[m.name];
+    const busyVerb = mcpBusyVerb(m.name);
     const word = busyVerb ? "starting" : m.state;
     const dot = node.querySelector<HTMLElement>(".dot");
     if (dot) {
@@ -156,18 +157,18 @@ function patchSidebar(): void {
     if (tag) tagEl.setAttribute("data-tag", tag);
     else tagEl.removeAttribute("data-tag");
     node.title = tooltipOf(m);
-    node.setAttribute("aria-selected", state.selected === m.name ? "true" : "false");
+    node.setAttribute("aria-selected", selectedMcp() === m.name ? "true" : "false");
   });
 
   let up = 0, bad = 0;
-  state.mcps.forEach((m) => {
+  mcpRows().forEach((m) => {
     if (m.state === "up") up++;
     else if (m.state === "down" || m.state === "error") bad++;
   });
   // The chip belongs to whichever view is on screen; the tunnel and jobs views count their own
   // rows (updateCountChip owns those), so the MCP text must not overwrite them mid-poll.
   if (currentView() === "mcps") {
-    $("countChip").textContent = state.mcps.length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
+    $("countChip").textContent = mcpRows().length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
   }
   // Group headers name the sections now, so the standing "MCPS" caption is noise; it earns its line
   // only while a search is on, where the match count is the useful part.

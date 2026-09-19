@@ -17,22 +17,24 @@
                                                                                  
                                                     
                                                   
-import { TOKEN_ID_KEY, apiJson, state, targetEl, toast } from "./util.js";
+import { TOKEN_ID_KEY, apiJson, targetEl, toast } from "./util.js";
 import { kindBody, logsBody } from "./logs.js";
 import { closeMenu } from "./pane.js";
 import { configBody, histClose } from "./run-history.js";
 import { runBody } from "./run.js";
 import { activeTokenSecret, pickCopyToken, refreshTokens, rememberedTokenId, setActiveTokenSecret, tokenRows } from "./views/tokens.js";
 import { menuIsOpen } from "./ui-state.js";
+import { gatewayInfo, mcpDetail } from "./mcp-state.js";
 
 /* --- connecting a client ---------------------------------------------------------------------- */
 /**
  * Client configuration is built here, in the browser, from the endpoint URL and the live bearer
- * token (fetched once into state.token). Each copied command embeds the token, so paste = ready — no
- * separate step of exporting the token in whatever shell the command lands in.
+ * token (fetched once into views/tokens.ts' activeTokenSecret). Each copied command embeds the
+ * token, so paste = ready — no separate step of exporting the token in whatever shell the command
+ * lands in.
  */
 function tokenEnv()         {
-  return (state.info && state.info.tokenEnv) || "SWISS_TOKEN";
+  return gatewayInfo()?.tokenEnv || "SWISS_TOKEN";
 }
 function endpointUrl(name        )         {
   // docs/24: /mcp/ is the MCP plugin's domain — every client URL this panel can produce
@@ -137,7 +139,7 @@ document.addEventListener("click", (e) => {
   // popover sits on <body>, so clicking its scrollbar or the preview pane must not count as "outside".
   // A row click closes it through applyRunHistory, its own handler.
   const inHist = targetEl(e)?.closest(".hist-wrap, .hist-pop");
-  const d = state.detail;
+  const d = mcpDetail();
   if (!inHist && d && d.tab === "run" && d.run.histOpen) histClose();
 });
 

@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
+import { lastActionOf, mcpDetail, resetMcpState, setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
 
 /* OAuth authorize (docs/24): the form fields + the bool-to-string translation (fields.js),
    the pane header button (pane.js renderPane), and the one-click flow (detail.js authorizeMcp)
@@ -91,15 +92,13 @@ beforeAll(async () => {
   detail = await import("../src/detail.js");
 });
 
-function freshState(overrides: Record<string, unknown> = {}) {
-  util.state.mcps = [];
-  util.state.groups = ["default"];
-  util.state.selected = null;
-  util.state.detail = null;
-  util.state.busy = {};
-  util.state.lastAction = {};
+function freshState(overrides: { mcps?: unknown[]; groups?: string[]; selected?: string | null; detail?: unknown } = {}) {
+  resetMcpState();
+  setMcpGroups(overrides.groups ?? ["default"]);
+  if (overrides.mcps) setMcpRows(overrides.mcps as never);
+  if (overrides.selected !== undefined) setSelectedMcp(overrides.selected);
+  if (overrides.detail !== undefined) setMcpDetail(overrides.detail as never);
   setMenuOpen(false);
-  Object.assign(util.state, overrides);
 }
 
 /** A detail object shaped the way openDetail builds it, trimmed to what renderPane reads. */
@@ -220,7 +219,7 @@ describe("both submit paths run the translation through the real modules (docs/2
 
   it("saveEdit PUTs auth oauth through the edit form", async () => {
     byId.clear(); freshState();
-    util.state.detail = { ...fakeDetail("fig", { type: "http", auth: "oauth" }) as Record<string, unknown>, editing: true, editType: "http" } as never;
+    setMcpDetail({ ...fakeDetail("fig", { type: "http", auth: "oauth" }) as Record<string, unknown>, editing: true, editType: "http" } as never);
     Object.assign(doc.getElementById("e-url"), { value: "https://mcp.figma.com/mcp" });
     Object.assign(doc.getElementById("e-auth"), { checked: true });
     let put: Record<string, unknown> | null = null;
@@ -307,7 +306,7 @@ describe("the authorize flow (docs/24 D5)", () => {
       seen.push(String(path));
       return { ok: true, status: next.status, json: async () => next.body } as never;
     };
-    const d = util.state.detail as unknown as { oauthBusy: boolean; name: string };
+    const d = mcpDetail() as unknown as { oauthBusy: boolean; name: string };
     const done = detail.authorizeMcp("fig");
     // Drive the 3s polls: each advance settles one poll round.
     for (let i = 0; i < 6 && !(await Promise.race([done.then(() => true), Promise.resolve(false)])); i++) {
@@ -316,7 +315,7 @@ describe("the authorize flow (docs/24 D5)", () => {
     await done;
     expect(windowOpen).toHaveBeenCalledTimes(1);
     expect(windowOpen).toHaveBeenCalledWith("https://as.test/authorize?client_id=x", "_blank");
-    expect(util.state.lastAction.fig.msg).toContain("authorized · 26 tools");
+    expect(lastActionOf("fig")?.msg).toContain("authorized · 26 tools");
     expect(d.oauthBusy).toBe(false);
     expect(seen[0]).toBe("/api/mcps/fig/authorize");
   });
@@ -332,15 +331,15 @@ describe("the authorize flow (docs/24 D5)", () => {
       const next = queue.shift()!;
       return { ok: true, status: next.status, json: async () => next.body } as never;
     };
-    const d = util.state.detail as unknown as { oauthBusy: boolean };
+    const d = mcpDetail() as unknown as { oauthBusy: boolean };
     const done = detail.authorizeMcp("fig");
     for (let i = 0; i < 4; i++) {
       await vi.advanceTimersByTimeAsync(3000);
       try { await done; break; } catch { /* pending */ }
     }
     await done;
-    expect(util.state.lastAction.fig.err).toBe(true);
-    expect(util.state.lastAction.fig.msg).toContain("name not allowed");
+    expect(lastActionOf("fig")?.err).toBe(true);
+    expect(lastActionOf("fig")?.msg).toContain("name not allowed");
     expect(d.oauthBusy).toBe(false);
   });
 });

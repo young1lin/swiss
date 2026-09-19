@@ -17,8 +17,9 @@
 import type { ApiMcpCallRow, ApiMcpItem, ApiMcpRow } from "./types/api.js";
 import type { JtBox, PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
-import { esc, icon, state, toast } from "./util.js";
+import { esc, icon, toast } from "./util.js";
 import { rowOf } from "./sidebar.js";
+import { mcpDetail } from "./mcp-state.js";
 
 /* --- Logs: what was called, with what, and what came back ------------------------------------- */
 function fmtChars(n: number): string {
@@ -345,7 +346,7 @@ function logsBody(d: McpDetail): string {
 
 /** Expand/collapse one call without re-rendering: a poll must not close what you just opened. */
 function toggleCall(seq: number): void {
-  const d = state.detail;
+  const d = mcpDetail();
   if (!d) return;
   d.callsOpen[seq] = !d.callsOpen[seq];
   const node = document.querySelector('#tabbody .call[data-seq="' + seq + '"]');

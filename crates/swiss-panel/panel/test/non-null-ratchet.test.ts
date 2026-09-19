@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
  * collected that debt: db-state.ts owns a record that is never null, so the boundary had
  * nothing left to assert and the thirteen data-* files fell from 229 to 113 - 207 total.
  * What survives is property-level (d.conn!, e.dataTransfer!, regex groups); the rest of it
- * goes with R4's last slice and R5's rendering pass.
+ * goes with R5's rendering pass. R4's last slice took detail.ts 9 -> 8 and left 206.
  * Keys are paths relative to src/ - the tree has basename twins (jobs.ts and views/jobs.ts)
  * and a basename map would silently count the wrong one. */
 const FROZEN: Record<string, number> = {
@@ -27,7 +27,7 @@ const FROZEN: Record<string, number> = {
   "views/plugins.ts": 1,
   "views/secrets.ts": 1,
   "views/tokens.ts": 6,
-  "detail.ts": 9,
+  "detail.ts": 8,
   "main.ts": 1,
   "page-core.ts": 2,
   "page-registry.ts": 5,

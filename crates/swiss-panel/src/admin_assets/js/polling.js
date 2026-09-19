@@ -15,7 +15,7 @@
  */
 
                                                                                                                                                    
-import { $, api, apiJson, dotTitle, esc, icon, state, toast, whenLabel } from "./util.js";
+import { $, api, apiJson, dotTitle, esc, icon, toast, whenLabel } from "./util.js";
 import { currentPageCount, navigatePage, refreshPage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
@@ -24,6 +24,7 @@ import { triggerSummary } from "./jobs-v2.js";
 import { currentView } from "./ui-state.js";
 import { setTunResponse, tunBusyOf, tunDragging, tunResponse, mountedTunScope } from "./tunnel-state.js";
 import { jobGroupNames, jobIsBusy, jobRows, setJobGroupNames, setJobRows } from "./job-state.js";
+import { mcpDetail, mcpRows, memoryInfo, selectedMcp, setMcpDetail, setMcpGroups, setMcpRows, setMemoryInfo, setSelectedMcp } from "./mcp-state.js";
 
 
 /* --- polling ---------------------------------------------------------------------------------- */
@@ -32,11 +33,12 @@ async function loadList()                {
     const r = await api("/api/mcps");
     if (!r.ok) { toast("HTTP " + r.status, true); return; }
     const j                     = await r.json();
-    state.mcps = j.mcps || [];
-    state.groups = j.groups || [];
-    if (state.selected && !rowOf(state.selected)) { state.selected = null; state.detail = null; }
+    setMcpRows(j.mcps || []);
+    setMcpGroups(j.groups || []);
+    const sel = selectedMcp();
+    if (sel && !rowOf(sel)) { setSelectedMcp(null); setMcpDetail(null); }
     patchSidebar();
-    if (state.detail) patchDetailHead();
+    if (mcpDetail()) patchDetailHead();
     else renderPane(); // empty state; nothing here can hold user input
   } catch (e) { /* handled */ }
 }
@@ -45,13 +47,13 @@ async function loadMemory(tree          )                {
   try {
     const r = await api("/api/memory" + (tree ? "?tree=1" : ""));
     if (!r.ok) return;
-    state.mem = await r.json();
+    setMemoryInfo(await r.json());
     renderMemory();
   } catch (e) { /* handled */ }
 }
 
 function renderMemory()       {
-  const m = state.mem;
+  const m = memoryInfo();
   if (!m) return;
   const chip = $("memChip");
   const total = m.childrenMb ? Math.round((m.gatewayMb + m.childrenMb) * 10) / 10 : m.gatewayMb;
@@ -120,11 +122,11 @@ function setView(v        )                { return navigatePage(v); }
  *  that segment every 6s poll versus every view switch. */
 function mcpChipText()         {
   let up = 0, bad = 0;
-  state.mcps.forEach((m) => {
+  mcpRows().forEach((m) => {
     if (m.state === "up") up++;
     else if (m.state === "down" || m.state === "error") bad++;
   });
-  return state.mcps.length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
+  return mcpRows().length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
 }
 
 function updateCountChip()       { $("countChip").textContent = currentPageCount(); }

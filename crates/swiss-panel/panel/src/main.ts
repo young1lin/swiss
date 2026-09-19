@@ -27,7 +27,7 @@
    lives in its own module next to this one; /admin/js/* is served with no-store, so editing any of
    them reaches the browser on the next reload — no build, no gateway restart.
    ================================================================================================ */
-import { $, THEME_KEY, api, isTyping, state, toast } from "./util.js";
+import { $, THEME_KEY, api, isTyping, toast } from "./util.js";
 import { loadCollapsed } from "./groups.js";
 import { closeSheet } from "./add-sheet.js";
 import { initSelects } from "./dropdown.js";
@@ -43,6 +43,7 @@ import { loadTokens } from "./views/tokens.js";
 import { knownPanelVersion, menuIsOpen, setFoldMap, setKnownPanelVersion, setListFilter } from "./ui-state.js";
 import { setTunFolds } from "./tunnel-state.js";
 import { setJobFolds } from "./job-state.js";
+import { gatewayInfo, mcpDetail, selectedMcp, setGatewayInfo } from "./mcp-state.js";
 
 
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
@@ -80,12 +81,12 @@ async function loadInfo(): Promise<void> {
   try {
     const r = await api("/api/info");
     if (r.ok) {
-      state.info = await r.json();
+      setGatewayInfo(await r.json());
       // First sight records the stamp; a LATER, DIFFERENT one means the panel was rebuilt —
       // reload in place when nothing unsaved would be lost (checked in maybeReloadPanel).
-      if (knownPanelVersion() === null) setKnownPanelVersion(state.info?.panelVersion || null);
-      else if (state.info?.panelVersion && state.info?.panelVersion !== knownPanelVersion()) {
-        maybeReloadPanel(state.info?.panelVersion!);
+      if (knownPanelVersion() === null) setKnownPanelVersion(gatewayInfo()?.panelVersion || null);
+      else if (gatewayInfo()?.panelVersion && gatewayInfo()?.panelVersion !== knownPanelVersion()) {
+        maybeReloadPanel(gatewayInfo()?.panelVersion!);
       }
     }
     await loadTokens();
@@ -181,7 +182,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (!$("sheet").hidden) { closeSheet(); return; }
     if (menuIsOpen()) { closeMenu(); return; }
-    const hd = state.detail;
+    const hd = mcpDetail();
     if (hd && hd.run && hd.run.histOpen) { histClose(); return; }
     if (immersiveOn()) { exitImmersive(); return; }
   }
@@ -202,7 +203,7 @@ document.addEventListener("keydown", (e) => {
   const rows = navRows();
   if (!rows.length) return;
   e.preventDefault();
-  const i = rows.findIndex((m) => { return m.name === state.selected; });
+  const i = rows.findIndex((m) => { return m.name === selectedMcp(); });
   let nextIndex = e.key === "ArrowDown" ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1);
   if (i < 0) nextIndex = 0;
   openDetail(rows[nextIndex].name);

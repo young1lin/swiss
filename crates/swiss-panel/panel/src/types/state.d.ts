@@ -14,13 +14,18 @@
  * limitations under the License.
  */
 
-/* The panel's shared state bag — ambient globals on purpose (docs/36 D6): one project-wide
-   `state` object does not need an import ceremony in all 55 modules, and a .d.ts never
-   emits, so no empty types.js can enter the served tree. Field comments carry the reasons
-   over from the boot literal in util.ts and the per-view factories (data-view's dbFreshState,
-   the tun/jobs literals) — the shape lives here now, the WHY stays with the field. */
+/* The panel's domain shapes. The file is named for what it used to be: docs/36 D6 put the
+   shared `state` bag's type here as an ambient global, R3 made it an ordinary module, and
+   R4 split the bag itself into seven slices that each own their record — so there is no
+   PanelState any more, and nothing in here is state. What is left is the shapes those
+   slices and their renderers pass around: one MCP's detail pane, a paged listing, the jobs
+   forms' models, the Data view's edit buffers and filter terms. A .d.ts still never emits,
+   so no empty types.js can enter the served tree.
 
-import type { ApiDbColumn, ApiDbFkRow, ApiInfoResponse, ApiMcpCallRow, ApiMcpItem, ApiMcpRow, ApiMemoryInfo } from "./api.js";
+   Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
+   and would bury the state split in import churn. */
+
+import type { ApiDbColumn, ApiDbFkRow, ApiMcpCallRow, ApiMcpItem } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -294,16 +299,3 @@ export interface DbGridConfig {
   hidden: string[];
 }
 
-/** The one shared bag, booted by util.ts's literal. tokenGroups/tokenMembers/tokenViewSecret
- *  are optional because the Tokens page creates them on first load — the boot literal (whose
- *  bytes are frozen by docs/36 D9) predates them. */
-export interface PanelState {
-  mcps: ApiMcpRow[];
-  groups: string[];
-  selected: string | null;
-  detail: McpDetail | null;
-  busy: Record<string, string>;
-  lastAction: Record<string, LastAction>;
-  mem: ApiMemoryInfo | null;
-  info: ApiInfoResponse | null;
-}

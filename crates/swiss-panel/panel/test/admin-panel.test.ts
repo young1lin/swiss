@@ -19,6 +19,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { setMemoryInfo } from "../src/mcp-state.js";
 
 // The memory-chip click and the r key share polling.js but must not share side effects:
 // refreshing the reading must never reload the active view under the pointer. The spy is
@@ -343,13 +344,12 @@ describe("the memory chip is a memory-only control", () => {
       if (prevDocument) Object.defineProperty(globalThis, "document", prevDocument);
       else delete (globalThis as Record<string, unknown>).document;
     });
-    state = (await import("../src/util.js")).state;
     polling = await import("../src/polling.js");
     refreshPageMock = (await import("../src/page-registry.js")).refreshPage as ReturnType<typeof vi.fn>;
   });
 
   it("renderMemory paints the chip as a control on EVERY paint", () => {
-    state.mem = { gatewayMb: 12.3, heapUsedMb: 1, heapTotalMb: 2, externalMb: 3, processCount: 1 };
+    setMemoryInfo({ gatewayMb: 12.3, heapUsedMb: 1, heapTotalMb: 2, externalMb: 3, processCount: 1, childrenPending: false, at: "12:00:00" });
     polling.renderMemory();
     const chip = els.get("memChip")!;
     expect(chip.textContent).toBe("12.3 MB");
@@ -359,7 +359,7 @@ describe("the memory chip is a memory-only control", () => {
   });
 
   it("the old retry-only case stays a memory-only control", () => {
-    state.mem = { gatewayMb: 12.3, heapUsedMb: 1, heapTotalMb: 2, externalMb: 3, processCount: 1, childrenPending: true };
+    setMemoryInfo({ gatewayMb: 12.3, heapUsedMb: 1, heapTotalMb: 2, externalMb: 3, processCount: 1, childrenPending: true, at: "12:00:00" });
     polling.renderMemory();
     expect(els.get("memChip")!.onclick).toBe(polling.refreshMemoryNow);
   });
@@ -375,7 +375,7 @@ describe("the memory chip is a memory-only control", () => {
       return { ok: true, json: async () => ({ gatewayMb: 42, heapUsedMb: 1, heapTotalMb: 2, externalMb: 3, processCount: 1 }) };
     }) as unknown as typeof fetch;
     try {
-      state.mem = { gatewayMb: 12.3, heapUsedMb: 1, heapTotalMb: 2, externalMb: 3, processCount: 1 };
+      setMemoryInfo({ gatewayMb: 12.3, heapUsedMb: 1, heapTotalMb: 2, externalMb: 3, processCount: 1, childrenPending: false, at: "12:00:00" });
       polling.renderMemory();
       (els.get("memChip")!.onclick as () => void)();
       await new Promise((resolve) => setTimeout(resolve, 0)); // let loadMemory settle

@@ -92,6 +92,22 @@ export default tseslint.config(
        * caughtErrors is off: the deliberate `catch (e) { /* comment *\/ }` swallows are the
        * house idiom for "this failure is the expected path", and the comment IS the handling. */
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", caughtErrors: "none" }],
+      /* R4's row, landed with the last slice (docs/37 M11). util.js no longer exports a
+       * `state` — the bag it held is seven domain modules now — so this cannot fire today.
+       * That is the point: it is what stops the 35-field bag growing back one convenient
+       * field at a time. util.js keeps its helpers ($, el, api, esc, toast…); what it may
+       * never hand out again is shared mutable state. */
+      "no-restricted-imports": ["error", {
+        paths: [{
+          name: "./util.js",
+          importNames: ["state"],
+          message: "state lives in its domain slice (mcp-state / ui-state / traffic / tunnel-state / job-state / db-state), not in util.js — docs/37 R4.",
+        }, {
+          name: "../util.js",
+          importNames: ["state"],
+          message: "state lives in its domain slice (mcp-state / ui-state / traffic / tunnel-state / job-state / db-state), not in util.js — docs/37 R4.",
+        }],
+      }],
     },
   },
   {

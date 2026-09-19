@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
+import { mcpDetail, mcpRows, resetMcpState, setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
 
 /* def revisions (docs/28 D1): the config tab's Replace flow and the rollback shelf. The
    rendering assertions go through the real renderPane markup; the confirm-gated restore is
@@ -80,15 +81,13 @@ beforeAll(async () => {
   util = await import("../src/util.js");
 });
 
-function freshState(overrides: Record<string, unknown> = {}) {
-  util.state.mcps = [];
-  util.state.groups = ["default"];
-  util.state.selected = null;
-  util.state.detail = null;
-  util.state.busy = {};
-  util.state.lastAction = {};
+function freshState(overrides: { mcps?: unknown[]; groups?: string[]; selected?: string | null; detail?: unknown } = {}) {
+  resetMcpState();
+  setMcpGroups(overrides.groups ?? ["default"]);
+  if (overrides.mcps) setMcpRows(overrides.mcps as never);
+  if (overrides.selected !== undefined) setSelectedMcp(overrides.selected);
+  if (overrides.detail !== undefined) setMcpDetail(overrides.detail as never);
   setMenuOpen(false);
-  Object.assign(util.state, overrides);
 }
 
 function fakeDetail(name: string, config: Record<string, unknown> | null) {
@@ -135,7 +134,7 @@ describe("config tab: the replace flow and the rollback shelf (docs/28 D1)", () 
     const d = fakeDetail("m", { type: "echo" });
     freshState({ mcps: [ROW] as never, detail: d });
     detail.startReplace();
-    expect((util.state.detail as unknown as Record<string, unknown>).editMode).toBe("replace");
+    expect((mcpDetail() as unknown as Record<string, unknown>).editMode).toBe("replace");
     const html = byId.get("pane")!.innerHTML;
     expect(html).toContain('id="e-note"');
     expect(html).toContain("Replace definition</button>");
@@ -170,7 +169,7 @@ describe("docs/28 D2: the verb is disable, the word is disabled", () => {
     byId.set("pane", paneNode);
     pane.patchDetailHead();
     expect(primary.textContent).toBe("Disable");
-    (util.state.mcps[0] as unknown as Record<string, unknown>).lifecycle = "stopped";
+    (mcpRows()[0] as unknown as Record<string, unknown>).lifecycle = "stopped";
     pane.patchDetailHead();
     expect(primary.textContent).toBe("Enable");
   });
