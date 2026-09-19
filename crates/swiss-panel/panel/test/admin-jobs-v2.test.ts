@@ -31,14 +31,85 @@ import {
    opens menu.js's popupMenu. No text Edit/History/Delete buttons inline, no red Delete
    repeated down the list — danger lives in the menu, where it is red on exactly one item.
    The builders live in polling.js, whose import graph (add-sheet.js) assigns to the DOM at
-   module top level — a permissive element stub satisfies that, and the builders themselves
-   are pure string functions. */
+   module top level — a permissive element stub satisfies that. jobRowNode stays a pure
+   string function (the jobs scope keeps its rowsHtml branch); the tunnel rows are BUILT
+   (docs/37 R5), so those two answer nodes, read back through the serialising micro-DOM
+   below. */
+/* docs/37 R5: the Node identity h()/frag() check children with, and the tree the builders
+   return has to read back as markup for the grep-style assertions — a plain-object stub
+   can do neither. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
+class FakeNode extends NodeStub {
+  tag: string;
+  attrs: Record<string, string> = {};
+  dataset: Record<string, string> = {};
+  className = "";
+  _text = "";
+  get textContent(): string { return this._text; }
+  set textContent(v: string) { if (v === "") { this.children = []; this._html = ""; } this._text = v; }
+  id = "";
+  type = "button";
+  value = "";
+  hidden = false;
+  checked = false;
+  disabled = false;
+  selected = false;
+  draggable = false;
+  title = "";
+  children: FakeNode[] = [];
+  onclick: ((ev?: unknown) => void) | null = null;
+  private _html = "";
+  constructor(tag: string) { super(); this.tag = tag.toUpperCase(); }
+  static fragment(): FakeNode { return new FakeNode("#document-fragment"); }
+  get innerHTML(): string { return this._html || serialize(this); }
+  set innerHTML(v: string) { this._html = v; this.children = []; }
+  querySelector(): FakeNode | null { return null; }
+  querySelectorAll(): FakeNode[] { return []; }
+  appendChild(n: FakeNode): FakeNode {
+    if (n.tag === "#DOCUMENT-FRAGMENT") { n.children.forEach((c) => { this.children.push(c); }); this._html = ""; return n; }
+    this.children.push(n);
+    this._html = "";
+    return n;
+  }
+  addEventListener(): void {}
+  removeEventListener(): void {}
+  setAttribute(k: string, v: string): void {
+    this.attrs[k] = v;
+    if (k === "id") this.id = v;
+    if (k.startsWith("data-")) this.dataset[k.slice(5)] = v;
+  }
+  removeAttribute(k: string): void { delete this.attrs[k]; }
+  focus(): void {}
+  getBoundingClientRect(): { top: number; left: number; right: number; bottom: number; width: number; height: number } {
+    return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  }
+  closest(sel: string): FakeNode | null { return sel.charAt(0) === "#" && this.id === sel.slice(1) ? this : null; }
+}
+
+/* One empty data- attribute stays bare, the way the string builder wrote it — the dot's
+   data-dot is a flag, not a key/value pair. */
+function serialize(node: FakeNode): string {
+  if (!node.tag || node.tag === "#TEXT") return String(node._text ?? "");
+  const attrs = Object.keys(node.attrs).map((k) => {
+    return node.attrs[k] === "" ? " " + k : " " + k + '="' + node.attrs[k] + '"';
+  }).join("");
+  const id = node.id ? ' id="' + node.id + '"' : "";
+  const cls = node.className ? ' class="' + node.className + '"' : "";
+  const ttl = node.title ? ' title="' + node.title + '"' : "";
+  const dis = node.disabled ? " disabled" : "";
+  const kids = node.children.map((c) => { return serialize(c); }).join("");
+  const tag = node.tag.toLowerCase();
+  return "<" + tag + id + cls + ttl + attrs + dis + ">" + (kids || node._text) + "</" + tag + ">";
+}
+
 /* Shared by the V5 and V6 describes below: the builders and the state they read, imported
    once under the permissive DOM stub (polling.js's import graph touches the DOM at module
    top level — see the V5 note). */
-let jobRowHtml: (j: Record<string, unknown>) => string;
-let ruleRowHtml: (r: Record<string, unknown>) => string;
-let connRowHtml: (c: Record<string, unknown>) => string;
+let jobRowNode: (j: Record<string, unknown>) => FakeNode;
+let ruleRowNode: (r: Record<string, unknown>) => FakeNode;
+let connRowNode: (c: Record<string, unknown>) => FakeNode;
 
 beforeAll(async () => {
   const anyG = globalThis as unknown as Record<string, unknown>;
@@ -49,23 +120,28 @@ beforeAll(async () => {
       setAttribute() {}, appendChild() {}, addEventListener() {},
     });
     anyG.document = {
-      getElementById: () => elem(), createElement: () => elem(),
+      // The builders run against createElement — the elements they return carry the tree
+      // serialize() reads back. The other lookups stay permissive elem() stubs.
+      getElementById: () => elem(), createElement: (t: string) => new FakeNode(t),
+      createElementNS: (_ns: string, t: string) => new FakeNode(t),
+      createDocumentFragment: () => FakeNode.fragment(),
+      createTextNode: (text: string) => { const n = new FakeNode("#text"); n.textContent = text; return n; },
       querySelector: () => null, querySelectorAll: () => [],
       addEventListener() {}, documentElement: elem(), body: elem(),
     };
   }
   const polling = await import("../src/polling.js") as unknown as {
-    jobRowHtml: (j: Record<string, unknown>) => string;
-    ruleRowHtml: (r: Record<string, unknown>) => string;
-    connRowHtml: (c: Record<string, unknown>) => string;
+    jobRowNode: (j: Record<string, unknown>) => FakeNode;
+    ruleRowNode: (r: Record<string, unknown>) => FakeNode;
+    connRowNode: (c: Record<string, unknown>) => FakeNode;
   };
-  ({ jobRowHtml, ruleRowHtml, connRowHtml } = polling);
+  ({ jobRowNode, ruleRowNode, connRowNode } = polling);
 });
 
 describe("visual refresh V5 — one primary action per row", () => {
 
   it("the job row keeps Run now plus one ellipsis; Edit/History/Delete move to the menu", () => {
-    const html = jobRowHtml({ name: "nightly", command: "cargo test", enabled: true, trigger: { kind: "cron", expression: "0 4 * * *" } });
+    const html = serialize(jobRowNode({ name: "nightly", command: "cargo test", enabled: true, trigger: { kind: "cron", expression: "0 4 * * *" } }));
     expect((html.match(/<button/g) || []).length).toBe(2);
     expect(html).toContain("data-run");
     expect(html).toContain("data-more");
@@ -76,7 +152,7 @@ describe("visual refresh V5 — one primary action per row", () => {
   });
 
   it("the rule row keeps Start/Stop plus the ellipsis; Force free and Delete are menu items", () => {
-    const html = ruleRowHtml({ id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "bastion", state: "down", portOwner: { pid: 7, name: "swiss" } });
+    const html = serialize(ruleRowNode({ id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "bastion", state: "down", portOwner: { pid: 7, name: "swiss" } }));
     expect((html.match(/<button/g) || []).length).toBe(2);
     expect(html).toContain('data-act="start"');
     expect(html).not.toContain("Force free");
@@ -85,7 +161,7 @@ describe("visual refresh V5 — one primary action per row", () => {
   });
 
   it("the connection row keeps Test plus the ellipsis", () => {
-    const html = connRowHtml({ id: "c1", name: "bastion", host: "10.0.0.4", port: 22, username: "jdoe", authType: "key", state: "down" });
+    const html = serialize(connRowNode({ id: "c1", name: "bastion", host: "10.0.0.4", port: 22, username: "jdoe", authType: "key", state: "down" }));
     expect((html.match(/<button/g) || []).length).toBe(2);
     expect(html).toContain("data-test");
     expect(html).not.toContain(">Delete<");
@@ -99,31 +175,43 @@ describe("visual refresh V5 — one primary action per row", () => {
    can never disagree between first paint and the 6s patch if both call the same function. */
 describe("visual refresh V6 — the status dot carries a title", () => {
   it("the job dot: idle explains itself, up says up", () => {
-    const off = jobRowHtml({ name: "off", command: "cargo test", enabled: false });
-    expect(off).toContain('<span class="dot idle" data-dot title="idle — starts on first request"></span>');
-    const ok = jobRowHtml({ name: "nightly", command: "cargo test", enabled: true, lastRunAt: "2026-09-12T00:00:00Z", lastOk: true });
-    expect(ok).toContain('<span class="dot up" data-dot title="up"></span>');
+    // docs/37 R5: the dot is a built node - class, flag attribute and title are asserted
+    // each on their own, like the rule row below.
+    const off = serialize(jobRowNode({ name: "off", command: "cargo test", enabled: false }));
+    expect(off).toContain('class="dot idle"');
+    expect(off).toContain("data-dot");
+    expect(off).toContain('title="idle — starts on first request"');
+    const ok = serialize(jobRowNode({ name: "nightly", command: "cargo test", enabled: true, lastRunAt: "2026-09-12T00:00:00Z", lastOk: true }));
+    expect(ok).toContain('class="dot up"');
+    expect(ok).toContain('title="up"');
   });
 
   it("the rule dot: error names its reason, a busy row says starting", () => {
-    const bad = ruleRowHtml({ id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "error", reason: "SSH refused" });
-    expect(bad).toContain('<span class="dot error" data-dot title="error: SSH refused"></span>');
+    // docs/37 R5: the dot is a built node — class, flag attribute and title are asserted
+    // each on its own, because a builder fixes the tree, not the attribute order a string
+    // concatenation happened to leave behind.
+    const bad = serialize(ruleRowNode({ id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "error", reason: "SSH refused" }));
+    expect(bad).toContain('class="dot error"');
+    expect(bad).toContain('title="error: SSH refused"');
+    expect(bad).toContain("data-dot");
     setTunBusy("r2", "start");
-    const busy = ruleRowHtml({ id: "r2", name: "pg", localPort: 18990, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "down" });
-    expect(busy).toContain('<span class="dot starting" data-dot title="starting"></span>');
+    const busy = serialize(ruleRowNode({ id: "r2", name: "pg", localPort: 18990, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "down" }));
+    expect(busy).toContain('class="dot starting"');
+    expect(busy).toContain('title="starting"');
     clearTunBusy("r2");
   });
 
   it("the connection dot: connected reads as up", () => {
-    const html = connRowHtml({ id: "c1", name: "bastion", host: "10.0.0.4", port: 22, username: "jdoe", authType: "key", state: "connected" });
-    expect(html).toContain('<span class="dot up" data-dot title="up"></span>');
+    const html = serialize(connRowNode({ id: "c1", name: "bastion", host: "10.0.0.4", port: 22, username: "jdoe", authType: "key", state: "connected" }));
+    expect(html).toContain('class="dot up"');
+    expect(html).toContain('title="up"');
   });
 
   it("the serves dots: a known MCP's dot says its state, an unknown one defers to the row", () => {
-    const html = ruleRowHtml({
+    const html = serialize(ruleRowNode({
       id: "r1", name: "pg", localPort: 18989, targetHost: "127.0.0.1", targetPort: 5432, connectionName: "s", state: "up",
       mcpRows: [{ name: "mysql", state: "up", known: true }, { name: "ghost", state: "", known: false }],
-    });
+    }));
     expect(html).toContain('mysql<span class="dot up" title="up"></span>');
     // No title on the unknown dot: the .serves span around it already answers the hover
     // ("no MCP named ghost"), and an empty title attribute would suppress that.

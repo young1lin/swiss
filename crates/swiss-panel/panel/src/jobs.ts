@@ -36,12 +36,14 @@
 import type { ApiJobRow, ApiJobRunRecord, ApiMcpTool, ToolInputSchema } from "./types/api.js";
 import type { GroupCfg, GroupSlice } from "./types/dom.js";
 import type { JobConfigRow, JobDef, JobFormValues, JobSched } from "./types/state.js";
-import { $, api, apiJson, dotTitle, emptyHtml, errText, esc, icon, toast, whenLabel } from "./util.js";
+import { $, api, apiJson, dotTitle, emptyNode, errText, iconNode, targetEl, toast, whenLabel } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
-import { assignMember, groupFieldHtml, groupOf as makeGroupOf, lastGroup, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "./groups.js";
+import { assignMember, groupFieldNode, groupOf as makeGroupOf, lastGroup, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "./groups.js";
 import { popupMenu } from "./menu.js";
-import { jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs } from "./polling.js";
-import { argFieldsHtml, readRunArgs } from "./run.js";
+import { jobDotClass, jobGroupsList, jobRowNode, jobsChipText, loadJobs } from "./polling.js";
+import { argFieldsNode, readRunArgs } from "./run.js";
+import { fill, frag, h } from "./h.js";
+import type { HChild } from "./h.js";
 import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
 import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
 import { currentView } from "./ui-state.js";
@@ -112,23 +114,25 @@ function renderJobs(): void {
   setPaintedJobsSig(jobGroupsList().join("\n") + "\u0000" +
     rows.map((j: ApiJobRow): string => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n"));
   const body = rows.length
-    ? '<div id="jobGroups"></div>'
-    : emptyHtml({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands the gateway runs on this machine. Add one with New." });
+    ? h("div", { id: "jobGroups" })
+    : emptyNode({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands the gateway runs on this machine. Add one with New." });
   // .wide + .pane-head + .tun-foot: the Tunnels view's exact frame — the rows are the same
   // name-plus-subtext-plus-buttons shape, so they wear the same classes.
   // No location title: the context bar already says "Jobs". The body header carries the
   // workflow description and nothing else; the actions sit in the section head below.
-  $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div>' +
-      '<div class="pane-desc">Scheduled commands the gateway runs locally — an interval or a 5-field cron in local time. Overlap, misfire and retry policies per job; every outcome lands in the run history.</div>' +
-    "</div></div>" +
-    '<div class="sec-head"><span class="sec-cap">Scheduled commands</span>' +
-      '<span style="display:flex;gap:var(--s2)"><button class="btn" id="jobNewGroup">New group</button>' +
-      '<button class="btn" id="jobNewAdv">New (advanced)</button>' +
-      '<button class="btn primary" id="jobNew">New</button></span></div>' +
-    body +
-    '<div class="tun-foot" data-foot>' + esc(jobsChipText()) + "</div>" +
-  "</div>";
+  fill($("pane"),
+    h("div", { class: "wide" },
+      h("div", { class: "pane-head" },
+        h("div", null,
+          h("div", { class: "pane-desc" }, "Scheduled commands the gateway runs locally — an interval or a 5-field cron in local time. Overlap, misfire and retry policies per job; every outcome lands in the run history."))),
+      h("div", { class: "sec-head" },
+        h("span", { class: "sec-cap" }, "Scheduled commands"),
+        h("span", { style: "display:flex;gap:var(--s2)" },
+          h("button", { class: "btn", id: "jobNewGroup" }, "New group"),
+          h("button", { class: "btn", id: "jobNewAdv" }, "New (advanced)"),
+          h("button", { class: "btn primary", id: "jobNew" }, "New"))),
+      body,
+      h("div", { class: "tun-foot", data: { foot: "" } }, jobsChipText())));
   if (rows.length) {
     // One group per slice — the component owns the header band and the empty line (docs/20
     // G4). Empty groups keep their place: that is how you drag the first job into one.
@@ -166,13 +170,11 @@ function jobCfg(): GroupCfg<ApiJobRow> {
       set: (v: string | null): void => { setJobDraggingGroup(v); },
     },
     rowId: (r: ApiJobRow): string => { return r.name; },
-    rowSel: (r: ApiJobRow): string => {
-      const v = window.CSS && CSS.escape ? CSS.escape(r.name) : r.name;
-      return '[data-job="' + v + '"]';
-    },
     rowsById: (): ApiJobRow[] => { return jobRows(); },
     groupOfRow: jobGroupOfRow,
-    rowsHtml: (g: GroupSlice<ApiJobRow>): string => { return g.rows.map(jobRowHtml).join(""); },
+    // The row as a node (docs/37 R5): the actions ride the pane's delegated click, so the
+    // row carries no per-render handlers of its own.
+    rowNode: jobRowNode,
     onMoveRow: moveJobRow,
     onAssign: (id: string, g: string | null): void => { void assignJobGroup(id, g); },
   };
@@ -226,35 +228,43 @@ function jobByName(name: string | null): ApiJobRow | null {
 }
 
 function wireJobs(): void {
-  $("jobNew").onclick = (): void => { openJobSheet(null); };
-  $("jobNewAdv").onclick = (): void => { void openV2Sheet(null); };
-  if ($("jobNewGroup")) $("jobNewGroup").onclick = (): void => {
-    newGroupFlow("jobs", jobGroupsList(), () => { return loadJobs(); });
-  };
-  Array.prototype.forEach.call($("pane").querySelectorAll("[data-job]"), (row: Element): void => {
-    const job = jobByName(row.getAttribute("data-job"));
+  // docs/37 R5: the head's three buttons AND every row action answer through ONE delegated
+  // click on #pane, climbed with closest() — a real pointer click lands on the button's
+  // text or glyph and the glyph carries no id. The row is re-resolved from jobRows() at
+  // click time, so a poll that landed between render and click cannot act on a stale row.
+  $("pane").onclick = (ev: MouseEvent): void => {
+    const t = targetEl(ev);
+    if (!t) return;
+    if (t.closest("#jobNew")) { openJobSheet(null); return; }
+    if (t.closest("#jobNewAdv")) { void openV2Sheet(null); return; }
+    if (t.closest("#jobNewGroup")) {
+      newGroupFlow("jobs", jobGroupsList(), (): Promise<void> => { return loadJobs(); });
+      return;
+    }
+    const rowEl = t.closest<HTMLElement>("[data-job]");
+    if (!rowEl) return;
+    const job = jobByName(rowEl.getAttribute("data-job"));
     if (!job) return;
-    row.querySelector<HTMLButtonElement>("[data-run]")!.onclick = (): void => { void runJob(job?.name); };
-    const more = row.querySelector("[data-more]") as HTMLButtonElement | null;
-    if (more) more.onclick = (ev: MouseEvent): void => {
+    if (t.closest("[data-run]")) { void runJob(job.name); return; }
+    const more = t.closest<HTMLElement>("[data-more]");
+    if (more) {
       // The overflow half of the row (docs/18 V5): the rare verbs and the destructive one.
       // stopPropagation FIRST: connect.js closes any open menu on clicks that reach document,
       // and without this the very click that opens the menu also tears it down.
       ev.stopPropagation();
-      popupMenu(more?.getBoundingClientRect(), [
+      popupMenu(more.getBoundingClientRect(), [
         { label: "Edit", fn: () => {
             // A definition the v1 shape cannot spell (docs/11 §7.1: editableInV1 false) goes
             // straight to the advanced sheet — the v1 form would silently drop its fields.
-            const job_ = job!;
-            if (job_.editableInV1 === false) void openV2Sheet(job_);
-            else openJobSheet(job_);
+            if (job.editableInV1 === false) void openV2Sheet(job);
+            else openJobSheet(job);
           } },
-        { label: "History", fn: (): void => { void openRunsSheet(job?.name); } },
+        { label: "History", fn: (): void => { void openRunsSheet(job.name); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: (): void => { deleteJob(job!); } },
+        { label: "Delete", danger: true, fn: (): void => { deleteJob(job); } },
       ]);
-    };
-  });
+    }
+  };
 }
 
 /* --- actions ---------------------------------------------------------------------------------- */
@@ -429,41 +439,53 @@ function openJobSheet(job: ApiJobRow | null): void {
     const staged = takeJobPendingGroup();
     picked = staged != null ? staged : resolveDefaultGroup(jobGroupsList(), lastGroup("jobs"));
   }
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit job" : "New job") + '">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Edit " + esc(job?.name) : "New job in " + esc(picked!)) + "</h2></div>" +
-      '<div class="sheet-body">' +
-        // The name IS the identity (the PUT path is the job), so it is fixed once created.
-        '<label class="field"><span>Name</span><input id="jf-name" value="' + esc(v.name || "") + '"' +
-          (editing ? " disabled" : "") + ' placeholder="nightly-vacuum" autocomplete="off"></label>' +
-        (editing ? "" : groupFieldHtml(jobGroupsList(), picked)) +
-        '<label class="field"><span>Command</span><textarea id="jf-command" rows="2" placeholder="cmd /c backup.bat --flag value" spellcheck="false">' + esc(v.command) + "</textarea></label>" +
-        '<div class="sched-say cmd-say" id="jf-cmd-say"></div>' +
-        '<div class="hint">One command — a job supervises one process, not a shell script. Pipes and redirections need "cmd /c \u2026" (Windows) or "sh -c \u2026" (Unix) around them. ${ENV} refs expand at run time; several steps belong in a script the command runs, or in several jobs.</div>' +
-        '<div class="sheet-cap">Schedule</div>' +
-        '<div class="sched" id="jf-sched">' +
-          '<div class="seg" role="tablist">' + ["interval", "daily", "weekly", "monthly", "cron"].map((m) => {
-            return '<button type="button" role="tab" data-mode="' + m + '" aria-selected="' + (sched.mode === m) + '">' + m + "</button>";
-          }).join("") + "</div>" +
-          '<div id="jf-sched-fields"></div>' +
-          '<div class="sched-say" id="jf-say"></div>' +
-        "</div>" +
-        '<div class="sheet-cap">Environment</div>' +
-        '<div class="sheet-cap">Options</div>' +
-        '<div class="two">' +
-          '<label class="field"><span>Timeout (minutes)</span><input id="jf-timeout" type="number" min="0.5" step="0.5" value="' +
-            (v.timeoutMs ? Math.max(0.5, Math.round(v.timeoutMs as number / 6000) / 10) : 10) + '" autocomplete="off"></label>' +
-          '<label class="field"><span>Working directory</span><input id="jf-cwd" value="' + esc(v.cwd || "") + '" placeholder="Optional" autocomplete="off"></label>' +
-        "</div>" +
-        '<label class="field"><span>Environment variables</span><textarea id="jf-env" rows="3" placeholder="DEPLOY_ENV=staging&#10;LOG_DIR=C:\\logs" spellcheck="false">' + esc(envToLines(v.env)) + "</textarea></label>" +
-        '<div class="hint">One KEY=value per line, added to the command\u2019s environment on top of what the gateway inherits. ${ENV} refs in a value resolve at run time.</div>' +
-        '<label class="check"><input type="checkbox" id="jf-enabled"' + (v.enabled ? " checked" : "") + ">Enabled</label>" +
-      "</div>" +
-      '<div class="sheet-foot"><button class="btn" id="jf-advanced">Advanced\u2026</button>' +
-        '<button class="btn" id="jf-cancel">Cancel</button>' +
-        '<button class="btn primary" id="jf-save">' + (editing ? "Save" : "Add") + "</button></div>" +
-    "</div>";
+  // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: editing ? "Edit job" : "New job" } },
+      h("div", { class: "sheet-head" },
+        h("h2", null, editing ? "Edit " + (job?.name || "") : "New job in " + (picked || ""))),
+      h("div", { class: "sheet-body" },
+        // The name IS the identity (the PUT path is the job), so it is fixed once created.
+        h("label", { class: "field" },
+          h("span", null, "Name"),
+          h("input", { id: "jf-name", value: v.name || "", disabled: editing, placeholder: "nightly-vacuum", autocomplete: "off" })),
+        editing ? null : groupFieldNode(jobGroupsList(), picked),
+        h("label", { class: "field" },
+          h("span", null, "Command"),
+          h("textarea", { id: "jf-command", rows: 2, placeholder: "cmd /c backup.bat --flag value", spellcheck: false }, v.command)),
+        h("div", { class: "sched-say cmd-say", id: "jf-cmd-say" }),
+        h("div", { class: "hint" }, "One command — a job supervises one process, not a shell script. Pipes and redirections need \"cmd /c \u2026\" (Windows) or \"sh -c \u2026\" (Unix) around them. ${ENV} refs expand at run time; several steps belong in a script the command runs, or in several jobs."),
+        h("div", { class: "sheet-cap" }, "Schedule"),
+        h("div", { class: "sched", id: "jf-sched" },
+          h("div", { class: "seg", role: "tablist" }, ["interval", "daily", "weekly", "monthly", "cron"].map((m) => {
+            return h("button", { type: "button", role: "tab", data: { mode: m },
+                aria: { selected: sched.mode === m ? "true" : "false" } }, m);
+          })),
+          h("div", { id: "jf-sched-fields" }),
+          h("div", { class: "sched-say", id: "jf-say" })),
+        h("div", { class: "sheet-cap" }, "Environment"),
+        h("div", { class: "sheet-cap" }, "Options"),
+        h("div", { class: "two" },
+          h("label", { class: "field" },
+            h("span", null, "Timeout (minutes)"),
+            h("input", { id: "jf-timeout", type: "number", min: "0.5", step: "0.5",
+              value: String(v.timeoutMs ? Math.max(0.5, Math.round(v.timeoutMs as number / 6000) / 10) : 10),
+              autocomplete: "off" })),
+          h("label", { class: "field" },
+            h("span", null, "Working directory"),
+            h("input", { id: "jf-cwd", value: v.cwd || "", placeholder: "Optional", autocomplete: "off" }))),
+        h("label", { class: "field" },
+          h("span", null, "Environment variables"),
+          // A property-assigned placeholder may carry a real newline; the entity dance an
+          // HTML attribute needed does not apply to the property path.
+          h("textarea", { id: "jf-env", rows: 3, placeholder: "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", spellcheck: false }, envToLines(v.env))),
+        h("div", { class: "hint" }, "One KEY=value per line, added to the command\u2019s environment on top of what the gateway inherits. ${ENV} refs in a value resolve at run time."),
+        h("label", { class: "check" }, h("input", { type: "checkbox", id: "jf-enabled", checked: !!v.enabled }), "Enabled")),
+      h("div", { class: "sheet-foot" },
+        h("button", { class: "btn", id: "jf-advanced" }, "Advanced\u2026"),
+        h("button", { class: "btn", id: "jf-cancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "jf-save" }, editing ? "Save" : "Add"))));
   $("jf-cancel").onclick = closeSheet;
   $("jf-advanced").onclick = (): void => { void openV2Sheet(job); };
   $("jf-save").onclick = (): void => { void saveJob(job); };
@@ -500,34 +522,48 @@ function openJobSheet(job: ApiJobRow | null): void {
   }
 
   function renderFields(): void {
-    let html = "";
+    let html: HChild;
     if (sched.mode === "interval") {
-      html = '<div class="two">' +
-        '<label class="field"><span>Run every</span><input id="jf-ev" type="number" min="1" value="' + (sched.every || "") + '" autocomplete="off"></label>' +
-        '<label class="field"><span>Unit</span><select id="jf-ev-u">' +
-          ["seconds", "minutes", "hours"].map((u: string): string => {
-            return '<option value="' + u + '"' + (sched.unit === u ? " selected" : "") + ">" + u + "</option>";
-          }).join("") + "</select></label></div>";
+      html = h("div", { class: "two" },
+        h("label", { class: "field" },
+          h("span", null, "Run every"),
+          h("input", { id: "jf-ev", type: "number", min: "1", value: String(sched.every || ""), autocomplete: "off" })),
+        h("label", { class: "field" },
+          h("span", null, "Unit"),
+          h("select", { id: "jf-ev-u" }, ["seconds", "minutes", "hours"].map((u: string) => {
+            return h("option", { value: u, selected: sched.unit === u }, u);
+          }))));
     } else if (sched.mode === "cron") {
-      html = '<label class="field"><span>Cron expression (local time)</span><input id="jf-cron-in" value="' + esc(sched.cron || "") + '" placeholder="30 3 * * *" autocomplete="off"></label>' +
-        '<div class="hint">Five fields: minute hour day-of-month month day-of-week.</div>';
+      html = frag(
+        h("label", { class: "field" },
+          h("span", null, "Cron expression (local time)"),
+          h("input", { id: "jf-cron-in", value: sched.cron || "", placeholder: "30 3 * * *", autocomplete: "off" })),
+        h("div", { class: "hint" }, "Five fields: minute hour day-of-month month day-of-week."));
     } else {
-      const at = '<label class="field"><span>At</span><input id="jf-at" type="time" value="' + esc(sched.time || "08:00") + '"></label>';
+      const at = h("label", { class: "field" },
+        h("span", null, "At"),
+        h("input", { id: "jf-at", type: "time", value: sched.time || "08:00" }));
       if (sched.mode === "daily") html = at;
       if (sched.mode === "weekly") {
-        html = '<label class="field"><span>On</span><div class="days" id="jf-days">' +
-          DOW_LABELS.map((d: string, i: number): string => {
-            const on = sched.days && sched.days.indexOf(i) >= 0;
-            return '<button type="button" data-dow="' + i + '" class="' + (on ? "on" : "") + '" aria-pressed="' + on + '">' + d + "</button>";
-          }).join("") + "</div></label>" + at;
+        html = frag(
+          h("label", { class: "field" },
+            h("span", null, "On"),
+            h("div", { class: "days", id: "jf-days" }, DOW_LABELS.map((d: string, i: number) => {
+              const on = sched.days && sched.days.indexOf(i) >= 0;
+              return h("button", { type: "button", data: { dow: i }, class: on ? "on" : "",
+                aria: { pressed: on ? "true" : "false" } }, d);
+            }))),
+          at);
       }
       if (sched.mode === "monthly") {
-        html = '<div class="two">' +
-          '<label class="field"><span>On day</span><input id="jf-md" type="number" min="1" max="31" value="' + (sched.day || 1) + '" autocomplete="off"></label>' +
-          at + "</div>";
+        html = h("div", { class: "two" },
+          h("label", { class: "field" },
+            h("span", null, "On day"),
+            h("input", { id: "jf-md", type: "number", min: "1", max: "31", value: String(sched.day || 1), autocomplete: "off" })),
+          at);
       }
     }
-    $("jf-sched-fields").innerHTML = html;
+    fill($("jf-sched-fields"), html);
     Array.prototype.forEach.call($("jf-sched-fields").querySelectorAll("input, select"), (el2: HTMLElement): void => {
       el2.oninput = readFields;
       el2.onchange = readFields;
@@ -649,88 +685,72 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
     picked = staged != null ? staged : resolveDefaultGroup(rowGroups, lastGroup("jobs"));
   }
 
-  const actionOpts = actions.map((a: ApiMcpTool): string => {
-    return '<option value="' + esc(a.type) + '"' + (a.type === form.actionType ? " selected" : "") + ">" +
-      esc(a.type) + (a.title && a.title !== a.type ? " \u2014 " + esc(a.title) : "") + "</option>";
-  }).join("");
+  const actionOptNodes = actions.map((a: ApiMcpTool) => {
+    return h("option", { value: String(a.type), selected: a.type === form.actionType },
+      a.type + (a.title && a.title !== a.type ? " \u2014 " + a.title : ""));
+  });
   const current = actionByType(actions, form.actionType);
-  const inputFields = current
-    ? argFieldsHtml({ inputSchema: current.schema as ToolInputSchema } as ApiMcpTool, "ja-", (base.action && base.action.input) || {})
-    : '<div class="hint">This action type is not registered right now (its plugin is off) — edit its input in the JSON below.</div>';
+  const inputFields: HChild = current
+    ? argFieldsNode({ inputSchema: current.schema as ToolInputSchema } as ApiMcpTool, "ja-", (base.action && base.action.input) || {})
+    : h("div", { class: "hint" }, "This action type is not registered right now (its plugin is off) — edit its input in the JSON below.");
 
-  $("sheet").innerHTML =
-    '<div class="sheet wide" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit definition" : "New definition") + '">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Definition \u2014 " + esc(name) : "New definition in " + esc(picked)) + "</h2></div>" +
-      '<div class="sheet-body">' +
-        (editing ? "" : '<label class="field"><span>id</span><input id="jv-id" value="' + esc(name) + '" placeholder="nightly-vacuum" autocomplete="off"></label>') +
-        (editing ? "" : groupFieldHtml(rowGroups, picked)) +
-        '<div class="two">' +
-          '<label class="field"><span>title</span><input id="jv-title" value="' + esc(form.title) + '" autocomplete="off"></label>' +
-          '<label class="field"><span>labels (comma-separated)</span><input id="jv-labels" value="' + esc(form.labels) + '" placeholder="ops, nightly" autocomplete="off"></label>' +
-        "</div>" +
-        '<div class="two">' +
-          '<label class="field"><span>trigger</span><select id="jv-kind">' +
-            ["interval", "cron", "manual"].map((k) => {
-              return '<option value="' + k + '"' + (form.kind === k ? " selected" : "") + ">" + k + "</option>";
-            }).join("") + "</select></label>" +
-          '<label class="field"><span>first firing</span><span class="hint">one schedule per definition</span></label>' +
-        "</div>" +
-        '<div class="two" id="jv-interval-row">' +
-          '<label class="field"><span>everyMs</span><input id="jv-every" value="' + esc(form.everyMs) + '" placeholder="3600000" autocomplete="off"></label>' +
-          '<label class="field"><span>firstRun</span><select id="jv-first">' +
-            ["aligned", "immediate"].map((f) => {
-              return '<option value="' + f + '"' + (form.firstRun === f ? " selected" : "") + ">" + f + "</option>";
-            }).join("") + "</select></label>" +
-        "</div>" +
-        '<label class="field" id="jv-cron-row"><span>cron (local time)</span><input id="jv-cron" value="' + esc(form.cron) + '" placeholder="30 3 * * *" autocomplete="off">' +
-          '<div class="sched-say" id="jv-cron-say"></div></label>' +
-        '<div class="two">' +
-          '<label class="field"><span>timeoutMs</span><input id="jv-timeout" value="' + esc(form.timeoutMs) + '" placeholder="600000" autocomplete="off"></label>' +
-          '<label class="check"><input type="checkbox" id="jv-disabled"' + (form.disabled ? " checked" : "") + ">Disabled</label>" +
-        "</div>" +
-        '<div class="two">' +
-          '<label class="field"><span>overlap</span><select id="jv-overlap">' +
-            ["skip", "queue-one"].map((o) => {
-              return '<option value="' + o + '"' + (form.overlap === o ? " selected" : "") + ">" + o + "</option>";
-            }).join("") + "</select></label>" +
-          '<label class="field"><span>misfire</span><select id="jv-misfire">' +
-            ["skip", "run-once"].map((m) => {
-              return '<option value="' + m + '"' + (form.misfire === m ? " selected" : "") + ">" + m + "</option>";
-            }).join("") + "</select></label>" +
-        "</div>" +
-        '<div class="two">' +
-          '<label class="field"><span>retry.maxAttempts</span><input id="jv-rmax" value="' + esc(form.retryMax) + '" placeholder="1" autocomplete="off"></label>' +
-          '<label class="field"><span>retry.delayMs</span><input id="jv-rdelay" value="' + esc(form.retryDelayMs) + '" placeholder="0" autocomplete="off"></label>' +
-        "</div>" +
-        '<div class="two">' +
-          '<label class="field"><span>retry.backoff</span><select id="jv-rback">' +
-            ["fixed", "exponential"].map((b) => {
-              return '<option value="' + b + '"' + (form.retryBackoff === b ? " selected" : "") + ">" + b + "</option>";
-            }).join("") + "</select></label>" +
-          '<span class="field"><span>retry.retryOn</span><span style="display:flex;gap:var(--s2)">' +
-            ["failure", "timeout"].map((r) => {
-              return '<label class="check"><input type="checkbox" data-retryon="' + r + '"' +
-                (form.retryOn.indexOf(r) >= 0 ? " checked" : "") + ">" + r + "</label>";
-            }).join("") + "</span></span>" +
-        "</div>" +
-        '<div class="two">' +
-          '<label class="field"><span>output.capture</span><select id="jv-capture">' +
-            ["tail", "none"].map((c) => {
-              return '<option value="' + c + '"' + (form.capture === c ? " selected" : "") + ">" + c + "</option>";
-            }).join("") + "</select></label>" +
-          '<label class="field"><span>output.maxBytes</span><input id="jv-maxbytes" value="' + esc(form.maxBytes) + '" placeholder="16384" autocomplete="off"></label>' +
-        "</div>" +
-        '<label class="field"><span>action</span><select id="jv-action">' + actionOpts + "</select></label>" +
-        '<div id="jv-inputs">' + inputFields + "</div>" +
-        '<label class="field"><span>definition JSON — the exact object that will be saved</span>' +
-          '<textarea id="jv-json" rows="12" spellcheck="false"></textarea></label>' +
-        '<div class="hint">The form writes only the fields it shows onto this object; anything else it already carries rides along untouched. Edit the JSON directly for anything the form does not know.</div>' +
-      "</div>" +
-      '<div class="sheet-foot"><button class="btn" id="jv-form-to-json">Form \u2192 JSON</button>' +
-        '<button class="btn" id="jv-cancel">Cancel</button>' +
-        '<button class="btn primary" id="jv-save">Save</button></div>' +
-    "</div>";
+  // Visible before the paint (panel-proof-of-life rule 1) — the wide sheet paints in one fill.
+  // Visible before the paint (panel-proof-of-life rule 1) — the wide sheet paints in one fill.
   $("sheet").hidden = false;
+  /* Field helpers keep the long form flat: one line per field, no paren nesting deep
+     enough to miscount. The ids and classes are the contract the wiring below reads. */
+  const fld = (label: string, ...kids: HChild[]): HTMLLabelElement =>
+    h("label", { class: "field" }, h("span", null, label), ...kids);
+  const sel = (id: string, opts: HTMLOptionElement[]): HTMLSelectElement => h("select", { id }, opts);
+  const opt = (v: string, on: boolean): HTMLOptionElement => h("option", { value: v, selected: on }, v);
+  const two = (...kids: HChild[]): HTMLDivElement => h("div", { class: "two" }, kids);
+  fill($("sheet"),
+    h("div", { class: "sheet wide", role: "dialog", aria: { modal: "true", label: editing ? "Edit definition" : "New definition" } },
+      h("div", { class: "sheet-head" },
+        h("h2", null, editing ? "Definition \u2014 " + name : "New definition in " + picked)),
+      h("div", { class: "sheet-body" },
+        editing ? null : fld("id", h("input", { id: "jv-id", value: name, placeholder: "nightly-vacuum", autocomplete: "off" })),
+        editing ? null : groupFieldNode(rowGroups, picked),
+        two(
+          fld("title", h("input", { id: "jv-title", value: form.title, autocomplete: "off" })),
+          fld("labels (comma-separated)", h("input", { id: "jv-labels", value: form.labels, placeholder: "ops, nightly", autocomplete: "off" }))),
+        two(
+          fld("trigger", sel("jv-kind", ["interval", "cron", "manual"].map((k) => opt(k, form.kind === k)))),
+          fld("first firing", h("span", { class: "hint" }, "one schedule per definition"))),
+        h("div", { class: "two", id: "jv-interval-row" },
+          fld("everyMs", h("input", { id: "jv-every", value: form.everyMs, placeholder: "3600000", autocomplete: "off" })),
+          fld("firstRun", sel("jv-first", ["aligned", "immediate"].map((f) => opt(f, form.firstRun === f))))),
+        h("label", { class: "field", id: "jv-cron-row" },
+          h("span", null, "cron (local time)"),
+          h("input", { id: "jv-cron", value: form.cron, placeholder: "30 3 * * *", autocomplete: "off" }),
+          h("div", { class: "sched-say", id: "jv-cron-say" })),
+        two(
+          fld("timeoutMs", h("input", { id: "jv-timeout", value: form.timeoutMs, placeholder: "600000", autocomplete: "off" })),
+          h("label", { class: "check" }, h("input", { type: "checkbox", id: "jv-disabled", checked: !!form.disabled }), "Disabled")),
+        two(
+          fld("overlap", sel("jv-overlap", ["skip", "queue-one"].map((o) => opt(o, form.overlap === o)))),
+          fld("misfire", sel("jv-misfire", ["skip", "run-once"].map((m) => opt(m, form.misfire === m))))),
+        two(
+          fld("retry.maxAttempts", h("input", { id: "jv-rmax", value: form.retryMax, placeholder: "1", autocomplete: "off" })),
+          fld("retry.delayMs", h("input", { id: "jv-rdelay", value: form.retryDelayMs, placeholder: "0", autocomplete: "off" }))),
+        two(
+          fld("retry.backoff", sel("jv-rback", ["fixed", "exponential"].map((b) => opt(b, form.retryBackoff === b)))),
+          h("span", { class: "field" },
+            h("span", null, "retry.retryOn"),
+            h("span", { style: "display:flex;gap:var(--s2)" }, ["failure", "timeout"].map((r) =>
+              h("label", { class: "check" },
+                h("input", { type: "checkbox", data: { retryon: r }, checked: form.retryOn.indexOf(r) >= 0 }), r))))),
+        two(
+          fld("output.capture", sel("jv-capture", ["tail", "none"].map((c) => opt(c, form.capture === c)))),
+          fld("output.maxBytes", h("input", { id: "jv-maxbytes", value: form.maxBytes, placeholder: "16384", autocomplete: "off" }))),
+        fld("action", sel("jv-action", actionOptNodes)),
+        h("div", { id: "jv-inputs" }, inputFields),
+        fld("definition JSON \u2014 the exact object that will be saved", h("textarea", { id: "jv-json", rows: 12, spellcheck: false })),
+        h("div", { class: "hint" }, "The form writes only the fields it shows onto this object; anything else it already carries rides along untouched. Edit the JSON directly for anything the form does not know.")),
+      h("div", { class: "sheet-foot" },
+        h("button", { class: "btn", id: "jv-form-to-json" }, "Form \u2192 JSON"),
+        h("button", { class: "btn", id: "jv-cancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "jv-save" }, "Save"))));
 
   // The one definition object both editors work on. `dirty` marks JSON as hand-edited:
   // from then on the textarea wins, until Form -> JSON rebuilds it from the form again.
@@ -764,9 +784,9 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   // Switching the action type rebuilds the input form from that capability's schema.
   $<HTMLSelectElement>("jv-action").onchange = (): void => {
     const next = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
-    $("jv-inputs").innerHTML = next
-      ? argFieldsHtml({ inputSchema: next.schema } as ApiMcpTool, "ja-", {})
-      : '<div class="hint">Not registered — edit the input in the JSON below.</div>';
+    fill($("jv-inputs"), next
+      ? argFieldsNode({ inputSchema: next.schema } as ApiMcpTool, "ja-", {})
+      : h("div", { class: "hint" }, "Not registered — edit the input in the JSON below."));
   };
 
   function formValues(): JobFormValues {
@@ -881,36 +901,33 @@ async function openRunsSheet(name: string, cursor?: string | null): Promise<void
 
 function renderRunsSheet(nextBefore?: string | null): void {
   const hist = jobHistory();
-  const rows = hist?.runs.map((r: ApiJobRunRecord): string => {
-    return '<div class="call">' +
-      '<button class="call-sum" type="button">' +
-        '<span class="dot ' + (r.ok ? "up" : "down") + '"></span>' +
-        '<span class="call-tool">' + esc(whenLabel(r.at)) + "</span>" +
-        '<span class="call-meta">' + esc(historyMeta(r)) + "</span>" +
-        '<span class="chev" aria-hidden="true">' + icon("chevron-right") + "</span>" +
-      "</button>" +
-      '<div class="call-body" hidden><pre class="logs">' +
-        esc((r.error ? r.error + "\n\n" : "") + (r.output || "") +
+  const rows: HChild = (hist?.runs || []).map((r: ApiJobRunRecord) => {
+    return h("div", { class: "call" },
+      h("button", { class: "call-sum", type: "button" },
+        h("span", { class: "dot " + (r.ok ? "up" : "down") }),
+        h("span", { class: "call-tool" }, whenLabel(r.at)),
+        h("span", { class: "call-meta" }, historyMeta(r)),
+        h("span", { class: "chev", aria: { hidden: "true" } }, iconNode("chevron-right"))),
+      h("div", { class: "call-body", hidden: true },
+        h("pre", { class: "logs" },
+          (r.error ? r.error + "\n\n" : "") + (r.output || "") +
           (r.preview ? "\n\u2026 output tail-capped at 16 KB" : "") +
-          (r.outcome && r.outcome !== "ran" ? "(" + r.outcome + " \u2014 no output recorded)" : "")) +
-      "</pre></div>" +
-    "</div>";
-  }).join("");
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Run history">' +
-      '<div class="sheet-head"><h2>Runs — ' + esc(hist?.name) + "</h2></div>" +
-      '<div class="sheet-body">' +
+          (r.outcome && r.outcome !== "ran" ? "(" + r.outcome + " \u2014 no output recorded)" : ""))));
+  });
+  // Visible before the paint (panel-proof-of-life rule 1).
+  $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Run history" } },
+      h("div", { class: "sheet-head" }, h("h2", null, "Runs — " + (hist?.name || ""))),
+      h("div", { class: "sheet-body" },
         // One card holding every run, so the rows stack flush instead of each taking the
         // sheet's field gap — forty runs read as one list, not forty islands.
-        '<div class="group">' +
-        (rows || '<div class="row"><span class="rowmsg">No runs recorded yet — wait for the schedule, or press Run now.</span></div>') +
-        "</div>" +
-      "</div>" +
-      '<div class="sheet-foot">' +
-        (nextBefore ? '<button class="btn" id="jr-more">Load more</button>' : "") +
-        '<button class="btn primary" id="jr-done">Done</button></div>' +
-    "</div>";
-  $("sheet").hidden = false;
+        h("div", { class: "group" },
+          rows.length ? rows : h("div", { class: "row" },
+            h("span", { class: "rowmsg" }, "No runs recorded yet — wait for the schedule, or press Run now.")))),
+      h("div", { class: "sheet-foot" },
+        nextBefore ? h("button", { class: "btn", id: "jr-more" }, "Load more") : null,
+        h("button", { class: "btn primary", id: "jr-done" }, "Done"))));
   $("jr-done").onclick = closeSheet;
   const more = $("jr-more");
   if (more) more.onclick = (): void => { void openRunsSheet(hist!.name, nextBefore); };

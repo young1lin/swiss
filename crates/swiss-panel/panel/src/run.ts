@@ -17,73 +17,10 @@
 import type { ApiMcpRow, ApiMcpTool, ToolSchemaProp } from "./types/api.js";
 import type { PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
-import { $, esc } from "./util.js"; // esc: the string runBody twin, until pane converts
+import { $ } from "./util.js";
 import { h } from "./h.js";
 import type { HChild } from "./h.js";
 import { histButtonLabel } from "./run-history.js";
-
-/* --- Run: invoke a tool from the panel -------------------------------------------------------- */
-/* argFieldsHtml, the STRING twin below, RETIRES with the jobs conversion (docs/37 R5 view
-   9/11): the jobs editor still splices it into its sheet strings, and a node cannot ride
-   through a concatenation. Run itself builds nodes - argFieldsNode - and reads them back
-   with readRunArgs, which is DOM-shape agnostic (it reads by id). */
-/** Argument inputs generated from the tool's own inputSchema, so this works for any MCP the gateway
- *  hosts — including a proc child whose tools the gateway knows nothing about. */
-function argFieldsHtml(tool: ApiMcpTool, idPrefix?: string, values?: Record<string, unknown>): string {
-  // idPrefix keeps the ids unique when the fields are embedded next to the Run view's own
-  // (the jobs editor reuses this builder inside its sheet under a "ja-" prefix), and
-  // `values` prefills them from an existing definition's action.input.
-  const pfx = idPrefix || "r-arg-";
-  const have = values || {};
-  const schema = tool.inputSchema || {};
-  const props: Record<string, ToolSchemaProp> = schema.properties || {};
-  const required = schema.required || [];
-  const keys = Object.keys(props);
-  if (!keys.length) return '<div class="hint">This tool takes no arguments.</div>';
-  return keys.map((k) => {
-    const p = props[k] || {};
-    const id = pfx + k;
-    const kind = p.type === "array" ? "array"
-      : p.type === "object" ? "object"
-      : p.type === "boolean" ? "boolean"
-      : (p.type === "number" || p.type === "integer") ? "number" : "string";
-    // Not escaped with the key: the star is markup, so it is concatenated after esc(k), never into it.
-    const star = required.indexOf(k) >= 0 ? ' <span class="req-star">*</span>' : "";
-    const hint = p.description ? '<div class="hint">' + esc(p.description) + "</div>" : "";
-    // esc() on the id too: the key comes from the tool's own inputSchema, and a proc MCP's child
-    // controls that completely — an unescaped key like `x" autofocus onfocus="…` breaks out of the
-    // attribute and runs on render. getElementById still matches, because the browser decodes the
-    // entities back to the raw key when it parses the attribute.
-    let attrs = ' id="' + esc(id) + '" data-arg="' + esc(k) + '" data-kind="' + kind + '"';
-    if (kind === "boolean") {
-      // Name and star in one span: .check is a flex row with an 8px gap, so a bare text node would
-      // leave the star floating a gap away from the name it belongs to.
-      const chk = have[k] ? " checked" : "";
-      return '<div><label class="check"><input type="checkbox"' + attrs + chk + "><span>" + esc(k) + star +
-        "</span></label>" + hint + "</div>";
-    }
-    // A constrained field renders as a dropdown rather than a free-text box that shows the allowed
-    // values nowhere. The blank first option keeps "leave this argument out" reachable.
-    if (Array.isArray(p.enum) && p.enum.length) {
-      const opts = '<option value=""></option>' + p.enum?.map((v: unknown): string => {
-        return '<option value="' + esc(v as string) + '"' + (have[k] === v ? " selected" : "") + '>' + esc(v as string) + "</option>";
-      }).join("");
-      return '<div><label class="field"><span>' + esc(k) + star + "  ·  " + esc(kind) + "</span>" +
-        "<select" + attrs + ">" + opts + "</select></label>" + hint + "</div>";
-    }
-    const area = kind === "array" || kind === "object" || k === "sql";
-    const itemType = kind === "array" && p.items && p.items.type ? String(p.items.type) : "";
-    if (itemType) attrs += ' data-items="' + esc(itemType) + '"';
-    const ph = k === "sql" ? "SELECT 1"
-      : kind === "array" ? "one value per line" + (itemType ? " (" + itemType + ")" : "")
-      : kind === "object" ? "{ }" : "";
-    const prefilled = have[k] == null ? "" : kind === "object" || kind === "array" ? JSON.stringify(have[k], null, 1) : String(have[k]);
-    const input = area
-      ? "<textarea" + attrs + ' placeholder="' + esc(ph) + '">' + esc(prefilled) + "</textarea>"
-      : '<input type="text"' + attrs + ' placeholder="' + esc(ph) + '" value="' + esc(prefilled) + '">';
-    return '<div><label class="field"><span>' + esc(k) + star + "  ·  " + esc(kind) + "</span>" + input + "</label>" + hint + "</div>";
-  }).join("");
-}
 
 function readRunArgs(tool: ApiMcpTool, idPrefix?: string): Record<string, unknown> {
   const pfx = idPrefix || "r-arg-";
@@ -225,4 +162,4 @@ function runBodyNode(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): HChild {
       h("pre", { class: "logs", id: "runOut" })));
 }
 
-export { argFieldsHtml, argFieldsNode, readRunArgs, runBodyNode };
+export { argFieldsNode, readRunArgs, runBodyNode };

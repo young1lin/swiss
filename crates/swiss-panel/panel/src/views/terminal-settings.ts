@@ -24,7 +24,8 @@
    nothing here runs before a click, long after both modules have evaluated.
    ================================================================================================ */
 import type { TerminalLocalCfg, TerminalPluginConfigResponse } from "../types/terminal-view.js";
-import { $, apiJson, esc, toast } from "../util.js";
+import { $, apiJson, toast } from "../util.js";
+import { fill, h } from "../h.js";
 import { configPutBody, targetRows } from "../terminal-core.js";
 import { closeSheet } from "../add-sheet.js";
 import { reload, sessions, targets } from "./terminal.js";
@@ -45,25 +46,35 @@ export async function openLocalSheet() {
   let whyOff = "";
   try { whyOff = got.schema?.properties.local.properties.enabled.description || ""; } catch (e) { /* an older schema: no line */ }
   const options = shells.map((s) => {
-    return '<option value="' + esc(s.program) + '">' + esc(s.label) + " · " + esc(s.program) + "</option>";
-  }).join("");
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Local shell settings">' +
-      '<div class="sheet-head"><h2>Local shell</h2></div>' +
-      '<div class="sheet-body">' +
-        '<div class="fld"><label class="check"><input type="checkbox" id="ls-enabled"' + (local.enabled ? " checked" : "") + ">Enabled</label>" +
-          (whyOff ? '<div class="hint">' + esc(whyOff) + "</div>" : "") + "</div>" +
+    return h("option", { value: s.program }, s.label + " · " + s.program);
+  });
+  // Visible before the paint (panel-proof-of-life rule 1).
+  $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Local shell settings" } },
+      h("div", { class: "sheet-head" }, h("h2", null, "Local shell")),
+      h("div", { class: "sheet-body" },
+        h("div", { class: "fld" },
+          h("label", { class: "check" }, h("input", { type: "checkbox", id: "ls-enabled", checked: !!local.enabled }), "Enabled"),
+          whyOff ? h("div", { class: "hint" }, whyOff) : null),
         /* A datalist, not a select: the candidates are suggestions, and any path the
            gateway can spawn is legal (docs/15 §2.1 — "may be typed by hand"). */
-        '<label class="field"><span>Shell</span>' +
-          '<input id="ls-shell" list="ls-shells" value="' + esc(local.shell || "") + '" placeholder="' + esc(l.shell || "the platform default") + '" autocomplete="off" spellcheck="false">' +
-          '<datalist id="ls-shells">' + options + "</datalist></label>" +
-        '<div class="hint">Empty = the platform default (' + esc(l.shell || "?") + "). Saving restarts the terminal plugin and closes every open session.</div>" +
-      "</div>" +
-      '<div class="sheet-foot"><button class="btn" id="ls-cancel">Cancel</button>' +
-        '<button class="btn primary" id="ls-save">Save</button></div>' +
-    "</div>";
-  $("sheet").hidden = false;
+        h("label", { class: "field" },
+          h("span", null, "Shell"),
+          // `list` is a read-only input property, so it rides as an attribute post-build.
+          (() => {
+            const el = h("input", { id: "ls-shell", value: local.shell || "",
+              placeholder: l.shell || "the platform default", autocomplete: "off", spellcheck: false });
+            el.setAttribute("list", "ls-shells");
+            return el;
+          })(),
+          h("datalist", { id: "ls-shells" }, options)),
+        h("div", { class: "hint" },
+          "Empty = the platform default (" + (l.shell || "?") +
+          "). Saving restarts the terminal plugin and closes every open session.")),
+      h("div", { class: "sheet-foot" },
+        h("button", { class: "btn", id: "ls-cancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "ls-save" }, "Save"))));
   $("ls-cancel").onclick = closeSheet;
   $("ls-save").onclick = () => { void saveLocalSheet(got!); };
   $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };

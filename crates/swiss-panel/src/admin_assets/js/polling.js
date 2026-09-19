@@ -15,7 +15,9 @@
  */
 
                                                                                                                                                    
-import { $, api, apiJson, dotTitle, esc, icon, toast, whenLabel } from "./util.js";
+import { $, api, apiJson, dotTitle, iconNode, toast, whenLabel } from "./util.js";
+import { frag, h } from "./h.js";
+                                     
 import { currentPageCount, navigatePage, refreshPage } from "./page-registry.js";
 import { patchSidebar } from "./menu.js";
 import { patchDetailHead, renderPane } from "./pane.js";
@@ -166,35 +168,39 @@ function jobDotClass(j           )         {
   return j.lastRunAt ? "up" : "idle";
 }
 
-function jobRowHtml(j           )         {
+/** The job row as a node (docs/37 R5): every label, command and trigger sentence is a text
+ *  node — data-last/data-next always render (possibly empty) so patchJobs can fill them in. */
+function jobRowNode(j           )              {
   const busy = jobIsBusy(j.name);
   // The v2 identity (docs/11 §7.1): the title is the human name when one is set, the id
   // stays beside it because every action still addresses the id.
-  const title = j.title && j.title !== j.name ? esc(j.title) + ' <span class="via">· ' + esc(j.name) + "</span>" : esc(j.name);
-  const labels = (j.labels || []).length
-    ? ' <span class="via">' + j.labels?.map((l        )         => { return "#" + esc(l); }).join(" ") + "</span>"
-    : "";
-  // data-last/data-next always render (possibly empty) so patchJobs can always fill them in.
+  const title         = j.title && j.title !== j.name
+    ? frag(j.title, " ", h("span", { class: "via" }, "· " + j.name))
+    : j.name;
+  const labels         = (j.labels || []).length
+    ? frag(" ", h("span", { class: "via" }, (j.labels || []).map((l        )         => { return "#" + l; }).join(" ")))
+    : null;
   const word = busy ? "starting" : jobDotClass(j);
-  return '<div class="tun-row" data-job="' + esc(j.name) + '">' +
-      '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word)) + '"></span>' +
-      '<div class="tun-main">' +
-        '<div class="tun-name">' + title + labels + (j.enabled ? "" : ' <span class="via">· off</span>') + "</div>" +
-        '<div class="tun-sub"><code>' + esc(j.command) + "</code>" +
-          ' <span class="via">· ' + esc(triggerSummary(j)) + "</span>" +
-          ' <span class="via" data-last>' + (j.lastRunAt
-            ? "· last " + esc(whenLabel(j.lastRunAt)) + (j.lastOk === false ? " · failed" : "")
-            : "") + "</span>" +
-          ' <span class="via" data-next>' + (j.enabled && j.nextDueAt ? "· next " + esc(whenLabel(j.nextDueAt)) : "") + "</span>" +
-        "</div>" +
-      "</div>" +
-      '<div class="tun-acts">' +
-        '<button class="btn" data-run' + (busy || j.running ? " disabled" : "") + ">" + (busy ? "…" : "Run now") + "</button>" +
-        // One primary per row (docs/18 V5): Edit, History and Delete answer from the ellipsis
-        // menu (jobs.js), so Delete is not a red button repeated down the whole list.
-        '<button class="btn ghost icon" data-more aria-label="Row actions" title="Row actions">' + icon("ellipsis") + "</button>" +
-      "</div>" +
-    "</div>";
+  return h("div", { class: "tun-row", data: { job: j.name } },
+    h("span", { class: "dot " + word, data: { dot: "" }, title: dotTitle(word) }),
+    h("div", { class: "tun-main" },
+      h("div", { class: "tun-name" }, title, labels, j.enabled ? null : frag(" ", h("span", { class: "via" }, "· off"))),
+      h("div", { class: "tun-sub" },
+        h("code", null, j.command),
+        " ",
+        h("span", { class: "via" }, "· " + triggerSummary(j)),
+        " ",
+        h("span", { class: "via", data: { last: "" } }, j.lastRunAt
+          ? "· last " + whenLabel(j.lastRunAt) + (j.lastOk === false ? " · failed" : "")
+          : ""),
+        " ",
+        h("span", { class: "via", data: { next: "" } }, j.enabled && j.nextDueAt ? "· next " + whenLabel(j.nextDueAt) : ""))),
+    h("div", { class: "tun-acts" },
+      h("button", { class: "btn", data: { run: "" }, disabled: busy || !!j.running }, busy ? "…" : "Run now"),
+      // One primary per row (docs/18 V5): Edit, History and Delete answer from the ellipsis
+      // menu (jobs.js), so Delete is not a red button repeated down the whole list.
+      h("button", { class: "btn ghost icon", data: { more: "" }, aria: { label: "Row actions" }, title: "Row actions" },
+        iconNode("ellipsis"))));
 }
 
 function jobsChipText()         {
@@ -220,45 +226,52 @@ async function loadJobs(patchOnly          )                {
   updateCountChip();
 }
 
-/** `18989 → 127.0.0.1:18989   via bastion · serves pg-app ●` */
-function ruleSubHtml(r                  )         {
-  let out = esc(String(r.localPort)) + " &rarr; " + esc(r.targetHost + ":" + r.targetPort);
-  out += ' <span class="via">via ' + esc(r.connectionName) + "</span>";
+/** `18989 → 127.0.0.1:18989   via bastion · serves pg-app ●` — the sub-line's
+ *  children (docs/37 R5): every host, connection name and remark the server sends is a
+ *  text node, and the arrow is the character itself rather than the &rarr; entity a string
+ *  builder had to spell out. */
+function ruleSubNode(r                  )           {
+  const out           = [String(r.localPort), " → ", r.targetHost + ":" + r.targetPort,
+    " ", h("span", { class: "via" }, "via " + r.connectionName)];
   if (r.mcpRows && r.mcpRows.length) {
-    out += ' <span class="via">· serves </span>' + r.mcpRows.map((m) => {
+    out.push(" ", h("span", { class: "via" }, "· serves "));
+    r.mcpRows.forEach((m, i) => {
+      if (i) out.push(", ");
       // A known MCP's dot keeps its own one-word title (docs/18 V6); an unknown name paints
       // no state, so it takes no title either — the hover falls through to the span around
       // it, which already answers with "no MCP named …".
-      return '<span class="serves' + (m.known ? "" : " unknown") + '" title="' +
-        esc(m.known ? "MCP " + m.name + " is " + m.state : "no MCP named " + m.name) + '">' +
-        esc(m.name) + '<span class="dot ' + esc(m.known ? m.state : "") + '"' +
-        (m.known ? ' title="' + esc(dotTitle(m.state)) + '"' : "") + "></span></span>";
-    }).join(", ");
+      out.push(h("span", { class: "serves" + (m.known ? "" : " unknown"),
+          title: m.known ? "MCP " + m.name + " is " + m.state : "no MCP named " + m.name },
+        m.name,
+        h("span", { class: "dot " + (m.known ? m.state : ""), title: m.known ? dotTitle(m.state) : undefined })));
+    });
   }
-  if (r.remark) out += ' <span class="via">· ' + esc(r.remark) + "</span>";
+  if (r.remark) out.push(" ", h("span", { class: "via" }, "· " + r.remark));
   return out;
 }
 
-function ruleRowHtml(r                  )         {
+/** One rule row as a NODE (docs/37 R5): names, routes and reasons are text, and the two
+ *  action buttons carry data-act/data-more for #pane's delegated click (tunnels.js) — no
+ *  per-render handlers to re-attach after a repaint. */
+function ruleRowNode(r                  )              {
   const busy = tunBusyOf(r.id);
   const word = busy ? "starting" : r.state;
   const running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
-  return '<div class="tun-row" draggable="true" data-rule="' + esc(r.id) + '">' +
-      '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word, null, r.reason)) + '"></span>' +
-      '<div class="tun-main">' +
-        '<div class="tun-name">' + esc(r.name) + "</div>" +
-        '<div class="tun-sub">' + ruleSubHtml(r) + "</div>" +
-        (r.state === "error" || r.state === "reconnecting"
-          ? '<div class="tun-err" data-reason>' + esc(r.reason || "") + "</div>" : "") +
-      "</div>" +
-      '<div class="tun-acts">' +
-        // Start/Stop is hairline, not solid (docs/18 V5 + 17 §2.1: one solid accent per page,
-        // and that is the page's New — a column of solid Starts is a column of shouting).
-        '<button class="btn" data-act="' + (running ? "stop" : "start") +
-          '"' + (busy ? " disabled" : "") + ">" + (busy ? "…" : running ? "Stop" : "Start") + "</button>" +
-        '<button class="btn ghost icon" data-more aria-label="Row actions" title="Row actions">' + icon("ellipsis") + "</button>" +
-      "</div>" +
-    "</div>";
+  return h("div", { class: "tun-row", draggable: true, data: { rule: r.id } },
+    h("span", { class: "dot " + word, data: { dot: "" }, title: dotTitle(word, null, r.reason) }),
+    h("div", { class: "tun-main" },
+      h("div", { class: "tun-name" }, r.name),
+      h("div", { class: "tun-sub" }, ruleSubNode(r)),
+      (r.state === "error" || r.state === "reconnecting")
+        ? h("div", { class: "tun-err", data: { reason: "" } }, r.reason || "")
+        : null),
+    h("div", { class: "tun-acts" },
+      // Start/Stop is hairline, not solid (docs/18 V5 + 17 §2.1: one solid accent per page,
+      // and that is the page's New — a column of solid Starts is a column of shouting).
+      h("button", { class: "btn", data: { act: running ? "stop" : "start" }, disabled: !!busy },
+        busy ? "…" : running ? "Stop" : "Start"),
+      h("button", { class: "btn ghost icon", data: { more: "" }, aria: { label: "Row actions" }, title: "Row actions" },
+        iconNode("ellipsis"))));
 }
 
 /** A jump id -> its connection's name (docs/27 §4). The row carries the id; the panel
@@ -274,30 +287,34 @@ function tunConnName(id        )         {
  *  jump is part of the row's identity ("this one dials through clash / through bastion"),
  *  so it rides the sub-line as the monochrome tag — the same form the sheet's Advanced
  *  summary uses, one word for the same fact in both places. */
-function connBadges(c                        )         {
-  let out = "";
-  if (c.proxy) out += ' <span class="tag">proxy</span>';
-  if (c.jump) out += ' <span class="tag">via ' + esc(tunConnName(c.jump)) + "</span>";
+function connBadgeNodes(c                        )           {
+  const out           = [];
+  if (c.proxy) out.push(" ", h("span", { class: "tag" }, "proxy"));
+  if (c.jump) out.push(" ", h("span", { class: "tag" }, "via " + tunConnName(c.jump)));
   return out;
 }
 
-function connRowHtml(c                        )         {
+/** One connection row as a NODE (docs/37 R5) — same contract as ruleRowNode: the host line
+ *  and any failure reason are text, the Test and ellipsis buttons carry data-test/data-more
+ *  for #pane's delegated click. */
+function connRowNode(c                        )              {
   const busy = tunBusyOf(c.id);
   const word = busy ? "starting" : c.state === "connected" ? "up" : c.state;
-  return '<div class="tun-row" draggable="true" data-conn="' + esc(c.id) + '">' +
-      '<span class="dot ' + esc(word) + '" data-dot title="' + esc(dotTitle(word, null, c.reason)) + '"></span>' +
-      '<div class="tun-main">' +
-        '<div class="tun-name">' + esc(c.name) + "</div>" +
-        '<div class="tun-sub">' + esc(c.host + ":" + c.port) + ' <span class="via">· ' + esc(c.username) +
-          " · " + esc(c.authType) + (c.ruleCount ? " · " + c.ruleCount + " rule" + (c.ruleCount === 1 ? "" : "s") : "") +
-          "</span>" + connBadges(c) + "</div>" +
-        (c.reason ? '<div class="tun-err" data-reason>' + esc(c.reason) + "</div>" : "") +
-      "</div>" +
-      '<div class="tun-acts">' +
-        '<button class="btn" data-test' + (busy ? " disabled" : "") + ">" + (busy ? "…" : "Test") + "</button>" +
-        '<button class="btn ghost icon" data-more aria-label="Row actions" title="Row actions">' + icon("ellipsis") + "</button>" +
-      "</div>" +
-    "</div>";
+  return h("div", { class: "tun-row", draggable: true, data: { conn: c.id } },
+    h("span", { class: "dot " + word, data: { dot: "" }, title: dotTitle(word, null, c.reason) }),
+    h("div", { class: "tun-main" },
+      h("div", { class: "tun-name" }, c.name),
+      h("div", { class: "tun-sub" },
+        c.host + ":" + c.port, " ",
+        h("span", { class: "via" },
+          "· " + c.username + " · " + c.authType +
+          (c.ruleCount ? " · " + c.ruleCount + " rule" + (c.ruleCount === 1 ? "" : "s") : "")),
+        connBadgeNodes(c)),
+      c.reason ? h("div", { class: "tun-err", data: { reason: "" } }, c.reason) : null),
+    h("div", { class: "tun-acts" },
+      h("button", { class: "btn", data: { test: "" }, disabled: !!busy }, busy ? "…" : "Test"),
+      h("button", { class: "btn ghost icon", data: { more: "" }, aria: { label: "Row actions" }, title: "Row actions" },
+        iconNode("ellipsis"))));
 }
 
-export { connRowHtml, isTunnelsView, jobDotClass, jobGroupsList, jobRowHtml, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowHtml, ruleSubHtml, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };
+export { connRowNode, isTunnelsView, jobDotClass, jobGroupsList, jobRowNode, jobsChipText, loadJobs, loadList, loadMemory, loadTunnels, mcpChipText, refreshMemoryNow, refreshNow, renderMemory, ruleRowNode, setView, tunConnName, tunData, tunGroupsList, tunRows, tunScope, updateCountChip };

@@ -33,6 +33,14 @@ let mods: any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let tunState: any;
 
+/* docs/37 R5: the render path builds nodes now, so the permissive stub grows the three
+   factory calls h()/frag() make (plus the Node identity instanceof checks against). This
+   suite never reaches renderTunnels — currentView() stays "mcps", so loadTunnels only
+   stores the answer — but a stub that would explode on the first paint hides that fact
+   instead of reporting it. */
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
+
 beforeAll(async () => {
   const prevDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const prevFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
@@ -53,6 +61,7 @@ beforeAll(async () => {
       documentElement: el(), body: el(), head: el(),
       hidden: false, visibilityState: "visible", activeElement: null,
       getElementById: () => el(), createElement: () => el(), createTextNode: () => el(),
+      createElementNS: () => el(), createDocumentFragment: () => el(),
       querySelector: () => null, querySelectorAll: () => [],
       addEventListener() {}, removeEventListener() {},
     },
@@ -128,17 +137,19 @@ describe("the tunnels plugin's two L2 pages", () => {
   it("the body no longer renders a page-local L2 segmented control", () => {
     const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "tunnels.ts"), "utf8");
     // The old .seg tab pair ("SSH Connections | Port Forwards" in the body) is gone; the
-    // context bar's page switcher is the one L2 mechanism.
-    expect(src).not.toContain('data-tab="conns"');
-    expect(src).not.toContain('role="tablist"');
+    // context bar's page switcher is the one L2 mechanism. The paint is BUILT now (docs/37
+    // R5), so the guard covers both spellings a built tree could carry the control in.
+    expect(src).not.toContain("tablist");
+    expect(src).not.toContain('data: { tab:');
     // The name of the removed control, guarded as a literal: docs/37 R4 gave the state slice a
     // reader for the mounted scope, and it is deliberately NOT called this.
     expect(src).not.toContain("tunTab");
-    // The scope's actions stayed in the body header, including the rules-only pair.
+    // The scope's actions stayed in the body header, including the rules-only pair. h()
+    // carries the id as a property, so the prop spelling is what the source pins.
     expect(src).toContain("tNewConn");
     expect(src).toContain("tNewRule");
-    expect(src).toContain('id="tStartAll"');
-    expect(src).toContain('id="tStopAll"');
+    expect(src).toContain('id: "tStartAll"');
+    expect(src).toContain('id: "tStopAll"');
     // And no location title: the context bar says where we are.
     expect(src).not.toContain("pane-title");
   });

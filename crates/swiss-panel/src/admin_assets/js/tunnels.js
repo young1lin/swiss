@@ -16,11 +16,13 @@
 
                                                                                
                                                                      
-import { $, api, apiJson, dotTitle, emptyHtml, esc, toast } from "./util.js";
+import { $, api, apiJson, dotTitle, emptyNode, targetEl, toast } from "./util.js";
+import { fill, h } from "./h.js";
+                                     
 import { copyText } from "./connect.js";
 import { popupMenu } from "./menu.js";
 import { assignMember, groupOf as makeGroupOf, mountGroup, newGroupFlow, saveOrder, slice } from "./groups.js";
-import { connRowHtml, isTunnelsView, loadList, loadTunnels, ruleRowHtml, tunData, tunGroupsList, tunRows, tunScope } from "./polling.js";
+import { connRowNode, isTunnelsView, loadList, loadTunnels, ruleRowNode, tunData, tunGroupsList, tunRows, tunScope } from "./polling.js";
 import { openConnSheet, openRuleSheet } from "./tunnel-sheets.js";
 import { currentView } from "./ui-state.js";
 import { clearTunBusy, clearTunView, setTunBusy, setTunDragging, setTunDraggingGroup, setTunPendingGroup, setMountedTunScope, tunBusyOf, tunDragging, tunDraggingGroup, tunFolds, mountedTunScope } from "./tunnel-state.js";
@@ -82,8 +84,9 @@ async function assignTunScoped(scope        , id        , group               ) 
    switcher. */
 
 /** The scope sentence under the bar: what THIS page operates on, never where we are (the
- *  context bar owns location). */
-function tunDescHtml(isConns         )         {
+ *  context bar owns location). Plain prose — it lands in the built tree as a text node
+ *  (docs/37 R5), so the Html suffix it carried as a string builder is gone. */
+function tunDesc(isConns         )         {
   return isConns
     ? "SSH hosts this gateway can forward ports over. Test one before pointing a rule at it."
     : "Local ports forwarded over an SSH connection. A local port stays bound only while its tunnel can carry traffic.";
@@ -107,12 +110,13 @@ function renderTunnels()       {
   // The page's actions, right-aligned in the body header (pane-actions is the panel's own
   // vocabulary for exactly this slot). Rules carry the bulk start/stop pair; connections
   // carry only New — Test lives on each row.
-  let acts =
-    '<button class="btn primary" id="' + (isConns ? "tNewConn" : "tNewRule") + '">New</button>' +
-    '<button class="btn" id="tNewGroup">New group</button>';
+  const acts           = [
+    h("button", { class: "btn primary", id: isConns ? "tNewConn" : "tNewRule" }, "New"),
+    h("button", { class: "btn", id: "tNewGroup" }, "New group"),
+  ];
   if (!isConns) {
-    acts += '<button class="btn" id="tStartAll">Start all</button>' +
-      '<button class="btn" id="tStopAll">Stop all</button>';
+    acts.push(h("button", { class: "btn", id: "tStartAll" }, "Start all"));
+    acts.push(h("button", { class: "btn", id: "tStopAll" }, "Stop all"));
   }
 
   // One group per slice — the component owns the header band, the indent and the empty line
@@ -121,21 +125,23 @@ function renderTunnels()       {
   const cfg = tunCfg();
   const grouped = slice(tunRows(), tunGroupsList(), tunGroupOfRow);
   const list = isConns ? d.connections : d.rules;
-  const foot = tunnelsCountText(isConns ? "conns" : "rules");
 
   // .wide for the same reason as the traffic log: a rule row is name + route + who it serves +
   // three buttons. .pane-desc keeps its own 60ch cap, so the prose does not stretch with it.
-  $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div><div class="pane-desc">' + tunDescHtml(isConns) + "</div></div>" +
-      '<div class="pane-actions">' + acts + "</div></div>" +
-    '<div id="tunGroups"></div>' +
-    '<div class="tun-foot">' + esc(foot) + "</div>" +
-  "</div>";
+  // Built, not concatenated (docs/37 R5): the scope prose and the footer count are text
+  // nodes, so nothing here can be markup.
+  fill($("pane"),
+    h("div", { class: "wide" },
+      h("div", { class: "pane-head" },
+        h("div", null, h("div", { class: "pane-desc" }, tunDesc(isConns))),
+        h("div", { class: "pane-actions" }, acts)),
+      h("div", { id: "tunGroups" }),
+      h("div", { class: "tun-foot" }, tunnelsCountText(isConns ? "conns" : "rules"))));
   const host = $("tunGroups");
   if (list.length) grouped.forEach((g                                                       )       => { host.appendChild(mountGroup(cfg, g)); });
-  else host.innerHTML = isConns
-    ? emptyHtml({ icon: "plug", title: "No SSH connections", hint: "Add one with New, then point a forwarding rule at it." })
-    : emptyHtml({ icon: "plug", title: "No forwarding rules", hint: "Add one with New. Each rule binds a local port and forwards it over SSH." });
+  else fill(host, emptyNode(isConns
+    ? { icon: "plug", title: "No SSH connections", hint: "Add one with New, then point a forwarding rule at it." }
+    : { icon: "plug", title: "No forwarding rules", hint: "Add one with New. Each rule binds a local port and forwards it over SSH." }));
   wireTunnels();
 }
 
@@ -167,14 +173,12 @@ function tunCfg()                                                      {
       set: (v               )       => { setTunDraggingGroup(v); },
     },
     rowId: (r                                           )         => { return r.id; },
-    rowSel: (r                                           )         => {
-      const v = window.CSS && CSS.escape ? CSS.escape(r.id) : r.id;
-      return mountedTunScope() === "conns" ? '[data-conn="' + v + '"]' : '[data-rule="' + v + '"]';
-    },
     rowsById: tunRows,
     groupOfRow: tunGroupOfRow,
-    rowsHtml: (g                                                       )         => {
-      return g.rows.map(mountedTunScope() === "conns" ? connRowHtml                                                                        : ruleRowHtml                                                                       ).join("");
+    // docs/37 R5: the rows are built, not parsed — the component wires drag on the node each
+    // builder returns, so this scope no longer round-trips through rowsHtml + rowSel.
+    rowNode: (r                                           )              => {
+      return mountedTunScope() === "conns" ? connRowNode(r                          ) : ruleRowNode(r                    );
     },
     onMoveRow: moveTunRow,
     onAssign: (id        , g               )       => { void assignTunScoped(tunScope(), id, g); },
@@ -229,54 +233,75 @@ function patchTunnels() {
   if (foot) foot.textContent = tunnelsCountText(mountedTunScope() === "conns" ? "conns" : "rules");
 }
 
+/* --- wiring: ONE delegated click on #pane (docs/37 R5) --------------------------------------------
+   The page used to re-query every row after each render and assign onclick per button; a
+   repaint destroyed the handlers and the wiring pass rebuilt them. The rows are nodes now
+   and fill() rebuilds the pane, so one delegated listener answers every click this page
+   owns — assigned as a property, so a repaint re-assigns the same slot instead of stacking
+   listeners. Buttons are matched with closest("#id"), never t.id: a real pointer click on
+   an icon button lands on its svg glyph, and the glyph carries no id. Row menus read the
+   LIVE row at click time (docs/37 §10.1) — a 6s poll may have replaced tunData() between
+   the render and the click, and the menu must not offer a Force free the row no longer
+   needs. */
 function wireTunnels() {
-  const pane = $("pane");
-  // The top New carries no group promise; the sheet falls back to the scope's last-used.
-  if ($("tNewConn")) $("tNewConn").onclick = () => { openConnSheet(null); };
-  if ($("tNewRule")) $("tNewRule").onclick = () => { openRuleSheet(null); };
-  if ($("tNewGroup")) $("tNewGroup").onclick = () => {
-    newGroupFlow(tunScope(), tunGroupsList(), () => { return loadTunnels(); });
-  };
-  if ($("tStartAll")) $("tStartAll").onclick = startAllRules;
-  if ($("tStopAll")) $("tStopAll").onclick = () => { void stopAllRules(false); };
-
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-rule]"), (node) => {
-    const id = node.dataset.rule;
-    const rule = tunData().rules.filter((r) => { return r.id === id; })[0];
-    const act = node.querySelector("[data-act]");
-    if (act) act.onclick = ()       => { void ruleAct(id, act.dataset.act); };
-    const ruleMore = node.querySelector("[data-more]");
-    if (ruleMore) ruleMore.onclick = (ev            )       => {
-      // The overflow half of the row (docs/18 V5). Force free appears only when a port is
-      // actually held — it is a remedy, not a standing action. stopPropagation first:
-      // connect.js closes open menus on clicks that reach document (the group-head menu
-      // above does the same).
-      ev.stopPropagation();
+  $("pane").onclick = (ev            )       => {
+    const t = targetEl(ev);
+    if (!t) return;
+    // The top New carries no group promise; the sheet falls back to the scope's last-used.
+    if (t.closest("#tNewConn")) { openConnSheet(null); return; }
+    if (t.closest("#tNewRule")) { openRuleSheet(null); return; }
+    if (t.closest("#tNewGroup")) {
+      newGroupFlow(tunScope(), tunGroupsList(), () => { return loadTunnels(); });
+      return;
+    }
+    if (t.closest("#tStartAll")) { void startAllRules(); return; }
+    if (t.closest("#tStopAll")) { void stopAllRules(false); return; }
+    // A rule's Start/Stop. Scoped to [data-rule] rows: connections carry [data-test].
+    const act = t.closest             ("[data-act]");
+    if (act) {
+      const id = act.closest             ("[data-rule]")?.dataset.rule;
+      if (id) void ruleAct(id, act.dataset.act || "start");
+      return;
+    }
+    const test = t.closest             ("[data-test]");
+    if (test) {
+      const id = test.closest             ("[data-conn]")?.dataset.conn;
+      if (id) void testConn(id);
+      return;
+    }
+    const more = t.closest             ("[data-more]");
+    if (!more) return;
+    // The overflow half of the row (docs/18 V5). stopPropagation first: connect.js closes
+    // open menus on clicks that reach document, so the very click that opens this one must
+    // not also tear it down.
+    ev.stopPropagation();
+    const ruleRow = more.closest             ("[data-rule]");
+    if (ruleRow) {
+      const rule = tunData().rules.filter((r) => { return r.id === ruleRow.dataset.rule; })[0];
+      if (!rule) return;
+      // Force free appears only when a port is actually held — it is a remedy, not a
+      // standing action.
       const items             = [
         { label: "Edit", fn: ()       => { openRuleSheet(rule); } },
         { label: "Copy local port", fn: ()       => { void copyText(String(rule.localPort), "Local port"); } },
       ];
-      if (rule.portOwner) items.push({ label: "Force free " + rule.localPort, fn: ()       => { void forceFreePort(rule.localPort, id); } });
+      if (rule.portOwner) items.push({ label: "Force free " + rule.localPort, fn: ()       => { void forceFreePort(rule.localPort, rule.id); } });
       items.push({ sep: true }, { label: "Delete", danger: true, fn: ()       => { void deleteRule(rule, false); } });
-      popupMenu(ruleMore.getBoundingClientRect(), items);
-    };
-  });
-  Array.prototype.forEach.call(pane.querySelectorAll("[data-conn]"), (node             )       => {
-    const id = node.dataset.conn;
-    const conn = tunData().connections.filter((c                        )          => { return c.id === id; })[0];
-    node.querySelector                   ("[data-test]") .onclick = ()       => { void testConn(id ); };
-    const connMore = node.querySelector("[data-more]")                            ;
-    if (connMore) connMore.onclick = (ev            )       => {
-      // Same as the rule rows above: the opening click must not reach document.
-      ev.stopPropagation();
-      popupMenu(connMore?.getBoundingClientRect(), [
-        { label: "Edit", fn: ()       => { openConnSheet(conn ); } },
-        { label: "Copy host", fn: ()       => { void copyText(conn?.host + ":" + conn?.port, "Host"); } },
+      popupMenu(more.getBoundingClientRect(), items);
+      return;
+    }
+    const connRow = more.closest             ("[data-conn]");
+    if (connRow) {
+      const conn = tunData().connections.filter((c                        )          => { return c.id === connRow.dataset.conn; })[0];
+      if (!conn) return;
+      popupMenu(more.getBoundingClientRect(), [
+        { label: "Edit", fn: ()       => { openConnSheet(conn); } },
+        { label: "Copy host", fn: ()       => { void copyText(conn.host + ":" + conn.port, "Host"); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: ()       => { void deleteConn(conn ); } },
+        { label: "Delete", danger: true, fn: ()       => { void deleteConn(conn); } },
       ]);
-    };
-  });
+    }
+  };
 }
 
 async function withTunBusy(id        , verb        , fn                        )                   {
