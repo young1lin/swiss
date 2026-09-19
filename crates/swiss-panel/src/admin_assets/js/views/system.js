@@ -14,55 +14,62 @@
  * limitations under the License.
  */
 
-import { $, apiJson, emptyHtml } from "../util.js";
+import { $, apiJson, emptyNode, targetEl } from "../util.js";
+import { fill, h } from "../h.js";
 import { closeSheet } from "../add-sheet.js";
 import { currentView } from "../ui-state.js";
 
 /** The process action is deliberately a Settings page, not permanent app chrome: quitting the
- *  whole toolbox is destructive, rare, and belongs beside other host-owned controls. */
-function systemBody() {
-  return '<div class="wide">' +
-    '<div class="pane-head"><div>' +
-      '<div class="pane-desc">Control this running swiss process. Quitting stops every plugin and local service cleanly; configuration and logs remain on disk.</div>' +
-    "</div></div>" +
-    '<div class="sec-head"><span class="sec-cap">Runtime</span></div>' +
-    '<div class="group">' +
-      '<div class="tun-row">' +
-        '<div class="tun-main">' +
-          '<div class="tun-name">Quit swiss</div>' +
-          '<div class="tun-sub"><span class="via">Gracefully stop MCPs, tunnels, jobs, terminals, and this local process.</span></div>' +
-        "</div>" +
-        '<div class="tun-acts"><button class="btn danger" id="system-quit">Quit swiss</button></div>' +
-      "</div>" +
-    "</div>" +
-  "</div>";
+ *  whole toolbox is destructive, rare, and belongs beside other host-owned controls.
+ *
+ *  Built with h() (docs/37 R5): every string here is the panel's own prose, so the security
+ *  face that moved the other views off innerHTML does not exist on this page - what the
+ *  builders buy here is the ledger (the file joins the node side of the eventual ratchet)
+ *  and a pane whose wiring survives its own repaint. */
+function systemBodyNode()              {
+  return h("div", { class: "wide" },
+    h("div", { class: "pane-head" },
+      h("div", null,
+        h("div", { class: "pane-desc" }, "Control this running swiss process. Quitting stops every plugin and local service cleanly; configuration and logs remain on disk."))),
+    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, "Runtime")),
+    h("div", { class: "group" },
+      h("div", { class: "tun-row" },
+        h("div", { class: "tun-main" },
+          h("div", { class: "tun-name" }, "Quit swiss"),
+          h("div", { class: "tun-sub" },
+            h("span", { class: "via" }, "Gracefully stop MCPs, tunnels, jobs, terminals, and this local process."))),
+        h("div", { class: "tun-acts" },
+          h("button", { class: "btn danger", id: "system-quit" }, "Quit swiss")))));
 }
 
-function quitSheetHtml() {
-  return '<div class="sheet" role="dialog" aria-modal="true" aria-label="Quit swiss">' +
-    '<div class="sheet-head"><h2>Quit swiss?</h2></div>' +
-    '<div class="sheet-body">' +
-      '<p>This disconnects every MCP client and stops active tunnels, jobs, and terminal sessions.</p>' +
-      '<p class="hint">Your configuration and logs are kept. Start it again with <code>swiss start</code>.</p>' +
-    "</div>" +
-    '<div class="sheet-foot"><span class="grow"></span>' +
-      '<button class="btn" id="quit-cancel">Cancel</button>' +
-      '<button class="btn danger" id="quit-confirm">Quit swiss</button>' +
-    "</div>" +
-  "</div>";
+function quitSheetNode()              {
+  return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Quit swiss" } },
+    h("div", { class: "sheet-head" }, h("h2", null, "Quit swiss?")),
+    h("div", { class: "sheet-body" },
+      h("p", null, "This disconnects every MCP client and stops active tunnels, jobs, and terminal sessions."),
+      h("p", { class: "hint" },
+        "Your configuration and logs are kept. Start it again with ",
+        h("code", null, "swiss start"), ".")),
+    h("div", { class: "sheet-foot" },
+      h("span", { class: "grow" }),
+      h("button", { class: "btn", id: "quit-cancel" }, "Cancel"),
+      h("button", { class: "btn danger", id: "quit-confirm" }, "Quit swiss")));
 }
 
-function openQuitSheet() {
+function openQuitSheet()       {
   const sheet = $("sheet");
-  sheet.hidden = false;
-  sheet.innerHTML = quitSheetHtml();
+  sheet.hidden = false; // BEFORE the content, per the house sheet idiom (add-sheet.js)
+  fill(sheet, quitSheetNode());
+  // Per-open wiring IS the house sheet idiom (add-sheet.js, the group sheet): #sheet is a
+  // shared shell host that outlives this view, so its controls are claimed here and only
+  // here - not delegated from the pane, which does not own the sheet.
   $("quit-cancel").onclick = closeSheet;
   $("quit-confirm").onclick = () => { void requestQuit(); };
   sheet.onclick = (event) => { if (event.target === sheet) closeSheet(); };
   $("quit-cancel").focus();
 }
 
-async function requestQuit() {
+async function requestQuit()                {
   const button = $                   ("quit-confirm");
   if (button) { button.disabled = true; button.textContent = "Quitting…"; }
   const stopped = await apiJson("/api/shutdown", { method: "POST" });
@@ -73,17 +80,21 @@ async function requestQuit() {
   closeSheet();
   // A slow response must not overwrite a different page reached while the sheet was open.
   if (currentView() === "system") {
-    $("pane").innerHTML = emptyHtml({
+    fill($("pane"), emptyNode({
       icon: "power",
       title: "swiss is stopping",
       hint: "The local process is closing gracefully. You can close this tab and run swiss start when you need it again.",
-    });
+    }));
   }
 }
 
-async function mount() {
-  $("pane").innerHTML = systemBody();
-  $("system-quit").onclick = openQuitSheet;
+async function mount()                {
+  fill($("pane"), systemBodyNode());
+  // One delegated claim on the pane (docs/37 R5): the quit button is reached through the
+  // pane's own listener, so the wiring survives any repaint of the pane's children.
+  $("pane").onclick = (event            )       => {
+    if (targetEl(event)?.closest("#system-quit")) openQuitSheet();
+  };
 }
 
-export { mount, openQuitSheet, quitSheetHtml, requestQuit, systemBody };
+export { mount, openQuitSheet, quitSheetNode, requestQuit, systemBodyNode };
