@@ -34,7 +34,8 @@
    ================================================================================================ */
 import type { ApiMcpRow, ApiTokenCreated, ApiTokenRow, ApiTokensResponse } from "../types/api.js";
 import type { GroupCfg, GroupSlice } from "../types/dom.js";
-import { $, TOKEN_ID_KEY, api, apiJson, emptyHtml, esc, icon, targetEl } from "../util.js";
+import { $, TOKEN_ID_KEY, api, apiJson, emptyNode, iconNode, targetEl } from "../util.js";
+import { fill, h } from "../h.js";
 import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
@@ -125,17 +126,27 @@ function inUse(): ApiTokenRow | null { return pickCopyToken(tokenRows(), remembe
 /** One token's row: one button (Use, absent on the token copies already use) and the
  *  overflow menu with Rotate and Revoke - red never sits on a row (design rule 4). The
  *  buttons stay delegated on #pane (wire), so the groups component rebuilding a card never
- *  rewires them. */
-function rowHtml(t: ApiTokenRow): string {
+ *  rewires them.
+ *
+ *  Built with h() (docs/37 R5), which is why there is no esc() left in here: a label and an
+ *  id are text nodes and an attribute value, and neither can close a tag. The two literal
+ *  " " children are the spaces the string version had between the tag and the name, and
+ *  between the two buttons - inline boxes, so the gap is real layout, not formatting. */
+function rowNode(t: ApiTokenRow): HTMLElement {
   const mine = inUse();
-  const used = mine && t.id === mine.id;
-  return '<div class="row" data-token="' + esc(t.id) + '"><div class="row-main">' +
-    '<div class="name">' + esc(t.label) + (used ? ' <span class="tag">copies use this</span>' : "") + "</div>" +
-    '<div class="desc">id ' + esc(t.id) + (t.createdAt ? " · created " + new Date(t.createdAt).toLocaleString() : "") + "</div>" +
-    '</div><div class="row-act">' +
-      (used ? "" : '<button class="btn" data-tkuse="' + esc(t.id) + '">Use</button> ') +
-      '<button class="btn ghost icon" data-tkmore="' + esc(t.id) + '" aria-label="Actions for ' + esc(t.label) + '" title="Rotate or revoke">' + icon("ellipsis") + "</button>" +
-    "</div></div>";
+  const used = !!mine && t.id === mine.id;
+  return h("div", { class: "row", data: { token: t.id } },
+    h("div", { class: "row-main" },
+      h("div", { class: "name" }, t.label, used && [" ", h("span", { class: "tag" }, "copies use this")]),
+      h("div", { class: "desc" }, "id " + t.id + (t.createdAt ? " · created " + new Date(t.createdAt).toLocaleString() : ""))),
+    h("div", { class: "row-act" },
+      !used && [h("button", { class: "btn", data: { tkuse: t.id } }, "Use"), " "],
+      h("button", {
+        class: "btn ghost icon",
+        data: { tkmore: t.id },
+        aria: { label: "Actions for " + t.label },
+        title: "Rotate or revoke",
+      }, iconNode("ellipsis"))));
 }
 
 /** The tokens scope's cfg for mountGroup. No drag contract: creation time is the order, the
@@ -161,11 +172,11 @@ function tkCfg(): GroupCfg<ApiTokenRow> {
     draggable: false,
     rowsById: (): ApiTokenRow[] => { return tokenRows(); },
     groupOfRow: groupOfToken,
-    rowsHtml: (g: GroupSlice<ApiTokenRow>): string => { return g.rows.map(rowHtml).join(""); },
-    rowSel: (r: ApiTokenRow): string => {
-      const v = window.CSS && CSS.escape ? CSS.escape(r.id) : r.id;
-      return '[data-token="' + v + '"]';
-    },
+    /* rowNode, not rowsHtml + rowSel (docs/37 R5): the component wires the node this
+     * builder hands back, so the round trip through a parsed string and a
+     * [data-token="..."] lookup - and the CSS.escape dance that lookup needed for ids the
+     * server lets be arbitrary - is gone. */
+    rowNode: rowNode,
   };
 }
 
@@ -179,10 +190,13 @@ function refreshGroupSelect(): void {
   const wanted = sel.value && names.indexOf(sel.value) >= 0
     ? sel.value
     : resolveDefaultGroup(names, lastGroup("tokens"));
-  const next = names.map((n: string): string => {
-    return '<option value="' + esc(n) + '"' + (n === wanted ? " selected" : "") + ">" + esc(n) + "</option>";
-  }).join("");
-  if (sel.innerHTML !== next) sel.innerHTML = next;
+  // Only when the option LIST actually moved. The string version compared rendered markup to
+  // decide that; the node version compares the values, which is the thing it meant. Rebuilding
+  // options resets the box, and a poll must not do that under a hand that just picked a group.
+  const shown = Array.from(sel.options).map((o: HTMLOptionElement): string => { return o.value; });
+  const moved = shown.length !== names.length || shown.some((v: string, i: number): boolean => { return v !== names[i]; });
+  if (moved) fill(sel, names.map((n: string): HTMLOptionElement => { return h("option", { value: n }, n); }));
+  sel.value = wanted;
 }
 
 /** (Re)build the groups region only — the create form and the secret box live outside it, so
@@ -191,63 +205,75 @@ function paintGroups(): void {
   const host = $("tkGroups");
   if (!host) return;
   painted = signature();
-  host.innerHTML = "";
   const list = tokenRows();
   if (!list.length) {
-    host.innerHTML = emptyHtml({ icon: "key", title: "No tokens", hint: "One token per client — create one, then copy its connect command." });
+    fill(host, emptyNode({ icon: "key", title: "No tokens", hint: "One token per client — create one, then copy its connect command." }));
     refreshGroupSelect();
     return;
   }
-  slice(list, tokenGroupNames().length ? tokenGroupNames() : ["default"], groupOfToken).forEach((g: GroupSlice<ApiTokenRow>): void => {
-    host.appendChild(mountGroup(tkCfg(), g));
-  });
+  const names = tokenGroupNames().length ? tokenGroupNames() : ["default"];
+  fill(host, slice(list, names, groupOfToken).map((g: GroupSlice<ApiTokenRow>): HTMLElement => {
+    return mountGroup(tkCfg(), g);
+  }));
   refreshGroupSelect();
   $("countChip").textContent = countText();
 }
 
-/** The Group select of the create form: the scope's groups, the last-used one selected. */
-function groupSelectHtml(): string {
+/** The Group select of the create form: the scope's groups, the last-used one selected.
+ *  `select.value = picked` rather than a selected attribute on one option - the property is
+ *  the selection, the attribute was only ever its initial default. */
+function groupSelectNode(): HTMLSelectElement {
   const names = tokenGroupNames().length ? tokenGroupNames() : ["default"];
-  const picked = resolveDefaultGroup(names, lastGroup("tokens"));
-  return '<select class="v" id="tkGroup" title="The group this token lists under">' +
-    names.map((n: string): string => {
-      return '<option value="' + esc(n) + '"' + (n === picked ? " selected" : "") + ">" + esc(n) + "</option>";
-    }).join("") + "</select>";
+  const sel = h("select", { class: "v", id: "tkGroup", title: "The group this token lists under" },
+    names.map((n: string): HTMLOptionElement => { return h("option", { value: n }, n); }));
+  sel.value = resolveDefaultGroup(names, lastGroup("tokens"));
+  return sel;
 }
 
 /** The once-only secret box: shown after a create or rotate, kept in state so a poll or the
- *  explicit refresh cannot lose the one chance to copy it. */
-function secretHtml(): string {
+ *  explicit refresh cannot lose the one chance to copy it. Null when there is nothing to
+ *  show - h() drops a null child, so the caller needs no "" branch. */
+function secretNode(): HTMLElement | null {
   const secret = tokensDomain.viewSecret;
-  return secret
-    ? '<div class="group" style="margin-top:var(--s4)"><div class="row"><div class="row-main">' +
-        '<div class="name">New secret — copy now, shown only once</div>' +
-        '<input class="v" id="tkSecret" style="width:100%" value="' + esc(secret) + '" readonly aria-label="The new token secret, shown once"></div></div>' +
-        '<div class="form-actions">' +
-          '<button class="btn" id="tkCopySecret">Copy secret</button>' +
-          '<button class="btn primary" id="tkCopyConn">Copy connect commands (all MCPs)</button>' +
-        '</div></div>'
-    : "";
+  if (!secret) return null;
+  return h("div", { class: "group", style: "margin-top:var(--s4)" },
+    h("div", { class: "row" },
+      h("div", { class: "row-main" },
+        h("div", { class: "name" }, "New secret — copy now, shown only once"),
+        h("input", {
+          class: "v", id: "tkSecret", style: "width:100%",
+          value: secret, readOnly: true,
+          aria: { label: "The new token secret, shown once" },
+        }))),
+    h("div", { class: "form-actions" },
+      h("button", { class: "btn", id: "tkCopySecret" }, "Copy secret"),
+      h("button", { class: "btn primary", id: "tkCopyConn" }, "Copy connect commands (all MCPs)")));
 }
 
 function render(): void {
   painted = signature();
   // No location title: the context bar already says "MCP / Token".
-  $("pane").innerHTML = '<div class="wide">' +
-    '<div class="pane-head"><div>' +
-      '<div class="pane-desc">One token per client. Copied connect commands use the <code>default</code> token unless you click Use. The Traffic tab attributes every request to its token, and to the name the client announces during initialize. A secret is shown once — on create or rotate.</div>' +
-    "</div>" +
-      '<div class="pane-actions"><button class="btn" id="tkNewGroup">New group</button></div>' +
-    "</div>" +
+  fill($("pane"), h("div", { class: "wide" },
+    h("div", { class: "pane-head" },
+      h("div", null,
+        h("div", { class: "pane-desc" },
+          "One token per client. Copied connect commands use the ",
+          h("code", null, "default"),
+          " token unless you click Use. The Traffic tab attributes every request to its token, and to the name the client announces during initialize. A secret is shown once — on create or rotate.")),
+      h("div", { class: "pane-actions" },
+        h("button", { class: "btn", id: "tkNewGroup" }, "New group"))),
     // The inline create form (docs/35 §3): one row, the Group select beside the primary.
-    '<div class="inline-form"><input id="tkLabel" placeholder="Label, e.g. claude-code">' +
-      groupSelectHtml() +
-      '<button class="btn primary" id="tkCreate">Create</button></div>' +
-    '<div id="tkGroups"></div>' +
-    secretHtml() +
-  "</div>";
+    h("div", { class: "inline-form" },
+      h("input", { id: "tkLabel", placeholder: "Label, e.g. claude-code" }),
+      groupSelectNode(),
+      h("button", { class: "btn primary", id: "tkCreate" }, "Create")),
+    h("div", { id: "tkGroups" }),
+    secretNode()));
   paintGroups();
   $("countChip").textContent = countText();
+  // Re-claimed, not re-attached: fill() keeps #pane itself, so this handler already survives
+  // a repaint. What it does not survive is another view taking #pane over - remote,
+  // remote-runs and secrets each assign their own - so the claim goes with every render.
   wire();
 }
 

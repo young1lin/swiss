@@ -15,6 +15,7 @@
  */
 
 import type { EmptyStateSpec } from "./types/dom.js";
+import { h } from "./h.js";
 const TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
 const KINDS = ["tools", "resources", "prompts"];
@@ -96,6 +97,19 @@ function emptyHtml(opts: EmptyStateSpec): string {
     (opts.hint ? '<p class="hint">' + esc(opts.hint) + "</p>" : "") +
     action +
     "</div></div>";
+}
+
+/** The same empty state as a NODE (docs/37 R5) - the shape every converted view needs the
+ *  moment its host stops taking a string. Same markup, same data-empty-action contract; the
+ *  esc() calls are gone because the title and hint are text nodes now. emptyHtml stays for
+ *  the views R5 has not reached and retires with the last of them. */
+function emptyNode(opts: EmptyStateSpec): HTMLElement {
+  return h("div", { class: "empty" },
+    h("div", null,
+      h("span", { class: "empty-ic" }, iconNode(opts.icon)),
+      h("h2", null, opts.title),
+      opts.hint ? h("p", { class: "hint" }, opts.hint) : null,
+      opts.action ? h("button", { class: "btn ghost", data: { "empty-action": opts.action } }, opts.action) : null));
 }
 
 /** The status dot's tooltip (docs/18 V6): a colour — and the idle hollow ring above all —
@@ -199,4 +213,4 @@ async function apiJson<T = unknown>(path: string, opts?: RequestInit): Promise<T
   }
 }
 
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, errText, esc, icon, iconNode, isTyping, now, targetEl, toast, typeTagHtml, TYPE_ICONS, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, emptyNode, errText, esc, icon, iconNode, isTyping, now, targetEl, toast, typeTagHtml, TYPE_ICONS, whenLabel };
