@@ -87,12 +87,14 @@ correctness boundary.
 
 ## Rust-specific rules
 
-- **The panel is edited here, directly.** `crates/swiss-panel/src/admin_assets/` is the panel's
-  source of truth — plain ES modules served straight from disk, still no bundler and no build
-  step. Its vitest acceptance suite lives in `crates/swiss-panel/panel-tests/` (node is a
-  dev-only test dependency there, never a build step). The panel's JavaScript remains the spec
-  for the admin API: every `/api/*` response must stay shape-identical to what the panel reads,
-  and a shape change ships on both sides in one commit.
+- **The panel is edited here, directly.** The panel's source of truth is
+  `crates/swiss-panel/panel/src/*.ts` (docs/36, ADR-024): TypeScript, erased to JS by
+  ts-blank-space line-for-line, with the emit COMMITTED under `crates/swiss-panel/src/admin_assets/js`
+  — still no bundler, no minify, no source map, and `cargo build` needs no node. The gate is
+  `npm run check` in `crates/swiss-panel/panel/` (typecheck + eslint + emit-freshness + the
+  vitest acceptance suite); node is a dev-only dependency there, never a build step of the
+  exe. The panel remains the spec for the admin API: every `/api/*` response must stay
+  shape-identical to what the panel reads, and a shape change ships on both sides in one commit.
 - **No `serde_json::Value` on a forwarding path.** The proxying adapters (`proc`, `http`, `rest`)
   must pass payloads through as `&RawValue`, parsing only the envelope fields they route on.
   Materialising a 2 MB body into a DOM is the single most expensive thing this process can do.
@@ -191,14 +193,14 @@ working tree, on every platform — CRLF never enters a commit.
 - New files are written with LF. Editors on Windows must not convert back — the attributes file
   covers a fresh checkout, but a misconfigured editor can still dirty an existing tree.
 - Binary types are marked binary in `.gitattributes`; never let git normalize them.
-- The panel tree `crates/swiss-panel/src/admin_assets` is edited here directly; the repo-wide
+- The panel emit tree `crates/swiss-panel/src/admin_assets` is committed, not hand-edited — edit `panel/src/*.ts` and run `npm run build` there; the repo-wide
   LF policy above is the only one it needs.
 
 ## Making changes
 
 - **A behaviour change ships with a test** that fails before it and passes after. Integration
   tests drive the axum app through `tower::ServiceExt::oneshot` — no real port, no real sleep.
-- **A panel change ships with its vitest case** in `crates/swiss-panel/panel-tests/` — that
+- **A panel change ships with its vitest case** in `crates/swiss-panel/panel/test/` — that
   suite is the panel's acceptance spec; see `docs/08-testing.md`.
 - **Write all code comments in English**, including in docs code samples.
 - **Never commit** `gateway.config.json`, `.env`, `managed.json`, `tunnels.json`, `master.key` or

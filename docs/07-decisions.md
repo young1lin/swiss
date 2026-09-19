@@ -425,7 +425,8 @@ unchanged in force:
 - the panel's JavaScript stays the spec for the admin API: every `/api/*` shape change ships
   on both sides in one commit;
 - the panel's vitest suite moves home: 35 files, 329 tests, now at
-  `crates/swiss-panel/panel-tests/` (node is a dev-only test dependency, never a build step).
+  `crates/swiss-panel/panel-tests/` (node is a dev-only test dependency, never a build step;
+  since ADR-024 the suite lives at `crates/swiss-panel/panel/test/` behind `npm run check`).
   The one server-coupled file (`admin-panel.test.ts`) shed its five HTTP tests - the Rust
   crate's own suite pins serving, the path guard and the stamp - and its module-graph walk
   was rewritten against the filesystem;
@@ -682,8 +683,41 @@ The decisions that keep it honest:
 - **Rename carries revisions; delete clears them** — with the OAuth credentials, the parked
   snapshots describe the logical service, so they follow the name and die with it. A future
   same-named MCP starts clean.
-
 What was rejected: the disabled-shadow registry (state contention above); and "rename the old
 one first" as the only answer (it works — ADR-less — but the operator asked for rollback
 under one name, and a rename that loses the name loses the rollback).
 
+## ADR-024 — The panel is authored in TypeScript, erased to the same JS (docs/36)
+
+**Status: Accepted (2026-10-24).** The panel's source of truth moved from
+`crates/swiss-panel/src/admin_assets/js` (hand-written JS, served as-is) to
+`crates/swiss-panel/panel/src/*.ts`. The emit pipeline is ts-blank-space: type-only syntax is
+blanked out line-by-line, so each emitted `.js` line keeps the number of its `.ts` source
+line. The emit is COMMITTED under `admin_assets/js` — the repo stays buildable with cargo
+alone, node is a dev-only dependency (npm ci + npm run check in crates/swiss-panel/panel),
+and the served tree, rust_embed, include_str! contracts and the /admin/js/main.js entry are
+byte-compatible with the pre-port layout. The options table behind this choice is docs/36 §7.2.
+
+What was rejected: shipping .ts with a bundler (a build step the repo never had, plus a
+second artifact to keep honest); serving TS and erasing in the browser (type-checking leaves
+the machine); keeping hand-written JS (docs/37 §0.2 — the language was ten years behind while
+the code carried 1,041 non-null assertions and types bent to fit it).
+
+## ADR-025 — D9 revoked: the panel's gate is the check suite, not byte-equality (docs/37)
+
+**Status: Accepted (2026-10-24).** D9 accepted the modern-TypeScript port on one condition:
+the emitted JS must stay byte-identical to the pre-port JS, so behavior change could be
+proved by diff. That condition is what made the port write BAD TypeScript — var kept
+because const emits longer, catch (e) untyped because errText(e) changes tokens, five
+global built-ins bent in types/dom.d.ts so call sites would not need casts (docs/37 §0.2).
+D9 is revoked: the acceptance line is now npm run check green (typecheck ×2 + lint +
+emit-freshness + vitest), per-file test coverage for every rewritten module, and the
+proof-of-life walk on 19998. The machine gate that replaces byte-equality is the eslint
+ratchet (docs/37 §9): rules turn to errors stage by stage — no-var, prefer-const,
+no-non-null-assertion (with a shrinking whitelist), consistent-type-imports, and
+no-restricted-properties on innerHTML with a static-skeleton whitelist.
+
+Options considered — A) keep D9 (rejected: the §0.2 bills only grow with every edit);
+B) revoke with no replacement gate (rejected: house style forks per-author);
+C) revoke and gate on the ratchet (chosen); D) tsc/esbuild emit + source maps (rejected:
+loses line-for-line emit, adds a debugging indirection, and does not stop the types lying).

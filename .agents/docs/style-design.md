@@ -139,7 +139,7 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 - **Zero DOM on forwarding paths**: the `proc/http/rest` adapters pass payloads through as `&RawValue`, parsing only the envelope fields they route on — materializing a 2 MB body into a DOM is the single most expensive thing this process can do (AGENTS.md).
 - **current_thread + a single exe**: a current_thread Tokio runtime; every thread of a work-stealing pool is a stack + allocator caches; opt-level z + fat LTO + codegen-units 1 — the slowness is deliberate.
 - **Comment and test culture**: code comments are all English; comments record the "why" and the bugs whose tuition was already paid ("Port the reason, not just the code"); behavior changes ship with tests, and porting a module means porting its vitest too; the panel tree has a byte-level guard test (skipped on dev machines = "guards nothing while still reporting ok", admin.rs:263-271).
-- **One source of truth (ADR-016)**: the panel is edited directly in `crates/swiss-panel/src/admin_assets/` with its vitest suite (`crates/swiss-panel/panel-tests/`); when docs and code conflict, code wins, but a discovered conflict must be fixed in the docs.
+- **One source of truth (ADR-016, superseded by ADR-024)**: the panel is authored in `crates/swiss-panel/panel/src/*.ts`, emitted line-for-line into `crates/swiss-panel/src/admin_assets/js/` (committed), gated by `npm run check` (`crates/swiss-panel/panel/test/`); when docs and code conflict, code wins, but a discovered conflict must be fixed in the docs.
 
 ## Unified Style Checklist (new plugin/page onboarding) + Known Exceptions/Inconsistencies
 
@@ -152,7 +152,7 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 5. Destructive operations confirm with the consequence named; table-level operations confirm verbatim; write operations carry a revision.
 6. fetch goes only through `api/apiJson`; error copy states consequences; mono only for copyable values; counts use tabular-nums.
 7. Backend: no `.unwrap()` (config/network/db/fs), no `serde_json::Value` materializing forwarding paths, dependencies defended with `default-features = false`, behavior changes ship with tests, comments in English.
-8. Changing behavior the Node build also has: read the original Node module first (the comments hold the reasons), change Node + vitest first, then copy the whole tree; never edit `admin_assets` directly.
+8. Changing behavior an older build also had: the reasons live in the module comments and in docs/ — read them before changing a shape; edit the TypeScript in `panel/src`, never the committed emit.
 9. Docs: the numbered docs/ series and the `.agents/docs/<id>.md` audit docs update in sync; status lines stay honest (see below).
 10. A reorderable list drags by a dedicated handle (never a header that carries buttons), offers the ⋯-menu Move up/down exactly where the move exists, shows the drop as before/after accent edges, persists as a whole-list PUT, and defers poll rebuilds while a drag is in flight (the MCP sidebar is the reference, sidebar.js:113-137,269-331).
 
@@ -166,7 +166,7 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 6. **Two generations of localStorage keys coexist**: `mcp_gateway_*` (the Node era) and `swiss_theme`/`swiss.terminal.fontSize`.
 7. **Comments lagging**: the `util.js:36` state.view comment lists only five views; the `state.groups` comment still says "`default` is implicit and comes first" (util.js:13) and the base.css sidebar-groups comment still pins `default` as "always first and always present" (base.css:334-337), contradicting the ordinary-group model (util.js:6-9); the `pg_browser.rs` module header also has a "mid-port leftover" style comment (see data.md).
 8. **Sidebar mechanism coupling**: `page.sidebar` is granted per page, yet the sidebar content always renders the MCP list; only mcps uses it today, and docs/13 §7 explicitly declines to fix it.
-9. **The panel-asset boundary (ADR-016)**: `admin_assets` is edited directly in this repo — still plain ES modules, no build step.
+9. **The panel-asset boundary (ADR-024)**: panel sources are `panel/src/*.ts`; the committed emit under `admin_assets/js` stays plain ES modules with no bundler — the exe build needs no node.
 10. **The grouped lists diverge at the edges**: only the MCP sidebar got grip handles and ⋯-menu moves — tunnel group headers are drop-into only (views.css:320-322) — and the two delete confirms disagree on where rows go: the sidebar names the first remaining group (sidebar.js:243-252), the tunnels still name the literal `default` (tunnels.js:92-97).
 
 ## Style and Design Observations

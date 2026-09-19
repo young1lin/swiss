@@ -35,6 +35,10 @@ visible control was clicked with real pointer events and answered. vitest green 
    regressions.
 3. **Rebuild and restart 19998** (`scripts/test-instance.ps1 -Stop`, build with
    `CARGO_TARGET_DIR=target-test`, then `-Fresh`). Never verify against a stale binary.
+   The panel is now authored in TypeScript (`crates/swiss-panel/panel/src`, docs/36): run
+   `npm run build` there first so the committed emit in `admin_assets/js` is fresh, THEN
+   `touch crates/swiss-panel/src/lib.rs` before the release build — the rust_embed
+   fingerprint trap below is unchanged by the port.
 4. **Real-browser walk on a fresh page load.** Using browser automation with REAL clicks
    (CDP input events, not `element.click()`), on a page navigated from scratch:
    - every level of navigation reaches the view (top tab -> page -> seg);

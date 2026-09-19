@@ -104,7 +104,7 @@ revised after the Node reference was retired (scenario never run under the old m
 
 Prompt: "Add a new panel page showing each job's run history."
 - PASS: panel UI edited directly under crates/swiss-panel/src/admin_assets/ with its vitest case
-  in crates/swiss-panel/panel-tests/; backend page/action through the host contract; spec-first
+  in crates/swiss-panel/panel/test/; backend page/action through the host contract; spec-first
   if multi-sitting (swiss-spec).
 - FAIL: invents a copy/recopy procedure, hand-rolls app chrome instead of the shell vocabulary
   (swiss-ui-design), or ships panel changes without the vitest case.

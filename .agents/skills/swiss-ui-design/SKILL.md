@@ -269,10 +269,10 @@ The UI must continue to work when Swiss has many plugins.
 When implementing Swiss panel changes:
 
 1. Read `AGENTS.md` first.
-2. Inspect `crates/swiss-panel/src/admin_assets/` before proposing new primitives.
+2. Inspect `crates/swiss-panel/panel/src/` (and the CSS under `crates/swiss-panel/src/admin_assets/`) before proposing new primitives.
 3. Respect plain ES modules: no bundler/framework migration for a UI cleanup.
 4. Reuse existing `page-registry`, menu, rail, icon, spacing and color mechanisms where possible.
-5. A behavior change ships with Vitest coverage under `crates/swiss-panel/panel-tests/`.
+5. A behavior change ships with Vitest coverage under `crates/swiss-panel/panel/test/`.
 6. Update design docs when an old decision is superseded; do not leave contradictory “implemented” rules as the apparent source of truth.
 7. Preserve deep links and compatibility unless there is a concrete reason not to.
 8. Do not change API contracts merely to make frontend rendering easier when the existing descriptors already express the needed structure.
@@ -318,7 +318,7 @@ One process, one loopback port, one panel. The panel is the product's face and i
 
 ### Where it lives, how it changes
 
-- Source: `crates/swiss-panel/src/admin_assets/` — two CSS files (`styles/base.css`, `styles/views.css`), native ES modules in `js/`, an inline SVG sprite in `index.html`. It is edited here directly; there is no sibling checkout and no copy-back step.
+- Source: TypeScript in `crates/swiss-panel/panel/src/` with the emit committed under `src/admin_assets/js` (ADR-024); CSS is edited in place (`styles/base.css`, `styles/views.css`), the SVG sprite lives in `index.html`. No bundler, no sibling checkout, no copy-back step.
 - No bundler, no framework, no npm dependency, no preprocessor, no web font download at runtime. A visual change that needs a build step is the wrong change.
 - Tokens are the block at the head of `styles/base.css`; the header comment there states the three rules everything below derives from. Read it before adding a value — the value probably exists.
 - Verify on 19998 with the agent-browser skill, light and dark, at ~1440px and at ~900px width. 19999 is the user's; never touch it.
