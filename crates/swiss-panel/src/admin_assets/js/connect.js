@@ -21,8 +21,8 @@ import { TOKEN_ID_KEY, apiJson, targetEl, toast } from "./util.js";
 import { kindBodyNode, logsBodyNode } from "./logs.js";
 import { frag } from "./h.js";
 import { closeMenu } from "./pane.js";
-import { configBody, histClose } from "./run-history.js";
-import { runBody } from "./run.js";
+import { configBodyNode, histClose } from "./run-history.js";
+import { runBodyNode } from "./run.js";
 import { activeTokenSecret, pickCopyToken, refreshTokens, rememberedTokenId, setActiveTokenSecret, tokenRows } from "./views/tokens.js";
 import { menuIsOpen } from "./ui-state.js";
 import { gatewayInfo, mcpDetail } from "./mcp-state.js";
@@ -155,8 +155,8 @@ function nodeHtml(node      )         {
 }
 
 function tabBody(d           , m                           )         {
-  if (d.tab === "run") return runBody(d, m);
-  if (d.tab === "config") return configBody(d);
+  if (d.tab === "run") return nodeHtml(frag(runBodyNode(d, m)));
+  if (d.tab === "config") return nodeHtml(frag(configBodyNode(d)));
   if (d.tab === "logs") return nodeHtml(frag(logsBodyNode(d)));
   return nodeHtml(frag(kindBodyNode(d, d.tab, m)));
 }

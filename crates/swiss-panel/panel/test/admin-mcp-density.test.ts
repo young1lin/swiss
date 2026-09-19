@@ -95,7 +95,8 @@ describe("MCP detail progressive disclosure", () => {
   });
 
   it("turns read-only configuration into a short overview with every setting behind disclosure", () => {
-    const html = history.configBody({
+    const host = document.createElement("div");
+    host.append(...[history.configBodyNode({
       source: "config",
       editing: false,
       config: {
@@ -111,19 +112,18 @@ describe("MCP detail progressive disclosure", () => {
       },
       revisions: [],
       tunnels: [],
-    });
+    })].flat().filter((n): n is Node => n != null));
 
-    expect(html).toContain('class="group config-summary"');
-    expect(html).toContain('class="config-target"');
-    expect(html).toContain("127.0.0.1:3306 / acme_app_dev");
-    expect(html).toContain('class="config-badges"');
-    expect(html).toContain("Starts at boot");
-    expect(html).toContain('<details class="config-more">');
-    expect(html).toContain("All settings");
-    expect(html).toContain("Default row limit");
-    expect(html).toContain("••••••••");
-    expect(html).toContain('id="c-edit"');
-    expect(html).toContain('id="c-replace"');
+    expect(host.querySelector(".group.config-summary")).not.toBeNull();
+    expect(host.querySelector(".config-target")!.textContent).toContain("127.0.0.1:3306 / acme_app_dev");
+    expect(host.querySelector(".config-badges")).not.toBeNull();
+    expect(host.querySelector(".config-badges")!.textContent).toContain("Starts at boot");
+    expect(host.querySelector("details.config-more")).not.toBeNull();
+    expect(host.querySelector("details.config-more > summary")!.textContent).toContain("All settings");
+    expect(host.querySelector(".config-rows")!.textContent).toContain("Default row limit");
+    expect(host.querySelector(".config-rows")!.textContent).toContain("••••••••");
+    expect(host.querySelector("#c-edit")).not.toBeNull();
+    expect(host.querySelector("#c-replace")).not.toBeNull();
   });
 
   it("summarizes each adapter shape without dropping its connection target", () => {
@@ -138,11 +138,12 @@ describe("MCP detail progressive disclosure", () => {
     ] as const;
 
     for (const [config, target] of cases) {
-      const html = history.configBody({ source: "managed", editing: false, config, revisions: [], tunnels: [] });
-      expect(html).toContain(target);
-      expect(html).toContain("All settings");
-      expect(html).toContain('id="c-edit"');
-      expect(html).toContain('id="c-replace"');
+      const host = document.createElement("div");
+      host.append(...[history.configBodyNode({ source: "managed", editing: false, config, revisions: [], tunnels: [] })].flat().filter((n): n is Node => n != null));
+      expect(host.querySelector(".config-target")!.textContent).toContain(target);
+      expect(host.querySelector("details.config-more > summary")!.textContent).toContain("All settings");
+      expect(host.querySelector("#c-edit")).not.toBeNull();
+      expect(host.querySelector("#c-replace")).not.toBeNull();
     }
   });
 

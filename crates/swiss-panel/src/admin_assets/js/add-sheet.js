@@ -16,8 +16,9 @@
 
                                                                
 import { $, DEFAULT_GROUP, apiJson, esc, toast } from "./util.js";
+import { fill } from "./h.js";
 import { openDetail, runConnTest } from "./detail.js";
-import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsHtml, readFields, translateOauth, translatePg } from "./fields.js";
+import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsNode, readFields, translateOauth, translatePg } from "./fields.js";
 import { loadList } from "./polling.js";
 import { addTitle, groupFieldHtml, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { newGroup } from "./sidebar.js";
@@ -57,7 +58,7 @@ function openSheet(group               )       {
     "</div>";
   $("sheet").hidden = false;
   const paint = ()       => {
-    $("a-fields").innerHTML = fieldsHtml($                   ("a-type").value, {}, "a-");
+    fill($("a-fields"), fieldsNode($                   ("a-type").value, {}, "a-"));
     // The test button exists only for the types that have something to test.
     const tb = $("a-test");
     if (tb) tb.hidden = TESTABLE_TYPES.indexOf($                   ("a-type").value) < 0;
