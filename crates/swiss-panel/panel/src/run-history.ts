@@ -18,14 +18,15 @@ import type { ApiMcpCallRow, ApiMcpTool } from "./types/api.js";
 import type { PgUrlParts } from "./types/dom.js";
 import type { ApiMcpResourceRead, McpConfigLike, McpRevisionRow, McpRunResult, McpTunnelDepRow } from "./types/runs.js";
 import type { McpDetail } from "./types/state.js";
-import { $, api, apiJson, errText, esc, icon, toast } from "./util.js";
+import { $, api, apiJson, errText, iconNode, targetEl, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { callsPageStep, callsRetry, cancelEdit, changeEditType, clearCalls, deleteRevision, loadCalls, loadPage, pageNext, pagePrev, restoreRevision, runConnTest, saveEdit, saveReplace, showFullResult, showTab, startEdit, startReplace } from "./detail.js";
-import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsHtml, parsePgUrl } from "./fields.js";
+import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToText, fieldsNode, parsePgUrl } from "./fields.js";
 import { popupMenu } from "./menu.js";
 import { closeMenu } from "./pane.js";
 import { copyLogText, fmtChars, fmtJson, logsBodyNode, mountJsonTrees, toggleCall } from "./logs.js";
-import { fill } from "./h.js";
+import { fill, frag, h } from "./h.js";
+import type { HChild } from "./h.js";
 import { renderPane } from "./pane.js";
 import { readRunArgs } from "./run.js";
 import { ago } from "./traffic.js";
@@ -51,44 +52,43 @@ function histButtonLabel(d: McpDetail, tool: string): string {
  *  runs whose FULL recorded arguments contain the search box's query (the server does that matching —
  *  the 96-char row label would miss a keyword deeper in). The row label is the clipped one-line
  *  preview — the full text is what the right pane is for. */
-function histRowsHtml(d: McpDetail, tool: string): string {
-  if (d.run.histTool !== tool) return '<div class="hist-empty">loading…</div>';
+function histRowsNode(d: McpDetail, tool: string): HChild {
+  if (d.run.histTool !== tool) return h("div", { class: "hist-empty" }, "loading…");
   const list = d.run.hist as unknown as ApiMcpCallRow[] || [];
   if (!list.length) {
     return d.run.histQ
-      ? '<div class="hist-empty">No runs whose arguments contain ' + esc('"' + d.run.histQ + '"') + ".</div>"
-      : '<div class="hist-empty">No runs of this tool recorded yet.</div>';
+      ? h("div", { class: "hist-empty" }, "No runs whose arguments contain ", '"' + d.run.histQ + '"', ".")
+      : h("div", { class: "hist-empty" }, "No runs of this tool recorded yet.");
   }
-  return list.map((h) => {
-    return '<button type="button" class="hist-row" data-seq="' + h.seq + '" title="' +
-      esc(h.args || "(no arguments)") + '">' + esc(h.args || "(no arguments)") + "</button>";
-  }).join("");
+  return list.map((row) => {
+    return h("button", { type: "button", class: "hist-row", data: { seq: row.seq }, title: row.args || "(no arguments)" },
+      row.args || "(no arguments)");
+  });
 }
 
 /** One hovered entry rendered in full: the meta line, the COMPLETE arguments (the row label is
  *  clipped at 96 chars — this is the answer to "let me read the whole thing"), and the reply that
  *  run produced (the stored preview, so a 1 MB reply never loads on a hover). */
-function histViewHtml(c: ApiMcpCallRow): string {
+function histViewNode(c: ApiMcpCallRow): HChild {
   // The identity line: status dot (the panel's universal up/down mark), when, who, how long —
   // not prose glued with dots, so each fact keeps its own weight and nothing runs together.
-  const head = '<div class="hist-head">' +
-    '<span class="dot ' + (c.ok ? "up" : "down") + '"></span>' +
-    "<span>" + esc(histWhen(c.at)) + "</span>" +
-    "<span>·</span>" +
-    "<span>" + esc(c.via + (c.client ? " (" + c.client + ")" : "")) + "</span>" +
-    '<span class="grow"></span>' +
-    (c.ms != null ? "<span>" + esc(c.ms + " ms") + "</span>" : "") +
-    "</div>";
-  let out = head +
-    '<div class="call-lbl">Arguments</div><pre class="logs">' +
-    esc(fmtJson(c.args) || "(none)") + "</pre>";
-  out += '<div class="call-lbl">' + (c.ok ? "Result" : "Error") + "</div>" +
-    '<pre class="logs' + (c.ok ? "" : " err") + '">' + esc(fmtJson(c.output) || "(empty)") + "</pre>";
-  if (c.preview) {
-    out += '<div class="hist-note">Reply shown is its first ' + esc(fmtChars(c.chars)) +
-      ' — the full reply lives in the Logs tab.</div>';
-  }
-  return out;
+  const head = h("div", { class: "hist-head" },
+    h("span", { class: "dot " + (c.ok ? "up" : "down") }),
+    h("span", null, histWhen(c.at)),
+    h("span", null, "·"),
+    h("span", null, c.via + (c.client ? " (" + c.client + ")" : "")),
+    h("span", { class: "grow" }),
+    c.ms != null ? h("span", null, c.ms + " ms") : null);
+  return frag(
+    head,
+    h("div", { class: "call-lbl" }, "Arguments"),
+    h("pre", { class: "logs" }, fmtJson(c.args) || "(none)"),
+    h("div", { class: "call-lbl" }, c.ok ? "Result" : "Error"),
+    h("pre", { class: "logs" + (c.ok ? "" : " err") }, fmtJson(c.output) || "(empty)"),
+    c.preview
+      ? h("div", { class: "hist-note" }, "Reply shown is its first ", fmtChars(c.chars),
+          " — the full reply lives in the Logs tab.")
+      : null);
 }
 
 /** Open/close the popover. Opening does not steal focus from the form — the rows are reachable
@@ -118,17 +118,31 @@ function histOpen(): void {
   const est = Math.min(340, window.innerHeight - 24);
   pop.style.top = (below + est > window.innerHeight ? Math.max(8, r.top - est - 6) : below) + "px";
   // Left pane: the filter box pinned above the rows it narrows. The input is NOT rebuilt while
-  // typing — only #r-hist-list's innerHTML is swapped (renderHistoryOnly), so focus survives.
-  pop.innerHTML = '<div class="hist-side">' +
-      '<div class="hist-search"><input id="r-hist-q" type="search" placeholder="Filter by arguments…" ' +
-        'aria-label="Filter past runs by their arguments" autocomplete="off" spellcheck="false"></div>' +
-      '<div class="hist-list" id="r-hist-list">' + histRowsHtml(d, d.run.tool) + "</div>" +
-    "</div>" +
-    '<div class="hist-view" id="r-hist-view">' +
-    '<div class="hist-empty">Hover a run to see it in full — the arguments and the reply it produced.</div>' +
-    "</div>";
+  // typing — only #r-hist-list's children are swapped (renderHistoryOnly), so focus survives.
+  fill(pop,
+    h("div", { class: "hist-side" },
+      h("div", { class: "hist-search" },
+        h("input", { id: "r-hist-q", type: "search", placeholder: "Filter by arguments…",
+          aria: { label: "Filter past runs by their arguments" }, autocomplete: "off", spellcheck: false })),
+      h("div", { class: "hist-list", id: "r-hist-list" }, histRowsNode(d, d.run.tool))),
+    h("div", { class: "hist-view", id: "r-hist-view" },
+      h("div", { class: "hist-empty" }, "Hover a run to see it in full — the arguments and the reply it produced.")));
   document.body.appendChild(pop);
-  wireHistRows();
+  // One delegated listener triplet on the popover (docs/37 R5) instead of three handlers
+  // re-attached to every row on every filter repaint: rows come and go, the listener stays.
+  pop.onclick = (ev: MouseEvent): void => {
+    const row = targetEl(ev)?.closest<HTMLElement>(".hist-row");
+    if (row) void applyRunHistory(Number(row.dataset.seq));
+  };
+  pop.onmouseover = (ev: MouseEvent): void => {
+    const row = targetEl(ev)?.closest<HTMLElement>(".hist-row");
+    if (row) void histPreview(Number(row.dataset.seq));
+  };
+  // focusin (bubbling focus) has no on* property - a listener, still one claim on the pop.
+  pop.addEventListener("focusin", (ev: FocusEvent): void => {
+    const row = targetEl(ev)?.closest<HTMLElement>(".hist-row");
+    if (row) void histPreview(Number(row.dataset.seq));
+  });
   const box = $<HTMLInputElement>("r-hist-q");
   if (box) {
     box.value = d.run.histQ || "";
@@ -189,7 +203,7 @@ async function histPreview(seq: number): Promise<void> {
   d.run.histSelSeq = seq;
   let full = d.run.histFull[seq];
   if (!full) {
-    view.innerHTML = '<div class="hist-empty"><span class="spin"></span> loading…</div>';
+    fill(view, h("div", { class: "hist-empty" }, h("span", { class: "spin" }), " loading…"));
     try {
       const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -197,12 +211,12 @@ async function histPreview(seq: number): Promise<void> {
       if (!j.call || mcpDetail() !== d) return;
       full = d.run.histFull[seq] = j.call;
     } catch (e) {
-      if (d.run.histSelSeq === seq) view.innerHTML = '<div class="hist-empty">could not load that run</div>';
+      if (d.run.histSelSeq === seq) fill(view, h("div", { class: "hist-empty" }, "could not load that run"));
       return;
     }
   }
   if (d.run.histSelSeq !== seq) return; // a newer hover already won
-  view.innerHTML = histViewHtml(full as ApiMcpCallRow);
+  fill(view, histViewNode(full as ApiMcpCallRow));
 }
 
 /** Load the selected tool's newest DISTINCT runs — the full list when the search box is empty, the
@@ -255,8 +269,7 @@ function renderHistoryOnly(): void {
   }
   const list = $("r-hist-list");
   if (list && d.run.histOpen) {
-    list.innerHTML = histRowsHtml(d, d.run.tool);
-    wireHistRows();
+    fill(list, histRowsNode(d, d.run.tool));
     if (d.run.histSelSeq != null) void histPreview(d.run.histSelSeq); // keep what was being read
   }
 }
@@ -286,16 +299,9 @@ async function applyRunHistory(seq: number): Promise<void> {
   histClose();
 }
 
-/** Bind the popover's rows: hover/focus previews in full, click refills the form and closes. */
-function wireHistRows(): void {
-  // NOTE: the popover lives on <body> (histOpen), not inside #tabbody — selecting from #tabbody
-  // here is why hover never fired: the rows existed, the wiring found none of them.
-  document.querySelectorAll<HTMLElement>("#r-hist-pop .hist-row").forEach((row) => {
-    row.onclick = () => { void applyRunHistory(Number(row.dataset.seq)); };
-    row.onmouseenter = () => { void histPreview(Number(row.dataset.seq)); };
-    row.onfocus = () => { void histPreview(Number(row.dataset.seq)); };
-  });
-}
+/* wireHistRows retired with the delegated popover listener (docs/37 R5): the rows used to
+   re-attach three handlers each on every filter repaint; the popover's own listener now
+   answers click/hover/focus for whichever rows exist, and a repaint wires nothing. */
 
 /** Write one call's arguments into the generated form fields — the inverse of readRunArgs. Fields
  *  the call does not mention are cleared, so nothing stale survives a refill; keys the schema no
@@ -340,7 +346,7 @@ async function runTool(): Promise<void> {
   const btn = $<HTMLButtonElement>("runBtn");
   if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
   const meta = $("runMeta");
-  if (meta) meta.innerHTML = '<span class="spin"></span>';
+  if (meta) fill(meta, h("span", { class: "spin" }));
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/call", {
       method: "POST", body: JSON.stringify({ tool: d.run.tool, arguments: args }),
@@ -414,7 +420,7 @@ function configTarget(c: McpConfigLike): string {
   return c.url || c.baseUrl || c.host || "Connection target not configured";
 }
 
-function configBody(d: McpDetail): string {
+function configBodyNode(d: McpDetail): HChild {
   if (d.editing) {
     const type = d.editType || (d.config && d.config.type) as string || "proc";
     // Stored values for the MCP's own type, nothing for a different one — then whatever the user has
@@ -437,35 +443,40 @@ function configBody(d: McpDetail): string {
     // def with no lazy at all gets the type's default (proc off, everything else on).
     if (vals.lazy !== undefined) vals.autostart = !vals.lazy;
     else if (vals.autostart === undefined) vals.autostart = type !== "proc";
-    const opts = Object.keys(TYPE_FIELDS).map((t) => {
-      return '<option value="' + t + '"' + (t === type ? " selected" : "") + ">" + esc(TYPE_LABELS[t] || t) + "</option>";
-    }).join("");
     const replacing = d.editMode === "replace";
     const pgRaw = type === "pg" && vals.__pgRaw !== undefined
-      ? '<label class="field"><span>Connection URL</span>' +
-        '<textarea id="e-pgraw" rows="2">' + esc(vals.__pgRaw) + "</textarea>" +
-        '<div class="hint">A whole-value \${...} ref (or a url that did not decompose) — it is kept whole.' +
-        " Fill the fields above to replace it with a decomposed url.</div></label>"
-      : "";
-    return '<div class="group"><div class="form">' +
-      '<label class="field"><span>Type</span><select id="e-type">' + opts + "</select></label>" +
-      fieldsHtml(type, vals, "e-") +
-      pgRaw +
-      (replacing
-        ? '<label class="field"><span>Note (kept with the parked revision)</span>' +
-          '<input id="e-note" placeholder="optional — e.g. proc version, before the swap"></label>'
-        : "") +
-      '<div class="form-actions"><button class="btn primary" id="e-save">' +
-        (replacing ? "Replace definition" : "Save &amp; Restart") + "</button>" +
-      (TESTABLE_TYPES.indexOf(type) >= 0
-        ? '<button class="btn" id="e-test">Test connection</button>'
-        : "") +
-      '<button class="btn" id="e-cancel">Cancel</button></div>' +
-      '<div class="hint" id="e-test-out" hidden></div>' +
-      "</div></div>";
+      ? h("label", { class: "field" },
+          h("span", null, "Connection URL"),
+          h("textarea", { id: "e-pgraw", rows: 2 }, String(vals.__pgRaw)),
+          h("div", { class: "hint" },
+            "A whole-value ${...} ref (or a url that did not decompose) — it is kept whole.",
+            " Fill the fields above to replace it with a decomposed url."))
+      : null;
+    return h("div", { class: "group" },
+      h("div", { class: "form" },
+        h("label", { class: "field" },
+          h("span", null, "Type"),
+          h("select", { id: "e-type" },
+            Object.keys(TYPE_FIELDS).map((t) => {
+              return h("option", { value: t, selected: t === type }, TYPE_LABELS[t] || t);
+            }))),
+        fieldsNode(type, vals, "e-"),
+        pgRaw,
+        replacing
+          ? h("label", { class: "field" },
+              h("span", null, "Note (kept with the parked revision)"),
+              h("input", { id: "e-note", placeholder: "optional — e.g. proc version, before the swap" }))
+          : null,
+        h("div", { class: "form-actions" },
+          h("button", { class: "btn primary", id: "e-save" }, replacing ? "Replace definition" : "Save & Restart"),
+          TESTABLE_TYPES.indexOf(type) >= 0
+            ? h("button", { class: "btn", id: "e-test" }, "Test connection")
+            : null,
+          h("button", { class: "btn", id: "e-cancel" }, "Cancel")),
+        h("div", { class: "hint", id: "e-test-out", hidden: true })));
   }
   const c = d.config;
-  if (!c) return '<div class="note"><span class="spin"></span> Loading…</div>';
+  if (!c) return h("div", { class: "note" }, h("span", { class: "spin" }), " Loading…");
   const type = c.type as string || "proc";
   const settings = Object.keys(c).reduce((all, key) => {
     const value = c?.[key];
@@ -474,53 +485,67 @@ function configBody(d: McpDetail): string {
     return all;
   }, [] as { key: string; label: string; text: string }[]);
   const rows = settings.map((setting) => {
-    const title = setting.text.replace(/\r?\n/g, " · ");
-    return '<div class="config-row"><span class="config-label">' + esc(setting.label) +
-      '</span><span class="config-value" title="' + esc(title) + '">' + esc(setting.text) + "</span></div>";
-  }).join("");
+    return h("div", { class: "config-row" },
+      h("span", { class: "config-label" }, setting.label),
+      h("span", { class: "config-value", title: setting.text.replace(/\r?\n/g, " · ") }, setting.text));
+  });
   const label = TYPE_LABELS[type] || type;
   const split = label.indexOf(" — ");
   const kind = split >= 0 ? label.slice(split + 3) : "MCP adapter";
   const target = configTarget(c as McpConfigLike);
-  const badges = [];
+  const badges: string[] = [];
   if (c.lazy !== undefined) badges.push(c.lazy ? "Starts on demand" : "Starts at boot");
   if (c.exposeResources !== undefined) badges.push(c.exposeResources ? "Resources on" : "Resources off");
   if (c.exposePrompts !== undefined) badges.push(c.exposePrompts ? "Prompts on" : "Prompts off");
   if (c.auth === "oauth") badges.push("OAuth managed");
-  const badgeHtml = badges.length ? '<div class="config-badges">' + badges.map((badge) => {
-    return '<span class="tag">' + esc(badge) + "</span>";
-  }).join("") + "</div>" : "";
-  const summary = '<div class="group config-summary">' +
-    '<div class="config-head"><div class="config-identity">' +
-      '<div class="config-kind"><span class="tag">' + esc(type) + "</span><span>" + esc(kind) + "</span></div>" +
-      '<div class="config-target" title="' + esc(target) + '">' + esc(target) + "</div>" +
-    '</div><button class="btn" id="c-edit">Edit configuration…</button></div>' +
-    badgeHtml +
-    '<details class="config-more"><summary><span>All settings</span><span class="config-count">' + settings.length +
-      (settings.length === 1 ? ' value' : ' values') + '</span><span class="config-chev">' + icon("chevron-right") + "</span></summary>" +
-      '<div class="config-rows">' + rows + "</div></details></div>";
+  const summary = h("div", { class: "group config-summary" },
+    h("div", { class: "config-head" },
+      h("div", { class: "config-identity" },
+        h("div", { class: "config-kind" },
+          h("span", { class: "tag" }, type),
+          h("span", null, kind)),
+        h("div", { class: "config-target", title: target }, target)),
+      h("button", { class: "btn", id: "c-edit" }, "Edit configuration…")),
+    badges.length ? h("div", { class: "config-badges" }, badges.map((badge) => {
+      return h("span", { class: "tag" }, badge);
+    })) : null,
+    h("details", { class: "config-more" },
+      h("summary", null,
+        h("span", null, "All settings"),
+        h("span", { class: "config-count" }, settings.length + (settings.length === 1 ? " value" : " values")),
+        h("span", { class: "config-chev" }, iconNode("chevron-right"))),
+      h("div", { class: "config-rows" }, rows)));
   const note = d.source === "config"
-    ? '<div class="note">Defined in gateway.config.json. Edits are saved as an override in managed.json; ' +
-      "<code>${ENV}</code> references are kept as references, so no credential is written to disk.</div>"
-    : "";
+    ? h("div", { class: "note" },
+        "Defined in gateway.config.json. Edits are saved as an override in managed.json; ",
+        h("code", null, "${ENV}"),
+        " references are kept as references, so no credential is written to disk.")
+    : null;
   const revs = d.revisions as McpRevisionRow[] || [];
   // Parked definition snapshots stay available without making an empty shelf a permanent section.
-  const revRows = revs.length
+  const revRows: HChild = revs.length
     ? revs.map((r, i) => {
         const when = r.at ? new Date(r.at).toLocaleString() : "";
-        return '<div class="row"><span class="k">' + esc(TYPE_LABELS[r.type] || r.type || "?") + "</span>" +
-          '<span class="v wrap">' + esc((r.note || "(no note)") + (when ? " · " + when : "")) +
-          ' <button class="btn" data-restore="' + i + '">Restore</button>' +
-          ' <button class="btn danger" data-revdel="' + i + '">Delete</button></span></div>';
-      }).join("")
-    : '<div class="row"><span class="rowmsg">None yet — replacing a definition parks the outgoing settings here.</span></div>';
-  const revBlock = '<details class="config-revisions"><summary><span>Saved revisions (' + revs.length + ")</span>" +
-    '<span class="config-chev">' + icon("chevron-right") + "</span></summary>" +
-    '<div class="config-revision-body"><div class="config-revision-intro">' +
-      '<span>Swap the adapter definition while keeping the current one available for restore.</span>' +
-      '<button class="btn" id="c-replace">Replace definition…</button></div>' +
-      '<div class="group">' + revRows + "</div></div></details>";
-  return tunnelDepsHtml(d) + summary + note + revBlock;
+        return h("div", { class: "row" },
+          h("span", { class: "k" }, TYPE_LABELS[r.type] || r.type || "?"),
+          h("span", { class: "v wrap" },
+            (r.note || "(no note)") + (when ? " · " + when : ""), " ",
+            h("button", { class: "btn", data: { restore: i } }, "Restore"),
+            " ",
+            h("button", { class: "btn danger", data: { revdel: i } }, "Delete")));
+      })
+    : h("div", { class: "row" },
+        h("span", { class: "rowmsg" }, "None yet — replacing a definition parks the outgoing settings here."));
+  const revBlock = h("details", { class: "config-revisions" },
+    h("summary", null,
+      h("span", null, "Saved revisions (" + revs.length + ")"),
+      h("span", { class: "config-chev" }, iconNode("chevron-right"))),
+    h("div", { class: "config-revision-body" },
+      h("div", { class: "config-revision-intro" },
+        h("span", null, "Swap the adapter definition while keeping the current one available for restore."),
+        h("button", { class: "btn", id: "c-replace" }, "Replace definition…")),
+      h("div", { class: "group" }, revRows)));
+  return frag(tunnelDepsNode(d), summary, note, revBlock);
 }
 
 /**
@@ -531,23 +556,29 @@ function configBody(d: McpDetail): string {
  * means its pool may hold sockets of the old SSH session, and the fix is the Restart button that is
  * already there. Nothing restarts an MCP on its own.
  */
-function tunnelDepsHtml(d: McpDetail): string {
+function tunnelDepsNode(d: McpDetail): HChild {
   const t = d.tunnels as McpTunnelDepRow[] | null | undefined;
-  if (!t || !t.length) return "";
+  if (!t || !t.length) return null;
   const rows = t.map((x) => {
     const dot = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "";
-    return '<div class="row"><span class="k">tunnel</span><span class="v">' +
-      '<span class="dot ' + dot + '" style="display:inline-block;margin-right:6px"></span>' +
-      esc(x.name) + " · " + esc(String(x.localPort)) + " &rarr; " + esc(x.targetHost + ":" + x.targetPort) +
-      " · " + esc(x.state) + (x.reason ? " — " + esc(x.reason) : "") +
-      (x.stalePool
-        ? '<div class="tun-err">reconnected after this MCP started — its connection pool may hold dead sockets. ' +
-          'Use Restart above.</div>'
-        : "") +
-      "</span></div>";
-  }).join("");
-  return '<div class="cap">Depends on</div><div class="group">' + rows + "</div><div style=\"height:var(--s5)\"></div>";
+    return h("div", { class: "row" },
+      h("span", { class: "k" }, "tunnel"),
+      h("span", { class: "v" },
+        h("span", { class: "dot " + dot, style: "display:inline-block;margin-right:6px" }),
+        x.name + " · " + String(x.localPort) + " → " + x.targetHost + ":" + x.targetPort,
+        " · " + x.state, x.reason ? " — " + x.reason : "",
+        x.stalePool
+          ? h("div", { class: "tun-err" },
+              "reconnected after this MCP started — its connection pool may hold dead sockets. ",
+              "Use Restart above.")
+          : null));
+  });
+  return frag(
+    h("div", { class: "cap" }, "Depends on"),
+    h("div", { class: "group" }, rows),
+    h("div", { style: "height:var(--s5)" }));
 }
+
 
 function wireTabBody(d: McpDetail): void {
   const prev = $("pgPrev"); if (prev) prev.onclick = pagePrev;
@@ -753,16 +784,20 @@ async function readResource(uri: string, btn: HTMLButtonElement | null): Promise
   });
   if (btn) { btn.disabled = false; btn.textContent = label || "Read"; }
   if (!j) return;
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="Resource contents">' +
-      '<div class="sheet-head"><h2>' + esc(uri) + "</h2></div>" +
-      '<div class="sheet-body"><div class="note">' +
-        (j.ok ? esc((j.mimeType || "text/plain") + " · " + j.ms + " ms") : '<span style="color:var(--red)">read failed</span>') +
-      "</div>" +
-      '<pre class="logs" style="max-height:60vh">' + esc(j.text || "") + "</pre></div>" +
-      '<div class="sheet-foot"><button class="btn" id="rd-close">Close</button></div>' +
-    "</div>";
+  // hidden BEFORE the content (the house sheet idiom, panel-proof-of-life rule 1). The
+  // resource text is a text node - a resource body is data, never markup.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Resource contents" } },
+      h("div", { class: "sheet-head" }, h("h2", null, uri)),
+      h("div", { class: "sheet-body" },
+        h("div", { class: "note" },
+          j.ok
+            ? (j.mimeType || "text/plain") + " · " + j.ms + " ms"
+            : h("span", { style: "color:var(--red)" }, "read failed")),
+        h("pre", { class: "logs", style: "max-height:60vh" }, j.text || "")),
+      h("div", { class: "sheet-foot" },
+        h("button", { class: "btn", id: "rd-close" }, "Close"))));
   $("rd-close").onclick = closeSheet;
   $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
 }
@@ -802,4 +837,4 @@ function renderCallsOnly(): void {
   mountJsonTrees(d); // docs/33 C2: open rows get their trees back, expansion restored
 }
 
-export { applyRunHistory, configBody, fillRunArgs, histButtonLabel, histClose, histOpen, histPreview, histRowsHtml, histSearchTimer, histToggle, histViewHtml, histWhen, loadRunHistory, queueHistSearch, readResource, renderCallsOnly, renderHistoryOnly, renderRunResult, runTool, toggleResources, toggleTool, tryTool, tunnelDepsHtml, wireHistRows, wireTabBody };
+export { applyRunHistory, configBodyNode, fillRunArgs, histButtonLabel, histClose, histOpen, histPreview, histRowsNode, histSearchTimer, histToggle, histViewNode, histWhen, loadRunHistory, queueHistSearch, readResource, renderCallsOnly, renderHistoryOnly, renderRunResult, runTool, toggleResources, toggleTool, tryTool, tunnelDepsNode, wireTabBody };

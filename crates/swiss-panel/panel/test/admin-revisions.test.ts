@@ -2,17 +2,38 @@ import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
 import { mcpDetail, mcpRows, resetMcpState, setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
 
+/* h()/frag() route children through `instanceof Node`, so the stub must exist BEFORE the
+   FakeNode class below evaluates, and FakeNode must be one of its instances. */
+const NodeStub = class {};
+(globalThis as unknown as Record<string, unknown>).Node = NodeStub;
+
 /* def revisions (docs/28 D1): the config tab's Replace flow and the rollback shelf. The
    rendering assertions go through the real renderPane markup; the confirm-gated restore is
    driven through a fetch queue — cancelled confirm must not fire a request at all. */
 
-class FakeNode {
+/* docs/37 R5: the tab bodies are built as nodes and ride a serialization bridge into the
+   pane's string paint; the FakeNode's innerHTML READ serialises its children so the config-
+   tab assertions keep seeing the built tree. */
+function serialize(node: FakeNode): string {
+  const raw = node as unknown as { text?: string };
+  if (!node.tag || raw.text != null) return String(raw.text ?? "");
+  const attrs = Object.keys(node.attrs).map((k) => { return " " + k + "=\"" + node.attrs[k] + "\""; }).join("");
+  const id = node.id ? " id=\"" + node.id + "\"" : "";
+  const cls = node.className ? " class=\"" + node.className + "\"" : "";
+  const dis = node.disabled ? " disabled" : "";
+  const val = node.value ? " value=\"" + node.value + "\"" : "";
+  const inner = node.children.map((c) => { return serialize(c); }).join("");
+  return "<" + node.tag.toLowerCase() + id + attrs + cls + dis + val + ">" + inner + "</" + node.tag.toLowerCase() + ">";
+}
+class FakeNode extends NodeStub {
   tag: string;
   attrs: Record<string, string> = {};
   dataset: Record<string, string> = {};
   className = "";
   textContent = "";
-  innerHTML = "";
+  _html = "";
+  get innerHTML(): string { return this._html || serialize(this); }
+  set innerHTML(v: string) { this._html = v; this.children = []; }
   id = "";
   type = "button";
   checked = false;
@@ -23,6 +44,7 @@ class FakeNode {
   children: FakeNode[] = [];
   onclick: ((ev?: unknown) => void) | null = null;
   constructor(tag: string) {
+    super();
     this.tag = tag.toUpperCase();
   }
   getBoundingClientRect() { return { left: 0, top: 0, bottom: 0, width: 10, height: 10 }; }
@@ -37,6 +59,7 @@ class FakeNode {
   querySelectorAll() { return [] as FakeNode[]; }
   contains() { return false; }
   appendChild(n: FakeNode) { this.children.push(n); return n; }
+  append(...nodes: FakeNode[]) { nodes.forEach((n) => { this.appendChild(n); }); }
   removeChild(n: FakeNode) { return n; }
   remove() {}
   addEventListener() {}
@@ -50,6 +73,9 @@ const doc = {
     return byId.get(id)!;
   },
   createElement: (t: string) => new FakeNode(t),
+  createElementNS: () => new FakeNode("svg"),
+  createTextNode: (s: string) => ({ text: s }) as unknown as FakeNode,
+  createDocumentFragment: () => new FakeNode("#document-fragment"),
   // patchDetailHead probes the pane's dot/sub-text through the document; everything else in
   // these modules expects null here. Answer only that probe.
   querySelector: (sel: string) => (String(sel).indexOf("pane-sub") >= 0 ? new FakeNode("span") : null),

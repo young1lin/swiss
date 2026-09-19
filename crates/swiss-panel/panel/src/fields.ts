@@ -15,7 +15,9 @@
  */
 
 import type { FieldSpec, PgUrlParts } from "./types/dom.js";
-import { $, esc } from "./util.js";
+import { $ } from "./util.js";
+import { h } from "./h.js";
+import type { HChild } from "./h.js";
 
 /* --- field schemas ---------------------------------------------------------------------------- */
 /* `description` leads every type: it is what the MCP client is told this endpoint is for, and with
@@ -206,13 +208,19 @@ function envToObj(text: string | null | undefined): Record<string, string> {
   return o;
 }
 
-/** Render one field. `p` prefixes element ids so the Add sheet and the inline editor can coexist. */
-function fieldHtml(spec: FieldSpec, val: unknown, p: string): string {
+/** Render one field as a NODE (docs/37 R5). `p` prefixes element ids so the Add sheet and the
+ *  inline editor can coexist. The label, hint, placeholder and value are text nodes and
+ *  properties now - the esc() discipline this file carried is structural instead. */
+function fieldNode(spec: FieldSpec, val: unknown, p: string): HTMLElement {
   const id = p + spec.k;
+  const hint = spec.hint ? h("div", { class: "hint" }, spec.hint) : null;
   if (spec.bool) {
     const on = val === undefined ? !!spec.def : !!val && val !== "false";
-    return '<div class="fld"><label class="check"><input type="checkbox" id="' + id + '"' + (on ? " checked" : "") + '>' +
-      esc(spec.label) + "</label>" + (spec.hint ? '<div class="hint">' + esc(spec.hint) + "</div>" : "") + "</div>";
+    return h("div", { class: "fld" },
+      h("label", { class: "check" },
+        h("input", { type: "checkbox", id: id, checked: on }),
+        spec.label),
+      hint);
   }
   /* `json` fields hold an authored structure (a rest MCP's tool declarations) rather than a value or a
      KEY=VALUE map, so they round-trip as pretty-printed JSON. */
@@ -220,25 +228,34 @@ function fieldHtml(spec: FieldSpec, val: unknown, p: string): string {
   // A password field is pre-filled with the mask sentinel, and the server keeps the stored secret
   // only while that sentinel comes back untouched. Password-manager autofill silently replacing it
   // would overwrite the real credential on save, with nothing to distinguish that from an edit.
-  const fill = /pass|secret|token|key|url|credential/i.test(spec.k) ? ' autocomplete="off" spellcheck="false"' : "";
+  const guard = /pass|secret|token|key|url|credential/i.test(spec.k);
+  const areaProps = {
+    id: id,
+    placeholder: spec.ph || undefined,
+    autocomplete: guard ? ("off" as const) : undefined,
+    spellcheck: guard ? false : undefined,
+  };
   const body = spec.area
-    ? "<textarea id=\"" + id + '"' + fill + (spec.ph ? ' placeholder="' + esc(spec.ph) + '"' : "") + ">" + esc(v) + "</textarea>"
-    : '<input type="text" id="' + id + '" value="' + esc(v) + '"' + fill + (spec.ph ? ' placeholder="' + esc(spec.ph) + '"' : "") + ">";
-  return '<div class="fld"><label class="field"><span>' + esc(spec.label) + "</span>" + body + "</label>" +
-    (spec.hint ? '<div class="hint">' + esc(spec.hint) + "</div>" : "") + "</div>";
+    ? h("textarea", areaProps, v)
+    : h("input", Object.assign({ type: "text" as const, value: v }, areaProps));
+  return h("div", { class: "fld" },
+    h("label", { class: "field" }, h("span", null, spec.label), body),
+    hint);
 }
 
-/** Lay a type's fields out, pairing the ones marked `half` into two columns. */
-function fieldsHtml(type: string, vals: Record<string, unknown> | null | undefined, p: string): string {
+/** Lay a type's fields out as nodes, pairing the ones marked `half` into two columns. */
+function fieldsNode(type: string, vals: Record<string, unknown> | null | undefined, p: string): HChild[] {
   const specs = TYPE_FIELDS[type] || [];
-  let out = "", i = 0;
+  const out: HChild[] = [];
+  let i = 0;
   while (i < specs.length) {
     if (specs[i].half && specs[i + 1] && specs[i + 1].half) {
-      out += '<div class="two">' + fieldHtml(specs[i], vals && vals[specs[i].k], p) +
-        fieldHtml(specs[i + 1], vals && vals[specs[i + 1].k], p) + "</div>";
+      out.push(h("div", { class: "two" },
+        fieldNode(specs[i], vals && vals[specs[i].k], p),
+        fieldNode(specs[i + 1], vals && vals[specs[i + 1].k], p)));
       i += 2;
     } else {
-      out += fieldHtml(specs[i], vals && vals[specs[i].k], p);
+      out.push(fieldNode(specs[i], vals && vals[specs[i].k], p));
       i += 1;
     }
   }
@@ -335,4 +352,4 @@ function readFields(type: string, p: string): Record<string, unknown> {
   return o;
 }
 
-export { AUTOSTART_EAGER, AUTOSTART_PROC, DESC_FIELD, TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToObj, envToText, fieldHtml, fieldsHtml, parsePgUrl, pgUrlFrom, readFields, translateOauth, translatePg };
+export { AUTOSTART_EAGER, AUTOSTART_PROC, DESC_FIELD, TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, envToObj, envToText, fieldNode, fieldsNode, parsePgUrl, pgUrlFrom, readFields, translateOauth, translatePg };

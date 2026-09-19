@@ -17,10 +17,16 @@
                                                                             
                                                     
                                                   
-import { $, esc } from "./util.js";
+import { $, esc } from "./util.js"; // esc: the string runBody twin, until pane converts
+import { h } from "./h.js";
+                                     
 import { histButtonLabel } from "./run-history.js";
 
 /* --- Run: invoke a tool from the panel -------------------------------------------------------- */
+/* argFieldsHtml, the STRING twin below, RETIRES with the jobs conversion (docs/37 R5 view
+   9/11): the jobs editor still splices it into its sheet strings, and a node cannot ride
+   through a concatenation. Run itself builds nodes - argFieldsNode - and reads them back
+   with readRunArgs, which is DOM-shape agnostic (it reads by id). */
 /** Argument inputs generated from the tool's own inputSchema, so this works for any MCP the gateway
  *  hosts — including a proc child whose tools the gateway knows nothing about. */
 function argFieldsHtml(tool            , idPrefix         , values                          )         {
@@ -119,6 +125,105 @@ function readRunArgs(tool            , idPrefix         )                       
   return out;
 }
 
+/** The node twin of argFieldsHtml (docs/37 R5): same ids, same data-arg/data-kind contract,
+ *  same required star - but schema keys, descriptions and placeholders are text nodes and
+ *  properties, so a hostile schema key from a proc child is a value, never markup. */
+function argFieldsNode(tool            , idPrefix         , values                          )         {
+  const pfx = idPrefix || "r-arg-";
+  const have = values || {};
+  const schema = tool.inputSchema || {};
+  const props                                 = schema.properties || {};
+  const required = schema.required || [];
+  const keys = Object.keys(props);
+  if (!keys.length) return h("div", { class: "hint" }, "This tool takes no arguments.");
+  return keys.map((k) => {
+    const p = props[k] || {};
+    const id = pfx + k;
+    const kind = p.type === "array" ? "array"
+      : p.type === "object" ? "object"
+      : p.type === "boolean" ? "boolean"
+      : (p.type === "number" || p.type === "integer") ? "number" : "string";
+    const star = required.indexOf(k) >= 0 ? h("span", { class: "req-star" }, "*") : null;
+    const hint = p.description ? h("div", { class: "hint" }, p.description) : null;
+    const data = { arg: k, kind: kind };
+    if (kind === "boolean") {
+      // Name and star in one span: .check is a flex row with an 8px gap, so a bare text node would
+      // leave the star floating a gap away from the name it belongs to.
+      return h("div", null,
+        h("label", { class: "check" },
+          h("input", { type: "checkbox", id: id, data: data, checked: have[k] === true }),
+          h("span", null, k, " ", star)),
+        hint);
+    }
+    // A constrained field renders as a dropdown rather than a free-text box that shows the allowed
+    // values nowhere. The blank first option keeps "leave this argument out" reachable.
+    if (Array.isArray(p.enum) && p.enum.length) {
+      return h("div", null,
+        h("label", { class: "field" },
+          h("span", null, k, " ", star, "  ·  ", kind),
+          h("select", { id: id, data: data },
+            h("option", { value: "" }),
+            p.enum.map((v         ) => { return h("option", { value: String(v), selected: have[k] === v }, String(v)); }))),
+        hint);
+    }
+    const area = kind === "array" || kind === "object" || k === "sql";
+    const itemType = kind === "array" && p.items && p.items.type ? String(p.items.type) : "";
+    const dataAll = itemType ? Object.assign({}, data, { items: itemType }) : data;
+    const ph = k === "sql" ? "SELECT 1"
+      : kind === "array" ? "one value per line" + (itemType ? " (" + itemType + ")" : "")
+      : kind === "object" ? "{ }" : "";
+    const prefilled = have[k] == null ? "" : kind === "object" || kind === "array" ? JSON.stringify(have[k], null, 1) : String(have[k]);
+    const input = area
+      ? h("textarea", { id: id, data: dataAll, placeholder: ph }, prefilled)
+      : h("input", { type: "text", id: id, data: dataAll, placeholder: ph, value: prefilled });
+    return h("div", null,
+      h("label", { class: "field" }, h("span", null, k, " ", star, "  ·  ", kind), input),
+      hint);
+  });
+}
+
+function runBodyNode(d           , m                           )         {
+  if (m.lifecycle !== "started") {
+    return h("div", { class: "group" },
+      h("div", { class: "row" }, h("span", { class: "rowmsg" }, "Not started — start it to run a tool.")));
+  }
+  const kd = d.tools;
+  if (kd.loading && !kd.loaded) return h("div", { class: "note" }, h("span", { class: "spin" }), " Loading tools…");
+  if (kd.error) return h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg warn" }, kd.error)));
+  const tools = kd.items || [];
+  if (!tools.length) return h("div", { class: "group" },
+    h("div", { class: "row" }, h("span", { class: "rowmsg" }, "This MCP exposes no tools.")));
+
+  let current                    = null;
+  for (let i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i]              ;
+  if (!current) current = tools[0]              ;
+  d.run.tool = current.name;
+
+  return h("div", { class: "group" },
+    h("div", { class: "form" },
+      h("label", { class: "field" },
+        h("span", null, "Tool"),
+        h("select", { id: "r-tool" },
+          tools.map((t) => { return h("option", { value: t.name, selected: t.name === current?.name }, t.name); }))),
+      current.description ? h("div", { class: "hint" }, current.description) : null,
+      argFieldsNode(current),
+      h("div", { class: "form-actions" },
+        h("button", { class: "btn primary", id: "runBtn" }, "Run"),
+        h("div", { class: "hist-wrap" },
+          h("button", {
+            type: "button",
+            id: "r-hist",
+            class: "hist-sel",
+            aria: { haspopup: "true", expanded: d.run.histOpen ? "true" : "false" },
+            title: "Fill the arguments from a past run — newest first, repeats shown once (up to 300). Type in the box to filter by arguments; hover an entry to read it in full. Secret values stay redacted.",
+          }, histButtonLabel(d, current.name))),
+        h("span", { class: "run-meta", id: "runMeta" })),
+      h("pre", { class: "logs", id: "runOut" })));
+}
+
+/* Kept until pane.ts converts (docs/37 R5, next stage of this view): the pane column is still
+   painted by string concatenation, so the Run body rides the same stated bridge as the Logs
+   bodies. runBody retires with that bridge. */
 function runBody(d           , m                           )         {
   if (m.lifecycle !== "started") {
     return '<div class="group"><div class="row"><span class="rowmsg">Not started — start it to run a tool.</span></div></div>';
@@ -154,4 +259,4 @@ function runBody(d           , m                           )         {
     "</div></div>";
 }
 
-export { argFieldsHtml, readRunArgs, runBody };
+export { argFieldsHtml, argFieldsNode, readRunArgs, runBody, runBodyNode };
