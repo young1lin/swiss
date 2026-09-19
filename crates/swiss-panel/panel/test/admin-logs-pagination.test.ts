@@ -62,7 +62,12 @@ class FakeNode extends NodeStub {
   querySelector(): FakeNode | null { return null; }
   querySelectorAll(): FakeNode[] { return []; }
   contains(): boolean { return false; }
-  closest(): FakeNode | null { return null; }
+  // The dispatchers climb to the button (t.closest("#clMenu")) because a real pointer click
+  // lands on the glyph, not the button. The suite's tree carries no parent links, so closest
+  // self-matches by id - the part this suite's clicks exercise.
+  closest(sel: string): FakeNode | null {
+    return sel.charAt(0) === "#" && this.id === sel.slice(1) ? this : null;
+  }
   appendChild(n: FakeNode) {
     if (n.tag === "#DOCUMENT-FRAGMENT") { n.children.forEach((c) => { this.children.push(c); }); return n; }
     this.children.push(n);
