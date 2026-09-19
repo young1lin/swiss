@@ -4,7 +4,7 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
  * 
  * Unless required by applicable law or agreed to in writing, software
@@ -14,52 +14,25 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+// @vitest-environment happy-dom
 
 /* The Secrets page (the Settings group's second page, docs/19 D6): names only, a write-only
-   store form, a rev-carrying delete, and a poll that never repaints the form mid-typing. The
-   rows markup is a pure string (the requiresBadge precedent — exported for the suite); the
-   mutations are driven directly under a fetch stub, because this repo's micro-DOM does not
-   parse HTML. */
+   store form, a rev-carrying delete, and a poll that never repaints the form mid-typing.
 
-class FakeNode {
-  tag: string;
-  id = "";
-  value = "";
-  innerHTML = "";
-  textContent = "";
-  hidden = false;
-  className = "";
-  title = "";
-  type = "";
-  draggable = false;
-  style = {};
-  dataset: Record<string, string> = {};
-  classList = { add() {}, remove() {}, contains() { return false; } };
-  children: FakeNode[] = [];
-  constructor(tag: string) {
-    this.tag = tag.toUpperCase();
-  }
-  appendChild(n: FakeNode) {
-    this.children.push(n);
-    return n;
-  }
-  querySelector(_sel?: string): FakeNode | null {
-    return null;
-  }
-  querySelectorAll(): FakeNode[] {
-    return [];
-  }
-  addEventListener() {}
-  setAttribute() {}
-  focus() {}
-  getBoundingClientRect() {
-    return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  }
-  closest(): FakeNode | null {
-    return null;
-  }
-}
+   REWRITTEN FOR R5 (docs/37 §7), and the rewrite is the point. The view used to build its
+   rows as a string and hand them to the suite through a rowsHtml() export, so every
+   assertion here was a substring test against markup nobody parsed - and the vault state
+   was planted through a __setVaultForTest seam that bypassed loadSecrets entirely. Now the
+   view builds nodes, so the suite runs on a real DOM (happy-dom, per file) against the
+   REAL load path: the fetch stub answers /api/secrets, mount() loads through it, and the
+   assertions ask what they always meant - which rows are in the list, in what order, and
+   did the half-typed value survive the poll. The seam is gone with the string it existed
+   to serve. */
+
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 interface Call {
   method: string;
@@ -67,180 +40,223 @@ interface Call {
   body?: string;
 }
 
-let calls: Call[];
+let body: unknown = { secrets: [], rev: 0 };
 let replies: Record<string, unknown>;
 let confirmAnswer: boolean;
-let pane: FakeNode;
-let chip: FakeNode;
-// Ids a test plants on purpose (the store form's inputs); everything else auto-creates.
-const planted: Record<string, FakeNode> = {};
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let mods: any;
+let calls: Call[];
+/* eslint-disable-next-line @typescript-eslint/no-explicit-any -- the view's public surface is
+   asserted by name below (the mutation helpers), so a typed import would be circular. */
+let view: any;
 
-function fakeInput(value: string): FakeNode {
-  const n = new FakeNode("input");
-  n.value = value;
-  return n;
+const here = dirname(fileURLToPath(import.meta.url));
+const $ = (id: string): HTMLElement => document.getElementById(id) as HTMLElement;
+
+/* The shell skeleton, taken from the SERVED index.html rather than invented here (the same
+ * rule as the tokens suite): modules in this graph wire shell controls at evaluation time,
+ * so the ids must exist before the import - and reading the real file means a renamed shell
+ * control fails here instead of drifting. */
+function shellSkeleton(): string {
+  const html = readFileSync(join(here, "..", "..", "src", "admin_assets", "index.html"), "utf8");
+  const ids = Array.from(html.matchAll(/id="([a-zA-Z0-9_-]+)"/g)).map((m) => m[1]);
+  return Array.from(new Set(ids)).map((id) => '<div id="' + id + '"></div>').join("");
 }
 
 beforeAll(async () => {
-  const anyG = globalThis as unknown as Record<string, unknown>;
-  // localStorage stub: the groups component persists fold state under swiss.groups.<scope>.
-  const ls: Record<string, string> = {};
-  anyG.window = {
-    innerWidth: 1440,
-    innerHeight: 900,
-    addEventListener() {},
-    localStorage: {
-      getItem: (k: string) => ls[k] ?? null,
-      setItem: (k: string, v: string) => { ls[k] = v; },
-      removeItem: (k: string) => { delete ls[k]; },
+  const prevFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
+  const prevConfirm = Object.getOwnPropertyDescriptor(globalThis, "confirm");
+  Object.assign(globalThis, {
+    fetch: (url: string, init?: RequestInit): Promise<Response> => {
+      const u = String(url);
+      const method = init?.method ?? "GET";
+      calls.push({ method, url: u, body: typeof init?.body === "string" ? init.body : undefined });
+      const key = method + " " + u;
+      // GET /api/secrets falls back to `body` (the page-under-test state); everything else
+      // answers only from `replies`, and an un-stubbed route 404s exactly like the old stub.
+      const reply = method === "GET" && u === "/api/secrets" && replies[u] === undefined
+        ? body
+        : replies[key];
+      const ok = reply !== undefined && reply !== null;
+      return Promise.resolve({ status: ok ? 200 : 404, ok, json: () => Promise.resolve(reply ?? { error: "no stub for " + key }) } as Response);
     },
-  };
-  anyG.confirm = () => confirmAnswer;
-  const doc = new FakeNode("#document");
-  const docBody = new FakeNode("body");
-  doc.appendChild(docBody);
-  // The groups component builds real nodes; the micro-DOM grows one factory for it.
-  (doc as unknown as { createElement(tag: string): FakeNode }).createElement = (tag: string) =>
-    new FakeNode(tag);
-  // Permissive getElementById: pane/countChip are planted by the suite, everything else
-  // auto-creates so module-top-level wiring (toasts, sheets) does not explode.
-  (doc as unknown as { getElementById(id: string): FakeNode }).getElementById = (id: string) => {
-    if (id === "pane") return pane;
-    if (id === "countChip") return chip;
-    if (planted[id]) return planted[id];
-    const made = new FakeNode("div");
-    made.id = id;
-    docBody.appendChild(made);
-    return made;
-  };
-  anyG.document = doc;
-  // navigator is getter-only in this runtime; no test here drives the Copy-ref button, so
-  // copyText's clipboard path is never taken and no stub is needed.
-  anyG.fetch = async (url: string, init?: RequestInit) => {
-    const u = String(url);
-    const method = init?.method ?? "GET";
-    calls.push({ method, url: u, body: typeof init?.body === "string" ? init.body : undefined });
-    const key = method + " " + u;
-    const reply = method === "GET" && replies[u] !== undefined ? replies[u] : replies[key];
-    const ok = reply !== undefined && reply !== null;
-    return {
-      ok,
-      status: ok ? 200 : 404,
-      json: async () => reply ?? { error: "no stub for " + key },
-    };
-  };
-  mods = await import("../src/views/secrets.js");
+    confirm: (): boolean => confirmAnswer,
+  });
+  afterAll(() => {
+    if (prevFetch) Object.defineProperty(globalThis, "fetch", prevFetch);
+    else delete (globalThis as Record<string, unknown>).fetch;
+    if (prevConfirm) Object.defineProperty(globalThis, "confirm", prevConfirm);
+    else delete (globalThis as Record<string, unknown>).confirm;
+  });
+  document.body.innerHTML = shellSkeleton(); // before the import: the graph wires on evaluation
+  view = await import("../src/views/secrets.js");
 });
 
+/* A clean shell per test so one test's pane cannot leak into the next; within a test #pane
+ * keeps its identity, which is what the poll case is about. */
 beforeEach(() => {
   calls = [];
   confirmAnswer = true;
-  pane = new FakeNode("div");
-  pane.querySelector = ((sel: string) => {
-    if (sel === "[data-rows]") {
-      const rows = new FakeNode("div");
-      return rows;
-    }
-    return null;
-  }) as FakeNode["querySelector"];
-  chip = new FakeNode("span");
   replies = {};
-  for (const k of Object.keys(planted)) delete planted[k];
-  // The groups region is its own container now (docs/20 G6): plant it AFTER the reset so the
-  // assertions can read what paintGroups drew without the pane's whole markup.
-  planted.skGroups = new FakeNode("div");
+  document.body.innerHTML = shellSkeleton();
 });
 
 describe("the Secrets page (docs/19 D6)", () => {
-  it("renders names and their references — never a value", () => {
-    mods.__setVaultForTest(["stripe-key", "zz-last"], 5);
-    const html = mods.rowsHtml();
-    expect(html).toContain("stripe-key");
-    expect(html).toContain("<code>${secret://stripe-key}</code>");
-    expect(html).toContain("Copy ref");
-    // Delete lives behind the row's overflow menu (design rule 4: red never sits on a row).
-    expect(html).not.toContain("btn danger");
-    expect(html).toContain("data-skmore=");
-    // The page never even holds a value to leak: the state is names + rev only.
-    expect(mods.countText()).toBe("2 secrets");
+  it("the view module exists at the entry every page descriptor points at", () => {
+    const entry = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "views", "secrets.ts");
+    expect(existsSync(entry), entry).toBe(true);
   });
 
-  it("renders rows in the stored order, unranked names after in name order (docs/26)", () => {
-    mods.__setVaultForTest(["zz-last", "aa-unranked", "mm-mid"], 5, ["zz-last", "mm-mid"]);
-    const html = mods.rowsHtml();
-    expect(html.indexOf("zz-last")).toBeLessThan(html.indexOf("mm-mid"));
-    expect(html.indexOf("mm-mid")).toBeLessThan(html.indexOf("aa-unranked"));
+  it("renders names and their references — never a value", async () => {
+    body = { secrets: ["stripe-key", "zz-last"], rev: 5 };
+    await view.mount();
+    const rows = $("pane").querySelectorAll("[data-secret]");
+    expect(rows.length).toBe(2);
+    // The row shows the REFERENCE, in a code element, not any value: the page never even
+    // holds a value to leak - its state is names + rev only.
+    expect(($("pane").querySelector('[data-secret="stripe-key"] .desc code') as HTMLElement).textContent)
+      .toBe("${secret://stripe-key}");
+    expect($("pane").querySelector('[data-secret="stripe-key"] .desc')?.textContent)
+      .toContain("substituted at run time wherever a credential is used");
+    expect($("pane").querySelectorAll('[data-skcopy="stripe-key"]').length).toBe(1);
+    // Delete lives behind the row's overflow menu (design rule 4: red never sits on a row).
+    expect($("pane").querySelector(".btn.danger")).toBeNull();
+    expect($("pane").querySelectorAll("[data-skmore]").length).toBe(2);
+    expect($("countChip").textContent).toBe("2 secrets");
+  });
+
+  it("renders rows in the stored order, unranked names after in name order (docs/26)", async () => {
+    // Through the real path this time: loadSecrets applies the order the server sent.
+    body = { secrets: ["zz-last", "aa-unranked", "mm-mid"], rev: 5, order: ["zz-last", "mm-mid"] };
+    await view.mount();
+    const names = Array.from($("pane").querySelectorAll("[data-secret] .name")).map((n) => n.textContent);
+    expect(names).toEqual(["zz-last", "mm-mid", "aa-unranked"]);
   });
 
   it("a row drag PUTs the flat order, then reloads the rev the PUT bumped (docs/26)", async () => {
-    mods.__setVaultForTest(["aa", "bb", "cc"], 5);
+    body = { secrets: ["aa", "bb", "cc"], rev: 5 };
+    await view.mount();
     replies["PUT /api/groups/secrets/order"] = { order: ["bb", "aa", "cc"] };
     replies["/api/secrets"] = { secrets: ["aa", "bb", "cc"], rev: 6 };
-    mods.moveSecretRow("bb", "aa", true);
+    view.moveSecretRow("bb", "aa", true);
     await new Promise((r) => setTimeout(r, 0));
     const put = calls.find((c) => c.method === "PUT" && c.url === "/api/groups/secrets/order");
     expect(put?.body && JSON.parse(put.body as string)).toEqual({ order: ["bb", "aa", "cc"] });
     // The order PUT bumps the vault rev - the reload is mandatory, not polish.
     expect(calls.some((c) => c.method === "GET" && c.url === "/api/secrets")).toBe(true);
+    // The moved list is what the rows show, even before the reload answers.
+    const names = Array.from($("pane").querySelectorAll("[data-secret] .name")).map((n) => n.textContent);
+    expect(names).toEqual(["bb", "aa", "cc"]);
   });
 
   it("the empty page says what a secret is for", async () => {
-    mods.__setVaultForTest([], 0);
-    await mods.mount();
+    body = { secrets: [], rev: 0 };
+    await view.mount();
     // The empty state renders into the groups container (docs/20 G6).
-    expect(planted.skGroups.innerHTML).toContain("No secrets yet");
-    expect(planted.skGroups.innerHTML).toContain("${secret://name}");
+    expect($("skGroups").querySelector(".empty h2")?.textContent).toBe("No secrets yet");
+    expect($("skGroups").textContent).toContain("${secret://name}");
     // The store form carries the Group select - the one option is the default group.
-    expect(pane.innerHTML).toContain('id="skGroup"');
+    expect($("skGroup")).not.toBeNull();
   });
 
-  it("storing PUTs name+value+rev, then reloads the names", async () => {
-    replies["/api/secrets"] = { secrets: [], rev: 3 };
-    await mods.mount();
-    // The form inputs are read by id: plant them where getElementById looks.
-    planted.skName = fakeInput("stripe-key");
-    planted.skValue = fakeInput("sk_live_panel");
+  it("storing PUTs name+value+rev, then reloads the names and clears the value box", async () => {
+    body = { secrets: [], rev: 3 };
+    await view.mount();
+    const nameBox = $("skName") as HTMLInputElement;
+    const valueBox = $("skValue") as HTMLInputElement;
+    nameBox.value = "stripe-key";
+    valueBox.value = "sk_live_panel";
     replies["PUT /api/secrets/stripe-key"] = { rev: 4 };
-    await mods.storeSecret();
-    const put = calls.find((c) => c.method === "PUT");
-    expect(put?.url).toBe("/api/secrets/stripe-key");
-    expect(JSON.parse(put?.body as string)).toEqual({ value: "sk_live_panel", rev: 3 });
+    await view.storeSecret();
+    const put = calls.find((c) => c.method === "PUT" && c.url === "/api/secrets/stripe-key");
+    expect(put && JSON.parse(put.body as string)).toEqual({ value: "sk_live_panel", rev: 3 });
+    // The one place a value is ever typed must not keep it after a successful store.
+    expect(valueBox.value).toBe("");
   });
 
   it("a name outside the grammar is refused before any request", async () => {
-    await mods.mount();
-    planted.skName = fakeInput("BadName");
-    planted.skValue = fakeInput("v");
-    await mods.storeSecret();
-    expect(calls.filter((c) => c.method === "PUT").length).toBe(0);
+    body = { secrets: [], rev: 1 };
+    await view.mount();
+    ($("skName") as HTMLInputElement).value = "BadName";
+    ($("skValue") as HTMLInputElement).value = "v";
+    await view.storeSecret();
+    expect(calls.filter((c) => c.method === "PUT" && c.url.startsWith("/api/secrets/")).length).toBe(0);
   });
 
   it("deleting asks first, then DELETEs by rev; a refused confirm sends nothing", async () => {
-    mods.__setVaultForTest(["old"], 9);
+    body = { secrets: ["old"], rev: 9 };
+    await view.mount();
     confirmAnswer = false;
-    await mods.removeSecret("old");
-    expect(calls.length).toBe(0);
+    await view.removeSecret("old");
+    // A refused confirm sends nothing - mount's own GET is the only call allowed in the log.
+    expect(calls.filter((c) => c.method !== "GET").length).toBe(0);
     confirmAnswer = true;
     replies["DELETE /api/secrets/old"] = { rev: 10 };
-    await mods.removeSecret("old");
+    await view.removeSecret("old");
     const del = calls.find((c) => c.method === "DELETE");
     expect(del?.url).toBe("/api/secrets/old?rev=9");
   });
 
-  it("the poll patches rows only — the store form survives it", async () => {
-    mods.__setVaultForTest(["a"], 1);
-    await mods.mount();
-    // Simulate the user mid-typing: a repaint would replace the pane's innerHTML wholesale.
-    const groupsBefore = planted.skGroups;
-    replies["/api/secrets"] = { secrets: ["a", "b"], rev: 2 };
-    await mods.poll();
-    expect(pane.innerHTML).toContain("inline-form"); // the form markup is still the pane's
-    // The refreshed list lands in the SAME groups container - a repaint, not a re-mount.
-    expect(planted.skGroups).toBe(groupsBefore);
-    expect(mods.rowsHtml()).toContain("b");
-    // The refreshed list lands without mount() being called again (no reloadPluginInventory).
-    expect(mods.rowsHtml()).toContain("b");
+  it("poll patches rows only — the store form survives it", async () => {
+    body = { secrets: ["a"], rev: 1 };
+    await view.mount();
+    // Simulate the user mid-typing in the value box - the one place a value is ever typed.
+    const valueBox = $("skValue") as HTMLInputElement;
+    valueBox.value = "half-typed";
+    const groupsRegion = $("skGroups");
+
+    body = { secrets: ["a", "b"], rev: 2 };
+    await view.poll();
+
+    expect(($("skValue") as HTMLInputElement).value).toBe("half-typed"); // not rebuilt
+    expect($("skValue")).toBe(valueBox);                                // the same node, even
+    expect($("skGroups")).toBe(groupsRegion);                           // the host is kept
+    expect($("pane").textContent).toContain("b");                       // the row arrived
+    expect($("countChip").textContent).toBe("2 secrets");
+
+    // An unchanged list must not even touch the groups region.
+    const marker = document.createElement("i");
+    marker.id = "rowsCanary";
+    groupsRegion.appendChild(marker);
+    await view.poll();
+    expect($("rowsCanary")).toBe(marker);
+  });
+
+  it("a name the server sent is text, never markup (docs/37 R5)", async () => {
+    // The whole reason the row builder moved off string concatenation. Under the old idiom
+    // this passed only because someone remembered esc(); now the DOM cannot do otherwise.
+    const hostile = '<b>bold</b><img src=x onerror=1>';
+    body = { secrets: [hostile], rev: 1 };
+    await view.mount();
+    const name = $("pane").querySelector("[data-secret] .name") as HTMLElement;
+    expect(name.textContent).toContain(hostile);
+    expect(name.querySelector("img")).toBeNull();
+    // Same for the reference in .desc, and the attribute values the delegate keys on.
+    expect($("pane").querySelector(".desc code")?.textContent).toBe("${secret://" + hostile + "}");
+    expect($("pane").querySelector("[data-skmore]")?.getAttribute("aria-label")).toBe("Actions for " + hostile);
+    expect($("pane").querySelectorAll('[data-secret="' + hostile + '"]').length).toBe(1);
+  });
+
+  it("the Group select keeps the user's pick across a poll, and follows a renamed list", async () => {
+    body = { secrets: ["a"], rev: 1, groups: ["default", "ci"], secretGroups: {} };
+    await view.mount();
+    const sel = $("skGroup") as HTMLSelectElement;
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual(["default", "ci"]);
+
+    sel.value = "ci"; // the hand that just picked a group
+    await view.poll();
+    expect(($("skGroup") as HTMLSelectElement).value).toBe("ci");
+
+    // The group is gone from the family: the box must not be left pointing at a dead option,
+    // because the next store would assign into a 400 (docs/20 G6).
+    body = { secrets: ["a"], rev: 2, groups: ["default"], secretGroups: {} };
+    await view.poll();
+    const after = $("skGroup") as HTMLSelectElement;
+    expect(Array.from(after.options).map((o) => o.value)).toEqual(["default"]);
+    expect(after.value).toBe("default");
+  });
+
+  it("still exports the mutation helpers the suite drives", () => {
+    for (const name of ["storeSecret", "removeSecret", "moveSecretRow"]) {
+      expect(typeof view[name], name).toBe("function");
+    }
   });
 });
