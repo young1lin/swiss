@@ -18,7 +18,36 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { emptyHtml, icon } from "../src/util.js";
+import { emptyNode, iconNode } from "../src/util.js";
+
+/* docs/37 R5: the glyph and empty-state builders return NODES, so this file carries a
+   minimal element stub (attrs + kids + writable props) and a serializer that spells the
+   tree back out in tag form for the substring assertions below. */
+class NodeStub {}
+const mkNode = (tag: string): Record<string, any> => {
+  return Object.assign(new NodeStub(), {
+    tag, attrs: {} as Record<string, string>, kids: [] as unknown[], className: "",
+    setAttribute(k: string, v: string) { this.attrs[k] = v; },
+    appendChild(n: unknown) { this.kids.push(n); return n; },
+  });
+};
+const anyG = globalThis as unknown as Record<string, unknown>;
+if (!anyG.document) {
+  anyG.document = {
+    createElement: (t: string) => mkNode(t),
+    createElementNS: (_ns: string, t: string) => mkNode(t),
+    createDocumentFragment: () => mkNode("#frag"),
+    createTextNode: (s: string) => ({ text: s }),
+  };
+}
+if (!anyG.Node) anyG.Node = NodeStub;
+const ser = (n: unknown): string => {
+  const node = n as { text?: string; tag: string; attrs: Record<string, string>; className: string; kids: unknown[] };
+  if (typeof node.text === "string") return node.text;
+  const attrs = Object.keys(node.attrs || {}).map((k) => { return " " + k + '="' + node.attrs[k] + '"'; }).join("");
+  const cls = node.className ? " class=\"" + node.className + "\"" : "";
+  return "<" + node.tag + cls + attrs + ">" + (node.kids || []).map(ser).join("") + "</" + node.tag + ">";
+};
 
 /* Visual refresh V2 (docs/18): one inline svg sprite in the shell replaces every unicode
    glyph icon — ↻ ☾ ☀ ⋯ × + › each had their own weight and baseline. These anchors pin the
@@ -78,11 +107,15 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
     }
   });
 
-  it("icon() points at the sprite, hidden by default, labelled on request", () => {
-    expect(icon("key")).toContain('href="#i-key"');
-    expect(icon("key")).toContain('aria-hidden="true"');
-    expect(icon("key", "Token")).toContain('aria-label="Token"');
-    expect(icon("key", "Token")).not.toContain("aria-hidden");
+  it("iconNode() points at the sprite, hidden by default, labelled on request", () => {
+    // docs/37 R5: the glyph is a BUILT node - the assertions read the attributes the
+    // builder set, against the element stub this file installs above.
+    const hrefOf = (n: unknown) => ser((n as { kids: unknown[] }).kids[0]);
+    const attr = (n: unknown, k: string) => (n as unknown as { attrs: Record<string, string> }).attrs[k];
+    expect(hrefOf(iconNode("key"))).toContain('href="#i-key"');
+    expect(attr(iconNode("key"), "aria-hidden")).toBe("true");
+    expect(attr(iconNode("key", "Token"), "aria-label")).toBe("Token");
+    expect(attr(iconNode("key", "Token"), "aria-hidden")).toBeUndefined();
   });
 });
 
@@ -90,20 +123,20 @@ describe("visual refresh V2 — the sprite replaces unicode glyphs", () => {
    action — used by the MCP pane, Jobs, Tunnels, Plugins and Data. Terminal keeps its own
    (it lives in the black frame with its own token system). */
 describe("visual refresh V7 — one empty-state template", () => {
-  it("emptyHtml() points at the sprite and keeps the title an h2", () => {
-    const html = emptyHtml({ icon: "mcp", title: "Select an MCP" });
+  it("emptyNode() points at the sprite and keeps the title an h2", () => {
+    const html = ser(emptyNode({ icon: "mcp", title: "Select an MCP" }));
     expect(html).toContain('href="#i-mcp"');
     expect(html).toContain("<h2>Select an MCP</h2>");
   });
 
   it("carries the action as data-empty-action; the hint is optional", () => {
-    const html = emptyHtml({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands run locally.", action: "New" });
+    const html = ser(emptyNode({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands run locally.", action: "New" }));
     expect(html).toContain('data-empty-action="New"');
     expect(html).toContain("Scheduled commands run locally.");
   });
 
   it("without an action there is no button", () => {
-    expect(emptyHtml({ icon: "plug", title: "No SSH connections" })).not.toContain("data-empty-action");
+    expect(ser(emptyNode({ icon: "plug", title: "No SSH connections" }))).not.toContain("data-empty-action");
   });
 });
 

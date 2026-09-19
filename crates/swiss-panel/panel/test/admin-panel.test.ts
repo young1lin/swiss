@@ -191,12 +191,18 @@ describe("admin panel assets", () => {
       documentElement: el(), body: el(), head: el(),
       hidden: false, visibilityState: "visible", activeElement: null,
       getElementById: () => el(), createElement: () => el(), createTextNode: () => el(),
+      // The node builders reach these on paint (docs/37 R5): every module must still
+      // evaluate with them present.
+      createElementNS: () => el(), createDocumentFragment: () => el(),
       querySelector: () => null, querySelectorAll: () => [],
       addEventListener: () => {}, removeEventListener: () => {},
     };
     const prevWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     Object.assign(globalThis, {
       document: doc, window: globalThis,
+      // h.js classifies built children with instanceof Node; the permissive element stub
+      // is never one, so a bare base class keeps frag() on the appendChild path.
+      Node: class {},
       localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
       location: { reload: () => {} },
       matchMedia: () => ({ matches: false, addEventListener: () => {}, addListener: () => {} }),
@@ -410,8 +416,45 @@ describe("the memory chip is a memory-only control", () => {
    The browser's own fullscreen is deliberately NEVER requested: F11 is the user's keypress,
    the app layout is ours — the stub below pins that it stays uncalled. */
 describe("focus mode - the page gains navigation space", () => {
-  interface FakeBtn { title: string; innerHTML: string; onclick: unknown; setAttribute: (k: string, v: string) => void; }
-  const els = new Map<string, FakeBtn>();
+  /* docs/37 R5: paintImmersive BUILDS the glyph (fill + iconNode), so the fake button
+   * carries kids and a serializing innerHTML getter, and the fake document answers the
+   * three createElementNS/createDocumentFragment calls the builder makes. */
+  /* The Node base: h.js classifies children with instanceof Node, so the stub nodes must
+   * genuinely be its instances or frag() would stringify them into text nodes. */
+  class NodeStub {}
+  const stubSvg = (): Record<string, unknown> => {
+    return Object.assign(new NodeStub(), {
+      attrs: {} as Record<string, string>,
+      kids: [] as unknown[],
+      setAttribute(k: string, v: string) { (this.attrs as Record<string, string>)[k] = v; },
+      appendChild(n: unknown) { (this.kids as unknown[]).push(n); return n; },
+    }) as unknown as Record<string, unknown>;
+  };
+  const svgMarkup = (n: unknown): string => {
+    const node = n as { attrs: Record<string, string>; kids: unknown[] };
+    if (!(node && node.attrs)) return "";
+    const inner = node.kids.map((k) => {
+      const use = k as { attrs: Record<string, string> };
+      return '<use href="' + (use.attrs.href || "") + '"></use>';
+    }).join("");
+    const attrStr = Object.keys(node.attrs).map((k) => { return " " + k + '="' + node.attrs[k] + '"'; }).join("");
+    return "<svg" + attrStr + ">" + inner + "</svg>";
+  };
+  const makeBtn = (): Record<string, unknown> => {
+    return {
+      title: "", onclick: null, kids: [] as unknown[],
+      setAttribute() {},
+      set textContent(v: string) { this.kids = []; void v; },
+      appendChild(n: { kids?: unknown[] }) {
+        // A fragment splices; a finished node lands whole (the real DOM contract).
+        if (n && Array.isArray(n.kids)) (this.kids as unknown[]).push(...n.kids);
+        return n;
+      },
+      get innerHTML() { return (this.kids as unknown[]).map(svgMarkup).join(""); },
+    };
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const els = new Map<string, any>();
   let classes: Set<string>;
   let fullscreenCalls: string[];
   let resizeCount: number;
@@ -429,9 +472,12 @@ describe("focus mode - the page gains navigation space", () => {
     fakeDocument = {
       getElementById: (id: string) => {
         let e = els.get(id);
-        if (!e) { e = { title: "", innerHTML: "", onclick: null, setAttribute() {} }; els.set(id, e); }
+        if (!e) { e = makeBtn(); els.set(id, e); }
         return e;
       },
+      createElementNS: () => stubSvg(),
+      createDocumentFragment: () => stubSvg(),
+      createTextNode: (t: string) => t,
       querySelector: () => null,
       querySelectorAll: () => [],
       addEventListener: () => {},
@@ -451,6 +497,9 @@ describe("focus mode - the page gains navigation space", () => {
     };
     Object.assign(globalThis, {
       document: fakeDocument,
+      // h.js's fill() classifies children with instanceof Node; the stub nodes above are
+      // built from this class so they survive the check (same trick as the FakeNode suites).
+      Node: NodeStub,
       window: { addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => { resizeCount++; return true; } },
     });
     afterAll(() => {
@@ -540,7 +589,10 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
     const terminal = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "views", "terminal.ts"), "utf8");
     const immersive = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "immersive.ts"), "utf8");
     expect(shell).toContain('id="appZone"');
-    expect(terminal).toContain('data-shell-focus-slot');
+    // docs/37 R5: the slot is a built node now - the attribute key is the quoted kebab
+    // spelling in the h() data bag, which immersive.ts looks up with the same selector.
+    expect(terminal).toContain('"shell-focus-slot"');
+    expect(immersive).toContain('[data-shell-focus-slot]');
     expect(immersive).toContain('"immersive-docked"');
     expect(immersive).toContain("MutationObserver");
   });

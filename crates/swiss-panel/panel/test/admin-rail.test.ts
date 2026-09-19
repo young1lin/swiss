@@ -18,7 +18,7 @@ import type { PageGroup } from "../src/types/dom.js";
 import { describe, it, expect } from "vitest";
 import {
   defaultPinIds,
-  glyphHtml,
+  glyphNode,
   paletteRows,
   pinnedGroups,
   pluginGlyph,
@@ -68,20 +68,35 @@ describe("the palette rows", () => {
 });
 
 describe("seat glyphs", () => {
+  // docs/37 R5: the glyph is a BUILT node now, so the assertions read its attributes off
+  // the SVG the builder returns. The stub satisfies the two createElementNS calls the
+  // builder makes (the svg wrapper and its use) - this suite has no DOM otherwise.
+  const stubSvg = () => {
+    return {
+      attrs: {} as Record<string, string>,
+      kids: [] as { attrs: Record<string, string> }[],
+      setAttribute(k: string, v: string) { this.attrs[k] = v; },
+      appendChild(n: { attrs: Record<string, string> }) { this.kids.push(n); return n; },
+    };
+  };
+  const anyG = globalThis as unknown as Record<string, unknown>;
+  if (!anyG.document) anyG.document = { createElementNS: () => stubSvg() };
+  const hrefOf = (node: unknown) => (((node as unknown as { kids: { attrs: Record<string, string> }[] }).kids[0]).attrs.href);
+
   it("built-ins use the sprite, and the remote plugin wears its own mark", () => {
     expect(pluginGlyph({ id: "mcp", label: "MCP" } as PageGroup)).toBe("mcp");
-    expect(glyphHtml({ id: "mcp", label: "MCP" } as PageGroup)).toContain("#i-mcp");
+    expect(hrefOf(glyphNode({ id: "mcp", label: "MCP" } as PageGroup))).toBe("#i-mcp");
     expect(pluginGlyph({ id: "remote", label: "Remote" } as PageGroup)).toBe("remote");
-    expect(glyphHtml({ id: "remote", label: "Remote" } as PageGroup)).toContain("#i-remote");
+    expect(hrefOf(glyphNode({ id: "remote", label: "Remote" } as PageGroup))).toBe("#i-remote");
   });
 
   it("an unknown plugin falls back to the default puzzle glyph, never a letter", () => {
     // A seat is a row of drawn icons; an initial letter reads as a broken glyph (the
     // "Remote shows a bare R" sighting). The puzzle piece is the universal plugin mark.
     expect(pluginGlyph({ id: "kubernetes", label: "Kubernetes" } as PageGroup)).toBe(null);
-    const html = glyphHtml({ id: "kubernetes", label: "Kubernetes" } as PageGroup);
-    expect(html).toContain("#i-puzzle");
-    expect(html).not.toContain("rail-glyph");
-    expect(html).not.toContain(">K<");
+    const svg = glyphNode({ id: "kubernetes", label: "Kubernetes" } as PageGroup);
+    expect(hrefOf(svg)).toBe("#i-puzzle");
+    // The fallback mark is still one sprite use - no letter, no per-plugin class.
+    expect(((svg as unknown) as { kids: unknown[] }).kids.length).toBe(1);
   });
 });

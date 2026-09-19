@@ -16,7 +16,8 @@
 
 import type { ApiMcpRow } from "./types/api.js";
 import type { MenuItem } from "./types/dom.js";
-import { $, dotTitle, typeTagHtml } from "./util.js";
+import { $, dotTitle, typeTagNode } from "./util.js";
+import { fill } from "./h.js";
 import { closeMenu } from "./pane.js";
 import { groupedMcps, sideCfg, visibleMcps } from "./sidebar.js";
 import { mountGroup } from "./groups.js";
@@ -129,7 +130,7 @@ function patchSidebar(): void {
   }).join("\u0002");
 
   if (list.dataset.sig !== sig && !draggingRow() && !draggingGroupName()) {
-    list.innerHTML = "";
+    fill(list);
     const cfg = sideCfg();
     groups.forEach((g) => { list.appendChild(mountGroup(cfg, g)); });
     list.dataset.sig = sig;
@@ -152,8 +153,8 @@ function patchSidebar(): void {
     const tagEl = node.querySelector<HTMLElement>(".side-type")!;
     const tag = m.tag || m.type || "";
     // docs/29: a mapped tag renders its glyph (the word rides the aria-label); anything else
-    // keeps the text chip exactly as before. innerHTML, not textContent — icon() is markup.
-    tagEl.innerHTML = tag ? typeTagHtml(tag) : "";
+    // keeps the text chip exactly as before. fill() so the tag string lands as a text node.
+    fill(tagEl, tag ? typeTagNode(tag) : null);
     if (tag) tagEl.setAttribute("data-tag", tag);
     else tagEl.removeAttribute("data-tag");
     node.title = tooltipOf(m);

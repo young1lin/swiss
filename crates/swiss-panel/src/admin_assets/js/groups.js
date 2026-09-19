@@ -50,7 +50,7 @@
    ================================================================================================ */
                                                                                                                                     
                                                                      
-import { apiJson, el, esc, icon, toast } from "./util.js";
+import { apiJson, el, esc, iconNode, toast } from "./util.js";
 import { h } from "./h.js";
 import { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resolveDefaultGroup, slice } from "./group-logic.js";
 import { openGroupSheet } from "./add-sheet.js";
@@ -159,13 +159,10 @@ function groupFieldHtml(names          , sel                )         {
  *    afterDrag()    catch-up render after a drag ends (the loader deferred it)
  *    drag/dragGroup { get, set } - the two in-flight-drag slots; a poll must not rebuild
  *                   under either (the caller's loader checks them)
- *    rowNode(row)   one row ELEMENT - preferred at both densities; the component wires click
- *                   + drag on what it hands back (docs/37 R5)
- *    rowsHtml(g)    page density, pre-R5 only: the rows as one HTML string, parsed into the
- *                   card body and found again through rowSel. Ignored when rowNode is set.
+ *    rowNode(row)   one row ELEMENT, at both densities; the component wires click
+ *                   + drag on what it hands back (docs/37 R5 — the string twin retired)
  *    wireRow(el, row) page density: extra per-row wiring (actions); drag is wired here
  *    rowId(row)     the id a drag carries (name for MCPs, id for tunnels)
- *    rowSel(row)    page density: a selector that finds rowId's node inside the body
  *    rowsById()     live rows, for drop-into's "slot after the last member" step
  *    groupOfRow(row) the rendering group of a row (a groupOf(names) closure)
  *    onMoveRow(id, targetId, before) flat reorder + order PUT + render (caller-owned list)
@@ -192,7 +189,7 @@ function mountGroup     (cfg               , g                 )              {
   const folded = !!(cfg.collapsed[g.name] && !cfg.filtered);
   toggle.setAttribute("aria-expanded", String(!folded));
   const chev = el("span", "grp-chev");
-  chev.innerHTML = icon("chevron-right");
+  chev.appendChild(iconNode("chevron-right"));
   toggle.appendChild(chev);
   toggle.appendChild(el("span", "grp-name", g.name));
   // The count stays visible when folded - 0 versus 3 is exactly how a folded empty group
@@ -211,7 +208,7 @@ function mountGroup     (cfg               , g                 )              {
   // in the first group to be dragged over afterwards. + stays visible (dimmed) because
   // adding is frequent; one persistent glyph per header is a hierarchy, two would be a toolbar.
   const add = el("button", "grp-add");
-  add.innerHTML = icon("plus");
+  add.appendChild(iconNode("plus"));
   add.type = "button";
   add.title = cfg.addTitle ? cfg.addTitle(g.name) : "Add to " + g.name;
   add.setAttribute("aria-label", add.title);
@@ -222,7 +219,7 @@ function mountGroup     (cfg               , g                 )              {
   // keyboard-and-precision path to what dragging the head does: present exactly when the move
   // exists, absent at the list's edges.
   const more = el("button", "grp-more");
-  more.innerHTML = icon("ellipsis");
+  more.appendChild(iconNode("ellipsis"));
   more.type = "button";
   more.title = "Move, rename or delete this group";
   more.setAttribute("aria-label", "Group actions");
@@ -250,28 +247,16 @@ function mountGroup     (cfg               , g                 )              {
   wrap.appendChild(head);
 
   const body = el("div", "grp-body");
-  // rowNode first, at BOTH densities (docs/37 R5). Side density always built nodes; page
-  // density parsed a string and then went looking for each row again with rowSel. A scope
-  // that has been converted to h() simply supplies rowNode and skips that round trip - the
-  // node it just built IS the node to wire, so rowSel and the querySelector go with it. The
-  // rowsHtml branch stays for the scopes R5 has not reached yet and retires with the last one.
+  // rowNode at BOTH densities (docs/37 R5): side density always built nodes, and page density
+  // once parsed a rowsHtml string and then went looking for each row again with rowSel. Every
+  // scope supplies a builder now, so the node it returns IS the node to wire — the string
+  // path and the querySelector retired with the last rowsHtml caller.
   if (cfg.rowNode) {
     g.rows.forEach((row) => {
       const node = cfg.rowNode (row);
       wireRowDrag(cfg, node, row);
       if (page && cfg.wireRow) cfg.wireRow(node, row); // the caller's own actions on the row
       body.appendChild(node);
-    });
-  } else if (page && g.rows.length) {
-    body.innerHTML = cfg.rowsHtml (g);
-    g.rows.forEach((row) => {
-      // rowSel, not a data-id: tunnels address rows by data-conn/data-rule, jobs and secrets
-      // by their own keys — the caller owns the DOM it built.
-      const node = body.querySelector             (cfg.rowSel (row));
-      if (node) {
-        wireRowDrag(cfg, node, row);
-        if (cfg.wireRow) cfg.wireRow(node, row); // the caller's own actions on the row
-      }
     });
   }
   // An empty group is not an empty state - it is a place. One SHORT quiet line keeps the

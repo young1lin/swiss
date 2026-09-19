@@ -15,6 +15,7 @@
  */
 
                                                      
+                                     
 import { h } from "./h.js";
 const TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
@@ -39,13 +40,8 @@ function esc(s         )         {
 }
 function now()         { return new Date().toLocaleTimeString(); }
 
-/** One inline icon from the shell's sprite (docs/18 V2). Stroke follows currentColor and .ic
- *  sizes it; decorative by default, an image with a name when `label` is passed (icon buttons). */
-function icon(name        , label         )         {
-  return label
-    ? '<svg class="ic" role="img" aria-label="' + esc(label) + '"><use href="#i-' + name + '"></use></svg>'
-    : '<svg class="ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
-}
+/* The sprite reference is a NODE (docs/18 V2, docs/37 R5): the pre-R5 string twin icon()
+ * retired with the last innerHTML caller — every glyph is iconNode() now. */
 
 /** The same sprite reference as a NODE, for the h() callers (docs/37 R5). SVG is its own
  *  namespace: createElement("svg") builds an HTMLUnknownElement that renders nothing, so this
@@ -77,32 +73,20 @@ const TYPE_ICONS                         = {
   remote: "remote",
   proc: "terminal",
 };
-function typeTagHtml(tag        )         {
+function typeTagNode(tag        )         {
   const name = TYPE_ICONS[tag];
-  if (!name) return esc(tag);
-  return icon(name, tag);
+  // A mapped tag renders its glyph (the word rides the aria-label, docs/29); anything else
+  // keeps the text chip exactly as before - the tag string is a text node, not markup.
+  return name ? iconNode(name, tag) : tag;
 }
 
 /** One empty state (docs/18 V7): icon, title, one line of hint, optional ghost action. Every
  *  view's "nothing here" is this shape — the Terminal alone keeps its own, because it lives in
  *  the black frame with its own tokens. The action button carries data-empty-action so the
- *  owning view can wire it without inventing per-view ids. */
-function emptyHtml(opts                )         {
-  const action = opts.action
-    ? '<button class="btn ghost" data-empty-action="' + esc(opts.action) + '">' + esc(opts.action) + "</button>"
-    : "";
-  return '<div class="empty"><div>' +
-    '<span class="empty-ic">' + icon(opts.icon) + "</span>" +
-    "<h2>" + esc(opts.title) + "</h2>" +
-    (opts.hint ? '<p class="hint">' + esc(opts.hint) + "</p>" : "") +
-    action +
-    "</div></div>";
-}
-
-/** The same empty state as a NODE (docs/37 R5) - the shape every converted view needs the
- *  moment its host stops taking a string. Same markup, same data-empty-action contract; the
- *  esc() calls are gone because the title and hint are text nodes now. emptyHtml stays for
- *  the views R5 has not reached and retires with the last of them. */
+ *  owning view can wire it without inventing per-view ids.
+ *
+ *  A NODE since docs/37 R5 — same markup, same data-empty-action contract; the esc() calls
+ *  are gone because the title and hint are text nodes. */
 function emptyNode(opts                )              {
   return h("div", { class: "empty" },
     h("div", null,
@@ -213,4 +197,6 @@ async function apiJson             (path        , opts              )           
   }
 }
 
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, emptyNode, errText, esc, icon, iconNode, isTyping, now, targetEl, toast, typeTagHtml, TYPE_ICONS, whenLabel };
+/* esc() survives for the few string contexts that remain (sheet titles via textContent
+ * builds are nodes now; the callers left are attribute values and pure-string suites). */
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isTyping, now, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };

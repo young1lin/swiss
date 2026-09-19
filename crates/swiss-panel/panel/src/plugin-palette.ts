@@ -26,7 +26,8 @@
    and an "onchange" repaint callback, so this module never imports the shell back.
    ================================================================================================ */
 import type { PageGroup, PaletteGroup, PaletteSection } from "./types/dom.js";
-import { el, esc, icon } from "./util.js";
+import { el, iconNode } from "./util.js";
+import { fill } from "./h.js";
 
 const PIN_KEY = "swiss.rail.pinned";
 /* How many seats the rail shows before the "..." seat. The palette is the real list; the
@@ -45,8 +46,8 @@ const DEFAULT_GLYPH = "puzzle";
 
 function pluginGlyph(group: PaletteGroup | PageGroup): string | null { return GLYPHS[group.id] || null; }
 
-function glyphHtml(group: PaletteGroup | PageGroup): string {
-  return icon(pluginGlyph(group) || DEFAULT_GLYPH);
+function glyphNode(group: PaletteGroup | PageGroup): SVGSVGElement {
+  return iconNode(pluginGlyph(group) || DEFAULT_GLYPH);
 }
 
 /* --- pin state (localStorage) ------------------------------------------------------------------- */
@@ -123,8 +124,11 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
   function rowButton(g: PaletteGroup): HTMLButtonElement {
     const b = el("button", "pal-row" + (g.off ? " off" : ""));
     b.type = "button";
-    b.innerHTML = glyphHtml(g) +
-      '<span class="pal-name">' + esc(g.label) + (g.off ? ' <span class="pal-off">· off</span>' : "") + "</span>";
+    b.appendChild(glyphNode(g));
+    const name = el("span", "pal-name");
+    name.textContent = g.label + (g.off ? " " : "");
+    if (g.off) name.appendChild(el("span", "pal-off", "· off"));
+    b.appendChild(name);
     b.title = g.off ? (g.offDetail || "Plugin disabled") : "Open " + g.label;
     b.onclick = (ev) => { ev.stopPropagation(); closePluginPalette(); void go(g.pages[0].id); };
     return b;
@@ -134,7 +138,7 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
     const pinned = pins.indexOf(g.id) >= 0;
     const p = el("button", "pal-pin");
     p.type = "button";
-    p.innerHTML = icon("star", (pinned ? "Unpin " : "Pin ") + g.label);
+    p.appendChild(iconNode("star", (pinned ? "Unpin " : "Pin ") + g.label));
     p.className = "pal-pin" + (pinned ? " on" : "");
     p.setAttribute("aria-pressed", String(pinned));
     p.title = pinned ? "Remove from the rail" : "Pin to the rail";
@@ -149,7 +153,7 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
   }
 
   function render() {
-    list.innerHTML = "";
+    fill(list);
     paletteRows(groups, pins, input.value).forEach((section) => {
       list.appendChild(el("div", "pal-section", section.section));
       section.groups.forEach((g) => {
@@ -199,4 +203,4 @@ function closePluginPalette(): void {
   if (more && typeof more.focus === "function") more.focus();
 }
 
-export { closePluginPalette, defaultPinIds, glyphHtml, openPluginPalette, paletteRows, pinnedGroups, pluginGlyph, RAIL_LIMIT };
+export { closePluginPalette, defaultPinIds, glyphNode, openPluginPalette, paletteRows, pinnedGroups, pluginGlyph, RAIL_LIMIT };

@@ -145,13 +145,12 @@ export interface GroupCfg<Row> {
   afterDrag?: () => void;
   drag?: { get(): string | null | undefined; set(value: string | null): void };
   dragGroup?: { get(): string | null | undefined; set(value: string | null): void };
-  /* rowNode wins wherever it is set (docs/37 R5); rowsHtml + rowSel are the string path the
-   * unconverted page-density scopes still take, and retire with the last of them. */
+  /* The row builder every scope supplies (docs/37 R5): the component wires click + drag on
+   * the node it hands back. The pre-R5 rowsHtml + rowSel string path retired with the last
+   * unconverted scope. */
   rowNode?: (row: Row) => HTMLElement;
-  rowsHtml?: (group: GroupSlice<Row>) => string;
   wireRow?: (node: HTMLElement, row: Row) => void;
   rowId?: (row: Row) => string;
-  rowSel?: (row: Row) => string;
   rowsById: () => Row[];
   groupOfRow: (row: Row) => string;
   onMoveRow?: (id: string, targetId: string, before: boolean) => unknown;

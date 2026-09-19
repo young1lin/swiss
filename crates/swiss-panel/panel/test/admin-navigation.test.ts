@@ -27,22 +27,54 @@ import { fileURLToPath } from "node:url";
    (404) would. What is asserted is the generated markup and the hidden state — the exact
    contract the browser renders. */
 
-interface FakeEl {
-  innerHTML: string;
-  hidden: boolean;
-  textContent: string;
-  className: string;
-  title: string;
-  onclick: unknown;
-  dataset: Record<string, string>;
-  setAttribute: (k: string, v: string) => void;
+/* docs/37 R5: the rail/context bar builders construct NODES now, so the fake element is
+ * a kid-carrying node with a serializing innerHTML getter. Attribute order in the output
+ * (class, id, title, then the bag attrs in insertion order) is chosen so the historical
+ * string assertions below keep reading the way they always did. */
+class NodeStub {}
+class FakeNode extends NodeStub {
+  tag: string;
+  className = "";
+  id = "";
+  title = "";
+  hidden = false;
+  disabled = false;
+  text = "";
+  onclick: unknown = null;
+  attrs: Record<string, string> = {};
+  kids: unknown[] = [];
+  constructor(tag: string) { super(); this.tag = tag; }
+  setAttribute(k: string, v: string) { this.attrs[k] = v; }
+  get textContent(): string { return this.kids.length ? this.kids.map(textOf).join("") : this.text; }
+  set textContent(v: string) { this.kids = []; this.text = v; }
+  appendChild(n: unknown): unknown {
+    // A fragment splices; a finished node lands whole (the DOM contract fill() relies on).
+    const f = n as { kids?: unknown[] };
+    if (f && Array.isArray(f.kids) && (n as { tag: string }).tag === "#document-fragment") this.kids.push(...f.kids);
+    else this.kids.push(n);
+    return n;
+  }
+  get innerHTML(): string { return this.kids.map(markupOf).join(""); }
 }
+const textOf = (n: unknown): string => {
+  const node = n as FakeNode;
+  if (node && typeof node.tag === "string") return node.textContent;
+  return String(n);
+};
+const markupOf = (n: unknown): string => {
+  const node = n as FakeNode;
+  if (!node || typeof node.tag !== "string" || node.tag === "#text") return textOf(node);
+  let attrStr = "";
+  if (node.className) attrStr += ' class="' + node.className + '"';
+  if (node.id) attrStr += ' id="' + node.id + '"';
+  if (node.title) attrStr += ' title="' + node.title + '"';
+  for (const k of Object.keys(node.attrs)) attrStr += " " + k + '="' + node.attrs[k] + '"';
+  if (node.disabled) attrStr += " disabled";
+  return "<" + node.tag + attrStr + ">" + node.kids.map(markupOf).join("") + "</" + node.tag + ">";
+};
+const fakeEl = (): FakeNode => new FakeNode("div");
 
-function fakeEl(): FakeEl {
-  return { innerHTML: "", hidden: false, textContent: "", className: "", title: "", onclick: null, dataset: {}, setAttribute: () => {} };
-}
-
-const els = new Map<string, FakeEl>();
+const els = new Map<string, FakeNode>();
 let responder: (path: string) => Promise<{ status: number; ok: boolean; json: () => Promise<unknown> }>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let registry: any; // the whole page-registry surface, reached loosely: this suite pokes internals
@@ -85,12 +117,18 @@ beforeAll(async () => {
   const prevDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const prevFetch = Object.getOwnPropertyDescriptor(globalThis, "fetch");
   Object.assign(globalThis, {
+    // h.js classifies built children with instanceof Node; FakeNode genuinely extends it.
+    Node: NodeStub,
     document: {
       getElementById: (id: string) => {
         let e = els.get(id);
         if (!e) { e = fakeEl(); els.set(id, e); }
         return e;
       },
+      createElement: (t: string) => new FakeNode(t),
+      createElementNS: (_ns: string, t: string) => new FakeNode(t),
+      createDocumentFragment: () => new FakeNode("#document-fragment"),
+      createTextNode: (s: string) => { const n = new FakeNode("#text"); n.textContent = s; return n; },
       querySelector: () => null,
       querySelectorAll: () => [],
       addEventListener: () => {},
@@ -114,7 +152,7 @@ beforeAll(async () => {
   registry = await import("../src/page-registry.js");
 });
 
-const byId = (id: string): FakeEl => els.get(id) as FakeEl;
+const byId = (id: string): FakeNode => els.get(id) as FakeNode;
 
 describe("the plugin rail (global navigation)", () => {
   it("paints one seat per plugin group — never one per page", async () => {

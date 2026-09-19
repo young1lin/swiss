@@ -16,9 +16,10 @@
 
 import type { ApiPluginPage, ApiPluginRow, ApiPluginsResponse } from "./types/api.js";
 import type { MenuItemAction, PageDescriptor, PageGroup, PageMenuItemSpec, PageModule } from "./types/dom.js";
-import { $, api, errText, esc, icon, toast } from "./util.js";
+import { $, api, errText, iconNode, toast } from "./util.js";
+import { fill, h } from "./h.js";
 import { createPageRegistry } from "./page-core.js";
-import { glyphHtml, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
+import { glyphNode, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
 import { currentView, setCurrentView } from "./ui-state.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
@@ -81,26 +82,27 @@ function currentGroup(): PageGroup | undefined {
    searchable list - the rail is the shortlist, not the ceiling). A seat carries data-group
    and data-view (the group's lowest-order page) so the deep selector in jobs.js keeps
    matching, and clicks delegate on [data-view]. */
-function railSeat(g: PageGroup): string {
+function railSeat(g: PageGroup): HTMLElement {
   const active = g.pages.some((p) => { return p.id === currentView(); });
   const offPlugin = unavailable(g.pages[0]);
   const allOff = g.pages.every((p) => { return !!unavailable(p); });
   const title = g.label + (allOff && offPlugin ? " — " + (offPlugin.lastError || "Plugin disabled") : "");
-  return '<button class="rail-btn" data-group="' + esc(g.id) + '" data-view="' + esc(g.pages[0].id) + '"' +
-    (active ? ' aria-current="true"' : "") + (allOff ? ' aria-disabled="true"' : "") +
-    ' title="' + esc(title) + '">' + glyphHtml(g) +
-    '<span class="rail-btn-label">' + esc(g.label) + "</span></button>";
+  return h("button", { class: "rail-btn", data: { group: g.id, view: g.pages[0].id },
+      // The two aria flags render only when true, exactly as the string builder spelled them.
+      aria: Object.assign({}, active ? { current: "true" } : {}, allOff ? { disabled: "true" } : {}), title },
+    glyphNode(g),
+    h("span", { class: "rail-btn-label" }, g.label));
 }
 
-function moreSeat() {
-  return '<button class="rail-btn rail-more" id="railMore" type="button" title="All plugins" aria-label="All plugins">' +
-    '<svg class="ic" aria-hidden="true"><use href="#i-ellipsis"></use></svg>' +
-    '<span class="rail-btn-label">More</span></button>';
+function moreSeat(): HTMLElement {
+  return h("button", { class: "rail-btn rail-more", id: "railMore", type: "button", title: "All plugins", aria: { label: "All plugins" } },
+    iconNode("ellipsis"),
+    h("span", { class: "rail-btn-label" }, "More"));
 }
 
 function paintPluginRail(): void {
   const nav = $("railNav");
-  nav.innerHTML = pinnedGroups(currentGroups()).map(railSeat).join("") + moreSeat();
+  fill(nav, ...pinnedGroups(currentGroups()).map(railSeat), moreSeat());
   nav.onclick = (event) => {
     const target = event.target as HTMLElement;
     const more = target.closest<HTMLElement>(".rail-more");
@@ -169,11 +171,11 @@ function paintPluginContext(): void {
   if (current_.pages.length >= 2) {
     btn.hidden = false;
     loc.hidden = true;
-    btn.innerHTML =
-      '<span class="ctx-plugin">' + esc(current_.label) + "</span>" +
-      '<span class="ctx-sep">/</span>' +
-      '<span class="ctx-page">' + esc(page?.label) + "</span>" +
-      icon("chevron-right");
+    fill(btn,
+      h("span", { class: "ctx-plugin" }, current_.label),
+      h("span", { class: "ctx-sep" }, "/"),
+      h("span", { class: "ctx-page" }, page?.label),
+      iconNode("chevron-right"));
     btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current_.label + " page";
     btn.onclick = (ev) => {
       ev.stopPropagation();
@@ -201,7 +203,7 @@ function paintPluginContext(): void {
     btn.onclick = null;
     btn.setAttribute("aria-expanded", "false");
     loc.hidden = false;
-    loc.innerHTML = '<span class="ctx-page">' + esc(current_.label) + "</span>";
+    fill(loc, h("span", { class: "ctx-page" }, current_.label));
     loc.title = off ? (off.lastError || "Plugin disabled") : "";
   }
 }
@@ -270,9 +272,11 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
   document.querySelector<HTMLElement>(".sidebar")!.hidden = layoutOf(page) !== "resource";
   paintNavigation();
   history.replaceState(null, "", page.path || "#" + id);
-  $("pane").innerHTML = off
-    ? '<div class="empty"><div><h2>' + esc(page.label) + ' unavailable</h2><p class="hint">' + esc(off.lastError || "This plugin is disabled. Manage it in Plugins.") + '</p></div></div>'
-    : '<div class="empty">Loading ' + esc(page.label) + "…</div>";
+  fill($("pane"), off
+    ? h("div", { class: "empty" }, h("div", null,
+        h("h2", null, page.label, " unavailable"),
+        h("p", { class: "hint" }, off.lastError || "This plugin is disabled. Manage it in Plugins.")))
+    : h("div", { class: "empty" }, "Loading " + page.label + "…"));
   try { if (module.mount) await module.mount({ signal: controller.signal }); }
   catch (error) { if (ticket === sequence && error instanceof Error && error.name !== "AbortError") toast(errText(error), true); }
   if (ticket === sequence) $("countChip").textContent = currentPageCount();
