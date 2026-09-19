@@ -46,6 +46,23 @@ function icon(name        , label         )         {
     : '<svg class="ic" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
 }
 
+/** The same sprite reference as a NODE, for the h() callers (docs/37 R5). SVG is its own
+ *  namespace: createElement("svg") builds an HTMLUnknownElement that renders nothing, so this
+ *  goes through createElementNS and cannot be folded into h(), which is typed for HTML tags.
+ *  <use href> without the xlink alias is SVG 2 — the same markup icon() has always emitted, so
+ *  the two builders agree on what reaches the browser. */
+function iconNode(name        , label         )                {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("class", "ic");
+  if (label) { svg.setAttribute("role", "img"); svg.setAttribute("aria-label", label); }
+  else svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(NS, "use");
+  use.setAttribute("href", "#i-" + name);
+  svg.appendChild(use);
+  return svg;
+}
+
 /** Launch-tag glyphs (docs/29): a monochrome brand mark where one exists, the text chip
  *  otherwise. Keys are the tags tag_of produces on the server: the type for in-process and
  *  remote MCPs, the command's first word for proc ones — arbitrary words appear (node, python,
@@ -182,4 +199,4 @@ async function apiJson             (path        , opts              )           
   }
 }
 
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, errText, esc, icon, isTyping, now, targetEl, toast, typeTagHtml, TYPE_ICONS, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyHtml, errText, esc, icon, iconNode, isTyping, now, targetEl, toast, typeTagHtml, TYPE_ICONS, whenLabel };
