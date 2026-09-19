@@ -33,10 +33,11 @@
                                                                                             
                                                 
                                                                                              
-import { $, apiJson, emptyHtml, esc, icon, targetEl, toast } from "../util.js";
+import { $, apiJson, emptyNode, iconNode, targetEl, toast } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
+import { fill, h } from "../h.js";
 import { popupMenu } from "../menu.js";
-import { assignMember, groupFieldHtml, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
+import { assignMember, groupFieldNode, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
 
 let targets = []                     ;
 let endpoints = []                       ;
@@ -75,10 +76,10 @@ function endpointLabel(id        )         {
 
 // The dot mirrors the endpoint's state: filled = connected, hollow = idle (will start
 // on demand), amber = mid-transition. The title always says the state in words.
-function endpointDot(id        )         {
+function endpointDotNode(id        )              {
   const st = (endpoints.find((e) => { return e.id === id; }) || {}                     ).state || "unknown";
   const cls = st === "connected" || st === "up" ? "up" : st === "idle" ? "idle" : "starting";
-  return '<span class="dot ' + cls + '" title="endpoint ' + esc(st) + '"></span>';
+  return h("span", { class: "dot " + cls, title: "endpoint " + st });
 }
 
 function signature()         {
@@ -89,24 +90,26 @@ function signature()         {
     }).join("\n");
 }
 
-function chip(text        )         {
-  return '<span class="side-type">' + esc(text) + "</span>";
+function chipNode(text        )              {
+  return h("span", { class: "side-type" }, text);
 }
 
-function row(t                 )         {
-  const caps = (t.capabilities || []).map(chip).join("");
+function rowNode(t                 )              {
   // A label the sheet defaulted to the alias (see save) is not worth saying twice.
-  const label = t.label && t.label !== t.id ? ' <span class="text-3">' + esc(t.label) + "</span>" : "";
-  return (
-    '<div class="row row-act" data-rmrow="' + esc(t.id) + '">' + endpointDot(t.endpoint) +
-      '<div class="row-main">' +
-        '<div class="name"><a href="#remote" class="rowname" data-rmedit="' + esc(t.id) + '">' + esc(t.id) + "</a>" + label + "</div>" +
-        '<div class="rm-sub">' + esc(t.workspaceRoot || "") + "</div>" +
-      "</div>" +
-      '<div class="row-chips">' + chip(endpointLabel(t.endpoint)) + caps + "</div>" +
-      '<button class="btn ghost icon" data-rmmore="' + esc(t.id) + '" aria-label="Actions for ' + esc(t.id) + '" title="Actions for ' + esc(t.id) + '">' + icon("ellipsis") + "</button>" +
-    "</div>"
-  );
+  const label = t.label && t.label !== t.id ? h("span", { class: "text-3" }, " " + t.label) : null;
+  return h("div", { class: "row row-act", data: { rmrow: t.id } },
+    endpointDotNode(t.endpoint),
+    h("div", { class: "row-main" },
+      h("div", { class: "name" },
+        h("a", { href: "#remote", class: "rowname", data: { rmedit: t.id } }, t.id),
+        label),
+      h("div", { class: "rm-sub" }, t.workspaceRoot || "")),
+    h("div", { class: "row-chips" },
+      chipNode(endpointLabel(t.endpoint)),
+      (t.capabilities || []).map(chipNode)),
+    h("button", { class: "btn ghost icon", data: { rmmore: t.id },
+        aria: { label: "Actions for " + t.id }, title: "Actions for " + t.id },
+      iconNode("ellipsis")));
 }
 
 /** The groups component's cfg (docs/20): this page's nouns, rows and moves. */
@@ -133,7 +136,7 @@ function cfg()                            {
       get: () => { return draggingGroup; },
       set: (v) => { draggingGroup = v; },
     },
-    rowsHtml: (g) => { return g.rows.map(row).join(""); },
+    rowNode: rowNode,
     rowId: (r) => { return r.id; },
     // Ids are validated slugs (a-z 0-9 -), so a bare attribute selector is safe.
     rowSel: (r) => { return '[data-rmrow="' + r.id + '"]'; },
@@ -148,7 +151,7 @@ function cfg()                            {
 function paint()       {
   const region = $("rmGroups");
   if (!region) return;
-  region.innerHTML = "";
+  region.textContent = ""; // the fill() wipe without the children: groups append one by one
   slice(targets, groupNames, groupOf(groupNames)).forEach((g) => {
     region.appendChild(mountGroup(cfg(), g));
   });
@@ -162,28 +165,26 @@ function render()       {
   // who else writes it; the drag is taught by the list itself, not by prose.
   // The status line names the presence only when it is NOT the normal one: "serving ·
   // 3 endpoints served by tunnels" said serving twice.
-  let status = endpoints.length + " endpoint" + (endpoints.length === 1 ? "" : "s") + " served by tunnels";
-  if (presence !== "serving") status = "Tunnels " + esc(presence) + " · " + status;
-  const head =
-    '<div class="wide">' +
-      '<div class="pane-head"><div>' +
-        '<div class="pane-desc">Machines the gateway can run commands on, reached over Tunnels SSH connections. The CLI (swiss remote …) writes the same table.</div>' +
-        '<div class="pane-sub">' + status + "</div>" +
-      "</div>" +
-      '<div class="pane-actions">' +
-        '<button class="btn primary" id="rmAdd">Add target</button>' +
-        '<button class="btn" id="rmNewGroup">New group</button>' +
-      "</div></div>" +
-      '<div id="rmGroups"></div>' +
-    "</div>";
-  $("pane").innerHTML = head;
+  const status = endpoints.length + " endpoint" + (endpoints.length === 1 ? "" : "s") + " served by tunnels";
+  fill($("pane"),
+    h("div", { class: "wide" },
+      h("div", { class: "pane-head" },
+        h("div", null,
+          h("div", { class: "pane-desc" }, "Machines the gateway can run commands on, reached over Tunnels SSH connections. The CLI (swiss remote …) writes the same table."),
+          h("div", { class: "pane-sub" },
+            presence !== "serving" ? h("span", null, "Tunnels " + presence + " · ") : null,
+            status)),
+        h("div", { class: "pane-actions" },
+          h("button", { class: "btn primary", id: "rmAdd" }, "Add target"),
+          h("button", { class: "btn", id: "rmNewGroup" }, "New group"))),
+      h("div", { id: "rmGroups" })));
   // The grouped list shows once there is anything to show: any row, or any group
   // beyond the implicit default. A group the user just made is a PLACE (docs/20: an
   // empty group is not an empty state) - hiding it behind "No targets yet" reads as
   // the create having failed, which is exactly the bug it was. The bare table (no
   // rows, only default) keeps the explaining empty state.
   if (!targets.length && groupNames.length <= 1) {
-    $("rmGroups").innerHTML = emptyHtml({ icon: "globe", title: "No targets yet", hint: "Add a target to run commands on the machines the Tunnels connections reach." });
+    fill($("rmGroups"), emptyNode({ icon: "globe", title: "No targets yet", hint: "Add a target to run commands on the machines the Tunnels connections reach." }));
   } else {
     paint();
   }
@@ -225,12 +226,9 @@ async function assign(id        , group               )                {
    closeSheet from add-sheet.js, backdrop click closes. */
 function openSheet(target                        )       {
   editing = target ? target.id : null;
-  const endpointOptions = endpoints
-    .map((e) => {
-      const sel = target && target.endpoint === e.id ? " selected" : "";
-      return '<option value="' + esc(e.id) + '"' + sel + ">" + esc(e.label || e.id) + "</option>";
-    })
-    .join("");
+  const endpointOptions = endpoints.map((e) => {
+    return h("option", { value: e.id, selected: !!(target && target.endpoint === e.id) }, e.label || e.id);
+  });
   // The Group select is where the row lands: the group whose + opened the sheet
   // preselects, the last used one otherwise, and a value the user changed wins.
   const groupSel = target
@@ -238,27 +236,34 @@ function openSheet(target                        )       {
     : pendingGroup || lastGroup("targets") || groupNames[0];
   pendingGroup = null;
   const caps = ["exec", "sync", "files"];
-  const capBoxes = caps
-    .map((c) => {
-      return '<label class="check"><input type="checkbox" id="rmcap-' + c + '"> ' + c + "</label>";
-    })
-    .join(" ");
-  $("sheet").innerHTML =
-    '<div class="sheet" role="dialog" aria-modal="true" aria-label="' + (editing ? "Edit" : "Add") + ' a remote target">' +
-      '<div class="sheet-head"><h2>' + (editing ? "Edit " + esc(editing) : "Add a remote target") + "</h2></div>" +
-      '<div class="sheet-body">' +
-        '<label class="field"><span>Alias (the name commands call: swiss remote exec &lt;alias&gt;)</span>' +
-          '<input id="rm-id" placeholder="build"></label>' +
-        '<label class="field"><span>Label (optional)</span><input id="rm-label"></label>' +
-        '<label class="field"><span>Endpoint (a Tunnels connection)</span><select id="rm-endpoint">' + endpointOptions + "</select></label>" +
-        groupFieldHtml(groupNames, groupSel) +
-        '<label class="field"><span>Workspace root (absolute POSIX path)</span><input id="rm-root" placeholder="/data/ws/proj"></label>' +
-        '<div class="field"><span>Capabilities</span><div>' + capBoxes + "</div></div>" +
-      "</div>" +
-      '<div class="sheet-foot"><button class="btn" id="rm-cancel">Cancel</button>' +
-      '<button class="btn primary" id="rm-save">' + (editing ? "Save" : "Add") + "</button></div>" +
-    "</div>";
+  // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
   $("sheet").hidden = false;
+  fill($("sheet"),
+    h("div", { class: "sheet", role: "dialog",
+        aria: { modal: "true", label: (editing ? "Edit" : "Add") + " a remote target" } },
+      h("div", { class: "sheet-head" },
+        h("h2", null, editing ? "Edit " + editing : "Add a remote target")),
+      h("div", { class: "sheet-body" },
+        h("label", { class: "field" },
+          h("span", null, "Alias (the name commands call: swiss remote exec <alias>)"),
+          h("input", { id: "rm-id", placeholder: "build" })),
+        h("label", { class: "field" },
+          h("span", null, "Label (optional)"), h("input", { id: "rm-label" })),
+        h("label", { class: "field" },
+          h("span", null, "Endpoint (a Tunnels connection)"),
+          h("select", { id: "rm-endpoint" }, endpointOptions)),
+        groupFieldNode(groupNames, groupSel),
+        h("label", { class: "field" },
+          h("span", null, "Workspace root (absolute POSIX path)"),
+          h("input", { id: "rm-root", placeholder: "/data/ws/proj" })),
+        h("div", { class: "field" },
+          h("span", null, "Capabilities"),
+          h("div", null, caps.map((c) => {
+            return h("label", { class: "check" }, h("input", { type: "checkbox", id: "rmcap-" + c }), " " + c);
+          })))),
+      h("div", { class: "sheet-foot" },
+        h("button", { class: "btn", id: "rm-cancel" }, "Cancel"),
+        h("button", { class: "btn primary", id: "rm-save" }, editing ? "Save" : "Add"))));
   // Prefill programmatically, not via value=" markup": the pane redraws by signature,
   // and programmatic values are the one source of truth an edit and a test can both read.
   $                  ("rm-id").disabled = !!editing; // the alias never edits; state set here, not in markup
