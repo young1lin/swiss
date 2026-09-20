@@ -86,7 +86,9 @@ true, ok: false), not an error - the run row says "canceled", which is the truth
 ## Project binding (`.swiss/remote.json`)
 
 Plain JSON (no secrets - a repository carries it), discovered by walking up from the cwd,
-first file wins, schemaVersion 1:
+first file wins, schemaVersion 1. The state home's own `remote.json` (the sealed target
+table, which for `~/.swiss` sits at exactly this path for `~`) is not a binding: the walk
+recognises the sealed envelope, skips it and continues above it (2026-09-20).
 
 ```json
 {
