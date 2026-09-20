@@ -1,13 +1,18 @@
 # 38 — 面板国际化：文/A 一键切换，英文原文为 key，中文是第一门外语
 
-> 状态：**待实施**。基线 `d040640`（2026-09-20，master）——docs/37 R0–R6 已落地：面板 61 个自有
+> 状态：**已实施**（分支 `panel-i18n`，I0–I10 全部落地：I0 `f167242`、I1 `6c77f49`、I2 `636a988`、
+> I3 `56ee652`、I4 `1e6582b`、I5 `b3da797`、I6 `1d52eee`、I7 `46ba1b8`、I8a `f98e627`、I8b `0ac9812`、
+> I9 `5470723`、I10 本提交）。基线 `d040640`（2026-09-20，master）——docs/37 R0–R6 已落地：面板 61 个自有
 > 模块 19,150 行 TypeScript，零 `innerHTML` 写入，每个视图从 state 重画并答一个委托监听器，
 > 69 个测试文件绿，`npm run check` 是门禁。本文的机制建立在 R5 之上，R5 之前做不起。
-> 实施在分支 `panel-i18n`（worktree `.agents/worktrees/panel-i18n`，panel-ts 的先例）：**全部
-> 落地、扫描闸绿、19998 中文走查完，再合并 master、部署一次**——中间态切到中文会半中半英，不进生产。
 > 前置阅读：`docs/36-panel-typescript-spec.md` §1.2（D2 发射、D3 产物提交、D10 零 any 继续有效）、
 > `docs/37-panel-modern-typescript-spec.md` §7（`h()` 与事件委托——本文的重画靠它）、
-> `.agents/rules/panel-proof-of-life.md`、`AGENTS.md` 四条产品属性。
+> `.agents/rules/panel-proof-of-life.md`、`AGENTS.md` 四条产品属性。合并 master 与部署是 owner 在
+> I10 之后的一次决定，不走本分支。
+> §7 四个数的终值：剩余裸字面量 **0**、`zh.ts` 词条 **987**、`zh.js` 字节 **68,480 B**、
+> 相对基线的 emit 净增 **+77,311 B**（各阶段增量之和）。扫描闸（§5.1）以 vitest 零门落地于
+> `panel/test/i18n-ratchet.test.ts`（eslint 的 no-restricted-syntax 单严重度槽位被 R5 的
+> innerHTML error 占用，测试文件头记录了这条决定）。
 > 代码注释与源码里的 key 一律英文；中文只存在于字典 `panel/src/locales/zh.ts` 和本文散文。
 
 > 需求原文（用户，2026-09-20）："看看我这个项目，怎么加下国际化的 文/A 那种 SVG 图标，可以切换
