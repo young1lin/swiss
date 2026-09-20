@@ -282,6 +282,11 @@ async function navigatePage(id        , force          )                {
   if (ticket === sequence) $("countChip").textContent = currentPageCount();
 }
 
+/** Whether the active page would allow a navigation right now (docs/38 §2.2): the 文/A
+ *  flip asks this before it writes the language preference — a vetoed switch must not
+ *  change anything the user can observe. */
+function pageCanLeave()          { return !(active && active.module.canLeave && !active.module.canLeave()); }
+
 async function pollPage()                {
   if (polling || !active || !active.module.poll) return;
   polling = true;
@@ -295,4 +300,4 @@ async function refreshPage()                {
   catch (error) { toast(errText(error), true); }
 }
 
-export { currentPageCount, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };
+export { currentPageCount, initPages, layoutOf, navigatePage, pageCanLeave, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };
