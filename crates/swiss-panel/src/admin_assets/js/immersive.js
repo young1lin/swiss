@@ -59,11 +59,11 @@ function paintImmersive()       {
   const btn = $("expandBtn");
   if (!btn) return;
   btn.title = on
-    ? (docked ? tr("Exit Terminal fullscreen (Esc)") : tr("Exit focus mode (Esc)"))
-    : (terminal ? tr("Terminal fullscreen — fill the Swiss window (Esc exits)") : tr("Focus mode — hide app navigation (Esc exits)"));
+    ? (docked ? tr("immersive.exitTerminalFullscreenEsc") : tr("immersive.exitFocusModeEsc"))
+    : (terminal ? tr("immersive.terminalFullscreenFillSwiss") : tr("immersive.focusModeHideApp"));
   if (btn.setAttribute) btn.setAttribute("aria-label", on
-    ? (docked ? tr("Exit Terminal fullscreen") : tr("Exit focus mode"))
-    : (terminal ? tr("Terminal fullscreen") : tr("Focus mode")));
+    ? (docked ? tr("immersive.exitTerminalFullscreen") : tr("immersive.exitFocusMode"))
+    : (terminal ? tr("immersive.terminalFullscreen") : tr("immersive.focusMode")));
   fill(btn, iconNode(on ? "collapse" : "expand"));
 }
 

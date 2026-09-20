@@ -109,11 +109,11 @@ function emptyNode(opts                )              {
  *  chip text once drifted between two copies, and a dot whose title disagrees with its class
  *  is the same bug one hover wide. */
 function dotTitle(word        , latencyMs                , reason         )         {
-  if (word === "up") return latencyMs != null ? tr("up · {n} ms", { n: latencyMs }) : tr("up");
+  if (word === "up") return latencyMs != null ? tr("util.nMs", { n: latencyMs }) : tr("util.text");
   // Idle is the one word that explains nothing: say what the ring means — nothing is wrong,
   // it starts when it is first needed.
-  if (word === "idle") return tr("idle — starts on first request");
-  if (word === "error") return reason ? tr("error: {reason}", { reason }) : tr("error");
+  if (word === "idle") return tr("util.idleStartsFirstRequest");
+  if (word === "error") return reason ? tr("util.errorReason", { reason }) : tr("util.error");
   return word || ""; // starting / stopping / reconnecting / down — the word the row already shows (docs/38 L9)
 }
 
@@ -197,7 +197,7 @@ async function apiJson             (path        , opts              )           
     if (!r.ok) {
       // Failure bodies are the API's own { error } envelope - narrowed, not assumed.
       const msg = typeof j === "object" && j !== null && "error" in j && typeof j.error === "string" ? j.error : "";
-      toast(msg || tr("HTTP {n}", { n: r.status }), true);
+      toast(msg || tr("util.httpN", { n: r.status }), true);
       return null;
     }
     // The one trust every caller grants the admin API: an ok body is the T the caller declared.
@@ -206,7 +206,7 @@ async function apiJson             (path        , opts              )           
     // A network-level failure (gateway stopped mid-click) must be reported too: every caller is
     // `if (!j) return;`, and a silent null made clicking Commit do literally nothing after the
     // confirm dialog.
-    toast(tr("request failed — is the gateway running?"), true);
+    toast(tr("util.requestFailedGatewayRunning"), true);
     return null;
   }
 }

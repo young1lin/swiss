@@ -48,7 +48,7 @@ function patchDetailHead()       {
   txt.textContent = headSubtitle(m);
   if (primary) {
     const started = m.lifecycle === "started";
-    primary.textContent = busyVerb ? "…" : (started ? tr("Disable") : tr("Enable"));
+    primary.textContent = busyVerb ? "…" : (started ? tr("pane.disable") : tr("pane.enable"));
     primary.disabled = !!busyVerb;
     // No onclick here (docs/37 R5): #pane's delegated click derives the verb from live state.
   }
@@ -57,14 +57,14 @@ function patchDetailHead()       {
 function headSubtitle(m                           )         {
   const bits = [];
   if (mcpBusyVerb(m.name)) bits.push(mcpBusyVerb(m.name) + "…");
-  else bits.push(m.state === "stopped" ? tr("disabled") : m.state); // docs/28 D2: the honest word
+  else bits.push(m.state === "stopped" ? tr("pane.disabled") : m.state); // docs/28 D2: the honest word
   bits.push(m.type);
   bits.push(m.source);
   if (m.state === "up" && m.latencyMs != null) bits.push(m.latencyMs + " ms");
-  if (m.startedAt) bits.push(tr("since {time}", { time: new Date(m.startedAt).toLocaleTimeString(locale()) }));
+  if (m.startedAt) bits.push(tr("pane.sinceTime", { time: new Date(m.startedAt).toLocaleTimeString(locale()) }));
   // The OAuth badge (docs/24 D5): stored credentials read authorized; expiry is the
   // gateway's to handle with a refresh, not the badge's to guess at.
-  if (m.oauth) bits.push(tr("oauth: {state}", { state: m.oauth }));
+  if (m.oauth) bits.push(tr("pane.oauthState", { state: m.oauth }));
   return bits.join("  ·  ");
 }
 
@@ -77,8 +77,8 @@ function renderPane()       {
     // The shared empty state (docs/18 V7), and the one place it carries an action: the pane's
     // own "add" answers the question the empty screen just asked.
     fill(pane, emptyNode(mcpRows().length
-      ? { icon: "mcp", title: tr("Select an MCP"), hint: tr("Its tools, resources and configuration appear here.") }
-      : { icon: "mcp", title: tr("No MCPs registered"), hint: tr("Add one with the + on a group header."), action: tr("Add an MCP") }));
+      ? { icon: "mcp", title: tr("pane.selectMcp"), hint: tr("pane.toolsResourcesConfigurationAppear") }
+      : { icon: "mcp", title: tr("pane.mcpsRegistered"), hint: tr("pane.addOneGroupHeader"), action: tr("pane.addMcp") }));
     // The empty pane answers ONLY its own button (master had no pane-level listener here):
     // a detail render earlier in this pane's life left the delegated properties behind, and
     // fill() wipes children, never listeners - without this reset one click on the action ran
@@ -119,22 +119,22 @@ function renderPane()       {
       // still polling.
       d.config && (d.config.auth === "oauth" || d.config.type === "figma")
         ? h("button", { class: "btn", id: "oauthBtn", disabled: !!d.oauthBusy },
-            m.oauth === "authorized" ? tr("Reauthorize") : tr("Authorize"))
+            m.oauth === "authorized" ? tr("pane.reauthorize") : tr("pane.authorize"))
         : null,
       // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
       // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
       // docs/28 D2: the verb is Disable/Enable, not Stop/Start — a stop that survives a boot and
       // refuses every client IS a disable; the mechanism below keeps the stop/start verbs.
       h("button", { class: "btn" + (started ? "" : " primary"), id: "primaryBtn", disabled: !!busyVerb },
-        busyVerb ? "…" : started ? tr("Disable") : tr("Enable")),
-      h("button", { class: "btn icon", id: "menuBtn", aria: { label: tr("More actions") }, title: tr("More actions") },
+        busyVerb ? "…" : started ? tr("pane.disable") : tr("pane.enable")),
+      h("button", { class: "btn icon", id: "menuBtn", aria: { label: tr("pane.moreActions") }, title: tr("pane.moreActions") },
         iconNode("ellipsis"))));
 
   /* Tab names are module-level data (docs/38 L7): stored as keys via tk(), painted through
    tr() so a language flip re-renders them with the page. */
   const TAB_LABELS                         = {
-    tools: tk("Tools"), resources: tk("Resources"), prompts: tk("Prompts"),
-    run: tk("Run"), config: tk("Config"), logs: tk("Logs"),
+    tools: tk("pane.tools"), resources: tk("pane.resources"), prompts: tk("pane.prompts"),
+    run: tk("pane.run"), config: tk("pane.config"), logs: tk("pane.logs"),
   };
   const tabs           = [...KINDS, "run", "config", "logs"];
   const seg = h("div", { class: "seg", role: "tablist" }, tabs.map((t) => {
@@ -254,7 +254,7 @@ function menuAct(d           , a        )       {
   else if (a === "rename") void renameMcp(d.name);
   else if (a === "delete") void removeMcp(d.name);
   else if (a === "edit") { d.tab = "config"; startEdit(); }
-  else if (a === "cp-url") void copyText(endpointUrl(d.name), tr("Endpoint URL"));
+  else if (a === "cp-url") void copyText(endpointUrl(d.name), tr("pane.endpointUrl"));
   else if (a === "cp-claude") void copyConn(d.name, "claude");
   else if (a === "cp-codex") void copyConn(d.name, "codex");
   else if (a === "cp-json") void copyConn(d.name, "json");
@@ -300,23 +300,23 @@ function menuNode(m                           )              {
     return h("button", { class: "pick" + (g === current ? " on" : ""), data: { grp: g } }, g);
   });
   return h("div", { class: "menu", id: "menu" },
-    h("div", { class: "menu-cap" }, tr("Connect a client")),
-    h("button", { data: { act: "cp-claude" } }, tr("Copy Claude Code command")),
-    h("button", { data: { act: "cp-codex" } }, tr("Copy Codex command")),
-    h("button", { data: { act: "cp-json" } }, tr("Copy .mcp.json entry")),
-    h("button", { data: { act: "cp-url" } }, tr("Copy endpoint URL")),
+    h("div", { class: "menu-cap" }, tr("pane.connectClient")),
+    h("button", { data: { act: "cp-claude" } }, tr("pane.copyClaudeCodeCommand")),
+    h("button", { data: { act: "cp-codex" } }, tr("pane.copyCodexCommand")),
+    h("button", { data: { act: "cp-json" } }, tr("pane.copyMcpJsonEntry")),
+    h("button", { data: { act: "cp-url" } }, tr("pane.copyEndpointUrl")),
     h("hr"),
-    h("div", { class: "menu-cap" }, tr("Group")),
+    h("div", { class: "menu-cap" }, tr("pane.group")),
     picks,
-    h("button", { data: { act: "new-group" } }, tr("New group…")),
+    h("button", { data: { act: "new-group" } }, tr("pane.newGroup")),
     h("hr"),
     h("button", { data: { act: m.lifecycle === "started" ? "stop" : "start" } },
-      m.lifecycle === "started" ? tr("Disable") : tr("Enable")),
-    h("button", { data: { act: "restart" } }, tr("Restart")),
-    h("button", { data: { act: "edit" } }, tr("Edit configuration…")),
-    h("button", { data: { act: "rename" } }, tr("Rename…")),
+      m.lifecycle === "started" ? tr("pane.disable") : tr("pane.enable")),
+    h("button", { data: { act: "restart" } }, tr("pane.restart")),
+    h("button", { data: { act: "edit" } }, tr("pane.editConfiguration")),
+    h("button", { data: { act: "rename" } }, tr("pane.rename")),
     h("hr"),
-    h("button", { class: "danger", data: { act: "delete" } }, tr("Delete")));
+    h("button", { class: "danger", data: { act: "delete" } }, tr("pane.delete")));
 }
 
 export { closeMenu, headSubtitle, menuNode, openMenu, paneHasFocus, patchDetailHead, renderPane, toggleMenu };

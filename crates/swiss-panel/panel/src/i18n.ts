@@ -35,8 +35,13 @@ function byId<T extends HTMLElement = HTMLElement>(id: string): T { return docum
 export type Lang = "en" | "zh-CN";
 export const LANG_KEY = "swiss_lang"; // absent = "en"; the preference, like THEME_KEY
 
+import enTable from "./locales/en.js";
+
 let lang: Lang = "en";
 let dict: Record<string, string> | null = null;
+/* English is the fallback chain's floor and every language renders it, so its table is a
+ * static leaf import (no cycle: locales import nothing); each locale above it stays lazy. */
+let enDict: Record<string, string> = enTable;
 
 /* --- preference --------------------------------------------------------------------------------- */
 
@@ -87,7 +92,10 @@ function apply(s: string, vars?: Record<string, string | number>): string {
 /** The one lookup (L1): a missing dictionary entry returns the English key itself — the
  *  panel can never render a key name or an undefined. */
 export function tr(key: string, vars?: Record<string, string | number>): string {
-  return apply(dict !== null && Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : key, vars);
+  const hit = dict !== null && Object.prototype.hasOwnProperty.call(dict, key) ? dict[key]
+    : Object.prototype.hasOwnProperty.call(enDict, key) ? enDict[key]
+    : key;
+  return apply(hit, vars);
 }
 
 /** Plural-aware lookup (L2): Intl.PluralRules of the INSTALLED locale picks one/other, {n}
@@ -103,6 +111,24 @@ export function trn(n: number, one: string, other: string, vars?: Record<string,
  *  freezes a translation at module-eval time. */
 export function tk(key: string): string { return key; }
 
+/** The wire vocabulary (L9's one carve-out): the gateway serves nav group/page labels as
+ *  English TEXT on /api/plugins, not as keys, so the panel maps served text -> wire.* key
+ *  here. An unknown label (a plugin added after this build) passes through and renders as
+ *  served. The wire test in i18n-complete.test.ts pins this list against the tables. */
+const WIRE_LABELS: Record<string, string> = {
+  "MCP": "wire.mcp", "Tunnels": "wire.tunnels", "Data": "wire.data", "Jobs": "wire.jobs",
+  "Process": "wire.process", "Terminal": "wire.terminal", "Remote": "wire.remote",
+  "Settings": "wire.settings", "Servers": "wire.servers", "Traffic": "wire.traffic",
+  "Token": "wire.token", "SSH Connections": "wire.sshConnections",
+  "Port Forwards": "wire.portForwards", "Targets": "wire.targets", "Runs": "wire.runs",
+  "Plugins": "wire.plugins", "Secrets": "wire.secrets", "System": "wire.system",
+};
+
+/** Map a gateway-served label to its key; unknown text passes through unchanged. */
+export function wireLabel(served: string): string {
+  return Object.prototype.hasOwnProperty.call(WIRE_LABELS, served) ? WIRE_LABELS[served] : served;
+}
+
 /* --- install / load ----------------------------------------------------------------------------- */
 
 /** Swap the active language in memory. Tests and loadLocale are the callers; setLang is the
@@ -112,6 +138,10 @@ export function install(l: Lang, table: Record<string, string> | null): void {
   dict = table;
   syncHtmlLang(l);
 }
+
+/** Test seam: hand the chain a substitute English table (the shipped one loads with the
+ *  module; only the vitest suite ever calls this). */
+export function installEnglish(table: Record<string, string>): void { enDict = table; }
 
 /** Resolve the preference into memory at boot (and again after a flip): the Chinese
  *  dictionary is fetched only when the preference is Chinese — an English browser downloads
@@ -138,25 +168,25 @@ let repaintThemeBtn: (() => void) | null = null;
  *  title is NOT here — see paintLangBtn. */
 export function paintChrome(): void {
   const filter = byId<HTMLInputElement>("filter");
-  filter.placeholder = tr("Search");
-  filter.setAttribute("aria-label", tr("Filter MCPs"));
+  filter.placeholder = tr("i18n.search");
+  filter.setAttribute("aria-label", tr("i18n.filterMcps"));
   const add = byId("addBtn");
-  add.title = tr("New group");
-  add.setAttribute("aria-label", tr("New group"));
-  byId("themeBtn").setAttribute("aria-label", tr("Appearance"));
+  add.title = tr("i18n.newGroup");
+  add.setAttribute("aria-label", tr("i18n.newGroup"));
+  byId("themeBtn").setAttribute("aria-label", tr("i18n.appearance"));
   const expand = byId("expandBtn");
-  expand.title = tr("Focus mode — hide app navigation (Esc exits)");
-  expand.setAttribute("aria-label", tr("Focus mode"));
-  byId("langBtn").setAttribute("aria-label", tr("Language"));
-  byId("sideCap").textContent = tr("MCPs");
+  expand.title = tr("i18n.focusModeHideApp");
+  expand.setAttribute("aria-label", tr("i18n.focusMode"));
+  byId("langBtn").setAttribute("aria-label", tr("i18n.language"));
+  byId("sideCap").textContent = tr("i18n.mcps");
   // The loading placeholder too: the first /api/memory answer overwrites it in both
   // languages (polling.ts owns the real reading).
-  byId("memChip").textContent = tr("mem …");
-  byId("memChip").title = tr("swiss resident set");
+  byId("memChip").textContent = tr("i18n.mem");
+  byId("memChip").title = tr("i18n.swissResidentSet");
   const rail = document.querySelector("aside.rail");
-  if (rail) rail.setAttribute("aria-label", tr("Plugins"));
-  byId("railNav").setAttribute("aria-label", tr("Plugins"));
-  byId("list").setAttribute("aria-label", tr("Hosted MCPs"));
+  if (rail) rail.setAttribute("aria-label", tr("i18n.plugins"));
+  byId("railNav").setAttribute("aria-label", tr("i18n.plugins"));
+  byId("list").setAttribute("aria-label", tr("i18n.hostedMcps"));
   if (repaintThemeBtn) repaintThemeBtn();
 }
 

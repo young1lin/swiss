@@ -63,7 +63,7 @@ function dbActivityPane(close            )       {
   head.appendChild(left);
   // The Close button answers through #pane's delegated click via data-actclose (docs/37 R5).
   head.appendChild(h("div", { class: "db-head-ctl" },
-    h("button", { class: "btn", type: "button", data: { actclose: "" } }, tr("Close"))));
+    h("button", { class: "btn", type: "button", data: { actclose: "" } }, tr("dataActivity.close"))));
   main.appendChild(head);
   const wrap = el("div", "db-grid-wrap");
   wrap.id = "dbActivityWrap";
@@ -133,7 +133,7 @@ function dbActivityRender() {
     // delegated click (docs/37 R5); the row is re-found from live state at event time.
     const ctl = el("td", "db-rowctl");
     ctl.appendChild(h("button", {
-      class: "db-act-more", type: "button", title: tr("Cancel or terminate this session"),
+      class: "db-act-more", type: "button", title: tr("dataActivity.cancelTerminateSession"),
       data: { apid: String(r.pid) },
     }, iconNode("ellipsis")));
     tri.appendChild(ctl);

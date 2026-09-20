@@ -68,9 +68,9 @@ function historyMeta(r: ApiJobRunRecord & { reason?: string; missedCount?: numbe
   const parts = [r.trigger || "?"];
   if (r.outcome && r.outcome !== "ran") {
     parts.push(r.outcome + (r.reason ? " (" + r.reason + ")" : ""));
-    if (r.missedCount != null) parts.push(tr("{n} more missed", { n: r.missedCount }));
+    if (r.missedCount != null) parts.push(tr("jobsV2.nMoreMissed", { n: r.missedCount }));
   } else {
-    if (r.attempt != null && r.attempts != null && r.attempts > 1) parts.push(tr("attempt {a}/{b}", { a: r.attempt, b: r.attempts }));
+    if (r.attempt != null && r.attempts != null && r.attempts > 1) parts.push(tr("jobsV2.attemptB", { a: r.attempt, b: r.attempts }));
     parts.push((r.ms == null ? "?" : String(r.ms)) + " ms");
     if (r.exitCode != null) parts.push("exit " + r.exitCode);
   }

@@ -118,7 +118,7 @@ function newGroupFlow(scope        , names          , reload                    
     const j = await saveGroupNames(scope, names.concat([name]));
     if (!j) return false;
     await reload();
-    toast(tr("Group {name} created", { name }));
+    toast(tr("groups.groupNameCreated", { name }));
     return true;
   });
 }
@@ -130,7 +130,7 @@ function newGroupFlow(scope        , names          , reload                    
  *  converted (jobs, remote, tunnels) and retires with them. */
 function groupFieldNode(names          , sel                )              {
   return h("label", { class: "field" },
-    h("span", null, tr("Group")),
+    h("span", null, tr("groups.group")),
     h("select", { id: "g-sel" }, names.map((n) => {
       return h("option", { value: n, selected: n === sel }, n);
     })));
@@ -139,7 +139,7 @@ function groupFieldHtml(names          , sel                )         {
   const opts = names.map((n) => {
     return '<option value="' + esc(n) + '"' + (n === sel ? " selected" : "") + ">" + esc(n) + "</option>";
   }).join("");
-  return '<label class="field"><span>' + esc(tr("Group")) + '</span><select id="g-sel">' + opts + "</select></label>";
+  return '<label class="field"><span>' + esc(tr("groups.group")) + '</span><select id="g-sel">' + opts + "</select></label>";
 }
 
 /* --- the component ------------------------------------------------------------------------------- */
@@ -211,7 +211,7 @@ function mountGroup     (cfg               , g                 )              {
   const add = el("button", "grp-add");
   add.appendChild(iconNode("plus"));
   add.type = "button";
-  add.title = cfg.addTitle ? cfg.addTitle(g.name) : tr("Add to {group}", { group: g.name });
+  add.title = cfg.addTitle ? cfg.addTitle(g.name) : tr("groups.addGroup", { group: g.name });
   add.setAttribute("aria-label", add.title);
   add.onclick = (ev) => { ev.stopPropagation(); cfg.onAdd(g.name); };
   head.appendChild(add);
@@ -222,21 +222,21 @@ function mountGroup     (cfg               , g                 )              {
   const more = el("button", "grp-more");
   more.appendChild(iconNode("ellipsis"));
   more.type = "button";
-  more.title = tr("Move, rename or delete this group");
-  more.setAttribute("aria-label", tr("Group actions"));
+  more.title = tr("groups.moveRenameDeleteGroup");
+  more.setAttribute("aria-label", tr("groups.groupActions"));
   more.onclick = (ev) => {
     ev.stopPropagation();
     const i = cfg.names.indexOf(g.name);
     const items             = [];
-    if (i > 0) items.push({ label: tr("Move up"), fn: () => { moveGroupBy(cfg, g.name, -1); } });
+    if (i > 0) items.push({ label: tr("groups.move"), fn: () => { moveGroupBy(cfg, g.name, -1); } });
     if (i >= 0 && i < cfg.names.length - 1) {
-      items.push({ label: tr("Move down"), fn: () => { moveGroupBy(cfg, g.name, 1); } });
+      items.push({ label: tr("groups.moveDown"), fn: () => { moveGroupBy(cfg, g.name, 1); } });
     }
     if (items.length) items.push({ sep: true });
     items.push(
-      { label: tr("Rename…"), fn: () => { renameFlow(cfg, g.name); } },
+      { label: tr("groups.rename"), fn: () => { renameFlow(cfg, g.name); } },
       { sep: true },
-      { label: tr("Delete group"), danger: true, fn: () => { deleteFlow(cfg, g.name); } },
+      { label: tr("groups.deleteGroup"), danger: true, fn: () => { deleteFlow(cfg, g.name); } },
     );
     popupMenu(more.getBoundingClientRect(), items);
   };
@@ -444,8 +444,8 @@ function renameFlow     (cfg               , from        )       {
     if (cfg.collapsed[from]) { delete cfg.collapsed[from]; cfg.collapsed[to] = true; saveCollapsed(cfg.scope, cfg.collapsed); }
     await cfg.reload();
     toast(j.moved
-    ? tr("Renamed {from} → {to} ({n} moved)", { from, to, n: j.moved })
-    : tr("Renamed {from} → {to}", { from, to }));
+    ? tr("groups.renamedNMoved", { from, to, n: j.moved })
+    : tr("groups.renamed", { from, to }));
     return true;
   });
 }
@@ -455,12 +455,12 @@ function renameFlow     (cfg               , from        )       {
 function deleteFlow     (cfg               , name        )       {
   const count = cfg.rowsById().filter((r) => { return cfg.groupOfRow(r) === name; }).length;
   const rest = cfg.names.filter((g) => { return g !== name; });
-  if (!rest.length) { toast(tr("At least one group must remain")); return; }
+  if (!rest.length) { toast(tr("groups.leastOneGroupMust")); return; }
   if (count && !confirm(deleteConfirmMsg(name, cfg.names, count, cfg.noun))) return;
   void saveGroupNames(cfg.scope, rest).then(async (j) => {
     if (!j) return;
     await cfg.reload();
-    toast(tr("Deleted group {name}", { name }));
+    toast(tr("groups.deletedGroupName", { name }));
   });
 }
 

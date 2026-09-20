@@ -14,129 +14,118 @@
  * limitations under the License.
  */
 
-/* The completeness gate (docs/38 L10a), first of the two machine gates: every tr/tk
-   literal key and every trn "other" key must have a zh entry, every zh entry must be
-   reachable from a literal, and no entry may equal its key (an untranslated copy is a bug
-   dressed as coverage). Counted with the real parser, not a regex: only CallExpressions
-   whose callee is exactly tr/tk/trn with literal arguments count, and a dynamic first
-   argument (a tk()-marked table painted through tr(x) at call time) is legal by design —
-   that half stays on review. */
-
+/* The docs/38 L10a dictionary-completeness gate, normalized (2026-10-30): keys are
+ * symbolic ("<module>.<semanticId>"), English copy lives in en.ts, every locale is its
+ * own table over the same keys, and the wire vocabulary (labels the gateway serves as
+ * English text on /api/plugins) is mapped at runtime by wireLabel(). Four directions
+ * stay honest:
+ *   - every literal key at a tr/trn/tk call site exists in EVERY locale table;
+ *   - no locale carries a key nothing uses (the wire.* keys count as used);
+ *   - the served wire labels all map to keys present in every locale;
+ *   - zh never carries a plural ".one" form (zh-CN has no "one" category).
+ * A new string ships with its call-site key in every table, one change. Adding a
+ * language = one new table + it joins LOCALES below; the gates do the rest. The
+ * mechanism's own unit test (i18n.test.ts) is exempt: it deliberately probes keys that
+ * do not exist anywhere. */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import zh from "../src/locales/zh.js";
+import en from "../src/locales/en.js";
 
-const here = import.meta.dirname;
-const srcDir = path.resolve(here, "../src");
-
-const { listSources } = await import(new URL("../build.mjs", import.meta.url).href) as {
-  listSources: () => string[];
-};
-const zh: Record<string, string> = (await import("../src/locales/zh.js")).default;
-
-/* key -> "file" of its first literal sighting, so a failure names where to look. */
-function collect(): Map<string, string> {
-  const used = new Map<string, string>();
-  for (const rel of listSources()) {
-    const text = fs.readFileSync(path.join(srcDir, rel), "utf8");
-    const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true);
-    const visit = (node: ts.Node): void => {
-      if (ts.isCallExpression(node)) {
-        const name = ts.isIdentifier(node.expression) ? node.expression.text : "";
-        const lit = (i: number): string | null => {
-          const a = node.arguments[i];
-          return a && (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) ? a.text : null;
-        };
-        if (name === "tr" || name === "tk") {
-          const key = lit(0);
-          if (key !== null && !used.has(key)) used.set(key, rel);
-        } else if (name === "trn") {
-          // The "other" form is the key every language needs; "one" is English-only (L3).
-          const key = lit(2);
-          if (key !== null && !used.has(key)) used.set(key, rel);
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sf);
-  }
-  return used;
-}
+const here = path.dirname(fileURLToPath(import.meta.url));
+const panel = path.resolve(here, "..");
+const LOCALES: Record<string, Record<string, string>> = { en, zh };
 
 const has = (o: Record<string, string>, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
 
-/* Keys whose Chinese IS their English (docs/38 L12 fallout): brand and product names,
-   unit-only counts, and separator-skeleton keys. An entry may sit in the dictionary
-   identical to its key only by being on this list, each with its reason — the
-   value === k rule stays a real gate for everything else.
-   - "MCP", "Base URL": product vocabulary, used as-is in Chinese UI copy.
-   - "{label} — {error}": an em-dash skeleton; Chinese keeps the same punctuation.
-   - "HTTP {n}", "{n} MB": units and codes stay Latin in Chinese technical copy.
-   - "· {user} · {auth}": a middle-dot metadata skeleton between data values.
-   - "· {error}": the plugins row's error tail — {error} is the host's own message.
-   - "id {id}": a data prefix (the token row's desc lead) — the payload is the id.
-   - "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}": the traffic row's meta line — a pure data skeleton; its only words ({status}: ok/err) translate under their own keys.
-   - "{name}: {error}" / "{name}: {msg}": toast skeletons — a name and an already-translated payload.
-   - "{verb} → {state}": the lifecycle action note — {verb} arrives translated, {state} is the host's state word (L9).
-   - "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}" (both shapes): the call log's meta line — pure data skeleton.
-   - "✗ {error}": a bare failure marker before the host's own error text.
-   - "SELECT 1": example SQL in a placeholder — language-neutral.
-   - "build", "/data/ws/proj": sample values in the remote sheet's placeholders — a plausible
-     alias and a plausible POSIX root, both language-neutral as samples.
-   - "socks5://127.0.0.1:7890": the proxy URL placeholder's sample URL — language-neutral.
-   - "5433", "5432", "127.0.0.1": the rule sheet's sample ports and host — numbers and the
-     loopback address, language-neutral as samples.
-   - "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", "nightly-vacuum", "cmd /c backup.bat --flag value",
-     "30 3 * * *", "ops, nightly": the jobs sheets' sample values — an env block, a job id, a
-     command line, a cron expression, labels; all language-neutral as samples.
-   - "retry.retryOn": the jobs config's own key path, shown as the field's label.
-   - "CSV", "SQL", "DDL": format and language names — brands.
-   - "events": the new-table sheet's sample table name — language-neutral sample.
-   - " · {note}": a data frame around the server's own note, kept verbatim.
-   - "id,name\n1,alice\n2,bob": the import sheet's sample CSV — data-shaped sample.
-   - "TRUE", "FALSE", "null": rendered SQL/JSON vocabulary, not copy.
-   - "git-mcp", "prod": the add sheets' sample ids — language-neutral samples.
-   - "Shell": the terminal settings field label — the program's own noun. */
-const PASSTHROUGH = new Set(["MCP", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1", "build", "/data/ws/proj", "socks5://127.0.0.1:7890", "5433", "5432", "127.0.0.1", "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", "nightly-vacuum", "cmd /c backup.bat --flag value", "30 3 * * *", "ops, nightly", "retry.retryOn", "CSV", "SQL", "DDL", "events", " · {note}", "id,name\n1,alice\n2,bob", "TRUE", "FALSE", "null", "git-mcp", "prod", "Shell"]);
+/* zh-CN never selects the "one" plural category (Intl.PluralRules), so its table carries
+ * no .one keys by design - the missing-entry check must not demand them. */
+const exempt = (locale: string, k: string): boolean => locale === "zh" && /[.]one$/.test(k);
 
-describe("i18n dictionary completeness (docs/38 L10a)", () => {
+/* The labels the gateway serves as English text (docs/09 §6 descriptors), mapped to
+ * wire.* keys by wireLabel() in i18n.ts. A new page's label joins this list, the
+ * WIRE_LABELS table there, and every locale table - one change. */
+const WIRE_KEYS = [
+  "wire.mcp", "wire.tunnels", "wire.data", "wire.jobs", "wire.process", "wire.terminal",
+  "wire.remote", "wire.settings", "wire.servers", "wire.traffic", "wire.token",
+  "wire.sshConnections", "wire.portForwards", "wire.targets", "wire.runs",
+  "wire.plugins", "wire.secrets", "wire.system",
+];
+
+/* Every literal key at a tr()/trn()/tk() call site, collected from the TS sources with
+ * the compiler (regexes mis-count closers; the AST never does). */
+function literalKeys(file: string, out: Set<string>): void {
+  const sf = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const name = ts.isIdentifier(node.expression) ? node.expression.text : "";
+      if (name === "tr" || name === "tk") {
+        const a = node.arguments[0];
+        if (a !== undefined && ts.isStringLiteral(a)) out.add(a.text);
+      } else if (name === "trn") {
+        for (const a of [node.arguments[1], node.arguments[2]]) {
+          if (a !== undefined && ts.isStringLiteral(a)) out.add(a.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+}
+
+function collect(): Set<string> {
+  const out = new Set<string>();
+  const walkSrc = (rel: string): void => {
+    for (const ent of fs.readdirSync(path.join(panel, "src", rel), { withFileTypes: true })) {
+      const child = rel ? rel + "/" + ent.name : ent.name;
+      if (ent.isDirectory()) { if (ent.name !== "locales") walkSrc(child); }
+      else if (ent.isFile() && ent.name.endsWith(".ts") && !ent.name.endsWith(".d.ts")) literalKeys(path.join(panel, "src", child), out);
+    }
+  };
+  walkSrc("");
+  for (const ent of fs.readdirSync(path.join(panel, "test"))) {
+    if (ent.endsWith(".ts") && !ent.startsWith("i18n-") && ent !== "i18n.test.ts") literalKeys(path.join(panel, "test", ent), out);
+  }
+  return out;
+}
+
+describe("i18n dictionary completeness (docs/38 L10a, normalized keys)", () => {
   const used = collect();
 
-  it("every literal key has a zh entry", () => {
-    expect(used.size, "the scanner found nothing - it is broken, not the tree clean").toBeGreaterThan(0);
-    const missing = [...used.entries()].filter(([k]) => !has(zh, k)).map(([k, where]) => k + " (used in " + where + ")");
-    expect(missing, "missing zh: …").toEqual([]);
+  it("the scanner sees the tree (a clean pass must not be a blind pass)", () => {
+    expect(used.size).toBeGreaterThan(900);
   });
 
-  it("no zh entry is orphaned", () => {
-    /* The gateway-served nav labels (the wire vocabulary below) reach the screen through
-     * tr(variable), which the scanner cannot see - count them as used here. */
-    const wire = new Set([
-      "MCP", "Tunnels", "Data", "Jobs", "Process", "Terminal", "Remote", "Settings",
-      "Servers", "Traffic", "Token", "SSH Connections", "Port Forwards",
-      "Targets", "Runs", "Plugins", "Secrets", "System",
-    ]);
-    const orphans = Object.keys(zh).filter((k) => !used.has(k) && !wire.has(k));
-    expect(orphans, "orphan zh: …").toEqual([]);
-  });
-  
-  it("the gateway-served nav labels all translate (the wire vocabulary)", () => {
-    /* The rail, the page switcher and the palette paint these through tr(g.label)/
-     * tr(p.label) - variable arguments, invisible to the literal scanner above. This
-     * list mirrors the descriptors the gateway serves on /api/plugins (docs/09 §6).
-     * A new page's label joins this list with its dictionary entry, in one change. */
-    const served = [
-      "MCP", "Tunnels", "Data", "Jobs", "Process", "Terminal", "Remote", "Settings",
-      "Servers", "Traffic", "Token", "SSH Connections", "Port Forwards",
-      "Targets", "Runs", "Plugins", "Secrets", "System",
-    ];
-    const missing = served.filter((k) => !has(zh, k));
-    expect(missing, "served label without a zh entry - the nav would show English").toEqual([]);
+  it("every literal key has an entry in every locale", () => {
+    const failures: string[] = [];
+    for (const [name, table] of Object.entries(LOCALES)) {
+      for (const k of used) if (!exempt(name, k) && !has(table, k)) failures.push(name + " missing " + k);
+    }
+    expect(failures, "missing entries - ship the key in every locale table").toEqual([]);
   });
 
-  it("no zh entry forgot to translate (value === key)", () => {
-    const copied = Object.entries(zh).filter(([k, v]) => v === k && !PASSTHROUGH.has(k)).map(([k]) => k);
-    expect(copied, "untranslated copy: …").toEqual([]);
+  it("no locale carries an orphan key", () => {
+    const usedAll = new Set([...used, ...WIRE_KEYS]);
+    const orphans: string[] = [];
+    for (const [name, table] of Object.entries(LOCALES)) {
+      for (const k of Object.keys(table)) if (!usedAll.has(k)) orphans.push(name + " orphan " + k);
+    }
+    expect(orphans, "orphan keys - remove them with the string that left").toEqual([]);
+  });
+
+  it("the wire labels map to keys with entries in every locale", () => {
+    const failures: string[] = [];
+    for (const k of WIRE_KEYS) {
+      for (const [name, table] of Object.entries(LOCALES)) if (!has(table, k)) failures.push(name + " missing " + k);
+    }
+    expect(failures, "a served label would render raw").toEqual([]);
+  });
+
+  it("zh plural entries never carry a .one form", () => {
+    const ones = Object.keys(zh).filter((k) => /[.]one$/.test(k));
+    expect(ones, "zh-CN has no one category - the entry would be dead weight").toEqual([]);
   });
 });

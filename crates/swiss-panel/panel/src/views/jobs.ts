@@ -28,8 +28,8 @@ function unavailable() {
   fill($("pane"),
     h("div", { class: "empty" },
       h("div", null,
-        h("h2", null, tr("Jobs unavailable")),
-        h("p", { class: "hint" }, tr("This gateway does not serve the jobs subsystem.")))));
+        h("h2", null, tr("jobs.jobsUnavailable")),
+        h("p", { class: "hint" }, tr("jobs.gatewayServeJobsSubsystem")))));
 }
 
 export async function mount() {

@@ -58,8 +58,8 @@ function deleteConfirmMsg(name        , names          , count        , noun    
   // one); the fallback keeps the type honest rather than asserting it.
   const sink = names.find((g) => { return g !== name; }) || name;
   return trn(count,
-    "Delete group '{name}'?\n\nIts {n} {noun} moves to '{sink}'. Nothing is removed.",
-    "Delete group '{name}'?\n\nIts {n} {noun}s move to '{sink}'. Nothing is removed.",
+    "groupLogic.deleteGroupNameN.one",
+    "groupLogic.deleteGroupNameN.other",
     { name, n: count, noun, sink });
 }
 
@@ -68,7 +68,7 @@ function deleteConfirmMsg(name        , names          , count        , noun    
  *  verb+noun composition ("Add an" + "MCP" + "to learn") could not survive translation
  *  (docs/38 L2: no concatenation in visible copy), so the sentence is one key. */
 function addTitle(noun        , group        )         {
-  return tr("New {noun} in {group}", { noun, group });
+  return tr("groupLogic.newNounGroup", { noun, group });
 }
 
 /* --- the empty line ------------------------------------------------------------------------------ */
@@ -78,7 +78,7 @@ function addTitle(noun        , group        )         {
  *  stays two words plus at most the drop affordance. Pure so the wording is pinned by tests
  *  like the delete confirm's is. */
 function emptyLineText(canDrop         )         {
-  return canDrop ? tr("No items — drop here or press +") : tr("No items");
+  return canDrop ? tr("groupLogic.itemsDropHerePress") : tr("groupLogic.items");
 }
 
 /* --- the last-used group ------------------------------------------------------------------------- */

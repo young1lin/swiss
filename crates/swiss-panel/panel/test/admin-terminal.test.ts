@@ -472,7 +472,7 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
     expect(view).toContain('id: "term-help"');
     expect(view).toContain("help.onclick = openHelpSheet");
     expect(view).toContain('if (ev.key === "?")');
-    expect(view).toContain('"Terminal shortcuts"');
+    expect(view).toContain('"terminal.terminalShortcuts"');
   });
 
   it("term-page owns [bar, find, stage, foot] - the bar CLOSES at the shell slot", () => {

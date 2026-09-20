@@ -52,29 +52,29 @@ export async function openLocalSheet() {
   // Visible before the paint (panel-proof-of-life rule 1).
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Local shell settings") } },
-      h("div", { class: "sheet-head" }, h("h2", null, tr("Local shell"))),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("terminalSettings.localShellSettings") } },
+      h("div", { class: "sheet-head" }, h("h2", null, tr("terminalSettings.localShell"))),
       h("div", { class: "sheet-body" },
         h("div", { class: "fld" },
-          h("label", { class: "check" }, h("input", { type: "checkbox", id: "ls-enabled", checked: !!local.enabled }), tr("Enabled")),
+          h("label", { class: "check" }, h("input", { type: "checkbox", id: "ls-enabled", checked: !!local.enabled }), tr("terminalSettings.enabled")),
           whyOff ? h("div", { class: "hint" }, whyOff) : null),
         /* A datalist, not a select: the candidates are suggestions, and any path the
            gateway can spawn is legal (docs/15 §2.1 — "may be typed by hand"). */
         h("label", { class: "field" },
-          h("span", null, tr("Shell")),
+          h("span", null, tr("terminalSettings.shell")),
           // `list` is a read-only input property, so it rides as an attribute post-build.
           (() => {
             const el = h("input", { id: "ls-shell", value: local.shell || "",
-              placeholder: l.shell || tr("the platform default"), autocomplete: "off", spellcheck: false });
+              placeholder: l.shell || tr("terminalSettings.platformDefault"), autocomplete: "off", spellcheck: false });
             el.setAttribute("list", "ls-shells");
             return el;
           })(),
           h("datalist", { id: "ls-shells" }, options)),
         h("div", { class: "hint" },
-          tr("Empty = the platform default ({which}). Saving restarts the terminal plugin and closes every open session.", { which: l.shell || "?" }))),
+          tr("terminalSettings.emptyPlatformDefaultWhich", { which: l.shell || "?" }))),
       h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "ls-cancel" }, tr("Cancel")),
-        h("button", { class: "btn primary", id: "ls-save" }, tr("Save")))));
+        h("button", { class: "btn", id: "ls-cancel" }, tr("terminalSettings.cancel")),
+        h("button", { class: "btn primary", id: "ls-save" }, tr("terminalSettings.save")))));
   $("ls-cancel").onclick = closeSheet;
   $("ls-save").onclick = () => { void saveLocalSheet(got ); };
   $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
@@ -88,7 +88,7 @@ async function saveLocalSheet(got                              ) {
      plugin restarts, and with it every session — say how many and let the user back out. */
   if (sessions.length) {
     const n = sessions.length;
-    if (!window.confirm(tr("Saving restarts the terminal plugin and closes {n}.", { n: trn(n, "{n} session", "{n} sessions") }))) return;
+    if (!window.confirm(tr("terminalSettings.savingRestartsTerminalPlugin", { n: trn(n, "terminalSettings.nSessions.one", "terminalSettings.nSessions.other") }))) return;
   }
   const saved = await apiJson("/api/plugins/terminal/config", {
     method: "PUT",
@@ -96,7 +96,7 @@ async function saveLocalSheet(got                              ) {
   });
   if (!saved) return;
   closeSheet();
-  toast(tr("Saved — the terminal plugin restarted with the new local shell settings"));
+  toast(tr("terminalSettings.savedTerminalPluginRestarted"));
   await reload();
   /* The row the user just switched on is the one they mean to open next; select it
      explicitly instead of trusting the rows' order to put it first forever. */

@@ -40,21 +40,21 @@ describe("the shell in Chinese (stage I1)", () => {
   });
 
   it("translates the pane's tab and menu vocabulary", () => {
-    expect(tr("Tools")).toBe("工具");
-    expect(tr("Logs")).toBe("日志");
-    expect(tr("Copy Claude Code command")).toBe("复制 Claude Code 命令");
+    expect(tr("pane.tools")).toBe("工具");
+    expect(tr("pane.logs")).toBe("日志");
+    expect(tr("pane.copyClaudeCodeCommand")).toBe("复制 Claude Code 命令");
   });
 
   it("fills placeholders and keeps counts where the English key has them", () => {
-    expect(tr("{n} matching", { n: 5 })).toBe("5 个匹配");
-    expect(tr("{n} MCPs · {up} up · {bad} down", { n: 8, up: 6, bad: 2 })).toBe("8 MCP · 6 运行中 · 2 已停止");
-    expect(tr("Loading {page}…", { page: tr("Jobs") })).toBe("正在加载 任务…");
+    expect(tr("menu.nMatching", { n: 5 })).toBe("5 个匹配");
+    expect(tr("polling.nMcpsBadDown", { n: 8, up: 6, bad: 2 })).toBe("8 MCP · 6 运行中 · 2 已停止");
+    expect(tr("pageRegistry.loadingPage", { page: tr("pageRegistry.jobs") })).toBe("正在加载 任务…");
   });
 
   it("routes zh plurals through the single other form", () => {
     // Chinese has no "one" category: both counts must land on the same entry.
-    expect(trn(1, "{n} job · {on} on", "{n} jobs · {on} on", { on: 1 })).toBe("1 个任务 · 1 个启用");
-    expect(trn(3, "{n} job · {on} on", "{n} jobs · {on} on", { on: 2 })).toBe("3 个任务 · 2 个启用");
+    expect(trn(1, "polling.nJobs.one", "polling.nJobs.other", { on: 1 })).toBe("1 个任务 · 1 个启用");
+    expect(trn(3, "polling.nJobs.one", "polling.nJobs.other", { on: 2 })).toBe("3 个任务 · 2 个启用");
   });
 
   it("speaks the group delete confirm and create title as sentences", () => {
@@ -131,12 +131,12 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
   });
 
   it("routes the secrets count through the zh other form", () => {
-    expect(trn(1, "{n} secret", "{n} secrets")).toBe("1 个密钥");
-    expect(trn(3, "{n} secret", "{n} secrets")).toBe("3 个密钥");
+    expect(trn(1, "secrets.nSecrets.one", "secrets.nSecrets.other")).toBe("1 个密钥");
+    expect(trn(3, "secrets.nSecrets.one", "secrets.nSecrets.other")).toBe("3 个密钥");
   });
 
   it("fills the secret delete confirm with the name twice (text and reference)", () => {
-    const key = 'Delete secret "{name}"? Everything referencing ${secret://{name}} starts failing until it is re-stored.';
+    const key = "secrets.deleteSecretNameEverything";
     expect(tr(key, { name: "db-pass" })).toBe(
       "删除密钥“db-pass”吗?所有引用 ${secret://db-pass} 的地方都会开始失败,直到重新存入。",
     );
@@ -176,21 +176,21 @@ describe("the I3 views in Chinese (tokens, traffic)", () => {
 
   it("composes the activity count with grouped numbers", async () => {
     await loadLocale();
-    expect(tr("{n} of {all} interactions", { n: "12", all: "1,024" })).toBe("12 / 1,024 次交互");
-    expect(trn(3, "{n} interaction", "{n} interactions", { n: "3" })).toBe("3 次交互");
-    expect(tr("Page {n}", { n: 2 })).toBe("第 2 页");
-    expect(tr("Newer")).toBe("较新");
+    expect(tr("traffic.nAllInteractions", { n: "12", all: "1,024" })).toBe("12 / 1,024 次交互");
+    expect(trn(3, "traffic.nInteractions.one", "traffic.nInteractions.other", { n: "3" })).toBe("3 次交互");
+    expect(tr("remoteRuns.pageN", { n: 2 })).toBe("第 2 页");
+    expect(tr("remoteRuns.newer")).toBe("较新");
   });
 
   it("carries the token page's row vocabulary and confirm", async () => {
     await loadLocale();
-    expect(tr("copies use this")).toBe("复制时使用");
-    expect(tr("Rotate or revoke")).toBe("轮换或吊销");
-    expect(tr("Revoke this token? Clients using it stop working immediately.")).toBe(
+    expect(tr("tokens.copiesUse")).toBe("复制时使用");
+    expect(tr("tokens.rotateRevoke")).toBe("轮换或吊销");
+    expect(tr("tokens.revokeTokenClientsUsing")).toBe(
       "吊销该令牌?使用它的客户端会立即停止工作。",
     );
-    expect(tr("id {id}", { id: "t_9" })).toBe("id t_9");
-    expect(trn(2, "{n} token", "{n} tokens")).toBe("2 个令牌");
+    expect(tr("tokens.idId", { id: "t_9" })).toBe("id t_9");
+    expect(trn(2, "tokens.nTokens.one", "tokens.nTokens.other")).toBe("2 个令牌");
   });
 });
 
@@ -205,9 +205,9 @@ describe("the I4 modules in Chinese (detail, logs, run)", () => {
 
   it("composes the lifecycle action note with a translated verb and a raw state word", async () => {
     await loadLocale();
-    expect(tr("{verb} → {state}", { verb: tr("enable"), state: "started" })).toBe("启用 → started");
-    expect(tr("{verb} failed: {error}", { verb: tr("disable"), error: "boom" })).toBe("停用 失败:boom");
-    expect(tr("{name}: {msg}", { name: "redis", msg: tr("config saved → restarted") })).toBe("redis: 配置已保存 → 已重启");
+    expect(tr("detail.verbState", { verb: tr("detail.enable"), state: "started" })).toBe("启用 → started");
+    expect(tr("detail.verbFailedError", { verb: tr("detail.disable"), error: "boom" })).toBe("停用 失败:boom");
+    expect(tr("detail.nameMsg", { name: "redis", msg: tr("detail.configSavedRestarted") })).toBe("redis: 配置已保存 → 已重启");
   });
 
   it("formats char counts and the call meta skeleton in Chinese", async () => {
@@ -226,20 +226,20 @@ describe("the I4 modules in Chinese (detail, logs, run)", () => {
 
   it("fills the delete confirm and the run-form refusals", async () => {
     await loadLocale();
-    expect(tr("Delete '{name}'?\n\nThis stops it and removes it permanently.", { name: "mysql" })).toBe(
+    expect(tr("detail.deleteNameStopsRemovesPermanently", { name: "mysql" })).toBe(
       "删除“mysql”?\n\n这会停止它并永久移除。",
     );
-    expect(tr("\u0060{k}\u0060 is required", { k: "sql" })).toBe("\u0060sql\u0060 为必填项");
-    expect(tr("Not started — start it to list {kind}.", { kind: "resources" })).toBe(
+    expect(tr("run.kRequired", { k: "sql" })).toBe("\u0060sql\u0060 为必填项");
+    expect(tr("logs.startedStartListKind", { kind: "resources" })).toBe(
       "尚未启动——启动后才能列出 resources。",
     );
   });
 
   it("reads the pager and the test-connection outcomes in Chinese", async () => {
     await loadLocale();
-    expect(tr("Page {n} of {m}", { n: 2, m: 5 })).toBe("第 2 页,共 5 页");
-    expect(tr("✓ connected — these values work ({ms} ms)", { ms: 42 })).toBe("✓ 已连接——这些值可用(42 毫秒)");
-    expect(tr("Show full result ({chars})", { chars: "1.5k 字符" })).toBe("显示完整结果(1.5k 字符)");
+    expect(tr("logs.pageNM", { n: 2, m: 5 })).toBe("第 2 页,共 5 页");
+    expect(tr("detail.connectedTheseValuesWorkMsMs", { ms: 42 })).toBe("✓ 已连接——这些值可用(42 毫秒)");
+    expect(tr("logs.showFullResultChars", { chars: "1.5k 字符" })).toBe("显示完整结果(1.5k 字符)");
   });
 });
 
@@ -254,31 +254,31 @@ describe("the I5 views in Chinese (remote targets, remote runs)", () => {
 
   it("keeps the host's state words raw around translated frames", async () => {
     await loadLocale();
-    expect(tr("endpoint {state}", { state: "serving" })).toBe("端点 serving");
-    expect(tr("Tunnels {state} · ", { state: "none" })).toBe("隧道 none · ");
-    expect(tr("exit {n}", { n: 2 })).toBe("退出码 2");
-    expect(tr("{n}ms", { n: 40 })).toBe("40 毫秒");
-    expect(tr("{m}m {s}s", { m: 2, s: 5 })).toBe("2 分 5 秒");
+    expect(tr("remote.endpointState", { state: "serving" })).toBe("端点 serving");
+    expect(tr("remote.tunnelsState", { state: "none" })).toBe("隧道 none · ");
+    expect(tr("remoteRuns.exitN", { n: 2 })).toBe("退出码 2");
+    expect(tr("remoteRuns.nMs", { n: 40 })).toBe("40 毫秒");
+    expect(tr("remoteRuns.mMSS", { m: 2, s: 5 })).toBe("2 分 5 秒");
   });
 
   it("speaks the budget line and the count chips", async () => {
     await loadLocale();
-    expect(trn(3, "{n} run recorded · {bytes}", "{n} runs recorded · {bytes}", { bytes: "1.5 KB" })).toBe("已记录 3 次运行 · 1.5 KB");
-    expect(tr(" of {cap} · kept {d} days", { cap: "500 MB", d: 30 })).toBe(" 上限 500 MB · 保留 30 天");
-    expect(trn(4, "{n} target", "{n} targets")).toBe("4 个目标");
-    expect(trn(2, "{n} run", "{n} runs")).toBe("2 次运行");
+    expect(trn(3, "remoteRuns.nRunsRecordedBytes.one", "remoteRuns.nRunsRecordedBytes.other", { bytes: "1.5 KB" })).toBe("已记录 3 次运行 · 1.5 KB");
+    expect(tr("remoteRuns.capKeptDDays", { cap: "500 MB", d: 30 })).toBe(" 上限 500 MB · 保留 30 天");
+    expect(trn(4, "remote.nTargets.one", "remote.nTargets.other")).toBe("4 个目标");
+    expect(trn(2, "remoteRuns.nRuns.one", "remoteRuns.nRuns.other")).toBe("2 次运行");
   });
 
   it("fills the remote sheet's labels and the delete confirm", async () => {
     await loadLocale();
-    expect(tr("Workspace root (absolute POSIX path)")).toBe("工作区根目录(绝对 POSIX 路径)");
-    expect(tr("Alias (the name commands call: swiss remote exec <alias>)")).toBe(
+    expect(tr("remote.workspaceRootAbsolutePosix")).toBe("工作区根目录(绝对 POSIX 路径)");
+    expect(tr("remote.aliasNameCommandsCall")).toBe(
       "别名(命令调用所用的名字:swiss remote exec <alias>)",
     );
-    expect(tr("Delete target {id}? The Tunnels connection and any files on the machine are not touched.", { id: "dev" })).toBe(
+    expect(tr("remote.deleteTargetIdTunnels", { id: "dev" })).toBe(
       "删除目标 dev?隧道连接和机器上的文件都不会受影响。",
     );
-    expect(tr("No output was produced.")).toBe("没有产生任何输出。");
+    expect(tr("remoteRuns.outputProduced")).toBe("没有产生任何输出。");
   });
 });
 
@@ -293,32 +293,32 @@ describe("the I6 tunnels pages in Chinese", () => {
 
   it("frames the host's words: state, banner, error, kind", async () => {
     await loadLocale();
-    expect(tr("{names} depend on this tunnel.\n\nStop it anyway?", { names: "redis, mysql" })).toBe(
+    expect(tr("tunnels.namesDependTunnelStop.other", { names: "redis, mysql" })).toBe(
       "redis, mysql 依赖这条隧道。\n\n仍要停止吗?",
     );
-    expect(tr("Connected in {ms} ms — {banner}", { ms: 42, banner: "SSH-2.0-OpenSSH_9" })).toBe(
+    expect(tr("tunnels.connectedMsMsBanner", { ms: 42, banner: "SSH-2.0-OpenSSH_9" })).toBe(
       "已在 42 毫秒内连上——SSH-2.0-OpenSSH_9",
     );
-    expect(tr("{error} ({kind})", { error: "connection refused", kind: "io" })).toBe("connection refused(io)");
-    expect(tr("Saved {name}", { name: "开发机" })).toBe("已保存 开发机");
-    expect(tr(" ({state})", { state: "up" })).toBe("(up)");
+    expect(tr("tunnels.errorKind", { error: "connection refused", kind: "io" })).toBe("connection refused(io)");
+    expect(tr("tunnelSheets.savedName", { name: "开发机" })).toBe("已保存 开发机");
+    expect(tr("tunnelSheets.state", { state: "up" })).toBe("(up)");
   });
 
   it("speaks the sheets' field copy", async () => {
     await loadLocale();
-    expect(tr("Passphrase (optional)")).toBe("口令(可选)");
-    expect(tr("key — private key file")).toBe("key——私钥文件");
-    expect(tr("Serves MCPs")).toBe("服务于 MCP");
-    expect(tr("New SSH connection in {group}", { group: "default" })).toBe("在 default 中新建 SSH 连接");
-    expect(tr("Defaults to ")).toBe("默认使用 ");
-    expect(tr(" when left empty.")).toBe("(留空时)。");
+    expect(tr("tunnelSheets.passphraseOptional")).toBe("口令(可选)");
+    expect(tr("tunnelSheets.keyPrivateKeyFile")).toBe("key——私钥文件");
+    expect(tr("tunnelSheets.servesMcps")).toBe("服务于 MCP");
+    expect(tr("tunnelSheets.newSshConnectionGroup", { group: "default" })).toBe("在 default 中新建 SSH 连接");
+    expect(tr("tunnelSheets.defaults")).toBe("默认使用 ");
+    expect(tr("tunnelSheets.whenLeftEmpty")).toBe("(留空时)。");
   });
 
   it("counts rules and connections", async () => {
     await loadLocale();
-    expect(trn(2, "{n} rule", "{n} rules")).toBe("2 条规则");
-    expect(trn(3, "{n} connection", "{n} connections")).toBe("3 条连接");
-    expect(trn(2, "{n} rule", "{n} rules") + tr(", {n} active", { n: 1 })).toBe("2 条规则,1 个活动");
+    expect(trn(2, "tunnels.nRules.one", "tunnels.nRules.other")).toBe("2 条规则");
+    expect(trn(3, "tunnels.nConnections.one", "tunnels.nConnections.other")).toBe("3 条连接");
+    expect(trn(2, "tunnels.nRules.one", "tunnels.nRules.other") + tr("tunnels.nActive", { n: 1 })).toBe("2 条规则,1 个活动");
   });
 });
 
@@ -333,33 +333,33 @@ describe("the I7 jobs machinery in Chinese", () => {
 
   it("speaks the schedule builder and its refusals", async () => {
     await loadLocale();
-    expect(tr("Every {n} {unit}.", { n: 2, unit: tr("hours") })).toBe("每 2 小时。");
-    expect(tr("the interval needs a number of {unit} (at least 1)", { unit: tr("minutes") })).toBe(
+    expect(tr("jobs.everyNUnit", { n: 2, unit: tr("jobs.hours") })).toBe("每 2 小时。");
+    expect(tr("jobs.intervalNeedsNumberUnit", { unit: tr("jobs.minutes") })).toBe(
       "间隔需要 分钟 的数量(至少 1)",
     );
-    expect(tr("the time must be HH:MM (24-hour)")).toBe("时间必须是 HH:MM(24 小时制)");
-    expect(tr("weekly needs at least one day picked")).toBe("每周需要至少选择一天");
-    expect(trn(3, "{n} value", "{n} values")).toBe("3 项");
-    expect(tr("Saved revisions ({n})", { n: 2 })).toBe("已保存的修订(2)");
+    expect(tr("jobs.timeMustHhMm")).toBe("时间必须是 HH:MM(24 小时制)");
+    expect(tr("jobs.weeklyNeedsLeastOne")).toBe("每周需要至少选择一天");
+    expect(trn(3, "runHistory.nValues.one", "runHistory.nValues.other")).toBe("3 项");
+    expect(tr("runHistory.savedRevisionsN", { n: 2 })).toBe("已保存的修订(2)");
   });
 
   it("keeps the host's run words raw around translated frames", async () => {
     await loadLocale();
-    expect(tr("{name}: {state}", { name: "backup", state: "succeeded" })).toBe("backup:succeeded");
-    expect(tr("Runs — {name}", { name: "backup" })).toBe("运行 —— backup");
-    expect(tr("attempt {a}/{b}", { a: 2, b: 3 })).toBe("第 2/3 次尝试");
-    expect(tr("{n} more missed", { n: 4 })).toBe("另有 4 次未触发");
-    expect(tr("({outcome} — no output recorded)", { outcome: "missed" })).toBe("(missed —— 未记录输出)");
+    expect(tr("jobs.nameState", { name: "backup", state: "succeeded" })).toBe("backup:succeeded");
+    expect(tr("jobs.runsName", { name: "backup" })).toBe("运行 —— backup");
+    expect(tr("jobsV2.attemptB", { a: 2, b: 3 })).toBe("第 2/3 次尝试");
+    expect(tr("jobsV2.nMoreMissed", { n: 4 })).toBe("另有 4 次未触发");
+    expect(tr("jobs.outcomeOutputRecorded", { outcome: "missed" })).toBe("(missed —— 未记录输出)");
   });
 
   it("fills the run tab's own controls (the I4 runBtn mystery, solved)", async () => {
     await loadLocale();
-    expect(tr("↺ Past runs ({n})", { n: 12 })).toBe("↺ 过往运行(12)");
-    expect(tr("↺ No past runs")).toBe("↺ 没有过往运行");
-    expect(tr("Running…")).toBe("运行中…");
-    expect(tr("Run")).toBe("运行");
-    expect(tr("Arguments")).toBe("参数");
-    expect(tr("(no output)")).toBe("(无输出)");
+    expect(tr("runHistory.pastRunsN", { n: 12 })).toBe("↺ 过往运行(12)");
+    expect(tr("runHistory.pastRuns2")).toBe("↺ 没有过往运行");
+    expect(tr("runHistory.running")).toBe("运行中…");
+    expect(tr("run.run")).toBe("运行");
+    expect(tr("runHistory.arguments2")).toBe("参数");
+    expect(tr("runHistory.output")).toBe("(无输出)");
   });
 });
 
@@ -374,29 +374,29 @@ describe("the I8a data machinery in Chinese", () => {
 
   it("speaks the commit bar's plurals and frames", async () => {
     await loadLocale();
-    expect(trn(3, "{n} update", "{n} updates")).toBe("3 个更新");
-    expect(trn(1, "{n} insert", "{n} inserts")).toBe("1 个插入");
-    expect(tr("{parts} — LOCAL ONLY, not yet in redis. Commit sends them as ONE pipelined round trip (every command guard-checked); Discard deletes them without a single command.", { parts: "3 个更新" })).toContain("仅在本地");
-    expect(tr("Commit (1 transaction)")).toBe("提交(1 个事务)");
-    expect(tr("Discard")).toBe("放弃");
+    expect(trn(3, "dataSql.nUpdates.one", "dataSql.nUpdates.other")).toBe("3 个更新");
+    expect(trn(1, "dataSql.nInserts.one", "dataSql.nInserts.other")).toBe("1 个插入");
+    expect(tr("dataSql.partsLocalOnlyRedis", { parts: "3 个更新" })).toContain("仅在本地");
+    expect(tr("dataSql.commitN1Transaction")).toBe("提交(1 个事务)");
+    expect(tr("dataSql.discard")).toBe("放弃");
   });
 
   it("keeps the grid's data frames raw and groups counts the panel's way", async () => {
     await loadLocale();
-    expect(tr(" · {note}", { note: "server said so" })).toBe(" · server said so");
-    expect(tr("{a}–{b} of {t}", { a: "1", b: "50", t: "1,234" })).toBe("1–50,共 1,234");
-    expect(tr("{n} rows", { n: "1,234" })).toBe("1,234 行");
-    expect(tr("editable — {note}", { note: tr("rows are addressed by all columns") })).toBe("可编辑——行以所有列定位");
-    expect(tr("Exported {n} rows", { n: "12,345" })).toBe("已导出 12,345 行");
+    expect(tr("dataGrid.note", { note: "server said so" })).toBe(" · server said so");
+    expect(tr("dataGrid.bT", { a: "1", b: "50", t: "1,234" })).toBe("1–50,共 1,234");
+    expect(tr("dataGrid.nRows2", { n: "1,234" })).toBe("1,234 行");
+    expect(tr("dataGrid.editableNote", { note: tr("dataGrid.rowsAddressedAllColumns") })).toBe("可编辑——行以所有列定位");
+    expect(tr("dataGrid.exportedNRows", { n: "12,345" })).toBe("已导出 12,345 行");
   });
 
   it("names the ddl sheet's parts", async () => {
     await loadLocale();
-    expect(tr("New table")).toBe("新建表");
-    expect(tr("New table in {t}", { t: "public" })).toBe("在 public 中新建表");
-    expect(tr("Add column in {t}", { t: "events" })).toBe("在 events 中添加列");
-    expect(tr("SQL preview — Commit runs these statements verbatim.")).toBe("SQL 预览——提交将原样运行这些语句。");
-    expect(tr("Type a command first")).toBe("请先输入命令");
+    expect(tr("dataView.newTable")).toBe("新建表");
+    expect(tr("dataDdl.newTableT2", { t: "public" })).toBe("在 public 中新建表");
+    expect(tr("dataDdl.addColumnT", { t: "events" })).toBe("在 events 中添加列");
+    expect(tr("dataDdl.sqlPreviewCommitRuns")).toBe("SQL 预览——提交将原样运行这些语句。");
+    expect(tr("dataSql.typeCommandFirst")).toBe("请先输入命令");
   });
 });
 
@@ -411,28 +411,28 @@ describe("the I8b data surfaces in Chinese", () => {
 
   it("speaks the redis commit and discard guards", async () => {
     await loadLocale();
-    expect(trn(3, "{n} command", "{n} commands")).toBe("3 条命令");
-    expect(tr("Committed {n}", { n: trn(2, "{n} command", "{n} commands") })).toBe("已提交 2 条命令");
-    expect(tr("Discard {n}? Nothing has been written to redis.", { n: trn(4, "{n} buffered change", "{n} buffered changes") })).toContain("4 个缓冲的更改");
+    expect(trn(3, "dataBrowsers.nCommands.one", "dataBrowsers.nCommands.other")).toBe("3 条命令");
+    expect(tr("dataBrowsers.committedN", { n: trn(2, "dataBrowsers.nCommands.one", "dataBrowsers.nCommands.other") })).toBe("已提交 2 条命令");
+    expect(tr("dataBrowsers.discardNNothingBeen", { n: trn(4, "dataBrowsers.nBufferedChanges.one", "dataBrowsers.nBufferedChanges.other") })).toContain("4 个缓冲的更改");
   });
 
   it("names the filter operators and the form stepper", async () => {
     await loadLocale();
-    expect(tr("is NULL")).toBe("为 NULL");
-    expect(tr("not in list")).toBe("不在列表中");
-    expect(tr("{shown} shown · {total} in keyspace", { shown: "10", total: "1,024" })).toBe("已显示 10 · 键空间共 1,024");
-    expect(tr("Row {i} of {n} on this page", { i: 3, n: 50 })).toBe("本页第 3 条,共 50 条");
-    expect(tr("New row {i} of {n} · buffered", { i: 1, n: 2 })).toBe("新行 1/2 · 已缓冲");
+    expect(tr("dataFilters.null")).toBe("为 NULL");
+    expect(tr("dataFilters.list2")).toBe("不在列表中");
+    expect(tr("dataFilters.shownShownTotalKeyspace", { shown: "10", total: "1,024" })).toBe("已显示 10 · 键空间共 1,024");
+    expect(tr("dataForm.rowINPage", { i: 3, n: 50 })).toBe("本页第 3 条,共 50 条");
+    expect(tr("dataForm.newRowIN", { i: 1, n: 2 })).toBe("新行 1/2 · 已缓冲");
   });
 
   it("fills the import and cell sheets' words", async () => {
     await loadLocale();
-    expect(tr("Import CSV into {t}", { t: "public.events" })).toBe("向 public.events 导入 CSV");
-    expect(tr("Insert")).toBe("插入");
-    expect(tr("Upsert")).toBe("插入或更新");
-    expect(tr("Map at least one column")).toBe("请至少映射一列");
-    expect(tr("Save to buffer")).toBe("保存到缓冲");
-    expect(tr(" · PK {pk}", { pk: "id=7" })).toBe(" · 主键 id=7");
+    expect(tr("dataCsv.importCsvIntoT", { t: "public.events" })).toBe("向 public.events 导入 CSV");
+    expect(tr("dataCsv.insert")).toBe("插入");
+    expect(tr("dataCsv.upsert")).toBe("插入或更新");
+    expect(tr("dataCsv.mapLeastOneColumn")).toBe("请至少映射一列");
+    expect(tr("dataCell.saveBuffer")).toBe("保存到缓冲");
+    expect(tr("dataCell.pkPk", { pk: "id=7" })).toBe(" · 主键 id=7");
   });
 });
 
@@ -447,29 +447,29 @@ describe("the I9 terminal surfaces in Chinese", () => {
 
   it("speaks the shortcuts sheet", async () => {
     await loadLocale();
-    expect(tr("Terminal shortcuts")).toBe("终端快捷键");
-    expect(tr("Keys")).toBe("键");
-    expect(tr("find in this session\u2019s buffer")).toBe("在此会话的缓冲区中查找");
-    expect(tr("asks first \u2014 paste whole or not at all")).toBe("先询问——要么整段粘贴,要么不粘贴");
-    expect(tr("Close (Esc)")).toBe("关闭(Esc)");
+    expect(tr("terminal.terminalShortcuts")).toBe("终端快捷键");
+    expect(tr("terminal.keys")).toBe("键");
+    expect(tr("terminal.findSessionsBuffer")).toBe("在此会话的缓冲区中查找");
+    expect(tr("terminal.asksFirstPasteWhole")).toBe("先询问——要么整段粘贴,要么不粘贴");
+    expect(tr("terminal.closeEsc")).toBe("关闭(Esc)");
   });
 
   it("speaks the bar and the empty state", async () => {
     await loadLocale();
-    expect(tr("Open session")).toBe("打开会话");
-    expect(tr("Local shell is off — turn it on")).toBe("本地 shell 已关闭——点此开启");
-    expect(tr("Shortcuts and gestures")).toBe("快捷键与手势");
-    expect(tr("No session yet")).toBe("还没有会话");
-    expect(tr("A dropped socket does not end a session — it waits out the grace window and catches up.")).toContain("宽限窗口");
-    expect(tr(" · closed")).toBe(" · 已关闭");
+    expect(tr("terminal.openSession")).toBe("打开会话");
+    expect(tr("terminal.localShellOffTurn")).toBe("本地 shell 已关闭——点此开启");
+    expect(tr("terminal.shortcutsGestures")).toBe("快捷键与手势");
+    expect(tr("terminal.session")).toBe("还没有会话");
+    expect(tr("terminal.droppedSocketEndSession")).toContain("宽限窗口");
+    expect(tr("terminal.closed")).toBe(" · 已关闭");
   });
 
   it("speaks the settings sheet and its save cost", async () => {
     await loadLocale();
-    expect(tr("Local shell")).toBe("本地 shell");
-    expect(tr("Empty = the platform default ({which}). Saving restarts the terminal plugin and closes every open session.", { which: "pwsh.exe" })).toContain("留空 = 平台默认(pwsh.exe)");
-    expect(trn(3, "{n} session", "{n} sessions")).toBe("3 个会话");
-    expect(tr("Saving restarts the terminal plugin and closes {n}.", { n: trn(3, "{n} session", "{n} sessions") })).toBe("保存会重启终端插件并关闭 3 个会话。");
-    expect(tr("Saved — the terminal plugin restarted with the new local shell settings")).toContain("已保存");
+    expect(tr("terminalSettings.localShell")).toBe("本地 shell");
+    expect(tr("terminalSettings.emptyPlatformDefaultWhich", { which: "pwsh.exe" })).toContain("留空 = 平台默认(pwsh.exe)");
+    expect(trn(3, "terminalSettings.nSessions.one", "terminalSettings.nSessions.other")).toBe("3 个会话");
+    expect(tr("terminalSettings.savingRestartsTerminalPlugin", { n: trn(3, "terminalSettings.nSessions.one", "terminalSettings.nSessions.other") })).toBe("保存会重启终端插件并关闭 3 个会话。");
+    expect(tr("terminalSettings.savedTerminalPluginRestarted")).toContain("已保存");
   });
 });

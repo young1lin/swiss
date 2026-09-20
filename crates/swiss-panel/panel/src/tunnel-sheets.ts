@@ -48,34 +48,34 @@ async function loadKeys(): Promise<ApiTunnelsKeysResponse> {
  *  error line), which h() flattens into the sheet body. */
 function advancedConnNode(d: ConnSheetDraft, editing: boolean): HChild[] {
   const chips: HChild[] = [];
-  if (d.proxy) chips.push(" ", h("span", { class: "tag" }, tr("proxy")));
-  if (d.jump) chips.push(" ", h("span", { class: "tag" }, tr("via {name}", { name: tunConnName(d.jump) })));
-  const jumpOpts: HChild[] = [h("option", { value: "" }, tr("None"))].concat(tunData().connections
+  if (d.proxy) chips.push(" ", h("span", { class: "tag" }, tr("tunnelSheets.proxy")));
+  if (d.jump) chips.push(" ", h("span", { class: "tag" }, tr("tunnelSheets.name", { name: tunConnName(d.jump) })));
+  const jumpOpts: HChild[] = [h("option", { value: "" }, tr("tunnelSheets.none"))].concat(tunData().connections
     .filter((c: ApiTunnelConnectionRow): boolean => { return !editing || c.id !== d.id; })
     .map((c: ApiTunnelConnectionRow) => {
       return h("option", { value: c.id, selected: d.jump === c.id }, c.name);
     }));
   return [
     h("details", { class: "fold", id: "c-advanced" },
-      h("summary", null, tr("Advanced"), chips),
+      h("summary", null, tr("tunnelSheets.advanced"), chips),
       h("div", { class: "fold-body" },
-        h("div", { class: "cap" }, tr("Proxy")),
+        h("div", { class: "cap" }, tr("tunnelSheets.proxy2")),
         h("label", { class: "field" },
-          h("span", null, tr("Proxy URL")),
-          h("input", { id: "c-proxy", value: d.proxy || "", placeholder: tr("socks5://127.0.0.1:7890"), autocomplete: "off", spellcheck: false })),
+          h("span", null, tr("tunnelSheets.proxyUrl")),
+          h("input", { id: "c-proxy", value: d.proxy || "", placeholder: tr("tunnelSheets.socks5N127N0N0"), autocomplete: "off", spellcheck: false })),
         h("div", { class: "two" },
           h("label", { class: "field" },
-            h("span", null, tr("Proxy username")),
+            h("span", null, tr("tunnelSheets.proxyUsername")),
             h("input", { id: "c-proxy-user", value: d.proxyUsername || "", autocomplete: "off" })),
           h("label", { class: "field" },
-            h("span", null, tr("Proxy password")),
+            h("span", null, tr("tunnelSheets.proxyPassword")),
             h("input", { id: "c-proxy-pass", type: "password", value: d.proxyPassword || "", autocomplete: "off" }))),
-        h("div", { class: "hint" }, tr("Leave empty to connect directly. Credentials never go inside the URL — use the two fields above.")),
-        h("div", { class: "cap" }, tr("Via connection (jump)")),
+        h("div", { class: "hint" }, tr("tunnelSheets.leaveEmptyConnectDirectly")),
+        h("div", { class: "cap" }, tr("tunnelSheets.connectionJump")),
         h("label", { class: "field" },
-          h("span", null, tr("Connection")),
+          h("span", null, tr("tunnelSheets.connection")),
           h("select", { id: "c-jump" }, jumpOpts)),
-        h("div", { class: "hint" }, tr("Dials through the chosen connection before reaching this host (OpenSSH -J). A proxy or a jump, not both — cycles are refused on save.")))),
+        h("div", { class: "hint" }, tr("tunnelSheets.dialsThroughChosenConnection")))),
     h("div", { class: "hint", id: "c-err", hidden: true }),
   ];
 }
@@ -93,34 +93,34 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
   $("sheet").hidden = false;
   fill($("sheet"),
     h("div", { class: "sheet", role: "dialog",
-        aria: { modal: "true", label: editing ? tr("Edit connection") : tr("New connection") } },
+        aria: { modal: "true", label: editing ? tr("tunnelSheets.editConnection") : tr("tunnelSheets.newConnection") } },
       h("div", { class: "sheet-head" },
-        h("h2", { id: "t-title" }, editing ? tr("Edit connection") : tr("New SSH connection in {group}", { group: initial }))),
+        h("h2", { id: "t-title" }, editing ? tr("tunnelSheets.editConnection") : tr("tunnelSheets.newSshConnectionGroup", { group: initial }))),
       h("div", { class: "sheet-body" },
         h("label", { class: "field" },
-          h("span", null, tr("Name")),
-          h("input", { id: "c-name", value: d.name, placeholder: tr("Test server"), autocomplete: "off" })),
+          h("span", null, tr("tunnelSheets.name2")),
+          h("input", { id: "c-name", value: d.name, placeholder: tr("tunnelSheets.testServer"), autocomplete: "off" })),
         groupField,
         h("div", { class: "two" },
           h("label", { class: "field" },
-            h("span", null, tr("Host")),
-            h("input", { id: "c-host", value: d.host, placeholder: tr("e.g. 192.168.1.100"), autocomplete: "off" })),
+            h("span", null, tr("tunnelSheets.host")),
+            h("input", { id: "c-host", value: d.host, placeholder: tr("tunnelSheets.eGN192N168"), autocomplete: "off" })),
           h("label", { class: "field" },
-            h("span", null, tr("Port")),
+            h("span", null, tr("tunnelSheets.port")),
             h("input", { id: "c-port", value: String(d.port || 22), autocomplete: "off" }))),
         h("label", { class: "field" },
-          h("span", null, tr("Username")),
-          h("input", { id: "c-user", value: d.username, placeholder: tr("Enter a username"), autocomplete: "off" })),
+          h("span", null, tr("tunnelSheets.username")),
+          h("input", { id: "c-user", value: d.username, placeholder: tr("tunnelSheets.enterUsername"), autocomplete: "off" })),
         h("label", { class: "field" },
-          h("span", null, tr("Authentication")),
+          h("span", null, tr("tunnelSheets.authentication")),
           h("select", { id: "c-auth" },
-            h("option", { value: "key", selected: d.authType === "key" }, tr("key — private key file")),
-            h("option", { value: "password", selected: d.authType === "password" }, tr("password")))),
+            h("option", { value: "key", selected: d.authType === "key" }, tr("tunnelSheets.keyPrivateKeyFile")),
+            h("option", { value: "password", selected: d.authType === "password" }, tr("tunnelSheets.password")))),
         h("div", { id: "c-auth-fields" }),
         advancedConnNode(d, editing)),
       h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "c-cancel" }, tr("Cancel")),
-        h("button", { class: "btn primary", id: "c-save" }, tr("Save")))));
+        h("button", { class: "btn", id: "c-cancel" }, tr("tunnelSheets.cancel")),
+        h("button", { class: "btn primary", id: "c-save" }, tr("tunnelSheets.save")))));
 
   const paint = async (): Promise<void> => {
     const keys = await loadKeys();
@@ -129,22 +129,22 @@ function openConnSheet(def: ApiTunnelConnectionRow | null): void {
       isKey
         ? [h("div", { class: "with-btn" },
             h("label", { class: "field" },
-              h("span", null, tr("Private key path")),
+              h("span", null, tr("tunnelSheets.privateKeyPath")),
               h("input", { id: "c-keypath", value: d.keyPath || "", placeholder: keys.defaultPath, autocomplete: "off", spellcheck: false })),
-            h("button", { class: "btn", id: "c-browse" }, tr("Browse…"))),
+            h("button", { class: "btn", id: "c-browse" }, tr("tunnelSheets.browse"))),
           h("label", { class: "field" },
-            h("span", null, tr("Passphrase (optional)")),
-            h("input", { id: "c-pass", type: "password", value: d.passphrase || "", placeholder: tr("Leave empty if the key has none"), autocomplete: "off" })),
-          h("div", { class: "hint" }, tr("Defaults to "), h("code", null, keys.defaultPath), tr(" when left empty."))]
+            h("span", null, tr("tunnelSheets.passphraseOptional")),
+            h("input", { id: "c-pass", type: "password", value: d.passphrase || "", placeholder: tr("tunnelSheets.leaveEmptyKeyNone"), autocomplete: "off" })),
+          h("div", { class: "hint" }, tr("tunnelSheets.defaults"), h("code", null, keys.defaultPath), tr("tunnelSheets.whenLeftEmpty"))]
         : [h("label", { class: "field" },
-            h("span", null, tr("Password")),
-            h("input", { id: "c-pass", type: "password", value: d.password || "", placeholder: tr("Enter the password"), autocomplete: "off" }))]);
+            h("span", null, tr("tunnelSheets.password2")),
+            h("input", { id: "c-pass", type: "password", value: d.password || "", placeholder: tr("tunnelSheets.enterPassword"), autocomplete: "off" }))]);
     if ($("c-browse")) $<HTMLButtonElement>("c-browse").onclick = openKeyPicker;
   };
   void paint();
   $<HTMLSelectElement>("c-auth").onchange = (): void => { void paint(); };
   if ($("g-sel")) $<HTMLSelectElement>("g-sel").onchange = (): void => {
-    $("t-title").textContent = tr("New SSH connection in {group}", { group: $<HTMLSelectElement>("g-sel").value });
+    $("t-title").textContent = tr("tunnelSheets.newSshConnectionGroup", { group: $<HTMLSelectElement>("g-sel").value });
   };
   $<HTMLButtonElement>("c-cancel").onclick = closeSheet;
   $<HTMLButtonElement>("c-save").onclick = (): void => { void saveConn(def!); };
@@ -167,7 +167,7 @@ async function openKeyPicker(): Promise<void> {
   const picker = el("div", "sheet");
   picker.setAttribute("role", "dialog");
   picker.setAttribute("aria-modal", "true");
-  picker.setAttribute("aria-label", tr("Choose a private key file"));
+  picker.setAttribute("aria-label", tr("tunnelSheets.choosePrivateKeyFile"));
   back.appendChild(picker);
   document.body.appendChild(back);
   const close = (): void => { document.body.removeChild(back); target.focus(); };
@@ -175,18 +175,18 @@ async function openKeyPicker(): Promise<void> {
 
   async function render(): Promise<void> {
     const j = await apiJson<ApiTunnelsBrowseResponse>("/api/tunnels/browse" + (cur ? "?dir=" + encodeURIComponent(cur) : ""));
-    if (!j) { toast(tr("Could not read that folder"), true); return; }
+    if (!j) { toast(tr("tunnelSheets.couldReadFolder"), true); return; }
     cur = j.dir; // normalize to the resolved path the server returned
     const dirs = j.entries.filter((e: ApiTunnelsBrowseEntry): boolean => { return e.dir; });
     const files = j.entries.filter((e: ApiTunnelsBrowseEntry): boolean => { return !e.dir; });
     fill(picker,
-      h("div", { class: "sheet-head" }, h("h2", null, tr("Choose a private key"))),
+      h("div", { class: "sheet-head" }, h("h2", null, tr("tunnelSheets.choosePrivateKey"))),
       h("div", { class: "sheet-body" },
         h("div", { class: "browse-cwd", style: "display:flex;gap:8px;align-items:center;margin-bottom:8px" },
           // The disabled class is cosmetic; the disabled PROPERTY is what stops the click.
-          h("button", { class: "btn" + (j.parent ? "" : " disabled"), id: "b-up", disabled: !j.parent, title: tr("Up one level") }, tr("↑ Up")),
+          h("button", { class: "btn" + (j.parent ? "" : " disabled"), id: "b-up", disabled: !j.parent, title: tr("tunnelSheets.oneLevel") }, tr("tunnelSheets.text")),
           h("input", { id: "b-path", value: j.dir, spellcheck: false, autocomplete: "off", style: "flex:1" }),
-          h("button", { class: "btn", id: "b-go" }, tr("Go"))),
+          h("button", { class: "btn", id: "b-go" }, tr("tunnelSheets.go"))),
         j.error ? h("div", { class: "hint" }, j.error) : null,
         h("div", { class: "keylist" },
           dirs.map((e: ApiTunnelsBrowseEntry): HTMLElement => {
@@ -195,7 +195,7 @@ async function openKeyPicker(): Promise<void> {
           files.map((e: ApiTunnelsBrowseEntry): HTMLElement => {
             return h("button", { data: { file: e.path } }, "📄 ", e.name);
           }))),
-      h("div", { class: "sheet-foot" }, h("button", { class: "btn", data: { close: "" } }, tr("Cancel"))));
+      h("div", { class: "sheet-foot" }, h("button", { class: "btn", data: { close: "" } }, tr("tunnelSheets.cancel"))));
     picker.querySelector<HTMLButtonElement>("[data-close]")!.onclick = close;
     if (j.parent) picker.querySelector<HTMLButtonElement>("#b-up")!.onclick = (): void => { cur = j?.parent!; void render(); };
     const go = (): void => { cur = $<HTMLInputElement>("b-path").value.trim(); void render(); };
@@ -256,27 +256,27 @@ async function saveConn(existing: ApiTunnelConnectionRow | null): Promise<void> 
       const err = $("c-err");
       if (err) {
         err.hidden = false;
-        err.textContent = j.error || tr("HTTP {n}", { n: r.status });
+        err.textContent = j.error || tr("tunnelSheets.httpN", { n: r.status });
         err.style.color = "var(--red)";
       }
       return;
     }
   } catch (e) {
-    toast(tr("request failed — is the gateway running?"), true);
+    toast(tr("tunnelSheets.requestFailedGatewayRunning"), true);
     return;
   }
   if (picked) rememberGroup("conns", picked);
   closeSheet();
   await loadTunnels();
   if (!existing && picked && j?.connection && j?.connection.id) await assignTunScoped("conns", j?.connection.id, picked);
-  toast(existing ? tr("Saved {name}", { name: body.name as string }) : tr("Added {name}", { name: body.name as string }));
+  toast(existing ? tr("tunnelSheets.savedName", { name: body.name as string }) : tr("tunnelSheets.addedName", { name: body.name as string }));
 }
 
 /* --- rule sheet ------------------------------------------------------------------------------- */
 
 function openRuleSheet(def: ApiTunnelRuleRow | null): void {
   const d = tunData();
-  if (!d.connections.length) { toast(tr("Add an SSH connection first"), true); return; }
+  if (!d.connections.length) { toast(tr("tunnelSheets.addSshConnectionFirst"), true); return; }
   const editing = !!def;
   const r: RuleSheetDraft = def || {
     name: "", connectionId: d.connections[0].id, localPort: "", targetHost: "127.0.0.1", targetPort: "",
@@ -294,44 +294,44 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
   $("sheet").hidden = false;
   fill($("sheet"),
     h("div", { class: "sheet", role: "dialog",
-        aria: { modal: "true", label: editing ? tr("Edit rule") : tr("New rule") } },
+        aria: { modal: "true", label: editing ? tr("tunnelSheets.editRule") : tr("tunnelSheets.newRule") } },
       h("div", { class: "sheet-head" },
-        h("h2", { id: "t-title" }, editing ? tr("Edit forwarding rule") : tr("New forwarding rule in {group}", { group: initial }))),
+        h("h2", { id: "t-title" }, editing ? tr("tunnelSheets.editForwardingRule") : tr("tunnelSheets.newForwardingRuleGroup", { group: initial }))),
       h("div", { class: "sheet-body" },
         h("label", { class: "field" },
-          h("span", null, tr("Name")),
-          h("input", { id: "r-name", value: r.name, placeholder: tr("Test server PostgreSQL"), autocomplete: "off" })),
+          h("span", null, tr("tunnelSheets.name2")),
+          h("input", { id: "r-name", value: r.name, placeholder: tr("tunnelSheets.testServerPostgresql"), autocomplete: "off" })),
         groupField,
         h("label", { class: "field" },
-          h("span", null, tr("SSH connection")),
+          h("span", null, tr("tunnelSheets.sshConnection")),
           h("select", { id: "r-conn" }, connOpts)),
         h("label", { class: "field" },
-          h("span", null, tr("Local port")),
-          h("input", { id: "r-lport", value: String(r.localPort), placeholder: tr("5433"), autocomplete: "off" })),
+          h("span", null, tr("tunnelSheets.localPort")),
+          h("input", { id: "r-lport", value: String(r.localPort), placeholder: tr("tunnelSheets.n5433"), autocomplete: "off" })),
         h("div", { class: "two" },
           h("label", { class: "field" },
-            h("span", null, tr("Target host")),
-            h("input", { id: "r-thost", value: r.targetHost, placeholder: tr("127.0.0.1"), autocomplete: "off" })),
+            h("span", null, tr("tunnelSheets.targetHost")),
+            h("input", { id: "r-thost", value: r.targetHost, placeholder: tr("tunnelSheets.n127N0N0N1"), autocomplete: "off" })),
           h("label", { class: "field" },
-            h("span", null, tr("Target port")),
-            h("input", { id: "r-tport", value: String(r.targetPort), placeholder: tr("5432"), autocomplete: "off" }))),
+            h("span", null, tr("tunnelSheets.targetPort")),
+            h("input", { id: "r-tport", value: String(r.targetPort), placeholder: tr("tunnelSheets.n5432"), autocomplete: "off" }))),
         h("label", { class: "field" },
-          h("span", null, tr("Remark")),
-          h("input", { id: "r-remark", value: r.remark || "", placeholder: tr("Optional"), autocomplete: "off" })),
-        h("div", { class: "cap", style: "padding-top:var(--s2)" }, tr("Serves MCPs")),
+          h("span", null, tr("tunnelSheets.remark")),
+          h("input", { id: "r-remark", value: r.remark || "", placeholder: tr("tunnelSheets.optional"), autocomplete: "off" })),
+        h("div", { class: "cap", style: "padding-top:var(--s2)" }, tr("tunnelSheets.servesMcps")),
         h("div", { class: "mcp-picks", id: "r-mcps" }),
-        h("div", { class: "hint", id: "r-mcps-hint" }, tr("Which MCPs use this tunnel. Shown on both sides, and you are warned before stopping a tunnel an MCP is using — nothing is started or restarted for you.")),
-        h("div", { class: "cap", style: "padding-top:var(--s2)" }, tr("Advanced")),
+        h("div", { class: "hint", id: "r-mcps-hint" }, tr("tunnelSheets.whichMcpsUseTunnel")),
+        h("div", { class: "cap", style: "padding-top:var(--s2)" }, tr("tunnelSheets.advanced")),
         h("label", { class: "check" },
           h("input", { type: "checkbox", id: "r-auto", checked: r.autoReconnect }),
-          tr("Reconnect automatically")),
+          tr("tunnelSheets.reconnectAutomatically")),
         h("label", { class: "field" },
-          h("span", null, tr("Reconnect interval (seconds)")),
+          h("span", null, tr("tunnelSheets.reconnectIntervalSeconds")),
           h("input", { id: "r-interval", value: String(r.reconnectInterval || 10), autocomplete: "off" })),
-        h("div", { class: "hint" }, tr("A dropped tunnel releases its local port first, then retries. Authentication and host-key failures are never retried."))),
+        h("div", { class: "hint" }, tr("tunnelSheets.droppedTunnelReleasesLocal"))),
       h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "r-cancel" }, tr("Cancel")),
-        h("button", { class: "btn primary", id: "r-save" }, tr("Save")))));
+        h("button", { class: "btn", id: "r-cancel" }, tr("tunnelSheets.cancel")),
+        h("button", { class: "btn primary", id: "r-save" }, tr("tunnelSheets.save")))));
 
   paintMcpPicks(r.mcps || [], []);
   // For a new rule, the suggestion is the point: type 5433 and the matching MCP checks itself.
@@ -346,7 +346,7 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
   if (!editing) $<HTMLInputElement>("r-lport").onchange = suggest;
   else void suggest(); // editing: keep the stored choice, but label what matches
   if ($("g-sel")) $<HTMLSelectElement>("g-sel").onchange = (): void => {
-    $("t-title").textContent = tr("New forwarding rule in {group}", { group: $<HTMLSelectElement>("g-sel").value });
+    $("t-title").textContent = tr("tunnelSheets.newForwardingRuleGroup", { group: $<HTMLSelectElement>("g-sel").value });
   };
   $<HTMLButtonElement>("r-cancel").onclick = closeSheet;
   $<HTMLButtonElement>("r-save").onclick = (): void => { void saveRule(def!); };
@@ -357,14 +357,14 @@ function openRuleSheet(def: ApiTunnelRuleRow | null): void {
 function paintMcpPicks(checked: string[], suggested: string[]): void {
   const names = tunData().mcps || [];
   if (!names.length) {
-    fill($("r-mcps"), h("div", { class: "hint" }, tr("No MCPs registered.")));
+    fill($("r-mcps"), h("div", { class: "hint" }, tr("tunnelSheets.mcpsRegistered")));
     return;
   }
   fill($("r-mcps"), names.map((n: string): HTMLElement => {
     return h("label", { class: "check" },
       h("input", { type: "checkbox", data: { mcp: n }, checked: checked.includes(n) }),
       n,
-      suggested.includes(n) ? h("span", { class: "hint" }, tr(" (matches this local port)")) : null);
+      suggested.includes(n) ? h("span", { class: "hint" }, tr("tunnelSheets.matchesLocalPort")) : null);
   }));
 }
 
@@ -400,8 +400,8 @@ async function saveRule(existing: ApiTunnelRuleRow): Promise<void> {
   const row = j.rule || {} as ApiTunnelRuleRow;
   // A create lands in the picked group, not wherever the header + promised.
   if (!existing && picked && row.id) await assignTunScoped("rules", row.id, picked);
-  toast((existing ? tr("Saved {name}", { name: body.name }) : tr("Added {name}", { name: body.name })) +
-    (row.state && row.state !== "stopped" ? tr(" ({state})", { state: row.state }) : ""));
+  toast((existing ? tr("tunnelSheets.savedName", { name: body.name }) : tr("tunnelSheets.addedName", { name: body.name })) +
+    (row.state && row.state !== "stopped" ? tr("tunnelSheets.state", { state: row.state }) : ""));
 }
 
 export { loadKeys, openConnSheet, openKeyPicker, openRuleSheet, paintMcpPicks, readMcpPicks, saveConn, saveRule };

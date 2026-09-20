@@ -249,11 +249,11 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   const d = dbView();
   if (!d.redisKey) {
     // The shared empty state (docs/18 V7).
-    wrap.appendChild(emptyNode({ icon: "database", title: tr("Select a key"), hint: tr("Pick a key on the left to view its value.") }));
+    wrap.appendChild(emptyNode({ icon: "database", title: tr("dataBrowsers.selectKey"), hint: tr("dataBrowsers.pickKeyLeftView") }));
     return;
   }
   const v = d.redisValue;
-  if (!v) { wrap.appendChild(el("div", "db-hint", tr("Loading {k}…", { k: d.redisKey }))); return; }
+  if (!v) { wrap.appendChild(el("div", "db-hint", tr("dataBrowsers.loadingK", { k: d.redisKey }))); return; }
   const meta = el("div", "db-detail-meta");
   meta.appendChild(document.createTextNode(v.key + " · " + v.type + " · "));
   meta.appendChild(dbRedisTtl(v));
@@ -265,7 +265,7 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
     // One add action per view; it buffers a row, never touches redis directly. data-radd —
     // the click resolves the live type config at event time (docs/37 R5).
     meta.appendChild(h("button", {
-      class: "btn", type: "button", title: tr("Buffer a new {thing} — applied only on Commit", { thing: cfg.thing }),
+      class: "btn", type: "button", title: tr("dataBrowsers.bufferNewThingApplied", { thing: cfg.thing }),
     }, cfg.add));
   }
   // docs/22 W1.3: the key's own actions ride the value header. Rename takes a one-input
@@ -274,11 +274,11 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   // stopPropagation lives in the dispatcher (dbRedisClick): connect.js closes any open menu
   // on clicks that reach document, and without it the same click tears the menu back down.
   meta.appendChild(h("button", {
-    class: "btn icon", type: "button", title: tr("Rename or delete this key"), data: { rkeymenu: "" },
+    class: "btn icon", type: "button", title: tr("dataBrowsers.renameDeleteKey"), data: { rkeymenu: "" },
   }, iconNode("ellipsis")));
   wrap.appendChild(meta);
   if (v.type === "none") {
-    wrap.appendChild(el("div", "db-hint", tr("Key not found — it may have expired.")));
+    wrap.appendChild(el("div", "db-hint", tr("dataBrowsers.keyFoundMayExpired")));
     return;
   }
   if (v.note) wrap.appendChild(el("div", "db-hint", v.note));
@@ -300,7 +300,7 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
 function dbRedisTtl(v: ApiDbRedisValue): HTMLElement {
   return h("button", {
     class: "db-ttl", type: "button",
-    title: tr("Change the TTL — Enter applies EXPIRE, empty removes it (PERSIST)"), data: { rttl: "" },
+    title: tr("dataBrowsers.changeTtlEnterApplies"), data: { rttl: "" },
   }, v.ttl! < 0 ? "no expiry" : v.ttl! + "s");
 }
 
@@ -335,7 +335,7 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
       const td = el("td", "db-cell db-cell-edit" + (filled ? " db-dirty" : ""));
       td.textContent = ins[c] == null ? "" : String(ins[c]);
       if (editable) {
-        td.title = tr("Double-click to edit");
+        td.title = tr("dataBrowsers.doubleClickEdit");
         td.ondblclick = (): void => {
           dbRedisCellEdit(td, i, "insert", c, ins[c] == null ? "" : String(ins[c]));
         };
@@ -427,7 +427,7 @@ function dbRedisCellEdit(td: HTMLElement, insertIdx: number, addr: string, col: 
     const b = dbRedisEdits();
     if (!b) return;
     if (col === "score" && !dbRedisValidScore(raw)) {
-      toast(tr("A score is a number, or inf / -inf"), true);
+      toast(tr("dataBrowsers.scoreNumberInfInf"), true);
       renderDbGrid();
       return;
     }
@@ -479,7 +479,7 @@ function dbRedisEditorClose(): void {
 async function dbRedisSetString(ta: HTMLTextAreaElement): Promise<void> {
   const d = dbView();
   const value = ta.value;
-  if (value === ta.dataset.orig) { toast(tr("Unchanged")); return; }
+  if (value === ta.dataset.orig) { toast(tr("dataBrowsers.unchanged")); return; }
   const j = await apiJson("/api/db/" + encodeURIComponent(d.conn!) + "/redis-pipeline", {
     method: "POST",
     body: JSON.stringify({ commands: [["SET", d.redisKey!, value]] }),
@@ -502,7 +502,7 @@ function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
   ta.dataset.orig = ta.value;
   ta.setAttribute("data-rstr", "");
   row.appendChild(ta);
-  row.appendChild(h("button", { class: "btn primary", type: "button", data: { rset: "" } }, tr("Set")));
+  row.appendChild(h("button", { class: "btn primary", type: "button", data: { rset: "" } }, tr("dataBrowsers.set")));
   wrap.appendChild(row);
 }
 
@@ -521,13 +521,13 @@ async function dbRedisCommit(): Promise<void> {
     return;
   }
   if (!cmds.length) return;
-  if (!confirm(tr("Commit {n} to {k}?\nOne pipelined round trip, every command guard-checked. Redis has no transaction here — a failed command stops the run.", { n: trn(cmds.length, "{n} command", "{n} commands"), k: d.redisKey ?? "" }))) return;
+  if (!confirm(tr("dataBrowsers.commitNKOne", { n: trn(cmds.length, "dataBrowsers.nCommands.one", "dataBrowsers.nCommands.other"), k: d.redisKey ?? "" }))) return;
   const j = await apiJson("/api/db/" + encodeURIComponent(d.conn!) + "/redis-pipeline", {
     method: "POST",
     body: JSON.stringify({ commands: cmds.map((c: { verb: string; args: unknown[] }): unknown[] => { return [c.verb as unknown].concat(c.args); }) }),
   });
   if (!j) return;
-  toast(tr("Committed {n}", { n: trn(cmds.length, "{n} command", "{n} commands") }));
+  toast(tr("dataBrowsers.committedN", { n: trn(cmds.length, "dataBrowsers.nCommands.one", "dataBrowsers.nCommands.other") }));
   d.redisEdits = null;
   d.sqlPreview = false;
   const key = d.redisKey;
@@ -544,7 +544,7 @@ function dbRedisDiscard(): void {
   const d = dbView();
   const n = dbRedisPendingCount();
   if (!n) return;
-  if (!confirm(tr("Discard {n}? Nothing has been written to redis.", { n: trn(n, "{n} buffered change", "{n} buffered changes") }))) return;
+  if (!confirm(tr("dataBrowsers.discardNNothingBeen", { n: trn(n, "dataBrowsers.nBufferedChanges.one", "dataBrowsers.nBufferedChanges.other") }))) return;
   d.redisEdits = null;
   d.sqlPreview = false;
   renderDbGrid();
@@ -553,9 +553,9 @@ function dbRedisDiscard(): void {
 
 function dbRedisKeyMenu(anchorEl: HTMLElement): void {
   popupMenu(anchorEl.getBoundingClientRect(), [
-    { label: tr("Rename…"), fn: (): void => { dbRedisRenameSheet(dbView().redisKey); } },
+    { label: tr("dataBrowsers.rename"), fn: (): void => { dbRedisRenameSheet(dbView().redisKey); } },
     { sep: true },
-    { label: tr("Delete…"), danger: true, fn: dbRedisDeleteKey },
+    { label: tr("dataBrowsers.delete"), danger: true, fn: dbRedisDeleteKey },
   ]);
 }
 
@@ -585,7 +585,7 @@ function dbRedisKeySheet(cfg: { title: string; label: string; value?: string; pl
       h("div", { class: "sheet-body" },
         h("label", { class: "field" }, h("span", null, cfg.label), h("input", { id: "dbKeyIn", autocomplete: "off" }))),
       h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "dbKeyCancel" }, tr("Cancel")),
+        h("button", { class: "btn", id: "dbKeyCancel" }, tr("dataBrowsers.cancel")),
         h("button", { class: "btn primary", id: "dbKeyGo" }, cfg.primary))));
   const input = $<HTMLInputElement>("dbKeyIn");
   input.value = cfg.value || "";
@@ -606,16 +606,16 @@ function dbRedisRenameSheet(key: string | null): void {
   // selection is nullable and that is the truth to honour — not an assertion at the call.
   if (!key) return;
   dbRedisKeySheet({
-    title: tr("Rename key"),
-    label: tr("New name"),
+    title: tr("dataBrowsers.renameKey"),
+    label: tr("dataBrowsers.newName"),
     value: key,
-    primary: tr("Rename"),
+    primary: tr("dataBrowsers.rename2"),
     submit: async (to: string): Promise<void> => {
       const d = dbView();
       if (!to || to === key) return;
       const j = await dbRedisCommand("RENAME " + key + " " + to);
       if (!j) return;
-      toast(tr("Renamed to {to}", { to }));
+      toast(tr("dataBrowsers.renamed", { to }));
       d!.redisKey = to;
       await dbLoadKeys(true);
       void dbLoadRedisValue(to);
@@ -631,7 +631,7 @@ function dbRedisDeleteKey(): void {
   dbTypedConfirm({ what: "DELETE (permanently)", name: key, kind: "key" }, (): void => {
     void dbRedisCommand("DEL " + key).then(async (j: unknown): Promise<void> => {
       if (!j) return;
-      toast(tr("Deleted {key}", { key }));
+      toast(tr("dataBrowsers.deletedKey", { key }));
       d.redisKey = null;
       d.redisValue = null;
       d.redisEdits = null;
@@ -685,7 +685,7 @@ function dbRedisClick(t: Element, ev: MouseEvent): boolean {
       if (ran) return;
       ran = true;
       const secs: string = input.value.trim();
-      if (secs && !/^\d+$/.test(secs)) { toast(tr("TTL must be a whole number of seconds"), true); void dbLoadRedisValue(d.redisKey!); return; }
+      if (secs && !/^\d+$/.test(secs)) { toast(tr("dataBrowsers.ttlMustWholeNumber"), true); void dbLoadRedisValue(d.redisKey!); return; }
       const line = secs ? "EXPIRE " + d.redisKey + " " + secs : "PERSIST " + d.redisKey;
       void dbRedisCommand(line).then((j: unknown): void => {
         if (j) toast(secs ? "TTL set to " + secs + "s" : "TTL removed");

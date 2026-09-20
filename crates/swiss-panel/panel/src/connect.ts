@@ -88,7 +88,7 @@ async function copyConn(name: string, kind: string): Promise<void> {
   if (!secret) return;
   const text = kind === "claude" ? claudeSnippet(name, secret)
     : kind === "codex" ? codexSnippet(name, secret) : mcpJsonSnippet(name, secret);
-  void copyText(text, kind === "claude" ? tr("Claude Code command") : kind === "codex" ? tr("Codex block") : tr(".mcp.json entry"));
+  void copyText(text, kind === "claude" ? tr("connect.claudeCodeCommand") : kind === "codex" ? tr("connect.codexBlock") : tr("connect.mcpJsonEntry"));
 }
 
 /** `claude mcp add` — one line, secret embedded. Runs in any shell (cmd, PowerShell, bash, zsh). */
@@ -116,10 +116,10 @@ async function copyText(text: string, label: string): Promise<void> {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
     else legacyCopy(text);
-    toast(tr("{label} copied — the token is embedded.", { label }));
+    toast(tr("connect.labelCopiedTokenEmbedded", { label }));
   } catch (e) {
     legacyCopy(text);
-    toast(tr("{label} copied", { label }));
+    toast(tr("connect.labelCopied", { label }));
   }
 }
 

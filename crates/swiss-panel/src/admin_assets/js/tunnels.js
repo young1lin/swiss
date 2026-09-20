@@ -89,8 +89,8 @@ async function assignTunScoped(scope        , id        , group               ) 
  *  (docs/37 R5), so the Html suffix it carried as a string builder is gone. */
 function tunDesc(isConns         )         {
   return isConns
-    ? tr("SSH hosts this gateway can forward ports over. Test one before pointing a rule at it.")
-    : tr("Local ports forwarded over an SSH connection. A local port stays bound only while its tunnel can carry traffic.");
+    ? tr("tunnels.sshHostsGatewayCan")
+    : tr("tunnels.localPortsForwardedOver");
 }
 
 /** The one count builder: the context bar's chip AND the page footer read the same words,
@@ -99,10 +99,10 @@ function tunnelsCountText(scope        )         {
   const d = tunData();
   if (scope === "rules") {
     const active = d.rules.filter((r                  )          => { return r.state === "up"; }).length;
-    return trn(d.rules.length, "{n} rule", "{n} rules") + tr(", {n} active", { n: active });
+    return trn(d.rules.length, "tunnels.nRules.one", "tunnels.nRules.other") + tr("tunnels.nActive", { n: active });
   }
   const connected = d.connections.filter((c                        )          => { return c.state === "connected"; }).length;
-  return trn(d.connections.length, "{n} connection", "{n} connections") + tr(", {n} connected", { n: connected });
+  return trn(d.connections.length, "tunnels.nConnections.one", "tunnels.nConnections.other") + tr("tunnels.nConnected", { n: connected });
 }
 
 function renderTunnels()       {
@@ -112,12 +112,12 @@ function renderTunnels()       {
   // vocabulary for exactly this slot). Rules carry the bulk start/stop pair; connections
   // carry only New — Test lives on each row.
   const acts           = [
-    h("button", { class: "btn primary", id: isConns ? "tNewConn" : "tNewRule" }, tr("New")),
-    h("button", { class: "btn", id: "tNewGroup" }, tr("New group")),
+    h("button", { class: "btn primary", id: isConns ? "tNewConn" : "tNewRule" }, tr("tunnels.new")),
+    h("button", { class: "btn", id: "tNewGroup" }, tr("tunnels.newGroup")),
   ];
   if (!isConns) {
-    acts.push(h("button", { class: "btn", id: "tStartAll" }, tr("Start all")));
-    acts.push(h("button", { class: "btn", id: "tStopAll" }, tr("Stop all")));
+    acts.push(h("button", { class: "btn", id: "tStartAll" }, tr("tunnels.startAll")));
+    acts.push(h("button", { class: "btn", id: "tStopAll" }, tr("tunnels.stopAll")));
   }
 
   // One group per slice — the component owns the header band, the indent and the empty line
@@ -141,8 +141,8 @@ function renderTunnels()       {
   const host = $("tunGroups");
   if (list.length) grouped.forEach((g                                                       )       => { host.appendChild(mountGroup(cfg, g)); });
   else fill(host, emptyNode(isConns
-    ? { icon: "plug", title: tr("No SSH connections"), hint: tr("Add one with New, then point a forwarding rule at it.") }
-    : { icon: "plug", title: tr("No forwarding rules"), hint: tr("Add one with New. Each rule binds a local port and forwards it over SSH.") }));
+    ? { icon: "plug", title: tr("tunnels.sshConnections"), hint: tr("tunnels.addOneNewThen") }
+    : { icon: "plug", title: tr("tunnels.forwardingRules"), hint: tr("tunnels.addOneNewEach") }));
   wireTunnels();
 }
 
@@ -154,9 +154,9 @@ function tunCfg()                                                      {
     density: "page",
     names: tunGroupsList(),
     collapsed: tunFolds(mountedTunScope()),
-    noun: tr("row"),
+    noun: tr("tunnels.row"),
     addTitle: (g        )         => {
-      return mountedTunScope() === "conns" ? tr("Add an SSH connection to {group}", { group: g }) : tr("Add a forwarding rule to {group}", { group: g });
+      return mountedTunScope() === "conns" ? tr("tunnels.addSshConnectionGroup", { group: g }) : tr("tunnels.addForwardingRuleGroup", { group: g });
     },
     onAdd: (g        )       => {
       setTunPendingGroup(g); // a real name now — the sheet's save lands the row in it
@@ -214,7 +214,7 @@ function patchTunnels() {
     const act = node.querySelector("[data-act]")                            ;
     if (act) {
       const running = row.state === "up" || row.state === "starting" || row.state === "reconnecting";
-      const label = busy ? "…" : running ? tr("Stop") : tr("Start");
+      const label = busy ? "…" : running ? tr("tunnels.stop") : tr("tunnels.start");
       if (act.textContent !== label) {
         act.textContent = label;
         act.className = "btn" + (running ? "" : " primary");
@@ -283,11 +283,11 @@ function wireTunnels() {
       // Force free appears only when a port is actually held — it is a remedy, not a
       // standing action.
       const items             = [
-        { label: tr("Edit"), fn: ()       => { openRuleSheet(rule); } },
-        { label: tr("Copy local port"), fn: ()       => { void copyText(String(rule.localPort), tr("Local port")); } },
+        { label: tr("tunnels.edit"), fn: ()       => { openRuleSheet(rule); } },
+        { label: tr("tunnels.copyLocalPort"), fn: ()       => { void copyText(String(rule.localPort), tr("tunnels.localPort")); } },
       ];
-      if (rule.portOwner) items.push({ label: tr("Force free {port}", { port: rule.localPort }), fn: ()       => { void forceFreePort(rule.localPort, rule.id); } });
-      items.push({ sep: true }, { label: tr("Delete"), danger: true, fn: ()       => { void deleteRule(rule, false); } });
+      if (rule.portOwner) items.push({ label: tr("tunnels.forceFreePort", { port: rule.localPort }), fn: ()       => { void forceFreePort(rule.localPort, rule.id); } });
+      items.push({ sep: true }, { label: tr("tunnels.delete"), danger: true, fn: ()       => { void deleteRule(rule, false); } });
       popupMenu(more.getBoundingClientRect(), items);
       return;
     }
@@ -296,10 +296,10 @@ function wireTunnels() {
       const conn = tunData().connections.find((c                        )          => { return c.id === connRow.dataset.conn; });
       if (!conn) return;
       popupMenu(more.getBoundingClientRect(), [
-        { label: tr("Edit"), fn: ()       => { openConnSheet(conn); } },
-        { label: tr("Copy host"), fn: ()       => { void copyText(conn.host + ":" + conn.port, tr("Host")); } },
+        { label: tr("tunnels.edit"), fn: ()       => { openConnSheet(conn); } },
+        { label: tr("tunnels.copyHost"), fn: ()       => { void copyText(conn.host + ":" + conn.port, tr("tunnels.host")); } },
         { sep: true },
-        { label: tr("Delete"), danger: true, fn: ()       => { void deleteConn(conn); } },
+        { label: tr("tunnels.delete"), danger: true, fn: ()       => { void deleteConn(conn); } },
       ]);
     }
   };
@@ -326,14 +326,14 @@ async function ruleAct(id        , verb        )                {
     // 409 means an MCP is using this tunnel. Tell the user who, then obey them.
     if (r.status === 409 && j.confirmRequired) {
       const names = j.dependents?.join(", ") || "";
-      if (!confirm(trn(j.dependents?.length || 0, "{names} depends on this tunnel.\n\nStop it anyway?", "{names} depend on this tunnel.\n\nStop it anyway?", { names }))) return;
+      if (!confirm(trn(j.dependents?.length || 0, "tunnels.namesDependTunnelStop.one", "tunnels.namesDependTunnelStop.other", { names }))) return;
       const forced = await apiJson         ("/api/tunnels/rules/" + encodeURIComponent(id) + "/stop?force=1", { method: "POST" });
-      if (forced) toast(tr("Stopped"));
+      if (forced) toast(tr("tunnels.stopped"));
       return;
     }
-    if (!r.ok) { toast(j.error || tr("HTTP {n}", { n: r.status }), true); return; }
-    if (j.ok === false) { toast(j.error || tr("Start failed"), true); return; }
-    toast(verb === "start" ? tr("Started") : tr("Stopped"));
+    if (!r.ok) { toast(j.error || tr("tunnels.httpN", { n: r.status }), true); return; }
+    if (j.ok === false) { toast(j.error || tr("tunnels.startFailed"), true); return; }
+    toast(verb === "start" ? tr("tunnels.started") : tr("tunnels.stopped"));
   });
 }
 
@@ -343,33 +343,33 @@ async function startAllRules()                {
   if (!j) return;
   const failed = (j.results || []).filter((x                  )          => { return !x.ok; });
   toast(failed.length
-    ? tr("{a} started, {b} failed: {first} — {error}", { a: j.results .length - failed.length, b: failed.length, first: failed[0] .name || "", error: failed[0] .error || "" })
-    : trn(j.results?.length || 0, "{n} tunnels started", "{n} tunnels started"), failed.length > 0);
+    ? tr("tunnels.startedBFailedFirst", { a: j.results .length - failed.length, b: failed.length, first: failed[0] .name || "", error: failed[0] .error || "" })
+    : trn(j.results?.length || 0, "tunnels.nTunnelsStarted.one", "tunnels.nTunnelsStarted.other"), failed.length > 0);
 }
 
 async function stopAllRules(force          )                {
   const r = await api("/api/tunnels/stop-all" + (force ? "?force=1" : ""), { method: "POST" });
   const j = await r.json().catch(()         => { return {}; })                                                                                             ;
   if (r.status === 409 && j.confirmRequired) {
-    if (!confirm(tr("These MCPs are using tunnels you are about to stop:\n\n{names}\n\nStop them anyway?", { names: j.dependents?.join(", ") || "" }))) return;
+    if (!confirm(tr("tunnels.theseMcpsUsingTunnels", { names: j.dependents?.join(", ") || "" }))) return;
     return stopAllRules(true);
   }
   await loadTunnels();
-  if (!r.ok) { toast(j.error || tr("HTTP {n}", { n: r.status }), true); return; }
-  toast(trn((j.results || []).length, "{n} tunnels stopped", "{n} tunnels stopped"));
+  if (!r.ok) { toast(j.error || tr("tunnels.httpN", { n: r.status }), true); return; }
+  toast(trn((j.results || []).length, "tunnels.nTunnelsStopped.one", "tunnels.nTunnelsStopped.other"));
 }
 
 async function deleteRule(rule                  , force          )                {
-  if (!force && !confirm(tr('Delete forwarding rule "{name}"?', { name: rule.name }))) return;
+  if (!force && !confirm(tr("tunnels.deleteForwardingRuleName", { name: rule.name }))) return;
   const r = await api("/api/tunnels/rules/" + encodeURIComponent(rule.id) + (force ? "?force=1" : ""), { method: "DELETE" });
   const j = await r.json().catch(()         => { return {}; })                                                                        ;
   if (r.status === 409 && j.confirmRequired) {
-    if (!confirm(tr("{names} depend on this tunnel.\n\nDelete it anyway?", { names: j.dependents?.join(", ") || "" }))) return;
+    if (!confirm(tr("tunnels.namesDependTunnelDelete", { names: j.dependents?.join(", ") || "" }))) return;
     return deleteRule(rule, true);
   }
   await loadTunnels();
-  if (!r.ok) { toast(j.error || tr("HTTP {n}", { n: r.status }), true); return; }
-  toast(tr("Deleted {name}", { name: rule.name }));
+  if (!r.ok) { toast(j.error || tr("tunnels.httpN", { n: r.status }), true); return; }
+  toast(tr("tunnels.deletedName", { name: rule.name }));
 }
 
 /** Kill whatever holds a local port. Confirmed here because it can kill a process doing real work. */
@@ -377,10 +377,10 @@ async function forceFreePort(port        , ruleId        )                {
   const d = tunData();
   const rule = d.rules.find((r                  )          => { return r.id === ruleId; });
   const owner = rule && rule.portOwner;
-  if (!confirm(tr("Port {port} is held by pid {owner}.\n\nForce-kill that process? It may be doing real work.", { port, owner: owner ? owner.pid + " (" + owner.name + ")" : "?" }))) return;
+  if (!confirm(tr("tunnels.portPortHeldPid", { port, owner: owner ? owner.pid + " (" + owner.name + ")" : "?" }))) return;
   const j = await apiJson                                           ("/api/tunnels/port/" + port + "/free", { method: "POST" });
   if (!j) { await loadTunnels(); return; }
-  toast(tr("Killed pid {pid} ({name})", { pid: j.killed.pid, name: j.killed.name }));
+  toast(tr("tunnels.killedPidPidName", { pid: j.killed.pid, name: j.killed.name }));
   await ruleAct(ruleId, "start");
 }
 
@@ -390,24 +390,24 @@ async function testConn(id        )                {
   await withTunBusy(id, "test", async ()                => {
     const j = await apiJson                                                                                                     ("/api/tunnels/connections/" + encodeURIComponent(id) + "/test", { method: "POST" });
     if (!j) return;
-    if (j.ok) { toast(j.banner ? tr("Connected in {ms} ms — {banner}", { ms: j.ms ?? 0, banner: j.banner }) : tr("Connected in {ms} ms", { ms: j.ms ?? 0 })); return; }
+    if (j.ok) { toast(j.banner ? tr("tunnels.connectedMsMsBanner", { ms: j.ms ?? 0, banner: j.banner }) : tr("tunnels.connectedMsMs", { ms: j.ms ?? 0 })); return; }
     // A changed host key is the one failure with an action attached.
     if (j.kind === "hostkey" && j.fingerprint) {
-      if (confirm(tr("{error}\n\nTrust the new key?", { error: j.error || "" }))) {
+      if (confirm(tr("tunnels.errorTrustNewKey", { error: j.error || "" }))) {
         const t = await apiJson         ("/api/tunnels/connections/" + encodeURIComponent(id) + "/trust", { method: "POST" });
-        if (t) toast(tr("Host key trusted — test again"));
+        if (t) toast(tr("tunnels.hostKeyTrustedTest"));
       }
       return;
     }
-    toast(tr("{error} ({kind})", { error: j.error || "", kind: j.kind || "" }), true);
+    toast(tr("tunnels.errorKind", { error: j.error || "", kind: j.kind || "" }), true);
   });
 }
 
 async function deleteConn(conn                        )                {
-  if (!confirm(tr('Delete SSH connection "{name}"?', { name: conn.name }))) return;
+  if (!confirm(tr("tunnels.deleteSshConnectionName", { name: conn.name }))) return;
   const j = await apiJson         ("/api/tunnels/connections/" + encodeURIComponent(conn.id), { method: "DELETE" });
   await loadTunnels();
-  if (j) toast(tr("Deleted {name}", { name: conn.name }));
+  if (j) toast(tr("tunnels.deletedName", { name: conn.name }));
 }
 
 /* --- the two L2 pages' shared lifecycle -----------------------------------------------------------

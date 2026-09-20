@@ -158,13 +158,13 @@ function paintTabs() {
      would destroy an open rename input. The memo is the built tree's own outerHTML
      (docs/37 R5): same tree in, same markup out - skip. */
   const tabs = all.map((m) => {
-    const label = tabLabel(m, m.shellTitle, m.customTitle) + (m.gone ? tr(" · closed") : "");
+    const label = tabLabel(m, m.shellTitle, m.customTitle) + (m.gone ? tr("terminal.closed") : "");
     return h("button", { role: "tab", data: { act: "select", id: m.id },
         aria: { selected: String(m.id === active) }, title: label },
       h("span", { class: "term-tab-label" }, label),
-      m.bell && !m.gone ? h("span", { class: "term-tab-bell", aria: { label: tr("bell") } }, "\u25cf") : null,
+      m.bell && !m.gone ? h("span", { class: "term-tab-bell", aria: { label: tr("terminal.bell") } }, "\u25cf") : null,
       " ",
-      h("span", { class: "term-tab-x", data: { act: "close", id: m.id }, title: tr("Close session"), role: "button" }, "\u00d7"));
+      h("span", { class: "term-tab-x", data: { act: "close", id: m.id }, title: tr("terminal.closeSession"), role: "button" }, "\u00d7"));
   });
   const html = tabs.map((n) => { return n.outerHTML; }).join("");
   if (html === paintTabsLast) return;
@@ -213,7 +213,7 @@ function setFontSize(size        ) {
 function copySelection(term               ) {
   const text = term.getSelection();
   navigator.clipboard.writeText(text).catch(() => {
-    toast(tr("could not write the selection to the clipboard"), true);
+    toast(tr("terminal.couldWriteSelectionClipboard"), true);
   });
   term.clearSelection();
 }
@@ -422,28 +422,28 @@ function openHelpSheet() {
   // Visible before the paint (panel-proof-of-life rule 1).
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Terminal shortcuts") } },
-      h("div", { class: "sheet-head" }, h("h2", null, tr("Terminal shortcuts"))),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("terminal.terminalShortcuts") } },
+      h("div", { class: "sheet-head" }, h("h2", null, tr("terminal.terminalShortcuts"))),
       h("div", { class: "sheet-body term-key-body" },
-        cap(tr("Keys")),
-        row([k("Ctrl+Shift+F")], tr("find in this session’s buffer")),
-        row([k("Enter"), k("Shift+Enter")], tr("next / previous match")),
-        row([k("Esc")], tr("close the find bar")),
-        row([k("Alt+1..9")], tr("switch to tab 1..9")),
-        row([k("Alt+\u2190"), k("Alt+\u2192")], tr("previous / next tab")),
-        row([k("Alt+W")], tr("close the tab")),
-        row([k("Ctrl+0")], tr("reset the font size (Ctrl+wheel zooms)")),
-        row([k("?")], tr("this sheet, anywhere on the page")),
-        cap(tr("Mouse")),
-        row(tr("double-click / right-click a tab"), tr("rename it (the name outranks the shell\u2019s title)")),
-        row(tr("middle-click a tab"), tr("close it")),
-        row(tr("drag a selection"), tr("copied on release; Ctrl+C stays the interrupt")),
-        row(tr("scroll up"), tr("stop following output \u2014 a chip counts what you missed")),
-        cap(tr("On by default")),
-        row(tr("bell"), tr("a dot on the tab until you read it")),
-        row(tr("copy-on-select"), tr("a scissors pill confirms each copy")),
-        row(tr("multiline paste"), tr("asks first \u2014 paste whole or not at all"))),
-      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }), h("button", { class: "btn", id: "th-close" }, tr("Close")))));
+        cap(tr("terminal.keys")),
+        row([k("Ctrl+Shift+F")], tr("terminal.findSessionsBuffer")),
+        row([k("Enter"), k("Shift+Enter")], tr("terminal.nextPreviousMatch")),
+        row([k("Esc")], tr("terminal.closeFindBar")),
+        row([k("Alt+1..9")], tr("terminal.switchTabN1N9")),
+        row([k("Alt+\u2190"), k("Alt+\u2192")], tr("terminal.previousNextTab")),
+        row([k("Alt+W")], tr("terminal.closeTab")),
+        row([k("Ctrl+0")], tr("terminal.resetFontSizeCtrl")),
+        row([k("?")], tr("terminal.sheetAnywherePage")),
+        cap(tr("terminal.mouse")),
+        row(tr("terminal.doubleClickRightClick"), tr("terminal.renameNameOutranksShells")),
+        row(tr("terminal.middleClickTab"), tr("terminal.close")),
+        row(tr("terminal.dragSelection"), tr("terminal.copiedReleaseCtrlC")),
+        row(tr("terminal.scroll"), tr("terminal.stopFollowingOutputChip")),
+        cap(tr("terminal.default")),
+        row(tr("terminal.bell"), tr("terminal.dotTabUntilYou")),
+        row(tr("terminal.copySelect"), tr("terminal.scissorsPillConfirmsEach")),
+        row(tr("terminal.multilinePaste"), tr("terminal.asksFirstPasteWhole"))),
+      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }), h("button", { class: "btn", id: "th-close" }, tr("terminal.close2")))));
   const onKey = (ev               ) => { if (ev.key === "Escape") close(); };
   const close = () => {
     document.removeEventListener("keydown", onKey, true);
@@ -633,7 +633,7 @@ function wireTerminal(m           ) {
         term.paste(text);
         term.focus();   // the click landed on the surface, not the keyboard focus
       }).catch(() => {
-        toast(tr("the browser refused to read the clipboard — use Ctrl+V"), true);
+        toast(tr("terminal.browserRefusedReadClipboard"), true);
         term.focus();
       });
     });
@@ -1034,7 +1034,7 @@ function render() {
   fill(pane,
     h("div", { class: "term-page" },
       h("div", { class: "term-bar" },
-        h("div", { class: "term-tabs", id: "term-tabs", role: "tablist", aria: { label: tr("Sessions") }, hidden: true }),
+        h("div", { class: "term-tabs", id: "term-tabs", role: "tablist", aria: { label: tr("terminal.sessions") }, hidden: true }),
         h("div", { class: "term-ctl" },
           pick.rows.length
             /* The select closes after its options and the two buttons are its SIBLINGS
@@ -1042,52 +1042,52 @@ function render() {
                <select> is invalid DOM and the browser drops it - the Open session
                button vanished exactly this way once. */
             ? frag(
-                h("select", { id: "term-target", class: "term-pick", aria: { label: tr("Target") } },
+                h("select", { id: "term-target", class: "term-pick", aria: { label: tr("terminal.target") } },
                   pick.rows.map((r) => {
                     return h("option", { value: r.id }, r.label + (r.state ? " (" + r.state + ")" : ""));
                   })),
                 /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
                    picker, not a second loud button — Open session stays the bar's one accent.
                    The gear is the sprite (i-gear), never a Unicode glyph (design rule 9). */
-                h("button", { class: "term-gear", id: "term-set", title: tr("Local shell settings"), aria: { label: tr("Local shell settings") } }, iconNode("gear")),
-                h("button", { class: "btn term-new", id: "term-new" }, tr("Open session")))
+                h("button", { class: "term-gear", id: "term-set", title: tr("terminal.localShellSettings"), aria: { label: tr("terminal.localShellSettings") } }, iconNode("gear")),
+                h("button", { class: "btn term-new", id: "term-new" }, tr("terminal.openSession")))
             /* Local off and nothing to pick: the line itself is the way in (docs/15
                §2.1) — a dead-end note that names a setting nobody can reach is how the
                gap this sheet closes came to exist. The tunnels reason, when there is one,
                stays readable beside it. */
             : pick.localOff
               ? frag(
-                  h("button", { class: "term-off", id: "term-off" }, tr("Local shell is off — turn it on")),
+                  h("button", { class: "term-off", id: "term-off" }, tr("terminal.localShellOffTurn")),
                   pick.reason ? h("span", { class: "term-none" }, pick.reason) : null)
               : h("span", { class: "term-none" }, pick.note),
           /* The ? reference button (guidance tier 3): same quiet box as the gear - present
              in every branch, including the empty ones, where it matters most. The empty slot
              after it accepts the shell-owned app zone only during Terminal fullscreen; there
              is no duplicate page-owned fullscreen control (immersive.js). */
-          h("button", { class: "term-gear", id: "term-help", title: tr("Shortcuts and gestures"), aria: { label: tr("Shortcuts and gestures") } }, iconNode("help"))),
+          h("button", { class: "term-gear", id: "term-help", title: tr("terminal.shortcutsGestures"), aria: { label: tr("terminal.shortcutsGestures") } }, iconNode("help"))),
         /* term-bar ENDS here (the second paren below closes it): master's term-page owns
            [bar, find, stage, foot] as siblings - an unclosed bar once swallowed find+stage,
            the stage went 0px tall inside the fixed-height bar, and xterm rendered nothing. */
         h("span", { class: "term-shell-slot", data: { "shell-focus-slot": "" } })),
       h("div", { class: "term-find", id: "term-find", hidden: true },
-        h("input", { id: "term-find-q", type: "text", placeholder: tr("Find"), aria: { label: tr("Find in terminal") }, spellcheck: false }),
+        h("input", { id: "term-find-q", type: "text", placeholder: tr("terminal.find"), aria: { label: tr("terminal.findTerminal") }, spellcheck: false }),
         h("span", { class: "term-find-count", id: "term-find-count" }),
-        h("button", { type: "button", id: "term-find-prev", title: tr("Previous match (Shift+Enter)") }, "\u2191"),
-        h("button", { type: "button", id: "term-find-next", title: tr("Next match (Enter)") }, "\u2193"),
-        h("button", { type: "button", id: "term-find-x", title: tr("Close (Esc)") }, "\u00d7")),
+        h("button", { type: "button", id: "term-find-prev", title: tr("terminal.previousMatchShiftEnter") }, "\u2191"),
+        h("button", { type: "button", id: "term-find-next", title: tr("terminal.nextMatchEnter") }, "\u2193"),
+        h("button", { type: "button", id: "term-find-x", title: tr("terminal.closeEsc") }, "\u00d7")),
       h("div", { class: "term-stage", id: "term-stage" },
         h("div", { class: "term-empty", id: "term-empty", hidden: true },
           h("div", { class: "term-ghost", aria: { hidden: "true" } },
             h("span", { class: "term-ghost-dollar" }, "$"),
             h("span", { class: "term-ghost-cursor" })),
-          h("h2", null, tr("No session yet")),
-          h("p", null, tr("Pick a host in the bar above and open one.")),
+          h("h2", null, tr("terminal.session")),
+          h("p", null, tr("terminal.pickHostBarAbove")),
           /* The one teaching moment every newcomer sees: three facts, one line, quiet. */
           h("p", { class: "term-keys-hint" },
-            h("kbd", null, "Ctrl+Shift+F"), tr(" find · "),
-            h("kbd", null, "Alt+1..9"), tr(" switch · "),
-            h("kbd", null, "?"), tr(" everything")),
-          h("p", null, tr("A dropped socket does not end a session \u2014 it waits out the grace window and catches up.")))),
+            h("kbd", null, "Ctrl+Shift+F"), tr("terminal.find2"),
+            h("kbd", null, "Alt+1..9"), tr("terminal.switch"),
+            h("kbd", null, "?"), tr("terminal.everything")),
+          h("p", null, tr("terminal.droppedSocketEndSession")))),
       h("div", { class: "term-foot", id: "term-status" })));
 
   wireFindBar();

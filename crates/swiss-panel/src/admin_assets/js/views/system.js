@@ -31,30 +31,30 @@ function systemBodyNode()              {
   return h("div", { class: "wide" },
     h("div", { class: "pane-head" },
       h("div", null,
-        h("div", { class: "pane-desc" }, tr("Control this running swiss process. Quitting stops every plugin and local service cleanly; configuration and logs remain on disk.")))),
-    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, tr("Runtime"))),
+        h("div", { class: "pane-desc" }, tr("system.controlRunningSwissProcess")))),
+    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, tr("system.runtime"))),
     h("div", { class: "group" },
       h("div", { class: "tun-row" },
         h("div", { class: "tun-main" },
-          h("div", { class: "tun-name" }, tr("Quit swiss")),
+          h("div", { class: "tun-name" }, tr("system.quitSwiss")),
           h("div", { class: "tun-sub" },
-            h("span", { class: "via" }, tr("Gracefully stop MCPs, tunnels, jobs, terminals, and this local process.")))),
+            h("span", { class: "via" }, tr("system.gracefullyStopMcpsTunnels")))),
         h("div", { class: "tun-acts" },
-          h("button", { class: "btn danger", id: "system-quit" }, tr("Quit swiss"))))));
+          h("button", { class: "btn danger", id: "system-quit" }, tr("system.quitSwiss"))))));
 }
 
 function quitSheetNode()              {
-  return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Quit swiss") } },
-    h("div", { class: "sheet-head" }, h("h2", null, tr("Quit swiss?"))),
+  return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("system.quitSwiss") } },
+    h("div", { class: "sheet-head" }, h("h2", null, tr("system.quitSwiss2"))),
     h("div", { class: "sheet-body" },
-      h("p", null, tr("This disconnects every MCP client and stops active tunnels, jobs, and terminal sessions.")),
+      h("p", null, tr("system.disconnectsEveryMcpClient")),
       h("p", { class: "hint" },
-        tr("Your configuration and logs are kept. Start it again with "),
+        tr("system.configurationLogsKeptStart"),
         h("code", null, "swiss start"), ".")),
     h("div", { class: "sheet-foot" },
       h("span", { class: "grow" }),
-      h("button", { class: "btn", id: "quit-cancel" }, tr("Cancel")),
-      h("button", { class: "btn danger", id: "quit-confirm" }, tr("Quit swiss"))));
+      h("button", { class: "btn", id: "quit-cancel" }, tr("system.cancel")),
+      h("button", { class: "btn danger", id: "quit-confirm" }, tr("system.quitSwiss"))));
 }
 
 function openQuitSheet()       {
@@ -72,10 +72,10 @@ function openQuitSheet()       {
 
 async function requestQuit()                {
   const button = $                   ("quit-confirm");
-  if (button) { button.disabled = true; button.textContent = tr("Quitting…"); }
+  if (button) { button.disabled = true; button.textContent = tr("system.quitting"); }
   const stopped = await apiJson("/api/shutdown", { method: "POST" });
   if (!stopped) {
-    if (button) { button.disabled = false; button.textContent = tr("Quit swiss"); }
+    if (button) { button.disabled = false; button.textContent = tr("system.quitSwiss"); }
     return;
   }
   closeSheet();
@@ -83,8 +83,8 @@ async function requestQuit()                {
   if (currentView() === "system") {
     fill($("pane"), emptyNode({
       icon: "power",
-      title: tr("swiss is stopping"),
-      hint: tr("The local process is closing gracefully. You can close this tab and run swiss start when you need it again."),
+      title: tr("system.swissStopping"),
+      hint: tr("system.localProcessClosingGracefully"),
     }));
   }
 }
