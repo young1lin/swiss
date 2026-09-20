@@ -281,3 +281,43 @@ describe("the I5 views in Chinese (remote targets, remote runs)", () => {
     expect(tr("No output was produced.")).toBe("没有产生任何输出。");
   });
 });
+
+describe("the I6 tunnels pages in Chinese", () => {
+  beforeEach(() => {
+    setLang("zh-CN");
+  });
+  afterEach(() => {
+    setLang("en");
+    localStorage.clear();
+  });
+
+  it("frames the host's words: state, banner, error, kind", async () => {
+    await loadLocale();
+    expect(tr("{names} depend on this tunnel.\n\nStop it anyway?", { names: "redis, mysql" })).toBe(
+      "redis, mysql 依赖这条隧道。\n\n仍要停止吗?",
+    );
+    expect(tr("Connected in {ms} ms — {banner}", { ms: 42, banner: "SSH-2.0-OpenSSH_9" })).toBe(
+      "已在 42 毫秒内连上——SSH-2.0-OpenSSH_9",
+    );
+    expect(tr("{error} ({kind})", { error: "connection refused", kind: "io" })).toBe("connection refused(io)");
+    expect(tr("Saved {name}", { name: "开发机" })).toBe("已保存 开发机");
+    expect(tr(" ({state})", { state: "up" })).toBe("(up)");
+  });
+
+  it("speaks the sheets' field copy", async () => {
+    await loadLocale();
+    expect(tr("Passphrase (optional)")).toBe("口令(可选)");
+    expect(tr("key — private key file")).toBe("key——私钥文件");
+    expect(tr("Serves MCPs")).toBe("服务于 MCP");
+    expect(tr("New SSH connection in {group}", { group: "default" })).toBe("在 default 中新建 SSH 连接");
+    expect(tr("Defaults to ")).toBe("默认使用 ");
+    expect(tr(" when left empty.")).toBe("(留空时)。");
+  });
+
+  it("counts rules and connections", async () => {
+    await loadLocale();
+    expect(trn(2, "{n} rule", "{n} rules")).toBe("2 条规则");
+    expect(trn(3, "{n} connection", "{n} connections")).toBe("3 条连接");
+    expect(trn(2, "{n} rule", "{n} rules") + tr(", {n} active", { n: 1 })).toBe("2 条规则,1 个活动");
+  });
+});

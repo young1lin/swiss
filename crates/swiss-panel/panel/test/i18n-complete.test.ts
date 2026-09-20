@@ -83,8 +83,11 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
    - "✗ {error}": a bare failure marker before the host's own error text.
    - "SELECT 1": example SQL in a placeholder — language-neutral.
    - "build", "/data/ws/proj": sample values in the remote sheet's placeholders — a plausible
-     alias and a plausible POSIX root, both language-neutral as samples. */
-const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1", "build", "/data/ws/proj"]);
+     alias and a plausible POSIX root, both language-neutral as samples.
+   - "socks5://127.0.0.1:7890": the proxy URL placeholder's sample URL — language-neutral.
+   - "5433", "5432", "127.0.0.1": the rule sheet's sample ports and host — numbers and the
+     loopback address, language-neutral as samples. */
+const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1", "build", "/data/ws/proj", "socks5://127.0.0.1:7890", "5433", "5432", "127.0.0.1"]);
 
 describe("i18n dictionary completeness (docs/38 L10a)", () => {
   const used = collect();
