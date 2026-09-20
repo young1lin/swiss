@@ -83,7 +83,7 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 | Data grid `.db-grid` | Collapsed table, sticky headers, three-state sorting, cells truncate with ellipsis at 340px | views.css:426-448 |
 | sheet | `min(560px, 92vw)`, r 10px, three sections head/body/foot, `role=dialog aria-modal`; all editing lives in sheets (a separate subtree the poll cannot hit) | views.css:240;add-sheet.js |
 | Floating menus `.menu` | Anchored to the trigger button's left edge, flips up when it cannot fit downward, `.danger` red, `.pick` blue-check single-select, `hr` grouping (the MCP overflow menu is a macOS-style three-section grouping) | views.css:204-229;menu.js:9-30 |
-| Empty states `emptyHtml()` | One unified template: sprite icon + h2 title + a 44ch width-capped p + optional ghost action button; every page's empty state must go through this function; the terminal page is the only registered exemption | util.js:80-94;views.css:28-35;docs/18 V7 |
+| Empty states `emptyNode()` | One unified template: sprite icon + h2 title + a 44ch width-capped p + optional ghost action button; every page's empty state must go through this function; the terminal page is the only registered exemption | util.js:80-94;views.css:28-35;docs/18 V7 |
 | toast | Auto-dismisses in 3.4s, err gets a red edge; once per error, never repeated every 6 seconds | util.js:138-145;base.css:273-279 |
 | Custom dropdowns | The native select is hidden but kept as the source of truth (value/event semantics unchanged), rendered as trigger button + floating layer; a MutationObserver takes over globally and automatically | dropdown.js |
 | chip | The top-bar memory chip (title hover details + click = refreshNow; the top-bar refresh button was deleted), the page-bar count chip, the Jobs footer chip | base.css:263-268;polling.js:33-55 |
@@ -147,7 +147,7 @@ A three-level vertical structure + one workspace, with every dimension pinned:
 
 1. The descriptor's six contributions are complete; pages come as `page(id, …, order, sidebar)` with an order that avoids the existing tiers (10/20/30…/70/1000/1001); the entry lands in `/admin/js/views/` or `/admin/plugins/`.
 2. The page module implements `mount/poll/refresh/countText` (leave-blocking edits add `canLeave/hasPendingChanges`); polling only patches, skips on structure signature, and never rebuilds a focus-holding structure.
-3. Empty states go through `emptyHtml()`; disabled/503 has structured degradation and does not manufacture a toast every 6 seconds.
+3. Empty states go through `emptyNode()`; disabled/503 has structured degradation and does not manufacture a toast every 6 seconds.
 4. At most one `primary` per view; red actions go into the ⋯ menu; icons use sprites, not Unicode glyphs; type tags are monochrome mono.
 5. Destructive operations confirm with the consequence named; table-level operations confirm verbatim; write operations carry a revision.
 6. fetch goes only through `api/apiJson`; error copy states consequences; mono only for copyable values; counts use tabular-nums.

@@ -27,8 +27,11 @@ visible control was clicked with real pointer events and answered. vitest green 
    (`npm run build` in `crates/swiss-panel/panel`). Read the house idiom before writing
    wiring: one existing view that already does the thing is the spec — sheets ->
    `panel/src/add-sheet.ts` + `panel/src/views/terminal-settings.ts`
-   (`$("sheet").hidden = false` BEFORE innerHTML; `closeSheet` comes from add-sheet);
-   empty states -> `util.ts emptyHtml`; icons -> the `i-*` sprite via `icon(name)`.
+   (`$("sheet").hidden = false` BEFORE `fill(...)` paints the body — an innerHTML
+   write is an eslint error now; `closeSheet` comes from add-sheet.ts);
+   empty states -> `util.ts emptyNode` (its action button answers `[data-empty-action]`);
+   icons -> the `i-*` sprite via `iconNode(name)` from util.ts; markup -> `h(tag, props,
+   ...kids)` from h.ts, `fill(host, ...kids)` to repaint a container.
    Never invent a parallel mechanism.
 2. **`npm run check` in `crates/swiss-panel/panel`** (typecheck ×2 + lint + emit
    freshness + vitest). Catches syntax, link-time import errors and pure-function

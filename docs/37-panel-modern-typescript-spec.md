@@ -224,15 +224,17 @@ md；发射产物的 diff 只在 73 行的空白上——这是 D9 撤销前最�
    每层导航能到、每个 seg 切换、每个 sheet 可见地打开、每个主操作发出请求并反映结果、空状态渲染。
 
 **验收：** 每个视图一次提交，提交说明写清"走查了哪些控件、哪些没走查及原因"；`innerHTML` 与内联
-handler 的总数逐阶段记账（§11）；`no-restricted-properties` 对 `innerHTML` 的规则在最后一个视图
-落地时转 error（白名单列静态骨架位置）。
+handler 的总数逐阶段记账（§11）；对 `innerHTML` 写入的 lint 禁令在最后一个视图落地时转 error——
+落地时白名单为零：收尾把最后的静态骨架位置也转了构造，`no-restricted-syntax` 选中任意
+`.innerHTML =` 赋值，无需豁免（§9 表）。
 
 ## 8. R6 — 门禁、文档、ADR（含 docs/36 欠下的 T5）
 
 ### 8.1 门禁接入
 
-- `scripts/deploy.ps1`：cargo test 之前加一个 panel phase（在 `crates/swiss-panel/panel` 下跑
-  `npm run check`，含 `build:check` 的新鲜度与 `lint`）；失败即停，与其他 phase 同款。
+- `scripts/deploy.ps1`：clippy 之后、停机重建之前加一个 panel phase（在 `crates/swiss-panel/panel` 下跑
+  `npm run check`，含 `build:check` 的新鲜度与 `lint`）；失败即停，此时守护进程尚未被触碰——这是
+  落地时确认的位置（先于 cargo test 的初稿位置，会在 Rust 门禁失败时白跑一整套 node 门禁）。
 - `.github/workflows/build.yml`：新 job `panel`（`ubuntu-latest`、`actions/setup-node@v4` node 24、
   `npm ci`、`npm run check`）；五个 Rust job 不动、不依赖它。
 - `.agents/rules/panel-proof-of-life.md`：第 3 步加"`npm run build` 之后再 `touch
@@ -262,9 +264,9 @@ PR 上跑绿一次；`panel-tests` 这个词在 AGENTS.md / docs / .agents 下�
 | `no-var`、`prefer-const` | R2 | M6 |
 | `@typescript-eslint/no-non-null-assertion` | R2 末（带白名单） | M7 |
 | `@typescript-eslint/consistent-type-imports` | R3 | M8 |
-| `@typescript-eslint/no-unnecessary-condition` | R3 | 索引签名补齐后，死分支现形 |
+| `@typescript-eslint/no-unnecessary-condition` | R3 起 warn（未转 error） | 索引签名补齐后，死分支现形；原计划随 R4 转 error，R4 落地后仍余 496 处（2026-10-24 计数），存量即燃尽清单，清零当日转 error |
 | `no-restricted-imports`：禁止从 `util.js` 导入可变 state | R4 | M11 |
-| `no-restricted-properties`：`innerHTML`（白名单静态骨架） | R5 | M12 |
+| `no-restricted-syntax`：选中任意 `.innerHTML =` 赋值（零豁免，收尾后全库无命中） | R5 | M12 |
 | `@typescript-eslint/no-floating-promises` | R0 起 warn，R3 转 error | 面板里大量 `apiJson()` 不 await 的位置 |
 
 ## 10. 验收与门禁命令

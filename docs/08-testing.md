@@ -235,9 +235,11 @@ The panel is authored in TypeScript (ADR-024, docs/36): sources in
 Its acceptance suite lives in `crates/swiss-panel/panel/test/` and runs behind ONE command:
 `npm run check` from `crates/swiss-panel/panel/`.
 
-- `tsc` typecheck of the sources AND of the emit (they must agree - the emit is committed),
-- eslint with the house ratchet (docs/37 section 9: no-var, the non-null whitelist, the
-  innerHTML whitelist),
+- `tsc` typecheck of the sources and of the test tree (the two tsconfigs; the emit is
+  never typechecked - it is blanked from the same sources, so its freshness is the next
+  bullet's job, not the compiler's),
+- eslint with the house ratchet (docs/37 section 9: no-var, the non-null whitelist,
+  and a `no-restricted-syntax` row that fails ANY `.innerHTML =` write - no allowlist),
 - `build:check` emit freshness (a stale committed emit fails the gate),
 - the vitest suite (every admin-*.test.ts file; the suites carry hand-rolled DOMs that follow
   the view layer's node-building idioms, docs/37 section 7).

@@ -21,58 +21,71 @@ and `js/vendor/**` have no TypeScript twin and are still edited in place.
 | --- | --- | --- |
 | `index.html` | 114 | The only HTML shell: the theme pre-paint script, the SVG icon sprite, the rail/context-bar/shell skeleton, the shell-owned app zone, `#sheet`/`#toast` mounts, the module entry |
 | `logo.svg` | 6 | favicon and brand mark |
-| `js/main.js` | 195 | Entry: boot, the three-state theme, 6 s polling, keyboard, panel-version self-reload |
-| `js/util.js` | 162 | The `state` singleton, the `api()`/`apiJson()` fetch wrappers, `esc/icon/emptyHtml/dotTitle/whenLabel/toast`, localStorage collapse persistence |
-| `js/page-registry.js` | 272 | Navigation rendering and page lifecycle (`initPages/navigatePage/pollPage/refreshPage`), the legacy page table, synthetic pages |
-| `js/page-core.js` | 76 | Page-bar paint primitives shared by page-registry (and its tests) |
-| `js/menu.js` | 116 | `patchSidebar` (structure signature + in-place patch), `popupMenu`, row dragging `wireDrag`, `tooltipOf` |
-| `js/polling.js` | 260 | Data loaders: `loadList/loadMemory/loadTunnels/loadJobs`, `refreshMemoryNow` (the chip's memory-only click) and `refreshNow` (the r key), the row templates `jobRowHtml/ruleRowHtml/connRowHtml`, chip copy |
-| `js/immersive.js` | 81 | Shell-owned Focus/full-page control: folds the rail, keeps an in-flow bar for ordinary pages, docks the app zone into an opt-in workspace slot, restores it after pane replacement, and dispatches resize; never requests document fullscreen |
-| `js/dropdown.js` | 190 | Panel-wide custom dropdown (a MutationObserver auto-takes-over every `<select>`) |
-| `js/fields.js` | 175 | The form-field schema for the 6 MCP types (`TYPE_FIELDS/TYPE_LABELS`) plus rendering/reading |
-| `js/add-sheet.js` | 139 | Add MCP sheet, group-name sheet, `.mcp.json` import |
-| `js/connect.js` | 128 | Connection-command generation (claude/codex/.mcp.json), token secret resolution, `copyText` clipboard + fallback |
-| `js/detail.js` | 358 | The detail pane: header, actions, the tabs of the selected MCP |
-| `js/run.js` | 138 | Run tab: the argument form generated from the tool's inputSchema (`argFieldsHtml/readRunArgs`) |
-| `js/run-history.js` | 592 | Run history table + the history popover |
-| `js/sidebar.js` | 180 | The #mcps sidebar rows (the MCP list — the page's main content) |
-| `js/groups.js` | 405 | The one groups component every list renders through (docs/20) |
-| `js/group-logic.js` | 67 | Pure grouping rules behind groups.js, unit-tested |
-| `js/jobs.js` | 906 | The Jobs page logic |
-| `js/jobs-v2.js` | 166 | Pure functions: `triggerSummary/historyMeta/v2ToForm/formToV2/defTemplate`, env-line parsing |
-| `js/logs.js` | 202 | The logs viewer |
-| `js/traffic.js` | 225 | The Traffic page rendering |
-| `js/tunnels.js` | 365 | Tunnels page logic |
-| `js/tunnel-sheets.js` | 276 | The tunnel add/edit sheets |
-| `js/terminal-core.js` | 307 | Pure terminal logic: fit math, paste rules, resize frames (unit-tested) |
-| `js/term-overlay.js` | 39 | The terminal overlay flashes (cols×rows, latency) |
-| `js/data-view.js` | 771 | Data page controller (docs/21/22) |
-| `js/data-browsers.js` | 610 | Connection/table browsing |
-| `js/data-grid.js` | 1089 | The grid renderer |
-| `js/data-cell.js` | 204 | Cell editing |
-| `js/data-sql.js` | 613 | The SQL console |
-| `js/data-ddl.js` | 478 | DDL (create/alter) sheets |
-| `js/data-csv.js` | 463 | CSV import/export |
-| `js/data-edit.js` | 199 | Buffered edits |
-| `js/data-filters.js` | 186 | Column filters |
-| `js/data-form.js` | 216 | Form view |
-| `js/data-structure.js` | 244 | Structure inspection |
-| `js/data-suggest.js` | 164 | AI suggest wiring |
-| `js/data-activity.js` | 163 | Activity feed |
-| `js/data-value.js` | 127 | Value sheet |
-| `js/views/mcps.js` | 16 | Thin page entry: mount/refresh/unmount |
-| `js/views/data.js` | 17 | Thin page entry (+ hasPendingChanges/canLeave guard) |
-| `js/views/jobs.js` | 21 | Thin page entry |
-| `js/views/traffic.js` | 8 | Thin page entry |
-| `js/views/tunnels.js` | 7 | Thin page entry |
-| `js/views/plugins.js` | 177 | The Plugins page |
-| `js/views/secrets.js` | 239 | The Secrets page (docs/19) |
-| `js/views/tokens.js` | 279 | The Tokens page |
-| `js/views/terminal.js` | 1168 | THE terminal page: DOM/WebSocket wiring, xterm mount, fit, sessions, and the optional shell-control dock |
-| `js/views/terminal-settings.js` | 77 | The terminal settings sheet |
+| `js/main.js` | 218 | Entry: boot, the three-state theme, 6 s polling, keyboard, panel-version self-reload |
+| `js/h.js` | 167 | The node builder of docs/37 R5: `h(tag, props, ...kids)` (props are DOM properties, `data:`/`aria:` bags go through setAttribute), `fill(host, ...kids)`, `frag(...)` |
+| `js/util.js` | 202 | The `api()`/`apiJson()` fetch wrappers, `esc/iconNode/emptyNode/typeTagNode/dotTitle/whenLabel/toast`, localStorage collapse persistence (the mutable `state` bag left with R4's slices) |
+| `js/ui-state.js` | 78 | R4 state slice: the shell/UI-owned fields |
+| `js/mcp-state.js` | 106 | R4 state slice: MCP rows/detail/groups |
+| `js/db-state.js` | 155 | R4 state slice: the Data page's `dbView()` record (mounted/unmounted lifecycle) |
+| `js/job-state.js` | 100 | R4 state slice: jobs definitions and runs |
+| `js/tunnel-state.js` | 91 | R4 state slice: tunnels connections/rules |
+| `js/page-registry.js` | 298 | Navigation rendering and page lifecycle (`initPages/navigatePage/pollPage/refreshPage`), the legacy page table, synthetic pages |
+| `js/page-core.js` | 94 | Page-bar paint primitives shared by page-registry (and its tests) |
+| `js/pane.js` | 315 | The detail pane's chrome and ONE delegated dispatch per event type on #pane (docs/37 R5): head, seg bar, empty state, the ... menu |
+| `js/menu.js` | 181 | `patchSidebar` (structure signature + in-place patch), `popupMenu`, row dragging `wireDrag`, `tooltipOf` |
+| `js/plugin-palette.js` | 206 | The "All plugins" overlay: search, pin, jump |
+| `js/polling.js` | 320 | Data loaders: `loadList/loadMemory/loadTunnels/loadJobs`, `refreshMemoryNow` (the chip's memory-only click) and `refreshNow` (the r key), the row builders `jobRowNode/ruleRowNode/connRowNode`, chip copy |
+| `js/immersive.js` | 98 | Shell-owned Focus/full-page control: folds the rail, keeps an in-flow bar for ordinary pages, docks the app zone into an opt-in workspace slot, restores it after pane replacement, and dispatches resize; never requests document fullscreen |
+| `js/dropdown.js` | 225 | Panel-wide custom dropdown (a MutationObserver auto-takes-over every `<select>`) |
+| `js/fields.js` | 355 | The form-field schema for the 6 MCP types (`TYPE_FIELDS/TYPE_LABELS`) plus rendering/reading |
+| `js/add-sheet.js` | 171 | Add MCP sheet, group-name sheet, `.mcp.json` import |
+| `js/connect.js` | 157 | Connection-command generation (claude/codex/.mcp.json), token secret resolution, `copyText` clipboard + fallback |
+| `js/detail.js` | 726 | The detail pane: header, actions, the tabs of the selected MCP |
+| `js/run.js` | 165 | Run tab: the argument form generated from the tool's inputSchema (`argFieldsNode/readRunArgs`) |
+| `js/run-history.js` | 877 | Run history table + the history popover |
+| `js/sidebar.js` | 223 | The #mcps sidebar rows (the MCP list — the page's main content) |
+| `js/groups.js` | 468 | The one groups component every list renders through (docs/20) |
+| `js/group-logic.js` | 94 | Pure grouping rules behind groups.js, unit-tested |
+| `js/jobs.js` | 946 | The Jobs page logic |
+| `js/jobs-v2.js` | 184 | Pure functions: `triggerSummary/historyMeta/v2ToForm/formToV2/defTemplate`, env-line parsing |
+| `js/logs.js` | 526 | The logs viewer |
+| `js/traffic.js` | 295 | The Traffic page rendering |
+| `js/tunnels.js` | 438 | Tunnels page logic |
+| `js/tunnel-sheets.js` | 405 | The tunnel add/edit sheets |
+| `js/terminal-core.js` | 324 | Pure terminal logic: fit math, paste rules, resize frames (unit-tested) |
+| `js/term-overlay.js` | 55 | The terminal overlay flashes (cols×rows, latency) |
+| `js/data-view.js` | 911 | Data page controller (docs/21/22) |
+| `js/data-browsers.js` | 740 | Connection/table browsing |
+| `js/data-grid.js` | 1233 | The grid renderer |
+| `js/data-cell.js` | 223 | Cell editing |
+| `js/data-sql.js` | 665 | The SQL console |
+| `js/data-ddl.js` | 510 | DDL (create/alter) sheets |
+| `js/data-csv.js` | 493 | CSV import/export |
+| `js/data-edit.js` | 237 | Buffered edits |
+| `js/data-filters.js` | 282 | Column filters |
+| `js/data-form.js` | 323 | Form view |
+| `js/data-structure.js` | 296 | Structure inspection |
+| `js/data-suggest.js` | 182 | AI suggest wiring |
+| `js/data-activity.js` | 204 | Activity feed |
+| `js/data-value.js` | 153 | Value sheet |
+| `js/views/mcps.js` | 39 | Thin page entry: mount/refresh/unmount |
+| `js/views/data.js` | 40 | Thin page entry (+ hasPendingChanges/canLeave guard) |
+| `js/views/jobs.js` | 41 | Thin page entry |
+| `js/views/traffic.js` | 23 | Thin page entry |
+| `js/views/tunnels.js` | 27 | Thin page entry |
+| `js/views/tunnel-forwards.js` | 27 | Thin page entry (the forwards seg) |
+| `js/views/plugins.js` | 263 | The Plugins page |
+| `js/views/secrets.js` | 337 | The Secrets page (docs/19) |
+| `js/views/tokens.js` | 368 | The Tokens page |
+| `js/views/remote.js` | 363 | The Remote page: targets table and sheets (docs/30) |
+| `js/views/remote-runs.js` | 386 | The Remote Runs page: every run with its output |
+| `js/views/system.js` | 100 | The System page (host diagnostics) |
+| `js/views/terminal.js` | 1209 | THE terminal page: DOM/WebSocket wiring, xterm mount, fit, sessions, and the optional shell-control dock |
+| `js/views/terminal-settings.js` | 105 | The terminal settings sheet |
 | `styles/base.css` | 503 | Shell, rail/context bar/sidebar, tokens, buttons, chips, Focus and docked-full-page rules |
 | `styles/views.css` | 917 | Per-view styles (data grid, Terminal toolbar/dock, jobs, ...) |
 | `js/vendor/*` | — | Vendored xterm.js (+ addons) and cronstrue; pinned, never npm |
+| `panel/src/types/*.d.ts` | — | Declaration-only (no emit): `api.d.ts` (906) the wire shapes, `state.d.ts` (301), `dom.d.ts` (223), `runs.d.ts` (157), `terminal-view.d.ts` (106), `vendor.d.ts` (105) |
 
 ## Per-view notes
 

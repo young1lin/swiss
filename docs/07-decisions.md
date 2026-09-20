@@ -715,7 +715,8 @@ emit-freshness + vitest), per-file test coverage for every rewritten module, and
 proof-of-life walk on 19998. The machine gate that replaces byte-equality is the eslint
 ratchet (docs/37 §9): rules turn to errors stage by stage — no-var, prefer-const,
 no-non-null-assertion (with a shrinking whitelist), consistent-type-imports, and
-no-restricted-properties on innerHTML with a static-skeleton whitelist.
+a no-restricted-syntax row that fails ANY .innerHTML = write — zero allowlist: the closeout
+converted the last static skeletons too, so none were left to whitelist.
 
 Options considered — A) keep D9 (rejected: the §0.2 bills only grow with every edit);
 B) revoke with no replacement gate (rejected: house style forks per-author);
