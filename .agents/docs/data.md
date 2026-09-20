@@ -104,7 +104,7 @@ The panel assets are edited directly in this repo (crates/swiss-panel/src/admin_
 | crates/swiss-mcp/src/adapters/sql.rs | Shared statement governance: is_read_only_sql/assert_single_statement/with_row_limit/clamp_row_limit/limit_report |
 | src/builtin.rs | DataPlugin/DataInstance and McpPlugin registration/stop choreography (the composition table) |
 | src/app.rs / src/server.rs | Route mounting, catalog OnceLock, capability probes (composition root) |
-| crates/swiss-panel/src/admin_assets/js/data-*.js, views/data.js | The Data page panel itself (byte-for-byte copy; it is the spec for the API) |
+| crates/swiss-panel/panel/src/data-*.ts, data-view.ts (emit committed under admin_assets/js, ADR-024) | The Data page panel itself — it is the spec for the API |
 | docs/09 (§3 Data and MCP), docs/12 (W3) | Architecture contract and implementation spec |
 
 ## Style and Design Observations
