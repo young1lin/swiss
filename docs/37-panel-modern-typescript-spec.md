@@ -335,8 +335,9 @@ history.rs `sanitized_input`）、`TerminalPluginConfig`（plugins/terminal.rs c
 | # | 位置 | 面板以为 | Rust 实际 | 后果 | 状态 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `jobs-v2.ts defTemplate` / `jobs.ts` firstRun 下拉 | `firstRun: "aligned"` | `enum_str` 只认 `after-interval`/`immediate`（def.rs:845，docs/11 §3.3） | Advanced sheet 用默认 interval 触发器新建必 400（实测 `must be one of: "after-interval", "immediate", got "aligned"`） | **本轮已修**——类型收成闭合联合后编译器自己揪出来的，纯面板侧；下拉改从 `JOB_*` 常量渲染，`legalOf` 收窄；用例 `the definition enums match def.rs` |
-| 2 | `ApiDbActivityRow.own` | `boolean` | pg 发 boolean；mysql 的 `ID = CONNECTION_ID()` 经网格 `query()` 的文本化变成 `"0"`/`"1"` | `"0"` 为真 → mysql 的 Activity 页 **每一行**都标 "this panel"（19998 实测 298/298） | 未修；根因在 `mysql_browser.rs activity()` 复用文本化查询，应在那里把 own 转 bool |
-| 3 | `ApiDbActivityRow.seconds` | `number` | pg 与 mysql **都**发字符串（bigint/int 被同一文本化） | 无可见后果（`dbActivityDuration` 做了 `Number()`），但类型说谎 | 未修；与 #2 同一处根因 |
+| 2 | `ApiDbActivityRow.own` | `boolean` | pg 发 boolean；mysql 的 `ID = CONNECTION_ID()` 经网格 `query()` 的文本化变成 `"0"`/`"1"` | `"0"` 为真 → mysql 的 Activity 页 **每一行**都标 "this panel"（19998 实测 298/298） | **两侧同改，已修**（合并前的独立提交）：`dbbrowser.rs activity_row()` 把 pid/seconds 转整数、own 转 bool，两个 browser 的 `activity()` 都经它；面板类型收回 `boolean`。根因是 `exact_int64` 按 docs/22 W2.4 故意把 BIGINT 文本化，网格对、Activity 不对 |
+| 3 | `ApiDbActivityRow.seconds` | `number` | pg 与 mysql **都**发字符串（bigint/int 被同一文本化） | 无可见后果（`dbActivityDuration` 做了 `Number()`），但类型说谎 | 已修，同 #2；`dbActivityDuration` 签名收回 `number` |
+| 3b | `ApiDbActivityRow.pid` | `number` | mysql 的 processlist `ID`（BIGINT UNSIGNED）同样到面板是 `"88"` | 面板把它原样 POST 回 `activity-kill`，路由 `as_i64` 拒绝 → mysql 上 Cancel/Terminate 必 400（对账 #2 时补查出来的） | 已修，同 #2 |
 | 4 | `ApiMcpDetails.tunnels` | `string[]` | `tunnels_for_mcp` 的对象行 | 无可见后果（`McpDetail.tunnels` 原是 `unknown[]` + 读处 cast） | 本轮类型已改为 `ApiMcpTunnelDep[]` |
 | 5 | `McpRevisionRow.at` | `string?` | `RevisionRec.at: i64` epoch 毫秒 | 无可见后果（`new Date(number)` 合法） | 本轮类型已改为 `number` |
 | 6 | `RemoteRunInput.path` | cat/write 读 `input.path` | 五组字段表里没有 `path`，cat/write 用 `remote` | 无可见后果（`|| input.remote` 兜底一直在生效） | 本轮已删掉死读取 |
