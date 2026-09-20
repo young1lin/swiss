@@ -57,7 +57,7 @@ describe("group logic", () => {
 
   it("names the sink group in the delete confirm - the first that remains, pluralising", () => {
     expect(deleteConfirmMsg("Docs", ["default", "Docs", "Search"], 1, "MCP")).toBe(
-      "Delete group 'Docs'?\n\nIts 1 MCP move to 'default'. Nothing is removed.",
+      "Delete group 'Docs'?\n\nIts 1 MCP moves to 'default'. Nothing is removed.",
     );
     expect(deleteConfirmMsg("default", ["default", "Docs"], 3, "row")).toBe(
       "Delete group 'default'?\n\nIts 3 rows move to 'Docs'. Nothing is removed.",
@@ -65,7 +65,9 @@ describe("group logic", () => {
   });
 
   it("builds create titles that name where the new thing goes", () => {
-    expect(addTitle("Add an", "MCP", "learn")).toBe("Add an MCP to learn");
+    // One sentence key since docs/38 L2: the old verb+noun+group concatenation could not
+    // translate. The zh dictionary carries the other direction (see i18n-shell-zh.test.ts).
+    expect(addTitle("MCP", "learn")).toBe("New MCP in learn");
   });
 
   it("resolves a fresh row's group: the last used while it lives, else the first slot", () => {

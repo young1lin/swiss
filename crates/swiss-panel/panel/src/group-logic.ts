@@ -25,6 +25,7 @@
    ================================================================================================ */
 import type { GroupSlice, GroupedRow } from "./types/dom.js";
 import { DEFAULT_GROUP } from "./util.js";
+import { tr, trn } from "./i18n.js";
 
 /* --- membership --------------------------------------------------------------------------------- */
 
@@ -53,15 +54,21 @@ function slice<Row>(rows: Row[], names: string[], fn: (row: Row) => string): Gro
  *  the server's sink. Tunnels once hard-coded 'default' here, which stayed wrong after the
  *  first group was renamed. Pure so the wording is pinned by tests, not by typing. */
 function deleteConfirmMsg(name: string, names: string[], count: number, noun: string): string {
-  const sink = names.find((g) => { return g !== name; });
-  return "Delete group '" + name + "'?\n\nIts " + count + " " + noun + (count === 1 ? "" : "s") +
-    " move to '" + sink + "'. Nothing is removed.";
+  // The caller guarantees at least one OTHER group exists (delete is disabled on the last
+  // one); the fallback keeps the type honest rather than asserting it.
+  const sink = names.find((g) => { return g !== name; }) || name;
+  return trn(count,
+    "Delete group '{name}'?\n\nIts {n} {noun} moves to '{sink}'. Nothing is removed.",
+    "Delete group '{name}'?\n\nIts {n} {noun}s move to '{sink}'. Nothing is removed.",
+    { name, n: count, noun, sink });
 }
 
-/** A create title that says where the new thing goes ("Add an MCP to learn"). The group is
- *  part of the promise the + made; a sheet that opens unnamed breaks it. */
-function addTitle(verb: string, noun: string, group: string): string {
-  return verb + " " + noun + " to " + group;
+/** A create title that says where the new thing goes ("New MCP in learn"). The group is
+ *  part of the promise the + made; a sheet that opens unnamed breaks it. The old
+ *  verb+noun composition ("Add an" + "MCP" + "to learn") could not survive translation
+ *  (docs/38 L2: no concatenation in visible copy), so the sentence is one key. */
+function addTitle(noun: string, group: string): string {
+  return tr("New {noun} in {group}", { noun, group });
 }
 
 /* --- the empty line ------------------------------------------------------------------------------ */
@@ -71,7 +78,7 @@ function addTitle(verb: string, noun: string, group: string): string {
  *  stays two words plus at most the drop affordance. Pure so the wording is pinned by tests
  *  like the delete confirm's is. */
 function emptyLineText(canDrop: boolean): string {
-  return canDrop ? "No items — drop here or press +" : "No items";
+  return canDrop ? tr("No items — drop here or press +") : tr("No items");
 }
 
 /* --- the last-used group ------------------------------------------------------------------------- */

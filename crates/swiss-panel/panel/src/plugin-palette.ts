@@ -27,6 +27,7 @@
    ================================================================================================ */
 import type { PageGroup, PaletteGroup, PaletteSection } from "./types/dom.js";
 import { el, iconNode } from "./util.js";
+import { tr } from "./i18n.js";
 import { fill } from "./h.js";
 
 const PIN_KEY = "swiss.rail.pinned";
@@ -91,8 +92,8 @@ function paletteRows(groups: PaletteGroup[], pins: string[], query: string): Pal
   const rest: PaletteGroup[] = [];
   groups.forEach((g) => { (pins.includes(g.id) ? pinned : rest).push(g); });
   return [
-    { section: "Pinned", groups: pinned.filter(match) },
-    { section: "All plugins", groups: rest.filter(match) },
+    { section: tr("Pinned"), groups: pinned.filter(match) },
+    { section: tr("All plugins"), groups: rest.filter(match) },
   ].filter((s) => { return s.groups.length; });
 }
 
@@ -109,13 +110,13 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
   const back = el("div", "palette-back");
   const card = el("div", "palette");
   card.setAttribute("role", "dialog");
-  card.setAttribute("aria-label", "Plugins");
+  card.setAttribute("aria-label", tr("Plugins"));
   back.appendChild(card);
 
   const input = el("input");
   input.type = "search";
-  input.placeholder = "Search plugins…";
-  input.setAttribute("aria-label", "Search plugins");
+  input.placeholder = tr("Search plugins…");
+  input.setAttribute("aria-label", tr("Search plugins"));
   card.appendChild(input);
 
   const list = el("div", "palette-list");
@@ -126,10 +127,10 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
     b.type = "button";
     b.appendChild(glyphNode(g));
     const name = el("span", "pal-name");
-    name.textContent = g.label + (g.off ? " " : "");
-    if (g.off) name.appendChild(el("span", "pal-off", "· off"));
+    name.textContent = tr(g.label) + (g.off ? " " : "");
+    if (g.off) name.appendChild(el("span", "pal-off", tr("· off")));
     b.appendChild(name);
-    b.title = g.off ? (g.offDetail || "Plugin disabled") : "Open " + g.label;
+    b.title = g.off ? (g.offDetail || tr("Plugin disabled")) : tr("Open {label}", { label: tr(g.label) });
     b.onclick = (ev) => { ev.stopPropagation(); closePluginPalette(); void go(g.pages[0].id); };
     return b;
   }
@@ -138,10 +139,10 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
     const pinned = pins.includes(g.id);
     const p = el("button", "pal-pin");
     p.type = "button";
-    p.appendChild(iconNode("star", (pinned ? "Unpin " : "Pin ") + g.label));
+    p.appendChild(iconNode("star", pinned ? tr("Unpin {label}", { label: tr(g.label) }) : tr("Pin {label}", { label: tr(g.label) })));
     p.className = "pal-pin" + (pinned ? " on" : "");
     p.setAttribute("aria-pressed", String(pinned));
-    p.title = pinned ? "Remove from the rail" : "Pin to the rail";
+    p.title = pinned ? tr("Remove from the rail") : tr("Pin to the rail");
     p.onclick = (ev) => {
       ev.stopPropagation();
       pins = pins.includes(g.id) ? pins.filter((x) => { return x !== g.id; }) : pins.concat([g.id]);
@@ -163,7 +164,7 @@ function openPluginPalette(groups: PaletteGroup[], go: (id: string) => void | Pr
         list.appendChild(holder);
       });
     });
-    if (!list.children.length) list.appendChild(el("div", "pal-none", "No plugins match."));
+    if (!list.children.length) list.appendChild(el("div", "pal-none", tr("No plugins match.")));
   }
 
   input.oninput = render;

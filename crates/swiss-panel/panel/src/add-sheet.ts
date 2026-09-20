@@ -21,6 +21,7 @@ import { openDetail, runConnTest } from "./detail.js";
 import { TESTABLE_TYPES, TYPE_FIELDS, TYPE_LABELS, fieldsNode, readFields, translateOauth, translatePg } from "./fields.js";
 import { loadList } from "./polling.js";
 import { addTitle, groupFieldNode, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
+import { tr } from "./i18n.js";
 import { newGroup } from "./sidebar.js";
 import { addGroupTarget, setAddGroupTarget } from "./ui-state.js";
 import { mcpGroups, selectedMcp, setSelectedMcp } from "./mcp-state.js";
@@ -38,29 +39,29 @@ function openSheet(group: string | null): void {
   // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Add an MCP" } },
-      h("div", { class: "sheet-head" }, h("h2", { id: "a-title" }, addTitle("Add an", "MCP", initial))),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Add an MCP") } },
+      h("div", { class: "sheet-head" }, h("h2", { id: "a-title" }, addTitle(tr("MCP"), initial))),
       h("div", { class: "sheet-body" },
         h("div", { class: "two" },
           h("label", { class: "field" },
-            h("span", null, "Name"),
+            h("span", null, tr("Name")),
             h("input", { id: "a-name", placeholder: "git-mcp", autocomplete: "off" })),
           h("label", { class: "field" },
-            h("span", null, "Type"),
+            h("span", null, tr("Type")),
             h("select", { id: "a-type" }, types.map((t) => {
-              return h("option", { value: t }, TYPE_LABELS[t] || t);
+              return h("option", { value: t }, tr(TYPE_LABELS[t] || t));
             })))),
         groupFieldNode(names, initial),
         h("div", { id: "a-fields" }),
-        h("label", { class: "check" }, h("input", { type: "checkbox", id: "a-start", checked: true }), "Start it now"),
+        h("label", { class: "check" }, h("input", { type: "checkbox", id: "a-start", checked: true }), tr("Start it now")),
         h("div", { class: "hint", id: "a-test-out", hidden: true })),
       h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "a-import" }, "Import .mcp.json"),
+        h("button", { class: "btn", id: "a-import" }, tr("Import .mcp.json")),
         h("input", { id: "a-file", type: "file", accept: ".json,application/json", hidden: true }),
         h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "a-cancel" }, "Cancel"),
-        h("button", { class: "btn", id: "a-test", hidden: true }, "Test connection"),
-        h("button", { class: "btn primary", id: "a-save" }, "Add"))));
+        h("button", { class: "btn", id: "a-cancel" }, tr("Cancel")),
+        h("button", { class: "btn", id: "a-test", hidden: true }, tr("Test connection")),
+        h("button", { class: "btn primary", id: "a-save" }, tr("Add")))));
   const paint = (): void => {
     fill($("a-fields"), fieldsNode($<HTMLSelectElement>("a-type").value, {}, "a-"));
     // The test button exists only for the types that have something to test.
@@ -70,7 +71,7 @@ function openSheet(group: string | null): void {
   paint();
   $("a-type").onchange = paint;
   $("g-sel").onchange = () => {
-    $("a-title").textContent = addTitle("Add an", "MCP", $<HTMLSelectElement>("g-sel").value);
+    $("a-title").textContent = addTitle(tr("MCP"), $<HTMLSelectElement>("g-sel").value);
   };
   $("a-cancel").onclick = closeSheet;
   $("a-test").onclick = () => { void runConnTest("a-"); };
@@ -92,19 +93,19 @@ function openGroupSheet(def: string | null, submit: (name: string) => Promise<bo
   // The house sheet idiom: visible BEFORE the body is painted.
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: editing ? "Rename group" : "New group" } },
-      h("div", { class: "sheet-head" }, h("h2", null, editing ? "Rename group" : "New group")),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: editing ? tr("Rename group") : tr("New group") } },
+      h("div", { class: "sheet-head" }, h("h2", null, editing ? tr("Rename group") : tr("New group"))),
       h("div", { class: "sheet-body" },
         h("label", { class: "field" },
-          h("span", null, "Name"),
+          h("span", null, tr("Name")),
           h("input", { id: "g-name", value: def || "", placeholder: "prod", autocomplete: "off" }))),
       h("div", { class: "sheet-foot" },
         h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "g-cancel" }, "Cancel"),
-        h("button", { class: "btn primary", id: "g-save" }, editing ? "Rename" : "Create"))));
+        h("button", { class: "btn", id: "g-cancel" }, tr("Cancel")),
+        h("button", { class: "btn primary", id: "g-save" }, editing ? tr("Rename") : tr("Create")))));
   const save = async () => {
     const name = $<HTMLInputElement>("g-name").value.trim();
-    if (!name) { toast("Name is required", true); return; }
+    if (!name) { toast(tr("Name is required"), true); return; }
     if (name === def) { closeSheet(); return; } // a rename that changed nothing is a cancel
     if (await submit(name)) closeSheet();
   };
@@ -120,15 +121,15 @@ async function submitImport(input: HTMLInputElement): Promise<void> {
   const f = input && input.files && input.files[0];
   if (!f) return;
   let text;
-  try { text = await f.text(); } catch (e) { toast("Could not read file", true); return; }
+  try { text = await f.text(); } catch (e) { toast(tr("Could not read file"), true); return; }
   let json;
-  try { json = JSON.parse(text); } catch (e) { toast("Not valid JSON", true); return; }
+  try { json = JSON.parse(text); } catch (e) { toast(tr("Not valid JSON"), true); return; }
   const j = await apiJson<ApiMcpDefsImportResponse>("/api/mcpdefs/import", { method: "POST", body: JSON.stringify(json) });
   if (!j) return;
   closeSheet();
   const n = (j.imported || []).length;
   const s = (j.skipped || []).length;
-  toast("Imported " + n + (s ? ", skipped " + s : ""));
+  toast(s ? tr("Imported {n}, skipped {s}", { n, s }) : tr("Imported {n}", { n }));
   if (j.imported && j.imported[0]) setSelectedMcp(j.imported[0].name);
   await loadList();
   const landed = selectedMcp();
@@ -145,15 +146,15 @@ async function submitAdd(): Promise<void> {
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body); // the auth checkbox is the def's auth string (docs/24 D1)
   translatePg(type, body); // docs/30: the pg form's pieces become one url
-  if (!body.name) { toast("Name is required", true); return; }
-  if (type === "proc" && !body.command) { toast("Command is required", true); return; }
+  if (!body.name) { toast(tr("Name is required"), true); return; }
+  if (type === "proc" && !body.command) { toast(tr("Command is required"), true); return; }
   // The select wins over the + that opened the sheet — a changed pick is the pick.
   if ($("g-sel")) setAddGroupTarget($<HTMLSelectElement>("g-sel").value);
   const j = await apiJson<{ lifecycle?: string }>("/api/mcps", { method: "POST", body: JSON.stringify(body) });
   if (!j) return;
   rememberGroup("mcps", addGroupTarget()!);
   closeSheet();
-  toast("Added " + body.name + " (" + (j.lifecycle || "stopped") + ")");
+  toast(tr("Added {name} ({state})", { name: body.name, state: j.lifecycle || "stopped" }));
   setSelectedMcp(body.name);
   // Join the group whose + opened this sheet, BEFORE the list reload — so the row is drawn in its
   // group once, rather than hopping a moment later. `default` is a real group name now: joining it

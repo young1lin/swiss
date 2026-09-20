@@ -20,9 +20,10 @@ import { openSheet } from "./add-sheet.js";
 import { act, openDetail, removeMcp, renameMcp } from "./detail.js";
 import { patchSidebar, popupMenu } from "./menu.js";
 import { loadList } from "./polling.js";
-import { assignMember, groupOf as makeGroupOf, newGroupFlow, saveGroupNames, saveOrder, slice } from "./groups.js";
+import { addTitle, assignMember, groupOf as makeGroupOf, newGroupFlow, saveGroupNames, saveOrder, slice } from "./groups.js";
 import { draggingGroupName, draggingRow, foldMap, listFilter, setDraggingGroupName, setDraggingRow } from "./ui-state.js";
 import { mcpGroups, mcpRows, selectedMcp, setMcpGroups, setMcpRows } from "./mcp-state.js";
+import { tr } from "./i18n.js";
 
 /* --- rendering: sidebar ----------------------------------------------------------------------- */
 /** The MCP side of the mcps scope: row rendering, the flat order and the glue between the
@@ -152,10 +153,10 @@ function rowMenu(name: string, anchor: { left: number; top: number; bottom: numb
   const m = rowOf(name) || { name: name, lifecycle: "stopped" };
   const started = m.lifecycle === "started";
   popupMenu(anchor, [
-    { label: "Rename…", fn: () => { void renameMcp(name); } },
-    { label: started ? "Disable" : "Enable", fn: () => { void act(name, started ? "stop" : "start"); } },
+    { label: tr("Rename…"), fn: () => { void renameMcp(name); } },
+    { label: started ? tr("Disable") : tr("Enable"), fn: () => { void act(name, started ? "stop" : "start"); } },
     { sep: true },
-    { label: "Delete", danger: true, fn: () => { void removeMcp(name); } },
+    { label: tr("Delete"), danger: true, fn: () => { void removeMcp(name); } },
   ]);
 }
 
@@ -167,8 +168,8 @@ function sideCfg(): GroupCfg<ApiMcpRow> {
     density: "side",
     names: mcpGroups(),
     collapsed: foldMap(),
-    noun: "MCP",
-    addTitle: (g) => { return "Add an MCP to " + g; },
+    noun: tr("MCP"),
+    addTitle: (g) => { return addTitle(tr("MCP"), g); },
     onAdd: (g) => { openSheet(g); },
     reload: () => { return loadList(); },
     render: patchSidebar,

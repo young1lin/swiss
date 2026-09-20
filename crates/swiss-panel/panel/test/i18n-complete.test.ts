@@ -66,6 +66,16 @@ function collect(): Map<string, string> {
 
 const has = (o: Record<string, string>, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
 
+/* Keys whose Chinese IS their English (docs/38 L12 fallout): brand and product names,
+   unit-only counts, and separator-skeleton keys. An entry may sit in the dictionary
+   identical to its key only by being on this list, each with its reason — the
+   value === k rule stays a real gate for everything else.
+   - "MCP", "Token", "Base URL": product vocabulary, used as-is in Chinese UI copy.
+   - "{label} — {error}": an em-dash skeleton; Chinese keeps the same punctuation.
+   - "HTTP {n}", "{n} MB": units and codes stay Latin in Chinese technical copy.
+   - "· {user} · {auth}": a middle-dot metadata skeleton between data values. */
+const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}"]);
+
 describe("i18n dictionary completeness (docs/38 L10a)", () => {
   const used = collect();
 
@@ -81,7 +91,7 @@ describe("i18n dictionary completeness (docs/38 L10a)", () => {
   });
 
   it("no zh entry forgot to translate (value === key)", () => {
-    const copied = Object.entries(zh).filter(([k, v]) => v === k).map(([k]) => k);
+    const copied = Object.entries(zh).filter(([k, v]) => v === k && !PASSTHROUGH.has(k)).map(([k]) => k);
     expect(copied, "untranslated copy: …").toEqual([]);
   });
 });
