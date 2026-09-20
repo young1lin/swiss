@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { addTitle, deleteConfirmMsg, emptyLineText } from "../src/group-logic.js";
 import { fieldsNode } from "../src/fields.js";
 import { loadLocale, setLang, tr, trn } from "../src/i18n.js";
+import en from "../src/locales/en.js";
 
 describe("the shell in Chinese (stage I1)", () => {
   beforeEach(async () => {
@@ -82,6 +83,11 @@ describe("the shell in Chinese (stage I1)", () => {
   it("shows the type select's long labels in Chinese", async () => {
     const { TYPE_LABELS } = await import("../src/fields.js");
     expect(tr(TYPE_LABELS["zai-vision"])).toBe("zai-vision——智谱 GLM 视觉工具,原生内置(取代 Node 子进程)");
+  // run-history splits the adapter label on the separator the LOCALE carries (" — " in
+  // en, "——" in zh) to extract the kind tail, so both shapes must stay present in copy.
+  const enLabel = en[TYPE_LABELS["zai-vision"]];
+  expect(enLabel).toContain(" — ");
+  expect(tr(TYPE_LABELS["zai-vision"])).toContain("——");
   });
 });
 
@@ -334,6 +340,8 @@ describe("the I7 jobs machinery in Chinese", () => {
   it("speaks the schedule builder and its refusals", async () => {
     await loadLocale();
     expect(tr("jobs.everyNUnit", { n: 2, unit: tr("jobs.hours") })).toBe("每 2 小时。");
+    // The every-1 sentence singularises in English; zh carries the same word for both.
+    expect(tr("jobs.everyNUnit", { n: 1, unit: tr("jobs.hour") })).toBe("每 1 小时。");
     expect(tr("jobs.intervalNeedsNumberUnit", { unit: tr("jobs.minutes") })).toBe(
       "间隔需要 分钟 的数量(至少 1)",
     );

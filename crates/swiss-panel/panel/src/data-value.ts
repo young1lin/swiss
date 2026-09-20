@@ -117,7 +117,9 @@ function dbOpenValueSheet(column: string, value: unknown, where: string | null |
     const p = dbHexPreview(value as string, DB_VALUE_HEX_MAX);
     body = h("div", null,
       h("div", { class: "db-val-meta" },
-        p.bytes.toLocaleString() + " bytes" + (p.truncated ? " \u00b7 truncated" : "")),
+        p.truncated
+          ? tr("dataValue.nBytesTruncated", { n: p.bytes.toLocaleString() })
+          : tr("dataValue.nBytes", { n: p.bytes.toLocaleString() })),
       h("pre", { class: "db-val-pre" }, p.text));
   } else if (kind === "url") {
     const s = value as string;

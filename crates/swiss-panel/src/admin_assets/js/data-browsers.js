@@ -301,7 +301,7 @@ function dbRedisTtl(v                 )              {
   return h("button", {
     class: "db-ttl", type: "button",
     title: tr("dataBrowsers.changeTtlEnterApplies"), data: { rttl: "" },
-  }, v.ttl  < 0 ? "no expiry" : v.ttl  + "s");
+  }, tr(v.ttl  < 0 ? "dataBrowsers.noExpiry" : "dataBrowsers.ttlSeconds", { n: v.ttl  }));
 }
 
 /** The typed table — the row grid's own vocabulary (inserts first, db-dirty cells, db-del
@@ -378,7 +378,7 @@ function dbRedisRowCtl(deletable         , deleted         , addr               
   if (!deletable && !deleted) return td;
   td.appendChild(h("button", {
     class: "db-act", type: "button",
-    title: deleted ? "Undo this buffered delete" : "Buffer a delete — applied only on Commit",
+    title: tr(deleted ? "dataBrowsers.undoBufferedDelete" : "dataBrowsers.bufferDeleteCommit"),
     data: addr != null ? { raddr: addr } : { rins: String(insIdx) },
   }, deleted ? "↩" : "✕"));
   return td;
@@ -485,7 +485,7 @@ async function dbRedisSetString(ta                     )                {
     body: JSON.stringify({ commands: [["SET", d.redisKey , value]] }),
   });
   if (!j) return;
-  toast("Set " + d.redisKey);
+  toast(tr("dataBrowsers.setKey", { key: d.redisKey ?? "" }));
   void dbLoadRedisValue(d.redisKey );
 }
 
@@ -688,7 +688,7 @@ function dbRedisClick(t         , ev            )          {
       if (secs && !/^\d+$/.test(secs)) { toast(tr("dataBrowsers.ttlMustWholeNumber"), true); void dbLoadRedisValue(d.redisKey ); return; }
       const line = secs ? "EXPIRE " + d.redisKey + " " + secs : "PERSIST " + d.redisKey;
       void dbRedisCommand(line).then((j         )       => {
-        if (j) toast(secs ? "TTL set to " + secs + "s" : "TTL removed");
+        if (j) toast(tr(secs ? "dataBrowsers.ttlSetSeconds" : "dataBrowsers.ttlRemoved", { s: secs }));
         void dbLoadRedisValue(d.redisKey );
       });
     };

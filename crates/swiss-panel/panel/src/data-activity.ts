@@ -181,9 +181,9 @@ async function dbActivityKill(row: ApiDbActivityRow, mode: string): Promise<void
   });
   if (!j) return;
   if (j.result === false) {
-    toast("pid " + row.pid + " was already gone", true);
+    toast(tr("dataActivity.pidAlreadyGone", { pid: row.pid }), true);
   } else {
-    toast(mode === "cancel" ? "Cancelled pid " + row.pid : "Terminated pid " + row.pid);
+    toast(tr(mode === "cancel" ? "dataActivity.cancelledPid" : "dataActivity.terminatedPid", { pid: row.pid }));
   }
   void dbActivityLoad();
 }

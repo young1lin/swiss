@@ -10,7 +10,7 @@
 > `docs/37-panel-modern-typescript-spec.md` §7（`h()` 与事件委托——本文的重画靠它）、
 > `.agents/rules/panel-proof-of-life.md`、`AGENTS.md` 四条产品属性。合并 master 与部署是 owner 在
 > 收尾之后的一次决定，不走本分支。
-> §7 四个数的终值：剩余裸字面量 **0**、字典词条（迁移后 en **1,179** / zh **1,152**）、
+> §7 四个数的终值：剩余裸字面量 **0**、字典词条（迁移后 en **1,250** / zh **1,218**）、
 > `zh.js` + `en.js` 字节见 §7 迁移后小节。扫描闸（§5.1）以 vitest 零门落地于
 > `panel/test/i18n-ratchet.test.ts`（eslint 的 no-restricted-syntax 单严重度槽位被 R5 的
 > innerHTML error 占用，测试文件头记录了这条决定）。

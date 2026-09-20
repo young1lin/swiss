@@ -150,17 +150,19 @@ function rowNode(r                 , isLive         )              {
 function bodyNode(r                 , isLive         )         {
   if (isLive) {
     const l = live[r.runId];
+    // Hoisted so the comparison literals stay out of the h() children (i18n gate).
+    const cancellable = r.state === "running" || r.state === "queued";
     return frag(
       h("div", { class: "call-lbl rr-live-head" },
         h("span", null, tr("remoteRuns.liveOutput")),
-        r.state === "running" || r.state === "queued"
+        cancellable
           ? h("button", { class: "btn", data: { rcancel: r.runId } }, tr("remoteRuns.cancel"))
           : null),
       h("pre", { class: "logs", data: { rlivepre: r.runId } },
         l ? l.text : null,
         l && l.text ? null
           : h("span", { style: "color:var(--text-3)" },
-            r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output"))));
+            tr(r.state === "queued" ? "remoteRuns.queuedWaitingFreeSlot" : "remoteRuns.output"))));
   }
   const b = bodies[r.runId];
   const head           = [];

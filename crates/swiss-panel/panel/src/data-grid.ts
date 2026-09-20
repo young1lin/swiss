@@ -310,7 +310,7 @@ function dbSameJson(a: Record<string, unknown> | null, b: Record<string, unknown
 function dbPasteApply(text: string, r0: number, c0: number): void {
   const d = dbView();
   if (!d.data || !d.data.editable) {
-    toast("This table is not editable (" + (d.data && d.data.editNote ? d.data.editNote : "no primary key") + ") — paste needs the edit buffer", true);
+    toast(tr("dataGrid.notEditablePaste", { note: d.data && d.data.editNote ? d.data.editNote : tr("dataGrid.noPrimaryKey") }), true);
     return;
   }
   const cfg = d.gridCfg || { widths: {}, hidden: [] };
@@ -421,8 +421,7 @@ async function dbLoadData(keepOffset?: boolean): Promise<void> {
 async function dbExportTable(btn: HTMLButtonElement, fmt: string): Promise<void> {
   const d2 = dbView();
   const name = fmt === "json" ? "NDJSON" : fmt === "sql" ? "SQL dump" : "CSV";
-  if (!confirm("Export " + (d2.schema ? d2.schema + "." : "") + d2.table + " as " + name +
-      "?\nCapped at 100,000 rows — filter first if you need less.")) return;
+  if (!confirm(tr("dataGrid.exportTableAs", { table: (d2.schema ? d2.schema + "." : "") + d2.table, format: name }))) return;
   let q = "/api/db/" + encodeURIComponent(d2.conn!) + "/export?table=" + encodeURIComponent(d2.table!) +
     "&format=" + fmt;
   if (d2.schema) q += "&schema=" + encodeURIComponent(d2.schema);
@@ -556,9 +555,9 @@ function renderDbToolbar(): void {
     ctl.appendChild(dataCtl);
   }
   ctl.appendChild(h("button", {
-    class: "btn", title: nosql ? "Run one command (SET, GET, DEL, HGETALL, TTL, TYPE…)" : "SQL console — statements split on ; get a tab each",
+    class: "btn", title: nosql ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle"),
     data: { tb: "sql" },
-  }, d.sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL")));
+  }, d.sqlOpen ? (nosql ? tr("dataGrid.hideCommand") : tr("dataSql.hideSql")) : (nosql ? tr("dataGrid.command") : tr("dataSql.sql"))));
   head.appendChild(ctl);
 }
 
@@ -1035,7 +1034,7 @@ function dbToolbarClick(t: Element, ev: MouseEvent): boolean {
       d.sqlOpen = !d.sqlOpen;
       const con = $("dbConsole");
       if (con) con.hidden = !d.sqlOpen;
-      tb.textContent = d.sqlOpen ? (nosql ? "Hide Command" : "Hide SQL") : (nosql ? "Command" : "SQL");
+      tb.textContent = d.sqlOpen ? (nosql ? tr("dataGrid.hideCommand") : tr("dataSql.hideSql")) : (nosql ? tr("dataGrid.command") : tr("dataSql.sql"));
       if (d.sqlOpen && $("dbSql")) $("dbSql").focus();
       return true;
     }
@@ -1096,11 +1095,11 @@ function dbGridClick(t: Element): boolean {
     if (!fk) return true; // the detail changed under the click — nothing to jump through
     const v = dbFocusedColumnValue(dbView(), col);
     if (v === undefined) {
-      toast("Click a cell in " + col + " first — the jump uses that row's value", true);
+      toast(tr("dataGrid.clickCellFirst", { col }), true);
       return true;
     }
     if (v === null) {
-      toast("The focused row's " + col + " is NULL — nothing to jump to", true);
+      toast(tr("dataGrid.focusedColNull", { col }), true);
       return true;
     }
     dbFkOpen(fk, v);

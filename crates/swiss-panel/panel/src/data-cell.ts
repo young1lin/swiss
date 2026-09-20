@@ -82,7 +82,7 @@ function dbOpenCellEditor(kind: "update" | "insert", key: string | null, i: numb
         h("div", { class: "db-cell-head" },
           h("h2", null, column),
           h("span", { class: "db-cell-where" }, (d.schema ? d.schema + "." : "") + d.table +
-            (kind === "update" ? tr("dataCell.pkPk", { pk: pkJson }) : tr("dataCell.newRow"))))),
+            tr(kind === "update" ? "dataCell.pkPk" : "dataCell.newRow", { pk: pkJson })))),
       h("div", { class: "sheet-body" },
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           isBool ? h("button", { class: "btn", id: "dbCellBool" }) : null,

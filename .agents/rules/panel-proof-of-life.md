@@ -53,11 +53,12 @@ visible control was clicked with real pointer events and answered. vitest green 
      reflects the result;
    - empty states render when the store is empty.
 5. **Honest reporting.** A flow that cannot be verified (missing credential, external
-   - a change that touches visible copy is walked a SECOND time in Chinese: click 文/A,
-     confirm `document.documentElement.lang === "zh-CN"`, and re-check the words (docs/38).
    endpoint) is listed as NOT verified with the reason - never marked with a checkmark.
    "Done" claims a dead page is a lie that costs the user's trust and their time as your
    test runner.
+6. **The second-language pass.** A change that touches visible copy is walked a SECOND
+   time in Chinese: click 文/A, confirm `document.documentElement.lang === "zh-CN"`, and
+   re-check the words (docs/38).
 
 ## Mechanical traps that shipped broken code (do not repeat)
 
