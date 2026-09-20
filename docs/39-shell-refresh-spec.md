@@ -1,8 +1,15 @@
 # 39 — 壳的减法：图标 rail、下划线页签、一种读数、记住上次的页
 
-> 状态：**待实施**。基线 `f959b12`（2026-09-20，master）。实施在分支 `refactor-ui`（worktree
-> `.agents/worktrees/refactor-ui`，**已建**，本文与 `docs/assets/39/shell-mockup.html` 在它上面）：
-> P0 → P3 全部落地、`npm run check` 绿、19998 走查完，再合并 master、部署一次。
+> 状态：**已实施**（分支 `refactor-ui`，2026-09-20）。P0 `360d1be`（S4 记住上次的页）、
+> P1 `6c8d7d3`（S2/S3/S7/S8 标题 + 下划线页签 + 溢出 ⋯，含一处实测修得的延迟重排）、
+> P2 `88a9811`（S1/S5/S6 图标 rail、一种读数、侧栏 glyph 去底）。门禁全绿：`npm run check`
+> 70 文件 621 用例、`cargo test --workspace`、`clippy -D warnings`。走查在 **19997**（同脚本、
+> 独立测试 home）——另一会话的 panel-i18n 实例 18:25 起占用 19998；1440/960/480、明暗两套、
+> 真指针。数字（§4 口径）：`base.css` 31,870 → 34,212 字节；自有发射 JS 958,105 → 968,594
+> 字节（+`last-page.js` 3,752）；`swiss.exe` 9,748,480 字节；MCP/Servers 首屏带框矩形：侧栏
+> 类型小方块 9 → 0、bar 换页器框 1 → 0、rail 9px 标签 7 → 0,机械枚举的着色/描边元素 17 个
+> （其中状态点 9、结构面 3,用户读作"框"的控件 4 个:搜索框 + 3 条组 band,另加选中座的悬停
+> 底),≤ §0.1 基线 20、达到 ≤9 的目标。合并 master、部署是 owner 的决定。
 > 前置阅读：`.claude/skills/swiss-ui-design/SKILL.md` §1–§8（四层与归属——本文一层都不挪）、§16
 > 规则 1 / 2 / 9 / 15 / 18；`.agents/rules/panel-proof-of-life.md`；`docs/36-panel-typescript-spec.md`
 > §1.2（D2 发射、D3 产物提交）；`docs/37-panel-modern-typescript-spec.md` §7（`h()` 与重画）。
