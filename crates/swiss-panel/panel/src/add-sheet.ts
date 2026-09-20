@@ -45,7 +45,7 @@ function openSheet(group: string | null): void {
         h("div", { class: "two" },
           h("label", { class: "field" },
             h("span", null, tr("Name")),
-            h("input", { id: "a-name", placeholder: "git-mcp", autocomplete: "off" })),
+            h("input", { id: "a-name", placeholder: tr("git-mcp"), autocomplete: "off" })),
           h("label", { class: "field" },
             h("span", null, tr("Type")),
             h("select", { id: "a-type" }, types.map((t) => {
@@ -98,7 +98,7 @@ function openGroupSheet(def: string | null, submit: (name: string) => Promise<bo
       h("div", { class: "sheet-body" },
         h("label", { class: "field" },
           h("span", null, tr("Name")),
-          h("input", { id: "g-name", value: def || "", placeholder: "prod", autocomplete: "off" }))),
+          h("input", { id: "g-name", value: def || "", placeholder: tr("prod"), autocomplete: "off" }))),
       h("div", { class: "sheet-foot" },
         h("span", { class: "grow" }),
         h("button", { class: "btn", id: "g-cancel" }, tr("Cancel")),

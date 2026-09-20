@@ -696,8 +696,8 @@ function renderDbTables(): void {
       // docs/22 closeout B1: a failed scan is a FAILURE, not an empty keyspace — the toast
       // carries the server's own text; this row keeps the list from pretending otherwise.
       box.appendChild(el("div", "db-hint", d.redisError
-        ? "Scan failed — the toast carries the server's error; this list is the last good page."
-        : d.grep ? 'No keys match "' + d.grep + '"' : "No keys yet — scan returned none."));
+        ? tr("Scan failed — the toast carries the server's error; this list is the last good page.")
+        : d.grep ? tr('No keys match "{q}"', { q: d.grep }) : tr("No keys yet — scan returned none.")));
     }
     const sortedKeys = (rr ? rr.keys : []).slice().sort(dbRedisCompare);
     sortedKeys.forEach((k: ApiDbRedisKeyRow): void => {

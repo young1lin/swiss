@@ -41,15 +41,6 @@ import { describe, expect, it } from "vitest";
  * view file a later stage owns. Keys are paths relative to src/; the tree has
  * basename twins (jobs.ts and views/jobs.ts). */
 const FROZEN: Record<string, number> = {
-  "add-sheet.ts": 2,
-  "data-activity.ts": 2,
-  "data-browsers.ts": 9,
-  "data-cell.ts": 6,
-  "data-csv.ts": 14,
-  "data-edit.ts": 3,
-  "data-filters.ts": 10,
-  "data-form.ts": 7,
-  "data-value.ts": 3,
   "views/terminal-settings.ts": 7,
   "views/terminal.ts": 26,
 };
