@@ -40,7 +40,8 @@ const zh: Record<string, string> = {
   "mem …": "内存 …",
   "A new panel version is ready — it will load once you finish editing": "面板新版本已就绪——完成编辑后会自动加载",
 
-  /* --- shell: page registry, rail, palette (page-registry.ts, plugin-palette.ts) --- */  "Token": "Token", // brand name, identical in zh (scanner PASSTHROUGH)
+  /* --- shell: page registry, rail, palette (page-registry.ts, plugin-palette.ts) --- */
+  "Token": "令牌",
   "MCP": "MCP", // product name, identical in zh (scanner PASSTHROUGH)
   "{label} — {error}": "{label} — {error}", // em-dash skeleton, identical in zh (scanner PASSTHROUGH)
 
@@ -1002,6 +1003,16 @@ const zh: Record<string, string> = {
   "Scan failed — the toast carries the server's error; this list is the last good page.": "扫描失败——提示中带有服务器的错误;此列表是最后一个正常的页面。",
   'No keys match "{q}"': "没有匹配 \"{q}\" 的键",
   "No keys yet — scan returned none.": "还没有键——扫描未返回任何结果。",
+
+  /* --- I11 fixup: the nav group and page labels the gateway SERVES (docs/38 §6 wire
+     vocabulary). The panel routes them through tr(g.label)/tr(p.label) in page-registry,
+     but variable arguments are invisible to the literal scanner, so these six had no
+     entries and fell back to English in the rail, the switcher and the palette. --- */
+  "Servers": "服务器",
+  "Terminal": "终端",
+  "Targets": "目标",
+  "Remote": "远程",
+  "Process": "进程",
   /* --- I9: views/terminal.ts + views/terminal-settings.ts --- */
   " · closed": " · 已关闭",
   "bell": "响铃",
