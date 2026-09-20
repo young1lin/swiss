@@ -193,3 +193,52 @@ describe("the I3 views in Chinese (tokens, traffic)", () => {
     expect(trn(2, "{n} token", "{n} tokens")).toBe("2 个令牌");
   });
 });
+
+describe("the I4 modules in Chinese (detail, logs, run)", () => {
+  beforeEach(() => {
+    setLang("zh-CN");
+  });
+  afterEach(() => {
+    setLang("en");
+    localStorage.clear();
+  });
+
+  it("composes the lifecycle action note with a translated verb and a raw state word", async () => {
+    await loadLocale();
+    expect(tr("{verb} → {state}", { verb: tr("enable"), state: "started" })).toBe("启用 → started");
+    expect(tr("{verb} failed: {error}", { verb: tr("disable"), error: "boom" })).toBe("停用 失败:boom");
+    expect(tr("{name}: {msg}", { name: "redis", msg: tr("config saved → restarted") })).toBe("redis: 配置已保存 → 已重启");
+  });
+
+  it("formats char counts and the call meta skeleton in Chinese", async () => {
+    await loadLocale();
+    const { fmtChars, callNode } = await import("../src/logs.js");
+    expect(fmtChars(500)).toBe("500 字符");
+    expect(fmtChars(1500)).toBe("1.5k 字符");
+    const call = callNode({ callsOpen: {}, callsFull: {} } as never, {
+      seq: 7, at: "2026-02-03T04:05:06Z", via: "redis", client: "cc", ms: 3, chars: 120,
+      tool: "GET", args: "k", ok: true, output: "1", preview: false,
+    } as never) as HTMLElement;
+    expect(call.textContent).toContain("  ·  redis  ·  cc  ·  3 ms  ·  120 字符");
+    expect(call.textContent).toContain("参数");
+    expect(call.textContent).toContain("结果");
+  });
+
+  it("fills the delete confirm and the run-form refusals", async () => {
+    await loadLocale();
+    expect(tr("Delete '{name}'?\n\nThis stops it and removes it permanently.", { name: "mysql" })).toBe(
+      "删除“mysql”?\n\n这会停止它并永久移除。",
+    );
+    expect(tr("\u0060{k}\u0060 is required", { k: "sql" })).toBe("\u0060sql\u0060 为必填项");
+    expect(tr("Not started — start it to list {kind}.", { kind: "resources" })).toBe(
+      "尚未启动——启动后才能列出 resources。",
+    );
+  });
+
+  it("reads the pager and the test-connection outcomes in Chinese", async () => {
+    await loadLocale();
+    expect(tr("Page {n} of {m}", { n: 2, m: 5 })).toBe("第 2 页,共 5 页");
+    expect(tr("✓ connected — these values work ({ms} ms)", { ms: 42 })).toBe("✓ 已连接——这些值可用(42 毫秒)");
+    expect(tr("Show full result ({chars})", { chars: "1.5k 字符" })).toBe("显示完整结果(1.5k 字符)");
+  });
+});

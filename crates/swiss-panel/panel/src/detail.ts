@@ -26,6 +26,7 @@ import { renderCallsOnly } from "./run-history.js";
 import { rowOf } from "./sidebar.js";
 import { setMenuOpen } from "./ui-state.js";
 import { clearMcpBusy, mcpBusyVerb, mcpDetail, selectedMcp, setLastAction, setMcpBusy, setMcpDetail, setSelectedMcp } from "./mcp-state.js";
+import { tr, trn } from "./i18n.js";
 
 /* --- lifecycle actions ------------------------------------------------------------------------ */
 async function act(name: string, verb: string): Promise<void> {
@@ -34,23 +35,23 @@ async function act(name: string, verb: string): Promise<void> {
   patchSidebar(); patchDetailHead();
   // docs/28 D2: the wire keeps the stop/start verbs; the panel says disable/enable — a stop
   // that survives a boot and refuses every client is a disable, and the word owed it.
-  const shown = verb === "stop" ? "disable" : verb === "start" ? "enable" : verb;
+  const shown = verb === "stop" ? tr("disable") : verb === "start" ? tr("enable") : verb === "restart" ? tr("restart") : verb;
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(name) + "/" + verb, { method: "POST" });
     const j = await r.json();
     if (!r.ok) {
-      setLastAction(name, { msg: shown + " failed: " + (j.error || "HTTP " + r.status), err: true, at: now() });
-      toast(name + ": " + (j.error || "failed"), true);
+      setLastAction(name, { msg: tr("{verb} failed: {error}", { verb: shown, error: j.error || tr("HTTP {n}", { n: r.status }) }), err: true, at: now() });
+      toast(tr("{name}: {error}", { name, error: j.error || tr("failed") }), true);
     } else {
       const state_word = j.lifecycle === "stopped" ? "disabled" : j.lifecycle;
       // Record it and say it from the SAME object — reading the row back to quote it was
       // only ever a way to repeat what this line already knows.
-      const done = { msg: shown + " → " + (state_word || "ok"), err: false, at: now() };
+      const done = { msg: tr("{verb} → {state}", { verb: shown, state: state_word || tr("ok") }), err: false, at: now() };
       setLastAction(name, done);
-      toast(name + ": " + done.msg);
+      toast(tr("{name}: {msg}", { name, msg: done.msg }));
     }
   } catch (e) {
-    setLastAction(name, { msg: shown + " request failed", err: true, at: now() });
+    setLastAction(name, { msg: tr("{verb} request failed", { verb: shown }), err: true, at: now() });
   }
   clearMcpBusy(name);
   await loadList();
@@ -65,7 +66,7 @@ async function act(name: string, verb: string): Promise<void> {
 }
 
 async function renameMcp(name: string): Promise<void> {
-  let next = prompt("Rename '" + name + "' to:", name);
+  let next = prompt(tr("Rename '{name}' to:", { name }), name);
   if (!next || next.trim() === name) return;
   next = next.trim();
   const ok = await apiJson("/api/mcps/" + encodeURIComponent(name) + "/rename", { method: "POST", body: JSON.stringify({ name: next }) });
@@ -73,7 +74,7 @@ async function renameMcp(name: string): Promise<void> {
   if (selectedMcp() === name) setSelectedMcp(next);
   const open = mcpDetail();
   if (open && open.name === name) open.name = next;
-  toast("Renamed " + name + " → " + next);
+  toast(tr("Renamed {name} → {next}", { name, next }));
   await loadList();
   renderPane();
 }
@@ -82,12 +83,13 @@ async function removeMcp(name: string): Promise<void> {
   // Config-sourced MCPs are removed from gateway.config.json too (server-side), so the confirm
   // says so — "removes it permanently" alone used to hide that the file edit is part of it.
   const fromConfig = mcpDetail()?.source === "config";
-  if (!confirm("Delete '" + name + "'?\n\nThis stops it and removes it permanently" +
-      (fromConfig ? ", including its entry in gateway.config.json." : "."))) return;
+  if (!confirm(fromConfig
+      ? tr("Delete '{name}'?\n\nThis stops it and removes it permanently, including its entry in gateway.config.json.", { name })
+      : tr("Delete '{name}'?\n\nThis stops it and removes it permanently.", { name }))) return;
   const ok = await apiJson("/api/mcps/" + encodeURIComponent(name), { method: "DELETE" });
   if (!ok) return;
   if (selectedMcp() === name) { setSelectedMcp(null); setMcpDetail(null); }
-  toast("Deleted " + name);
+  toast(tr("Deleted {name}", { name }));
   await loadList();
   renderPane();
 }
@@ -114,8 +116,8 @@ async function authorizeMcp(name: string): Promise<void> {
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(name) + "/authorize", { method: "POST" });
     const j = await r.json().catch(() => { return {}; });
-    if (!r.ok) { note("authorize failed: " + (j.error || "HTTP " + r.status), true); return; }
-    note("authorize: preparing the consent page…");
+    if (!r.ok) { note(tr("authorize failed: {error}", { error: j.error || tr("HTTP {n}", { n: r.status }) }), true); return; }
+    note(tr("authorize: preparing the consent page…"));
     let opened = false;
     // 100 polls x 3s = 5 min, the server flow's own callback cap.
     for (let i = 0; i < 100; i++) {
@@ -125,25 +127,25 @@ async function authorizeMcp(name: string): Promise<void> {
       if (s.status === "authorization_required" && s.authorizationUrl && !opened) {
         opened = true;
         window.open(s.authorizationUrl, "_blank");
-        note("authorize: consent page opened — approve it in the browser…");
+        note(tr("authorize: consent page opened — approve it in the browser…"));
       } else if (s.status === "approved") {
-        setLastAction(name, { msg: "authorized · " + (s.tools != null ? s.tools + " tools" : "MCP started"), err: false, at: now() });
-        toast(name + ": authorized");
+        setLastAction(name, { msg: tr("authorized · {what}", { what: s.tools != null ? trn(s.tools, "{n} tool", "{n} tools") : tr("MCP started") }), err: false, at: now() });
+        toast(tr("{name}: {msg}", { name, msg: tr("authorized") }));
         await loadList();
         void loadMeta(name);
         const open = mcpDetail();
         if (open && !open.editing) renderPane();
         return;
       } else if (s.status === "error") {
-        note("authorize failed: " + (s.error || "unknown error"), true);
+        note(tr("authorize failed: {error}", { error: s.error || tr("unknown error") }), true);
         await loadList();
         return;
       }
       // starting, or the URL not yet in this answer: keep polling.
     }
-    note("authorize: timed out waiting for approval", true);
+    note(tr("authorize: timed out waiting for approval"), true);
   } catch (e) {
-    note("authorize request failed", true);
+    note(tr("authorize request failed"), true);
   } finally {
     const open = mcpDetail();
     if (open && open.name === name) open.oauthBusy = false;
@@ -280,8 +282,8 @@ async function loadCalls(name: string, isPoll?: boolean): Promise<void> {
 function callsLoadFailed(d: McpDetail, target: number, status: number, sw: { dir: string | null } | null): void {
   d.callsPendingPage = null;
   d.callsSwitch = null;
-  d.callsError = "Could not load calls.";
-  d.callsErrStatus = status ? "HTTP " + status : "";
+  d.callsError = tr("Could not load calls.");
+  d.callsErrStatus = status ? tr("HTTP {n}", { n: status }) : "";
   d.callsRetryTarget = target;
   d.callsRetryDir = sw && sw.dir ? sw.dir : null; // a Retry re-anchors toward the same direction
   if (d.calls == null) renderCallsOnly(); // nothing painted yet — the spinner becomes the error
@@ -381,13 +383,13 @@ async function showFullResult(seq: number): Promise<void> {
   if (!d) return;
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
-    if (!r.ok) { toast("HTTP " + r.status, true); return; }
+    if (!r.ok) { toast(tr("HTTP {n}", { n: r.status }), true); return; }
     const j = await r.json();
     if (mcpDetail()?.name !== d.name || !j.call) return;
     if (j.call.bodyGone) {
       // Only the newest replies keep their payload; say which part is missing rather than showing a
       // short result as if it were whole.
-      toast("The full reply is no longer stored — only the newest 50 per MCP are kept.", true);
+      toast(tr("The full reply is no longer stored — only the newest 50 per MCP are kept."), true);
       return;
     }
     d.callsFull[seq] = j.call.output;
@@ -396,7 +398,7 @@ async function showFullResult(seq: number): Promise<void> {
     if (pre) pre.textContent = fmtJson(j.call.output);
     const btn = document.querySelector('#tabbody [data-full="' + seq + '"]');
     if (btn) btn.remove();
-  } catch (e) { toast("request failed", true); }
+  } catch (e) { toast(tr("request failed"), true); }
 }
 
 async function clearCalls(): Promise<void> {
@@ -404,10 +406,10 @@ async function clearCalls(): Promise<void> {
   if (!d) return;
   // docs/32 B4: one mis-click removes the index AND the stored full replies, and nothing can
   // undo it — so the confirm names both costs, and a cancelled confirm fires no request at all.
-  if (!confirm("Clear all recorded tool calls for \u201C" + d.name + "\u201D? This removes the call history and stored full replies. The MCP configuration is not changed.")) return;
+  if (!confirm(tr("Clear all recorded tool calls for \u201C{name}\u201D? This removes the call history and stored full replies. The MCP configuration is not changed.", { name: d.name }))) return;
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls", { method: "DELETE" });
-    if (!r.ok) { toast("HTTP " + r.status, true); return; }
+    if (!r.ok) { toast(tr("HTTP {n}", { n: r.status }), true); return; }
     // The clear is part of the same transaction space as the paging loads: bump the generation so
     // a response that left before the DELETE (a poll, a parked switch — confirm blocks the event
     // loop, not the network) lands stale and cannot repaint rows over the emptied log.
@@ -423,9 +425,9 @@ async function clearCalls(): Promise<void> {
     d.callsErrStatus = "";
     d.callsRetryTarget = null;
     d.callsRetryDir = null;
-    toast("Call log cleared");
+    toast(tr("Call log cleared"));
     renderCallsOnly();
-  } catch (e) { toast("request failed", true); }
+  } catch (e) { toast(tr("request failed"), true); }
 }
 
 async function loadPage(name: string, kind: McpKind): Promise<void> {
@@ -455,7 +457,7 @@ async function loadPage(name: string, kind: McpKind): Promise<void> {
       kd.error = j.error || "HTTP " + r.status;
     }
   } catch (e) {
-    kd.error = "request failed";
+    kd.error = tr("request failed");
   }
   kd.loading = false;
   // Run builds its form from the tool list, so it also needs a repaint when tools land.
@@ -553,7 +555,7 @@ async function saveReplace(): Promise<void> {
   translatePg(type, body); // docs/30: the pg form's pieces become one url
   const noteEl = $<HTMLInputElement>("e-note");
   if (noteEl) body.note = noteEl.value;
-  if (type === "proc" && !body.command) { toast("Command is required", true); return; }
+  if (type === "proc" && !body.command) { toast(tr("Command is required"), true); return; }
   const name = d.name;
   const restore = () => {
     if (!mcpDetail() || mcpDetail() !== d) return;
@@ -568,22 +570,22 @@ async function saveReplace(): Promise<void> {
     const r = await api("/api/mcps/" + encodeURIComponent(name) + "/replace", { method: "POST", body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) {
-      setLastAction(name, { msg: "replace failed: " + (j.error || "HTTP " + r.status), err: true, at: now() });
-      toast(j.error || "replace failed", true);
+      setLastAction(name, { msg: tr("replace failed: {error}", { error: j.error || tr("HTTP {n}", { n: r.status }) }), err: true, at: now() });
+      toast(j.error || tr("replace failed"), true);
       restore();
     } else {
-      setLastAction(name, { msg: "def replaced → revision " + (j.revisions || "?") + " parked", err: false, at: now() });
-      toast(name + ": replaced — previous def parked as revision " + (j.revisions || "?"));
+      setLastAction(name, { msg: tr("def replaced → revision {n} parked", { n: j.revisions || "?" }), err: false, at: now() });
+      toast(tr("{name}: {msg}", { name, msg: tr("replaced — previous def parked as revision {n}", { n: j.revisions || "?" }) }));
       // The swap stands even when the new def will not start; the panel must say so, not hide it.
-      if (j.restartError) toast(name + " failed to start: " + j.restartError, true);
+      if (j.restartError) toast(tr("{name} failed to start: {error}", { name, error: j.restartError }), true);
       if (mcpDetail() === d) d.editVals = null;
       resetKindPages();
       void loadMeta(name);
       void loadRevisions(name);
     }
   } catch (e) {
-    setLastAction(name, { msg: "replace request failed", err: true, at: now() });
-    toast("replace request failed", true);
+    setLastAction(name, { msg: tr("replace request failed"), err: true, at: now() });
+    toast(tr("replace request failed"), true);
     restore();
   }
   clearMcpBusy(name);
@@ -594,27 +596,27 @@ async function saveReplace(): Promise<void> {
 async function restoreRevision(index: number): Promise<void> {
   const d = mcpDetail();
   if (!d) return;
-  if (!confirm("Restore revision " + (index + 1) + "?\n\nThe current def is parked as a new revision first — this is reversible too.")) return;
+  if (!confirm(tr("Restore revision {n}?\n\nThe current def is parked as a new revision first — this is reversible too.", { n: index + 1 }))) return;
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index + "/restore", { method: "POST", body: "{}" });
     const j = await r.json();
-    if (!r.ok) { toast(j.error || "restore failed", true); return; }
-    toast(d.name + ": revision " + (index + 1) + " restored");
-    if (j.restartError) toast(d.name + " failed to start: " + j.restartError, true);
+    if (!r.ok) { toast(j.error || tr("restore failed"), true); return; }
+    toast(tr("{name}: {msg}", { name: d.name, msg: tr("revision {n} restored", { n: index + 1 }) }));
+    if (j.restartError) toast(tr("{name} failed to start: {error}", { name: d.name, error: j.restartError }), true);
     resetKindPages();
     void loadMeta(d.name);
     void loadRevisions(d.name);
     await loadList();
     renderPane();
-  } catch (e) { toast("restore request failed", true); }
+  } catch (e) { toast(tr("restore request failed"), true); }
 }
 
 async function deleteRevision(index: number): Promise<void> {
   const d = mcpDetail();
   if (!d) return;
-  if (!confirm("Delete parked revision " + (index + 1) + "? This only drops the snapshot — the live def is untouched.")) return;
+  if (!confirm(tr("Delete parked revision {n}? This only drops the snapshot — the live def is untouched.", { n: index + 1 }))) return;
   if (!await apiJson("/api/mcps/" + encodeURIComponent(d.name) + "/revisions/" + index, { method: "DELETE" })) return;
-  toast("Revision " + (index + 1) + " deleted");
+  toast(tr("Revision {n} deleted", { n: index + 1 }));
   void loadRevisions(d.name);
 }
 /** Switching type re-renders the form, so read what is in it first and carry it across — a field
@@ -651,21 +653,21 @@ async function runConnTest(p: string): Promise<void> {
   // runs, and the flow needs the MCP saved first (credentials are name-keyed). Say so rather
   // than firing a request whose only possible answer is the 401.
   if (wantsOauth) {
-    out.textContent = "OAuth remote: use Authorize on the detail view — a keyless handshake is always 401.";
+    out.textContent = tr("OAuth remote: use Authorize on the detail view — a keyless handshake is always 401.");
     out.style.color = "";
     return;
   }
   // A metered vision API: the only honest "test" is a real generation, and that spends
   // tokens. The health probe already skips it for the same reason — say so instead.
   if (type === "zai-vision") {
-    out.textContent = "Metered GLM API: every call spends tokens — save it and call a tool from an MCP client instead.";
+    out.textContent = tr("Metered GLM API: every call spends tokens — save it and call a tool from an MCP client instead.");
     out.style.color = "";
     return;
   }
   btn.disabled = true;
-  btn.textContent = "Testing…";
+  btn.textContent = tr("Testing…");
   out.hidden = false;
-  out.textContent = "connecting with these exact values — ${ENV} refs expand server-side…";
+  out.textContent = tr("connecting with these exact values — ${ENV} refs expand server-side…");
   out.style.color = "";
   try {
     const r = await api("/api/mcpdefs/test", { method: "POST", body: JSON.stringify(body) });
@@ -673,18 +675,22 @@ async function runConnTest(p: string): Promise<void> {
     if (j.ok) {
       // For a rest target any HTTP answer is reachable — show which one came back (404 from the
       // base path is fine; the tools live under their own paths).
-      out.textContent = "✓ connected — these values work (" + j.ms + " ms" + (j.status ? " · HTTP " + j.status : "") + ")";
+      out.textContent = j.status
+        ? tr("✓ connected — these values work ({ms} ms · HTTP {status})", { ms: j.ms, status: j.status })
+        : tr("✓ connected — these values work ({ms} ms)", { ms: j.ms });
       out.style.color = "var(--green)";
     } else {
-      out.textContent = "✗ " + (j.error || "failed") + (j.ms != null ? " (" + j.ms + " ms)" : "");
+      out.textContent = j.ms != null
+        ? tr("✗ {error} ({ms} ms)", { error: j.error || tr("failed"), ms: j.ms })
+        : tr("✗ {error}", { error: j.error || tr("failed") });
       out.style.color = "var(--red)";
     }
   } catch (e) {
-    out.textContent = "test request failed — is the gateway running?";
+    out.textContent = tr("test request failed — is the gateway running?");
     out.style.color = "var(--red)";
   } finally {
     btn.disabled = false;
-    btn.textContent = "Test connection";
+    btn.textContent = tr("Test connection");
   }
 }
 
@@ -697,7 +703,7 @@ async function saveEdit(): Promise<void> {
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body); // the auth checkbox is the def auth string (docs/24 D1)
   translatePg(type, body); // docs/30: the pg form's pieces become one url
-  if (type === "proc" && !body.command) { toast("Command is required", true); return; }
+  if (type === "proc" && !body.command) { toast(tr("Command is required"), true); return; }
   const name = d.name;
   // Rendering the pane destroys the form, so hold on to what was typed: a save the server rejects
   // used to cost the user the whole form, with nothing to do but reopen it and retype.
@@ -714,19 +720,19 @@ async function saveEdit(): Promise<void> {
     const r = await api("/api/mcps/" + encodeURIComponent(name), { method: "PUT", body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) {
-      setLastAction(name, { msg: "edit failed: " + (j.error || "HTTP " + r.status), err: true, at: now() });
-      toast(j.error || "edit failed", true);
+      setLastAction(name, { msg: tr("edit failed: {error}", { error: j.error || tr("HTTP {n}", { n: r.status }) }), err: true, at: now() });
+      toast(j.error || tr("edit failed"), true);
       restore();
     } else {
-      setLastAction(name, { msg: "config saved → restarted", err: false, at: now() });
-      toast(name + ": config saved, restarted");
+      setLastAction(name, { msg: tr("config saved → restarted"), err: false, at: now() });
+      toast(tr("{name}: {msg}", { name, msg: tr("config saved, restarted") }));
       if (mcpDetail() === d) d.editVals = null;
       resetKindPages();
       void loadMeta(name);
     }
   } catch (e) {
-    setLastAction(name, { msg: "edit request failed", err: true, at: now() });
-    toast("edit request failed", true);
+    setLastAction(name, { msg: tr("edit request failed"), err: true, at: now() });
+    toast(tr("edit request failed"), true);
     restore();
   }
   clearMcpBusy(name);
