@@ -20,6 +20,7 @@ import { fill, frag, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { fmtJson } from "./logs.js";
 import { currentView } from "./ui-state.js";
+import { locale, tr, trn } from "./i18n.js";
 
 /* The traffic domain owns its state (docs/37 R4, slice 2 of 7): ONE page of interactions, the
  * ring-wide client fold, the query that produced them (filter, client, page) and the per-row
@@ -66,10 +67,10 @@ export function clearTrafficView(): void {
 /** Relative "x ago"; refreshes every poll (6s) because renderTraffic re-runs while the view is open. */
 function ago(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
-  if (ms < 5000) return "just now";
-  if (ms < 60000) return Math.round(ms / 1000) + "s ago";
-  if (ms < 3600000) return Math.round(ms / 60000) + "m ago";
-  return new Date(iso).toLocaleTimeString();
+  if (ms < 5000) return tr("just now");
+  if (ms < 60000) return tr("{n}s ago", { n: Math.round(ms / 1000) });
+  if (ms < 3600000) return tr("{n}m ago", { n: Math.round(ms / 60000) });
+  return new Date(iso).toLocaleTimeString(locale());
 }
 
 /**
@@ -115,8 +116,13 @@ function trafficPageStep(delta: number): void {
   trafficReload(false);
 }
 function trafficRowNode(e: ApiTrafficRow): HChild {
-  const meta = (e.clientName ? e.clientName + (e.clientVersion ? " " + e.clientVersion : "") : "—") +
-    "  ·  /" + e.mcp + "  ·  " + (e.ok ? "ok" : "err") + "  ·  " + e.ms + "ms  ·  " + whenLabel(e.at);
+  const meta = tr("{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", {
+    client: e.clientName ? e.clientName + (e.clientVersion ? " " + e.clientVersion : "") : "—",
+    mcp: e.mcp,
+    status: e.ok ? tr("ok") : tr("err"),
+    ms: e.ms,
+    when: whenLabel(e.at),
+  });
   // Collapsed: method + a one-line params preview + meta. Expanded (chevron): the raw request JSON.
   return h("div", { class: "call" + (traffic.open[e.seq] ? " open" : ""), data: { tseq: e.seq } },
     h("div", { class: "call-sum", data: { tog: e.seq }, role: "button", tabIndex: 0 },
@@ -133,16 +139,16 @@ function trafficRowNode(e: ApiTrafficRow): HChild {
 
 function trafficBodyNode(e: { seq: number }): HChild {
   const full = traffic.full[e.seq];
-  if (!full) return h("div", { class: "note" }, h("span", { class: "spin" }), " Loading…");
-  if (full.gone) return h("div", { class: "note" }, "This interaction has rolled out of the buffer.");
+  if (!full) return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("Loading…"));
+  if (full.gone) return h("div", { class: "note" }, tr("This interaction has rolled out of the buffer."));
   return frag(
-    h("div", { class: "call-lbl" }, "Request"),
+    h("div", { class: "call-lbl" }, tr("Request")),
     h("pre", { class: "logs" }, fmtJson(full.body || "")),
-    h("div", { class: "call-lbl" }, "Response",
-      full.response ? null : h("span", { style: "color:var(--text-3)" }, " — none —")),
+    h("div", { class: "call-lbl" }, tr("Response"),
+      full.response ? null : h("span", { style: "color:var(--text-3)" }, tr(" — none —"))),
     h("pre", { class: "logs" },
       full.response ? fmtJson(full.response)
-        : h("span", { style: "color:var(--text-3)" }, "no reply captured for this entry")));
+        : h("span", { style: "color:var(--text-3)" }, tr("no reply captured for this entry"))));
 }
 
 /** Fetch one interaction's raw request and reply, then paint it into the already-open row. */
@@ -171,12 +177,12 @@ function renderTraffic(): void {
 
   // Controls: action/everything toggle + clear. This whole pane is the Traffic view's content.
   const ctrl = h("div", { class: "sec-head" },
-    h("span", { class: "sec-cap" }, "Traffic"),
+    h("span", { class: "sec-cap" }, tr("Traffic")),
     h("span", { style: "display:flex;gap:var(--s2);align-items:center" },
       h("div", { class: "seg", id: "trFilter" },
-        h("button", { data: { filter: "actions" }, aria: { selected: traffic.filter !== "all" ? "true" : "false" } }, "Actions"),
-        h("button", { data: { filter: "all" }, aria: { selected: traffic.filter === "all" ? "true" : "false" } }, "Everything")),
-      h("button", { class: "btn", id: "trClear", disabled: !all }, sel ? "Clear client" : "Clear")));
+        h("button", { data: { filter: "actions" }, aria: { selected: traffic.filter !== "all" ? "true" : "false" } }, tr("Actions")),
+        h("button", { data: { filter: "all" }, aria: { selected: traffic.filter === "all" ? "true" : "false" } }, tr("Everything"))),
+      h("button", { class: "btn", id: "trClear", disabled: !all }, sel ? tr("Clear client") : tr("Clear"))));
 
   // Clients — who has been talking to the gateway, folded from recorded traffic (stateless: no live
   // connection to query). Click a row to filter the activity log to that client.
@@ -185,49 +191,51 @@ function renderTraffic(): void {
     // One line per client (docs/18 V4): name, token, paths, last seen, request count — a
     // five-column grid, not a card-per-client with two lines of prose.
     const head = h("div", { class: "cli-head" },
-      h("span", null, "Client"), h("span", null, "Token"), h("span", null, "Paths"),
-      h("span", null, "Last"), h("span", { class: "cli-n" }, "Requests"), h("span"));
+      h("span", null, tr("Client")), h("span", null, tr("Token")), h("span", null, tr("Paths")),
+      h("span", null, tr("Last")), h("span", { class: "cli-n" }, tr("Requests")), h("span"));
     const rows = clients.map((c) => {
       const isSel = sel === c.key;
       const mcps = (c.mcps || []).map((m) => { return "/mcp/" + m; }).join(" ");
       const tokens = c.tokens || [];
-      const tokenLine = tokens.length ? tokens.join(", ") : "no token";
+      const tokenLine = tokens.length ? tokens.join(", ") : tr("no token");
       return h("div", { class: "cli-row" + (isSel ? " sel" : ""), data: { ckey: c.key }, role: "button", tabIndex: 0 },
         h("span", { class: "cli-name" }, h("code", null, c.label)),
         h("span", { class: "cli-token" }, tokenLine),
         h("span", { class: "cli-paths" }, mcps),
         h("span", { class: "cli-last" }, ago(c.lastAt)),
-        h("span", { class: "cli-n" }, c.count.toLocaleString()),
+        h("span", { class: "cli-n" }, c.count.toLocaleString(locale())),
         isSel
-          ? h("button", { class: "btn ghost icon", data: { cclr: "" }, title: "Stop filtering" }, iconNode("x"))
+          ? h("button", { class: "btn ghost icon", data: { cclr: "" }, title: tr("Stop filtering") }, iconNode("x"))
           : h("span", { class: "cli-x" }));
     });
     clientBlock = frag(
-      h("div", { class: "cap", style: "padding-top:var(--s5)" }, "Clients · " + clients.length),
+      h("div", { class: "cap", style: "padding-top:var(--s5)" }, tr("Clients · {n}", { n: clients.length })),
       h("div", { class: "group" }, head, rows));
   } else {
     clientBlock = frag(
-      h("div", { class: "cap", style: "padding-top:var(--s5)" }, "Clients"),
+      h("div", { class: "cap", style: "padding-top:var(--s5)" }, tr("Clients")),
       h("div", { class: "group" }, h("div", { class: "row" },
-        h("span", { class: "rowmsg" }, "No clients yet. When a client sends its first request (initialize, tools/list, …) it appears here with the MCPs it is using."))));
+        h("span", { class: "rowmsg" }, tr("No clients yet. When a client sends its first request (initialize, tools/list, …) it appears here with the MCPs it is using.")))));
   }
 
   // Activity log — de-noised by the toggle, narrowed by a selected client.
-  const actCap = "Activity · " + (traffic.filter === "all" ? "everything" : "actions only");
-  const countTxt = total.toLocaleString() + (total !== all ? " of " + all.toLocaleString() : "") + " interactions";
+  const actCap = traffic.filter === "all" ? tr("Activity · everything") : tr("Activity · actions only");
+  const countTxt = total !== all
+    ? tr("{n} of {all} interactions", { n: total.toLocaleString(locale()), all: all.toLocaleString(locale()) })
+    : trn(total, "{n} interaction", "{n} interactions", { n: total.toLocaleString(locale()) });
   const actHead = h("div", { class: "sec-head", style: "padding-top:var(--s5)" },
     h("span", { class: "sec-cap" }, actCap),
     h("span", { class: "hint" }, countTxt));
   let body: HChild;
   if (!all) {
     body = h("div", { class: "group" }, h("div", { class: "row" },
-      h("span", { class: "rowmsg" }, "No interactions yet. Every JSON-RPC request a client sends — initialize, tools/list, resources/read, tools/call — is recorded here; the clients above are summarized from it.")));
+      h("span", { class: "rowmsg" }, tr("No interactions yet. Every JSON-RPC request a client sends — initialize, tools/list, resources/read, tools/call — is recorded here; the clients above are summarized from it."))));
   } else if (!entries.length) {
     const hint = traffic.page
-      ? "Nothing on this page."
+      ? tr("Nothing on this page.")
       : sel
-        ? "No activity for this client" + (traffic.filter !== "all" ? " in actions-only view." : ".")
-        : (traffic.filter !== "all" ? "No actions yet — switch to Everything to see the protocol handshake." : "No interactions.");
+        ? (traffic.filter !== "all" ? tr("No activity for this client in actions-only view.") : tr("No activity for this client."))
+        : (traffic.filter !== "all" ? tr("No actions yet — switch to Everything to see the protocol handshake.") : tr("No interactions."));
     body = h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg" }, hint)));
   } else {
     body = h("div", { class: "group" }, entries.map(trafficRowNode));
@@ -237,9 +245,9 @@ function renderTraffic(): void {
   // "Newer" always means toward the top of a newest-first list in both views.
   const pager: HChild = (traffic.page > 0 || traffic.more)
     ? h("div", { class: "pager" },
-        h("button", { class: "btn", id: "trPrev", disabled: traffic.page <= 0 }, "Newer"),
-        h("span", null, "Page " + (traffic.page + 1)),
-        h("button", { class: "btn", id: "trNext", disabled: !traffic.more }, "Older"))
+        h("button", { class: "btn", id: "trPrev", disabled: traffic.page <= 0 }, tr("Newer")),
+        h("span", null, tr("Page {n}", { n: traffic.page + 1 })),
+        h("button", { class: "btn", id: "trNext", disabled: !traffic.more }, tr("Older")))
     : null;
 
   // Wrapped in .wide: an interaction row is method + params + client + timing on one line, which the

@@ -60,7 +60,6 @@ const FROZEN: Record<string, number> = {
   "logs.ts": 33,
   "run-history.ts": 38,
   "run.ts": 7,
-  "traffic.ts": 20,
   "tunnel-sheets.ts": 57,
   "tunnels.ts": 6,
   "views/jobs.ts": 2,
@@ -68,7 +67,6 @@ const FROZEN: Record<string, number> = {
   "views/remote.ts": 13,
   "views/terminal-settings.ts": 7,
   "views/terminal.ts": 26,
-  "views/tokens.ts": 16,
 };
 
 const QUALIFIES = /[A-Za-z]{2}/;
