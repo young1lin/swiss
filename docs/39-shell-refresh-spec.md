@@ -246,7 +246,7 @@ tab 隐藏、Terminal 的 dock 仍收成 0；**溢出 `⋯` 今天用真实插�
 .ctxbar .app-zone { margin-left: var(--s2); }
 ```
 
-`#memChip` 是 `.chip.button` 时 hover 的规则不变；960px 隐藏规则不变。
+`#memChip` 是 `.chip.button` 时 hover 的规则不变。960px 是支持下限：mem 数字离开时，那颗只为它服务的 `·` 一并离开（`#memChip, #countChip::after { display: none }`）——右侧空无一物的分隔符是孤儿。
 
 侧栏 glyph（`base.css .side-type` 段）：
 

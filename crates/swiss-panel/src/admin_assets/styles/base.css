@@ -293,7 +293,10 @@
     /* The memory chip is a control (renderMemory wires a memory-only click): mono because
        the value is a copyable number, .chip.button for the hover affordance. */
     #memChip { font-family: var(--mono); font-size: var(--f-caption); }
-    @media (max-width: 960px) { #memChip { display: none; } /* 960px is the support floor */ }
+    /* 960px is the support floor: the memory number goes, and so does the dot that only
+       ever separated it from the count - a separator with nothing on its right is an
+       orphan. Found on the post-review walk; the spec's S5 text says the same. */
+    @media (max-width: 960px) { #memChip, #countChip::after { display: none; } }
     .chip {
       font-size: var(--f-label); font-variant-numeric: tabular-nums;
       color: var(--text-3); background: none;
