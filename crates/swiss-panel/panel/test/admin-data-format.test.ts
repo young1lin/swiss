@@ -200,6 +200,6 @@ describe("the console skeleton carries what its wiring queries", () => {
     const src = readFileSync(join(admin, "js", "data-view.js"), "utf8");
     expect(src).toContain('id: "dbSqlFormat"');
     expect(src).toContain('id: "dbSqlFav"');
-    expect(src).toContain('label: "Save to favorites"');
+    expect(src).toContain('label: tr("Save to favorites")'); // docs/38: the label went through tr()
   });
 });

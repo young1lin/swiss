@@ -30,6 +30,7 @@ import { h } from "./h.js";
 import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
 import { popupMenu } from "./menu.js";
 import { dbView } from "./db-state.js";
+import { locale, tr, trn } from "./i18n.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
 
@@ -432,7 +433,7 @@ async function dbExportTable(btn                   , fmt        )               
   btn.textContent = "Exporting\u2026";
   try {
     const resp = await fetch(q);
-    if (!resp.ok) { toast("Export failed: HTTP " + resp.status, true); return; }
+    if (!resp.ok) { toast(tr("Export failed: HTTP {n}", { n: resp.status }), true); return; }
     const blob = await resp.blob();
     const disp = resp.headers.get("Content-Disposition") || "";
     const m = /filename="([^"]+)"/.exec(disp);
@@ -444,12 +445,12 @@ async function dbExportTable(btn                   , fmt        )               
     a.remove();
     setTimeout(() => { URL.revokeObjectURL(a.href); }, 1000);
     const rows = resp.headers.get("X-Export-Rows");
-    toast("Exported " + (rows != null ? Number(rows).toLocaleString() + " rows" : ""));
+    toast(rows != null ? tr("Exported {n} rows", { n: Number(rows).toLocaleString(locale()) }) : tr("Exported"));
   } catch (e) {
-    toast("Export failed", true);
+    toast(tr("Export failed"), true);
   } finally {
     btn.disabled = false;
-    btn.textContent = "Export\u2026";
+    btn.textContent = tr("Export…");
   }
 }
 
@@ -460,10 +461,10 @@ function renderDbToolbar()       {
   head.textContent = "";
   const left = el("div", "db-head-left");
   if (d.sqlResult) {
-    left.appendChild(el("h2", "db-title pane-title", d.sqlResult.explained ? "Execution plan" : (dbIsRedis() ? "Command reply" : "SQL results")));
-    left.appendChild(el("div", "db-meta", d.sqlResult.rowCount + " row" + (d.sqlResult.rowCount === 1 ? "" : "s") +
-      (d.sqlResult.note ? " · " + d.sqlResult.note : "") +
-      (d.sqlResult.elapsedMs != null ? " · " + d.sqlResult.elapsedMs + " ms" : "")));
+    left.appendChild(el("h2", "db-title pane-title", d.sqlResult.explained ? tr("Execution plan") : (dbIsRedis() ? tr("Command reply") : tr("SQL results"))));
+    left.appendChild(el("div", "db-meta", trn(d.sqlResult.rowCount, "{n} row", "{n} rows") +
+      (d.sqlResult.note ? tr(" · {note}", { note: d.sqlResult.note }) : "") +
+      (d.sqlResult.elapsedMs != null ? tr(" · {ms} ms", { ms: d.sqlResult.elapsedMs }) : "")));
     // docs/22 W4.3: one tab per statement reply, in the pane's segmented-control vocabulary
     // (.db-tabs — the same strip the Structure tabs use). Eight fit the pane; past that the
     // strip scrolls sideways instead of wrapping. Switching only repoints the active result;
@@ -475,30 +476,30 @@ function renderDbToolbar()       {
       left.appendChild(h("div", { class: "db-tabs", role: "tablist" },
         d.sqlResults?.map((r              , ti        ) => {
           return h("button", { role: "tab", data: { rtab: String(ti) }, aria: { selected: ti === d.sqlTab ? "true" : "false" } },
-            r.tabLabel || "Result " + (ti + 1));
+            r.tabLabel || tr("Result {n}", { n: ti + 1 }));
         })));
     }
   } else if (d.data) {
     left.appendChild(el("h2", "db-title pane-title", (d.data.schema ? d.data.schema + "." : "") + d.data.table));
-    const bits = [d.data.total.toLocaleString() + " rows"];
+    const bits = [tr("{n} rows", { n: d.data.total.toLocaleString(locale()) })];
     // docs/22 W4.1: a keyless table edits by every-column addressing — the server's note
     // says how, and it belongs in the editable branch now (this same line used to explain
     // why such a table could not be edited at all).
     const pkCols0 = d.data.primaryKey || [];
     bits.push(d.data.editable
-      ? (pkCols0.length ? "editable — changes buffer until Commit" : "editable — " + (d.data.editNote || "rows are addressed by all columns"))
-      : (d.data.editNote || "browsing only"));
+      ? (pkCols0.length ? tr("editable — changes buffer until Commit") : tr("editable — {note}", { note: d.data.editNote || tr("rows are addressed by all columns") }))
+      : (d.data.editNote || tr("browsing only")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (dbIsRedis()) {
-    left.appendChild(el("h2", "db-title pane-title", d.redisKey ? d.redisKey : "Keys"));
+    left.appendChild(el("h2", "db-title pane-title", d.redisKey ? d.redisKey : tr("Keys")));
     const conn2 = d.conns.find((c                    )          => { return c.name === d.conn; });
     left.appendChild(el("div", "db-meta",
       (conn2 ? conn2.label : "") +
-      (d.redis && d.redis.total != null ? " · " + Number(d.redis.total).toLocaleString() + " keys" : "") +
-      " · browsing · edit values in place or run commands"));
+      (d.redis && d.redis.total != null ? tr(" · {n} keys", { n: Number(d.redis.total).toLocaleString(locale()) }) : "") +
+      tr(" · browsing · edit values in place or run commands")));
   } else {
-    left.appendChild(el("h2", "db-title pane-title", "Data"));
-    left.appendChild(el("div", "db-meta", d.conn ? (d.table ? "Loading…" : "Select a table on the left") : "No database MCP registered"));
+    left.appendChild(el("h2", "db-title pane-title", tr("Data")));
+    left.appendChild(el("div", "db-meta", d.conn ? (d.table ? tr("Loading…") : tr("Select a table on the left")) : tr("No database MCP registered")));
   }
   head.appendChild(left);
 
@@ -506,7 +507,7 @@ function renderDbToolbar()       {
   const nosql = dbIsRedis();
   if (d.data && !d.sqlResult && !nosql) dbRenderTabs(ctl);
   if (d.sqlResult) {
-    ctl.appendChild(h("button", { class: "btn", data: { tb: "back" } }, dbIsRedis() ? "Back to keys" : "Back to table"));
+    ctl.appendChild(h("button", { class: "btn", data: { tb: "back" } }, dbIsRedis() ? tr("Back to keys") : tr("Back to table")));
   } else if (d.data) {
     // Row-grid controls: page size, pager, refresh, insert, CSV. Rendered on EVERY tab but hidden
     // with visibility (keeps the width) off the Data tab, so the tab segment never shifts.
@@ -514,7 +515,7 @@ function renderDbToolbar()       {
     if (d.tab !== "data") dataCtl.style.visibility = "hidden";
     // The page-size select carries a data-tb address — #pane's delegated change listener
     // answers it (docs/37 R5), and the refused-discard restore reads live state.
-    dataCtl.appendChild(h("select", { class: "db-pagesize", title: "Rows per page", data: { tb: "pagesize" } },
+    dataCtl.appendChild(h("select", { class: "db-pagesize", title: tr("Rows per page"), data: { tb: "pagesize" } },
       DB_PAGE_SIZES.map((n        ) => {
         return h("option", { value: String(n), selected: n === d.pageSize }, String(n));
       })));
@@ -522,35 +523,35 @@ function renderDbToolbar()       {
     const first = d.offset + 1;
     const to = d.offset + d.data.rows.length;
     dataCtl.appendChild(el("span", "db-pageinfo",
-      d.data.total ? first.toLocaleString() + "–" + to.toLocaleString() + " of " + d.data.total.toLocaleString() : "0 rows"));
+      d.data.total ? tr("{a}–{b} of {t}", { a: first.toLocaleString(locale()), b: to.toLocaleString(locale()), t: d.data.total.toLocaleString(locale()) }) : tr("0 rows")));
     dataCtl.appendChild(h("button", {
-      class: "btn icon", title: "Previous page", disabled: d.offset === 0, data: { pg: "prev" },
+      class: "btn icon", title: tr("Previous page"), disabled: d.offset === 0, data: { pg: "prev" },
     }, iconNode("chevron-left")));
     // docs/22 W1.9: the limit+1 probe answers "is there another page" from the rows actually
     // fetched; the old offset-vs-total arithmetic stays as the fallback when the flag is absent.
     dataCtl.appendChild(h("button", {
-      class: "btn icon", title: "Next page",
+      class: "btn icon", title: tr("Next page"),
       disabled: d.data.nextPage != null ? !d.data.nextPage : to >= d.data.total, data: { pg: "next" },
     }, iconNode("chevron-right")));
 
     dataCtl.appendChild(h("button", {
-      class: "btn", title: "Reload this page (drops buffered edits)", data: { tb: "refresh" },
-    }, "Refresh"));
+      class: "btn", title: tr("Reload this page (drops buffered edits)"), data: { tb: "refresh" },
+    }, tr("Refresh")));
     if (d.data.editable) {
       dataCtl.appendChild(h("button", {
-        class: "btn", title: "Buffer a new row — inserted only on Commit", data: { tb: "addrow" },
-      }, "+ Row"));
+        class: "btn", title: tr("Buffer a new row — inserted only on Commit"), data: { tb: "addrow" },
+      }, tr("+ Row")));
     }
     dataCtl.appendChild(h("button", {
-      class: "btn", title: "Download the current page as CSV", data: { tb: "csv" },
-    }, "CSV"));
+      class: "btn", title: tr("Download the current page as CSV"), data: { tb: "csv" },
+    }, tr("CSV")));
     dataCtl.appendChild(h("button", {
-      class: "btn", title: "Export the whole table as CSV, NDJSON, or SQL dump (capped at 100k rows)", data: { tb: "export" },
-    }, "Export…"));
+      class: "btn", title: tr("Export the whole table as CSV, NDJSON, or SQL dump (capped at 100k rows)"), data: { tb: "export" },
+    }, tr("Export…")));
     if (d.data.editable) {
       dataCtl.appendChild(h("button", {
-        class: "btn", title: "Insert CSV rows in one transaction", data: { tb: "import" },
-      }, "Import\u2026"));
+        class: "btn", title: tr("Insert CSV rows in one transaction"), data: { tb: "import" },
+      }, tr("Import…")));
     }
     ctl.appendChild(dataCtl);
   }
@@ -656,14 +657,14 @@ function renderDbGrid()       {
   // docs/22 W5.1: the Form tab paints the same rows as the grid, one record at a time.
   if (d.tab === "form") { renderDbFormView(wrap); return; }
   if (d.tab !== "data") { renderDbDetailGrid(wrap); return; }
-  if (!d.conn) { wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first.")); return; }
+  if (!d.conn) { wrap.appendChild(el("div", "db-hint", tr("No database MCP registered — add a mysql or pg MCP first."))); return; }
   if (!d.table || !d.data) {
-    if (d.table) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+    if (d.table) { wrap.appendChild(el("div", "db-hint", tr("Loading…"))); return; }
     // The shared empty state (docs/18 V7); "Loading…" stays a quiet one-liner.
-    wrap.appendChild(emptyNode({ icon: "database", title: "Select a table", hint: "Pick a table on the left to browse its rows." }));
+    wrap.appendChild(emptyNode({ icon: "database", title: tr("Select a table"), hint: tr("Pick a table on the left to browse its rows.") }));
     return;
   }
-  if (d.loading) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+  if (d.loading) { wrap.appendChild(el("div", "db-hint", tr("Loading…"))); return; }
 
   const pkCols = d.data.primaryKey || [];
   const editable = d.data.editable;
@@ -688,7 +689,7 @@ function renderDbGrid()       {
   // answers it (docs/37 R5), so no per-render handler and no re-attach on repaint.
   thAll.appendChild(h("input", {
     type: "checkbox", class: "db-selbox", checked: allOn,
-    title: "Select every row on this page (for copy)", data: { selall: "" },
+    title: tr("Select every row on this page (for copy)"), data: { selall: "" },
   }));
   hr.appendChild(thAll);
   // One caption line under every column name when ANY column carries a comment: the meaning is
@@ -717,9 +718,8 @@ function renderDbGrid()       {
       // row is re-resolved from live d.detail at event time (docs/37 §10.1).
       main.appendChild(h("button", {
         class: "db-col-fk", type: "button",
-        title: "Open " + (fk.refSchema ? fk.refSchema + "." : "") + fk.refTable +
-          " filtered to this column's value in the focused row",
-        aria: { label: "Jump to referenced row" },
+        title: tr("Open {ref} filtered to this column's value in the focused row", { ref: (fk.refSchema ? fk.refSchema + "." : "") + fk.refTable }),
+        aria: { label: tr("Jump to referenced row") },
         data: { fkjump: c.name },
       }, iconNode("arrow-right")));
     }
@@ -785,9 +785,8 @@ function renderDbGrid()       {
     const trh = el("tr");
     const tdh = el("td", "db-grid-hiddenall");
     const inner = el("div");
-    inner.appendChild(el("span", "", "Every column of " +
-      (d.schema ? d.schema + "." : "") + d.table + " is hidden."));
-    inner.appendChild(h("button", { class: "btn", data: { colsall: "" } }, "Show all columns"));
+    inner.appendChild(el("span", "", tr("Every column of {t} is hidden.", { t: (d.schema ? d.schema + "." : "") + d.table })));
+    inner.appendChild(h("button", { class: "btn", data: { colsall: "" } }, tr("Show all columns")));
     tdh.appendChild(inner);
     trh.appendChild(tdh);
     tbody.appendChild(trh);
@@ -798,10 +797,10 @@ function renderDbGrid()       {
 
   // Buffered inserts first, so they read as "the row you are about to add".
   d.inserts.forEach((ins          , i        )       => {
-    const tr = el("tr", "db-ins");
+    const tri = el("tr", "db-ins");
     const rc = el("td", "db-rowctl");
-    rc.appendChild(h("button", { class: "db-act", title: "Remove this buffered insert", data: { irm: String(i) } }, "✕"));
-    tr.appendChild(rc);
+    rc.appendChild(h("button", { class: "db-act", title: tr("Remove this buffered insert"), data: { irm: String(i) } }, "✕"));
+    tri.appendChild(rc);
     cols.forEach((c             , ci        )       => {
       const has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
       const td = el("td", "db-cell")                                                                        ;
@@ -833,31 +832,31 @@ function renderDbGrid()       {
         // row's menu never offered the dialog path a data row's menu always had.
         td.oncontextmenu = (e            )       => { dbCellMenu(e, null, null, c.name, ()       => { dbOpenCellEditor("insert", null, i, c.name, null); }); };
       }
-      tr.appendChild(td);
+      tri.appendChild(td);
     });
-    tbody.appendChild(tr);
+    tbody.appendChild(tri);
   });
 
   d.data?.rows.forEach((row                         , rowIdx        )       => {
     const key = keyOf(row, rowIdx);
     const deleted = !!d.deletes[key];
     const upd = d.updates[key];
-    const tr = el("tr", (deleted ? "db-del " : "") + (d.sel[key] ? "db-sel" : ""));
+    const tri = el("tr", (deleted ? "db-del " : "") + (d.sel[key] ? "db-sel" : ""));
     // The row's controls carry data-srow/data-rdel addresses instead of handlers (docs/37
     // R5): #pane's delegated change/click resolve the row and its delete state from live
     // state at event time — the shift-range and the ↩/✕ glyph both recompute, never capture.
     const rc = el("td", "db-rowctl");
     rc.appendChild(h("input", {
       type: "checkbox", class: "db-selbox", checked: !!d.sel[key],
-      title: "Select row for copy (Shift-click for a range)", data: { srow: String(rowIdx) },
+      title: tr("Select row for copy (Shift-click for a range)"), data: { srow: String(rowIdx) },
     }));
     if (editable) {
       rc.appendChild(h("button", {
-        class: "db-act", title: deleted ? "Undo this buffered delete" : "Buffer a delete — applied only on Commit",
+        class: "db-act", title: deleted ? tr("Undo this buffered delete") : tr("Buffer a delete — applied only on Commit"),
         data: { rdel: String(rowIdx) },
       }, deleted ? "↩" : "✕"));
     }
-    tr.appendChild(rc);
+    tri.appendChild(rc);
     cols.forEach((c             , ci        )       => {
       const orig = row[c.name];
       const pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, c.name);
@@ -892,9 +891,9 @@ function renderDbGrid()       {
           dbCellMenu(e, row, key, c.name, ()       => { dbOpenCellEditor("update", key, -1, c.name, meta); });
         };
       }
-      tr.appendChild(td);
+      tri.appendChild(td);
     });
-    tbody.appendChild(tr);
+    tbody.appendChild(tri);
   });
 
   tbl.appendChild(tbody);
@@ -935,7 +934,7 @@ function renderDbResultGrid(wrap             )       {
   const allOn2 = res.rows.length > 0 && res.rows.every((_                         , i        )          => { return !!d.sel[dbResultKey(tab, i)]; });
   thAll2.appendChild(h("input", {
     type: "checkbox", class: "db-selbox", checked: allOn2,
-    title: "Select every result row (for copy)", data: { selall: "" },
+    title: tr("Select every result row (for copy)"), data: { selall: "" },
   }));
   hr.appendChild(thAll2);
   res.columns.forEach((c        )       => { hr.appendChild(el("th", "db-col", c)); });
@@ -944,16 +943,16 @@ function renderDbResultGrid(wrap             )       {
   const tbody = el("tbody");
   res.rows.forEach((row                         , i        )       => {
     const qkey = dbResultKey(tab, i);
-    const tr = el("tr", d.sel[qkey] ? "db-sel" : "");
+    const tri = el("tr", d.sel[qkey] ? "db-sel" : "");
     const rc2 = el("td", "db-rowctl");
     // data-qrow addresses the row for #pane's delegated change (docs/37 R5); the shift-range
     // and selection keys recompute from live state at event time.
     rc2.appendChild(h("input", {
       type: "checkbox", class: "db-selbox", checked: !!d.sel[qkey],
-      title: "Select row for copy (Shift-click for a range)", data: { qrow: String(i) },
+      title: tr("Select row for copy (Shift-click for a range)"), data: { qrow: String(i) },
     }));
     rc2.appendChild(document.createTextNode(String(i + 1)));
-    tr.appendChild(rc2);
+    tri.appendChild(rc2);
     res?.columns.forEach((c        )       => {
       const td = el("td", "db-cell");
       td.oncontextmenu = (e            )       => { dbResultCellMenu(e, row, c); };
@@ -961,9 +960,9 @@ function renderDbResultGrid(wrap             )       {
       // links URLs and right-aligns JS numbers off the value alone.
       const v = row[c];
       dbPaintCell(td, v === undefined ? null : v, true);
-      tr.appendChild(td);
+      tri.appendChild(td);
     });
-    tbody.appendChild(tr);
+    tbody.appendChild(tri);
   });
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);

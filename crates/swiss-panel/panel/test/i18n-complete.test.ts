@@ -90,8 +90,11 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
    - "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", "nightly-vacuum", "cmd /c backup.bat --flag value",
      "30 3 * * *", "ops, nightly": the jobs sheets' sample values — an env block, a job id, a
      command line, a cron expression, labels; all language-neutral as samples.
-   - "retry.retryOn": the jobs config's own key path, shown as the field's label. */
-const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1", "build", "/data/ws/proj", "socks5://127.0.0.1:7890", "5433", "5432", "127.0.0.1", "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", "nightly-vacuum", "cmd /c backup.bat --flag value", "30 3 * * *", "ops, nightly", "retry.retryOn"]);
+   - "retry.retryOn": the jobs config's own key path, shown as the field's label.
+   - "CSV", "SQL", "DDL": format and language names — brands.
+   - "events": the new-table sheet's sample table name — language-neutral sample.
+   - " · {note}": a data frame around the server's own note, kept verbatim. */
+const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1", "build", "/data/ws/proj", "socks5://127.0.0.1:7890", "5433", "5432", "127.0.0.1", "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", "nightly-vacuum", "cmd /c backup.bat --flag value", "30 3 * * *", "ops, nightly", "retry.retryOn", "CSV", "SQL", "DDL", "events", " · {note}"]);
 
 describe("i18n dictionary completeness (docs/38 L10a)", () => {
   const used = collect();

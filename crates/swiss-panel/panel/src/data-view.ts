@@ -38,6 +38,7 @@ import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
 import { dbIsMounted, dbView, mountDbView } from "./db-state.js";
+import { tr } from "./i18n.js";
 
 /* ================================================================================================
    Data view — a DBeaver-style browser over the mysql/pg MCPs.
@@ -150,40 +151,40 @@ function renderDbView(): void {
   const root = el("div", "db-root");
   fill(root,
     h("div", { class: "db-side" },
-      h("select", { id: "dbConn", aria: { label: "Connection" } }),
-      h("select", { id: "dbSchema", aria: { label: "Schema" }, hidden: true }),
-      h("input", { id: "dbGrep", type: "search", placeholder: "Filter tables", aria: { label: "Filter tables" } }),
+      h("select", { id: "dbConn", aria: { label: tr("Connection") } }),
+      h("select", { id: "dbSchema", aria: { label: tr("Schema") }, hidden: true }),
+      h("input", { id: "dbGrep", type: "search", placeholder: tr("Filter tables"), aria: { label: tr("Filter tables") } }),
       h("div", { class: "db-sortrow" },
-        h("select", { id: "dbSort", aria: { label: "Sort by" } }),
-        h("button", { class: "btn icon", id: "dbSortDir", type: "button", title: "Sort direction" })),
+        h("select", { id: "dbSort", aria: { label: tr("Sort by") } }),
+        h("button", { class: "btn icon", id: "dbSortDir", type: "button", title: tr("Sort direction") })),
       // docs/22 W4.6: the table list's own header band — the list names itself and carries
       // one persistent dimmed + (the docs/20 §4 container-header glyph) for New table….
       h("div", { class: "db-list-head", id: "dbListHead", hidden: true },
-        h("span", { class: "db-list-title" }, "Tables"),
-        h("button", { class: "btn icon grp-add", id: "dbNewTable", type: "button", aria: { label: "New table" }, title: "New table…" }, iconNode("plus"))),
-      h("div", { class: "db-tables", id: "dbTables" }, h("div", { class: "db-hint" }, "Loading…")),
+        h("span", { class: "db-list-title" }, tr("Tables")),
+        h("button", { class: "btn icon grp-add", id: "dbNewTable", type: "button", aria: { label: tr("New table") }, title: tr("New table…") }, iconNode("plus"))),
+      h("div", { class: "db-tables", id: "dbTables" }, h("div", { class: "db-hint" }, tr("Loading…"))),
       h("div", { class: "db-side-foot", id: "dbTablesPager" })),
     h("div", { class: "db-main" },
       h("div", { class: "db-headrow" },
         h("div", { class: "db-head", id: "dbHead" }),
         // Pane-level actions live behind one ⋯ next to the head (docs/22 W3.2); the Activity
         // monitor is the first. Hidden until a SQL connection exists — redis has no sessions.
-        h("button", { class: "btn icon", id: "dbMore", type: "button", title: "More pane actions", hidden: true }, iconNode("ellipsis"))),
+        h("button", { class: "btn icon", id: "dbMore", type: "button", title: tr("More pane actions"), hidden: true }, iconNode("ellipsis"))),
       h("div", { class: "db-filters", id: "dbFilters" }),
       h("div", { class: "db-console", id: "dbConsole", hidden: true },
         h("div", { class: "db-sql-wrap" },
           h("pre", { class: "db-sql-hl db-sql-face", id: "dbSqlHl", aria: { hidden: "true" } }),
           h("textarea", {
             class: "db-sql-face", id: "dbSql", spellcheck: false,
-            placeholder: "SELECT / UPDATE / DELETE … — statements split on ;",
+            placeholder: tr("SELECT / UPDATE / DELETE … — statements split on ;"),
           })),
         h("div", { class: "db-console-row" },
-          h("button", { class: "btn", id: "dbSqlRun" }, "Run"),
-          h("button", { class: "btn", id: "dbSqlExplain" }, "Explain"),
-          h("button", { class: "btn", id: "dbSqlFormat" }, "Format"),
-          h("select", { id: "dbSqlHistory", title: "Query history" }, h("option", { value: "" }, "History")),
-          h("button", { class: "btn icon", id: "dbSqlFav", type: "button", aria: { label: "Save to favorites" }, title: "Save the console text to favorites" }, iconNode("star")),
-          h("span", { class: "hint", id: "dbSqlHint" }, "statements split on ; · Ctrl+Enter runs"))),
+          h("button", { class: "btn", id: "dbSqlRun" }, tr("Run")),
+          h("button", { class: "btn", id: "dbSqlExplain" }, tr("Explain")),
+          h("button", { class: "btn", id: "dbSqlFormat" }, tr("Format")),
+          h("select", { id: "dbSqlHistory", title: tr("Query history") }, h("option", { value: "" }, tr("History"))),
+          h("button", { class: "btn icon", id: "dbSqlFav", type: "button", aria: { label: tr("Save to favorites") }, title: tr("Save the console text to favorites") }, iconNode("star")),
+          h("span", { class: "hint", id: "dbSqlHint" }, tr("statements split on ; · Ctrl+Enter runs")))),
       h("div", { class: "db-grid-wrap", id: "dbGridWrap" }),
       h("div", { class: "db-bar", id: "dbBar", hidden: true })));
   pane.appendChild(root);
@@ -559,7 +560,7 @@ function dbSyncKind(): void {
     if (fmt) fmt.hidden = false;
     // docs/22 W4.3: the ; split answers one result tab per statement; the blank-line block
     // rule (W1.8) still decides what a single Run covers.
-    hint.textContent = "a blank line starts a new block · Ctrl+Enter runs the caret's block · ; splits it into one result tab per statement";
+    hint.textContent = tr("a blank line starts a new block · Ctrl+Enter runs the caret's block · ; splits it into one result tab per statement");
   }
   // The pane's ⋯ exists for the Activity page, which is a SQL-connection feature: a redis
   // connection (or none) hides the button rather than the menu hiding its one item. The
