@@ -176,7 +176,9 @@ export function configPutBody(config                                            
 /** The picker's label for a session tab: short, monospace-friendly, stable. The listing
  *  rows carry the connection's label ("jdoe-demo"); without it a remote tab would show
  *  the raw connection UUID, which is noise, not a name. */
-export function sessionLabel(session                                          )         {
+/* The session param is the two fields the label reads: both the wire's listing rows and
+   the view's own TermModel carry label/target, and either shape may sit behind a tab. */
+export function sessionLabel(session                                                                    )         {
   if (!session) return "?";
   if (session.label) return String(session.label);
   const t = session.target || "?";
@@ -275,7 +277,7 @@ export function mouseAction(ev                                                  
  *  opened on. An EMPTY shell title is the shell resetting its title, not a label —
  *  fall through. Seven of nine explored reference terminals converged on exactly
  *  this order (docs/22 consensus 1). */
-export function tabLabel(session                                          , shellTitle         , customTitle         )         {
+export function tabLabel(session                                                                    , shellTitle         , customTitle         )         {
   const custom = customTitle == null ? "" : String(customTitle).trim();
   if (custom) return custom;
   const shell = shellTitle == null ? "" : String(shellTitle).trim();

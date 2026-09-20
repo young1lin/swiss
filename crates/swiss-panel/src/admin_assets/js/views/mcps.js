@@ -33,7 +33,7 @@ export async function refresh() {
   const d = mcpDetail();
   if (!d) return;
   await loadMeta(d.name);
-  if (KINDS.indexOf(d.tab) >= 0) { d[d.tab] = pageState(); await loadPage(d.name, d.tab); }
+  if (KINDS.includes(d.tab)) { d[d.tab] = pageState(); await loadPage(d.name, d.tab); }
 }
 export function countText() { return mcpChipText(); }
 export function unmount() { histClose(); }

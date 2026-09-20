@@ -285,9 +285,9 @@ function dbStructureClick(t: Element, ev: MouseEvent): boolean {
   const ref = t.closest<HTMLElement>("[data-ref-table]");
   if (ref) {
     if (!dbOkToDrop()) return true;
-    // The FK row's schema is null for a same-schema reference; ApiDbTableRow types it string,
-  // so this one cast survives (the same cast the pre-R5 string builder carried).
-  dbOpenTable({ name: ref.dataset.refTable || "", schema: (ref.dataset.refSchema || null) as unknown as string });
+    // The header writes data-ref-schema only for a cross-schema reference, so a same-schema
+    // jump opens with schema null - exactly what dbOpenTable's target type carries.
+    dbOpenTable({ name: ref.dataset.refTable || "", schema: ref.dataset.refSchema || null });
     return true;
   }
   return false;

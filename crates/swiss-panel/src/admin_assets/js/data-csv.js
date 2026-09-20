@@ -87,7 +87,7 @@ function dbOpenImport()       {
     lines = rows.slice(1, 10001); // cap mirrors IMPORT_ROW_CAP
     // default mapping: match by name, skip otherwise
     const names = (d.data?.columns.map((c             )         => { return c.name; }) ?? []);
-    mapping = header.map((h        )                => { return names.indexOf(h) >= 0 ? h : null; });
+    mapping = header.map((h        )                => { return names.includes(h) ? h : null; });
     paint();
   }
 
@@ -238,14 +238,15 @@ function dbPushCellFilter(column        , op        , value         )       {
   if (!dbApplyFilters()) { d.filters.pop(); renderDbFilters(); }
 }
 
-function dbCellMenu(e            , row                                , key        , column        , editInDialog                     )       {
+function dbCellMenu(e            , row                                , key               , column        , editInDialog                     )       {
   e.preventDefault();
   const d = dbView();
   if (!d.data) return;
-  const upd = d.updates[key];
+  // An insert row's menu carries no row key; a data row's key and row always arrive together.
+  const upd = key == null ? null : d.updates[key];
   const pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, column);
   const value = pending ? upd.changes[column] : row ? row[column] : undefined;
-  const full = row ? dbRowForCopy(row, key) : null;
+  const full = row && key != null ? dbRowForCopy(row, key) : null;
   const names = d.data?.columns.map((c             )         => { return c.name; });
   const dialect = (d.conns.find((c                    )          => { return c.name === d.conn; }) || {}                        ).dialect || "mysql";
 

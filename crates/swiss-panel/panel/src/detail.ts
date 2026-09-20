@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-import type { FreshDetail } from "./types/dom.js";
 import type { KindPageState, McpDetail } from "./types/state.js";
 import { $, KINDS, api, apiJson, now, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
@@ -61,7 +60,7 @@ async function act(name: string, verb: string): Promise<void> {
     KINDS.forEach((k) => { d[k as "tools" | "resources" | "prompts"] = pageState(); });
     renderPane();
     void loadMeta(name);
-    if (KINDS.indexOf(d.tab) >= 0) void loadPage(name, d.tab);
+    if (KINDS.includes(d.tab)) void loadPage(name, d.tab);
   }
 }
 
@@ -159,7 +158,7 @@ function pageState(): KindPageState {
 function openDetail(name: string): void {
   if (mcpDetail()?.name === name) return;
   setSelectedMcp(name);
-  const d: FreshDetail = {
+  const d: McpDetail = {
     name: name, tab: "tools", config: null, source: undefined, editing: false, editType: null, editVals: null,
     // OAuth (docs/24 D5): the detail's auth state ("authorized" | "needs-auth" | undefined),
     // and whether an authorize flow this panel started is still polling.
@@ -186,9 +185,10 @@ function openDetail(name: string): void {
     callsPendingPage: null, callsError: "", callsErrStatus: "", callsRetryTarget: null,
     callsRetryDir: null, callsSwitch: null, callsRequest: 0, callsActive: 0,
     callsTree: {}, // docs/33 C2: per-seq JSON tree expansion, survives the poll repaint
+    // The three kind pages (views/mcps.ts stages the active one under d[d.tab]) open fresh.
+    tools: pageState(), resources: pageState(), prompts: pageState(),
   };
-  KINDS.forEach((k) => { d[k] = pageState(); });
-  setMcpDetail(d as unknown as McpDetail);
+  setMcpDetail(d);
   setMenuOpen(false);
   patchSidebar();
   renderPane();
@@ -462,7 +462,7 @@ function showTab(tab: string): void {
   d.tab = tab;
   d.editing = false;
   renderPane();
-  if (KINDS.indexOf(tab) >= 0 && !d[tab as "tools" | "resources" | "prompts"].loaded && !d[tab as "tools" | "resources" | "prompts"].loading) void loadPage(d.name, tab);
+  if (KINDS.includes(tab) && !d[tab as "tools" | "resources" | "prompts"].loaded && !d[tab as "tools" | "resources" | "prompts"].loading) void loadPage(d.name, tab);
   // The config tab's revision list (docs/28 D1) rides along with the tab, not the poll.
   if (tab === "config") void loadRevisions(d.name);
   // Run needs the tool list to build its argument form.

@@ -56,7 +56,7 @@ function currentPageCount() { return active && active.module.countText ? active.
 function pluginFor(page                )                                  { return inventory && (inventory.plugins || []).find((p) => { return p.id === page.pluginId; }); }
 function unavailable(page                )                      {
   const plugin = pluginFor(page);
-  return plugin && (plugin.enabled === false || ["disabled", "failed", "waitingDependency", "not-built"].indexOf(plugin.state) >= 0) ? plugin : null;
+  return plugin && (plugin.enabled === false || ["disabled", "failed", "waitingDependency", "not-built"].includes(plugin.state)) ? plugin : null;
 }
 
 /* --- layouts (docs/13 D5, as revised) -------------------------------------------------------------
@@ -222,7 +222,7 @@ async function reloadPluginInventory()                                     {
     if (!response.ok) throw new Error("Cannot load plugin inventory: HTTP " + response.status);
     const next                                                                                    = await response.json();
     const pages = next.pages || (next.plugins || []).flatMap((p) => { return p.pages || []; });
-    registry.replace(pages.filter((p) => { return ["plugins", "secrets", "system"].indexOf(p.id) < 0; })
+    registry.replace(pages.filter((p) => { return !["plugins", "secrets", "system"].includes(p.id); })
       .concat([management, vaultPage, systemPage]                   ));
     inventory = next;
   }

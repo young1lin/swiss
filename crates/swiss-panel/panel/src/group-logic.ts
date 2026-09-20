@@ -34,7 +34,7 @@ import { DEFAULT_GROUP } from "./util.js";
 function groupOf(names: string[]): (row: GroupedRow | null | undefined) => string {
   const first = names[0] || DEFAULT_GROUP;
   return (row) => {
-    return row && row.group && names.indexOf(row.group) >= 0 ? row.group : first;
+    return row && row.group && names.includes(row.group) ? row.group : first;
   };
 }
 
@@ -53,7 +53,7 @@ function slice<Row>(rows: Row[], names: string[], fn: (row: Row) => string): Gro
  *  the server's sink. Tunnels once hard-coded 'default' here, which stayed wrong after the
  *  first group was renamed. Pure so the wording is pinned by tests, not by typing. */
 function deleteConfirmMsg(name: string, names: string[], count: number, noun: string): string {
-  const sink = names.filter((g) => { return g !== name; })[0];
+  const sink = names.find((g) => { return g !== name; });
   return "Delete group '" + name + "'?\n\nIts " + count + " " + noun + (count === 1 ? "" : "s") +
     " move to '" + sink + "'. Nothing is removed.";
 }
@@ -88,7 +88,7 @@ function lastGroupKey(scope: string): string {
  *  name whose group was deleted or renamed is not a promise anybody made - else the first
  *  slot, the sink. Reading localStorage stays with the caller; this is the policy. */
 function resolveDefaultGroup(names: string[], lastUsed: string | null | undefined): string {
-  return lastUsed && names.indexOf(lastUsed) >= 0 ? lastUsed : names[0] || DEFAULT_GROUP;
+  return lastUsed && names.includes(lastUsed) ? lastUsed : names[0] || DEFAULT_GROUP;
 }
 
 export { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resolveDefaultGroup, slice };

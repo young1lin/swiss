@@ -279,7 +279,7 @@ function ruleRowNode(r                  )              {
  *  the raw id when the target is missing — deleting a jump in use is refused, so this is a
  *  stale-tab guard, and an id says more than an empty tag. */
 function tunConnName(id        )         {
-  const hit = tunData().connections.filter((c) => { return c.id === id; })[0];
+  const hit = tunData().connections.find((c) => { return c.id === id; });
   return hit ? hit.name : id;
 }
 

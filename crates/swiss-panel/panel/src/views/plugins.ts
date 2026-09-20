@@ -43,7 +43,9 @@ let painted = ""; // the structural signature of the drawn list; a change means 
 let autostart: { enabled: boolean; detail?: string; command?: string } | null = null; // { enabled, detail, command } from /api/autostart; null = old gateway
 let autostartBusy = false; // true while the OS registration write is in flight
 
-function inv(): ApiPluginsResponse { return pluginInventory() || { plugins: [], revision: 0 } as unknown as ApiPluginsResponse; }
+/* The never-loaded fallback carries every field the inventory answers with, so an
+   unreachable-empty list is still a truthful ApiPluginsResponse. */
+function inv(): ApiPluginsResponse { return pluginInventory() || { plugins: [], revision: 0, pages: [] }; }
 function rows(): ApiPluginRow[] { return inv().plugins || []; }
 function signature(): string { return rows().map((p: ApiPluginRow): string => { return p.id; }).join("\n"); }
 

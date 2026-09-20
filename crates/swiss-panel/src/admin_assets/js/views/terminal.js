@@ -157,7 +157,7 @@ function paintTabs() {
      would destroy an open rename input. The memo is the built tree's own outerHTML
      (docs/37 R5): same tree in, same markup out - skip. */
   const tabs = all.map((m) => {
-    const label = tabLabel(m                                    , m.shellTitle, m.customTitle) + (m.gone ? " · closed" : "");
+    const label = tabLabel(m, m.shellTitle, m.customTitle) + (m.gone ? " · closed" : "");
     return h("button", { role: "tab", data: { act: "select", id: m.id },
         aria: { selected: String(m.id === active) }, title: label },
       h("span", { class: "term-tab-label" }, label),
@@ -287,7 +287,7 @@ function paintJump(m           ) {
 function tabList() {
   const known = models.map((m) => { return m.id; });
   const extra = sessions.filter((s) => {
-    return s && s.id && known.indexOf(s.id) < 0 && !dismissed.has(s.id);
+    return s && s.id && !known.includes(s.id) && !dismissed.has(s.id);
   });
   return models.concat(extra.map((s) => {
     return { id: s.id, target: s.target, label: s.label, status: "", gone: false }             ;
@@ -720,7 +720,9 @@ function termTheme() {
   };
 }
 
-let encoder = null                          ;
+/* The shared encoder is made on first use; the const capture keeps the narrowed type
+   inside the send closures (a let's narrowing does not survive into one). */
+let encoder                     = null;
 function sendInput(m           , text        ) {
   if (!m.ws || m.ws.readyState !== 1) {
     /* Keystrokes typed while the FIRST socket is still coming up ride exactly once
@@ -729,8 +731,8 @@ function sendInput(m           , text        ) {
     if (m.buffered && m.buffered.length < 64) m.buffered.push(text);
     return;
   }
-  encoder = encoder || new TextEncoder();
-  m.ws.send(encoder.encode(text));
+  const enc = encoder || (encoder = new TextEncoder());
+  m.ws.send(enc.encode(text));
   if (m.toBottom) m.toBottom();   // typing puts the reader back on the bottom
 }
 
@@ -750,10 +752,10 @@ function connect(m           , ticket        ) {
     m.status = "attached";
     paintStatus();
     if (m.buffered && m.buffered.length) {
-      encoder = encoder || new TextEncoder();
+      const enc = encoder || (encoder = new TextEncoder());
       const queued = m.buffered;
       m.buffered = null;   // the pre-launch queue rides once, then never again
-      queued.forEach((t) => { ws.send(encoder.encode(t)); });
+      queued.forEach((t) => { ws.send(enc.encode(t)); });
     }
     if (m.term) {
       /* A re-attach must not leak the previous attach's mouse-tracking or

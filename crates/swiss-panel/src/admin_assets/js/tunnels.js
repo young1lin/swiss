@@ -49,7 +49,7 @@ function saveTunOrder()       {
 function moveTunRow(id        , target        , before         )       {
   if (!id || !target || id === target) return;
   const rows = tunRows()                                                 ;
-  const item = rows.filter((r                                           )          => { return r.id === id; })[0];
+  const item = rows.find((r                                           )          => { return r.id === id; });
   if (!item) return;
   const to = rows.findIndex((r                                           )          => { return r.id === target; });
   if (to < 0) return; // target vanished mid-drag — leave everything where it is
@@ -63,7 +63,7 @@ function moveTunRow(id        , target        , before         )       {
  *  — a reject takes the server's word for it. Scope is the family's own word ("conns"|"rules"). */
 async function assignTunScoped(scope        , id        , group               )                {
   const rows = scope === "rules" ? tunData().rules : tunData().connections;
-  const row = rows.filter((r                                           )          => { return r.id === id; })[0];
+  const row = rows.find((r                                           )          => { return r.id === id; });
   if (!row) return;
   const names = scope === "rules" ? tunData().ruleGroups : tunData().connGroups;
   if (makeGroupOf(names || [])(row) === (group || (names || [])[0])) return;
@@ -277,7 +277,7 @@ function wireTunnels() {
     ev.stopPropagation();
     const ruleRow = more.closest             ("[data-rule]");
     if (ruleRow) {
-      const rule = tunData().rules.filter((r) => { return r.id === ruleRow.dataset.rule; })[0];
+      const rule = tunData().rules.find((r) => { return r.id === ruleRow.dataset.rule; });
       if (!rule) return;
       // Force free appears only when a port is actually held — it is a remedy, not a
       // standing action.
@@ -292,7 +292,7 @@ function wireTunnels() {
     }
     const connRow = more.closest             ("[data-conn]");
     if (connRow) {
-      const conn = tunData().connections.filter((c                        )          => { return c.id === connRow.dataset.conn; })[0];
+      const conn = tunData().connections.find((c                        )          => { return c.id === connRow.dataset.conn; });
       if (!conn) return;
       popupMenu(more.getBoundingClientRect(), [
         { label: "Edit", fn: ()       => { openConnSheet(conn); } },
@@ -375,7 +375,7 @@ async function deleteRule(rule                  , force          )              
 /** Kill whatever holds a local port. Confirmed here because it can kill a process doing real work. */
 async function forceFreePort(port        , ruleId        )                {
   const d = tunData();
-  const rule = d.rules.filter((r                  )          => { return r.id === ruleId; })[0];
+  const rule = d.rules.find((r                  )          => { return r.id === ruleId; });
   const owner = rule && rule.portOwner;
   if (!confirm("Port " + port + " is held by pid " + (owner ? owner.pid + " (" + owner.name + ")" : "?") +
       ".\n\nForce-kill that process? It may be doing real work.")) return;

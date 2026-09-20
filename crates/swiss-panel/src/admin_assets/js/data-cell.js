@@ -28,7 +28,9 @@ import { dbView } from "./db-state.js";
    whole grid mid-edit, and a 4 KB JSON cell has no business in a 30px row anyway. The dialog
    knows what it is editing (table, column, PK address), offers NULL / one-line / text / JSON,
    and Save only writes the LOCAL buffer — Commit is still the only door to the database. */
-let dbCellEdit                                                                                                 = null; // { kind: "update"|"insert", key, i, column, meta } while the sheet is open
+/* While the sheet is open: an update carries its row's key and meta, an insert neither
+   (its row is d.inserts[i]) - key/meta are nullable and the update paths narrow. */
+let dbCellEdit                                                                                                               = null;
 
 function dbCellJsonLike(s         )          {
   const t = String(s == null ? "" : s).trim();
@@ -40,17 +42,25 @@ function dbCellPretty(s        )                {
   try { return JSON.stringify(JSON.parse(String(s)), null, 2); } catch (e) { return null; }
 }
 
-function dbOpenCellEditor(kind                     , key        , i        , column        , meta            )       {
+function dbOpenCellEditor(kind                     , key               , i        , column        , meta                   )       {
   const d = dbView();
   if (!d.data || !d.data.editable) return;
   let isNull = false;
   let text                = "";
+  // The header line and the empty-string rule read the update's meta; capture both where the
+  // narrowing lives instead of re-testing meta at each later use.
+  let pkJson = "";
+  let emptyWasNotNull = false;
   if (kind === "update") {
+    // An update editor is only opened for a real row, which always carries its key and meta.
+    if (key == null || !meta) return;
     const e = d.updates[key];
     const pending = e && Object.prototype.hasOwnProperty.call(e.changes, column);
     const v = pending ? e?.changes[column] : meta.orig;
     isNull = pending ? v === null : meta.orig === null || meta.orig === undefined;
     text = isNull ? "" : dbCellText(v) ;
+    pkJson = JSON.stringify(meta.pk);
+    emptyWasNotNull = meta.orig !== "";
   } else {
     const ins = d.inserts[i] ;   // an insert editor is only opened for a buffered row that still exists
     const has = Object.prototype.hasOwnProperty.call(ins.values, column);
@@ -71,7 +81,7 @@ function dbOpenCellEditor(kind                     , key        , i        , col
         h("div", { class: "db-cell-head" },
           h("h2", null, column),
           h("span", { class: "db-cell-where" }, (d.schema ? d.schema + "." : "") + d.table +
-            (kind === "update" ? " · PK " + JSON.stringify(meta.pk) : " · new row")))),
+            (kind === "update" ? " · PK " + pkJson : " · new row")))),
       h("div", { class: "sheet-body" },
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           isBool ? h("button", { class: "btn", id: "dbCellBool" }) : null,
@@ -130,7 +140,7 @@ function dbOpenCellEditor(kind                     , key        , i        , col
     else {
       const raw = ta.value;
       // A JSON-shaped text in a JSON-ish column is stored as the string it is; the driver casts.
-      v = raw === "" && kind === "update" && meta.orig !== "" ? null : raw;
+      v = raw === "" && kind === "update" && emptyWasNotNull ? null : raw;
       if (raw === "" && kind === "insert") v = undefined; // empty insert cell = use column default
     }
     dbSaveCellEdit(v);
@@ -155,6 +165,8 @@ function dbSaveCellEdit(v                           )       {
     if (v === undefined) delete ins.values[ed.column];
     else ins.values[ed.column] = v;
   } else {
+    // An update save always carries its row key and meta (the editor's own invariant).
+    if (ed.key == null || !ed.meta) return;
     const e = d.updates[ed.key] || (d.updates[ed.key] = { pk: ed.meta.pk                           , changes: {} });
     const backToOriginal = v === ed.meta.orig || (v === null && (ed.meta.orig === null || ed.meta.orig === undefined));
     if (backToOriginal) {

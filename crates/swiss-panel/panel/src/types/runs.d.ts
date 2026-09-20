@@ -132,14 +132,10 @@ export interface ApiRemoteRunRow extends ApiRunRow {
   meta?: { target?: string; [key: string]: unknown };
 }
 
-/** One opened recorded row's fetched body (bodies[runId]): the growing text, the next
- *  read's cursor and the whole-run total. gone marks a run the record rolled past. */
-export interface RemoteRunBody {
-  text: string;
-  next: number;
-  total: number;
-  gone?: boolean;
-}
+/** One opened recorded row's fetched body (bodies[runId]): either the output read so far
+ *  (growing text, next read's cursor, whole-run total) or the gone marker a failed read
+ *  leaves when the record rolled past the run - never a mix of the two. */
+export type RemoteRunBody = { text: string; next: number; total: number } | { gone: true };
 
 /** One opened live row's followed output (live[runId]): what has been shown, and where the
  *  next pull continues from. */

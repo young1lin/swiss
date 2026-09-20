@@ -450,9 +450,9 @@ function dbFormatSql(text        )         {
     if (depth === 0 && prev !== null && out !== "" && /^[A-Za-z_]/.test(tok)) {
       const nxt = tokens[i + 1];
       // "join" does not break again when its lead (left/right/inner/...) just broke.
-      const joinAgain = low === "join" && DB_FORMAT_JOIN_LEADS.indexOf(prev.toLowerCase()) >= 0;
-      const clause = !joinAgain && (DB_FORMAT_CLAUSES.indexOf(low) >= 0 ||
-        (DB_FORMAT_JOIN_LEADS.indexOf(low) >= 0 && nxt && nxt.toLowerCase() === "join"));
+      const joinAgain = low === "join" && DB_FORMAT_JOIN_LEADS.includes(prev.toLowerCase());
+      const clause = !joinAgain && (DB_FORMAT_CLAUSES.includes(low) ||
+        (DB_FORMAT_JOIN_LEADS.includes(low) && nxt && nxt.toLowerCase() === "join"));
       const cont = low === "and" || low === "or";
       if (clause || cont) { out += "\n" + (cont ? "  " : ""); prev = null; }
     }

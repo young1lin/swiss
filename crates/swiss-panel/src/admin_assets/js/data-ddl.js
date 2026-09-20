@@ -194,7 +194,7 @@ function paintDbDdlSheet()       {
     // docs/22 W1.1: a Postgres catalog is many schemas, so the new table says where it goes
     // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
     const schemas = S_.schemas.slice();
-    if (schemas.indexOf(S_.schema) < 0) schemas.unshift(S_.schema);
+    if (!schemas.includes(S_.schema)) schemas.unshift(S_.schema);
     body.push(h("label", { class: "field" }, h("span", null, "Schema"),
       h("select", { id: "ddl-schema" }, schemas.map((s        )         => {
         return h("option", { value: s, selected: s === S_.schema }, s);
@@ -492,7 +492,7 @@ async function commitDbDdl()                {
   if (kind === "table") {
     toast("Table " + table + " created");
     await dbLoadTables();
-    dbOpenTable({ name: table, schema: schema, type: "table" });
+    dbOpenTable({ name: table, schema: schema });
   } else if (kind === "column") {
     toast("Column added to " + table);
     void dbLoadDetail();

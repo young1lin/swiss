@@ -136,7 +136,9 @@ export function h                                       (
       if (key === "style") { node.setAttribute("style", String(value)); return; }
       if (key === "data") { setAttrs(node, "data-", value           ); return; }
       if (key === "aria") { setAttrs(node, "aria-", value           ); return; }
-      (node                                      )[key] = value;
+      // A dynamic prop write onto a checked key: Object.assign does it without
+      // pretending the element carries an index signature.
+      Object.assign(node, { [key]: value });
     });
   } else {
     appendChild(node, props          );

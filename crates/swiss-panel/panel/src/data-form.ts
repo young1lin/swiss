@@ -103,7 +103,7 @@ function dbFormField(d: DbState, val: HTMLElement, f: DbFormField, ctx: { kind: 
     }, on ? "TRUE" : "FALSE"));
   } else {
     const text = f.value === null || f.value === undefined ? null : dbCellText(f.value);
-    const long = text != null && (text.length > DB_INLINE_MAX || text.indexOf("\n") >= 0);
+    const long = text != null && (text.length > DB_INLINE_MAX || text.includes("\n"));
     if (long) {
       val.appendChild(h("div", { class: "db-form-long", title: "Open the editor sheet", data: { ff: "long", col: f.name } }, text));
     } else {
@@ -238,7 +238,7 @@ function dbFormCtx(): {
 /** The live field behind a data-col address. */
 function dbFormFieldAt(ctx: NonNullable<ReturnType<typeof dbFormCtx>>, column: string): DbFormField | null {
   const fields = dbFormRowFields(ctx.columns, ctx.row, ctx.key, ctx.d.updates, ctx.ins);
-  return fields.filter((f: DbFormField): boolean => { return f.name === column; })[0] || null;
+  return fields.find((f: DbFormField): boolean => { return f.name === column; }) || null;
 }
 
 function dbFormWriteField(ctx: NonNullable<ReturnType<typeof dbFormCtx>>, f: DbFormField, v: unknown): void {
@@ -283,7 +283,7 @@ function dbFormClick(t: Element): boolean {
     return true;
   }
   if (ctl.dataset.ff === "long") {
-    dbOpenCellEditor(kind, ctx.key as string, ctx.isIns ? ctx.idx : -1, f.name, { pk: ctx.pkAddr, orig: f.orig });
+    dbOpenCellEditor(kind, ctx.key, ctx.isIns ? ctx.idx : -1, f.name, { pk: ctx.pkAddr, orig: f.orig });
     return true;
   }
   if (ctl.dataset.ff === "null") {

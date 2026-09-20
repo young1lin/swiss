@@ -167,7 +167,9 @@ function bodyNode(r                 , isLive         )         {
     head.push(h("div", { class: "call-lbl" }, "Error"), h("pre", { class: "logs err" }, r.error));
   }
   if (!b) return frag(head, h("div", { class: "note" }, h("span", { class: "spin" }), " Loading\u2026"));
-  if (b.gone) return frag(head, h("div", { class: "note" }, "This run has rolled out of the record."));
+  // The body union's two states: the gone marker (the record rolled past the run) or the
+  // output read so far - "gone" in b is the discriminant.
+  if ("gone" in b) return frag(head, h("div", { class: "note" }, "This run has rolled out of the record."));
   head.push(h("div", { class: "call-lbl" }, "Output" + (b.total ? " \u00b7 " + fmtBytes(b.total) : "")));
   if (!b.total) {
     head.push(h("pre", { class: "logs" }, h("span", { style: "color:var(--text-3)" }, "No output was produced.")));
@@ -206,11 +208,11 @@ function repaintBody(id        )       {
 async function loadBody(id        , more         )                {
   const b = bodies[id];
   if (b && !more) return;
-  const after = b ? b.next : 0;
+  const after = b && !("gone" in b) ? b.next : 0;
   const j = await apiJson                    ("/api/remote/runs/" + id + "/output?after=" + after + "&max=131072");
-  if (!j) { bodies[id] = { gone: true }                            ; repaintBody(id); return; }
+  if (!j) { bodies[id] = { gone: true }; repaintBody(id); return; }
   bodies[id] = {
-    text: (b ? b.text : "") + (j.output || ""),
+    text: (b && !("gone" in b) ? b.text : "") + (j.output || ""),
     next: j.nextCursor || 0,
     total: j.total || 0,
   };

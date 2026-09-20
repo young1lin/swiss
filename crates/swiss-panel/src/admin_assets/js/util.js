@@ -185,9 +185,16 @@ function dbReqGuard()                                                       {
 async function apiJson             (path        , opts              )                    {
   try {
     const r = await api(path, opts);
-    const j                     = await r.json().catch(() => { return {}; });
-    if (!r.ok) { toast(j.error || "HTTP " + r.status, true); return null; }
-    return j                ;
+    // r.json() resolves `any` by DOM typing; unknown is what a parsed body honestly is.
+    const j          = await r.json().catch(()          => { return {}; });
+    if (!r.ok) {
+      // Failure bodies are the API's own { error } envelope - narrowed, not assumed.
+      const msg = typeof j === "object" && j !== null && "error" in j && typeof j.error === "string" ? j.error : "";
+      toast(msg || "HTTP " + r.status, true);
+      return null;
+    }
+    // The one trust every caller grants the admin API: an ok body is the T the caller declared.
+    return j     ;
   } catch (e) {
     // A network-level failure (gateway stopped mid-click) must be reported too: every caller is
     // `if (!j) return;`, and a silent null made clicking Commit do literally nothing after the

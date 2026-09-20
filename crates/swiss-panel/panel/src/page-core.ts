@@ -54,7 +54,7 @@ function createPageRegistry(importer?: (entry: string) => Promise<PageModule>) {
   function valid(page: PageInput): PageDescriptor {
     if (!page || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(page.id || "")) throw new Error("Invalid page id");
     if (typeof page.label !== "string" || !page.label) throw new Error("Page label is required");
-    const entryOk = /^\/admin\/(?:js\/views|plugins)\/[a-zA-Z0-9_./-]+\.js$/.test(page.entry || "") && (page.entry || "").indexOf("..") === -1;
+    const entryOk = /^\/admin\/(?:js\/views|plugins)\/[a-zA-Z0-9_./-]+\.js$/.test(page.entry || "") && !(page.entry || "").includes("..");
     if (!entryOk) throw new Error("Page entry must be a local admin module");
     return Object.assign({}, page, { order: Number.isFinite(page.order) ? page.order : 0 }) as PageDescriptor;
   }

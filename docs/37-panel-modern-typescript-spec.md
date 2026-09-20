@@ -302,6 +302,17 @@ R0 → R1 → R2 → R3 → R4 → R5 → R6，不许跳。每个提交：
 每阶段记：发射字节与基线的比、上面六个计数的剩余数、`npm run check` 耗时。R6 另记 release exe 的
 字节差（与 `a6ee5be` 比）——**Ruthlessly small** 的账要算到最后。
 
+**R6 收账（`0f107ef` + 并行审查修复批，2026-10-24）**：发射自有 JS **953,763 字节**（+9.7% 对基线，
+类型标注与注释随行——ts-blank-space 保列输出，注释留在发射里）；`var` 0，`!.` 186（逐文件冻结），
+`innerHTML` 写 0（lint error，零豁免），内联 handler 赋值 184（-35%，其余是 R5 认可的直接接线：
+非冒泡事件、每渲染一控件的 sheet 流），索引签名 36（其中 §0.2 点名的两个洞——`state.d.ts` 的
+`d[d.tab]` 动态槽与 `dom.d.ts` 的 `JtBox`——仍未关，见下），全局增补 0（lint 拦），双重大cast
+（`as unknown as`）0（审查后 34→0，签名改诚实而非硬塞）。机械转换残留：`.filter(...)[0]` 剩 7 处
+（其余 19 处已转 `.find`），布尔比较的 `indexOf` 剩 0 处（56 处已转 `includes`；剩 23 处是真用下标），
+forEach 里的 IIFE 循环捕获 0 处（2 处已解包）。`no-unnecessary-condition` 仍 warn，存量 496——
+即 §9 注：清零当日转 error。块体箭头函数（`(t: X): T => { return ...; }` 形态）约 1,400+ 处
+**有意保留**：纯风格改写对合并前是零收益的大 diff，留待独立的机械轮。
+
 ## 12. 不做什么
 
 - 不 bundle、不 minify、不 source map、不引 prettier、不 `cargo fmt` 面板。
