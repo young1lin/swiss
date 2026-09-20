@@ -142,3 +142,54 @@ describe("the I2 views in Chinese (plugins, secrets, system)", () => {
     );
   });
 });
+
+describe("the I3 views in Chinese (tokens, traffic)", () => {
+  beforeEach(() => {
+    setLang("zh-CN");
+  });
+  afterEach(() => {
+    setLang("en");
+    localStorage.clear();
+  });
+
+  it("speaks the relative-time family used across traffic and clients", async () => {
+    await loadLocale();
+    const { ago } = await import("../src/traffic.js");
+    expect(ago(new Date(Date.now() - 1000).toISOString())).toBe("刚刚");
+    expect(ago(new Date(Date.now() - 42000).toISOString())).toBe("42 秒前");
+    expect(ago(new Date(Date.now() - 300000).toISOString())).toBe("5 分钟前");
+  });
+
+  it("builds the traffic meta skeleton with Chinese ok/err", async () => {
+    await loadLocale();
+    const { trafficRowNode } = await import("../src/traffic.js");
+    const row = trafficRowNode({
+      seq: 1, method: "tools/list", params: "{}", ok: true, ms: 5,
+      clientName: "claude-code", clientVersion: "1.0", mcp: "mcp", at: new Date().toISOString(),
+    } as never) as HTMLElement;
+    expect(row.textContent).toContain("claude-code 1.0  ·  /mcp  ·  成功  ·  5ms");
+    const bad = trafficRowNode({
+      seq: 2, method: "tools/call", params: "", ok: false, ms: 12, mcp: "mcp", at: new Date().toISOString(),
+    } as never) as HTMLElement;
+    expect(bad.textContent).toContain("—  ·  /mcp  ·  失败  ·  12ms");
+  });
+
+  it("composes the activity count with grouped numbers", async () => {
+    await loadLocale();
+    expect(tr("{n} of {all} interactions", { n: "12", all: "1,024" })).toBe("12 / 1,024 次交互");
+    expect(trn(3, "{n} interaction", "{n} interactions", { n: "3" })).toBe("3 次交互");
+    expect(tr("Page {n}", { n: 2 })).toBe("第 2 页");
+    expect(tr("Newer")).toBe("较新");
+  });
+
+  it("carries the token page's row vocabulary and confirm", async () => {
+    await loadLocale();
+    expect(tr("copies use this")).toBe("复制时使用");
+    expect(tr("Rotate or revoke")).toBe("轮换或吊销");
+    expect(tr("Revoke this token? Clients using it stop working immediately.")).toBe(
+      "吊销该令牌?使用它的客户端会立即停止工作。",
+    );
+    expect(tr("id {id}", { id: "t_9" })).toBe("id t_9");
+    expect(trn(2, "{n} token", "{n} tokens")).toBe("2 个令牌");
+  });
+});

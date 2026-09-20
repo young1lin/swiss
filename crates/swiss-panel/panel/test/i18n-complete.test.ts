@@ -74,8 +74,10 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
    - "{label} — {error}": an em-dash skeleton; Chinese keeps the same punctuation.
    - "HTTP {n}", "{n} MB": units and codes stay Latin in Chinese technical copy.
    - "· {user} · {auth}": a middle-dot metadata skeleton between data values.
-   - "· {error}": the plugins row's error tail — {error} is the host's own message. */
-const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}"]);
+   - "· {error}": the plugins row's error tail — {error} is the host's own message.
+   - "id {id}": a data prefix (the token row's desc lead) — the payload is the id.
+   - "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}": the traffic row's meta line — a pure data skeleton; its only words ({status}: ok/err) translate under their own keys. */
+const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}"]);
 
 describe("i18n dictionary completeness (docs/38 L10a)", () => {
   const used = collect();

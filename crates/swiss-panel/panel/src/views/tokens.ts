@@ -40,6 +40,7 @@ import { claudeSnippet, copyText, fetchSecret, useToken } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, slice } from "../groups.js";
 import { mcpRows } from "../mcp-state.js";
+import { locale, tr, trn } from "../i18n.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed: Record<string, boolean> = {}; // the tokens fold map, loaded once before the first paint
@@ -137,15 +138,15 @@ function rowNode(t: ApiTokenRow): HTMLElement {
   const used = !!mine && t.id === mine.id;
   return h("div", { class: "row", data: { token: t.id } },
     h("div", { class: "row-main" },
-      h("div", { class: "name" }, t.label, used && [" ", h("span", { class: "tag" }, "copies use this")]),
-      h("div", { class: "desc" }, "id " + t.id + (t.createdAt ? " · created " + new Date(t.createdAt).toLocaleString() : ""))),
+      h("div", { class: "name" }, t.label, used && [" ", h("span", { class: "tag" }, tr("copies use this"))]),
+      h("div", { class: "desc" }, tr("id {id}", { id: t.id }), t.createdAt && [" ", tr("· created {when}", { when: new Date(t.createdAt).toLocaleString(locale()) })])),
     h("div", { class: "row-act" },
-      !used && [h("button", { class: "btn", data: { tkuse: t.id } }, "Use"), " "],
+      !used && [h("button", { class: "btn", data: { tkuse: t.id } }, tr("Use")), " "],
       h("button", {
         class: "btn ghost icon",
         data: { tkmore: t.id },
-        aria: { label: "Actions for " + t.label },
-        title: "Rotate or revoke",
+        aria: { label: tr("Actions for {name}", { name: t.label }) },
+        title: tr("Rotate or revoke"),
       }, iconNode("ellipsis"))));
 }
 
@@ -158,8 +159,8 @@ function tkCfg(): GroupCfg<ApiTokenRow> {
     density: "page",
     names: tokenGroupNames().length ? tokenGroupNames() : ["default"],
     collapsed: collapsed,
-    noun: "token",
-    addTitle: (g: string): string => { return "Create a token in " + g; },
+    noun: tr("token"),
+    addTitle: (g: string): string => { return tr("Create a token in {group}", { group: g }); },
     onAdd: (g: string): void => {
       // The + points at the inline form: pick the group it names and put the cursor in the
       // label box — the sheet scopes open a modal; this page's flow was always inline.
@@ -207,7 +208,7 @@ function paintGroups(): void {
   painted = signature();
   const list = tokenRows();
   if (!list.length) {
-    fill(host, emptyNode({ icon: "key", title: "No tokens", hint: "One token per client — create one, then copy its connect command." }));
+    fill(host, emptyNode({ icon: "key", title: tr("No tokens"), hint: tr("One token per client — create one, then copy its connect command.") }));
     refreshGroupSelect();
     return;
   }
@@ -224,7 +225,7 @@ function paintGroups(): void {
  *  the selection, the attribute was only ever its initial default. */
 function groupSelectNode(): HTMLSelectElement {
   const names = tokenGroupNames().length ? tokenGroupNames() : ["default"];
-  const sel = h("select", { class: "v", id: "tkGroup", title: "The group this token lists under" },
+  const sel = h("select", { class: "v", id: "tkGroup", title: tr("The group this token lists under") },
     names.map((n: string): HTMLOptionElement => { return h("option", { value: n }, n); }));
   sel.value = resolveDefaultGroup(names, lastGroup("tokens"));
   return sel;
@@ -239,15 +240,15 @@ function secretNode(): HTMLElement | null {
   return h("div", { class: "group", style: "margin-top:var(--s4)" },
     h("div", { class: "row" },
       h("div", { class: "row-main" },
-        h("div", { class: "name" }, "New secret — copy now, shown only once"),
+        h("div", { class: "name" }, tr("New secret — copy now, shown only once")),
         h("input", {
           class: "v", id: "tkSecret", style: "width:100%",
           value: secret, readOnly: true,
-          aria: { label: "The new token secret, shown once" },
+          aria: { label: tr("The new token secret, shown once") },
         }))),
     h("div", { class: "form-actions" },
-      h("button", { class: "btn", id: "tkCopySecret" }, "Copy secret"),
-      h("button", { class: "btn primary", id: "tkCopyConn" }, "Copy connect commands (all MCPs)")));
+      h("button", { class: "btn", id: "tkCopySecret" }, tr("Copy secret")),
+      h("button", { class: "btn primary", id: "tkCopyConn" }, tr("Copy connect commands (all MCPs)"))));
 }
 
 function render(): void {
@@ -257,16 +258,16 @@ function render(): void {
     h("div", { class: "pane-head" },
       h("div", null,
         h("div", { class: "pane-desc" },
-          "One token per client. Copied connect commands use the ",
+          tr("One token per client. Copied connect commands use the "),
           h("code", null, "default"),
-          " token unless you click Use. The Traffic tab attributes every request to its token, and to the name the client announces during initialize. A secret is shown once — on create or rotate.")),
+          tr(" token unless you click Use. The Traffic tab attributes every request to its token, and to the name the client announces during initialize. A secret is shown once — on create or rotate."))),
       h("div", { class: "pane-actions" },
-        h("button", { class: "btn", id: "tkNewGroup" }, "New group"))),
+        h("button", { class: "btn", id: "tkNewGroup" }, tr("New group")))),
     // The inline create form (docs/35 §3): one row, the Group select beside the primary.
     h("div", { class: "inline-form" },
-      h("input", { id: "tkLabel", placeholder: "Label, e.g. claude-code" }),
+      h("input", { id: "tkLabel", placeholder: tr("Label, e.g. claude-code") }),
       groupSelectNode(),
-      h("button", { class: "btn primary", id: "tkCreate" }, "Create")),
+      h("button", { class: "btn primary", id: "tkCreate" }, tr("Create"))),
     h("div", { id: "tkGroups" }),
     secretNode()));
   paintGroups();
@@ -296,7 +297,7 @@ async function rotateToken(id: string): Promise<void> {
 
 /** Revoke after an explicit confirm; a revoked in-use token also clears the copy choice. */
 async function revokeToken(id: string): Promise<void> {
-  if (!confirm("Revoke this token? Clients using it stop working immediately.")) return;
+  if (!confirm(tr("Revoke this token? Clients using it stop working immediately."))) return;
   const d = await apiJson<unknown>("/api/tokens/" + encodeURIComponent(id), { method: "DELETE" });
   if (!d) return;
   if (rememberedTokenId() === id) {
@@ -332,8 +333,8 @@ function wire(): void {
       });
       return;
     }
-    if (button.id === "tkCopySecret") { void copyText(tokensDomain.viewSecret!, "Token secret"); return; }
-    if (button.id === "tkCopyConn") { void copyText(connectAll(tokensDomain.viewSecret!), "Connect commands"); return; }
+    if (button.id === "tkCopySecret") { void copyText(tokensDomain.viewSecret!, tr("Token secret")); return; }
+    if (button.id === "tkCopyConn") { void copyText(connectAll(tokensDomain.viewSecret!), tr("Connect commands")); return; }
     if (button.dataset.tkuse) {
       if (await fetchSecret(button.dataset.tkuse)) render();
       return;
@@ -343,9 +344,9 @@ function wire(): void {
       event.stopPropagation();
       const id = button.dataset.tkmore;
       popupMenu(button.getBoundingClientRect(), [
-        { label: "Rotate secret", fn: (): void => { void rotateToken(id!); } },
+        { label: tr("Rotate secret"), fn: (): void => { void rotateToken(id!); } },
         { sep: true },
-        { label: "Revoke", danger: true, fn: (): void => { void revokeToken(id!); } },
+        { label: tr("Revoke"), danger: true, fn: (): void => { void revokeToken(id!); } },
       ]);
     }
   };
@@ -361,7 +362,7 @@ export async function refresh(): Promise<void> { await refreshTokens(); render()
 export async function poll(): Promise<void> { await refreshTokens(); patch(); }
 export function countText(): string {
   const n = tokenRows().length;
-  return n + (n === 1 ? " token" : " tokens");
+  return trn(n, "{n} token", "{n} tokens");
 }
 export function unmount(): void { painted = ""; }
 
