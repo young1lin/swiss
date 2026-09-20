@@ -36,6 +36,7 @@ import { fill, h } from "../h.js";
 import { copyText } from "../connect.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "../groups.js";
+import { tr, trn } from "../i18n.js";
 
 let painted = ""; // structural signature of the drawn list; a change means the rows move
 let collapsed                          = {}; // the secrets fold map, loaded once before the first paint
@@ -101,14 +102,14 @@ function rowNode(name        )              {
       h("div", { class: "name" }, name),
       h("div", { class: "desc" },
         h("code", null, "${secret://" + name + "}"),
-        " — substituted at run time wherever a credential is used")),
+        " ", tr("— substituted at run time wherever a credential is used"))),
     h("div", { class: "row-act" },
-      h("button", { class: "btn", data: { skcopy: name } }, "Copy ref"), " ",
+      h("button", { class: "btn", data: { skcopy: name } }, tr("Copy ref")), " ",
       h("button", {
         class: "btn ghost icon",
         data: { skmore: name },
-        aria: { label: "Actions for " + name },
-        title: "Delete",
+        aria: { label: tr("Actions for {name}", { name }) },
+        title: tr("Delete"),
       }, iconNode("ellipsis"))));
 }
 
@@ -121,8 +122,8 @@ function skCfg()                   {
     density: "page",
     names: secrets.groups || ["default"],
     collapsed: collapsed,
-    noun: "secret",
-    addTitle: (g        )         => { return "Store a secret into " + g; },
+    noun: tr("secret"),
+    addTitle: (g        )         => { return tr("Store a secret into {group}", { group: g }); },
     onAdd: (g        )       => {
       // The + points at the inline form: pick the group it names and put the cursor in the
       // name box — the sheet scopes open a modal; this page's flow was always inline.
@@ -187,7 +188,7 @@ function paintGroups()       {
   if (!host) return;
   painted = signature();
   if (!secrets.list.length) {
-    fill(host, emptyNode({ icon: "key", title: "No secrets yet", hint: "Store a credential once, reference it everywhere as ${secret://name}." }));
+    fill(host, emptyNode({ icon: "key", title: tr("No secrets yet"), hint: tr("Store a credential once, reference it everywhere as ${secret://name}.") }));
     return;
   }
   fill(host, slice(secrets.list, secrets.groups || ["default"], groupOfName).map((g                    )              => {
@@ -229,7 +230,7 @@ function refreshGroupSelect()       {
  *  the selection, the attribute was only ever its initial default. */
 function groupSelectNode()                    {
   const names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
-  const sel = h("select", { class: "v v-sk-group", id: "skGroup", title: "The group this secret lists under" },
+  const sel = h("select", { class: "v v-sk-group", id: "skGroup", title: tr("The group this secret lists under") },
     names.map((n        )                    => { return h("option", { value: n }, n); }));
   sel.value = resolveDefaultGroup(names, lastGroup("secrets"));
   return sel;
@@ -242,17 +243,17 @@ function render()       {
     h("div", { class: "pane-head" },
       h("div", null,
         h("div", { class: "pane-desc" },
-          "Device-bound vault (docs/19). A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: ",
+          tr("Device-bound vault. A value is written once and never shown again — not here, not in any API answer; a forgotten one can only be re-stored. Reference it wherever a credential goes: "),
           h("code", null, "${secret://name}"),
-          " in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed.")),
+          tr(" in a header, a URL, a command or an env value. A missing reference fails loudly at first use, naming where it was needed."))),
       h("div", { class: "pane-actions" },
-        h("button", { class: "btn", id: "skNewGroup" }, "New group"))),
+        h("button", { class: "btn", id: "skNewGroup" }, tr("New group")))),
     // The inline create form (docs/35 §3): one row, the Group select beside the primary.
     h("div", { class: "inline-form" },
-      h("input", { class: "v", id: "skName", placeholder: "Name — lowercase kebab (a-z 0-9 -)" }),
-      h("input", { class: "v grow", id: "skValue", type: "password", placeholder: "Value — write-only, never shown again" }),
+      h("input", { class: "v", id: "skName", placeholder: tr("Name — lowercase kebab (a-z 0-9 -)") }),
+      h("input", { class: "v grow", id: "skValue", type: "password", placeholder: tr("Value — write-only, never shown again") }),
       groupSelectNode(),
-      h("button", { class: "btn primary", id: "skStore" }, "Store")),
+      h("button", { class: "btn primary", id: "skStore" }, tr("Store"))),
     h("div", { id: "skGroups" })));
   paintGroups();
   const chip = $("countChip");
@@ -271,13 +272,13 @@ function wire()       {
       });
       return;
     }
-    if (hit.dataset.skcopy) { void copyText("${secret://" + hit.dataset.skcopy + "}", "Reference"); return; }
+    if (hit.dataset.skcopy) { void copyText("${secret://" + hit.dataset.skcopy + "}", tr("Reference")); return; }
     if (hit.dataset.skmore) {
       // The opening click must not reach document (menu.js closes on outside clicks).
       event.stopPropagation();
       const name = hit.dataset.skmore;
       popupMenu(hit.getBoundingClientRect(), [
-        { label: "Delete", danger: true, fn: ()       => { void removeSecret(name ); } },
+        { label: tr("Delete"), danger: true, fn: ()       => { void removeSecret(name ); } },
       ]);
     }
   };
@@ -290,8 +291,8 @@ function wire()       {
 async function storeSecret()                {
   const name = ($                  ("skName").value || "").trim();
   const value = $                  ("skValue").value || "";
-  if (!name || !value) { toast("a secret needs both a name and a value", true); return; }
-  if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) { toast("names are lowercase kebab: a-z, 0-9, dashes", true); return; }
+  if (!name || !value) { toast(tr("a secret needs both a name and a value"), true); return; }
+  if (!/^[a-z][a-z0-9-]{0,63}$/.test(name)) { toast(tr("names are lowercase kebab: a-z, 0-9, dashes"), true); return; }
   const picked = $("skGroup") ? $                   ("skGroup").value : null;
   const j = await apiJson         ("/api/secrets/" + encodeURIComponent(name), {
     method: "PUT",
@@ -305,18 +306,18 @@ async function storeSecret()                {
   $                  ("skValue").value = "";
   await loadSecrets();
   paintGroups();
-  toast("stored — reference it as ${secret://" + name + "}");
+  toast(tr("stored — reference it as ${secret://{name}}", { name }));
 }
 
 /** Delete one secret after an explicit confirm: everything referencing it starts failing
  *  honestly until it is re-stored. */
 async function removeSecret(name        )                {
-  if (!confirm('Delete secret "' + name + '"? Everything referencing ${secret://' + name + "} starts failing until it is re-stored.")) return;
+  if (!confirm(tr('Delete secret "{name}"? Everything referencing ${secret://{name}} starts failing until it is re-stored.', { name }))) return;
   const j = await apiJson         ("/api/secrets/" + encodeURIComponent(name) + "?rev=" + secrets.rev, { method: "DELETE" });
   if (!j) return;
   await loadSecrets();
   paintGroups();
-  toast("deleted " + name);
+  toast(tr("deleted {name}", { name }));
 }
 
 export async function mount() {
@@ -328,7 +329,7 @@ export async function refresh() { await loadSecrets(); render(); }
 export async function poll() { await loadSecrets(); patch(); }
 export function countText() {
   const n = secrets.list.length;
-  return n + (n === 1 ? " secret" : " secrets");
+  return trn(n, "{n} secret", "{n} secrets");
 }
 export function unmount() { painted = ""; }
 

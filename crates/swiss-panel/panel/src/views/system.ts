@@ -18,6 +18,7 @@ import { $, apiJson, emptyNode, targetEl } from "../util.js";
 import { fill, h } from "../h.js";
 import { closeSheet } from "../add-sheet.js";
 import { currentView } from "../ui-state.js";
+import { tr } from "../i18n.js";
 
 /** The process action is deliberately a Settings page, not permanent app chrome: quitting the
  *  whole toolbox is destructive, rare, and belongs beside other host-owned controls.
@@ -30,30 +31,30 @@ function systemBodyNode(): HTMLElement {
   return h("div", { class: "wide" },
     h("div", { class: "pane-head" },
       h("div", null,
-        h("div", { class: "pane-desc" }, "Control this running swiss process. Quitting stops every plugin and local service cleanly; configuration and logs remain on disk."))),
-    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, "Runtime")),
+        h("div", { class: "pane-desc" }, tr("Control this running swiss process. Quitting stops every plugin and local service cleanly; configuration and logs remain on disk.")))),
+    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, tr("Runtime"))),
     h("div", { class: "group" },
       h("div", { class: "tun-row" },
         h("div", { class: "tun-main" },
-          h("div", { class: "tun-name" }, "Quit swiss"),
+          h("div", { class: "tun-name" }, tr("Quit swiss")),
           h("div", { class: "tun-sub" },
-            h("span", { class: "via" }, "Gracefully stop MCPs, tunnels, jobs, terminals, and this local process."))),
+            h("span", { class: "via" }, tr("Gracefully stop MCPs, tunnels, jobs, terminals, and this local process.")))),
         h("div", { class: "tun-acts" },
-          h("button", { class: "btn danger", id: "system-quit" }, "Quit swiss")))));
+          h("button", { class: "btn danger", id: "system-quit" }, tr("Quit swiss"))))));
 }
 
 function quitSheetNode(): HTMLElement {
-  return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Quit swiss" } },
-    h("div", { class: "sheet-head" }, h("h2", null, "Quit swiss?")),
+  return h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Quit swiss") } },
+    h("div", { class: "sheet-head" }, h("h2", null, tr("Quit swiss?"))),
     h("div", { class: "sheet-body" },
-      h("p", null, "This disconnects every MCP client and stops active tunnels, jobs, and terminal sessions."),
+      h("p", null, tr("This disconnects every MCP client and stops active tunnels, jobs, and terminal sessions.")),
       h("p", { class: "hint" },
-        "Your configuration and logs are kept. Start it again with ",
+        tr("Your configuration and logs are kept. Start it again with "),
         h("code", null, "swiss start"), ".")),
     h("div", { class: "sheet-foot" },
       h("span", { class: "grow" }),
-      h("button", { class: "btn", id: "quit-cancel" }, "Cancel"),
-      h("button", { class: "btn danger", id: "quit-confirm" }, "Quit swiss")));
+      h("button", { class: "btn", id: "quit-cancel" }, tr("Cancel")),
+      h("button", { class: "btn danger", id: "quit-confirm" }, tr("Quit swiss"))));
 }
 
 function openQuitSheet(): void {
@@ -71,10 +72,10 @@ function openQuitSheet(): void {
 
 async function requestQuit(): Promise<void> {
   const button = $<HTMLButtonElement>("quit-confirm");
-  if (button) { button.disabled = true; button.textContent = "Quitting…"; }
+  if (button) { button.disabled = true; button.textContent = tr("Quitting…"); }
   const stopped = await apiJson("/api/shutdown", { method: "POST" });
   if (!stopped) {
-    if (button) { button.disabled = false; button.textContent = "Quit swiss"; }
+    if (button) { button.disabled = false; button.textContent = tr("Quit swiss"); }
     return;
   }
   closeSheet();
@@ -82,8 +83,8 @@ async function requestQuit(): Promise<void> {
   if (currentView() === "system") {
     fill($("pane"), emptyNode({
       icon: "power",
-      title: "swiss is stopping",
-      hint: "The local process is closing gracefully. You can close this tab and run swiss start when you need it again.",
+      title: tr("swiss is stopping"),
+      hint: tr("The local process is closing gracefully. You can close this tab and run swiss start when you need it again."),
     }));
   }
 }

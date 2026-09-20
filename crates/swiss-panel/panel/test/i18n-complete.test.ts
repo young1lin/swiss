@@ -73,8 +73,9 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
    - "MCP", "Token", "Base URL": product vocabulary, used as-is in Chinese UI copy.
    - "{label} — {error}": an em-dash skeleton; Chinese keeps the same punctuation.
    - "HTTP {n}", "{n} MB": units and codes stay Latin in Chinese technical copy.
-   - "· {user} · {auth}": a middle-dot metadata skeleton between data values. */
-const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}"]);
+   - "· {user} · {auth}": a middle-dot metadata skeleton between data values.
+   - "· {error}": the plugins row's error tail — {error} is the host's own message. */
+const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}"]);
 
 describe("i18n dictionary completeness (docs/38 L10a)", () => {
   const used = collect();

@@ -34,7 +34,8 @@ import * as path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-/* Frozen at the I1 commit (docs/38 stage table): the shell files are swept to their
+/* Frozen at the I1 commit (docs/38 stage table), burned down per stage since: I2 swept
+ * views/plugins, views/secrets and views/system to zero. The shell files are swept to their
  * deliberate survivors - add-sheet's two example-identifier placeholders ("git-mcp",
  * "prod", docs/38 §8 keeps identifiers untranslated) - and every remaining row is a
  * view file a later stage owns. Keys are paths relative to src/; the tree has
@@ -63,11 +64,8 @@ const FROZEN: Record<string, number> = {
   "tunnel-sheets.ts": 57,
   "tunnels.ts": 6,
   "views/jobs.ts": 2,
-  "views/plugins.ts": 11,
   "views/remote-runs.ts": 18,
   "views/remote.ts": 13,
-  "views/secrets.ts": 14,
-  "views/system.ts": 13,
   "views/terminal-settings.ts": 7,
   "views/terminal.ts": 26,
   "views/tokens.ts": 16,
