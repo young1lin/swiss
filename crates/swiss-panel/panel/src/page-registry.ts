@@ -20,6 +20,7 @@ import { $, api, errText, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
 import { createPageRegistry } from "./page-core.js";
 import { glyphNode, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
+import { loadLastPages, rememberLastPage, targetPageFor } from "./last-page.js";
 import { currentView, setCurrentView } from "./ui-state.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
@@ -81,7 +82,8 @@ function currentGroup(): PageGroup | undefined {
    One seat per PINNED plugin group, plus the "..." seat that opens the palette (the full,
    searchable list - the rail is the shortlist, not the ceiling). A seat carries data-group
    and data-view (the group's lowest-order page) so the deep selector in jobs.js keeps
-   matching, and clicks delegate on [data-view]. */
+   matching, and clicks delegate on [data-group] - the page actually opened is computed per
+   click (seatTarget, docs/39 S4), never written into the markup. */
 function railSeat(g: PageGroup): HTMLElement {
   const active = g.pages.some((p) => { return p.id === currentView(); });
   const offPlugin = unavailable(g.pages[0]);
@@ -106,10 +108,21 @@ function paintPluginRail(): void {
   nav.onclick = (event) => {
     const target = event.target as HTMLElement;
     const more = target.closest<HTMLElement>(".rail-more");
-    if (more) { openPluginPalette(decoratedGroups(), navigatePage, paintPluginRail); return; }
-    const button = target.closest<HTMLElement>("[data-view]");
-    if (button) void navigatePage(button.dataset.view!);
+    if (more) { openPluginPalette(decoratedGroups(), (group) => { void navigatePage(seatTarget(group)); }, paintPluginRail); return; }
+    const button = target.closest<HTMLElement>("[data-group]");
+    const group = button && currentGroups().find((g) => { return g.id === button.dataset.group; });
+    if (group) void navigatePage(seatTarget(group));
   };
+}
+
+/** The page a plugin's seat or palette row opens (docs/39 S4): the last page visited when
+ *  it is still a member of the group and usable, else the group's first page. Both entry
+ *  points go through this one wrapper, so the policy exists exactly once. */
+function seatTarget(group: { id: string; pages: { id: string }[] }): string {
+  return targetPageFor(group, loadLastPages(), (id) => {
+    const page = registry.get(id);
+    return !!page && !unavailable(page);
+  });
 }
 
 /* Groups carrying their availability, for the palette: it is navigation for EVERY plugin,
@@ -265,6 +278,12 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
   }
   const controller = new AbortController();
   setCurrentView(id);
+  /* docs/39 S4: the plugin's seat reopens here. Keyed by the GROUP id (currentGroup()'s),
+   * not page.pluginId - legacy descriptors may omit the field and groups() homogenized it
+   * already. Only a navigation that LANDED records: the canLeave early-return above never
+   * reaches this line, so a blocked leave keeps the previous memory intact. */
+  const landed = currentGroup();
+  if (landed) rememberLastPage(landed.id, id);
   active = { id: id, module: module, controller: controller };
   /* The resource sidebar belongs to the resource layout alone; every other layout gets the
    * full body width (a "page" wraps its content in the pane's padding, a "workspace" is
