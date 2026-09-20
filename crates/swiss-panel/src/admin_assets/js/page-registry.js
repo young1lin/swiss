@@ -231,11 +231,13 @@ function fitTabs(tabs                                 , activeId        , avail 
 }
 
 /** Measure the painted tabs and hide what does not fit (docs/39 S3): every width comes
- *  from the laid-out nodes, the decision from fitTabs. The ⋯ seat is measured by un-hiding
- *  it for the read - a display:none box has no width - then hidden again unless needed.
- *  Environments without layout (the vitest node DOM: every offsetWidth is 0) degrade to
- *  "everything fits", which is exactly what the suite asserts. */
-function layoutTabs()       {
+ *  from the laid-out nodes, the decision from fitTabs. EVERYTHING is un-hidden for the
+ *  read - a display:none box has no width, and a re-entry pass that measured only the
+ *  visible tabs would always conclude "everything fits" and re-expand the strip (found
+ *  live at 480px; the admin-navigation suite pins the refit). Environments without layout
+ *  (the vitest node DOM: every offsetWidth is 0) degrade to "everything fits", which is
+ *  exactly what the suite asserts. Exported for that suite's refit regression. */
+export function layoutTabs()       {
   const tabs = $("pageTabs");
   /* Measuring needs the box model (element children, a scoped querySelector, box widths).
    * A DOM without it - the parse-and-eval boot suite's minimal stub - keeps every tab
@@ -244,7 +246,14 @@ function layoutTabs()       {
   const links = (Array.prototype.filter.call(tabs.children, (el             ) => { return el.classList.contains("ctx-tab") && !el.classList.contains("ctx-more"); })                 );
   const more = tabs.querySelector             (".ctx-more");
   if (!links.length || !more) return;
+  /* Un-hide EVERYTHING before measuring, not just the ... seat: [hidden] is display:none
+   * (base.css), so a tab hidden by a previous pass measures offsetWidth 0. Measuring a
+   * stripped strip once made every later pass (observer, refit) see a total of visible tabs
+   * only - always "everything fits" - and re-expand the strip over its own clip, stranding
+   * the active tab out of view until a real window resize. Un-hidden first, every pass
+   * measures the same true widths and converges on the same fit. */
   more.hidden = false;
+  links.forEach((el) => { el.hidden = false; });
   const measured = links
     .map((el) => { return { id: el.dataset.page || "", width: el.offsetWidth || 0 }; })
     .filter((t) => { return t.id !== ""; });
