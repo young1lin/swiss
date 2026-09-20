@@ -92,9 +92,38 @@ export interface ApiMcpDetails {
   state: string;
   logs: string;
   config: Record<string, unknown>;
-  tunnels: string[];
+  tunnels: ApiMcpTunnelDep[];
   reason?: string;
   oauth?: "authorized" | "needs-auth";
+}
+
+/** One tunnel this MCP's traffic depends on - swiss-tunnels/src/tunnel/manager.rs
+ *  tunnels_for_mcp: the rule's identity and target, its live state, and the pool-staleness
+ *  flag the config tab warns on. Not the full /api/tunnels rule row (no counters). */
+export interface ApiMcpTunnelDep {
+  id: string;
+  name: string;
+  state: string;
+  localPort: number;
+  targetHost: string;
+  targetPort: number;
+  reason?: string;
+  reconnectedAt?: string;
+  stalePool?: boolean;
+}
+
+/** GET /api/mcps/{name}/revisions - adminapi.rs:1413: one parked definition per row, at is
+ *  epoch millis (managed.rs RevisionRec.at: i64), note the operator's free text ("" when
+ *  none), type the parked def's adapter kind. */
+export interface ApiMcpRevisionRow {
+  index: number;
+  at: number;
+  note: string;
+  type: string;
+}
+
+export interface ApiMcpRevisionsResponse {
+  revisions: ApiMcpRevisionRow[];
 }
 
 /** GET /api/mcps/{name}/{kind} (tools|resources|prompts) - adminapi.rs:2321: the page lives
@@ -119,28 +148,39 @@ export type ApiJobTrigger =
   | { kind: "interval"; everyMs: number; firstRun: string | null }
   | { kind: "cron"; expression: string; timezone: string };
 
-/** A tools/list item, passed through from the MCP as-is - only the fields the panel renders. */
-/** A tool's input schema as the panel reads it (the JSON-Schema subset that drives the Run
- *  form's generated argument fields: properties, required, enum, array item types). */
-export interface ToolSchemaProp {
+/** One JSON-Schema node, the subset the panel walks: the Run form generates argument fields
+ *  from type / description / enum / items / properties / required (run.ts argFieldsNode), and
+ *  the terminal settings sheet reads a property's description off a plugin's config schema.
+ *  Recursive through properties and items; no open signature - a key the panel does not
+ *  read is a key it does not need to see. */
+export interface JsonSchemaNode {
   type?: string;
   description?: string;
+  default?: unknown;
   enum?: unknown[];
-  items?: { type?: string };
-  [key: string]: unknown;
-}
-
-export interface ToolInputSchema {
-  properties?: Record<string, ToolSchemaProp>;
+  items?: JsonSchemaNode;
+  properties?: Record<string, JsonSchemaNode>;
   required?: string[];
-  [key: string]: unknown;
+  additionalProperties?: boolean | JsonSchemaNode;
 }
 
+/** A tool's inputSchema (the MCP spec's Tool.inputSchema, always type "object"). */
+export type ToolInputSchema = JsonSchemaNode;
+
+/** One property under a tool's inputSchema.properties. */
+export type ToolSchemaProp = JsonSchemaNode;
+
+/** A tools/list item as the MCP spec (2025-06-18) spells Tool. The gateway passes these
+ *  through from the server verbatim (paging.rs PageOut.items is Vec<Value>), so the shape is
+ *  the protocol's, not a Rust struct's; the fields are the spec's, the panel renders name,
+ *  title, description and inputSchema. */
 export interface ApiMcpTool {
   name: string;
+  title?: string;
   description?: string;
   inputSchema?: ToolInputSchema;
-  [key: string]: unknown;
+  outputSchema?: JsonSchemaNode;
+  annotations?: Record<string, unknown>;
 }
 
 /** One kind-page row, the three capabilities fused for the shared renderer (logs.ts kindBody):
@@ -148,28 +188,47 @@ export interface ApiMcpTool {
  *  the kind, so one shape carries all three without a union at every property. */
 export interface ApiMcpItem {
   name?: string;
+  title?: string;
   uri?: string;
   description?: string;
-  arguments?: { name: string; required?: boolean }[];
+  mimeType?: string;
+  arguments?: { name: string; description?: string; required?: boolean }[];
   inputSchema?: ToolInputSchema;
-  [key: string]: unknown;
 }
 
-/** A resources/list item (uri is the identity). */
+/** A resources/list item (uri is the identity) - the MCP spec's Resource. */
 export interface ApiMcpResource {
   uri: string;
   name: string;
+  title?: string;
   description?: string;
   mimeType?: string;
-  [key: string]: unknown;
+  size?: number;
+  annotations?: Record<string, unknown>;
 }
 
-/** A prompts/list item. */
+/** A prompts/list item - the MCP spec's Prompt. */
 export interface ApiMcpPrompt {
   name: string;
+  title?: string;
   description?: string;
-  arguments?: { name: string; description?: string; required?: boolean }[];
-  [key: string]: unknown;
+  arguments?: { name: string; title?: string; description?: string; required?: boolean }[];
+}
+
+/** GET /api/actions - swiss-host/src/services/api.rs list_actions, one row per registered
+ *  capability (action.rs ActionInfo; stopped providers absent): the jobs sheet's action
+ *  select and the schema its input form is generated from. Not an MCP tool, though the form
+ *  generator is shared with the Run view. */
+export interface ApiActionRow {
+  type: string;
+  title: string;
+  provider: string;
+  cancelable: boolean;
+  schema: JsonSchemaNode;
+}
+
+export interface ApiActionsResponse {
+  actions: ApiActionRow[];
 }
 
 /** GET /api/mcps/{name}/calls - swiss-mcp/src/calls.rs read_calls. */
@@ -322,19 +381,8 @@ export interface ApiGroupsOrderResponse {
 }
 
 /* --- runs and actions (swiss-host/src/services/api.rs, runs.rs) ---------------------------------- */
-
-/** GET /api/actions - services/api.rs:74: live capabilities, stopped providers absent. */
-export interface ApiActionsResponse {
-  actions: ApiActionRow[];
-}
-
-export interface ApiActionRow {
-  type: string;
-  title: string;
-  provider: string;
-  cancelable: boolean;
-  schema: Record<string, unknown>;
-}
+/* GET /api/actions (ApiActionRow / ApiActionsResponse) is declared beside JsonSchemaNode above:
+   its schema field is the same JSON Schema the Run form generator walks. */
 
 /** GET /api/runs - services/api.rs:83. */
 export interface ApiRunsResponse {
@@ -686,13 +734,14 @@ export interface DbQueryReply {
 export interface ApiDbRedisValue {
   key: string;
   type: string;
+  ttl: number;
+  /* the redis type's own payload: a string, a list page, a hash / set / zset map - null for
+   * a missing key ("none"). Typed unknown because the type field decides its shape. */
   value?: unknown;
-  length?: number | null;
-  ttl?: number;
-  /* open by construction (docs/37 M9 keep): the value half is the redis type's own
-   * payload - string / list / hash / set / zset each shape it differently - so only the
-   * envelope is closed and the payload rides as unknown. */
-  [key: string]: unknown;
+  /* containers only: the full length, and the cap notice when the page shows fewer. */
+  length?: number;
+  truncated?: boolean;
+  note?: string;
 }
 
 /** GET /api/db/{name}/keys - the redis SCAN page (one page of the key grid). */
@@ -704,13 +753,11 @@ export interface ApiDbRedisKeysResponse {
   total: number;
 }
 
+/** One SCAN row - redis_browser.rs scan_keys builds exactly these three per key. */
 export interface ApiDbRedisKeyRow {
   key: string;
   type: string;
-  ttl?: number;
-  /* open by keep (docs/37 M9): SCAN rows are built key-by-key from driver maps; the
-   * panel reads the three listed fields and tolerates a driver adding one. */
-  [key: string]: unknown;
+  ttl: number;
 }
 
 /** GET /api/db/{name}/activity - the 5s Activity poll while the pane is open. */
@@ -718,20 +765,29 @@ export interface ApiDbActivityReply {
   rows: ApiDbActivityRow[];
 }
 
-/** One pg_stat_activity-style session row (swiss-data activity.rs); own marks the row this
- *  panel's own polling session is, seconds feeds the duration column. */
+/** One session row, verbatim from swiss-host/src/dbbrowser.rs activity_sql: both dialects
+ *  alias their catalog columns to this one key set, so the shape is closed. own marks the
+ *  row this panel's own polling session is, seconds feeds the duration column. */
 export interface ApiDbActivityRow {
   pid: number;
-  user?: string | null;
-  state?: string | null;
-  wait?: string | null;
-  blockedBy?: string | number | null;
-  seconds?: number | null;
-  query?: string | null;
-  own?: boolean;
-  /* open by keep (docs/37 M9): pg_stat_activity columns differ per engine (mysql shows
-   * different state fields than pg); the listed fields are the rendered ones. */
-  [key: string]: unknown;
+  /* pg usename is NULL for background workers; mysql USER never is. */
+  user: string | null;
+  /* COALESCE'd to "" on both dialects, never null. */
+  state: string;
+  wait: string;
+  /* The SQL yields an integer, but both browsers answer through the grid's query() path,
+   * which renders every cell as text - so the wire carries "29", not 29, on pg AND mysql
+   * (D11 entry, docs/37 M9 walk 2026-09-20; dbActivityDuration Number()s it). */
+  seconds: number | string;
+  /* pg LEFT(query, 2000) keeps a NULL; mysql COALESCEs INFO to "". */
+  query: string | null;
+  /* pg returns the boolean `pid = pg_backend_pid()`. mysql's `ID = CONNECTION_ID()` is an
+   * integer the same text-rendering turns into "0" / "1" - and "0" is truthy, so every mysql
+   * row reads as the panel's own session (D11 entry, same walk; the fix belongs in
+   * mysql_browser.rs activity(), coercing own to a bool and seconds to a number). */
+  own: boolean | string;
+  /* pg only: array_to_string(pg_blocking_pids(pid)) - "" when nothing blocks. Absent on mysql. */
+  blockedBy?: string;
 }
 
 /** POST /api/db/{conn}/completion - one candidate the console's suggest list shows. */

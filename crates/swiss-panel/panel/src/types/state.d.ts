@@ -25,13 +25,17 @@
    Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
    and would bury the state split in import churn. */
 
-import type { ApiDbColumn, ApiDbFkRow, ApiMcpCallRow, ApiMcpItem } from "./api.js";
+import type { ApiDbColumn, ApiDbFkRow, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
   err: boolean;
   at: string;
 }
+
+/** The three listable capability kinds - the /api/mcps/{name}/{kind} path segment and the
+ *  three McpDetail slots that hold their pages. util.ts KINDS is the runtime list. */
+export type McpKind = "tools" | "resources" | "prompts";
 
 /** One paged tools/resources/prompts listing (detail.ts pageState; /api/mcps/:name/:kind). */
 export interface KindPageState {
@@ -70,10 +74,10 @@ export interface McpRunState {
  *  while unknown — they mirror the /details answer. */
 export interface McpDetail {
   name: string;
+  /* One of the pane's six tabs: the three McpKind slots below, or run / config / logs. The
+   *  kind pages are reached as d[kind] after an isMcpKind(d.tab) guard (util.ts), not through
+   *  an open signature. */
   tab: string;
-  /* views/mcps.ts stages the active tab's page state under the tab key (d[d.tab]), so the
-   *  detail carries an index signature for the per-tab slots. */
-  [key: string]: unknown;
   config: Record<string, unknown> | null;
   source?: string;
   editing: boolean;
@@ -82,10 +86,10 @@ export interface McpDetail {
   editMode?: string | null;
   editType: string | null;
   editVals: Record<string, unknown> | null;
-  revisions?: { at?: string; note?: string; [key: string]: unknown }[];
-  /* /details' tunnel forwards for this MCP (the config tab chips count them); absent when the
-   *  host sends none. Rows are tunnel-rule shaped (McpTunnelDepRow in types/runs.d.ts). */
-  tunnels?: unknown[];
+  revisions?: ApiMcpRevisionRow[];
+  /* /details' tunnel forwards for this MCP (the config tab chips count them); absent until
+   *  the first /details answer lands. */
+  tunnels?: ApiMcpTunnelDep[];
   /* The calls tab's search debounce handle (run-history.ts queueHistSearch); joins at
    *  runtime, not in the openDetail literal. The union spans the browser build (number)
    *  and the node-typed test tsconfig (Timeout). */
@@ -116,30 +120,59 @@ export interface McpDetail {
   prompts: KindPageState;
 }
 
-/* The jobs plugin's config row (jobs.ts openV2Sheet): the definitions map plus the groups
- *  the sheet's select offers; read-modify-PUT with the revision just read. */
+/* The jobs plugin's config row (jobs.ts openV2Sheet): the wire form of
+ *  swiss-jobs/src/jobs/def.rs JobsConfig, read-modify-PUT with the revision just read. The
+ *  parser refuses any key outside this list (def.rs parse_at check_known), so the shape is
+ *  closed on both sides; every field is optional on the wire because the parser defaults it. */
 export interface JobConfigRow {
-  definitions?: Record<string, JobDef>;
+  schemaVersion?: number;
+  maxConcurrentRuns?: number;
+  maxQueuedRuns?: number;
+  retention?: { days?: number; maxBytesPerJob?: number; maxHistoryBytes?: number };
   groups?: string[];
-  revision?: number;
-  [key: string]: unknown;
+  definitions?: Record<string, JobDef>;
 }
 
-/* One v2 job definition (docs/10 section 5): the form owns the keys it shows, everything
- *  else rides along untouched - hence the index signature. */
+/* The closed enums of a v2 definition, spelled as def.rs enum_str accepts them. The
+ *  Advanced sheet's selects are rendered FROM these lists (jobs-v2.ts JOB_*), so the form
+ *  cannot offer a value the server refuses - the 2026-09 "aligned" firstRun did exactly that. */
+export type JobTriggerKind = "manual" | "interval" | "cron";
+export type JobFirstRun = "after-interval" | "immediate";
+export type JobOverlap = "skip" | "queue-one";
+export type JobMisfire = "skip" | "run-once";
+export type JobBackoff = "fixed" | "exponential";
+export type JobRetryOn = "failure" | "timeout";
+export type JobCapture = "tail" | "none";
+
+/* A definition's trigger (def.rs parse_trigger): kind picks which of the other keys are
+ *  legal - interval takes everyMs / firstRun, cron takes expression / timezone (only "local"
+ *  is accepted), manual takes nothing. Flat rather than a discriminated union because the
+ *  form reads every slot off whatever trigger it loaded before it knows the kind. */
+export interface JobTrigger {
+  kind: JobTriggerKind;
+  everyMs?: number;
+  firstRun?: JobFirstRun;
+  expression?: string;
+  timezone?: "local";
+}
+
+/* One v2 job definition (docs/11 section 3) - the wire form of def.rs JobDefinition, keyed
+ *  by id in JobConfigRow.definitions (the id is the map key, never a field: the parser's
+ *  known-field list does not include it). Closed: def.rs parse_definition check_known
+ *  refuses any other key, so nothing "rides along" - a key this form does not own cannot
+ *  exist in a row the server accepted. */
 export interface JobDef {
-  id?: string;
   title?: string;
   labels?: string[];
-  trigger?: { kind: string; everyMs?: number; cron?: string; expression?: string; firstRun?: string; timezone?: string; [key: string]: unknown };
-  action?: { type: string; input?: Record<string, unknown>; [key: string]: unknown };
-  timeoutMs?: number;
   disabled?: boolean;
-  overlap?: string;
-  misfire?: string;
-  retry?: { maxAttempts?: number; delayMs?: number; backoff?: string; retryOn?: string[]; [key: string]: unknown };
-  output?: { capture?: string; maxBytes?: number; [key: string]: unknown };
-  [key: string]: unknown;
+  group?: string | null;
+  trigger?: JobTrigger;
+  action?: { type: string; input?: Record<string, unknown>; schemaVersion?: number };
+  timeoutMs?: number;
+  overlap?: JobOverlap;
+  misfire?: JobMisfire;
+  retry?: { maxAttempts?: number; delayMs?: number; backoff?: JobBackoff; retryOn?: JobRetryOn[] };
+  output?: { capture?: JobCapture; maxBytes?: number };
 }
 
 /* formValues()' flat output (jobs.ts openV2Sheet): every form control's value as a string,
@@ -147,19 +180,19 @@ export interface JobDef {
 export interface JobFormValues {
   title: string;
   labels: string;
-  kind: string;
+  kind: JobTriggerKind;
   everyMs: string;
-  firstRun: string;
+  firstRun: JobFirstRun;
   cron: string;
   timeoutMs: string;
   disabled: boolean;
-  overlap: string;
-  misfire: string;
+  overlap: JobOverlap;
+  misfire: JobMisfire;
   retryMax: string;
   retryDelayMs: string;
-  retryBackoff: string;
-  retryOn: string[];
-  capture: string;
+  retryBackoff: JobBackoff;
+  retryOn: JobRetryOn[];
+  capture: JobCapture;
   maxBytes: string;
   actionType: string;
 }
@@ -212,18 +245,21 @@ export interface DdlRow {
   isNew: boolean;
 }
 
-/** The (op, payload) body /api/db/:name/ddl-preview and /ddl both take. */
+/** The payload half of the (op, payload) body /api/db/:name/ddl-preview and /ddl both take -
+ *  what swiss-host/src/dbbrowser.rs build_ddl_create reads per op: table (+ schema) on every
+ *  op; create_table columns / primary / comment; add_column columns; create_index index /
+ *  columns / unique. The sheet builds it from its form (data-ddl.ts dbDdlFormPayload), it
+ *  never round-trips a server object, so nothing else can be in it. */
 export interface DbDdlPayload {
   schema?: string;
   table?: string;
   index?: string;
   /* the index flavor lists plain column names; the table/column flavors list row objects. */
   columns?: ({ name?: string; type?: string; nullable?: boolean; default?: string; comment?: string } | string)[];
+  /* create_table only, and the sheet does not offer it yet: the primary-key column names. */
+  primary?: string[];
   unique?: boolean;
   comment?: string;
-  /* open by keep (docs/37 M9): a DDL sheet draft round-trips the user's whole column
-   * spec through read-modify-write; the form owns the listed keys, the rest rides. */
-  [key: string]: unknown;
 }
 
 /** One open DDL sheet's whole mutable context; rebuilt per open, nulled on close. */
@@ -272,9 +308,6 @@ export interface DbFormField {
 export interface DbCellMeta {
   orig: unknown;
   pk: unknown;
-  /* open by keep (docs/37 M9): callers thread extra row context through the editor's
-   * meta (the grid adds its own keys); orig/pk are the contract. */
-  [key: string]: unknown;
 }
 
 /** One buffered row update in the Data grid (data-view.ts): pk identifies the row, changes

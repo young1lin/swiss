@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-                                                                            
+                                                                                             
                                                     
                                                   
 import { $ } from "./util.js";
@@ -22,7 +22,11 @@ import { h } from "./h.js";
                                      
 import { histButtonLabel } from "./run-history.js";
 
-function readRunArgs(tool            , idPrefix         )                          {
+/** What the argument-form generator needs of a tool: its input schema and nothing else, so
+ *  an MCP tool and a jobs action (whose schema field is the same JSON Schema) both fit. */
+                                                         
+
+function readRunArgs(tool               , idPrefix         )                          {
   const pfx = idPrefix || "r-arg-";
   const out                          = {};
   const props = (tool && tool.inputSchema && tool.inputSchema.properties) || {};
@@ -65,7 +69,7 @@ function readRunArgs(tool            , idPrefix         )                       
 /** The node twin of argFieldsHtml (docs/37 R5): same ids, same data-arg/data-kind contract,
  *  same required star - but schema keys, descriptions and placeholders are text nodes and
  *  properties, so a hostile schema key from a proc child is a value, never markup. */
-function argFieldsNode(tool            , idPrefix         , values                          )         {
+function argFieldsNode(tool               , idPrefix         , values                          )         {
   const pfx = idPrefix || "r-arg-";
   const have = values || {};
   const schema = tool.inputSchema || {};

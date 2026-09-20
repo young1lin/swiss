@@ -20,6 +20,8 @@
    Function-property memo) are retired - docs/37 M3 - in favour of local casts and
    module-scoped state in views/terminal.ts. */
 
+import type { JsonSchemaNode } from "./api.js";
+
 /** One wired session. The literals in select()/openSession() build the core fields; the
  *  rest join at their first real value (wireTerminal, connect, paintJump) and are
  *  optional for exactly that reason - the literals predate them. */
@@ -82,25 +84,27 @@ export interface TerminalLocalCfg {
   shells?: { program: string; label: string }[];
 }
 
-/** GET /api/plugins/terminal/config as the settings sheet reads it: the config's local
- *  block, the revision the save PUT echoes back, and the schema branch the switch's
- *  reason line walks (properties.local.properties.enabled.description). The read sits in
- *  a try because an older schema can lack any link of that chain, so the declared depth
- *  is best-effort by design. */
+/** The terminal plugin's config row - the keys src/plugins/terminal.rs config_schema
+ *  declares (docs/14 section 6): the local block the settings sheet edits, and the remote
+ *  session limits it leaves alone. Every field is optional on the wire; the plugin defaults
+ *  what is absent. */
+export interface TerminalPluginConfig {
+  local?: TerminalLocalCfg | null;
+  allowedTargets?: string[];
+  maxSessions?: number;
+  maxSessionsPerTarget?: number;
+  idleTimeoutMinutes?: number;
+  graceSeconds?: number;
+  stallSeconds?: number;
+  recording?: boolean;
+}
+
+/** GET /api/plugins/terminal/config as the settings sheet reads it (host/api.rs get_config):
+ *  the row, the revision the save PUT echoes back, and the descriptor's JSON schema, whose
+ *  properties.local.properties.enabled.description is the switch's reason line. The walk
+ *  sits in a try because an older schema can lack a link of that chain. */
 export interface TerminalPluginConfigResponse {
   revision: number;
-  config: { local?: TerminalLocalCfg | null; [key: string]: unknown };
-  schema: {
-    properties: {
-      local: {
-        properties: {
-          enabled: { description?: string; [key: string]: unknown };
-          [key: string]: unknown;
-        };
-        [key: string]: unknown;
-      };
-      [key: string]: unknown;
-    };
-    [key: string]: unknown;
-  } | null;
+  config: TerminalPluginConfig;
+  schema: JsonSchemaNode | null;
 }

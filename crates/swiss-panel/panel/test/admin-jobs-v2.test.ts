@@ -15,14 +15,23 @@
  */
 
 import type { ApiJobRow, ApiJobRunRecord } from "../src/types/api.js";
+import type { JobDef } from "../src/types/state.js";
 import { describe, it, expect, beforeAll } from "vitest";
 import { clearTunBusy, setTunBusy } from "../src/tunnel-state.js";
 import {
+  JOB_BACKOFFS,
+  JOB_CAPTURES,
+  JOB_FIRST_RUNS,
+  JOB_MISFIRES,
+  JOB_OVERLAPS,
+  JOB_RETRY_ONS,
+  JOB_TRIGGER_KINDS,
   cloneJson,
   defTemplate,
   envToLines,
   formToV2,
   historyMeta,
+  legalOf,
   parseEnvLines,
   triggerSummary,
   v2ToForm,
@@ -226,7 +235,7 @@ describe("visual refresh V6 — the status dot carries a title", () => {
 describe("triggerSummary", () => {
   it("reads the v2 trigger object", () => {
     expect(triggerSummary({ trigger: { kind: "cron", expression: "30 3 * * *" } } as ApiJobRow)).toBe("cron 30 3 * * *");
-    expect(triggerSummary({ trigger: { kind: "interval", everyMs: 3600000, firstRun: "aligned" } } as ApiJobRow)).toBe("every 3600 s");
+    expect(triggerSummary({ trigger: { kind: "interval", everyMs: 3600000, firstRun: "after-interval" } } as ApiJobRow)).toBe("every 3600 s");
     expect(triggerSummary({ trigger: { kind: "interval", everyMs: 90000, firstRun: "immediate" } } as ApiJobRow)).toBe("every 90 s · immediate");
     expect(triggerSummary({ trigger: { kind: "manual" } } as ApiJobRow)).toBe("manual");
   });
@@ -262,17 +271,20 @@ describe("historyMeta", () => {
 });
 
 describe("the form <-> definition round trip", () => {
-  it("keeps keys the form does not know (docs/10 §5: losing one deletes configuration)", () => {
-    const base = {
+  it("never silently drops a key it does not own (the server's refusal must name it, not a form edit)", () => {
+    // The JSON textarea can hand the form any object; def.rs check_known refuses a key it
+    // does not know, naming it. That refusal is only reachable if the form leaves the key
+    // in place - a form that quietly deleted it would turn a loud 400 into lost text. The
+    // intersection says what this object is: a definition plus one key the server will refuse.
+    const base: JobDef & { fanout: { regions: string[] } } = {
       title: "nightly",
       trigger: { kind: "cron", expression: "30 3 * * *", timezone: "local" },
       action: { type: "process.legacy-command", input: { command: "cmd /c x" } },
-      // A field from a FUTURE gateway this form has never heard of:
       fanout: { regions: ["eu", "us"] },
     };
     const form = v2ToForm(base);
     form.title = "nightly vacuum";
-    const out = formToV2(form, base, { command: "cmd /c x" });
+    const out = formToV2(form, base, { command: "cmd /c x" }) as typeof base;
     expect(out.fanout).toEqual({ regions: ["eu", "us"] });
     expect(out.title).toBe("nightly vacuum");
   });
@@ -282,7 +294,7 @@ describe("the form <-> definition round trip", () => {
     const out = formToV2(v2ToForm(base), base, { command: "" });
     // The form owns overlap/misfire and writes their defaults explicitly - explicit
     // defaults parse identically and keep the JSON editor honest about what will save.
-    const strip = (d: Record<string, unknown>) => ({ ...d, overlap: undefined, misfire: undefined });
+    const strip = (d: JobDef) => ({ ...d, overlap: undefined, misfire: undefined });
     expect(strip(out)).toEqual(strip(base));
     expect(out.overlap).toBe("skip");
     expect(out.misfire).toBe("skip");
@@ -321,6 +333,39 @@ describe("the form <-> definition round trip", () => {
     const frozen = cloneJson(base);
     formToV2(v2ToForm(base), base, { command: "" });
     expect(base).toEqual(frozen);
+  });
+});
+
+/* docs/37 M9: the sheet's enum values are the server's (swiss-jobs/src/jobs/def.rs enum_str
+   and the descriptor's config_schema in src/builtin.rs). Until 2026-09 the template and the
+   firstRun select both said "aligned", a word the parser refuses with `must be one of:
+   "after-interval", "immediate"` - every Advanced-sheet create with the default interval
+   trigger was a 400. These pin the lists to the parser's spelling. */
+describe("the definition enums match def.rs", () => {
+  it("offers exactly the parser's values, in the parser's spelling", () => {
+    expect([...JOB_TRIGGER_KINDS].sort()).toEqual(["cron", "interval", "manual"]);
+    expect([...JOB_FIRST_RUNS]).toEqual(["after-interval", "immediate"]);
+    expect([...JOB_OVERLAPS]).toEqual(["skip", "queue-one"]);
+    expect([...JOB_MISFIRES]).toEqual(["skip", "run-once"]);
+    expect([...JOB_BACKOFFS]).toEqual(["fixed", "exponential"]);
+    expect([...JOB_RETRY_ONS]).toEqual(["failure", "timeout"]);
+    expect([...JOB_CAPTURES]).toEqual(["tail", "none"]);
+  });
+
+  it("templates and defaults a firstRun the server accepts (the 'aligned' regression)", () => {
+    expect(defTemplate("x").trigger?.firstRun).toBe("after-interval");
+    expect(JOB_FIRST_RUNS).toContain(defTemplate("x").trigger?.firstRun);
+    // A definition without a firstRun reads as the server's default, not an invented word.
+    expect(v2ToForm({ trigger: { kind: "interval", everyMs: 1000 } }).firstRun).toBe("after-interval");
+    // And the form writes that default back verbatim.
+    const out = formToV2(v2ToForm({ trigger: { kind: "interval", everyMs: 1000 } }), {}, {});
+    expect(out.trigger).toEqual({ kind: "interval", everyMs: 1000, firstRun: "after-interval" });
+  });
+
+  it("legalOf narrows a select value to its list and refuses anything else by name", () => {
+    expect(legalOf("immediate", JOB_FIRST_RUNS, "trigger.firstRun")).toBe("immediate");
+    expect(() => legalOf("aligned", JOB_FIRST_RUNS, "trigger.firstRun"))
+      .toThrow('trigger.firstRun must be one of after-interval, immediate, got "aligned"');
   });
 });
 

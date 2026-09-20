@@ -24,6 +24,7 @@
    views/terminal.js; everything a test needs to trust lives here. */
 
                                                                                 
+                                                                     
 const PTY_MIN = 1;
 const PTY_MAX = 1000;   // the bounds swiss-host enforces on both axes — a 0-column PTY is
                       // undefined behaviour on the far side, so the panel clamps BEFORE
@@ -157,8 +158,8 @@ function baseName(p         )         {
  *  so a save cannot silently drop a limit someone else set (docs/15 §2.1). An empty
  *  shell string is omitted rather than sent as "" — that is how "the platform default"
  *  stays expressible. */
-export function withLocalConfig(config                                            , enabled         , shell         )                          {
-  const out                          = Object.assign({}, config || {});
+export function withLocalConfig(config                                         , enabled         , shell         )                       {
+  const out                       = Object.assign({}, config || {});
   const local                                       = { enabled: !!enabled };
   const s = String(shell == null ? "" : shell).trim();
   if (s) local.shell = s;
@@ -169,7 +170,7 @@ export function withLocalConfig(config                                          
 /** The PUT body for /api/plugins/terminal/config: the config above plus the revision the
  *  GET carried, so a save that raced another panel loses loudly (409) instead of
  *  overwriting it. */
-export function configPutBody(config                                            , revision         , enabled         , shell         )                                                         {
+export function configPutBody(config                                         , revision         , enabled         , shell         )                                                      {
   return { config: withLocalConfig(config, enabled, shell), revision: revision };
 }
 

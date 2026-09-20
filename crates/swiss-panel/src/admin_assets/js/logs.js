@@ -16,7 +16,7 @@
 
                                                                            
                                                            
-                                                  
+                                                           
 import { iconNode, toast } from "./util.js";
 import { frag, h } from "./h.js";
                                      
@@ -399,8 +399,8 @@ function toolDetailNode(it            , args        )              {
       h("pre", { class: "item-schema" }, schema)));
 }
 
-function kindBodyNode(d           , kind        , m                           )         {
-  const kd = d[kind                                     ];
+function kindBodyNode(d           , kind         , m                           )         {
+  const kd = d[kind];
   // Resources get a master on/off at the top: off empties the list (the capability stays, so the
   // notify stays valid) and tells connected clients to re-list. Symmetric with the per-tool toggle.
   let resToggle                     = null;

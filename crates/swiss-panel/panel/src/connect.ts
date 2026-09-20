@@ -17,7 +17,7 @@
 import type { ApiMcpRow, ApiTokenCreated, ApiTokenSecret } from "./types/api.js";
 import type { PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
-import { TOKEN_ID_KEY, apiJson, targetEl, toast } from "./util.js";
+import { TOKEN_ID_KEY, apiJson, isMcpKind, targetEl, toast } from "./util.js";
 import { kindBodyNode, logsBodyNode } from "./logs.js";
 import type { HChild } from "./h.js";
 import { closeMenu } from "./pane.js";
@@ -151,7 +151,9 @@ function tabBody(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): HChild {
   if (d.tab === "run") return runBodyNode(d, m);
   if (d.tab === "config") return configBodyNode(d);
   if (d.tab === "logs") return logsBodyNode(d);
-  return kindBodyNode(d, d.tab, m);
+  // The three kind pages are what is left; an unknown tab string paints nothing rather than
+  // indexing a slot that does not exist.
+  return isMcpKind(d.tab) ? kindBodyNode(d, d.tab, m) : null;
 }
 
 export { claudeSnippet, codexSnippet, copyConn, copyText, endpointUrl, fetchSecret, legacyCopy, mcpJsonSnippet, resolveSecret, tabBody, tokenEnv, useToken };

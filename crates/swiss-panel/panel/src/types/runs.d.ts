@@ -25,7 +25,7 @@
 
 /** POST /api/mcps/{name}/resource (readResource): one resource read's reply. text is the
  *  body, mimeType rides when the source sent one, ms is the round trip. */
-import type { ApiRemoteTargetRow } from "./api.js";
+import type { ApiMcpRevisionRow, ApiMcpTunnelDep, ApiRemoteTargetRow } from "./api.js";
 export interface ApiMcpResourceRead {
   ok: boolean;
   text?: string;
@@ -41,43 +41,28 @@ export interface McpRunResult {
   ms?: number | null;
 }
 
-/** One parked definition revision as configBody renders it (d.revisions rows): state.d.ts
- *  types the rows open-ended; this names the three fields the revision list reads. type is
- *  required here only to index TYPE_LABELS - an older row without one falls to "?" at
- *  runtime exactly as before. */
-export interface McpRevisionRow {
-  type: string;
-  at?: string;
-  note?: string;
-  [key: string]: unknown;
-}
+/** One parked definition revision as configBody renders it (d.revisions rows) - the
+ *  /revisions wire row, one name for the reader (types/api.d.ts ApiMcpRevisionRow). */
+export type McpRevisionRow = ApiMcpRevisionRow;
 
-/** One tunnel forward a /details answer carries for this MCP (tunnelDepsHtml). state.d.ts
- *  types the field unknown[] because this module is its only reader; the fields are the
- *  rule row's own (tunnel/manager.rs rule_row_of minus the live counters it does not read). */
-export interface McpTunnelDepRow {
-  name: string;
-  localPort: number;
-  targetHost: string;
-  targetPort: number;
-  state: string;
-  reason?: string;
-  stalePool?: boolean;
-  [key: string]: unknown;
-}
+/** One tunnel forward a /details answer carries for this MCP (tunnelDepsNode) - the
+ *  /details wire row, one name for the reader (types/api.d.ts ApiMcpTunnelDep). */
+export type McpTunnelDepRow = ApiMcpTunnelDep;
 
 /** The masked MCP config as configTarget reads it: a Record<string, unknown> on the wire
- *  (d.config); the fields the adapter branches touch, named so the reads stay checked. */
+ *  (d.config, every adapter's own def shape behind mask_def); the fields the adapter
+ *  branches touch, named so the reads stay checked. port is the mysql / redis defs' own
+ *  (a number in the def, a string when the form last wrote it). */
 export interface McpConfigLike {
   type?: string;
   command?: string;
   url?: string;
   baseUrl?: string;
   host?: string;
+  port?: number | string;
   db?: string;
   database?: string;
   mode?: string;
-  [key: string]: unknown;
 }
 
 /* --- views/remote.ts ---------------------------------------------------------------------------- */
@@ -109,18 +94,42 @@ import type { ApiRunRow } from "./api.js";
 
 /* --- views/remote-runs.ts ----------------------------------------------------------------------- */
 
-/** The input half of a remote run row: argv for exec, source/to for sync, remote/to for
- *  pull, path for cat/write, target and cwd on any kind. */
+/** The input half of a remote run row: the validated action input, recorded with env
+ *  reduced to envKeys (history.rs sanitized_input). The keys are the union of the five
+ *  capabilities' field lists (swiss-remote/src/actions.rs EXEC_FIELDS / SYNC_FIELDS /
+ *  PULL_FIELDS and the cat / write pairs); target is on every kind, the rest per kind:
+ *  exec argv/cwd/timeoutMs/envKeys, sync source/exclude/verbose/to, pull remote/to/verbose,
+ *  cat remote, write remote/content. */
 export interface RemoteRunInput {
-  argv?: unknown[];
+  target?: string;
+  argv?: string[];
+  envKeys?: string[];
+  cwd?: string;
+  timeoutMs?: number;
   source?: string;
+  exclude?: string[];
+  verbose?: boolean;
   to?: string;
   remote?: string;
-  path?: string;
-  target?: string;
-  cwd?: string;
-  [key: string]: unknown;
+  content?: string;
 }
+
+/** A remote run's meta as actions.rs stamps it: target/endpoint on every kind, the sync
+ *  report counters and outputTruncated per kind. A type alias, not an interface, so it
+ *  stays assignable to ApiRunRow's Record<string, unknown> meta. */
+export type RemoteRunMeta = {
+  target?: string;
+  endpoint?: string;
+  outputTruncated?: boolean;
+  scanned?: number;
+  uploaded?: number;
+  skipped?: number;
+  bytes?: number;
+  dirs?: number;
+  files?: number;
+  remote?: string;
+  to?: string;
+};
 
 /** One /api/remote/runs row as the Runs page reads it: ApiRunRow plus the input the active
  *  rows carry and the record's capped-output pair. api.d.ts types input only on the
@@ -129,7 +138,7 @@ export interface ApiRemoteRunRow extends ApiRunRow {
   input?: RemoteRunInput;
   outputCapped?: boolean;
   tail?: string;
-  meta?: { target?: string; [key: string]: unknown };
+  meta?: RemoteRunMeta;
 }
 
 /** One opened recorded row's fetched body (bodies[runId]): either the output read so far

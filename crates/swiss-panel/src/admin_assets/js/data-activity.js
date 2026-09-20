@@ -35,7 +35,7 @@ let dbActivityCloseFn                      = null;
 
 /** Seconds as the compact duration the table shows — "42s", "1m 12s", "2h 05m", "3d 04h".
  *  Pure so the column's formatting can be pinned without a DOM. */
-function dbActivityDuration(secs                           )         {
+function dbActivityDuration(secs                                    )         {
   const s = Math.max(0, Math.floor(Number(secs) || 0));
   if (s < 60) return s + "s";
   const m = Math.floor(s / 60);
@@ -104,18 +104,19 @@ function dbActivityRender() {
   const tbody = el("tbody");
   rows.forEach((r                  ) => {
     const tr = el("tr", r.own ? "db-act-own" : "");
-    const pid = el("td", "db-cell tnum", String(r.pid == null ? "" : r.pid));
+    const pid = el("td", "db-cell tnum", String(r.pid));
     pid.title = "pid " + r.pid;
     tr.appendChild(pid);
-    const user = el("td", "", String(r.user == null ? "" : r.user));
+    const user = el("td", "", r.user == null ? "" : r.user);
     if (r.own) {
       const chip = el("span", "db-keytype", "this panel");
       chip.title = "The session this Activity page itself polls through";
       user.appendChild(chip);
     }
     tr.appendChild(user);
-    tr.appendChild(el("td", "", String(r.state == null ? "" : r.state)));
-    const wait = el("td", "", String(r.wait == null ? "" : r.wait));
+    // state and wait are COALESCE'd to "" in activity_sql on both dialects - never null.
+    tr.appendChild(el("td", "", r.state));
+    const wait = el("td", "", r.wait);
     if (r.blockedBy) {
       const blocked = el("span", "db-act-blocked", " · blocked by " + r.blockedBy);
       blocked.title = "pids holding locks this session waits on";
@@ -132,7 +133,7 @@ function dbActivityRender() {
     const ctl = el("td", "db-rowctl");
     ctl.appendChild(h("button", {
       class: "db-act-more", type: "button", title: "Cancel or terminate this session",
-      data: { apid: r.pid == null ? "" : String(r.pid) },
+      data: { apid: String(r.pid) },
     }, iconNode("ellipsis")));
     tr.appendChild(ctl);
     tbody.appendChild(tr);

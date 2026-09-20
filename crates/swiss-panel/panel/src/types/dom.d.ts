@@ -62,7 +62,6 @@ export interface PageModule {
   canLeave?: () => boolean;
   countText?: () => string;
   hasPendingChanges?: () => boolean;
-  [key: string]: unknown;
 }
 
 /** One empty state - util.ts emptyHtml opts (docs/18 V7): every view's nothing-here is
@@ -70,8 +69,8 @@ export interface PageModule {
  *  the owning view wires. */
 /** One page descriptor as the registry stores it after valid(): the server rows plus the
  *  client-side pages, order normalised to a finite number. pluginId/path/sidebar/layout ride
- *  when the contributing side sent them (ApiPluginPage's shape); the index signature keeps
- *  the passthrough honest instead of enumerating the world. */
+ *  when the contributing side sent them (ApiPluginPage's shape, host/descriptor.rs
+ *  PageDescriptor::to_json); a client-side page may leave them out. */
 export interface PageDescriptor {
   id: string;
   label: string;
@@ -81,7 +80,6 @@ export interface PageDescriptor {
   path?: string;
   sidebar?: boolean;
   layout?: string;
-  [key: string]: unknown;
 }
 
 /** What replace() accepts - the unvalidated wire/input form valid() checks and throws on.
@@ -159,12 +157,11 @@ export interface GroupCfg<Row> {
   filtered?: boolean;
 }
 
-/* A JSON-tree node (logs.ts buildJsonTree/jtNode): an object whose every value is more
- *  tree material - arrays arrive the same way, narrowed by Array.isArray at the branch.
- *  The index signature is what lets the tree index val[k] with no parenthesised cast. */
-export interface JtBox {
-  [key: string]: unknown;
-}
+/* A JSON-tree node (logs.ts buildJsonTree/jtNode): an arbitrary JSON object whose every
+ *  value is more tree material - arrays arrive the same way, narrowed by Array.isArray at
+ *  the branch. Record<string, unknown> is the honest type of "any JSON object": the tree
+ *  indexes val[k] over Object.keys, it never names a key. */
+export type JtBox = Record<string, unknown>;
 
 /** One form field's schema (fields.ts TYPE_FIELDS rows): k is the def key, bool/num/area/
  *  kv/json pick the input kind, half pairs it into two columns, def is the checkbox default. */

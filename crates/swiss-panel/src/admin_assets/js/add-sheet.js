@@ -137,10 +137,11 @@ async function submitImport(input                  )                {
 
 async function submitAdd()                {
   const type = $                   ("a-type").value;
-  /* the def body is open by construction: readFields(type) emits the type-specific
-   * fields (url/command/program/args/auth...), then the two translate passes rewrite
-   * more - only the three shared keys are spelled out (docs/37 M9 keep). */
-  const body                                                                           = Object.assign({ name: $                  ("a-name").value.trim(), type: type, enabled: $                  ("a-start").checked }, readFields(type, "a-"));
+  /* The def body is dynamic by construction: readFields(type) emits the adapter type's own
+   * fields (fields.ts TYPE_FIELDS: url / command / program / args / auth ...), then the two
+   * translate passes rewrite more. Only the three shared keys are named; the rest is the
+   * TYPE_FIELDS row set, which is why this is a Record and not an interface (docs/37 M9). */
+  const body                                                                             = Object.assign({ name: $                  ("a-name").value.trim(), type: type, enabled: $                  ("a-start").checked }, readFields(type, "a-"));
   if (body.autostart !== undefined) { body.lazy = !body.autostart; delete body.autostart; }
   translateOauth(body); // the auth checkbox is the def's auth string (docs/24 D1)
   translatePg(type, body); // docs/30: the pg form's pieces become one url

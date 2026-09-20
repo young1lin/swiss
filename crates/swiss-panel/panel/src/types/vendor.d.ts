@@ -99,7 +99,16 @@ interface XtermSearchAddon extends XtermAddon {
   clearDecorations(): void;
 }
 
-/** cronstrue's namespace as the vendored UMD exposes it (jobs.ts describeCron). */
+/** cronstrue's namespace as the vendored UMD exposes it (jobs.ts describeCron). The options
+ *  are cronstrue 2.x's own Options type; the panel passes throwExceptionOnParseError only. */
 interface CronstrueLib {
-  toString(expression: string, options?: { throwExceptionOnParseError?: boolean; [key: string]: unknown }): string;
+  toString(expression: string, options?: {
+    throwExceptionOnParseError?: boolean;
+    verbose?: boolean;
+    dayOfWeekStartIndexZero?: boolean;
+    monthStartIndexZero?: boolean;
+    use24HourTimeFormat?: boolean;
+    locale?: string;
+    tzOffset?: number;
+  }): string;
 }

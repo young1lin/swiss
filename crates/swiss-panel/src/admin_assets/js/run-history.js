@@ -16,7 +16,7 @@
 
                                                                 
                                                  
-                                                                                                                        
+                                                                                       
                                                   
 import { $, api, apiJson, errText, iconNode, targetEl, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
@@ -521,7 +521,7 @@ function configBodyNode(d           )         {
         h("code", null, "${ENV}"),
         " references are kept as references, so no credential is written to disk.")
     : null;
-  const revs = d.revisions                     || [];
+  const revs = d.revisions || [];
   // Parked definition snapshots stay available without making an empty shelf a permanent section.
   const revRows         = revs.length
     ? revs.map((r, i) => {
@@ -557,7 +557,7 @@ function configBodyNode(d           )         {
  * already there. Nothing restarts an MCP on its own.
  */
 function tunnelDepsNode(d           )         {
-  const t = d.tunnels                                        ;
+  const t = d.tunnels;
   if (!t || !t.length) return null;
   const rows = t.map((x) => {
     const dot = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "";

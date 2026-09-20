@@ -280,7 +280,7 @@ function dbRenderRedisValue(wrap             )       {
     wrap.appendChild(el("div", "db-hint", "Key not found — it may have expired."));
     return;
   }
-  if (v.note) wrap.appendChild(el("div", "db-hint", v.note          ));
+  if (v.note) wrap.appendChild(el("div", "db-hint", v.note));
   if (cfg) { dbRedisTypedTable(wrap, v, cfg); return; }
   if (v.type === "string") { dbRedisStringEditor(wrap, v); return; }
   // Stream and module types stay read-only — their commands have no field grid (docs/22 W3.3).

@@ -107,10 +107,10 @@ function stateDotNode(r: ApiRemoteRunRow): HTMLElement {
 function commandOf(r: ApiRemoteRunRow): string {
   const input = r.input || {} as RemoteRunInput;
   const kind = (r.action || "").replace(/^remote\./, "");
-  if (kind === "exec" && Array.isArray(input.argv)) return input.argv.join(" ");
+  if (kind === "exec" && input.argv) return input.argv.join(" ");
   if (kind === "sync") return "sync " + (input.source || ".") + (input.to ? " \u2192 " + input.to : "");
   if (kind === "pull") return "pull " + (input.remote || "") + (input.to ? " \u2192 " + input.to : "");
-  if (kind === "cat" || kind === "write") return kind + " " + (input.path || input.remote || "");
+  if (kind === "cat" || kind === "write") return kind + " " + (input.remote || "");
   return input.argv ? String(input.argv) : (r.label || kind || "run");
 }
 

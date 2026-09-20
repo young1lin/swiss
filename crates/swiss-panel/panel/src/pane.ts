@@ -17,7 +17,7 @@
 import type { ApiMcpRow } from "./types/api.js";
 import type { PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
-import { $, KINDS, emptyNode, iconNode, targetEl } from "./util.js";
+import { $, KINDS, emptyNode, iconNode, isMcpKind, targetEl } from "./util.js";
 import { fill, h } from "./h.js";
 import { openGroupSheet, openSheet } from "./add-sheet.js";
 import { copyConn, copyText, endpointUrl, tabBody } from "./connect.js";
@@ -129,9 +129,9 @@ function renderPane(): void {
       h("button", { class: "btn icon", id: "menuBtn", aria: { label: "More actions" }, title: "More actions" },
         iconNode("ellipsis"))));
 
-  const tabs = KINDS.concat(["run", "config", "logs"]);
+  const tabs: string[] = [...KINDS, "run", "config", "logs"];
   const seg = h("div", { class: "seg", role: "tablist" }, tabs.map((t) => {
-    const kd = KINDS.includes(t) ? d[t as "tools" | "resources" | "prompts"] : null;
+    const kd = isMcpKind(t) ? d[t] : null;
     const count = kd && kd.loaded
       ? h("span", { class: "seg-n" }, String(kd.total != null ? kd.total : kd.items.length))
       : null;
