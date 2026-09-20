@@ -75,10 +75,15 @@ const markupOf = (n: unknown): string => {
 const fakeEl = (): FakeNode => new FakeNode("div");
 
 const els = new Map<string, FakeNode>();
+/* Map-backed so the last-page memory round-trips (docs/39 S4): navigatePage writes the
+ * store, the seat click reads it back. Every other consumer sees an empty store, exactly
+ * what the old always-null stub gave them. */
+const memoryStore = new Map<string, string>();
 let responder: (path: string) => Promise<{ status: number; ok: boolean; json: () => Promise<unknown> }>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let registry: any; // the whole page-registry surface, reached loosely: this suite pokes internals
 let setCurrentView: (id: string) => void;
+let currentView: () => string;
 
 const jsonResponse = (status: number, body?: unknown) => ({
   status,
@@ -129,7 +134,8 @@ beforeAll(async () => {
       createElementNS: (_ns: string, t: string) => new FakeNode(t),
       createDocumentFragment: () => new FakeNode("#document-fragment"),
       createTextNode: (s: string) => { const n = new FakeNode("#text"); n.textContent = s; return n; },
-      querySelector: () => null,
+      // navigatePage toggles the resource sidebar's hidden flag on the way in.
+      querySelector: (sel: string) => (sel === ".sidebar" ? fakeEl() : null),
       querySelectorAll: () => [],
       addEventListener: () => {},
       removeEventListener: () => {},
@@ -140,7 +146,15 @@ beforeAll(async () => {
       activeElement: null,
     },
     fetch: (path: unknown) => responder(String(path)),
-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    // navigatePage calls history.replaceState after landing; node has no history global.
+    history: { replaceState: () => {} },
+    // Data's canLeave asks "discard uncommitted changes?" - the veto test answers no.
+    confirm: () => false,
+    localStorage: {
+      getItem: (k: string) => (memoryStore.has(k) ? memoryStore.get(k) as string : null),
+      setItem: (k: string, v: string) => { memoryStore.set(k, v); },
+      removeItem: (k: string) => { memoryStore.delete(k); },
+    },
   });
   afterAll(() => {
     if (prevDocument) Object.defineProperty(globalThis, "document", prevDocument);
@@ -148,7 +162,7 @@ beforeAll(async () => {
     if (prevFetch) Object.defineProperty(globalThis, "fetch", prevFetch);
     else delete (globalThis as Record<string, unknown>).fetch;
   });
-  ({ setCurrentView } = await import("../src/ui-state.js"));
+  ({ setCurrentView, currentView } = await import("../src/ui-state.js"));
   registry = await import("../src/page-registry.js");
 });
 
@@ -195,6 +209,65 @@ describe("the plugin rail (global navigation)", () => {
     expect(rail).toContain('title="MCP — Plugin disabled"');
     // Other groups are untouched.
     expect(rail).not.toMatch(/data-group="tunnels"[^>]*aria-disabled/);
+  });
+
+  it("a seat reopens the plugin's LAST page; data-view stays the first page id (docs/39 S4)", async () => {
+    // Page data fetches fail softly (500) so the real view modules mount without painting -
+    // this test is about the shell's navigation, not the traffic or jobs bodies.
+    memoryStore.clear();
+    await paint("mcps", inventory);
+    responder = (path: string) => Promise.resolve(
+      path === "/api/plugins" ? jsonResponse(200, inventory) : jsonResponse(500, { error: "stub" }));
+
+    // Walk #traffic, then #jobs, through the REAL navigatePage - it is what records the visit.
+    await registry.navigatePage("traffic");
+    expect(JSON.parse(memoryStore.get("swiss.lastPage") as string)).toEqual({ mcp: "traffic" });
+    await registry.navigatePage("jobs");
+    expect(currentView()).toBe("jobs");
+
+    // Click the MCP seat through the rail's delegated handler (the fake target answers the
+    // two closest() probes the real DOM would).
+    const seat = { dataset: { group: "mcp" } };
+    const click = byId("railNav").onclick as unknown as (ev: { target: unknown }) => void;
+    click({ target: { closest: (sel: string) => (sel === "[data-group]" ? seat : null) } });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    // The landing is Traffic, the rail still marks MCP, and the seat's data-view attribute
+    // is still the FIRST page id - jobs.ts's deep selector and the assertion above it rely on it.
+    expect(currentView()).toBe("traffic");
+    expect(byId("railNav").innerHTML).toContain('data-group="mcp" data-view="mcps" aria-current="true"');
+    expect(memoryStore.get("swiss.lastPage")).toContain('"mcp":"traffic"');
+  });
+
+  it("a leave the page vetoes neither navigates nor rewrites the memory (docs/39 S4)", async () => {
+    memoryStore.clear();
+    // The shared inventory has no Data page; this test needs the one plugin whose view vetoes.
+    const withData = {
+      ...inventory,
+      pages: inventory.pages.concat([
+        { id: "data", pluginId: "data", label: "Data", order: 40, layout: "workspace", path: "#data", entry: "/admin/js/views/data.js" },
+      ]),
+    };
+    await paint("mcps", withData);
+    responder = (path: string) => Promise.resolve(
+      path === "/api/plugins" ? jsonResponse(200, withData) : jsonResponse(500, { error: "stub" }));
+    await registry.navigatePage("traffic");
+    await registry.navigatePage("data");
+    expect(currentView()).toBe("data");
+    // One buffered Data edit is what makes the real view veto the leave (dbPending() > 0).
+    const dbState = await import("../src/db-state.js");
+    dbState.dbView().inserts = [{ values: { a: 1 } }];
+    const before = memoryStore.get("swiss.lastPage");
+
+    const seat = { dataset: { group: "mcp" } };
+    const click = byId("railNav").onclick as unknown as (ev: { target: unknown }) => void;
+    click({ target: { closest: (sel: string) => (sel === "[data-group]" ? seat : null) } });
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    // Still on Data, hash pushed back, memory untouched - the veto kept both.
+    expect(currentView()).toBe("data");
+    expect(memoryStore.get("swiss.lastPage")).toBe(before);
+    expect(memoryStore.get("swiss.lastPage")).not.toContain("mcp");
   });
 });
 
