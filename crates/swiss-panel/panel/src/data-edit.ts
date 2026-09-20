@@ -26,6 +26,7 @@ import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
 import { dbView } from "./db-state.js";
+import { tr } from "./i18n.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
 /* A Table menu beside the tabs. Truncate and drop demand a TYPED confirmation — the user
@@ -34,7 +35,7 @@ import { dbView } from "./db-state.js";
 function dbGenerateSql(kind: string): void {
   const d = dbView();
   if (!d.data || !d.data.columns || !d.data.columns.length) {
-    toast("Open the table first — the template needs its column set", true);
+    toast(tr("Open the table first — the template needs its column set"), true);
     return;
   }
   const dialect = (d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; }) || {} as { dialect?: string }).dialect || "mysql";
@@ -65,7 +66,7 @@ function dbTableMenu(anchorEl: HTMLElement): void {
   item("Rename table\u2026", () => {
     const to = prompt("Rename " + (d.schema ? d.schema + "." : "") + d.table + " to:", d.table!);
     if (!to || to === d.table) return;
-    if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast("Not a valid table name", true); return; }
+    if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast(tr("Not a valid table name"), true); return;}
     void dbRunDdl("rename", to);
   });
   item("Truncate table\u2026", () => {
@@ -101,7 +102,7 @@ function dbTypedConfirm(o: { what: string; name: string; kind: string; typed?: s
   const typed = prompt(o.what + " " + o.name + "\n" +
     "This cannot be undone. Type the " + o.kind + " name to confirm:", "");
   if (typed !== (o.typed != null ? o.typed : o.name)) {
-    if (typed !== null) toast("Name did not match — nothing was done", true);
+    if (typed !== null) toast(tr("Name did not match — nothing was done"), true);
     return;
   }
   fn();

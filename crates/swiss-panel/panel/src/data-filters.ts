@@ -22,6 +22,7 @@ import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbDropEdits, dbOkToDrop } from "./data-view.js";
 import { dbView } from "./db-state.js";
+import { locale, tk, tr } from "./i18n.js";
 
 /* --- SQL syntax highlighting -------------------------------------------------------------------- */
 /* A tiny tokenizer, not a parser: keywords, strings, numbers, comments, functions, identifiers.
@@ -83,10 +84,10 @@ const DB_FILTER_OPS = [
   { op: "eq", label: "=" }, { op: "ne", label: "≠" },
   { op: "gt", label: ">" }, { op: "gte", label: "≥" },
   { op: "lt", label: "<" }, { op: "lte", label: "≤" },
-  { op: "in", label: "in list" }, { op: "notIn", label: "not in list" },
-  { op: "between", label: "between" },
-  { op: "like", label: "contains" }, { op: "notLike", label: "excludes" },
-  { op: "isNull", label: "is NULL" }, { op: "isNotNull", label: "not NULL" },
+  { op: "in", label: tk("in list") }, { op: "notIn", label: tk("not in list") },
+  { op: "between", label: tk("between") },
+  { op: "like", label: tk("contains") }, { op: "notLike", label: tk("excludes") },
+  { op: "isNull", label: tk("is NULL") }, { op: "isNotNull", label: tk("not NULL") },
 ];
 
 function dbValueless(op: string): boolean { return op === "isNull" || op === "isNotNull"; }
@@ -123,46 +124,45 @@ function dbFiltersNodes(): HChild[] {
     // The redis filter is a glob PATTERN fed to SCAN's MATCH — server-side, cursor-safe.
     return [h("div", { class: "db-filter" },
       h("input", {
-        type: "search", placeholder: "Key pattern, e.g. session:*", value: d.grep || "",
-        style: "width:220px", title: "SCAN MATCH pattern — applies on Enter", data: { fkey: "" },
+        type: "search", placeholder: tr("Key pattern, e.g. session:*"), value: d.grep || "",
+        style: "width:220px", title: tr("SCAN MATCH pattern — applies on Enter"), data: { fkey: "" },
       }),
       // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
       // it, and "" keeps the request byte-identical to the unfiltered one.
-      h("select", { title: "Key type", data: { frtype: "" } },
+      h("select", { title: tr("Key type"), data: { frtype: "" } },
         [""].concat(["string", "hash", "list", "set", "zset", "stream"]).map((t: string): HChild => {
-          return h("option", { value: t, selected: (d.redisType || "") === t }, t || "All types");
+          return h("option", { value: t, selected: (d.redisType || "") === t }, t || tr("All types"));
         })),
       d.redis && d.redis.total != null
         ? h("span", { class: "db-filter-hint" },
-            (d.redis?.keys ? d.redis?.keys.length.toLocaleString() : "0") + " shown · " +
-            Number(d.redis?.total).toLocaleString() + " in keyspace")
+            tr("{shown} shown · {total} in keyspace", { shown: (d.redis?.keys ? d.redis?.keys.length.toLocaleString(locale()) : "0"), total: Number(d.redis?.total).toLocaleString(locale()) }))
         : null)];
   }
   if (!d.data || d.tab !== "data") return []; // filters belong to the row grid only
   const cols = d.data?.columns.map((c: { name: string }): string => { return c.name; });
   const rows: HChild[] = d.filters.map((f: DbFilterTerm, i: number): HChild => {
     return h("div", { class: "db-filter" },
-      h("select", { title: "Column", data: { fi: String(i), fk: "col" } },
+      h("select", { title: tr("Column"), data: { fi: String(i), fk: "col" } },
         cols.map((c: string): HChild => { return h("option", { value: c, selected: c === f.column }, c); })),
-      h("select", { title: "Operator", data: { fi: String(i), fk: "op" } },
+      h("select", { title: tr("Operator"), data: { fi: String(i), fk: "op" } },
         DB_FILTER_OPS.map((op: { op: string; label: string }): HChild => {
-          return h("option", { value: op.op, selected: op.op === f.op }, op.label);
+          return h("option", { value: op.op, selected: op.op === f.op }, tr(op.label));
         })),
       !dbValueless(f.op)
         ? h("input", {
-            type: "text", title: "Enter applies", value: f.value as string || "",
+            type: "text", title: tr("Enter applies"), value: f.value as string || "",
             // The list operators say what they want right in the box (docs/22 W1.2).
             placeholder: f.op === "in" || f.op === "notIn" ? "1,2,3" : (f.op === "between" ? "lo,hi" : "value"),
             data: { fi: String(i), fk: "val" },
           })
         : null,
-      h("button", { class: "db-act", title: "Remove this filter", data: { frm: String(i) } }, "✕"));
+      h("button", { class: "db-act", title: tr("Remove this filter"), data: { frm: String(i) } }, "✕"));
   });
   rows.push(h("button", {
-    class: "btn db-filter-add", title: "Filter rows by a column value (server-side)", data: { fadd: "" },
-  }, "+ Filter"));
+    class: "btn db-filter-add", title: tr("Filter rows by a column value (server-side)"), data: { fadd: "" },
+  }, tr("+ Filter")));
   if (d.filters.length) {
-    rows.push(h("span", { class: "db-filter-hint" }, "Enter applies · terms stack with AND · filtered total shown above"));
+    rows.push(h("span", { class: "db-filter-hint" }, tr("Enter applies · terms stack with AND · filtered total shown above")));
   }
   return rows;
 }

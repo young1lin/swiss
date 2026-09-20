@@ -399,3 +399,39 @@ describe("the I8a data machinery in Chinese", () => {
     expect(tr("Type a command first")).toBe("请先输入命令");
   });
 });
+
+describe("the I8b data surfaces in Chinese", () => {
+  beforeEach(() => {
+    setLang("zh-CN");
+  });
+  afterEach(() => {
+    setLang("en");
+    localStorage.clear();
+  });
+
+  it("speaks the redis commit and discard guards", async () => {
+    await loadLocale();
+    expect(trn(3, "{n} command", "{n} commands")).toBe("3 条命令");
+    expect(tr("Committed {n}", { n: trn(2, "{n} command", "{n} commands") })).toBe("已提交 2 条命令");
+    expect(tr("Discard {n}? Nothing has been written to redis.", { n: trn(4, "{n} buffered change", "{n} buffered changes") })).toContain("4 个缓冲的更改");
+  });
+
+  it("names the filter operators and the form stepper", async () => {
+    await loadLocale();
+    expect(tr("is NULL")).toBe("为 NULL");
+    expect(tr("not in list")).toBe("不在列表中");
+    expect(tr("{shown} shown · {total} in keyspace", { shown: "10", total: "1,024" })).toBe("已显示 10 · 键空间共 1,024");
+    expect(tr("Row {i} of {n} on this page", { i: 3, n: 50 })).toBe("本页第 3 条,共 50 条");
+    expect(tr("New row {i} of {n} · buffered", { i: 1, n: 2 })).toBe("新行 1/2 · 已缓冲");
+  });
+
+  it("fills the import and cell sheets' words", async () => {
+    await loadLocale();
+    expect(tr("Import CSV into {t}", { t: "public.events" })).toBe("向 public.events 导入 CSV");
+    expect(tr("Insert")).toBe("插入");
+    expect(tr("Upsert")).toBe("插入或更新");
+    expect(tr("Map at least one column")).toBe("请至少映射一列");
+    expect(tr("Save to buffer")).toBe("保存到缓冲");
+    expect(tr(" · PK {pk}", { pk: "id=7" })).toBe(" · 主键 id=7");
+  });
+});

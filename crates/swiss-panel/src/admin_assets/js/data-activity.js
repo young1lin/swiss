@@ -19,6 +19,7 @@ import { $, apiJson, el, iconNode, toast } from "./util.js";
 import { h } from "./h.js";
 import { popupMenu } from "./menu.js";
 import { dbIsMounted, dbView } from "./db-state.js";
+import { tr } from "./i18n.js";
 
 /* --- activity monitor (docs/22 W3.2) -------------------------------------------------------------- */
 /* A section page over the right pane: live sessions on the connection's server, one shared
@@ -62,7 +63,7 @@ function dbActivityPane(close            )       {
   head.appendChild(left);
   // The Close button answers through #pane's delegated click via data-actclose (docs/37 R5).
   head.appendChild(h("div", { class: "db-head-ctl" },
-    h("button", { class: "btn", type: "button", data: { actclose: "" } }, "Close")));
+    h("button", { class: "btn", type: "button", data: { actclose: "" } }, tr("Close"))));
   main.appendChild(head);
   const wrap = el("div", "db-grid-wrap");
   wrap.id = "dbActivityWrap";
@@ -103,40 +104,40 @@ function dbActivityRender() {
   tbl.appendChild(thead);
   const tbody = el("tbody");
   rows.forEach((r                  ) => {
-    const tr = el("tr", r.own ? "db-act-own" : "");
+    const tri = el("tr", r.own ? "db-act-own" : "");
     const pid = el("td", "db-cell tnum", String(r.pid));
     pid.title = "pid " + r.pid;
-    tr.appendChild(pid);
+    tri.appendChild(pid);
     const user = el("td", "", r.user == null ? "" : r.user);
     if (r.own) {
       const chip = el("span", "db-keytype", "this panel");
       chip.title = "The session this Activity page itself polls through";
       user.appendChild(chip);
     }
-    tr.appendChild(user);
+    tri.appendChild(user);
     // state and wait are COALESCE'd to "" in activity_sql on both dialects - never null.
-    tr.appendChild(el("td", "", r.state));
+    tri.appendChild(el("td", "", r.state));
     const wait = el("td", "", r.wait);
     if (r.blockedBy) {
       const blocked = el("span", "db-act-blocked", " · blocked by " + r.blockedBy);
       blocked.title = "pids holding locks this session waits on";
       wait.appendChild(blocked);
     }
-    tr.appendChild(wait);
-    tr.appendChild(el("td", "tnum", dbActivityDuration(r.seconds)));
+    tri.appendChild(wait);
+    tri.appendChild(el("td", "tnum", dbActivityDuration(r.seconds)));
     // The query truncates in the cell; the full text is one hover away (title).
     const q = el("td", "db-cell", String(r.query == null ? "" : r.query));
     q.title = q.textContent;
-    tr.appendChild(q);
+    tri.appendChild(q);
     // The per-row menu trigger addresses its row by pid and answers through #pane's
     // delegated click (docs/37 R5); the row is re-found from live state at event time.
     const ctl = el("td", "db-rowctl");
     ctl.appendChild(h("button", {
-      class: "db-act-more", type: "button", title: "Cancel or terminate this session",
+      class: "db-act-more", type: "button", title: tr("Cancel or terminate this session"),
       data: { apid: String(r.pid) },
     }, iconNode("ellipsis")));
-    tr.appendChild(ctl);
-    tbody.appendChild(tr);
+    tri.appendChild(ctl);
+    tbody.appendChild(tri);
   });
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);

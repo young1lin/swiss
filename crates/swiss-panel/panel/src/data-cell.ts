@@ -22,6 +22,7 @@ import { closeSheet } from "./add-sheet.js";
 import { renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbView } from "./db-state.js";
+import { tr } from "./i18n.js";
 
 /* --- cell editor dialog ------------------------------------------------------------------------- */
 /* Editing happens in a sheet, never inline: an inline input grows its row and reshuffles the
@@ -76,22 +77,22 @@ function dbOpenCellEditor(kind: "update" | "insert", key: string | null, i: numb
   // (the sheet idiom — the buttons and their closure state live only while it is open).
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Edit cell" } },
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Edit cell") } },
       h("div", { class: "sheet-head" },
         h("div", { class: "db-cell-head" },
           h("h2", null, column),
           h("span", { class: "db-cell-where" }, (d.schema ? d.schema + "." : "") + d.table +
-            (kind === "update" ? " · PK " + pkJson : " · new row")))),
+            (kind === "update" ? tr(" · PK {pk}", { pk: pkJson }) : tr(" · new row"))))),
       h("div", { class: "sheet-body" },
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           isBool ? h("button", { class: "btn", id: "dbCellBool" }) : null,
           h("button", { class: "btn", id: "dbCellNull" }),
-          pretty ? h("button", { class: "btn", id: "dbCellJson" }, "Format JSON") : null,
-          h("span", { class: "hint" }, "saves to the local buffer — Commit writes it in one transaction")),
+          pretty ? h("button", { class: "btn", id: "dbCellJson" }, tr("Format JSON")) : null,
+          h("span", { class: "hint" }, tr("saves to the local buffer — Commit writes it in one transaction"))),
         h("textarea", { id: "dbCellText", spellcheck: false })),
       h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "dbCellCancel" }, "Cancel"),
-        h("button", { class: "btn primary", id: "dbCellSave" }, "Save to buffer"))));
+        h("button", { class: "btn", id: "dbCellCancel" }, tr("Cancel")),
+        h("button", { class: "btn primary", id: "dbCellSave" }, tr("Save to buffer")))));
   const ta = $<HTMLTextAreaElement>("dbCellText");
   ta.value = pretty || text;
   let nullState = isNull;
@@ -129,7 +130,7 @@ function dbOpenCellEditor(kind: "update" | "insert", key: string | null, i: numb
     $("dbCellJson").onclick = () => {
       const p: string | null = dbCellPretty(ta.value);
       if (p != null) { ta.value = p; ta.classList.add("json"); }
-      else toast("Not valid JSON — left as-is", true);
+      else toast(tr("Not valid JSON — left as-is"), true);
     };
   }
   paintNull();
