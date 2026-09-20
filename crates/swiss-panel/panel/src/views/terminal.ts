@@ -1034,10 +1034,15 @@ function render() {
         h("div", { class: "term-tabs", id: "term-tabs", role: "tablist", aria: { label: "Sessions" }, hidden: true }),
         h("div", { class: "term-ctl" },
           pick.rows.length
-            ? h("select", { id: "term-target", class: "term-pick", aria: { label: "Target" } },
-                pick.rows.map((r) => {
-                  return h("option", { value: r.id }, r.label + (r.state ? " (" + r.state + ")" : ""));
-                }),
+            /* The select closes after its options and the two buttons are its SIBLINGS
+               (the master string builder spelled it exactly so): a <button> inside a
+               <select> is invalid DOM and the browser drops it - the Open session
+               button vanished exactly this way once. */
+            ? frag(
+                h("select", { id: "term-target", class: "term-pick", aria: { label: "Target" } },
+                  pick.rows.map((r) => {
+                    return h("option", { value: r.id }, r.label + (r.state ? " (" + r.state + ")" : ""));
+                  })),
                 /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
                    picker, not a second loud button — Open session stays the bar's one accent.
                    The gear is the sprite (i-gear), never a Unicode glyph (design rule 9). */

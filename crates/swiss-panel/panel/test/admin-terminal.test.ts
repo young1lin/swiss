@@ -475,6 +475,20 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
     expect(view).toContain('"Terminal shortcuts"');
   });
 
+  it("the Open session button is a SIBLING of the target select, never its child", () => {
+    // Regression (2026-10-24, live on 19998): the R5 conversion once passed the gear and
+    // Open session buttons as children of the h("select") call - invalid DOM (<select>
+    // takes options only), and the browser dropped both buttons, so the page had no way
+    // to open a session. The select's call must CLOSE (})) + comma) before the buttons:
+    // in the broken shape the slice below contained only the option map's `}),`.
+    const start = view.indexOf('h("select"');
+    const end = view.indexOf('id: "term-new"');
+    const between = view.slice(start, end);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(between).toMatch(/\}\)\),/);
+  });
+
   it("draws the gear from the sprite, not a Unicode glyph", () => {
     expect(view).toContain('iconNode("gear")');
     expect(view).not.toContain(">\u2699<");
