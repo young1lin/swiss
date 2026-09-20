@@ -22,8 +22,10 @@
    lives in localStorage like the theme - no server persistence for a UI choice.
 
    The pure half (pin slice, palette rows, the glyph map) is exported for the vitest suite;
-   openPluginPalette builds the one overlay. The caller passes the "go" callback (navigatePage)
-   and an "onchange" repaint callback, so this module never imports the shell back.
+   openPluginPalette builds the one overlay. The caller passes the "go" callback (the shell
+   navigates to the group's remembered page, docs/39 S4 - the callee picks the page, so the
+   policy stays out of the palette) and an "onchange" repaint callback, so this module never
+   imports the shell back.
    ================================================================================================ */
                                                                               
 import { el, iconNode } from "./util.js";
@@ -100,10 +102,11 @@ function paletteRows(groups                , pins          , query        )     
 /* --- the overlay -------------------------------------------------------------------------------- */
 
 /** Open the palette over everything (z-index above menus: it is the navigation itself).
- *  groups: registry groups (each may carry .off - every page unavailable). go(id) navigates;
- *  onchange() repaints the rail after a pin toggle. Escape or a click on the backdrop closes,
- *  and focus returns to the "..." seat so the keyboard path does not dead-end. */
-function openPluginPalette(groups                , go                                      , onchange             )       {
+ *  groups: registry groups (each may carry .off - every page unavailable). go(group)
+ *  navigates - which PAGE that is (the remembered one, docs/39 S4) is the callee's call;
+ *  onchange() repaints the rail after a pin toggle. Escape or a click on the backdrop
+ *  closes, and focus returns to the "..." seat so the keyboard path does not dead-end. */
+function openPluginPalette(groups                , go                                               , onchange             )       {
   closePluginPalette();
   let pins = loadPins() || defaultPinIds(groups);
 
@@ -115,7 +118,7 @@ function openPluginPalette(groups                , go                           
 
   const input = el("input");
   input.type = "search";
-  input.placeholder = tr("pluginPalette.searchPlugins");
+  input.placeholder = "Search plugins…";
   input.setAttribute("aria-label", tr("pluginPalette.searchPlugins2"));
   card.appendChild(input);
 
@@ -128,10 +131,10 @@ function openPluginPalette(groups                , go                           
     b.appendChild(glyphNode(g));
     const name = el("span", "pal-name");
     name.textContent = tr(wireLabel(g.label)) + (g.off ? " " : "");
-    if (g.off) name.appendChild(el("span", "pal-off", tr("pluginPalette.off")));
+    if (g.off) name.appendChild(el("span", "pal-off", "· off"));
     b.appendChild(name);
-    b.title = g.off ? (g.offDetail || tr("pluginPalette.pluginDisabled")) : tr("pluginPalette.openLabel", { label: tr(g.label) });
-    b.onclick = (ev) => { ev.stopPropagation(); closePluginPalette(); void go(g.pages[0].id); };
+    b.title = g.off ? (g.offDetail || tr("pageRegistry.pluginDisabled")) : tr("pluginPalette.openLabel", { label: tr(wireLabel(g.label)) });
+    b.onclick = (ev) => { ev.stopPropagation(); closePluginPalette(); void go(g); };
     return b;
   }
 
@@ -139,10 +142,10 @@ function openPluginPalette(groups                , go                           
     const pinned = pins.includes(g.id);
     const p = el("button", "pal-pin");
     p.type = "button";
-    p.appendChild(iconNode("star", pinned ? tr("pluginPalette.unpinLabel", { label: tr(wireLabel(g.label)) }) : tr("pluginPalette.pinLabel", { label: tr(wireLabel(g.label)) })));
+    p.appendChild(iconNode("star", tr(pinned ? "pluginPalette.unpinLabel" : "pluginPalette.pinLabel", { label: tr(wireLabel(g.label)) })));
     p.className = "pal-pin" + (pinned ? " on" : "");
     p.setAttribute("aria-pressed", String(pinned));
-    p.title = pinned ? tr("pluginPalette.removeRail") : tr("pluginPalette.pinRail");
+    p.title = tr(pinned ? "pluginPalette.removeRail" : "pluginPalette.pinRail");
     p.onclick = (ev) => {
       ev.stopPropagation();
       pins = pins.includes(g.id) ? pins.filter((x) => { return x !== g.id; }) : pins.concat([g.id]);

@@ -252,11 +252,12 @@
     /* --- shell --------------------------------------------------------------------------------- */
     /* The adaptive shell (docs/13 D5, redrawn): a left plugin RAIL for global navigation and
        the plugin's workspace to its right. A plugin is a destination, not a label competing
-       with its pages, so the rail is narrow — glyph seats over 9px captions, never a row of
-       pills. Seats are borderless until pointed at (the macOS toolbar vocabulary); readouts
-       stay plain text. */
+       with its pages, so the rail is narrow and icon-only (docs/39 S1) — a seat is its
+       glyph plus a tooltip, never a row of pills; the plugin's name is the context bar's
+       title once landed. Seats are borderless until pointed at (the macOS toolbar
+       vocabulary); readouts stay plain text. */
     .rail {
-      width: 56px; flex: none;
+      width: 48px; flex: none;
       display: flex; flex-direction: column;
       background: var(--sidebar); border-right: 1px solid var(--sep);
       padding: var(--s2) 0;
@@ -270,28 +271,33 @@
       display: flex; flex-direction: column; gap: 2px;
       padding: 0 var(--s1); min-height: 0; overflow-y: auto;
     }
-    /* One seat per plugin: a 17px glyph (icon or initial) over a truncated caption. The
-       active seat is the only place the accent appears in the chrome — a 2px notch on the
-       seat's left edge, in the rail's own hairline idiom. An unavailable plugin keeps its
-       seat (the panel must stay one click from a plugin it can no longer reach) and says
-       so in the seat's title. */
+    /* One seat per plugin: an 18px glyph alone (docs/39 S1) — the 9px caption was legible
+       to no one and duplicated the tooltip. The active seat is the only place the accent
+       appears in the chrome — a 2px notch on the seat's left edge, in the rail's own
+       hairline idiom. An unavailable plugin keeps its seat (the panel must stay one click
+       from a plugin it can no longer reach) and says so in the seat's title. */
     .rail-btn {
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-      height: 48px; border-radius: var(--r-btn);
+      display: flex; align-items: center; justify-content: center;
+      height: 36px; border-radius: var(--r-btn);
       color: var(--text-2);
     }
-    .rail-btn .ic { width: 17px; height: 17px; }
-    .rail-btn-label {
-      font-size: 9px; letter-spacing: .01em; max-width: 52px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
+    .rail-btn .ic { width: 18px; height: 18px; }
     .rail-btn:hover { background: var(--hover); color: var(--text); }
     .rail-btn[aria-current="true"] { background: var(--hover); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
     .grow { flex: 1; }
+    /* The bar's readouts are one line of text in one voice (docs/39 S5): the count and the
+       memory number share a size and a grey, separated by a middle dot that exists only
+       while the count does. The memory value is still mono — a copyable number — but one
+       step smaller, so its x-height meets the sans beside it. */
+    .ctxbar .chip { color: var(--text-3); padding: 2px 0; }
+    #countChip:not(:empty)::after { content: "·"; margin: 0 var(--s2); color: var(--text-3); }
     /* The memory chip is a control (renderMemory wires a memory-only click): mono because
        the value is a copyable number, .chip.button for the hover affordance. */
-    #memChip { font-family: var(--mono); }
-    @media (max-width: 960px) { #memChip { display: none; } /* 960px is the support floor */ }
+    #memChip { font-family: var(--mono); font-size: var(--f-caption); }
+    /* 960px is the support floor: the memory number goes, and so does the dot that only
+       ever separated it from the count - a separator with nothing on its right is an
+       orphan. Found on the post-review walk; the spec's S5 text says the same. */
+    @media (max-width: 960px) { #memChip, #countChip::after { display: none; } }
     .chip {
       font-size: var(--f-label); font-variant-numeric: tabular-nums;
       color: var(--text-3); background: none;
@@ -307,12 +313,13 @@
     .workbench { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .shell { display: flex; flex: 1; min-height: 0; }
 
-    /* The plugin context bar: "MCP / Servers" with a disclosure — the compact page switcher
-       plus the page's count — or, for a single-page plugin, the plain location label and
-       nothing else. One bar, dressed in the rail's vocabulary (borderless until pointed
-       at), so plugin navigation and page navigation never wear the same segmented control
-       twice. Every plugin draws it (docs/13 D5, as revised): the page body below keeps one
-       vertical origin across the whole panel. */
+    /* The plugin context bar: the plugin's name once — the glyph its rail seat wears,
+       beside its label — then its pages as underline tabs (docs/39 S2), then the page's
+       count. A single-page plugin draws only the title. Every plugin draws the bar
+       (docs/13 D5, as revised): the page body below keeps one vertical origin across the
+       whole panel, and three navigation levels wear three shapes — rail seat, underlined
+       tab, pill segment inside the page — so plugin navigation and page navigation never
+       share a control shape. */
     .ctxbar {
       display: flex; align-items: center; gap: var(--s2);
       height: 40px; flex: none;
@@ -320,26 +327,37 @@
       background: var(--bar); border-bottom: 1px solid var(--sep);
       min-width: 0;
     }
-    .app-zone { display: inline-flex; align-items: center; gap: var(--s2); flex: none; }
-    /* A control, and it must LOOK like one before it is discovered by hover: the switcher
-       carries its chip always (quiet tint + hairline), not only under the cursor - a plain
-       breadcrumb was read as text and the page menu went unfound (live feedback, 3ec7f4d). */
-    .ctx-switch {
-      display: inline-flex; align-items: center; gap: var(--s1);
-      font-size: var(--f-body);
-      padding: 4px var(--s2); margin-left: calc(-1 * var(--s2));
-      border-radius: var(--r-btn); color: var(--text-2); max-width: 60%;
-      background: var(--hover); box-shadow: inset 0 0 0 1px var(--sep);
+    /* The reserved app zone keeps its own breath left of itself (docs/39 S5): one gap
+       between the readouts and the trio, the same rhythm the bar uses everywhere else. */
+    .app-zone { display: inline-flex; align-items: center; gap: var(--s2); flex: none; margin-left: var(--s2); }
+    /* --- context bar: title + page tabs (docs/39) ----------------------------------------------
+       The bar's left half names the plugin ONCE - its rail glyph and its label - and lays
+       the plugin's pages out as underline tabs. Three levels, three shapes: a rail seat,
+       an underlined tab, a pill segment inside the page. The title wears the glyph so it
+       can never be read as a fourth tab, and so an icon-only rail still has the plugin's
+       name on screen. */
+    .ctx-title { display: inline-flex; align-items: center; gap: var(--s2); font-weight: 600; color: var(--text); margin-right: var(--s3); min-width: 0; }
+    .ctx-title .ic { color: var(--text-2); }
+    .ctx-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* flex:1 caps the strip at the slack the bar has; overflow:hidden plus the ⋯ seat
+       absorb what does not fit (docs/39 S3). align-self:stretch drops the tab row onto
+       the bar's own bottom hairline, which is where the active tab's underline sits. */
+    .ctx-tabs { display: flex; align-self: stretch; gap: 2px; flex: 1; min-width: 0; overflow: hidden; }
+    .ctx-tab {
+      position: relative; display: inline-flex; align-items: center; padding: 0 var(--s2);
+      color: var(--text-2); font-size: var(--f-body); font-weight: 500; text-decoration: none; white-space: nowrap;
     }
-    .ctx-switch:hover { background: color-mix(in srgb, var(--hover), var(--card)); color: var(--text); }
-    .ctx-plugin { color: var(--text-3); font-weight: 450; }
-    .ctx-sep { color: var(--text-3); flex: none; }
-    .ctx-page { color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* The caret points DOWN: the click opens a menu below, not a page to the right. */
-    .ctx-switch .ic { width: 13px; height: 13px; color: var(--text-2); transform: rotate(90deg); }
-    /* The single-page location: text, not a control — same slot and weight as the page
-       label a multi-page group shows, minus the disclosure a one-entry menu would fake. */
-    .ctx-loc { min-width: 0; max-width: 60%; }
+    .ctx-tab:hover { color: var(--text); }
+    .ctx-tab[aria-current="page"] { color: var(--text); font-weight: 600; }
+    /* The current page's mark sits ON the bar's bottom hairline: the same 2px accent as a
+       selected row's leading edge, turned horizontal. */
+    .ctx-tab[aria-current="page"]::after {
+      content: ""; position: absolute; left: var(--s2); right: var(--s2); bottom: -1px; height: 2px;
+      background: var(--accent); border-radius: 1px 1px 0 0;
+    }
+    .ctx-tab[aria-disabled="true"] { color: var(--text-3); }
+    .ctx-more { padding: 0 var(--s2); color: var(--text-3); }
+    .ctx-more:hover, .ctx-more[aria-expanded="true"] { color: var(--text); }
 
     /* Focus mode folds navigation, not the shell/page boundary. On ordinary pages the rail
        gives its width to the current plugin, while the context bar stays 40px tall and strips
@@ -358,8 +376,8 @@
     body.immersive.immersive-docked .ctxbar {
       height: 0; min-height: 0; padding: 0; border-bottom: 0;
     }
-    body.immersive #pageBtn,
-    body.immersive #pageLoc,
+    body.immersive #pageTitle,
+    body.immersive #pageTabs,
     body.immersive #countChip,
     body.immersive #memChip { display: none; }
     /* Exit is always visible and visibly actionable, but it stays in the bar's layout slot.
@@ -415,9 +433,13 @@
       white-space: nowrap; padding: 1px 6px; border-radius: 4px;
       color: var(--text-3); background: color-mix(in srgb, var(--text) 5%, transparent);
     }
-    /* A glyph chip (docs/29) sits tighter than the word chip it replaces: the mark is 14px
-       tall, so the side padding collapses and the mono font rules stop applying. */
-    .side-type:has(.ic) { padding: 2px 3px; }
+    /* A type GLYPH carries no box (docs/39 S6): the mark is a label in the row's own
+       vocabulary, one of nine small squares the view did not need - quiet grey, brightening
+       with the row under the cursor or when selected. Word chips (outside the icon
+       whitelist) keep the mono + 5% wash above: a word is a different thing from a mark. */
+    .side-type:has(.ic) { padding: 0; background: none; color: var(--text-3); }
+    .side-row:hover .side-type:has(.ic),
+    .side-row[aria-selected="true"] .side-type:has(.ic) { color: var(--text-2); }
     .side-type .ic { display: block; width: 14px; height: 14px; }
 
     /* --- groups (docs/20 §4 as revised by docs/35) -----------------------------------------------

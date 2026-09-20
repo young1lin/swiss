@@ -26,7 +26,7 @@ import { LANG_KEY, install, paintChrome, toggleLang } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 
 vi.mock("../src/page-registry.js", () => ({
-  pageCanLeave: () => false,
+  pageHasPendingChanges: () => true,
   navigatePage: async () => {},
 }));
 

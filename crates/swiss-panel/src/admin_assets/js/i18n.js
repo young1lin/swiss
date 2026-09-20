@@ -206,7 +206,7 @@ function paintLangBtn()       {
  *  back once its labels go through tr() — a static edge would close that cycle. */
 export async function toggleLang()                {
   const reg                      = await import("./page-registry.js");
-  if (!reg.pageCanLeave()) return;
+  if (reg.pageHasPendingChanges()) return;
   setLang(nextLang());
   await loadLocale();
   paintChrome();
