@@ -33,12 +33,12 @@ import { tk, tr } from "./i18n.js";
 
 /* tk()-marked tab labels (docs/38 L7): painted through tr(t.label) at render time. */
 const DB_TABS = [
-  { id: "data", label: tk("Data") },
-  { id: "form", label: tk("Form") },
-  { id: "columns", label: tk("Columns") },
-  { id: "indexes", label: tk("Indexes") },
-  { id: "fks", label: tk("Foreign Keys") },
-  { id: "ddl", label: tk("DDL") },
+  { id: "data", label: tk("dataStructure.data") },
+  { id: "form", label: tk("dataStructure.form") },
+  { id: "columns", label: tk("dataStructure.columns") },
+  { id: "indexes", label: tk("dataStructure.indexes") },
+  { id: "fks", label: tk("dataStructure.foreignKeys") },
+  { id: "ddl", label: tk("dataStructure.ddl") },
 ];
 
 function dbSetTab(t: string): void {
@@ -88,7 +88,7 @@ function dbRenderTabs(ctl: HTMLElement): void {
     })));
   // The Table menu: rename / truncate / drop, guarded by typed confirms server- AND client-side.
   if (!dbIsRedis()) {
-    ctl.appendChild(h("button", { class: "btn", title: tr("Rename, truncate or drop this table"), data: { tmenu: "" } }, tr("Table ▾")));
+    ctl.appendChild(h("button", { class: "btn", title: tr("dataStructure.renameTruncateDropTable"), data: { tmenu: "" } }, tr("dataStructure.table")));
   }
 }
 
@@ -96,7 +96,7 @@ function dbRenderTabs(ctl: HTMLElement): void {
  *  DDL as a monospace block. */
 function renderDbDetailGrid(wrap: HTMLElement): void {
   const d = dbView();
-  if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", tr("Loading…"))); return; }
+  if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.loading"))); return; }
   if (!d.detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
   const det = d.detail;
   if (d.tab === "ddl") {

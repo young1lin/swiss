@@ -81,7 +81,7 @@ function dbHexPreview(value        , maxBytes        )                          
    runtime check; the one Record downcast sits behind typeof-object + not-an-array, the
    narrowest honest shape an indexable object has. */
 function dbJsonNode(v         , isOpen         )         {
-  if (v === null || v === undefined) return h("span", { class: "db-val-v db-null" }, tr("null"));
+  if (v === null || v === undefined) return h("span", { class: "db-val-v db-null" }, tr("dataValue.null"));
   if (typeof v !== "object") return h("span", { class: "db-val-v" }, JSON.stringify(v));
   if (Array.isArray(v)) {
     return h("details", { class: "db-val-node", open: isOpen },
@@ -130,14 +130,14 @@ function dbOpenValueSheet(column        , value         , where                 
   // a hidden box); per-open button wiring stays, per the sheet idiom.
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("View value") } },
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("dataValue.viewValue") } },
       h("div", { class: "sheet-head" },
         h("div", { class: "db-cell-head" },
           h("h2", null, column),
           h("span", { class: "db-cell-where" }, where || ""))),
       h("div", { class: "sheet-body" }, body),
       h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn primary", id: "dbValClose" }, tr("Close")))));
+        h("button", { class: "btn primary", id: "dbValClose" }, tr("dataValue.close")))));
   const onKey = (e               )       => {
     if (e.key === "Escape") { closeValueSheet(); }
   };

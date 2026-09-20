@@ -77,22 +77,22 @@ function dbOpenCellEditor(kind                     , key               , i      
   // (the sheet idiom — the buttons and their closure state live only while it is open).
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Edit cell") } },
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("dataCell.editCell") } },
       h("div", { class: "sheet-head" },
         h("div", { class: "db-cell-head" },
           h("h2", null, column),
           h("span", { class: "db-cell-where" }, (d.schema ? d.schema + "." : "") + d.table +
-            (kind === "update" ? tr(" · PK {pk}", { pk: pkJson }) : tr(" · new row"))))),
+            (kind === "update" ? tr("dataCell.pkPk", { pk: pkJson }) : tr("dataCell.newRow"))))),
       h("div", { class: "sheet-body" },
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           isBool ? h("button", { class: "btn", id: "dbCellBool" }) : null,
           h("button", { class: "btn", id: "dbCellNull" }),
-          pretty ? h("button", { class: "btn", id: "dbCellJson" }, tr("Format JSON")) : null,
-          h("span", { class: "hint" }, tr("saves to the local buffer — Commit writes it in one transaction"))),
+          pretty ? h("button", { class: "btn", id: "dbCellJson" }, tr("dataCell.formatJson")) : null,
+          h("span", { class: "hint" }, tr("dataCell.savesLocalBufferCommit"))),
         h("textarea", { id: "dbCellText", spellcheck: false })),
       h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "dbCellCancel" }, tr("Cancel")),
-        h("button", { class: "btn primary", id: "dbCellSave" }, tr("Save to buffer")))));
+        h("button", { class: "btn", id: "dbCellCancel" }, tr("dataCell.cancel")),
+        h("button", { class: "btn primary", id: "dbCellSave" }, tr("dataCell.saveBuffer")))));
   const ta = $                     ("dbCellText");
   ta.value = pretty || text;
   let nullState = isNull;
@@ -130,7 +130,7 @@ function dbOpenCellEditor(kind                     , key               , i      
     $("dbCellJson").onclick = () => {
       const p                = dbCellPretty(ta.value);
       if (p != null) { ta.value = p; ta.classList.add("json"); }
-      else toast(tr("Not valid JSON — left as-is"), true);
+      else toast(tr("dataCell.validJsonLeft"), true);
     };
   }
   paintNull();

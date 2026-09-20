@@ -99,14 +99,14 @@ function dbFormField(d         , val             , f             , ctx          
     const on = f.value === true || f.value === 1 ||
       String(f.value).toLowerCase() === "true" || f.value === "1";
     val.appendChild(h("button", {
-      class: "btn", type: "button", title: tr("Toggle this boolean — buffered like any cell edit"),
+      class: "btn", type: "button", title: tr("dataForm.toggleBooleanBufferedLike"),
       data: { ff: "bool", col: f.name, on: on ? "1" : "" },
-    }, on ? tr("TRUE") : tr("FALSE")));
+    }, on ? tr("dataForm.true") : tr("dataForm.false")));
   } else {
     const text = f.value === null || f.value === undefined ? null : dbCellText(f.value);
     const long = text != null && (text.length > DB_INLINE_MAX || text.includes("\n"));
     if (long) {
-      val.appendChild(h("div", { class: "db-form-long", title: tr("Open the editor sheet"), data: { ff: "long", col: f.name } }, text));
+      val.appendChild(h("div", { class: "db-form-long", title: tr("dataForm.openEditorSheet"), data: { ff: "long", col: f.name } }, text));
     } else {
       val.appendChild(h("input", {
         class: "db-form-input", type: "text", value: text == null ? "" : text,
@@ -117,9 +117,9 @@ function dbFormField(d         , val             , f             , ctx          
   }
 
   val.appendChild(h("button", {
-    class: "btn", type: "button", title: tr("Buffer NULL for this column"),
+    class: "btn", type: "button", title: tr("dataForm.bufferNullColumn"),
     data: { ff: "null", col: f.name, has: f.value === null ? "1" : "" },
-  }, f.value === null ? tr("NULL (set)") : tr("Set NULL")));
+  }, f.value === null ? tr("dataForm.nullSet") : tr("dataForm.setNull")));
 }
 
 /** The Form tab's body. Same entry guards and row order as the grid (buffered inserts in
@@ -146,8 +146,8 @@ function renderDbFormView(wrap             )       {
   // The stepper answers through #pane's delegated click via data-fpg (docs/37 R5).
   const head = el("div", "db-form-head");
   head.appendChild(h("button", {
-    class: "btn icon", type: "button", title: tr("Previous record"), disabled: idx === 0,
-    aria: { label: tr("Previous record") }, data: { fpg: "prev" },
+    class: "btn icon", type: "button", title: tr("dataForm.previousRecord"), disabled: idx === 0,
+    aria: { label: tr("dataForm.previousRecord") }, data: { fpg: "prev" },
   }, iconNode("chevron-left")));
   const isIns = idx < nIns;
 
@@ -161,11 +161,11 @@ function renderDbFormView(wrap             )       {
   const deleted = !isIns && !!d.deletes[key          ];
 
   head.appendChild(el("span", "db-form-pos", isIns
-    ? tr("New row {i} of {n} · buffered", { i: idx + 1, n: nIns })
-    : tr("Row {i} of {n} on this page", { i: idx - nIns + 1, n: d.data?.rows.length ?? 0 })));
+    ? tr("dataForm.newRowIN", { i: idx + 1, n: nIns })
+    : tr("dataForm.rowINPage", { i: idx - nIns + 1, n: d.data?.rows.length ?? 0 })));
   head.appendChild(h("button", {
-    class: "btn icon", type: "button", title: tr("Next record"), disabled: idx === total - 1,
-    aria: { label: tr("Next record") }, data: { fpg: "next" },
+    class: "btn icon", type: "button", title: tr("dataForm.nextRecord"), disabled: idx === total - 1,
+    aria: { label: tr("dataForm.nextRecord") }, data: { fpg: "next" },
   }, iconNode("chevron-right")));
 
   // The record's own action rides the head's right end — the grid rowctl vocabulary. The

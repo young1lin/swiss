@@ -101,15 +101,15 @@ function tooltipOf(m           )         {
   // Idle is the one state word that names no behaviour of its own (docs/18 V6): a lazy proc
   // has no child yet and wakes on the first request — say that, so a hollow ring explains itself.
   const stateWord = mcpBusyVerb(m.name) ? mcpBusyVerb(m.name) + "…"
-    : m.state === "idle" ? tr("idle — lazy: no child yet, wakes on the first request")
-    : m.state === "stopped" ? tr("disabled")
+    : m.state === "idle" ? tr("menu.idleLazyChildWakes")
+    : m.state === "stopped" ? tr("menu.disabled")
     : m.state;
   // docs/24: the endpoint path shown to the operator carries the /mcp/ domain prefix.
   const bits = ["/mcp/" + m.name, m.type, m.source, stateWord];
   if (m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.description) bits.unshift(m.description);
   if (m.reason) bits.push(m.reason);
-  bits.push(tr("right-click for actions")); // docs/28 D3: the row menu has no button of its own
+  bits.push(tr("menu.rightClickActions")); // docs/28 D3: the row menu has no button of its own
   return bits.join("  ·  ");
 }
 
@@ -171,13 +171,13 @@ function patchSidebar()       {
   // rows (updateCountChip owns those), so the MCP text must not overwrite them mid-poll.
   if (currentView() === "mcps") {
     $("countChip").textContent = bad
-    ? tr("{n} MCPs · {up} up · {bad} down", { n: mcpRows().length, up, bad })
-    : tr("{n} MCPs · {up} up", { n: mcpRows().length, up });
+    ? tr("menu.nMcpsBadDown", { n: mcpRows().length, up, bad })
+    : tr("menu.nMcps", { n: mcpRows().length, up });
   }
   // Group headers name the sections now, so the standing "MCPS" caption is noise; it earns its line
   // only while a search is on, where the match count is the useful part.
   const cap = $("sideCap");
-  cap.textContent = tr("{n} matching", { n: rows.length });
+  cap.textContent = tr("menu.nMatching", { n: rows.length });
   cap.hidden = !listFilter();
 }
 

@@ -52,7 +52,7 @@ function dbParseCsvLine(line: string): string[] {
 
 function dbOpenImport(): void {
   const d = dbView();
-  if (!d.conn || !d.table || !d.data) { toast(tr("Open a table first"), true); return; }
+  if (!d.conn || !d.table || !d.data) { toast(tr("dataCsv.openTableFirst"), true); return; }
   if (!d.data.editable) { toast("This table is not editable (" + (d.data.editNote || "no primary key") + ")", true); return; }
   if (dbPending() && !dbOkToDrop()) return;
   let header: string[] = [], lines: string[] = [], mapping: (string | null)[] = [];
@@ -61,24 +61,24 @@ function dbOpenImport(): void {
   // stays (the sheet idiom — parse/paint/setMode close over the mapping state).
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Import CSV") } },
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("dataCsv.importCsv") } },
       h("div", { class: "sheet-head" },
-        h("h2", null, tr("Import CSV into {t}", { t: (d.schema ? d.schema + "." : "") + d.table! })),
+        h("h2", null, tr("dataCsv.importCsvIntoT", { t: (d.schema ? d.schema + "." : "") + d.table! })),
       h("div", { class: "sheet-body" },
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           h("div", { class: "seg", role: "tablist", id: "dbImpMode", style: "margin-bottom:0" },
-            h("button", { type: "button", role: "tab", data: { mode: "insert" }, aria: { selected: "true" } }, tr("Insert")),
-            h("button", { type: "button", role: "tab", data: { mode: "upsert" }, aria: { selected: "false" } }, tr("Upsert"))),
-          h("span", { class: "hint", id: "dbImpModeSay" }, tr("Every row inserts — a duplicate key aborts the whole file.")),)),
+            h("button", { type: "button", role: "tab", data: { mode: "insert" }, aria: { selected: "true" } }, tr("dataCsv.insert")),
+            h("button", { type: "button", role: "tab", data: { mode: "upsert" }, aria: { selected: "false" } }, tr("dataCsv.upsert"))),
+          h("span", { class: "hint", id: "dbImpModeSay" }, tr("dataCsv.everyRowInsertsDuplicate")),)),
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           h("input", { type: "file", id: "dbImpFile", accept: ".csv,text/csv", style: "width:auto" }),
-          h("span", { class: "hint" }, tr("…or paste below (first row = header)"))),
-        h("textarea", { id: "dbImpText", placeholder: tr("id,name\n1,alice\n2,bob"), style: "min-height:120px" }),
+          h("span", { class: "hint" }, tr("dataCsv.pasteBelowFirstRow"))),
+        h("textarea", { id: "dbImpText", placeholder: tr("dataCsv.idNameN1Alice"), style: "min-height:120px" }),
         h("div", { id: "dbImpMap", style: "margin-top:var(--s3)" }),
         h("div", { id: "dbImpPreview", style: "margin-top:var(--s3)" })),
       h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "dbImpCancel" }, tr("Cancel")),
-        h("button", { class: "btn primary", id: "dbImpRun" }, tr("Import (one transaction)")))));
+        h("button", { class: "btn", id: "dbImpCancel" }, tr("dataCsv.cancel")),
+        h("button", { class: "btn primary", id: "dbImpRun" }, tr("dataCsv.importOneTransaction")))));
 
   function parse(): void {
     const text = $<HTMLInputElement>("dbImpText").value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -148,8 +148,8 @@ function dbOpenImport(): void {
     });
     // One sentence beside the control names the cost of the picked mode (docs/22 W4.5).
     $("dbImpModeSay").textContent = m === "upsert"
-      ? tr("Rows that match an existing key update it; the rest insert — still one transaction.")
-      : tr("Every row inserts — a duplicate key aborts the whole file.");
+      ? tr("dataCsv.rowsMatchExistingKey")
+      : tr("dataCsv.everyRowInsertsDuplicate");
   }
   $("dbImpMode").onclick = (e: MouseEvent): void => {
     const b: HTMLElement | null = targetEl(e)?.closest<HTMLElement>("button[data-mode]") ?? null;
@@ -164,8 +164,8 @@ function dbOpenImport(): void {
   };
   $("dbImpCancel").onclick = closeSheet;
   $<HTMLButtonElement>("dbImpRun").onclick = async (e): Promise<void> => {
-    if (!header.length || !lines.length) { toast(tr("Paste or upload a CSV first"), true); return; }
-    if (!mapping.some(Boolean)) { toast(tr("Map at least one column"), true); return; }
+    if (!header.length || !lines.length) { toast(tr("dataCsv.pasteUploadCsvFirst"), true); return; }
+    if (!mapping.some(Boolean)) { toast(tr("dataCsv.mapLeastOneColumn"), true); return; }
     const upsert = mode === "upsert";
     if (!confirm((upsert ? "Upsert " : "Insert ") + lines.length.toLocaleString() + " rows into " +
         (d.schema ? d.schema + "." : "") + d.table! + " in ONE transaction? A failure rolls the whole file back.")) return;
@@ -198,7 +198,7 @@ function dbOpenImport(): void {
    from the CURRENT BUFFER when the cell has a pending edit, so what you copy is what you see. */
 function dbCopyText(text: string): void {
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then((): void => { toast(tr("Copied")); }, (): void => { dbCopyFallback(text); });
+    navigator.clipboard.writeText(text).then((): void => { toast(tr("dataCsv.copied")); }, (): void => { dbCopyFallback(text); });
   } else dbCopyFallback(text);
 }
 
@@ -209,7 +209,7 @@ function dbCopyFallback(text: string): void {
   ta.style.opacity = "0";
   document.body.appendChild(ta);
   ta.select();
-  try { document.execCommand("copy"); toast(tr("Copied")); } catch (e) { toast(tr("Copy failed"), true); }
+  try { document.execCommand("copy"); toast(tr("dataCsv.copied")); } catch (e) { toast(tr("dataCsv.copyFailed"), true); }
   ta.remove();
 }
 

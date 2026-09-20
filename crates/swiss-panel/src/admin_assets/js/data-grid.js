@@ -433,7 +433,7 @@ async function dbExportTable(btn                   , fmt        )               
   btn.textContent = "Exporting\u2026";
   try {
     const resp = await fetch(q);
-    if (!resp.ok) { toast(tr("Export failed: HTTP {n}", { n: resp.status }), true); return; }
+    if (!resp.ok) { toast(tr("dataGrid.exportFailedHttpN", { n: resp.status }), true); return; }
     const blob = await resp.blob();
     const disp = resp.headers.get("Content-Disposition") || "";
     const m = /filename="([^"]+)"/.exec(disp);
@@ -445,12 +445,12 @@ async function dbExportTable(btn                   , fmt        )               
     a.remove();
     setTimeout(() => { URL.revokeObjectURL(a.href); }, 1000);
     const rows = resp.headers.get("X-Export-Rows");
-    toast(rows != null ? tr("Exported {n} rows", { n: Number(rows).toLocaleString(locale()) }) : tr("Exported"));
+    toast(rows != null ? tr("dataGrid.exportedNRows", { n: Number(rows).toLocaleString(locale()) }) : tr("dataGrid.exported"));
   } catch (e) {
-    toast(tr("Export failed"), true);
+    toast(tr("dataGrid.exportFailed"), true);
   } finally {
     btn.disabled = false;
-    btn.textContent = tr("Export…");
+    btn.textContent = tr("dataGrid.export");
   }
 }
 
@@ -461,10 +461,10 @@ function renderDbToolbar()       {
   head.textContent = "";
   const left = el("div", "db-head-left");
   if (d.sqlResult) {
-    left.appendChild(el("h2", "db-title pane-title", d.sqlResult.explained ? tr("Execution plan") : (dbIsRedis() ? tr("Command reply") : tr("SQL results"))));
-    left.appendChild(el("div", "db-meta", trn(d.sqlResult.rowCount, "{n} row", "{n} rows") +
-      (d.sqlResult.note ? tr(" · {note}", { note: d.sqlResult.note }) : "") +
-      (d.sqlResult.elapsedMs != null ? tr(" · {ms} ms", { ms: d.sqlResult.elapsedMs }) : "")));
+    left.appendChild(el("h2", "db-title pane-title", d.sqlResult.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
+    left.appendChild(el("div", "db-meta", trn(d.sqlResult.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
+      (d.sqlResult.note ? tr("dataGrid.note", { note: d.sqlResult.note }) : "") +
+      (d.sqlResult.elapsedMs != null ? tr("dataGrid.msMs", { ms: d.sqlResult.elapsedMs }) : "")));
     // docs/22 W4.3: one tab per statement reply, in the pane's segmented-control vocabulary
     // (.db-tabs — the same strip the Structure tabs use). Eight fit the pane; past that the
     // strip scrolls sideways instead of wrapping. Switching only repoints the active result;
@@ -476,30 +476,30 @@ function renderDbToolbar()       {
       left.appendChild(h("div", { class: "db-tabs", role: "tablist" },
         d.sqlResults?.map((r              , ti        ) => {
           return h("button", { role: "tab", data: { rtab: String(ti) }, aria: { selected: ti === d.sqlTab ? "true" : "false" } },
-            r.tabLabel || tr("Result {n}", { n: ti + 1 }));
+            r.tabLabel || tr("dataGrid.resultN", { n: ti + 1 }));
         })));
     }
   } else if (d.data) {
     left.appendChild(el("h2", "db-title pane-title", (d.data.schema ? d.data.schema + "." : "") + d.data.table));
-    const bits = [tr("{n} rows", { n: d.data.total.toLocaleString(locale()) })];
+    const bits = [tr("dataGrid.nRows2", { n: d.data.total.toLocaleString(locale()) })];
     // docs/22 W4.1: a keyless table edits by every-column addressing — the server's note
     // says how, and it belongs in the editable branch now (this same line used to explain
     // why such a table could not be edited at all).
     const pkCols0 = d.data.primaryKey || [];
     bits.push(d.data.editable
-      ? (pkCols0.length ? tr("editable — changes buffer until Commit") : tr("editable — {note}", { note: d.data.editNote || tr("rows are addressed by all columns") }))
-      : (d.data.editNote || tr("browsing only")));
+      ? (pkCols0.length ? tr("dataGrid.editableChangesBufferUntil") : tr("dataGrid.editableNote", { note: d.data.editNote || tr("dataGrid.rowsAddressedAllColumns") }))
+      : (d.data.editNote || tr("dataGrid.browsingOnly")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (dbIsRedis()) {
-    left.appendChild(el("h2", "db-title pane-title", d.redisKey ? d.redisKey : tr("Keys")));
+    left.appendChild(el("h2", "db-title pane-title", d.redisKey ? d.redisKey : tr("dataGrid.keys")));
     const conn2 = d.conns.find((c                    )          => { return c.name === d.conn; });
     left.appendChild(el("div", "db-meta",
       (conn2 ? conn2.label : "") +
-      (d.redis && d.redis.total != null ? tr(" · {n} keys", { n: Number(d.redis.total).toLocaleString(locale()) }) : "") +
-      tr(" · browsing · edit values in place or run commands")));
+      (d.redis && d.redis.total != null ? tr("dataGrid.nKeys", { n: Number(d.redis.total).toLocaleString(locale()) }) : "") +
+      tr("dataGrid.browsingEditValuesPlace")));
   } else {
-    left.appendChild(el("h2", "db-title pane-title", tr("Data")));
-    left.appendChild(el("div", "db-meta", d.conn ? (d.table ? tr("Loading…") : tr("Select a table on the left")) : tr("No database MCP registered")));
+    left.appendChild(el("h2", "db-title pane-title", tr("dataGrid.data")));
+    left.appendChild(el("div", "db-meta", d.conn ? (d.table ? tr("dataGrid.loading") : tr("dataGrid.selectTableLeft")) : tr("dataGrid.databaseMcpRegistered")));
   }
   head.appendChild(left);
 
@@ -507,7 +507,7 @@ function renderDbToolbar()       {
   const nosql = dbIsRedis();
   if (d.data && !d.sqlResult && !nosql) dbRenderTabs(ctl);
   if (d.sqlResult) {
-    ctl.appendChild(h("button", { class: "btn", data: { tb: "back" } }, dbIsRedis() ? tr("Back to keys") : tr("Back to table")));
+    ctl.appendChild(h("button", { class: "btn", data: { tb: "back" } }, dbIsRedis() ? tr("dataGrid.backKeys") : tr("dataGrid.backTable")));
   } else if (d.data) {
     // Row-grid controls: page size, pager, refresh, insert, CSV. Rendered on EVERY tab but hidden
     // with visibility (keeps the width) off the Data tab, so the tab segment never shifts.
@@ -515,7 +515,7 @@ function renderDbToolbar()       {
     if (d.tab !== "data") dataCtl.style.visibility = "hidden";
     // The page-size select carries a data-tb address — #pane's delegated change listener
     // answers it (docs/37 R5), and the refused-discard restore reads live state.
-    dataCtl.appendChild(h("select", { class: "db-pagesize", title: tr("Rows per page"), data: { tb: "pagesize" } },
+    dataCtl.appendChild(h("select", { class: "db-pagesize", title: tr("dataGrid.rowsPage"), data: { tb: "pagesize" } },
       DB_PAGE_SIZES.map((n        ) => {
         return h("option", { value: String(n), selected: n === d.pageSize }, String(n));
       })));
@@ -523,35 +523,35 @@ function renderDbToolbar()       {
     const first = d.offset + 1;
     const to = d.offset + d.data.rows.length;
     dataCtl.appendChild(el("span", "db-pageinfo",
-      d.data.total ? tr("{a}–{b} of {t}", { a: first.toLocaleString(locale()), b: to.toLocaleString(locale()), t: d.data.total.toLocaleString(locale()) }) : tr("0 rows")));
+      d.data.total ? tr("dataGrid.bT", { a: first.toLocaleString(locale()), b: to.toLocaleString(locale()), t: d.data.total.toLocaleString(locale()) }) : tr("dataGrid.n0Rows")));
     dataCtl.appendChild(h("button", {
-      class: "btn icon", title: tr("Previous page"), disabled: d.offset === 0, data: { pg: "prev" },
+      class: "btn icon", title: tr("dataGrid.previousPage"), disabled: d.offset === 0, data: { pg: "prev" },
     }, iconNode("chevron-left")));
     // docs/22 W1.9: the limit+1 probe answers "is there another page" from the rows actually
     // fetched; the old offset-vs-total arithmetic stays as the fallback when the flag is absent.
     dataCtl.appendChild(h("button", {
-      class: "btn icon", title: tr("Next page"),
+      class: "btn icon", title: tr("dataGrid.nextPage"),
       disabled: d.data.nextPage != null ? !d.data.nextPage : to >= d.data.total, data: { pg: "next" },
     }, iconNode("chevron-right")));
 
     dataCtl.appendChild(h("button", {
-      class: "btn", title: tr("Reload this page (drops buffered edits)"), data: { tb: "refresh" },
-    }, tr("Refresh")));
+      class: "btn", title: tr("dataGrid.reloadPageDropsBuffered"), data: { tb: "refresh" },
+    }, tr("dataGrid.refresh")));
     if (d.data.editable) {
       dataCtl.appendChild(h("button", {
-        class: "btn", title: tr("Buffer a new row — inserted only on Commit"), data: { tb: "addrow" },
-      }, tr("+ Row")));
+        class: "btn", title: tr("dataGrid.bufferNewRowInserted"), data: { tb: "addrow" },
+      }, tr("dataGrid.row")));
     }
     dataCtl.appendChild(h("button", {
-      class: "btn", title: tr("Download the current page as CSV"), data: { tb: "csv" },
-    }, tr("CSV")));
+      class: "btn", title: tr("dataGrid.downloadCurrentPageCsv"), data: { tb: "csv" },
+    }, tr("dataGrid.csv")));
     dataCtl.appendChild(h("button", {
-      class: "btn", title: tr("Export the whole table as CSV, NDJSON, or SQL dump (capped at 100k rows)"), data: { tb: "export" },
-    }, tr("Export…")));
+      class: "btn", title: tr("dataGrid.exportWholeTableCsv"), data: { tb: "export" },
+    }, tr("dataGrid.export")));
     if (d.data.editable) {
       dataCtl.appendChild(h("button", {
-        class: "btn", title: tr("Insert CSV rows in one transaction"), data: { tb: "import" },
-      }, tr("Import…")));
+        class: "btn", title: tr("dataGrid.insertCsvRowsOne"), data: { tb: "import" },
+      }, tr("dataGrid.import")));
     }
     ctl.appendChild(dataCtl);
   }
@@ -657,14 +657,14 @@ function renderDbGrid()       {
   // docs/22 W5.1: the Form tab paints the same rows as the grid, one record at a time.
   if (d.tab === "form") { renderDbFormView(wrap); return; }
   if (d.tab !== "data") { renderDbDetailGrid(wrap); return; }
-  if (!d.conn) { wrap.appendChild(el("div", "db-hint", tr("No database MCP registered — add a mysql or pg MCP first."))); return; }
+  if (!d.conn) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.databaseMcpRegisteredAdd"))); return; }
   if (!d.table || !d.data) {
-    if (d.table) { wrap.appendChild(el("div", "db-hint", tr("Loading…"))); return; }
+    if (d.table) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.loading"))); return; }
     // The shared empty state (docs/18 V7); "Loading…" stays a quiet one-liner.
-    wrap.appendChild(emptyNode({ icon: "database", title: tr("Select a table"), hint: tr("Pick a table on the left to browse its rows.") }));
+    wrap.appendChild(emptyNode({ icon: "database", title: tr("dataGrid.selectTable"), hint: tr("dataGrid.pickTableLeftBrowse") }));
     return;
   }
-  if (d.loading) { wrap.appendChild(el("div", "db-hint", tr("Loading…"))); return; }
+  if (d.loading) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.loading"))); return; }
 
   const pkCols = d.data.primaryKey || [];
   const editable = d.data.editable;
@@ -689,7 +689,7 @@ function renderDbGrid()       {
   // answers it (docs/37 R5), so no per-render handler and no re-attach on repaint.
   thAll.appendChild(h("input", {
     type: "checkbox", class: "db-selbox", checked: allOn,
-    title: tr("Select every row on this page (for copy)"), data: { selall: "" },
+    title: tr("dataGrid.selectEveryRowPage"), data: { selall: "" },
   }));
   hr.appendChild(thAll);
   // One caption line under every column name when ANY column carries a comment: the meaning is
@@ -718,8 +718,8 @@ function renderDbGrid()       {
       // row is re-resolved from live d.detail at event time (docs/37 §10.1).
       main.appendChild(h("button", {
         class: "db-col-fk", type: "button",
-        title: tr("Open {ref} filtered to this column's value in the focused row", { ref: (fk.refSchema ? fk.refSchema + "." : "") + fk.refTable }),
-        aria: { label: tr("Jump to referenced row") },
+        title: tr("dataGrid.openRefFilteredColumns", { ref: (fk.refSchema ? fk.refSchema + "." : "") + fk.refTable }),
+        aria: { label: tr("dataGrid.jumpReferencedRow") },
         data: { fkjump: c.name },
       }, iconNode("arrow-right")));
     }
@@ -785,8 +785,8 @@ function renderDbGrid()       {
     const trh = el("tr");
     const tdh = el("td", "db-grid-hiddenall");
     const inner = el("div");
-    inner.appendChild(el("span", "", tr("Every column of {t} is hidden.", { t: (d.schema ? d.schema + "." : "") + d.table })));
-    inner.appendChild(h("button", { class: "btn", data: { colsall: "" } }, tr("Show all columns")));
+    inner.appendChild(el("span", "", tr("dataGrid.everyColumnTHidden", { t: (d.schema ? d.schema + "." : "") + d.table })));
+    inner.appendChild(h("button", { class: "btn", data: { colsall: "" } }, tr("dataGrid.showAllColumns")));
     tdh.appendChild(inner);
     trh.appendChild(tdh);
     tbody.appendChild(trh);
@@ -799,7 +799,7 @@ function renderDbGrid()       {
   d.inserts.forEach((ins          , i        )       => {
     const tri = el("tr", "db-ins");
     const rc = el("td", "db-rowctl");
-    rc.appendChild(h("button", { class: "db-act", title: tr("Remove this buffered insert"), data: { irm: String(i) } }, "✕"));
+    rc.appendChild(h("button", { class: "db-act", title: tr("dataGrid.removeBufferedInsert"), data: { irm: String(i) } }, "✕"));
     tri.appendChild(rc);
     cols.forEach((c             , ci        )       => {
       const has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
@@ -848,11 +848,11 @@ function renderDbGrid()       {
     const rc = el("td", "db-rowctl");
     rc.appendChild(h("input", {
       type: "checkbox", class: "db-selbox", checked: !!d.sel[key],
-      title: tr("Select row for copy (Shift-click for a range)"), data: { srow: String(rowIdx) },
+      title: tr("dataGrid.selectRowCopyShift"), data: { srow: String(rowIdx) },
     }));
     if (editable) {
       rc.appendChild(h("button", {
-        class: "db-act", title: deleted ? tr("Undo this buffered delete") : tr("Buffer a delete — applied only on Commit"),
+        class: "db-act", title: deleted ? tr("dataGrid.undoBufferedDelete") : tr("dataGrid.bufferDeleteAppliedOnly"),
         data: { rdel: String(rowIdx) },
       }, deleted ? "↩" : "✕"));
     }
@@ -934,7 +934,7 @@ function renderDbResultGrid(wrap             )       {
   const allOn2 = res.rows.length > 0 && res.rows.every((_                         , i        )          => { return !!d.sel[dbResultKey(tab, i)]; });
   thAll2.appendChild(h("input", {
     type: "checkbox", class: "db-selbox", checked: allOn2,
-    title: tr("Select every result row (for copy)"), data: { selall: "" },
+    title: tr("dataGrid.selectEveryResultRow"), data: { selall: "" },
   }));
   hr.appendChild(thAll2);
   res.columns.forEach((c        )       => { hr.appendChild(el("th", "db-col", c)); });
@@ -949,7 +949,7 @@ function renderDbResultGrid(wrap             )       {
     // and selection keys recompute from live state at event time.
     rc2.appendChild(h("input", {
       type: "checkbox", class: "db-selbox", checked: !!d.sel[qkey],
-      title: tr("Select row for copy (Shift-click for a range)"), data: { qrow: String(i) },
+      title: tr("dataGrid.selectRowCopyShift"), data: { qrow: String(i) },
     }));
     rc2.appendChild(document.createTextNode(String(i + 1)));
     tri.appendChild(rc2);

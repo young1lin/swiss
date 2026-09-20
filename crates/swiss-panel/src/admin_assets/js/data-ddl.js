@@ -133,11 +133,11 @@ function dbDdlIndexSuggestion(table         , cols          )         {
 /* --- the sheet ---------------------------------------------------------------------------------- */
 
 const DDL_OP = { table: "create_table", column: "add_column", index: "create_index" };
-const DDL_TITLE = { table: tk("New table"), column: tk("Add column"), index: tk("New index") };
+const DDL_TITLE = { table: tk("dataDdl.newTable"), column: tk("dataDdl.addColumn"), index: tk("dataDdl.newIndex") };
 /* tk()-marked "… in {t}" titles (docs/38 L7): chosen by kind, painted through tr(). */
-const DDL_IN = { table: tk("New table in {t}"), column: tk("Add column in {t}"), index: tk("New index in {t}") };
+const DDL_IN = { table: tk("dataDdl.newTableT"), column: tk("dataDdl.addColumnT"), index: tk("dataDdl.newIndexT") };
 /* tk()-marked header words (docs/38 L7): painted through tr(hd) below. */
-const DDL_HEAD = [tk("Name"), tk("Type"), tk("Null"), tk("Default"), tk("Comment"), ""];
+const DDL_HEAD = [tk("dataDdl.name"), tk("dataDdl.type"), tk("dataDdl.null"), tk("dataDdl.default"), tk("dataDdl.comment"), ""];
 const DDL_QUIET = {
   table: "Name the table and at least one column to see the SQL.",
   column: "Add a column row below to see the SQL.",
@@ -200,29 +200,29 @@ function paintDbDdlSheet()       {
     // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
     const schemas = S_.schemas.slice();
     if (!schemas.includes(S_.schema)) schemas.unshift(S_.schema);
-    body.push(h("label", { class: "field" }, h("span", null, tr("Schema")),
+    body.push(h("label", { class: "field" }, h("span", null, tr("dataDdl.schema")),
       h("select", { id: "ddl-schema" }, schemas.map((s        )         => {
         return h("option", { value: s, selected: s === S_.schema }, s);
       }))));
   }
   if (kind === "table") {
     body.push(h("div", { class: "two" },
-      h("label", { class: "field" }, h("span", null, tr("Table name")),
-        h("input", { id: "ddl-table", autocomplete: "off", spellcheck: false, placeholder: tr("events") })),
-      h("label", { class: "field" }, h("span", null, tr("Comment (optional)")),
-        h("input", { id: "ddl-comment", autocomplete: "off", placeholder: tr("what this table holds") }))));
+      h("label", { class: "field" }, h("span", null, tr("dataDdl.tableName")),
+        h("input", { id: "ddl-table", autocomplete: "off", spellcheck: false, placeholder: tr("dataDdl.events") })),
+      h("label", { class: "field" }, h("span", null, tr("dataDdl.commentOptional")),
+        h("input", { id: "ddl-comment", autocomplete: "off", placeholder: tr("dataDdl.whatTableHolds") }))));
   }
   if (kind === "index") {
     body.push(h("div", { class: "two" },
-      h("label", { class: "field" }, h("span", null, tr("Index name")),
+      h("label", { class: "field" }, h("span", null, tr("dataDdl.indexName")),
         h("input", { id: "ddl-index", autocomplete: "off", spellcheck: false, value: S_.indexName })),
       h("label", { class: "check", style: "align-self:end;padding-bottom:6px" },
-        h("input", { type: "checkbox", id: "ddl-unique" }), tr("Unique"))),
-      h("div", { class: "field" }, h("span", null, tr("Columns")),
+        h("input", { type: "checkbox", id: "ddl-unique" }), tr("dataDdl.unique"))),
+      h("div", { class: "field" }, h("span", null, tr("dataDdl.columns")),
         h("div", { id: "ddl-cols", class: "db-ddl-colpick" })));
   }
   if (kind !== "index") {
-    body.push(h("div", { class: "field" }, h("span", null, tr("Columns")),
+    body.push(h("div", { class: "field" }, h("span", null, tr("dataDdl.columns")),
       h("table", { class: "db-ddl-grid", id: "ddl-grid" },
         h("colgroup",
           h("col", { style: "width:22%" }), h("col", { style: "width:24%" }), h("col", { style: "width:56px" }),
@@ -232,13 +232,13 @@ function paintDbDdlSheet()       {
             return h("th", null, hd ? tr(hd) : hd);
           }))),
         h("tbody")),
-      h("button", { class: "btn ghost", id: "ddl-add-row", type: "button" }, tr("Add column")),
+      h("button", { class: "btn ghost", id: "ddl-add-row", type: "button" }, tr("dataDdl.addColumn2")),
       h("datalist", { id: "ddl-types" }, dbDdlTypeOptions(S_.dialect).map((t        )         => {
         return h("option", { value: t });
       }))));
   }
   body.push(
-    h("div", { class: "hint", id: "ddl-hint" }, tr("SQL preview — Commit runs these statements verbatim.")),
+    h("div", { class: "hint", id: "ddl-hint" }, tr("dataDdl.sqlPreviewCommitRuns")),
     h("pre", { class: "db-ddl", id: "ddl-pre" }));
   const host = $("sheet");
   host.hidden = false;
@@ -247,9 +247,9 @@ function paintDbDdlSheet()       {
       h("div", { class: "sheet-head" }, h("h2", { id: "ddl-title" }, title)),
       h("div", { class: "sheet-body" }, body),
       h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "ddl-cancel", type: "button" }, tr("Cancel")),
+        h("button", { class: "btn", id: "ddl-cancel", type: "button" }, tr("dataDdl.cancel")),
         h("button", { class: "btn primary", id: "ddl-commit", type: "button", disabled: true },
-          kind === "table" ? tr("Create table") : kind === "column" ? tr("Add column") : tr("Create index")))));
+          kind === "table" ? tr("dataDdl.createTable") : kind === "column" ? tr("dataDdl.addColumn2") : tr("dataDdl.createIndex")))));
   wireDbDdlSheet();
   // The mini-grid belongs to the table and column kinds only — the index sheet has no
   // #ddl-grid, and rendering rows into it would throw before the picker and the quiet
@@ -275,7 +275,7 @@ function wireDbDdlSheet()       {
   };
   const retitle = ()       => {
     if (S?.dialect === "pg" && kind === "table") {
-      $("ddl-title").textContent = tr("New table in {t}", { t: $                   ("ddl-schema").value });
+      $("ddl-title").textContent = tr("dataDdl.newTableT2", { t: $                   ("ddl-schema").value });
     }
   };
   if (kind === "table") {
@@ -356,7 +356,7 @@ function renderDbDdlRows()       {
     rm.type = "button";
     rm.appendChild(iconNode("x", "Remove column"));
     rm.dataset.i = String(i);
-    if (!r.isNew) { rm.disabled = true; rm.title = tr("Only new columns can be removed here"); }
+    if (!r.isNew) { rm.disabled = true; rm.title = tr("dataDdl.onlyNewColumnsCan"); }
     rm.onclick = ()       => {
       S?.rows.splice(i, 1);
       renderDbDdlRows();

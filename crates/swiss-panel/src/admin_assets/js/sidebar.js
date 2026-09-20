@@ -153,10 +153,10 @@ function rowMenu(name        , anchor                                           
   const m = rowOf(name) || { name: name, lifecycle: "stopped" };
   const started = m.lifecycle === "started";
   popupMenu(anchor, [
-    { label: tr("Rename…"), fn: () => { void renameMcp(name); } },
-    { label: started ? tr("Disable") : tr("Enable"), fn: () => { void act(name, started ? "stop" : "start"); } },
+    { label: tr("sidebar.rename"), fn: () => { void renameMcp(name); } },
+    { label: started ? tr("sidebar.disable") : tr("sidebar.enable"), fn: () => { void act(name, started ? "stop" : "start"); } },
     { sep: true },
-    { label: tr("Delete"), danger: true, fn: () => { void removeMcp(name); } },
+    { label: tr("sidebar.delete"), danger: true, fn: () => { void removeMcp(name); } },
   ]);
 }
 
@@ -168,8 +168,8 @@ function sideCfg()                      {
     density: "side",
     names: mcpGroups(),
     collapsed: foldMap(),
-    noun: tr("MCP"),
-    addTitle: (g) => { return addTitle(tr("MCP"), g); },
+    noun: tr("sidebar.mcp"),
+    addTitle: (g) => { return addTitle(tr("sidebar.mcp"), g); },
     onAdd: (g) => { openSheet(g); },
     reload: () => { return loadList(); },
     render: patchSidebar,

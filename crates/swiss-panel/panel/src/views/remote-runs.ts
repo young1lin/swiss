@@ -88,10 +88,10 @@ function fmtBytes(n: number): string {
 
 function fmtMs(ms: number | null | undefined): string {
   if (ms == null) return "";
-  if (ms < 1000) return tr("{n}ms", { n: ms });
-  if (ms < 60000) return tr("{n}s", { n: (ms / 1000).toFixed(1) });
+  if (ms < 1000) return tr("remoteRuns.nMs", { n: ms });
+  if (ms < 60000) return tr("remoteRuns.nS", { n: (ms / 1000).toFixed(1) });
   const m = Math.floor(ms / 60000);
-  return tr("{m}m {s}s", { m, s: Math.round((ms - m * 60000) / 1000) });
+  return tr("remoteRuns.mMSS", { m, s: Math.round((ms - m * 60000) / 1000) });
 }
 
 /** The dot says the state in shape and colour; the title says it in words. */
@@ -122,9 +122,9 @@ function targetOf(r: ApiRemoteRunRow): string {
 function metaOf(r: ApiRemoteRunRow): string {
   const parts = ["#" + r.runId];
   if (r.state === "running" || r.state === "queued") parts.push(r.state);
-  else if (r.exitCode != null) parts.push(tr("exit {n}", { n: r.exitCode }));
-  else if (r.state === "canceled") parts.push(tr("canceled"));
-  else if (r.state === "timeout") parts.push(tr("timed out"));
+  else if (r.exitCode != null) parts.push(tr("remoteRuns.exitN", { n: r.exitCode }));
+  else if (r.state === "canceled") parts.push(tr("remoteRuns.canceled"));
+  else if (r.state === "timeout") parts.push(tr("remoteRuns.timed"));
   else parts.push(r.state);
   if (r.ms != null) parts.push(fmtMs(r.ms));
   parts.push(whenLabel(r.startedAt || r.queuedAt));
@@ -152,40 +152,40 @@ function bodyNode(r: ApiRemoteRunRow, isLive: boolean): HChild {
     const l = live[r.runId];
     return frag(
       h("div", { class: "call-lbl rr-live-head" },
-        h("span", null, tr("Live output")),
+        h("span", null, tr("remoteRuns.liveOutput")),
         r.state === "running" || r.state === "queued"
-          ? h("button", { class: "btn", data: { rcancel: r.runId } }, tr("Cancel"))
+          ? h("button", { class: "btn", data: { rcancel: r.runId } }, tr("remoteRuns.cancel"))
           : null),
       h("pre", { class: "logs", data: { rlivepre: r.runId } },
         l ? l.text : null,
         l && l.text ? null
           : h("span", { style: "color:var(--text-3)" },
-            r.state === "queued" ? tr("Queued - waiting for a free slot.") : tr("No output yet."))));
+            r.state === "queued" ? tr("remoteRuns.queuedWaitingFreeSlot") : tr("remoteRuns.output"))));
   }
   const b = bodies[r.runId];
   const head: HChild[] = [];
   if (r.error) {
-    head.push(h("div", { class: "call-lbl" }, tr("Error")), h("pre", { class: "logs err" }, r.error));
+    head.push(h("div", { class: "call-lbl" }, tr("remoteRuns.error")), h("pre", { class: "logs err" }, r.error));
   }
-  if (!b) return frag(head, h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("Loading…")));
+  if (!b) return frag(head, h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("remoteRuns.loading")));
   // The body union's two states: the gone marker (the record rolled past the run) or the
   // output read so far - "gone" in b is the discriminant.
-  if ("gone" in b) return frag(head, h("div", { class: "note" }, tr("This run has rolled out of the record.")));
-  head.push(h("div", { class: "call-lbl" }, tr("Output"), b.total ? [" \u00b7 ", fmtBytes(b.total)] : ""));
+  if ("gone" in b) return frag(head, h("div", { class: "note" }, tr("remoteRuns.runRolledRecord")));
+  head.push(h("div", { class: "call-lbl" }, tr("remoteRuns.output2"), b.total ? [" \u00b7 ", fmtBytes(b.total)] : ""));
   if (!b.total) {
-    head.push(h("pre", { class: "logs" }, h("span", { style: "color:var(--text-3)" }, tr("No output was produced."))));
+    head.push(h("pre", { class: "logs" }, h("span", { style: "color:var(--text-3)" }, tr("remoteRuns.outputProduced"))));
   } else {
     head.push(h("pre", { class: "logs" }, b.text));
     if (b.next < b.total) {
       head.push(h("div", { class: "pager" },
-        h("button", { class: "btn", data: { rmore: r.runId } }, tr("Load more")),
-        h("span", null, tr("{a} of {b}", { a: fmtBytes(b.next), b: fmtBytes(b.total) }))));
+        h("button", { class: "btn", data: { rmore: r.runId } }, tr("remoteRuns.loadMore")),
+        h("span", null, tr("remoteRuns.b", { a: fmtBytes(b.next), b: fmtBytes(b.total) }))));
     }
   }
   if (r.outputCapped && r.tail) {
     head.push(
       h("div", { class: "note" },
-        tr("Output capped at {cap} \u2014 the last {tail}:", { cap: fmtBytes(limits ? limits.maxOutputBytes : 0), tail: fmtBytes(r.tail.length) })),
+        tr("remoteRuns.outputCappedCapLast", { cap: fmtBytes(limits ? limits.maxOutputBytes : 0), tail: fmtBytes(r.tail.length) })),
       h("pre", { class: "logs" }, r.tail));
   }
   return frag(head);
@@ -258,43 +258,43 @@ function toggle(id: number): void {
 async function cancelRun(id: number): Promise<void> {
   const j = await apiJson("/api/runs/" + id + "/cancel", { method: "POST" });
   if (!j) return;
-  toast(tr("Cancel requested for run #{id}", { id }));
+  toast(tr("remoteRuns.cancelRequestedRunId", { id }));
   void refresh();
 }
 
 async function clearAll(): Promise<void> {
-  if (!confirm(tr("Forget every recorded remote run and its output? Runs still in flight are not affected."))) return;
+  if (!confirm(tr("remoteRuns.forgetEveryRecordedRemote"))) return;
   const j = await apiJson("/api/remote/runs", { method: "DELETE" });
   if (!j) return;
   bodies = {};
   open = {};
   cursors = [null];
   page = 0;
-  toast(tr("Run record cleared"));
+  toast(tr("remoteRuns.runRecordCleared"));
   await refresh();
 }
 
 function render(): void {
   painted = signature();
-  const kept = trn(usage.runs, "{n} run recorded \u00b7 {bytes}", "{n} runs recorded \u00b7 {bytes}", { bytes: fmtBytes(usage.bytes) }) +
-    (limits ? tr(" of {cap} \u00b7 kept {d} days", { cap: fmtBytes(limits.maxTotalBytes), d: Math.round(limits.maxAgeMs / 86400000) }) : "");
-  const options = [h("option", { value: "" }, tr("All targets"))].concat(targetIds.map((id) => {
+  const kept = trn(usage.runs, "remoteRuns.nRunsRecordedBytes.one", "remoteRuns.nRunsRecordedBytes.other", { bytes: fmtBytes(usage.bytes) }) +
+    (limits ? tr("remoteRuns.capKeptDDays", { cap: fmtBytes(limits.maxTotalBytes), d: Math.round(limits.maxAgeMs / 86400000) }) : "");
+  const options = [h("option", { value: "" }, tr("remoteRuns.allTargets"))].concat(targetIds.map((id) => {
     return h("option", { value: id, selected: id === target }, id);
   }));
   fill($("pane"),
     h("div", { class: "wide" },
       h("div", { class: "pane-head" },
         h("div", null,
-          h("div", { class: "pane-desc" }, tr("Every command, sync and pull run on a remote target, with its output - as the CLI (swiss remote \u2026) and the remote MCP tools ran it.")),
+          h("div", { class: "pane-desc" }, tr("remoteRuns.everyCommandSyncPull")),
           h("div", { class: "pane-sub" }, kept)),
         h("div", { class: "pane-actions" },
-          h("button", { class: "btn", id: "rrClear", disabled: !usage.runs }, tr("Clear")))),
+          h("button", { class: "btn", id: "rrClear", disabled: !usage.runs }, tr("remoteRuns.clear")))),
       h("div", { class: "sec-head" },
-        h("span", { class: "sec-cap" }, tr("Runs")),
-        h("select", { id: "rrTarget", aria: { label: tr("Filter by target") } }, options)),
+        h("span", { class: "sec-cap" }, tr("remoteRuns.runs")),
+        h("select", { id: "rrTarget", aria: { label: tr("remoteRuns.filterTarget") } }, options)),
       h("div", { id: "rrList" })));
   paintList();
-  $("countChip").textContent = usage.runs ? trn(usage.runs, "{n} run", "{n} runs") : "";
+  $("countChip").textContent = usage.runs ? trn(usage.runs, "remoteRuns.nRuns.one", "remoteRuns.nRuns.other") : "";
 }
 
 function paintList(): void {
@@ -304,8 +304,8 @@ function paintList(): void {
     fill(region,
       page || target
         ? h("div", { class: "group" }, h("div", { class: "row" },
-            h("span", { class: "rowmsg" }, page ? tr("Nothing on this page.") : tr("No runs on this target yet."))))
-        : emptyNode({ icon: "history", title: tr("No runs yet"), hint: tr("Run something on a target - swiss remote exec, or the remote MCP tools - and it is recorded here with its output.") }),
+            h("span", { class: "rowmsg" }, page ? tr("remoteRuns.nothingPage") : tr("remoteRuns.runsTarget"))))
+        : emptyNode({ icon: "history", title: tr("remoteRuns.runs2"), hint: tr("remoteRuns.runSomethingTargetSwiss") }),
       page ? pagerNode() : null);
     return;
   }
@@ -321,9 +321,9 @@ function paintList(): void {
 function pagerNode(): HChild {
   if (!page && !nextBefore) return null;
   return h("div", { class: "pager" },
-    h("button", { class: "btn", id: "rrPrev", disabled: page <= 0 }, tr("Newer")),
-    h("span", null, tr("Page {n}", { n: page + 1 })),
-    h("button", { class: "btn", id: "rrNext", disabled: !nextBefore }, tr("Older")));
+    h("button", { class: "btn", id: "rrPrev", disabled: page <= 0 }, tr("remoteRuns.newer")),
+    h("span", null, tr("remoteRuns.pageN", { n: page + 1 })),
+    h("button", { class: "btn", id: "rrNext", disabled: !nextBefore }, tr("remoteRuns.older")));
 }
 
 async function step(delta: number): Promise<void> {
@@ -374,7 +374,7 @@ export async function refresh() {
   armLive();
 }
 export async function poll() { await refresh(); }
-export function countText() { return usage.runs ? trn(usage.runs, "{n} run", "{n} runs") : ""; }
+export function countText() { return usage.runs ? trn(usage.runs, "remoteRuns.nRuns.one", "remoteRuns.nRuns.other") : ""; }
 export function unmount() {
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
   // A return visit starts on page 0 with no filter: the record moved on while the page

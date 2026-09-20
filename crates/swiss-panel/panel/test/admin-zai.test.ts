@@ -112,7 +112,7 @@ describe("the zai-vision type: the native GLM vision tools", () => {
     // No url (that is mode/baseUrl's job), no auth box (no OAuth on this API).
     expect(keys).not.toContain("url");
     expect(keys).not.toContain("auth");
-    expect(fields.TYPE_LABELS["zai-vision"]).toContain("zai-vision");
+    expect(fields.TYPE_LABELS["zai-vision"]).toContain("zaiVision");
   });
 
   it("readFields keeps the ${...} key reference exactly as typed", () => {

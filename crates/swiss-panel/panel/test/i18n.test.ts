@@ -54,37 +54,37 @@ describe("i18n lookup and preference (docs/38 §2.5)", () => {
   });
 
   it("tr passes the key through in English and looks it up once installed", () => {
-    expect(tr("No targets yet")).toBe("No targets yet");
-    install("zh-CN", { "No targets yet": "还没有目标" });
-    expect(tr("No targets yet")).toBe("还没有目标");
+    expect(tr("remoteRuns.runsTarget")).toBe("No runs on this target yet.");
+    install("zh-CN", { "remoteRuns.runsTarget": "该目标还没有运行记录。" });
+    expect(tr("remoteRuns.runsTarget")).toBe("该目标还没有运行记录。");
     expect(locale()).toBe("zh-CN");
-    expect(tr("Never collected")).toBe("Never collected"); // unknown key: the key itself, never undefined
+    expect(tr("no.suchKeyAnywhere")).toBe("no.suchKeyAnywhere"); // unknown everywhere: the raw key, visibly, never undefined
   });
 
   it("install(en, null) returns to English", () => {
-    install("zh-CN", { "Search": "搜索" });
-    expect(tr("Search")).toBe("搜索");
+    install("zh-CN", { "i18n.search": "搜索" });
+    expect(tr("i18n.search")).toBe("搜索");
     install("en", null);
-    expect(tr("Search")).toBe("Search");
+    expect(tr("i18n.search")).toBe("Search");
     expect(locale()).toBe("en");
   });
 
   it("tr substitutes provided vars and keeps missing placeholders literally visible", () => {
-    expect(tr("Imported {n}, skipped {s}", { n: 3, s: 1 })).toBe("Imported 3, skipped 1");
-    expect(tr("Imported {n}, skipped {s}", { n: 3 })).toBe("Imported 3, skipped {s}");
+    expect(tr("addSheet.importedNSkippedS", { n: 3, s: 1 })).toBe("Imported 3, skipped 1");
+    expect(tr("addSheet.importedNSkippedS", { n: 3 })).toBe("Imported 3, skipped {s}");
   });
 
   it("trn selects one/other in English and only other in Chinese", () => {
-    expect(trn(1, "{n} row", "{n} rows")).toBe("1 row");
-    expect(trn(2, "{n} row", "{n} rows")).toBe("2 rows");
-    expect(trn(0, "{n} row", "{n} rows")).toBe("0 rows");
-    install("zh-CN", { "{n} rows": "{n} 行" });
-    expect(trn(1, "{n} row", "{n} rows")).toBe("1 行");
-    expect(trn(5, "{n} row", "{n} rows")).toBe("5 行");
+    expect(trn(1, "dataGrid.nRows.one", "dataGrid.nRows.other")).toBe("1 row");
+    expect(trn(2, "dataGrid.nRows.one", "dataGrid.nRows.other")).toBe("2 rows");
+    expect(trn(0, "dataGrid.nRows.one", "dataGrid.nRows.other")).toBe("0 rows");
+    install("zh-CN", { "dataGrid.nRows.other": "{n} 行" });
+    expect(trn(1, "dataGrid.nRows.one", "dataGrid.nRows.other")).toBe("1 行");
+    expect(trn(5, "dataGrid.nRows.one", "dataGrid.nRows.other")).toBe("5 行");
   });
 
   it("trn lets caller vars override the injected {n}", () => {
-    expect(trn(2, "{n} row", "{n} rows", { n: "two" })).toBe("two rows");
+    expect(trn(2, "dataGrid.nRows.one", "dataGrid.nRows.other", { n: "two" })).toBe("two rows");
   });
 
   it("langPref defaults to en and only accepts zh-CN", () => {
@@ -117,10 +117,10 @@ describe("i18n lookup and preference (docs/38 §2.5)", () => {
 
   it("loadLocale installs the real dictionary only for a Chinese preference", async () => {
     await loadLocale();
-    expect(tr("Search")).toBe("Search");
+    expect(tr("i18n.search")).toBe("Search");
     localStorage.setItem(LANG_KEY, "zh-CN");
     await loadLocale();
-    expect(tr("Search")).toBe("搜索");
+    expect(tr("i18n.search")).toBe("搜索");
     expect(locale()).toBe("zh-CN");
   });
 });

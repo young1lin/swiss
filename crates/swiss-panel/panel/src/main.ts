@@ -68,7 +68,7 @@ function maybeReloadPanel(newVersion: string): void {
   if (typing || busy || edits) {
     if (!warnedNewPanel) {
       warnedNewPanel = true;
-      toast(tr("A new panel version is ready — it will load once you finish editing"));
+      toast(tr("main.newPanelVersionReady"));
     }
     return;
   }
@@ -131,7 +131,7 @@ function paintThemeBtn(): void {
   // The sprite swap (docs/18 V2): switch the referenced symbol, not the button's HTML.
   const use = b.querySelector("use");
   if (use) use.setAttribute("href", dark ? "#i-sun" : "#i-moon");
-  b.title = dark ? tr("Switch to light") : tr("Switch to dark");
+  b.title = dark ? tr("main.switchLight") : tr("main.switchDark");
 }
 $("themeBtn").onclick = (e) => {
   e.stopPropagation();

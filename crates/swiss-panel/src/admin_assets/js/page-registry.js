@@ -21,27 +21,27 @@ import { fill, h } from "./h.js";
 import { createPageRegistry } from "./page-core.js";
 import { glyphNode, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
 import { currentView, setCurrentView } from "./ui-state.js";
-import { tk, tr } from "./i18n.js";
+import { tk, tr, wireLabel } from "./i18n.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
 const legacy                   = [
-  { id: "mcps", pluginId: "mcp", label: tk("MCPs"), sidebar: true },
-  { id: "traffic", pluginId: "mcp", label: tk("Traffic") },
-  { id: "tokens", pluginId: "mcp", label: tk("Token") },
-  { id: "tunnels", pluginId: "tunnels", label: tk("SSH Connections") },
-  { id: "tunnel-forwards", pluginId: "tunnels", label: tk("Port Forwards") },
-  { id: "data", pluginId: "data", label: tk("Data") },
-  { id: "jobs", pluginId: "jobs", label: tk("Jobs") },
+  { id: "mcps", pluginId: "mcp", label: tk("pageRegistry.mcps"), sidebar: true },
+  { id: "traffic", pluginId: "mcp", label: tk("pageRegistry.traffic") },
+  { id: "tokens", pluginId: "mcp", label: tk("pageRegistry.token") },
+  { id: "tunnels", pluginId: "tunnels", label: tk("pageRegistry.sshConnections") },
+  { id: "tunnel-forwards", pluginId: "tunnels", label: tk("pageRegistry.portForwards") },
+  { id: "data", pluginId: "data", label: tk("pageRegistry.data") },
+  { id: "jobs", pluginId: "jobs", label: tk("pageRegistry.jobs") },
 ].map((p, i) => { return Object.assign({ order: i * 10, path: "#" + p.id, entry: "/admin/js/views/" + p.id + ".js" }, p); });
-const management                 = { id: "plugins", pluginId: "host", label: tk("Plugins"), order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
+const management                 = { id: "plugins", pluginId: "host", label: tk("pageRegistry.plugins"), order: 1000, path: "#plugins", entry: "/admin/js/views/plugins.js" };
 /* These pages are host-owned like management: every plugin may depend on the vault, while System
  * controls the one running process rather than any individual plugin. */
-const vaultPage                 = { id: "secrets", pluginId: "host", label: tk("Secrets"), order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
-const systemPage                 = { id: "system", pluginId: "host", label: tk("System"), order: 1002, path: "#system", entry: "/admin/js/views/system.js" };
+const vaultPage                 = { id: "secrets", pluginId: "host", label: tk("pageRegistry.secrets"), order: 1001, path: "#secrets", entry: "/admin/js/views/secrets.js" };
+const systemPage                 = { id: "system", pluginId: "host", label: tk("pageRegistry.system"), order: 1002, path: "#system", entry: "/admin/js/views/system.js" };
 /* Group labels used when the host serves no plugin inventory (an older gateway answers 404 on
    /api/plugins), plus the one group that has no inventory row at all: the management page is
    synthesized here, not contributed by a plugin. */
-const GROUP_LABELS = { mcp: tk("MCP"), tunnels: tk("Tunnels"), data: tk("Data"), jobs: tk("Jobs"), host: tk("Settings") };
+const GROUP_LABELS = { mcp: tk("pageRegistry.mcp"), tunnels: tk("pageRegistry.tunnels"), data: tk("pageRegistry.data"), jobs: tk("pageRegistry.jobs"), host: tk("pageRegistry.settings") };
 const registry = createPageRegistry();
 registry.replace(legacy);
 let inventory                            = null;
@@ -87,9 +87,9 @@ function railSeat(g           )              {
   const active = g.pages.some((p) => { return p.id === currentView(); });
   const offPlugin = unavailable(g.pages[0]);
   const allOff = g.pages.every((p) => { return !!unavailable(p); });
-  const label = tr(g.label);
+  const label = tr(wireLabel(g.label));
   const title = allOff && offPlugin
-    ? tr("{label} — {error}", { label, error: offPlugin.lastError || tr("Plugin disabled") })
+    ? tr("pageRegistry.labelError", { label, error: offPlugin.lastError || tr("pageRegistry.pluginDisabled") })
     : label;
   return h("button", { class: "rail-btn", data: { group: g.id, view: g.pages[0].id },
       // The two aria flags render only when true, exactly as the string builder spelled them.
@@ -99,9 +99,9 @@ function railSeat(g           )              {
 }
 
 function moreSeat()              {
-  return h("button", { class: "rail-btn rail-more", id: "railMore", type: "button", title: tr("All plugins"), aria: { label: tr("All plugins") } },
+  return h("button", { class: "rail-btn rail-more", id: "railMore", type: "button", title: tr("pageRegistry.allPlugins"), aria: { label: tr("pageRegistry.allPlugins") } },
     iconNode("ellipsis"),
-    h("span", { class: "rail-btn-label" }, tr("More")));
+    h("span", { class: "rail-btn-label" }, tr("pageRegistry.more")));
 }
 
 function paintPluginRail()       {
@@ -124,7 +124,7 @@ function decoratedGroups() {
     return {
       id: g.id, label: g.label, pages: g.pages,
       off: g.pages.length > 0 && g.pages.every((p) => { return !!unavailable(p); }),
-      offDetail: bad ? (bad.lastError || tr("Plugin disabled")) : "",
+      offDetail: bad ? (bad.lastError || tr("pageRegistry.pluginDisabled")) : "",
     };
   });
 }
@@ -143,8 +143,8 @@ function pageMenuItems(current           )                     {
   return current.pages.map((p) => {
     const po = unavailable(p);
     return {
-      label: tr(p.label) + (po ? tr(" · off") : ""),
-      title: po ? (po.lastError || tr("Plugin disabled")) : undefined,
+      label: tr(wireLabel(p.label)) + (po ? tr("pageRegistry.off") : ""),
+      title: po ? (po.lastError || tr("pageRegistry.pluginDisabled")) : undefined,
       pick: true,
       on: p.id === currentView(),
     };
@@ -176,11 +176,11 @@ function paintPluginContext()       {
     btn.hidden = false;
     loc.hidden = true;
     fill(btn,
-      h("span", { class: "ctx-plugin" }, tr(current_.label)),
+      h("span", { class: "ctx-plugin" }, tr(wireLabel(current_.label))),
       h("span", { class: "ctx-sep" }, "/"),
-      h("span", { class: "ctx-page" }, tr(page?.label || "")),
+      h("span", { class: "ctx-page" }, tr(wireLabel(page?.label || ""))),
       iconNode("chevron-right"));
-    btn.title = off ? (off.lastError || tr("Plugin disabled")) : tr("Switch {label} page", { label: tr(current_.label) });
+    btn.title = off ? (off.lastError || tr("pageRegistry.pluginDisabled")) : tr("pageRegistry.switchLabelPage", { label: tr(wireLabel(current_.label)) });
     btn.onclick = (ev) => {
       ev.stopPropagation();
       btn.setAttribute("aria-expanded", "true");
@@ -207,8 +207,8 @@ function paintPluginContext()       {
     btn.onclick = null;
     btn.setAttribute("aria-expanded", "false");
     loc.hidden = false;
-    fill(loc, h("span", { class: "ctx-page" }, tr(current_.label)));
-    loc.title = off ? (off.lastError || tr("Plugin disabled")) : "";
+    fill(loc, h("span", { class: "ctx-page" }, tr(wireLabel(current_.label))));
+    loc.title = off ? (off.lastError || tr("pageRegistry.pluginDisabled")) : "";
   }
 }
 
@@ -223,7 +223,7 @@ async function reloadPluginInventory()                                     {
     inventory = null;
     registry.replace(legacy);
   } else {
-    if (!response.ok) throw new Error(tr("Cannot load plugin inventory: HTTP {status}", { status: response.status }));
+    if (!response.ok) throw new Error(tr("pageRegistry.cannotLoadPluginInventory", { status: response.status }));
     const next                                                                                    = await response.json();
     const pages = next.pages || (next.plugins || []).flatMap((p) => { return p.pages || []; });
     registry.replace(pages.filter((p) => { return !["plugins", "secrets", "system"].includes(p.id); })
@@ -278,9 +278,9 @@ async function navigatePage(id        , force          )                {
   history.replaceState(null, "", page.path || "#" + id);
   fill($("pane"), off
     ? h("div", { class: "empty" }, h("div", null,
-        h("h2", null, tr("{page} unavailable", { page: tr(page.label) })),
-        h("p", { class: "hint" }, off.lastError || tr("This plugin is disabled. Manage it in Plugins."))))
-    : h("div", { class: "empty" }, tr("Loading {page}…", { page: tr(page.label) })));
+        h("h2", null, tr("pageRegistry.pageUnavailable", { page: tr(wireLabel(page.label)) })),
+        h("p", { class: "hint" }, off.lastError || tr("pageRegistry.pluginDisabledManagePlugins"))))
+    : h("div", { class: "empty" }, tr("pageRegistry.loadingPage", { page: tr(wireLabel(page.label)) })));
   try { if (module.mount) await module.mount({ signal: controller.signal }); }
   catch (error) { if (ticket === sequence && error instanceof Error && error.name !== "AbortError") toast(errText(error), true); }
   if (ticket === sequence) $("countChip").textContent = currentPageCount();
