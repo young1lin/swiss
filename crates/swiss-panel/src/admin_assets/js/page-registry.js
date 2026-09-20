@@ -49,6 +49,8 @@ let active                                                                      
 let sequence = 0;
 let boot                       = null;
 let polling = false;
+/* The one tab-strip width watcher (docs/39 S3): re-created never, re-pointed every repaint. */
+let tabsObserver                        = null;
 
 function pluginInventory()                            { return inventory; }
 function pageHasPendingChanges() { return !!(active && active.module.hasPendingChanges && active.module.hasPendingChanges()); }
@@ -139,13 +141,14 @@ function decoratedGroups() {
 }
 
 /* --- the plugin context bar: page navigation (level two) ------------------------------------------
-   ALWAYS drawn in normal mode (docs/13 D5, as revised): the same bar height and the same
-   body origin for every plugin - multi-page, single-page and workspace alike. A multi-page
-   plugin gets the compact "MCP / Servers" switcher with a menu, never a full-width second
-   tab row - level one and level two never share a control shape. A single-page plugin gets
-   a static location label instead (#pageLoc): no fake dropdown, no "Data / Data" - the
-   location reads as text because it is text. */
-/** The switcher menu's items for one group: its pages in order, the current one picked,
+   ALWAYS drawn in normal mode (docs/13 D5, as revised; docs/39 S2): the same bar height
+   and the same body origin for every plugin - multi-page, single-page and workspace alike.
+   The left half names the plugin ONCE - the same glyph its rail seat wears, beside its
+   label - and a multi-page plugin lays its pages out as underline tabs, every page visible
+   at once instead of parked behind a menu: three levels, three shapes (a rail seat, an
+   underlined tab, a pill segment inside the page), so level one and level two never share
+   a control shape. A single-page plugin draws only the title - no fake one-entry tabs. */
+/** The ⋯ menu's items for one group: its pages in order, the current one picked,
  *  unavailable ones marked. Factored out of the click handler so the contract (order, the
  *  pick column, the · off marker) is testable without a menu. */
 function pageMenuItems(current           )                     {
@@ -160,10 +163,103 @@ function pageMenuItems(current           )                     {
   });
 }
 
+/** One underline tab (docs/39 S2/S8): a real link through the hash, so keyboard focus,
+ *  middle-click and copy-link come free and the existing hashchange path does the
+ *  navigating. Unavailable pages stay listed and marked - the same contract the old
+ *  switcher menu had - and still navigate (the landing paints the unavailable state). */
+function tabNode(p                , active         )                    {
+  const po = unavailable(p);
+  const aria                         = {};
+  if (active) aria.current = "page";
+  if (po) aria.disabled = "true";
+  return h("a", {
+    class: "ctx-tab", href: p.path || "#" + p.id,
+    title: po ? (po.lastError || "Plugin disabled") : "",
+    aria: aria, data: { page: p.id },
+  }, p.label + (po ? " · off" : ""));
+}
+
+/** The overflow seat (docs/39 S3): the ⋯ tab that appears when the pages do not fit. It
+ *  reuses the old switcher's menu exactly - pageMenuItems lists every page, the current
+ *  one picked - so the safety net and the tabs can never disagree about what exists. */
+function moreTab(current           )                    {
+  const b = h("button", { class: "ctx-tab ctx-more", type: "button", title: "All pages", aria: { haspopup: "menu", expanded: "false" } }, iconNode("ellipsis"));
+  b.onclick = (ev) => {
+    ev.stopPropagation();
+    b.setAttribute("aria-expanded", "true");
+    const items = pageMenuItems(current).map((it, i) => {
+      const p = current.pages[i];
+      it.fn = () => { b.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
+      return it                  ;
+    });
+    /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
+     * top level), so it loads HERE, at interaction time - the shell's own module graph stays
+     * DOM-free at eval, which the pure-helper suites (plugins.js) import it under. */
+    void import("./menu.js").then((menu) => { menu.popupMenu(b.getBoundingClientRect(), items); });
+    /* The menu also closes without an item click (document click, Escape); a one-shot
+     * listener puts the flag back whenever that lands. */
+    setTimeout(() => {
+      document.addEventListener("click", () => { b.setAttribute("aria-expanded", "false"); }, { once: true });
+    });
+  };
+  return b;
+}
+
+/** Which tabs stay visible in `avail` px (docs/39 S3). All fit -> all visible. Otherwise
+ *  reserve `moreWidth` for the ⋯ tab, keep tabs in order while they fit, and guarantee
+ *  the active one: when it fell into the overflow it takes the last visible slot. Returns
+ *  ids; the caller toggles `hidden`. Pure - the suite pins each rule with numbers. */
+function fitTabs(tabs                                 , activeId        , avail        , moreWidth        )                                            {
+  const total = tabs.reduce((sum, t) => { return sum + t.width; }, 0);
+  if (total <= avail) return { visible: tabs.map((t) => { return t.id; }), overflow: [] };
+  const budget = avail - moreWidth;
+  let used = 0;
+  let cut = tabs.length;
+  for (let i = 0; i < tabs.length; i++) {
+    if (used + tabs[i].width > budget) { cut = i; break; }
+    used += tabs[i].width;
+  }
+  const visible = tabs.slice(0, cut).map((t) => { return t.id; });
+  const overflow = tabs.slice(cut).map((t) => { return t.id; });
+  if (activeId && overflow.indexOf(activeId) !== -1) {
+    overflow.splice(overflow.indexOf(activeId), 1);
+    const displaced = visible.pop();
+    if (displaced != null) overflow.unshift(displaced);
+    visible.push(activeId);
+  }
+  return { visible: visible, overflow: overflow };
+}
+
+/** Measure the painted tabs and hide what does not fit (docs/39 S3): every width comes
+ *  from the laid-out nodes, the decision from fitTabs. The ⋯ seat is measured by un-hiding
+ *  it for the read - a display:none box has no width - then hidden again unless needed.
+ *  Environments without layout (the vitest node DOM: every offsetWidth is 0) degrade to
+ *  "everything fits", which is exactly what the suite asserts. */
+function layoutTabs()       {
+  const tabs = $("pageTabs");
+  /* Measuring needs the box model (element children, a scoped querySelector, box widths).
+   * A DOM without it - the parse-and-eval boot suite's minimal stub - keeps every tab
+   * visible: nothing can be measured, so nothing is hidden. */
+  if (!tabs.children || typeof tabs.querySelector !== "function") return;
+  const links = (Array.prototype.filter.call(tabs.children, (el             ) => { return el.classList.contains("ctx-tab") && !el.classList.contains("ctx-more"); })                 );
+  const more = tabs.querySelector             (".ctx-more");
+  if (!links.length || !more) return;
+  more.hidden = false;
+  const measured = links
+    .map((el) => { return { id: el.dataset.page || "", width: el.offsetWidth || 0 }; })
+    .filter((t) => { return t.id !== ""; });
+  const fit = fitTabs(measured, currentView(), tabs.clientWidth || 0, more.offsetWidth || 0);
+  links.forEach((el) => {
+    const id = el.dataset.page || "";
+    if (id !== "") el.hidden = fit.visible.indexOf(id) === -1;
+  });
+  more.hidden = fit.overflow.length === 0;
+}
+
 function paintPluginContext()       {
   const bar = $("ctxBar");
-  const btn = $("pageBtn");
-  const loc = $("pageLoc");
+  const title = $("pageTitle");
+  const tabs = $("pageTabs");
   const current = currentGroup();
   const page = registry.get(currentView());
   /* No page to name (an empty registry during boot) is the one case with nothing to draw;
@@ -175,49 +271,41 @@ function paintPluginContext()       {
   const immersive = document.body && document.body.classList && document.body.classList.contains("immersive");
   bar.hidden = !show && !immersive;
   if (!show) {
-    btn.hidden = true; btn.onclick = null;
-    loc.hidden = true;
+    title.hidden = true;
+    tabs.hidden = true;
+    if (tabsObserver) tabsObserver.disconnect();
     return;
   }
   const off = unavailable(page );
   const current_ = current ;
+  /* The plugin's name lives here once (docs/39 S2): its rail glyph beside its label, so an
+   * icon-only rail still names the destination and the title can never read as a tab. */
+  title.hidden = false;
+  title.title = off ? (off.lastError || "Plugin disabled") : "";
+  fill(title, glyphNode(current_), h("span", { class: "ctx-name" }, current_.label));
   if (current_.pages.length >= 2) {
-    btn.hidden = false;
-    loc.hidden = true;
-    fill(btn,
-      h("span", { class: "ctx-plugin" }, current_.label),
-      h("span", { class: "ctx-sep" }, "/"),
-      h("span", { class: "ctx-page" }, page?.label),
-      iconNode("chevron-right"));
-    btn.title = off ? (off.lastError || "Plugin disabled") : "Switch " + current_.label + " page";
-    btn.onclick = (ev) => {
-      ev.stopPropagation();
-      btn.setAttribute("aria-expanded", "true");
-      const items = pageMenuItems(current ).map((it, i) => {
-        const p = current?.pages[i];
-        it.fn = () => { btn.setAttribute("aria-expanded", "false"); void navigatePage(p.id); };
-        return it                  ;
-      });
-      /* menu.js's module graph wires DOM at import time (add-sheet binds its buttons at the
-       * top level), so it loads HERE, at interaction time - the shell's own module graph stays
-       * DOM-free at eval, which the pure-helper suites (plugins.js) import it under. */
-      void import("./menu.js").then((menu) => { menu.popupMenu(btn.getBoundingClientRect(), items); });
-      /* The menu also closes without an item click (document click, Escape); a one-shot
-       * listener puts the flag back whenever that lands. */
-      setTimeout(() => {
-        document.addEventListener("click", () => { btn.setAttribute("aria-expanded", "false"); }, { once: true });
-      });
-    };
+    tabs.hidden = false;
+    fill(tabs, ...current_.pages.map((p) => { return tabNode(p, p.id === currentView()); }), moreTab(current_));
+    layoutTabs();
+    /* Re-fit when the bar's width changes (the window, the sidebar): one observer, moved to
+     * the freshly painted node on every repaint - the old node is gone with its listeners,
+     * and a disconnected box must never keep firing. Guarded: the node test DOM has none. */
+    if (typeof ResizeObserver !== "undefined") {
+      if (!tabsObserver) tabsObserver = new ResizeObserver(() => { layoutTabs(); });
+      tabsObserver.disconnect();
+      tabsObserver.observe(tabs);
+    }
+    /* The paint-time measure can run against a pre-frame layout - the bar's count chip
+     * fills only after the view paints - and an observer re-attached at an unchanged
+     * box size reports nothing when that content-driven shrink lands inside the same
+     * frame (seen live at 480px: the strip kept its wide fit until the window moved).
+     * One deferred re-fit after the frame settles closes both; bounded, never chained. */
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => { requestAnimationFrame(() => { layoutTabs(); }); });
+    }
   } else {
-    /* One page: the plugin name IS the location. Same slot, same weight as the page label
-     * of a multi-page group, but plain text - a dropdown with one entry is a lie about
-     * what the control does. */
-    btn.hidden = true;
-    btn.onclick = null;
-    btn.setAttribute("aria-expanded", "false");
-    loc.hidden = false;
-    fill(loc, h("span", { class: "ctx-page" }, current_.label));
-    loc.title = off ? (off.lastError || "Plugin disabled") : "";
+    tabs.hidden = true;
+    if (tabsObserver) tabsObserver.disconnect();
   }
 }
 
@@ -314,4 +402,4 @@ async function refreshPage()                {
   catch (error) { toast(errText(error), true); }
 }
 
-export { currentPageCount, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };
+export { currentPageCount, fitTabs, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };

@@ -19,13 +19,13 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/* The adaptive shell (docs/13 D5, redrawn): a plugin RAIL for global navigation and a
-   compact page SWITCHER ("MCP / Servers" + menu) for page navigation. No bundler and no
-   browser in the suite, so this drives the real page-registry under a hand-rolled DOM:
-   fake elements that record what paintNavigation writes, and a fetch stub answering
-   /api/plugins the way the plugin-aware gateway (full inventory) or an older gateway
-   (404) would. What is asserted is the generated markup and the hidden state — the exact
-   contract the browser renders. */
+/* The adaptive shell (docs/13 D5, redrawn; docs/39 S2): a plugin RAIL for global
+   navigation and a TITLE + underline TABS strip in the context bar for page navigation.
+   No bundler and no browser in the suite, so this drives the real page-registry under a
+   hand-rolled DOM: fake elements that record what paintNavigation writes, and a fetch stub
+   answering /api/plugins the way the plugin-aware gateway (full inventory) or an older
+   gateway (404) would. What is asserted is the generated markup and the hidden state — the
+   exact contract the browser renders. */
 
 /* docs/37 R5: the rail/context bar builders construct NODES now, so the fake element is
  * a kid-carrying node with a serializing innerHTML getter. Attribute order in the output
@@ -42,6 +42,7 @@ class FakeNode extends NodeStub {
   text = "";
   onclick: unknown = null;
   attrs: Record<string, string> = {};
+  href = "";
   kids: unknown[] = [];
   constructor(tag: string) { super(); this.tag = tag; }
   setAttribute(k: string, v: string) { this.attrs[k] = v; }
@@ -55,6 +56,31 @@ class FakeNode extends NodeStub {
     return n;
   }
   get innerHTML(): string { return this.kids.map(markupOf).join(""); }
+  /* The tab strip's measuring half (docs/39 S3) walks the DOM the browser offers: element
+   * children, classList, dataset, a scoped querySelector and box widths. The fake carries
+   * just enough of each for layoutTabs to run un-mocked - and the widths stay 0, so
+   * fitTabs' own rule ("everything fits at zero") is what the suite exercises. */
+  get children(): unknown[] {
+    return this.kids.filter((k) => {
+      const t = (k as FakeNode).tag;
+      return typeof t === "string" && t !== "#text" && t !== "#document-fragment";
+    });
+  }
+  get dataset(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const k of Object.keys(this.attrs)) {
+      if (k.startsWith("data-")) out[k.slice(5).replace(/-([a-z])/g, (_m, c) => String(c).toUpperCase())] = this.attrs[k];
+    }
+    return out;
+  }
+  classList = { contains: (c: string) => (" " + this.className + " ").includes(" " + c + " ") };
+  querySelector(sel: string): unknown {
+    if (!sel.startsWith(".")) return null;
+    const want = sel.slice(1);
+    return this.children.find((k) => (k as FakeNode).classList.contains(want)) ?? null;
+  }
+  clientWidth = 0;
+  offsetWidth = 0;
 }
 const textOf = (n: unknown): string => {
   const node = n as FakeNode;
@@ -167,6 +193,12 @@ beforeAll(async () => {
 });
 
 const byId = (id: string): FakeNode => els.get(id) as FakeNode;
+/* The painted tab strip's links, in order. The strip's fitting half degrades to
+ * "everything fits" in this DOM (all box widths are 0 - see FakeNode), so the suites
+ * assert what is painted: every page as a real link, aria-current on exactly the landing
+ * page, the ⋯ seat present but hidden. fitTabs' arithmetic has its own suite
+ * (fit-tabs.test.ts). */
+const tabLinks = (): FakeNode[] => (byId("pageTabs").kids as FakeNode[]).filter((k) => k.tag === "a");
 
 describe("the plugin rail (global navigation)", () => {
   it("paints one seat per plugin group — never one per page", async () => {
@@ -272,13 +304,26 @@ describe("the plugin rail (global navigation)", () => {
 });
 
 describe("the plugin context bar (page navigation)", () => {
-  it("MCP carries Servers / Traffic / Token in the switcher and its menu", async () => {
+  it("MCP carries Servers / Traffic / Token as underline tabs, its title wearing the rail glyph", async () => {
     await paint("mcps", inventory);
     expect(byId("ctxBar").hidden).toBe(false);
-    const btn = byId("pageBtn");
-    expect(btn.innerHTML).toContain('ctx-plugin">MCP</span>');
-    expect(btn.innerHTML).toContain('ctx-page">Servers</span>');
-    expect(typeof btn.onclick).toBe("function");
+    // The title names the plugin once: the same glyph its rail seat wears, beside the label.
+    const title = byId("pageTitle");
+    expect(title.hidden).toBe(false);
+    expect(title.innerHTML).toContain('href="#i-mcp"');
+    expect(title.innerHTML).toContain('ctx-name">MCP</span>');
+    // Three real links through the hash, the landing one marked, in declaration order.
+    const tabs = byId("pageTabs");
+    expect(tabs.hidden).toBe(false);
+    expect(tabLinks().map((t) => t.attrs["data-page"])).toEqual(["mcps", "traffic", "tokens"]);
+    expect(tabLinks().map((t) => t.href)).toEqual(["#mcps", "#traffic", "#tokens"]);
+    expect(tabLinks()[0].attrs["aria-current"]).toBe("page");
+    expect(tabLinks()[1].attrs["aria-current"]).toBeUndefined();
+    // The ⋯ seat exists (overflow safety net) but hides while everything fits.
+    const more = tabs.querySelector(".ctx-more") as FakeNode;
+    expect(more).not.toBe(null);
+    expect(more.hidden).toBe(true);
+    // The ⋯ menu lists the same pages in the same order - the net and the strip agree.
     const mcpPages = inventory.pages
       .filter((p) => p.pluginId === "mcp")
       .sort((a, b) => a.order - b.order);
@@ -288,24 +333,28 @@ describe("the plugin context bar (page navigation)", () => {
     expect(items.every((i: { pick: boolean }) => i.pick)).toBe(true);
   });
 
-  it("deep-linking #traffic selects MCP in the rail and Traffic in the switcher", async () => {
+  it("deep-linking #traffic selects MCP in the rail and marks the Traffic tab", async () => {
     await paint("traffic", inventory);
     expect(byId("railNav").innerHTML).toContain('data-group="mcp" data-view="mcps" aria-current="true"');
-    expect(byId("pageBtn").innerHTML).toContain('ctx-page">Traffic</span>');
+    const current = tabLinks().filter((t) => t.attrs["aria-current"] === "page");
+    expect(current.map((t) => t.attrs["data-page"])).toEqual(["traffic"]);
   });
 
-  it("deep-linking #tokens selects MCP in the rail and Token in the switcher", async () => {
+  it("deep-linking #tokens selects MCP in the rail and marks the Token tab", async () => {
     await paint("tokens", inventory);
     expect(byId("railNav").innerHTML).toContain('data-group="mcp" data-view="mcps" aria-current="true"');
-    expect(byId("pageBtn").innerHTML).toContain('ctx-page">Token</span>');
+    const current = tabLinks().filter((t) => t.attrs["aria-current"] === "page");
+    expect(current.map((t) => t.attrs["data-page"])).toEqual(["tokens"]);
   });
 
   it("synthesizes System under Settings instead of giving a destructive action permanent chrome", async () => {
     await paint("system", inventory);
     expect(byId("railNav").innerHTML).toContain('data-group="host" data-view="plugins" aria-current="true"');
-    expect(byId("pageBtn").hidden).toBe(false);
-    expect(byId("pageBtn").innerHTML).toContain('ctx-plugin">Settings</span>');
-    expect(byId("pageBtn").innerHTML).toContain('ctx-page">System</span>');
+    const title = byId("pageTitle");
+    expect(title.hidden).toBe(false);
+    expect(title.innerHTML).toContain('ctx-name">Settings</span>');
+    const current = tabLinks().filter((t) => t.attrs["aria-current"] === "page");
+    expect(current.map((t) => t.attrs["data-page"])).toEqual(["system"]);
   });
 
   it("tunnels is a two-page group: #tunnels is SSH Connections, #tunnel-forwards is Port Forwards", async () => {
@@ -314,30 +363,28 @@ describe("the plugin context bar (page navigation)", () => {
     const items = registry.pageMenuItems({ id: "tunnels", pages: tunnelsPages });
     expect(items.map((i: { label: string }) => i.label)).toEqual(["SSH Connections", "Port Forwards"]);
 
-    // The legacy deep link keeps its meaning: rail selects Tunnels, bar says SSH Connections.
+    // The legacy deep link keeps its meaning: rail selects Tunnels, the title says Tunnels.
     await paint("tunnels", inventory);
     expect(byId("railNav").innerHTML).toContain('data-group="tunnels" data-view="tunnels" aria-current="true"');
     expect(byId("ctxBar").hidden).toBe(false);
-    expect(byId("pageBtn").hidden).toBe(false);
-    expect(byId("pageBtn").innerHTML).toContain('ctx-plugin">Tunnels</span>');
-    expect(byId("pageBtn").innerHTML).toContain('ctx-page">SSH Connections</span>');
+    expect(byId("pageTitle").innerHTML).toContain('ctx-name">Tunnels</span>');
+    expect(tabLinks().map((t) => t.attrs["data-page"])).toEqual(["tunnels", "tunnel-forwards"]);
+    expect(tabLinks()[0].attrs["aria-current"]).toBe("page");
 
-    // The new sibling lands in the SAME group, on its own page.
+    // The new sibling lands in the SAME group, on its own tab.
     await paint("tunnel-forwards", inventory);
     expect(byId("railNav").innerHTML).toContain('data-group="tunnels" data-view="tunnels" aria-current="true"');
-    expect(byId("pageBtn").innerHTML).toContain('ctx-page">Port Forwards</span>');
+    expect(tabLinks()[1].attrs["aria-current"]).toBe("page");
   });
 
-  it("a single-page plugin keeps the bar — a static location, not a fake dropdown", async () => {
+  it("a single-page plugin keeps the bar — the title alone, no one-entry tabs", async () => {
     await paint("jobs", inventory);
     expect(byId("ctxBar").hidden).toBe(false);
-    // The location reads as text (same slot and weight), because a one-entry menu would lie.
-    expect(byId("pageBtn").hidden).toBe(true);
-    expect(byId("pageBtn").onclick).toBe(null);
-    expect(byId("pageLoc").hidden).toBe(false);
-    expect(byId("pageLoc").innerHTML).toContain('ctx-page">Jobs</span>');
-    // No redundant "Jobs / Jobs" breadcrumb either.
-    expect(byId("pageLoc").innerHTML).not.toContain("ctx-sep");
+    // The title IS the location; a one-entry tab strip would lie about what it does.
+    const title = byId("pageTitle");
+    expect(title.hidden).toBe(false);
+    expect(title.innerHTML).toContain('ctx-name">Jobs</span>');
+    expect(byId("pageTabs").hidden).toBe(true);
     // ...and the rail still seats and selects it.
     expect(byId("railNav").innerHTML).toContain('data-group="jobs" data-view="jobs" aria-current="true"');
   });
@@ -346,27 +393,41 @@ describe("the plugin context bar (page navigation)", () => {
     await paint("terminal", inventory);
     // Workspace frames the BODY only; the shell keeps drawing its chrome (docs/13 D5 rev.).
     expect(byId("ctxBar").hidden).toBe(false);
-    expect(byId("pageLoc").hidden).toBe(false);
-    expect(byId("pageLoc").innerHTML).toContain('ctx-page">Terminal</span>');
+    expect(byId("pageTitle").hidden).toBe(false);
+    expect(byId("pageTitle").innerHTML).toContain('ctx-name">Terminal</span>');
+    expect(byId("pageTabs").hidden).toBe(true);
     expect(byId("railNav").innerHTML).toContain('data-group="terminal" data-view="terminal" aria-current="true"');
   });
 
-  it("page chips sit left, the app trio (mem, theme, focus) owns the far right of the bar", () => {
+  it("the title and tabs sit left, the app trio (mem, theme, focus) owns the far right of the bar", () => {
     const shell = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../..", "src", "admin_assets", "index.html"), "utf8");
     const rail = shell.slice(shell.indexOf('class="rail"'), shell.indexOf('class="workbench"'));
     const ctx = shell.slice(shell.indexOf('class="ctxbar"'), shell.indexOf('class="shell"'));
+    // Page naming precedes the flex slack; readouts and the app zone follow it.
+    const titleAt = ctx.indexOf('id="pageTitle"');
+    const tabsAt = ctx.indexOf('id="pageTabs"');
+    const growAt = ctx.indexOf('class="grow"');
+    const countAt = ctx.indexOf('id="countChip"');
+    const memAt = ctx.indexOf('id="memChip"');
+    const zoneAt = ctx.indexOf('class="app-zone"');
+    for (const at of [titleAt, tabsAt, growAt, countAt, memAt, zoneAt]) expect(at).toBeGreaterThan(-1);
+    expect(titleAt).toBeLessThan(growAt);
+    expect(tabsAt).toBeLessThan(growAt);
+    expect(growAt).toBeLessThan(countAt);
+    expect(countAt).toBeLessThan(memAt);
+    expect(memAt).toBeLessThan(zoneAt);
     expect(rail).not.toContain("countChip");
-    expect(ctx).toContain('id="countChip"');
-    expect(ctx).toContain('id="memChip"');
     // The reserved app zone: theme moved here from the rail foot, focus stays far right.
     expect(rail).not.toContain('id="expandBtn"');
     expect(rail).not.toContain('id="themeBtn"');
     expect(ctx).toContain('id="themeBtn"');
     expect(ctx).toContain('id="expandBtn"');
-    // The two-segment-control era is gone from the shell.
+    // The two-segment-control era is gone from the shell, and so is the boxed switcher.
     expect(shell).not.toContain('id="viewSeg"');
     expect(shell).not.toContain('id="subBar"');
     expect(shell).not.toContain('id="subSeg"');
+    expect(shell).not.toContain('id="pageBtn"');
+    expect(shell).not.toContain('id="pageLoc"');
   });
 });
 
@@ -387,20 +448,21 @@ describe("layouts (docs/13 D5)", () => {
     expect(rail).toContain('data-group="mcp" data-view="mcps"');
     expect(rail).not.toContain('data-view="traffic"');
     expect(rail).toContain(">MCP</span>");
-    // The switcher keeps working: the legacy manifest's MCP group has three pages.
+    // The tabs keep working: the legacy manifest's MCP group has three pages.
     expect(byId("ctxBar").hidden).toBe(false);
-    expect(byId("pageBtn").innerHTML).toContain('ctx-page">MCPs</span>');
+    expect(byId("pageTitle").innerHTML).toContain('ctx-name">MCP</span>');
+    expect(tabLinks().map((t) => t.attrs["data-page"])).toEqual(["mcps", "traffic", "tokens"]);
   });
 
   it("the legacy manifest grows the same two tunnels pages as the inventory", async () => {
     await paint("tunnel-forwards", null, 404);
     // One group, both pages, correct labels — the 404 path must not collapse back to one.
     expect(byId("railNav").innerHTML).toContain('data-group="tunnels" data-view="tunnels" aria-current="true"');
-    expect(byId("pageBtn").innerHTML).toContain('ctx-plugin">Tunnels</span>');
-    expect(byId("pageBtn").innerHTML).toContain('ctx-page">Port Forwards</span>');
+    expect(byId("pageTitle").innerHTML).toContain('ctx-name">Tunnels</span>');
+    expect(tabLinks().map((t) => t.attrs["data-page"])).toEqual(["tunnels", "tunnel-forwards"]);
   });
 
-  it("a multi-page group whose pages cannot serve keeps its switcher, marked · off", async () => {
+  it("a multi-page group whose pages cannot serve keeps its tabs, marked · off", async () => {
     const disabled: typeof inventory = {
       ...inventory,
       plugins: inventory.plugins.map((p) => (p.id === "mcp" ? { ...p, enabled: false } : p)),
@@ -410,7 +472,15 @@ describe("layouts (docs/13 D5)", () => {
     const items = registry.pageMenuItems({ id: "mcp", pages: mcpPages });
     expect(items.map((i: { label: string }) => i.label)).toEqual(["Servers · off", "Traffic · off", "Token · off"]);
     expect(items[0].title).toBe("Plugin disabled");
-    // The switcher itself stays reachable - an unavailable plugin is one click from Plugins.
+    // The tabs stay reachable - an unavailable plugin is one click from Plugins. Each is
+    // marked in the strip itself (label + aria-disabled), not only inside the ⋯ menu.
     expect(byId("ctxBar").hidden).toBe(false);
+    expect(byId("pageTitle").title).toBe("Plugin disabled");
+    for (const link of tabLinks()) {
+      expect(link.attrs["aria-disabled"]).toBe("true");
+      expect(link.textContent).toContain("· off");
+    }
+    // ...and still navigate: the landing tab carries aria-current like any other.
+    expect(tabLinks()[0].attrs["aria-current"]).toBe("page");
   });
 });

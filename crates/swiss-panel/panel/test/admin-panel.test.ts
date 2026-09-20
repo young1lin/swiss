@@ -571,8 +571,8 @@ describe("fullscreen - the CSS contract (e2e over the shipped sheet)", () => {
   });
 
   it("the minimal bar folds page context and passive readouts", () => {
-    expect(base).toMatch(/body.immersive #pageBtn,/);
-    expect(base).toMatch(/body.immersive #pageLoc,/);
+    expect(base).toMatch(/body.immersive #pageTitle,/);
+    expect(base).toMatch(/body.immersive #pageTabs,/);
     expect(base).toMatch(/body.immersive #countChip,/);
     expect(base).toMatch(/body.immersive #memChip {[^}]*display: none/);
   });
