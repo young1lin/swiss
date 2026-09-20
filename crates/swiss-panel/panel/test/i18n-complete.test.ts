@@ -70,7 +70,7 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
    unit-only counts, and separator-skeleton keys. An entry may sit in the dictionary
    identical to its key only by being on this list, each with its reason — the
    value === k rule stays a real gate for everything else.
-   - "MCP", "Token", "Base URL": product vocabulary, used as-is in Chinese UI copy.
+   - "MCP", "Base URL": product vocabulary, used as-is in Chinese UI copy.
    - "{label} — {error}": an em-dash skeleton; Chinese keeps the same punctuation.
    - "HTTP {n}", "{n} MB": units and codes stay Latin in Chinese technical copy.
    - "· {user} · {auth}": a middle-dot metadata skeleton between data values.
@@ -98,7 +98,7 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
    - "TRUE", "FALSE", "null": rendered SQL/JSON vocabulary, not copy.
    - "git-mcp", "prod": the add sheets' sample ids — language-neutral samples.
    - "Shell": the terminal settings field label — the program's own noun. */
-const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1", "build", "/data/ws/proj", "socks5://127.0.0.1:7890", "5433", "5432", "127.0.0.1", "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", "nightly-vacuum", "cmd /c backup.bat --flag value", "30 3 * * *", "ops, nightly", "retry.retryOn", "CSV", "SQL", "DDL", "events", " · {note}", "id,name\n1,alice\n2,bob", "TRUE", "FALSE", "null", "git-mcp", "prod", "Shell"]);
+const PASSTHROUGH = new Set(["MCP", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1", "build", "/data/ws/proj", "socks5://127.0.0.1:7890", "5433", "5432", "127.0.0.1", "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", "nightly-vacuum", "cmd /c backup.bat --flag value", "30 3 * * *", "ops, nightly", "retry.retryOn", "CSV", "SQL", "DDL", "events", " · {note}", "id,name\n1,alice\n2,bob", "TRUE", "FALSE", "null", "git-mcp", "prod", "Shell"]);
 
 describe("i18n dictionary completeness (docs/38 L10a)", () => {
   const used = collect();
@@ -110,8 +110,29 @@ describe("i18n dictionary completeness (docs/38 L10a)", () => {
   });
 
   it("no zh entry is orphaned", () => {
-    const orphans = Object.keys(zh).filter((k) => !used.has(k));
+    /* The gateway-served nav labels (the wire vocabulary below) reach the screen through
+     * tr(variable), which the scanner cannot see - count them as used here. */
+    const wire = new Set([
+      "MCP", "Tunnels", "Data", "Jobs", "Process", "Terminal", "Remote", "Settings",
+      "Servers", "Traffic", "Token", "SSH Connections", "Port Forwards",
+      "Targets", "Runs", "Plugins", "Secrets", "System",
+    ]);
+    const orphans = Object.keys(zh).filter((k) => !used.has(k) && !wire.has(k));
     expect(orphans, "orphan zh: …").toEqual([]);
+  });
+  
+  it("the gateway-served nav labels all translate (the wire vocabulary)", () => {
+    /* The rail, the page switcher and the palette paint these through tr(g.label)/
+     * tr(p.label) - variable arguments, invisible to the literal scanner above. This
+     * list mirrors the descriptors the gateway serves on /api/plugins (docs/09 §6).
+     * A new page's label joins this list with its dictionary entry, in one change. */
+    const served = [
+      "MCP", "Tunnels", "Data", "Jobs", "Process", "Terminal", "Remote", "Settings",
+      "Servers", "Traffic", "Token", "SSH Connections", "Port Forwards",
+      "Targets", "Runs", "Plugins", "Secrets", "System",
+    ];
+    const missing = served.filter((k) => !has(zh, k));
+    expect(missing, "served label without a zh entry - the nav would show English").toEqual([]);
   });
 
   it("no zh entry forgot to translate (value === key)", () => {
