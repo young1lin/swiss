@@ -313,6 +313,36 @@ forEach 里的 IIFE 循环捕获 0 处（2 处已解包）。`no-unnecessary-con
 即 §9 注：清零当日转 error。块体箭头函数（`(t: X): T => { return ...; }` 形态）约 1,400+ 处
 **有意保留**：纯风格改写对合并前是零收益的大 diff，留待独立的机械轮。
 
+**M9 补账（2026-09-20，合并前）**：R6 收账里"索引签名 36"这一项当时只做了"审计并加 keep 注释"，
+没有对 Rust 逐字段。这一轮把 35 处全部去掉之后只有 **21 个 tsc 错误、13 个位置**——绝大多数
+"open by keep" 从来没有承重，那些注释描述的开放性（"driver 可能多给一列"、"未来网关的字段会
+ride along"）要么是结构类型本来就有的行为，要么被服务端 `check_known` 直接否定。现状：`src/types/`
+里 `[key: string]` **0**；`add-sheet.ts` 的 def body 改写成 `{…} & Record<string, unknown>`（唯一
+真正按类型动态构造的对象，`TYPE_FIELDS` 决定字段）；`JtBox` 改成 `Record<string, unknown>` 别名
+（任意 JSON 对象的诚实写法）。对齐来源逐个记在类型注释里：`ApiActionRow`（services/api.rs
+list_actions；jobs 的 action 之前被标成 `ApiMcpTool`，靠签名遮住 `type`/`title`/`schema` 三个读取）、
+`JobConfigRow`/`JobDef`/`JobTrigger` 与七个闭合枚举（def.rs `check_known` + `enum_str`）、
+`ApiDbActivityRow`（dbbrowser.rs `activity_sql`）、`ApiDbRedisValue`/`ApiDbRedisKeyRow`
+（redis.rs `type_aware_read`、redis_browser.rs）、`ApiMcpTunnelDep`（manager.rs `tunnels_for_mcp`）、
+`ApiMcpRevisionRow`（adminapi.rs:1413）、`RemoteRunInput`/`RemoteRunMeta`（actions.rs 五组字段表 +
+history.rs `sanitized_input`）、`TerminalPluginConfig`（plugins/terminal.rs config_schema）、
+`JsonSchemaNode`（MCP Tool.inputSchema 与插件 config_schema 共用的 JSON-Schema 子集）。`McpDetail`
+的 `d[d.tab]` 动态槽改成 `McpKind` 联合 + `isMcpKind` 守卫，7 处 `as "tools" | "resources" | "prompts"`
+连同签名一起退休。发射自有 JS 957,278 字节（+0.4% 对 R6）。
+
+**D11 清单（对账时发现的两侧不一致；按 §5 规则只记录，修复另开提交两侧同改）**：
+
+| # | 位置 | 面板以为 | Rust 实际 | 后果 | 状态 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `jobs-v2.ts defTemplate` / `jobs.ts` firstRun 下拉 | `firstRun: "aligned"` | `enum_str` 只认 `after-interval`/`immediate`（def.rs:845，docs/11 §3.3） | Advanced sheet 用默认 interval 触发器新建必 400（实测 `must be one of: "after-interval", "immediate", got "aligned"`） | **本轮已修**——类型收成闭合联合后编译器自己揪出来的，纯面板侧；下拉改从 `JOB_*` 常量渲染，`legalOf` 收窄；用例 `the definition enums match def.rs` |
+| 2 | `ApiDbActivityRow.own` | `boolean` | pg 发 boolean；mysql 的 `ID = CONNECTION_ID()` 经网格 `query()` 的文本化变成 `"0"`/`"1"` | `"0"` 为真 → mysql 的 Activity 页 **每一行**都标 "this panel"（19998 实测 298/298） | 未修；根因在 `mysql_browser.rs activity()` 复用文本化查询，应在那里把 own 转 bool |
+| 3 | `ApiDbActivityRow.seconds` | `number` | pg 与 mysql **都**发字符串（bigint/int 被同一文本化） | 无可见后果（`dbActivityDuration` 做了 `Number()`），但类型说谎 | 未修；与 #2 同一处根因 |
+| 4 | `ApiMcpDetails.tunnels` | `string[]` | `tunnels_for_mcp` 的对象行 | 无可见后果（`McpDetail.tunnels` 原是 `unknown[]` + 读处 cast） | 本轮类型已改为 `ApiMcpTunnelDep[]` |
+| 5 | `McpRevisionRow.at` | `string?` | `RevisionRec.at: i64` epoch 毫秒 | 无可见后果（`new Date(number)` 合法） | 本轮类型已改为 `number` |
+| 6 | `RemoteRunInput.path` | cat/write 读 `input.path` | 五组字段表里没有 `path`，cat/write 用 `remote` | 无可见后果（`|| input.remote` 兜底一直在生效） | 本轮已删掉死读取 |
+| 7 | `JobDef.id` / `JobDef.trigger.cron` | 可选字段 | 定义的合法字段表没有 `id`（id 是 map 的 key）、trigger 没有 `cron`（是 `expression`） | 手写 JSON 带 `id` 会 400，面板类型却放行 | 本轮类型已删 |
+| 8 | jobs Advanced sheet 的提示文案 | "anything else it already carries rides along untouched" | `check_known` 拒绝一切未知键 | 文案对用户说了一个服务端否定的承诺 | 本轮文案已改 |
+
 ## 12. 不做什么
 
 - 不 bundle、不 minify、不 source map、不引 prettier、不 `cargo fmt` 面板。

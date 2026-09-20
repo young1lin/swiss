@@ -16,7 +16,7 @@
 
 import type { ApiMcpCallRow, ApiMcpItem, ApiMcpRow } from "./types/api.js";
 import type { JtBox, PhantomMcpRow } from "./types/dom.js";
-import type { McpDetail } from "./types/state.js";
+import type { McpDetail, McpKind } from "./types/state.js";
 import { iconNode, toast } from "./util.js";
 import { frag, h } from "./h.js";
 import type { HChild } from "./h.js";
@@ -399,8 +399,8 @@ function toolDetailNode(it: ApiMcpItem, args: HChild): HTMLElement {
       h("pre", { class: "item-schema" }, schema)));
 }
 
-function kindBodyNode(d: McpDetail, kind: string, m: ApiMcpRow | PhantomMcpRow): HChild {
-  const kd = d[kind as "tools" | "resources" | "prompts"];
+function kindBodyNode(d: McpDetail, kind: McpKind, m: ApiMcpRow | PhantomMcpRow): HChild {
+  const kd = d[kind];
   // Resources get a master on/off at the top: off empties the list (the capability stays, so the
   // notify stays valid) and tells connected clients to re-list. Symmetric with the per-tool toggle.
   let resToggle: HTMLElement | null = null;

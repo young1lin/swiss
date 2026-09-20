@@ -16,7 +16,7 @@
 
 import type { ApiMcpCallRow, ApiMcpTool } from "./types/api.js";
 import type { PgUrlParts } from "./types/dom.js";
-import type { ApiMcpResourceRead, McpConfigLike, McpRevisionRow, McpRunResult, McpTunnelDepRow } from "./types/runs.js";
+import type { ApiMcpResourceRead, McpConfigLike, McpRunResult } from "./types/runs.js";
 import type { McpDetail } from "./types/state.js";
 import { $, api, apiJson, errText, iconNode, targetEl, toast } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
@@ -521,7 +521,7 @@ function configBodyNode(d: McpDetail): HChild {
         h("code", null, "${ENV}"),
         " references are kept as references, so no credential is written to disk.")
     : null;
-  const revs = d.revisions as McpRevisionRow[] || [];
+  const revs = d.revisions || [];
   // Parked definition snapshots stay available without making an empty shelf a permanent section.
   const revRows: HChild = revs.length
     ? revs.map((r, i) => {
@@ -557,7 +557,7 @@ function configBodyNode(d: McpDetail): HChild {
  * already there. Nothing restarts an MCP on its own.
  */
 function tunnelDepsNode(d: McpDetail): HChild {
-  const t = d.tunnels as McpTunnelDepRow[] | null | undefined;
+  const t = d.tunnels;
   if (!t || !t.length) return null;
   const rows = t.map((x) => {
     const dot = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "";

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-import type { KindPageState, McpDetail } from "./types/state.js";
-import { $, KINDS, api, apiJson, now, toast } from "./util.js";
+import type { KindPageState, McpDetail, McpKind } from "./types/state.js";
+import { $, KINDS, api, apiJson, isMcpKind, now, toast } from "./util.js";
 import { readFields, translateOauth, translatePg } from "./fields.js";
 import { callsErrNode, callsStatusNode, fmtJson, mountJsonTrees } from "./logs.js";
 import { fill } from "./h.js";
@@ -57,10 +57,10 @@ async function act(name: string, verb: string): Promise<void> {
   // The server rebuilt on start/restart, so any cached page list is stale.
   const d = mcpDetail();
   if (d && d.name === name) {
-    KINDS.forEach((k) => { d[k as "tools" | "resources" | "prompts"] = pageState(); });
+    KINDS.forEach((k) => { d[k] = pageState(); });
     renderPane();
     void loadMeta(name);
-    if (KINDS.includes(d.tab)) void loadPage(name, d.tab);
+    if (isMcpKind(d.tab)) void loadPage(name, d.tab);
   }
 }
 
@@ -153,6 +153,12 @@ async function authorizeMcp(name: string): Promise<void> {
 /* --- detail data ------------------------------------------------------------------------------ */
 function pageState(): KindPageState {
   return { items: [], nextCursor: undefined, total: undefined, pageSize: 50, cursors: [""], loading: false, loaded: false, error: null };
+}
+/** After a restart, restore or config save the three kind pages are stale: open them fresh
+ *  on whatever detail is showing now (the async caller's detail may have been closed). */
+function resetKindPages(): void {
+  const d = mcpDetail();
+  if (d) KINDS.forEach((k) => { d[k] = pageState(); });
 }
 
 function openDetail(name: string): void {
@@ -422,11 +428,11 @@ async function clearCalls(): Promise<void> {
   } catch (e) { toast("request failed", true); }
 }
 
-async function loadPage(name: string, kind: string): Promise<void> {
+async function loadPage(name: string, kind: McpKind): Promise<void> {
   const d = mcpDetail();
   if (!d || d.name !== name) return;
-  const kd = d[kind as "tools" | "resources" | "prompts"];
-  if (!kd || kd.loading) return;
+  const kd = d[kind];
+  if (kd.loading) return;
   kd.loading = true;
   kd.error = null;
   if (d.tab === kind) renderPane();
@@ -462,7 +468,7 @@ function showTab(tab: string): void {
   d.tab = tab;
   d.editing = false;
   renderPane();
-  if (KINDS.includes(tab) && !d[tab as "tools" | "resources" | "prompts"].loaded && !d[tab as "tools" | "resources" | "prompts"].loading) void loadPage(d.name, tab);
+  if (isMcpKind(tab) && !d[tab].loaded && !d[tab].loading) void loadPage(d.name, tab);
   // The config tab's revision list (docs/28 D1) rides along with the tab, not the poll.
   if (tab === "config") void loadRevisions(d.name);
   // Run needs the tool list to build its argument form.
@@ -471,19 +477,24 @@ function showTab(tab: string): void {
   // request for the same target on top of the one in flight.
   if (tab === "logs" && d.callsPendingPage == null) void loadCalls(d.name);
 }
+/** The pager's target: the open detail's active kind page, or null when the tab is not a
+ *  kind page (run / config / logs have no pager). */
+function activeKindPage(): { d: McpDetail; kind: McpKind; kd: KindPageState } | null {
+  const d = mcpDetail();
+  if (!d || !isMcpKind(d.tab)) return null;
+  return { d, kind: d.tab, kd: d[d.tab] };
+}
 function pageNext(): void {
-  const d = mcpDetail(), kd = d && d[d.tab as "tools" | "resources" | "prompts"];
-  if (!kd || !kd.nextCursor || kd.loading) return;
-  kd.cursors.push(kd.nextCursor);
-  const d_ = d!;
-  void loadPage(d_.name, d_.tab);
+  const at = activeKindPage();
+  if (!at || !at.kd.nextCursor || at.kd.loading) return;
+  at.kd.cursors.push(at.kd.nextCursor);
+  void loadPage(at.d.name, at.kind);
 }
 function pagePrev(): void {
-  const d = mcpDetail(), kd = d && d[d.tab as "tools" | "resources" | "prompts"];
-  if (!kd || kd.cursors.length <= 1 || kd.loading) return;
-  kd.cursors.pop();
-  const d_ = d!;
-  void loadPage(d_.name, d_.tab);
+  const at = activeKindPage();
+  if (!at || at.kd.cursors.length <= 1 || at.kd.loading) return;
+  at.kd.cursors.pop();
+  void loadPage(at.d.name, at.kind);
 }
 
 /* --- config edit ------------------------------------------------------------------------------ */
@@ -566,7 +577,7 @@ async function saveReplace(): Promise<void> {
       // The swap stands even when the new def will not start; the panel must say so, not hide it.
       if (j.restartError) toast(name + " failed to start: " + j.restartError, true);
       if (mcpDetail() === d) d.editVals = null;
-      KINDS.forEach((k) => { if (mcpDetail()) mcpDetail()![k as "tools" | "resources" | "prompts"] = pageState(); });
+      resetKindPages();
       void loadMeta(name);
       void loadRevisions(name);
     }
@@ -590,7 +601,7 @@ async function restoreRevision(index: number): Promise<void> {
     if (!r.ok) { toast(j.error || "restore failed", true); return; }
     toast(d.name + ": revision " + (index + 1) + " restored");
     if (j.restartError) toast(d.name + " failed to start: " + j.restartError, true);
-    KINDS.forEach((k) => { if (mcpDetail()) mcpDetail()![k as "tools" | "resources" | "prompts"] = pageState(); });
+    resetKindPages();
     void loadMeta(d.name);
     void loadRevisions(d.name);
     await loadList();
@@ -710,7 +721,7 @@ async function saveEdit(): Promise<void> {
       setLastAction(name, { msg: "config saved → restarted", err: false, at: now() });
       toast(name + ": config saved, restarted");
       if (mcpDetail() === d) d.editVals = null;
-      KINDS.forEach((k) => { if (mcpDetail()) mcpDetail()![k as "tools" | "resources" | "prompts"] = pageState(); });
+      resetKindPages();
       void loadMeta(name);
     }
   } catch (e) {

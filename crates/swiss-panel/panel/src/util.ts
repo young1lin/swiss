@@ -15,11 +15,15 @@
  */
 
 import type { EmptyStateSpec } from "./types/dom.js";
+import type { McpKind } from "./types/state.js";
 import type { HChild } from "./h.js";
 import { h } from "./h.js";
 const TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
-const KINDS = ["tools", "resources", "prompts"];
+/* The three kind pages, in tab order. Typed so a kind indexes McpDetail's three slots
+   directly (d[kind]) - the tab string narrows through isMcpKind, not through a cast. */
+const KINDS: readonly McpKind[] = ["tools", "resources", "prompts"];
+function isMcpKind(s: string): s is McpKind { return (KINDS as readonly string[]).includes(s); }
 /* Mirrors DEFAULT_GROUP in managed.ts: the name a group list starts from — an ordinary group
    the user can rename or delete, whose only privilege is being the initial FIRST entry (the
    slot unassigned MCPs render under). The server now stores it like any other name. */
@@ -206,4 +210,4 @@ async function apiJson<T = unknown>(path: string, opts?: RequestInit): Promise<T
 
 /* esc() survives for the few string contexts that remain (sheet titles via textContent
  * builds are nodes now; the callers left are attribute values and pure-string suites). */
-export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isTyping, now, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };
+export { $, DEFAULT_GROUP, KINDS, THEME_KEY, TOKEN_ID_KEY, api, apiJson, dbReqGuard, dotTitle, el, emptyNode, errText, esc, iconNode, isMcpKind, isTyping, now, targetEl, toast, typeTagNode, TYPE_ICONS, whenLabel };

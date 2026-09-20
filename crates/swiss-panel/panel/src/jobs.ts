@@ -33,9 +33,9 @@
    (action input built from GET /api/actions, run.js's builder) plus a JSON editor, round-tripping
    losslessly so fields this form does not know survive the save.
    ================================================================================================ */
-import type { ApiJobRow, ApiJobRunRecord, ApiMcpTool, ToolInputSchema } from "./types/api.js";
+import type { ApiActionRow, ApiActionsResponse, ApiJobRow, ApiJobRunRecord } from "./types/api.js";
 import type { GroupCfg, GroupSlice } from "./types/dom.js";
-import type { JobConfigRow, JobDef, JobFormValues, JobSched } from "./types/state.js";
+import type { JobConfigRow, JobDef, JobFormValues, JobRetryOn, JobSched } from "./types/state.js";
 import { $, api, apiJson, dotTitle, emptyNode, errText, iconNode, targetEl, toast, whenLabel } from "./util.js";
 import { closeSheet } from "./add-sheet.js";
 import { assignMember, groupFieldNode, groupOf as makeGroupOf, lastGroup, mountGroup, newGroupFlow, rememberGroup, resolveDefaultGroup, saveOrder, slice } from "./groups.js";
@@ -44,7 +44,7 @@ import { jobDotClass, jobGroupsList, jobRowNode, jobsChipText, loadJobs } from "
 import { argFieldsNode, readRunArgs } from "./run.js";
 import { fill, frag, h } from "./h.js";
 import type { HChild } from "./h.js";
-import { defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, v2ToForm } from "./jobs-v2.js";
+import { JOB_BACKOFFS, JOB_CAPTURES, JOB_FIRST_RUNS, JOB_MISFIRES, JOB_OVERLAPS, JOB_RETRY_ONS, JOB_TRIGGER_KINDS, defTemplate, envToLines, formToV2, historyMeta, legalOf, parseEnvLines, v2ToForm } from "./jobs-v2.js";
 import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
 import { currentView } from "./ui-state.js";
 import { appendJobRuns, clearJobBusy, jobDragging, jobDraggingGroup, jobFolds, jobHistory, jobHistoryIsFor, jobIsBusy, jobRows, paintedJobsSig, setJobBusy, setJobDragging, setJobDraggingGroup, setJobPendingGroup, setPaintedJobsSig, startJobHistory, takeJobPendingGroup } from "./job-state.js";
@@ -651,14 +651,13 @@ async function saveJob(existing: ApiJobRow | null): Promise<void> {
 
 /** The live action list, fetched once per sheet open: the action input form is generated from
  *  each capability's own schema (docs/10 §7), exactly like the Run view's argument fields. */
-async function fetchActions(): Promise<ApiMcpTool[]> {
-  const j = await apiJson<{ actions?: ApiMcpTool[] }>("/api/actions");
+async function fetchActions(): Promise<ApiActionRow[]> {
+  const j = await apiJson<ApiActionsResponse>("/api/actions");
   return (j && j.actions) || [];
 }
 
-function actionByType(actions: ApiMcpTool[], type: string): ApiMcpTool | null {
-  for (let i = 0; i < actions.length; i++) if (actions[i].type === type) return actions[i];
-  return null;
+function actionByType(actions: ApiActionRow[], type: string): ApiActionRow | null {
+  return actions.find((a) => { return a.type === type; }) || null;
 }
 
 /** The Advanced editor. `job` null = create. Edits go through PUT /api/plugins/jobs/config
@@ -685,13 +684,13 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
     picked = staged != null ? staged : resolveDefaultGroup(rowGroups, lastGroup("jobs"));
   }
 
-  const actionOptNodes = actions.map((a: ApiMcpTool) => {
-    return h("option", { value: String(a.type), selected: a.type === form.actionType },
+  const actionOptNodes = actions.map((a) => {
+    return h("option", { value: a.type, selected: a.type === form.actionType },
       a.type + (a.title && a.title !== a.type ? " \u2014 " + a.title : ""));
   });
   const current = actionByType(actions, form.actionType);
   const inputFields: HChild = current
-    ? argFieldsNode({ inputSchema: current.schema as ToolInputSchema } as ApiMcpTool, "ja-", (base.action && base.action.input) || {})
+    ? argFieldsNode({ inputSchema: current.schema }, "ja-", (base.action && base.action.input) || {})
     : h("div", { class: "hint" }, "This action type is not registered right now (its plugin is off) — edit its input in the JSON below.");
 
   // Visible before the paint (panel-proof-of-life rule 1) — the wide sheet paints in one fill.
@@ -714,11 +713,11 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
           fld("title", h("input", { id: "jv-title", value: form.title, autocomplete: "off" })),
           fld("labels (comma-separated)", h("input", { id: "jv-labels", value: form.labels, placeholder: "ops, nightly", autocomplete: "off" }))),
         two(
-          fld("trigger", sel("jv-kind", ["interval", "cron", "manual"].map((k) => opt(k, form.kind === k)))),
+          fld("trigger", sel("jv-kind", JOB_TRIGGER_KINDS.map((k) => opt(k, form.kind === k)))),
           fld("first firing", h("span", { class: "hint" }, "one schedule per definition"))),
         h("div", { class: "two", id: "jv-interval-row" },
           fld("everyMs", h("input", { id: "jv-every", value: form.everyMs, placeholder: "3600000", autocomplete: "off" })),
-          fld("firstRun", sel("jv-first", ["aligned", "immediate"].map((f) => opt(f, form.firstRun === f))))),
+          fld("firstRun", sel("jv-first", JOB_FIRST_RUNS.map((f) => opt(f, form.firstRun === f))))),
         h("label", { class: "field", id: "jv-cron-row" },
           h("span", null, "cron (local time)"),
           h("input", { id: "jv-cron", value: form.cron, placeholder: "30 3 * * *", autocomplete: "off" }),
@@ -727,25 +726,25 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
           fld("timeoutMs", h("input", { id: "jv-timeout", value: form.timeoutMs, placeholder: "600000", autocomplete: "off" })),
           h("label", { class: "check" }, h("input", { type: "checkbox", id: "jv-disabled", checked: !!form.disabled }), "Disabled")),
         two(
-          fld("overlap", sel("jv-overlap", ["skip", "queue-one"].map((o) => opt(o, form.overlap === o)))),
-          fld("misfire", sel("jv-misfire", ["skip", "run-once"].map((m) => opt(m, form.misfire === m))))),
+          fld("overlap", sel("jv-overlap", JOB_OVERLAPS.map((o) => opt(o, form.overlap === o)))),
+          fld("misfire", sel("jv-misfire", JOB_MISFIRES.map((m) => opt(m, form.misfire === m))))),
         two(
           fld("retry.maxAttempts", h("input", { id: "jv-rmax", value: form.retryMax, placeholder: "1", autocomplete: "off" })),
           fld("retry.delayMs", h("input", { id: "jv-rdelay", value: form.retryDelayMs, placeholder: "0", autocomplete: "off" }))),
         two(
-          fld("retry.backoff", sel("jv-rback", ["fixed", "exponential"].map((b) => opt(b, form.retryBackoff === b)))),
+          fld("retry.backoff", sel("jv-rback", JOB_BACKOFFS.map((b) => opt(b, form.retryBackoff === b)))),
           h("span", { class: "field" },
             h("span", null, "retry.retryOn"),
-            h("span", { style: "display:flex;gap:var(--s2)" }, ["failure", "timeout"].map((r) =>
+            h("span", { style: "display:flex;gap:var(--s2)" }, JOB_RETRY_ONS.map((r) =>
               h("label", { class: "check" },
                 h("input", { type: "checkbox", data: { retryon: r }, checked: form.retryOn.includes(r) }), r))))),
         two(
-          fld("output.capture", sel("jv-capture", ["tail", "none"].map((c) => opt(c, form.capture === c)))),
+          fld("output.capture", sel("jv-capture", JOB_CAPTURES.map((c) => opt(c, form.capture === c)))),
           fld("output.maxBytes", h("input", { id: "jv-maxbytes", value: form.maxBytes, placeholder: "16384", autocomplete: "off" }))),
         fld("action", sel("jv-action", actionOptNodes)),
         h("div", { id: "jv-inputs" }, inputFields),
         fld("definition JSON \u2014 the exact object that will be saved", h("textarea", { id: "jv-json", rows: 12, spellcheck: false })),
-        h("div", { class: "hint" }, "The form writes only the fields it shows onto this object; anything else it already carries rides along untouched. Edit the JSON directly for anything the form does not know.")),
+        h("div", { class: "hint" }, "The form writes only the fields it shows onto this object. Edit the JSON directly for the fields it does not show (group, action.schemaVersion); the server refuses any key it does not know.")),
       h("div", { class: "sheet-foot" },
         h("button", { class: "btn", id: "jv-form-to-json" }, "Form \u2192 JSON"),
         h("button", { class: "btn", id: "jv-cancel" }, "Cancel"),
@@ -784,31 +783,33 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   $<HTMLSelectElement>("jv-action").onchange = (): void => {
     const next = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
     fill($("jv-inputs"), next
-      ? argFieldsNode({ inputSchema: next.schema } as ApiMcpTool, "ja-", {})
+      ? argFieldsNode({ inputSchema: next.schema }, "ja-", {})
       : h("div", { class: "hint" }, "Not registered — edit the input in the JSON below."));
   };
 
+  /* The selects were rendered from the JOB_* lists, so legalOf is a type narrowing, not a
+     second validation - it throws only if the DOM and the lists disagree (a panel bug). */
   function formValues(): JobFormValues {
-    const retryOn: string[] = [];
-    Array.prototype.forEach.call(document.querySelectorAll("[data-retryon]"), (cb: HTMLInputElement): void => {
-      if (cb.checked) retryOn.push(cb.getAttribute("data-retryon")!);
+    const retryOn: JobRetryOn[] = [];
+    document.querySelectorAll<HTMLInputElement>("[data-retryon]").forEach((cb) => {
+      if (cb.checked) retryOn.push(legalOf(cb.dataset.retryon || "", JOB_RETRY_ONS, "retry.retryOn"));
     });
     return {
       title: $<HTMLInputElement>("jv-title").value.trim(),
       labels: $<HTMLInputElement>("jv-labels").value,
       disabled: $<HTMLInputElement>("jv-disabled").checked,
-      kind: $<HTMLSelectElement>("jv-kind").value,
+      kind: legalOf($<HTMLSelectElement>("jv-kind").value, JOB_TRIGGER_KINDS, "trigger.kind"),
       everyMs: $<HTMLInputElement>("jv-every").value.trim(),
-      firstRun: $<HTMLSelectElement>("jv-first").value,
+      firstRun: legalOf($<HTMLSelectElement>("jv-first").value, JOB_FIRST_RUNS, "trigger.firstRun"),
       cron: $<HTMLInputElement>("jv-cron").value.trim(),
       timeoutMs: $<HTMLInputElement>("jv-timeout").value.trim(),
-      overlap: $<HTMLSelectElement>("jv-overlap").value,
-      misfire: $<HTMLSelectElement>("jv-misfire").value,
+      overlap: legalOf($<HTMLSelectElement>("jv-overlap").value, JOB_OVERLAPS, "overlap"),
+      misfire: legalOf($<HTMLSelectElement>("jv-misfire").value, JOB_MISFIRES, "misfire"),
       retryMax: $<HTMLInputElement>("jv-rmax").value.trim(),
       retryDelayMs: $<HTMLInputElement>("jv-rdelay").value.trim(),
-      retryBackoff: $<HTMLSelectElement>("jv-rback").value,
+      retryBackoff: legalOf($<HTMLSelectElement>("jv-rback").value, JOB_BACKOFFS, "retry.backoff"),
       retryOn: retryOn,
-      capture: $<HTMLSelectElement>("jv-capture").value,
+      capture: legalOf($<HTMLSelectElement>("jv-capture").value, JOB_CAPTURES, "output.capture"),
       maxBytes: $<HTMLInputElement>("jv-maxbytes").value.trim(),
       actionType: $<HTMLSelectElement>("jv-action").value,
     };
@@ -817,7 +818,7 @@ async function openV2Sheet(job: ApiJobRow | null): Promise<void> {
   function formToDef(): JobDef {
     const currentAction = actionByType(actions, $<HTMLSelectElement>("jv-action").value);
     const input = currentAction
-      ? readRunArgs({ inputSchema: currentAction.schema as ToolInputSchema } as ApiMcpTool, "ja-")
+      ? readRunArgs({ inputSchema: currentAction.schema }, "ja-")
       : (def.action && def.action.input) || {};
     return formToV2(formValues(), def, input);
   }

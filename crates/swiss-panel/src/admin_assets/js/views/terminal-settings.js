@@ -44,7 +44,7 @@ export async function openLocalSheet() {
   /* The switch's reason line is the schema's own description: one source, no fork — the
      sentence next to the checkbox can never drift from the one the backend enforces. */
   let whyOff = "";
-  try { whyOff = got.schema?.properties.local.properties.enabled.description || ""; } catch (e) { /* an older schema: no line */ }
+  try { whyOff = got.schema?.properties?.local.properties?.enabled.description || ""; } catch (e) { /* an older schema: no line */ }
   const options = shells.map((s) => {
     return h("option", { value: s.program }, s.label + " · " + s.program);
   });

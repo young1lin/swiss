@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { KINDS } from "../util.js";
+import { isMcpKind } from "../util.js";
 import { loadList, mcpChipText } from "../polling.js";
 import { loadCalls, loadMeta, loadPage, pageState } from "../detail.js";
 import { renderPane } from "../pane.js";
@@ -33,7 +33,7 @@ export async function refresh() {
   const d = mcpDetail();
   if (!d) return;
   await loadMeta(d.name);
-  if (KINDS.includes(d.tab)) { d[d.tab] = pageState(); await loadPage(d.name, d.tab); }
+  if (isMcpKind(d.tab)) { d[d.tab] = pageState(); await loadPage(d.name, d.tab); }
 }
 export function countText() { return mcpChipText(); }
 export function unmount() { histClose(); }

@@ -26,7 +26,27 @@
  * v2 `trigger` object with a fallback to the v1 flat fields, so the same row renders on a
  * gateway that predates the v2 listing. */
                                                                  
-                                                              
+                                                                                                                                                                   
+
+/* The Advanced sheet's select options - the closed enums swiss-jobs/src/jobs/def.rs
+ * enum_str accepts, in the order the selects show them. Rendering FROM these lists is what
+ * keeps the form unable to offer a value the server refuses (docs/37 M9). */
+const JOB_TRIGGER_KINDS                            = ["interval", "cron", "manual"];
+const JOB_FIRST_RUNS                         = ["after-interval", "immediate"];
+const JOB_OVERLAPS                        = ["skip", "queue-one"];
+const JOB_MISFIRES                        = ["skip", "run-once"];
+const JOB_BACKOFFS                        = ["fixed", "exponential"];
+const JOB_RETRY_ONS                        = ["failure", "timeout"];
+const JOB_CAPTURES                        = ["tail", "none"];
+
+/** A select's value narrowed to its own option list. A select can only hold one of the
+ * options the sheet rendered from `legal`, so a miss is a panel bug, and it throws the way
+ * a malformed form value does - formToJson toasts it. */
+function legalOf                  (value        , legal              , field        )    {
+  if ((legal                     ).includes(value)) return value     ;
+  throw new Error(field + " must be one of " + legal.join(", ") + ", got " + JSON.stringify(value));
+}
+
 function triggerSummary(j           )         {
   const t = j.trigger;
   if (!t || !t.kind) {
@@ -64,27 +84,27 @@ function historyMeta(r                                                          
 function defTemplate(id        )         {
   return {
     title: id,
-    trigger: { kind: "interval", everyMs: 3600000, firstRun: "aligned" },
+    trigger: { kind: "interval", everyMs: 3600000, firstRun: "after-interval" },
     action: { type: "process.legacy-command", input: { command: "" } },
     timeoutMs: 600000,
   };
 }
 
 /** Definition \u2192 flat form values, every one a string the inputs can hold (except the
- * checkbox-shaped ones: disabled is boolean, retryOn is the checked-name list). Unknown
- * definition keys are NOT read here; they survive through the `base` object formToV2
- * writes onto. */
+ * checkbox-shaped ones: disabled is boolean, retryOn is the checked-name list). A slot the
+ * definition leaves out reads as the server's default for it (def.rs), which is what an
+ * absent key means on the wire. */
 function v2ToForm(def        )                {
-  const t = def.trigger || {}                                  ;
-  const retry = def.retry || {}                                ;
-  const output = def.output || {}                                 ;
+  const t                      = def.trigger || {};
+  const retry                               = def.retry || {};
+  const output                                = def.output || {};
   return {
     title: def.title || "",
     labels: (def.labels || []).join(", "),
     disabled: !!def.disabled,
     kind: t.kind || "interval",
     everyMs: t.everyMs == null ? "" : String(t.everyMs),
-    firstRun: t.firstRun || "aligned",
+    firstRun: t.firstRun || "after-interval",
     cron: t.expression || "",
     timeoutMs: def.timeoutMs == null ? "" : String(def.timeoutMs),
     overlap: def.overlap || "skip",
@@ -146,7 +166,7 @@ function formToV2(form               , base        , actionInput                
   return def;
 }
 
-export { cloneJson, defTemplate, envToLines, formToV2, historyMeta, parseEnvLines, triggerSummary, v2ToForm };
+export { JOB_BACKOFFS, JOB_CAPTURES, JOB_FIRST_RUNS, JOB_MISFIRES, JOB_OVERLAPS, JOB_RETRY_ONS, JOB_TRIGGER_KINDS, cloneJson, defTemplate, envToLines, formToV2, historyMeta, legalOf, parseEnvLines, triggerSummary, v2ToForm };
 
 /* --- the v1 form's environment-variables box -----------------------------------------------
  * KEY=value lines in a textarea <-> the env object the PUT body and the action input

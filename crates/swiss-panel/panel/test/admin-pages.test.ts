@@ -15,6 +15,7 @@
  */
 
 import type { ApiPluginRow } from "../src/types/api.js";
+import type { PageModule } from "../src/types/dom.js";
 import { describe, expect, it } from "vitest";
 import { createPageRegistry, groupPages } from "../src/page-core.js";
 
@@ -46,10 +47,12 @@ describe("admin page registry", () => {
 
   it("caches a loaded module per entry and retries after a failure", async () => {
     let loads = 0;
-    const importer = async (entry: string) => {
+    // A real PageModule shape: the registry caches the module object itself, so identity is
+    // what the assertions below compare - countText just makes each mock tell its entry.
+    const importer = async (entry: string): Promise<PageModule> => {
       loads++;
       if (loads === 1) throw new Error("flaky");
-      return { entry, mounted: true };
+      return { countText: () => entry };
     };
     const reg = createPageRegistry(importer);
     reg.replace([good]);
