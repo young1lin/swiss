@@ -20,6 +20,7 @@ import { jobsChipText, loadJobs } from "../polling.js";
 import { probeJobs } from "../jobs.js";
 import { pluginInventory } from "../page-registry.js";
 import { clearJobsView } from "../job-state.js";
+import { tr } from "../i18n.js";
 
 /** On a gateway without the jobs subsystem (no inventory API and a failed probe) the view says
  *  so once instead of parking on its loading placeholder — the row the tab could still show. */
@@ -27,8 +28,8 @@ function unavailable() {
   fill($("pane"),
     h("div", { class: "empty" },
       h("div", null,
-        h("h2", null, "Jobs unavailable"),
-        h("p", { class: "hint" }, "This gateway does not serve the jobs subsystem."))));
+        h("h2", null, tr("Jobs unavailable")),
+        h("p", { class: "hint" }, tr("This gateway does not serve the jobs subsystem.")))));
 }
 
 export async function mount() {

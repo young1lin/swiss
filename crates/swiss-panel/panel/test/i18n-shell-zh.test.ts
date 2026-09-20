@@ -321,3 +321,44 @@ describe("the I6 tunnels pages in Chinese", () => {
     expect(trn(2, "{n} rule", "{n} rules") + tr(", {n} active", { n: 1 })).toBe("2 条规则,1 个活动");
   });
 });
+
+describe("the I7 jobs machinery in Chinese", () => {
+  beforeEach(() => {
+    setLang("zh-CN");
+  });
+  afterEach(() => {
+    setLang("en");
+    localStorage.clear();
+  });
+
+  it("speaks the schedule builder and its refusals", async () => {
+    await loadLocale();
+    expect(tr("Every {n} {unit}.", { n: 2, unit: tr("hours") })).toBe("每 2 小时。");
+    expect(tr("the interval needs a number of {unit} (at least 1)", { unit: tr("minutes") })).toBe(
+      "间隔需要 分钟 的数量(至少 1)",
+    );
+    expect(tr("the time must be HH:MM (24-hour)")).toBe("时间必须是 HH:MM(24 小时制)");
+    expect(tr("weekly needs at least one day picked")).toBe("每周需要至少选择一天");
+    expect(trn(3, "{n} value", "{n} values")).toBe("3 项");
+    expect(tr("Saved revisions ({n})", { n: 2 })).toBe("已保存的修订(2)");
+  });
+
+  it("keeps the host's run words raw around translated frames", async () => {
+    await loadLocale();
+    expect(tr("{name}: {state}", { name: "backup", state: "succeeded" })).toBe("backup:succeeded");
+    expect(tr("Runs — {name}", { name: "backup" })).toBe("运行 —— backup");
+    expect(tr("attempt {a}/{b}", { a: 2, b: 3 })).toBe("第 2/3 次尝试");
+    expect(tr("{n} more missed", { n: 4 })).toBe("另有 4 次未触发");
+    expect(tr("({outcome} — no output recorded)", { outcome: "missed" })).toBe("(missed —— 未记录输出)");
+  });
+
+  it("fills the run tab's own controls (the I4 runBtn mystery, solved)", async () => {
+    await loadLocale();
+    expect(tr("↺ Past runs ({n})", { n: 12 })).toBe("↺ 过往运行(12)");
+    expect(tr("↺ No past runs")).toBe("↺ 没有过往运行");
+    expect(tr("Running…")).toBe("运行中…");
+    expect(tr("Run")).toBe("运行");
+    expect(tr("Arguments")).toBe("参数");
+    expect(tr("(no output)")).toBe("(无输出)");
+  });
+});

@@ -27,6 +27,7 @@
  * gateway that predates the v2 listing. */
                                                                  
                                                                                                                                                                    
+import { tr } from "./i18n.js";
 
 /* The Advanced sheet's select options - the closed enums swiss-jobs/src/jobs/def.rs
  * enum_str accepts, in the order the selects show them. Rendering FROM these lists is what
@@ -67,9 +68,9 @@ function historyMeta(r                                                          
   const parts = [r.trigger || "?"];
   if (r.outcome && r.outcome !== "ran") {
     parts.push(r.outcome + (r.reason ? " (" + r.reason + ")" : ""));
-    if (r.missedCount != null) parts.push(r.missedCount + " more missed");
+    if (r.missedCount != null) parts.push(tr("{n} more missed", { n: r.missedCount }));
   } else {
-    if (r.attempt != null && r.attempts != null && r.attempts > 1) parts.push("attempt " + r.attempt + "/" + r.attempts);
+    if (r.attempt != null && r.attempts != null && r.attempts > 1) parts.push(tr("attempt {a}/{b}", { a: r.attempt, b: r.attempts }));
     parts.push((r.ms == null ? "?" : String(r.ms)) + " ms");
     if (r.exitCode != null) parts.push("exit " + r.exitCode);
   }
