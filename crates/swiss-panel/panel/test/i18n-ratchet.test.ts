@@ -41,8 +41,6 @@ import { describe, expect, it } from "vitest";
  * view file a later stage owns. Keys are paths relative to src/; the tree has
  * basename twins (jobs.ts and views/jobs.ts). */
 const FROZEN: Record<string, number> = {
-  "views/terminal-settings.ts": 7,
-  "views/terminal.ts": 26,
 };
 
 const QUALIFIES = /[A-Za-z]{2}/;
