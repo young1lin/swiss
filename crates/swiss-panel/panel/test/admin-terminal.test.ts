@@ -475,6 +475,23 @@ describe("the view's audit fixes stay fixed (source-level, fresh-eyes audit 2026
     expect(view).toContain('"Terminal shortcuts"');
   });
 
+  it("term-page owns [bar, find, stage, foot] - the bar CLOSES at the shell slot", () => {
+    // Regression (2026-10-24, live on 19998): the R5 conversion left term-bar's h() call
+    // open past the shell slot, so term-find and term-stage became the BAR's children; the
+    // bar is flex:0 0 auto, the stage collapsed to 0px and xterm rendered nothing (Open
+    // session "worked", the tab appeared, the screen stayed black). The shell-slot line
+    // must close BOTH the span and the bar: two parens before the comma.
+    const slot = view.split("\n").find((l: string) => l.indexOf("term-shell-slot") >= 0);
+    expect(slot).toBeTruthy();
+    expect(slot).toMatch(/\}\)\),\s*$/);
+    // And the four term-page sections appear in master's order, each a sibling start.
+    const order = ["class: \"term-bar\"", "class: \"term-find\"", "class: \"term-stage\"", "class: \"term-foot\""]
+      .map((k: string) => view.indexOf(k))
+      .filter((i: number) => i >= 0);
+    expect(order).toHaveLength(4);
+    expect([...order].sort((a: number, b: number) => a - b)).toEqual(order);
+  });
+
   it("the Open session button is a SIBLING of the target select, never its child", () => {
     // Regression (2026-10-24, live on 19998): the R5 conversion once passed the gear and
     // Open session buttons as children of the h("select") call - invalid DOM (<select>
