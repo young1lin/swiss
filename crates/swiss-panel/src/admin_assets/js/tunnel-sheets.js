@@ -361,9 +361,9 @@ function paintMcpPicks(checked          , suggested          )       {
   }
   fill($("r-mcps"), names.map((n        )              => {
     return h("label", { class: "check" },
-      h("input", { type: "checkbox", data: { mcp: n }, checked: checked.indexOf(n) >= 0 }),
+      h("input", { type: "checkbox", data: { mcp: n }, checked: checked.includes(n) }),
       n,
-      suggested.indexOf(n) >= 0 ? h("span", { class: "hint" }, " (matches this local port)") : null);
+      suggested.includes(n) ? h("span", { class: "hint" }, " (matches this local port)") : null);
   }));
 }
 

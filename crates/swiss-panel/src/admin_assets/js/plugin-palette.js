@@ -76,7 +76,7 @@ function defaultPinIds(groups                  )           {
 function pinnedGroups(groups             , pins                  )              {
   const p = pins === undefined ? loadPins() : pins;
   if (!p) return groups.slice(0, RAIL_LIMIT);
-  return groups.filter((g) => { return p?.indexOf(g.id) >= 0; });
+  return groups.filter((g) => { return p?.includes(g.id); });
 }
 
 /** The palette's sections given a query: Pinned first, then All plugins, each filtered by
@@ -85,11 +85,11 @@ function pinnedGroups(groups             , pins                  )              
 function paletteRows(groups                , pins          , query        )                   {
   const q = String(query || "").trim().toLowerCase();
   const match = (g              )          => {
-    return !q || String(g.label).toLowerCase().indexOf(q) >= 0 || String(g.id).toLowerCase().indexOf(q) >= 0;
+    return !q || String(g.label).toLowerCase().includes(q) || String(g.id).toLowerCase().includes(q);
   };
   const pinned                 = [];
   const rest                 = [];
-  groups.forEach((g) => { (pins.indexOf(g.id) >= 0 ? pinned : rest).push(g); });
+  groups.forEach((g) => { (pins.includes(g.id) ? pinned : rest).push(g); });
   return [
     { section: "Pinned", groups: pinned.filter(match) },
     { section: "All plugins", groups: rest.filter(match) },
@@ -135,7 +135,7 @@ function openPluginPalette(groups                , go                           
   }
 
   function pinButton(g              )                    {
-    const pinned = pins.indexOf(g.id) >= 0;
+    const pinned = pins.includes(g.id);
     const p = el("button", "pal-pin");
     p.type = "button";
     p.appendChild(iconNode("star", (pinned ? "Unpin " : "Pin ") + g.label));
@@ -144,7 +144,7 @@ function openPluginPalette(groups                , go                           
     p.title = pinned ? "Remove from the rail" : "Pin to the rail";
     p.onclick = (ev) => {
       ev.stopPropagation();
-      pins = pins.indexOf(g.id) >= 0 ? pins.filter((x) => { return x !== g.id; }) : pins.concat([g.id]);
+      pins = pins.includes(g.id) ? pins.filter((x) => { return x !== g.id; }) : pins.concat([g.id]);
       savePins(pins);
       render();
       if (onchange) onchange();

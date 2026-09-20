@@ -36,10 +36,10 @@ function visibleMcps(): ApiMcpRow[] {
   const f = listFilter().trim().toLowerCase();
   if (!f) return mcpRows();
   return mcpRows().filter((m) => {
-    return m.name.toLowerCase().indexOf(f) >= 0
-      || String(m.type).toLowerCase().indexOf(f) >= 0
-      || String(m.tag || "").toLowerCase().indexOf(f) >= 0 // "npx"/"uvx"/"http" finds a launch method
-      || String(m.group || "").toLowerCase().indexOf(f) >= 0; // ...and a group name finds its members
+    return m.name.toLowerCase().includes(f)
+      || String(m.type).toLowerCase().includes(f)
+      || String(m.tag || "").toLowerCase().includes(f) // "npx"/"uvx"/"http" finds a launch method
+      || String(m.group || "").toLowerCase().includes(f); // ...and a group name finds its members
   });
 }
 

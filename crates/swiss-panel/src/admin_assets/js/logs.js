@@ -465,7 +465,7 @@ function kindBodyNode(d           , kind        , m                           ) 
       if (kind === "tools" && it.inputSchema && it.inputSchema.properties) {
         const req = it.inputSchema.required || [];
         args = argLineNode(Object.keys(it.inputSchema.properties).map((k) => {
-          return { name: k, req: req.indexOf(k) >= 0 };
+          return { name: k, req: req.includes(k) };
         }));
       }
       const main = h("div", { class: "row-main" },

@@ -26,7 +26,6 @@
  *  is label+fn with optional styling flags. pick/on drive the checked-mark row styles
  *  (danger reds the item); menu.ts never reads a field the arm does not carry. */
 import type { ApiMcpRow } from "./api.js";
-import type { McpDetail } from "./state.js";
 export interface MenuItemAction {
   label: string;
   fn: (ev?: MouseEvent) => void;
@@ -166,12 +165,6 @@ export interface GroupCfg<Row> {
 export interface JtBox {
   [key: string]: unknown;
 }
-
-/* detail.ts openDetail builds the detail object as one literal and then stamps the three
- *  kind pages onto it (KINDS.forEach); this is the literal's shape - everything but the
- *  kind keys, plus the index the forEach writes through. Cast back to McpDetail at the
- *  state assignment, once all three are in. */
-export type FreshDetail = Omit<McpDetail, "tools" | "resources" | "prompts"> & { [key: string]: unknown };
 
 /** One form field's schema (fields.ts TYPE_FIELDS rows): k is the def key, bool/num/area/
  *  kv/json pick the input kind, half pairs it into two columns, def is the checkbox default. */

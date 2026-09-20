@@ -81,7 +81,7 @@ function saveJobOrder()       {
 function moveJobRow(id        , target        , before         )       {
   if (!id || !target || id === target) return;
   const rows = jobRows();
-  const item = rows.filter((r           )          => { return r.name === id; })[0];
+  const item = rows.find((r           )          => { return r.name === id; });
   if (!item) return;
   const to = rows.findIndex((r           )          => { return r.name === target; });
   if (to < 0) return; // target vanished mid-drag — leave everything where it is
@@ -94,7 +94,7 @@ function moveJobRow(id        , target        , before         )       {
 /** Put one job in a group. Applied locally first so the row jumps immediately, then persisted
  *  — a reject takes the server's word for it. */
 async function assignJobGroup(id        , group               )                {
-  const row = jobRows().filter((r           )          => { return r.name === id; })[0];
+  const row = jobRows().find((r           )          => { return r.name === id; });
   if (!row) return;
   const names = jobGroupsList();
   if (jobGroupOfRow(row) === (group || names[0])) return;
@@ -377,7 +377,7 @@ function schedFromJob(v                                                         
       if (isNaN(a) || isNaN(b) || a < 0 || b > 7) { ok = false; return; }
       a = a % 7; b = b % 7; // cron's 7 is Sunday again
       for (let d = a; ; d = (d + 1) % 7) {
-        if (days.indexOf(d) < 0) days.push(d);
+        if (!days.includes(d)) days.push(d);
         if (d === b) break;
       }
     });
@@ -549,7 +549,7 @@ function openJobSheet(job                  )       {
           h("label", { class: "field" },
             h("span", null, "On"),
             h("div", { class: "days", id: "jf-days" }, DOW_LABELS.map((d        , i        ) => {
-              const on = sched.days && sched.days.indexOf(i) >= 0;
+              const on = sched.days && sched.days.includes(i);
               return h("button", { type: "button", data: { dow: i }, class: on ? "on" : "",
                 aria: { pressed: on ? "true" : "false" } }, d);
             }))),
@@ -738,7 +738,7 @@ async function openV2Sheet(job                  )                {
             h("span", null, "retry.retryOn"),
             h("span", { style: "display:flex;gap:var(--s2)" }, ["failure", "timeout"].map((r) =>
               h("label", { class: "check" },
-                h("input", { type: "checkbox", data: { retryon: r }, checked: form.retryOn.indexOf(r) >= 0 }), r))))),
+                h("input", { type: "checkbox", data: { retryon: r }, checked: form.retryOn.includes(r) }), r))))),
         two(
           fld("output.capture", sel("jv-capture", ["tail", "none"].map((c) => opt(c, form.capture === c)))),
           fld("output.maxBytes", h("input", { id: "jv-maxbytes", value: form.maxBytes, placeholder: "16384", autocomplete: "off" }))),

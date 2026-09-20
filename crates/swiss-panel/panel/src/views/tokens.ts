@@ -86,10 +86,10 @@ export async function loadTokens(): Promise<void> {
 function pickCopyToken(list: ApiTokenRow[], remembered: string | null): ApiTokenRow | null {
   if (!list.length) return null;
   if (remembered) {
-    const hit = list.filter((t: ApiTokenRow): boolean => { return t.id === remembered; })[0];
+    const hit = list.find((t: ApiTokenRow): boolean => { return t.id === remembered; });
     if (hit) return hit;
   }
-  return list.filter((t: ApiTokenRow): boolean => { return t.label === "default"; })[0] || list[0] || null;
+  return list.find((t: ApiTokenRow): boolean => { return t.label === "default"; }) || list[0] || null;
 }
 
 async function refreshTokens(): Promise<void> {
@@ -110,7 +110,7 @@ function connectAll(secret: string): string {
 function groupOfToken(t: ApiTokenRow): string {
   const g = tokenMemberOf(t.id);
   const names = tokenGroupNames();
-  return names.indexOf(g!) >= 0 ? g! : (names.length ? names[0] : "default");
+  return names.includes(g!) ? g! : (names.length ? names[0] : "default");
 }
 
 function signature(): string {
@@ -187,7 +187,7 @@ function refreshGroupSelect(): void {
   const sel = $<HTMLSelectElement>("tkGroup");
   if (!sel) return;
   const names = tokenGroupNames().length ? tokenGroupNames() : ["default"];
-  const wanted = sel.value && names.indexOf(sel.value) >= 0
+  const wanted = sel.value && names.includes(sel.value)
     ? sel.value
     : resolveDefaultGroup(names, lastGroup("tokens"));
   // Only when the option LIST actually moved. The string version compared rendered markup to

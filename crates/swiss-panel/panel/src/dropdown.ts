@@ -191,16 +191,22 @@ function initSelects(): void {
   Array.prototype.forEach.call(document.querySelectorAll("select"), styleSelect);
   if (typeof MutationObserver !== "undefined" && document.body) new MutationObserver((muts) => {
     for (const m of muts) {
-      for (const n of m.addedNodes as unknown as Element[]) {
+      // Node lists carry every node kind; nodeType 1 is the element test that works under
+      // every DOM this module imports through (real, happy-dom, and the boot test's stubs,
+      // which have no Element class to instanceof against). The downcast then names what
+      // the walk needs - nodeType 1 already promised an element.
+      for (const n of m.addedNodes) {
         if (n.nodeType !== 1) continue;
-        if (n.tagName === "SELECT") styleSelect(n as HTMLSelectElement);
-        else if (n.querySelectorAll) Array.prototype.forEach.call(n.querySelectorAll("select"), styleSelect);
+        const added = n as Element;
+        if (added.tagName === "SELECT") styleSelect(added as HTMLSelectElement);
+        else if (added.querySelectorAll) Array.prototype.forEach.call(added.querySelectorAll("select"), styleSelect);
       }
       // docs/22 closeout B7: a removed styled select must not leave its trigger behind.
-      for (const n of m.removedNodes as unknown as Element[]) {
+      for (const n of m.removedNodes) {
         if (n.nodeType !== 1) continue;
-        if (n.tagName === "SELECT") dropTrig(n as HTMLSelectElement);
-        else if (n.querySelectorAll) Array.prototype.forEach.call(n.querySelectorAll("select"), dropTrig);
+        const gone = n as Element;
+        if (gone.tagName === "SELECT") dropTrig(gone as HTMLSelectElement);
+        else if (gone.querySelectorAll) Array.prototype.forEach.call(gone.querySelectorAll("select"), dropTrig);
       }
     }
     // A re-render can remove an open trigger's subtree; its menu would be left floating.

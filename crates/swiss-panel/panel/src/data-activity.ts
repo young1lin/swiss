@@ -155,7 +155,7 @@ function dbActivityClick(t: Element, ev: MouseEvent): boolean {
     // without this the very click that opens the menu also tears it down.
     ev.stopPropagation();
     const pid = Number(more.dataset.apid);
-    const row = (dbView().activityRows || []).filter((r: ApiDbActivityRow): boolean => { return r.pid === pid; })[0];
+    const row = (dbView().activityRows || []).find((r: ApiDbActivityRow): boolean => { return r.pid === pid; });
     if (row) dbActivityMenu(more, row);
     return true;
   }

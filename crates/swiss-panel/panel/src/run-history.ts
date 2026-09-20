@@ -54,7 +54,7 @@ function histButtonLabel(d: McpDetail, tool: string): string {
  *  preview — the full text is what the right pane is for. */
 function histRowsNode(d: McpDetail, tool: string): HChild {
   if (d.run.histTool !== tool) return h("div", { class: "hist-empty" }, "loading…");
-  const list = d.run.hist as unknown as ApiMcpCallRow[] || [];
+  const list = d.run.hist || [];
   if (!list.length) {
     return d.run.histQ
       ? h("div", { class: "hist-empty" }, "No runs whose arguments contain ", '"' + d.run.histQ + '"', ".")
@@ -290,7 +290,7 @@ async function applyRunHistory(seq: number): Promise<void> {
     d.run.histFull[seq] = j.call; // the pick just fetched it — a hover later is free
     // Arguments over 4 KB were stored clipped (argsText's overflow marker), so they are no longer
     // parseable JSON — say that precisely instead of the generic read failure.
-    if (j.call.args && j.call.args.indexOf("… +") >= 0 && j.call.args.endsWith("more characters")) {
+    if (j.call.args && j.call.args.includes("… +") && j.call.args.endsWith("more characters")) {
       toast("that run's arguments were too long to store in full — copy them from the Logs tab", true);
       return;
     }
@@ -469,7 +469,7 @@ function configBodyNode(d: McpDetail): HChild {
           : null,
         h("div", { class: "form-actions" },
           h("button", { class: "btn primary", id: "e-save" }, replacing ? "Replace definition" : "Save & Restart"),
-          TESTABLE_TYPES.indexOf(type) >= 0
+          TESTABLE_TYPES.includes(type)
             ? h("button", { class: "btn", id: "e-test" }, "Test connection")
             : null,
           h("button", { class: "btn", id: "e-cancel" }, "Cancel")),
@@ -658,9 +658,9 @@ function paneTabClick(ev: MouseEvent): void {
   }
   // The full-result button sits inside an expandable row — it must not also toggle the row.
   const fullBtn = t.closest<HTMLElement>("[data-full]");
-  if (fullBtn) { ev.stopPropagation(); void showFullResult(fullBtn.dataset.full as unknown as number); return; }
+  if (fullBtn) { ev.stopPropagation(); void showFullResult(Number(fullBtn.dataset.full)); return; }
   const callRow = t.closest<HTMLElement>("[data-callseq]");
-  if (callRow) { toggleCall(callRow.dataset.callseq as unknown as number); return; }
+  if (callRow) { toggleCall(Number(callRow.dataset.callseq)); return; }
   // Run tab
   if (t.id === "runBtn") { void runTool(); return; }
   if (t.id === "r-hist") { histToggle(); return; }
@@ -689,9 +689,12 @@ function paneTabChange(ev: Event): void {
 function paneTabInput(ev: Event): void {
   const t = targetEl(ev);
   if (!t || t.id !== "callsQ") return;
+  // One stable id owns exactly one element - the calls search input. Narrowed here the
+  // same way every closest<HTMLInputElement> in the tree narrows; no Element classes
+  // exist to instanceof against in the Node-boot environment this dispatcher is tested in.
+  const q = t as HTMLInputElement;
   const d = mcpDetail();
   if (!d) return;
-  const q = t as unknown as HTMLInputElement;
   clearTimeout(d.callsQTimer);
   d.callsQTimer = setTimeout(() => {
     const nd = mcpDetail();
@@ -713,8 +716,9 @@ function paneTabKeydown(ev: KeyboardEvent): void {
   const t = targetEl(ev);
   if (!t) return;
   if (t.id === "callsQ") {
-    // Escape clears at once (docs/31): no debounce, no wait.
-    const q = t as unknown as HTMLInputElement;
+    // Escape clears at once (docs/31): no debounce, no wait. #callsQ is the calls
+    // search input - see paneTabInput for why the narrow is an id, not instanceof.
+    const q = t as HTMLInputElement;
     if (ev.key !== "Escape" || !q.value) return;
     const d = mcpDetail();
     if (!d) return;
@@ -735,14 +739,14 @@ function paneTabKeydown(ev: KeyboardEvent): void {
   const callRow = t.closest<HTMLElement>("[data-callseq]");
   if (callRow && (ev.key === "Enter" || ev.key === " ")) {
     ev.preventDefault();
-    toggleCall(callRow.dataset.callseq as unknown as number);
+    toggleCall(Number(callRow.dataset.callseq));
     return;
   }
   // Ctrl/Cmd+Enter runs, so a SQL textarea can be submitted without reaching for the mouse.
   // #runBtn only exists on the Run tab, which is the scope the per-field listener had.
-  const field = t as unknown as HTMLElement;
+  // The field test is duck-typed (tagName/type) so stub targets keep answering too.
   if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter" && $("runBtn")
-    && (field.tagName === "TEXTAREA" || (field as unknown as HTMLInputElement).type === "text")) {
+    && (t.tagName === "TEXTAREA" || (t as HTMLInputElement).type === "text")) {
     ev.preventDefault();
     void runTool();
   }

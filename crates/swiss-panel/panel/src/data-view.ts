@@ -341,7 +341,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
     const d = dbView();
     const name = tblRow.dataset.tname!;
     const schema = tblRow.dataset.tschema || null;
-    const row = d.tables.filter((x: ApiDbTableRow): boolean => { return x.name === name && (x.schema || null) === schema; })[0];
+    const row = d.tables.find((x: ApiDbTableRow): boolean => { return x.name === name && (x.schema || null) === schema; });
     if (row) dbOpenTable(row);
     return true;
   }
@@ -663,7 +663,7 @@ function dbFilterMatches(tokens: string, name: unknown): boolean {
     return term.split("|").some((alt: string): boolean => {
       alt = alt.trim();
       if (!alt) return false;
-      if (alt.indexOf("*") < 0) return n.indexOf(alt) >= 0;
+      if (!alt.includes("*")) return n.includes(alt);
       const re = "^" + alt.split("*").map((p: string): string => {
         return p.replace(/[.+?^\[\]{}()\\\-|]/g, "\\$&");
       }).join(".*") + "$";
@@ -727,7 +727,7 @@ function renderDbTables(): void {
   if (dbIsPg() && d.tables.length) {
     const schemas: string[] = [];
     d.tables.forEach((t: ApiDbTableRow): void => {
-      if (schemas.indexOf(t.schema) < 0) schemas.push(t.schema);
+      if (!schemas.includes(t.schema)) schemas.push(t.schema);
     });
     schemas.forEach((s: string): void => {
       const rows = d!.tables.filter((t: ApiDbTableRow): boolean => { return t.schema === s; });
@@ -810,10 +810,10 @@ function dbPaintSchemaOptions(): void {
   sel.hidden = false;
   const schemas: string[] = [];
   d.tables.forEach((t: ApiDbTableRow): void => {
-    if (schemas.indexOf(t.schema) < 0) schemas.push(t.schema);
+    if (!schemas.includes(t.schema)) schemas.push(t.schema);
   });
   const current = d.schemaFilter || "";
-  if (current && schemas.indexOf(current) < 0) schemas.push(current);
+  if (current && !schemas.includes(current)) schemas.push(current);
   schemas.sort();
   sel.textContent = "";
   const all = el("option", "", "All schemas") as HTMLOptionElement;
@@ -843,14 +843,16 @@ function dbKnownSchemas(): string[] {
   const d = dbView();
   const out: string[] = [];
   d.tables.forEach((t: ApiDbTableRow): void => {
-    if (t.schema && out.indexOf(t.schema) < 0) out.push(t.schema);
+    if (t.schema && !out.includes(t.schema)) out.push(t.schema);
   });
-  if (out.indexOf("public") < 0) out.unshift("public");
+  if (!out.includes("public")) out.unshift("public");
   out.sort();
   return out;
 }
 
-function dbOpenTable(t: ApiDbTableRow): void {
+/* The open-target the table list, the DDL sheet and the FK jump all hand in: a name plus
+   its schema (null when the caller has none - the FK jump's same-schema case). */
+function dbOpenTable(t: { name: string; schema: string | null }): void {
   const d = dbView();
   if (t.name === d.table && t.schema === d.schema) return;
   if (!dbOkToDrop()) return;

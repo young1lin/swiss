@@ -131,7 +131,7 @@ function renderPane(): void {
 
   const tabs = KINDS.concat(["run", "config", "logs"]);
   const seg = h("div", { class: "seg", role: "tablist" }, tabs.map((t) => {
-    const kd = KINDS.indexOf(t) >= 0 ? d[t as "tools" | "resources" | "prompts"] : null;
+    const kd = KINDS.includes(t) ? d[t as "tools" | "resources" | "prompts"] : null;
     const count = kd && kd.loaded
       ? h("span", { class: "seg-n" }, String(kd.total != null ? kd.total : kd.items.length))
       : null;

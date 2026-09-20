@@ -98,7 +98,7 @@ function dbGridKeyNow()                {
  *  storage so the choice survives a reload. */
 function dbHideColumn(name        )       {
   const d = dbView();
-  if (d.gridCfg.hidden.indexOf(name) < 0) d.gridCfg.hidden.push(name);
+  if (!d.gridCfg.hidden.includes(name)) d.gridCfg.hidden.push(name);
   const key = dbGridKeyNow();
   if (key) dbGridConfigSave(key, d.gridCfg);
   renderDbGrid();
@@ -117,7 +117,7 @@ function dbShowAllColumns()       {
  *  written once on release. The handle owns mousedown/click (stopPropagation) so a drag never
  *  sorts the column it is resizing. Each cell gets width AND maxWidth — under
  *  table-layout: auto a width alone is only a hint the nowrap content outvotes. */
-function dbColResizeStart(e            , name        , th             , cells                         )       {
+function dbColResizeStart(e            , name        , th             , cells               )       {
   e.preventDefault();
   e.stopPropagation();
   const d = dbView();
@@ -213,17 +213,19 @@ function dbFocusEdit(seed                )       {
   td.dbKbdEdit(seed == null ? null : String(seed));
 }
 
-/** Write one pasted cell into the buffers with the same semantics a typed edit has:
- *  an insert cell reverts to the column default on empty, an update collapses back when the
- *  pasted text equals the original. */
-function dbPasteCell(kind        , key        , i        , column        , meta            , raw        )       {
+/** Write one pasted cell into an insert row's buffer with the same semantics a typed edit
+ *  has: an insert cell reverts to the column default on empty. */
+function dbPasteInsertCell(i        , column        , raw        )       {
   const d = dbView();
-  if (kind === "insert") {
-    const ins = d.inserts[i] ;   // a paste only targets a row that still exists
-    if (raw === "") delete ins.values[column];
-    else ins.values[column] = raw;
-    return;
-  }
+  const ins = d.inserts[i] ;   // a paste only targets a row that still exists
+  if (raw === "") delete ins.values[column];
+  else ins.values[column] = raw;
+}
+
+/** Write one pasted cell into an existing row's buffer: the update collapses back when the
+ *  pasted text equals the original. */
+function dbPasteUpdateCell(key        , column        , meta            , raw        )       {
+  const d = dbView();
   // meta.pk is already the pk VALUES map the caller built (same object dbSaveInlineEdit
   // stores); running it through dbPkVals again would forEach over an object and throw.
   const upd = d.updates[key] || (d.updates[key] = { pk: meta.pk                           , changes: {} });
@@ -277,10 +279,10 @@ function dbSameJson(a                                , b                        
   // with a ReferenceError, so the observer only arms where a window with fetch is real.
   if (typeof window === "undefined" || !window.fetch) return;
   const orig = window.fetch;
-  window.fetch = function (                                  input             , _init              )                    {
-    return orig.apply(this, arguments                                                     ).then((r          )           => {
+  window.fetch = function (                                  input                   , init              )                    {
+    return orig.call(this, input, init).then((r          )           => {
       try {
-        const path = typeof input === "string" ? input : (input && input.url) || "";
+        const path = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
         if (/\/edits(\?|$)/.test(path)) {
           let d = dbView();
           if (r.status === 409) {
@@ -288,9 +290,9 @@ function dbSameJson(a                                , b                        
               d = dbView();
               const cols = (j && j.conflictColumns) || [];
               if (!d.updates || !cols.length || !j || !j.row) return;
-              const hit = Object.keys(d.updates).filter((k) => {
+              const hit = Object.keys(d.updates).find((k) => {
                 return dbSameJson(d .updates[k].pk, j.row );
-              })[0];
+              });
               if (hit) { d .conflict = { key: hit, columns: cols }; renderDbGrid(); }
             }).catch(() => { /* an observation never breaks the panel */ });
           } else if (d.conflict) {
@@ -325,17 +327,17 @@ function dbPasteApply(text        , r0        , c0        )       {
       const raw = rows[i][j];
       const insertsBefore = d.inserts.length;
       if (target < insertsBefore) {
-        dbPasteCell("insert", null                     , target, col, null                         , raw);
+        dbPasteInsertCell(target, col, raw);
       } else {
         const ri = target - d.inserts.length;
         if (ri < d.data.rows.length) {
           const row = d.data?.rows[ri];
           const key = keyOf(row, ri);
-          dbPasteCell("update", key, ri, col, { pk: dbRowAddr(pkCols, d.data?.columns, row), orig: row[col] }, raw);
+          dbPasteUpdateCell(key, col, { pk: dbRowAddr(pkCols, d.data?.columns, row), orig: row[col] }, raw);
         } else {
           // Past the page: the paste row becomes a NEW buffered insert, values in column order.
           d.inserts.push({ values: {} });
-          dbPasteCell("insert", null                     , d.inserts.length - 1, col, null                         , raw);
+          dbPasteInsertCell(d.inserts.length - 1, col, raw);
         }
       }
     }
@@ -408,7 +410,7 @@ async function dbLoadData(keepOffset          )                {
   dbDropEdits(); // a fresh page is a fresh baseline — buffered edits never survive a reload
   // A filter naming a column that no longer exists would 400 on every reload — drop it instead.
   const names = d.data?.columns.map((c             )         => { return c.name; });
-  d.filters = d.filters.filter((f              )          => { return names.indexOf(f.column) >= 0; });
+  d.filters = d.filters.filter((f              )          => { return names.includes(f.column); });
   renderDbToolbar(); renderDbGrid(); renderDbBar(); renderDbFilters();
 }
 
@@ -709,7 +711,7 @@ function renderDbGrid()       {
     // filter, the same channel a typed filter or W1.5's cell menu uses. The detail (and its
     // foreignKeys) loads with the table; until it answers there is no arrow, which is the
     // honest state — and a table with no FKs never draws one.
-    const fk = ((d.detail && d.detail.foreignKeys) || []).filter((f            )          => { return f.column === c.name; })[0];
+    const fk = ((d.detail && d.detail.foreignKeys) || []).find((f            )          => { return f.column === c.name; });
     if (fk) {
       // The jump answers through #pane's delegated click via its data-fkjump address; the FK
       // row is re-resolved from live d.detail at event time (docs/37 §10.1).
@@ -730,10 +732,14 @@ function renderDbGrid()       {
     grip.title = "Drag to resize";
     grip.onmousedown = (ev            )       => {
       const idx = Array.prototype.indexOf.call(hr.children, th);
-      const cells = [th]                            ;
+      const cells                = [th];
       const trs = tbl.querySelectorAll("tbody tr");
-      for (let r = 0; r < trs.length; r++) if (trs[r].children[idx]) cells.push(trs[r].children[idx]                          );
-      dbColResizeStart(ev, c.name, th, cells                                      );
+      for (let r = 0; r < trs.length; r++) {
+        // The column's body cells are td elements; children[] only promises Element.
+        const cell = trs[r].children[idx];
+        if (cell) cells.push(cell               );
+      }
+      dbColResizeStart(ev, c.name, th, cells);
     };
     // No grip.onclick stopPropagation any more: #pane's delegated click consumes grip clicks
     // BEFORE the sort check (a grip click resizes, it must never sort).
@@ -800,8 +806,8 @@ function renderDbGrid()       {
       const has = Object.prototype.hasOwnProperty.call(ins.values, c.name);
       const td = el("td", "db-cell")                                                                        ;
       // The cell's grid address: the focus ring moves between live cells by it (P0-B).
-      td.setAttribute("data-r", i                     );
-      td.setAttribute("data-c", ci                     );
+      td.setAttribute("data-r", String(i));
+      td.setAttribute("data-c", String(ci));
       widthOf(c, td);
       const long = dbPaintCell(td, has ? ins.values[c.name] : undefined, has, c.dataType);
       // docs/22 W2.2: one click puts the keyboard's focus cell here; the ring marks it.
@@ -814,20 +820,18 @@ function renderDbGrid()       {
       if (editable) {
         td.classList.add("db-cell-edit");
         td.title = long || "Double-click to edit · right-click for dialog/copy";
-        ((col        , present         )       => {
-          td.ondblclick = ()       => {
-            const cur = present ? dbCellText(ins.values[col]) : "";
-            dbEditCellEnter("insert", null                     , i, col, {}              , td, cur == null ? "" : cur);
-          };
-          td.dbKbdEdit = (seed               )       => {
-            const cur = seed != null ? seed : present ? dbCellText(ins.values[col]) : "";
-            dbEditCellEnter("insert", null                     , i, col, {}              , td, cur == null ? "" : cur);
-          };
-          // docs/22 closeout B2: the editInDialog callback is dbCellMenu's FIFTH parameter —
-          // a stray null before it parked the callback in an unread sixth slot, so the insert
-          // row's menu never offered the dialog path a data row's menu always had.
-          td.oncontextmenu = (e            )       => { dbCellMenu(e, null, null                     , col, ()       => { dbOpenCellEditor("insert", null                     , i, col, {}              ); }); };
-        })(c.name, has);
+        td.ondblclick = ()       => {
+          const cur = has ? dbCellText(ins.values[c.name]) : "";
+          dbEditCellEnter("insert", null, i, c.name, null, td, cur == null ? "" : cur);
+        };
+        td.dbKbdEdit = (seed               )       => {
+          const cur = seed != null ? seed : has ? dbCellText(ins.values[c.name]) : "";
+          dbEditCellEnter("insert", null, i, c.name, null, td, cur == null ? "" : cur);
+        };
+        // docs/22 closeout B2: the editInDialog callback is dbCellMenu's FIFTH parameter —
+        // a stray null before it parked the callback in an unread sixth slot, so the insert
+        // row's menu never offered the dialog path a data row's menu always had.
+        td.oncontextmenu = (e            )       => { dbCellMenu(e, null, null, c.name, ()       => { dbOpenCellEditor("insert", null, i, c.name, null); }); };
       }
       tr.appendChild(td);
     });
@@ -861,13 +865,13 @@ function renderDbGrid()       {
       // docs/22 W4.2: the cells a lost commit race named stay red while their buffered
       // change is still pending — amber says "differs from the loaded row", red says
       // "the server refused this change; the row moved under it".
-      const lost = pending && !!d.conflict && d.conflict.key === key && d.conflict.columns.indexOf(c.name) >= 0;
+      const lost = pending && !!d.conflict && d.conflict.key === key && d.conflict.columns.includes(c.name);
       const td = el("td", "db-cell" + (pending ? " db-dirty" : "") + (lost ? " db-conflict" : ""))                                                                        ;
       // docs/22 W2.2: same focus wiring as insert cells; the row index counts the inserts
       // above. The address rides the cell so the ring can move without a rebuild (P0-B).
       const gridRow = d.inserts.length + rowIdx;
-      td.setAttribute("data-r", gridRow                     );
-      td.setAttribute("data-c", ci                     );
+      td.setAttribute("data-r", String(gridRow));
+      td.setAttribute("data-c", String(ci));
       widthOf(c, td);
       const long = dbPaintCell(td, v, true, c.dataType);
       td.onmousedown = (ev            )       => { ev.preventDefault(); dbFocusCell(gridRow, ci); }; // P0-A: see the insert cells
@@ -875,20 +879,18 @@ function renderDbGrid()       {
       if (editable && !deleted) {
         td.classList.add("db-cell-edit");
         td.title = long || "Double-click to edit · right-click for dialog/copy";
-        ((col        , orig         )       => {
-          const meta             = { pk: dbRowAddr(pkCols, d .data .columns, row), orig: orig };
-          td.ondblclick = ()       => {
-            const cur = dbCellText(orig);
-            dbEditCellEnter("update", key, -1, col, meta, td, cur == null ? "" : cur);
-          };
-          td.dbKbdEdit = (seed               )       => {
-            const cur = seed != null ? seed : dbCellText(orig);
-            dbEditCellEnter("update", key, -1, col, meta, td, cur == null ? "" : cur);
-          };
-          td.oncontextmenu = (e            )       => {
-            dbCellMenu(e, row, key, col, ()       => { dbOpenCellEditor("update", key, -1, col, meta); });
-          };
-        })(c.name, orig);
+        const meta             = { pk: dbRowAddr(pkCols, d .data .columns, row), orig: orig };
+        td.ondblclick = ()       => {
+          const cur = dbCellText(orig);
+          dbEditCellEnter("update", key, -1, c.name, meta, td, cur == null ? "" : cur);
+        };
+        td.dbKbdEdit = (seed               )       => {
+          const cur = seed != null ? seed : dbCellText(orig);
+          dbEditCellEnter("update", key, -1, c.name, meta, td, cur == null ? "" : cur);
+        };
+        td.oncontextmenu = (e            )       => {
+          dbCellMenu(e, row, key, c.name, ()       => { dbOpenCellEditor("update", key, -1, c.name, meta); });
+        };
       }
       tr.appendChild(td);
     });
@@ -1091,7 +1093,7 @@ function dbGridClick(t         )          {
   const fkj = t.closest             ("[data-fkjump]");
   if (fkj) {
     const col = fkj.dataset.fkjump ?? "";
-    const fk = ((d.detail && d.detail.foreignKeys) || []).filter((f            )          => { return f.column === col; })[0];
+    const fk = ((d.detail && d.detail.foreignKeys) || []).find((f            )          => { return f.column === col; });
     if (!fk) return true; // the detail changed under the click — nothing to jump through
     const v = dbFocusedColumnValue(dbView(), col);
     if (v === undefined) {

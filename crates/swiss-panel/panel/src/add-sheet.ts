@@ -65,7 +65,7 @@ function openSheet(group: string | null): void {
     fill($("a-fields"), fieldsNode($<HTMLSelectElement>("a-type").value, {}, "a-"));
     // The test button exists only for the types that have something to test.
     const tb = $("a-test");
-    if (tb) tb.hidden = TESTABLE_TYPES.indexOf($<HTMLSelectElement>("a-type").value) < 0;
+    if (tb) tb.hidden = !TESTABLE_TYPES.includes($<HTMLSelectElement>("a-type").value);
   };
   paint();
   $("a-type").onchange = paint;

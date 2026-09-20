@@ -47,7 +47,7 @@ let draggingGroup: string | null = null; // the group name a header grip carries
  *  the single default group, which the component draws as no divider at all. */
 function groupOfName(name: string): string {
   const g = secrets.memberGroups && secrets.memberGroups[name];
-  return (secrets.groups || []).indexOf(g) >= 0 ? g : (secrets.groups || ["default"])[0];
+  return (secrets.groups || []).includes(g) ? g : (secrets.groups || ["default"])[0];
 }
 
 function signature(): string {
@@ -212,7 +212,7 @@ function refreshGroupSelect(): void {
   const sel = $<HTMLSelectElement>("skGroup");
   if (!sel) return;
   const names = secrets.groups && secrets.groups.length ? secrets.groups : ["default"];
-  const wanted = sel.value && names.indexOf(sel.value) >= 0
+  const wanted = sel.value && names.includes(sel.value)
     ? sel.value
     : resolveDefaultGroup(names, lastGroup("secrets"));
   // Only when the option LIST actually moved. The string version compared rendered markup to

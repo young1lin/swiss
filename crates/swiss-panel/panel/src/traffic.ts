@@ -266,7 +266,7 @@ function renderTraffic(): void {
     if (t.id === "trPrev") { trafficPageStep(-1); return; }
     if (t.id === "trNext") { trafficPageStep(1); return; }
     const tog = t.closest<HTMLElement>("[data-tog]");
-    if (tog) { toggleTraffic(tog.dataset.tog as unknown as number); return; }
+    if (tog) { toggleTraffic(Number(tog.dataset.tog)); return; }
     if (t.id === "trClear") { void clearTraffic(); }
   };
   pane.onkeydown = (ev: KeyboardEvent): void => {
@@ -276,7 +276,7 @@ function renderTraffic(): void {
     const crow = t.closest<HTMLElement>("[data-ckey]");
     if (crow) { ev.preventDefault(); crow.click(); return; }
     const tog = t.closest<HTMLElement>("[data-tog]");
-    if (tog) { ev.preventDefault(); toggleTraffic(tog.dataset.tog as unknown as number); }
+    if (tog) { ev.preventDefault(); toggleTraffic(Number(tog.dataset.tog)); }
   };
 }
 

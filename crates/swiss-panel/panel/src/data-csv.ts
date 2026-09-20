@@ -87,7 +87,7 @@ function dbOpenImport(): void {
     lines = rows.slice(1, 10001); // cap mirrors IMPORT_ROW_CAP
     // default mapping: match by name, skip otherwise
     const names = (d.data?.columns.map((c: ApiDbColumn): string => { return c.name; }) ?? []);
-    mapping = header.map((h: string): string | null => { return names.indexOf(h) >= 0 ? h : null; });
+    mapping = header.map((h: string): string | null => { return names.includes(h) ? h : null; });
     paint();
   }
 
@@ -238,14 +238,15 @@ function dbPushCellFilter(column: string, op: string, value: unknown): void {
   if (!dbApplyFilters()) { d.filters.pop(); renderDbFilters(); }
 }
 
-function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: string, column: string, editInDialog: null | (() => void)): void {
+function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: string | null, column: string, editInDialog: null | (() => void)): void {
   e.preventDefault();
   const d = dbView();
   if (!d.data) return;
-  const upd = d.updates[key];
+  // An insert row's menu carries no row key; a data row's key and row always arrive together.
+  const upd = key == null ? null : d.updates[key];
   const pending = !!upd && Object.prototype.hasOwnProperty.call(upd.changes, column);
   const value = pending ? upd.changes[column] : row ? row[column] : undefined;
-  const full = row ? dbRowForCopy(row, key) : null;
+  const full = row && key != null ? dbRowForCopy(row, key) : null;
   const names = d.data?.columns.map((c: ApiDbColumn): string => { return c.name; });
   const dialect = (d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; }) || {} as { dialect?: string }).dialect || "mysql";
 

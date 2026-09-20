@@ -145,7 +145,9 @@ async function dbRunDdl(op: string, to?: string): Promise<void> {
    offers "Edit in dialog" so the choice stays with the user. */
 const DB_INLINE_MAX = 80;
 
-let dbInlineEdit: { td: HTMLElement; ta: HTMLTextAreaElement; kind: string; key: string; i: number; column: string; meta: DbCellMeta } | null = null; // { td, ta, kind, key, i, column, meta, closed }
+/* An update edit carries its row's key and meta; an insert edit has neither (its row is
+   d.inserts[i]), so key/meta are nullable and the update paths narrow before reading them. */
+let dbInlineEdit: { td: HTMLElement; ta: HTMLTextAreaElement; kind: string; key: string | null; i: number; column: string; meta: DbCellMeta | null } | null = null;
 
 function dbCloseInlineEdit(): void {
   if (!dbInlineEdit) return;
@@ -161,7 +163,7 @@ function dbInlineDismiss(ev: MouseEvent): void {
   dbSaveInlineEdit();
 }
 
-function dbOpenInlineEdit(kind: string, key: string, i: number, column: string, meta: DbCellMeta, td: HTMLElement, current: string): void {
+function dbOpenInlineEdit(kind: "update" | "insert", key: string | null, i: number, column: string, meta: DbCellMeta | null, td: HTMLElement, current: string): void {
   if (dbInlineEdit) dbCloseInlineEdit();
   const rect = td.getBoundingClientRect();
   const wrap = $("dbGridWrap");
@@ -213,6 +215,10 @@ function dbSaveInlineEdit(): void {
     if (raw === "") delete ins.values[e.column];
     else ins.values[e.column] = raw;
   } else {
+    // An update edit always carries its row key and meta (only the grid's real rows build
+    // updates); a null pair would mean the caller lied, and dropping the edit is the
+    // honest answer.
+    if (e.key == null || !e.meta) return;
     const upd = d.updates[e.key] || (d.updates[e.key] = { pk: e.meta.pk as Record<string, unknown>, changes: {} });
     const origTxt = e.meta.orig == null ? "" : String(e.meta.orig);
     if (raw === origTxt) {
@@ -225,9 +231,9 @@ function dbSaveInlineEdit(): void {
 }
 
 /** The single entry point: short values edit inline, long ones open the dialog. */
-function dbEditCellEnter(kind: "update" | "insert", key: string, i: number, column: string, meta: DbCellMeta, td: HTMLElement, current: unknown): void {
+function dbEditCellEnter(kind: "update" | "insert", key: string | null, i: number, column: string, meta: DbCellMeta | null, td: HTMLElement, current: unknown): void {
   const s = current == null ? "" : String(current);
-  if (s.length > DB_INLINE_MAX || s.indexOf("\n") >= 0) {
+  if (s.length > DB_INLINE_MAX || s.includes("\n")) {
     dbOpenCellEditor(kind, key, i, column, meta);
     return;
   }

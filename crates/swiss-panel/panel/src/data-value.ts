@@ -76,33 +76,32 @@ function dbHexPreview(value: string, maxBytes: number): { text: string; bytes: n
  *  demand. Object keys are identity (text face); values are values you would copy (mono).
  *  Every remote string lands as a TEXT node: a document full of tags stays inert text with
  *  no esc() anywhere. Pure in its inputs (builds nodes only, touches nothing live). */
-function dbJsonNode(v: Record<string, unknown>, isOpen: boolean): HChild {
+/* The node builder takes unknown (a parsed JSON value is exactly that) and narrows by
+   runtime check; the one Record downcast sits behind typeof-object + not-an-array, the
+   narrowest honest shape an indexable object has. */
+function dbJsonNode(v: unknown, isOpen: boolean): HChild {
   if (v === null || v === undefined) return h("span", { class: "db-val-v db-null" }, "null");
-  if (Array.isArray(v) || typeof v === "object") {
-    const isArr = Array.isArray(v);
-    const keys = isArr ? v as unknown as unknown[] : Object.keys(v);
-    const summary = isArr ? (keys.length ? "[ " + keys.length + " ]" : "[ ]")
-      : (keys.length ? "{ " + keys.length + " }" : "{ }");
-    const inner: HChild[] = [];
-    if (isArr) {
-      keys.forEach((x: unknown) => {
-        inner.push(h("div", { class: "db-val-row" }, dbJsonNode(x as Record<string, unknown>, false)));
-      });
-    } else {
-      keys.forEach((k: unknown): void => {
-        inner.push(h("div", { class: "db-val-row" },
-          h("span", { class: "db-val-k" }, String(k)),
-          dbJsonNode(v[k as string] as Record<string, unknown>, false)));
-      });
-    }
+  if (typeof v !== "object") return h("span", { class: "db-val-v" }, JSON.stringify(v));
+  if (Array.isArray(v)) {
     return h("details", { class: "db-val-node", open: isOpen },
-      h("summary", null, summary),
-      ...inner);
+      h("summary", null, v.length ? "[ " + v.length + " ]" : "[ ]"),
+      ...v.map((x: unknown): HChild => { return h("div", { class: "db-val-row" }, dbJsonNode(x, false)); }));
   }
-  return h("span", { class: "db-val-v" }, JSON.stringify(v));
+  const obj = v as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  const summary = keys.length ? "{ " + keys.length + " }" : "{ }";
+  const inner: HChild[] = [];
+  keys.forEach((k: string): void => {
+    inner.push(h("div", { class: "db-val-row" },
+      h("span", { class: "db-val-k" }, k),
+      dbJsonNode(obj[k], false)));
+  });
+  return h("details", { class: "db-val-node", open: isOpen },
+    h("summary", null, summary),
+    ...inner);
 }
 
-function dbJsonTreeNodes(v: unknown): HChild { return dbJsonNode(v as Record<string, unknown>, true); }
+function dbJsonTreeNodes(v: unknown): HChild { return dbJsonNode(v, true); }
 
 /** Open the read-only viewer. One primary action (Close); Escape and the backdrop close
  *  too. `where` is the caption the caller knows (table for grid cells, "SQL result" for

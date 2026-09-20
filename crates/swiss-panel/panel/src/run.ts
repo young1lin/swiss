@@ -80,7 +80,7 @@ function argFieldsNode(tool: ApiMcpTool, idPrefix?: string, values?: Record<stri
       : p.type === "object" ? "object"
       : p.type === "boolean" ? "boolean"
       : (p.type === "number" || p.type === "integer") ? "number" : "string";
-    const star = required.indexOf(k) >= 0 ? h("span", { class: "req-star" }, "*") : null;
+    const star = required.includes(k) ? h("span", { class: "req-star" }, "*") : null;
     const hint = p.description ? h("div", { class: "hint" }, p.description) : null;
     const data = { arg: k, kind: kind };
     if (kind === "boolean") {

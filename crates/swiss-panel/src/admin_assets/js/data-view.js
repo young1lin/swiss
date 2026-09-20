@@ -341,7 +341,7 @@ function dbChromeClick(t         , ev            )          {
     const d = dbView();
     const name = tblRow.dataset.tname ;
     const schema = tblRow.dataset.tschema || null;
-    const row = d.tables.filter((x               )          => { return x.name === name && (x.schema || null) === schema; })[0];
+    const row = d.tables.find((x               )          => { return x.name === name && (x.schema || null) === schema; });
     if (row) dbOpenTable(row);
     return true;
   }
@@ -663,7 +663,7 @@ function dbFilterMatches(tokens        , name         )          {
     return term.split("|").some((alt        )          => {
       alt = alt.trim();
       if (!alt) return false;
-      if (alt.indexOf("*") < 0) return n.indexOf(alt) >= 0;
+      if (!alt.includes("*")) return n.includes(alt);
       const re = "^" + alt.split("*").map((p        )         => {
         return p.replace(/[.+?^\[\]{}()\\\-|]/g, "\\$&");
       }).join(".*") + "$";
@@ -727,7 +727,7 @@ function renderDbTables()       {
   if (dbIsPg() && d.tables.length) {
     const schemas           = [];
     d.tables.forEach((t               )       => {
-      if (schemas.indexOf(t.schema) < 0) schemas.push(t.schema);
+      if (!schemas.includes(t.schema)) schemas.push(t.schema);
     });
     schemas.forEach((s        )       => {
       const rows = d .tables.filter((t               )          => { return t.schema === s; });
@@ -810,10 +810,10 @@ function dbPaintSchemaOptions()       {
   sel.hidden = false;
   const schemas           = [];
   d.tables.forEach((t               )       => {
-    if (schemas.indexOf(t.schema) < 0) schemas.push(t.schema);
+    if (!schemas.includes(t.schema)) schemas.push(t.schema);
   });
   const current = d.schemaFilter || "";
-  if (current && schemas.indexOf(current) < 0) schemas.push(current);
+  if (current && !schemas.includes(current)) schemas.push(current);
   schemas.sort();
   sel.textContent = "";
   const all = el("option", "", "All schemas")                     ;
@@ -843,14 +843,16 @@ function dbKnownSchemas()           {
   const d = dbView();
   const out           = [];
   d.tables.forEach((t               )       => {
-    if (t.schema && out.indexOf(t.schema) < 0) out.push(t.schema);
+    if (t.schema && !out.includes(t.schema)) out.push(t.schema);
   });
-  if (out.indexOf("public") < 0) out.unshift("public");
+  if (!out.includes("public")) out.unshift("public");
   out.sort();
   return out;
 }
 
-function dbOpenTable(t               )       {
+/* The open-target the table list, the DDL sheet and the FK jump all hand in: a name plus
+   its schema (null when the caller has none - the FK jump's same-schema case). */
+function dbOpenTable(t                                         )       {
   const d = dbView();
   if (t.name === d.table && t.schema === d.schema) return;
   if (!dbOkToDrop()) return;

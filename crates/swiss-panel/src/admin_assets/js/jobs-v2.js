@@ -175,7 +175,7 @@ function parseEnvLines(text        )                                            
       return { env: null, error: "line " + (i + 1) + ": expected KEY=value, got \"" + line + "\"" };
     }
     const key = line.slice(0, eq);
-    if (key.indexOf("\u0000") >= 0) {
+    if (key.includes("\u0000")) {
       return { env: null, error: "line " + (i + 1) + ": the key contains a NUL character" };
     }
     env[key] = line.slice(eq + 1);

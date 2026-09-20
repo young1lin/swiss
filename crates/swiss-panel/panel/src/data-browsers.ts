@@ -329,7 +329,7 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
     const tr = el("tr", "db-ins");
     tr.appendChild(dbRedisRowCtl(false, false, null, i));
     cfg.cols.forEach((c: string): void => {
-      const editable = cfg.ins.indexOf(c) >= 0;
+      const editable = cfg.ins.includes(c);
       const filled = editable && ins[c] != null && String(ins[c]) !== "";
       const td = el("td", "db-cell db-cell-edit" + (filled ? " db-dirty" : ""));
       td.textContent = ins[c] == null ? "" : String(ins[c]);
@@ -348,8 +348,8 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
     const tr = el("tr", entry.deleted ? "db-del" : "");
     tr.appendChild(dbRedisRowCtl(cfg.deletable, entry.deleted, entry.addr, -1));
     cfg.cols.forEach((c: string): void => {
-      const editable = cfg.edit.indexOf(c) >= 0 && !entry.deleted;
-      const td = el("td", "db-cell" + (entry.updated && cfg.edit.indexOf(c) >= 0 ? " db-dirty" : "") + (editable ? " db-cell-edit" : ""));
+      const editable = cfg.edit.includes(c) && !entry.deleted;
+      const td = el("td", "db-cell" + (entry.updated && cfg.edit.includes(c) ? " db-dirty" : "") + (editable ? " db-cell-edit" : ""));
       td.textContent = entry.cells[c] == null ? "" : String(entry.cells[c]);
       td.title = td.textContent || ""; // long values truncate in the cell; the full text is one hover away
       if (editable) {

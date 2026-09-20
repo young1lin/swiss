@@ -193,7 +193,7 @@ function render()       {
  *  the scope's order route - a reject takes the server's word for it. */
 function moveRow(id        , targetId        , before         )       {
   if (!id || !targetId || id === targetId) return;
-  const item = targets.filter((r) => { return r.id === id; })[0];
+  const item = targets.find((r) => { return r.id === id; });
   if (!item) return;
   const to = targets.findIndex((r) => { return r.id === targetId; });
   if (to < 0) return; // target vanished mid-drag - leave everything where it is
@@ -207,7 +207,7 @@ function moveRow(id        , targetId        , before         )       {
 /** Put one row in a group after a drop-into: applied locally first so the row jumps
  *  immediately, then the member PUT - the server's canonical spelling wins. */
 async function assign(id        , group               )                {
-  const row = targets.filter((r) => { return r.id === id; })[0];
+  const row = targets.find((r) => { return r.id === id; });
   if (!row) return;
   if (groupOf(groupNames)(row) === (group || groupNames[0])) return;
   row.group = group;
@@ -266,7 +266,7 @@ function openSheet(target                        )       {
   // and programmatic values are the one source of truth an edit and a test can both read.
   $                  ("rm-id").disabled = !!editing; // the alias never edits; state set here, not in markup
   caps.forEach((c) => {
-    $                  ("rmcap-" + c).checked = target ? (target.capabilities || []).indexOf(c) >= 0 : c === "exec";
+    $                  ("rmcap-" + c).checked = target ? (target.capabilities || []).includes(c) : c === "exec";
   });
   if (target) {
     $                  ("rm-label").value = target.label === target.id ? "" : target.label || "";
