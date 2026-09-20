@@ -33,7 +33,7 @@
 import type { ApiRemoteEndpointsResponse, ApiRemoteTargetsResponse } from "../types/api.js";
 import type { GroupCfg } from "../types/dom.js";
 import type { RemoteEndpointRow, RemoteTargetBody, RemoteTargetRow } from "../types/runs.js";
-import { $, apiJson, emptyNode, iconNode, targetEl, toast } from "../util.js";
+import { $, apiJson, iconNode, targetEl, toast } from "../util.js";
 import { closeSheet } from "../add-sheet.js";
 import { fill, h } from "../h.js";
 import { popupMenu } from "../menu.js";
@@ -176,16 +176,15 @@ function render(): void {
           h("button", { class: "btn primary", id: "rmAdd" }, "Add target"),
           h("button", { class: "btn", id: "rmNewGroup" }, "New group"))),
       h("div", { id: "rmGroups" })));
-  // The grouped list shows once there is anything to show: any row, or any group
-  // beyond the implicit default. A group the user just made is a PLACE (docs/20: an
-  // empty group is not an empty state) - hiding it behind "No targets yet" reads as
-  // the create having failed, which is exactly the bug it was. The bare table (no
-  // rows, only default) keeps the explaining empty state.
-  if (!targets.length && groupNames.length <= 1) {
-    fill($("rmGroups"), emptyNode({ icon: "globe", title: "No targets yet", hint: "Add a target to run commands on the machines the Tunnels connections reach." }));
-  } else {
-    paint();
-  }
+  // The grouped list ALWAYS paints, rows or none. A group is a place (docs/20: an empty
+  // group is not an empty state - it is a drop target with a +), and the default group is
+  // one too: it exists on every gateway and its + is the first way a target gets added.
+  // This page used to swap in the "No targets yet" empty state whenever the table was bare
+  // AND only the default group remained, so deleting the last user-made group made the
+  // default group vanish with it - and a fresh page showed no group at all (2026-09-20).
+  // The pane-desc above already says what the page is for; the empty group's own line
+  // says what to do next.
+  paint();
   $("countChip").textContent = targets.length ? targets.length + " target" + (targets.length === 1 ? "" : "s") : "";
 }
 

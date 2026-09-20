@@ -232,15 +232,34 @@ describe("the Remote Targets page (remote plugin, R6 + R8)", () => {
     expect(byId("countChip").textContent).toBe("1 target");
   });
 
-  it("an empty table draws the empty state in the groups slot, under the standing header", async () => {
+  it("an empty table still draws the default group - a place with a +, under the standing header", async () => {
     serve([]);
     await view.mount();
-    // The tunnels page's shape: the header and its actions stay above the empty state
-    // (Add target stays one click away), and the empty state takes the groups slot.
-    expect(drawn()).toContain("No targets yet");
+    // The header and its actions stay (Add target one click away); the groups slot holds
+    // the default group as an empty container, never the "No targets yet" empty state -
+    // that state used to take the slot whenever only the default group was left, so a
+    // fresh page showed no group at all and deleting the last user-made group appeared
+    // to delete the default one with it (2026-09-20).
+    expect(drawn()).toContain("default");
+    expect(groupsEl.children.length).toBe(1);
+    expect(drawn()).not.toContain("No targets yet");
     expect(paneEl.innerHTML).toContain('id="rmAdd"');
     expect(paneEl.innerHTML).toContain('id="rmNewGroup"');
     expect(byId("countChip").textContent).toBe("");
+  });
+
+  it("deleting the last user-made group leaves the default group on the page", async () => {
+    // The reported flow: default + a new group show as two containers; the new one is
+    // deleted; the page must still show the default container, not swap to an empty state.
+    serve([], ["default", "test"]);
+    await view.mount();
+    expect(groupsEl.children.length).toBe(2);
+    serve([], ["default"]);
+    await view.refresh();
+    expect(groupsEl.children.length).toBe(1);
+    expect(drawn()).toContain("default");
+    expect(drawn()).not.toContain("test");
+    expect(drawn()).not.toContain("No targets yet");
   });
 
   it("a group the user created stays visible with no rows yet - a place, not an empty state", async () => {
