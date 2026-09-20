@@ -435,3 +435,41 @@ describe("the I8b data surfaces in Chinese", () => {
     expect(tr(" · PK {pk}", { pk: "id=7" })).toBe(" · 主键 id=7");
   });
 });
+
+describe("the I9 terminal surfaces in Chinese", () => {
+  beforeEach(() => {
+    setLang("zh-CN");
+  });
+  afterEach(() => {
+    setLang("en");
+    localStorage.clear();
+  });
+
+  it("speaks the shortcuts sheet", async () => {
+    await loadLocale();
+    expect(tr("Terminal shortcuts")).toBe("终端快捷键");
+    expect(tr("Keys")).toBe("键");
+    expect(tr("find in this session\u2019s buffer")).toBe("在此会话的缓冲区中查找");
+    expect(tr("asks first \u2014 paste whole or not at all")).toBe("先询问——要么整段粘贴,要么不粘贴");
+    expect(tr("Close (Esc)")).toBe("关闭(Esc)");
+  });
+
+  it("speaks the bar and the empty state", async () => {
+    await loadLocale();
+    expect(tr("Open session")).toBe("打开会话");
+    expect(tr("Local shell is off — turn it on")).toBe("本地 shell 已关闭——点此开启");
+    expect(tr("Shortcuts and gestures")).toBe("快捷键与手势");
+    expect(tr("No session yet")).toBe("还没有会话");
+    expect(tr("A dropped socket does not end a session — it waits out the grace window and catches up.")).toContain("宽限窗口");
+    expect(tr(" · closed")).toBe(" · 已关闭");
+  });
+
+  it("speaks the settings sheet and its save cost", async () => {
+    await loadLocale();
+    expect(tr("Local shell")).toBe("本地 shell");
+    expect(tr("Empty = the platform default ({which}). Saving restarts the terminal plugin and closes every open session.", { which: "pwsh.exe" })).toContain("留空 = 平台默认(pwsh.exe)");
+    expect(trn(3, "{n} session", "{n} sessions")).toBe("3 个会话");
+    expect(tr("Saving restarts the terminal plugin and closes {n}.", { n: trn(3, "{n} session", "{n} sessions") })).toBe("保存会重启终端插件并关闭 3 个会话。");
+    expect(tr("Saved — the terminal plugin restarted with the new local shell settings")).toContain("已保存");
+  });
+});

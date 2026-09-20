@@ -49,6 +49,7 @@ import { createOverlay } from "../term-overlay.js";
 import { loadSearchAddon } from "../vendor/xterm/addon-search-0.16.0/index.js";
 import { openLocalSheet } from "./terminal-settings.js";
 import { closeSheet } from "../add-sheet.js";
+import { tr } from "../i18n.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
@@ -157,13 +158,13 @@ function paintTabs() {
      would destroy an open rename input. The memo is the built tree's own outerHTML
      (docs/37 R5): same tree in, same markup out - skip. */
   const tabs = all.map((m) => {
-    const label = tabLabel(m, m.shellTitle, m.customTitle) + (m.gone ? " · closed" : "");
+    const label = tabLabel(m, m.shellTitle, m.customTitle) + (m.gone ? tr(" · closed") : "");
     return h("button", { role: "tab", data: { act: "select", id: m.id },
         aria: { selected: String(m.id === active) }, title: label },
       h("span", { class: "term-tab-label" }, label),
-      m.bell && !m.gone ? h("span", { class: "term-tab-bell", aria: { label: "bell" } }, "\u25cf") : null,
+      m.bell && !m.gone ? h("span", { class: "term-tab-bell", aria: { label: tr("bell") } }, "\u25cf") : null,
       " ",
-      h("span", { class: "term-tab-x", data: { act: "close", id: m.id }, title: "Close session", role: "button" }, "\u00d7"));
+      h("span", { class: "term-tab-x", data: { act: "close", id: m.id }, title: tr("Close session"), role: "button" }, "\u00d7"));
   });
   const html = tabs.map((n) => { return n.outerHTML; }).join("");
   if (html === paintTabsLast) return;
@@ -212,7 +213,7 @@ function setFontSize(size        ) {
 function copySelection(term               ) {
   const text = term.getSelection();
   navigator.clipboard.writeText(text).catch(() => {
-    toast("could not write the selection to the clipboard", true);
+    toast(tr("could not write the selection to the clipboard"), true);
   });
   term.clearSelection();
 }
@@ -421,28 +422,28 @@ function openHelpSheet() {
   // Visible before the paint (panel-proof-of-life rule 1).
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Terminal shortcuts" } },
-      h("div", { class: "sheet-head" }, h("h2", null, "Terminal shortcuts")),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Terminal shortcuts") } },
+      h("div", { class: "sheet-head" }, h("h2", null, tr("Terminal shortcuts"))),
       h("div", { class: "sheet-body term-key-body" },
-        cap("Keys"),
-        row([k("Ctrl+Shift+F")], "find in this session\u2019s buffer"),
-        row([k("Enter"), k("Shift+Enter")], "next / previous match"),
-        row([k("Esc")], "close the find bar"),
-        row([k("Alt+1..9")], "switch to tab 1..9"),
-        row([k("Alt+\u2190"), k("Alt+\u2192")], "previous / next tab"),
-        row([k("Alt+W")], "close the tab"),
-        row([k("Ctrl+0")], "reset the font size (Ctrl+wheel zooms)"),
-        row([k("?")], "this sheet, anywhere on the page"),
-        cap("Mouse"),
-        row("double-click / right-click a tab", "rename it (the name outranks the shell\u2019s title)"),
-        row("middle-click a tab", "close it"),
-        row("drag a selection", "copied on release; Ctrl+C stays the interrupt"),
-        row("scroll up", "stop following output \u2014 a chip counts what you missed"),
-        cap("On by default"),
-        row("bell", "a dot on the tab until you read it"),
-        row("copy-on-select", "a scissors pill confirms each copy"),
-        row("multiline paste", "asks first \u2014 paste whole or not at all")),
-      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }), h("button", { class: "btn", id: "th-close" }, "Close"))));
+        cap(tr("Keys")),
+        row([k("Ctrl+Shift+F")], tr("find in this session’s buffer")),
+        row([k("Enter"), k("Shift+Enter")], tr("next / previous match")),
+        row([k("Esc")], tr("close the find bar")),
+        row([k("Alt+1..9")], tr("switch to tab 1..9")),
+        row([k("Alt+\u2190"), k("Alt+\u2192")], tr("previous / next tab")),
+        row([k("Alt+W")], tr("close the tab")),
+        row([k("Ctrl+0")], tr("reset the font size (Ctrl+wheel zooms)")),
+        row([k("?")], tr("this sheet, anywhere on the page")),
+        cap(tr("Mouse")),
+        row(tr("double-click / right-click a tab"), tr("rename it (the name outranks the shell\u2019s title)")),
+        row(tr("middle-click a tab"), tr("close it")),
+        row(tr("drag a selection"), tr("copied on release; Ctrl+C stays the interrupt")),
+        row(tr("scroll up"), tr("stop following output \u2014 a chip counts what you missed")),
+        cap(tr("On by default")),
+        row(tr("bell"), tr("a dot on the tab until you read it")),
+        row(tr("copy-on-select"), tr("a scissors pill confirms each copy")),
+        row(tr("multiline paste"), tr("asks first \u2014 paste whole or not at all"))),
+      h("div", { class: "sheet-foot" }, h("span", { class: "grow" }), h("button", { class: "btn", id: "th-close" }, tr("Close")))));
   const onKey = (ev               ) => { if (ev.key === "Escape") close(); };
   const close = () => {
     document.removeEventListener("keydown", onKey, true);
@@ -632,7 +633,7 @@ function wireTerminal(m           ) {
         term.paste(text);
         term.focus();   // the click landed on the surface, not the keyboard focus
       }).catch(() => {
-        toast("the browser refused to read the clipboard — use Ctrl+V", true);
+        toast(tr("the browser refused to read the clipboard — use Ctrl+V"), true);
         term.focus();
       });
     });
@@ -1033,7 +1034,7 @@ function render() {
   fill(pane,
     h("div", { class: "term-page" },
       h("div", { class: "term-bar" },
-        h("div", { class: "term-tabs", id: "term-tabs", role: "tablist", aria: { label: "Sessions" }, hidden: true }),
+        h("div", { class: "term-tabs", id: "term-tabs", role: "tablist", aria: { label: tr("Sessions") }, hidden: true }),
         h("div", { class: "term-ctl" },
           pick.rows.length
             /* The select closes after its options and the two buttons are its SIBLINGS
@@ -1041,52 +1042,52 @@ function render() {
                <select> is invalid DOM and the browser drops it - the Open session
                button vanished exactly this way once. */
             ? frag(
-                h("select", { id: "term-target", class: "term-pick", aria: { label: "Target" } },
+                h("select", { id: "term-target", class: "term-pick", aria: { label: tr("Target") } },
                   pick.rows.map((r) => {
                     return h("option", { value: r.id }, r.label + (r.state ? " (" + r.state + ")" : ""));
                   })),
                 /* The Local shell settings entry (docs/15 §2.1): a quiet gear beside the
                    picker, not a second loud button — Open session stays the bar's one accent.
                    The gear is the sprite (i-gear), never a Unicode glyph (design rule 9). */
-                h("button", { class: "term-gear", id: "term-set", title: "Local shell settings", aria: { label: "Local shell settings" } }, iconNode("gear")),
-                h("button", { class: "btn term-new", id: "term-new" }, "Open session"))
+                h("button", { class: "term-gear", id: "term-set", title: tr("Local shell settings"), aria: { label: tr("Local shell settings") } }, iconNode("gear")),
+                h("button", { class: "btn term-new", id: "term-new" }, tr("Open session")))
             /* Local off and nothing to pick: the line itself is the way in (docs/15
                §2.1) — a dead-end note that names a setting nobody can reach is how the
                gap this sheet closes came to exist. The tunnels reason, when there is one,
                stays readable beside it. */
             : pick.localOff
               ? frag(
-                  h("button", { class: "term-off", id: "term-off" }, "Local shell is off — turn it on"),
+                  h("button", { class: "term-off", id: "term-off" }, tr("Local shell is off — turn it on")),
                   pick.reason ? h("span", { class: "term-none" }, pick.reason) : null)
               : h("span", { class: "term-none" }, pick.note),
           /* The ? reference button (guidance tier 3): same quiet box as the gear - present
              in every branch, including the empty ones, where it matters most. The empty slot
              after it accepts the shell-owned app zone only during Terminal fullscreen; there
              is no duplicate page-owned fullscreen control (immersive.js). */
-          h("button", { class: "term-gear", id: "term-help", title: "Shortcuts and gestures", aria: { label: "Shortcuts and gestures" } }, iconNode("help"))),
+          h("button", { class: "term-gear", id: "term-help", title: tr("Shortcuts and gestures"), aria: { label: tr("Shortcuts and gestures") } }, iconNode("help"))),
         /* term-bar ENDS here (the second paren below closes it): master's term-page owns
            [bar, find, stage, foot] as siblings - an unclosed bar once swallowed find+stage,
            the stage went 0px tall inside the fixed-height bar, and xterm rendered nothing. */
         h("span", { class: "term-shell-slot", data: { "shell-focus-slot": "" } })),
       h("div", { class: "term-find", id: "term-find", hidden: true },
-        h("input", { id: "term-find-q", type: "text", placeholder: "Find", aria: { label: "Find in terminal" }, spellcheck: false }),
+        h("input", { id: "term-find-q", type: "text", placeholder: tr("Find"), aria: { label: tr("Find in terminal") }, spellcheck: false }),
         h("span", { class: "term-find-count", id: "term-find-count" }),
-        h("button", { type: "button", id: "term-find-prev", title: "Previous match (Shift+Enter)" }, "\u2191"),
-        h("button", { type: "button", id: "term-find-next", title: "Next match (Enter)" }, "\u2193"),
-        h("button", { type: "button", id: "term-find-x", title: "Close (Esc)" }, "\u00d7")),
+        h("button", { type: "button", id: "term-find-prev", title: tr("Previous match (Shift+Enter)") }, "\u2191"),
+        h("button", { type: "button", id: "term-find-next", title: tr("Next match (Enter)") }, "\u2193"),
+        h("button", { type: "button", id: "term-find-x", title: tr("Close (Esc)") }, "\u00d7")),
       h("div", { class: "term-stage", id: "term-stage" },
         h("div", { class: "term-empty", id: "term-empty", hidden: true },
           h("div", { class: "term-ghost", aria: { hidden: "true" } },
             h("span", { class: "term-ghost-dollar" }, "$"),
             h("span", { class: "term-ghost-cursor" })),
-          h("h2", null, "No session yet"),
-          h("p", null, "Pick a host in the bar above and open one."),
+          h("h2", null, tr("No session yet")),
+          h("p", null, tr("Pick a host in the bar above and open one.")),
           /* The one teaching moment every newcomer sees: three facts, one line, quiet. */
           h("p", { class: "term-keys-hint" },
-            h("kbd", null, "Ctrl+Shift+F"), " find · ",
-            h("kbd", null, "Alt+1..9"), " switch · ",
-            h("kbd", null, "?"), " everything"),
-          h("p", null, "A dropped socket does not end a session \u2014 it waits out the grace window and catches up."))),
+            h("kbd", null, "Ctrl+Shift+F"), tr(" find · "),
+            h("kbd", null, "Alt+1..9"), tr(" switch · "),
+            h("kbd", null, "?"), tr(" everything")),
+          h("p", null, tr("A dropped socket does not end a session \u2014 it waits out the grace window and catches up.")))),
       h("div", { class: "term-foot", id: "term-status" })));
 
   wireFindBar();
