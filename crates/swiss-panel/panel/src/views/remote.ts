@@ -38,6 +38,7 @@ import { closeSheet } from "../add-sheet.js";
 import { fill, h } from "../h.js";
 import { popupMenu } from "../menu.js";
 import { assignMember, groupFieldNode, groupOf, lastGroup, loadCollapsed, mountGroup, newGroupFlow, rememberGroup, saveOrder, slice } from "../groups.js";
+import { tr, trn } from "../i18n.js";
 
 let targets = [] as RemoteTargetRow[];
 let endpoints = [] as RemoteEndpointRow[];
@@ -79,7 +80,7 @@ function endpointLabel(id: string): string {
 function endpointDotNode(id: string): HTMLElement {
   const st = (endpoints.find((e) => { return e.id === id; }) || {} as RemoteEndpointRow).state || "unknown";
   const cls = st === "connected" || st === "up" ? "up" : st === "idle" ? "idle" : "starting";
-  return h("span", { class: "dot " + cls, title: "endpoint " + st });
+  return h("span", { class: "dot " + cls, title: tr("endpoint {state}", { state: st }) });
 }
 
 function signature(): string {
@@ -108,7 +109,7 @@ function rowNode(t: RemoteTargetRow): HTMLElement {
       chipNode(endpointLabel(t.endpoint)),
       (t.capabilities || []).map(chipNode)),
     h("button", { class: "btn ghost icon", data: { rmmore: t.id },
-        aria: { label: "Actions for " + t.id }, title: "Actions for " + t.id },
+        aria: { label: tr("Actions for {name}", { name: t.id }) }, title: tr("Actions for {name}", { name: t.id }) },
       iconNode("ellipsis")));
 }
 
@@ -119,8 +120,8 @@ function cfg(): GroupCfg<RemoteTargetRow> {
     density: "page",
     names: groupNames,
     collapsed: collapsed,
-    noun: "target",
-    addTitle: (g) => { return "Add a remote target to " + g; },
+    noun: tr("target"),
+    addTitle: (g) => { return tr("Add a remote target to {group}", { group: g }); },
     onAdd: (g) => {
       pendingGroup = g; // a real name now - the sheet's Group select starts on it
       openSheet(null);
@@ -163,18 +164,18 @@ function render(): void {
   // who else writes it; the drag is taught by the list itself, not by prose.
   // The status line names the presence only when it is NOT the normal one: "serving ·
   // 3 endpoints served by tunnels" said serving twice.
-  const status = endpoints.length + " endpoint" + (endpoints.length === 1 ? "" : "s") + " served by tunnels";
+  const status = trn(endpoints.length, "{n} endpoint served by tunnels", "{n} endpoints served by tunnels");
   fill($("pane"),
     h("div", { class: "wide" },
       h("div", { class: "pane-head" },
         h("div", null,
-          h("div", { class: "pane-desc" }, "Machines the gateway can run commands on, reached over Tunnels SSH connections. The CLI (swiss remote …) writes the same table."),
+          h("div", { class: "pane-desc" }, tr("Machines the gateway can run commands on, reached over Tunnels SSH connections. The CLI (swiss remote …) writes the same table.")),
           h("div", { class: "pane-sub" },
-            presence !== "serving" ? h("span", null, "Tunnels " + presence + " · ") : null,
+            presence !== "serving" ? h("span", null, tr("Tunnels {state} · ", { state: presence })) : null,
             status)),
         h("div", { class: "pane-actions" },
-          h("button", { class: "btn primary", id: "rmAdd" }, "Add target"),
-          h("button", { class: "btn", id: "rmNewGroup" }, "New group"))),
+          h("button", { class: "btn primary", id: "rmAdd" }, tr("Add target")),
+          h("button", { class: "btn", id: "rmNewGroup" }, tr("New group")))),
       h("div", { id: "rmGroups" })));
   // The grouped list ALWAYS paints, rows or none. A group is a place (docs/20: an empty
   // group is not an empty state - it is a drop target with a +), and the default group is
@@ -185,7 +186,7 @@ function render(): void {
   // The pane-desc above already says what the page is for; the empty group's own line
   // says what to do next.
   paint();
-  $("countChip").textContent = targets.length ? targets.length + " target" + (targets.length === 1 ? "" : "s") : "";
+  $("countChip").textContent = targets.length ? trn(targets.length, "{n} target", "{n} targets") : "";
 }
 
 /** Flat reorder after a row drag: applied locally so the row jumps immediately, then
@@ -237,30 +238,30 @@ function openSheet(target: RemoteTargetRow | null): void {
   $("sheet").hidden = false;
   fill($("sheet"),
     h("div", { class: "sheet", role: "dialog",
-        aria: { modal: "true", label: (editing ? "Edit" : "Add") + " a remote target" } },
+        aria: { modal: "true", label: editing ? tr("Edit a remote target") : tr("Add a remote target") } },
       h("div", { class: "sheet-head" },
-        h("h2", null, editing ? "Edit " + editing : "Add a remote target")),
+        h("h2", null, editing ? tr("Edit {name}", { name: editing }) : tr("Add a remote target"))),
       h("div", { class: "sheet-body" },
         h("label", { class: "field" },
-          h("span", null, "Alias (the name commands call: swiss remote exec <alias>)"),
-          h("input", { id: "rm-id", placeholder: "build" })),
+          h("span", null, tr("Alias (the name commands call: swiss remote exec <alias>)")),
+          h("input", { id: "rm-id", placeholder: tr("build") })),
         h("label", { class: "field" },
-          h("span", null, "Label (optional)"), h("input", { id: "rm-label" })),
+          h("span", null, tr("Label (optional)")), h("input", { id: "rm-label" })),
         h("label", { class: "field" },
-          h("span", null, "Endpoint (a Tunnels connection)"),
+          h("span", null, tr("Endpoint (a Tunnels connection)")),
           h("select", { id: "rm-endpoint" }, endpointOptions)),
         groupFieldNode(groupNames, groupSel),
         h("label", { class: "field" },
-          h("span", null, "Workspace root (absolute POSIX path)"),
-          h("input", { id: "rm-root", placeholder: "/data/ws/proj" })),
+          h("span", null, tr("Workspace root (absolute POSIX path)")),
+          h("input", { id: "rm-root", placeholder: tr("/data/ws/proj") })),
         h("div", { class: "field" },
-          h("span", null, "Capabilities"),
+          h("span", null, tr("Capabilities")),
           h("div", null, caps.map((c) => {
             return h("label", { class: "check" }, h("input", { type: "checkbox", id: "rmcap-" + c }), " " + c);
           })))),
       h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "rm-cancel" }, "Cancel"),
-        h("button", { class: "btn primary", id: "rm-save" }, editing ? "Save" : "Add"))));
+        h("button", { class: "btn", id: "rm-cancel" }, tr("Cancel")),
+        h("button", { class: "btn primary", id: "rm-save" }, editing ? tr("Save") : tr("Add")))));
   // Prefill programmatically, not via value=" markup": the pane redraws by signature,
   // and programmatic values are the one source of truth an edit and a test can both read.
   $<HTMLInputElement>("rm-id").disabled = !!editing; // the alias never edits; state set here, not in markup
@@ -279,7 +280,7 @@ function openSheet(target: RemoteTargetRow | null): void {
 
 async function save(): Promise<void> {
   const caps = ["exec", "sync", "files"].filter((c) => { return $<HTMLInputElement>("rmcap-" + c).checked; });
-  if (!caps.length) { toast("Pick at least one capability", true); return; }
+  if (!caps.length) { toast(tr("Pick at least one capability"), true); return; }
   const id = editing || $<HTMLInputElement>("rm-id").value.trim();
   const body: RemoteTargetBody = {
     // The store refuses an empty label (swiss-remote target.rs), and the field says
@@ -297,7 +298,7 @@ async function save(): Promise<void> {
     shell: "posix",
   };
   if (!body.workspaceRoot || body.workspaceRoot.charAt(0) !== "/") {
-    toast("Workspace root must be an absolute POSIX path", true);
+    toast(tr("Workspace root must be an absolute POSIX path"), true);
     return;
   }
   let url = "/api/remote/targets";
@@ -311,7 +312,7 @@ async function save(): Promise<void> {
 }
 
 async function removeTarget(id: string): Promise<void> {
-  if (!confirm("Delete target " + id + "? The Tunnels connection and any files on the machine are not touched.")) return;
+  if (!confirm(tr("Delete target {id}? The Tunnels connection and any files on the machine are not touched.", { id }))) return;
   const d = await apiJson("/api/remote/targets/" + encodeURIComponent(id), { method: "DELETE" });
   if (!d) return;
   await reload();
@@ -339,9 +340,9 @@ export async function mount() {
       const t = targets.find((x) => { return x.id === more?.dataset.rmmore; });
       if (!t) return;
       popupMenu(more.getBoundingClientRect(), [
-        { label: "Edit", fn: () => { openSheet(t!); } },
+        { label: tr("Edit"), fn: () => { openSheet(t!); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: () => { void removeTarget(t?.id); } },
+        { label: tr("Delete"), danger: true, fn: () => { void removeTarget(t?.id); } },
       ]);
     }
   };
@@ -358,5 +359,5 @@ export async function refresh() {
   render();
 }
 export async function poll() { await refresh(); }
-export function countText() { return targets.length ? targets.length + " targets" : ""; }
+export function countText() { return targets.length ? trn(targets.length, "{n} target", "{n} targets") : ""; }
 export function unmount() {}
