@@ -78,6 +78,14 @@ function renderPane(): void {
     fill(pane, emptyNode(mcpRows().length
       ? { icon: "mcp", title: "Select an MCP", hint: "Its tools, resources and configuration appear here." }
       : { icon: "mcp", title: "No MCPs registered", hint: "Add one with the + on a group header.", action: "Add an MCP" }));
+    // The empty pane answers ONLY its own button (master had no pane-level listener here):
+    // a detail render earlier in this pane's life left the delegated properties behind, and
+    // fill() wipes children, never listeners - without this reset one click on the action ran
+    // openSheet twice (direct handler + the [data-empty-action] branch in paneChromeClick).
+    pane.onclick = null;
+    pane.oninput = null;
+    pane.onchange = null;
+    pane.onkeydown = null;
     const addBtn = pane.querySelector<HTMLElement>("[data-empty-action]");
     if (addBtn) addBtn.onclick = () => { openSheet(null); };
     return;
@@ -183,12 +191,17 @@ function paneChromeClick(ev: MouseEvent): boolean {
   // The ... menu is inside #pane — its buttons arrive here first.
   const pick = t.closest<HTMLElement>(".menu [data-grp]");
   if (pick) {
+    // stopPropagation is master's wireMenu semantics, carried into the delegation: without it
+    // the click reaches connect.ts's document listener, whose histClose() shuts the Run-history
+    // popover master kept open across a menu action.
+    ev.stopPropagation();
     const d = mcpDetail();
     if (d) void assignGroup(d.name, String(pick.dataset.grp)); // every name in the menu is a real group now
     return true;
   }
   const mBtn = t.closest<HTMLElement>(".menu [data-act]");
   if (mBtn) {
+    ev.stopPropagation(); // same wireMenu carry-over as the group items above
     const d = mcpDetail();
     if (d) menuAct(d, String(mBtn.dataset.act));
     return true;

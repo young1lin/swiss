@@ -42,8 +42,6 @@ function node(tag: string): FakeNode {
 
 let sel: FakeNode | null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let state: any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let dataView: any;
 
 beforeAll(async () => {
@@ -69,7 +67,6 @@ beforeAll(async () => {
     if (prevDocument) Object.defineProperty(globalThis, "document", prevDocument);
     else delete (globalThis as Record<string, unknown>).document;
   });
-  state = ((await import("../src/util.js")) as unknown as { state: Record<string, unknown> }).state;
   dataView = await import("../src/data-view.js");
 });
 

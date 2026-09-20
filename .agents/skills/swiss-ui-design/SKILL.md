@@ -341,9 +341,9 @@ The taste behind it, in one paragraph (docs/35 is the worked example): **a thing
 6. **Every "new" says where it goes.** A create sheet or inline form has a Group field — a select over the scope's groups plus "New group…" — prefilled from the header `+` that opened it or from the last group used; the sheet title carries the group ("New job in *learn*"). Nothing lands in a group silently.
 7. **One glyph, one meaning per page.** Two `plus` icons on one screen must do the same thing. A different act gets a different icon (`folder-plus` for a new group, `plus` for a new item).
 8. **One persistent glyph per container header, and the whole header drags.** `+` stays visible (dimmed) because adding is frequent; `⋯` appears on hover/focus. The header itself is the drag surface for reordering groups (docs/35) — pick it up by the name, the count or the empty band; there is no grip to find. The buttons on it cancel the drag at `dragstart` (`groups.js wireHeadDrag`), so a twitch while clicking `+` or `⋯` still lands the click. Any new draggable container follows the same two rules: draggable whole, buttons opt out.
-9. **Icons are the sprite.** Lucide-style, 24 viewBox, 1.5 stroke, `currentColor`, hand-written paths in `index.html`, used through `icon(name)`. No Unicode glyphs as icons, no icon packages. Adding one icon means adding one `<symbol>`; twenty-odd symbols under 4 KB is the budget.
+9. **Icons are the sprite.** Lucide-style, 24 viewBox, 1.5 stroke, `currentColor`, hand-written paths in `index.html`, used through `iconNode(name)` (util.ts; an `HChild`, not a string — markup is built with `h()`/`fill()` since docs/37 R5). No Unicode glyphs as icons, no icon packages. Adding one icon means adding one `<symbol>`; twenty-odd symbols under 4 KB is the budget.
 10. **Status is a dot plus neutral text.** 6px; filled green up, filled red down/error, hollow ring (`.dot.idle`) for "not running, will start on demand" — the shape says idle, not a colour. Every dot carries a `title` that says the state in words.
-11. **Empty states use one template** — `emptyHtml({icon, title, hint, action})`: an icon in `--text-3`, an `--f-head` title, an `--f-label` hint under 44ch, an optional ghost action. An empty *container* is not an empty state: it shows one quiet row ("No items — drop here or press +") the height of a real row, so it still reads as a place and a drop target.
+11. **Empty states use one template** — `emptyNode({icon, title, hint, action})` (util.ts, returns the node tree): an icon in `--text-3`, an `--f-head` title, an `--f-label` hint under 44ch, an optional ghost action (`[data-empty-action]`). An empty *container* is not an empty state: it shows one quiet row ("No items — drop here or press +") the height of a real row, so it still reads as a place and a drop target.
 12. **Surfaces are a grey ladder, not a shadow stack.** Cards are lifted by a hairline ring only; shadows belong to floating layers (sheet, popup menu). Dark mode is a warm near-black that reads as paper, with brightness as the ladder.
 13. **Motion is 150ms ease or nothing**, and nothing under `prefers-reduced-motion`. Chevrons rotate; nothing slides, bounces or fades in.
 14. **Copy is English, short, declarative.** Titles name the thing ("Tunnels"), descriptions say what it does in one sentence, hints say what to do next. No exclamation marks, no "please", no emoji. Confirmations state consequences and what is *not* destroyed: "Its 3 jobs move to 'default'. Nothing is removed."
@@ -375,7 +375,7 @@ Use these words in specs and class names; if a design needs a word not here, add
 | **sheet** | A modal form with head / body / foot; foot holds Cancel + one primary | `.sheet*` |
 | **popup menu** | `popupMenu(anchor, items)`: 30px items, separators, danger last | `menu.js` |
 | **segmented control** | L3 tabs inside one resource's detail (a server's Tools / Resources / Prompts); never plugin-page navigation (§5) | `.seg` |
-| **empty state** | `emptyHtml(...)` | `util.js` |
+| **empty state** | `emptyNode(...)` | `util.ts` |
 | **toast** | One-line transient confirmation, bottom | `toast()` |
 
 ## 18. Checklist before you call it done

@@ -695,7 +695,6 @@ async function openV2Sheet(job                  )                {
     : h("div", { class: "hint" }, "This action type is not registered right now (its plugin is off) — edit its input in the JSON below.");
 
   // Visible before the paint (panel-proof-of-life rule 1) — the wide sheet paints in one fill.
-  // Visible before the paint (panel-proof-of-life rule 1) — the wide sheet paints in one fill.
   $("sheet").hidden = false;
   /* Field helpers keep the long form flat: one line per field, no paren nesting deep
      enough to miscount. The ids and classes are the contract the wiring below reads. */
