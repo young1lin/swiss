@@ -107,18 +107,19 @@
     <span class="grow"></span>
   </aside>
 
-  <!-- The plugin context bar (docs/13 D5, as revised): ALWAYS drawn in normal mode —
-       every plugin, single-page and workspace included, keeps the same bar height and the
-       same body origin. Two zones that never mix: the LEFT belongs to the current page
-       (location switcher or static label, then the page's count chip), and the FAR RIGHT
-       is a reserved app zone, the same trio on every page in the same order — memory,
-       theme, focus. Ordinary Focus keeps a minimal in-flow bar. A workspace may declare
-       one shell dock: Terminal hosts this same app-zone in its own toolbar, so its full-page
-       mode has one row of chrome and no overlay or empty strip. -->
+  <!-- The plugin context bar (docs/13 D5, as revised; docs/39 S2): ALWAYS drawn in normal
+       mode — every plugin, single-page and workspace included, keeps the same bar height and
+       the same body origin. Two zones that never mix: the LEFT names the plugin ONCE (its
+       rail glyph and label in #pageTitle) and, when it has several pages, lays them out as
+       underline tabs in #pageTabs — a multi-page plugin's pages are visible, not parked
+       behind a menu; the FAR RIGHT is a reserved app zone, the same trio on every page in
+       the same order — memory, theme, focus. Ordinary Focus keeps a minimal in-flow bar. A
+       workspace may declare one shell dock: Terminal hosts this same app-zone in its own
+       toolbar, so its full-page mode has one row of chrome and no overlay or empty strip. -->
   <div class="workbench">
     <header class="ctxbar" id="ctxBar" hidden>
-      <button class="ctx-switch" id="pageBtn" type="button" aria-haspopup="menu" aria-expanded="false" hidden><!-- Plugin / Page ▾ --></button>
-      <span class="ctx-loc" id="pageLoc" hidden><!-- Single-page plugin: the location, as text --></span>
+      <span class="ctx-title" id="pageTitle" hidden><!-- the plugin's glyph + label, once --></span>
+      <nav class="ctx-tabs" id="pageTabs" aria-label="Pages" hidden><!-- one .ctx-tab per page, ⋯ when they overflow --></nav>
       <span class="grow"></span>
       <span class="chip" id="countChip"></span>
       <span class="chip" id="memChip" title="swiss resident set">mem …</span>

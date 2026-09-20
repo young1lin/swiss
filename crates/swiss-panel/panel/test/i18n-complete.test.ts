@@ -56,19 +56,31 @@ const WIRE_KEYS = [
 ];
 
 /* Every literal key at a tr()/trn()/tk() call site, collected from the TS sources with
- * the compiler (regexes mis-count closers; the AST never does). */
+ * the compiler (regexes mis-count closers; the AST never does). A key argument may be a
+ * plain literal or a conditional over literals (tr(flag ? "k.one" : "k.two")) - both forms
+ * contribute their literals; anything dynamic contributes nothing. */
+function argKeys(arg: ts.Expression | undefined, out: Set<string>): void {
+  if (arg === undefined) return;
+  if (ts.isStringLiteral(arg)) { out.add(arg.text); return; }
+  if (ts.isParenthesizedExpression(arg)) { argKeys(arg.expression, out); return; }
+  /* A conditional over literals: collect the branches, never the condition - a comparison
+   * inside the condition (form === "one") is code, not a key. */
+  if (ts.isConditionalExpression(arg)) {
+    argKeys(arg.whenTrue, out);
+    argKeys(arg.whenFalse, out);
+  }
+}
+
 function literalKeys(file: string, out: Set<string>): void {
   const sf = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const name = ts.isIdentifier(node.expression) ? node.expression.text : "";
       if (name === "tr" || name === "tk") {
-        const a = node.arguments[0];
-        if (a !== undefined && ts.isStringLiteral(a)) out.add(a.text);
+        argKeys(node.arguments[0], out);
       } else if (name === "trn") {
-        for (const a of [node.arguments[1], node.arguments[2]]) {
-          if (a !== undefined && ts.isStringLiteral(a)) out.add(a.text);
-        }
+        argKeys(node.arguments[1], out);
+        argKeys(node.arguments[2], out);
       }
     }
     ts.forEachChild(node, visit);
