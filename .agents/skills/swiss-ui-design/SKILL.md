@@ -75,13 +75,13 @@ Never let a page replace or recreate app chrome.
 
 ## 3. Plugin Rail rules
 
-The left rail is the only L1 navigation.
+The left rail is the only L1 navigation. It is **icon-only** (docs/39 S1): a seat is its glyph at 18px inside a 36px seat on a 48px rail — the plugin's name is the seat's tooltip (`title`) and, once landed, the context bar's title.
 
-- One seat per pinned plugin.
+- One seat per pinned plugin; no caption spans, ever — a 9px caption under a glyph is noise the tooltip already answers.
 - `More` opens the complete/searchable plugin list.
-- Active plugin uses the existing restrained accent treatment.
+- Active plugin uses the existing restrained accent treatment (2px inset on the seat's leading edge).
 - Plugin pages never appear as separate rail seats.
-- A disabled/unavailable plugin remains reachable and is marked unavailable instead of disappearing.
+- A disabled/unavailable plugin remains reachable and is marked unavailable instead of disappearing (the tooltip carries the reason).
 - Do not create another plugin navigation row inside the page.
 
 ## 4. Context Bar rules
@@ -97,19 +97,19 @@ Its job is to answer:
 
 ### Multi-page plugin
 
-Render a stable plugin label plus an obvious page switcher:
+The title names the plugin once (its rail glyph beside its label); every page is a visible underline tab — a real `<a href="#id">` link — and the current one is marked by a 2px accent on the bar's own bottom hairline:
 
 ```text
-MCP / [ Servers ▾ ]                         8 MCPs · 4 up   [⛶]
-Tunnels / [ SSH Connections ▾ ]             3 connections  [⛶]
-Gateway / [ Plugins ▾ ]                     6 plugins       [⛶]
+[⛏] MCP   Servers  Traffic  Token            10 MCPs · 4 up   [⛶]
+[🔌] Tunnels   SSH Connections  Port Forwards   3 connections  [⛶]
+[⚙] Settings   Plugins  Secrets  System          6 plugins       [⛶]
 ```
 
-The current page control must look interactive. Do not disguise it as a breadcrumb with a vague chevron.
+The underline tab is the L2 shape; the pill segment inside a page body is the L3 shape. The two are never interchangeable: a plugin's pages never render as pills in the bar, and page-body panes never render as underline tabs. A trailing `⋯` seat (the old page menu, unchanged) catches overflow below the support floor; needing more than ~5 tabs means L3 content is being spent on L2 (see §13).
 
 ### Single-page plugin
 
-Keep the same bar height and alignment, but do not render a fake dropdown or redundant `Data / Data`:
+Keep the same bar height and alignment; draw the title alone — no fake one-entry tabs:
 
 ```text
 Data                                         mysql · 1,697 tables   [⛶]
@@ -290,6 +290,7 @@ Before accepting any UI change, answer all of these:
 - Does switching plugins cause the body to jump vertically?
 - Is a dropdown visibly a dropdown rather than a breadcrumb-looking mystery control?
 - Is a segmented control being used for a true page-local sibling view rather than plugin-page navigation?
+- Does the plugin need more than 5 pages? If its context bar needs a second row — or the ⋯ seat at normal widths — L3 content is being spent on L2; restructure the pages.
 - Is a large card merely decorating a workspace that already has an app boundary?
 - Is Focus Mode available in the same place on every page?
 - Does Focus Mode exit from the same spatial anchor?
@@ -362,7 +363,7 @@ Use these words in specs and class names; if a design needs a word not here, add
 | --- | --- | --- |
 | **rail** | Global navigation: brand, one seat per pinned plugin, `...` opening the palette, the rail foot | `index.html`, `base.css .rail` |
 | **plugin palette** | The rail's `...` seat: the searchable list of every plugin | `js/plugin-palette.js` |
-| **context bar** | The always-present second row: `Plugin / [Page ▾]` switcher (or single-page location text), count chip, Focus at right | `index.html #ctxBar`, `js/page-registry.js`, `base.css .ctxbar` |
+| **context bar** | The always-present second row: the plugin's title (rail glyph + label, docs/39 S2) with one underline tab per page when it has several, count chip, Focus at right | `index.html #ctxBar`, `js/page-registry.js`, `base.css .ctxbar` |
 | **pane** | The content area under the bars | `views.css .pane` |
 | **sidebar** | The 248px source list beside a detail pane | `base.css .side*` |
 | **band** (`.grp-head`) | A container's header: `--sep-soft`, `--r-row` corners, chevron + name + count, `+` and `⋯` at its end; draggable whole. The word for "this is where a group starts" | rule 16.16, `base.css` groups section |
@@ -374,7 +375,7 @@ Use these words in specs and class names; if a design needs a word not here, add
 | **chip** | A monochrome mono tag (launch method, dialect) or the count chip | `.side-type`, context-bar chip |
 | **sheet** | A modal form with head / body / foot; foot holds Cancel + one primary | `.sheet*` |
 | **popup menu** | `popupMenu(anchor, items)`: 30px items, separators, danger last | `menu.js` |
-| **segmented control** | L3 tabs inside one resource's detail (a server's Tools / Resources / Prompts); never plugin-page navigation (§5) | `.seg` |
+| **segmented control** | L3 tabs inside one resource's detail (a server's Tools / Resources / Prompts); never plugin-page navigation (§5), never in the context bar — underline tabs are L2's shape | `.seg` |
 | **empty state** | `emptyNode(...)` | `util.ts` |
 | **toast** | One-line transient confirmation, bottom | `toast()` |
 

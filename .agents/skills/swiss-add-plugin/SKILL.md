@@ -34,6 +34,13 @@ dependency, a child process, or a new crate.
 - **One action, many entries.** Generic actions are callable from pages, CLI, and jobs; do not copy
   business logic per entry point. Jobs-specific contracts (definitions, triggers, recovery) are in
   docs/10.
+- **A plugin owns at most 5 pages** (docs/39 S3): its pages sit in the context bar as underline
+  tabs, and more than ~5 means L3 content is being spent on L2 — restructure the pages instead of
+  overflowing into the bar's `⋯` seat.
+- **Give the plugin a sprite glyph:** one line in the `GLYPHS` table in
+  `crates/swiss-panel/panel/src/plugin-palette.ts` maps the group id to an existing `i-*` symbol
+  (the rail is icon-only, docs/39 S1 — without a glyph the seat falls back to the puzzle piece,
+  which cannot tell two such plugins apart).
 
 ## Non-negotiables for anything new
 
