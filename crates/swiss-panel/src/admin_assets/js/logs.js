@@ -22,10 +22,11 @@ import { frag, h } from "./h.js";
                                      
 import { rowOf } from "./sidebar.js";
 import { mcpDetail } from "./mcp-state.js";
+import { locale, tr } from "./i18n.js";
 
 /* --- Logs: what was called, with what, and what came back ------------------------------------- */
 function fmtChars(n        )         {
-  return n < 1000 ? n + " chars" : (n / 1000).toFixed(1) + "k chars";
+  return n < 1000 ? tr("{n} chars", { n }) : tr("{n}k chars", { n: (n / 1000).toFixed(1) });
 }
 
 /**
@@ -67,12 +68,12 @@ async function copyLogText(text        )                {
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text);
-      toast("Copied");
+      toast(tr("Copied"));
       return;
     }
   } catch (e) { /* fall through to the legacy path */ }
-  try { legacyCopy(text); toast("Copied"); }
-  catch (e) { toast("Copy failed", true); }
+  try { legacyCopy(text); toast(tr("Copied")); }
+  catch (e) { toast(tr("Copy failed"), true); }
 }
 
 /** docs/33 C2: a block is tree material only when it is a JSON object or array. Plain strings,
@@ -116,12 +117,12 @@ function jtNode(parentEl             , key                 , val       , path   
   // The block copy action still returns exact, valid JSON.
   const keySpan = jtSpan("jt-key", String(key));
   const colSpan = jtSpan("jt-col", ":");
-  const cp = jtBtn("jt-copy", "Copy value");
+  const cp = jtBtn("jt-copy", tr("Copy value"));
   cp.dataset.copy = "1";
   cp.appendChild(iconNode("copy"));
   cp.onclick = () => { void copyLogText(jtCopyText(val)); };
   if (isObj) {
-    const chev = jtBtn("jt-chev", "Toggle");
+    const chev = jtBtn("jt-chev", tr("Toggle"));
     chev.appendChild(iconNode("chevron-right"));
     const kids = jtDiv("jt-kids");
     const renderKids = () => {
@@ -133,7 +134,7 @@ function jtNode(parentEl             , key                 , val       , path   
       entries.forEach((e) => { jtNode(kids, e[0], e[1]         , path + e[0] + "/", open); });
     };
     const setChevronLabel = () => {
-      const label = (open[path] ? "Collapse " : "Expand ") + String(key);
+      const label = open[path] ? tr("Collapse {key}", { key: String(key) }) : tr("Expand {key}", { key: String(key) });
       chev.title = label;
       chev.setAttribute("aria-label", label);
       chev.setAttribute("aria-expanded", open[path] ? "true" : "false");
@@ -179,7 +180,7 @@ function blockNode(raw                           , kind        , seq        , ok
   const pretty = fmtJson(raw);
   if (parseJsonBlock(pretty) != null) return h("div", { class: "jtree", data: { jtree: kind + ":" + seq } });
   return h("pre", { class: "logs" + (ok ? "" : " err"), data: kind === "out" ? { out: seq } : {} },
-    pretty || (kind === "args" ? "(none)" : "(empty)"));
+    pretty || (kind === "args" ? tr("(none)") : tr("(empty)")));
 }
 
 /** Build the tree into `host` (a .jtree slot). Rebuildable any number of times.
@@ -241,7 +242,7 @@ function mountBlock(rowEl         , d           , c               , kind        
 
 /** docs/33 C1: a block label row — the caption plus the copy affordance for that block. */
 function lblNode(text        , kind        , seq        )              {
-  const label = kind === "args" ? "Copy arguments" : "Copy result";
+  const label = kind === "args" ? tr("Copy arguments") : tr("Copy result");
   return h("div", { class: "call-lbl" },
     text,
     h("button", { class: "btn icon", data: { copy: kind + ":" + seq }, aria: { label: label }, title: label },
@@ -249,26 +250,28 @@ function lblNode(text        , kind        , seq        )              {
 }
 
 function callNode(d           , c               )              {
-  const when = new Date(c.at).toLocaleString();
-  const meta = when + "  ·  " + c.via + (c.client ? "  ·  " + c.client : "") + "  ·  " + c.ms + " ms  ·  " + fmtChars(c.chars);
+  const when = new Date(c.at).toLocaleString(locale());
+  const meta = c.client
+    ? tr("{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", { when, via: c.via, client: c.client, ms: c.ms, chars: fmtChars(c.chars) })
+    : tr("{when}  ·  {via}  ·  {ms} ms  ·  {chars}", { when, via: c.via, ms: c.ms, chars: fmtChars(c.chars) });
   // A page ships only the head of each reply. Offer the rest instead of leaving a dangling tail.
   const full = d.callsFull[c.seq];
   const body = full != null ? full : c.output;
   const more = c.preview && full == null
     ? h("div", { class: "form-actions" },
-        h("button", { class: "btn", data: { full: c.seq } }, "Show full result (" + fmtChars(c.chars) + ")"))
+        h("button", { class: "btn", data: { full: c.seq } }, tr("Show full result ({chars})", { chars: fmtChars(c.chars) })))
     : null;
   return h("div", { class: "call" + (d.callsOpen[c.seq] ? " open" : ""), data: { seq: c.seq } },
     h("div", { class: "call-sum", data: { callseq: c.seq }, role: "button", tabIndex: 0 },
       h("span", { class: "chev", aria: { hidden: "true" } }, iconNode("chevron-right")),
       h("span", { class: "dot " + (c.ok ? "up" : "down") }),
       h("span", { class: "call-tool" }, c.tool),
-      h("span", { class: "call-arg" }, c.args || "no arguments"),
+      h("span", { class: "call-arg" }, c.args || tr("no arguments")),
       h("span", { class: "call-meta" }, meta)),
     h("div", { class: "call-body" },
-      lblNode("Arguments", "args", c.seq),
+      lblNode(tr("Arguments"), "args", c.seq),
       blockNode(c.args, "args", c.seq, true),
-      lblNode(c.ok ? "Result" : "Error", "out", c.seq),
+      lblNode(c.ok ? tr("Result") : tr("Error"), "out", c.seq),
       blockNode(body, "out", c.seq, c.ok),
       more));
 }
@@ -279,8 +282,8 @@ function callNode(d           , c               )              {
 function callsStatusNode(d           )         {
   const page = d.callsPage + 1;
   return d.callsPendingPage != null
-    ? ["Page " + page + " · ", h("span", { class: "spin" }), "Loading…"]
-    : "Page " + page;
+    ? [tr("Page {n} · ", { n: page }), h("span", { class: "spin" }), tr("Loading…")]
+    : tr("Page {n}", { n: page });
 }
 
 /** A failed foreground load, in place: the sentence and the way out, nothing else. The HTTP
@@ -289,23 +292,23 @@ function callsErrNode(d           )              {
   // The sentence is set once, in the state field (detail.js callsLoadFailed) — the node renders
   // the field, so the copy cannot drift between the two.
   return h("div", { class: "calls-err", id: "clErr", role: "status" },
-    h("span", d.callsError || "Could not load calls."),
+    h("span", d.callsError || tr("Could not load calls.")),
     d.callsErrStatus ? h("span", { class: "calls-err-why" }, d.callsErrStatus) : null,
-    h("button", { class: "btn", id: "clRetry" }, "Retry"));
+    h("button", { class: "btn", id: "clRetry" }, tr("Retry")));
 }
 
 function logsBodyNode(d           )         {
   if (d.calls == null && !d.callsError) {
     /* First open, before anything is there to keep in place (docs/32 B1). */
-    return h("div", { class: "note" }, h("span", { class: "spin" }), " Loading calls…");
+    return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("Loading calls…"));
   }
   /* docs/31: server-side search over the stored calls. The input re-renders with the page, but
    * renderCallsOnly swaps the LIVE node back in, so focus and caret survive a result repaint. */
   const q = d.callsQ || "";
   const head = h("div", { class: "sec-head" },
-    h("span", { class: "sec-cap" }, "Tool calls · newest first"),
-    h("input", { id: "callsQ", type: "search", placeholder: "Search calls", aria: { label: "Search tool calls" }, value: q }),
-    h("button", { class: "btn icon", id: "clMenu", aria: { label: "More log actions" }, title: "More log actions" }, iconNode("ellipsis")));
+    h("span", { class: "sec-cap" }, tr("Tool calls · newest first")),
+    h("input", { id: "callsQ", type: "search", placeholder: tr("Search calls"), aria: { label: tr("Search tool calls") }, value: q }),
+    h("button", { class: "btn icon", id: "clMenu", aria: { label: tr("More log actions") }, title: tr("More log actions") }, iconNode("ellipsis")));
   const busy = d.callsPendingPage != null;
   let body        ;
   let pager         = null;
@@ -318,16 +321,16 @@ function logsBodyNode(d           )         {
           h("div", { class: "row" },
             h("span", { class: "rowmsg" },
               d.callsPage
-                ? "Nothing on this page."
+                ? tr("Nothing on this page.")
                 : q
-                  ? "No calls matching \u201C" + q + "\u201D."
-                  : "No calls yet. Every tool invocation — from an MCP client or from the Run tab — is recorded here with its arguments and its reply, and the log is kept on disk across restarts.")));
+                  ? tr("No calls matching \u201C{q}\u201D.", { q })
+                  : tr("No calls yet. Every tool invocation — from an MCP client or from the Run tab — is recorded here with its arguments and its reply, and the log is kept on disk across restarts."))));
     /* Both directions go quiet while a switch is pending; the number stays the committed page. */
     pager = (d.callsPage > 0 || d.callsMore)
-      ? h("div", { class: "pager", id: "clPager", role: "navigation", aria: { label: "Call log pages" } },
-          h("button", { class: "btn", id: "clPrev", disabled: busy || d.callsPage <= 0 }, "Newer"),
+      ? h("div", { class: "pager", id: "clPager", role: "navigation", aria: { label: tr("Call log pages") } },
+          h("button", { class: "btn", id: "clPrev", disabled: busy || d.callsPage <= 0 }, tr("Newer")),
           h("span", { class: "calls-status", id: "clStatus", aria: { live: "polite" } }, callsStatusNode(d)),
-          h("button", { class: "btn", id: "clNext", disabled: busy || !d.callsMore }, "Older"))
+          h("button", { class: "btn", id: "clNext", disabled: busy || !d.callsMore }, tr("Older")))
       : null;
   }
   const errAgain = d.callsError && d.calls != null ? callsErrNode(d) : null;
@@ -338,19 +341,19 @@ function logsBodyNode(d           )         {
   let err         = null;
   if (d.stderr) {
     err = frag(
-      h("div", { class: "sec-head", style: "padding-top:var(--s5)" }, h("span", { class: "sec-cap" }, "Child process stderr")),
+      h("div", { class: "sec-head", style: "padding-top:var(--s5)" }, h("span", { class: "sec-cap" }, tr("Child process stderr"))),
       h("div", { class: "group" }, h("pre", { class: "logs" }, d.stderr)));
   } else if ((d.config && d.config.type) === "proc") {
     /* An empty stderr on a proc answers a different question depending on whether a child exists
        yet. Blank space here reads as "logs went missing" — say which of the three blanks it is. */
     const st = (rowOf(d.name) || {}             ).lifecycle;
     const why = st === "idle"
-      ? "No child process yet — a lazy proc starts on the first request (or the Start button). If that start fails, the failure reason and whatever the child printed land here."
+      ? tr("No child process yet — a lazy proc starts on the first request (or the Start button). If that start fails, the failure reason and whatever the child printed land here.")
       : st === "error"
-        ? "The child printed nothing before failing — the failure reason is in this MCP's header and on the Config tab."
-        : "The child is running but has printed nothing to stderr — nothing is being swallowed.";
+        ? tr("The child printed nothing before failing — the failure reason is in this MCP's header and on the Config tab.")
+        : tr("The child is running but has printed nothing to stderr — nothing is being swallowed.");
     err = frag(
-      h("div", { class: "sec-head", style: "padding-top:var(--s5)" }, h("span", { class: "sec-cap" }, "Child process stderr")),
+      h("div", { class: "sec-head", style: "padding-top:var(--s5)" }, h("span", { class: "sec-cap" }, tr("Child process stderr"))),
       h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg" }, why))));
   }
   return frag(head, region, err);
@@ -383,8 +386,8 @@ function argLineNode(args                                   )                   
 
 /** A tool stays one quiet row until the user asks for its complete MCP metadata. */
 function toolDetailNode(it            , args        )              {
-  const description = it.description || "No description provided.";
-  const schema = it.inputSchema ? JSON.stringify(it.inputSchema, null, 2) : "No input schema provided.";
+  const description = it.description || tr("No description provided.");
+  const schema = it.inputSchema ? JSON.stringify(it.inputSchema, null, 2) : tr("No input schema provided.");
   return h("details", { class: "item-detail" },
     h("summary", { title: description },
       h("span", { class: "item-chev" }, iconNode("chevron-right")),
@@ -393,9 +396,9 @@ function toolDetailNode(it            , args        )              {
         h("span", { class: "desc item-teaser" }, description),
         args)),
     h("div", { class: "item-full" },
-      h("div", { class: "item-full-label" }, "Full description"),
+      h("div", { class: "item-full-label" }, tr("Full description")),
       h("div", { class: "item-full-text" }, description),
-      h("div", { class: "item-full-label" }, "Input schema"),
+      h("div", { class: "item-full-label" }, tr("Input schema")),
       h("pre", { class: "item-schema" }, schema)));
 }
 
@@ -408,30 +411,30 @@ function kindBodyNode(d           , kind         , m                           )
     const on = kd.resourceEnabled !== false;
     resToggle = h("div", { class: "row row-act" },
       h("div", { class: "row-main" },
-        h("div", { class: "name" }, "Expose resources"),
-        h("div", { class: "desc" }, on ? "visible to clients" : "hidden — clients see no resources")),
+        h("div", { class: "name" }, tr("Expose resources")),
+        h("div", { class: "desc" }, on ? tr("visible to clients") : tr("hidden — clients see no resources"))),
       h("button", {
         class: "sw", role: "switch",
-        aria: { checked: on ? "true" : "false", label: "Expose resources" },
+        aria: { checked: on ? "true" : "false", label: tr("Expose resources") },
         data: { restog: on ? "1" : "0" },
-        title: on ? "Click to hide all resources" : "Click to expose resources",
+        title: on ? tr("Click to hide all resources") : tr("Click to expose resources"),
       }));
   }
   if (m.lifecycle !== "started") {
     return h("div", { class: "group" },
-      h("div", { class: "row" }, h("span", { class: "rowmsg" }, "Not started — start it to list " + kind + ".")));
+      h("div", { class: "row" }, h("span", { class: "rowmsg" }, tr("Not started — start it to list {kind}.", { kind }))));
   }
   if (kd.loading && !kd.loaded) {
-    return h("div", { class: "note" }, h("span", { class: "spin" }), " Loading " + kind + "…");
+    return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("Loading {kind}…", { kind }));
   }
   if (kd.error) {
     // Keep the pager: pageNext/pagePrev push the cursor optimistically, so a failed page used to
     // leave the tab with no way back except the global Refresh (which resets to page one).
     const errPager = kd.cursors.length > 1
       ? h("div", { class: "pager" },
-          h("button", { class: "btn", id: "pgPrev" }, "Previous"),
-          h("span", null, "Page " + kd.cursors.length),
-          h("button", { class: "btn", id: "pgNext", disabled: !kd.nextCursor }, "Next"))
+          h("button", { class: "btn", id: "pgPrev" }, tr("Previous")),
+          h("span", null, tr("Page {n}", { n: kd.cursors.length })),
+          h("button", { class: "btn", id: "pgNext", disabled: !kd.nextCursor }, tr("Next")))
       : null;
     return frag(
       h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg warn" }, kd.error))),
@@ -443,8 +446,8 @@ function kindBodyNode(d           , kind         , m                           )
     // so this is composed into `rows` and the resToggle header is added by the normal return below
     // rather than short-circuiting out of the function.
     const emptyMsg = kind === "resources" && kd.resourceEnabled === false
-      ? "Resources are hidden — turn them on above to expose them to clients."
-      : "No " + kind + ".";
+      ? tr("Resources are hidden — turn them on above to expose them to clients.")
+      : tr("No {kind}.", { kind });
     rows = h("div", { class: "row" }, h("span", { class: "rowmsg" }, emptyMsg));
   } else {
     rows = kd.items.map((it) => {
@@ -456,7 +459,7 @@ function kindBodyNode(d           , kind         , m                           )
             h("div", { class: "name" }, it.uri),
             it.name ? h("div", { class: "desc" }, it.name) : null,
             it.description ? h("div", { class: "desc" }, it.description) : null),
-          h("button", { class: "btn", data: { read: it.uri }, title: "Read this resource" }, "Read"));
+          h("button", { class: "btn", data: { read: it.uri }, title: tr("Read this resource") }, tr("Read")));
       }
       let args         = null;
       if (kind === "prompts" && it.arguments && it.arguments.length) {
@@ -478,12 +481,12 @@ function kindBodyNode(d           , kind         , m                           )
       if (kind === "tools") {
         return h("div", { class: "row row-act item-row" },
           toolDetailNode(it, args),
-          h("button", { class: "btn", data: { try: it.name }, title: "Try this tool" }, "Try"),
+          h("button", { class: "btn", data: { try: it.name }, title: tr("Try this tool") }, tr("Try")),
           h("button", {
             class: "sw", role: "switch",
-            aria: { checked: "true", label: "Visible to clients" },
+            aria: { checked: "true", label: tr("Visible to clients") },
             data: { toggle: it.name, on: "1" },
-            title: "Visible to clients — click to hide",
+            title: tr("Visible to clients — click to hide"),
           }));
       }
       return h("div", { class: "row row-b" }, main);
@@ -494,28 +497,28 @@ function kindBodyNode(d           , kind         , m                           )
   // toggle the other way, so a tool can be switched back on from the same place it was switched off.
   const disabledRows           = [];
   if (kind === "tools" && kd.disabled && kd.disabled.length) {
-    disabledRows.push(h("div", { class: "group-cap" }, "Disabled — not shown to clients"));
+    disabledRows.push(h("div", { class: "group-cap" }, tr("Disabled — not shown to clients")));
     kd.disabled.forEach((name) => {
       disabledRows.push(h("div", { class: "row row-act muted" },
         h("div", { class: "row-main" },
           h("div", { class: "name" }, name),
-          h("div", { class: "desc" }, "hidden from tools/list until re-enabled")),
+          h("div", { class: "desc" }, tr("hidden from tools/list until re-enabled"))),
         h("button", {
           class: "sw", role: "switch",
-          aria: { checked: "false", label: "Visible to clients" },
+          aria: { checked: "false", label: tr("Visible to clients") },
           data: { toggle: name, on: "0" },
-          title: "Turn this tool on",
+          title: tr("Turn this tool on"),
         })));
     });
   }
 
   const page = kd.cursors.length;
-  const pages = kd.total != null ? " of " + Math.max(1, Math.ceil(kd.total / kd.pageSize)) : "";
+  const pages = kd.total != null ? tr("Page {n} of {m}", { n: page, m: Math.max(1, Math.ceil(kd.total / kd.pageSize)) }) : tr("Page {n}", { n: page });
   const pager = (page > 1 || kd.nextCursor)
     ? h("div", { class: "pager" },
-        h("button", { class: "btn", id: "pgPrev", disabled: page <= 1 }, "Previous"),
-        h("span", null, "Page " + page + pages + " ", kd.loading ? h("span", { class: "spin" }) : null),
-        h("button", { class: "btn", id: "pgNext", disabled: !kd.nextCursor }, "Next"))
+        h("button", { class: "btn", id: "pgPrev", disabled: page <= 1 }, tr("Previous")),
+        h("span", null, pages + " ", kd.loading ? h("span", { class: "spin" }) : null),
+        h("button", { class: "btn", id: "pgNext", disabled: !kd.nextCursor }, tr("Next")))
     : null;
   return frag(
     resToggle ? h("div", { class: "group" }, resToggle) : null,

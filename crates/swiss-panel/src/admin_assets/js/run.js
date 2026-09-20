@@ -21,6 +21,7 @@ import { $ } from "./util.js";
 import { h } from "./h.js";
                                      
 import { histButtonLabel } from "./run-history.js";
+import { tr } from "./i18n.js";
 
 /** What the argument-form generator needs of a tool: its input schema and nothing else, so
  *  an MCP tool and a jobs action (whose schema field is the same JSON Schema) both fit. */
@@ -49,7 +50,7 @@ function readRunArgs(tool               , idPrefix         )                    
       });
       return;
     }
-    if (kind === "object") { try { out[k] = JSON.parse(raw); } catch (e) { throw new Error("`" + k + "` is not valid JSON"); } return; }
+    if (kind === "object") { try { out[k] = JSON.parse(raw); } catch (e) { throw new Error(tr("`{k}` is not valid JSON", { k })); } return; }
     out[k] = raw;
   });
   // A required argument left blank is refused HERE, with the field focused, instead of being
@@ -61,7 +62,7 @@ function readRunArgs(tool               , idPrefix         )                    
     if (!(rk in props) || out[rk] !== undefined) continue;
     const missing = $(pfx + rk);
     if (missing && typeof missing.focus === "function") missing.focus();
-    throw new Error("`" + rk + "` is required");
+    throw new Error(tr("`{k}` is required", { k: rk }));
   }
   return out;
 }
@@ -76,7 +77,7 @@ function argFieldsNode(tool               , idPrefix         , values           
   const props                                 = schema.properties || {};
   const required = schema.required || [];
   const keys = Object.keys(props);
-  if (!keys.length) return h("div", { class: "hint" }, "This tool takes no arguments.");
+  if (!keys.length) return h("div", { class: "hint" }, tr("This tool takes no arguments."));
   return keys.map((k) => {
     const p = props[k] || {};
     const id = pfx + k;
@@ -110,8 +111,8 @@ function argFieldsNode(tool               , idPrefix         , values           
     const area = kind === "array" || kind === "object" || k === "sql";
     const itemType = kind === "array" && p.items && p.items.type ? String(p.items.type) : "";
     const dataAll = itemType ? Object.assign({}, data, { items: itemType }) : data;
-    const ph = k === "sql" ? "SELECT 1"
-      : kind === "array" ? "one value per line" + (itemType ? " (" + itemType + ")" : "")
+    const ph = k === "sql" ? tr("SELECT 1")
+      : kind === "array" ? (itemType ? tr("one value per line ({type})", { type: itemType }) : tr("one value per line"))
       : kind === "object" ? "{ }" : "";
     const prefilled = have[k] == null ? "" : kind === "object" || kind === "array" ? JSON.stringify(have[k], null, 1) : String(have[k]);
     const input = area
@@ -126,14 +127,14 @@ function argFieldsNode(tool               , idPrefix         , values           
 function runBodyNode(d           , m                           )         {
   if (m.lifecycle !== "started") {
     return h("div", { class: "group" },
-      h("div", { class: "row" }, h("span", { class: "rowmsg" }, "Not started — start it to run a tool.")));
+      h("div", { class: "row" }, h("span", { class: "rowmsg" }, tr("Not started — start it to run a tool."))));
   }
   const kd = d.tools;
-  if (kd.loading && !kd.loaded) return h("div", { class: "note" }, h("span", { class: "spin" }), " Loading tools…");
+  if (kd.loading && !kd.loaded) return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("Loading tools…"));
   if (kd.error) return h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg warn" }, kd.error)));
   const tools = kd.items || [];
   if (!tools.length) return h("div", { class: "group" },
-    h("div", { class: "row" }, h("span", { class: "rowmsg" }, "This MCP exposes no tools.")));
+    h("div", { class: "row" }, h("span", { class: "rowmsg" }, tr("This MCP exposes no tools."))));
 
   let current                    = null;
   for (let i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i]              ;
@@ -143,13 +144,13 @@ function runBodyNode(d           , m                           )         {
   return h("div", { class: "group" },
     h("div", { class: "form" },
       h("label", { class: "field" },
-        h("span", null, "Tool"),
+        h("span", null, tr("Tool")),
         h("select", { id: "r-tool" },
           tools.map((t) => { return h("option", { value: t.name, selected: t.name === current?.name }, t.name); }))),
       current.description ? h("div", { class: "hint" }, current.description) : null,
       argFieldsNode(current),
       h("div", { class: "form-actions" },
-        h("button", { class: "btn primary", id: "runBtn" }, "Run"),
+        h("button", { class: "btn primary", id: "runBtn" }, tr("Run")),
         h("div", { class: "hist-wrap" },
           h("button", {
             type: "button",
@@ -160,7 +161,7 @@ function runBodyNode(d           , m                           )         {
             // (and its empty state) can open.
             disabled: !d.run.histQ && d.run.histTool === d.run.tool && !(d.run.hist || []).length,
             aria: { haspopup: "true", expanded: d.run.histOpen ? "true" : "false" },
-            title: "Fill the arguments from a past run — newest first, repeats shown once (up to 300). Type in the box to filter by arguments; hover an entry to read it in full. Secret values stay redacted.",
+            title: tr("Fill the arguments from a past run — newest first, repeats shown once (up to 300). Type in the box to filter by arguments; hover an entry to read it in full. Secret values stay redacted."),
           }, histButtonLabel(d, current.name))),
         h("span", { class: "run-meta", id: "runMeta" })),
       h("pre", { class: "logs", id: "runOut" })));

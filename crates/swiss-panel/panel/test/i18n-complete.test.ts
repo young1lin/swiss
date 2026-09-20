@@ -76,8 +76,13 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
    - "· {user} · {auth}": a middle-dot metadata skeleton between data values.
    - "· {error}": the plugins row's error tail — {error} is the host's own message.
    - "id {id}": a data prefix (the token row's desc lead) — the payload is the id.
-   - "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}": the traffic row's meta line — a pure data skeleton; its only words ({status}: ok/err) translate under their own keys. */
-const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}"]);
+   - "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}": the traffic row's meta line — a pure data skeleton; its only words ({status}: ok/err) translate under their own keys.
+   - "{name}: {error}" / "{name}: {msg}": toast skeletons — a name and an already-translated payload.
+   - "{verb} → {state}": the lifecycle action note — {verb} arrives translated, {state} is the host's state word (L9).
+   - "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}" (both shapes): the call log's meta line — pure data skeleton.
+   - "✗ {error}": a bare failure marker before the host's own error text.
+   - "SELECT 1": example SQL in a placeholder — language-neutral. */
+const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1"]);
 
 describe("i18n dictionary completeness (docs/38 L10a)", () => {
   const used = collect();
