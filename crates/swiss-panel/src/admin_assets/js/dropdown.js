@@ -89,9 +89,12 @@ function openMenuFor(sel                   , trig                   )       {
       if (sel.value !== o.value) {
         valDesc?.set.call(sel, o.value);
         paint(sel, trig);
-        // Native change events do not fire on programmatic assignment; the panel's handlers are
-        // onchange/addEventListener on the select, and a dispatched event reaches both.
-        sel.dispatchEvent(new Event("change"));
+        // Native change events do not fire on programmatic assignment, so the pick dispatches
+        // one - and it must BUBBLE like the native event does: since docs/37 R5 the views listen
+        // once, on the pane root (data-view dbPaneChange, run-history paneTabChange, remote-runs),
+        // and a non-bubbling Event("change") stops at the select and never reaches them. That
+        // was the Data connection picker doing nothing on 19998 (2026-09-20).
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
       }
       closeMenu();
       trig.focus();
