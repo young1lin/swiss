@@ -58,8 +58,10 @@ class FakeNode extends NodeStub {
   get innerHTML(): string { return this.kids.map(markupOf).join(""); }
   /* The tab strip's measuring half (docs/39 S3) walks the DOM the browser offers: element
    * children, classList, dataset, a scoped querySelector and box widths. The fake carries
-   * just enough of each for layoutTabs to run un-mocked - and the widths stay 0, so
-   * fitTabs' own rule ("everything fits at zero") is what the suite exercises. */
+   * just enough of each for layoutTabs to run un-mocked. width models a tab's natural box
+   * width and offsetWidth folds in the CSS rule that matters ([hidden] is display:none, so
+   * a hidden element measures 0) - the default 0 keeps every unpinned test on fitTabs' own
+   * "everything fits at zero" rule, while the refit regression below can stage real boxes. */
   get children(): unknown[] {
     return this.kids.filter((k) => {
       const t = (k as FakeNode).tag;
@@ -80,7 +82,8 @@ class FakeNode extends NodeStub {
     return this.children.find((k) => (k as FakeNode).classList.contains(want)) ?? null;
   }
   clientWidth = 0;
-  offsetWidth = 0;
+  width = 0;
+  get offsetWidth(): number { return this.hidden ? 0 : this.width; }
 }
 const textOf = (n: unknown): string => {
   const node = n as FakeNode;
@@ -193,11 +196,11 @@ beforeAll(async () => {
 });
 
 const byId = (id: string): FakeNode => els.get(id) as FakeNode;
-/* The painted tab strip's links, in order. The strip's fitting half degrades to
- * "everything fits" in this DOM (all box widths are 0 - see FakeNode), so the suites
- * assert what is painted: every page as a real link, aria-current on exactly the landing
- * page, the ⋯ seat present but hidden. fitTabs' arithmetic has its own suite
- * (fit-tabs.test.ts). */
+/* The painted tab strip's links, in order. Most suites leave the box widths at 0, where
+ * the fitting half degrades to "everything fits" (see FakeNode), and assert what is
+ * painted: every page as a real link, aria-current on exactly the landing page, the ⋯
+ * seat present but hidden. fitTabs' arithmetic has its own suite (fit-tabs.test.ts), and
+ * the refit regression below stages real widths on these nodes. */
 const tabLinks = (): FakeNode[] => (byId("pageTabs").kids as FakeNode[]).filter((k) => k.tag === "a");
 
 describe("the plugin rail (global navigation)", () => {
@@ -302,6 +305,34 @@ describe("the plugin rail (global navigation)", () => {
     expect(currentView()).toBe("data");
     expect(memoryStore.get("swiss.lastPage")).toBe(before);
     expect(memoryStore.get("swiss.lastPage")).not.toContain("mcp");
+  });
+});
+
+describe("the tab strip's refit (docs/39 S3, found live at 480px)", () => {
+  it("a re-entry pass over an already-fitted strip keeps the fit instead of re-expanding it", async () => {
+    await paint("mcps", inventory);
+    /* Stage real boxes: a 120px strip, 60px tabs, a 32px ... seat - the widths of the
+     * live repro. [hidden] models display:none, so a hidden tab measures 0 (FakeNode).
+     * Pass 1 fits: total 180 > 120, budget 88, prefix cut leaves [mcps] (the active tab),
+     * traffic/tokens behind the ... seat. */
+    const tabs = byId("pageTabs");
+    tabs.clientWidth = 120;
+    tabLinks().forEach((t) => { t.width = 60; });
+    (tabs.querySelector(".ctx-more") as FakeNode).width = 32;
+    registry.layoutTabs();
+    const fitted = tabLinks().map((t) => !!t.hidden);
+    expect(fitted).toEqual([false, true, true]);
+    expect((tabs.querySelector(".ctx-more") as FakeNode).hidden).toBe(false);
+    /* The bug this pins: any later pass (observer delivery, refit) used to measure the
+     * hidden tabs at 0, read the strip as "everything fits", and un-hide exactly what the
+     * fit had hidden - the strip overflowed its clip with the active tab out of view.
+     * A pass over the SAME fitted DOM must land on the same fit. */
+    registry.layoutTabs();
+    expect(tabLinks().map((t) => !!t.hidden)).toEqual(fitted);
+    expect((tabs.querySelector(".ctx-more") as FakeNode).hidden).toBe(false);
+    // And a third, for good measure: convergence is a fixed point now.
+    registry.layoutTabs();
+    expect(tabLinks().map((t) => !!t.hidden)).toEqual(fitted);
   });
 });
 
