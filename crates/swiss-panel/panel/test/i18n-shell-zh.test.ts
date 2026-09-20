@@ -242,3 +242,42 @@ describe("the I4 modules in Chinese (detail, logs, run)", () => {
     expect(tr("Show full result ({chars})", { chars: "1.5k 字符" })).toBe("显示完整结果(1.5k 字符)");
   });
 });
+
+describe("the I5 views in Chinese (remote targets, remote runs)", () => {
+  beforeEach(() => {
+    setLang("zh-CN");
+  });
+  afterEach(() => {
+    setLang("en");
+    localStorage.clear();
+  });
+
+  it("keeps the host's state words raw around translated frames", async () => {
+    await loadLocale();
+    expect(tr("endpoint {state}", { state: "serving" })).toBe("端点 serving");
+    expect(tr("Tunnels {state} · ", { state: "none" })).toBe("隧道 none · ");
+    expect(tr("exit {n}", { n: 2 })).toBe("退出码 2");
+    expect(tr("{n}ms", { n: 40 })).toBe("40 毫秒");
+    expect(tr("{m}m {s}s", { m: 2, s: 5 })).toBe("2 分 5 秒");
+  });
+
+  it("speaks the budget line and the count chips", async () => {
+    await loadLocale();
+    expect(trn(3, "{n} run recorded · {bytes}", "{n} runs recorded · {bytes}", { bytes: "1.5 KB" })).toBe("已记录 3 次运行 · 1.5 KB");
+    expect(tr(" of {cap} · kept {d} days", { cap: "500 MB", d: 30 })).toBe(" 上限 500 MB · 保留 30 天");
+    expect(trn(4, "{n} target", "{n} targets")).toBe("4 个目标");
+    expect(trn(2, "{n} run", "{n} runs")).toBe("2 次运行");
+  });
+
+  it("fills the remote sheet's labels and the delete confirm", async () => {
+    await loadLocale();
+    expect(tr("Workspace root (absolute POSIX path)")).toBe("工作区根目录(绝对 POSIX 路径)");
+    expect(tr("Alias (the name commands call: swiss remote exec <alias>)")).toBe(
+      "别名(命令调用所用的名字:swiss remote exec <alias>)",
+    );
+    expect(tr("Delete target {id}? The Tunnels connection and any files on the machine are not touched.", { id: "dev" })).toBe(
+      "删除目标 dev?隧道连接和机器上的文件都不会受影响。",
+    );
+    expect(tr("No output was produced.")).toBe("没有产生任何输出。");
+  });
+});

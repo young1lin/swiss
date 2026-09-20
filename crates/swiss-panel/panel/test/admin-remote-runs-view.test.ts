@@ -298,7 +298,8 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(pane).toContain('id="rrClear"');
     expect(pane).toContain(">Clear</button>");
     expect(byId("countChip").textContent).toBe("1 run");
-    expect(view.countText()).toBe("1 runs");
+    // The i18n sweep (docs/38 I5) pluralized the chip: 1 run, 2 runs.
+  expect(view.countText()).toBe("1 run");
   });
 
   it("an empty record draws the empty state and a disabled Clear", async () => {

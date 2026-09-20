@@ -81,8 +81,10 @@ const has = (o: Record<string, string>, k: string): boolean => Object.prototype.
    - "{verb} → {state}": the lifecycle action note — {verb} arrives translated, {state} is the host's state word (L9).
    - "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}" (both shapes): the call log's meta line — pure data skeleton.
    - "✗ {error}": a bare failure marker before the host's own error text.
-   - "SELECT 1": example SQL in a placeholder — language-neutral. */
-const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1"]);
+   - "SELECT 1": example SQL in a placeholder — language-neutral.
+   - "build", "/data/ws/proj": sample values in the remote sheet's placeholders — a plausible
+     alias and a plausible POSIX root, both language-neutral as samples. */
+const PASSTHROUGH = new Set(["MCP", "Token", "Base URL", "{label} — {error}", "HTTP {n}", "{n} MB", "· {user} · {auth}", "· {error}", "id {id}", "{client}  ·  /{mcp}  ·  {status}  ·  {ms}ms  ·  {when}", "{name}: {error}", "{name}: {msg}", "{verb} → {state}", "{when}  ·  {via}  ·  {client}  ·  {ms} ms  ·  {chars}", "{when}  ·  {via}  ·  {ms} ms  ·  {chars}", "✗ {error}", "SELECT 1", "build", "/data/ws/proj"]);
 
 describe("i18n dictionary completeness (docs/38 L10a)", () => {
   const used = collect();

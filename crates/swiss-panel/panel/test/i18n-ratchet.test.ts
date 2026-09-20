@@ -60,8 +60,6 @@ const FROZEN: Record<string, number> = {
   "tunnel-sheets.ts": 57,
   "tunnels.ts": 6,
   "views/jobs.ts": 2,
-  "views/remote-runs.ts": 18,
-  "views/remote.ts": 13,
   "views/terminal-settings.ts": 7,
   "views/terminal.ts": 26,
 };
