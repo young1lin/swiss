@@ -1064,7 +1064,10 @@ function render() {
              after it accepts the shell-owned app zone only during Terminal fullscreen; there
              is no duplicate page-owned fullscreen control (immersive.js). */
           h("button", { class: "term-gear", id: "term-help", title: "Shortcuts and gestures", aria: { label: "Shortcuts and gestures" } }, iconNode("help"))),
-        h("span", { class: "term-shell-slot", data: { "shell-focus-slot": "" } }),
+        /* term-bar ENDS here (the second paren below closes it): master's term-page owns
+           [bar, find, stage, foot] as siblings - an unclosed bar once swallowed find+stage,
+           the stage went 0px tall inside the fixed-height bar, and xterm rendered nothing. */
+        h("span", { class: "term-shell-slot", data: { "shell-focus-slot": "" } })),
       h("div", { class: "term-find", id: "term-find", hidden: true },
         h("input", { id: "term-find-q", type: "text", placeholder: "Find", aria: { label: "Find in terminal" }, spellcheck: false }),
         h("span", { class: "term-find-count", id: "term-find-count" }),
@@ -1083,7 +1086,7 @@ function render() {
             h("kbd", null, "Ctrl+Shift+F"), " find · ",
             h("kbd", null, "Alt+1..9"), " switch · ",
             h("kbd", null, "?"), " everything"),
-          h("p", null, "A dropped socket does not end a session \u2014 it waits out the grace window and catches up.")))),
+          h("p", null, "A dropped socket does not end a session \u2014 it waits out the grace window and catches up."))),
       h("div", { class: "term-foot", id: "term-status" })));
 
   wireFindBar();
