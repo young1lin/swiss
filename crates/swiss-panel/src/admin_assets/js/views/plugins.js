@@ -37,6 +37,7 @@ import { $, api, apiJson, emptyNode, targetEl, toast } from "../util.js";
 import { fill, h } from "../h.js";
                                       
 import { pluginInventory, reloadPluginInventory } from "../page-registry.js";
+import { tr, trn } from "../i18n.js";
 
 let busy                          = {}; // plugin id -> true while its own toggle is in flight
 let painted = ""; // the structural signature of the drawn list; a change means rebuild
@@ -58,8 +59,8 @@ function dotClass(p              )         {
 
 /** What the row says it is doing, in the host's own words — never a guess of our own. */
 function stateLabel(p              )         {
-  if (busy[p.id]) return "working…";
-  return p.enabled ? p.state : "disabled";
+  if (busy[p.id]) return tr("working…");
+  return p.enabled ? p.state : tr("disabled");
 }
 // (docs/18 V4): the state word left the row — the dot carries it; stateLabel is the dot's
 // title (docs/18 V6), so the host's own vocabulary explains the colour on hover.
@@ -76,9 +77,9 @@ export function requiresBadge(p              )         {
   const requires = p.requires || [];
   if (!requires.length) return null;
   if (p.requiresMet === false) {
-    return ["· needs " + requires.join(", ") + " ", h("span", { class: "warn" }, "(no provider)")];
+    return [tr("· needs {list}", { list: requires.join(", ") }) + " ", h("span", { class: "warn" }, tr("(no provider)"))];
   }
-  return "· requires " + requires.join(", ");
+  return tr("· requires {list}", { list: requires.join(", ") });
 }
 
 /** One plugins row (docs/18 V4): dot + name + one grey line (id, pages, requirements,
@@ -91,19 +92,19 @@ export function rowNode(p              )              {
   return h("div", { class: "tun-row", data: { plugin: p.id }, title: p.version ? "v" + p.version : undefined },
     h("span", { class: "dot " + dotClass(p), data: { dot: true }, title: stateLabel(p) }),
     h("div", { class: "tun-main" },
-      h("div", { class: "tun-name" }, p.label || p.id, !p.enabled && [" ", h("span", { class: "via" }, "· off")]),
+      h("div", { class: "tun-name" }, p.label || p.id, !p.enabled && [" ", h("span", { class: "via" }, tr("· off"))]),
       h("div", { class: "tun-sub" },
         h("code", null, p.id),
         " ",
-        h("span", { class: "via" }, pages ? "· pages: " + pages : "· no page"),
+        h("span", { class: "via" }, pages ? tr("· pages: {pages}", { pages }) : tr("· no page")),
         h("span", { class: "via", data: { reqs: true } }, requiresBadge(p)),
-        h("span", { data: { err: true } }, p.lastError && [" ", h("span", { class: "via" }, "· " + p.lastError)]))),
+        h("span", { data: { err: true } }, p.lastError && [" ", h("span", { class: "via" }, tr("· {error}", { error: p.lastError }))]))),
     h("div", { class: "tun-acts" },
       h("button", {
         class: "sw",
         data: { toggle: true },
         role: "switch",
-        aria: { checked: p.enabled ? "true" : "false", label: "Toggle " + (p.label || p.id) },
+        aria: { checked: p.enabled ? "true" : "false", label: tr("Toggle {name}", { name: p.label || p.id }) },
         disabled: !!busy[p.id],
       })));
 }
@@ -116,16 +117,16 @@ export function rowNode(p              )              {
 export function startupRowNode(a                                                                )                     {
   if (!a) return null;
   return h("div", { class: "tun-row", data: { autostart: true }, title: a.command || "" },
-    h("span", { class: "dot " + (a.enabled ? "up" : "idle"), title: a.enabled ? "enabled" : "off" }),
+    h("span", { class: "dot " + (a.enabled ? "up" : "idle"), title: a.enabled ? tr("enabled") : tr("off") }),
     h("div", { class: "tun-main" },
-      h("div", { class: "tun-name" }, "Start swiss when you sign in", !a.enabled && [" ", h("span", { class: "via" }, "· off")]),
+      h("div", { class: "tun-name" }, tr("Start swiss when you sign in"), !a.enabled && [" ", h("span", { class: "via" }, tr("· off"))]),
       h("div", { class: "tun-sub" }, h("span", { class: "via" }, a.detail || ""))),
     h("div", { class: "tun-acts" },
       h("button", {
         class: "sw",
         data: { "autostart-toggle": true },
         role: "switch",
-        aria: { checked: a.enabled ? "true" : "false", label: "Toggle start at sign-in" },
+        aria: { checked: a.enabled ? "true" : "false", label: tr("Toggle start at sign-in") },
       })));
 }
 
@@ -133,8 +134,9 @@ function chipText()         {
   const all = rows();
   const on = all.filter((p              )          => { return p.enabled; }).length;
   const failed = all.filter((p              )          => { return p.state === "failed"; }).length;
-  return all.length + (all.length === 1 ? " plugin" : " plugins") + " · " + on + " on" +
-    (failed ? " · " + failed + " failed" : "");
+  return failed
+    ? trn(all.length, "{n} plugin · {on} on · {bad} failed", "{n} plugins · {on} on · {bad} failed", { on, bad: failed })
+    : trn(all.length, "{n} plugin · {on} on", "{n} plugins · {on} on", { on });
 }
 
 function render()       {
@@ -145,18 +147,18 @@ function render()       {
   fill($("pane"), h("div", { class: "wide" },
     h("div", { class: "pane-head" },
       h("div", null,
-        h("div", { class: "pane-desc" }, "What this build is composed of. Disabling one stops its subsystem and takes its pages and API routes off the air until it is enabled again; definitions, logs and state files are left alone."))),
+        h("div", { class: "pane-desc" }, tr("What this build is composed of. Disabling one stops its subsystem and takes its pages and API routes off the air until it is enabled again; definitions, logs and state files are left alone.")))),
     startup && [
-      h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, "Startup")),
+      h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, tr("Startup"))),
       h("div", { class: "group" }, startup),
     ],
-    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, "Installed")),
+    h("div", { class: "sec-head" }, h("span", { class: "sec-cap" }, tr("Installed"))),
     all.length
       ? h("div", { class: "group" }, all.map(rowNode))
-      : emptyNode({ icon: "power", title: "No plugins", hint: "This gateway reports an empty inventory." }),
+      : emptyNode({ icon: "power", title: tr("No plugins"), hint: tr("This gateway reports an empty inventory.") }),
     h("div", { class: "tun-foot", data: { foot: true } },
       h("span", { data: { "foot-text": true } }, chipText()),
-      h("span", { class: "tun-foot-rev" }, "revision " + inv().revision))));
+      h("span", { class: "tun-foot-rev" }, tr("revision {n}", { n: inv().revision })))));
   wire();
 }
 
@@ -173,7 +175,7 @@ function patch()       {
     // title must follow the class or it keeps explaining the state before the last change.
     if (dot) { dot.className = "dot " + dotClass(p); dot.title = stateLabel(p); }
     const err = row.querySelector("[data-err]")                      ;
-    if (err) fill(err, p.lastError && [" ", h("span", { class: "via" }, "· " + p.lastError)]);
+    if (err) fill(err, p.lastError && [" ", h("span", { class: "via" }, tr("· {error}", { error: p.lastError }))]);
     const reqs = row.querySelector("[data-reqs]")                      ;
     if (reqs) fill(reqs, requiresBadge(p));
     const button = row.querySelector("[data-toggle]")                            ;
@@ -182,7 +184,7 @@ function patch()       {
       button.setAttribute("aria-checked", p.enabled ? "true" : "false");
     }
     const name = row.querySelector(".tun-name")                      ;
-    if (name) fill(name, p.label || p.id, !p.enabled && [" ", h("span", { class: "via" }, "· off")]);
+    if (name) fill(name, p.label || p.id, !p.enabled && [" ", h("span", { class: "via" }, tr("· off"))]);
   });
   const foot = pane.querySelector("[data-foot-text]")                      ;
   if (foot) foot.textContent = chipText();
