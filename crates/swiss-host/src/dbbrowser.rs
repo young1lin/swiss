@@ -3101,6 +3101,52 @@ pub fn activity_kill_sql(dialect: DbDialect, pid: i64, terminate: bool) -> Resul
     })
 }
 
+/// One Activity row, typed the way the panel computes on it. Both browsers answer
+/// `activity()` through their grid `query()` path, whose cell renderer stringifies every
+/// BIGINT on purpose (docs/22 W2.4, `exact_int64`: a JS number cannot hold one). Right for a
+/// data grid; wrong for the three columns here that the panel does not merely display:
+/// `pid` goes back into the kill route's `as_i64` (a `"88"` is a 400), `seconds` into a
+/// duration, and `own` — MySQL's `(ID = CONNECTION_ID())` is an integer 0/1, so it arrived as
+/// `"0"`/`"1"` — into an `if`, where `"0"` is truthy and marked EVERY mysql row "this panel"
+/// (docs/37 §11 D11, 2026-09-20). The three are typed here, once, for both dialects; a cell
+/// that is not a number/boolean spelling is left as it came, so an oddity shows rather than
+/// vanishes. The display columns pass through untouched.
+pub fn activity_row(mut row: Map<String, Value>) -> Map<String, Value> {
+    for key in ["pid", "seconds"] {
+        if let Some(n) = row.get(key).and_then(wire_i64) {
+            row.insert(key.to_string(), json!(n));
+        }
+    }
+    if let Some(b) = row.get("own").and_then(wire_bool) {
+        row.insert("own".to_string(), json!(b));
+    }
+    row
+}
+
+/// An integer the driver may have shipped as a number or as its decimal text.
+fn wire_i64(v: &Value) -> Option<i64> {
+    match v {
+        Value::Number(n) => n.as_i64(),
+        Value::String(s) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+/// A truth the driver may have shipped as a bool, a 0/1 (MySQL's comparison result), or
+/// either of those as text.
+fn wire_bool(v: &Value) -> Option<bool> {
+    match v {
+        Value::Bool(b) => Some(*b),
+        Value::Number(n) => n.as_i64().map(|n| n != 0),
+        Value::String(s) => match s.trim() {
+            "0" | "false" | "f" => Some(false),
+            "1" | "true" | "t" => Some(true),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 // --- SQL completion (docs/22 W3.1) ------------------------------------------------------------------
 
 /// How long a completion cache entry stays fresh. Ten minutes: long enough that typing a
@@ -5892,6 +5938,58 @@ mod tests {
             assert!(activity_kill_sql(DbDialect::Pg, bad, false).is_err());
             assert!(activity_kill_sql(DbDialect::Mysql, bad, true).is_err());
         }
+    }
+
+    fn row_of(v: Value) -> Map<String, Value> {
+        v.as_object().cloned().expect("object")
+    }
+
+    #[test]
+    fn activity_row_types_what_the_panel_computes_on_a_mysql_row() {
+        // docs/37 §11 D11 (2026-09-20): through the grid's BIGINT-as-text path mysql delivered
+        // pid "88", seconds "12" and own "0" - and "0" is truthy in the panel, which marked
+        // every row "this panel" and would have sent the kill route a pid it refuses.
+        let row = activity_row(row_of(json!({
+            "pid": "88", "user": "app", "state": "Sleep", "wait": "", "seconds": "12",
+            "query": "", "own": "0"
+        })));
+        assert_eq!(row["pid"], json!(88));
+        assert_eq!(row["seconds"], json!(12));
+        assert_eq!(row["own"], json!(false));
+        // The display columns are not the reply's business.
+        assert_eq!(row["user"], json!("app"));
+        assert_eq!(row["state"], json!("Sleep"));
+        assert_eq!(row["query"], json!(""));
+        // "1" is the one true spelling; a driver that types the comparison ships 1/0.
+        assert_eq!(activity_row(row_of(json!({ "own": "1" })))["own"], json!(true));
+        assert_eq!(activity_row(row_of(json!({ "own": 1 })))["own"], json!(true));
+        assert_eq!(activity_row(row_of(json!({ "own": 0 })))["own"], json!(false));
+    }
+
+    #[test]
+    fn activity_row_leaves_a_typed_postgres_row_alone() {
+        // Postgres ships pid (int4) and own (bool) typed already; only its bigint `seconds`
+        // rode the text path. Nothing else moves - null user, empty blockedBy included.
+        let row = activity_row(row_of(json!({
+            "pid": 478202, "user": null, "state": "active", "wait": "", "seconds": "4",
+            "query": "SELECT 1", "own": true, "blockedBy": ""
+        })));
+        assert_eq!(row["pid"], json!(478202));
+        assert_eq!(row["seconds"], json!(4));
+        assert_eq!(row["own"], json!(true));
+        assert_eq!(row["user"], Value::Null);
+        assert_eq!(row["blockedBy"], json!(""));
+        assert_eq!(row.len(), 8);
+    }
+
+    #[test]
+    fn activity_row_keeps_a_cell_it_cannot_type() {
+        // An unparseable cell stays as it came rather than vanishing: the panel shows the odd
+        // text instead of a hole, and the kill route's own pid check still refuses it.
+        let row = activity_row(row_of(json!({ "pid": "abc", "seconds": null, "own": "maybe" })));
+        assert_eq!(row["pid"], json!("abc"));
+        assert_eq!(row["seconds"], Value::Null);
+        assert_eq!(row["own"], json!("maybe"));
     }
 
     // --- docs/22 W3.1: server-side completion -------------------------------------------------

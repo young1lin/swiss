@@ -667,11 +667,15 @@ impl DbBrowser for MysqlBrowser {
     }
 
     async fn activity(&self) -> Result<Value, String> {
-        // The statement already aliases to the shared reply keys (dbbrowser.rs), so the rows
-        // are the reply, verbatim.
-        let rows = self
+        // The statement already aliases to the shared reply keys (dbbrowser.rs). The grid path
+        // renders BIGINT cells as text, which is right for a grid and wrong for pid/seconds/own
+        // here - activity_row types those three (docs/37 §11 D11).
+        let rows: Vec<Map<String, Value>> = self
             .query(&swiss_host::dbbrowser::activity_sql(DbDialect::Mysql), &[])
-            .await?;
+            .await?
+            .into_iter()
+            .map(swiss_host::dbbrowser::activity_row)
+            .collect();
         Ok(json!({ "rows": rows }))
     }
 

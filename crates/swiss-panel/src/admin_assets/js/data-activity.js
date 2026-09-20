@@ -35,7 +35,7 @@ let dbActivityCloseFn                      = null;
 
 /** Seconds as the compact duration the table shows — "42s", "1m 12s", "2h 05m", "3d 04h".
  *  Pure so the column's formatting can be pinned without a DOM. */
-function dbActivityDuration(secs                                    )         {
+function dbActivityDuration(secs                           )         {
   const s = Math.max(0, Math.floor(Number(secs) || 0));
   if (s < 60) return s + "s";
   const m = Math.floor(s / 60);

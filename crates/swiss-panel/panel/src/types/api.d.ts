@@ -765,27 +765,26 @@ export interface ApiDbActivityReply {
   rows: ApiDbActivityRow[];
 }
 
-/** One session row, verbatim from swiss-host/src/dbbrowser.rs activity_sql: both dialects
- *  alias their catalog columns to this one key set, so the shape is closed. own marks the
- *  row this panel's own polling session is, seconds feeds the duration column. */
+/** One session row from swiss-host/src/dbbrowser.rs activity_sql, passed through activity_row:
+ *  both dialects alias their catalog columns to this one key set, so the shape is closed. own
+ *  marks the row this panel's own polling session is, seconds feeds the duration column.
+ *  pid, seconds and own are the three the panel computes on, and the three activity_row types
+ *  - the browsers answer through the grid's query() path, which renders BIGINT cells as text,
+ *  and before the normalizer mysql shipped pid "88", seconds "12", own "0"/"1" (docs/37 §11
+ *  D11, walked 2026-09-20: "0" is truthy, so every mysql row read as the panel's own). */
 export interface ApiDbActivityRow {
+  /* Goes back to POST activity-kill, whose `as_i64` refuses a digit string. */
   pid: number;
   /* pg usename is NULL for background workers; mysql USER never is. */
   user: string | null;
   /* COALESCE'd to "" on both dialects, never null. */
   state: string;
   wait: string;
-  /* The SQL yields an integer, but both browsers answer through the grid's query() path,
-   * which renders every cell as text - so the wire carries "29", not 29, on pg AND mysql
-   * (D11 entry, docs/37 M9 walk 2026-09-20; dbActivityDuration Number()s it). */
-  seconds: number | string;
+  seconds: number;
   /* pg LEFT(query, 2000) keeps a NULL; mysql COALESCEs INFO to "". */
   query: string | null;
-  /* pg returns the boolean `pid = pg_backend_pid()`. mysql's `ID = CONNECTION_ID()` is an
-   * integer the same text-rendering turns into "0" / "1" - and "0" is truthy, so every mysql
-   * row reads as the panel's own session (D11 entry, same walk; the fix belongs in
-   * mysql_browser.rs activity(), coercing own to a bool and seconds to a number). */
-  own: boolean | string;
+  /* pg `pid = pg_backend_pid()`; mysql `ID = CONNECTION_ID()`, a 0/1 activity_row turns into a bool. */
+  own: boolean;
   /* pg only: array_to_string(pg_blocking_pids(pid)) - "" when nothing blocks. Absent on mysql. */
   blockedBy?: string;
 }
