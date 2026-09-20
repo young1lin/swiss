@@ -27,6 +27,7 @@
      a group with an ugly name. */
                                                    
                                                                                        
+import { tr } from "./i18n.js";
 function groupPages(pages                  , plugins                                   , fallbackLabels                                           )              {
   const byId = new Map((plugins || []).map((p) => { return [p.id, p]; }));
   const groups = new Map                   ();
@@ -52,20 +53,20 @@ function createPageRegistry(importer                                         ) {
   const modules = new Map                                                         ();
   importer = importer || ((entry        ) => { return import(entry); });
   function valid(page           )                 {
-    if (!page || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(page.id || "")) throw new Error("Invalid page id");
-    if (typeof page.label !== "string" || !page.label) throw new Error("Page label is required");
+    if (!page || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(page.id || "")) throw new Error(tr("Invalid page id"));
+    if (typeof page.label !== "string" || !page.label) throw new Error(tr("Page label is required"));
     const entryOk = /^\/admin\/(?:js\/views|plugins)\/[a-zA-Z0-9_./-]+\.js$/.test(page.entry || "") && !(page.entry || "").includes("..");
-    if (!entryOk) throw new Error("Page entry must be a local admin module");
+    if (!entryOk) throw new Error(tr("Page entry must be a local admin module"));
     return Object.assign({}, page, { order: Number.isFinite(page.order) ? page.order : 0 })                  ;
   }
   function listSorted()                   { return Array.from(entries.values()).sort((a, b) => { return a.order - b.order; }); }
   return {
     replace: (pages             ) => {
-      if (!Array.isArray(pages)) throw new Error("Pages must be an array");
+      if (!Array.isArray(pages)) throw new Error(tr("Pages must be an array"));
       const next = new Map();
       pages.forEach((page) => {
         page = valid(page);
-        if (next.has(page.id)) throw new Error("Duplicate page: " + page.id);
+        if (next.has(page.id)) throw new Error(tr("Duplicate page: {id}", { id: String(page.id) }));
         next.set(page.id, page);
       });
       entries = next;
@@ -78,7 +79,7 @@ function createPageRegistry(importer                                         ) {
     groups: (plugins                                   , fallbackLabels                         ) => { return groupPages(listSorted(), plugins, fallbackLabels); },
     load: (id        ) => {
       const page = entries.get(id);
-      if (!page) return Promise.reject(new Error("Unknown page: " + id));
+      if (!page) return Promise.reject(new Error(tr("Unknown page: {id}", { id })));
       const cached = modules.get(id);
       if (cached) return cached.promise;
       const promise = Promise.resolve().then(() => { return importer(page?.entry); }).catch((error) => {

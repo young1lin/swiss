@@ -24,9 +24,13 @@
    lets. Module top level NEVER calls tr() (docs/38 L7): imported modules evaluate before
    main.ts's await loadLocale() resolves, so a top-level tr() would freeze English onto a
    Chinese screen. */
-import { $ } from "./util.js";
 import { currentView } from "./ui-state.js";
 import type * as PageRegistry from "./page-registry.js";
+
+/* Local element lookup instead of util's $: util will import locale/tr from here for its
+   own copy (dotTitle, whenLabel), and a cycle - even a benign call-time one - is not worth
+   having when the helper is one line. */
+function byId<T extends HTMLElement = HTMLElement>(id: string): T { return document.getElementById(id) as T; }
 
 export type Lang = "en" | "zh-CN";
 export const LANG_KEY = "swiss_lang"; // absent = "en"; the preference, like THEME_KEY
@@ -133,26 +137,26 @@ let repaintThemeBtn: (() => void) | null = null;
  *  writes the same strings back (a no-op); in Chinese it swaps them. The 文/A button's own
  *  title is NOT here — see paintLangBtn. */
 export function paintChrome(): void {
-  const filter = $<HTMLInputElement>("filter");
+  const filter = byId<HTMLInputElement>("filter");
   filter.placeholder = tr("Search");
   filter.setAttribute("aria-label", tr("Filter MCPs"));
-  const add = $("addBtn");
+  const add = byId("addBtn");
   add.title = tr("New group");
   add.setAttribute("aria-label", tr("New group"));
-  $("themeBtn").setAttribute("aria-label", tr("Appearance"));
-  const expand = $("expandBtn");
+  byId("themeBtn").setAttribute("aria-label", tr("Appearance"));
+  const expand = byId("expandBtn");
   expand.title = tr("Focus mode — hide app navigation (Esc exits)");
   expand.setAttribute("aria-label", tr("Focus mode"));
-  $("langBtn").setAttribute("aria-label", tr("Language"));
-  $("sideCap").textContent = tr("MCPs");
+  byId("langBtn").setAttribute("aria-label", tr("Language"));
+  byId("sideCap").textContent = tr("MCPs");
   // The loading placeholder too: the first /api/memory answer overwrites it in both
   // languages (polling.ts owns the real reading).
-  $("memChip").textContent = tr("mem …");
-  $("memChip").title = tr("swiss resident set");
+  byId("memChip").textContent = tr("mem …");
+  byId("memChip").title = tr("swiss resident set");
   const rail = document.querySelector("aside.rail");
   if (rail) rail.setAttribute("aria-label", tr("Plugins"));
-  $("railNav").setAttribute("aria-label", tr("Plugins"));
-  $("list").setAttribute("aria-label", tr("Hosted MCPs"));
+  byId("railNav").setAttribute("aria-label", tr("Plugins"));
+  byId("list").setAttribute("aria-label", tr("Hosted MCPs"));
   if (repaintThemeBtn) repaintThemeBtn();
 }
 
@@ -161,7 +165,7 @@ export function paintChrome(): void {
  *  click, and vice versa — a reader fluent in the current language needs no label at all.
  *  This pair deliberately stays out of the dictionary (the scanner never sees it). */
 function paintLangBtn(): void {
-  $("langBtn").title = lang === "en" ? "切换到中文" : "Switch to English";
+  byId("langBtn").title = lang === "en" ? "切换到中文" : "Switch to English";
 }
 
 /** One click on 文/A (L6): a canLeave veto aborts BEFORE the preference is written — an
@@ -184,7 +188,7 @@ export async function toggleLang(): Promise<void> {
  *  chrome repaint can refresh the theme title through its own tr() calls). */
 export function initLangButton(onThemeRepaint?: () => void): void {
   repaintThemeBtn = onThemeRepaint ?? null;
-  const b = $("langBtn");
+  const b = byId("langBtn");
   b.onclick = (e) => { e.stopPropagation(); void toggleLang(); };
   paintLangBtn();
 }

@@ -18,6 +18,9 @@ import type { EmptyStateSpec } from "./types/dom.js";
 import type { McpKind } from "./types/state.js";
 import type { HChild } from "./h.js";
 import { h } from "./h.js";
+/* i18n has no import back into util (its element lookup is a local byId), so this edge is
+   one-way: util may localize its own copy without a module cycle. */
+import { locale, tr } from "./i18n.js";
 const TOKEN_ID_KEY = "mcp_gateway_token_id"; // which token copied connect commands embed
 const THEME_KEY = "swiss_theme";       // auto | light | dark — the preference, not the result
 /* The three kind pages, in tab order. Typed so a kind indexes McpDetail's three slots
@@ -42,7 +45,7 @@ function esc(s: unknown): string {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c as "&" | "<" | ">" | '"' | "'"];
   });
 }
-function now(): string { return new Date().toLocaleTimeString(); }
+function now(): string { return new Date().toLocaleTimeString(locale()); }
 
 /* The sprite reference is a NODE (docs/18 V2, docs/37 R5): the pre-R5 string twin icon()
  * retired with the last innerHTML caller — every glyph is iconNode() now. */
@@ -106,12 +109,12 @@ function emptyNode(opts: EmptyStateSpec): HTMLElement {
  *  chip text once drifted between two copies, and a dot whose title disagrees with its class
  *  is the same bug one hover wide. */
 function dotTitle(word: string, latencyMs?: number | null, reason?: string): string {
-  if (word === "up") return latencyMs != null ? "up · " + latencyMs + " ms" : "up";
+  if (word === "up") return latencyMs != null ? tr("up · {n} ms", { n: latencyMs }) : tr("up");
   // Idle is the one word that explains nothing: say what the ring means — nothing is wrong,
   // it starts when it is first needed.
-  if (word === "idle") return "idle — starts on first request";
-  if (word === "error") return reason ? "error: " + reason : "error";
-  return word || ""; // starting / stopping / reconnecting / down — the word the row already shows
+  if (word === "idle") return tr("idle — starts on first request");
+  if (word === "error") return reason ? tr("error: {reason}", { reason }) : tr("error");
+  return word || ""; // starting / stopping / reconnecting / down — the word the row already shows (docs/38 L9)
 }
 
 /** One time format for row lists: time-of-day inside the last 24h, date+time beyond it (the
@@ -122,8 +125,8 @@ function whenLabel(iso: string | number): string {
   if (isNaN(d.getTime())) return String(iso);
   const day = 24 * 60 * 60 * 1000;
   return (Date.now() - d.getTime() >= day)
-    ? d.toLocaleString()
-    : d.toLocaleTimeString();
+    ? d.toLocaleString(locale())
+    : d.toLocaleTimeString(locale());
 }
 
 // Fold state for every scope lives in groups.js now — keyed swiss.groups.<scope>.collapsed, one
@@ -194,7 +197,7 @@ async function apiJson<T = unknown>(path: string, opts?: RequestInit): Promise<T
     if (!r.ok) {
       // Failure bodies are the API's own { error } envelope - narrowed, not assumed.
       const msg = typeof j === "object" && j !== null && "error" in j && typeof j.error === "string" ? j.error : "";
-      toast(msg || "HTTP " + r.status, true);
+      toast(msg || tr("HTTP {n}", { n: r.status }), true);
       return null;
     }
     // The one trust every caller grants the admin API: an ok body is the T the caller declared.
@@ -203,7 +206,7 @@ async function apiJson<T = unknown>(path: string, opts?: RequestInit): Promise<T
     // A network-level failure (gateway stopped mid-click) must be reported too: every caller is
     // `if (!j) return;`, and a silent null made clicking Commit do literally nothing after the
     // confirm dialog.
-    toast("request failed — is the gateway running?", true);
+    toast(tr("request failed — is the gateway running?"), true);
     return null;
   }
 }

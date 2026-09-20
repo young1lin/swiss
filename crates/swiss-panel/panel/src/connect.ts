@@ -18,6 +18,7 @@ import type { ApiMcpRow, ApiTokenCreated, ApiTokenSecret } from "./types/api.js"
 import type { PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
 import { TOKEN_ID_KEY, apiJson, isMcpKind, targetEl, toast } from "./util.js";
+import { tr } from "./i18n.js";
 import { kindBodyNode, logsBodyNode } from "./logs.js";
 import type { HChild } from "./h.js";
 import { closeMenu } from "./pane.js";
@@ -87,7 +88,7 @@ async function copyConn(name: string, kind: string): Promise<void> {
   if (!secret) return;
   const text = kind === "claude" ? claudeSnippet(name, secret)
     : kind === "codex" ? codexSnippet(name, secret) : mcpJsonSnippet(name, secret);
-  void copyText(text, kind === "claude" ? "Claude Code command" : kind === "codex" ? "Codex block" : ".mcp.json entry");
+  void copyText(text, kind === "claude" ? tr("Claude Code command") : kind === "codex" ? tr("Codex block") : tr(".mcp.json entry"));
 }
 
 /** `claude mcp add` — one line, secret embedded. Runs in any shell (cmd, PowerShell, bash, zsh). */
@@ -115,10 +116,10 @@ async function copyText(text: string, label: string): Promise<void> {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(text);
     else legacyCopy(text);
-    toast(label + " copied — the token is embedded.");
+    toast(tr("{label} copied — the token is embedded.", { label }));
   } catch (e) {
     legacyCopy(text);
-    toast(label + " copied");
+    toast(tr("{label} copied", { label }));
   }
 }
 

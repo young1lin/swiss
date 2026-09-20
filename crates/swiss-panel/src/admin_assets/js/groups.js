@@ -53,6 +53,7 @@
 import { apiJson, el, esc, iconNode, toast } from "./util.js";
 import { h } from "./h.js";
 import { addTitle, deleteConfirmMsg, emptyLineText, groupOf, lastGroupKey, resolveDefaultGroup, slice } from "./group-logic.js";
+import { tr } from "./i18n.js";
 import { openGroupSheet } from "./add-sheet.js";
 import { popupMenu } from "./menu.js";
 
@@ -117,7 +118,7 @@ function newGroupFlow(scope        , names          , reload                    
     const j = await saveGroupNames(scope, names.concat([name]));
     if (!j) return false;
     await reload();
-    toast("Group " + name + " created");
+    toast(tr("Group {name} created", { name }));
     return true;
   });
 }
@@ -129,7 +130,7 @@ function newGroupFlow(scope        , names          , reload                    
  *  converted (jobs, remote, tunnels) and retires with them. */
 function groupFieldNode(names          , sel                )              {
   return h("label", { class: "field" },
-    h("span", null, "Group"),
+    h("span", null, tr("Group")),
     h("select", { id: "g-sel" }, names.map((n) => {
       return h("option", { value: n, selected: n === sel }, n);
     })));
@@ -138,7 +139,7 @@ function groupFieldHtml(names          , sel                )         {
   const opts = names.map((n) => {
     return '<option value="' + esc(n) + '"' + (n === sel ? " selected" : "") + ">" + esc(n) + "</option>";
   }).join("");
-  return '<label class="field"><span>Group</span><select id="g-sel">' + opts + "</select></label>";
+  return '<label class="field"><span>' + esc(tr("Group")) + '</span><select id="g-sel">' + opts + "</select></label>";
 }
 
 /* --- the component ------------------------------------------------------------------------------- */
@@ -152,7 +153,7 @@ function groupFieldHtml(names          , sel                )         {
  *    names          the scope's ordered group names (the ellipsis menu's Move edges, the sink)
  *    collapsed      the fold map (foldMap() / the tunnels tab's own)
  *    noun           what the delete confirm counts ("MCP", "row")
- *    addTitle(g)    the header +'s title, e.g. "Add an MCP to learn"
+ *    addTitle(g)    the header +'s title, e.g. "New MCP in learn"
  *    onAdd(group)   the header + - opens the scope's create flow on that group
  *    reload()       full data reload after a group-list mutation (create/reorder/delete)
  *    render()       re-render this view only (the optimistic local move needs it)
@@ -210,7 +211,7 @@ function mountGroup     (cfg               , g                 )              {
   const add = el("button", "grp-add");
   add.appendChild(iconNode("plus"));
   add.type = "button";
-  add.title = cfg.addTitle ? cfg.addTitle(g.name) : "Add to " + g.name;
+  add.title = cfg.addTitle ? cfg.addTitle(g.name) : tr("Add to {group}", { group: g.name });
   add.setAttribute("aria-label", add.title);
   add.onclick = (ev) => { ev.stopPropagation(); cfg.onAdd(g.name); };
   head.appendChild(add);
@@ -221,21 +222,21 @@ function mountGroup     (cfg               , g                 )              {
   const more = el("button", "grp-more");
   more.appendChild(iconNode("ellipsis"));
   more.type = "button";
-  more.title = "Move, rename or delete this group";
-  more.setAttribute("aria-label", "Group actions");
+  more.title = tr("Move, rename or delete this group");
+  more.setAttribute("aria-label", tr("Group actions"));
   more.onclick = (ev) => {
     ev.stopPropagation();
     const i = cfg.names.indexOf(g.name);
     const items             = [];
-    if (i > 0) items.push({ label: "Move up", fn: () => { moveGroupBy(cfg, g.name, -1); } });
+    if (i > 0) items.push({ label: tr("Move up"), fn: () => { moveGroupBy(cfg, g.name, -1); } });
     if (i >= 0 && i < cfg.names.length - 1) {
-      items.push({ label: "Move down", fn: () => { moveGroupBy(cfg, g.name, 1); } });
+      items.push({ label: tr("Move down"), fn: () => { moveGroupBy(cfg, g.name, 1); } });
     }
     if (items.length) items.push({ sep: true });
     items.push(
-      { label: "Rename…", fn: () => { renameFlow(cfg, g.name); } },
+      { label: tr("Rename…"), fn: () => { renameFlow(cfg, g.name); } },
       { sep: true },
-      { label: "Delete group", danger: true, fn: () => { deleteFlow(cfg, g.name); } },
+      { label: tr("Delete group"), danger: true, fn: () => { deleteFlow(cfg, g.name); } },
     );
     popupMenu(more.getBoundingClientRect(), items);
   };
@@ -442,7 +443,9 @@ function renameFlow     (cfg               , from        )       {
     if (!j) return false;
     if (cfg.collapsed[from]) { delete cfg.collapsed[from]; cfg.collapsed[to] = true; saveCollapsed(cfg.scope, cfg.collapsed); }
     await cfg.reload();
-    toast("Renamed " + from + " → " + to + (j.moved ? " (" + j.moved + " moved)" : ""));
+    toast(j.moved
+    ? tr("Renamed {from} → {to} ({n} moved)", { from, to, n: j.moved })
+    : tr("Renamed {from} → {to}", { from, to }));
     return true;
   });
 }
@@ -452,12 +455,12 @@ function renameFlow     (cfg               , from        )       {
 function deleteFlow     (cfg               , name        )       {
   const count = cfg.rowsById().filter((r) => { return cfg.groupOfRow(r) === name; }).length;
   const rest = cfg.names.filter((g) => { return g !== name; });
-  if (!rest.length) { toast("At least one group must remain"); return; }
+  if (!rest.length) { toast(tr("At least one group must remain")); return; }
   if (count && !confirm(deleteConfirmMsg(name, cfg.names, count, cfg.noun))) return;
   void saveGroupNames(cfg.scope, rest).then(async (j) => {
     if (!j) return;
     await cfg.reload();
-    toast("Deleted group " + name);
+    toast(tr("Deleted group {name}", { name }));
   });
 }
 

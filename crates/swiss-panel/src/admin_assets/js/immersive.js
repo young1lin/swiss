@@ -15,6 +15,7 @@
  */
 
 import { $, iconNode } from "./util.js";
+import { tr } from "./i18n.js";
 import { fill } from "./h.js";
 
 /* Focus mode is a shell behavior with one workspace escape hatch. Ordinary pages gain the
@@ -58,11 +59,11 @@ function paintImmersive()       {
   const btn = $("expandBtn");
   if (!btn) return;
   btn.title = on
-    ? (docked ? "Exit Terminal fullscreen (Esc)" : "Exit focus mode (Esc)")
-    : (terminal ? "Terminal fullscreen — fill the Swiss window (Esc exits)" : "Focus mode — hide app navigation (Esc exits)");
+    ? (docked ? tr("Exit Terminal fullscreen (Esc)") : tr("Exit focus mode (Esc)"))
+    : (terminal ? tr("Terminal fullscreen — fill the Swiss window (Esc exits)") : tr("Focus mode — hide app navigation (Esc exits)"));
   if (btn.setAttribute) btn.setAttribute("aria-label", on
-    ? (docked ? "Exit Terminal fullscreen" : "Exit focus mode")
-    : (terminal ? "Terminal fullscreen" : "Focus mode"));
+    ? (docked ? tr("Exit Terminal fullscreen") : tr("Exit focus mode"))
+    : (terminal ? tr("Terminal fullscreen") : tr("Focus mode")));
   fill(btn, iconNode(on ? "collapse" : "expand"));
 }
 

@@ -23,6 +23,7 @@ import { groupedMcps, sideCfg, visibleMcps } from "./sidebar.js";
 import { mountGroup } from "./groups.js";
 import { currentView, draggingGroupName, draggingRow, foldMap, listFilter, setMenuOpen } from "./ui-state.js";
 import { mcpBusyVerb, mcpRows, selectedMcp } from "./mcp-state.js";
+import { tr } from "./i18n.js";
 
 /* --- a menu anchored to a button ---------------------------------------------------------------
    The pane's overflow menu anchors to .pane-actions; menus raised from the sidebar have no such
@@ -100,15 +101,15 @@ function tooltipOf(m: ApiMcpRow): string {
   // Idle is the one state word that names no behaviour of its own (docs/18 V6): a lazy proc
   // has no child yet and wakes on the first request — say that, so a hollow ring explains itself.
   const stateWord = mcpBusyVerb(m.name) ? mcpBusyVerb(m.name) + "…"
-    : m.state === "idle" ? "idle — lazy: no child yet, wakes on the first request"
-    : m.state === "stopped" ? "disabled"
+    : m.state === "idle" ? tr("idle — lazy: no child yet, wakes on the first request")
+    : m.state === "stopped" ? tr("disabled")
     : m.state;
   // docs/24: the endpoint path shown to the operator carries the /mcp/ domain prefix.
   const bits = ["/mcp/" + m.name, m.type, m.source, stateWord];
   if (m.latencyMs != null) bits.push(m.latencyMs + " ms");
   if (m.description) bits.unshift(m.description);
   if (m.reason) bits.push(m.reason);
-  bits.push("right-click for actions"); // docs/28 D3: the row menu has no button of its own
+  bits.push(tr("right-click for actions")); // docs/28 D3: the row menu has no button of its own
   return bits.join("  ·  ");
 }
 
@@ -169,12 +170,14 @@ function patchSidebar(): void {
   // The chip belongs to whichever view is on screen; the tunnel and jobs views count their own
   // rows (updateCountChip owns those), so the MCP text must not overwrite them mid-poll.
   if (currentView() === "mcps") {
-    $("countChip").textContent = mcpRows().length + " MCPs · " + up + " up" + (bad ? " · " + bad + " down" : "");
+    $("countChip").textContent = bad
+    ? tr("{n} MCPs · {up} up · {bad} down", { n: mcpRows().length, up, bad })
+    : tr("{n} MCPs · {up} up", { n: mcpRows().length, up });
   }
   // Group headers name the sections now, so the standing "MCPS" caption is noise; it earns its line
   // only while a search is on, where the match count is the useful part.
   const cap = $("sideCap");
-  cap.textContent = rows.length + " matching";
+  cap.textContent = tr("{n} matching", { n: rows.length });
   cap.hidden = !listFilter();
 }
 
