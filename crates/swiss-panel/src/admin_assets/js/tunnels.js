@@ -333,7 +333,7 @@ async function ruleAct(id        , verb        )                {
     }
     if (!r.ok) { toast(j.error || tr("tunnels.httpN", { n: r.status }), true); return; }
     if (j.ok === false) { toast(j.error || tr("tunnels.startFailed"), true); return; }
-    toast(verb === "start" ? tr("tunnels.started") : tr("tunnels.stopped"));
+    toast(tr(verb === "start" ? "tunnels.started" : "tunnels.stopped"));
   });
 }
 

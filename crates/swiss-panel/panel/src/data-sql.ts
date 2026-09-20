@@ -213,7 +213,7 @@ function dbBarClick(t: Element): boolean {
     const n = dbIsRedis() ? dbRedisPendingCount() : dbPending();
     if (dbIsRedis()) dbRedisDiscard();
     else {
-      if (!confirm("Discard " + n + " buffered change" + (n > 1 ? "s" : "") + "? Nothing has been written.")) return true;
+      if (!confirm(tr("dataSql.discardBufferedConfirm", { n: trn(n, "dataSql.nBufferedChanges.one", "dataSql.nBufferedChanges.other") }))) return true;
       dbDropEdits();
       renderDbGrid(); renderDbBar();
     }
@@ -271,18 +271,17 @@ async function dbCommit(): Promise<void> {
   // The summary names the table and counts, because "commit 3 changes" must be a decision, not a reflex.
   const ups = Object.keys(d.updates).length, dels = Object.keys(d.deletes).length, ins = d.inserts.length;
   const parts: string[] = [];
-  if (ups) parts.push(ups + " update" + (ups > 1 ? "s" : ""));
-  if (dels) parts.push(dels + " delete" + (dels > 1 ? "s" : ""));
-  if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
+  if (ups) parts.push(trn(ups, "dataSql.nUpdates.one", "dataSql.nUpdates.other"));
+  if (dels) parts.push(trn(dels, "dataSql.nDeletes.one", "dataSql.nDeletes.other"));
+  if (ins) parts.push(trn(ins, "dataSql.nInserts.one", "dataSql.nInserts.other"));
   const tableLabel = (d.schema ? d.schema + "." : "") + d.table!;
   // docs/22 W4.1 (W4b follow-up): the gate names the address the server will really use — a
   // keyless table commits with whole-row WHEREs, and the user deserves that in the decision.
   const pkColsC = (d.data && d.data.primaryKey) || [];
   const addressed = pkColsC.length
-    ? "every row is addressed by its primary key"
-    : "the table has no primary key — every row is addressed by all its columns";
-  if (!confirm("Commit " + parts.join(", ") + " to " + tableLabel + "?\n" +
-      "One transaction: " + addressed + ", and any failure rolls the whole batch back.")) {
+    ? tr("dataSql.addressedByPk")
+    : tr("dataSql.addressedByAllColumns");
+  if (!confirm(tr("dataSql.commitToTable", { parts: parts.join(", "), table: tableLabel, how: addressed }))) {
     return; // cancelled — the buffer stays, nothing was sent
   }
   const j = await apiJson<{ results?: { affected?: number; row?: Record<string, unknown> }[] }>("/api/db/" + encodeURIComponent(d.conn!) + "/edits", {
@@ -291,7 +290,8 @@ async function dbCommit(): Promise<void> {
   });
   if (!j) return; // the server rolled back; the buffer stays exactly as it was
   const affected = (j.results || []).reduce((a: number, r: { affected?: number }): number => { return a + (r.affected || 0); }, 0);
-  toast("Committed " + edits.length + " change" + (edits.length > 1 ? "s" : "") + " · " + affected + " row" + (affected === 1 ? "" : "s") + " affected");
+  toast(trn(edits.length, "dataSql.committedChange.one", "dataSql.committedChange.other",
+    { rows: trn(affected, "dataSql.nRowsAffected.one", "dataSql.nRowsAffected.other") }));
   // docs/22 W1.7: each update's read-back row lands on the page before the reload, so the
   // committed truth (truncated, defaulted, trigger-rewritten) is what the grid shows next.
   const pkCols = (d.data && d.data.primaryKey) || [];

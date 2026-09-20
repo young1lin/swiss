@@ -266,12 +266,14 @@ function ruleRowNode(r: ApiTunnelRuleRow): HTMLElement {
   const busy = tunBusyOf(r.id);
   const word = busy ? "starting" : r.state;
   const running = r.state === "up" || r.state === "starting" || r.state === "reconnecting";
+  // Hoisted so the comparison literals stay out of the h() children (i18n gate).
+  const failing = r.state === "error" || r.state === "reconnecting";
   return h("div", { class: "tun-row", draggable: true, data: { rule: r.id } },
     h("span", { class: "dot " + word, data: { dot: "" }, title: dotTitle(word, null, r.reason) }),
     h("div", { class: "tun-main" },
       h("div", { class: "tun-name" }, r.name),
       h("div", { class: "tun-sub" }, ruleSubNode(r)),
-      (r.state === "error" || r.state === "reconnecting")
+      failing
         ? h("div", { class: "tun-err", data: { reason: "" } }, r.reason || "")
         : null),
     h("div", { class: "tun-acts" },

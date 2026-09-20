@@ -53,7 +53,7 @@ function dbParseCsvLine(line        )           {
 function dbOpenImport()       {
   const d = dbView();
   if (!d.conn || !d.table || !d.data) { toast(tr("dataCsv.openTableFirst"), true); return; }
-  if (!d.data.editable) { toast("This table is not editable (" + (d.data.editNote || "no primary key") + ")", true); return; }
+  if (!d.data.editable) { toast(tr("dataCsv.tableNotEditable", { reason: d.data.editNote || tr("dataCsv.noPrimaryKey") }), true); return; }
   if (dbPending() && !dbOkToDrop()) return;
   let header           = [], lines           = [], mapping                    = [];
   let mode = "insert"; // docs/22 W4.5: "insert" | "upsert" — the statement form the commit uses
@@ -167,8 +167,8 @@ function dbOpenImport()       {
     if (!header.length || !lines.length) { toast(tr("dataCsv.pasteUploadCsvFirst"), true); return; }
     if (!mapping.some(Boolean)) { toast(tr("dataCsv.mapLeastOneColumn"), true); return; }
     const upsert = mode === "upsert";
-    if (!confirm((upsert ? "Upsert " : "Insert ") + lines.length.toLocaleString() + " rows into " +
-        (d.schema ? d.schema + "." : "") + d.table  + " in ONE transaction? A failure rolls the whole file back.")) return;
+    if (!confirm(tr(upsert ? "dataCsv.upsertConfirm" : "dataCsv.insertConfirm",
+        { n: lines.length.toLocaleString(), t: (d.schema ? d.schema + "." : "") + d.table  }))) return;
     const t = e.currentTarget                     ;
     t.disabled = true;
     t.textContent = "Importing\u2026";
@@ -186,7 +186,7 @@ function dbOpenImport()       {
     if (!j) return; // server rolled back; the sheet stays for fixing
     // j.note is the server's degrade explanation (a Postgres table with no primary key); the
     // count is still the truth, the sentence beside it says what actually ran.
-    toast("Imported " + j.inserted + " row" + (j.inserted > 1 ? "s" : "") + (j.note ? " \u2014 " + j.note : ""));
+    toast(tr(j.note ? "dataCsv.importedRowsNote" : "dataCsv.importedRows", { n: j.inserted, note: j.note ?? "" }));
     closeSheet();
     dbDropEdits();
     void dbLoadData(true);

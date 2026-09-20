@@ -141,6 +141,9 @@ function dbFiltersNodes()           {
   if (!d.data || d.tab !== "data") return []; // filters belong to the row grid only
   const cols = d.data?.columns.map((c                  )         => { return c.name; });
   const rows           = d.filters.map((f              , i        )         => {
+    // The list operators say what they want right in the box (docs/22 W1.2).
+    const ph = f.op === "in" || f.op === "notIn" ? tr("dataFilters.phList")
+      : f.op === "between" ? tr("dataFilters.phBetween") : tr("dataFilters.phValue");
     return h("div", { class: "db-filter" },
       h("select", { title: tr("dataFilters.column"), data: { fi: String(i), fk: "col" } },
         cols.map((c        )         => { return h("option", { value: c, selected: c === f.column }, c); })),
@@ -151,8 +154,7 @@ function dbFiltersNodes()           {
       !dbValueless(f.op)
         ? h("input", {
             type: "text", title: tr("dataFilters.enterApplies"), value: f.value           || "",
-            // The list operators say what they want right in the box (docs/22 W1.2).
-            placeholder: f.op === "in" || f.op === "notIn" ? "1,2,3" : (f.op === "between" ? "lo,hi" : "value"),
+            placeholder: ph,
             data: { fi: String(i), fk: "val" },
           })
         : null,

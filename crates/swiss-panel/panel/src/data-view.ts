@@ -38,7 +38,7 @@ import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
 import { dbIsMounted, dbView, mountDbView } from "./db-state.js";
-import { tr } from "./i18n.js";
+import { tr, trn } from "./i18n.js";
 
 /* ================================================================================================
    Data view — a DBeaver-style browser over the mysql/pg MCPs.
@@ -64,7 +64,8 @@ function dbPending(): number {
  *  would break the same rule the row grid's guard exists for. */
 function dbOkToDrop(): boolean {
   const n = dbPending() + dbRedisPendingCount();
-  return !n || confirm("Discard " + n + " uncommitted change" + (n > 1 ? "s" : "") + "? Nothing has been written yet.");
+  return !n || confirm(tr("dataView.discardNothingWritten",
+    { n: trn(n, "dataView.nUncommittedChanges.one", "dataView.nUncommittedChanges.other") }));
 }
 
 function dbDropEdits() {

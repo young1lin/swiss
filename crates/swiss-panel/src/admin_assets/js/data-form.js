@@ -110,7 +110,8 @@ function dbFormField(d         , val             , f             , ctx          
     } else {
       val.appendChild(h("input", {
         class: "db-form-input", type: "text", value: text == null ? "" : text,
-        placeholder: f.value === undefined ? "default" : f.value === null ? "NULL — type to replace" : "",
+        placeholder: f.value === undefined ? tr("dataForm.phDefault")
+          : f.value === null ? tr("dataForm.phNullReplace") : "",
         spellcheck: false, data: { ff: "input", col: f.name },
       }));
     }
@@ -174,8 +175,8 @@ function renderDbFormView(wrap             )       {
     head.appendChild(el("span", "grow"));
     head.appendChild(h("button", {
       class: "db-act", type: "button",
-      title: isIns ? "Remove this buffered insert"
-        : deleted ? "Undo this buffered delete" : "Buffer a delete \u2014 applied only on Commit",
+      title: isIns ? tr("dataGrid.removeBufferedInsert")
+        : deleted ? tr("dataGrid.undoBufferedDelete") : tr("dataGrid.bufferDeleteAppliedOnly"),
       data: { fact: "" },
     }, isIns ? "\u2715" : deleted ? "\u21a9" : "\u2715"));
   }

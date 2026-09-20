@@ -159,8 +159,9 @@ function renderDbDetailGrid(wrap             )       {
   if (d.tab === "columns" || d.tab === "indexes") {
     // data-dadd carries the sheet kind; the click handler resolves the live detail for the
     // sheet's payload (docs/37 R5 — state at event time, not render time).
-    meta.appendChild(h("button", { class: "btn", type: "button", data: { dadd: d.tab === "columns" ? "column" : "index" } },
-      d.tab === "columns" ? "Add column…" : "New index…"));
+    const colsTab = d.tab === "columns";
+    meta.appendChild(h("button", { class: "btn", type: "button", data: { dadd: colsTab ? "column" : "index" } },
+      colsTab ? tr("dataStructure.addColumn") : tr("dataStructure.newIndex")));
   }
   wrap.appendChild(meta);
   spec.head.forEach((h        )       => { hr.appendChild(el("th", "db-col", h)); });
@@ -168,7 +169,9 @@ function renderDbDetailGrid(wrap             )       {
   tbl.appendChild(thead);
   const tbody = el("tbody");
   spec.rows.forEach((r         )       => {
-    const tr = el("tr");
+    /* Named trEl, not tr: this loop predates i18n, and the row element shadowed the
+     * imported tr() the FK button's title needs (the 2026-10 i18n sweep hit exactly that). */
+    const trEl = el("tr");
     spec.row(r).forEach((v                                                           )       => {
       const cell = v && typeof v === "object" ? v : { text: v, cls: "" };
       const td = el("td", "db-cell" + (cell.cls ? " " + cell.cls : ""));
@@ -183,13 +186,13 @@ function renderDbDetailGrid(wrap             )       {
         // button was inert from the R5 conversion until the 2026-09-20 review.
         td.appendChild(h("button", {
           class: "db-fk-ref", type: "button",
-          title: "Open " + (fk_.refSchema ? fk_.refSchema + "." : "") + fk_.refTable,
+          title: tr("dataStructure.openRefTable", { ref: (fk_.refSchema ? fk_.refSchema + "." : "") + fk_.refTable }),
           data: { "ref-table": fk_.refTable, "ref-schema": fk_.refSchema || "" },
         }, String(cell.text)));
       } else td.textContent = String(cell.text);
-      tr.appendChild(td);
+      trEl.appendChild(td);
     });
-    tbody.appendChild(tr);
+    tbody.appendChild(trEl);
   });
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);

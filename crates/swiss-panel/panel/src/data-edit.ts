@@ -64,7 +64,7 @@ function dbTableMenu(anchorEl: HTMLElement): void {
   });
   menu.appendChild(document.createElement("hr"));
   item("Rename table\u2026", () => {
-    const to = prompt("Rename " + (d.schema ? d.schema + "." : "") + d.table + " to:", d.table!);
+    const to = prompt(tr("dataEdit.renameTo", { name: (d.schema ? d.schema + "." : "") + d.table }), d.table!);
     if (!to || to === d.table) return;
     if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast(tr("dataEdit.validTableName"), true); return;}
     void dbRunDdl("rename", to);
@@ -99,8 +99,7 @@ function dbTableMenu(anchorEl: HTMLElement): void {
    SHOWS a qualified name but demands the bare one; the key flavor's display name is the
    thing itself. */
 function dbTypedConfirm(o: { what: string; name: string; kind: string; typed?: string | null }, fn: () => void): void {
-  const typed = prompt(o.what + " " + o.name + "\n" +
-    "This cannot be undone. Type the " + o.kind + " name to confirm:", "");
+  const typed = prompt(tr("dataEdit.typedConfirm", { what: o.what, name: o.name, kind: o.kind }), "");
   if (typed !== (o.typed != null ? o.typed : o.name)) {
     if (typed !== null) toast(tr("dataEdit.nameMatchNothingDone"), true);
     return;
@@ -115,7 +114,7 @@ async function dbRunDdl(op: string, to?: string): Promise<void> {
     body: JSON.stringify({ op: op, table: d.table, schema: d.schema, to: to }),
   });
   if (!j) return;
-  toast("Ran: " + j.ran);
+  toast(tr("dataEdit.ran", { sql: j.ran }));
   if (op === "drop") {
     // The table is gone: nothing of it may linger on the right pane. d.schema, the open
     // result tabs and the view state (order, filters, focus) belong to the dropped table

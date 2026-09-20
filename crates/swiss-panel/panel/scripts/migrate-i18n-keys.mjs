@@ -6,7 +6,9 @@
  *
  * Run ONCE from crates/swiss-panel/panel:  node scripts/migrate-i18n-keys.mjs
  * The script is idempotent-safe to re-run only on the pre-migration tree; it exists
- * in the repo as the record of how the migration was performed.
+ * in the repo as the record of how the migration was performed. A re-run on the
+ * ALREADY-migrated tree would treat every symbolic key as English copy and corrupt the
+ * call sites and en.ts, so the guard below refuses to start and exits non-zero.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -16,6 +18,18 @@ import ts from "typescript";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const panel = path.resolve(here, "..");
 const srcDir = path.join(panel, "src");
+
+/* --- the re-run guard: a tr()/tk()/trn() literal that already reads as a symbolic key
+ * (lowercase module dot camelCase id) proves the migration already ran; rewriting again
+ * would mint keys FROM keys and burn the dictionaries. Refuse loudly, not silently. */
+for (const rel of fs.readdirSync(srcDir, { withFileTypes: true })) {
+  if (!rel.isFile() || !rel.name.endsWith(".ts")) continue;
+  const body = fs.readFileSync(path.join(srcDir, rel.name), "utf8");
+  if (/tr\("([a-z][a-zA-Z0-9]*\.[a-z][A-Za-z0-9]*)"/.test(body) || /tk\("([a-z][a-zA-Z0-9]*\.[a-z][A-Za-z0-9]*)"/.test(body)) {
+    console.error("refusing to run: " + rel.name + " already carries symbolic keys - the migration has already been performed");
+    process.exit(1);
+  }
+}
 
 /* --- the wire vocabulary: labels the gateway serves on /api/plugins. They reach the
  * screen through tr(variable), so the codemod cannot see them at call sites; they get

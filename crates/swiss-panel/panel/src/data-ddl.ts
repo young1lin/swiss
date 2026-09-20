@@ -249,7 +249,7 @@ function paintDbDdlSheet(): void {
       h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
         h("button", { class: "btn", id: "ddl-cancel", type: "button" }, tr("dataDdl.cancel")),
         h("button", { class: "btn primary", id: "ddl-commit", type: "button", disabled: true },
-          kind === "table" ? tr("dataDdl.createTable") : kind === "column" ? tr("dataDdl.addColumn2") : tr("dataDdl.createIndex")))));
+          tr(kind === "table" ? "dataDdl.createTable" : kind === "column" ? "dataDdl.addColumn2" : "dataDdl.createIndex")))));
   wireDbDdlSheet();
   // The mini-grid belongs to the table and column kinds only — the index sheet has no
   // #ddl-grid, and rendering rows into it would throw before the picker and the quiet
@@ -495,15 +495,15 @@ async function commitDbDdl(): Promise<void> {
   const schema = S.lastPayload.schema || "";
   closeDbDdlSheet();
   if (kind === "table") {
-    toast("Table " + table + " created");
+    toast(tr("dataDdl.tableCreated", { table: table }));
     await dbLoadTables();
     dbOpenTable({ name: table, schema: schema });
   } else if (kind === "column") {
-    toast("Column added to " + table);
+    toast(tr("dataDdl.columnAdded", { table: table }));
     void dbLoadDetail();
     void dbLoadData(true);
   } else {
-    toast("Index created on " + table);
+    toast(tr("dataDdl.indexCreated", { table: table }));
     void dbLoadDetail();
   }
 }

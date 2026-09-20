@@ -39,6 +39,10 @@ import enTable from "./locales/en.js";
 
 let lang       = "en";
 let dict                                = null;
+/* The last setLang() choice, kept in memory: when localStorage is blocked the stored
+ * preference cannot exist, so this is the preference the loader falls back to and the
+ * flip targets read (docs/38 L4's "the choice still applies to this page load"). */
+let wanted       = "en";
 /* English is the fallback chain's floor and every language renders it, so its table is a
  * static leaf import (no cycle: locales import nothing); each locale above it stays lazy. */
 let enDict                         = enTable;
@@ -46,11 +50,12 @@ let enDict                         = enTable;
 /* --- preference --------------------------------------------------------------------------------- */
 
 /** The stored preference (L4): anything absent or unrecognized answers "en" — no browser
- *  probing, an unset browser gets English, full stop. A blocked localStorage is the same as
- *  no preference. */
+ *  probing, an unset browser gets English, full stop. A blocked localStorage falls back to
+ *  the last in-memory choice rather than to English, so a flip still takes effect for the
+ *  page load even when nothing can be persisted. */
 export function langPref()       {
   try { return localStorage.getItem(LANG_KEY) === "zh-CN" ? "zh-CN" : "en"; }
-  catch (e) { return "en"; }
+  catch (e) { return wanted; }
 }
 
 /** The BCP-47 tag for Intl and toLocale* (L8): "en" | "zh-CN" for whatever is installed.
@@ -68,6 +73,7 @@ function syncHtmlLang(l      )       {
 /** Store the choice ("en" removes the key — English is the unset default) and keep
  *  <html lang> in step. */
 export function setLang(l      )       {
+  wanted = l;
   try {
     if (l === "en") localStorage.removeItem(LANG_KEY);
     else localStorage.setItem(LANG_KEY, l);
@@ -75,8 +81,11 @@ export function setLang(l      )       {
   syncHtmlLang(l);
 }
 
-/** The flip target of the 文/A button: en → zh-CN → en. */
-export function nextLang()       { return lang === "en" ? "zh-CN" : "en"; }
+/** The flip target of the 文/A button: en → zh-CN → en. Based on the CHOICE, not the
+ *  installed state: while a first zh dictionary download is still in flight the choice is
+ *  already zh-CN, so a second click correctly targets English — two rapid clicks land on
+ *  English, they do not get swallowed as one flip. */
+export function nextLang()       { return langPref() === "en" ? "zh-CN" : "en"; }
 
 /* --- lookup ------------------------------------------------------------------------------------- */
 
@@ -89,8 +98,10 @@ function apply(s        , vars                                  )         {
   });
 }
 
-/** The one lookup (L1): a missing dictionary entry returns the English key itself — the
- *  panel can never render a key name or an undefined. */
+/** The one lookup (L1): a missing dictionary entry falls back to the English table, and
+ *  a key carried by neither table renders as the key itself — visible in the string, never
+ *  undefined, never swallowed. The completeness gate keeps the last state unreachable for
+ *  literal keys; dynamically derived keys must stay within table bounds by construction. */
 export function tr(key        , vars                                  )         {
   const hit = dict !== null && Object.prototype.hasOwnProperty.call(dict, key) ? dict[key]
     : Object.prototype.hasOwnProperty.call(enDict, key) ? enDict[key]
@@ -148,8 +159,19 @@ export function installEnglish(table                        )       { enDict = t
  *  none of it (docs/38 §1.1, the "ruthlessly small" row). */
 export async function loadLocale()                {
   if (langPref() === "zh-CN") {
-    const table                                      = await import("./locales/zh.js");
-    install("zh-CN", table.default);
+    try {
+      const table                                      = await import("./locales/zh.js");
+      /* A flip back to English may have landed while this download was in flight (the
+       * module var, not storage, is the tiebreaker when storage is blocked): installing a
+       * dictionary the user has already clicked away from would be a lost update. */
+      if (langPref() === "zh-CN") install("zh-CN", table.default);
+    } catch (e) {
+      /* The dictionary failed to arrive (a stale-embed build serving an old asset tree is
+       * the realistic way): fall back to the English floor instead of rejecting — boot's
+       * top-level await would otherwise take the whole panel down with it. */
+      console.warn("zh dictionary unavailable, staying on English", e);
+      install("en", null);
+    }
   } else {
     install("en", null);
   }
@@ -209,6 +231,10 @@ export async function toggleLang()                {
   if (reg.pageHasPendingChanges()) return;
   setLang(nextLang());
   await loadLocale();
+  /* The zh download failed (loadLocale stayed on English): revert the preference so it
+   * stops disagreeing with the screen every boot — the flip becomes a visible no-op that
+   * the next click can retry once the asset tree is consistent again. */
+  if (langPref() === "zh-CN" && lang === "en") setLang("en");
   paintChrome();
   await reg.navigatePage(currentView(), true);
   paintLangBtn();

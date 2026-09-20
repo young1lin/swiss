@@ -400,8 +400,9 @@ async function saveRule(existing: ApiTunnelRuleRow): Promise<void> {
   const row = j.rule || {} as ApiTunnelRuleRow;
   // A create lands in the picked group, not wherever the header + promised.
   if (!existing && picked && row.id) await assignTunScoped("rules", row.id, picked);
-  toast((existing ? tr("tunnelSheets.savedName", { name: body.name }) : tr("tunnelSheets.addedName", { name: body.name })) +
-    (row.state && row.state !== "stopped" ? tr("tunnelSheets.state", { state: row.state }) : ""));
+  // Hoisted so the comparison literal stays out of the toast argument (i18n gate).
+  const stateNote = row.state && row.state !== "stopped" ? tr("tunnelSheets.state", { state: row.state }) : "";
+  toast((existing ? tr("tunnelSheets.savedName", { name: body.name }) : tr("tunnelSheets.addedName", { name: body.name })) + stateNote);
 }
 
 export { loadKeys, openConnSheet, openKeyPicker, openRuleSheet, paintMcpPicks, readMcpPicks, saveConn, saveRule };

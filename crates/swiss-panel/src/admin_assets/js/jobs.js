@@ -331,7 +331,26 @@ function joinCommand(text        )         { return text.trim().replace(/\s*\n+\
 /* tk() marks the table's English entries for the completeness scanner (docs/38 L7): the
    paint renders them through tr(label) at call time, so the key stays literal here. */
 const DOW_LABELS = [tk("jobs.sun"), tk("jobs.mon"), tk("jobs.tue"), tk("jobs.wed"), tk("jobs.thu"), tk("jobs.fri"), tk("jobs.sat")];
-const INTERVAL_UNITS = [tk("jobs.seconds"), tk("jobs.minutes"), tk("jobs.hours")];
+/* The interval units stay PLAIN in the schedule state and in the select's option values —
+ * schedFromJob, readFields and the everySec multiplier all speak this vocabulary — while
+ * the display text paints through the dictionary at render time (docs/38 L5: keys never
+ * travel as data). tk() marks the table's entries for the completeness scanner. */
+const INTERVAL_UNITS           = ["seconds", "minutes", "hours"];
+const UNIT_LABELS                         = {
+  seconds: tk("jobs.seconds"), minutes: tk("jobs.minutes"), hours: tk("jobs.hours"),
+};
+/* Singular forms for the "every 1 …" sentence: English singularises, Chinese does not
+ * (the same word serves both numbers), so each unit has both entries in both tables. */
+const UNIT_ONE                         = {
+  seconds: tk("jobs.second"), minutes: tk("jobs.minute"), hours: tk("jobs.hour"),
+};
+/* The schedule modes are wire vocabulary in the state (data-mode, sched.mode); the seg
+ * paints the display word through the dictionary, never the raw mode id. */
+const SCHED_MODES           = ["interval", "daily", "weekly", "monthly", "cron"];
+const MODE_LABELS                         = {
+  interval: tk("jobs.modeInterval"), daily: tk("jobs.modeDaily"), weekly: tk("jobs.modeWeekly"),
+  monthly: tk("jobs.modeMonthly"), cron: tk("jobs.modeCron"),
+};
 
 function two(n        )         { return (n < 10 ? "0" : "") + n; }
 
@@ -402,10 +421,11 @@ function schedFromJob(v                                                         
 function schedToBody(s          )                                                              {
   const unit_ = s.unit ;
   if (s.mode === "interval") {
-    if (!(s.every  > 0)) throw new Error(tr("jobs.intervalNeedsNumberUnit", { unit: tr(unit_) }));
+    if (!(s.every  > 0)) throw new Error(tr("jobs.intervalNeedsNumberUnit", { unit: tr(UNIT_LABELS[unit_] ?? unit_) }));
     const mult = s.unit === "hours" ? 3600 : s.unit === "minutes" ? 60 : 1;
-    // The unit options are plural ("hours"); the sentence singularises for "every 1 hour".
-    const unit = s.every === 1 ? unit_.replace(/s$/, "") : unit_;
+    // The sentence singularises for "every 1 hour" (English only); the dictionary key
+    // for each form comes from the tables above, never from string surgery on a key.
+    const unit = s.every === 1 ? (UNIT_ONE[unit_] ?? UNIT_LABELS[unit_] ?? unit_) : (UNIT_LABELS[unit_] ?? unit_);
     return { body: { everySec: s.every  * mult }, say: tr("jobs.everyNUnit", { n: s.every ?? 0, unit: tr(unit) }) };
   }
   const t = /^(\d{1,2}):(\d{2})$/.exec(s.time || "");
@@ -462,9 +482,9 @@ function openJobSheet(job                  )       {
         h("div", { class: "hint" }, tr("jobs.oneCommandJobSupervises")),
         h("div", { class: "sheet-cap" }, tr("jobs.schedule")),
         h("div", { class: "sched", id: "jf-sched" },
-          h("div", { class: "seg", role: "tablist" }, ["interval", "daily", "weekly", "monthly", "cron"].map((m) => {
+          h("div", { class: "seg", role: "tablist" }, SCHED_MODES.map((m) => {
             return h("button", { type: "button", role: "tab", data: { mode: m },
-                aria: { selected: sched.mode === m ? "true" : "false" } }, m);
+                aria: { selected: sched.mode === m ? "true" : "false" } }, tr(MODE_LABELS[m] ?? m));
           })),
           h("div", { id: "jf-sched-fields" }),
           h("div", { class: "sched-say", id: "jf-say" })),
@@ -535,7 +555,7 @@ function openJobSheet(job                  )       {
         h("label", { class: "field" },
           h("span", null, tr("jobs.unit")),
           h("select", { id: "jf-ev-u" }, INTERVAL_UNITS.map((u        ) => {
-            return h("option", { value: u, selected: sched.unit === u }, tr(u));
+            return h("option", { value: u, selected: sched.unit === u }, tr(UNIT_LABELS[u] ?? u));
           }))));
     } else if (sched.mode === "cron") {
       html = frag(
@@ -647,7 +667,7 @@ async function saveJob(existing                  )                {
     rememberGroup("jobs", picked);
     await assignMember("jobs", name, picked);
   }
-  toast((existing ? "Saved " : "Added ") + name);
+  toast(tr(existing ? "jobs.savedName" : "jobs.addedName", { name }));
   await loadJobs();
 }
 
@@ -707,9 +727,9 @@ async function openV2Sheet(job                  )                {
   const opt = (v        , on         )                    => h("option", { value: v, selected: on }, v);
   const two = (...kids          )                 => h("div", { class: "two" }, kids);
   fill($("sheet"),
-    h("div", { class: "sheet wide", role: "dialog", aria: { modal: "true", label: editing ? "Edit definition" : "New definition" } },
+    h("div", { class: "sheet wide", role: "dialog", aria: { modal: "true", label: tr(editing ? "jobs.editDefinition" : "jobs.newDefinition") } },
       h("div", { class: "sheet-head" },
-        h("h2", null, editing ? "Definition \u2014 " + name : "New definition in " + picked)),
+        h("h2", null, editing ? tr("jobs.definitionOf", { name }) : tr("jobs.newDefinitionIn", { picked: picked ?? "" }))),
       h("div", { class: "sheet-body" },
         editing ? null : fld("id", h("input", { id: "jv-id", value: name, placeholder: tr("jobs.nightlyVacuum"), autocomplete: "off" })),
         editing ? null : groupFieldNode(rowGroups, picked),
@@ -881,7 +901,7 @@ async function openV2Sheet(job                  )                {
     });
     if (!reply) return; // apiJson toasted the 400/409/500 with the field path
     closeSheet();
-    toast((editing ? "Saved " : "Added ") + id);
+    toast(tr(editing ? "jobs.savedName" : "jobs.addedName", { name: id }));
     await loadJobs();
   }
 }

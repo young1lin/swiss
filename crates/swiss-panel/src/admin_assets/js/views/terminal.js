@@ -49,7 +49,7 @@ import { createOverlay } from "../term-overlay.js";
 import { loadSearchAddon } from "../vendor/xterm/addon-search-0.16.0/index.js";
 import { openLocalSheet } from "./terminal-settings.js";
 import { closeSheet } from "../add-sheet.js";
-import { tr } from "../i18n.js";
+import { tr, trn } from "../i18n.js";
 
 /* docs/14 §2: the system monospace stack - no Nerd Font, no web font. The resource
    pipeline is text-only; a font file cannot enter the tree, by design. */
@@ -510,7 +510,7 @@ async function openFind() {
       m.search.onDidChangeResults((res) => { paintFindCount(res); });
       m.term.loadAddon(m.search);
     } catch (e) {
-      toast("could not load the search addon: " + errText(e), true);
+      toast(tr("terminal.searchAddonLoadFailed", { error: errText(e) }), true);
       closeFind();
       return;
     }
@@ -695,7 +695,7 @@ function wireTerminal(m           ) {
       ev.preventDefault();
       ev.stopPropagation();
       const preview = text.length > 1000 ? text.slice(0, 1000) + "\u2026" : text;
-      if (window.confirm("Paste " + (lines + 1) + " lines into the shell?\n\n" + preview)) {
+      if (window.confirm(trn(lines + 1, "terminal.pasteLinesConfirm.one", "terminal.pasteLinesConfirm.other", { preview }))) {
         term.paste(text);
       }
     }, true);
@@ -952,7 +952,7 @@ async function openSession() {
   } catch (e) {
     /* A vendored package that failed to load must say so - a silently vanishing tab teaches
        the user that Open is decorative. */
-    toast("could not load the terminal packages: " + errText(e), true);
+    toast(tr("terminal.packagesLoadFailed", { error: errText(e) }), true);
     models.splice(models.indexOf(m), 1);
     active = null;
     paintTabs();

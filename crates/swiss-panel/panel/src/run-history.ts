@@ -79,7 +79,7 @@ function histViewNode(c: ApiMcpCallRow): HChild {
     h("span", null, "·"),
     h("span", null, c.via + (c.client ? " (" + c.client + ")" : "")),
     h("span", { class: "grow" }),
-    c.ms != null ? h("span", null, c.ms + " ms") : null);
+    c.ms != null ? h("span", null, tr("runHistory.durationMs", { ms: c.ms })) : null);
   return frag(
     head,
     h("div", { class: "call-lbl" }, tr("runHistory.arguments2")),
@@ -460,7 +460,7 @@ function configBodyNode(d: McpDetail): HChild {
           h("span", null, tr("runHistory.type")),
           h("select", { id: "e-type" },
             Object.keys(TYPE_FIELDS).map((t) => {
-              return h("option", { value: t, selected: t === type }, TYPE_LABELS[t] || t);
+              return h("option", { value: t, selected: t === type }, tr(TYPE_LABELS[t] || t));
             }))),
         fieldsNode(type, vals, "e-"),
         pgRaw,
@@ -491,9 +491,15 @@ function configBodyNode(d: McpDetail): HChild {
       h("span", { class: "config-label" }, setting.label),
       h("span", { class: "config-value", title: setting.text.replace(/\r?\n/g, " · ") }, setting.text));
   });
-  const label = TYPE_LABELS[type] || type;
-  const split = label.indexOf(" — ");
-  const kind = split >= 0 ? label.slice(split + 3) : tr("runHistory.mcpAdapter");
+  /* The adapter descriptors are "kind — detail" in English and "kind——detail" in Chinese;
+   * split on whichever separator this locale's copy carries, so the detail tail reads
+   * correctly in both (a label with no separator keeps the generic kind). */
+  const label = tr(TYPE_LABELS[type] || type);
+  const enDash = label.indexOf(" — ");
+  const zhDash = label.indexOf("——");
+  const kind = enDash >= 0 ? label.slice(enDash + 3)
+    : zhDash >= 0 ? label.slice(zhDash + 2)
+    : tr("runHistory.mcpAdapter");
   const target = configTarget(c as McpConfigLike);
   const badges: string[] = [];
   if (c.lazy !== undefined) badges.push(c.lazy ? tr("runHistory.startsDemand") : tr("runHistory.startsBoot"));
@@ -529,7 +535,7 @@ function configBodyNode(d: McpDetail): HChild {
     ? revs.map((r, i) => {
         const when = r.at ? new Date(r.at).toLocaleString() : "";
         return h("div", { class: "row" },
-          h("span", { class: "k" }, TYPE_LABELS[r.type] || r.type || "?"),
+          h("span", { class: "k" }, tr(TYPE_LABELS[r.type] || r.type || "?")),
           h("span", { class: "v wrap" },
             (r.note || tr("runHistory.note")) + (when ? " · " + when : ""), " ",
             h("button", { class: "btn", data: { restore: i } }, tr("runHistory.restore")),
@@ -834,7 +840,7 @@ async function readResource(uri: string, btn: HTMLButtonElement | null): Promise
       h("div", { class: "sheet-body" },
         h("div", { class: "note" },
           j.ok
-            ? (j.mimeType || "text/plain") + " · " + j.ms + " ms"
+            ? tr("runHistory.resourceMeta", { type: j.mimeType || "text/plain", ms: j.ms ?? 0 })
             : h("span", { style: "color:var(--red)" }, tr("runHistory.readFailed"))),
         h("pre", { class: "logs", style: "max-height:60vh" }, j.text || "")),
       h("div", { class: "sheet-foot" },

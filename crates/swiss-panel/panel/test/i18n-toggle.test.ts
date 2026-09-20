@@ -22,11 +22,12 @@
    time and the veto case needs canLeave=false without mounting a real page. */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { LANG_KEY, install, paintChrome, toggleLang } from "../src/i18n.js";
+import { LANG_KEY, install, locale, paintChrome, toggleLang } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 
+const flipGate = vi.hoisted(() => ({ veto: true }));
 vi.mock("../src/page-registry.js", () => ({
-  pageHasPendingChanges: () => true,
+  pageHasPendingChanges: () => flipGate.veto,
   navigatePage: async () => {},
 }));
 
@@ -78,5 +79,22 @@ describe("paintChrome and the language flip (docs/38 §2.5)", () => {
     await toggleLang();
     expect(localStorage.getItem(LANG_KEY)).toBe(null);
     expect(document.documentElement.lang).toBe("en");
+  });
+
+  it("a blocked localStorage still flips for the page load (L4's in-memory choice)", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => { throw new Error("blocked"); },
+      setItem: () => { throw new Error("blocked"); },
+      removeItem: () => { throw new Error("blocked"); },
+    });
+    flipGate.veto = false;
+    try {
+      await toggleLang();
+      expect(document.documentElement.lang).toBe("zh-CN");
+      expect(locale()).toBe("zh-CN");
+    } finally {
+      flipGate.veto = true;
+      vi.unstubAllGlobals();
+    }
   });
 });

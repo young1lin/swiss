@@ -165,13 +165,15 @@ function render(): void {
   // The status line names the presence only when it is NOT the normal one: "serving ·
   // 3 endpoints served by tunnels" said serving twice.
   const status = trn(endpoints.length, "remote.nEndpointsServedTunnels.one", "remote.nEndpointsServedTunnels.other");
+  // Hoisted so the comparison literal stays out of the h() children (i18n gate).
+  const notServing = presence !== "serving";
   fill($("pane"),
     h("div", { class: "wide" },
       h("div", { class: "pane-head" },
         h("div", null,
           h("div", { class: "pane-desc" }, tr("remote.machinesGatewayCanRun")),
           h("div", { class: "pane-sub" },
-            presence !== "serving" ? h("span", null, tr("remote.tunnelsState", { state: presence })) : null,
+            notServing ? h("span", null, tr("remote.tunnelsState", { state: presence })) : null,
             status)),
         h("div", { class: "pane-actions" },
           h("button", { class: "btn primary", id: "rmAdd" }, tr("remote.addTarget")),

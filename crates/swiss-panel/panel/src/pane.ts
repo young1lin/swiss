@@ -104,22 +104,24 @@ function renderPane(): void {
   //
   // The head is BUILT (docs/37 R5): the MCP's name, description and status line are text nodes,
   // so a name with markup in it is a name, not a payload.
+  // Hoisted so the comparison literals stay out of the h() children (i18n gate).
+  const oauthKind = !!d.config && (d.config.auth === "oauth" || d.config.type === "figma");
   const head = h("div", { class: "pane-head" },
     h("div", null,
       h("h1", { class: "pane-title" }, d.name),
       m.description ? h("div", { class: "pane-desc" }, m.description) : null,
       h("div", { class: "pane-sub" },
         h("span", { class: "dot " + (busyVerb ? "starting" : m.state) }),
-        h("span", { class: "sub-path" }, "/mcp/" + d.name),
+        h("span", { class: "sub-path" }, tr("pane.mcpPath", { name: d.name })),
         h("span", { class: "sub-text" }, headSubtitle(m)))),
     h("div", { class: "pane-actions" },
       // OAuth MCPs get their authorize action in the header (docs/24 D5) — it is the one
       // action this MCP cannot live without until it runs, and Reauthorize is the anytime
       // re-consent path after a revoked grant. Disabled while a flow this panel started is
       // still polling.
-      d.config && (d.config.auth === "oauth" || d.config.type === "figma")
+      oauthKind
         ? h("button", { class: "btn", id: "oauthBtn", disabled: !!d.oauthBusy },
-            m.oauth === "authorized" ? tr("pane.reauthorize") : tr("pane.authorize"))
+            tr(m.oauth === "authorized" ? "pane.reauthorize" : "pane.authorize"))
         : null,
       // Tinted only for Start: blue is the affirmative action, and a header full of blue Stop
       // buttons on six healthy MCPs says nothing. Disable is a plain button with the same footprint.
@@ -311,7 +313,7 @@ function menuNode(m: ApiMcpRow | PhantomMcpRow): HTMLElement {
     h("button", { data: { act: "new-group" } }, tr("pane.newGroup")),
     h("hr"),
     h("button", { data: { act: m.lifecycle === "started" ? "stop" : "start" } },
-      m.lifecycle === "started" ? tr("pane.disable") : tr("pane.enable")),
+      tr(m.lifecycle === "started" ? "pane.disable" : "pane.enable")),
     h("button", { data: { act: "restart" } }, tr("pane.restart")),
     h("button", { data: { act: "edit" } }, tr("pane.editConfiguration")),
     h("button", { data: { act: "rename" } }, tr("pane.rename")),

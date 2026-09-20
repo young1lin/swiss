@@ -63,6 +63,22 @@ function propValue(obj: ts.ObjectLiteralExpression, key: string): ts.Expression 
   return null;
 }
 
+
+/* A tracked child/first-arg that is not itself a literal may still CARRY one ("Added " +
+ * name, flag ? "Saved " : "Added ", a template with literal chunks) - those leaves are
+ * visible copy exactly like a bare literal, and the pure-literal scan above cannot see
+ * them. Call subtrees do not count: a nested tr("k") is translated, not bare. */
+function carriesBare(n: ts.Node): boolean {
+  if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) return QUALIFIES.test(n.text);
+  if (ts.isTemplateExpression(n)) {
+    if (QUALIFIES.test(n.head.text)) return true;
+    return n.templateSpans.some((s) => QUALIFIES.test(s.literal.text));
+  }
+  if (ts.isCallExpression(n)) return false;
+  let hit = false;
+  ts.forEachChild(n, (c) => { if (!hit && carriesBare(c)) hit = true; });
+  return hit;
+}
 function countBare(rel: string): number {
   const sf = ts.createSourceFile(rel, fs.readFileSync(path.join(srcDir, rel), "utf8"), ts.ScriptTarget.Latest, true);
   let n = 0;
@@ -75,29 +91,29 @@ function countBare(rel: string): number {
         const exempt = tag === "code" || tag === "kbd" || tag === "pre";
         for (let i = 2; i < node.arguments.length; i++) {
           const a = node.arguments[i];
-          if (a !== undefined && ts.isStringLiteral(a) && !exempt && QUALIFIES.test(a.text)) n++;
+          if (a !== undefined && !exempt && carriesBare(a)) n++;
         }
         const props = node.arguments[1];
         if (props !== undefined && ts.isObjectLiteralExpression(props)) {
           for (const key of ["title", "placeholder"]) {
             const v = propValue(props, key);
-            if (v && ts.isStringLiteral(v) && QUALIFIES.test(v.text)) n++;
+            if (v && carriesBare(v)) n++;
           }
           const aria = propValue(props, "aria");
           if (aria && ts.isObjectLiteralExpression(aria)) {
             const v = propValue(aria, "label");
-            if (v && ts.isStringLiteral(v) && QUALIFIES.test(v.text)) n++;
+            if (v && carriesBare(v)) n++;
           }
         }
       } else if (name === "toast" || name === "confirm" || name === "prompt" || name === "say") {
         const a = node.arguments[0];
-        if (a !== undefined && ts.isStringLiteral(a) && QUALIFIES.test(a.text)) n++;
+        if (a !== undefined && carriesBare(a)) n++;
       } else if (name === "emptyNode") {
         const a = node.arguments[0];
         if (a !== undefined && ts.isObjectLiteralExpression(a)) {
           for (const key of ["title", "hint", "action"]) {
             const v = propValue(a, key);
-            if (v && ts.isStringLiteral(v) && QUALIFIES.test(v.text)) n++;
+            if (v && carriesBare(v)) n++;
           }
         }
       }
