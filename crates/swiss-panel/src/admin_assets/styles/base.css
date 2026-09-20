@@ -306,12 +306,13 @@
     .workbench { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .shell { display: flex; flex: 1; min-height: 0; }
 
-    /* The plugin context bar: "MCP / Servers" with a disclosure — the compact page switcher
-       plus the page's count — or, for a single-page plugin, the plain location label and
-       nothing else. One bar, dressed in the rail's vocabulary (borderless until pointed
-       at), so plugin navigation and page navigation never wear the same segmented control
-       twice. Every plugin draws it (docs/13 D5, as revised): the page body below keeps one
-       vertical origin across the whole panel. */
+    /* The plugin context bar: the plugin's name once — the glyph its rail seat wears,
+       beside its label — then its pages as underline tabs (docs/39 S2), then the page's
+       count. A single-page plugin draws only the title. Every plugin draws the bar
+       (docs/13 D5, as revised): the page body below keeps one vertical origin across the
+       whole panel, and three navigation levels wear three shapes — rail seat, underlined
+       tab, pill segment inside the page — so plugin navigation and page navigation never
+       share a control shape. */
     .ctxbar {
       display: flex; align-items: center; gap: var(--s2);
       height: 40px; flex: none;
@@ -320,25 +321,34 @@
       min-width: 0;
     }
     .app-zone { display: inline-flex; align-items: center; gap: var(--s2); flex: none; }
-    /* A control, and it must LOOK like one before it is discovered by hover: the switcher
-       carries its chip always (quiet tint + hairline), not only under the cursor - a plain
-       breadcrumb was read as text and the page menu went unfound (live feedback, 3ec7f4d). */
-    .ctx-switch {
-      display: inline-flex; align-items: center; gap: var(--s1);
-      font-size: var(--f-body);
-      padding: 4px var(--s2); margin-left: calc(-1 * var(--s2));
-      border-radius: var(--r-btn); color: var(--text-2); max-width: 60%;
-      background: var(--hover); box-shadow: inset 0 0 0 1px var(--sep);
+    /* --- context bar: title + page tabs (docs/39) ----------------------------------------------
+       The bar's left half names the plugin ONCE - its rail glyph and its label - and lays
+       the plugin's pages out as underline tabs. Three levels, three shapes: a rail seat,
+       an underlined tab, a pill segment inside the page. The title wears the glyph so it
+       can never be read as a fourth tab, and so an icon-only rail still has the plugin's
+       name on screen. */
+    .ctx-title { display: inline-flex; align-items: center; gap: var(--s2); font-weight: 600; color: var(--text); margin-right: var(--s3); min-width: 0; }
+    .ctx-title .ic { color: var(--text-2); }
+    .ctx-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* flex:1 caps the strip at the slack the bar has; overflow:hidden plus the ⋯ seat
+       absorb what does not fit (docs/39 S3). align-self:stretch drops the tab row onto
+       the bar's own bottom hairline, which is where the active tab's underline sits. */
+    .ctx-tabs { display: flex; align-self: stretch; gap: 2px; flex: 1; min-width: 0; overflow: hidden; }
+    .ctx-tab {
+      position: relative; display: inline-flex; align-items: center; padding: 0 var(--s2);
+      color: var(--text-2); font-size: var(--f-body); font-weight: 500; text-decoration: none; white-space: nowrap;
     }
-    .ctx-switch:hover { background: color-mix(in srgb, var(--hover), var(--card)); color: var(--text); }
-    .ctx-plugin { color: var(--text-3); font-weight: 450; }
-    .ctx-sep { color: var(--text-3); flex: none; }
-    .ctx-page { color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* The caret points DOWN: the click opens a menu below, not a page to the right. */
-    .ctx-switch .ic { width: 13px; height: 13px; color: var(--text-2); transform: rotate(90deg); }
-    /* The single-page location: text, not a control — same slot and weight as the page
-       label a multi-page group shows, minus the disclosure a one-entry menu would fake. */
-    .ctx-loc { min-width: 0; max-width: 60%; }
+    .ctx-tab:hover { color: var(--text); }
+    .ctx-tab[aria-current="page"] { color: var(--text); font-weight: 600; }
+    /* The current page's mark sits ON the bar's bottom hairline: the same 2px accent as a
+       selected row's leading edge, turned horizontal. */
+    .ctx-tab[aria-current="page"]::after {
+      content: ""; position: absolute; left: var(--s2); right: var(--s2); bottom: -1px; height: 2px;
+      background: var(--accent); border-radius: 1px 1px 0 0;
+    }
+    .ctx-tab[aria-disabled="true"] { color: var(--text-3); }
+    .ctx-more { padding: 0 var(--s2); color: var(--text-3); }
+    .ctx-more:hover, .ctx-more[aria-expanded="true"] { color: var(--text); }
 
     /* Focus mode folds navigation, not the shell/page boundary. On ordinary pages the rail
        gives its width to the current plugin, while the context bar stays 40px tall and strips
@@ -357,8 +367,8 @@
     body.immersive.immersive-docked .ctxbar {
       height: 0; min-height: 0; padding: 0; border-bottom: 0;
     }
-    body.immersive #pageBtn,
-    body.immersive #pageLoc,
+    body.immersive #pageTitle,
+    body.immersive #pageTabs,
     body.immersive #countChip,
     body.immersive #memChip { display: none; }
     /* Exit is always visible and visibly actionable, but it stays in the bar's layout slot.
