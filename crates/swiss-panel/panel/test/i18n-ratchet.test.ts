@@ -55,9 +55,6 @@ const FROZEN: Record<string, number> = {
   "data-structure.ts": 2,
   "data-value.ts": 3,
   "data-view.ts": 20,
-  "jobs.ts": 50,
-  "run-history.ts": 38,
-  "views/jobs.ts": 2,
   "views/terminal-settings.ts": 7,
   "views/terminal.ts": 26,
 };

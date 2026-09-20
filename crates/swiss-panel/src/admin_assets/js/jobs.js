@@ -48,6 +48,7 @@ import { JOB_BACKOFFS, JOB_CAPTURES, JOB_FIRST_RUNS, JOB_MISFIRES, JOB_OVERLAPS,
 import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
 import { currentView } from "./ui-state.js";
 import { appendJobRuns, clearJobBusy, jobDragging, jobDraggingGroup, jobFolds, jobHistory, jobHistoryIsFor, jobIsBusy, jobRows, paintedJobsSig, setJobBusy, setJobDragging, setJobDraggingGroup, setJobPendingGroup, setPaintedJobsSig, startJobHistory, takeJobPendingGroup } from "./job-state.js";
+import { tk, tr } from "./i18n.js";
 
 let probed                 = null; // null = not probed yet; then the cached boolean answer for this page load
 
@@ -115,7 +116,7 @@ function renderJobs()       {
     rows.map((j           )         => { return j.name + "\u0001" + jobGroupOfRow(j); }).join("\n"));
   const body = rows.length
     ? h("div", { id: "jobGroups" })
-    : emptyNode({ icon: "clock", title: "No jobs yet", hint: "Scheduled commands the gateway runs on this machine. Add one with New." });
+    : emptyNode({ icon: "clock", title: tr("No jobs yet"), hint: tr("Scheduled commands the gateway runs on this machine. Add one with New.") });
   // .wide + .pane-head + .tun-foot: the Tunnels view's exact frame — the rows are the same
   // name-plus-subtext-plus-buttons shape, so they wear the same classes.
   // No location title: the context bar already says "Jobs". The body header carries the
@@ -124,13 +125,13 @@ function renderJobs()       {
     h("div", { class: "wide" },
       h("div", { class: "pane-head" },
         h("div", null,
-          h("div", { class: "pane-desc" }, "Scheduled commands the gateway runs locally — an interval or a 5-field cron in local time. Overlap, misfire and retry policies per job; every outcome lands in the run history."))),
+          h("div", { class: "pane-desc" }, tr("Scheduled commands the gateway runs locally — an interval or a 5-field cron in local time. Overlap, misfire and retry policies per job; every outcome lands in the run history.")))),
       h("div", { class: "sec-head" },
-        h("span", { class: "sec-cap" }, "Scheduled commands"),
+        h("span", { class: "sec-cap" }, tr("Scheduled commands")),
         h("span", { style: "display:flex;gap:var(--s2)" },
-          h("button", { class: "btn", id: "jobNewGroup" }, "New group"),
-          h("button", { class: "btn", id: "jobNewAdv" }, "New (advanced)"),
-          h("button", { class: "btn primary", id: "jobNew" }, "New"))),
+          h("button", { class: "btn", id: "jobNewGroup" }, tr("New group")),
+          h("button", { class: "btn", id: "jobNewAdv" }, tr("New (advanced)")),
+          h("button", { class: "btn primary", id: "jobNew" }, tr("New")))),
       body,
       h("div", { class: "tun-foot", data: { foot: "" } }, jobsChipText())));
   if (rows.length) {
@@ -152,8 +153,8 @@ function jobCfg()                      {
     density: "page",
     names: jobGroupsList(),
     collapsed: jobFolds(),
-    noun: "job",
-    addTitle: (g        )         => { return "Add a job to " + g; },
+    noun: tr("job"),
+    addTitle: (g        )         => { return tr("Add a job to {group}", { group: g }); },
     onAdd: (g        )       => {
       setJobPendingGroup(g); // a real name now — the sheet's save lands the job in it
       openJobSheet(null);
@@ -204,11 +205,11 @@ function patchJobs()       {
     // Rendered as (possibly empty) spans at build time so the patch can always fill them.
     const last = row.querySelector("[data-last]");
     if (last) last.textContent = j?.lastRunAt
-      ? "\u00b7 last " + whenLabel(j?.lastRunAt) + (j?.lastOk === false ? " \u00b7 failed" : "") : "";
+      ? tr("\u00b7 last {when}", { when: whenLabel(j?.lastRunAt) }) + (j?.lastOk === false ? tr(" \u00b7 failed") : "") : "";
     const next = row.querySelector("[data-next]");
-    if (next) next.textContent = j?.enabled && j?.nextDueAt ? "\u00b7 next " + whenLabel(j?.nextDueAt) : "";
+    if (next) next.textContent = j?.enabled && j?.nextDueAt ? tr("\u00b7 next {when}", { when: whenLabel(j?.nextDueAt) }) : "";
     const run = row.querySelector("[data-run]")                            ;
-    if (run) { run.disabled = !!busy || !!j?.running; run.textContent = busy ? "\u2026" : "Run now"; }
+    if (run) { run.disabled = !!busy || !!j?.running; run.textContent = busy ? "\u2026" : tr("Run now"); }
   });
   // Group counts move with rows: a count that only refreshed on rebuild would disagree with
   // the patched dots beside it for the rest of the poll.
@@ -259,7 +260,7 @@ function wireJobs()       {
             if (job.editableInV1 === false) void openV2Sheet(job);
             else openJobSheet(job);
           } },
-        { label: "History", fn: ()       => { void openRunsSheet(job.name); } },
+        { label: tr("History"), fn: ()       => { void openRunsSheet(job.name); } },
         { sep: true },
         { label: "Delete", danger: true, fn: ()       => { deleteJob(job); } },
       ]);
@@ -293,22 +294,22 @@ async function runJob(name        )                {
     if (v.state === "queued" || v.state === "running") continue;
     clearJobBusy(name);
     const ok = v.state === "succeeded";
-    toast(name + ": " + v.state + (v.ms != null ? " in " + v.ms + " ms" : "") +
-      (v.error ? " \u2014 " + v.error : ""), !ok);
+    toast(tr("{name}: {state}", { name, state: v.state }) + (v.ms != null ? tr(" in {ms} ms", { ms: v.ms }) : "") +
+      (v.error ? tr(" \u2014 {error}", { error: v.error }) : ""), !ok);
     await loadJobs();
     return;
   }
   clearJobBusy(name);
   patchJobs();
-  toast(name + " is still running \u2014 watch it in History", false);
+  toast(tr("{name} is still running \u2014 watch it in History", { name }), false);
 }
 
 function deleteJob(job           )       {
-  if (!confirm('Delete job "' + job.name + '"? The job stops; its run history stays on disk.')) return;
+  if (!confirm(tr('Delete job "{name}"? The job stops; its run history stays on disk.', { name: job.name }))) return;
   void (async () => {
     const j = await apiJson         ("/api/jobs/" + encodeURIComponent(job.name), { method: "DELETE" });
     if (!j) return;
-    toast("Deleted " + job.name);
+    toast(tr("Deleted {name}", { name: job.name }));
     await loadJobs();
   })();
 }
@@ -327,7 +328,10 @@ function deleteJob(job           )       {
  *  break never silently means a second command — one job supervises one process. */
 function joinCommand(text        )         { return text.trim().replace(/\s*\n+\s*/g, " "); }
 
-const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/* tk() marks the table's English entries for the completeness scanner (docs/38 L7): the
+   paint renders them through tr(label) at call time, so the key stays literal here. */
+const DOW_LABELS = [tk("Sun"), tk("Mon"), tk("Tue"), tk("Wed"), tk("Thu"), tk("Fri"), tk("Sat")];
+const INTERVAL_UNITS = [tk("seconds"), tk("minutes"), tk("hours")];
 
 function two(n        )         { return (n < 10 ? "0" : "") + n; }
 
@@ -349,8 +353,8 @@ function ensureCronstrue(ready                                                  
 }
 
 function describeCron(expr        )         {
-  if (!/^(\S+\s+){4}\S+$/.test(expr)) throw new Error("give all five cron fields");
-  if (!cronstrueLib) throw new Error("cronstrue is still loading — one moment");
+  if (!/^(\S+\s+){4}\S+$/.test(expr)) throw new Error(tr("give all five cron fields"));
+  if (!cronstrueLib) throw new Error(tr("cronstrue is still loading — one moment"));
   return cronstrueLib.toString(expr, { throwExceptionOnParseError: true });
 }
 
@@ -398,27 +402,27 @@ function schedFromJob(v                                                         
 function schedToBody(s          )                                                              {
   const unit_ = s.unit ;
   if (s.mode === "interval") {
-    if (!(s.every  > 0)) throw new Error("the interval needs a number of " + unit_ + " (at least 1)");
+    if (!(s.every  > 0)) throw new Error(tr("the interval needs a number of {unit} (at least 1)", { unit: tr(unit_) }));
     const mult = s.unit === "hours" ? 3600 : s.unit === "minutes" ? 60 : 1;
     // The unit options are plural ("hours"); the sentence singularises for "every 1 hour".
     const unit = s.every === 1 ? unit_.replace(/s$/, "") : unit_;
-    return { body: { everySec: s.every  * mult }, say: "Every " + s.every + " " + unit + "." };
+    return { body: { everySec: s.every  * mult }, say: tr("Every {n} {unit}.", { n: s.every ?? 0, unit: tr(unit) }) };
   }
   const t = /^(\d{1,2}):(\d{2})$/.exec(s.time || "");
-  if (!t) throw new Error("the time must be HH:MM (24-hour)");
+  if (!t) throw new Error(tr("the time must be HH:MM (24-hour)"));
   const hh = +t[1], mm = +t[2];
-  if (hh > 23 || mm > 59) throw new Error("the time must be a real time of day");
+  if (hh > 23 || mm > 59) throw new Error(tr("the time must be a real time of day"));
   let expr;
   if (s.mode === "daily") expr = mm + " " + hh + " * * *";
   else if (s.mode === "weekly") {
-    if (!s.days || !s.days.length) throw new Error("weekly needs at least one day picked");
+    if (!s.days || !s.days.length) throw new Error(tr("weekly needs at least one day picked"));
     expr = mm + " " + hh + " * * " + s.days.join(",");
   } else if (s.mode === "monthly") {
-    if (!(s.day  >= 1 && s.day  <= 31)) throw new Error("the day of month must be between 1 and 31");
+    if (!(s.day  >= 1 && s.day  <= 31)) throw new Error(tr("the day of month must be between 1 and 31"));
     expr = mm + " " + hh + " " + s.day + " * *";
   } else {
     expr = (s.cron || "").trim().replace(/\s+/g, " ");
-    if (!expr) throw new Error("the cron expression is empty");
+    if (!expr) throw new Error(tr("the cron expression is empty"));
     return { body: { cron: expr }, say: describeCron(expr) + "." };
   }
   return { body: { cron: expr }, say: describeCron(expr) + "." };
@@ -442,21 +446,21 @@ function openJobSheet(job                  )       {
   // The house sheet idiom (panel-proof-of-life rule 1): visible BEFORE the body is painted.
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: editing ? "Edit job" : "New job" } },
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: editing ? tr("Edit job") : tr("New job") } },
       h("div", { class: "sheet-head" },
-        h("h2", null, editing ? "Edit " + (job?.name || "") : "New job in " + (picked || ""))),
+        h("h2", null, editing ? tr("Edit {name}", { name: job?.name || "" }) : tr("New job in {group}", { group: picked || "" }))),
       h("div", { class: "sheet-body" },
         // The name IS the identity (the PUT path is the job), so it is fixed once created.
         h("label", { class: "field" },
-          h("span", null, "Name"),
-          h("input", { id: "jf-name", value: v.name || "", disabled: editing, placeholder: "nightly-vacuum", autocomplete: "off" })),
+          h("span", null, tr("Name")),
+          h("input", { id: "jf-name", value: v.name || "", disabled: editing, placeholder: tr("nightly-vacuum"), autocomplete: "off" })),
         editing ? null : groupFieldNode(jobGroupsList(), picked),
         h("label", { class: "field" },
-          h("span", null, "Command"),
-          h("textarea", { id: "jf-command", rows: 2, placeholder: "cmd /c backup.bat --flag value", spellcheck: false }, v.command)),
+          h("span", null, tr("Command")),
+          h("textarea", { id: "jf-command", rows: 2, placeholder: tr("cmd /c backup.bat --flag value"), spellcheck: false }, v.command)),
         h("div", { class: "sched-say cmd-say", id: "jf-cmd-say" }),
-        h("div", { class: "hint" }, "One command — a job supervises one process, not a shell script. Pipes and redirections need \"cmd /c \u2026\" (Windows) or \"sh -c \u2026\" (Unix) around them. ${ENV} refs expand at run time; several steps belong in a script the command runs, or in several jobs."),
-        h("div", { class: "sheet-cap" }, "Schedule"),
+        h("div", { class: "hint" }, tr("One command — a job supervises one process, not a shell script. Pipes and redirections need \"cmd /c \u2026\" (Windows) or \"sh -c \u2026\" (Unix) around them. ${ENV} refs expand at run time; several steps belong in a script the command runs, or in several jobs.")),
+        h("div", { class: "sheet-cap" }, tr("Schedule")),
         h("div", { class: "sched", id: "jf-sched" },
           h("div", { class: "seg", role: "tablist" }, ["interval", "daily", "weekly", "monthly", "cron"].map((m) => {
             return h("button", { type: "button", role: "tab", data: { mode: m },
@@ -464,28 +468,28 @@ function openJobSheet(job                  )       {
           })),
           h("div", { id: "jf-sched-fields" }),
           h("div", { class: "sched-say", id: "jf-say" })),
-        h("div", { class: "sheet-cap" }, "Environment"),
-        h("div", { class: "sheet-cap" }, "Options"),
+        h("div", { class: "sheet-cap" }, tr("Environment")),
+        h("div", { class: "sheet-cap" }, tr("Options")),
         h("div", { class: "two" },
           h("label", { class: "field" },
-            h("span", null, "Timeout (minutes)"),
+            h("span", null, tr("Timeout (minutes)")),
             h("input", { id: "jf-timeout", type: "number", min: "0.5", step: "0.5",
               value: String(v.timeoutMs ? Math.max(0.5, Math.round(v.timeoutMs           / 6000) / 10) : 10),
               autocomplete: "off" })),
           h("label", { class: "field" },
-            h("span", null, "Working directory"),
-            h("input", { id: "jf-cwd", value: v.cwd || "", placeholder: "Optional", autocomplete: "off" }))),
+            h("span", null, tr("Working directory")),
+            h("input", { id: "jf-cwd", value: v.cwd || "", placeholder: tr("Optional"), autocomplete: "off" }))),
         h("label", { class: "field" },
-          h("span", null, "Environment variables"),
+          h("span", null, tr("Environment variables")),
           // A property-assigned placeholder may carry a real newline; the entity dance an
           // HTML attribute needed does not apply to the property path.
-          h("textarea", { id: "jf-env", rows: 3, placeholder: "DEPLOY_ENV=staging\nLOG_DIR=C:\\logs", spellcheck: false }, envToLines(v.env))),
-        h("div", { class: "hint" }, "One KEY=value per line, added to the command\u2019s environment on top of what the gateway inherits. ${ENV} refs in a value resolve at run time."),
-        h("label", { class: "check" }, h("input", { type: "checkbox", id: "jf-enabled", checked: !!v.enabled }), "Enabled")),
+          h("textarea", { id: "jf-env", rows: 3, placeholder: tr("DEPLOY_ENV=staging\nLOG_DIR=C:\\logs"), spellcheck: false }, envToLines(v.env))),
+        h("div", { class: "hint" }, tr("One KEY=value per line, added to the command\u2019s environment on top of what the gateway inherits. ${ENV} refs in a value resolve at run time.")),
+        h("label", { class: "check" }, h("input", { type: "checkbox", id: "jf-enabled", checked: !!v.enabled }), tr("Enabled"))),
       h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "jf-advanced" }, "Advanced\u2026"),
-        h("button", { class: "btn", id: "jf-cancel" }, "Cancel"),
-        h("button", { class: "btn primary", id: "jf-save" }, editing ? "Save" : "Add"))));
+        h("button", { class: "btn", id: "jf-advanced" }, tr("Advanced\u2026")),
+        h("button", { class: "btn", id: "jf-cancel" }, tr("Cancel")),
+        h("button", { class: "btn primary", id: "jf-save" }, editing ? tr("Save") : tr("Add")))));
   $("jf-cancel").onclick = closeSheet;
   $("jf-advanced").onclick = ()       => { void openV2Sheet(job); };
   $("jf-save").onclick = ()       => { void saveJob(job); };
@@ -526,39 +530,39 @@ function openJobSheet(job                  )       {
     if (sched.mode === "interval") {
       html = h("div", { class: "two" },
         h("label", { class: "field" },
-          h("span", null, "Run every"),
+          h("span", null, tr("Run every")),
           h("input", { id: "jf-ev", type: "number", min: "1", value: String(sched.every || ""), autocomplete: "off" })),
         h("label", { class: "field" },
-          h("span", null, "Unit"),
-          h("select", { id: "jf-ev-u" }, ["seconds", "minutes", "hours"].map((u        ) => {
-            return h("option", { value: u, selected: sched.unit === u }, u);
+          h("span", null, tr("Unit")),
+          h("select", { id: "jf-ev-u" }, INTERVAL_UNITS.map((u        ) => {
+            return h("option", { value: u, selected: sched.unit === u }, tr(u));
           }))));
     } else if (sched.mode === "cron") {
       html = frag(
         h("label", { class: "field" },
-          h("span", null, "Cron expression (local time)"),
-          h("input", { id: "jf-cron-in", value: sched.cron || "", placeholder: "30 3 * * *", autocomplete: "off" })),
-        h("div", { class: "hint" }, "Five fields: minute hour day-of-month month day-of-week."));
+          h("span", null, tr("Cron expression (local time)")),
+          h("input", { id: "jf-cron-in", value: sched.cron || "", placeholder: tr("30 3 * * *"), autocomplete: "off" })),
+        h("div", { class: "hint" }, tr("Five fields: minute hour day-of-month month day-of-week.")));
     } else {
       const at = h("label", { class: "field" },
-        h("span", null, "At"),
+        h("span", null, tr("At")),
         h("input", { id: "jf-at", type: "time", value: sched.time || "08:00" }));
       if (sched.mode === "daily") html = at;
       if (sched.mode === "weekly") {
         html = frag(
           h("label", { class: "field" },
-            h("span", null, "On"),
+            h("span", null, tr("Days")),
             h("div", { class: "days", id: "jf-days" }, DOW_LABELS.map((d        , i        ) => {
               const on = sched.days && sched.days.includes(i);
               return h("button", { type: "button", data: { dow: i }, class: on ? "on" : "",
-                aria: { pressed: on ? "true" : "false" } }, d);
+                aria: { pressed: on ? "true" : "false" } }, tr(d));
             }))),
           at);
       }
       if (sched.mode === "monthly") {
         html = h("div", { class: "two" },
           h("label", { class: "field" },
-            h("span", null, "On day"),
+            h("span", null, tr("On day")),
             h("input", { id: "jf-md", type: "number", min: "1", max: "31", value: String(sched.day || 1), autocomplete: "off" })),
           at);
       }
@@ -601,7 +605,7 @@ function openJobSheet(job                  )       {
     cmdSay.className = "sched-say cmd-say";
     cmdSay.textContent = "";
     const joined = joinCommand($                     ("jf-command").value);
-    if (joined) cmdSay.textContent = "Saves as: " + joined;
+    if (joined) cmdSay.textContent = tr("Saves as: {cmd}", { cmd: joined });
   }
   $                     ("jf-command").oninput = sayCommand;
   sayCommand();
@@ -613,8 +617,8 @@ async function saveJob(existing                  )                {
   const name = $                  ("jf-name").value.trim();
   // The preview under the box has been showing this exact join all along.
   const command = joinCommand($                     ("jf-command").value);
-  if (!name) { toast("Name is required", true); return; }
-  if (!command) { toast("Command is required", true); return; }
+  if (!name) { toast(tr("Name is required"), true); return; }
+  if (!command) { toast(tr("Command is required"), true); return; }
   // The builder produces (and has already said) the schedule: the same sentence it showed is
   // what saves, and the same complaint it printed is what toasts here.
   let sched                                                             ;
@@ -691,7 +695,7 @@ async function openV2Sheet(job                  )                {
   const current = actionByType(actions, form.actionType);
   const inputFields         = current
     ? argFieldsNode({ inputSchema: current.schema }, "ja-", (base.action && base.action.input) || {})
-    : h("div", { class: "hint" }, "This action type is not registered right now (its plugin is off) — edit its input in the JSON below.");
+    : h("div", { class: "hint" }, tr("This action type is not registered right now (its plugin is off) — edit its input in the JSON below."));
 
   // Visible before the paint (panel-proof-of-life rule 1) — the wide sheet paints in one fill.
   $("sheet").hidden = false;
@@ -707,24 +711,24 @@ async function openV2Sheet(job                  )                {
       h("div", { class: "sheet-head" },
         h("h2", null, editing ? "Definition \u2014 " + name : "New definition in " + picked)),
       h("div", { class: "sheet-body" },
-        editing ? null : fld("id", h("input", { id: "jv-id", value: name, placeholder: "nightly-vacuum", autocomplete: "off" })),
+        editing ? null : fld("id", h("input", { id: "jv-id", value: name, placeholder: tr("nightly-vacuum"), autocomplete: "off" })),
         editing ? null : groupFieldNode(rowGroups, picked),
         two(
           fld("title", h("input", { id: "jv-title", value: form.title, autocomplete: "off" })),
-          fld("labels (comma-separated)", h("input", { id: "jv-labels", value: form.labels, placeholder: "ops, nightly", autocomplete: "off" }))),
+          fld("labels (comma-separated)", h("input", { id: "jv-labels", value: form.labels, placeholder: tr("ops, nightly"), autocomplete: "off" }))),
         two(
           fld("trigger", sel("jv-kind", JOB_TRIGGER_KINDS.map((k) => opt(k, form.kind === k)))),
-          fld("first firing", h("span", { class: "hint" }, "one schedule per definition"))),
+          fld(tr("first firing"), h("span", { class: "hint" }, tr("one schedule per definition")))),
         h("div", { class: "two", id: "jv-interval-row" },
           fld("everyMs", h("input", { id: "jv-every", value: form.everyMs, placeholder: "3600000", autocomplete: "off" })),
           fld("firstRun", sel("jv-first", JOB_FIRST_RUNS.map((f) => opt(f, form.firstRun === f))))),
         h("label", { class: "field", id: "jv-cron-row" },
-          h("span", null, "cron (local time)"),
+          h("span", null, tr("cron (local time)")),
           h("input", { id: "jv-cron", value: form.cron, placeholder: "30 3 * * *", autocomplete: "off" }),
           h("div", { class: "sched-say", id: "jv-cron-say" })),
         two(
           fld("timeoutMs", h("input", { id: "jv-timeout", value: form.timeoutMs, placeholder: "600000", autocomplete: "off" })),
-          h("label", { class: "check" }, h("input", { type: "checkbox", id: "jv-disabled", checked: !!form.disabled }), "Disabled")),
+          h("label", { class: "check" }, h("input", { type: "checkbox", id: "jv-disabled", checked: !!form.disabled }), tr("Disabled"))),
         two(
           fld("overlap", sel("jv-overlap", JOB_OVERLAPS.map((o) => opt(o, form.overlap === o)))),
           fld("misfire", sel("jv-misfire", JOB_MISFIRES.map((m) => opt(m, form.misfire === m))))),
@@ -734,7 +738,7 @@ async function openV2Sheet(job                  )                {
         two(
           fld("retry.backoff", sel("jv-rback", JOB_BACKOFFS.map((b) => opt(b, form.retryBackoff === b)))),
           h("span", { class: "field" },
-            h("span", null, "retry.retryOn"),
+            h("span", null, tr("retry.retryOn")),
             h("span", { style: "display:flex;gap:var(--s2)" }, JOB_RETRY_ONS.map((r) =>
               h("label", { class: "check" },
                 h("input", { type: "checkbox", data: { retryon: r }, checked: form.retryOn.includes(r) }), r))))),
@@ -744,11 +748,11 @@ async function openV2Sheet(job                  )                {
         fld("action", sel("jv-action", actionOptNodes)),
         h("div", { id: "jv-inputs" }, inputFields),
         fld("definition JSON \u2014 the exact object that will be saved", h("textarea", { id: "jv-json", rows: 12, spellcheck: false })),
-        h("div", { class: "hint" }, "The form writes only the fields it shows onto this object. Edit the JSON directly for the fields it does not show (group, action.schemaVersion); the server refuses any key it does not know.")),
+        h("div", { class: "hint" }, tr("The form writes only the fields it shows onto this object. Edit the JSON directly for the fields it does not show (group, action.schemaVersion); the server refuses any key it does not know."))),
       h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "jv-form-to-json" }, "Form \u2192 JSON"),
-        h("button", { class: "btn", id: "jv-cancel" }, "Cancel"),
-        h("button", { class: "btn primary", id: "jv-save" }, "Save"))));
+        h("button", { class: "btn", id: "jv-form-to-json" }, tr("Form \u2192 JSON")),
+        h("button", { class: "btn", id: "jv-cancel" }, tr("Cancel")),
+        h("button", { class: "btn primary", id: "jv-save" }, tr("Save")))));
 
   // The one definition object both editors work on. `dirty` marks JSON as hand-edited:
   // from then on the textarea wins, until Form -> JSON rebuilds it from the form again.
@@ -784,7 +788,7 @@ async function openV2Sheet(job                  )                {
     const next = actionByType(actions, $                   ("jv-action").value);
     fill($("jv-inputs"), next
       ? argFieldsNode({ inputSchema: next.schema }, "ja-", {})
-      : h("div", { class: "hint" }, "Not registered — edit the input in the JSON below."));
+      : h("div", { class: "hint" }, tr("Not registered — edit the input in the JSON below.")));
   };
 
   /* The selects were rendered from the JOB_* lists, so legalOf is a type narrowing, not a
@@ -842,11 +846,11 @@ async function openV2Sheet(job                  )                {
 
   async function save()                {
     const id = editing ? name : $                  ("jv-id").value.trim();
-    if (!id || !/^[\w.-]+$/.test(id)) { toast("id is required (letters, digits, -, _, .)", true); return; }
+    if (!id || !/^[\w.-]+$/.test(id)) { toast(tr("id is required (letters, digits, -, _, .)"), true); return; }
     if (dirty) {
       // The JSON textarea is the source of truth once hand-edited.
       try { def = JSON.parse(jsonBox.value)          ; }
-      catch (e) { toast("definition JSON does not parse: " + errText(e), true); return; }
+      catch (e) { toast(tr("definition JSON does not parse: {error}", { error: errText(e) }), true); return; }
     } else {
       // Form -> def (and the box): that click IS what save means for the form path. A read
       // error here toasts on its own; the dirty flag stays set, so save stops for a fix.
@@ -911,27 +915,28 @@ function renderRunsSheet(nextBefore                )       {
       h("div", { class: "call-body", hidden: true },
         h("pre", { class: "logs" },
           (r.error ? r.error + "\n\n" : "") + (r.output || "") +
-          (r.preview ? "\n\u2026 output tail-capped at 16 KB" : "") +
-          (r.outcome && r.outcome !== "ran" ? "(" + r.outcome + " \u2014 no output recorded)" : ""))));
+          (r.preview ? tr("\n\u2026 output tail-capped at 16 KB") : "") +
+          (r.outcome && r.outcome !== "ran" ? tr("({outcome} \u2014 no output recorded)", { outcome: r.outcome }) : ""))));
   });
   // Visible before the paint (panel-proof-of-life rule 1).
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Run history" } },
-      h("div", { class: "sheet-head" }, h("h2", null, "Runs — " + (hist?.name || ""))),
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Run history") } },
+      h("div", { class: "sheet-head" }, h("h2", null, tr("Runs — {name}", { name: hist?.name || "" }))),
       h("div", { class: "sheet-body" },
         // One card holding every run, so the rows stack flush instead of each taking the
         // sheet's field gap — forty runs read as one list, not forty islands.
         h("div", { class: "group" },
           rows.length ? rows : h("div", { class: "row" },
-            h("span", { class: "rowmsg" }, "No runs recorded yet — wait for the schedule, or press Run now.")))),
+            h("span", { class: "rowmsg" }, tr("No runs recorded yet — wait for the schedule, or press Run now."))))),
       h("div", { class: "sheet-foot" },
-        nextBefore ? h("button", { class: "btn", id: "jr-more" }, "Load more") : null,
-        h("button", { class: "btn primary", id: "jr-done" }, "Done"))));
+        nextBefore ? h("button", { class: "btn", id: "jr-more" }, tr("Load more")) : null,
+        h("button", { class: "btn primary", id: "jr-done" }, tr("Done")))));
   $("jr-done").onclick = closeSheet;
   const more = $("jr-more");
   if (more) more.onclick = ()       => { void openRunsSheet(hist .name, nextBefore); };
   $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
+
   // The Traffic expand idiom: clicking the summary toggles the raw output beneath it.
   Array.prototype.forEach.call($("sheet").querySelectorAll(".call-sum"), (b) => {
     b.onclick = () => {

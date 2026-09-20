@@ -32,6 +32,7 @@ import { readRunArgs } from "./run.js";
 import { ago } from "./traffic.js";
 import { menuIsOpen } from "./ui-state.js";
 import { mcpDetail, selectedMcp } from "./mcp-state.js";
+import { tr, trn } from "./i18n.js";
 
 /* --- Run history: the refill control in the actions row ------------------------------------------ */
 /** When an entry ran. Reuses ago() inside a day; past that, ago's time-of-day would be ambiguous,
@@ -43,9 +44,9 @@ function histWhen(iso        )         {
 /** The control's closed label. "↺ Past runs (12)" says what it opens and how much is in it, so the
  *  closed control explains itself without looking like a form value. */
 function histButtonLabel(d           , tool        )         {
-  if (d.run.histTool !== tool) return "↺ Past runs…"; // never loaded, or a fetch in flight
+  if (d.run.histTool !== tool) return tr("↺ Past runs…"); // never loaded, or a fetch in flight
   const n = (d.run.hist || []).length;
-  return n ? "↺ Past runs (" + n + ")" : "↺ No past runs";
+  return n ? tr("↺ Past runs ({n})", { n }) : tr("↺ No past runs");
 }
 
 /** The popover's left pane: one button per DISTINCT argument set, newest first, narrowed to the
@@ -53,16 +54,16 @@ function histButtonLabel(d           , tool        )         {
  *  the 96-char row label would miss a keyword deeper in). The row label is the clipped one-line
  *  preview — the full text is what the right pane is for. */
 function histRowsNode(d           , tool        )         {
-  if (d.run.histTool !== tool) return h("div", { class: "hist-empty" }, "loading…");
+  if (d.run.histTool !== tool) return h("div", { class: "hist-empty" }, tr("loading…"));
   const list = d.run.hist || [];
   if (!list.length) {
     return d.run.histQ
-      ? h("div", { class: "hist-empty" }, "No runs whose arguments contain ", '"' + d.run.histQ + '"', ".")
-      : h("div", { class: "hist-empty" }, "No runs of this tool recorded yet.");
+      ? h("div", { class: "hist-empty" }, tr("No runs whose arguments contain \"{q}\".", { q: d.run.histQ }))
+      : h("div", { class: "hist-empty" }, tr("No runs of this tool recorded yet."));
   }
   return list.map((row) => {
-    return h("button", { type: "button", class: "hist-row", data: { seq: row.seq }, title: row.args || "(no arguments)" },
-      row.args || "(no arguments)");
+    return h("button", { type: "button", class: "hist-row", data: { seq: row.seq }, title: row.args || tr("(no arguments)") },
+      row.args || tr("(no arguments)"));
   });
 }
 
@@ -81,13 +82,13 @@ function histViewNode(c               )         {
     c.ms != null ? h("span", null, c.ms + " ms") : null);
   return frag(
     head,
-    h("div", { class: "call-lbl" }, "Arguments"),
-    h("pre", { class: "logs" }, fmtJson(c.args) || "(none)"),
-    h("div", { class: "call-lbl" }, c.ok ? "Result" : "Error"),
-    h("pre", { class: "logs" + (c.ok ? "" : " err") }, fmtJson(c.output) || "(empty)"),
+    h("div", { class: "call-lbl" }, tr("Arguments")),
+    h("pre", { class: "logs" }, fmtJson(c.args) || tr("(none)")),
+    h("div", { class: "call-lbl" }, c.ok ? tr("Result") : tr("Error")),
+    h("pre", { class: "logs" + (c.ok ? "" : " err") }, fmtJson(c.output) || tr("(empty)")),
     c.preview
-      ? h("div", { class: "hist-note" }, "Reply shown is its first ", fmtChars(c.chars),
-          " — the full reply lives in the Logs tab.")
+      ? h("div", { class: "hist-note" }, tr("Reply shown is its first "), fmtChars(c.chars),
+          tr(" — the full reply lives in the Logs tab."))
       : null);
 }
 
@@ -122,11 +123,11 @@ function histOpen()       {
   fill(pop,
     h("div", { class: "hist-side" },
       h("div", { class: "hist-search" },
-        h("input", { id: "r-hist-q", type: "search", placeholder: "Filter by arguments…",
-          aria: { label: "Filter past runs by their arguments" }, autocomplete: "off", spellcheck: false })),
+        h("input", { id: "r-hist-q", type: "search", placeholder: tr("Filter by arguments…"),
+          aria: { label: tr("Filter past runs by their arguments") }, autocomplete: "off", spellcheck: false })),
       h("div", { class: "hist-list", id: "r-hist-list" }, histRowsNode(d, d.run.tool))),
     h("div", { class: "hist-view", id: "r-hist-view" },
-      h("div", { class: "hist-empty" }, "Hover a run to see it in full — the arguments and the reply it produced.")));
+      h("div", { class: "hist-empty" }, tr("Hover a run to see it in full — the arguments and the reply it produced."))));
   document.body.appendChild(pop);
   // One delegated listener triplet on the popover (docs/37 R5) instead of three handlers
   // re-attached to every row on every filter repaint: rows come and go, the listener stays.
@@ -203,15 +204,15 @@ async function histPreview(seq        )                {
   d.run.histSelSeq = seq;
   let full = d.run.histFull[seq];
   if (!full) {
-    fill(view, h("div", { class: "hist-empty" }, h("span", { class: "spin" }), " loading…"));
+    fill(view, h("div", { class: "hist-empty" }, h("span", { class: "spin" }), " ", tr("loading…")));
     try {
       const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) throw new Error(tr("HTTP {n}", { n: r.status }));
       const j = await r.json();
       if (!j.call || mcpDetail() !== d) return;
       full = d.run.histFull[seq] = j.call;
     } catch (e) {
-      if (d.run.histSelSeq === seq) fill(view, h("div", { class: "hist-empty" }, "could not load that run"));
+      if (d.run.histSelSeq === seq) fill(view, h("div", { class: "hist-empty" }, tr("could not load that run")));
       return;
     }
   }
@@ -284,18 +285,18 @@ async function applyRunHistory(seq        )                {
   if (!toolDef) return;
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
-    if (!r.ok) { toast("HTTP " + r.status, true); return; }
+    if (!r.ok) { toast(tr("HTTP {n}", { n: r.status }), true); return; }
     const j = await r.json();
     if (!j.call) return;
     d.run.histFull[seq] = j.call; // the pick just fetched it — a hover later is free
     // Arguments over 4 KB were stored clipped (argsText's overflow marker), so they are no longer
     // parseable JSON — say that precisely instead of the generic read failure.
     if (j.call.args && j.call.args.includes("… +") && j.call.args.endsWith("more characters")) {
-      toast("that run's arguments were too long to store in full — copy them from the Logs tab", true);
+      toast(tr("that run's arguments were too long to store in full — copy them from the Logs tab"), true);
       return;
     }
     fillRunArgs(toolDef, JSON.parse(j.call.args || "{}") || {});
-  } catch (e) { toast("that run's arguments could not be read", true); }
+  } catch (e) { toast(tr("that run's arguments could not be read"), true); }
   histClose();
 }
 
@@ -344,7 +345,7 @@ async function runTool()                {
   }
   d.run.running = true;
   const btn = $                   ("runBtn");
-  if (btn) { btn.disabled = true; btn.textContent = "Running…"; }
+  if (btn) { btn.disabled = true; btn.textContent = tr("Running…"); }
   const meta = $("runMeta");
   if (meta) fill(meta, h("span", { class: "spin" }));
   try {
@@ -354,11 +355,11 @@ async function runTool()                {
     const j = await r.json().catch(() => { return {}; });
     d.run.result = {
       ok: !!j.ok && !j.isError,
-      text: j.text != null && j.text !== "" ? j.text : (j.error || "(no output)"),
+      text: j.text != null && j.text !== "" ? j.text : (j.error || tr("(no output)")),
       ms: j.ms,
     };
   } catch (e) {
-    d.run.result = { ok: false, text: "request failed", ms: 0 };
+    d.run.result = { ok: false, text: tr("request failed"), ms: 0 };
   }
   d.run.running = false;
   renderRunResult();
@@ -374,7 +375,7 @@ function renderRunResult()       {
   const running = !!(d && d.run.running);
   const btn = $                   ("runBtn");
   // Also called right after a pane rebuild, which may land mid-run — keep the button honest.
-  if (btn) { btn.disabled = running; btn.textContent = running ? "Running…" : "Run"; }
+  if (btn) { btn.disabled = running; btn.textContent = running ? tr("Running…") : tr("Run"); }
   const out = $("runOut"), meta = $("runMeta");
   if (!out || !d) return;
   const res = d.run.result                       ;
@@ -384,22 +385,22 @@ function renderRunResult()       {
   out.className = "logs" + (res.ok ? "" : " err");
   if (meta) {
     const bytes = new TextEncoder().encode(res.text).length;
-    meta.textContent = (res.ok ? "ok" : "error") + "  ·  " + (res.ms != null ? res.ms + " ms" : "") +
+    meta.textContent = (res.ok ? tr("ok") : tr("error")) + "  ·  " + (res.ms != null ? res.ms + " ms" : "") +
       "  ·  " + (bytes < 1024 ? bytes + " B" : (bytes / 1024).toFixed(1) + " KB");
   }
 }
 
 function configFieldLabel(type        , key        )         {
-  if (key === "type") return "Type";
-  if (key === "lazy") return "Startup";
+  if (key === "type") return tr("Type");
+  if (key === "lazy") return tr("Startup");
   const fields = TYPE_FIELDS[type] || [];
   const found = fields.find((f) => { return f.k === key || (key === "lazy" && f.k === "autostart"); });
   return found ? found.label : key;
 }
 
 function configValue(key        , value         )         {
-  if (key === "lazy") return value ? "On demand" : "At boot";
-  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (key === "lazy") return value ? tr("On demand") : tr("At boot");
+  if (typeof value === "boolean") return value ? tr("On") : tr("Off");
   if (typeof value === "object") return Array.isArray(value) ? JSON.stringify(value) : envToText(value                          );
   return String(value);
 }
@@ -407,17 +408,17 @@ function configValue(key        , value         )         {
 function configTarget(c               )         {
   const type = c.type || "proc";
   if (type === "mysql" || type === "mariadb" || type === "redis") {
-    const host = c.host || "default host";
+    const host = c.host || tr("default host");
     const target = host + (c.port != null ? ":" + c.port : "");
     const scope = type === "redis" ? c.db : c.database;
     return scope != null && scope !== "" ? target + " / " + scope : target;
   }
-  if (type === "proc") return c.command || "Command not configured";
-  if (type === "pg" || type === "http") return c.url || "Endpoint not configured";
-  if (type === "rest") return c.baseUrl || "Base URL not configured";
+  if (type === "proc") return c.command || tr("Command not configured");
+  if (type === "pg" || type === "http") return c.url || tr("Endpoint not configured");
+  if (type === "rest") return c.baseUrl || tr("Base URL not configured");
   if (type === "figma") return "https://mcp.figma.com/mcp";
-  if (type === "zai-vision") return c.baseUrl || (c.mode || "ZHIPU") + " endpoint";
-  return c.url || c.baseUrl || c.host || "Connection target not configured";
+  if (type === "zai-vision") return c.baseUrl || tr("{mode} endpoint", { mode: c.mode || "ZHIPU" });
+  return c.url || c.baseUrl || c.host || tr("Connection target not configured");
 }
 
 function configBodyNode(d           )         {
@@ -446,16 +447,16 @@ function configBodyNode(d           )         {
     const replacing = d.editMode === "replace";
     const pgRaw = type === "pg" && vals.__pgRaw !== undefined
       ? h("label", { class: "field" },
-          h("span", null, "Connection URL"),
+          h("span", null, tr("Connection URL")),
           h("textarea", { id: "e-pgraw", rows: 2 }, String(vals.__pgRaw)),
           h("div", { class: "hint" },
-            "A whole-value ${...} ref (or a url that did not decompose) — it is kept whole.",
-            " Fill the fields above to replace it with a decomposed url."))
+            tr("A whole-value ${...} ref (or a url that did not decompose) — it is kept whole."),
+            tr(" Fill the fields above to replace it with a decomposed url.")))
       : null;
     return h("div", { class: "group" },
       h("div", { class: "form" },
         h("label", { class: "field" },
-          h("span", null, "Type"),
+          h("span", null, tr("Type")),
           h("select", { id: "e-type" },
             Object.keys(TYPE_FIELDS).map((t) => {
               return h("option", { value: t, selected: t === type }, TYPE_LABELS[t] || t);
@@ -464,19 +465,19 @@ function configBodyNode(d           )         {
         pgRaw,
         replacing
           ? h("label", { class: "field" },
-              h("span", null, "Note (kept with the parked revision)"),
-              h("input", { id: "e-note", placeholder: "optional — e.g. proc version, before the swap" }))
+              h("span", null, tr("Note (kept with the parked revision)")),
+              h("input", { id: "e-note", placeholder: tr("optional — e.g. proc version, before the swap") }))
           : null,
         h("div", { class: "form-actions" },
-          h("button", { class: "btn primary", id: "e-save" }, replacing ? "Replace definition" : "Save & Restart"),
+          h("button", { class: "btn primary", id: "e-save" }, replacing ? tr("Replace definition") : tr("Save & Restart")),
           TESTABLE_TYPES.includes(type)
-            ? h("button", { class: "btn", id: "e-test" }, "Test connection")
+            ? h("button", { class: "btn", id: "e-test" }, tr("Test connection"))
             : null,
-          h("button", { class: "btn", id: "e-cancel" }, "Cancel")),
+          h("button", { class: "btn", id: "e-cancel" }, tr("Cancel"))),
         h("div", { class: "hint", id: "e-test-out", hidden: true })));
   }
   const c = d.config;
-  if (!c) return h("div", { class: "note" }, h("span", { class: "spin" }), " Loading…");
+  if (!c) return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("Loading…"));
   const type = c.type           || "proc";
   const settings = Object.keys(c).reduce((all, key) => {
     const value = c?.[key];
@@ -491,13 +492,13 @@ function configBodyNode(d           )         {
   });
   const label = TYPE_LABELS[type] || type;
   const split = label.indexOf(" — ");
-  const kind = split >= 0 ? label.slice(split + 3) : "MCP adapter";
+  const kind = split >= 0 ? label.slice(split + 3) : tr("MCP adapter");
   const target = configTarget(c                 );
   const badges           = [];
-  if (c.lazy !== undefined) badges.push(c.lazy ? "Starts on demand" : "Starts at boot");
-  if (c.exposeResources !== undefined) badges.push(c.exposeResources ? "Resources on" : "Resources off");
-  if (c.exposePrompts !== undefined) badges.push(c.exposePrompts ? "Prompts on" : "Prompts off");
-  if (c.auth === "oauth") badges.push("OAuth managed");
+  if (c.lazy !== undefined) badges.push(c.lazy ? tr("Starts on demand") : tr("Starts at boot"));
+  if (c.exposeResources !== undefined) badges.push(c.exposeResources ? tr("Resources on") : tr("Resources off"));
+  if (c.exposePrompts !== undefined) badges.push(c.exposePrompts ? tr("Prompts on") : tr("Prompts off"));
+  if (c.auth === "oauth") badges.push(tr("OAuth managed"));
   const summary = h("div", { class: "group config-summary" },
     h("div", { class: "config-head" },
       h("div", { class: "config-identity" },
@@ -505,21 +506,21 @@ function configBodyNode(d           )         {
           h("span", { class: "tag" }, type),
           h("span", null, kind)),
         h("div", { class: "config-target", title: target }, target)),
-      h("button", { class: "btn", id: "c-edit" }, "Edit configuration…")),
+      h("button", { class: "btn", id: "c-edit" }, tr("Edit configuration…"))),
     badges.length ? h("div", { class: "config-badges" }, badges.map((badge) => {
       return h("span", { class: "tag" }, badge);
     })) : null,
     h("details", { class: "config-more" },
       h("summary", null,
-        h("span", null, "All settings"),
-        h("span", { class: "config-count" }, settings.length + (settings.length === 1 ? " value" : " values")),
+        h("span", null, tr("All settings")),
+        h("span", { class: "config-count" }, trn(settings.length, "{n} value", "{n} values")),
         h("span", { class: "config-chev" }, iconNode("chevron-right"))),
       h("div", { class: "config-rows" }, rows)));
   const note = d.source === "config"
     ? h("div", { class: "note" },
-        "Defined in gateway.config.json. Edits are saved as an override in managed.json; ",
+        tr("Defined in gateway.config.json. Edits are saved as an override in managed.json; "),
         h("code", null, "${ENV}"),
-        " references are kept as references, so no credential is written to disk.")
+        tr(" references are kept as references, so no credential is written to disk."))
     : null;
   const revs = d.revisions || [];
   // Parked definition snapshots stay available without making an empty shelf a permanent section.
@@ -529,21 +530,21 @@ function configBodyNode(d           )         {
         return h("div", { class: "row" },
           h("span", { class: "k" }, TYPE_LABELS[r.type] || r.type || "?"),
           h("span", { class: "v wrap" },
-            (r.note || "(no note)") + (when ? " · " + when : ""), " ",
-            h("button", { class: "btn", data: { restore: i } }, "Restore"),
+            (r.note || tr("(no note)")) + (when ? " · " + when : ""), " ",
+            h("button", { class: "btn", data: { restore: i } }, tr("Restore")),
             " ",
-            h("button", { class: "btn danger", data: { revdel: i } }, "Delete")));
+            h("button", { class: "btn danger", data: { revdel: i } }, tr("Delete"))));
       })
     : h("div", { class: "row" },
-        h("span", { class: "rowmsg" }, "None yet — replacing a definition parks the outgoing settings here."));
+        h("span", { class: "rowmsg" }, tr("None yet — replacing a definition parks the outgoing settings here.")));
   const revBlock = h("details", { class: "config-revisions" },
     h("summary", null,
-      h("span", null, "Saved revisions (" + revs.length + ")"),
+      h("span", null, tr("Saved revisions ({n})", { n: revs.length })),
       h("span", { class: "config-chev" }, iconNode("chevron-right"))),
     h("div", { class: "config-revision-body" },
       h("div", { class: "config-revision-intro" },
-        h("span", null, "Swap the adapter definition while keeping the current one available for restore."),
-        h("button", { class: "btn", id: "c-replace" }, "Replace definition…")),
+        h("span", null, tr("Swap the adapter definition while keeping the current one available for restore.")),
+        h("button", { class: "btn", id: "c-replace" }, tr("Replace definition…"))),
       h("div", { class: "group" }, revRows)));
   return frag(tunnelDepsNode(d), summary, note, revBlock);
 }
@@ -562,19 +563,19 @@ function tunnelDepsNode(d           )         {
   const rows = t.map((x) => {
     const dot = x.state === "up" ? "up" : x.state === "error" ? "error" : x.state === "reconnecting" ? "starting" : "";
     return h("div", { class: "row" },
-      h("span", { class: "k" }, "tunnel"),
+      h("span", { class: "k" }, tr("tunnel")),
       h("span", { class: "v" },
         h("span", { class: "dot " + dot, style: "display:inline-block;margin-right:6px" }),
         x.name + " · " + String(x.localPort) + " → " + x.targetHost + ":" + x.targetPort,
         " · " + x.state, x.reason ? " — " + x.reason : "",
         x.stalePool
           ? h("div", { class: "tun-err" },
-              "reconnected after this MCP started — its connection pool may hold dead sockets. ",
-              "Use Restart above.")
+              tr("reconnected after this MCP started — its connection pool may hold dead sockets. "),
+              tr("Use Restart above."))
           : null));
   });
   return frag(
-    h("div", { class: "cap" }, "Depends on"),
+    h("div", { class: "cap" }, tr("Depends on")),
     h("div", { class: "group" }, rows),
     h("div", { style: "height:var(--s5)" }));
 }
@@ -632,7 +633,7 @@ function paneTabClick(ev            )       {
     // The house toggle idiom (pane.js toggleMenu): a second click dismisses instead of reopening.
     if (menuIsOpen()) { closeMenu(); return; }
     popupMenu(clMenu.getBoundingClientRect(), [
-      { label: "Clear logs…", danger: true, fn: ()       => { void clearCalls(); } },
+      { label: tr("Clear logs…"), danger: true, fn: ()       => { void clearCalls(); } },
     ]);
     return;
   }
@@ -788,7 +789,7 @@ async function toggleResources(currentlyOn         , btn                   )    
   });
   btn.disabled = false;
   if (!j) return;
-  if (j.unchanged) { toast("Already " + (currentlyOn ? "on" : "off")); return; }
+  if (j.unchanged) { toast(currentlyOn ? tr("Already on") : tr("Already off")); return; }
   const d = mcpDetail();
   if (d) { d.resources.loaded = false; d.resources.cursors = []; void loadPage(d.name, "resources"); }
 }
@@ -805,7 +806,7 @@ async function toggleTool(name        , currentlyOn         , btn               
   });
   btn.disabled = false;
   if (!j) return;
-  if (j.unchanged) { toast("Already " + (currentlyOn ? "on" : "off")); return; }
+  if (j.unchanged) { toast(currentlyOn ? tr("Already on") : tr("Already off")); return; }
   // Reload the tools page so the row moves between the enabled list and the disabled group.
   const d = mcpDetail();
   if (d) { d.tools.loaded = false; d.tools.cursors = []; void loadPage(d.name, "tools"); }
@@ -821,22 +822,22 @@ async function readResource(uri        , btn                          )         
     method: "POST",
     body: JSON.stringify({ uri: uri }),
   });
-  if (btn) { btn.disabled = false; btn.textContent = label || "Read"; }
+  if (btn) { btn.disabled = false; btn.textContent = label || tr("Read"); }
   if (!j) return;
   // hidden BEFORE the content (the house sheet idiom, panel-proof-of-life rule 1). The
   // resource text is a text node - a resource body is data, never markup.
   $("sheet").hidden = false;
   fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: "Resource contents" } },
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("Resource contents") } },
       h("div", { class: "sheet-head" }, h("h2", null, uri)),
       h("div", { class: "sheet-body" },
         h("div", { class: "note" },
           j.ok
             ? (j.mimeType || "text/plain") + " · " + j.ms + " ms"
-            : h("span", { style: "color:var(--red)" }, "read failed")),
+            : h("span", { style: "color:var(--red)" }, tr("read failed"))),
         h("pre", { class: "logs", style: "max-height:60vh" }, j.text || "")),
       h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "rd-close" }, "Close"))));
+        h("button", { class: "btn", id: "rd-close" }, tr("Close")))));
   $("rd-close").onclick = closeSheet;
   $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
 }
