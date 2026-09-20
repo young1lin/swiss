@@ -170,7 +170,10 @@ describe("admin panel assets", () => {
   // broke mid-statement — every static check passed, and the dashboard rendered blank. The only
   // check that catches that class is EXECUTION. Each module is imported under Node with DOM stubs;
   // a syntax error, a missing export used at load, or an evaluation-time throw fails here.
-  it("boots: every module parses and evaluates (DOM-stubbed, no network)", async () => {
+  // 20s budget: this test imports and evaluates all ~69 emitted modules; alone it takes
+  // ~4s, but under the full 66-file suite the collectors run in parallel and the default 5s
+  // has been exceeded twice on a busy machine (5.01s) — a load flake, not a module fault.
+  it("boots: every module parses and evaluates (DOM-stubbed, no network)", { timeout: 20000 }, async () => {
     const el = (): Record<string, unknown> => {
       const node: Record<string, unknown> = {
         style: {}, dataset: {}, hidden: false, disabled: false, checked: false, value: "",
