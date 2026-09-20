@@ -174,11 +174,15 @@ function renderDbDetailGrid(wrap             )       {
       if (cell.fk) {
         // docs/22 W5.2: the referenced table opens on click — no filter here, just the
         // navigation (the arrow in the grid header owns the filtered jump). The target rides
-        // data attributes and the click is answered by #pane's delegated listener.
+        // data attributes and the click is answered by #pane's delegated listener, which
+        // matches [data-ref-table] and reads dataset.refTable. h() writes data keys verbatim,
+        // so they are spelled kebab here: a camelCase key became data-reftable (HTML lowercases
+        // attribute names), which neither the selector nor dataset.refTable ever saw - the
+        // button was inert from the R5 conversion until the 2026-09-20 review.
         td.appendChild(h("button", {
           class: "db-fk-ref", type: "button",
           title: "Open " + (fk_.refSchema ? fk_.refSchema + "." : "") + fk_.refTable,
-          data: { refTable: fk_.refTable, refSchema: fk_.refSchema || "" },
+          data: { "ref-table": fk_.refTable, "ref-schema": fk_.refSchema || "" },
         }, String(cell.text)));
       } else td.textContent = String(cell.text);
       tr.appendChild(td);
