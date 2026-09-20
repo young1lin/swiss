@@ -44,6 +44,15 @@ import { knownPanelVersion, menuIsOpen, setFoldMap, setKnownPanelVersion, setLis
 import { setTunFolds } from "./tunnel-state.js";
 import { setJobFolds } from "./job-state.js";
 import { gatewayInfo, mcpDetail, selectedMcp, setGatewayInfo } from "./mcp-state.js";
+import { initLangButton, loadLocale, paintChrome, tr } from "./i18n.js";
+
+/* The dictionary resolves before anything paints (docs/38 §2.1): this top-level await is
+   the whole reason a Chinese screen never flashes English chrome — every statement below
+   (theme wiring, fold maps, showApp) runs with the dictionary already installed. The views'
+   modules have evaluated by import time already, which is exactly why they may only CALL
+   tr() at paint time, never at module top level (L7). */
+await loadLocale();
+paintChrome();
 
 
 /** A new panel build has landed. Reload in place — the same tab, never a new one — but only
@@ -59,7 +68,7 @@ function maybeReloadPanel(newVersion: string): void {
   if (typing || busy || edits) {
     if (!warnedNewPanel) {
       warnedNewPanel = true;
-      toast("A new panel version is ready — it will load once you finish editing");
+      toast(tr("A new panel version is ready — it will load once you finish editing"));
     }
     return;
   }
@@ -122,7 +131,7 @@ function paintThemeBtn(): void {
   // The sprite swap (docs/18 V2): switch the referenced symbol, not the button's HTML.
   const use = b.querySelector("use");
   if (use) use.setAttribute("href", dark ? "#i-sun" : "#i-moon");
-  b.title = dark ? "Switch to light" : "Switch to dark";
+  b.title = dark ? tr("Switch to light") : tr("Switch to dark");
 }
 $("themeBtn").onclick = (e) => {
   e.stopPropagation();
@@ -131,6 +140,7 @@ $("themeBtn").onclick = (e) => {
   paintThemeBtn();
 };
 paintThemeBtn();
+initLangButton(paintThemeBtn); // the 文/A flip (docs/38): hands over the theme repainter so chrome stays whole
 // Every dropdown in the panel becomes the shared custom control: what is in the DOM now, plus
 // whatever the views create later (observed), so no view ever opts in or out.
 initSelects();

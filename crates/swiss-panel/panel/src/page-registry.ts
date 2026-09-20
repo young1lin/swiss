@@ -282,6 +282,11 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
   if (ticket === sequence) $("countChip").textContent = currentPageCount();
 }
 
+/** Whether the active page would allow a navigation right now (docs/38 §2.2): the 文/A
+ *  flip asks this before it writes the language preference — a vetoed switch must not
+ *  change anything the user can observe. */
+function pageCanLeave(): boolean { return !(active && active.module.canLeave && !active.module.canLeave()); }
+
 async function pollPage(): Promise<void> {
   if (polling || !active || !active.module.poll) return;
   polling = true;
@@ -295,4 +300,4 @@ async function refreshPage(): Promise<void> {
   catch (error) { toast(errText(error), true); }
 }
 
-export { currentPageCount, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };
+export { currentPageCount, initPages, layoutOf, navigatePage, pageCanLeave, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };
