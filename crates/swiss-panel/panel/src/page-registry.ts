@@ -91,17 +91,17 @@ function railSeat(g: PageGroup): HTMLElement {
   const offPlugin = unavailable(g.pages[0]);
   const allOff = g.pages.every((p) => { return !!unavailable(p); });
   const title = g.label + (allOff && offPlugin ? " — " + (offPlugin.lastError || "Plugin disabled") : "");
+  /* Icon-only (docs/39 S1): the seat wears just the glyph; the plugin's name lives in the
+   * seat's title (the tooltip) and, once landed, in the context bar's title. */
   return h("button", { class: "rail-btn", data: { group: g.id, view: g.pages[0].id },
       // The two aria flags render only when true, exactly as the string builder spelled them.
       aria: Object.assign({}, active ? { current: "true" } : {}, allOff ? { disabled: "true" } : {}), title },
-    glyphNode(g),
-    h("span", { class: "rail-btn-label" }, g.label));
+    glyphNode(g));
 }
 
 function moreSeat(): HTMLElement {
   return h("button", { class: "rail-btn rail-more", id: "railMore", type: "button", title: "All plugins", aria: { label: "All plugins" } },
-    iconNode("ellipsis"),
-    h("span", { class: "rail-btn-label" }, "More"));
+    iconNode("ellipsis"));
 }
 
 function paintPluginRail(): void {
