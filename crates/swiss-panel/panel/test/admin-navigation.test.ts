@@ -216,8 +216,10 @@ describe("the plugin rail (global navigation)", () => {
     // The workspace plugin rides the rail like any peer.
     expect(rail).toContain('data-group="terminal" data-view="terminal"');
     // The synthesized management page has no inventory row: GROUP_LABELS names its group.
-    expect(rail).toContain('data-group="host" data-view="plugins"');
-    expect(rail).toContain(">Settings</span>");
+    // Icon-only seats (docs/39 S1): the group's name is the seat's title tooltip, the bar's
+    // title says it once landed - no caption span remains in the rail markup.
+    expect(rail).toContain('title="Settings" data-group="host" data-view="plugins"');
+    expect(rail).not.toContain("rail-btn-label");
     // The ... seat opens the palette; the rail is a shortlist, not the ceiling.
     expect(rail).toContain('class="rail-btn rail-more" id="railMore"');
     expect(typeof byId("railNav").onclick).toBe("function");
@@ -444,10 +446,11 @@ describe("layouts (docs/13 D5)", () => {
   it("an older gateway answering 404 falls back to the legacy manifest and its labels", async () => {
     await paint("mcps", null, 404);
     const rail = byId("railNav").innerHTML;
-    // Group label from GROUP_LABELS; the seat lands on the manifest's first page.
+    // Group label from GROUP_LABELS names the seat's tooltip (docs/39 S1); the seat lands
+    // on the manifest's first page.
     expect(rail).toContain('data-group="mcp" data-view="mcps"');
     expect(rail).not.toContain('data-view="traffic"');
-    expect(rail).toContain(">MCP</span>");
+    expect(rail).toContain('title="MCP"');
     // The tabs keep working: the legacy manifest's MCP group has three pages.
     expect(byId("ctxBar").hidden).toBe(false);
     expect(byId("pageTitle").innerHTML).toContain('ctx-name">MCP</span>');
