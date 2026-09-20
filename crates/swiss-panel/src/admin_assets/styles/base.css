@@ -65,7 +65,8 @@
       --r-btn: 6px;
       --r-pill: 980px;
 
-      --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif;
+      /* CJK after system-ui (docs/38 §5.2): latin glyphs stay Inter, Chinese falls to the system's own faces. */
+      --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
       --mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
 
       /* Light. The canvas is a neutral near-white, the sidebar one grey step below it, cards pure

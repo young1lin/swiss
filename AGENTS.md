@@ -202,6 +202,10 @@ working tree, on every platform — CRLF never enters a commit.
   tests drive the axum app through `tower::ServiceExt::oneshot` — no real port, no real sleep.
 - **A panel change ships with its vitest case** in `crates/swiss-panel/panel/test/` — that
   suite is the panel's acceptance spec; see `docs/08-testing.md`.
+- **Every visible panel string goes through `tr()`/`trn()`** (docs/38): English is the key,
+  the Chinese entry in `panel/src/locales/zh.ts` is part of the change, and the two machine
+  gates in `npm run check` (dictionary completeness + the bare-literal zero gate) enforce
+  both. A new literal that skips `tr()` fails the suite, not review.
 - **Write all code comments in English**, including in docs code samples.
 - **Never commit** `gateway.config.json`, `.env`, `managed.json`, `tunnels.json`, `master.key` or
   `*.log` — all gitignored, all carry real secrets locally. The same goes for

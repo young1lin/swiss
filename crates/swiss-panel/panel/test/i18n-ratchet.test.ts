@@ -34,14 +34,11 @@ import * as path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-/* Frozen at the I1 commit (docs/38 stage table), burned down per stage since: I2 swept
- * views/plugins, views/secrets and views/system to zero. The shell files are swept to their
- * deliberate survivors - add-sheet's two example-identifier placeholders ("git-mcp",
- * "prod", docs/38 §8 keeps identifiers untranslated) - and every remaining row is a
- * view file a later stage owns. Keys are paths relative to src/; the tree has
- * basename twins (jobs.ts and views/jobs.ts). */
-const FROZEN: Record<string, number> = {
-};
+/* I10 closeout: the burn-down finished at I9 (every view swept, zero bare literals
+ * repo-wide), so the frozen map is gone and the ratchet is now the hard gate the
+ * spec always meant it to become - ANY bare visible literal in ANY src file fails
+ * the suite, exactly as an eslint error would. A new file starts at zero the day
+ * it lands; there is no row to add back. */
 
 const QUALIFIES = /[A-Za-z]{2}/;
 const srcDir = path.resolve(import.meta.dirname, "../src");
@@ -111,33 +108,17 @@ function countBare(rel: string): number {
   return n;
 }
 
-describe("docs/38 L10b bare-literal coverage ratchet", () => {
-  it("every src file's bare-visible count is at or below its frozen row", () => {
+describe("docs/38 L10b bare-literal gate (the ratchet closed at I10)", () => {
+  it("every src file's bare-visible count is exactly zero", () => {
     const failures: string[] = [];
     for (const rel of srcFiles()) {
       const actual = countBare(rel);
-      const frozen = FROZEN[rel] ?? 0;
-      if (actual > frozen) failures.push(rel + ": " + actual + " > " + frozen);
+      if (actual !== 0) failures.push(rel + ": " + actual + " bare literal(s) - wrap them in tr()/trn() or add them to the scanner's documented exemptions");
     }
-    expect(failures, "visible copy may only move under tr() - counts may only shrink").toEqual([]);
+    expect(failures, "visible copy must live under tr() - the burn-down finished at I9, new copy starts wrapped").toEqual([]);
   });
 
-  it("no frozen row points at a file that is already clean", () => {
-    const present = srcFiles();
-    const stale: string[] = [];
-    for (const rel of Object.keys(FROZEN)) {
-      if (!present.has(rel)) { stale.push(rel + " (deleted)"); continue; }
-      if (countBare(rel) === 0) stale.push(rel + " (now 0 - remove the row; I10 removes the map)");
-    }
-    expect(stale).toEqual([]);
-  });
-
-  it("reports the docs/38 §7 stage number (the burn-down total)", () => {
-    let total = 0;
-    for (const rel of srcFiles()) total += countBare(rel);
-    // The frozen map's own sum - kept in lockstep so a row edit cannot lose count.
-    let frozenTotal = 0;
-    for (const v of Object.values(FROZEN)) frozenTotal += v;
-    expect(total, "total " + total + " bare literals remain; frozen rows sum to " + frozenTotal).toBeLessThanOrEqual(frozenTotal);
+  it("the scanner still sees the tree (a clean pass must not be a blind pass)", () => {
+    expect(srcFiles().size, "the scanner found nothing - it is broken, not the tree clean").toBeGreaterThan(50);
   });
 });
