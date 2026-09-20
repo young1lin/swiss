@@ -479,6 +479,12 @@ pub async fn start_daemon(opts: StartOptions) -> StartResult {
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        // The log redirects above set the CHILD's stdio; they do not stop it inheriting OUR
+        // std handles as well (bInheritHandles is TRUE for every configured spawn). Under a
+        // wrapper reading this CLI through a pipe - deploy.ps1 in a shell that captures its
+        // output, CI, `| tee` - the daemon then held the wrapper's pipe open for its whole life
+        // and `swiss start` looked hung after it had finished (2026-09-20). Ours stay ours.
+        swiss_core::platform::keep_std_handles_from_children();
     }
     let child = match command.spawn() {
         Ok(child) => child,

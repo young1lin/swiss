@@ -20,15 +20,20 @@
 # fixes the order, then proves the result: /health must report the hash this build stamped
 # into swiss.exe --version, or the script fails loudly with both values.
 #
-# Run it from YOUR OWN terminal at the repo root, not from an agent tool shell: a deploy is
-# the operator's decision (H1 scrubs the daemon's environment anyway, but the habit stands).
+# Run it from the repo root; a deploy is the operator's decision, from whichever shell they
+# choose (H1 scrubs the daemon's environment, so an agent or CI shell is safe too). Until
+# 2026-09-20 a shell that CAPTURED this script's output (`| Out-File`, a tool wrapper, `| tee`)
+# hung after "gateway started": the daemon inherited the wrapper's stdout pipe and the wrapper
+# waited for an EOF that never came, so the proof step below never ran and the lock stayed.
+# `swiss start` now keeps its std handles out of the daemon's inheritance (swiss-core
+# platform::keep_std_handles_from_children), and a captured deploy runs to the end.
 # -SkipGates jumps the test/clippy gates for a hotfix; the default is to run them.
 #
 # The single-deployer lock (deploy-lock.ps1) is taken FIRST and held for the whole run: the
 # 2026-09-14 incident was two sessions deploying the same production four minutes apart,
 # each unaware the other had already stopped it. Phase lines also land in the gateway home's
 # deploy.log as they happen, so a background deploy can be watched even when its stdout is
-# buffered away by a wrapper (that exact buffering made a healthy re-deploy look dead once).
+# buffered away by a wrapper.
 [CmdletBinding()]
 param(
     [switch]$SkipGates

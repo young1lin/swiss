@@ -494,6 +494,41 @@ pub fn tree_kill(pid: u32) {
     }
 }
 
+/// Keep this process's standard handles out of the next child's inheritance.
+///
+/// Rust's `Command::spawn` passes `bInheritHandles = TRUE` whenever a stdio is configured, and
+/// Windows then hands the child EVERY inheritable handle this process holds — the parent's own
+/// std handles included, even when the child's stdio was pointed elsewhere. A daemon started
+/// under a wrapper that reads our stdout through a pipe (PowerShell's `& swiss start … |
+/// Out-File`, a CI step, `| tee`) inherited that pipe, the wrapper waited for its EOF, and EOF
+/// never came while the daemon lived: a finished `swiss start` looked hung, and deploy.ps1
+/// never reached its proof step or released its lock (2026-09-20). The inherit flag is per
+/// handle and per process — clearing it changes nothing about our own reads and writes, and
+/// `Stdio::inherit()` children are unaffected (std duplicates the handle inheritable for them).
+pub fn keep_std_handles_from_children() {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    for raw in [
+        std::io::stdin().as_raw_handle(),
+        std::io::stdout().as_raw_handle(),
+        std::io::stderr().as_raw_handle(),
+    ] {
+        if raw.is_null() {
+            continue; // no such std handle in this process (a detached start)
+        }
+        let _ = clear_inherit(HANDLE(raw));
+    }
+}
+
+/// Clear HANDLE_FLAG_INHERIT on one handle. Failure (an invalid or pseudo handle) is the
+/// caller's to ignore: an uninheritable handle we could not touch is no worse than before.
+fn clear_inherit(handle: windows::Win32::Foundation::HANDLE) -> WinResult<()> {
+    use windows::Win32::Foundation::{SetHandleInformation, HANDLE_FLAGS, HANDLE_FLAG_INHERIT};
+    // SAFETY: SetHandleInformation only flips flags on a handle this process owns; it takes no
+    // pointers and closes nothing.
+    unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT.0, HANDLE_FLAGS(0)) }
+}
+
 /// Sum of the working sets of every process in the subtrees rooted at `roots` (BFS by
 /// ParentProcessId — a proc MCP is cmd.exe -> npx -> the real server, so descendants are what
 /// matter). Toolhelp32 snapshot walk — the direct replacement for the Node build's PowerShell
@@ -561,5 +596,47 @@ mod tests {
         assert_ne!(parent.pid, 0);
         assert_ne!(parent.pid, std::process::id());
         assert!(!parent.name.is_empty());
+    }
+
+    fn inherit_flag(handle: windows::Win32::Foundation::HANDLE) -> bool {
+        use windows::Win32::Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT};
+        let mut flags = 0u32;
+        // SAFETY: writes one u32 through a valid pointer; the handle is ours and open.
+        unsafe { GetHandleInformation(handle, &mut flags) }.expect("handle information");
+        flags & HANDLE_FLAG_INHERIT.0 != 0
+    }
+
+    #[test]
+    fn clear_inherit_takes_the_flag_off_a_handle_that_had_it() {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::{SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT};
+        // A file handle of our own, made inheritable the way a wrapper's pipe arrives: the
+        // mechanism under test is the flag flip, on a handle no other test shares.
+        let dir = std::env::temp_dir().join(format!("swiss-inherit-{}", crate::util::random_hex(8)));
+        std::fs::create_dir_all(&dir).expect("scratch");
+        let file = std::fs::File::create(dir.join("h")).expect("file");
+        let handle = HANDLE(file.as_raw_handle());
+        unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT.0, HANDLE_FLAG_INHERIT) }
+            .expect("make inheritable");
+        assert!(inherit_flag(handle), "precondition: the handle is inheritable");
+        clear_inherit(handle).expect("clear");
+        assert!(!inherit_flag(handle), "the flag is gone");
+        drop(file);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn std_handles_are_not_inheritable_after_the_call() {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        // The daemon spawn's precondition: whatever the test runner handed us as stdout (a
+        // pipe under cargo, a console in a terminal) is not inheritable once this ran.
+        keep_std_handles_from_children();
+        for raw in [std::io::stdout().as_raw_handle(), std::io::stderr().as_raw_handle()] {
+            if raw.is_null() {
+                continue;
+            }
+            assert!(!inherit_flag(HANDLE(raw)), "a std handle stayed inheritable");
+        }
     }
 }
