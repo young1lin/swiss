@@ -162,6 +162,15 @@ impl ProjectBinding {
     /// Look for the binding starting at `start` and walking up (max 32 levels -
     /// past a drive root there is nowhere left to find one). The FIRST file wins,
     /// like .git: a nested project can carry its own binding.
+    ///
+    /// A state home is not a project root. Its own `remote.json` is the SEALED target
+    /// table (target.rs), and since the home is `~/.swiss` that file sits at exactly the
+    /// binding's path for `~` — so a walk from any directory under the user's home that
+    /// carries no binding of its own reached it and failed to read a sealed envelope as a
+    /// binding (found 2026-09-20: the crate's own walk-up test failed on a machine whose
+    /// home held a target table). A sealed file is skipped wherever it sits — the shape test
+    /// covers the default home, a `SWISS_HOME` elsewhere and a test's scratch home alike —
+    /// and the walk continues above it. A binding is plain JSON by definition (module doc).
     pub fn discover(start: &Path) -> Result<Option<Self>, String> {
         let mut dir = Some(start);
         let mut depth = 0;
@@ -176,8 +185,10 @@ impl ProjectBinding {
                     .map_err(|err| format!("read {}: {err}", file.display()))?;
                 let value: Value = serde_json::from_str(&raw)
                     .map_err(|err| format!("parse {}: {err}", file.display()))?;
-                let root = at.to_path_buf();
-                return ProjectBinding::parse(root, &value).map(Some);
+                if !swiss_core::secure::envelope::is_sealed(&value) {
+                    let root = at.to_path_buf();
+                    return ProjectBinding::parse(root, &value).map(Some);
+                }
             }
             dir = at.parent();
         }
@@ -261,10 +272,63 @@ mod tests {
             .expect("found");
         assert_eq!(found.project.as_deref(), Some("outer"));
         assert_eq!(found.root, outer);
+        // Above the scratch repo lies the real machine: the temp dir, the user's home (and
+        // with it the state home's sealed remote.json, which discover skips), the drive root.
         assert!(
             ProjectBinding::discover(&dir).unwrap().is_none(),
             "nothing above the repo"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn discovery_skips_a_state_homes_sealed_remote_json() {
+        // ~/.swiss/remote.json is the sealed target table, at the binding's path for `~`. A
+        // project under the home with no binding of its own must resolve to "no binding",
+        // not to a parse error over a sealed envelope - and the walk must CONTINUE past the
+        // sealed file, so a binding above a nested home still counts; a project with a
+        // binding of its own still wins, first file first.
+        let dir = scratch();
+        std::fs::create_dir_all(dir.join(".swiss")).expect("outer binding dir");
+        std::fs::write(
+            dir.join(".swiss/remote.json"),
+            r#"{"schemaVersion":1,"project":"above-the-home"}"#,
+        )
+        .expect("outer binding");
+        let home = dir.join("home");
+        std::fs::create_dir_all(home.join(".swiss")).expect("home");
+        std::fs::write(
+            home.join(".swiss/remote.json"),
+            r#"{"lmg":1,"alg":"aes-256-gcm","keySource":"dpapi","salt":"x","iv":"y","tag":"z","ct":"w"}"#,
+        )
+        .expect("sealed");
+        let bare = home.join("dev/bare/src");
+        std::fs::create_dir_all(&bare).expect("bare");
+        let found = ProjectBinding::discover(&bare)
+            .expect("the sealed table is not an error")
+            .expect("the walk continued to the binding above");
+        assert_eq!(found.project.as_deref(), Some("above-the-home"));
+        assert_eq!(found.root, dir);
+        let bound = home.join("dev/bound");
+        std::fs::create_dir_all(bound.join(".swiss")).expect("bound");
+        std::fs::create_dir_all(bound.join("src")).expect("bound src");
+        std::fs::write(
+            bound.join(".swiss/remote.json"),
+            r#"{"schemaVersion":1,"project":"bound"}"#,
+        )
+        .expect("w");
+        let found = ProjectBinding::discover(&bound.join("src"))
+            .expect("no error")
+            .expect("found");
+        assert_eq!(found.project.as_deref(), Some("bound"));
+        // An unsealed file that is not a binding is still the loud error it always was.
+        std::fs::write(
+            home.join(".swiss/remote.json"),
+            r#"{"lmg":2,"alg":"aes-256-gcm","ct":"w"}"#,
+        )
+        .expect("not our envelope");
+        let err = ProjectBinding::discover(&bare).unwrap_err();
+        assert!(err.contains("binding.schemaVersion"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
