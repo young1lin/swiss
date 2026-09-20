@@ -28,6 +28,7 @@ import { SQL_TOKEN_RE, dbHighlightNodes, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
 import { dbView } from "./db-state.js";
+import { tr, trn } from "./i18n.js";
 
 /* --- pending-SQL preview ------------------------------------------------------------------------ */
 /* The exact statements the server will run on Commit, mirrored from buildEditStatements
@@ -120,16 +121,16 @@ function renderDbRedisBar(d         , bar             )       {
   const del = Object.keys(b.deletes).length;
   const ins = b.inserts.length;
   const parts = [];
-  if (u) parts.push(u + " update" + (u > 1 ? "s" : ""));
-  if (del) parts.push(del + " delete" + (del > 1 ? "s" : ""));
-  if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
-  bar.appendChild(h("span", null, parts.join(", ") + " — LOCAL ONLY, not yet in redis. Commit sends them as ONE pipelined round trip (every command guard-checked); Discard deletes them without a single command."));
+  if (u) parts.push(trn(u, "{n} update", "{n} updates"));
+  if (del) parts.push(trn(del, "{n} delete", "{n} deletes"));
+  if (ins) parts.push(trn(ins, "{n} insert", "{n} inserts"));
+  bar.appendChild(h("span", null, tr("{parts} — LOCAL ONLY, not yet in redis. Commit sends them as ONE pipelined round trip (every command guard-checked); Discard deletes them without a single command.", { parts: parts.join(", ") })));
   // No per-button handlers (docs/37 R5): the buttons carry data-bar addresses and #pane's
   // delegated click answers them from live state.
-  bar.appendChild(h("button", { class: "btn", title: "Show the exact commands Commit will run", data: { bar: "preview" } },
-    d.sqlPreview ? "Hide commands" : "Commands"));
-  bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, "Discard"));
-  bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, "Commit (1 pipeline)"));
+  bar.appendChild(h("button", { class: "btn", title: tr("Show the exact commands Commit will run"), data: { bar: "preview" } },
+    d.sqlPreview ? tr("Hide commands") : tr("Commands")));
+  bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, tr("Discard")));
+  bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, tr("Commit (1 pipeline)")));
   if (d.sqlPreview) {
     // The command list is plain text, not SQL — no highlight pass (unlike the SQL bar below).
     let body        ;
@@ -167,19 +168,19 @@ function renderDbBar()       {
   const del = Object.keys(d.deletes).length;
   const ins = d.inserts.length;
   const parts           = [];
-  if (u) parts.push(u + " update" + (u > 1 ? "s" : ""));
-  if (del) parts.push(del + " delete" + (del > 1 ? "s" : ""));
-  if (ins) parts.push(ins + " insert" + (ins > 1 ? "s" : ""));
+  if (u) parts.push(trn(u, "{n} update", "{n} updates"));
+  if (del) parts.push(trn(del, "{n} delete", "{n} deletes"));
+  if (ins) parts.push(trn(ins, "{n} insert", "{n} inserts"));
   // Same addressing honesty as the Commit gate (docs/22 W4b follow-up): the bar names the
   // WHERE the server will build, pk or whole-row.
   const pkColsB = (d.data && d.data.primaryKey) || [];
-  bar.appendChild(h("span", null, parts.join(", ") + " — LOCAL ONLY, not yet in the database. Commit sends them as ONE transaction (rows addressed by " + (pkColsB.length ? "primary key" : "all columns — the table has no primary key") + "); Discard deletes them without a single query."));
+  bar.appendChild(h("span", null, tr("{parts} — LOCAL ONLY, not yet in the database. Commit sends them as ONE transaction (rows addressed by {how}); Discard deletes them without a single query.", { parts: parts.join(", "), how: pkColsB.length ? tr("primary key") : tr("all columns — the table has no primary key") })));
   // No per-button handlers (docs/37 R5): data-bar addresses, answered by #pane's delegated
   // click with the counts read from live state at event time.
-  bar.appendChild(h("button", { class: "btn", title: "Show the exact statements Commit will run", data: { bar: "preview" } },
-    d.sqlPreview ? "Hide SQL" : "SQL"));
-  bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, "Discard"));
-  bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, "Commit (1 transaction)"));
+  bar.appendChild(h("button", { class: "btn", title: tr("Show the exact statements Commit will run"), data: { bar: "preview" } },
+    d.sqlPreview ? tr("Hide SQL") : tr("SQL")));
+  bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, tr("Discard")));
+  bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, tr("Commit (1 transaction)")));
   if (d.sqlPreview) {
     let body        ;
     try {
@@ -411,13 +412,13 @@ function dbFavoriteName(sql        )         {
 function dbFavPush(sql        )       {
   const d = dbView();
   const s = String(sql == null ? "" : sql);
-  if (!s.trim()) { toast("Nothing to save \u2014 the console is empty", true); return; }
+  if (!s.trim()) { toast(tr("Nothing to save — the console is empty"), true); return; }
   d.favorites = (d.favorites || []).filter((f        )          => { return f !== s; });
   d.favorites.unshift(s);
   d.favorites = d.favorites.slice(0, DB_FAV_MAX);
   dbFavSave();
   dbHistoryRender();
-  toast("Saved to favorites");
+  toast(tr("Saved to favorites"));
 }
 
 /* --- the lightweight SQL formatter (docs/22 W5.4) ------------------------------------------------ */
@@ -591,12 +592,12 @@ const dbRunReq = dbReqGuard();
 
 async function dbRunSql(explain                 )                { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
   const d = dbView();
-  if (!d.conn) { toast("No database connection", true); return; }
+  if (!d.conn) { toast(tr("No database connection"), true); return; }
   // docs/22 W1.8: the run covers the block the caret is in — one block per run keeps the
   // single-statement guard honest on multi-part scripts.
   const ta = $                     ("dbSql");
   const block = dbSubqueryAt(d.sqlText || "", ta ? ta.selectionStart : null).trim();
-  if (!block) { toast("Type a command first", true); return; }
+  if (!block) { toast(tr("Type a command first"), true); return; }
   // The redis console: one command per run; the server-side guard still refuses what would
   // break the shared connection or the server. Writes (SET, DEL, EXPIRE…) run.
   if (dbIsRedis()) {
@@ -628,7 +629,7 @@ async function dbRunSql(explain                 )                { // falsy runs
   // failure stops the batch with the tabs that already answered kept on screen; history
   // records the whole block, and only when every statement answered.
   const stmts = dbSplitStatements(block);
-  if (!stmts.length) { toast("Type a command first", true); return; }
+  if (!stmts.length) { toast(tr("Type a command first"), true); return; }
   const token = dbRunReq.issue();
   d.sqlBusy = true;
   d.sqlResult = null; // "Running…" paints in place of the previous grid

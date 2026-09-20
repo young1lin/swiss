@@ -362,3 +362,40 @@ describe("the I7 jobs machinery in Chinese", () => {
     expect(tr("(no output)")).toBe("(无输出)");
   });
 });
+
+describe("the I8a data machinery in Chinese", () => {
+  beforeEach(() => {
+    setLang("zh-CN");
+  });
+  afterEach(() => {
+    setLang("en");
+    localStorage.clear();
+  });
+
+  it("speaks the commit bar's plurals and frames", async () => {
+    await loadLocale();
+    expect(trn(3, "{n} update", "{n} updates")).toBe("3 个更新");
+    expect(trn(1, "{n} insert", "{n} inserts")).toBe("1 个插入");
+    expect(tr("{parts} — LOCAL ONLY, not yet in redis. Commit sends them as ONE pipelined round trip (every command guard-checked); Discard deletes them without a single command.", { parts: "3 个更新" })).toContain("仅在本地");
+    expect(tr("Commit (1 transaction)")).toBe("提交(1 个事务)");
+    expect(tr("Discard")).toBe("放弃");
+  });
+
+  it("keeps the grid's data frames raw and groups counts the panel's way", async () => {
+    await loadLocale();
+    expect(tr(" · {note}", { note: "server said so" })).toBe(" · server said so");
+    expect(tr("{a}–{b} of {t}", { a: "1", b: "50", t: "1,234" })).toBe("1–50,共 1,234");
+    expect(tr("{n} rows", { n: "1,234" })).toBe("1,234 行");
+    expect(tr("editable — {note}", { note: tr("rows are addressed by all columns") })).toBe("可编辑——行以所有列定位");
+    expect(tr("Exported {n} rows", { n: "12,345" })).toBe("已导出 12,345 行");
+  });
+
+  it("names the ddl sheet's parts", async () => {
+    await loadLocale();
+    expect(tr("New table")).toBe("新建表");
+    expect(tr("New table in {t}", { t: "public" })).toBe("在 public 中新建表");
+    expect(tr("Add column in {t}", { t: "events" })).toBe("在 events 中添加列");
+    expect(tr("SQL preview — Commit runs these statements verbatim.")).toBe("SQL 预览——提交将原样运行这些语句。");
+    expect(tr("Type a command first")).toBe("请先输入命令");
+  });
+});

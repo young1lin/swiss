@@ -23,6 +23,7 @@ import { dbHighlightNodes } from "./data-filters.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbLoadTables, dbOpenTable } from "./data-view.js";
 import { dbLoadDetail } from "./data-structure.js";
+import { tk, tr } from "./i18n.js";
 
 /* ================================================================================================
    docs/22 W4.6 — the minimal DDL set: CREATE TABLE, ADD COLUMN, CREATE INDEX, one sheet per
@@ -132,7 +133,11 @@ function dbDdlIndexSuggestion(table: unknown, cols: string[]): string {
 /* --- the sheet ---------------------------------------------------------------------------------- */
 
 const DDL_OP = { table: "create_table", column: "add_column", index: "create_index" };
-const DDL_TITLE = { table: "New table", column: "Add column", index: "New index" };
+const DDL_TITLE = { table: tk("New table"), column: tk("Add column"), index: tk("New index") };
+/* tk()-marked "… in {t}" titles (docs/38 L7): chosen by kind, painted through tr(). */
+const DDL_IN = { table: tk("New table in {t}"), column: tk("Add column in {t}"), index: tk("New index in {t}") };
+/* tk()-marked header words (docs/38 L7): painted through tr(hd) below. */
+const DDL_HEAD = [tk("Name"), tk("Type"), tk("Null"), tk("Default"), tk("Comment"), ""];
 const DDL_QUIET = {
   table: "Name the table and at least one column to see the SQL.",
   column: "Add a column row below to see the SQL.",
@@ -188,63 +193,63 @@ function closeDbDdlSheet() {
 function paintDbDdlSheet(): void {
   const S_ = S!;
   const kind = S_.kind;
-  const title = DDL_TITLE[kind] + (S_.table ? " in " + S_.table : "");
+  const title = S_.table ? tr(DDL_IN[kind], { t: S_.table }) : tr(DDL_TITLE[kind]);
   const body: (HChild | null)[] = [];
   if (kind === "table" && S_.dialect === "pg") {
     // docs/22 W1.1: a Postgres catalog is many schemas, so the new table says where it goes
     // (swiss-ui-design rule 6) — a select, prefilled from the list's active schema filter.
     const schemas = S_.schemas.slice();
     if (!schemas.includes(S_.schema)) schemas.unshift(S_.schema);
-    body.push(h("label", { class: "field" }, h("span", null, "Schema"),
+    body.push(h("label", { class: "field" }, h("span", null, tr("Schema")),
       h("select", { id: "ddl-schema" }, schemas.map((s: string): HChild => {
         return h("option", { value: s, selected: s === S_.schema }, s);
       }))));
   }
   if (kind === "table") {
     body.push(h("div", { class: "two" },
-      h("label", { class: "field" }, h("span", null, "Table name"),
-        h("input", { id: "ddl-table", autocomplete: "off", spellcheck: false, placeholder: "events" })),
-      h("label", { class: "field" }, h("span", null, "Comment (optional)"),
-        h("input", { id: "ddl-comment", autocomplete: "off", placeholder: "what this table holds" }))));
+      h("label", { class: "field" }, h("span", null, tr("Table name")),
+        h("input", { id: "ddl-table", autocomplete: "off", spellcheck: false, placeholder: tr("events") })),
+      h("label", { class: "field" }, h("span", null, tr("Comment (optional)")),
+        h("input", { id: "ddl-comment", autocomplete: "off", placeholder: tr("what this table holds") }))));
   }
   if (kind === "index") {
     body.push(h("div", { class: "two" },
-      h("label", { class: "field" }, h("span", null, "Index name"),
+      h("label", { class: "field" }, h("span", null, tr("Index name")),
         h("input", { id: "ddl-index", autocomplete: "off", spellcheck: false, value: S_.indexName })),
       h("label", { class: "check", style: "align-self:end;padding-bottom:6px" },
-        h("input", { type: "checkbox", id: "ddl-unique" }), "Unique")),
-      h("div", { class: "field" }, h("span", null, "Columns"),
+        h("input", { type: "checkbox", id: "ddl-unique" }), tr("Unique"))),
+      h("div", { class: "field" }, h("span", null, tr("Columns")),
         h("div", { id: "ddl-cols", class: "db-ddl-colpick" })));
   }
   if (kind !== "index") {
-    body.push(h("div", { class: "field" }, h("span", null, "Columns"),
+    body.push(h("div", { class: "field" }, h("span", null, tr("Columns")),
       h("table", { class: "db-ddl-grid", id: "ddl-grid" },
         h("colgroup",
           h("col", { style: "width:22%" }), h("col", { style: "width:24%" }), h("col", { style: "width:56px" }),
           h("col", { style: "width:20%" }), h("col", { style: "width:28%" }), h("col", { style: "width:26px" })),
         h("thead", null, h("tr", null,
-          ["Name", "Type", "Null", "Default", "Comment", ""].map((hd: string): HChild => {
-            return h("th", null, hd);
+          DDL_HEAD.map((hd: string): HChild => {
+            return h("th", null, hd ? tr(hd) : hd);
           }))),
         h("tbody")),
-      h("button", { class: "btn ghost", id: "ddl-add-row", type: "button" }, "Add column"),
+      h("button", { class: "btn ghost", id: "ddl-add-row", type: "button" }, tr("Add column")),
       h("datalist", { id: "ddl-types" }, dbDdlTypeOptions(S_.dialect).map((t: string): HChild => {
         return h("option", { value: t });
       }))));
   }
   body.push(
-    h("div", { class: "hint", id: "ddl-hint" }, "SQL preview — Commit runs these statements verbatim."),
+    h("div", { class: "hint", id: "ddl-hint" }, tr("SQL preview — Commit runs these statements verbatim.")),
     h("pre", { class: "db-ddl", id: "ddl-pre" }));
   const host = $("sheet");
   host.hidden = false;
   fill(host,
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: DDL_TITLE[kind] } },
+    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr(DDL_TITLE[kind]) } },
       h("div", { class: "sheet-head" }, h("h2", { id: "ddl-title" }, title)),
       h("div", { class: "sheet-body" }, body),
       h("div", { class: "sheet-foot" }, h("span", { class: "grow" }),
-        h("button", { class: "btn", id: "ddl-cancel", type: "button" }, "Cancel"),
+        h("button", { class: "btn", id: "ddl-cancel", type: "button" }, tr("Cancel")),
         h("button", { class: "btn primary", id: "ddl-commit", type: "button", disabled: true },
-          kind === "table" ? "Create table" : kind === "column" ? "Add column" : "Create index"))));
+          kind === "table" ? tr("Create table") : kind === "column" ? tr("Add column") : tr("Create index")))));
   wireDbDdlSheet();
   // The mini-grid belongs to the table and column kinds only — the index sheet has no
   // #ddl-grid, and rendering rows into it would throw before the picker and the quiet
@@ -270,7 +275,7 @@ function wireDbDdlSheet(): void {
   };
   const retitle = (): void => {
     if (S?.dialect === "pg" && kind === "table") {
-      $("ddl-title").textContent = "New table in " + $<HTMLSelectElement>("ddl-schema").value;
+      $("ddl-title").textContent = tr("New table in {t}", { t: $<HTMLSelectElement>("ddl-schema").value });
     }
   };
   if (kind === "table") {
@@ -314,7 +319,7 @@ function renderDbDdlRows(): void {
   const body = $("ddl-grid").querySelector<HTMLElement>("tbody");
   body!.textContent = "";
   S?.rows.forEach((r: DdlRow, i: number): void => {
-    const tr = el("tr");
+    const tri = el("tr");
     const mk = (k: string, value: string, ph?: string): HTMLTableCellElement => {
       const td = el("td");
       const input = document.createElement("input");
@@ -332,8 +337,8 @@ function renderDbDdlRows(): void {
       td.appendChild(input);
       return td;
     };
-    tr.appendChild(mk("name", r.name, "id"));
-    tr.appendChild(mk("type", r.type, "int"));
+    tri.appendChild(mk("name", r.name, "id"));
+    tri.appendChild(mk("type", r.type, "int"));
     const tdn = el("td");
     const cb = document.createElement("input");
     cb.type = "checkbox";
@@ -343,23 +348,23 @@ function renderDbDdlRows(): void {
     if (!r.isNew) cb.disabled = true;
     cb.onchange = (e) => { r.nullable = (e.currentTarget as HTMLInputElement).checked; scheduleDbDdlPreview(); };
     tdn.appendChild(cb);
-    tr.appendChild(tdn);
-    tr.appendChild(mk("default", r.default, "0"));
-    tr.appendChild(mk("comment", r.comment, ""));
+    tri.appendChild(tdn);
+    tri.appendChild(mk("default", r.default, "0"));
+    tri.appendChild(mk("comment", r.comment, ""));
     const tdx = el("td");
     const rm = el("button", "btn icon") as HTMLButtonElement;
     rm.type = "button";
     rm.appendChild(iconNode("x", "Remove column"));
     rm.dataset.i = String(i);
-    if (!r.isNew) { rm.disabled = true; rm.title = "Only new columns can be removed here"; }
+    if (!r.isNew) { rm.disabled = true; rm.title = tr("Only new columns can be removed here"); }
     rm.onclick = (): void => {
       S?.rows.splice(i, 1);
       renderDbDdlRows();
       scheduleDbDdlPreview();
     };
     tdx.appendChild(rm);
-    tr.appendChild(tdx);
-    body?.appendChild(tr);
+    tri.appendChild(tdx);
+    body?.appendChild(tri);
   });
 }
 

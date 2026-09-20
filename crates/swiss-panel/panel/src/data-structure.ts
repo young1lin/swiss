@@ -27,16 +27,18 @@ import { dbHighlightNodes, renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbView } from "./db-state.js";
+import { tk, tr } from "./i18n.js";
 
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
 
+/* tk()-marked tab labels (docs/38 L7): painted through tr(t.label) at render time. */
 const DB_TABS = [
-  { id: "data", label: "Data" },
-  { id: "form", label: "Form" },
-  { id: "columns", label: "Columns" },
-  { id: "indexes", label: "Indexes" },
-  { id: "fks", label: "Foreign Keys" },
-  { id: "ddl", label: "DDL" },
+  { id: "data", label: tk("Data") },
+  { id: "form", label: tk("Form") },
+  { id: "columns", label: tk("Columns") },
+  { id: "indexes", label: tk("Indexes") },
+  { id: "fks", label: tk("Foreign Keys") },
+  { id: "ddl", label: tk("DDL") },
 ];
 
 function dbSetTab(t: string): void {
@@ -82,11 +84,11 @@ function dbRenderTabs(ctl: HTMLElement): void {
   // data-dtab / data-tmenu addresses (docs/37 R5) — no per-render handlers on the strip.
   ctl.appendChild(h("div", { class: "db-tabs", role: "tablist" },
     DB_TABS.map((t: { id: string; label: string }) => {
-      return h("button", { role: "tab", data: { dtab: t.id }, aria: { selected: String(d.tab === t.id) } }, t.label);
+      return h("button", { role: "tab", data: { dtab: t.id }, aria: { selected: String(d.tab === t.id) } }, tr(t.label));
     })));
   // The Table menu: rename / truncate / drop, guarded by typed confirms server- AND client-side.
   if (!dbIsRedis()) {
-    ctl.appendChild(h("button", { class: "btn", title: "Rename, truncate or drop this table", data: { tmenu: "" } }, "Table \u25be"));
+    ctl.appendChild(h("button", { class: "btn", title: tr("Rename, truncate or drop this table"), data: { tmenu: "" } }, tr("Table ▾")));
   }
 }
 
@@ -94,7 +96,7 @@ function dbRenderTabs(ctl: HTMLElement): void {
  *  DDL as a monospace block. */
 function renderDbDetailGrid(wrap: HTMLElement): void {
   const d = dbView();
-  if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", "Loading…")); return; }
+  if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", tr("Loading…"))); return; }
   if (!d.detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
   const det = d.detail;
   if (d.tab === "ddl") {
