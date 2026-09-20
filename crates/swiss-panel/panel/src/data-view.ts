@@ -233,6 +233,13 @@ let dbGrepTimer: ReturnType<typeof setTimeout> | undefined;
 function dbPaneClick(ev: MouseEvent): void {
   const t = targetEl(ev);
   if (!t) return;
+  // Grid-internal clicks master stopped AT the node (data-grid.js: every selection checkbox
+  // cb/cbAll/cb2/cbAll2 and the column grip carried a bare stopPropagation): connect.ts's
+  // document listener closes any open Export/Explain/#dbMore menu over a click that reaches
+  // it, and a selection click or a grip grab is not an "outside the menu" click. The
+  // checkbox acts on change and the grip on mousedown, so stopping here is the whole click
+  // behavior — no dispatcher follows, exactly as master's node handlers did nothing on click.
+  if (t.closest(".db-selbox, .db-col-grip")) { ev.stopPropagation(); return; }
   if (dbChromeClick(t, ev)) return;
   if (dbToolbarClick(t, ev)) return;
   if (dbGridClick(t)) return;
