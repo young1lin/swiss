@@ -8,8 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-swiss-core = { path = "../swiss-core" }
-swiss-host = { path = "../swiss-host" }
+swiss-core = { path = "../swiss-core", version = "0.1.0" }
+swiss-host = { path = "../swiss-host", version = "0.1.0" }
 # The rmcp `macros` feature stays off: servers implement ServerHandler by hand, mirroring the
 # Node build's setRequestHandler exactly and keeping pastey out of the build.
 rmcp = { version = "3.2", default-features = false, features = [
@@ -48,7 +48,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 libc = "0.2"
 
 [dev-dependencies]
-swiss-core = { path = "../swiss-core", features = ["test-utils"] }
+swiss-core = { path = "../swiss-core", version = "0.1.0", features = ["test-utils"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync", "test-util"] }

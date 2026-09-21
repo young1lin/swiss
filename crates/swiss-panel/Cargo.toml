@@ -8,8 +8,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-swiss-core = { path = "../swiss-core" }
-swiss-host = { path = "../swiss-host" }
+swiss-core = { path = "../swiss-core", version = "0.1.0" }
+swiss-host = { path = "../swiss-host", version = "0.1.0" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 # The admin panel, embedded byte-for-byte and served from &'static [u8].
