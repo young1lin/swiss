@@ -55,6 +55,19 @@ use swiss_host::services::RuntimeServices;
 /// so neither population's cancels and shutdown sweeps reach these runs.
 const MCP_RUN_OWNER: &str = "remote-mcp";
 
+/// The run's actor (docs/41 A1): the token that authenticated this MCP call, as
+/// `mcp:<token label>` - the one actor string in the system that is not self-declared.
+/// The panel's Run button reaches the same tools without a token: `panel`. Read from
+/// the source the server captured at factory time, never from the task-local: rmcp
+/// drives call_tool from its own task, where `current_source()` sees nothing.
+fn actor_of(source: &crate::calls::CallSource) -> String {
+    match (source.via.as_str(), source.client.as_deref()) {
+        ("panel", _) => "panel".to_string(),
+        (_, Some(client)) => format!("mcp:{client}"),
+        (_, None) => "mcp".to_string(),
+    }
+}
+
 /// The default deadline for one-shot tools (sync/pull/cat/write): the /api/runs
 /// surface's own default, which is what a panel-run action of the same shape gets.
 const TOOL_TIMEOUT_MS: u64 = 600_000;
@@ -447,7 +460,11 @@ fn tool_text(text: &str, is_error: bool) -> CallToolResponse {
 /// Submit one plan as a run and wait for its terminal view - the exact
 /// accounting path Jobs and /api/runs use, owner-scoped so these runs are their
 /// own population in the runs surface.
-async fn run_plan(services: &Arc<RuntimeServices>, planned: Plan) -> Result<RunView, String> {
+async fn run_plan(
+    services: &Arc<RuntimeServices>,
+    planned: Plan,
+    actor: String,
+) -> Result<RunView, String> {
     let submitted: SubmittedRun = services
         .runs
         .submit(SubmitRequest {
@@ -460,6 +477,7 @@ async fn run_plan(services: &Arc<RuntimeServices>, planned: Plan) -> Result<RunV
             // alternative is telling an agent "retry later", which agents do
             // badly.
             queue_if_busy: true,
+            actor,
         })
         .map_err(|err| match err {
             SubmitError::Action(m) => {
@@ -535,6 +553,7 @@ impl ServerHandler for RemoteServer {
             .map(Value::Object)
             .unwrap_or(Value::Null);
         let services = self.services.clone();
+        let actor = actor_of(&self.source);
         async move {
             log.logged(
                 mcp.as_deref(),
@@ -549,7 +568,7 @@ impl ServerHandler for RemoteServer {
                         Ok(planned) => planned,
                         Err(err) => return Ok(tool_text(&err, true)),
                     };
-                    match run_plan(&services, planned).await {
+                    match run_plan(&services, planned, actor).await {
                         Ok(view) => Ok(run_result(&view)),
                         Err(err) => Ok(tool_text(&err, true)),
                     }
@@ -855,6 +874,64 @@ mod tests {
         // The action saw exactly the routed input.
         let seen = stubs[0].seen.lock().unwrap();
         assert_eq!(seen[0], json!({ "target": "dev", "argv": ["make", "-j8"] }));
+    }
+
+    /// Drive one call through a server whose factory-time source is `source`.
+    async fn call_as(
+        services: &Arc<RuntimeServices>,
+        source: crate::calls::CallSource,
+        tool: &str,
+        args: Value,
+    ) -> CallToolResult {
+        let mut srv = server(services);
+        srv.source = source;
+        let client = crate::introspect::open_session(srv)
+            .await
+            .expect("session opens");
+        let mut params = CallToolRequestParams::default();
+        params.name = tool.to_string().into();
+        params.arguments = args.as_object().cloned();
+        let out = client.call_tool(params).await.expect("tools/call answers");
+        let _ = client.cancel().await;
+        out
+    }
+
+    #[tokio::test]
+    async fn the_run_is_booked_to_the_token_that_made_the_call() {
+        // docs/41 A1: the actor comes from the source captured at factory time - the
+        // one attribution in the system that is authenticated - and rmcp's own task
+        // (where the task-local is unset) cannot blank it.
+        let (services, _stubs) = server_with_actions();
+        let sources = [
+            (
+                crate::calls::CallSource {
+                    via: "mcp".into(),
+                    client: Some("claude-code".into()),
+                },
+                "mcp:claude-code",
+            ),
+            (
+                crate::calls::CallSource {
+                    via: "panel".into(),
+                    client: None,
+                },
+                "panel",
+            ),
+            (crate::calls::CallSource::default(), "mcp"),
+        ];
+        for (source, want) in sources {
+            let out = call_as(
+                &services,
+                source,
+                "remote_exec",
+                json!({ "target": "dev", "argv": ["true"] }),
+            )
+            .await;
+            assert!(!is_error(&out), "{}", text_of(&out));
+            let newest = services.runs.list().into_iter().next().expect("the run is listed");
+            assert_eq!(newest.actor, want);
+            assert_eq!(newest.to_json(false)["actor"], want);
+        }
     }
 
     #[tokio::test]

@@ -127,6 +127,17 @@ async fn submit_run(State(services): State<Arc<RuntimeServices>>, body: NodeBody
             }
         },
     };
+    // Who is asking (docs/41 A1). /api has no credential - loopback is its boundary - so
+    // this is the caller's own word: the CLI sends cli:<user>@<host>, the panel sends
+    // panel; anything else that omits it is recorded as api.
+    let actor = body
+        .0
+        .get("actor")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|a| !a.is_empty() && a.len() <= 128)
+        .unwrap_or("api")
+        .to_string();
     let request = SubmitRequest {
         owner: MANUAL_OWNER.to_string(),
         label: body
@@ -145,6 +156,7 @@ async fn submit_run(State(services): State<Arc<RuntimeServices>>, body: NodeBody
             .get("queueIfBusy")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        actor,
     };
     match services.runs.submit(request) {
         Ok(submitted) => {

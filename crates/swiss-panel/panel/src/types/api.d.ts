@@ -395,6 +395,9 @@ export interface ApiRunsResponse {
 export interface ApiRunRow {
   runId: number;
   owner: string;
+  /** Who submitted the run (docs/41 A1): `cli:<user>@<host>`, `mcp:<token label>`,
+   *  `panel`, `jobs` or `api`. Absent on rows an older gateway recorded. */
+  actor?: string;
   label: string;
   action: string;
   state: string;

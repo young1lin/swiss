@@ -302,6 +302,18 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
   expect(view.countText()).toBe("1 run");
   });
 
+  it("a row carries its actor in the meta, verbatim, between the id and the exit (docs/41 A1)", async () => {
+    const byCli = { ...finished, runId: 19, actor: "cli:jdoe@box" };
+    const byMcp = { ...running, runId: 20, actor: "mcp:claude-code" };
+    serve([byCli, finished], [byMcp]);
+    await view.mount();
+    const list = byId("rrList").innerHTML;
+    expect(list).toContain("#19 · cli:jdoe@box · exit 2 · 12.3s");
+    expect(list).toContain("#20 · mcp:claude-code · running");
+    // A row an older gateway recorded has no actor and shows none - no empty seat.
+    expect(list).toContain("#17 · exit 2 · 12.3s");
+  });
+
   it("an empty record draws the empty state and a disabled Clear", async () => {
     serve([], []);
     await view.mount();

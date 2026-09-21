@@ -1368,6 +1368,7 @@ mod tests {
             input: exec_input("dev", &["make"]),
             timeout_ms: 30_000,
             queue_if_busy: false,
+            actor: "test".to_string(),
         });
         let submitted = match submitted {
             Ok(s) => s,

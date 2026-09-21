@@ -637,6 +637,16 @@ async fn cmd_exec(gw: Gateway, a: &RemoteArgs) -> i32 {
     )
     .await
 }
+/// Who this CLI is, for the run record (docs/41 A1): `cli:<os user>@<hostname>`. The
+/// admin API has no credential - loopback is its boundary - so this is self-declared,
+/// which on a single-user machine is the truth and in the audit trail is the difference
+/// between "the operator ran make" and "an agent's MCP token ran make".
+fn cli_actor() -> String {
+    let user = whoami::username();
+    let host = whoami::fallible::hostname().unwrap_or_else(|_| "?".to_string());
+    format!("cli:{user}@{host}")
+}
+
 /// Submit one remote run and, unless --detach, stream its live output through the
 /// cursor API until it is terminal - then exit with the REMOTE exit code (docs/34
 /// SS26): `swiss remote exec build -- false` exits 1 because false did.
@@ -648,7 +658,7 @@ async fn submit_and_stream(
     timeout_ms: Option<u64>,
     a: &RemoteArgs,
 ) -> i32 {
-    let mut body = json!({ "action": action, "input": input, "label": label });
+    let mut body = json!({ "action": action, "input": input, "label": label, "actor": cli_actor() });
     if let Some(ms) = timeout_ms {
         body["timeoutMs"] = json!(ms);
     }
@@ -1009,6 +1019,16 @@ mod tests {
         let (head, tail) = split_passthrough(&whole);
         assert_eq!(tail.len(), 0);
         assert!(parse(head).json);
+    }
+
+    #[test]
+    fn the_cli_declares_itself_as_user_at_host() {
+        // docs/41 A1: the shape the audit trail keys on; the parts are whatever the OS
+        // says, never empty.
+        let actor = cli_actor();
+        let rest = actor.strip_prefix("cli:").expect("the cli: prefix");
+        let (user, host) = rest.split_once('@').expect("user@host");
+        assert!(!user.is_empty() && !host.is_empty(), "{actor}");
     }
 
     #[test]

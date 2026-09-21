@@ -235,6 +235,11 @@ impl RunHistory {
         (ledger.total_bytes, ledger.runs)
     }
 
+    /// Where the log lives (`<home>/logs/remote`): the index file and the `out/` files.
+    pub fn dir(&self) -> &std::path::Path {
+        &self.dir
+    }
+
     fn index_path(&self) -> PathBuf {
         self.dir.join(INDEX_FILE)
     }
@@ -656,6 +661,7 @@ mod tests {
             input,
             timeout_ms: 60_000,
             queue_if_busy: false,
+            actor: "test".to_string(),
         }
     }
 
@@ -666,6 +672,7 @@ mod tests {
             run_id,
             owner: "remote".into(),
             label: "build".into(),
+            actor: "test".to_string(),
             action_type: "remote.exec".into(),
             state: RunState::Succeeded,
             queued_at_ms: ended_at_ms.saturating_sub(10),
@@ -713,6 +720,7 @@ mod tests {
         let row = &page[0];
         assert_eq!(row["runId"], 7);
         assert_eq!(row["state"], "succeeded");
+        assert_eq!(row["actor"], "test", "who ran it is on the line (docs/41 A1)");
         assert_eq!(row["outputBytes"], 18);
         assert_eq!(row["meta"]["target"], "build");
         assert_eq!(row["input"]["argv"], json!(["make", "-j8"]));

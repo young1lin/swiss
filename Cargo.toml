@@ -72,6 +72,9 @@ encoding_rs = { version = "0.8", default-features = false }
 base64 = "0.23"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "parsing", "macros"] }
 rust-embed = { version = "8", features = ["interpolate-folder-path"] }
+# The CLI's self-declared actor on a remote run, `cli:<user>@<host>` (docs/41 A1). Already
+# in the tree through sqlx (same version resolves), so the direct edge costs no code.
+whoami = { version = "1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # reqwest on Windows: native-tls = schannel — pure Rust, the OS trust store; rustls would pull

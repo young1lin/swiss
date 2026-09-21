@@ -119,8 +119,11 @@ function targetOf(r: ApiRemoteRunRow): string {
   return (r.meta && r.meta.target) || (r.input && r.input.target) || "";
 }
 
+/** The row's meta: id, who (docs/41 A1 - the actor is an identifier, never translated;
+ *  a row an older gateway recorded has none and skips it), how it ended, how long, when. */
 function metaOf(r: ApiRemoteRunRow): string {
   const parts = ["#" + r.runId];
+  if (r.actor) parts.push(r.actor);
   if (r.state === "running" || r.state === "queued") parts.push(r.state);
   else if (r.exitCode != null) parts.push(tr("remoteRuns.exitN", { n: r.exitCode }));
   else if (r.state === "canceled") parts.push(tr("remoteRuns.canceled"));
