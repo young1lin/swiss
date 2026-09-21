@@ -1,9 +1,14 @@
 # 40 — 开源前的清场：身份、脱敏、归属、标配、卫生
 
-> 状态：**实施中**（2026-09-21，master）。本文是 2026-09-21 开源审计的落地 spec：审计扫了
-> 全部 559 个 tracked 文件、415 个 commit 的完整历史、依赖 license、截图像素、vendored 代码
-> 来源。owner 对八个问题的决定在 §1，逐项工作在 §2，验收在 §3。**本地为止**——GitHub 建仓、
-> push、CI 首跑不在本 spec 内，owner 另行决定何时做。
+> 状态：**已实施**（2026-09-21，master，本地为止）。O1–O5 各一个 commit，O6 是分支/worktree/
+> 产物的删除（无 tracked 变更），O7 是三遍 `git filter-repo`（第一遍主重写；第二、三遍补
+> commit message 里的字面量和 JSON 转义写法的路径），之后一个 commit 把 37 个 doc 里引用的
+> 91 个旧短 hash 换成重写后的值。§3 验收全部通过：520 个 commit 只有一个 author/committer、
+> 0 条 trailer、工作树与全历史 0 命中、四张截图与 build 树从历史消失、无 >5 MB blob、pack
+> 110 MB → 7 MB、`cargo test --workspace` 1365 通过、clippy `-D warnings` 与 `npm run check`
+> （76 文件 682 用例）绿、`cargo deny check` 四项 ok。重写前的完整备份：
+> `../local-mcp-gateway-rust-pre-oss.bundle`（所有分支、旧 hash）。GitHub 建仓、push、CI 首跑、
+> tag 不在本 spec 内——owner 另行决定何时做。
 
 ## 0. 审计结论（动手前的事实）
 

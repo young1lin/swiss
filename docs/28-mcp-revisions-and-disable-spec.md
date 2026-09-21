@@ -1,6 +1,6 @@
 # 28 · MCP 同名替换(revisions)与禁用正名 — spec
 
-**状态:Approved for implementation(2026-09-16),基线 `2683849`。** swiss-spec 流程产出;
+**状态:Approved for implementation(2026-09-16),基线 `a178e3d`。** swiss-spec 流程产出;
 执行会话(同日)按 `docs/28-mcp-revisions-and-disable-prompt.md` 起跑。
 
 **验证端口:19997**(操作者指定,压缩也不许忘):agent 的实机验证实例一律 -Port 19997,

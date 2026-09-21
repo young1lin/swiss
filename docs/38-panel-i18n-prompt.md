@@ -6,7 +6,7 @@
 
 ## 工作目录
 
-先在主 checkout（`<repo>`，分支 `master`，基线 `d040640`）建
+先在主 checkout（`<repo>`，分支 `master`，基线 `c585831`）建
 worktree，然后**只在 worktree 里工作**：
 
 ```

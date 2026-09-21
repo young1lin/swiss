@@ -1,6 +1,6 @@
 # 20 — 分组与层级：一个模型、一族 API、一个组件
 
-> 状态：**已实施（G1–G8，`72dc010` 起，完成于本提交）**。基线 `109397e`（2026-09-13）。配套交接提示词：[20-groups-and-hierarchy-prompt.md](20-groups-and-hierarchy-prompt.md)。
+> 状态：**已实施（G1–G8，`f977935` 起，完成于本提交）**。基线 `54da948`（2026-09-13）。配套交接提示词：[20-groups-and-hierarchy-prompt.md](20-groups-and-hierarchy-prompt.md)。
 > **§4 视觉模型修订（tree 模型，2026-09）：分组头不再是 `--sep-soft` 色带，而是树节点——
 > chevron、folder 图标（新 sprite `i-folder`）、名称、计数，透明底、hover 才有轻背景；grip 与 ⋯
 > hover/focus 才显现，且 grip 移到头部末尾以稳定树列的 x 坐标。缩进按「最终排版的文字 x 坐标」计量：
@@ -349,7 +349,7 @@ docs/05 的测试断言"Rust 能打开 Node 封的文件"仍成立。反方向�
 
 ### G8 — 文档收口
 
-- docs/05 追加 §2.3 的三段；docs/07 追加 ADR-015（§8）；docs/18 状态行改为"已实施（V1–V7，`810623a`
+- docs/05 追加 §2.3 的三段；docs/07 追加 ADR-015（§8）；docs/18 状态行改为"已实施（V1–V7，`b7131aa`
   起）"（2026-09-13 核对 git，状态行仍写"待做"）；README docs 表补 17/18/19/20 四行；`.agents/docs`
   按 ask-swiss 的流程刷新 mcp/tunnels/jobs/host/panel/style-design 六份。
 

@@ -196,7 +196,7 @@ Plus, inside the registry.rs test module, a small assertion helper that reads th
   20. `details_report_state_reason_and_source_fields` (#23)
   21. `mcp_delete_without_a_bearer_is_refused` (#1)
   22. `mysql_browser_statements_match_the_wiring_contract` (#25) and `a_live_database_answers_ping_when_credentials_are_planted` (#7; env-gated self-skip)
-- **Added by the 8064a06 groups re-audit** (`default` becomes an ordinary group; the Data picker ranks by visual order) — numbering continues:
+- **Added by the 6b84f26 groups re-audit** (`default` becomes an ordinary group; the Data picker ranks by visual order) — numbering continues:
   23. `deleting_the_default_group_by_omission_moves_its_members_to_the_new_first_group` (#22, P1 — the sink-slot semantics through the API)
   24. `a_pre_v2_groups_file_serves_default_first_and_the_v2_marker_freezes_edits` (#22, P1 — the legacy-file migration of the groupsV2 marker)
   25. `the_db_picker_follows_the_sidebar_visual_order_across_interleaved_groups` (#27, P2)

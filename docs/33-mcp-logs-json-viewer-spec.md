@@ -1,6 +1,6 @@
 # docs/33 — MCP Logs: JSON viewer for arguments and replies
 
-Status: Shipped — C1 in 8c87cdb, C2 in 52c90f3, then refined after the live result exposed excessive density. The current viewer omits the redundant synthetic root, shows only the useful top level initially, folds nested containers, uses neutral text-face keys and compact inline controls, and keeps pretty-printing entirely in the panel. Direct-adapter tool results travel to the AI as compact JSON; display whitespace never consumes model context. The original live-found fixes remain covered (dataset-string seq mounting and preserving the slot's `jtree` class).
+Status: Shipped — C1 in e844b98, C2 in 26a448f, then refined after the live result exposed excessive density. The current viewer omits the redundant synthetic root, shows only the useful top level initially, folds nested containers, uses neutral text-face keys and compact inline controls, and keeps pretty-printing entirely in the panel. Direct-adapter tool results travel to the AI as compact JSON; display whitespace never consumes model context. The original live-found fixes remain covered (dataset-string seq mounting and preserving the slot's `jtree` class).
 
 The Logs tab (docs/31 search, docs/32 paging) ships tool arguments and replies as flat
 pretty-printed `<pre>` text. Three gaps, reported by the operator on the live panel:

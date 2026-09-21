@@ -7,7 +7,7 @@
 ## 工作目录
 
 `<repo>\.agents\worktrees\panel-ts`（worktree，分支
-`panel-ts`，基线 `9332a88`）。面板的 npm 家在 `crates/swiss-panel/panel`。
+`panel-ts`，基线 `fddd33b`）。面板的 npm 家在 `crates/swiss-panel/panel`。
 
 **不要 `cd` 回主 checkout。** PowerShell 里 `cd` 混在链式命令中会打断后面每一个相对路径——构建与
 实例脚本各起一条命令，从仓库根跑。

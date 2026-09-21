@@ -13,7 +13,7 @@ current verification gate is green: 941 workspace tests, strict Clippy, and the 
 build all pass.
 
 Since then the build has become the toolbox docs/09 and docs/10 describe, and both documents are
-now fully implemented (`4147e8a`). A plugin host owns the subsystems; Actions, Runs and the process
+now fully implemented (`2937034`). A plugin host owns the subsystems; Actions, Runs and the process
 supervisor are shared services rather than each subsystem's own; Jobs are defined in configuration
 with occurrence keys, misfire, DST and retry semantics; Data reaches its connections through a
 catalog contract instead of reaching into MCP; and the source is eight crates whose dependency
@@ -22,7 +22,7 @@ stages and their acceptance criteria.
 
 **One acceptance task remains, and it is not code.** docs/01's rows are all filled now — the
 realistic adapter workload measured 22.4 MB against a fresh Node run's 113.8 MB on the same
-data directory and traffic (2026-09-11, `3c3fd7f`). Phase 6's calendar week is underway de
+data directory and traffic (2026-09-11, `3b4934f`). Phase 6's calendar week is underway de
 facto: since the W2 measurement the Rust build is the only gateway on the real port (Node
 stopped — the two cannot hold the tunnel listeners simultaneously anyway), and it carries
 daily traffic: all seven MCPs, the two SSH tunnel connections, remote terminal sessions

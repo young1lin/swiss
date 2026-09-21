@@ -1,8 +1,8 @@
 # 12 — 剩余工作实施规范（文档校正 / 内存实测 / P4 / P6 / P5）
 
-> 状态：**全部已实施**。写作基线 `5f18951`，完成基线 `4147e8a`。
-> W1 文档校正 · W2 内存实测（2026-09-11，见下）· W3 连接目录 `9e76351` · W4 试金石插件 `9cdd7c6`
-> · W5 workspace 拆分 `4147e8a`。W2 最终在 `3c3fd7f`（ADR-012 之后的 release）上完成：
+> 状态：**全部已实施**。写作基线 `6910f75`，完成基线 `2937034`。
+> W1 文档校正 · W2 内存实测（2026-09-11，见下）· W3 连接目录 `2026831` · W4 试金石插件 `3d81d30`
+> · W5 workspace 拆分 `2937034`。W2 最终在 `3b4934f`（ADR-012 之后的 release）上完成：
 > 本机没有独立 DB 服务，mysql/pg/redis 全部经网关自己的 SSH 隧道到达，压测用官方 MCP SDK
 > 客户端直打各适配器端点（`../local-mcp-gateway/scripts/w2-drive.mjs`），Node 侧同数据目录
 > 同流量顺序复测（隧道本地端口互斥，无法并排）。数字在 docs/01 的表里。
@@ -33,13 +33,13 @@ cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 
 ## W1 — 文档校正 ✅ 已完成（与本文同一提交）
 
-`5f18951` 实现了插件宿主，但几处文档还停在实现之前，会让下一个读者（人或模型）做出错误判断。
+`6910f75` 实现了插件宿主，但几处文档还停在实现之前，会让下一个读者（人或模型）做出错误判断。
 这一项已经做完，下面是改动记录，不需要重做——**但接手 W3–W5 时请核对它仍然属实**。
 
 改过的五处：
 
-1. **`docs/09` 第 3 行**：`> 状态：设计提议，尚未实施重构。代码基线：81882cc。`
-   → 改为：P1–P3 已在 `5f18951` 落地（PluginHost、ActionRegistry/RunCoordinator/Supervisor、面板 PageRegistry 与 `/api/plugins`），未实施的是 P4–P6；代码基线更新为 `5f18951`。
+1. **`docs/09` 第 3 行**：`> 状态：设计提议，尚未实施重构。代码基线：b1fdc32。`
+   → 改为：P1–P3 已在 `6910f75` 落地（PluginHost、ActionRegistry/RunCoordinator/Supervisor、面板 PageRegistry 与 `/api/plugins`），未实施的是 P4–P6；代码基线更新为 `6910f75`。
 2. **`docs/09` §11「本次实际完成与未完成」**：整节重写成当前事实。原文"没有实现上述 v2 schema/插件宿主"已经不成立；v2 schema 仍未实现这一半要保留，并指向 docs/11。
 3. **`README.md`**（"The toolbox proposals are not implemented configuration or API documentation." 那一段）：改为——docs/09 的插件宿主与 docs/10 的执行半边已实现；配置驱动的 Jobs（docs/10 §5、§9 步骤 3–7）仍是提议，实施规范见 docs/11。README 的文档表格补上 docs/11 与 docs/12 两行。
 4. **`docs/06` 的「Current implementation status」**：补一句插件宿主与共享运行服务已落地，并明确 Phase 6（并行运行一周后切换）与 docs/01 的内存实测仍未做。
@@ -73,9 +73,9 @@ cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 
 | 行 | 条件 | 状态 |
 | --- | --- | --- |
-| Rust Phase 1 | echo + 面板，无 DB | ✅ 14.0 MB（`4147e8a`，2026-09-10） |
-| Rust Phase 2 | mysql + pg + 2×redis | ✅ 21.8 MB（`3c3fd7f`，2026-09-11，DB 全经自身隧道） |
-| Rust Phase 4 | 全功能（含 tunnels、http） | ✅ 22.4 MB（`3c3fd7f`，2026-09-11，60/60 调用；Node 同流量复测 113.8 MB） |
+| Rust Phase 1 | echo + 面板，无 DB | ✅ 14.0 MB（`2937034`，2026-09-10） |
+| Rust Phase 2 | mysql + pg + 2×redis | ✅ 21.8 MB（`3b4934f`，2026-09-11，DB 全经自身隧道） |
+| Rust Phase 4 | 全功能（含 tunnels、http） | ✅ 22.4 MB（`3b4934f`，2026-09-11，60/60 调用；Node 同流量复测 113.8 MB） |
 
 ### 判定
 
@@ -88,7 +88,7 @@ cargo tree -d          # 重复的 TLS 栈或 runtime 必须让评审失败
 
 ---
 
-## W3（docs/09 P4）— MCP 与 Data 的连接能力解耦 ✅ 已完成（`9e76351`）
+## W3（docs/09 P4）— MCP 与 Data 的连接能力解耦 ✅ 已完成（`2026831`）
 
 ### 现状与问题
 
@@ -165,7 +165,7 @@ pub enum CatalogError {
 
 ---
 
-## W4（docs/09 P6）— 试金石插件：证明"加一个工具不用改核心" ✅ 已完成（`9cdd7c6`）
+## W4（docs/09 P6）— 试金石插件：证明"加一个工具不用改核心" ✅ 已完成（`3d81d30`）
 
 > 插件本体已于 2026-09-11 按用户决定删除（连同面板视图与专属测试）。试金石的使命——从零加插件、
 > `host/` 零改动——已经完成，并由终端插件在同一路径上再次验证。下文保留为实施记录。
@@ -197,7 +197,7 @@ docs/09 §9 要的验收样例是 **HTTP 工具插件**。选它有一个现成�
 
 ---
 
-## W5（docs/09 P5）— workspace 拆分 ✅ 已完成（`4147e8a`）
+## W5（docs/09 P5）— workspace 拆分 ✅ 已完成（`2937034`）
 
 **这是机械搬迁，放在最后。** 它的价值是把依赖方向变成编译器能强制的东西，不是省内存——docs/09 §8 说得很清楚，**任何"拆目录省内存"的说法都不许写进提交信息或文档**。
 

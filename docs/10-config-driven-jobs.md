@@ -1,9 +1,9 @@
 # 10 — Jobs 完全配置驱动
 
-> 状态：**全部已实现**。基线：`4147e8a`。
-> 执行的一半（`5f18951`）：Action / RunCoordinator / ProcessSupervisor 这套共享执行服务，
+> 状态：**全部已实现**。基线：`2937034`。
+> 执行的一半（`6910f75`）：Action / RunCoordinator / ProcessSupervisor 这套共享执行服务，
 > Jobs 由执行者变成它的 producer（§2、§6 的执行部分、§7 的 `/api/actions`、`/api/runs`）。
-> 配置的一半（`6bcdf9e`–`18ad5f2`）：v2 schema 与字段契约（§4）、配置作为定义的唯一事实来源
+> 配置的一半（`580b8dc`–`e40d3fa`）：v2 schema 与字段契约（§4）、配置作为定义的唯一事实来源
 > （§5）、cron/misfire/DST 的持久化语义、`jobs.json` 迁移、schema 驱动的面板（§7）。
 > 分阶段的实施记录与验收标准见 [11 — Jobs v2 实施规范](11-jobs-v2-implementation-spec.md)。
 > 配套架构：[09 — 开发瑞士军刀插件架构](09-toolbox-plugin-architecture.md)。

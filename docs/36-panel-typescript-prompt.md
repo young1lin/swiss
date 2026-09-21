@@ -2,7 +2,7 @@
 
 > 复制下面整段给实施模型。它假设模型在一个**新的 git worktree** 里工作：
 > `<repo>\.agents\worktrees\panel-ts`，分支 `panel-ts`，
-> 从 `master`（基线 `a6ee5be`）切出。worktree 由用户先建好：
+> 从 `master`（基线 `69853b7`）切出。worktree 由用户先建好：
 > `git worktree add .agents\worktrees\panel-ts -b panel-ts master`。
 
 ---
@@ -35,7 +35,7 @@ module，由 rust-embed 嵌进 exe。
 交付：**T0 → T1 → T2 → T3 → T4 → T5，每条一个提交**（T2–T4 可按文件组再拆）。每个提交的硬性要求：
 
 - vitest 全绿（基线 60 文件 / 544 用例，一个都不能少）；`npm run build:check` 干净。
-- `git diff -w --ignore-blank-lines a6ee5be -- crates/swiss-panel/src/admin_assets/js` 为空，或提交
+- `git diff -w --ignore-blank-lines 69853b7 -- crates/swiss-panel/src/admin_assets/js` 为空，或提交
   说明逐行点名并附测试（spec D9、§8）。T0 更严：`git diff --stat` 为空，字节相同。
 - `npm run typecheck` 的剩余错误数写进每个提交说明，单调下降，T4 归零，T5 起是门禁。
 - `cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings` 绿；`--workspace`

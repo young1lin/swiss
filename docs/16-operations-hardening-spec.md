@@ -1,6 +1,6 @@
 # 16 — 运维加固：守护进程的环境、隔离的测试实例、一步部署、CI，与依赖体检
 
-> 状态：**H1–H5 已实施**（2026-09-12；提交 bcc73ad / 42fbf6d / 15bb55f / H5 见 git log，H4 经核已由
+> 状态：**H1–H5 已实施**（2026-09-12；提交 03823c3 / 83008c4 / 8f6b7af / H5 见 git log，H4 经核已由
 > 既有 `.github/workflows/build.yml` 全覆盖、未另建 ci.yml）。H6（可选）另行处理。本文只写清
 > 「是什么、为什么、改哪里、怎么验」，不含实现代码。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/05-wire-compatibility.md`（状态目录与密钥，H2 要用）、
@@ -14,7 +14,7 @@
 
 | 现象 | 根因 | 这份文档的条目 |
 |---|---|---|
-| 19999 上的本地 PowerShell 7 黑白无色 | 部署 19999 的那个 agent 工具 shell 带着 `NO_COLOR=1`；`swiss start` 把启动者的整个环境原样交给守护进程，守护进程再原样交给每个子进程。终端插件已在 `local.rs::shell_command` 单点堵住（提交 `23047d8`），但 jobs 的子进程、MCP 的 stdio 子进程仍然全盘继承 | H1 |
+| 19999 上的本地 PowerShell 7 黑白无色 | 部署 19999 的那个 agent 工具 shell 带着 `NO_COLOR=1`；`swiss start` 把启动者的整个环境原样交给守护进程，守护进程再原样交给每个子进程。终端插件已在 `local.rs::shell_command` 单点堵住（提交 `fcf012c`），但 jobs 的子进程、MCP 的 stdio 子进程仍然全盘继承 | H1 |
 | 在 19998 上保存 terminal 配置，写进了生产的 `gateway.config.json` | 两个实例共用 `~/.mcp-gateway`。`MCP_GATEWAY_HOME` 早就存在（`crates/swiss-core/src/paths.rs::data_dir`），只是没有一条把它用于 19998 的规矩和脚本 | H2 |
 | 「19999 跑的还是旧二进制」被误以为已部署；`cargo build` 报 `Access is denied (os error 5)` | 部署是三步手工仪式（stop → build → start），顺序错一步就失败；而且没有任何地方能看出**正在运行的**二进制是哪次构建 | H3 |
 | 门禁全靠人跑 | Rust 仓库没有 CI；Node 仓库有三个 workflow | H4 |
@@ -103,15 +103,15 @@ PowerShell 脚本没有单元测试；验收在 §7。但 Rust 侧要确认一�
 ### 3.1 目标行为
 
 - 二进制知道自己是哪次构建：`build.rs`（根 crate `swiss`）在编译时取 `git rev-parse --short HEAD`
-  与 `git status --porcelain` 是否为空，输出 `SWISS_GIT_HASH`（如 `23047d8` / `23047d8-dirty`）和
+  与 `git status --porcelain` 是否为空，输出 `SWISS_GIT_HASH`（如 `fcf012c` / `23047d8-dirty`）和
   `SWISS_BUILD_TIME`（RFC 3339，UTC）。没有 git 或不在仓库里时两者为 `unknown`，**构建不能失败**。
   `rerun-if-changed` 指向 `.git/HEAD` 与 `.git/refs/heads`。不加任何 crate 依赖。
-- `swiss --version` 打印 `swiss 0.1.0 (23047d8, 2026-09-11T13:16:40Z)`。
+- `swiss --version` 打印 `swiss 0.1.0 (fcf012c, 2026-09-11T13:16:40Z)`。
 - `/health` 加 `build: { "hash": "...", "time": "..." }`（无鉴权路由；loopback 上暴露短 hash 可以
   接受——写进注释）。`/api/info` 同样加 `build`。
-- `swiss status` 多打一行：`build: 23047d8 (2026-09-11T13:16:40Z)`；并且把**磁盘上 entry 的构建**
+- `swiss status` 多打一行：`build: fcf012c (2026-09-11T13:16:40Z)`；并且把**磁盘上 entry 的构建**
   （对 pid 文件里的 `entry` 跑 `--version`）和**运行中的构建**（`/health` 的 `build`）比一下，
-  不一致时多一行 `note: the binary on disk is 9f1c2ab; the running daemon is 23047d8 — restart to pick it up`。
+  不一致时多一行 `note: the binary on disk is 9f1c2ab; the running daemon is fcf012c — restart to pick it up`。
   JSON 输出（`status_json`）同样带 `build` 与 `diskBuild`。
 - `scripts/deploy.ps1`：
   1. `cargo test --workspace` 与 `cargo clippy --workspace --all-targets -- -D warnings`（可用

@@ -4,7 +4,7 @@
 
 ## 工作目录与分支
 
-- worktree:`.agents/worktrees/mcp`(分支 `mcp`,已含基线 `2683849`)。shell 一律以
+- worktree:`.agents/worktrees/mcp`(分支 `mcp`,已含基线 `a178e3d`)。shell 一律以
   `.agents/worktrees/mcp` 为 workdir;文件工具路径前缀 `.agents/worktrees/mcp/`。
 - 嵌套 powershell 脚本一律绝对路径(相对路径会漂到别的 worktree —— 踩过的坑)。
 

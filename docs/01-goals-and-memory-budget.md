@@ -47,7 +47,7 @@ The pre-split monolith's acceptance below (2026-09-07) read 20.3 MB. The split b
 terminal plugin shipped and MongoDB deleted (ADR-012, exe 10,649,600 → 7,948,288 B), re-measured
 the same workload family this morning against a fresh Node run on the same data directory:
 
-| | Node | Rust (`3c3fd7f`) | |
+| | Node | Rust (`3b4934f`) | |
 | --- | --- | --- | --- |
 | Gateway RSS | 113.8 MB | **22.4 MB** | −80%, ~91 MB back |
 | Private bytes | 124.9 MB | **8.6 MB** | −93% |
@@ -207,14 +207,14 @@ the wrong way, is worth stopping for.
 | --- | --- | --- | --- | --- |
 | 2026-09-07 | Node (baseline) | mysql, pg, 2×redis, 2×http, echo | 117.5 | 2×proc asleep |
 | 2026-09-07 | Rust Phase 0 (spike) | echo only | **9.1** | release, after 60 requests; 1 thread, 4.0 MB private, 1.05 MB exe |
-| 2026-09-10 | Rust Phase 1 | echo + panel | **14.0** | release+mongo, scratch home, echo settled; measured across the crate split (`4147e8a`: 14.2 → 14.0) |
+| 2026-09-10 | Rust Phase 1 | echo + panel | **14.0** | release+mongo, scratch home, echo settled; measured across the crate split (`2937034`: 14.2 → 14.0) |
 | 2026-09-10 | Rust + terminal plugin | echo + panel + terminal | **13.7** | release+mongo, scratch home, plugin loaded, zero sessions (−0.3 vs Phase 1, i.e. noise); exe 10,649,600 B, +662 KB over the 9,972,224 B ADR-010 baseline — +138 KB under the +800 KB budget; +233 KB per attached local session (budget 1.0 MB, `docs/14` §7) |
-| | Rust Phase 2 | mysql, pg, 2×redis | **21.8** | 2026-09-11, `3c3fd7f` release; all three DBs ride the gateway's own SSH tunnels; 40/40 calls ok; WS 21.8, private 8.2, 3 threads; 2×http started not driven, 2×proc asleep |
-| | Rust Phase 4 | full workload | **22.4** | 2026-09-11, `3c3fd7f` release; 60/60 calls ok incl. 12× web-reader (http); 9 tunnel rules over 2 SSH connections live; WS 22.4, private 8.6, 6 threads |
+| | Rust Phase 2 | mysql, pg, 2×redis | **21.8** | 2026-09-11, `3b4934f` release; all three DBs ride the gateway's own SSH tunnels; 40/40 calls ok; WS 21.8, private 8.2, 3 threads; 2×http started not driven, 2×proc asleep |
+| | Rust Phase 4 | full workload | **22.4** | 2026-09-11, `3b4934f` release; 60/60 calls ok incl. 12× web-reader (http); 9 tunnel rules over 2 SSH connections live; WS 22.4, private 8.6, 6 threads |
 | 2026-09-11 | Node (re-measure) | same set, same data dir, same 60-call traffic | **113.8** | fresh side-by-side: private 124.9 MB, 13 threads — consistent with the 117.5 baseline |
-| | Rust streaming SQL dump | mysql, pg (data view) | peak **32.5** | 2026-09-13, `9aee217` release; 100k-row/114 MB pg table exported whole-body: csv materialises it (peak WS 164.2, heap 157.9) while format=sql streams (docs/22 W4.4): peak WS 32.5, heap 22.9 at a 20.
-| | Rust + MCP OAuth | full workload, figma grant stored | **19.9** | 2026-09-15, `bc7b4c2` release (docs/24); idle after a real Figma authorization round-trip on 19998 — the oauth module is code plus a lazily-read sealed map, so idle cost is unchanged-to-down vs the 2026-09-13 rows measured under heavier tunnels/children; WS 19.9, private 6.5, children asleep.7 baseline — O(chunk) held; the gap grows with table size |
-| | Rust + zai-vision native | full workload, 2× zai-vision native started, proc zai-vision child stopped | **21.8** | 2026-09-15, `6c7fc00` release (ADR-022); the native engine adds nothing measurable — WS 22.0 with both defs live, 21.8 after stopping the old proc def's child; the child it replaces (`node @z_ai/mcp-server`, npx cache copy) measured **66.6 MB** WS alive, so migrating the def retires that entire footprint; real GLM vision call through the native engine: 2229 ms, 200 OK |
+| | Rust streaming SQL dump | mysql, pg (data view) | peak **32.5** | 2026-09-13, `d95e5f0` release; 100k-row/114 MB pg table exported whole-body: csv materialises it (peak WS 164.2, heap 157.9) while format=sql streams (docs/22 W4.4): peak WS 32.5, heap 22.9 at a 20.
+| | Rust + MCP OAuth | full workload, figma grant stored | **19.9** | 2026-09-15, `3c5bcf0` release (docs/24); idle after a real Figma authorization round-trip on 19998 — the oauth module is code plus a lazily-read sealed map, so idle cost is unchanged-to-down vs the 2026-09-13 rows measured under heavier tunnels/children; WS 19.9, private 6.5, children asleep.7 baseline — O(chunk) held; the gap grows with table size |
+| | Rust + zai-vision native | full workload, 2× zai-vision native started, proc zai-vision child stopped | **21.8** | 2026-09-15, `0981edd` release (ADR-022); the native engine adds nothing measurable — WS 22.0 with both defs live, 21.8 after stopping the old proc def's child; the child it replaces (`node @z_ai/mcp-server`, npx cache copy) measured **66.6 MB** WS alive, so migrating the def retires that entire footprint; real GLM vision call through the native engine: 2229 ms, 200 OK |
 
 Phase 1 reading: 14.0 MB with the whole gateway present — panel embedded, registry, both on-disk
 logs, the plugin host and every adapter family compiled in — against a 9.1 MB spike that had none

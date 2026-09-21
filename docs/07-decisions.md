@@ -48,7 +48,7 @@ named above — a third-party adapter can no longer appear in the Data view.
 
 ## ADR-002 — One crate, not a workspace
 
-**Status: Superseded by ADR-010 (`4147e8a`).**
+**Status: Superseded by ADR-010 (`2937034`).**
 
 A workspace buys nothing at runtime and costs build and navigation complexity. `src/lib.rs` beside
 `src/main.rs` already lets `tests/` drive the real application. Revisit only if compile times become
@@ -218,7 +218,7 @@ quietly compares nothing is worse than no check — it reports ok.
 
 ## ADR-010 — Eight crates, still one binary
 
-**Status: Accepted (`4147e8a`). Supersedes ADR-002.**
+**Status: Accepted (`2937034`). Supersedes ADR-002.**
 
 The source is a cargo workspace: `swiss-core`, `swiss-host`, the five subsystem crates (`swiss-mcp`,
 `swiss-data`, `swiss-tunnels`, `swiss-jobs`, `swiss-panel`) and the `swiss` composition crate. The product is
@@ -237,7 +237,7 @@ The cost is real and accepted: eight manifests to keep in step, and gate command
 
 ## ADR-011 — The terminal plugin: WebSocket, hand-written ConPTY, no tunnels edge
 
-**Status: Accepted (`310ffe2` … `616b530`, T1–T7 of docs/14). Grows ADR-010's set to nine crates.**
+**Status: Accepted (`c405cb8` … `3361429`, T1–T7 of docs/14). Grows ADR-010's set to nine crates.**
 
 Three decisions, each with the number that justified it:
 
@@ -275,7 +275,7 @@ of honestly listing targets. When tunnels is absent or stopped, `/api/terminal/t
 by name and the panel shows the reason instead of an empty list.
 
 Per-remote-session RSS, measured 2026-09-11 against the two real hosts (开发机 + 构建机,
-release build `3c3fd7f`): baseline 23,258 KB → one attached session 23,844 KB (+586 KB, including
+release build `3b4934f`): baseline 23,258 KB → one attached session 23,844 KB (+586 KB, including
 the one-time SSH channel setup and code paging) → four attached sessions (2+2) 24,596 KB. Marginal
 cost (4−1)/3 = **250.7 KB per session** — inside the ≤ 256 KB row, though only just; a record, not
 a gate.

@@ -1,12 +1,12 @@
 # 09 — 开发瑞士军刀插件架构
 
-> 状态：**P1–P6 全部已实施**。代码基线：`4147e8a`。
-> P1–P3（`5f18951`）：PluginHost 与插件生命周期、ActionRegistry / RunCoordinator /
+> 状态：**P1–P6 全部已实施**。代码基线：`2937034`。
+> P1–P3（`6910f75`）：PluginHost 与插件生命周期、ActionRegistry / RunCoordinator /
 > ProcessSupervisor、面板 PageRegistry 与 `/api/plugins` 清单。
-> P4（`9e76351`）：连接目录 `crates/swiss-host/src/services/catalog.rs`，Data 不再依赖 MCP。
-> P6（`9cdd7c6`，后随用户决定移除）：试金石插件——加它没有改动 `crates/swiss-host/src/host/` 一行；
+> P4（`2026831`）：连接目录 `crates/swiss-host/src/services/catalog.rs`，Data 不再依赖 MCP。
+> P6（`3d81d30`，后随用户决定移除）：试金石插件——加它没有改动 `crates/swiss-host/src/host/` 一行；
 > 契约随后由终端插件（docs/14）在同一路径上再次验证。
-> P5（`4147e8a`）：workspace 拆分成八个 crate，仍是一个 `swiss.exe`（体积 +1.1%）。
+> P5（`2937034`）：workspace 拆分成八个 crate，仍是一个 `swiss.exe`（体积 +1.1%）。
 > 实施过程见 [12](12-remaining-work-spec.md)。
 > 产品方向：一个低内存、单进程的开发工具宿主；MCP 是重要插件，但不再是其他功能必须依附的核心。
 > 本文不改变现有线上配置、接口或前端源文件归属。Jobs 详细契约见 [10](10-config-driven-jobs.md)。
@@ -236,7 +236,7 @@ Cargo features 表达编译能力，不取代运行时开关。发行版保留�
 
 | 阶段 | 主要提交 | 退出条件 |
 | --- | --- | --- |
-| P0 基线与测量 | `81882cc`；记录历史兼容与已知资源风险 | 默认测试、Clippy 通过；不修改运行配置 |
+| P0 基线与测量 | `b1fdc32`；记录历史兼容与已知资源风险 | 默认测试、Clippy 通过；不修改运行配置 |
 | P1 最小宿主契约 | PluginDescriptor、PluginScope、inventory、显式组合表；先包装 Jobs/Tunnels | 安全路由不漏挂；双插件可独立启停；失败隔离；资源清理可测试 |
 | P2 运行服务与 Jobs | 有界输出、ProcessSupervisor、Action/RunRegistry、v2 Jobs schema | Jobs 配置不混 lastRun；保存失败可见；取消/并发/队列/漏跑测试通过 |
 | P3 页面贡献 | Node 前端先实现 PageRegistry/slots + schema 编辑，复制面板 | 新页只注册贡献；切页清理；后台任务不依附页面；旧链接兼容 |
@@ -248,9 +248,9 @@ P1/P2 中已知的输出上限、取消、保存失败等安全/正确性修复�
 
 ## 11. 实施状态
 
-> 本节是分阶段的施工记录，按落地顺序读。下面 P1–P3 的部分写于 `5f18951`，后面三条是它之后的事；全部六项都已完成，顶部的状态行是权威。
+> 本节是分阶段的施工记录，按落地顺序读。下面 P1–P3 的部分写于 `6910f75`，后面三条是它之后的事；全部六项都已完成，顶部的状态行是权威。
 
-**P1–P3（`5f18951`）。**
+**P1–P3（`6910f75`）。**
 
 - P1 最小宿主契约：`crates/swiss-host/src/host/` 的 PluginDescriptor / PluginScope / PluginHost，显式组合表在
   `src/builtin.rs`；六态生命周期、并发 start 单飞、路由边界的结构化 503、失败隔离（一个插件
@@ -262,19 +262,19 @@ P1/P2 中已知的输出上限、取消、保存失败等安全/正确性修复�
 - P3 页面贡献：面板的 `page-core.js` / `page-registry.js` / `views/plugins.js` 从 `/api/plugins`
   清单渲染标签页，Node 参考源先改、再逐字节复制。
 
-**P4（`9e76351`）连接目录。** `crates/swiss-host/src/services/catalog.rs` 成为 Data 取连接的唯一
+**P4（`2026831`）连接目录。** `crates/swiss-host/src/services/catalog.rs` 成为 Data 取连接的唯一
 入口，provider 由 MCP 侧在 start 时注册、stop 时撤销。原来的问题——Data 不拥有资源，停用 MCP
 会连带打瘫它——因此消失：Data 现在看到的是一份可能为空的目录，而不是一个不见了的模块。
 
-**P6（`9cdd7c6`）试金石插件。** 一个一次性的 HTTP 请求工具插件。它存在的意义不是这个功能，而是
+**P6（`3d81d30`）试金石插件。** 一个一次性的 HTTP 请求工具插件。它存在的意义不是这个功能，而是
 证明“加一个插件不用动宿主”：加它没有改 `crates/swiss-host/src/host/` 一行。任务完成后，插件本体
 已按用户决定删除（2026-09-11，连同面板视图与专属测试）；契约的活性证明由终端插件承担——它走的
 正是同一条 descriptor/action/page 路径。
 
-**P5（`4147e8a`）workspace 拆分。** 八个 crate，仍是一个 `swiss.exe`（体积 +1.1%）。放在最后是
+**P5（`2937034`）workspace 拆分。** 八个 crate，仍是一个 `swiss.exe`（体积 +1.1%）。放在最后是
 对的：先让契约在单 crate 里跑通，再用 manifest 把已经成立的边界固化——`swiss-data` 的
 Cargo.toml 里没有 `swiss-mcp`，所以那条边再也回不来。见 ADR-010。
 
 docs/10 的配置驱动那一半（v2 schema、配置作为定义的唯一来源、`jobs.json` 迁移、schema 驱动的
-面板）也已在 `6bcdf9e`–`18ad5f2` 落地，分阶段记录见 [11](11-jobs-v2-implementation-spec.md)。
+面板）也已在 `580b8dc`–`e40d3fa` 落地，分阶段记录见 [11](11-jobs-v2-implementation-spec.md)。
 剩下的唯一未完成项是 [06](06-roadmap.md) 的 Phase 6 切换周（日历活，不是代码）。
