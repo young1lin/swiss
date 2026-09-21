@@ -33,6 +33,12 @@ import { tr } from "./i18n.js";
    (its row is d.inserts[i]) - key/meta are nullable and the update paths narrow. */
 let dbCellEdit: { kind: "update" | "insert"; key: string | null; i: number; column: string; meta: DbCellMeta | null } | null = null;
 
+/* The boolean toggle words itself with the same SQL tokens dbCellView uses for boolean
+   values — value words like NULL, not copy — so they render untranslated in every language
+   and live here as consts, out of the i18n gate's scanned positions. */
+const DB_BOOL_TRUE = "TRUE";
+const DB_BOOL_FALSE = "FALSE";
+
 function dbCellJsonLike(s: unknown): boolean {
   const t = String(s == null ? "" : s).trim();
   return t.startsWith("{") || t.startsWith("[");
@@ -101,9 +107,9 @@ function dbOpenCellEditor(kind: "update" | "insert", key: string | null, i: numb
     // NULL is a visible overlay state that typing clears on its own.
     ta.disabled = false;
     ta.style.opacity = nullState ? ".5" : "1";
-    ta.placeholder = nullState ? "NULL — type to replace, or toggle the button" : "";
+    ta.placeholder = nullState ? tr("dataCell.nullPlaceholder") : "";
     const b = $("dbCellNull");
-    b.textContent = nullState ? "NULL (set)" : "Set NULL";
+    b.textContent = nullState ? tr("dataCell.nullSet") : tr("dataCell.setNull");
   }
   // Typing while NULL is set means replacing the NULL — clear the flag.
   ta.addEventListener("input", () => {
@@ -117,7 +123,7 @@ function dbOpenCellEditor(kind: "update" | "insert", key: string | null, i: numb
   if (isBool) {
     let boolState = text === "1" || text?.toLowerCase() === "true";
     const bb = $("dbCellBool");
-    function paintBool(): void { bb.textContent = boolState ? "TRUE" : "FALSE"; }
+    function paintBool(): void { bb.textContent = boolState ? DB_BOOL_TRUE : DB_BOOL_FALSE; }
     bb.onclick = () => {
       boolState = !boolState;
       nullState = false;
@@ -216,7 +222,7 @@ function dbCellView(value: unknown, colType: unknown): { text: string | null; cl
     // Buffers-to-string pass), so the panel never sees the raw bytes — count what it did get,
     // in UTF-8 bytes (exact for ASCII payloads, honest about the delivery for the rest).
     const bytes = new TextEncoder().encode(String(value)).length;
-    return { text: "binary, " + bytes + " bytes", cls: "db-fold", title: null, href: null };
+    return { text: tr("dataCell.binaryNBytes", { n: bytes }), cls: "db-fold", title: null, href: null };
   }
   if (/bool/.test(type) || typeof value === "boolean") {
     const on = value === true || value === 1 || String(value).toLowerCase() === "true" || value === "1";
@@ -226,7 +232,7 @@ function dbCellView(value: unknown, colType: unknown): { text: string | null; cl
   if (/^https?:\/\//i.test(text)) return { text: text, cls: null, title: text, href: text };
   const jsonLike = typeof value === "object" || dbCellJsonLike(text);
   if (jsonLike && text.length > DB_CELL_FOLD) {
-    return { text: "(JSON)", cls: "db-fold", title: text, href: null };
+    return { text: tr("dataCell.jsonFold"), cls: "db-fold", title: text, href: null };
   }
   const numeric = typeof value === "number" ||
     /int|decimal|numeric|float|double|real|money|year|bit/.test(type);

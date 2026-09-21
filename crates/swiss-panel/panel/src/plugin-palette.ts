@@ -28,8 +28,8 @@
    imports the shell back.
    ================================================================================================ */
 import type { PageGroup, PaletteGroup, PaletteSection } from "./types/dom.js";
-import { el, iconNode } from "./util.js";
 import { tr, wireLabel } from "./i18n.js";
+import { el, iconNode } from "./util.js";
 import { fill } from "./h.js";
 
 const PIN_KEY = "swiss.rail.pinned";
@@ -118,7 +118,7 @@ function openPluginPalette(groups: PaletteGroup[], go: (group: PaletteGroup) => 
 
   const input = el("input");
   input.type = "search";
-  input.placeholder = "Search plugins…";
+  input.placeholder = tr("pluginPalette.searchPlugins");
   input.setAttribute("aria-label", tr("pluginPalette.searchPlugins2"));
   card.appendChild(input);
 
@@ -131,7 +131,7 @@ function openPluginPalette(groups: PaletteGroup[], go: (group: PaletteGroup) => 
     b.appendChild(glyphNode(g));
     const name = el("span", "pal-name");
     name.textContent = tr(wireLabel(g.label)) + (g.off ? " " : "");
-    if (g.off) name.appendChild(el("span", "pal-off", "· off"));
+    if (g.off) name.appendChild(el("span", "pal-off", "· " + tr("pluginPalette.off")));
     b.appendChild(name);
     b.title = g.off ? (g.offDetail || tr("pageRegistry.pluginDisabled")) : tr("pluginPalette.openLabel", { label: tr(wireLabel(g.label)) });
     b.onclick = (ev) => { ev.stopPropagation(); closePluginPalette(); void go(g); };

@@ -25,7 +25,7 @@ import { dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
 import { dbView } from "./db-state.js";
-import { tr } from "./i18n.js";
+import { tr, trn } from "./i18n.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.
@@ -49,6 +49,12 @@ function dbParseCsvLine(line        )           {
   out.push(cur);
   return out;
 }
+
+/* The mapping row's left label is punctuation around a raw CSV header name (CSV "id" →):
+   the CSV token, the quotes and the arrow carry no translatable words in any language, so
+   the label stays out of the dictionary and its literals live here as consts. */
+const CSV_MAP_LABEL = "CSV ";
+const CSV_MAP_ARROW = " \u2192 ";
 
 function dbOpenImport()       {
   const d = dbView();
@@ -100,10 +106,10 @@ function dbOpenImport()       {
     header.forEach((h        , i        )       => {
       const row = el("div", "db-console-row");
       row.style.marginBottom = "2px";
-      row.appendChild(el("span", "db-filter-hint", "CSV " + String.fromCharCode(34) + h + String.fromCharCode(34) + " \u2192 "));
+      row.appendChild(el("span", "db-filter-hint", CSV_MAP_LABEL + String.fromCharCode(34) + h + String.fromCharCode(34) + CSV_MAP_ARROW));
       const sel = el("select");
       sel.style.width = "auto";
-      const skip = el("option", "", "(skip)")                     ;
+      const skip = el("option", "", tr("dataCsv.skipColumn"))                     ;
       skip.value = "";
       sel.appendChild(skip);
       names.forEach((n        )       => {
@@ -124,15 +130,15 @@ function dbOpenImport()       {
     box.textContent = "";
     if (!header.length) return;
     const mapped         = mapping.filter(Boolean).length;
-    if (!mapped) { box.appendChild(el("div", "hint", "No columns mapped — pick at least one target column.")); return; }
+    if (!mapped) { box.appendChild(el("div", "hint", tr("dataCsv.noColumnsMapped"))); return; }
     const sample = lines.slice(0, 3).map((l        )                          => {
       const cells = dbParseCsvLine(l);
       const o                          = {};
       mapping.forEach((m               , i        )       => { if (m) o[m] = cells[i] === "" ? null : cells[i]; });
       return o;
     });
-    box.appendChild(el("div", "hint", lines.length.toLocaleString() + " row" + (lines.length > 1 ? "s" : "") +
-      " \u00b7 " + mapped + " of " + header.length + " CSV columns mapped. First rows as they will be inserted:"));
+    box.appendChild(el("div", "hint", trn(lines.length, "dataCsv.previewSummary.one", "dataCsv.previewSummary.other",
+      { n: lines.length.toLocaleString(), m: mapped, k: header.length })));
     const pre = el("pre", "db-ddl");
     pre.style.position = "static";
     pre.style.margin = "var(--s1) 0 0";
@@ -143,11 +149,13 @@ function dbOpenImport()       {
   $                  ("dbImpText").oninput = parse;
   function setMode(m        )       {
     mode = m;
+    // Hoisted: the i18n gate's ternary scan counts the comparison literal in the condition.
+    const isUpsert = m === "upsert";
     $("dbImpMode").querySelectorAll("button").forEach((b) => {
       b.setAttribute("aria-selected", String(b.dataset.mode === m));
     });
     // One sentence beside the control names the cost of the picked mode (docs/22 W4.5).
-    $("dbImpModeSay").textContent = m === "upsert"
+    $("dbImpModeSay").textContent = isUpsert
       ? tr("dataCsv.rowsMatchExistingKey")
       : tr("dataCsv.everyRowInsertsDuplicate");
   }
@@ -171,7 +179,7 @@ function dbOpenImport()       {
         { n: lines.length.toLocaleString(), t: (d.schema ? d.schema + "." : "") + d.table  }))) return;
     const t = e.currentTarget                     ;
     t.disabled = true;
-    t.textContent = "Importing\u2026";
+    t.textContent = tr("dataCsv.importing");
     const j = await apiJson                                     ("/api/db/" + encodeURIComponent(d.conn ) + "/import", {
       method: "POST",
       // mode rides the payload only when upsert — a default import stays byte-identical to
@@ -182,7 +190,7 @@ function dbOpenImport()       {
       )),
     });
     const btn = $                   ("dbImpRun");
-    if (btn) { btn.disabled = false; btn.textContent = "Import (one transaction)"; }
+    if (btn) { btn.disabled = false; btn.textContent = tr("dataCsv.importOneTransaction"); }
     if (!j) return; // server rolled back; the sheet stays for fixing
     // j.note is the server's degrade explanation (a Postgres table with no primary key); the
     // count is still the truth, the sentence beside it says what actually ran.
@@ -257,35 +265,35 @@ function dbCellMenu(e            , row                                , key     
     b.onclick = ()       => { closeMenu2(); fn(); };
     menu.appendChild(b);
   }
-  item("Copy value", ()       => { dbCopyText(value === null || value === undefined ? "NULL" : String(value)); });
+  item(tr("logs.copyValue"), ()       => { dbCopyText(value === null || value === undefined ? "NULL" : String(value)); });
   // docs/22 W5.3: the read-only viewer — full text, a JSON tree, hex or the link. NULL has
   // no content to view, so it gets no item (same rule as the filter items below).
   if (value !== null && value !== undefined) {
-    item("View value\u2026", ()       => {
+    item(tr("dataCsv.viewValue"), ()       => {
       dbOpenValueSheet(column, value, (d.schema ? d.schema + "." : "") + d.table );
     });
   }
   if (editInDialog) {
-    item("Edit in dialog\u2026", editInDialog); // long text / JSON: the user-chosen dialog path
+    item(tr("dataCsv.editInDialog"), editInDialog); // long text / JSON: the user-chosen dialog path
   }
   // docs/22 W1.5: filter-by-value straight off a cell. NULL cells show none of these (there is
   // no value to equal); the pushed filter lands in the standing filter row like a typed one.
   if (!d.sqlResult && row && value !== null && value !== undefined) {
-    item("Filter = value", ()       => { dbPushCellFilter(column, "eq", value); });
-    item("Filter \u2260 value", ()       => { dbPushCellFilter(column, "ne", value); });
-    item("Filter contains", ()       => { dbPushCellFilter(column, "like", value); });
+    item(tr("dataCsv.filterEqValue"), ()       => { dbPushCellFilter(column, "eq", value); });
+    item(tr("dataCsv.filterNeValue"), ()       => { dbPushCellFilter(column, "ne", value); });
+    item(tr("dataCsv.filterContains"), ()       => { dbPushCellFilter(column, "like", value); });
   }
   // Checked-row copies live in the SAME menu — one right-click reaches every format.
   if (!d.sqlResult) {
     const hint = dbAppendSelItems(item, dbSelectedForCopy());
     if (hint) menu.appendChild(hint);
-    item("Select all on page", ()       => { dbSelAll(true); });
-    if (Object.keys(d.sel).length) item("Clear selection", ()       => { dbSelAll(false); });
+    item(tr("dataCsv.selectAllOnPage"), ()       => { dbSelAll(true); });
+    if (Object.keys(d.sel).length) item(tr("dataCsv.clearSelection"), ()       => { dbSelAll(false); });
   }
   if (full) {
-    item("Copy row as JSON", ()       => { dbCopyText(JSON.stringify(full, null, 2)); });
-    item("Copy row as CSV", ()       => { dbCopyText(names.map((n        )         => { return dbCopyCsvCell(full?.[n]); }).join(",")); });
-    item("Copy row as INSERT", ()       => {
+    item(tr("dataCsv.copyRowAsJson"), ()       => { dbCopyText(JSON.stringify(full, null, 2)); });
+    item(tr("dataCsv.copyRowAsCsv"), ()       => { dbCopyText(names.map((n        )         => { return dbCopyCsvCell(full?.[n]); }).join(",")); });
+    item(tr("dataCsv.copyRowAsInsert"), ()       => {
       try {
         const q = (n        )         => { return dialect === "mysql" ? "`" + n + "`" : String.fromCharCode(34) + n + String.fromCharCode(34); };
         const cols = names.filter((n        )          => { return full [n] !== undefined; });
@@ -399,16 +407,18 @@ function dbSelAll(on         )       {
 function dbAppendSelItems(item                                         , sel                                                     )                     {
   const n = sel.rows.length;
   if (!n) {
-    const hint = el("button", "ctx-hint", "No rows checked \u2014 tick boxes on the left")                     ;
+    const hint = el("button", "ctx-hint", tr("dataCsv.noRowsChecked"))                     ;
     hint.disabled = true;
     // item() only makes enabled buttons; the hint is appended by the caller's menu directly
     return hint;
   }
-  const noun = n + " checked row" + (n > 1 ? "s" : "");
-  item("Copy " + noun + " as CSV", ()       => { dbCopyText(dbRowsCsv(sel)); });
-  item("Copy " + noun + " as TSV", ()       => { dbCopyText(dbRowsTsv(sel)); });
-  item("Copy " + noun + " as Markdown table", ()       => { dbCopyText(dbRowsMarkdown(sel)); });
-  item("Copy " + noun + " as JSON", ()       => { dbCopyText(dbRowsJson(sel)); });
+  // The noun is plural-aware (trn) and rides the four format labels as a {noun} var — the
+  // same nested-trn shape dataBrowsers.commitNKOne uses.
+  const noun = trn(n, "dataCsv.checkedRows.one", "dataCsv.checkedRows.other");
+  item(tr("dataCsv.copySelAsCsv", { noun }), ()       => { dbCopyText(dbRowsCsv(sel)); });
+  item(tr("dataCsv.copySelAsTsv", { noun }), ()       => { dbCopyText(dbRowsTsv(sel)); });
+  item(tr("dataCsv.copySelAsMarkdownTable", { noun }), ()       => { dbCopyText(dbRowsMarkdown(sel)); });
+  item(tr("dataCsv.copySelAsJson", { noun }), ()       => { dbCopyText(dbRowsJson(sel)); });
   return null;
 }
 
@@ -425,16 +435,16 @@ function dbResultCellMenu(e            , row                                , co
     menu.appendChild(b);
   }
   const v = row ? row[column] : undefined;
-  item("Copy value", ()       => { dbCopyText(v === null || v === undefined ? "NULL" : String(v)); });
+  item(tr("logs.copyValue"), ()       => { dbCopyText(v === null || v === undefined ? "NULL" : String(v)); });
   // docs/22 W5.3: the same read-only viewer on a console-result cell (no column types there —
   // the value alone picks the presentation, and the \\x wire form still says hex).
   if (v !== null && v !== undefined) {
-    item("View value\u2026", ()       => { dbOpenValueSheet(column, v, "SQL result"); });
+    item(tr("dataCsv.viewValue"), ()       => { dbOpenValueSheet(column, v, tr("dataCsv.sqlResult")); });
   }
   if (i >= 0) {
     const rk = dbResultKey(d.sqlTab || 0, i);
     const on = !!d.sel[rk];
-    item(on ? "Uncheck this row" : "Check this row", ()       => {
+    item(on ? tr("dataCsv.uncheckThisRow") : tr("dataCsv.checkThisRow"), ()       => {
       if (on) delete d.sel[rk]; else d.sel[rk] = true;
       d.selAnchor = i;
       renderDbToolbar(); renderDbGrid();
@@ -442,8 +452,8 @@ function dbResultCellMenu(e            , row                                , co
   }
   const hint = dbAppendSelItems(item, dbSelectedForCopy());
   if (hint) menu.appendChild(hint);
-  item("Select all on page", ()       => { dbSelAll(true); });
-  if (Object.keys(d.sel).length) item("Clear selection", ()       => { dbSelAll(false); });
+  item(tr("dataCsv.selectAllOnPage"), ()       => { dbSelAll(true); });
+  if (Object.keys(d.sel).length) item(tr("dataCsv.clearSelection"), ()       => { dbSelAll(false); });
   document.body.appendChild(menu);
   // Same clamp as dbCellMenu (docs/22 closeout audit) — measured after the append.
   const box2 = menu.getBoundingClientRect();

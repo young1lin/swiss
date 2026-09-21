@@ -48,7 +48,7 @@ import { JOB_BACKOFFS, JOB_CAPTURES, JOB_FIRST_RUNS, JOB_MISFIRES, JOB_OVERLAPS,
 import { loadCronstrue } from "./vendor/cronstrue/2.52.0/index.js";
 import { currentView } from "./ui-state.js";
 import { appendJobRuns, clearJobBusy, jobDragging, jobDraggingGroup, jobFolds, jobHistory, jobHistoryIsFor, jobIsBusy, jobRows, paintedJobsSig, setJobBusy, setJobDragging, setJobDraggingGroup, setJobPendingGroup, setPaintedJobsSig, startJobHistory, takeJobPendingGroup } from "./job-state.js";
-import { tk, tr } from "./i18n.js";
+import { locale, tk, tr } from "./i18n.js";
 
 let probed                 = null; // null = not probed yet; then the cached boolean answer for this page load
 
@@ -254,7 +254,7 @@ function wireJobs()       {
       // and without this the very click that opens the menu also tears it down.
       ev.stopPropagation();
       popupMenu(more.getBoundingClientRect(), [
-        { label: "Edit", fn: () => {
+        { label: tr("jobs.edit"), fn: () => {
             // A definition the v1 shape cannot spell (docs/11 §7.1: editableInV1 false) goes
             // straight to the advanced sheet — the v1 form would silently drop its fields.
             if (job.editableInV1 === false) void openV2Sheet(job);
@@ -262,7 +262,7 @@ function wireJobs()       {
           } },
         { label: tr("jobs.history"), fn: ()       => { void openRunsSheet(job.name); } },
         { sep: true },
-        { label: "Delete", danger: true, fn: ()       => { deleteJob(job); } },
+        { label: tr("jobs.delete"), danger: true, fn: ()       => { deleteJob(job); } },
       ]);
     }
   };
@@ -357,15 +357,15 @@ function two(n        )         { return (n < 10 ? "0" : "") + n; }
 /** cronstrue, with the two checks of our own: exactly five fields (the API is a 5-field cron;
  *  cronstrue also speaks 6-7 field dialects, whose descriptions would lie about what saves),
  *  and a missing global means the vendor file was not served — say that, not a TypeError. */
-let cronstrueLib                                                                                                 = null;
+let cronstrueLib                                                                                                                  = null;
 
 /** cronstrue, loaded once through the vendored shim (docs/14 §2: UMD bundles arrive as
  *  classic scripts, not imports). Sheets call ensureCronstrue with their own re-say as the
  *  ready callback; before the library lands, describeCron's complaint names it instead of
  *  throwing a TypeError about it. */
-function ensureCronstrue(ready                                                                                                         )       {
+function ensureCronstrue(ready                                                                                                                          )       {
   if (cronstrueLib) { if (ready) ready(cronstrueLib); return; }
-  loadCronstrue().then((lib                                                                                         )       => {
+  loadCronstrue().then((lib                                                                                                          )       => {
     cronstrueLib = lib;
     if (ready) ready(lib);
   }, () => { /* the say-line's own complaint covers the failure */ });
@@ -374,7 +374,12 @@ function ensureCronstrue(ready                                                  
 function describeCron(expr        )         {
   if (!/^(\S+\s+){4}\S+$/.test(expr)) throw new Error(tr("jobs.giveAllFiveCron"));
   if (!cronstrueLib) throw new Error(tr("jobs.cronstrueStillLoadingOne"));
-  return cronstrueLib.toString(expr, { throwExceptionOnParseError: true });
+  /* The vendored bundle carries every cronstrue locale; the panel's schedule sentence
+   *  follows the installed language (docs/38) - cronstrue names Chinese "zh_CN". */
+  return cronstrueLib.toString(expr, {
+    throwExceptionOnParseError: true,
+    locale: locale() === "zh-CN" ? "zh_CN" : undefined,
+  });
 }
 
 /** The builder state a job's trigger round-trips into. A cron the presets can spell comes back

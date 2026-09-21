@@ -136,9 +136,8 @@ function renderDbRedisBar(d         , bar             )       {
     let body        ;
     try {
       const cmds = dbRedisCommands(d.redisKey , b.type, b);
-      body = "-- " + cmds.length + " command" + (cmds.length > 1 ? "s" : "") +
-        ", one pipelined round trip — each guard-checked before the socket is touched\n" +
-        cmds.map(dbRedisCommandText).join("\n");
+      body = "-- " + trn(cmds.length, "dataSql.commandsPreviewHead.one", "dataSql.commandsPreviewHead.other") +
+        "\n" + cmds.map(dbRedisCommandText).join("\n");
     } catch (e) {
       body = errText(e);
     }
@@ -185,8 +184,8 @@ function renderDbBar()       {
     let body        ;
     try {
       const stmts = dbPendingSql();
-      body = dbHighlightNodes("-- " + stmts.length + " statement" + (stmts.length > 1 ? "s" : "") +
-        ", executed inside BEGIN ... COMMIT\n" + stmts.join("\n"));
+      body = dbHighlightNodes("-- " + trn(stmts.length, "dataSql.statementsPreviewHead.one", "dataSql.statementsPreviewHead.other") +
+        "\n" + stmts.join("\n"));
     } catch (e) {
       body = errText(e);
     }
@@ -354,7 +353,7 @@ function dbHistoryRender()       {
   const sel = $("dbSqlHistory");
   if (!sel) return;
   sel.textContent = "";
-  const head = el("option", "", "History")                     ;
+  const head = el("option", "", tr("dataView.history"))                     ;
   head.value = "";
   sel.appendChild(head);
   const d = dbView();
@@ -362,7 +361,7 @@ function dbHistoryRender()       {
   // (favorites). The value carries the group: a plain index is history, "f"+i a favorite.
   if (d.history && d.history.length) {
     const og = el("optgroup")                       ;
-    og.label = "History";
+    og.label = tr("dataView.history");
     d.history.forEach((sql        , i        )       => {
       const o = el("option", "", sql.replace(/\s+/g, " ").slice(0, 80))                     ;
       o.value = String(i);
@@ -373,7 +372,7 @@ function dbHistoryRender()       {
   }
   if (d.favorites && d.favorites.length) {
     const fg = el("optgroup")                       ;
-    fg.label = "Favorites";
+    fg.label = tr("dataSql.favorites");
     d.favorites.forEach((sql        , i        )       => {
       const o = el("option", "", dbFavoriteName(sql))                     ;
       o.value = "f" + i;
@@ -615,7 +614,8 @@ async function dbRunSql(explain                 )                { // falsy runs
     dbClearSel(); // a new result grid starts unselected
     d.sqlResult = { columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false,
       elapsedMs: cj.elapsedMs,
-      note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null ? cj.reply.length + " items" : undefined };
+      note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null
+        ? trn(cj.reply.length, "dataSql.nReplyItems.one", "dataSql.nReplyItems.other") : undefined };
     d.sqlResults = [d.sqlResult ]; // docs/22 W4.3: the tab strip reads the list — one reply, one tab
     d.sqlTab = 0;
     dbHistoryPush(block);

@@ -10,7 +10,10 @@
 > `docs/37-panel-modern-typescript-spec.md` §7（`h()` 与事件委托——本文的重画靠它）、
 > `.agents/rules/panel-proof-of-life.md`、`AGENTS.md` 四条产品属性。合并 master 与部署是 owner 在
 > 收尾之后的一次决定，不走本分支。
-> §7 四个数的终值：剩余裸字面量 **0**、字典词条（迁移后 en **1,250** / zh **1,218**）、
+> §7 四个数的终值：剩余裸字面量 **0**、字典词条（迁移后 en **1,250** / zh **1,218**；后续两轮
+> 补扫把五类漏扫位置——el() 文本、popupMenu 标签、textContent/title/placeholder 直写、
+> window.confirm、setAttribute(aria-label)——纳入闸内并清扫，加上 cronstrue 换用
+> upstream i18n 包使 cron 预览句跟随界面语言，词条数以两表当前行数为准）、
 > `zh.js` + `en.js` 字节见 §7 迁移后小节。扫描闸（§5.1）以 vitest 零门落地于
 > `panel/test/i18n-ratchet.test.ts`（eslint 的 no-restricted-syntax 单严重度槽位被 R5 的
 > innerHTML error 占用，测试文件头记录了这条决定）。

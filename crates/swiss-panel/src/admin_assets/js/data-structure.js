@@ -27,7 +27,7 @@ import { dbHighlightNodes, renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbView } from "./db-state.js";
-import { tk, tr } from "./i18n.js";
+import { tk, tr, trn } from "./i18n.js";
 
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
 
@@ -97,16 +97,16 @@ function dbRenderTabs(ctl             )       {
 function renderDbDetailGrid(wrap             )       {
   const d = dbView();
   if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.loading"))); return; }
-  if (!d.detail) { wrap.appendChild(el("div", "db-hint", "Select a table on the left to see its structure.")); return; }
+  if (!d.detail) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.selectTableStructure"))); return; }
   const det = d.detail;
   if (d.tab === "ddl") {
     wrap.appendChild(el("div", "db-detail-meta",
       (d.conn && d.conns.some((c                    )          => { return c.name === d.conn && c.dialect === "pg"; })
-        ? "Postgres keeps DDL in migration scripts — this sketch is assembled from the catalog."
-        : "From SHOW CREATE TABLE.")));
+        ? tr("dataStructure.pgDdlFromCatalog")
+        : tr("dataStructure.fromShowCreateTable"))));
     const pre = el("pre", "db-ddl db-sql-hl");
     pre.style.position = "static"; // undo the overlay absolute positioning — this is a plain block
-    fill(pre, dbHighlightNodes(dbAlignDdl(det.ddl || "(no DDL)")));
+    fill(pre, dbHighlightNodes(dbAlignDdl(det.ddl || tr("dataStructure.noDdl"))));
     wrap.appendChild(pre);
     return;
   }
@@ -116,7 +116,8 @@ function renderDbDetailGrid(wrap             )       {
   let spec              ;
   if (d.tab === "columns") {
     spec = {
-      head: ["Column", "Type", "Nullable", "Default", "Key", "Comment"],
+      head: [tr("dataFilters.column"), tr("dataDdl.type"), tr("dataDdl.nullable"),
+        tr("dataDdl.default"), tr("dataView.sortKey"), tr("dataDdl.comment")],
       row: (c             ) => {
         return [c.name, c.dataType, c.nullable ? "YES" : "NO",
           c.defaultValue == null ? "—" : String(c.defaultValue),
@@ -126,28 +127,29 @@ function renderDbDetailGrid(wrap             )       {
           c.comment == null ? "—" : { text: String(c.comment), cls: "db-det-comment" }];
       },
       rows: det.columns,
-      meta: det.columns.length + " columns · primary key: " + (det.primaryKey.join(", ") || "none"),
+      meta: trn(det.columns.length, "dataStructure.nColumns.one", "dataStructure.nColumns.other") +
+        " · " + tr("dataSql.primaryKey") + ": " + (det.primaryKey.join(", ") || tr("dataStructure.none")),
     };
   } else if (d.tab === "indexes") {
     spec = {
-      head: ["Index", "Unique", "Primary", "Columns"],
+      head: [tr("dataStructure.index"), tr("dataDdl.unique"), tr("dataStructure.primary"), tr("dataStructure.columns")],
       row: (x                                                                                             ) => {
         return [x.name, x.unique ? "yes" : "no", x.primary ? "yes" : "no",
           (x.columns && x.columns.length ? x.columns.join(", ") : "") || (x.definition || "")];
       },
       rows: det.indexes,
-      meta: det.indexes.length + " indexes",
+      meta: trn(det.indexes.length, "dataStructure.nIndexes.one", "dataStructure.nIndexes.other"),
     };
   } else {
     spec = {
-      head: ["Constraint", "Column", "References"],
+      head: [tr("dataStructure.constraint"), tr("dataFilters.column"), tr("dataStructure.references")],
       row: (f            ) => {
         // docs/22 W5.2: the target name carries its fk — the renderer draws it as a link
         // (read-only navigation; the grid header's arrow is the filtered jump).
         return [f.name, f.column, { text: f.refSchema + "." + f.refTable + " (" + f.refColumn + ")", fk: f }];
       },
       rows: det.foreignKeys,
-      meta: det.foreignKeys.length + " foreign keys",
+      meta: trn(det.foreignKeys.length, "dataStructure.nForeignKeys.one", "dataStructure.nForeignKeys.other"),
     };
   }
   // docs/22 W4.6: the tab's own create action rides the meta line (the W3.3 idiom) —
