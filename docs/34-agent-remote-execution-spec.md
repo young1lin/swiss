@@ -1,5 +1,11 @@
 # 34 - Agent-Friendly Remote Execution (SSH Gateway)
 
+> 2026-09-21: docs/41 amends this contract in three places - every remote command runs
+> under a UTF-8 locale and every byte window ends on a character boundary (§1.1 there);
+> every run carries an `actor` and the record keeps seven days whatever the budgets say
+> (§1.2); `GET /api/remote/runs` takes `since` / `until` / `actor` and `swiss run audit`
+> prints the window. Where this file and docs/41 disagree, docs/41 wins.
+
 Phase R1-R5, implemented 2026-10. The goal: let an AI agent (or a human at a terminal) run
 commands, upload source trees, and pull artifacts back on the machines the Tunnels plugin
 already reaches - through the SAME run accounting everything else uses, with output an agent

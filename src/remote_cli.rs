@@ -361,6 +361,15 @@ pub fn usage_text() -> String {
         "\nEverything after a bare -- is ARGV for the far side, passed through untouched.\n",
     );
     s.push_str(
+        "Remote commands run under LANG=C.UTF-8 / LC_ALL=C.UTF-8 unless --env sets them; argv and output are UTF-8\n",
+    );
+    s.push_str(
+        "end to end (Windows PowerShell 5: [Console]::OutputEncoding = [Text.Encoding]::UTF8 before reading it).\n",
+    );
+    s.push_str(
+        "Every remote run is recorded - who, what, where, exit, output - for seven days at least: swiss run audit.\n",
+    );
+    s.push_str(
         "Timeout precedence: --timeout > project binding > target default > 2h (max 24h).\n",
     );
     s

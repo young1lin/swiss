@@ -153,6 +153,9 @@ usage: swiss <command> [options]
                    Windows, a LaunchAgent on macOS, a systemd user unit on Linux
   update           check GitHub for a newer release; updating stays a manual exe swap
   serve            run the gateway in this process (what the daemon spawns)
+  remote …         run commands and move files on SSH targets (swiss remote help)
+  run …            a run's status / logs / cancel; `run audit` lists the last 7 days of
+                   remote runs - who ran what, where, with what result
 
 options
   -p, --port <n>   listen on this port (saved as the new default)
