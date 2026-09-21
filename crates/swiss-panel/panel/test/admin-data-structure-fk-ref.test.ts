@@ -29,7 +29,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn as dbConnState, dbTab, mountDbView, unmountDbView } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
 import type { ApiDbFkRow } from "../src/types/api.js";
 
@@ -74,10 +74,14 @@ beforeEach(() => {
   document.body.innerHTML = shellSkeleton();
   unmountDbView();
   mountDbView();
-  Object.assign(dbView(), {
-    conns: [dbConn("c", "mysql")], conn: "c", table: "orders", schema: null, tab: "fks",
-    detail: { schema: "", table: "orders", columns: [], primaryKey: [], indexes: [], foreignKeys: [fk], ddl: "" },
-  });
+  Object.assign(dbConnState(), { conns: [dbConn("c", "mysql")], conn: "c" });
+  const tab = dbTab();
+  if (tab.kind === "table") {
+    Object.assign(tab, {
+      table: "orders", schema: null, pane: "fks",
+      detail: { schema: "", table: "orders", columns: [], primaryKey: [], indexes: [], foreignKeys: [fk], ddl: "" },
+    });
+  }
 });
 
 describe("Structure > Foreign Keys > the referenced-table button (docs/22 W5.2, R5 delegation)", () => {
@@ -99,9 +103,11 @@ describe("Structure > Foreign Keys > the referenced-table button (docs/22 W5.2, 
     const btn = wrap.querySelector<HTMLElement>("button.db-fk-ref")!;
     const handled = structure.dbStructureClick(btn, new MouseEvent("click", { bubbles: true }));
     expect(handled).toBe(true);
-    const d = dbView();
+    const d = dbTab();
+    expect(d.kind, "the ref opens a table tab").toBe("table");
+    if (d.kind !== "table") return;
     expect(d.table).toBe("customers");
     expect(d.schema).toBeNull(); // an empty refSchema opens schemaless (dbOpenTable's contract)
-    expect(d.tab).toBe("data");
+    expect(d.pane).toBe("data");
   });
 });

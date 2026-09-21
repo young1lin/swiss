@@ -1,4 +1,3 @@
-                                             
 /*
  * Copyright 2026 young1lin
  * 
@@ -26,7 +25,7 @@ import { dbTableMenu } from "./data-edit.js";
 import { dbHighlightNodes, renderDbFilters } from "./data-filters.js";
 import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
 
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
@@ -41,19 +40,25 @@ const DB_TABS = [
   { id: "ddl", label: tk("dataStructure.ddl") },
 ];
 
+/* The Structure strip's pane ids: data | form | columns | indexes | fks | ddl (the six
+   fold into four with docs/42 T4). */
+const DB_PANES = ["data", "form", "columns", "indexes", "fks", "ddl"];
+
 function dbSetTab(t        )       {
-  const d = dbView();
-  if (d.tab === t) return;
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return; // the strip belongs to the open table tab
+  if (d.pane === t) return;
   // docs/22 W5.1: the form opens on the row the keyboard focused, and the grid's focus
   // returns to the form's row — one cursor, two presentations of it.
   if (t === "form" && d.focus) d.formIdx = d.focus.r;
   if (t === "data" && d.formIdx != null) d.focus = { r: d.formIdx, c: d.focus ? d.focus.c : 0 };
-  d.tab = t                  ;
+  d.pane = DB_PANES.includes(t) ? t : "data";
   renderDbToolbar();
   renderDbFilters();
   renderDbGrid();
   renderDbBar();
-  if (t !== "data" && t !== "form" && d.conn && d.table) void dbLoadDetail();
+  if (t !== "data" && t !== "form" && c.conn && d.table) void dbLoadDetail();
 }
 
 // One /schema request chain: a slow answer for the table the user just left must be
@@ -62,11 +67,13 @@ function dbSetTab(t        )       {
 const dbDetailReq = dbReqGuard();
 
 async function dbLoadDetail()                {
-  const d = dbView();
-  if (!d.conn || !d.table) return;
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return;
+  if (!c.conn || !d.table) return;
   d.detailBusy = true;
   renderDbGrid();
-  let q = "/api/db/" + encodeURIComponent(d.conn) + "/schema?table=" + encodeURIComponent(d.table);
+  let q = "/api/db/" + encodeURIComponent(c.conn) + "/schema?table=" + encodeURIComponent(d.table);
   if (d.schema) q += "&schema=" + encodeURIComponent(d.schema);
   const token = dbDetailReq.issue();
   const j = await apiJson                  (q);
@@ -79,12 +86,13 @@ async function dbLoadDetail()                {
 }
 
 function dbRenderTabs(ctl             )       {
-  const d = dbView();
+  const t = dbTab();
+  const pane = t.kind === "table" ? t.pane : null;
   // Tab clicks and the Table menu answer through #pane's delegated listener via their
   // data-dtab / data-tmenu addresses (docs/37 R5) — no per-render handlers on the strip.
   ctl.appendChild(h("div", { class: "db-tabs", role: "tablist" },
-    DB_TABS.map((t                               ) => {
-      return h("button", { role: "tab", data: { dtab: t.id }, aria: { selected: String(d.tab === t.id) } }, tr(t.label));
+    DB_TABS.map((x                               ) => {
+      return h("button", { role: "tab", data: { dtab: x.id }, aria: { selected: String(pane === x.id) } }, tr(x.label));
     })));
   // The Table menu: rename / truncate / drop, guarded by typed confirms server- AND client-side.
   if (!dbIsRedis()) {
@@ -95,13 +103,15 @@ function dbRenderTabs(ctl             )       {
 /** The Structure tabs reuse the grid wrapper: Columns/Indexes/FKs render as plain tables,
  *  DDL as a monospace block. */
 function renderDbDetailGrid(wrap             )       {
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return;
   if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.loading"))); return; }
   if (!d.detail) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.selectTableStructure"))); return; }
   const det = d.detail;
-  if (d.tab === "ddl") {
+  if (d.pane === "ddl") {
     wrap.appendChild(el("div", "db-detail-meta",
-      (d.conn && d.conns.some((c                    )          => { return c.name === d.conn && c.dialect === "pg"; })
+      (c.conn && c.conns.some((x                    )          => { return x.name === c.conn && x.dialect === "pg"; })
         ? tr("dataStructure.pgDdlFromCatalog")
         : tr("dataStructure.fromShowCreateTable"))));
     const pre = el("pre", "db-ddl db-sql-hl");
@@ -114,7 +124,7 @@ function renderDbDetailGrid(wrap             )       {
   const thead = el("thead");
   const hr = el("tr");
   let spec              ;
-  if (d.tab === "columns") {
+  if (d.pane === "columns") {
     spec = {
       head: [tr("dataFilters.column"), tr("dataDdl.type"), tr("dataDdl.nullable"),
         tr("dataDdl.default"), tr("dataView.sortKey"), tr("dataDdl.comment")],
@@ -130,7 +140,7 @@ function renderDbDetailGrid(wrap             )       {
       meta: trn(det.columns.length, "dataStructure.nColumns.one", "dataStructure.nColumns.other") +
         " · " + tr("dataSql.primaryKey") + ": " + (det.primaryKey.join(", ") || tr("dataStructure.none")),
     };
-  } else if (d.tab === "indexes") {
+  } else if (d.pane === "indexes") {
     spec = {
       head: [tr("dataStructure.index"), tr("dataDdl.unique"), tr("dataStructure.primary"), tr("dataStructure.columns")],
       row: (x                                                                                             ) => {
@@ -158,10 +168,10 @@ function renderDbDetailGrid(wrap             )       {
   const meta = el("div", "db-detail-meta");
   meta.appendChild(el("span", "", spec.meta));
   meta.appendChild(el("span", "grow"));
-  if (d.tab === "columns" || d.tab === "indexes") {
+  if (d.pane === "columns" || d.pane === "indexes") {
     // data-dadd carries the sheet kind; the click handler resolves the live detail for the
     // sheet's payload (docs/37 R5 — state at event time, not render time).
-    const colsTab = d.tab === "columns";
+    const colsTab = d.pane === "columns";
     meta.appendChild(h("button", { class: "btn", type: "button", data: { dadd: colsTab ? "column" : "index" } },
       colsTab ? tr("dataStructure.addColumn") : tr("dataStructure.newIndex")));
   }
@@ -268,7 +278,8 @@ function dbAlignDdl(ddl               )         {
  *  d.detail at event time — a detail that reloaded between render and click opens the sheet
  *  against what is on screen now, not what the button was painted with. */
 function dbStructureClick(t         , ev            )          {
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
   const tabBtn = t.closest             ("[data-dtab]");
   if (tabBtn) { dbSetTab(tabBtn.dataset.dtab ?? ""); return true; }
   const menuBtn = t.closest             ("[data-tmenu]");
@@ -281,11 +292,11 @@ function dbStructureClick(t         , ev            )          {
   }
   const add = t.closest             ("[data-dadd]");
   if (add) {
-    const det = d.detail;
+    const det = d.kind === "table" ? d.detail : null;
     if (det) {
       openDbDdlSheet(add.dataset.dadd                      , {
         dialect: dbDialectOf(),
-        conn: d.conn ,
+        conn: c.conn ,
         schema: det.schema || "",
         table: det.table,
         columns: det.columns,

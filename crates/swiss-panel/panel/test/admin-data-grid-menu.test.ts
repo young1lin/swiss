@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn as dbConnState, dbTab, mountDbView, unmountDbView } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
 
 /* Grid-internal clicks must not escape #pane (docs/37 R5 + the code-review P3): master's
@@ -102,10 +102,14 @@ const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
 /** Paint the data grid with one row from state, the way a finished dbLoadData would. */
 function paintGrid(): Stub {
   mountDbView();
-  Object.assign(dbView(), {
-    conns: [dbConn("c", "mysql")], conn: "c", table: "t", tab: "data",
-    data: { columns: [{ name: "id", dataType: "int" }], rows: [{ id: 1 }], primaryKey: ["id"], editable: true, total: 1 },
-  });
+  Object.assign(dbConnState(), { conns: [dbConn("c", "mysql")], conn: "c" });
+  const t = dbTab();
+  if (t.kind === "table") {
+    Object.assign(t, {
+      table: "t", pane: "data",
+      data: { columns: [{ name: "id", dataType: "int" }], rows: [{ id: 1 }], primaryKey: ["id"], editable: true, total: 1 },
+    });
+  }
   view.renderDbView();
   return resolveId("pane");
 }

@@ -21,7 +21,7 @@ import type { HChild } from "./h.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbDropEdits, dbOkToDrop } from "./data-view.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbTab } from "./db-state.js";
 import { locale, tk, tr } from "./i18n.js";
 
 /* --- SQL syntax highlighting -------------------------------------------------------------------- */
@@ -97,8 +97,9 @@ function dbValueless(op: string): boolean { return op === "isNull" || op === "is
  *  Returns whether it ran: a REFUSED discard gate leaves everything untouched, and the row
  *  editors below restore their select from that answer (docs/22 closeout audit). */
 function dbApplyFilters(): boolean {
-  const d = dbView();
+  const d = dbTab();
   if (!dbOkToDrop()) { renderDbFilters(); return false; }
+  if (d.kind !== "table") return true;
   d.offset = 0;
   dbDropEdits();
   void dbLoadData(true);
@@ -119,26 +120,27 @@ function renderDbFilters(): void {
  *  address instead of a per-render handler — #pane's delegated listeners answer them, and the
  *  filter object behind a row is resolved from live state at event time. */
 function dbFiltersNodes(): HChild[] {
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
   if (dbIsRedis()) {
     // The redis filter is a glob PATTERN fed to SCAN's MATCH — server-side, cursor-safe.
     return [h("div", { class: "db-filter" },
       h("input", {
-        type: "search", placeholder: tr("dataFilters.keyPatternEG"), value: d.grep || "",
+        type: "search", placeholder: tr("dataFilters.keyPatternEG"), value: c.grep || "",
         style: "width:220px", title: tr("dataFilters.scanMatchPatternApplies"), data: { fkey: "" },
       }),
       // SCAN TYPE narrows the same cursor walk to one Redis type; the backend already speaks
       // it, and "" keeps the request byte-identical to the unfiltered one.
       h("select", { title: tr("dataFilters.keyType"), data: { frtype: "" } },
         [""].concat(["string", "hash", "list", "set", "zset", "stream"]).map((t: string): HChild => {
-          return h("option", { value: t, selected: (d.redisType || "") === t }, t || tr("dataFilters.allTypes"));
+          return h("option", { value: t, selected: (c.redisType || "") === t }, t || tr("dataFilters.allTypes"));
         })),
-      d.redis && d.redis.total != null
+      c.redis && c.redis.total != null
         ? h("span", { class: "db-filter-hint" },
-            tr("dataFilters.shownShownTotalKeyspace", { shown: (d.redis?.keys ? d.redis?.keys.length.toLocaleString(locale()) : "0"), total: Number(d.redis?.total).toLocaleString(locale()) }))
+            tr("dataFilters.shownShownTotalKeyspace", { shown: (c.redis?.keys ? c.redis?.keys.length.toLocaleString(locale()) : "0"), total: Number(c.redis?.total).toLocaleString(locale()) }))
         : null)];
   }
-  if (!d.data || d.tab !== "data") return []; // filters belong to the row grid only
+  if (d.kind !== "table" || !d.data || d.pane !== "data") return []; // filters belong to the row grid only
   const cols = d.data?.columns.map((c: { name: string }): string => { return c.name; });
   const rows: HChild[] = d.filters.map((f: DbFilterTerm, i: number): HChild => {
     // The list operators say what they want right in the box (docs/22 W1.2).
@@ -176,9 +178,9 @@ function dbFiltersNodes(): HChild[] {
    re-render between paint and click can never restore into a stale object. */
 
 function dbFiltersClick(t: Element): boolean {
-  const d = dbView();
+  const d = dbTab();
   const rm = t.closest<HTMLElement>("[data-frm]");
-  if (rm) {
+  if (rm && d.kind === "table") {
     const i = Number(rm.dataset.frm);
     const f = d.filters[i];
     if (!f) return true; // a stale address (the row set changed under the click) — nothing to do
@@ -189,7 +191,8 @@ function dbFiltersClick(t: Element): boolean {
     return true;
   }
   if (t.closest("[data-fadd]")) {
-    const d2 = dbView();
+    const d2 = dbTab();
+    if (d2.kind !== "table") return true;
     const cols = (d2.data && d2.data.columns || []).map((c: { name: string }): string => { return c.name; });
     d2.filters.push({ column: cols[0] || "", op: "eq", value: "" });
     renderDbFilters();
@@ -206,12 +209,14 @@ function dbFiltersClick(t: Element): boolean {
 function dbFiltersChange(t: Element): boolean {
   const sel = t.closest<HTMLElement>("[data-fk],[data-frtype]");
   if (!sel) return false;
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
   if (typeof sel.dataset.frtype !== "undefined") {
-    d.redisType = (sel as HTMLSelectElement).value;
+    c.redisType = (sel as HTMLSelectElement).value;
     void dbLoadKeys(true);
     return true;
   }
+  if (d.kind !== "table") return false;
   const i = Number(sel.dataset.fi);
   const f = d.filters[i];
   if (!f) return false;
@@ -245,7 +250,7 @@ function dbFiltersInput(t: Element): boolean {
   if (dbKeyPatternTimer !== null) clearTimeout(dbKeyPatternTimer);
   dbKeyPatternTimer = setTimeout((): void => {
     dbKeyPatternTimer = null;
-    const d = dbView();
+    const d = dbConn();
     d.grep = v;
     void dbLoadKeys(true);
   }, 400);
@@ -261,7 +266,7 @@ function dbFiltersKeydown(ev: KeyboardEvent, t: Element): boolean {
     ev.stopPropagation();
     if (dbKeyPatternTimer !== null) clearTimeout(dbKeyPatternTimer);
     dbKeyPatternTimer = null;
-    dbView().grep = pat.value;
+    dbConn().grep = pat.value;
     void dbLoadKeys(true);
     return true;
   }
@@ -269,7 +274,8 @@ function dbFiltersKeydown(ev: KeyboardEvent, t: Element): boolean {
   if (vi) {
     ev.preventDefault();
     ev.stopPropagation();
-    const f = dbView().filters[Number(vi.dataset.fi)];
+    const t2 = dbTab();
+    const f = t2.kind === "table" ? t2.filters[Number(vi.dataset.fi)] : null;
     if (f) f.value = vi.value;
     dbApplyFilters();
     return true;

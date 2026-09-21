@@ -25,7 +25,7 @@ import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
@@ -33,23 +33,27 @@ import { tr } from "./i18n.js";
    retypes the table name — because both destroy data with no transaction to roll back to. */
 /** docs/22 W1.10: build one template for the open table and drop it into the console. */
 function dbGenerateSql(kind        )       {
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return;
   if (!d.data || !d.data.columns || !d.data.columns.length) {
     toast(tr("dataEdit.openTableFirstTemplate"), true);
     return;
   }
-  const dialect = (d.conns.find((c                    )          => { return c.name === d.conn; }) || {}                        ).dialect || "mysql";
+  const dialect = (c.conns.find((x                    )          => { return x.name === c.conn; }) || {}                        ).dialect || "mysql";
   let sql;
   try {
     sql = dbTemplateSql(kind, dialect, d.schema , d.table ,
-      d.data?.columns.map((c             )         => { return c.name; }), d.data?.primaryKey || []);
+      d.data?.columns.map((col             )         => { return col.name; }), d.data?.primaryKey || []);
   } catch (err) { toast(errText(err), true); return; }
   dbFillConsole(sql);
 }
 
 function dbTableMenu(anchorEl             )       {
-  const d = dbView();
-  if (!d.conn || !d.table) return;
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return;
+  if (!c.conn || !d.table) return;
   const menu = el("div", "ctx-menu");
   function item(label        , fn            )       {
     const b = el("button", "", label)                     ;
@@ -108,8 +112,11 @@ function dbTypedConfirm(o                                                       
 }
 
 async function dbRunDdl(op        , to         )                {
-  const d = dbView();
-  const j = await apiJson                 ("/api/db/" + encodeURIComponent(d.conn ) + "/ddl", {
+  const c = dbConn();
+  const d0 = dbTab();
+  if (d0.kind !== "table") return;
+  const d = d0;
+  const j = await apiJson                 ("/api/db/" + encodeURIComponent(c.conn ) + "/ddl", {
     method: "POST",
     body: JSON.stringify({ op: op, table: d.table, schema: d.schema, to: to }),
   });
@@ -121,13 +128,13 @@ async function dbRunDdl(op        , to         )                {
     // as much as d.data does, and the pane itself needs a repaint — renderDbTables
     // refreshes only the LEFT list (docs/22 closeout audit).
     d.table = null; d.schema = null; d.data = null; d.detail = null;
-    d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: every result tab closes
-    d.tab = "data"; d.order = null; d.dir = "asc"; d.filters = []; d.focus = null;
+    c.sqlResult = null; c.sqlResults = null; c.resultTab = 0; // docs/22 W4.3: every result tab closes
+    d.pane = "data"; d.order = null; d.dir = "asc"; d.filters = []; d.focus = null;
     dbDropEdits();
   }
   if (op === "rename" && to) { d.table = to; d.data = null; }
   if (op === "truncate") { dbDropEdits(); }
-  d.tablesPage = 0;
+  c.tablesPage = 0;
   if (dbIsRedis()) void dbLoadKeys(true);
   else void dbLoadTables();
   if (d.table) void dbLoadData(true);
@@ -209,7 +216,9 @@ function dbSaveInlineEdit()       {
   if (!e) return;
   const raw = e.ta.value;
   dbCloseInlineEdit();
-  const d = dbView();
+  const t = dbTab();
+  if (t.kind !== "table") return;
+  const d = t;
   if (e.kind === "insert") {
     const ins = d.inserts[e.i] ;   // an insert edit only fires for a row that still exists
     if (raw === "") delete ins.values[e.column];

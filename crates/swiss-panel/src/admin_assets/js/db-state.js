@@ -14,83 +14,33 @@
  * limitations under the License.
  */
 
-                                                                                                                                                                            
-                                                                                                             
+                                                                                                                     
 
-/* The Data view owns its state (docs/37 R4, slice 6 of 7).
+/* The Data view owns its state (docs/37 R4, slice 6 of 7; docs/42 §2 splits the record).
 
-   This slice does NOT get one accessor pair per field, and that is deliberate: the record has
-   47 of them, so the literal reading of M11 would mint 94 functions that only forward. The
-   boundary that earns its keep here is a different one — every reader of this record already
-   lives in the db domain (the fifteen data-*.ts modules and views/data.ts; nothing else in src
-   ever touched state.db). So the module hands the domain ONE typed handle and keeps the
-   lifecycle to itself.
+   docs/37 R4 made this record a never-null singleton with ONE read mouth (dbView) because
+   every reader already lived in the db domain. docs/42 cuts that record in two along the
+   line the object tabs need: DbConnState is what survives switching the open object, and
+   DbTab is one open object — a discriminated union, so a read of the wrong domain is a
+   typecheck error rather than a browser bug. The four accessors below replace dbView()
+   with no compatibility alias: an alias would let callers keep writing the old shape.
 
-   A leaf module, same reason as tunnel-state and job-state: data-view.ts is imported by every
-   other data-* module, so hosting the record there closes a cycle. This file imports types only.
+   The lifecycle contract is unchanged: the records are never null. Between unmount and
+   the next mount they are simply the fresh literals, so a debounce or a poll that
+   outlives the view reads empties instead of throwing; whether the view is actually on
+   screen stays dbIsMounted(). There is still no per-field accessor pair — the domain
+   gets typed handles, not 98 forwarding functions.
 
-   What actually changes for callers: the record is never null. state.db was `DbState | null`,
-   where null meant two different things at once — "no bag" and "the view is not mounted". Only
-   the second is information, and it is now dbIsMounted(). That split is what retires the fifty
-   `const d = state.db; const d_ = d!;` pairs docs/36 left behind, and with them the footgun the
-   old dbFreshState comment had to warn about: there is no entry on which this can be null, so
-   there is no second entry that dies halfway through renderDbView's wiring. */
-                          
-                              
-                      
-                          
-                      
-                     
-                      
-                
-               
-                       
-               
-                  
-                       
-                        
-                             
-                          
-                   
-                 
-                       
-              
-                   
-                        
-                      
-                                            
-                                                   
-                      
-                               
-                    
-                                         
-                   
-                  
-                                 
-                                    
-                 
-                   
-                    
-                      
-              
-                  
-                                                                                     
-                                                        
-                                                                                           
-                                     
-                          
-                                  
-                    
-                                          
-                    
-                      
-                                  
-                      
-                                                                                   
-                                                      
- 
+   A leaf module, same reason as tunnel-state and job-state: data-view.ts is imported by
+   every other data-* module, so hosting the record there closes a cycle. This file
+   imports types only.
 
-function freshDbState()          {
+   T1 shape (docs/42 §3): the strip holds EXACTLY ONE tab and there is no open/close
+   entry yet — the tab's kind follows the connection's family (a redis connection browses
+   keys, everything else browses tables), replaced by data-view's connection-switch path.
+   The console (sqlOpen) and the activity flag stay connection-scoped here until T2 gives
+   them kinds of their own. */
+function freshConnState()              {
   return {
     conns: [],            // rows from /api/db
     conn: null,           // selected connection (MCP name)
@@ -98,47 +48,80 @@ function freshDbState()          {
     tablesTotal: 0, tablesPage: 0, tablesLimit: 200, more: false, grep: "",
     schemaFilter: "",     // pg only: "" = every schema; the /tables schema param (docs/22 W1.1)
     sort: "name", sortDir: "asc", // the list's sort key/dir — SQL sorts server-side, redis client-side
-    table: null, schema: null,
-    data: null,           // last /api/db/:name/data page
-    filters: [],          // [{ column, op, value }] — server-side WHERE terms (AND-ed)
-    pageSize: 50, offset: 0, order: null, dir: "asc", loading: false,
     gridCfg: { widths: {}, hidden: [] }, // per-connection column widths/hides (docs/22 W2.1), reloaded per page
-    sqlPreview: false,    // pending bar: show the SQL Commit will run
-    updates: {},          // pkKey -> { pk, changes: { col: value-or-null } }
-    deletes: {},          // pkKey -> pk object
-    inserts: [],          // [{ values: { col: value-or-null } }]
-    sel: {},             // rowKey -> true — checked rows the next Copy pulls (grid or query result)
-    selAnchor: -1,       // visible row index of the last checkbox click (Shift range start)
-    focus: null,         // {r, c} — the keyboard's focus cell, inserts-first grid rows (docs/22 W2.2)
-    sqlOpen: false, sqlText: "", sqlResult: null, sqlResults: null, sqlTab: 0, sqlBusy: false,
-                         // ^ W4.3: sqlResult is the ACTIVE tab's reply; sqlResults holds every
-                         // statement's reply and sqlTab which one is showing
     history: [],         // last-run console queries, newest first (per-browser, localStorage)
     favorites: [],       // starred queries, same store (docs/22 W5.4)
-    tab: "data",        // data | form | columns | indexes | ddl | fks — Form is the data page's own second view (W5.1)
-    formIdx: 0,         // the Form tab's record — grid row space (inserts first), shared with the keyboard focus
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
-    redisValue: null,    // the shown key's decoded value (docs/22 W3.3)
-    redisKey: null,      // the key whose value is shown in the pane
-    redisEdits: null,    // buffered typed-value edits for that key (docs/22 W3.3)
-    activity: false,     // the Activity section page is open (docs/22 W3.2) — SQL connections only
-    activityRows: null,  // last /activity answer, re-rendered by the 5s poll while open
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
     redisError: false,  // the last /keys fetch FAILED (docs/22 closeout B1) — the list must say so, not "no keys"
-    detail: null,       // last /api/db/:name/schema answer (BrowseTableDetail)
-    detailBusy: false,
-    conflict: null,      // the fetch observer's 409 mark; cleared when the row is re-edited
+    sqlOpen: false, sqlText: "", sqlResult: null, sqlResults: null, resultTab: 0, sqlBusy: false,
+                         // ^ transitional (docs/42 T1): the console is still a toggle over
+                         //   the pane; T2 moves this block into the sql tab kind
+    activity: false,     // the Activity section page is open (docs/22 W3.2) — SQL connections only; T2 retires the flag
+    activityRows: null,  // last /activity answer, re-rendered by the 5s poll while open; T2 moves it into the activity tab kind
   };
 }
 
-let db          = freshDbState();
+/** A fresh tab of one kind, carrying ONLY that kind's fields (the T1 acceptance pins the
+ *  shapes: a sql tab has no table field, a key tab no sqlText — the union stays honest
+ *  from the first builder). Overloaded so a literal kind yields the literal member type;
+ *  the final DbTabKind overload lets a computed union kind (the conn-family switch in
+ *  dbResetTabForConn) build without a cast. */
+                                                    
+                                                
+                                                
+                                                          
+                                                 
+export function freshTab(kind           )        {
+  // Each branch spells its literal kind: a shared { kind } base would widen the
+  // discriminant to DbTabKind and the member object would not narrow to its arm.
+  if (kind === "table") {
+    return {
+      kind: "table", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false,
+      table: null, schema: null,
+      data: null,           // last /api/db/:name/data page
+      filters: [],          // [{ column, op, value }] — server-side WHERE terms (AND-ed)
+      pageSize: 50, offset: 0, order: null, dir: "asc",
+      updates: {},          // pkKey -> { pk, changes: { col: value-or-null } }
+      deletes: {},          // pkKey -> pk object
+      inserts: [],          // [{ values: { col: value-or-null } }]
+      pane: "data",         // data | form | columns | indexes | fks | ddl — Form is the data page's own second view (W5.1); six folds into four with docs/42 T4
+      formIdx: 0,           // the Form tab's record — grid row space (inserts first), shared with the keyboard focus
+      detail: null,         // last /api/db/:name/schema answer (BrowseTableDetail)
+      detailBusy: false,
+      conflict: null,       // the fetch observer's 409 mark; cleared when the row is re-edited
+    };
+  }
+  if (kind === "sql") {
+    return { kind: "sql", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false,
+      sqlText: "", sqlResult: null, sqlResults: null, resultTab: 0, sqlBusy: false };
+  }
+  if (kind === "key") {
+    return { kind: "key", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false,
+      redisKey: null, redisValue: null, redisEdits: null };
+  }
+  return { kind: "activity", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false,
+    activityRows: null };
+}
+
+let connRec              = freshConnState();
+let tabs          = [freshTab("table")];
 let mounted = false;
 
-/** The Data view's record. Never null: between unmount and the next mount it is simply the
- *  fresh literal, so a debounce or a poll that outlives the view reads empties instead of
- *  throwing. Whether the view is actually on screen is dbIsMounted(), and that is what such a
- *  late callback should be asking. */
-export function dbView()          { return db; }
+/** The connection-scoped record: the sidebar's list, its filters, and what the console
+ *  remembers. Shared by every open tab; reset when the connection changes. */
+export function dbConn()              { return connRec; }
+
+/** The active tab's record. Never null: a fresh mount opens one empty table tab, so the
+ *  view always has somewhere to paint. Narrow with `t.kind` before reading kind fields —
+ *  the discriminant is the split's safety net. */
+export function dbTab()        { return tabs[0]; }
+
+/** Every open tab, in strip order. The active one is `dbTabs()[dbActiveIndex()]`. */
+export function dbTabs()          { return tabs; }
+
+/** The active tab's index into dbTabs(). */
+export function dbActiveIndex()         { return 0; }
 
 /** Is the Data view mounted? The question the old `if (!state.db) return;` guards were really
  *  asking — an async continuation that crossed an unmount has nothing left to paint. */
@@ -147,9 +130,10 @@ export function dbIsMounted()          { return mounted; }
 /** Entering the view. */
 export function mountDbView()       { mounted = true; }
 
-/** Leaving it: the whole record goes back to the fresh literal, which is what nulling it used
+/** Leaving it: both records go back to the fresh literals, which is what nulling them used
  *  to buy — the rows, the buffered edits and the query results are dropped together. */
 export function unmountDbView()       {
-  db = freshDbState();
+  connRec = freshConnState();
+  tabs = [freshTab("table")];
   mounted = false;
 }

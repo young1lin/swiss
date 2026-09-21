@@ -1,4 +1,3 @@
-                                             
 /*
  * Copyright 2026 young1lin
  * 
@@ -27,7 +26,8 @@ import {
 import { SQL_TOKEN_RE, dbHighlightNodes, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbTab } from "./db-state.js";
+                                                 
 import { tr, trn } from "./i18n.js";
 
 /* --- pending-SQL preview ------------------------------------------------------------------------ */
@@ -65,15 +65,17 @@ function dbStatsSql(dialect        , schema        , table        , column      
 }
 
 function dbPendingSql()           {
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return [];
   if (!d.data) return [];
-  const dialect = (d.conns.find((c                    )          => { return c.name === d.conn; }) || {}                        ).dialect || "mysql";
+  const dialect = (c.conns.find((x                    )          => { return x.name === c.conn; }) || {}                        ).dialect || "mysql";
   const q = (n        )         => {
     const safe = dbQuoteIdentSafe(n);
     if (!safe) throw new Error("not a valid identifier: " + n);
     return dialect === "mysql" ? "`" + safe + "`" : '"' + safe + '"';
   };
-  const table = (d.schema ? q(d.schema ) + "." : "") + q(d.table );
+  const table = (d.schema ? q(d.schema) + "." : "") + q(d.table );
   const pkCols = d.data.primaryKey || [];
   // docs/22 W4.1 (W4b follow-up): the preview sketches the address the server really builds —
   // pk columns for a pk table, EVERY column for a keyless one (the row buffer carries whole
@@ -115,7 +117,7 @@ function dbPendingSql()           {
 /** The redis arm of the bar (docs/22 W3.3): same slot, same words, same Discard, with
  *  "Commands" in place of "SQL" and one pipeline in place of the transaction. The command
  *  list is the very list Commit posts — the preview is the payload, not a paraphrase. */
-function renderDbRedisBar(d         , bar             )       {
+function renderDbRedisBar(d          , bar             )       {
   const b = d.redisEdits ;
   const u = Object.keys(b.updates).length;
   const del = Object.keys(b.deletes).length;
@@ -148,39 +150,44 @@ function renderDbRedisBar(d         , bar             )       {
 }
 
 function renderDbBar()       {
-  const d = dbView();
+  const d = dbTab();
   const bar = $("dbBar");
   if (!bar) return;
   const redis = dbIsRedis();
-  const n = redis ? dbRedisPendingCount() : dbPending();
   // The redis bar owns the same slot (docs/22 W3.3): the typed value view buffers edits the
   // way the row grid does, and its Commit is ONE guarded pipeline instead of a transaction.
-  if (!n || (redis ? !d.redisValue : !d.data)) { bar.hidden = true; return; }
+  // The counts and the buffers both read the ACTIVE tab (docs/42 T1) — a key tab's edits, a
+  // table tab's — so the wrong kind's tab hides the bar exactly like a missing page did.
+  const n = redis ? dbRedisPendingCount() : dbPending();
+  const payload = redis ? (d.kind === "key" ? d.redisValue : null) : (d.kind === "table" ? d.data : null);
+  if (!n || !payload) { bar.hidden = true; return; }
   bar.hidden = false;
   bar.style.flexWrap = "nowrap";
   fill(bar);
   if (redis) {
-    renderDbRedisBar(d, bar);
+    if (d.kind === "key") renderDbRedisBar(d, bar);
     return;
   }
-  const u = Object.keys(d.updates).length;
-  const del = Object.keys(d.deletes).length;
-  const ins = d.inserts.length;
+  if (d.kind !== "table" || !d.data) { bar.hidden = true; return; }
+  const dt = d; // narrowed by the guard above — a plain alias, not a cast
+  const u = Object.keys(dt.updates).length;
+  const del = Object.keys(dt.deletes).length;
+  const ins = dt.inserts.length;
   const parts           = [];
   if (u) parts.push(trn(u, "dataSql.nUpdates.one", "dataSql.nUpdates.other"));
   if (del) parts.push(trn(del, "dataSql.nDeletes.one", "dataSql.nDeletes.other"));
   if (ins) parts.push(trn(ins, "dataSql.nInserts.one", "dataSql.nInserts.other"));
   // Same addressing honesty as the Commit gate (docs/22 W4b follow-up): the bar names the
   // WHERE the server will build, pk or whole-row.
-  const pkColsB = (d.data && d.data.primaryKey) || [];
+  const pkColsB = (dt.data && dt.data.primaryKey) || [];
   bar.appendChild(h("span", null, tr("dataSql.partsLocalOnlyDatabase", { parts: parts.join(", "), how: pkColsB.length ? tr("dataSql.primaryKey") : tr("dataSql.allColumnsTablePrimary") })));
   // No per-button handlers (docs/37 R5): data-bar addresses, answered by #pane's delegated
   // click with the counts read from live state at event time.
   bar.appendChild(h("button", { class: "btn", title: tr("dataSql.showExactStatementsCommit"), data: { bar: "preview" } },
-    d.sqlPreview ? tr("dataSql.hideSql") : tr("dataSql.sql")));
+    dt.sqlPreview ? tr("dataSql.hideSql") : tr("dataSql.sql")));
   bar.appendChild(h("button", { class: "btn", data: { bar: "discard" } }, tr("dataSql.discard")));
   bar.appendChild(h("button", { class: "btn commit", data: { bar: "commit" } }, tr("dataSql.commitN1Transaction")));
-  if (d.sqlPreview) {
+  if (dt.sqlPreview) {
     let body        ;
     try {
       const stmts = dbPendingSql();
@@ -201,7 +208,7 @@ function renderDbBar()       {
 function dbBarClick(t         )          {
   const b = t.closest             ("[data-bar]");
   if (!b) return false;
-  const d = dbView();
+  const d = dbTab();
   const which = b.dataset.bar;
   if (which === "preview") {
     d.sqlPreview = !d.sqlPreview;
@@ -244,7 +251,7 @@ function dbApplyReadback(rows                                  , pkCols         
 /** docs/22 W1.4 / W1.10: put a generated statement into the console — visible, editable, and
  *  in history once run, instead of hiding behind a one-off request. */
 function dbFillConsole(sql        )       {
-  const d = dbView();
+  const d = dbConn();
   d.sqlText = sql;
   d.sqlOpen = true;
   const con = $("dbConsole");
@@ -256,8 +263,10 @@ function dbFillConsole(sql        )       {
 }
 
 async function dbCommit()                {
-  const d = dbView();
-  if (!d.conn || !d.table || !d.data) return;
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return;
+  if (!c.conn || !d.table || !d.data) return;
   const edits                                                                                                                      = [];
   Object.keys(d.deletes).forEach((k        )       => { edits.push({ op: "delete", pk: d.deletes[k] }); });
   Object.keys(d.updates).forEach((k        )       => {
@@ -283,7 +292,7 @@ async function dbCommit()                {
   if (!confirm(tr("dataSql.commitToTable", { parts: parts.join(", "), table: tableLabel, how: addressed }))) {
     return; // cancelled — the buffer stays, nothing was sent
   }
-  const j = await apiJson                                                                      ("/api/db/" + encodeURIComponent(d.conn ) + "/edits", {
+  const j = await apiJson                                                                      ("/api/db/" + encodeURIComponent(c.conn ) + "/edits", {
     method: "POST",
     body: JSON.stringify({ table: d.table, schema: d.schema, edits: edits }),
   });
@@ -328,20 +337,20 @@ function dbWithExplain(sql        , mode        )         {
 /* --- query history (per-browser) ---------------------------------------------------------------- */
 
 function dbHistoryLoad()       {
-  const d = dbView();
+  const d = dbConn();
   try { d.history = JSON.parse(localStorage.getItem(DB_HISTORY_KEY)          ) || []; }
   catch (e) { d.history = []; }
 }
 
 function dbHistorySave()       {
-  try { localStorage.setItem(DB_HISTORY_KEY, JSON.stringify(dbView().history.slice(0, DB_HISTORY_MAX))); }
+  try { localStorage.setItem(DB_HISTORY_KEY, JSON.stringify(dbConn().history.slice(0, DB_HISTORY_MAX))); }
   catch (e) { /* full or blocked — history is a convenience, not state */ }
 }
 
 /** Record a successful run: newest first, a repeat of the current head is a no-op, and the
  *  list stays bounded. */
 function dbHistoryPush(sql        )       {
-  const d = dbView();
+  const d = dbConn();
   if (d.history[0] === sql) return;
   d.history.unshift(sql);
   d.history = d.history.slice(0, DB_HISTORY_MAX);
@@ -356,7 +365,7 @@ function dbHistoryRender()       {
   const head = el("option", "", tr("dataView.history"))                     ;
   head.value = "";
   sel.appendChild(head);
-  const d = dbView();
+  const d = dbConn();
   // docs/22 W5.4: one dropdown, two groups — what ran (history) and what was starred
   // (favorites). The value carries the group: a plain index is history, "f"+i a favorite.
   if (d.history && d.history.length) {
@@ -392,13 +401,13 @@ const DB_FAV_KEY = "mcp_gateway_db_favorites";
 const DB_FAV_MAX = 50;
 
 function dbFavLoad()       {
-  const d = dbView();
+  const d = dbConn();
   try { d.favorites = JSON.parse(localStorage.getItem(DB_FAV_KEY)          ) || []; }
   catch (e) { d.favorites = []; }
 }
 
 function dbFavSave()       {
-  try { localStorage.setItem(DB_FAV_KEY, JSON.stringify(dbView().favorites.slice(0, DB_FAV_MAX))); }
+  try { localStorage.setItem(DB_FAV_KEY, JSON.stringify(dbConn().favorites.slice(0, DB_FAV_MAX))); }
   catch (e) { /* full or blocked — favorites are a convenience, not state */ }
 }
 
@@ -409,7 +418,7 @@ function dbFavoriteName(sql        )         {
 }
 
 function dbFavPush(sql        )       {
-  const d = dbView();
+  const d = dbConn();
   const s = String(sql == null ? "" : sql);
   if (!s.trim()) { toast(tr("dataSql.nothingSaveConsoleEmpty"), true); return; }
   d.favorites = (d.favorites || []).filter((f        )          => { return f !== s; });
@@ -589,8 +598,16 @@ function dbResultTabLabel(stmt        , rowCount                           )    
 // fire — an early guard refusal (empty console) must not invalidate a run in flight.
 const dbRunReq = dbReqGuard();
 
+/* The console's row cap (docs/22 W5.3): the open table tab's page size when a table is
+   open, the fresh default otherwise. Transitional shape (docs/42 T1) — T2's sql tab owns
+   its own limit. */
+function dbRunLimit()         {
+  const t = dbTab();
+  return t.kind === "table" ? t.pageSize : 50;
+}
+
 async function dbRunSql(explain                 )                { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
-  const d = dbView();
+  const d = dbConn();
   if (!d.conn) { toast(tr("dataSql.databaseConnection"), true); return; }
   // docs/22 W1.8: the run covers the block the caret is in — one block per run keeps the
   // single-statement guard honest on multi-part scripts.
@@ -610,14 +627,14 @@ async function dbRunSql(explain                 )                { // falsy runs
     });
     if (!dbRunReq.accepts(rtoken)) return; // superseded: a newer run owns the pane and the flag
     d.sqlBusy = false;
-    if (!cj) { d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; renderDbToolbar(); renderDbGrid(); return; }
+    if (!cj) { d.sqlResult = null; d.sqlResults = null; d.resultTab = 0; renderDbToolbar(); renderDbGrid(); return; }
     dbClearSel(); // a new result grid starts unselected
     d.sqlResult = { columns: ["reply"], rows: [{ reply: cj.reply }], rowCount: 1, explained: false,
       elapsedMs: cj.elapsedMs,
       note: typeof cj.reply === "object" && cj.reply && cj.reply.length != null
         ? trn(cj.reply.length, "dataSql.nReplyItems.one", "dataSql.nReplyItems.other") : undefined };
     d.sqlResults = [d.sqlResult ]; // docs/22 W4.3: the tab strip reads the list — one reply, one tab
-    d.sqlTab = 0;
+    d.resultTab = 0;
     dbHistoryPush(block);
     renderDbToolbar();
     renderDbGrid();
@@ -644,7 +661,9 @@ async function dbRunSql(explain                 )                { // falsy runs
     const toSend = explain ? dbWithExplain(stmts[si], explain) : stmts[si];
     const j = await apiJson              ("/api/db/" + encodeURIComponent(d.conn ) + "/query", {
       method: "POST",
-      body: JSON.stringify({ sql: toSend, limit: d.pageSize }),
+      // The row cap for a console query is the open table tab's page size — the operator's
+      // chosen density — or the fresh default when no table tab is open (docs/42 T1).
+      body: JSON.stringify({ sql: toSend, limit: dbRunLimit() }),
     });
     if (!dbRunReq.accepts(token)) return; // superseded mid-batch: stop quietly, the newer run owns the pane
     if (!j) { ok = false; break; } // apiJson already showed the error; the answered tabs stay
@@ -655,7 +674,7 @@ async function dbRunSql(explain                 )                { // falsy runs
   d.sqlBusy = false;
   dbClearSel(); // a new result grid starts unselected
   d.sqlResults = results;
-  d.sqlTab = 0;
+  d.resultTab = 0;
   d.sqlResult = results.length ? results[0] : null;
   // The plan of a query is not a query — only whole, real runs are history.
   if (ok && !explain) dbHistoryPush(block);

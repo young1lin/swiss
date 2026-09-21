@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn, mountDbView, unmountDbView } from "../src/db-state.js";
 
 /* DOM-stub technique as admin-data-redis-celledit.test.ts: the suggest list renders through
    util's el()/$, so the globals must exist before the module graph evaluates. fetch is
@@ -64,7 +64,7 @@ describe("the suggest list render (docs/22 W3.1)", () => {
     // list, then drew the list — every box reached the screen with zero rows.
     unmountDbView();
     mountDbView();
-    Object.assign(dbView(), { conn: "pg", conns: [{ name: "pg", dialect: "pg" }], tables: ["users"] });
+    Object.assign(dbConn(), { conn: "pg", conns: [{ name: "pg", dialect: "pg" }], tables: ["users"] });
     const wrap = el();
     byId.dbSuggest = undefined as unknown as Stub;
     const ta: any = el("textarea");
