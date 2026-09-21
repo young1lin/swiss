@@ -40,6 +40,16 @@ under the Apache License, Version 2.0.
 
     Copyright Z.AI. Licensed under the Apache License, Version 2.0.
 
+### agent-browser skill — Apache-2.0
+
+`.agents/skills/agent-browser/SKILL.md` — the agent instructions the live-verification
+workflow loads before driving the panel in a real browser — is a condensed derivative of the
+skill file shipped with `agent-browser` by Vercel Labs
+(https://github.com/vercel-labs/agent-browser, `skill-data/core/SKILL.md`), under the Apache
+License, Version 2.0. The tool itself is not vendored: the skill installs it from npm.
+
+    Copyright Vercel, Inc. Licensed under the Apache License, Version 2.0.
+
 ## 3. Rust crates linked into the binary
 
 The release binary statically links the crates below (every dependency that reaches the
