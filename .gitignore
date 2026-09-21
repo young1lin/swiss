@@ -7,6 +7,10 @@ target/
 target-test/
 **/*.rs.bk
 *.pdb
+# Where production 19999 runs from: scripts/deploy.ps1 copies target/release/swiss.exe here
+# so the linker and the daemon never share a file, and the path is stable for PATH and
+# autostart (docs/16 §3.3). A build product, never source.
+/bin/
 
 # Local gateway state — same set the Node build never commits. All carry real secrets.
 gateway.config.json

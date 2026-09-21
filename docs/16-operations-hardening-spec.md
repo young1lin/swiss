@@ -132,6 +132,27 @@ PowerShell 脚本没有单元测试；验收在 §7。但 Rust 侧要确认一�
 - `daemon_status` 的现有测试基建里加一条：假 entry 的 `--version` 报一个 hash，`/health` 报另一个，
   `status` 的结果里 `note` 非空。
 
+### 3.3 2026-09-21 追记：生产从 `bin\swiss.exe` 跑，不再从 `target\` 跑
+
+owner 的要求："创建一个 bin 目录，每次部署的时候，拷贝到 bin 目录下，启动，并且 git ignore bin
+目录下的文件……不要放到 target 目录启动了……我可以设置环境变量，这样可以在其他的应用中使用
+swiss remote 功能"。
+
+- `scripts/deploy.ps1` 的顺序变为：门禁 → `cargo build --release`（**老守护进程还在服务**，因为它
+  持有的是 `bin\swiss.exe`，链接器写的是 `target\release\swiss.exe`，两者不再是同一个文件）→
+  stop → `Copy-Item target\release\swiss.exe bin\swiss.exe`（进程释放句柄可能慢半拍，拷贝重试
+  20 次 × 250 ms）→ `bin\swiss.exe start --no-open` → status → 3.1 的 hash 证明（对 `bin\swiss.exe
+  --version` 与 `/health`）。停机窗口从一次 release 构建（约 4 分钟）缩到 stop + copy + start（几秒）。
+- 一次性迁移：pid 文件里 `entry` 还是 `target\release\swiss.exe` 的守护进程（旧布局）在构建**前**
+  停掉——这一次链接器确实要覆盖它持有的文件；之后的部署都走上面的顺序。
+- `bin/` 进 `.gitignore`：它是构建产物。
+- `bin\swiss.exe start` / `stop` / `status` 从任何目录都能用：`start` 起的是 `current_exe()`（即
+  `bin\swiss.exe`），`stop` / `status` 靠 home 里的 pid 文件；`swiss autostart on` 若打开，注册的
+  也是 `bin\` 这个稳定路径。
+- PATH 由 owner 自己设：脚本只在 `bin\` 不在 PATH 上时打印一行怎么加（改用户的 PATH 不是部署
+  脚本该做的事）。加上之后任何程序都能 `swiss remote exec <target> -- ...`（CLI 从 home 读 token，
+  与 19999 同一用户即可）。
+
 ## 4. H4 — Rust 仓库的 CI
 
 ### 4.1 目标行为
