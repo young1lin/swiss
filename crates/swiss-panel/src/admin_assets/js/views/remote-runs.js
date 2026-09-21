@@ -124,10 +124,14 @@ function targetOf(r                 )         {
 function metaOf(r                 )         {
   const parts = ["#" + r.runId];
   if (r.actor) parts.push(r.actor);
-  if (r.state === "running" || r.state === "queued") parts.push(r.state);
+  if (r.state === "running") parts.push(tr("remoteRuns.stateRunning"));
+  else if (r.state === "queued") parts.push(tr("remoteRuns.stateQueued"));
   else if (r.exitCode != null) parts.push(tr("remoteRuns.exitN", { n: r.exitCode }));
   else if (r.state === "canceled") parts.push(tr("remoteRuns.canceled"));
   else if (r.state === "timeout") parts.push(tr("remoteRuns.timed"));
+  // A file action (sync / pull / cat / write) has no exit code: its state is the word.
+  else if (r.state === "succeeded") parts.push(tr("remoteRuns.stateSucceeded"));
+  else if (r.state === "failed") parts.push(tr("remoteRuns.stateFailed"));
   else parts.push(r.state);
   if (r.ms != null) parts.push(fmtMs(r.ms));
   parts.push(whenLabel(r.startedAt || r.queuedAt));

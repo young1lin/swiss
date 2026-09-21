@@ -305,11 +305,14 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
   it("a row carries its actor in the meta, verbatim, between the id and the exit (docs/41 A1)", async () => {
     const byCli = { ...finished, runId: 19, actor: "cli:jdoe@box" };
     const byMcp = { ...running, runId: 20, actor: "mcp:claude-code" };
-    serve([byCli, finished], [byMcp]);
+    // A file action has no exit code: its state is the (translated) word, not raw JSON.
+    const synced = { ...finished, runId: 21, actor: "panel", action: "remote.sync", state: "succeeded", exitCode: undefined, input: { target: "build", source: "." } };
+    serve([byCli, finished, synced], [byMcp]);
     await view.mount();
     const list = byId("rrList").innerHTML;
     expect(list).toContain("#19 · cli:jdoe@box · exit 2 · 12.3s");
     expect(list).toContain("#20 · mcp:claude-code · running");
+    expect(list).toContain("#21 · panel · succeeded · 12.3s");
     // A row an older gateway recorded has no actor and shows none - no empty seat.
     expect(list).toContain("#17 · exit 2 · 12.3s");
   });
