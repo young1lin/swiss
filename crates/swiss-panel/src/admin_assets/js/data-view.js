@@ -34,6 +34,10 @@ import { dbFormChange, dbFormClick, dbFormKeydown } from "./data-form.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
+import { loadCollapsed, mountGroup } from "./groups.js";
+                                                                     
+import { DB_TREE_SECTIONS, dbSectionOf, dbSectionSlices, redisNamespaceTree } from "./data-tree.js";
+                                                                  
 import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-state.js";
 // The strip's policy module. The cycle is the same accepted shape as the data-structure edge
 // below: data-tabs reaches back for renderDbTables, and both sides only call across it inside
@@ -174,16 +178,11 @@ function renderDbView()       {
   fill(root,
     h("div", { class: "db-side" },
       h("select", { id: "dbConn", aria: { label: tr("dataView.connection") } }),
-      h("select", { id: "dbSchema", aria: { label: tr("dataView.schema") }, hidden: true }),
+      // docs/43 M2: the sidebar's top is the connection row and ONE search box. The sort
+      // select and its direction button moved into the Tables band's ellipsis (where they
+      // act), and pg's schema dropdown died - a schema is a VISIBLE band in the tree now,
+      // and a dropdown beside it would be two mechanisms saying one thing.
       h("input", { id: "dbGrep", type: "search", placeholder: tr("dataView.filterTables"), aria: { label: tr("dataView.filterTables") } }),
-      h("div", { class: "db-sortrow" },
-        h("select", { id: "dbSort", aria: { label: tr("dataView.sort") } }),
-        h("button", { class: "btn icon", id: "dbSortDir", type: "button", title: tr("dataView.sortDirection") })),
-      // docs/22 W4.6: the table list's own header band — the list names itself and carries
-      // one persistent dimmed + (the docs/20 §4 container-header glyph) for New table….
-      h("div", { class: "db-list-head", id: "dbListHead", hidden: true },
-        h("span", { class: "db-list-title" }, tr("dataView.tables")),
-        h("button", { class: "btn icon grp-add", id: "dbNewTable", type: "button", aria: { label: tr("dataView.newTable") }, title: tr("dataView.newTable2") }, iconNode("plus"))),
       h("div", { class: "db-tables", id: "dbTables" }, h("div", { class: "db-hint" }, tr("dataView.loading"))),
       h("div", { class: "db-side-foot", id: "dbTablesPager" })),
     h("div", { class: "db-main" },
@@ -220,9 +219,7 @@ function renderDbView()       {
   pane.oninput = dbPaneInput;
   pane.onchange = dbPaneChange;
   pane.onkeydown = dbPaneKeydown;
-  // docs/43 M1: the strip's cards close on middle-click (auxclick, button 1) - a browser
-  // native affordance every tab strip owes its user. Property-assigned like its siblings
-  // (a second listener would stack, not replace).
+  // auxclick is its own event type, property-assigned like its four siblings (docs/37 R5).
   pane.onauxclick = dbPaneAuxClick;
   // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
   // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
@@ -262,16 +259,6 @@ function renderDbView()       {
 // The sidebar grep's debounce: one module-level timer, restarted per keystroke.
 let dbGrepTimer                                           ;
 
-/** The strip's middle-click close (docs/43 M1): button 1 only - the plain click already
- *  went through dbPaneClick, and button 2 (right) is contextmenu, not ours. The handler
- *  re-reads the live tab state at event time, like every dispatcher here. */
-function dbPaneAuxClick(ev            )       {
-  if (ev.button !== 1) return;
-  const t = targetEl(ev);
-  if (!t) return;
-  dbTabsAuxClick(t);
-}
-
 function dbPaneClick(ev            )       {
   const t = targetEl(ev);
   if (!t) return;
@@ -292,6 +279,16 @@ function dbPaneClick(ev            )       {
   if (dbStructureClick(t, ev)) return;
   if (dbRedisClick(t, ev)) return;
   if (dbActivityClick(t, ev)) return;
+}
+
+/** The middle-button half of the pointer contract (docs/43 M1 D8): a middle press fires
+ *  click once for compatibility and auxclick for the truth, so the strip's middle close is
+ *  answered HERE — acting on click as well would close two tabs for one press. */
+function dbPaneAuxClick(ev            )       {
+  if (ev.button !== 1) return; // 1 = middle; anything else belongs to click
+  const t = targetEl(ev);
+  if (!t) return;
+  dbTabsAuxClick(t);
 }
 
 function dbPaneInput(ev       )       {
@@ -322,15 +319,6 @@ function dbPaneKeydown(ev               )       {
 
 /** The sidebar + console half of the delegated click. */
 function dbChromeClick(t         , ev            )          {
-  if (t.closest("#dbSortDir")) {
-    const d = dbConn();
-    d.sortDir = d.sortDir === "asc" ? "desc" : "asc";
-    dbPaintSort();
-    d.tablesPage = 0;
-    if (dbIsRedis()) renderDbTables();
-    else void dbLoadTables();
-    return true;
-  }
   // wrapped: dbRunSql's first parameter is 'explain' — an event object is truthy, so a
   // plain Run click used to quietly run EXPLAIN (docs/22 W5.4 audit).
   if (t.closest("#dbSqlRun")) { void dbRunSql(false); return true; }
@@ -356,17 +344,6 @@ function dbChromeClick(t         , ev            )          {
     st.sqlText = dbFormatSql(st.sqlText);
     const ta = $                     ("dbSql");
     if (ta) { ta.value = st.sqlText; dbSqlPaint(); ta.focus(); }
-    return true;
-  }
-  if (t.closest("#dbNewTable")) {
-    const d = dbConn();
-    if (!d.conn || dbIsRedis()) return true;
-    openDbDdlSheet("table", {
-      dialect: dbDialectOf(),
-      conn: d.conn,
-      schema: dbIsPg() ? (d.schemaFilter || "public") : "",
-      schemas: dbIsPg() ? dbKnownSchemas() : [],
-    });
     return true;
   }
   const moreBtn = t.closest             ("#dbMore");
@@ -475,27 +452,6 @@ function dbChromeChange(t         )          {
     else void dbLoadTables();
     return true;
   }
-  // The schema picker (pg only): a pick re-requests the table list inside that schema. The
-  // select is removed and re-created by dbPaintSchemaOptions — delegation by id needs no
-  // per-creation wiring, which is why dbWireSchemaSelect is gone (docs/37 R5).
-  const schemaSel = t.closest                   ("#dbSchema");
-  if (schemaSel) {
-    const d = dbConn();
-    if (schemaSel.value === d.schemaFilter) return true;
-    d.schemaFilter = schemaSel.value;
-    d.tablesPage = 0;
-    void dbLoadTables();
-    return true;
-  }
-  const sortSel = t.closest                   ("#dbSort");
-  if (sortSel) {
-    const d = dbConn();
-    d.sort = sortSel.value;
-    d.tablesPage = 0;
-    if (dbIsRedis()) renderDbTables(); // keys sort in place over what has been scanned
-    else void dbLoadTables();
-    return true;
-  }
   const hist = t.closest                   ("#dbSqlHistory");
   if (hist) {
     if (hist.value === "") return true;
@@ -534,26 +490,6 @@ function dbSortOptions()                             {
     : [{ v: "name", t: tr("dataView.sortName") }, { v: "rows", t: tr("dataView.sortRows") }, { v: "size", t: tr("dataView.sortSize") }];
 }
 
-function dbPaintSort()       {
-  const d = dbConn();
-  const sel = $                   ("dbSort"), dir = $("dbSortDir");
-  if (!sel || !dir) return;
-  const opts = dbSortOptions();
-  if (!opts.some((o                          )          => { return o.v === d.sort; })) d.sort = opts[0].v; // kind switched
-  sel.textContent = "";
-  opts.forEach((o                          )       => {
-    const op = el("option", "", o.t)                     ;
-    op.value = o.v;
-    op.selected = o.v === d.sort;
-    sel.appendChild(op);
-  });
-  // The comparison is hoisted: a string literal in a ternary CONDITION reads as bare
-  // copy to the ratchet scanner, while the arrows themselves are glyphs, not words.
-  const asc = d.sortDir === "asc";
-  dir.textContent = asc ? "\u2191" : "\u2193";
-  dir.setAttribute("aria-label", asc ? tr("dataView.sortAscending") : tr("dataView.sortDescending"));
-}
-
 /** Redis keys arrive in SCAN (hash-slot) order; the list sorts what has been loaded. Key names
  *  compare naturally — numeric runs by value, case folded (t2 < t10, foo == FOO) — because the
  *  raw byte order is exactly the ASCII sort nobody asked for. TTL puts expiring keys first; no
@@ -578,7 +514,6 @@ function dbSyncKind()       {
   const grep = $                  ("dbGrep"), sql = $                     ("dbSql"), explain = $("dbSqlExplain"), hint = $("dbSqlHint");
   if (!grep || !sql || !explain || !hint) return;
   const fmt = $("dbSqlFormat");
-  dbPaintSort();
   if (dbIsRedis()) {
     grep.placeholder = tr("dataView.filterKeys"); grep.setAttribute("aria-label", tr("dataView.filterKeys"));
     grep.title = tr("dataView.filterKeysScanPattern");
@@ -598,14 +533,10 @@ function dbSyncKind()       {
     hint.textContent = tr("dataView.blankLineStartsNew");
   }
   // The pane's ⋯ exists for the Activity page, which is a SQL-connection feature: a redis
-  // connection (or none) hides the button rather than the menu hiding its one item. The
-  // list band rides the same condition — redis keys are not tables, and there is nothing to
-  // create without a connection.
+  // connection (or none) hides the button rather than the menu hiding its one item.
   const more = $("dbMore");
   const d = dbConn();
   if (more) more.hidden = !d.conn || dbIsRedis();
-  const listHead = $("dbListHead");
-  if (listHead) listHead.hidden = !d.conn || dbIsRedis();
 }
 
 /** The one label a connection goes by — the sidebar dropdown's option text. The page-bar
@@ -715,12 +646,18 @@ function dbFilterMatches(tokens        , name         )          {
   });
 }
 
+/* The sidebar's list, which is a TREE now (docs/43 M2): SQL connections cut into Tables /
+   Views / Routines bands (a pg catalog nests them under schema bands), a redis keyspace
+   folded along ":" with single-child chains compressed. Every band is mountGroup - the one
+   container-head shape swiss-ui-design allows - at side density; the collapse state rides the
+   component's own localStorage (scope "dbtree", plus ".sch" for pg's schema bands and ".ns"
+   for redis namespaces). Nothing here drags: the grouping is DERIVED from the catalog, not
+   named by the operator. */
 function renderDbTables()       {
   const d = dbConn();
   const box = $("dbTables");
   if (!box) return;
   box.textContent = "";
-  dbPaintSchemaOptions();
   if (!d.conn) {
     box.appendChild(el("div", "db-hint", tr("dataView.addMysqlPgMcpHint")));
     return;
@@ -738,18 +675,25 @@ function renderDbTables()       {
     // "key" (docs/42 T1), and a fresh one with no key opened selects nothing.
     const kt = dbTab();
     const selKey = kt.kind === "key" ? kt.redisKey : null;
-    const sortedKeys = (rr ? rr.keys : []).slice().sort(dbRedisCompare);
-    sortedKeys.forEach((k                  )       => {
-      const b = el("button", "db-table" + (k.key === selKey ? " sel" : ""));
-      b.title = k.key; // the row truncates with an ellipsis; the full key is one hover away
-      // docs/37 R5: the key itself is the address — the delegated click (dbChromeClick)
-      // re-reads the live selection and the drop guard at event time.
-      b.dataset.rkey = k.key;
-      b.appendChild(el("div", "db-table-name", k.key));
-      let meta = k.type;
-      if (k.ttl  >= 0) meta += " · ttl " + k.ttl + "s";
-      b.appendChild(el("div", "db-table-meta", meta));
-      box.appendChild(b);
+    // ONE collapse map per scope for the whole pass (docs/43 M2): mountGroup mutates the map
+    // it is handed and saves it whole, so a per-band load would let the second toggle clobber
+    // the first.
+    const nsCollapsed = loadCollapsed("dbtree.ns");
+    const tree = redisNamespaceTree(rr ? rr.keys : [], dbRedisCompare);
+    tree.forEach((g              )       => {
+      if (!g.ns) {
+        // Keys with no ":" are the keyspace's own rows (docs/43 M2 acceptance): they sit at
+        // the root, not under a band that pretends a namespace exists.
+        g.keys.forEach((k                  )       => { box.appendChild(dbKeyRow(k, k.key, selKey)); });
+        return;
+      }
+      // The leaf promise at the root too: a namespace holding exactly one key and nothing
+      // else IS that row (docs/43 M2 #4) - no folder around a single file.
+      if (!g.children.length && g.keys.length === 1) {
+        box.appendChild(dbKeyRow(g.keys[0], g.keys[0].key, selKey));
+        return;
+      }
+      box.appendChild(dbRedisBand(g, "", selKey, nsCollapsed, !!d.grep));
     });
     const foot2 = $("dbTablesPager");
     if (foot2) {
@@ -771,28 +715,40 @@ function renderDbTables()       {
   if (!d.tables.length) {
     box.appendChild(el("div", "db-hint", d.grep ? tr("dataView.noTablesMatchQ", { q: d.grep }) : tr("dataView.noTables")));
   }
-  // docs/22 W1.1: a Postgres catalog is many schemas, so the page renders grouped — the docs/20
-  // §4 container vocabulary (band header, mixed-case name, tnum count, indented body behind the
-  // guide line). MySQL is one database: the flat list, no headers, visually exactly as before.
+  // docs/43 M2: the SQL tree. A pg catalog nests its type bands under one band per schema
+  // (mockup B); MySQL is one database, so its three type bands sit at the root. Both shapes
+  // are the same component at the same density - a schema band's "rows" are the type bands.
   if (dbIsPg() && d.tables.length) {
+    // One collapse map per scope for the whole pass (see the redis half above for why).
+    const secCollapsed = loadCollapsed("dbtree");
+    const schCfg                                      = {
+      scope: "dbtree.sch", density: "side",
+      names: [], collapsed: loadCollapsed("dbtree.sch"), noun: "schema",
+      draggable: false, filtered: !!d.grep,
+      reload: renderDbTables, render: renderDbTables,
+      rowsById: () => { return []; },
+      groupOfRow: (s                           )         => { return s.rows.length ? s.rows[0].schema : ""; },
+      rowNode: (s                           )              => { return dbSectionBand(s, secCollapsed); },
+      countOf: (s                     )         => {
+        return s.rows.reduce((n        , sec         )         => {
+          const sl = sec                             ;
+          return n + (sl && sl.rows ? sl.rows.length : 0);
+        }, 0);
+      },
+    };
     const schemas           = [];
     d.tables.forEach((t               )       => {
       if (!schemas.includes(t.schema)) schemas.push(t.schema);
     });
     schemas.forEach((s        )       => {
-      const rows = d .tables.filter((t               )          => { return t.schema === s; });
-      const g = el("div", "grp grp--side");
-      const head = el("div", "grp-head");
-      head.appendChild(el("span", "grp-toggle", s));
-      head.appendChild(el("span", "grp-n", String(rows.length)));
-      g.appendChild(head);
-      const body = el("div", "grp-body");
-      rows.forEach((t               )       => { body.appendChild(dbTableRow(t)); });
-      g.appendChild(body);
-      box.appendChild(g);
+      const rows = dbSectionSlices(d.tables.filter((t               )          => { return t.schema === s; }));
+      box.appendChild(mountGroup(schCfg, { name: s, rows: rows }));
     });
-  } else {
-    d.tables.forEach((t               )       => { box.appendChild(dbTableRow(t)); });
+  } else if (d.tables.length) {
+    const secCollapsed = loadCollapsed("dbtree");
+    dbSectionSlices(d.tables).forEach((sec                                                )       => {
+      box.appendChild(dbSectionBand(sec, secCollapsed));
+    });
   }
   const foot = $("dbTablesPager");
   if (!foot) return;
@@ -818,68 +774,154 @@ function renderDbTables()       {
   foot.appendChild(next);
 }
 
-/** One table row, shared by the flat list and every schema group. docs/37 R5: the name and
- *  schema are the address — the delegated click (dbChromeClick's [data-tname]) re-finds the
- *  row in the live list and hands it to dbOpenTab, whose dedupe and cap are re-read at event
- *  time. */
+/** One table row, one LINE (docs/43 M2): the name left, the approximate row count right in
+ *  --text-3 tnum caption - the two-line row's "table · ~9,309 rows · 7.0 MB" meta moved into
+ *  the title, one hover away, where nothing truncates the name to show it. docs/37 R5: the
+ *  name and schema are the address — the delegated click (dbChromeClick's [data-tname])
+ *  re-finds the row in the live list and hands it to dbOpenTab, whose dedupe and cap are
+ *  re-read at event time. */
 function dbTableRow(t               )              {
   const ct = dbTab();
   const sel = ct.kind === "table" && t.name === ct.table && t.schema === ct.schema;
   const b = el("button", "db-table" + (sel ? " sel" : ""));
-  b.title = t.name;
+  b.title = t.schema ? t.schema + "." + t.name + " · " : "";
+  b.title += t.type + (t.approxRows != null
+    ? " · " + tr("dataView.approxRows", { n: Number(t.approxRows).toLocaleString(locale()) }) : "")
+    + (t.size ? " · " + t.size : "");
   b.dataset.tname = t.name;
   b.dataset.tschema = t.schema || "";
-  b.appendChild(el("div", "db-table-name", t.name));
-  b.appendChild(el("div", "db-table-meta",
-    t.type + (t.approxRows != null ? " · " + tr("dataView.approxRows", { n: Number(t.approxRows).toLocaleString(locale()) }) : "") +
-    (t.size ? " · " + t.size : "")));
+  b.appendChild(el("span", "db-table-name", t.name));
+  // The trailing slot numbers what the row holds. Zero reads as 0 - an empty table is a fact
+  // worth scanning for, not a blank.
+  b.appendChild(el("span", "db-table-meta",
+    t.approxRows != null ? Number(t.approxRows).toLocaleString(locale()) : ""));
   return b;
 }
 
-/** The schema picker above the grep box (pg only): "All schemas" plus one option per schema
- *  on the current page, counts from the page the list is showing. A schema picked on an earlier
- *  page stays selectable even when this page does not carry it.
- *  docs/22 closeout B7: a non-pg connection carries NO picker — the select leaves the DOM,
- *  not hidden-with-options. A hidden native select still surfaces in automation accessibility
- *  trees as a live "Schema" button holding the previous pg connection's pick, which read as a
- *  redis page offering a schema dropdown; hidden options are state residue even unseen. */
-function dbPaintSchemaOptions()       {
+/** One redis key row, one line (docs/43 M2): the name left (the REMAINDER under its band's
+ *  prefix - the band already said the prefix; a leaf row says the whole key), its type and
+ *  expiry right. The full key stays the row's title and its address ([data-rkey]). */
+function dbKeyRow(k                  , label        , selKey               )              {
+  const b = el("button", "db-table" + (k.key === selKey ? " sel" : ""));
+  let meta = k.type;
+  if (k.ttl  >= 0) meta += " · ttl " + k.ttl + "s";
+  b.title = k.key + " · " + meta;
+  b.dataset.rkey = k.key;
+  b.appendChild(el("span", "db-table-name", label));
+  b.appendChild(el("span", "db-table-meta", k.type + (k.ttl  >= 0 ? " · " + k.ttl + "s" : "")));
+  return b;
+}
+
+/** One Tables / Views / Routines band (docs/43 M2) — the tree's leaf container, shared by
+ *  MySQL (at the root) and pg (nested inside its schema band). The band owns the list's sort
+ *  (its ellipsis, mockup B) and — on the Tables section only — the New table +. */
+function dbSectionBand(sec                                         ,
+  secCollapsed                         )              {
   const d = dbConn();
-  let sel = $                   ("dbSchema");
-  if (!d.conn || !dbIsPg()) {
-    if (sel) sel.remove();
-    return;
-  }
-  if (!sel) {
-    // Coming back to pg after a non-pg connection removed it: re-create it in the sidebar,
-    // right after the connection picker. docs/37 R5: no wiring to carry — the pane's
-    // delegated change listener finds the select by id at event time.
-    sel = el("select")                     ;
-    sel.id = "dbSchema";
-    sel.setAttribute("aria-label", tr("dataView.schema"));
-    const conn = $("dbConn");
-    if (conn && conn.parentNode) conn.parentNode.insertBefore(sel, conn.nextSibling);
-  }
-  sel.hidden = false;
-  const schemas           = [];
-  d.tables.forEach((t               )       => {
-    if (!schemas.includes(t.schema)) schemas.push(t.schema);
+  const cfg                          = {
+    scope: "dbtree", density: "side",
+    names: DB_TREE_SECTIONS.slice(), collapsed: secCollapsed, noun: "table",
+    draggable: false, filtered: !!d.grep,
+    label: dbSectionLabel,
+    onAdd: dbNewTableFlow, canAdd: (g        )          => { return g === "tables"; },
+    addTitle: ()         => { return tr("dataView.newTable2"); },
+    moreItems: (g        )                    => { return g === "tables" ? dbSortMenu() : null; },
+    moreTitle: ()         => { return tr("dataView.sort"); },
+    emptyText: dbSectionEmpty,
+    reload: renderDbTables, render: renderDbTables,
+    rowsById: ()                  => { return d.tables; },
+    groupOfRow: (t               )                => { return dbSectionOf(t); },
+    rowNode: dbTableRow,
+  };
+  return mountGroup(cfg, sec);
+}
+
+/** The band label over a stable section id (docs/38: identity keys the fold state, copy is
+ *  a lookup, so the tree never mistranslates between renders - and the keys stay LITERAL,
+ *  one branch per section, because the dictionary's orphan scanner reads source, not
+ *  concatenations). */
+function dbSectionLabel(sec        )         {
+  if (sec === "tables") return tr("dataTree.tables");
+  if (sec === "views") return tr("dataTree.views");
+  return tr("dataTree.routines");
+}
+
+/** What an empty section says: the fact it is missing, not a drop target it cannot honor
+ *  (docs/43 M2 - nothing can be dropped into a band the catalog owns). */
+function dbSectionEmpty(sec        )         {
+  if (sec === "tables") return tr("dataTree.no.tables");
+  if (sec === "views") return tr("dataTree.no.views");
+  return tr("dataTree.no.routines");
+}
+
+/** New table… — the Tables band's +, the same flow the old list header's button opened
+ *  (docs/22 W4.6). Where it lands follows the picked schema the same way. */
+function dbNewTableFlow()       {
+  const d = dbConn();
+  if (!d.conn || dbIsRedis()) return;
+  openDbDdlSheet("table", {
+    dialect: dbDialectOf(),
+    conn: d.conn,
+    schema: dbIsPg() ? (d.schemaFilter || "public") : "",
+    schemas: dbIsPg() ? dbKnownSchemas() : [],
   });
-  const current = d.schemaFilter || "";
-  if (current && !schemas.includes(current)) schemas.push(current);
-  schemas.sort();
-  sel.textContent = "";
-  const all = el("option", "", tr("dataView.allSchemas"))                     ;
-  all.value = "";
-  all.selected = current === "";
-  sel.appendChild(all);
-  schemas.forEach((s        )       => {
-    const n = d.tables.filter((t               )          => { return t.schema === s; }).length;
-    const o = el("option", "", s + " (" + n + ")")                     ;
-    o.value = s;
-    o.selected = s === current;
-    sel.appendChild(o);
+}
+
+/** The Tables band's ellipsis (docs/43 M2 #6): the list's sort key and direction, moved off
+ *  the sidebar's top row and put where they act. SQL re-requests the list (server-side sort
+ *  against the catalog); redis re-sorts what SCAN has handed over, client-side. */
+function dbSortMenu()             {
+  const d = dbConn();
+  const items             = dbSortOptions().map((o                          )           => {
+    return { label: o.t, pick: true, on: d.sort === o.v, fn: ()       => { dbSetSort(o.v, null); } };
   });
+  items.push({ sep: true });
+  items.push({ label: tr("dataView.sortAscending"), pick: true, on: d.sortDir !== "desc", fn: ()       => { dbSetSort(null, "asc"); } });
+  items.push({ label: tr("dataView.sortDescending"), pick: true, on: d.sortDir === "desc", fn: ()       => { dbSetSort(null, "desc"); } });
+  return items;
+}
+
+/** Apply a sort choice from the band menu (docs/43 M2): key or direction or both; a null
+ *  argument keeps what is set. Choosing what is already set is a repaint, not a request. */
+function dbSetSort(key               , dir               )       {
+  const d = dbConn();
+  if (dir) d.sortDir = dir;
+  if (key) d.sort = key;
+  d.tablesPage = 0;
+  if (dbIsRedis()) renderDbTables();
+  else void dbLoadTables();
+}
+
+/** One redis namespace band (docs/43 M2): mountGroup over the node's children (as bands)
+ *  and its direct keys (as rows), children first. A namespace holding exactly one key and
+ *  nothing else IS that row — no folder around a single file (the tree compressed the chain
+ *  on the way in; this is the rendering half of that promise). */
+function dbRedisBand(g              , parentNs        , selKey               ,
+  nsCollapsed                         , filtered         )              {
+                                             
+  const isGroup = (r     )                    => { return (r                ).ns !== undefined; };
+  const prefix = parentNs ? parentNs + ":" : "";
+  const rows        = ([]         ).concat(g.children, g.keys);
+  const cfg                = {
+    scope: "dbtree.ns", density: "side",
+    names: [], collapsed: nsCollapsed, noun: "key",
+    draggable: false, filtered,
+    // The one-key leaf never reaches a band of its own (its parent renders it as the row),
+    // so every band that exists holds at least two things worth sorting.
+    moreItems: ()                    => { return dbSortMenu(); },
+    moreTitle: ()         => { return tr("dataView.sort"); },
+    reload: renderDbTables, render: renderDbTables,
+    rowsById: ()        => { return []; },
+    groupOfRow: (r     )         => { return isGroup(r) ? r.ns : r.key; },
+    rowNode: (r     )              => {
+      if (isGroup(r)) {
+        if (!r.children.length && r.keys.length === 1) return dbKeyRow(r.keys[0], r.keys[0].key, selKey);
+        return dbRedisBand(r, g.ns, selKey, nsCollapsed, filtered);
+      }
+      return dbKeyRow(r, r.key.slice(prefix.length), selKey);
+    },
+  };
+  return mountGroup(cfg, { name: g.ns, rows: rows });
 }
 
 /** The selected connection's dialect word ("mysql" | "pg") — the DDL sheets build their
@@ -941,4 +983,6 @@ function dbFkOpen(fk            , value         )       {
   dbOpenTab({ kind: "table", table: j.table, schema: j.schema, filters: j.filters });
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSortMenu, loadDbView, renderDbSide, renderDbTables, renderDbView };
+// dbSectionEmpty stays module-private: the acceptance suite reaches it through the band's
+// emptyText hook, which is the only contract it has.
