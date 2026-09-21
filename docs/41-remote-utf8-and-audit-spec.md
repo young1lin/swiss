@@ -1,7 +1,7 @@
 # 41 — swiss remote：UTF-8 到底、七天可溯源、SKILL.md 讲清楚
 
 > 状态：**已实施，真机已验**（2026-09-21，master：U1 699b305、U2 8306993、U3+U4 835c7c7、A1 d67db29、
-> A2 755eb9e、A3 21cfc8d、S1+D1 c4d764e、A4 801c834、U5 见 §4.3）。owner 的三句话："强制输入和输出都是 UTF-8，避免乱码"、
+> A2 755eb9e、A3 21cfc8d、S1+D1 c4d764e、A4 801c834、U5 324a656、A5 见 §4.3）。owner 的三句话："强制输入和输出都是 UTF-8，避免乱码"、
 > "可审计，可以溯源最近七天的内容"、"SKILL.md 关于 swiss 的介绍你自己看看怎么做"。本文先把
 > 代码里的现状说清（§0），再定契约（§1），再列工作项（§2）和验收（§3）。docs/34 是 remote 的
 > 总契约，本文只改它没说的和说错的地方。
@@ -164,6 +164,11 @@ remote 动作都留痕、`swiss run audit`、七天）、面板和 `swiss --help
      且 terminal 时改从记录（`/api/remote/runs/{id}/output`，记录在 run 变 terminal 之前已写完）打印全文；
      没有记录（非 remote run）则照旧。`recorded::a_run_that_finished_before_the_first_poll_is_whole_in_the_record`
      钉住这条 API 契约；修后再 `cat` 回来 121393 B `cmp` 相同、无 U+FFFD。测试文件已从 `/tmp/swiss` 删除。
-   - 顺带看到的既有限制，未动：run id 每次进程启动从 0 计，记录按 `runId` 索引，重启后同 id 的行会
-     重复（`/api/remote/runs/{id}` 取最新的一条）。
+   - 顺带看到并修掉的既有限制（**A5**）：run id 原是每次进程启动从 0 计的内存计数，记录按 `runId` 索引，
+     重启后同号的行会重复。现在 `RunCoordinator::persist_sequence(<home>/runs.seq)` 把下一个 id 跨重启
+     保存（每次分配 tmp+rename 写一次），且 `RunHistorySink::last_run_id()` 让记录里的最高 id 成为编号
+     的下限（升级后第一次启动、seq 文件丢失都不会撞号）。19998 上：记录最高 #19 → 启动后 seq 已是 20 →
+     跑一条 #20 → 重启 → 下一条 #21。owner 问"为什么不是页面上设置的唯一 alias"：alias 标识的是**目标**
+     （哪台机器），每条记录和 audit 的 target 列本来就带；run 需要自己的号，因为一个目标有很多次运行——
+     坏的是号码跨重启不唯一，现在唯一了。
 4. `swiss skill install` 装出的 SKILL.md 与源一致（`skill_install.rs` 两条断言）。
