@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 188 64" role="img" aria-label="swiss">
-  <path fill="#DA291C" d="M7 11 32 3 57 11 V30 C57 45 46 55 32 61 18 55 7 45 7 30 Z"/>
-  <rect x="20" y="25.5" width="24" height="7" rx="1.5" fill="#fff"/>
-  <rect x="28.5" y="15" width="7" height="28" rx="1.5" fill="#fff"/>
+  <rect width="64" height="64" rx="14" fill="#DA291C"/>
+  <g fill="#fff">
+    <rect x="18" y="42" width="34" height="8" rx="4"/>
+    <rect x="18" y="42" width="30" height="8" rx="4" transform="rotate(-32 18 46)"/>
+    <rect x="18" y="42" width="26" height="8" rx="4" transform="rotate(-64 18 46)"/>
+    <circle cx="18" cy="46" r="7"/>
+  </g>
+  <circle cx="18" cy="46" r="2.4" fill="#DA291C"/>
   <text x="80" y="43" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="30" font-weight="700" fill="#24292f">swiss</text>
 </svg>

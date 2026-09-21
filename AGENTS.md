@@ -5,7 +5,7 @@ Guidance for AI coding agents working in this repo. Single source of truth for a
 
 ## What this is
 
-The project is named **swiss** — the developer's Swiss Army knife toolbox. It began as the Rust
+The project is named **swiss** — the developer's pocket multitool. It began as the Rust
 port of `local-mcp-gateway` (the Node original — retired as the reference on 2026-09-13, see
 docs/07; the sibling checkout is no longer needed or consulted). One local process, every MCP
 server on an HTTP path under the `/mcp/` prefix on `127.0.0.1:19999` (docs/24, ADR-018 —
@@ -18,7 +18,7 @@ included. The reasons behind ported shapes live in `docs/` and in the code comme
 piece of behavior looks odd, the module's comment usually records the bug that was paid for
 once already.
 
-## The product: a developer's Swiss Army knife
+## The product: a developer's pocket multitool
 
 The port is the starting point, not the destination. What this is being built into is simple to
 state: **one local process that holds every small tool a developer reaches for while writing

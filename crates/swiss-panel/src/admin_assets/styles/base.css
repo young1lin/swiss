@@ -263,9 +263,10 @@
       background: var(--sidebar); border-right: 1px solid var(--sep);
       padding: var(--s2) 0;
     }
-    /* The brand carries a mark: the swiss logo (logo.svg), a red shield with a white cross -
-       the pocket-knife emblem, distinct from the flag's plain field. In the rail it is the
-       one saturated thing, which is what keeps the rail reading as the panel's spine. */
+    /* The brand carries a mark: the swiss logo (logo.svg), a red tile with three white tools
+       fanned open from one rivet - a multitool drawn from scratch (docs/40 O4: no shield, no
+       cross). In the rail it is the one saturated thing, which is what keeps the rail reading
+       as the panel's spine. */
     .rail-brand { display: flex; align-items: center; justify-content: center; padding: var(--s1) 0 var(--s2); }
     .brand-mark { width: 20px; height: 20px; border-radius: 5px; flex: 0 0 auto; }
     .rail-nav {
