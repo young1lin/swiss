@@ -1,7 +1,7 @@
 # 41 — swiss remote：UTF-8 到底、七天可溯源、SKILL.md 讲清楚
 
-> 状态：**已实施，待真机**（2026-09-21，master：U1 699b305、U2 8306993、U3+U4 835c7c7、A1 d67db29、
-> A2 755eb9e、A3 21cfc8d、S1+D1 c4d764e；A4 的走查见 §4）。owner 的三句话："强制输入和输出都是 UTF-8，避免乱码"、
+> 状态：**已实施，真机已验**（2026-09-21，master：U1 699b305、U2 8306993、U3+U4 835c7c7、A1 d67db29、
+> A2 755eb9e、A3 21cfc8d、S1+D1 c4d764e、A4 801c834、U5 见 §4.3）。owner 的三句话："强制输入和输出都是 UTF-8，避免乱码"、
 > "可审计，可以溯源最近七天的内容"、"SKILL.md 关于 swiss 的介绍你自己看看怎么做"。本文先把
 > 代码里的现状说清（§0），再定契约（§1），再列工作项（§2）和验收（§3）。docs/34 是 remote 的
 > 总契约，本文只改它没说的和说错的地方。
@@ -150,9 +150,20 @@ remote 动作都留痕、`swiss run audit`、七天）、面板和 `swiss --help
      （走查发现无退出码的 sync/cat 行 state 原样英文，顺手补了 stateSucceeded/Failed/Running/
      Queued 四个键）。480px：页面不横向滚动，行可点开；meta 在行内被裁掉是 `.call` 行与
      Traffic 共用的既有布局，未动。
-3. **真机未验**：`swiss remote exec <t> -- printf '中文
-'`、`python3 -c "print('中文')"`、大于一个
-   SSH 读块的 `remote cat`。fake transport 的用例（`every_exec_carries_the_utf8_locale_unless_the_caller_set_one`、
-   `cat_decodes_once_so_a_character_split_across_read_chunks_survives`）与上面的 API/CLI 边界证据
-   是现有证据；要补真机，owner 指一台可用目标即可。
+3. **真机（owner 在 19998 上建的 `ubuntu-1`，root `/tmp/swiss`，2026-09-21 07:25–07:29 UTC，
+   `swiss run audit --since 30m` 能列出全部 13 条，actor 均为 `cli:young1lin@dev-box`）：**
+   - `exec -- sh -c 'echo LANG=$LANG LC_ALL=$LC_ALL; locale charmap'` → `LANG=C.UTF-8 LC_ALL=C.UTF-8`
+     / `UTF-8`：U4 的缺省到了远端。
+   - `exec -- printf '中文\n'` 回来的字节是 `e4 b8 ad e6 96 87 0a`；`python3 -c "print('中文 ✓ émoji 😀')"`
+     原样回显（python 看不到 UTF-8 locale 时会在 😀 上抛 UnicodeEncodeError）。
+   - `write ubuntu-1 'swiss-utf8-小文件.txt'`（中文文件名，37 B 中文内容）再 `cat` 回来 `cmp` 相同。
+   - `write` 一个 121393 B 的中文文件（3500 行"第 N 行：编译完成 ✓ ok"），远端 `sha256sum` 与本地一致
+     （`ab7f6f60…4d24`）；`cat` 回来**第一次只剩最后 65534 字节**——这暴露了一个 docs/41 之外的既有缺陷
+     （**U5**）：run 在 CLI 第一次轮询前就结束时，live 窗口已按 `KEEP_FINISHED_OUTPUT_BYTES` 压到最后
+     64 KiB，`stream_run` 把 `truncated: true` 当没看见，把尾巴当全文打印。修法：cursor 0 且 `truncated`
+     且 terminal 时改从记录（`/api/remote/runs/{id}/output`，记录在 run 变 terminal 之前已写完）打印全文；
+     没有记录（非 remote run）则照旧。`recorded::a_run_that_finished_before_the_first_poll_is_whole_in_the_record`
+     钉住这条 API 契约；修后再 `cat` 回来 121393 B `cmp` 相同、无 U+FFFD。测试文件已从 `/tmp/swiss` 删除。
+   - 顺带看到的既有限制，未动：run id 每次进程启动从 0 计，记录按 `runId` 索引，重启后同 id 的行会
+     重复（`/api/remote/runs/{id}` 取最新的一条）。
 4. `swiss skill install` 装出的 SKILL.md 与源一致（`skill_install.rs` 两条断言）。

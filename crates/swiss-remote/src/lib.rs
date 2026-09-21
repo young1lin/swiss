@@ -835,4 +835,88 @@ mod recorded {
         assert_eq!(page["runs"], json!([]));
         assert_eq!(page["usage"]["bytes"], 0);
     }
+
+    /// The contract `swiss remote cat` / `exec` stand on for a run that finished before
+    /// the follower's first poll (found live 2026-09-21 with a 121 KB cat): the live
+    /// window has been compacted to its last 64 KiB and says so (`truncated` at cursor
+    /// 0), while the record - written before the run turned terminal - has every byte.
+    #[tokio::test]
+    async fn a_run_that_finished_before_the_first_poll_is_whole_in_the_record() {
+        let (system, fake) = crate::testing::system_with_fake();
+        // 121 KB of Chinese lines: past the 64 KiB finished-keep, under the cat cap.
+        let stdout: Vec<u8> = (1..=3500)
+            .map(|i| format!("第 {i} 行：编译完成 ✓ ok\n"))
+            .collect::<String>()
+            .into_bytes();
+        let total = stdout.len() as u64;
+        assert!(total > 64 * 1024 && total < 128 * 1024, "{total}");
+        fake.program(
+            "dump",
+            crate::testing::FakeProgram {
+                argv0: "dump".into(),
+                stdout: stdout.clone(),
+                stderr: Vec::new(),
+                exit: 0,
+                delay_ms: 0,
+            },
+        );
+        crate::actions::register_all(system.clone(), &system.services().actions).unwrap();
+        let sink: Arc<dyn swiss_host::services::runs::RunHistorySink> = system.history().clone();
+        system.services().runs.add_history_sink(sink);
+        let state = crate::api::RemoteState::new();
+        state.install(system.clone());
+        let app = swiss_host::services::api::mount(system.services().clone())
+            .merge(crate::api::mount(state));
+
+        let (status, submitted) = call(
+            &app,
+            "POST",
+            "/api/runs",
+            json!({ "action": "remote.exec", "input": { "target": "dev", "argv": ["dump"] }, "timeoutMs": 30000 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let id = submitted["runId"].as_u64().unwrap();
+        for _ in 0..500 {
+            let (_, run) = call(&app, "GET", &format!("/api/runs/{id}?output=0"), Value::Null).await;
+            if run["state"] != "queued" && run["state"] != "running" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+
+        // The live window: compacted, and honest about it.
+        let (status, live) = call(&app, "GET", &format!("/api/runs/{id}/output?after=0&max=131072"), Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(live["terminal"], true);
+        assert_eq!(live["truncated"], true, "{live}");
+        let tail = live["output"].as_str().unwrap();
+        assert!(tail.len() <= 64 * 1024, "{}", tail.len());
+        assert!(!tail.contains('\u{FFFD}'), "the compacted window starts on a character");
+        assert!(stdout.ends_with(tail.as_bytes()));
+
+        // The record: the whole stream, page by page, no U+FFFD at any page seam.
+        let mut got = Vec::new();
+        let mut cursor = 0u64;
+        loop {
+            let (status, chunk) = call(
+                &app,
+                "GET",
+                &format!("/api/remote/runs/{id}/output?after={cursor}&max=131072"),
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            let text = chunk["output"].as_str().unwrap();
+            assert!(!text.contains('\u{FFFD}'));
+            got.extend_from_slice(text.as_bytes());
+            let next = chunk["nextCursor"].as_u64().unwrap();
+            assert_eq!(chunk["total"], total);
+            if next >= total {
+                break;
+            }
+            cursor = next;
+        }
+        assert_eq!(got, stdout, "the record is byte-exact");
+    }
 }
