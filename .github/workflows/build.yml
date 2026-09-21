@@ -33,8 +33,10 @@ on:
     tags: ["v*"]
   pull_request:
 
+# Read-only by default; only the release job, which attaches binaries to a GitHub Release,
+# is granted write on contents (least privilege for the build/test/deny jobs).
 permissions:
-  contents: write # the release job attaches binaries to a GitHub Release
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -157,10 +159,23 @@ jobs:
         run: npm run check
         working-directory: crates/swiss-panel/panel
 
+  # Licenses, advisories and registry sources against deny.toml (docs/40 O5). Independent of
+  # the matrix like the panel job: one cheap ubuntu run, no Rust build.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --locked
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, panel, deny]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
