@@ -135,7 +135,10 @@ function paintStatus() {
   if (fontSize !== FONT_DEFAULT) {
     const zoom = document.createElement("span");
     zoom.className = "term-zoom";
-    zoom.textContent = fontSize + "px \u00b7 Ctrl+0 resets";
+    // The px unit is a format string, not copy - hoisted so the write carries only the
+    // glyph separator and the translated sentence.
+    const px = fontSize + "px";
+    zoom.textContent = px + " \u00b7 " + tr("terminal.ctrl0Resets");
     line.appendChild(zoom);
   }
 }
@@ -280,7 +283,7 @@ function paintJump(m: TermModel) {
     m.jump = chip;
   }
   m.jump.hidden = m.pinned || !m.unseen;
-  m.jump.textContent = m.unseen + " new \u2193";
+  m.jump.textContent = tr("terminal.nNewDown", { n: m.unseen });
 }
 
 /* The tab inventory paintTabs and the Alt-shortcuts agree on: wired models first
@@ -330,7 +333,7 @@ function startRename(id: string) {
   input.id = "term-rename";   // the a11y auditor wants a name on every form field
   input.maxLength = 40;
   input.value = m.customTitle || m.shellTitle || "";
-  input.setAttribute("aria-label", "Rename tab");
+  input.setAttribute("aria-label", tr("terminal.renameTab"));
   labelEl.parentNode.replaceChild(input, labelEl);
   input.focus();
   input.select();
@@ -375,7 +378,7 @@ function findInput() { return $<HTMLInputElement>("term-find-q"); }
 function paintFindCount(res: { resultIndex: number; resultCount: number } | null | undefined) {
   const el = $("term-find-count");
   if (!el) return;
-  el.textContent = !res ? "" : res.resultCount ? (res.resultIndex + 1) + "/" + res.resultCount : "no results";
+  el.textContent = !res ? "" : res.resultCount ? (res.resultIndex + 1) + "/" + res.resultCount : tr("terminal.noResults");
 }
 
 function runFind(back: boolean) {

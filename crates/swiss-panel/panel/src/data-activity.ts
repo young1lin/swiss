@@ -57,9 +57,9 @@ function dbActivityPane(close: () => void): void {
   const conn = d.conns.find((c) => { return c.name === d.conn; });
   const head = el("div", "db-head");
   const left = el("div", "db-head-left");
-  left.appendChild(el("h2", "db-title pane-title", "Activity"));
+  left.appendChild(el("h2", "db-title pane-title", tr("dataActivity.title")));
   left.appendChild(el("div", "db-meta",
-    (conn ? conn.label : d.conn) + " · refreshes every 5s while this page is open"));
+    (conn ? conn.label : d.conn) + " · " + tr("dataActivity.refreshesWhileOpen")));
   head.appendChild(left);
   // The Close button answers through #pane's delegated click via data-actclose (docs/37 R5).
   head.appendChild(h("div", { class: "db-head-ctl" },
@@ -67,7 +67,7 @@ function dbActivityPane(close: () => void): void {
   main.appendChild(head);
   const wrap = el("div", "db-grid-wrap");
   wrap.id = "dbActivityWrap";
-  wrap.appendChild(el("div", "db-hint", "Loading sessions…"));
+  wrap.appendChild(el("div", "db-hint", tr("dataActivity.loadingSessions")));
   main.appendChild(wrap);
   void dbActivityLoad();
   dbActivityPollStart();
@@ -91,14 +91,18 @@ function dbActivityRender() {
   const rows = d.activityRows || [];
   wrap.textContent = "";
   if (!rows.length) {
-    wrap.appendChild(el("div", "db-hint", "No sessions — the server reports none."));
+    wrap.appendChild(el("div", "db-hint", tr("dataActivity.noSessions")));
     return;
   }
   const tbl = el("table", "db-grid");
   const thead = el("thead");
   const hr = el("tr");
-  ["pid", "user", "state", "wait", "duration", "query", ""].forEach((h) => {
-    hr.appendChild(el("th", h === "duration" ? "db-rowctl tnum" : "db-rowctl", h));
+  // pid/query are server words and stay untranslated tokens; the four word columns go through
+  // tr(). The numeric class picks by INDEX (duration is 4): the label itself is translated, so
+  // comparing it against an English literal would only match in English.
+  ["pid", tr("dataActivity.colUser"), tr("dataActivity.colState"), tr("dataActivity.colWait"),
+    tr("dataActivity.colDuration"), "query", ""].forEach((h: string, i: number): void => {
+    hr.appendChild(el("th", i === 4 ? "db-rowctl tnum" : "db-rowctl", h));
   });
   thead.appendChild(hr);
   tbl.appendChild(thead);
@@ -106,12 +110,12 @@ function dbActivityRender() {
   rows.forEach((r: ApiDbActivityRow) => {
     const tri = el("tr", r.own ? "db-act-own" : "");
     const pid = el("td", "db-cell tnum", String(r.pid));
-    pid.title = "pid " + r.pid;
+    pid.title = tr("dataActivity.pidTip", { pid: r.pid });
     tri.appendChild(pid);
     const user = el("td", "", r.user == null ? "" : r.user);
     if (r.own) {
-      const chip = el("span", "db-keytype", "this panel");
-      chip.title = "The session this Activity page itself polls through";
+      const chip = el("span", "db-keytype", tr("dataActivity.thisPanel"));
+      chip.title = tr("dataActivity.thisPanelTip");
       user.appendChild(chip);
     }
     tri.appendChild(user);
@@ -119,8 +123,8 @@ function dbActivityRender() {
     tri.appendChild(el("td", "", r.state));
     const wait = el("td", "", r.wait);
     if (r.blockedBy) {
-      const blocked = el("span", "db-act-blocked", " · blocked by " + r.blockedBy);
-      blocked.title = "pids holding locks this session waits on";
+      const blocked = el("span", "db-act-blocked", " · " + tr("dataActivity.blockedBy", { pid: r.blockedBy }));
+      blocked.title = tr("dataActivity.blockedByTip");
       wait.appendChild(blocked);
     }
     tri.appendChild(wait);
@@ -168,8 +172,8 @@ function dbActivityClick(t: Element, ev: MouseEvent): boolean {
  *  keeps the session; Terminate (red, last) closes the session itself. */
 function dbActivityMenu(anchorEl: HTMLElement, row: ApiDbActivityRow): void {
   popupMenu(anchorEl.getBoundingClientRect(), [
-    { label: "Cancel query", fn: () => { void dbActivityKill(row, "cancel"); } },
-    { label: "Terminate session", danger: true, fn: () => { void dbActivityKill(row, "terminate"); } },
+    { label: tr("dataActivity.cancelQuery"), fn: () => { void dbActivityKill(row, "cancel"); } },
+    { label: tr("dataActivity.terminateSession"), danger: true, fn: () => { void dbActivityKill(row, "terminate"); } },
   ]);
 }
 

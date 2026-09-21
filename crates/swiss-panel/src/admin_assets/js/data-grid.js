@@ -15,7 +15,6 @@
  */
 
                                                                                                                
-                                               
                                                                                          
 import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
 import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
@@ -429,7 +428,7 @@ async function dbExportTable(btn                   , fmt        )               
   // set, and the exported row count is the filtered total.
   if (d2.filters.length) q += "&filters=" + encodeURIComponent(JSON.stringify(d2.filters));
   btn.disabled = true;
-  btn.textContent = "Exporting\u2026";
+  btn.textContent = tr("dataGrid.exporting");
   try {
     const resp = await fetch(q);
     if (!resp.ok) { toast(tr("dataGrid.exportFailedHttpN", { n: resp.status }), true); return; }
@@ -579,7 +578,7 @@ function dbRunColumnStats(column        , kind        )       {
  *  their own hint instead of clobbering it. */
 function dbPaintCell(td                      , v         , has         , colType         )                {
   if (!has || v === undefined) return null; // nothing set yet (an insert stub cell)
-  if (v === null) { td.appendChild(el("span", "db-null", "NULL")); return null; }
+  if (v === null) { td.appendChild(el("span", "db-null", tr("dataGrid.null"))); return null; }
   const view = dbCellView(v, colType);
   if (view.href) {
     const a = el("a", "db-link", view.text);
@@ -612,10 +611,10 @@ function dbTipHide()       {
 function dbTipShow(th             , c             )       {
   const tip = el("div", "db-tip");
   tip.appendChild(el("div", "t-name", c.name));
-  tip.appendChild(el("div", "t-type", c.dataType + (c.nullable ? " · nullable" : " · not null") +
-    (c.isPrimaryKey ? " · primary key" : "")));
+  tip.appendChild(el("div", "t-type", c.dataType + (c.nullable ? " · " + tr("dataGrid.nullable") : " · " + tr("dataGrid.notNull")) +
+    (c.isPrimaryKey ? " · " + tr("dataSql.primaryKey") : "")));
   if (c.comment) tip.appendChild(el("div", "t-comment", c.comment ));
-  tip.appendChild(el("div", "t-hint", "Click sorts: ascending → descending → off"));
+  tip.appendChild(el("div", "t-hint", tr("dataGrid.clickSortsCycle")));
   document.body.appendChild(tip);
   const r = th.getBoundingClientRect();
   tip.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tip.offsetWidth - 8)) + "px";
@@ -728,7 +727,7 @@ function renderDbGrid()       {
     // docs/22 W2.1: the resize grip hugs the header's right edge. It owns mousedown and click
     // so a drag neither sorts the column nor fights the hover card for the pointer.
     const grip = el("span", "db-col-grip");
-    grip.title = "Drag to resize";
+    grip.title = tr("dataGrid.dragResize");
     grip.onmousedown = (ev            )       => {
       const idx = Array.prototype.indexOf.call(hr.children, th);
       const cells                = [th];
@@ -757,17 +756,17 @@ function renderDbGrid()       {
       dbTipHide();
       // docs/22 W2.1: hiding lives in the same menu, one separator down, and the recovery
       // entry ("Show all columns") appears exactly while something is hidden — one place for
-      // both directions.
-      const items             = [
-        { label: "Value distribution\u2026", fn: ()       => { dbRunColumnStats(c.name, "dist"); } },
-        { label: "Numeric stats\u2026", fn: ()       => { dbRunColumnStats(c.name, "num"); } },
+      // both directions. The items ride inline at the call (not through a local) so the
+      // bare-literal gate keeps seeing every label.
+      popupMenu((e.currentTarget               ).getBoundingClientRect(), [
+        { label: tr("dataGrid.valueDistribution"), fn: ()       => { dbRunColumnStats(c.name, "dist"); } },
+        { label: tr("dataGrid.numericStats"), fn: ()       => { dbRunColumnStats(c.name, "num"); } },
         { sep: true },
-        { label: "Hide column", fn: ()       => { dbHideColumn(c.name); } },
-      ];
-      if (d.gridCfg && d.gridCfg.hidden.length) {
-        items.push({ label: "Show all columns", fn: dbShowAllColumns });
-      }
-      popupMenu((e.currentTarget               ).getBoundingClientRect(), items);
+        { label: tr("dataGrid.hideColumn"), fn: ()       => { dbHideColumn(c.name); } },
+        ...(d.gridCfg && d.gridCfg.hidden.length
+          ? [{ label: tr("dataGrid.showAllColumns"), fn: dbShowAllColumns }]
+          : []),
+      ]);
     };
     hr.appendChild(th);
   });
@@ -817,7 +816,7 @@ function renderDbGrid()       {
       if (d.focus && d.focus.r === i && d.focus.c === ci) td.classList.add("db-focus");
       if (editable) {
         td.classList.add("db-cell-edit");
-        td.title = long || "Double-click to edit · right-click for dialog/copy";
+        td.title = long || tr("dataGrid.doubleClickEditMenuCopy");
         td.ondblclick = ()       => {
           const cur = has ? dbCellText(ins.values[c.name]) : "";
           dbEditCellEnter("insert", null, i, c.name, null, td, cur == null ? "" : cur);
@@ -876,7 +875,7 @@ function renderDbGrid()       {
       if (d.focus && d.focus.r === gridRow && d.focus.c === ci) td.classList.add("db-focus");
       if (editable && !deleted) {
         td.classList.add("db-cell-edit");
-        td.title = long || "Double-click to edit · right-click for dialog/copy";
+        td.title = long || tr("dataGrid.doubleClickEditMenuCopy");
         const meta             = { pk: dbRowAddr(pkCols, d .data .columns, row), orig: orig };
         td.ondblclick = ()       => {
           const cur = dbCellText(orig);
@@ -908,7 +907,7 @@ function renderDbGrid()       {
   kbd.type = "text";
   kbd.id = "dbKbd";
   kbd.tabIndex = -1;
-  kbd.setAttribute("aria-label", "Data grid keyboard navigation");
+  kbd.setAttribute("aria-label", tr("dataGrid.kbdNav"));
   kbd.onpaste = (ev                )       => {
     const d = dbView();
     if (!d.data) return;
@@ -922,9 +921,9 @@ function renderDbGrid()       {
 
 function renderDbResultGrid(wrap             )       {
   const d = dbView();
-  if (d.sqlBusy) { wrap.appendChild(el("div", "db-hint", "Running…")); return; }
+  if (d.sqlBusy) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.running"))); return; }
   const res = d.sqlResult;
-  if (!res) { wrap.appendChild(el("div", "db-hint", "Run a query to see rows here.")); return; }
+  if (!res) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.runQuerySeeRows"))); return; }
   const tab = d.sqlTab || 0; // docs/22 W4.3: this grid is one tab of the strip — its selection keys are that tab's
   const tbl = el("table", "db-grid");
   const thead = el("thead");
@@ -1022,9 +1021,9 @@ function dbToolbarClick(t         , ev            )          {
       // and without this the very click that opens the menu also tears it down.
       ev.stopPropagation();
       popupMenu(tb.getBoundingClientRect(), [
-        { label: "Export CSV…", fn: ()       => { void dbExportTable(tb                     , "csv"); } },
-        { label: "Export NDJSON…", fn: ()       => { void dbExportTable(tb                     , "json"); } },
-        { label: "Export SQL dump…", fn: ()       => { void dbExportTable(tb                     , "sql"); } },
+        { label: tr("dataGrid.exportCsv"), fn: ()       => { void dbExportTable(tb                     , "csv"); } },
+        { label: tr("dataGrid.exportNdjson"), fn: ()       => { void dbExportTable(tb                     , "json"); } },
+        { label: tr("dataGrid.exportSqlDump"), fn: ()       => { void dbExportTable(tb                     , "sql"); } },
       ]);
       return true;
     }

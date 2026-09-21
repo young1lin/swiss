@@ -385,8 +385,12 @@ function renderRunResult(): void {
   out.className = "logs" + (res.ok ? "" : " err");
   if (meta) {
     const bytes = new TextEncoder().encode(res.text).length;
-    meta.textContent = (res.ok ? tr("runHistory.ok") : tr("runHistory.error2")) + "  ·  " + (res.ms != null ? res.ms + " ms" : "") +
-      "  ·  " + (bytes < 1024 ? bytes + " B" : (bytes / 1024).toFixed(1) + " KB");
+    // ms reuses runHistory.durationMs; B/KB are unit format strings, not copy (docs/38
+    // §2.1) - both hoisted so the write itself carries only translated text and the
+    // "  ·  " separators.
+    const ms = res.ms != null ? tr("runHistory.durationMs", { ms: res.ms }) : "";
+    const size = bytes < 1024 ? bytes + " B" : (bytes / 1024).toFixed(1) + " KB";
+    meta.textContent = (res.ok ? tr("runHistory.ok") : tr("runHistory.error2")) + "  ·  " + ms + "  ·  " + size;
   }
 }
 

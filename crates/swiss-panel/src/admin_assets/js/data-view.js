@@ -299,8 +299,8 @@ function dbChromeClick(t         , ev            )          {
     // without it the click that opens the menu also tears it down (same as the Export menu).
     ev.stopPropagation();
     popupMenu(explainBtn.getBoundingClientRect(), [
-      { label: "Explain", fn: ()       => { void dbRunSql("plan"); } },
-      { label: "Explain ANALYZE", fn: ()       => { void dbRunSql("analyze"); } },
+      { label: tr("dataView.explain"), fn: ()       => { void dbRunSql("plan"); } },
+      { label: tr("dataView.explainAnalyze"), fn: ()       => { void dbRunSql("analyze"); } },
     ]);
     return true;
   }
@@ -330,7 +330,7 @@ function dbChromeClick(t         , ev            )          {
     ev.stopPropagation();
     const d = dbView();
     popupMenu(moreBtn.getBoundingClientRect(), [
-      { label: d.activity ? "Close activity" : "Activity…", fn: dbActivityToggle },
+      { label: d.activity ? tr("dataView.closeActivity") : tr("dataView.activity"), fn: dbActivityToggle },
     ]);
     return true;
   }
@@ -499,8 +499,8 @@ function dbActivityClose()       {
  * one direction button; the option set repaints when the connection kind changes. */
 function dbSortOptions()                             {
   return dbIsRedis()
-    ? [{ v: "name", t: "Key" }, { v: "ttl", t: "TTL" }]
-    : [{ v: "name", t: "Name" }, { v: "rows", t: "Rows" }, { v: "size", t: "Size" }];
+    ? [{ v: "name", t: tr("dataView.sortKey") }, { v: "ttl", t: "TTL" }]
+    : [{ v: "name", t: tr("dataView.sortName") }, { v: "rows", t: tr("dataView.sortRows") }, { v: "size", t: tr("dataView.sortSize") }];
 }
 
 function dbPaintSort()       {
@@ -516,8 +516,11 @@ function dbPaintSort()       {
     op.selected = o.v === d.sort;
     sel.appendChild(op);
   });
-  dir.textContent = d.sortDir === "asc" ? "\u2191" : "\u2193";
-  dir.setAttribute("aria-label", d.sortDir === "asc" ? "Sort ascending" : "Sort descending");
+  // The comparison is hoisted: a string literal in a ternary CONDITION reads as bare
+  // copy to the ratchet scanner, while the arrows themselves are glyphs, not words.
+  const asc = d.sortDir === "asc";
+  dir.textContent = asc ? "\u2191" : "\u2193";
+  dir.setAttribute("aria-label", asc ? tr("dataView.sortAscending") : tr("dataView.sortDescending"));
 }
 
 /** Redis keys arrive in SCAN (hash-slot) order; the list sorts what has been loaded. Key names
@@ -546,17 +549,17 @@ function dbSyncKind()       {
   const fmt = $("dbSqlFormat");
   dbPaintSort();
   if (dbIsRedis()) {
-    grep.placeholder = "Filter keys"; grep.setAttribute("aria-label", "Filter keys");
-    grep.title = "Filter keys (a SCAN MATCH pattern)";
-    sql.placeholder = "SET k v · GET k · DEL k · HGETALL h · TTL k — one command per run";
+    grep.placeholder = tr("dataView.filterKeys"); grep.setAttribute("aria-label", tr("dataView.filterKeys"));
+    grep.title = tr("dataView.filterKeysScanPattern");
+    sql.placeholder = tr("dataView.redisConsolePlaceholder");
     explain.hidden = true;
     if (fmt) fmt.hidden = true; // docs/22 W5.4: SQL formatting has nothing to say about a command
-    hint.textContent = "writes run · KEYS is refused, use the key list · Ctrl+Enter runs";
+    hint.textContent = tr("dataView.redisConsoleHint");
   } else {
     // The placeholder IS the grammar (docs/22 W1.6): comma AND, | OR, * wildcard.
-    grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", "Filter tables");
-    grep.title = "Filter tables: comma-separated terms AND together, | is OR, * is a wildcard";
-    sql.placeholder = "SELECT / UPDATE / DELETE … — statements split on ;";
+    grep.placeholder = "a*, b|c"; grep.setAttribute("aria-label", tr("dataView.filterTables"));
+    grep.title = tr("dataView.filterTablesGrammar");
+    sql.placeholder = tr("dataView.selectUpdateDeleteStatements");
     explain.hidden = false;
     if (fmt) fmt.hidden = false;
     // docs/22 W4.3: the ; split answers one result tab per statement; the blank-line block
@@ -588,7 +591,7 @@ function renderDbSide()       {
   if (!sel) return;
   sel.textContent = "";
   if (!d.conns.length) {
-    const none = el("option", "", "No database MCPs")                     ;
+    const none = el("option", "", tr("dataView.noDatabaseMcps"))                     ;
     none.value = "";
     sel.appendChild(none);
     sel.disabled = true;
@@ -635,7 +638,7 @@ async function dbLoadTables()                {
   const d = dbView();
   if (!d.conn) return;
   const box = $("dbTables");
-  if (box) { box.textContent = ""; box.appendChild(el("div", "db-hint", "Loading…")); }
+  if (box) { box.textContent = ""; box.appendChild(el("div", "db-hint", tr("dataView.loading"))); }
   let q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?page=" + d.tablesPage;
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
   if (d.schemaFilter) q += "&schema=" + encodeURIComponent(d.schemaFilter);
@@ -688,7 +691,7 @@ function renderDbTables()       {
   box.textContent = "";
   dbPaintSchemaOptions();
   if (!d.conn) {
-    box.appendChild(el("div", "db-hint", "Add a mysql or pg MCP, then browse it here."));
+    box.appendChild(el("div", "db-hint", tr("dataView.addMysqlPgMcpHint")));
     return;
   }
   if (dbIsRedis()) {
@@ -717,10 +720,13 @@ function renderDbTables()       {
     if (foot2) {
       foot2.textContent = "";
       const shown = rr ? rr.keys.length : 0;
-      foot2.appendChild(el("span", "", shown.toLocaleString() + (rr && rr.total != null ? " of " + Number(rr.total).toLocaleString() + " keys" : " keys")));
+      foot2.appendChild(el("span", "",
+        rr && rr.total != null
+          ? tr("dataView.keysShownOfTotal", { shown: shown.toLocaleString(), total: Number(rr.total).toLocaleString() })
+          : trn(shown, "dataView.nKeys.one", "dataView.nKeys.other", { n: shown.toLocaleString() })));
       if (rr && !rr.done) {
-        const more = el("button", "btn", "More");
-        more.title = "Continue the SCAN";
+        const more = el("button", "btn", tr("dataView.more"));
+        more.title = tr("dataView.continueScan");
         more.dataset.keysmore = "";
         foot2.appendChild(more);
       }
@@ -728,7 +734,7 @@ function renderDbTables()       {
     return;
   }
   if (!d.tables.length) {
-    box.appendChild(el("div", "db-hint", d.grep ? 'No tables match "' + d.grep + '".' : "No tables."));
+    box.appendChild(el("div", "db-hint", d.grep ? tr("dataView.noTablesMatchQ", { q: d.grep }) : tr("dataView.noTables")));
   }
   // docs/22 W1.1: a Postgres catalog is many schemas, so the page renders grouped — the docs/20
   // §4 container vocabulary (band header, mixed-case name, tnum count, indented body behind the
@@ -758,17 +764,19 @@ function renderDbTables()       {
   foot.textContent = "";
   const from = d.tablesTotal ? d.tablesPage * d.tablesLimit + 1 : 0;
   const to = d.tablesPage * d.tablesLimit + d.tables.length;
-  foot.appendChild(el("span", "", from.toLocaleString() + "–" + to.toLocaleString() + " of " + d.tablesTotal.toLocaleString()));
+  foot.appendChild(el("span", "", tr("dataView.tablesRangeOfTotal", {
+    from: from.toLocaleString(), to: to.toLocaleString(), total: d.tablesTotal.toLocaleString(),
+  })));
   // docs/37 R5: the pager rides the delegated click (dbChromeClick's [data-tpg]) — the
   // page counter it moves is read from dbView() at event time, not from this render.
   const prev = el("button", "btn icon")                     ;
   prev.appendChild(iconNode("chevron-left"));
-  prev.title = "Previous page of tables";
+  prev.title = tr("dataView.prevTablesPage");
   prev.disabled = d.tablesPage === 0;
   prev.dataset.tpg = "prev";
   const next = el("button", "btn icon")                     ;
   next.appendChild(iconNode("chevron-right"));
-  next.title = "Next page of tables";
+  next.title = tr("dataView.nextTablesPage");
   next.disabled = !d.more;
   next.dataset.tpg = "next";
   foot.appendChild(prev);
@@ -787,7 +795,7 @@ function dbTableRow(t               )              {
   b.dataset.tschema = t.schema || "";
   b.appendChild(el("div", "db-table-name", t.name));
   b.appendChild(el("div", "db-table-meta",
-    t.type + (t.approxRows != null ? " · ~" + Number(t.approxRows).toLocaleString() + " rows" : "") +
+    t.type + (t.approxRows != null ? " · " + tr("dataView.approxRows", { n: Number(t.approxRows).toLocaleString() }) : "") +
     (t.size ? " · " + t.size : "")));
   return b;
 }
@@ -812,7 +820,7 @@ function dbPaintSchemaOptions()       {
     // delegated change listener finds the select by id at event time.
     sel = el("select")                     ;
     sel.id = "dbSchema";
-    sel.setAttribute("aria-label", "Schema");
+    sel.setAttribute("aria-label", tr("dataView.schema"));
     const conn = $("dbConn");
     if (conn && conn.parentNode) conn.parentNode.insertBefore(sel, conn.nextSibling);
   }
@@ -825,7 +833,7 @@ function dbPaintSchemaOptions()       {
   if (current && !schemas.includes(current)) schemas.push(current);
   schemas.sort();
   sel.textContent = "";
-  const all = el("option", "", "All schemas")                     ;
+  const all = el("option", "", tr("dataView.allSchemas"))                     ;
   all.value = "";
   all.selected = current === "";
   sel.appendChild(all);

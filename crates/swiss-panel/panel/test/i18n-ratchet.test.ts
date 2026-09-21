@@ -85,7 +85,41 @@ function countBare(rel: string): number {
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const name = ts.isIdentifier(node.expression) ? node.expression.text : "";
-      if (name === "h") {
+      const member = ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
+        ? node.expression.name.text : "";
+      const memberOnWindow = ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression)
+        && node.expression.expression.text === "window";
+      if (name === "el") {
+        /* el(tag, cls, ...kids) - the util's plain-node twin of h(); kids from index 2 on
+         * are visible children exactly like h()'s. */
+        for (let i = 2; i < node.arguments.length; i++) {
+          const a = node.arguments[i];
+          if (a !== undefined && carriesBare(a)) n++;
+        }
+      } else if (name === "setAttribute" || member === "setAttribute") {
+        /* setAttribute("aria-label"/"title"/"placeholder", copy) - attribute sinks the
+         * property-write rule cannot see. */
+        const attr = node.arguments[0];
+        const sink = attr !== undefined && ts.isStringLiteral(attr)
+          && ["aria-label", "title", "placeholder"].includes(attr.text);
+        if (sink) {
+          const v = node.arguments[1];
+          if (v !== undefined && carriesBare(v)) n++;
+        }
+      } else if (name === "popupMenu") {
+        /* popupMenu(rect, items): each item's label/title/hint is visible menu copy. */
+        const items = node.arguments[1];
+        if (items !== undefined && ts.isArrayLiteralExpression(items)) {
+          for (const it of items.elements) {
+            if (ts.isObjectLiteralExpression(it)) {
+              for (const key of ["label", "title", "hint"]) {
+                const v = propValue(it, key);
+                if (v && carriesBare(v)) n++;
+              }
+            }
+          }
+        }
+      } else if (name === "h") {
         const tagArg = node.arguments[0];
         const tag = tagArg !== undefined && ts.isStringLiteral(tagArg) ? tagArg.text : "";
         const exempt = tag === "code" || tag === "kbd" || tag === "pre";
@@ -105,7 +139,10 @@ function countBare(rel: string): number {
             if (v && carriesBare(v)) n++;
           }
         }
-      } else if (name === "toast" || name === "confirm" || name === "prompt" || name === "say") {
+      } else if (name === "toast" || name === "confirm" || name === "prompt" || name === "say"
+        || (memberOnWindow && (member === "confirm" || member === "prompt"))) {
+        /* window.confirm/window.prompt are the same dialog sinks as the bare names - the
+         * member form was invisible to the identifier match above (found live in terminal). */
         const a = node.arguments[0];
         if (a !== undefined && carriesBare(a)) n++;
       } else if (name === "emptyNode") {
@@ -117,6 +154,12 @@ function countBare(rel: string): number {
           }
         }
       }
+    } else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && ts.isPropertyAccessExpression(node.left) && ts.isIdentifier(node.left.name)
+      && ["textContent", "innerText", "title", "placeholder"].includes(node.left.name.text)) {
+      /* Direct property writes are the third sink class (textContent = "Added " + x):
+       * .value stays out - form state, not copy. */
+      if (carriesBare(node.right)) n++;
     }
     ts.forEachChild(node, visit);
   };
@@ -124,11 +167,17 @@ function countBare(rel: string): number {
   return n;
 }
 
+/* The documented exemptions (docs/38 §2.2): the 文/A button's own title is the one
+ * panel string written in the TARGET language - on an English screen only 切换到中文
+ * tells a Chinese reader where to click. A count, not a line number, so refactors of
+ * paintLangBtn cannot silently invalidate it. */
+const EXEMPT: Record<string, number> = { "i18n.ts": 1 };
+
 describe("docs/38 L10b bare-literal gate (the ratchet closed at I10)", () => {
   it("every src file's bare-visible count is exactly zero", () => {
     const failures: string[] = [];
     for (const rel of srcFiles()) {
-      const actual = countBare(rel);
+      const actual = countBare(rel) - (EXEMPT[rel] ?? 0);
       if (actual !== 0) failures.push(rel + ": " + actual + " bare literal(s) - wrap them in tr()/trn() or add them to the scanner's documented exemptions");
     }
     expect(failures, "visible copy must live under tr() - the burn-down finished at I9, new copy starts wrapped").toEqual([]);

@@ -28,7 +28,7 @@ import { dbTypedConfirm } from "./data-edit.js";
 import { renderDbTables } from "./data-view.js";
 import { popupMenu } from "./menu.js";
 import { dbView } from "./db-state.js";
-import { tr, trn } from "./i18n.js";
+import { tk, tr, trn } from "./i18n.js";
 
 /* --- redis key browser -------------------------------------------------------------------------- */
 /* A redis connection in the picker swaps the table list for a SCAN-paged key list, and the
@@ -121,12 +121,28 @@ async function dbLoadRedisValue(key        )                {
    edits on an existing row, `ins` the cells a buffered insert carries, `thing` the word the
    add button and the refusals use. `deletable` is false only for list: redis has no command
    that removes one item by index without rewriting the tail, so the buffer offers nothing it
-   cannot honor (dbgate's list changeset stops at LSET/RPUSH for the same reason). */
+   cannot honor (dbgate's list changeset stops at LSET/RPUSH for the same reason).
+   `add` holds a tk()-marked key (docs/38 L7): the button paints it through tr() at render
+   time, so a language flip is honored — a module-eval tr() would freeze English.
+   `cols` and `thing` themselves stay WIRE words (cell addressing compares them), so their
+   display forms go through the tk()-marked label maps below at paint time. */
+/* Display labels for the wire vocabulary above (docs/38 L7 tk idiom): the th heads and the
+ * add-button's {thing} noun are copy; the underlying strings are cell keys, not copy. */
+const REDIS_COL_KEYS                         = {
+  field: tk("dataBrowsers.colField"), value: tk("dataBrowsers.colValue"),
+  member: tk("dataBrowsers.colMember"), score: tk("dataBrowsers.colScore"),
+  index: tk("dataBrowsers.colIndex"),
+};
+const REDIS_THING_KEYS                         = {
+  field: tk("dataBrowsers.thingField"), member: tk("dataBrowsers.thingMember"),
+  item: tk("dataBrowsers.thingItem"),
+};
+
 const DB_REDIS_TYPES                                 = {
-  hash: { cols: ["field", "value"], edit: ["value"], ins: ["field", "value"], thing: "field", deletable: true, add: "+ Field" },
-  zset: { cols: ["member", "score"], edit: ["score"], ins: ["member", "score"], thing: "member", deletable: true, add: "+ Member" },
-  list: { cols: ["index", "value"], edit: ["value"], ins: ["value"], thing: "item", deletable: false, add: "+ Row" },
-  set: { cols: ["member"], edit: [], ins: ["member"], thing: "member", deletable: true, add: "+ Member" },
+  hash: { cols: ["field", "value"], edit: ["value"], ins: ["field", "value"], thing: "field", deletable: true, add: tk("dataBrowsers.addField") },
+  zset: { cols: ["member", "score"], edit: ["score"], ins: ["member", "score"], thing: "member", deletable: true, add: tk("dataBrowsers.addMember") },
+  list: { cols: ["index", "value"], edit: ["value"], ins: ["value"], thing: "item", deletable: false, add: tk("dataGrid.row") },
+  set: { cols: ["member"], edit: [], ins: ["member"], thing: "member", deletable: true, add: tk("dataBrowsers.addMember") },
 };
 
 /** A zset score is a number or redis' own inf spellings — anything else refuses Commit
@@ -257,16 +273,16 @@ function dbRenderRedisValue(wrap             )       {
   const meta = el("div", "db-detail-meta");
   meta.appendChild(document.createTextNode(v.key + " · " + v.type + " · "));
   meta.appendChild(dbRedisTtl(v));
-  if (v.length != null) meta.appendChild(document.createTextNode(" · " + v.length + " entries"));
-  if (v.truncated) meta.appendChild(document.createTextNode(" · truncated"));
+  if (v.length != null) meta.appendChild(document.createTextNode(" · " + trn(v.length, "dataBrowsers.nEntries.one", "dataBrowsers.nEntries.other")));
+  if (v.truncated) meta.appendChild(document.createTextNode(" · " + tr("dataBrowsers.truncated")));
   meta.appendChild(el("span", "grow"));
   const cfg = DB_REDIS_TYPES[v.type];
   if (cfg) {
     // One add action per view; it buffers a row, never touches redis directly. data-radd —
     // the click resolves the live type config at event time (docs/37 R5).
     meta.appendChild(h("button", {
-      class: "btn", type: "button", title: tr("dataBrowsers.bufferNewThingApplied", { thing: cfg.thing }),
-    }, cfg.add));
+      class: "btn", type: "button", title: tr("dataBrowsers.bufferNewThingApplied", { thing: tr(REDIS_THING_KEYS[cfg.thing] ?? cfg.thing) }),
+    }, tr(cfg.add)));
   }
   // docs/22 W1.3: the key's own actions ride the value header. Rename takes a one-input
   // sheet, Delete is last and red and demands the key name typed back — the same confirm
@@ -288,7 +304,10 @@ function dbRenderRedisValue(wrap             )       {
   const pre = el("pre", "db-ddl");
   pre.style.position = "static";
   pre.style.margin = "var(--s2)";
-  pre.textContent = typeof v.value === "string" ? v.value : JSON.stringify(v.value, null, 2);
+  // The value is data, not copy; the whole conditional is hoisted to a const because the
+  // i18n gate's ternary scan counts the comparison literal in the condition as bare copy.
+  const valueText = typeof v.value === "string" ? v.value : JSON.stringify(v.value, null, 2);
+  pre.textContent = valueText;
   wrap.appendChild(pre);
 }
 
@@ -315,7 +334,7 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
   const hr = el("tr");
   hr.appendChild(el("th", "db-rowctl", ""));
   cfg.cols.forEach((c        )       => {
-    const th = el("th", "db-col", c);
+    const th = el("th", "db-col", tr(REDIS_COL_KEYS[c] ?? c));
     th.classList.add("db-rowctl"); // no sort affordance on a typed value table
     hr.appendChild(th);
   });
@@ -676,7 +695,7 @@ function dbRedisClick(t         , ev            )          {
     if (!v) return true;
     const input = el("input", "db-ttl-in")                    ;
     input.value = v.ttl  < 0 ? "" : String(v.ttl);
-    input.placeholder = "seconds";
+    input.placeholder = tr("dataBrowsers.seconds");
     btn.replaceWith(input);
     input.focus();
     input.select();

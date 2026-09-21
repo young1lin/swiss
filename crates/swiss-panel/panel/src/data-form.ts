@@ -88,8 +88,8 @@ function dbFormWrite(d: DbState, kind: string, key: string, i: number, column: s
  *  button was painted with. */
 function dbFormField(d: DbState, val: HTMLElement, f: DbFormField, ctx: { kind: "update" | "insert"; key: string | null; i: number; editable: boolean; pkAddr: Record<string, unknown> }): void {
   if (!ctx.editable) {
-    if (f.value === undefined) { val.appendChild(el("span", "db-fold", "default")); return; }
-    if (f.value === null) { val.appendChild(el("span", "db-null", "NULL")); return; }
+    if (f.value === undefined) { val.appendChild(el("span", "db-fold", tr("dataForm.phDefault"))); return; }
+    if (f.value === null) { val.appendChild(el("span", "db-null", tr("dataGrid.null"))); return; }
     val.appendChild(el("span", "db-form-text", dbCellText(f.value)!));
     return;
   }
@@ -128,19 +128,19 @@ function dbFormField(d: DbState, val: HTMLElement, f: DbFormField, ctx: { kind: 
 function renderDbFormView(wrap: HTMLElement): void {
   const d = dbView();
   if (!d.conn) {
-    wrap.appendChild(el("div", "db-hint", "No database MCP registered — add a mysql or pg MCP first."));
+    wrap.appendChild(el("div", "db-hint", tr("dataGrid.databaseMcpRegisteredAdd")));
     return;
   }
   if (!d.table || !d.data) {
     wrap.appendChild(el("div", "db-hint", d.table
-      ? "Loading " + d.table + "\u2026"
-      : "Select a table to see one record as a form."));
+      ? tr("dataBrowsers.loadingK", { k: d.table })
+      : tr("dataForm.selectTableRecordForm")));
     return;
   }
-  if (d.loading) { wrap.appendChild(el("div", "db-hint", "Loading\u2026")); return; }
+  if (d.loading) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.loading"))); return; }
   const nIns = d.inserts.length;
   const total = nIns + d.data?.rows.length;
-  if (!total) { wrap.appendChild(el("div", "db-hint", "No rows on this page.")); return; }
+  if (!total) { wrap.appendChild(el("div", "db-hint", tr("dataForm.noRowsPage"))); return; }
   const idx = Math.max(0, Math.min(total - 1, d.formIdx || 0));
   d.formIdx = idx;
 

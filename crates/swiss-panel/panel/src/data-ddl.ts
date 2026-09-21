@@ -344,7 +344,7 @@ function renderDbDdlRows(): void {
     cb.type = "checkbox";
     cb.checked = !!r.nullable;
     cb.dataset.i = String(i);
-    cb.setAttribute("aria-label", "Nullable");
+    cb.setAttribute("aria-label", tr("dataDdl.nullable"));
     if (!r.isNew) cb.disabled = true;
     cb.onchange = (e) => { r.nullable = (e.currentTarget as HTMLInputElement).checked; scheduleDbDdlPreview(); };
     tdn.appendChild(cb);
