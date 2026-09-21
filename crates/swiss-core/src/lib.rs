@@ -24,4 +24,5 @@ pub mod log;
 pub mod paths;
 pub mod platform;
 pub mod secure;
+pub mod utf8;
 pub mod util;
