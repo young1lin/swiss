@@ -26,7 +26,8 @@ import {
 import { SQL_TOKEN_RE, dbHighlightNodes, dbSqlPaint } from "./data-filters.js";
 import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { DB_HISTORY_KEY, DB_HISTORY_MAX, dbClearSel, dbDropEdits, dbPending, dbPkKey } from "./data-view.js";
-import { dbConn, dbTab } from "./db-state.js";
+import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
+import { dbLastTableTab, dbOpenTab, renderDbTabs } from "./data-tabs.js";
                                                  
 import { tr, trn } from "./i18n.js";
 
@@ -153,6 +154,10 @@ function renderDbBar()       {
   const d = dbTab();
   const bar = $("dbBar");
   if (!bar) return;
+  // The card's dirty dot counts exactly what this bar summarises (docs/42 T2), so the strip is
+  // repainted with it — and at the TOP, because the bar has several exits (a tab with nothing
+  // buffered hides it and returns early) and the dot must go when the count does.
+  renderDbTabs();
   const redis = dbIsRedis();
   // The redis bar owns the same slot (docs/22 W3.3): the typed value view buffers edits the
   // way the row grid does, and its Commit is ONE guarded pipeline instead of a transaction.
@@ -249,13 +254,13 @@ function dbApplyReadback(rows                                  , pkCols         
 }
 
 /** docs/22 W1.4 / W1.10: put a generated statement into the console — visible, editable, and
- *  in history once run, instead of hiding behind a one-off request. */
+ *  in history once run, instead of hiding behind a one-off request. docs/42 T2: the console is
+ *  an object, so this OPENS it (or activates the one already open) and then writes into it. */
 function dbFillConsole(sql        )       {
-  const d = dbConn();
-  d.sqlText = sql;
-  d.sqlOpen = true;
-  const con = $("dbConsole");
-  if (con) con.hidden = false;
+  dbOpenTab({ kind: "sql" });
+  const st = dbSqlTab();
+  if (!st) return; // the strip refused the open — the toast has already said why
+  st.sqlText = sql;
   const ta = $                     ("dbSql");
   if (ta) ta.value = sql;
   dbSqlPaint();
@@ -598,17 +603,23 @@ function dbResultTabLabel(stmt        , rowCount                           )    
 // fire — an early guard refusal (empty console) must not invalidate a run in flight.
 const dbRunReq = dbReqGuard();
 
-/* The console's row cap (docs/22 W5.3): the open table tab's page size when a table is
-   open, the fresh default otherwise. Transitional shape (docs/42 T1) — T2's sql tab owns
-   its own limit. */
+/* The console's row cap (docs/22 W5.3): the rows-per-page the operator picked on whatever
+   table tab they were last reading, or the fresh default when the strip holds no table at
+   all. It is a density preference, not one table's property — which is why the console keeps
+   honoring it now that it sits in a tab of its own (docs/42 T2). */
 function dbRunLimit()         {
-  const t = dbTab();
-  return t.kind === "table" ? t.pageSize : 50;
+  const t = dbLastTableTab();
+  return t ? t.pageSize : 50;
 }
 
 async function dbRunSql(explain                 )                { // falsy runs the statement(s); "plan"|"analyze" prefix EXPLAIN
-  const d = dbConn();
-  if (!d.conn) { toast(tr("dataSql.databaseConnection"), true); return; }
+  const c = dbConn();
+  // The console's text, its busy flag and its replies all live on the sql TAB (docs/42 T2):
+  // `d` below is that tab, so a run that outlives a tab switch writes where it came from and
+  // the request guard decides whether the pane repaints.
+  const d = dbSqlTab();
+  if (!d) return; // Run reached us with no console open — nothing to run
+  if (!c.conn) { toast(tr("dataSql.databaseConnection"), true); return; }
   // docs/22 W1.8: the run covers the block the caret is in — one block per run keeps the
   // single-statement guard honest on multi-part scripts.
   const ta = $                     ("dbSql");
@@ -621,7 +632,7 @@ async function dbRunSql(explain                 )                { // falsy runs
     d.sqlBusy = true;
     renderDbToolbar();
     renderDbGrid();
-    const cj = await apiJson                                                                                        ("/api/db/" + encodeURIComponent(d.conn ) + "/command", {
+    const cj = await apiJson                                                                                        ("/api/db/" + encodeURIComponent(c.conn ) + "/command", {
       method: "POST",
       body: JSON.stringify({ command: block }),
     });
@@ -659,7 +670,7 @@ async function dbRunSql(explain                 )                { // falsy runs
     // The plan view runs EXPLAIN (or EXPLAIN ANALYZE) on each statement; dbWithExplain is
     // idempotent, so a query that already explains itself is sent as-is.
     const toSend = explain ? dbWithExplain(stmts[si], explain) : stmts[si];
-    const j = await apiJson              ("/api/db/" + encodeURIComponent(d.conn ) + "/query", {
+    const j = await apiJson              ("/api/db/" + encodeURIComponent(c.conn ) + "/query", {
       method: "POST",
       // The row cap for a console query is the open table tab's page size — the operator's
       // chosen density — or the fresh default when no table tab is open (docs/42 T1).

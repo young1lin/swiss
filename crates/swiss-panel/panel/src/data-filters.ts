@@ -21,6 +21,9 @@ import type { HChild } from "./h.js";
 import { dbIsRedis, dbLoadKeys } from "./data-browsers.js";
 import { dbLoadData } from "./data-grid.js";
 import { dbDropEdits, dbOkToDrop } from "./data-view.js";
+// The strip reads this module's filter rows for the per-card count; the call crosses inside a
+// function, never at module scope, which is the accepted shape for every data-* edge.
+import { renderDbTabs } from "./data-tabs.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { locale, tk, tr } from "./i18n.js";
 
@@ -114,6 +117,10 @@ function renderDbFilters(): void {
   const box = $("dbFilters");
   if (!box) return;
   fill(box, dbFiltersNodes());
+  // The card carries this tab's filter COUNT (docs/42 T2), so the strip is repainted with the
+  // row it counts. Pairing it here is what keeps the two from drifting: every path that adds,
+  // edits or drops a term already ends in this render.
+  renderDbTabs();
 }
 
 /** The filter rows as nodes. Every control carries a data-fi/data-fk (or data-frm/data-fadd)

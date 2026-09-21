@@ -23,6 +23,10 @@ import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
+// The strip's policy module: DROP closes the tabs the dropped table owned. Same accepted cycle
+// shape as the rest of the data-* edges — the call crosses inside a function, never at module
+// scope.
+import { dbDropTableTabs } from "./data-tabs.js";
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
 import { dbConn, dbTab } from "./db-state.js";
@@ -123,14 +127,15 @@ async function dbRunDdl(op        , to         )                {
   if (!j) return;
   toast(tr("dataEdit.ran", { sql: j.ran }));
   if (op === "drop") {
-    // The table is gone: nothing of it may linger on the right pane. d.schema, the open
-    // result tabs and the view state (order, filters, focus) belong to the dropped table
-    // as much as d.data does, and the pane itself needs a repaint — renderDbTables
-    // refreshes only the LEFT list (docs/22 closeout audit).
-    d.table = null; d.schema = null; d.data = null; d.detail = null;
-    c.sqlResult = null; c.sqlResults = null; c.resultTab = 0; // docs/22 W4.3: every result tab closes
-    d.pane = "data"; d.order = null; d.dir = "asc"; d.filters = []; d.focus = null;
-    dbDropEdits();
+    // The table is gone, so every tab open on it goes with it — this one and any background
+    // tab holding the same table under a different filter. What is left is whatever else was
+    // open, or the strip's placeholder, whose empty state IS the repaint the right pane needs:
+    // renderDbTables refreshes only the LEFT list (docs/22 closeout audit, under docs/42 T2).
+    dbDropTableTabs(d.table, d.schema);
+    c.tablesPage = 0;
+    if (dbIsRedis()) void dbLoadKeys(true);
+    else void dbLoadTables();
+    return;
   }
   if (op === "rename" && to) { d.table = to; d.data = null; }
   if (op === "truncate") { dbDropEdits(); }

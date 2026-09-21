@@ -35,11 +35,12 @@ import type { DbActivityTab, DbConnState, DbKeyTab, DbSqlTab, DbTab, DbTabKind, 
    every other data-* module, so hosting the record there closes a cycle. This file
    imports types only.
 
-   T1 shape (docs/42 §3): the strip holds EXACTLY ONE tab and there is no open/close
-   entry yet — the tab's kind follows the connection's family (a redis connection browses
-   keys, everything else browses tables), replaced by data-view's connection-switch path.
-   The console (sqlOpen) and the activity flag stay connection-scoped here until T2 gives
-   them kinds of their own. */
+   T2 shape (docs/42 §4): the strip holds many tabs and an active index. What it never
+   holds is zero tabs — closing the last one leaves a PLACEHOLDER (a table tab with no
+   table, a key tab with no key), which is what a fresh mount starts from. The placeholder
+   keeps dbTab() total, so no reader needs a null branch, and data-tabs.ts keeps it off the
+   strip and out of the cap. The policy — open, close, activate, evict — lives there; this
+   file owns only the records and the stamps. */
 function freshConnState(): DbConnState {
   return {
     conns: [],            // rows from /api/db
@@ -54,13 +55,15 @@ function freshConnState(): DbConnState {
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
     redisError: false,  // the last /keys fetch FAILED (docs/22 closeout B1) — the list must say so, not "no keys"
-    sqlOpen: false, sqlText: "", sqlResult: null, sqlResults: null, resultTab: 0, sqlBusy: false,
-                         // ^ transitional (docs/42 T1): the console is still a toggle over
-                         //   the pane; T2 moves this block into the sql tab kind
-    activity: false,     // the Activity section page is open (docs/22 W3.2) — SQL connections only; T2 retires the flag
-    activityRows: null,  // last /activity answer, re-rendered by the 5s poll while open; T2 moves it into the activity tab kind
   };
 }
+
+/* The strip's LRU clock (docs/42 D3). Monotonic and view-lifetime scoped: a tab born or
+   activated later always outranks one born or activated earlier, which is the whole
+   question eviction asks. It is deliberately not a wall clock — Date.now() would make the
+   cap behave differently for a fast operator than a slow one, and two tabs opened in the
+   same millisecond would tie. */
+let tabClock = 0;
 
 /** A fresh tab of one kind, carrying ONLY that kind's fields (the T1 acceptance pins the
  *  shapes: a sql tab has no table field, a key tab no sqlText — the union stays honest
@@ -77,7 +80,7 @@ export function freshTab(kind: DbTabKind): DbTab {
   // discriminant to DbTabKind and the member object would not narrow to its arm.
   if (kind === "table") {
     return {
-      kind: "table", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false,
+      kind: "table", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
       table: null, schema: null,
       data: null,           // last /api/db/:name/data page
       filters: [],          // [{ column, op, value }] — server-side WHERE terms (AND-ed)
@@ -93,35 +96,61 @@ export function freshTab(kind: DbTabKind): DbTab {
     };
   }
   if (kind === "sql") {
-    return { kind: "sql", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false,
+    return { kind: "sql", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
       sqlText: "", sqlResult: null, sqlResults: null, resultTab: 0, sqlBusy: false };
   }
   if (kind === "key") {
-    return { kind: "key", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false,
+    return { kind: "key", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
       redisKey: null, redisValue: null, redisEdits: null };
   }
-  return { kind: "activity", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false,
+  return { kind: "activity", loading: false, sel: {}, selAnchor: -1, focus: null, sqlPreview: false, touched: ++tabClock,
     activityRows: null };
 }
 
 let connRec: DbConnState = freshConnState();
 let tabs: DbTab[] = [freshTab("table")];
+let activeIdx = 0;
 let mounted = false;
 
 /** The connection-scoped record: the sidebar's list, its filters, and what the console
  *  remembers. Shared by every open tab; reset when the connection changes. */
 export function dbConn(): DbConnState { return connRec; }
 
-/** The active tab's record. Never null: a fresh mount opens one empty table tab, so the
- *  view always has somewhere to paint. Narrow with `t.kind` before reading kind fields —
- *  the discriminant is the split's safety net. */
-export function dbTab(): DbTab { return tabs[0]; }
+/** The active tab's record. Never null: the strip always holds at least the placeholder,
+ *  so the view always has somewhere to paint. Narrow with `t.kind` before reading kind
+ *  fields — the discriminant is the split's safety net. */
+export function dbTab(): DbTab { return tabs[activeIdx]; }
 
-/** Every open tab, in strip order. The active one is `dbTabs()[dbActiveIndex()]`. */
+/** Every open tab, in strip order — the LIVE array, so data-tabs.ts opens and closes by
+ *  splicing it. The active one is `dbTabs()[dbActiveIndex()]`. */
 export function dbTabs(): DbTab[] { return tabs; }
 
 /** The active tab's index into dbTabs(). */
-export function dbActiveIndex(): number { return 0; }
+export function dbActiveIndex(): number { return activeIdx; }
+
+/** The sql tab the pane is showing, or null when the open object is not a console. The
+ *  question `dbConn().sqlResult` used to answer when the console overlaid the pane
+ *  (docs/42 T1) — every reader of a query reply asks it. */
+export function dbSqlTab(): DbSqlTab | null {
+  const t = tabs[activeIdx];
+  return t.kind === "sql" ? t : null;
+}
+
+/** Activate the i'th tab and stamp it as the most recently used. An index outside the
+ *  strip is clamped rather than trusted: a stale render's address must not leave the view
+ *  pointing at a tab that no longer exists. */
+export function dbSetActive(i: number): void {
+  activeIdx = Math.max(0, Math.min(tabs.length - 1, i | 0));
+  tabs[activeIdx].touched = ++tabClock;
+}
+
+/** Replace the whole strip — the connection switch, which leaves every open object behind
+ *  with the connection it belonged to. `tabs` is reassigned rather than emptied in place so
+ *  a render still holding the old array paints the old tabs instead of an empty strip. */
+export function dbResetTabs(next: DbTab[], idx: number): void {
+  tabs = next.length ? next : [freshTab("table")];
+  dbSetActive(idx);
+}
 
 /** Is the Data view mounted? The question the old `if (!state.db) return;` guards were really
  *  asking — an async continuation that crossed an unmount has nothing left to paint. */
@@ -135,5 +164,6 @@ export function mountDbView(): void { mounted = true; }
 export function unmountDbView(): void {
   connRec = freshConnState();
   tabs = [freshTab("table")];
+  activeIdx = 0;
   mounted = false;
 }

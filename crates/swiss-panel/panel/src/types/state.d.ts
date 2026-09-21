@@ -360,6 +360,10 @@ export interface DbTabBase {
   selAnchor: number;
   focus: { r: number; c: number } | null;
   sqlPreview: boolean;
+  /* The strip's least-recently-used clock (docs/42 D3): a monotonic stamp bumped when the
+     tab is created and every time it is activated. Eviction reads it and nothing else — a
+     wall clock would tie the cap to how fast the operator works. */
+  touched: number;
 }
 
 /** A table (or view) opened in the row grid: its page, its filters, its buffered edits,
@@ -415,15 +419,27 @@ export interface DbActivityTab extends DbTabBase {
 
 export type DbTab = DbTableTab | DbSqlTab | DbKeyTab | DbActivityTab;
 
+/** What a tab is opened FOR (docs/42 T2): the address `dbOpenTab` dedupes on before it
+ *  builds anything. A table's identity is schema+table+filters — the FK jump's filtered
+ *  view of a table is a different object than the same table unfiltered, which is exactly
+ *  why the jump opens a tab of its own instead of rewriting the one in front of the user
+ *  (docs/22 W5.2). `sql` and `activity` carry no address: there is one console and one
+ *  activity monitor per connection, so a second open activates the first. */
+export type DbTabSpec =
+  | { kind: "table"; table: string; schema: string | null; filters?: DbFilterTerm[] }
+  | { kind: "key"; key: string }
+  | { kind: "sql" }
+  | { kind: "activity" };
+
 /** The connection-scoped half of the old record: the sidebar's list state, the pickers,
  *  the grid geometry (per-connection by construction, docs/22 W2.1) and what the console
- *  remembers. Shared by every open tab; reset when the connection changes.
+ *  remembers ACROSS consoles — the query history and the favorites, which belong to the
+ *  connection, not to one scratchpad. Shared by every open tab; reset when the connection
+ *  changes.
  *
- *  The block after redisError is TRANSITIONAL (docs/42 T1): until T2 gives the console
- *  and the activity monitor tab kinds of their own, their state stays connection-scoped
- *  exactly where the single record held it — sqlOpen toggles the console over the pane
- *  and activity flags the section page. T2 retires both flags by moving the fields into
- *  DbSqlTab / DbActivityTab. */
+ *  T1's transitional block is gone (docs/42 T2): the console's text and replies live on
+ *  DbSqlTab and the activity rows on DbActivityTab, so `sqlOpen` and `activity: boolean`
+ *  have nothing left to flag — an open console IS an open tab. */
 export interface DbConnState {
   conns: ApiDbConnectionRow[];
   conn: string | null;
@@ -444,14 +460,5 @@ export interface DbConnState {
   redis: { keys: ApiDbRedisKeyRow[]; cursor: string; done: boolean; total: number } | null;
   redisType: string;
   redisError: boolean;
-  /* Transitional until docs/42 T2 (see the interface comment). */
-  sqlOpen: boolean;
-  sqlText: string;
-  sqlResult: DbQueryReply | null;
-  sqlResults: DbQueryReply[] | null;
-  resultTab: number;
-  sqlBusy: boolean;
-  activity: boolean;
-  activityRows: ApiDbActivityRow[] | null;
 }
 

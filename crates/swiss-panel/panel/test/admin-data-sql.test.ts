@@ -47,6 +47,9 @@ const doc = {
   documentElement: el(), body: el(), head: el(),
   hidden: false, visibilityState: "visible", activeElement: null,
   getElementById: (_id?: string) => el(), createElement: () => el(), createTextNode: () => el(),
+  // The sprite factory: renderDbBar repaints the object strip beside it (docs/42 T2), and
+  // every card carries an iconNode, which builds through the SVG namespace.
+  createElementNS: () => el(),
   createDocumentFragment: () => el(),
   querySelector: () => null, querySelectorAll: () => [],
   addEventListener: () => {}, removeEventListener: () => {},
@@ -86,7 +89,6 @@ const setTable = (over: Record<string, unknown> = {}) => {
   Object.assign(dbConn(), {
     conn: "mysql",
     conns: [{ name: "mysql", dialect: "mysql" }],
-    sqlOpen: false, sqlText: "", sqlResult: null, sqlResults: null, resultTab: 0, sqlBusy: false,
   });
   const t = dbTab();
   if (t.kind === "table") {

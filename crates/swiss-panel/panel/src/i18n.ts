@@ -228,7 +228,16 @@ function paintLangBtn(): void {
  *  back once its labels go through tr() — a static edge would close that cycle. */
 export async function toggleLang(): Promise<void> {
   const reg: typeof PageRegistry = await import("./page-registry.js");
-  if (reg.pageHasPendingChanges()) return;
+  if (reg.pageHasPendingChanges()) {
+    // The remount at the end of this function would drop those changes, so the flip refuses.
+    // It used to refuse in silence, which reads as a broken button: found live during the
+    // docs/42 T2 second-language pass, where one buffered cell edit on any Data tab made 文/A
+    // answer every click with nothing. util is imported here rather than at the top for the
+    // same reason page-registry is: a static edge would close a cycle back into this module.
+    const { toast } = await import("./util.js");
+    toast(tr("i18n.pendingBlocksSwitch"), true);
+    return;
+  }
   setLang(nextLang());
   await loadLocale();
   /* The zh download failed (loadLocale stayed on English): revert the preference so it

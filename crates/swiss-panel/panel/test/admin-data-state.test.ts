@@ -62,6 +62,7 @@ interface FakeNode {
   focus(): void;
   blur(): void;
   closest(): null;
+  contains(): boolean;
   querySelector(): FakeNode;
   querySelectorAll(): [];
 }
@@ -78,6 +79,8 @@ function node(): FakeNode {
     addEventListener() {}, removeEventListener() {},
     setAttribute() {}, getAttribute: () => null,
     focus() {}, blur() {}, closest: () => null,
+    // The strip asks this before a repaint, to decide whether the keyboard was standing on it.
+    contains: () => false,
     querySelector: () => node(), querySelectorAll: () => [],
   } as FakeNode;
   Object.setPrototypeOf(n, NodeStub.prototype);
@@ -219,13 +222,14 @@ describe("countText names the connection, not the page (docs/18 follow-up)", () 
 });
 
 /* docs/42 T1 — the split record's own contract. The old 49-field DbState mixed the
-   connection's half with the open object's; these pins hold the seam the split cut:
-   one tab on the strip (the length-1 transitional shape), the four kinds carrying only
-   their own fields, and unmount resetting BOTH records. */
+   connection's half with the open object's; these pins hold the seam the split cut: the
+   four kinds carrying only their own fields, and unmount resetting BOTH records. T2 hung
+   the strip off the same records, so the mount pin now reads as the placeholder invariant —
+   never zero tabs, so no renderer needs a null branch. */
 describe("the split record (docs/42 T1)", () => {
-  it("a fresh mount holds exactly one table tab — the strip's transitional shape", async () => {
+  it("a fresh mount holds exactly one table tab — the strip's placeholder", async () => {
     await view.mount();
-    expect(dbTabs().length, "the tab strip holds one tab in T1").toBe(1);
+    expect(dbTabs().length, "the strip is never empty").toBe(1);
     expect(dbActiveIndex()).toBe(0);
     expect(dbTab().kind).toBe("table");
   });
@@ -253,13 +257,18 @@ describe("the split record (docs/42 T1)", () => {
     expect("redisKey" in activity).toBe(false);
   });
 
-  it("every kind shares the base: loading, sel, selAnchor, focus, sqlPreview", () => {
+  it("every kind shares the base: loading, sel, selAnchor, focus, sqlPreview, touched", () => {
+    let last = 0;
     for (const t of [freshTab("table"), freshTab("sql"), freshTab("key"), freshTab("activity")]) {
       expect(t.loading).toBe(false);
       expect(t.sel).toEqual({});
       expect(t.selAnchor).toBe(-1);
       expect(t.focus).toBeNull();
       expect(t.sqlPreview).toBe(false);
+      // The LRU stamp (docs/42 D3) is set by the builder and only ever climbs — eviction reads
+      // it and nothing else, so a tab born later must always outrank one born earlier.
+      expect(t.touched).toBeGreaterThan(last);
+      last = t.touched;
     }
   });
 

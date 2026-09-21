@@ -24,7 +24,7 @@ import { dbOpenValueSheet } from "./data-value.js";
 import { dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
-import { dbConn, dbTab } from "./db-state.js";
+import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
@@ -286,18 +286,18 @@ function dbCellMenu(e            , row                                , key     
   }
   // docs/22 W1.5: filter-by-value straight off a cell. NULL cells show none of these (there is
   // no value to equal); the pushed filter lands in the standing filter row like a typed one.
-  if (!c.sqlResult && row && value !== null && value !== undefined) {
+  if (row && value !== null && value !== undefined) {
     item(tr("dataCsv.filterEqValue"), ()       => { dbPushCellFilter(column, "eq", value); });
     item(tr("dataCsv.filterNeValue"), ()       => { dbPushCellFilter(column, "ne", value); });
     item(tr("dataCsv.filterContains"), ()       => { dbPushCellFilter(column, "like", value); });
   }
-  // Checked-row copies live in the SAME menu — one right-click reaches every format.
-  if (!c.sqlResult) {
-    const hint = dbAppendSelItems(item, dbSelectedForCopy());
-    if (hint) menu.appendChild(hint);
-    item(tr("dataCsv.selectAllOnPage"), ()       => { dbSelAll(true); });
-    if (Object.keys(d.sel).length) item(tr("dataCsv.clearSelection"), ()       => { dbSelAll(false); });
-  }
+  // Checked-row copies live in the SAME menu — one right-click reaches every format. No
+  // sqlResult guard left (docs/42 T2): this is the TABLE grid's cell menu, and a query reply
+  // now paints in its own tab with dbResultCellMenu below — the two can no longer overlap.
+  const hint = dbAppendSelItems(item, dbSelectedForCopy());
+  if (hint) menu.appendChild(hint);
+  item(tr("dataCsv.selectAllOnPage"), ()       => { dbSelAll(true); });
+  if (Object.keys(d.sel).length) item(tr("dataCsv.clearSelection"), ()       => { dbSelAll(false); });
   if (full) {
     item(tr("dataCsv.copyRowAsJson"), ()       => { dbCopyText(JSON.stringify(full, null, 2)); });
     item(tr("dataCsv.copyRowAsCsv"), ()       => { dbCopyText(names.map((n        )         => { return dbCopyCsvCell(full?.[n]); }).join(",")); });
@@ -340,13 +340,14 @@ function dbCellMenu(e            , row                                , key     
    rows keep their original values. For a query-result grid the keys are dbResultKey(tab, index) —
    the ACTIVE tab's namespace (docs/22 W4.3), so a copy never crosses tabs. */
 function dbSelectedForCopy()                                                      {
-  const c = dbConn();
   const t = dbTab();
-  if (c.sqlResult) {
-    const tab = c.resultTab || 0;
+  const st = dbSqlTab();
+  if (st && st.sqlResult) {
+    const res = st.sqlResult;
+    const tab = st.resultTab || 0;
     const qrows                            = [];
-    c.sqlResult.rows.forEach((r                         , i        )       => { if (t.sel[dbResultKey(tab, i)]) qrows.push(r); });
-    return { cols: c.sqlResult.columns, rows: qrows };
+    res.rows.forEach((r                         , i        )       => { if (t.sel[dbResultKey(tab, i)]) qrows.push(r); });
+    return { cols: res.columns, rows: qrows };
   }
   if (t.kind !== "table") return { cols: [], rows: [] };
   const d = t;
@@ -397,11 +398,11 @@ function dbRowsJson(sel                                                     )   
 
 /** Tick or clear every row on screen (the header checkbox). Keys match dbSelectedForCopy. */
 function dbSelAll(on         )       {
-  const c = dbConn();
   const t = dbTab();
-  if (c.sqlResult) {
-    const tab = c.resultTab || 0;
-    c.sqlResult.rows.forEach((r                         , i        )       => {
+  const st = dbSqlTab();
+  if (st && st.sqlResult) {
+    const tab = st.resultTab || 0;
+    st.sqlResult.rows.forEach((r                         , i        )       => {
       const k = dbResultKey(tab, i);
       if (on) t.sel[k] = true; else delete t.sel[k];
     });
@@ -440,9 +441,9 @@ function dbAppendSelItems(item                                         , sel    
    The row's checkbox can also be toggled from here — right-click needs no mouse travel. */
 function dbResultCellMenu(e            , row                                , column        )       {
   e.preventDefault();
-  const c = dbConn();
   const d = dbTab();
-  const i = c.sqlResult ? c.sqlResult.rows.indexOf(row ) : -1;
+  const st = dbSqlTab();
+  const i = st && st.sqlResult ? st.sqlResult.rows.indexOf(row ) : -1;
   const menu = el("div", "ctx-menu");
   function item(label        , fn            )       {
     const b = el("button", "", label)                     ;
@@ -457,7 +458,7 @@ function dbResultCellMenu(e            , row                                , co
     item(tr("dataCsv.viewValue"), ()       => { dbOpenValueSheet(column, v, tr("dataCsv.sqlResult")); });
   }
   if (i >= 0) {
-    const rk = dbResultKey(c.resultTab || 0, i);
+    const rk = dbResultKey(st ? st.resultTab || 0 : 0, i);
     const on = !!d.sel[rk];
     item(on ? tr("dataCsv.uncheckThisRow") : tr("dataCsv.checkThisRow"), ()       => {
       if (on) delete d.sel[rk]; else d.sel[rk] = true;
@@ -487,12 +488,12 @@ function dbResultCellMenu(e            , row                                , co
 /* --- CSV export of whatever the grid is showing --------------------------------------------------- */
 
 function dbExportCsv()       {
-  const c = dbConn();
   const t = dbTab();
+  const st = dbSqlTab();
   let cols          , rows                           , name        ;
-  if (c.sqlResult) {
-    cols = c.sqlResult.columns;
-    rows = c.sqlResult.rows;
+  if (st && st.sqlResult) {
+    cols = st.sqlResult.columns;
+    rows = st.sqlResult.rows;
     name = "query.csv";
   } else if (t.kind === "table") {
     const d = t;
