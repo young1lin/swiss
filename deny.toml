@@ -25,7 +25,15 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+    # RUSTSEC-2023-0071, the Marvin attack on the `rsa` crate (timing side channel in RSA
+    # decryption/signing). Reaches swiss twice: sqlx-mysql (caching_sha2 password exchange
+    # encrypts the password with the server's public key - swiss holds no private key there)
+    # and russh (SSH key auth signs with the user's own key on the user's own machine). Both
+    # run on the loopback host against keys the same user already owns, and no upstream has a
+    # fixed release; rsa 0.10 is tracked and the ignore goes away with it.
+    { id = "RUSTSEC-2023-0071", reason = "no fixed release; both call sites act on the local user's own keys" },
+]
 
 [licenses]
 version = 2
@@ -51,6 +59,9 @@ allow = [
 confidence-threshold = 0.8
 
 [bans]
+# Workspace members reference each other by path with no version - that is the one
+# wildcard shape this tree has, and it is intended.
+allow-wildcard-paths = true
 # The build.yml duplicate check owns the "linked twice" gate for the heavy crates; here a
 # duplicate is a warning so a RustCrypto generation gap (russh vs aes-gcm) does not fail CI.
 multiple-versions = "warn"
