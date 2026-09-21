@@ -928,7 +928,12 @@ mod tests {
             )
             .await;
             assert!(!is_error(&out), "{}", text_of(&out));
-            let newest = services.runs.list().into_iter().next().expect("the run is listed");
+            let newest = services
+                .runs
+                .list()
+                .into_iter()
+                .next()
+                .expect("the run is listed");
             assert_eq!(newest.actor, want);
             assert_eq!(newest.to_json(false)["actor"], want);
         }

@@ -159,7 +159,9 @@ impl RunOutputTee for OutputFile {
             if let Some(mut file) = inner.file.take() {
                 let _ = file.flush();
             }
-            let ring = inner.overflow.get_or_insert_with(|| VecDeque::with_capacity(TAIL_BYTES));
+            let ring = inner
+                .overflow
+                .get_or_insert_with(|| VecDeque::with_capacity(TAIL_BYTES));
             ring.extend(rest.iter().copied());
             let excess = ring.len().saturating_sub(TAIL_BYTES);
             if excess > 0 {
@@ -184,6 +186,33 @@ impl OutputFile {
         });
         (inner.written, tail)
     }
+}
+
+/// What a page read asks for (docs/41 A3): the cursor and size the pane pages with,
+/// and the predicates the audit surface adds. `since` (inclusive) and `until`
+/// (exclusive) are epoch ms against the record's `endedAt`. The index is in finish
+/// order, so a line older than `since` ends the walk (finishes a few ms apart can
+/// land out of order - a boundary that fine is not one an audit turns on).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PageQuery<'a> {
+    pub before: Option<u64>,
+    pub limit: usize,
+    pub target: Option<&'a str>,
+    pub since: Option<u64>,
+    pub until: Option<u64>,
+    pub actor: Option<&'a str>,
+}
+
+/// An instant as a query string spells it: epoch ms, or ISO-8601.
+pub fn parse_instant(raw: &str) -> Option<u64> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if raw.bytes().all(|b| b.is_ascii_digit()) {
+        return raw.parse::<u64>().ok();
+    }
+    parse_iso_ms(raw).and_then(|ms| u64::try_from(ms).ok())
 }
 
 /// One bounded read of a recorded run's output file.
@@ -273,15 +302,39 @@ impl RunHistory {
         limit: usize,
         target: Option<&str>,
     ) -> (Vec<Value>, Option<u64>) {
+        self.query(PageQuery {
+            before,
+            limit,
+            target,
+            ..PageQuery::default()
+        })
+    }
+
+    /// [Self::page] with every predicate (docs/41 A3): the time window and the actor,
+    /// on top of the cursor and the target. Still one walk from the end, one page's
+    /// worth of records in memory.
+    pub fn query(&self, q: PageQuery<'_>) -> (Vec<Value>, Option<u64>) {
         self.enforce_budget();
-        let limit = limit.clamp(1, 100);
+        let limit = q.limit.clamp(1, 100);
         let mut records: Vec<Value> = Vec::with_capacity(limit + 1);
         self.walk_back(|v| {
             let id = v.get("runId").and_then(Value::as_u64).unwrap_or(0);
-            if before.is_some_and(|b| id >= b) {
+            if q.before.is_some_and(|b| id >= b) {
                 return true;
             }
-            if target.is_some_and(|t| record_target(&v) != Some(t)) {
+            let ended = record_ended_ms(&v);
+            if q.since.is_some_and(|s| ended < s) {
+                return false; // older than the window: so is everything before it
+            }
+            if q.until.is_some_and(|u| ended >= u) {
+                return true;
+            }
+            if q.target.is_some_and(|t| record_target(&v) != Some(t)) {
+                return true;
+            }
+            if q.actor
+                .is_some_and(|a| v.get("actor").and_then(Value::as_str) != Some(a))
+            {
                 return true;
             }
             records.push(v);
@@ -292,7 +345,8 @@ impl RunHistory {
         let next_before = if records.is_empty() {
             None
         } else {
-            page.last().and_then(|v| v.get("runId").and_then(Value::as_u64))
+            page.last()
+                .and_then(|v| v.get("runId").and_then(Value::as_u64))
         };
         (page, next_before)
     }
@@ -431,8 +485,8 @@ impl RunHistory {
         let aged = ledger
             .oldest_ended_ms
             .is_some_and(|oldest| now.saturating_sub(oldest) > self.limits.max_age_ms);
-        let over = ledger.total_bytes > self.limits.max_total_bytes
-            || ledger.runs > self.limits.max_runs;
+        let over =
+            ledger.total_bytes > self.limits.max_total_bytes || ledger.runs > self.limits.max_runs;
         if !aged && !over {
             return;
         }
@@ -464,7 +518,10 @@ impl RunHistory {
                 let bytes = line.len() as u64 + 1;
                 if let Some(f) = LineFacts::parse(&line) {
                     total += bytes + f.output_bytes;
-                    lines.push(LineFacts { line_bytes: bytes, ..f });
+                    lines.push(LineFacts {
+                        line_bytes: bytes,
+                        ..f
+                    });
                 } else {
                     total += bytes; // a torn line is dropped by the rewrite below
                 }
@@ -514,7 +571,10 @@ impl RunHistory {
         });
         if dropped.is_empty() && stripped.is_empty() {
             drop(_guard);
-            self.ledger.lock().unwrap_or_else(|e| e.into_inner()).hold_until_ms = hold_until;
+            self.ledger
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .hold_until_ms = hold_until;
             return;
         }
         // Rewrite: keep every well-formed line not in the dropped set; a stripped line is
@@ -661,13 +721,11 @@ impl LineFacts {
     fn parse(line: &[u8]) -> Option<Self> {
         let v = parse_line(line)?;
         let run_id = v.get("runId")?.as_u64()?;
-        let ended_ms = v
-            .get("endedAt")
-            .and_then(Value::as_str)
-            .and_then(parse_iso_ms)
-            .and_then(|ms| u64::try_from(ms).ok())
-            .unwrap_or(0);
-        let evicted = v.get("outputEvicted").and_then(Value::as_bool).unwrap_or(false);
+        let ended_ms = record_ended_ms(&v);
+        let evicted = v
+            .get("outputEvicted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let output_bytes = if evicted {
             0
         } else {
@@ -688,6 +746,16 @@ fn parse_line(line: &[u8]) -> Option<Value> {
         return None;
     }
     serde_json::from_str::<Value>(text).ok()
+}
+
+/// When a record ended, epoch ms; a line without the field reads as the beginning of
+/// time (the age budget treats it the same way).
+fn record_ended_ms(v: &Value) -> u64 {
+    v.get("endedAt")
+        .and_then(Value::as_str)
+        .and_then(parse_iso_ms)
+        .and_then(|ms| u64::try_from(ms).ok())
+        .unwrap_or(0)
 }
 
 /// The target a record ran against: the outcome's meta first (what actually resolved),
@@ -727,10 +795,8 @@ mod tests {
     use swiss_host::services::runs::RunState;
 
     fn scratch() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "swiss-rhist-{}",
-            swiss_core::util::random_hex(8)
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("swiss-rhist-{}", swiss_core::util::random_hex(8)));
         std::fs::create_dir_all(&dir).expect("scratch");
         dir
     }
@@ -775,8 +841,13 @@ mod tests {
 
     /// One whole run through the sink: begin, stream, finish.
     fn run(history: &RunHistory, run_id: u64, output: &[u8], ended_at_ms: u64) {
-        let req = request("remote.exec", json!({ "target": "build", "argv": ["make"] }));
-        let tee = history.begin(run_id, &req).expect("a remote run is recorded");
+        let req = request(
+            "remote.exec",
+            json!({ "target": "build", "argv": ["make"] }),
+        );
+        let tee = history
+            .begin(run_id, &req)
+            .expect("a remote run is recorded");
         if !output.is_empty() {
             tee.write(output);
         }
@@ -802,12 +873,18 @@ mod tests {
         let row = &page[0];
         assert_eq!(row["runId"], 7);
         assert_eq!(row["state"], "succeeded");
-        assert_eq!(row["actor"], "test", "who ran it is on the line (docs/41 A1)");
+        assert_eq!(
+            row["actor"], "test",
+            "who ran it is on the line (docs/41 A1)"
+        );
         assert_eq!(row["outputBytes"], 18);
         assert_eq!(row["meta"]["target"], "build");
         assert_eq!(row["input"]["argv"], json!(["make", "-j8"]));
         assert_eq!(row["input"]["envKeys"], json!(["TOKEN"]));
-        assert!(row["input"].get("env").is_none(), "values never land on disk");
+        assert!(
+            row["input"].get("env").is_none(),
+            "values never land on disk"
+        );
         let raw = std::fs::read_to_string(dir.join(INDEX_FILE)).unwrap();
         assert!(!raw.contains("s3cret"), "{raw}");
 
@@ -957,15 +1034,25 @@ mod tests {
         }
         let (page, _) = history.page(None, 20, None);
         let ids: Vec<u64> = page.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
-        assert_eq!(ids, vec![6, 5, 4, 3, 2, 1], "no line inside the window is dropped");
+        assert_eq!(
+            ids,
+            vec![6, 5, 4, 3, 2, 1],
+            "no line inside the window is dropped"
+        );
         let evicted: Vec<u64> = page
             .iter()
             .filter(|v| v["outputEvicted"] == true)
             .map(|v| v["runId"].as_u64().unwrap())
             .collect();
         assert!(!evicted.is_empty(), "the byte budget had to take something");
-        assert!(evicted.contains(&1), "the oldest output goes first: {evicted:?}");
-        assert!(!evicted.contains(&6), "the newest keeps its file: {evicted:?}");
+        assert!(
+            evicted.contains(&1),
+            "the oldest output goes first: {evicted:?}"
+        );
+        assert!(
+            !evicted.contains(&6),
+            "the newest keeps its file: {evicted:?}"
+        );
         // The oldest evicted, the newest kept: no gap in the middle.
         let newest_evicted = *evicted.iter().max().unwrap();
         for id in 1..=6u64 {
@@ -1012,9 +1099,15 @@ mod tests {
         let (page, _) = history.page(None, 20, None);
         let ids: Vec<u64> = page.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
         assert!(!ids.contains(&1), "{ids:?}");
-        assert!(ids.contains(&6) && ids.contains(&5) && ids.contains(&4), "{ids:?}");
+        assert!(
+            ids.contains(&6) && ids.contains(&5) && ids.contains(&4),
+            "{ids:?}"
+        );
         for id in 4..=6u64 {
-            assert!(dir.join(OUT_DIR).join(format!("{id}.txt")).exists(), "run {id}");
+            assert!(
+                dir.join(OUT_DIR).join(format!("{id}.txt")).exists(),
+                "run {id}"
+            );
             assert!(history.get(id).unwrap().get("outputEvicted").is_none());
         }
         assert!(history.usage().0 <= 3_000);
@@ -1045,24 +1138,38 @@ mod tests {
         let hold = history.ledger.lock().unwrap().hold_until_ms;
         assert!(hold.is_some_and(|until| until > now_ms()), "{hold:?}");
         let before = index_bytes(&dir);
-        let mtime = std::fs::metadata(dir.join(INDEX_FILE)).unwrap().modified().unwrap();
+        let mtime = std::fs::metadata(dir.join(INDEX_FILE))
+            .unwrap()
+            .modified()
+            .unwrap();
         for _ in 0..3 {
             history.page(None, 20, None);
         }
         assert_eq!(index_bytes(&dir), before);
         assert_eq!(
-            std::fs::metadata(dir.join(INDEX_FILE)).unwrap().modified().unwrap(),
+            std::fs::metadata(dir.join(INDEX_FILE))
+                .unwrap()
+                .modified()
+                .unwrap(),
             mtime,
             "no rewrite while the hold stands"
         );
         // Two old runs behind them: those go, the five stay, the cap is still over.
         run(&history, 6, b"old\n", base - 8 * DAY);
         run(&history, 7, b"old\n", base - 8 * DAY + 1);
-        assert_eq!(history.usage().1, 7, "the hold stands: the appends did not rewrite");
+        assert_eq!(
+            history.usage().1,
+            7,
+            "the hold stands: the appends did not rewrite"
+        );
         history.ledger.lock().unwrap().hold_until_ms = None; // the window moved on
         let (page, _) = history.page(None, 20, None);
         let ids: Vec<u64> = page.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
-        assert_eq!(ids, vec![5, 4, 3, 2, 1], "the old two went, the window stayed");
+        assert_eq!(
+            ids,
+            vec![5, 4, 3, 2, 1],
+            "the old two went, the window stayed"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1087,14 +1194,21 @@ mod tests {
         assert!(!dir.join(OUT_DIR).join("1.txt").exists());
         assert!(!dir.join(OUT_DIR).join("2.txt").exists());
         run(&history, 3, b"three\n", base + 3);
-        assert!(!dir.join(OUT_DIR).join("3.txt").exists(), "the new file went too");
+        assert!(
+            !dir.join(OUT_DIR).join("3.txt").exists(),
+            "the new file went too"
+        );
         assert_eq!(history.get(3).unwrap()["outputEvicted"], true);
         assert_eq!(history.usage().1, 3, "and every line is still there");
         // A silent run adds nothing a pass could take: the hold stands, no rewrite.
         let before = index_bytes(&dir);
         run(&history, 4, b"", base + 4);
         let after = index_bytes(&dir);
-        assert!(after.starts_with(&before), "append only: {}", String::from_utf8_lossy(&after));
+        assert!(
+            after.starts_with(&before),
+            "append only: {}",
+            String::from_utf8_lossy(&after)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1133,7 +1247,10 @@ mod tests {
         assert_eq!(ids, vec![7, 6, 5]);
         assert_eq!(next, Some(5));
         let (second, next) = history.page(next, 3, None);
-        let ids: Vec<u64> = second.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
+        let ids: Vec<u64> = second
+            .iter()
+            .map(|v| v["runId"].as_u64().unwrap())
+            .collect();
         assert_eq!(ids, vec![4, 3, 2]);
         assert_eq!(next, Some(2));
         let (third, next) = history.page(next, 3, None);
@@ -1144,6 +1261,109 @@ mod tests {
         let ids: Vec<u64> = odd.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
         assert_eq!(ids, vec![7, 5, 3, 1]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_query_narrows_by_window_and_actor_and_stops_walking_at_since() {
+        // Seven runs a minute apart, actors alternating: the window picks the middle,
+        // the actor picks its half, and the two compose. `since` ends the walk rather
+        // than filtering it, so the page below the window costs nothing.
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        let base = now_ms() - 10 * 60_000;
+        for id in 1..=7u64 {
+            let req = request("remote.exec", json!({ "target": "build" }));
+            let tee = history.begin(id, &req).unwrap();
+            tee.write(b"x");
+            let mut v = view(id, base + id * 60_000);
+            v.actor = if id % 2 == 0 {
+                "mcp:claude".into()
+            } else {
+                "cli:jdoe@box".into()
+            };
+            history.finish(&v, &req);
+        }
+        let ids = |page: &[Value]| -> Vec<u64> {
+            page.iter().map(|v| v["runId"].as_u64().unwrap()).collect()
+        };
+        let q = PageQuery {
+            limit: 20,
+            ..PageQuery::default()
+        };
+        // since inclusive, until exclusive, both against endedAt.
+        let (page, next) = history.query(PageQuery {
+            since: Some(base + 3 * 60_000),
+            until: Some(base + 6 * 60_000),
+            ..q
+        });
+        assert_eq!(ids(&page), vec![5, 4, 3]);
+        assert!(next.is_none());
+        let (page, _) = history.query(PageQuery {
+            actor: Some("mcp:claude"),
+            ..q
+        });
+        assert_eq!(ids(&page), vec![6, 4, 2]);
+        let (page, _) = history.query(PageQuery {
+            since: Some(base + 3 * 60_000),
+            actor: Some("cli:jdoe@box"),
+            ..q
+        });
+        assert_eq!(ids(&page), vec![7, 5, 3]);
+        // The cursor still pages inside a window.
+        let (page, next) = history.query(PageQuery {
+            since: Some(base + 2 * 60_000),
+            limit: 2,
+            ..q
+        });
+        assert_eq!(ids(&page), vec![7, 6]);
+        assert_eq!(next, Some(6));
+        let (page, next) = history.query(PageQuery {
+            since: Some(base + 2 * 60_000),
+            limit: 2,
+            before: next,
+            ..q
+        });
+        assert_eq!(ids(&page), vec![5, 4]);
+        assert_eq!(next, Some(4));
+        let (page, next) = history.query(PageQuery {
+            since: Some(base + 2 * 60_000),
+            limit: 2,
+            before: next,
+            ..q
+        });
+        assert_eq!(ids(&page), vec![3, 2]);
+        assert!(
+            next.is_none(),
+            "the walk stopped at since: nothing older is offered"
+        );
+        // A window with nothing in it is an empty page, not an error.
+        let (page, _) = history.query(PageQuery {
+            until: Some(base),
+            ..q
+        });
+        assert!(page.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn instants_parse_as_epoch_ms_or_iso() {
+        assert_eq!(parse_instant("1700000000000"), Some(1_700_000_000_000));
+        assert_eq!(parse_instant(" 1700000000000 "), Some(1_700_000_000_000));
+        assert_eq!(
+            parse_instant("2023-11-14T22:13:20Z"),
+            Some(1_700_000_000_000)
+        );
+        assert_eq!(
+            parse_instant("2023-11-14T22:13:20.000Z"),
+            Some(1_700_000_000_000)
+        );
+        assert_eq!(parse_instant(""), None);
+        assert_eq!(
+            parse_instant("7d"),
+            None,
+            "relative spellings are the CLI's, not the API's"
+        );
+        assert_eq!(parse_instant("yesterday"), None);
     }
 
     #[test]

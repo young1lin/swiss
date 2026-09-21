@@ -60,6 +60,11 @@ pub struct RemoteArgs {
     pub follow: bool,
     pub verbose: bool,
     pub json: bool,
+    /// `swiss run audit` (docs/41 A3): the window, the actor, and where to copy it.
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub actor: Option<String>,
+    pub export: Option<String>,
     pub bad_port: bool,
     pub unknown: Vec<String>,
 }
@@ -122,6 +127,10 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
                 }
             }
             "--timeout" => a.timeout = Some(value(argv, &mut i, &inline)),
+            "--since" => a.since = Some(value(argv, &mut i, &inline)),
+            "--until" => a.until = Some(value(argv, &mut i, &inline)),
+            "--actor" => a.actor = Some(value(argv, &mut i, &inline)),
+            "--export" => a.export = Some(value(argv, &mut i, &inline)),
             "--detach" => a.detach = true,
             "--follow" | "-f" => a.follow = true,
             "--verbose" => a.verbose = true,
@@ -148,6 +157,56 @@ pub fn parse_duration(raw: &str) -> Option<u64> {
     let n: u64 = digits.parse().ok()?;
     Some(n.saturating_mul(mul))
 }
+/// An instant the way `--since` / `--until` are written: a span back from now
+/// ("7d", "36h", "90m", "30s"), an ISO-8601 instant, or epoch milliseconds. Answers
+/// epoch ms, which is what the API takes.
+pub fn parse_instant(raw: &str, now_ms: u64) -> Option<u64> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(days) = raw.strip_suffix('d') {
+        let n: u64 = days.parse().ok()?;
+        return Some(now_ms.saturating_sub(n.saturating_mul(24 * 60 * 60 * 1000)));
+    }
+    if raw.ends_with(['h', 'm', 's']) {
+        return Some(now_ms.saturating_sub(parse_duration(raw)?));
+    }
+    if raw.bytes().all(|b| b.is_ascii_digit()) {
+        return raw.parse().ok();
+    }
+    swiss_core::util::parse_iso_ms(raw).and_then(|ms| u64::try_from(ms).ok())
+}
+
+/// One argv word as a POSIX shell would need it typed: bare when it is plain, in
+/// single quotes otherwise (a quote inside becomes '\''). The audit line shows the
+/// command the way it could be run again, not the way JSON spells it.
+pub fn shell_word(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./=:@%+,".contains(c));
+    if plain {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
+}
+
+/// A query-string value: everything but the unreserved set percent-encoded, so an
+/// actor like `cli:jdoe@box` or a target with a space survives the trip.
+pub fn query_encode(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for b in raw.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// One gateway client: base URL plus the bearer token the admin API wants.
 struct Gateway {
     client: reqwest::Client,
@@ -291,6 +350,12 @@ pub fn usage_text() -> String {
     }
     s.push_str(
         "  run status <id> | run logs <id> [-f] | run cancel <id>              the run surface\n",
+    );
+    s.push_str(
+        "  run audit [--since 7d|ISO] [--until ISO] [--target t] [--actor a] [--json] [--export DIR]\n",
+    );
+    s.push_str(
+        "                                                                         who ran what, where, with what result - the last 7 days by default\n",
     );
     s.push_str(
         "\nEverything after a bare -- is ARGV for the far side, passed through untouched.\n",
@@ -658,7 +723,8 @@ async fn submit_and_stream(
     timeout_ms: Option<u64>,
     a: &RemoteArgs,
 ) -> i32 {
-    let mut body = json!({ "action": action, "input": input, "label": label, "actor": cli_actor() });
+    let mut body =
+        json!({ "action": action, "input": input, "label": label, "actor": cli_actor() });
     if let Some(ms) = timeout_ms {
         body["timeoutMs"] = json!(ms);
     }
@@ -988,11 +1054,279 @@ pub async fn run_main(argv: Vec<String>) -> i32 {
                 a.json,
             )
         }
+        "audit" => cmd_audit(&gw, &a).await,
         other => {
-            eprintln!("unknown run subcommand: {other} (status, logs, cancel)");
+            eprintln!("unknown run subcommand: {other} (status, logs, cancel, audit)");
             1
         }
     }
+}
+
+// --- `swiss run audit`: the last seven days, one line a run (docs/41 A3) ------------------
+
+/// The record's rows inside the window, newest first, every page of them - the API
+/// stops walking at `since`, so this ends where the window does.
+async fn audit_rows(
+    gw: &Gateway,
+    a: &RemoteArgs,
+    since: u64,
+    until: Option<u64>,
+) -> Result<Vec<Value>, String> {
+    let mut rows = Vec::new();
+    let mut before: Option<u64> = None;
+    loop {
+        let mut path = format!("/api/remote/runs?limit=100&since={since}");
+        if let Some(until) = until {
+            path.push_str(&format!("&until={until}"));
+        }
+        if let Some(target) = a.target.as_deref().filter(|t| !t.is_empty()) {
+            path.push_str(&format!("&target={}", query_encode(target)));
+        }
+        if let Some(actor) = a.actor.as_deref().filter(|x| !x.is_empty()) {
+            path.push_str(&format!("&actor={}", query_encode(actor)));
+        }
+        if let Some(b) = before {
+            path.push_str(&format!("&before={b}"));
+        }
+        let page = gw.get(&path).await?;
+        if let Some(runs) = page["runs"].as_array() {
+            rows.extend(runs.iter().cloned());
+        }
+        match page["nextBefore"].as_u64() {
+            Some(next) => before = Some(next),
+            None => break,
+        }
+    }
+    Ok(rows)
+}
+
+/// What ran, the way it could be typed again: the argv shell-quoted for an exec, the
+/// shape for the file actions.
+pub fn audit_command(row: &Value) -> String {
+    let input = &row["input"];
+    let kind = row["action"]
+        .as_str()
+        .unwrap_or("")
+        .trim_start_matches("remote.");
+    let field = |k: &str| input[k].as_str().unwrap_or("");
+    match kind {
+        "exec" => input["argv"]
+            .as_array()
+            .map(|argv| {
+                argv.iter()
+                    .filter_map(Value::as_str)
+                    .map(shell_word)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default(),
+        "sync" => {
+            let mut s = format!(
+                "sync {}",
+                shell_word(if field("source").is_empty() {
+                    "."
+                } else {
+                    field("source")
+                })
+            );
+            if !field("to").is_empty() {
+                s.push_str(&format!(" -> {}", shell_word(field("to"))));
+            }
+            s
+        }
+        "pull" => {
+            let mut s = format!("pull {}", shell_word(field("remote")));
+            if !field("to").is_empty() {
+                s.push_str(&format!(" -> {}", shell_word(field("to"))));
+            }
+            s
+        }
+        "cat" | "write" => format!("{kind} {}", shell_word(field("remote"))),
+        other => row["label"].as_str().unwrap_or(other).to_string(),
+    }
+}
+
+/// How the run ended, in a word or two.
+pub fn audit_outcome(row: &Value) -> String {
+    match row["state"].as_str().unwrap_or("") {
+        "succeeded" => "exit 0".to_string(),
+        "canceled" => "canceled".to_string(),
+        "timeout" => "timeout".to_string(),
+        _ => match row["exitCode"].as_i64() {
+            Some(code) => format!("exit {code}"),
+            None => match row["error"].as_str() {
+                Some(err) => format!("error: {}", err.lines().next().unwrap_or("")),
+                None => row["state"].as_str().unwrap_or("?").to_string(),
+            },
+        },
+    }
+}
+
+fn audit_duration(row: &Value) -> String {
+    match row["ms"].as_u64() {
+        Some(ms) if ms >= 60_000 => format!("{}m{:02}s", ms / 60_000, (ms % 60_000) / 1000),
+        Some(ms) if ms >= 10_000 => format!("{}s", ms / 1000),
+        Some(ms) => format!("{:.1}s", ms as f64 / 1000.0),
+        None => "-".to_string(),
+    }
+}
+
+fn audit_bytes(row: &Value) -> String {
+    let n = row["outputBytes"].as_u64().unwrap_or(0);
+    let s = if n >= 1024 * 1024 {
+        format!("{:.1}M", n as f64 / (1024.0 * 1024.0))
+    } else if n >= 1024 {
+        format!("{:.1}K", n as f64 / 1024.0)
+    } else {
+        format!("{n}B")
+    };
+    if row["outputEvicted"].as_bool().unwrap_or(false) {
+        format!("{s}*")
+    } else {
+        s
+    }
+}
+
+/// One row as the audit prints it: when, who, where, what, how it ended, how long,
+/// how much, and the id to `swiss run status` / the panel.
+pub fn audit_line(row: &Value) -> String {
+    let when = row["endedAt"]
+        .as_str()
+        .or(row["startedAt"].as_str())
+        .unwrap_or("?");
+    let when = when.get(..19).unwrap_or(when); // to the second; the record keeps the ms
+    let target = row["meta"]["target"]
+        .as_str()
+        .or(row["input"]["target"].as_str())
+        .unwrap_or("-");
+    format!(
+        "{when:<19}  {:<24} {:<14} {:<7} {:<40} {:<10} {:>7} {:>8}  #{}",
+        row["actor"].as_str().unwrap_or("-"),
+        target,
+        row["action"]
+            .as_str()
+            .unwrap_or("")
+            .trim_start_matches("remote."),
+        audit_command(row),
+        audit_outcome(row),
+        audit_duration(row),
+        audit_bytes(row),
+        row["runId"].as_u64().unwrap_or(0),
+    )
+}
+
+/// Copy the window out: `<dir>/runs.jsonl` (the rows, one a line, as the record has
+/// them) and `<dir>/out/<id>.txt` for every run whose output is still on disk. The
+/// material a person hands to whoever asked "what happened on Tuesday".
+async fn audit_export(
+    gw: &Gateway,
+    rows: &[Value],
+    dir: &std::path::Path,
+) -> Result<(usize, usize), String> {
+    use std::io::Write as _;
+    let out_dir = dir.join("out");
+    std::fs::create_dir_all(&out_dir)
+        .map_err(|e| format!("cannot create {}: {e}", out_dir.display()))?;
+    let index = dir.join("runs.jsonl");
+    let mut file = std::fs::File::create(&index)
+        .map_err(|e| format!("cannot write {}: {e}", index.display()))?;
+    let mut files = 0usize;
+    for row in rows {
+        let mut line = serde_json::to_string(row).unwrap_or_default();
+        line.push('\n');
+        file.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+        let id = row["runId"].as_u64().unwrap_or(0);
+        let evicted = row["outputEvicted"].as_bool().unwrap_or(false);
+        if row["outputBytes"].as_u64().unwrap_or(0) == 0 || evicted {
+            continue;
+        }
+        let path = out_dir.join(format!("{id}.txt"));
+        let mut out = std::fs::File::create(&path)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        let mut cursor: u64 = 0;
+        loop {
+            let chunk = gw
+                .get(&format!(
+                    "/api/remote/runs/{id}/output?after={cursor}&max=131072"
+                ))
+                .await?;
+            out.write_all(chunk["output"].as_str().unwrap_or("").as_bytes())
+                .map_err(|e| e.to_string())?;
+            let next = chunk["nextCursor"].as_u64().unwrap_or(cursor);
+            let total = chunk["total"].as_u64().unwrap_or(0);
+            if next <= cursor || next >= total {
+                break;
+            }
+            cursor = next;
+        }
+        files += 1;
+    }
+    Ok((rows.len(), files))
+}
+
+async fn cmd_audit(gw: &Gateway, a: &RemoteArgs) -> i32 {
+    let now = swiss_core::util::now_ms();
+    let since = match a.since.as_deref() {
+        None => now.saturating_sub(7 * 24 * 60 * 60 * 1000),
+        Some(raw) => match parse_instant(raw, now) {
+            Some(ms) => ms,
+            None => {
+                eprintln!("--since takes 7d / 36h / 90m, an ISO-8601 instant, or epoch milliseconds - not {raw:?}");
+                return 1;
+            }
+        },
+    };
+    let until = match a.until.as_deref() {
+        None => None,
+        Some(raw) => match parse_instant(raw, now) {
+            Some(ms) => Some(ms),
+            None => {
+                eprintln!("--until takes an ISO-8601 instant, epoch milliseconds, or 2d / 12h back from now - not {raw:?}");
+                return 1;
+            }
+        },
+    };
+    let rows = match audit_rows(gw, a, since, until).await {
+        Ok(rows) => rows,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    if a.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&Value::Array(rows.clone())).unwrap_or_default()
+        );
+    } else if rows.is_empty() {
+        println!("no remote runs recorded in the window");
+    } else {
+        for row in &rows {
+            println!("{}", audit_line(row));
+        }
+        if rows
+            .iter()
+            .any(|r| r["outputEvicted"].as_bool().unwrap_or(false))
+        {
+            println!("* output file evicted by the size budget; the line is what remains");
+        }
+    }
+    if let Some(dir) = a.export.as_deref().filter(|d| !d.is_empty()) {
+        let dir = std::path::PathBuf::from(dir);
+        match audit_export(gw, &rows, &dir).await {
+            Ok((runs, files)) => {
+                eprintln!(
+                    "exported {runs} runs, {files} output files to {}",
+                    dir.display()
+                );
+            }
+            Err(err) => {
+                eprintln!("{err}");
+                return 1;
+            }
+        }
+    }
+    0
 }
 #[cfg(test)]
 mod tests {
@@ -1029,6 +1363,80 @@ mod tests {
         let rest = actor.strip_prefix("cli:").expect("the cli: prefix");
         let (user, host) = rest.split_once('@').expect("user@host");
         assert!(!user.is_empty() && !host.is_empty(), "{actor}");
+    }
+
+    #[test]
+    fn audit_instants_are_a_span_back_an_iso_instant_or_epoch_ms() {
+        let now = 1_700_000_000_000;
+        assert_eq!(parse_instant("7d", now), Some(now - 7 * 86_400_000));
+        assert_eq!(parse_instant("36h", now), Some(now - 36 * 3_600_000));
+        assert_eq!(parse_instant("90m", now), Some(now - 90 * 60_000));
+        assert_eq!(parse_instant("30s", now), Some(now - 30_000));
+        assert_eq!(parse_instant("2023-11-14T22:13:20Z", now), Some(now));
+        assert_eq!(parse_instant("1700000000000", now), Some(now));
+        assert_eq!(parse_instant("", now), None);
+        assert_eq!(parse_instant("last tuesday", now), None);
+        assert_eq!(parse_instant("xd", now), None);
+    }
+
+    #[test]
+    fn an_audit_line_shows_the_command_as_it_could_be_typed_again() {
+        // The argv is quoted for a POSIX shell, never JSON-spelled; the file actions
+        // show their shape; the outcome is a word; an evicted output is starred.
+        let row = json!({
+            "runId": 17, "actor": "cli:jdoe@box", "action": "remote.exec", "state": "failed",
+            "endedAt": "2026-09-21T14:03:11.250Z", "ms": 12345, "exitCode": 2, "outputBytes": 3072,
+            "meta": { "target": "build" },
+            "input": { "target": "build", "argv": ["bash", "-c", "echo 中文 && make -j8", "it's"] },
+        });
+        let line = audit_line(&row);
+        assert!(
+            line.starts_with("2026-09-21T14:03:11  cli:jdoe@box"),
+            "{line}"
+        );
+        assert!(line.contains(" build "), "{line}");
+        assert!(
+            line.contains("bash -c 'echo 中文 && make -j8' 'it'\\''s'"),
+            "{line}"
+        );
+        assert!(line.contains(" exit 2 "), "{line}");
+        assert!(line.contains(" 12s "), "{line}");
+        assert!(line.contains(" 3.0K "), "{line}");
+        assert!(line.ends_with("#17"), "{line}");
+
+        let sync = json!({ "action": "remote.sync", "state": "succeeded", "input": { "source": "src", "to": "app/src" } });
+        assert_eq!(audit_command(&sync), "sync src -> app/src");
+        assert_eq!(audit_outcome(&sync), "exit 0");
+        let cat = json!({ "action": "remote.cat", "state": "canceled", "input": { "remote": "logs/app.log" } });
+        assert_eq!(audit_command(&cat), "cat logs/app.log");
+        assert_eq!(audit_outcome(&cat), "canceled");
+        let broken = json!({ "action": "remote.exec", "state": "failed", "error": "ssh: connect refused\nmore" });
+        assert_eq!(audit_outcome(&broken), "error: ssh: connect refused");
+        let evicted = json!({ "action": "remote.exec", "state": "succeeded", "outputBytes": 2048, "outputEvicted": true, "input": { "argv": ["true"] } });
+        assert!(
+            audit_line(&evicted).contains(" 2.0K* "),
+            "{}",
+            audit_line(&evicted)
+        );
+    }
+
+    #[test]
+    fn query_values_are_percent_encoded() {
+        assert_eq!(query_encode("build"), "build");
+        assert_eq!(query_encode("cli:jdoe@box"), "cli%3Ajdoe%40box");
+        assert_eq!(query_encode("a b&c=中"), "a%20b%26c%3D%E4%B8%AD");
+    }
+
+    #[test]
+    fn shell_words_quote_only_what_needs_it() {
+        assert_eq!(shell_word("make"), "make");
+        assert_eq!(shell_word("-j8"), "-j8");
+        assert_eq!(shell_word("a=b:c@d/e.f"), "a=b:c@d/e.f");
+        assert_eq!(shell_word("two words"), "'two words'");
+        assert_eq!(shell_word("中文"), "'中文'");
+        assert_eq!(shell_word("$HOME"), "'$HOME'");
+        assert_eq!(shell_word(""), "''");
+        assert_eq!(shell_word("it's"), "'it'\\''s'");
     }
 
     #[test]
