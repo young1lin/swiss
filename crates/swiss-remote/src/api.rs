@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 young1lin
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -108,6 +108,10 @@ struct RunsQuery {
     before: Option<String>,
     limit: Option<String>,
     target: Option<String>,
+    /// docs/41 A3: epoch ms or ISO-8601, against endedAt; since inclusive, until exclusive.
+    since: Option<String>,
+    until: Option<String>,
+    actor: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -116,11 +120,13 @@ struct RunOutputQuery {
     max: Option<String>,
 }
 
-/// GET /api/remote/runs?before=&limit=&target=: one page of recorded runs, newest
-/// first, plus the remote runs the coordinator holds right now that are NOT yet in
-/// the record (queued / running) so the pane paints from one read. `nextBefore` is
-/// the cursor for the older page; absent on the last one. The budgets and what they
-/// currently hold ride along so the page can say what "kept" means.
+/// GET /api/remote/runs?before=&limit=&target=&since=&until=&actor=: one page of
+/// recorded runs, newest first, plus the remote runs the coordinator holds right now
+/// that are NOT yet in the record (queued / running) so the pane paints from one
+/// read. `nextBefore` is the cursor for the older page; absent on the last one. The
+/// budgets and what they currently hold ride along so the page can say what "kept"
+/// means. A malformed `since` / `until` is 400: an audit that silently widened its
+/// window would be worse than one that failed.
 async fn list_runs(
     State(state): State<Arc<RemoteState>>,
     Query(query): Query<RunsQuery>,
@@ -135,10 +141,41 @@ async fn list_runs(
         .and_then(|l| l.parse::<usize>().ok())
         .unwrap_or(PAGE_SIZE);
     let target = query.target.as_deref().filter(|t| !t.is_empty());
+    let actor = query.actor.as_deref().filter(|a| !a.is_empty());
+    let mut window = [None, None];
+    for (slot, (name, raw)) in window
+        .iter_mut()
+        .zip([("since", &query.since), ("until", &query.until)])
+    {
+        let Some(raw) = raw.as_deref().filter(|r| !r.trim().is_empty()) else {
+            continue;
+        };
+        match crate::history::parse_instant(raw) {
+            Some(ms) => *slot = Some(ms),
+            None => {
+                return admin_error(
+                    StatusCode::BAD_REQUEST,
+                    &format!(
+                        "{name} must be epoch milliseconds or an ISO-8601 instant, not {raw:?}"
+                    ),
+                )
+            }
+        }
+    }
+    let [since, until] = window;
     let history = system.history();
-    let (runs, next_before) = history.page(before, limit, target);
+    let (runs, next_before) = history.query(crate::history::PageQuery {
+        before,
+        limit,
+        target,
+        since,
+        until,
+        actor,
+    });
     // Active = not terminal: the record only ever holds finished runs, so there is
-    // no overlap to reconcile.
+    // no overlap to reconcile. They are happening now, so a window that reaches now
+    // includes them; the actor predicate applies as it does to the record.
+    let now = swiss_core::util::now_ms();
     let active: Vec<Value> = system
         .services()
         .runs
@@ -154,6 +191,8 @@ async fn list_runs(
         })
         .filter(|row| {
             target.is_none_or(|t| row["input"]["target"].as_str() == Some(t))
+                && actor.is_none_or(|a| row["actor"].as_str() == Some(a))
+                && until.is_none_or(|u| now < u)
         })
         .collect();
     let limits = history.limits();

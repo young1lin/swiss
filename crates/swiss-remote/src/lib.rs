@@ -599,7 +599,12 @@ mod recorded {
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    async fn call(app: &axum::Router, method: &str, path: &str, body: Value) -> (StatusCode, Value) {
+    async fn call(
+        app: &axum::Router,
+        method: &str,
+        path: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
         let request = Request::builder()
             .method(method)
             .uri(path)
@@ -615,7 +620,10 @@ mod recorded {
         let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
             .await
             .unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     #[tokio::test]
@@ -645,7 +653,10 @@ mod recorded {
         assert_eq!(empty["runs"], json!([]));
         assert_eq!(empty["active"], json!([]));
         assert_eq!(empty["limits"]["maxAgeMs"], crate::history::MAX_AGE_MS);
-        assert_eq!(empty["limits"]["maxTotalBytes"], crate::history::MAX_TOTAL_BYTES);
+        assert_eq!(
+            empty["limits"]["maxTotalBytes"],
+            crate::history::MAX_TOTAL_BYTES
+        );
         assert_eq!(empty["usage"]["runs"], 0);
 
         let (status, submitted) = call(
@@ -662,7 +673,13 @@ mod recorded {
         assert_eq!(status, StatusCode::ACCEPTED);
         let run_id = submitted["runId"].as_u64().unwrap();
         for _ in 0..500 {
-            let (_, run) = call(&app, "GET", &format!("/api/runs/{run_id}?output=0"), Value::Null).await;
+            let (_, run) = call(
+                &app,
+                "GET",
+                &format!("/api/runs/{run_id}?output=0"),
+                Value::Null,
+            )
+            .await;
             if run["state"] != "queued" && run["state"] != "running" {
                 break;
             }
@@ -712,7 +729,13 @@ mod recorded {
             let id = submitted["runId"].as_u64().unwrap();
             assert_eq!(submitted["run"]["actor"], want, "the live view carries it");
             for _ in 0..500 {
-                let (_, run) = call(&app, "GET", &format!("/api/runs/{id}?output=0"), Value::Null).await;
+                let (_, run) = call(
+                    &app,
+                    "GET",
+                    &format!("/api/runs/{id}?output=0"),
+                    Value::Null,
+                )
+                .await;
                 if run["state"] != "queued" && run["state"] != "running" {
                     break;
                 }
@@ -725,7 +748,58 @@ mod recorded {
         assert!(raw.contains("\"actor\":\"cli:jdoe@box\""), "{raw}");
         assert_eq!(raw.lines().count(), 4);
 
-        let (status, one) = call(&app, "GET", &format!("/api/remote/runs/{run_id}"), Value::Null).await;
+        // docs/41 A3: the audit predicates over the same route.
+        let (status, page) = call(
+            &app,
+            "GET",
+            "/api/remote/runs?actor=cli:jdoe@box",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(page["runs"].as_array().unwrap().len(), 1, "{page}");
+        assert_eq!(page["runs"][0]["actor"], "cli:jdoe@box");
+        let (_, page) = call(&app, "GET", "/api/remote/runs?actor=api", Value::Null).await;
+        assert_eq!(page["runs"].as_array().unwrap().len(), 3);
+        let future = swiss_core::util::now_ms() + 3_600_000;
+        let (_, page) = call(
+            &app,
+            "GET",
+            &format!("/api/remote/runs?since={future}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(page["runs"], json!([]), "nothing ended in the future");
+        let (_, page) = call(
+            &app,
+            "GET",
+            &format!("/api/remote/runs?until={future}"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(page["runs"].as_array().unwrap().len(), 4);
+        let (_, page) = call(
+            &app,
+            "GET",
+            "/api/remote/runs?since=2000-01-01T00:00:00Z",
+            Value::Null,
+        )
+        .await;
+        assert_eq!(page["runs"].as_array().unwrap().len(), 4, "ISO is accepted");
+        let (status, err) = call(&app, "GET", "/api/remote/runs?since=7d", Value::Null).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
+        assert!(
+            err["error"].as_str().unwrap_or("").contains("since"),
+            "{err}"
+        );
+
+        let (status, one) = call(
+            &app,
+            "GET",
+            &format!("/api/remote/runs/{run_id}"),
+            Value::Null,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(one["runId"], run_id);
 
@@ -740,7 +814,10 @@ mod recorded {
         assert_eq!(status, StatusCode::OK);
         let text = out["output"].as_str().unwrap();
         assert!(text.contains("compiling...\nok\n"), "{text:?}");
-        assert!(text.contains("warn: x\n"), "stderr rides the same stream: {text:?}");
+        assert!(
+            text.contains("warn: x\n"),
+            "stderr rides the same stream: {text:?}"
+        );
         assert_eq!(out["total"], 24);
         assert_eq!(out["nextCursor"], 24);
         assert_eq!(out["terminal"], true);
