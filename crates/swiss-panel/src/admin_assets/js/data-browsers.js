@@ -20,7 +20,7 @@ import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from 
 import { fill, h } from "./h.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
-import { renderDbGrid } from "./data-grid.js";
+import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 // Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
 // runtime-only use — the same shape as the data-sql import above.
@@ -123,6 +123,9 @@ async function dbLoadRedisValue(key        )                {
   if (!dbValueReq.accepts(token)) return; // superseded: a newer key owns the pane
   if (!j) { d.redisKey = null; renderDbGrid(); return; }
   d.redisValue = j;
+  // docs/43 M4: the toolbar's primary action follows the value's TYPE — it paints only when
+  // the value is here, so the toolbar repainted with the grid (the status line rides along).
+  renderDbToolbar();
   renderDbGrid();
 }
 
@@ -837,7 +840,7 @@ function dbRedisKeydown(t         , ev               )          {
 }
 
 export {
-  DB_REDIS_TYPES, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore,
+  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore,
   dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
-  dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisPendingCount, dbRenderRedisValue,
+  dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisKeyMenu, dbRedisPendingCount, dbRenderRedisValue,
 };

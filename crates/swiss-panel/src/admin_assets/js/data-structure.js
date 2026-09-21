@@ -32,34 +32,49 @@ import { tk, tr, trn } from "./i18n.js";
 /* --- structure tabs (columns / indexes / DDL / foreign keys) ------------------------------------ */
 
 /* tk()-marked tab labels (docs/38 L7): painted through tr(t.label) at render time. */
+/* docs/42 T4 / docs/43 M4: the strip folds SIX panes into FOUR tabs — Data, Form,
+ * Structure, DDL. Structure is one tab whose body is the three catalog tables
+ * (Columns / Indexes / Foreign Keys) behind its own sub-segment; the pane ids
+ * columns/indexes/fks stay, so every renderer and the detail load keep their ids. */
 const DB_TABS = [
   { id: "data", label: tk("dataStructure.data") },
   { id: "form", label: tk("dataStructure.form") },
-  { id: "columns", label: tk("dataStructure.columns") },
-  { id: "indexes", label: tk("dataStructure.indexes") },
-  { id: "fks", label: tk("dataStructure.foreignKeys") },
+  { id: "structure", label: tk("dataStructure.structure") },
   { id: "ddl", label: tk("dataStructure.ddl") },
 ];
 
-/* The Structure strip's pane ids: data | form | columns | indexes | fks | ddl (the six
-   fold into four with docs/42 T4). */
+/* The Structure strip's pane ids: data | form | columns | indexes | fks | ddl — the six
+ * fold into four with docs/42 T4; "structure" itself resolves to columns when entered. */
 const DB_PANES = ["data", "form", "columns", "indexes", "fks", "ddl"];
+
+/** docs/43 M4: the pane id a main-segment tab STANDS FOR — the three catalog pane ids
+ *  all belong to the Structure tab. Pure. */
+export function dbPaneToTab(pane        )         {
+  if (pane === "columns" || pane === "indexes" || pane === "fks") return "structure";
+  return pane;
+}
+
+/** docs/43 M4: the pane a main-segment tab OPENS — Structure lands on Columns. Pure. */
+export function dbTabToPane(tab        )         {
+  return tab === "structure" ? "columns" : tab;
+}
 
 function dbSetTab(t        )       {
   const c = dbConn();
   const d = dbTab();
   if (d.kind !== "table") return; // the strip belongs to the open table tab
-  if (d.pane === t) return;
+  const pane = dbTabToPane(t);
+  if (d.pane === pane) return;
   // docs/22 W5.1: the form opens on the row the keyboard focused, and the grid's focus
   // returns to the form's row — one cursor, two presentations of it.
   if (t === "form" && d.focus) d.formIdx = d.focus.r;
   if (t === "data" && d.formIdx != null) d.focus = { r: d.formIdx, c: d.focus ? d.focus.c : 0 };
-  d.pane = DB_PANES.includes(t) ? t : "data";
+  d.pane = DB_PANES.includes(pane) ? pane : "data";
   renderDbToolbar();
   renderDbFilters();
   renderDbGrid();
   renderDbBar();
-  if (t !== "data" && t !== "form" && c.conn && d.table) void dbLoadDetail();
+  if (pane !== "data" && pane !== "form" && c.conn && d.table) void dbLoadDetail();
 }
 
 // One /schema request chain: a slow answer for the table the user just left must be
@@ -89,16 +104,14 @@ async function dbLoadDetail()                {
 function dbRenderTabs(ctl             )       {
   const t = dbTab();
   const pane = t.kind === "table" ? t.pane : null;
-  // Tab clicks and the Table menu answer through #pane's delegated listener via their
-  // data-dtab / data-tmenu addresses (docs/37 R5) — no per-render handlers on the strip.
+  // Tab clicks and the Structure sub-segment answer through #pane's delegated listener via
+  // their data-dtab addresses (docs/37 R5) — no per-render handlers on the strip. The main
+  // segment folds three catalog panes into Structure (docs/43 M4): the selected mark reads
+  // dbPaneToTab, the click sends the pane id the same handler already knew.
   ctl.appendChild(h("div", { class: "db-tabs", role: "tablist" },
     DB_TABS.map((x                               ) => {
-      return h("button", { role: "tab", data: { dtab: x.id }, aria: { selected: String(pane === x.id) } }, tr(x.label));
+      return h("button", { role: "tab", data: { dtab: x.id }, aria: { selected: String(pane != null && dbPaneToTab(pane) === x.id) } }, tr(x.label));
     })));
-  // The Table menu: rename / truncate / drop, guarded by typed confirms server- AND client-side.
-  if (!dbIsRedis()) {
-    ctl.appendChild(h("button", { class: "btn", title: tr("dataStructure.renameTruncateDropTable"), data: { tmenu: "" } }, tr("dataStructure.table")));
-  }
 }
 
 /** The Structure tabs reuse the grid wrapper: Columns/Indexes/FKs render as plain tables,
@@ -108,6 +121,17 @@ function renderDbDetailGrid(wrap             )       {
   const d = dbTab();
   if (d.kind !== "table") return;
   if (d.detailBusy) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.loading"))); return; }
+  // docs/43 M4: the three catalog panes are ONE tab's body now — the Structure sub-segment
+  // (Columns / Indexes / Foreign Keys) heads each of the three, and its clicks ride the same
+  // data-dtab address the main segment uses, so dbSetTab already knows every pane id.
+  if (d.pane === "columns" || d.pane === "indexes" || d.pane === "fks") {
+    if (!d.detail) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.selectTableStructure"))); return; }
+    wrap.appendChild(h("div", { class: "db-tabs db-struct-sub", role: "tablist" },
+      ["columns", "indexes", "fks"].map((p        ) => {
+        const label = p === "columns" ? "dataStructure.columns" : p === "indexes" ? "dataStructure.indexes" : "dataStructure.foreignKeys";
+        return h("button", { role: "tab", data: { dtab: p }, aria: { selected: String(d.pane === p) } }, tr(label));
+      })));
+  }
   if (!d.detail) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.selectTableStructure"))); return; }
   const det = d.detail;
   if (d.pane === "ddl") {
