@@ -16,6 +16,7 @@
 
                                                                                                 
                                                
+                                                    
 import { $, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
 import { dbActiveIndex, dbConn, dbIsMounted, dbResetTabs, dbSetActive, dbTab, dbTabs, freshTab } from "./db-state.js";
@@ -172,14 +173,16 @@ function dbTabGlyph(t       )         {
   return "clock";
 }
 
-/** The scope a card's schema qualifier is redundant against (docs/43 M1 D3). A MySQL
- *  connection browses exactly one database — every row the list carries reports it, so the
- *  shared schema IS the scope, and a tab whose schema differs (an FK jump across databases)
- *  keeps its qualifier. A pg connection spans schemas: the scope is the schema the operator
- *  picked, public by default, so only cross-schema cards carry theirs. Null when there is no
- *  list to read the scope from — then every qualifier stays. Pure. */
-function dbTabScope(c             , pg         )                {
+/** The scope a card's schema qualifier is redundant against (docs/43 M1 D3, revised by
+ *  docs/43 M3): on MySQL the scope is the CONFIGURED primary database, not whichever
+ *  database is being browsed — a secondary database's cards carry their db.table qualifier
+ *  everywhere (row, card, overflow menu), the primary's never do. A pg connection spans
+ *  schemas: the scope is the schema the operator picked, public by default. Null when
+ *  nothing names one — then every qualifier stays. Pure. */
+export function dbTabScope(c             , pg         )                {
   if (pg) return c.schemaFilter || "public";
+  const primary = (c.databases || []).find((x               )          => x.primary);
+  if (primary) return primary.name;
   return c.tables.length ? c.tables[0].schema : null;
 }
 
@@ -626,6 +629,6 @@ export {
   DB_TAB_MAX, dbActivateTab, dbAfterTabSwitch, dbCloseAllTabs, dbCloseBatch, dbCloseOthers, dbCloseTab,
   dbCloseToRight, dbCycleTab, dbDropTableTabs, dbEvictTarget, dbFiltersSame, dbLastTableTab,
   dbOpenTab, dbResetTabsForConn, dbTabCardTitle, dbTabGlyph, dbTabMatches, dbTabPending,
-  dbTabPlaceholder, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsMenuItems, dbTabsPending,
+  dbTabPlaceholder, dbTabsAuxClick, dbTabsClick, dbTabsMenuItems, dbTabsPending,
   dbTabTitle, dbTabVisible, dbTabEvictable, renderDbTabs,
 };

@@ -332,6 +332,31 @@ fn reply(out: Result<Value, Fail>) -> Response {
 
 // --- handler bodies ------------------------------------------------------------------------------
 
+/// GET /api/db/{name}/databases (docs/43 M3): the connection's database catalog — the
+/// configured primary, the one the pool sits on, and the rest with an honest per-entry
+/// reason when browsing one needs its own connection. Serves BOTH flavors: the mysql/pg
+/// adapters answer from information_schema / pg_database, redis from INFO keyspace.
+async fn databases(catalog: &CatalogRegistry, name: &str) -> Result<Value, Fail> {
+    catalog_guard(catalog)?;
+    let lease = catalog.lease(name, "data").map_err(lease_fail)?;
+    let out = match lease.flavor() {
+        BrowserFlavor::Db(db) => db.clone().list_databases().await,
+        BrowserFlavor::Redis(rb) => rb.clone().list_databases().await,
+        BrowserFlavor::None => {
+            return Err(Fail {
+                status: StatusCode::NOT_FOUND,
+                message: format!(
+                    "MCP '{}' ({}) has no database to browse",
+                    name,
+                    lease.dialect()
+                ),
+                conflict: None,
+            })
+        }
+    };
+    out.map_err(Fail::bad)
+}
+
 async fn tables(
     catalog: &CatalogRegistry,
     name: &str,
@@ -944,6 +969,13 @@ async fn tables_route(
     reply(tables(&catalog, &name, &q).await)
 }
 
+async fn databases_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+) -> Response {
+    reply(databases(&catalog, &name).await)
+}
+
 async fn data_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -1082,6 +1114,9 @@ where
         .route("/api/db", get(connections))
         // The lazy table list: one bounded page plus a counted total, with an optional name filter.
         .route("/api/db/{name}/tables", get(tables_route))
+        // The database axis (docs/43 M3): primary, current, and the rest with per-entry
+        // browsability — the panel's database selector is this body, whole.
+        .route("/api/db/{name}/databases", get(databases_route))
         // One grid page: columns, rows, total, and whether (and why not) the table is editable.
         .route("/api/db/{name}/data", get(data_route))
         // The Structure tabs: columns, indexes, foreign keys and DDL for one table.
@@ -1159,8 +1194,12 @@ mod tests {
     }
 
     /// A DbBrowser with an in-memory table, mirroring the Node suite's stubBrowser.
+    /// The databases field opts the stub into the docs/43 M3 catalog route: None keeps
+    /// the trait DEFAULT (the empty catalog — exactly what a stub that never heard of
+    /// the route must serve), Some answers as the test needs.
     struct StubDb {
         seen: SeenRef,
+        databases: Option<Result<Value, String>>,
     }
 
     #[async_trait]
@@ -1462,11 +1501,22 @@ mod tests {
                 { "label": "UNION", "kind": "keyword", "detail": "keyword" },
             ] }))
         }
+        async fn list_databases(&self) -> Result<Value, String> {
+            match &self.databases {
+                Some(r) => r.clone(),
+                // The trait default in the flesh: a db stub that never heard of the route
+                // still answers, with the empty catalog.
+                None => Ok(json!({ "primary": null, "current": null, "databases": [] })),
+            }
+        }
     }
 
     /// The Node suite's fake redis browser.
     struct StubRedis {
         seen: SeenRef,
+        /// docs/43 M3: the redis flavor's catalog answer for the databases route; None
+        /// keeps the trait default (empty catalog).
+        databases: Option<Value>,
     }
 
     #[async_trait]
@@ -1503,6 +1553,14 @@ mod tests {
             }
             let replies: Vec<Value> = commands.iter().map(|c| json!(c.len())).collect();
             Ok(json!({ "replies": replies }))
+        }
+        async fn list_databases(&self) -> Result<Value, String> {
+            match &self.databases {
+                Some(v) => Ok(v.clone()),
+                // The trait default in the flesh: a redis stub that never heard of the
+                // route still answers, with the empty catalog.
+                None => Ok(json!({ "primary": null, "current": null, "databases": [] })),
+            }
         }
     }
 
@@ -1700,6 +1758,7 @@ mod tests {
                 "db-one",
                 Arc::new(StubDb {
                     seen: Arc::new(Mutex::new(Seen::default())),
+                    databases: None,
                 }),
             ),
             plain_entry("plain"),
@@ -1727,6 +1786,7 @@ mod tests {
         let stub = || {
             Arc::new(StubDb {
                 seen: Arc::new(Mutex::new(Seen::default())),
+                databases: None,
             }) as Arc<dyn DbBrowser>
         };
         let rows = vec![
@@ -1771,6 +1831,7 @@ mod tests {
         let stub = || {
             Arc::new(StubDb {
                 seen: Arc::new(Mutex::new(Seen::default())),
+                databases: None,
             }) as Arc<dyn DbBrowser>
         };
         let rows = vec![
@@ -1818,6 +1879,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: Arc::new(Mutex::new(Seen::default())),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(app, "GET", "/api/db/db/tables?page=0&grep=us", None).await;
@@ -1833,6 +1895,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: Arc::new(Mutex::new(Seen::default())),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -1864,7 +1927,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, _, _) = call(
             app,
@@ -1885,6 +1948,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(app, "GET", "/api/db/db/tables?sort=evil", None).await;
@@ -1900,7 +1964,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, _, _) = call(app, "GET", "/api/db/db/tables?page=0&schema=app", None).await;
         assert_eq!(status, StatusCode::OK);
@@ -1913,7 +1977,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let terms = json!([{ "column": "name", "op": "like", "value": "al" }]).to_string();
         let (status, _, _, _) = call(
@@ -1933,6 +1997,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -1950,6 +2015,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, _, _) = call(
@@ -1982,6 +2048,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(app, "GET", "/api/db/db/schema?table=users", None).await;
@@ -2002,6 +2069,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, headers, _, text) =
@@ -2023,6 +2091,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, headers, _, text) = call(
@@ -2047,7 +2116,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let terms = json!([{ "column": "name", "op": "like", "value": "al" }]).to_string();
         let (status, _, _, _) = call(
@@ -2078,6 +2147,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -2100,7 +2170,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, headers, _, text) =
             call(app, "GET", "/api/db/db/export?table=users&format=sql", None).await;
@@ -2152,7 +2222,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let terms = json!([{ "column": "pad", "op": "like", "value": "x" }]).to_string();
         let (status, _, _, _) = call(
@@ -2181,6 +2251,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, headers, _, text) = call(
@@ -2201,7 +2272,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2225,6 +2296,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, _, _) = call(
@@ -2240,6 +2312,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -2261,7 +2334,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2292,7 +2365,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, _, _) = call(
             app,
@@ -2319,6 +2392,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -2344,7 +2418,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2364,6 +2438,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -2395,7 +2470,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2413,7 +2488,7 @@ mod tests {
 
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2445,6 +2520,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -2465,6 +2541,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -2501,6 +2578,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, _, _) = call(
@@ -2515,7 +2593,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2547,6 +2625,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -2578,7 +2657,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2598,7 +2677,7 @@ mod tests {
         // forwards whatever the browser accepts.
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }),
+            Arc::new(StubDb { seen: seen.clone(), databases: None }),
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2618,6 +2697,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -2642,7 +2722,7 @@ mod tests {
             name: name.into(),
             adapter_type: "redis".into(),
             state: "stopped".into(),
-            browser: BrowserFlavor::Redis(Arc::new(StubRedis { seen })),
+            browser: BrowserFlavor::Redis(Arc::new(StubRedis { seen, databases: None })),
         })
     }
 
@@ -2707,7 +2787,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+            Arc::new(StubDb { seen: seen.clone(), databases: None }) as Arc<dyn DbBrowser>,
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2738,7 +2818,7 @@ mod tests {
         let make = || {
             router_of(vec![db_entry(
                 "db",
-                Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+                Arc::new(StubDb { seen: seen.clone(), databases: None }) as Arc<dyn DbBrowser>,
             )])
         };
         for bad in [
@@ -2778,6 +2858,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }) as Arc<dyn DbBrowser>,
         )]);
         let (status, _, body, _) = call(app, "GET", "/api/db/db/activity", None).await;
@@ -2798,7 +2879,7 @@ mod tests {
         let make = || {
             router_of(vec![db_entry(
                 "db",
-                Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+                Arc::new(StubDb { seen: seen.clone(), databases: None }) as Arc<dyn DbBrowser>,
             )])
         };
         for bad in [
@@ -2836,7 +2917,7 @@ mod tests {
         let seen = SeenRef::default();
         let app = router_of(vec![db_entry(
             "db",
-            Arc::new(StubDb { seen: seen.clone() }) as Arc<dyn DbBrowser>,
+            Arc::new(StubDb { seen: seen.clone(), databases: None }) as Arc<dyn DbBrowser>,
         )]);
         let (status, _, body, _) = call(
             app,
@@ -2870,6 +2951,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }) as Arc<dyn DbBrowser>,
         )]);
         let (status, _, body, _) = call(
@@ -2939,6 +3021,7 @@ mod tests {
             "db",
             Arc::new(StubDb {
                 seen: SeenRef::default(),
+                databases: None,
             }),
         )]);
         let (status, _, body, _) = call(
@@ -3096,6 +3179,7 @@ mod tests {
                         "db",
                         Arc::new(StubDb {
                             seen: Arc::new(Mutex::new(Seen::default())),
+                            databases: None,
                         }),
                     )],
                     tracker: LeaseTracker::new(),
@@ -3132,6 +3216,7 @@ mod tests {
                             "db",
                             Arc::new(StubDb {
                                 seen: Arc::new(Mutex::new(Seen::default())),
+                                databases: None,
                             }),
                         ),
                         redis_entry("cache"),
@@ -3166,5 +3251,106 @@ mod tests {
         assert_eq!(tracker.outstanding(), 1);
         drop(lease);
         assert_eq!(tracker.outstanding(), 0);
+    }
+
+    // --- docs/43 M3: the database catalog route ----------------------------------------------
+
+    #[tokio::test]
+    async fn the_databases_route_passes_the_browsers_catalog_through_whole() {
+        // The panel's database selector is this body, byte for byte: primary first, the
+        // rest with their browsability and the server's own reason sentence.
+        let catalog = json!({
+            "primary": "acme_app_dev",
+            "current": "acme_app_dev",
+            "databases": [
+                { "name": "acme_app_dev", "primary": true,  "browsable": true,  "system": false, "tables": 1712 },
+                { "name": "mysql",        "primary": false, "browsable": true,  "system": true,  "tables": 31 },
+                { "name": "template_app", "primary": false, "browsable": false, "system": false,
+                  "reason": "A Postgres connection is bound to one database; browsing this one needs its own connection." },
+            ],
+        });
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+                databases: Some(Ok(catalog.clone())),
+            }),
+        )]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/databases", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json"), catalog);
+    }
+
+    #[tokio::test]
+    async fn a_browser_error_on_the_catalog_maps_to_the_shared_400() {
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+                databases: Some(Err("catalog is being rebuilt".into())),
+            }),
+        )]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/databases", None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body.expect("json")["error"], "catalog is being rebuilt");
+    }
+
+    #[tokio::test]
+    async fn a_browser_that_never_heard_of_the_route_serves_the_empty_catalog() {
+        // The trait default is the compatibility story (docs/43 M3): a flavor or a stub
+        // without a database axis compiles unchanged and answers empty — the panel shows
+        // no selector, nothing 500s.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+                databases: None,
+            }),
+        )]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/databases", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body.expect("json"),
+            json!({ "primary": null, "current": null, "databases": [] })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_redis_flavor_answers_the_catalog_route_too() {
+        // INFO keyspace + CLIENT INFO (docs/43 M3): current is the db number the connection
+        // SELECTed, every other dbN is listed with its key count and not browsable.
+        let catalog = json!({
+            "primary": "0",
+            "current": "0",
+            "databases": [
+                { "name": "0", "primary": true,  "browsable": true,  "system": false, "tables": 3160, "reason": null },
+                { "name": "5", "primary": false, "browsable": false, "system": false, "tables": 2,
+                  "reason": "SELECT would break the shared connection; opening another database needs its own connection." },
+            ],
+        });
+        let seen = SeenRef::default();
+        let app = router_of(vec![Arc::new(StubRow {
+            name: "cache".into(),
+            adapter_type: "redis".into(),
+            state: "stopped".into(),
+            browser: BrowserFlavor::Redis(Arc::new(StubRedis {
+                seen,
+                databases: Some(catalog.clone()),
+            })),
+        })]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/cache/databases", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.expect("json"), catalog);
+    }
+
+    #[tokio::test]
+    async fn a_non_browsable_mcp_404s_on_the_catalog_route() {
+        let app = router_of(vec![plain_entry("echo")]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/echo/databases", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'echo' (echo) has no database to browse"
+        );
     }
 }

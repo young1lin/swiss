@@ -37,6 +37,13 @@ export interface MenuItemAction {
    *  strip's overflow lists open objects, and the menu is the whole set's one read. */
   icon?: string;
   dot?: boolean;
+  /* docs/43 M3: a row the menu shows but refuses to run — the database selector lists
+   *  every database the instance names, browsable or not, so the reason (title) is one
+   *  hover away instead of the row simply being missing. */
+  disabled?: boolean;
+  /* docs/43 M3: a non-interactive heading row (a connection GROUP name, "system" bands) —
+   *  styled like the menu's own chrome, never focused, never clicked. */
+  heading?: boolean;
   sep?: never;
 }
 

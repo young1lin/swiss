@@ -55,6 +55,8 @@ function freshConnState(): DbConnState {
     redis: null,         // { keys, cursor, done, total } while a redis connection is selected
     redisType: "",      // SCAN TYPE filter — "" walks every type (string/hash/list/set/zset/stream)
     redisError: false,  // the last /keys fetch FAILED (docs/22 closeout B1) — the list must say so, not "no keys"
+    database: "",       // docs/43 M3: the SELECTED database ("" = the connection's configured one)
+    databases: null,    // docs/43 M3: lazy /databases catalog (null = never asked; [] = no axis → no row)
   };
 }
 

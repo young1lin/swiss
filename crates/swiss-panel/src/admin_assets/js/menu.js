@@ -38,12 +38,24 @@ function popupMenu(anchor                                               , items 
   node.id = "menu";
   items.forEach((it) => {
     if (it.sep) { node.appendChild(document.createElement("hr")); return; }
+    // docs/43 M3: a heading is chrome, not a choice — a plain div, so it can neither take
+    // focus from the first real item nor answer a click.
+    if (it.heading) {
+      const h = document.createElement("div");
+      h.className = "menu-head";
+      h.textContent = it.label;
+      node.appendChild(h);
+      return;
+    }
     const cls = (it.pick ? "pick" : "") + (it.on ? " on" : "") + (it.danger ? " danger" : "");
     const b = document.createElement("button");
     b.type = "button";
     b.className = cls.trim();
     b.textContent = it.label;
     if (it.title && b.title !== undefined) b.title = it.title;
+    // docs/43 M3: shown but refused — the database selector's browsable:false rows carry
+    // the server's reason in title; a disabled button cannot be clicked, so no fn runs.
+    if (it.disabled) b.disabled = true;
     // docs/43 M1: the same type glyph and dirty dot the object's card carries, on the menu
     // row that stands in for it. Order is the card's order: glyph first, dot last.
     if (it.icon) b.insertBefore(iconNode(it.icon), b.firstChild);
@@ -52,7 +64,7 @@ function popupMenu(anchor                                               , items 
       d.className = "db-tab-dot";
       b.appendChild(d);
     }
-    b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); it.fn(); };
+    b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); if (!b.disabled) it.fn(); };
     node.appendChild(b);
   });
   document.body.appendChild(node);
@@ -68,7 +80,9 @@ function popupMenu(anchor                                               , items 
   // Roles and keys (guarded: the vitest micro-DOM has neither querySelectorAll nor focus).
   if (node.setAttribute) node.setAttribute("role", "menu");
   const buttons = typeof node.querySelectorAll === "function"
-    ? Array.prototype.slice.call(node.querySelectorAll                   ("button")) : [];
+    ? Array.prototype.slice.call(node.querySelectorAll                   ("button"))
+      .filter((b                   ) => !b.disabled)
+    : [];
   buttons.forEach((b) => { if (b.setAttribute) b.setAttribute("role", "menuitem"); });
   if (buttons[0] && typeof buttons[0].focus === "function") buttons[0].focus();
   if (typeof node.addEventListener === "function") {

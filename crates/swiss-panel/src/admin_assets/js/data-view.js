@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-                                                                                                                           
-                                                                 
+                                                                                                                                                                  
+                                                                              
 import { $, apiJson, dbReqGuard, el, iconNode, targetEl } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
@@ -42,7 +42,7 @@ import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-
 // The strip's policy module. The cycle is the same accepted shape as the data-structure edge
 // below: data-tabs reaches back for renderDbTables, and both sides only call across it inside
 // functions, never at module scope.
-import { dbOpenTab, dbResetTabsForConn, dbTabsAuxClick, dbTabsClick, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
+import { dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
 
 /* ================================================================================================
@@ -177,7 +177,14 @@ function renderDbView()       {
   const root = el("div", "db-root");
   fill(root,
     h("div", { class: "db-side" },
-      h("select", { id: "dbConn", aria: { label: tr("dataView.connection") } }),
+      // docs/43 M3: the sidebar's top is TWO band-shaped rows — the connection row (status
+      // dot, name, dialect chip, chevron; popupMenu keeps the docs/20 G5 groups as heading
+      // rows) and, when the connection has a database axis, the database row (current name,
+      // chevron; primary first with the rest behind a separator, system last, not-browsable
+      // disabled with the server's reason one hover away). A select cannot carry any of
+      // that; these two buttons replaced it.
+      h("button", { class: "db-conn-row", id: "dbConnRow", type: "button", aria: { haspopup: "menu", label: tr("dataView.connection") } }),
+      h("button", { class: "db-db-row", id: "dbDatabaseRow", type: "button", hidden: true, aria: { haspopup: "menu", label: tr("dataView.databaseRow") } }),
       // docs/43 M2: the sidebar's top is the connection row and ONE search box. The sort
       // select and its direction button moved into the Tables band's ellipsis (where they
       // act), and pg's schema dropdown died - a schema is a VISIBLE band in the tree now,
@@ -338,6 +345,48 @@ function dbChromeClick(t         , ev            )          {
     if (st) dbFavPush(st.sqlText);
     return true;
   }
+  // docs/43 M3: the connection row opens the connection menu — the docs/20 G5 groups as
+  // heading rows, one separator between groups, the selected connection marked on.
+  const connRow = t.closest             ("#dbConnRow");
+  if (connRow) {
+    const d = dbConn();
+    if (!d.conns.length) return true;
+    ev.stopPropagation();
+    const items             = [];
+    const order           = [];
+    const buckets                                       = {};
+    d.conns.forEach((c                    )       => {
+      const g = c.group || "default";
+      if (!buckets[g]) { buckets[g] = []; order.push(g); }
+      buckets[g].push(c);
+    });
+    order.forEach((g        , gi        )       => {
+      if (gi > 0 || order.length === 1) items.push({ sep: true });
+      if (order.length > 1) items.push({ heading: true, label: g, fn: ()       => {} });
+      buckets[g].forEach((c                    )       => {
+        items.push({
+          label: dbConnLabel(c),
+          title: dbConnLabel(c),
+          on: c.name === d.conn,
+          fn: ()       => { void dbSwitchConn(c.name); },
+        });
+      });
+    });
+    popupMenu(connRow.getBoundingClientRect(), items);
+    return true;
+  }
+  // docs/43 M3: the database row opens the selector — primary first with its group heading,
+  // the rest behind a separator, system last, not-browsable rows disabled with the server's
+  // reason one hover away.
+  const dbRowBtn = t.closest             ("#dbDatabaseRow");
+  if (dbRowBtn) {
+    const d = dbConn();
+    if (!d.databases || !d.databases.length) return true;
+    ev.stopPropagation();
+    popupMenu(dbRowBtn.getBoundingClientRect(),
+      dbDatabaseMenuItems(d.databases, dbCurrentDatabase(d), dbSwitchDatabase));
+    return true;
+  }
   if (t.closest("#dbSqlFormat")) {
     const st = dbSqlTab();
     if (!st || !st.sqlText.trim()) return true;
@@ -415,43 +464,6 @@ function dbChromeInput(t         )          {
 }
 
 function dbChromeChange(t         )          {
-  const connSel = t.closest                   ("#dbConn");
-  if (connSel) {
-    const db_ = dbConn();
-    if (connSel.value === db_.conn) return true;
-    // Every open object, not just the one in front: the switch is a page-wide drop, so it
-    // asks with the whole strip's total (docs/42 D5).
-    if (!dbOkToLeave()) { connSel.value = db_.conn || ""; return true; }
-    const d = dbConn();
-    d.conn = connSel.value;
-    d.tables = []; d.tablesPage = 0;
-    d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
-    d.redis = null;
-    d.sort = "name"; d.sortDir = "asc"; // the new connection's kind may not have the chosen key
-    // A sidebar search is table-list-scoped: carrying "tsys_" from one connection into the next
-    // silently filters the new list down to nothing. Reset it and the box that shows it.
-    d.grep = "";
-    d.redisType = ""; // same reasoning: a type filter is chosen against a key list, not inherited
-    const gb = $                  ("dbGrep");
-    if (gb) gb.value = "";
-    // The strip belongs to the connection being left — every open object closes with it, the
-    // activity poll included (docs/42 T2).
-    dbResetTabsForConn();
-    const ta0 = $                     ("dbSql");
-    if (ta0) ta0.value = "";
-    dbSqlPaint();
-    dbSyncKind();
-    renderDbTabs();
-    renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
-    // The page-bar count chip names the connection (views/data.js countText) and is otherwise
-    // written only on navigation — the switch has to rewrite it here or the bar keeps naming
-    // the connection this view just left behind.
-    const chip = $("countChip");
-    if (chip) chip.textContent = currentPageCount();
-    if (dbIsRedis()) void dbLoadKeys(true);
-    else void dbLoadTables();
-    return true;
-  }
   const hist = t.closest                   ("#dbSqlHistory");
   if (hist) {
     if (hist.value === "") return true;
@@ -547,47 +559,188 @@ function dbConnLabel(c                    )         {
   return c.name + " · " + c.dialect;
 }
 
+/* --- docs/43 M3: the two sidebar rows' menus and the two switches ----------------------------- */
+
+// One /databases request in flight (renderDbSide can fire the lazy fetch from a busy loop).
+let dbDatabasesInFlight = false;
+
+/** docs/43 M3: the database IN EFFECT — the picked one, or the catalog's primary when
+ *  nothing has been picked yet ("" means the configured default, which the primary row
+ *  stands for). The row's name, the menu's on-mark and the switch's own no-op test all
+ *  read THIS, so the three can never disagree. Pure. */
+function dbCurrentDatabase(d             )         {
+  if (d.database) return d.database;
+  const list = d.databases || [];
+  const p = list.find((x               )          => x.primary);
+  return p ? p.name : "";
+}
+
+/** Switch CONNECTIONS (docs/42 D5, now shared by the row menu): every open object closes,
+ *  the database catalog of the connection being left is dropped, and the first page loads
+ *  for the new connection's CONFIGURED database. */
+async function dbSwitchConn(name        )                {
+  const d = dbConn();
+  if (!name || name === d.conn) return;
+  // Every open object, not just the one in front: the switch is a page-wide drop, so it
+  // asks with the whole strip's total.
+  if (!dbOkToLeave()) return;
+  d.conn = name;
+  d.tables = []; d.tablesPage = 0;
+  d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
+  d.redis = null;
+  d.database = "";  // docs/43 M3: the new connection starts on its CONFIGURED database
+  d.databases = null; // and its catalog is not the one just left behind
+  d.sort = "name"; d.sortDir = "asc"; // the new connection's kind may not have the chosen key
+  d.grep = "";        // a sidebar search is table-list-scoped, never inherited
+  d.redisType = "";   // same reasoning: a type filter belongs to the key list it chose
+  const gb = $                  ("dbGrep");
+  if (gb) gb.value = "";
+  dbResetTabsForConn();
+  const ta0 = $                     ("dbSql");
+  if (ta0) ta0.value = "";
+  dbSqlPaint();
+  dbSyncKind();
+  renderDbSide();
+  renderDbTabs();
+  renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
+  const chip = $("countChip");
+  if (chip) chip.textContent = currentPageCount();
+  if (dbIsRedis()) void dbLoadKeys(true);
+  else { void dbLoadTables(); void dbLoadDatabases(); }
+}
+
 function renderDbSide()       {
   const d = dbConn();
-  const sel = $                   ("dbConn");
-  if (!sel) return;
-  sel.textContent = "";
+  const row = $("dbConnRow");
+  const dbRow = $("dbDatabaseRow");
+  if (!row) return;
+  row.textContent = "";
   if (!d.conns.length) {
-    const none = el("option", "", tr("dataView.noDatabaseMcps"))                     ;
-    none.value = "";
-    sel.appendChild(none);
-    sel.disabled = true;
+    row.classList.add("off");
+    row.appendChild(el("span", "db-row-name", tr("dataView.noDatabaseMcps")));
+    if (dbRow) dbRow.hidden = true;
     return;
   }
-  sel.disabled = false;
-  // docs/20 G5: each row carries the group its connection lists under. With more than one,
-  // the options fold into one optgroup per group — groups in first-appearance order over the
-  // flat list, members in the list's own order inside. A single group stays flat: an
-  // optgroup around everything is noise that says nothing. An older gateway answers no
-  // group at all, which reads as the one flat list it always drew.
-  const order           = [];
-  const buckets                                       = {};
-  d.conns.forEach((c                    )       => {
-    const g = c.group || "default";
-    if (!buckets[g]) { buckets[g] = []; order.push(g); }
-    buckets[g].push(c);
-  });
-  const addOption = (parent             , c                    )       => {
-    const o = el("option", "", dbConnLabel(c))                     ;
-    o.value = c.name;
-    o.selected = c.name === d.conn;
-    parent.appendChild(o);
-  };
-  if (order.length < 2) {
-    d.conns.forEach((c                    )       => { addOption(sel, c); });
-    return;
+  row.classList.remove("off");
+  // The connection row itself: status dot + name + dialect chip + chevron. The dot is the
+  // connection's state in one glance (stopped = hollow text-colored, everything else =
+  // the accent); the chip names the dialect so the row no longer needs the label's host.
+  const cur = d.conns.find((c                    )          => { return c.name === d.conn; });
+  const dot = el("span", "db-dot" + (cur && cur.state === "stopped" ? " off" : ""));
+  row.appendChild(dot);
+  row.appendChild(el("span", "db-row-name", cur ? cur.name : tr("dataView.pickConnection")));
+  if (cur) row.appendChild(el("span", "db-chip", cur.dialect));
+  const chev = iconNode("chevron-down");
+  chev.setAttribute("class", "ic db-row-chev");
+  row.appendChild(chev);
+  // docs/20 G5: the connection menu keeps the groups — heading rows where the optgroups
+  // were, first-appearance order over the flat list, one separator between groups. A single
+  // group stays flat (a heading around everything says nothing); no group reads as one list.
+  // docs/43 M3: the database row appears only when the catalog answered with entries; the
+  // catalog itself is fetched once per connection (dbLoadDatabases), null = not yet asked.
+  if (dbRow) {
+    const names = d.databases || [];
+    const show = names.length > 0;
+    dbRow.hidden = !show;
+    if (show) {
+      dbRow.textContent = "";
+      const active = dbCurrentDatabase(d);
+      const dbIc = iconNode("database");
+      dbIc.setAttribute("class", "ic db-row-ic");
+      dbRow.appendChild(dbIc);
+      dbRow.appendChild(el("span", "db-row-name", active));
+      const chev2 = iconNode("chevron-down");
+      chev2.setAttribute("class", "ic db-row-chev");
+      dbRow.appendChild(chev2);
+    }
   }
-  order.forEach((g        )       => {
-    const og = el("optgroup")                       ;
-    og.label = g;
-    buckets[g].forEach((c                    )       => { addOption(og, c); });
-    sel.appendChild(og);
+  // docs/43 M3: the catalog is fetched once per connection — null means not asked yet, and
+  // the in-flight flag keeps a busy render loop from asking twice.
+  if (d.conn && d.databases === null && !dbDatabasesInFlight) void dbLoadDatabases();
+}
+
+/** docs/43 M3: the database selector's ordering, a pure function so the acceptance suite
+ *  can pin it - primary first, the rest by name, system databases last (they stay listed:
+ *  hiding them is not the panel's call). */
+function dbSortDatabases(list                 )                  {
+  return list.slice().sort((a               , b               )         => {
+    if (a.primary !== b.primary) return a.primary ? -1 : 1;
+    if (a.system !== b.system) return a.system ? 1 : -1;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
   });
+}
+
+/** docs/43 M3: the database selector's menu rows, built as DATA so the suite can pin the
+ *  contract (primary first; browsable:false rows disabled with the server's own reason as
+ *  title; the selected database marks on and cannot re-pick) without a live menu. */
+function dbDatabaseMenuItems(
+  list                 ,
+  selected        ,
+  pick                        ,
+)             {
+  const items             = [];
+  const sorted = dbSortDatabases(list);
+  sorted.forEach((x               , i        )       => {
+    if (x.primary && i === 0) {
+      items.push({ heading: true, label: tr("dataView.dbPrimaryGroup"), fn: ()       => {} });
+    } else if (!x.primary && (i === 0 || sorted[i - 1].primary)) {
+      items.push({ sep: true });
+      items.push({ heading: true, label: tr("dataView.dbOtherGroup"), fn: ()       => {} });
+    } else if (x.system && (i === 0 || !sorted[i - 1].system)) {
+      items.push({ sep: true });
+      items.push({ heading: true, label: tr("dataView.dbSystemGroup"), fn: ()       => {} });
+    }
+    items.push({
+      label: x.name + (x.tables != null ? " - " + Number(x.tables).toLocaleString(locale()) : ""),
+      title: x.browsable ? "" : (x.reason || ""),
+      disabled: !x.browsable || x.name === selected,
+      on: x.name === selected,
+      fn: ()       => { pick(x.name); },
+    });
+  });
+  return items;
+}
+
+/** docs/43 M3 4.3.3: switching DATABASES is the light version of switching connections -
+ *  the same whole-strip confirmation (an orders tab that now points at another database's
+ *  orders table is worse than a closed tab), the same resets, but the connection and its
+ *  catalog stay. */
+function dbSwitchDatabase(name        )       {
+  const d = dbConn();
+  if (!name) return;
+  // The no-op test reads the database IN EFFECT (dbCurrentDatabase): picking the primary
+  // while nothing has been picked is "stay", not a strip-wide drop for nothing.
+  if (name === dbCurrentDatabase(d)) return;
+  if (!dbOkToLeave()) return;
+  d.database = name;
+  d.tables = []; d.tablesPage = 0;
+  d.grep = "";
+  d.sort = "name"; d.sortDir = "asc";
+  const gb = $                  ("dbGrep");
+  if (gb) gb.value = "";
+  dbResetTabsForConn();
+  renderDbSide();
+  renderDbTabs();
+  renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
+  void dbLoadTables();
+}
+
+/** docs/43 M3: fetch the connection's database catalog once — null means not asked yet,
+ *  and an EMPTY array is a real answer (the dialect has no database axis; the row stays
+ *  hidden). The lazy fetch rides the first renderDbSide after a connection switch; the
+ *  selector itself then reads the cache. */
+async function dbLoadDatabases()                {
+  const d = dbConn();
+  if (!d.conn || d.databases) return;
+  dbDatabasesInFlight = true;
+  try {
+    const j = await apiJson                        ("/api/db/" + encodeURIComponent(d.conn) + "/databases");
+    if (!j) { d.databases = []; return; } // the toast already spoke; an empty axis hides the row
+    d.databases = j.databases || [];
+  } finally {
+    dbDatabasesInFlight = false;
+  }
+  renderDbSide();
 }
 
 /* --- lazy table list ---------------------------------------------------------------------------- */
@@ -603,7 +756,11 @@ async function dbLoadTables()                {
   if (box) { box.textContent = ""; box.appendChild(el("div", "db-hint", tr("dataView.loading"))); }
   let q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?page=" + d.tablesPage;
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
+  // docs/43 M3: on MySQL the schema parameter NAMES THE DATABASE — absent keeps the
+  // configured one byte-identical; a chosen database rides here (the server whitelists it
+  // before any SQL is built). pg keeps its in-database schema semantics, untouched.
   if (d.schemaFilter) q += "&schema=" + encodeURIComponent(d.schemaFilter);
+  else if (d.database) q += "&schema=" + encodeURIComponent(d.database);
   if (d.sort) q += "&sort=" + encodeURIComponent(d.sort) + "&dir=" + encodeURIComponent(d.sortDir || "asc");
   const token = dbTablesReq.issue();
   const j = await apiJson                     (q);
@@ -785,7 +942,7 @@ function renderDbTables()       {
  *  name and schema are the address — the delegated click (dbChromeClick's [data-tname])
  *  re-finds the row in the live list and hands it to dbOpenTab, whose dedupe and cap are
  *  re-read at event time. */
-function dbTableRow(t               )              {
+function dbTableRow(t               , scope               )              {
   const ct = dbTab();
   const sel = ct.kind === "table" && t.name === ct.table && t.schema === ct.schema;
   const b = el("button", "db-table" + (sel ? " sel" : ""));
@@ -795,7 +952,11 @@ function dbTableRow(t               )              {
     + (t.size ? " · " + t.size : "");
   b.dataset.tname = t.name;
   b.dataset.tschema = t.schema || "";
-  b.appendChild(el("span", "db-table-name", t.name));
+  // docs/43 M3 D3's other shoe: a table in a database OTHER than the scope carries its
+  // db.table qualifier in the row (browsing a secondary database must never read as the
+  // configured one's tables); inside the scope the name stands alone, as it always did.
+  const qualified = t.schema && scope && t.schema !== scope;
+  b.appendChild(el("span", "db-table-name", qualified ? t.schema + "." + t.name : t.name));
   // The trailing slot numbers what the row holds. Zero reads as 0 - an empty table is a fact
   // worth scanning for, not a blank.
   b.appendChild(el("span", "db-table-meta",
@@ -836,7 +997,7 @@ function dbSectionBand(sec                                         ,
     reload: renderDbTables, render: renderDbTables,
     rowsById: ()                  => { return d.tables; },
     groupOfRow: (t               )                => { return dbSectionOf(t); },
-    rowNode: dbTableRow,
+    rowNode: (t               )              => dbTableRow(t, dbTabScope(d, dbIsPg())),
   };
   return mountGroup(cfg, sec);
 }
@@ -988,6 +1149,6 @@ function dbFkOpen(fk            , value         )       {
   dbOpenTab({ kind: "table", table: j.table, schema: j.schema, filters: j.filters });
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSortMenu, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbCurrentDatabase, dbDatabaseMenuItems, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, dbSectionLabel, dbSortDatabases, dbSortMenu, dbSwitchConn, dbSwitchDatabase, loadDbView, renderDbSide, renderDbTables, renderDbView };
 // dbSectionEmpty stays module-private: the acceptance suite reaches it through the band's
 // emptyText hook, which is the only contract it has.
