@@ -1,6 +1,8 @@
 # 42 — Data 的对象页签：一次握住多个对象
 
-> 状态：**草案，待 owner 复核**。基线 `801c834`（master，2026-09-21）。实施分支 `data-full-access`
+> 状态：**已实施**（T1 状态切分、T2 页签条先行落地；T3 侧栏成树与 T4 工具条收敛由 docs/43 M2/M4 收编交付，
+> ADR-026 落进 docs/07）。终态数字见 docs/43 状态头（84 文件 / 781 用例、CSS 与发射 JS 与 exe 字节）。
+> 基线 `801c834`（master，2026-09-21）。实施分支 `data-full-access`
 > （worktree `.agents/worktrees/data`，建于 `755eb9e`，**落地前先 rebase 到 master**，中间三个提交是
 > docs/41 的 remote 工作，与本文无关）。视觉参考 `docs/assets/42/data-layout-mockup.html`（双击打开，
 > 键 `1`–`4` 切方案，`2` 就是本文的目标；Engine 与 State 两个下拉覆盖 MySQL / PostgreSQL 各 18 态、
