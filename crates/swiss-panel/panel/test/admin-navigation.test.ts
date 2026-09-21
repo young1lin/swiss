@@ -219,10 +219,11 @@ describe("the plugin rail (global navigation)", () => {
     // The workspace plugin rides the rail like any peer.
     expect(rail).toContain('data-group="terminal" data-view="terminal"');
     // The synthesized management page has no inventory row: GROUP_LABELS names its group.
-    // Icon-only seats (docs/39 S1): the group's name is the seat's title tooltip, the bar's
-    // title says it once landed - no caption span remains in the rail markup.
+    // Seats carry their caption again (docs/39 S1 icon-only reversed by owner, 2026-10-30):
+    // the group's translated name sits under the glyph at --f-caption, and the title
+    // tooltip still carries it (plus the error text when the plugin is down).
     expect(rail).toContain('title="Settings" data-group="host" data-view="plugins"');
-    expect(rail).not.toContain("rail-btn-label");
+    expect(rail).toContain('class="rail-label">Settings</span>');
     // The ... seat opens the palette; the rail is a shortlist, not the ceiling.
     expect(rail).toContain('class="rail-btn rail-more" id="railMore"');
     expect(typeof byId("railNav").onclick).toBe("function");
