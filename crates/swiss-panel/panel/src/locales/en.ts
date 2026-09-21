@@ -1287,6 +1287,8 @@ const en: Record<string, string> = {
   "remoteRuns.nRunsRecordedBytes.one": "{n} run recorded · {bytes}",
   "remoteRuns.nRunsRecordedBytes.other": "{n} runs recorded · {bytes}",
   "remoteRuns.capKeptDDays": " of {cap} · kept {d} days",
+  "remoteRuns.traceableWDays": " · the last {w} days always traceable",
+  "remoteRuns.outputEvicted": "The output ({size}) was evicted by the size budget; the record itself stays for {d} days.",
   "remoteRuns.allTargets": "All targets",
   "remoteRuns.everyCommandSyncPull": "Every command, sync and pull run on a remote target, with its output - as the CLI (swiss remote …) and the remote MCP tools ran it.",
   "remoteRuns.clear": "Clear",

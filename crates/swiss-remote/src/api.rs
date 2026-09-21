@@ -166,6 +166,7 @@ async fn list_runs(
             "maxTotalBytes": limits.max_total_bytes,
             "maxRuns": limits.max_runs,
             "maxOutputBytes": limits.max_output_bytes,
+            "auditWindowMs": limits.audit_window_ms,
         },
         "usage": { "bytes": bytes, "runs": count },
     });

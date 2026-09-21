@@ -358,6 +358,21 @@ describe("the Remote Runs page (remote plugin, the run record)", () => {
     expect(body).not.toContain("Load more");
   });
 
+  it("an evicted output says so in place of the stream, keeps a capped run's tail, and the budget line names the window (docs/41 A2)", async () => {
+    const evicted = { ...finished, runId: 22, outputBytes: 3072, outputEvicted: true, outputCapped: true, tail: "the last lines\n" };
+    serve([evicted], [], { limits: { maxAgeMs: 30 * 86400000, maxTotalBytes: 500 * 1024 * 1024, maxRuns: 5000, maxOutputBytes: 16 * 1024 * 1024, auditWindowMs: 7 * 86400000 } });
+    // The file is gone: the output route answers the empty chunk a silent run gets.
+    bodyByPath["/api/remote/runs/22/output?after=0&max=131072"] = { runId: 22, cursor: 0, nextCursor: 0, output: "", total: 0, truncated: false, terminal: true };
+    await view.mount();
+    expect(byId("pane").innerHTML).toContain("kept 30 days · the last 7 days always traceable");
+    click({ rtog: "22" });
+    await settle();
+    const body = node('#pane .call[data-rrun="22"] .call-body').innerHTML;
+    expect(body).toContain("The output (3.0 KB) was evicted by the size budget; the record itself stays for 30 days.");
+    expect(body).not.toContain("No output was produced.");
+    expect(body).toContain("the last lines");
+  });
+
   it("opening a live row follows /api/runs output and offers Cancel, which posts the cancel", async () => {
     serve([], [running]);
     bodyByPath["/api/runs/18/output?after=0&max=131072"] = { runId: 18, state: "running", cursor: 0, nextCursor: 5, output: "tick\n", truncated: false, terminal: false };
