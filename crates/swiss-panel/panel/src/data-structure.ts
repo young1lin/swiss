@@ -18,7 +18,6 @@ import type { ApiDbColumn, ApiDbConnectionRow, ApiDbFkRow, ApiDbTableDetail } fr
 import type { DbDetailSpec } from "./types/state.js";
 import { apiJson, dbReqGuard, el } from "./util.js";
 import { fill, h } from "./h.js";
-import { dbIsRedis } from "./data-browsers.js";
 import { dbDialectOf, dbOkToDrop } from "./data-view.js";
 import { dbOpenTab } from "./data-tabs.js";
 import { openDbDdlSheet } from "./data-ddl.js";
@@ -127,10 +126,9 @@ function renderDbDetailGrid(wrap: HTMLElement): void {
   if (d.pane === "columns" || d.pane === "indexes" || d.pane === "fks") {
     if (!d.detail) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.selectTableStructure"))); return; }
     wrap.appendChild(h("div", { class: "db-tabs db-struct-sub", role: "tablist" },
-      ["columns", "indexes", "fks"].map((p: string) => {
-        const label = p === "columns" ? "dataStructure.columns" : p === "indexes" ? "dataStructure.indexes" : "dataStructure.foreignKeys";
-        return h("button", { role: "tab", data: { dtab: p }, aria: { selected: String(d.pane === p) } }, tr(label));
-      })));
+      h("button", { role: "tab", data: { dtab: "columns" }, aria: { selected: String(d.pane === "columns") } }, tr("dataStructure.columns")),
+      h("button", { role: "tab", data: { dtab: "indexes" }, aria: { selected: String(d.pane === "indexes") } }, tr("dataStructure.indexes")),
+      h("button", { role: "tab", data: { dtab: "fks" }, aria: { selected: String(d.pane === "fks") } }, tr("dataStructure.foreignKeys"))));
   }
   if (!d.detail) { wrap.appendChild(el("div", "db-hint", tr("dataStructure.selectTableStructure"))); return; }
   const det = d.detail;

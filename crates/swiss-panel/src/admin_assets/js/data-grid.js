@@ -531,7 +531,7 @@ function dbMoreItemsForSql()             {
   };
   if (d.favorites && d.favorites.length) {
     items.push({ sep: true });
-    items.push({ heading: true, label: tr("dataView.saveFavorites"), fn: ()       => {} });
+    items.push({ heading: true, label: tr("dataView.favoritesTitle"), fn: ()       => {} });
     d.favorites.slice(0, 8).forEach((q        )       => {
       items.push({ label: q.slice(0, 60), title: q, fn: ()       => { loadSql(q); } });
     });
@@ -629,7 +629,7 @@ function renderDbStatus()       {
       (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
   } else if (t.kind === "key" && t.redisValue) {
     bar.appendChild(el("span", "db-status-note",
-      t.redisValue.type + (t.redisValue.ttl != null && t.redisValue.ttl >= 0 ? " · ttl " + t.redisValue.ttl + "s" : "")));
+      t.redisValue.type + (t.redisValue.ttl != null && t.redisValue.ttl >= 0 ? tr("dataGrid.ttlSecs", { n: t.redisValue.ttl }) : "")));
   }
   bar.appendChild(el("span", "grow"));
   const conn0 = c.conns.find((x                    )          => { return x.name === c.conn; });
