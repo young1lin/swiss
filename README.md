@@ -2,7 +2,7 @@
 
 <p><img src="assets/logo-wordmark.svg" alt="swiss" align="top" height="56"></p>
 
-A developer's Swiss Army knife — one tiny local process, every tool behind one loopback port.
+A developer's pocket multitool — one tiny local process, every tool behind one loopback port.
 
 swiss serves on `127.0.0.1:19999`: every MCP server an AI client needs, on HTTP paths under
 `/mcp/<name>`, plus database browsing, SSH tunnels, scheduled jobs and a web terminal — one
@@ -141,8 +141,17 @@ browser. Deploying to 19999 is the last step, done once, through `scripts/deploy
 - **No self-updating binary.** `swiss update` checks and instructs; the swap is yours.
 - **No saving on `proc` MCPs.** An `npx`/`uvx` child is 50–150 MB and stays exactly that.
 
+## Contributing and security
+
+[CONTRIBUTING.md](CONTRIBUTING.md) is the short version of the house rules (the long one is
+[AGENTS.md](AGENTS.md)); [SECURITY.md](SECURITY.md) says how to report a vulnerability
+privately — swiss holds credentials, so please use it rather than a public issue.
+
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE). The panel vendors third-party pieces under
-`crates/swiss-panel/src/admin_assets/js/vendor/`, each carrying its own notice: xterm.js and
-its addons (MIT), cronstrue (MIT).
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Third-party material and its
+terms are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): the panel vendors xterm.js
+and its addons (MIT) and cronstrue (MIT) under `crates/swiss-panel/src/admin_assets/js/vendor/`,
+each directory carrying the upstream license text; the zai-vision adapter reproduces prompts
+from `@z_ai/mcp-server` (Apache-2.0, Z.AI); the binary statically links the crates the file
+tabulates.
