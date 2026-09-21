@@ -84,6 +84,7 @@ L1 仍在 rail，L2 仍在 context bar，L3 仍在页体——本文换的是 L1
 | S10 | **测试**：`fitTabs()` 与 `targetPageFor()` 各一个纯函数用例文件；`admin-navigation.test.ts` 的切换器断言改成 tab 断言（§2 列了每一条）；`admin-rail.test.ts` 不动 | 行为改动配用例；断言用户看得见的状态（`aria-current`、`hidden`），不断言存在性 |
 | S11 | **文档同步**：`swiss-ui-design` skill §4（context bar 的形）、§17（`context bar` / `segmented control` 两行）、§3（rail 无标签）；`.agents/docs/style-design.md` 的 rail / ctxbar 条目；`swiss-add-plugin` skill 加"≤ 5 页"与"给你的插件在 `GLYPHS` 加一个 sprite glyph"；README docs 表加一行；本文状态头 | skill §12 第 6 条：旧决定被替代时不留矛盾的"已实施" |
 | S12 | **交付**：P0 → P3 各一个提交（§2），每提交 `npm run check` + `cargo test --workspace` + 19998 真点走查；合并与部署是 P3 之后 owner 的决定 | 房子的规则 |
+> **修订（2026-10-30，业主决定）**：S1 的 icon-only 形态被推翻——rail 座位重新带上插件名（glyph 18px 在上，标签 `--f-caption` 11px 在下，座位 36→44px，rail 仍 48px 宽）。9px 时代的教训是"出字阶的字号读不了"，不是"文字本身多余"；这次标签回到五级字阶内。`⋯` More 座不是领域，保持纯图标。tooltip（含插件故障文案）与 context bar 标题不变。
 
 ### 1.3 不变的东西（写明，免得"顺手"）
 

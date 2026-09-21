@@ -94,12 +94,16 @@ function railSeat(g: PageGroup): HTMLElement {
   const title = allOff && offPlugin
     ? tr("pageRegistry.labelError", { label: tr(wireLabel(g.label)), error: offPlugin.lastError || tr("pageRegistry.pluginDisabled") })
     : tr(wireLabel(g.label));
-  /* Icon-only (docs/39 S1): the seat wears just the glyph; the plugin's name lives in the
-   * seat's title (the tooltip) and, once landed, in the context bar's title. */
+  /* docs/39 S1 shipped the rail icon-only; reversed by owner decision (2026-10-30) for
+   * clarity - the seat wears its glyph AND the plugin's translated name at --f-caption
+   * (the caption the 9px era lacked: in the type scale, so it stays legible). The tooltip
+   * still carries the richer error text when the plugin is down; the label stays the
+   * plain name. The More seat keeps its glyph alone - it is an affordance, not a domain. */
   return h("button", { class: "rail-btn", data: { group: g.id, view: g.pages[0].id },
       // The two aria flags render only when true, exactly as the string builder spelled them.
       aria: Object.assign({}, active ? { current: "true" } : {}, allOff ? { disabled: "true" } : {}), title },
-    glyphNode(g));
+    glyphNode(g),
+    h("span", { class: "rail-label" }, tr(wireLabel(g.label))));
 }
 
 function moreSeat(): HTMLElement {
