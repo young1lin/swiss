@@ -69,16 +69,20 @@ function dbOpenImport()       {
   // docs/37 R5: node sheet, painted AFTER the host is unhidden; the per-open wiring below
   // stays (the sheet idiom — parse/paint/setMode close over the mapping state).
   $("sheet").hidden = false;
+  // docs/43 M2 fixup: sheet-head/body/foot are SIBLINGS here. A missing paren on the h2
+  // line used to nest body and foot INSIDE the head band, so the whole dialog was laid out
+  // by .sheet-head's rules on every dialect (mysql and pg alike) — the "broken import
+  // styling" report. The sheet idiom (add-sheet.ts) is the reference shape.
   fill($("sheet"),
     h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("dataCsv.importCsv") } },
       h("div", { class: "sheet-head" },
-        h("h2", null, tr("dataCsv.importCsvIntoT", { t: (d.schema ? d.schema + "." : "") + d.table  })),
+        h("h2", null, tr("dataCsv.importCsvIntoT", { t: (d.schema ? d.schema + "." : "") + d.table  }))),
       h("div", { class: "sheet-body" },
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           h("div", { class: "seg", role: "tablist", id: "dbImpMode", style: "margin-bottom:0" },
             h("button", { type: "button", role: "tab", data: { mode: "insert" }, aria: { selected: "true" } }, tr("dataCsv.insert")),
             h("button", { type: "button", role: "tab", data: { mode: "upsert" }, aria: { selected: "false" } }, tr("dataCsv.upsert"))),
-          h("span", { class: "hint", id: "dbImpModeSay" }, tr("dataCsv.everyRowInsertsDuplicate")),)),
+          h("span", { class: "hint", id: "dbImpModeSay" }, tr("dataCsv.everyRowInsertsDuplicate"))),
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           h("input", { type: "file", id: "dbImpFile", accept: ".csv,text/csv", style: "width:auto" }),
           h("span", { class: "hint" }, tr("dataCsv.pasteBelowFirstRow"))),

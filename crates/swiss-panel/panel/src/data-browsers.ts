@@ -25,6 +25,8 @@ import { renderDbBar } from "./data-sql.js";
 // Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
 // runtime-only use — the same shape as the data-sql import above.
 import { dbTypedConfirm } from "./data-edit.js";
+import { dbCopyText } from "./data-csv.js";
+import { dbOpenValueSheet } from "./data-value.js";
 import { renderDbTables } from "./data-view.js";
 import { popupMenu } from "./menu.js";
 import { dbConn, dbTab } from "./db-state.js";
@@ -319,6 +321,9 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   // i18n gate's ternary scan counts the comparison literal in the condition as bare copy.
   const valueText = typeof v.value === "string" ? v.value : JSON.stringify(v.value, null, 2);
   pre.textContent = valueText;
+  pre.oncontextmenu = (ev: MouseEvent): void => {
+    dbRedisCellMenu(ev, v.type, valueText, v.key);
+  };
   wrap.appendChild(pre);
 }
 
@@ -370,6 +375,9 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
           dbRedisCellEdit(td, i, "insert", c, ins[c] == null ? "" : String(ins[c]));
         };
       }
+      td.oncontextmenu = (ev: MouseEvent): void => {
+        dbRedisCellMenu(ev, tr(REDIS_COL_KEYS[c] ?? c), td.textContent || "", v.key + " · " + v.type);
+      };
       tri.appendChild(td);
     });
     tbody.appendChild(tri);
@@ -390,6 +398,9 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
         dbRedisCellEdit(td, -1, entry.addr, c, String(entry.cells[c]));
         };
       }
+      td.oncontextmenu = (ev: MouseEvent): void => {
+        dbRedisCellMenu(ev, tr(REDIS_COL_KEYS[c] ?? c), td.textContent || "", v.key + " · " + v.type);
+      };
       tri.appendChild(td);
     });
     tbody.appendChild(tri);
@@ -397,6 +408,19 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
 
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+}
+
+/** The typed table's right-click — the docs/22 W5.3 cell-menu vocabulary on the redis
+ *  side. A zset member is regularly a long JSON blob the cell truncates to ellipsis; before
+ *  this menu the only way to see one whole was the title hover, and stream values (a plain
+ *  read-only pre) had nothing at all. Copy and View use the same words the SQL grid's cell
+ *  menu uses, and the viewer is the same sheet (text / JSON tree / hex). */
+function dbRedisCellMenu(e: MouseEvent, colLabel: string, text: string, where: string): void {
+  e.preventDefault();
+  popupMenu({ left: e.clientX, top: e.clientY, bottom: e.clientY }, [
+    { label: tr("logs.copyValue"), fn: (): void => { dbCopyText(text); } },
+    { label: tr("dataCsv.viewValue"), fn: (): void => { dbOpenValueSheet(colLabel, text, where); } },
+  ]);
 }
 
 /** The narrow ✕/↩ column the row grid uses, in the value view's words: ✕ buffers a delete
