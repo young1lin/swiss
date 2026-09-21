@@ -21,7 +21,7 @@ import { fill, h } from "./h.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
-import { dbView } from "./db-state.js";
+import { dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
 
 /* --- cell editor dialog ------------------------------------------------------------------------- */
@@ -50,7 +50,9 @@ function dbCellPretty(s: string): string | null {
 }
 
 function dbOpenCellEditor(kind: "update" | "insert", key: string | null, i: number, column: string, meta: DbCellMeta | null): void {
-  const d = dbView();
+  const t = dbTab();
+  if (t.kind !== "table") return;
+  const d = t;
   if (!d.data || !d.data.editable) return;
   let isNull = false;
   let text: string | null = "";
@@ -164,7 +166,9 @@ function dbCloseCellEditor(): void {
 
 /** Write the dialog result into the local buffer and repaint the grid + bar. */
 function dbSaveCellEdit(v: string | null | undefined): void {
-  const d = dbView();
+  const t = dbTab();
+  if (t.kind !== "table") return;
+  const d = t;
   const ed = dbCellEdit;
   if (!ed || !d.data) return;
   if (ed.kind === "insert") {

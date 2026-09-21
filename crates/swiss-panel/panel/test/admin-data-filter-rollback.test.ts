@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView } from "../src/db-state.js";
+import { dbConn as dbConnState, dbTab } from "../src/db-state.js";
 import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), with child-tracking
@@ -103,13 +103,19 @@ function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] 
 
 /** One filter row ("a" = "1") plus a buffered update, so the discard gate asks. */
 function renderFilterRow(): { d: Record<string, any>; selects: Stub[] } {
-  const d = dbView();
-  d.conns = [dbConn("c", "mysql")];
-  d.conn = "c"; d.table = "t"; d.tab = "data"; d.sqlResult = null;
+  const c = dbConnState();
+  c.conns = [dbConn("c", "mysql")];
+  c.conn = "c"; c.sqlResult = null; c.gridCfg = { widths: {}, hidden: [] };
+  // The filter rows are the open table tab's (docs/42 T1); the callers read only tab
+  // fields through d, so d IS the narrowed tab.
+  const tab = dbTab();
+  if (tab.kind !== "table") throw new Error("fresh state must hold a table tab");
+  const d = tab as unknown as Record<string, any>;
+  d.table = "t"; d.pane = "data";
   d.data = dbPage({ table: "t", columns: [dbCol("a"), dbCol("b")], primaryKey: ["a"] });
   d.filters = [{ column: "a", op: "eq", value: "1" }];
   d.updates = { k1: { pk: { a: 1 }, changes: { a: "buffered" } } };
-  d.deletes = {}; d.inserts = []; d.sel = {}; d.gridCfg = { widths: {}, hidden: [] };
+  d.deletes = {}; d.inserts = []; d.sel = {};
   byId.dbFilters = el();
   filters.renderDbFilters();
   const selects = find(byId.dbFilters, (n) => n.tag === "select");

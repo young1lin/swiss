@@ -18,7 +18,7 @@ import type { ApiDbActivityReply, ApiDbActivityRow } from "./types/api.js";
 import { $, apiJson, el, iconNode, toast } from "./util.js";
 import { h } from "./h.js";
 import { popupMenu } from "./menu.js";
-import { dbIsMounted, dbView } from "./db-state.js";
+import { dbConn, dbIsMounted } from "./db-state.js";
 import { tr } from "./i18n.js";
 
 /* --- activity monitor (docs/22 W3.2) -------------------------------------------------------------- */
@@ -50,7 +50,7 @@ function dbActivityDuration(secs: number | null | undefined): string {
  *  close action — passed in so this module never imports data-view back. */
 function dbActivityPane(close: () => void): void {
   dbActivityCloseFn = close;
-  const d = dbView();
+  const d = dbConn();
   const main = document.querySelector<HTMLElement>(".db-main");
   if (!main) return;
   main.textContent = "";
@@ -74,18 +74,18 @@ function dbActivityPane(close: () => void): void {
 }
 
 async function dbActivityLoad() {
-  const d = dbView();
+  const d = dbConn();
   const wrap = $("dbActivityWrap");
   if (!d.conn || !wrap) return;
   const j = await apiJson<ApiDbActivityReply>("/api/db/" + encodeURIComponent(d.conn!) + "/activity");
   // A view that closed mid-flight leaves the timer to self-clear and the DOM alone.
   if (!j || !$("dbActivityWrap")) return;
-  d!.activityRows = j.rows || [];
+  d.activityRows = j.rows || [];
   dbActivityRender();
 }
 
 function dbActivityRender() {
-  const d = dbView();
+  const d = dbConn();
   const wrap = $("dbActivityWrap");
   if (!wrap) return;
   const rows = d.activityRows || [];
@@ -161,7 +161,7 @@ function dbActivityClick(t: Element, ev: MouseEvent): boolean {
     // without this the very click that opens the menu also tears it down.
     ev.stopPropagation();
     const pid = Number(more.dataset.apid);
-    const row = (dbView().activityRows || []).find((r: ApiDbActivityRow): boolean => { return r.pid === pid; });
+    const row = (dbConn().activityRows || []).find((r: ApiDbActivityRow): boolean => { return r.pid === pid; });
     if (row) dbActivityMenu(more, row);
     return true;
   }
@@ -178,7 +178,7 @@ function dbActivityMenu(anchorEl: HTMLElement, row: ApiDbActivityRow): void {
 }
 
 async function dbActivityKill(row: ApiDbActivityRow, mode: string): Promise<void> {
-  const d = dbView();
+  const d = dbConn();
   const j = await apiJson<{ result?: boolean }>("/api/db/" + encodeURIComponent(d.conn!) + "/activity-kill", {
     method: "POST",
     body: JSON.stringify({ pid: row.pid, mode: mode }),
@@ -197,7 +197,7 @@ function dbActivityPollStart() {
   dbActivityTimer = setInterval(() => {
     // Self-guarding: the page closed or the view unmounted — stop instead of polling into a
     // DOM nobody sees. A hidden tab skips its tick but keeps the timer.
-    if (!dbIsMounted() || !dbView().activity || !$("dbActivityWrap")) { dbActivityPollStop(); return; }
+    if (!dbIsMounted() || !dbConn().activity || !$("dbActivityWrap")) { dbActivityPollStop(); return; }
     if (document.hidden) return;
     void dbActivityLoad();
   }, DB_ACTIVITY_POLL_MS);

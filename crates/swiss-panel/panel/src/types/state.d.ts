@@ -25,7 +25,7 @@
    Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
    and would bury the state split in import churn. */
 
-import type { ApiDbColumn, ApiDbFkRow, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep } from "./api.js";
+import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -330,5 +330,128 @@ export interface DbFilterTerm {
 export interface DbGridConfig {
   widths: Record<string, number>;
   hidden: string[];
+}
+
+/* --- the Data view's split record (docs/42 §2) --------------------------------------------------- */
+/* The 49-field DbState mixed two domains that change at different times: what belongs to
+   the CONNECTION (the sidebar's list, its filters, what the console remembers) and what
+   belongs to the OPEN OBJECT (the grid's page, its filters, its buffered edits). docs/42
+   splits the record along that line — every field of the old record lands in exactly one
+   of the shapes below, and the division is disjoint (17 connection + 30 tab + 2 retired
+   = 49; the "tab" count includes the kind discriminant itself).
+
+   DbTab is a discriminated union ON PURPOSE: after `if (t.kind !== "table") return;`
+   the table fields are visible and every other kind's fields are not, so a read of the
+   wrong domain is a typecheck error, not a browser bug. Collapsing the four kinds into
+   one interface with optional fields would switch that safety net off. */
+
+/** One open object's tab kind: a table grid, the console, a redis key's value view, or
+ *  the activity monitor. */
+export type DbTabKind = "table" | "sql" | "key" | "activity";
+
+/** What every tab carries whatever it shows: its own loading flag, its own checked-row
+ *  map (the grid's keys and the result grid's "q"-prefixed keys share it), the keyboard
+ *  focus cell, and the pending-bar preview toggle — the bar belongs to the tab, so its
+ *  open/closed preview state does too. */
+export interface DbTabBase {
+  kind: DbTabKind;
+  loading: boolean;
+  sel: Record<string, boolean>;
+  selAnchor: number;
+  focus: { r: number; c: number } | null;
+  sqlPreview: boolean;
+}
+
+/** A table (or view) opened in the row grid: its page, its filters, its buffered edits,
+ *  and the pane segment showing (data | form | columns | indexes | fks | ddl until the
+ *  six fold into four with docs/42 T4). */
+export interface DbTableTab extends DbTabBase {
+  kind: "table";
+  table: string | null;
+  schema: string | null;
+  data: ApiDbDataPage | null;
+  filters: DbFilterTerm[];
+  pageSize: number;
+  offset: number;
+  order: string | null;
+  dir: string;
+  updates: Record<string, DbBufferedUpdate>;
+  deletes: Record<string, Record<string, unknown>>;
+  inserts: DbInsert[];
+  pane: string;
+  formIdx: number;
+  detail: ApiDbTableDetail | null;
+  detailBusy: boolean;
+  /* The 409 observer's mark: which buffered row and columns lost a commit race. */
+  conflict: { key: string; columns: string[] } | null;
+}
+
+/** The console as an open object (docs/42 T2): the text being written, the reply strip,
+ *  and which reply is showing. One statement per result tab (docs/22 W4.3). */
+export interface DbSqlTab extends DbTabBase {
+  kind: "sql";
+  sqlText: string;
+  sqlResult: DbQueryReply | null;
+  sqlResults: DbQueryReply[] | null;
+  resultTab: number;
+  sqlBusy: boolean;
+}
+
+/** A redis key opened in the value view (docs/22 W3.3): the shown key, its decoded
+ *  value, and the buffered typed-value edits Commit would pipeline. */
+export interface DbKeyTab extends DbTabBase {
+  kind: "key";
+  redisKey: string | null;
+  redisValue: ApiDbRedisValue | null;
+  redisEdits: DbRedisEdits | null;
+}
+
+/** The activity monitor as an open object (docs/22 W3.2, docs/42 T2): the last
+ *  /activity answer the 5s poll re-renders. */
+export interface DbActivityTab extends DbTabBase {
+  kind: "activity";
+  activityRows: ApiDbActivityRow[] | null;
+}
+
+export type DbTab = DbTableTab | DbSqlTab | DbKeyTab | DbActivityTab;
+
+/** The connection-scoped half of the old record: the sidebar's list state, the pickers,
+ *  the grid geometry (per-connection by construction, docs/22 W2.1) and what the console
+ *  remembers. Shared by every open tab; reset when the connection changes.
+ *
+ *  The block after redisError is TRANSITIONAL (docs/42 T1): until T2 gives the console
+ *  and the activity monitor tab kinds of their own, their state stays connection-scoped
+ *  exactly where the single record held it — sqlOpen toggles the console over the pane
+ *  and activity flags the section page. T2 retires both flags by moving the fields into
+ *  DbSqlTab / DbActivityTab. */
+export interface DbConnState {
+  conns: ApiDbConnectionRow[];
+  conn: string | null;
+  tables: ApiDbTableRow[];
+  tablesTotal: number;
+  tablesPage: number;
+  tablesLimit: number;
+  more: boolean;
+  grep: string;
+  schemaFilter: string;
+  sort: string;
+  sortDir: string;
+  gridCfg: DbGridConfig;
+  history: string[];
+  favorites: string[];
+  /* The SCAN cursor is the wire's string (redis cursors are big unsigned numbers the
+     panel compares against "0" — never a JS number). */
+  redis: { keys: ApiDbRedisKeyRow[]; cursor: string; done: boolean; total: number } | null;
+  redisType: string;
+  redisError: boolean;
+  /* Transitional until docs/42 T2 (see the interface comment). */
+  sqlOpen: boolean;
+  sqlText: string;
+  sqlResult: DbQueryReply | null;
+  sqlResults: DbQueryReply[] | null;
+  resultTab: number;
+  sqlBusy: boolean;
+  activity: boolean;
+  activityRows: ApiDbActivityRow[] | null;
 }
 

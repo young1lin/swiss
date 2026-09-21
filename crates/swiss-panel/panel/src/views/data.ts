@@ -16,7 +16,7 @@
 
 import { $ } from "../util.js";
 import { dbConnLabel, dbOkToDrop, dbPending, loadDbView } from "../data-view.js";
-import { dbView, unmountDbView } from "../db-state.js";
+import { dbConn, unmountDbView } from "../db-state.js";
 export function mount() { return loadDbView(); }
 export function refresh() { return loadDbView(); }
 export function hasPendingChanges() { return dbPending() > 0; }
@@ -33,7 +33,7 @@ export function unmount() {
    in the dropdown's own words (dbConnLabel, one builder for both), and renders nothing when
    no connection is selected rather than repeating the page name. */
 export function countText() {
-  const d = dbView();
+  const d = dbConn();
   if (!d.conn) return "";
   const c = d.conns.find((x) => { return x.name === d.conn; });
   return c ? dbConnLabel(c) : "";

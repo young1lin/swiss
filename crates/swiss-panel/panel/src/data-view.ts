@@ -1,4 +1,3 @@
-import type { DbState } from "./db-state.js";
 /*
  * Copyright 2026 young1lin
  * 
@@ -16,7 +15,7 @@ import type { DbState } from "./db-state.js";
  */
 
 import type { ApiDbConnectionRow, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbTableRow, ApiDbTablesResponse } from "./types/api.js";
-import type { DbFilterTerm } from "./types/state.js";
+import type { DbFilterTerm, DbTableTab } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, iconNode, targetEl } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
@@ -37,7 +36,7 @@ import { dbFormChange, dbFormClick, dbFormKeydown } from "./data-form.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
-import { dbIsMounted, dbView, mountDbView } from "./db-state.js";
+import { dbConn, dbIsMounted, dbTab, dbTabs, freshTab, mountDbView } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
 
 /* ================================================================================================
@@ -55,8 +54,9 @@ const DB_HISTORY_MAX = 50;
 
 
 function dbPending(): number {
-  const d = dbView();
-  return Object.keys(d.updates).length + Object.keys(d.deletes).length + d.inserts.length;
+  const t = dbTab();
+  if (t.kind !== "table") return 0; // buffered row edits live on the open table tab
+  return Object.keys(t.updates).length + Object.keys(t.deletes).length + t.inserts.length;
 }
 
 /** Ask before an action would drop buffered edits; false when the user said no. The redis
@@ -69,17 +69,18 @@ function dbOkToDrop(): boolean {
 }
 
 function dbDropEdits() {
-  const d = dbView();
-  d.updates = {}; d.deletes = {}; d.inserts = [];
+  const t = dbTab();
+  if (t.kind !== "table") return; // a key tab buffers under its own redisEdits (data-browsers)
+  t.updates = {}; t.deletes = {}; t.inserts = [];
   dbClearSel(); // selection addresses rows of the OLD page — it never survives a reload
-  d.sqlPreview = false;
+  t.sqlPreview = false;
 }
 
 /** Row selection is scoped to what is on screen: cleared whenever the grid identity changes. */
 function dbClearSel(): void {
-  const d = dbView();
-  d.sel = {};
-  d.selAnchor = -1;
+  const t = dbTab();
+  t.sel = {};
+  t.selAnchor = -1;
 }
 
 function dbPkKey(pkCols: string[], row: Record<string, unknown>): string {
@@ -110,18 +111,20 @@ async function loadDbView(): Promise<void> {
   renderDbView();
   const j = await apiJson<{ connections: ApiDbConnectionRow[] }>("/api/db");
   if (!j) return;
-  const d = dbView();
+  const d = dbConn();
   d.conns = j.connections || [];
   const stillThere = d.conns.some((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; });
   if (!stillThere) {
     d.conn = d.conns.length ? d.conns[0].name : null;
-    d.table = null; d.schema = null; d.data = null; d.tables = [];
-    d.redis = null; d.redisKey = null; d.redisValue = null;
-    d.redisEdits = null;
+    d.tables = [];
+    d.redis = null;
+    // The open object dies with the connection it belonged to: a fresh tab of the new
+    // connection's kind (docs/42 T1) resets table/schema/data and redisKey/Value/Edits
+    // exactly the way the single record's switch ritual did.
+    dbResetTabForConn();
     d.sqlResult = null;
     d.sqlResults = null; // docs/22 W4.3: the tab strip goes with the result it named
-    d.sqlTab = 0;
-    dbDropEdits();
+    d.resultTab = 0;
   }
   renderDbSide();
   // The skeleton above was drawn before /api/db answered, i.e. with no connection: its hint said
@@ -135,7 +138,8 @@ async function loadDbView(): Promise<void> {
   if (d.conn && dbIsRedis()) { if (!d.redis) void dbLoadKeys(true); else renderDbTables(); }
   else if (d.conn) { if (!d.tables.length) void dbLoadTables(); else renderDbTables(); }
   else renderDbTables();
-  if (d.table && !d.data && !dbIsRedis()) void dbLoadData(true);
+  const t = dbTab();
+  if (t.kind === "table" && t.table && !t.data && !dbIsRedis()) void dbLoadData(true);
 }
 
 function renderDbView(): void {
@@ -195,7 +199,7 @@ function renderDbView(): void {
   pane.onkeydown = dbPaneKeydown;
   // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
   // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
-  const db_ = dbView();
+  const db_ = dbConn();
   $<HTMLInputElement>("dbGrep").value = db_.grep || "";
   $<HTMLTextAreaElement>("dbSql").value = db_.sqlText;
   // The console keeps two direct hooks that delegation cannot express: onscroll never
@@ -227,7 +231,7 @@ function renderDbView(): void {
    dispatcher below handles the sidebar and console; each section module exports its own
    dispatcher and the chain calls them in order — selectors are disjoint, and the first
    match wins. Behavior note (docs/37 §10.1): all state is resolved at EVENT time through
-   dbView(), never captured at render time. */
+   dbConn()/dbTab(), never captured at render time. */
 
 // The sidebar grep's debounce: one module-level timer, restarted per keystroke.
 let dbGrepTimer: ReturnType<typeof setTimeout> | undefined;
@@ -282,7 +286,7 @@ function dbPaneKeydown(ev: KeyboardEvent): void {
 /** The sidebar + console half of the delegated click. */
 function dbChromeClick(t: Element, ev: MouseEvent): boolean {
   if (t.closest("#dbSortDir")) {
-    const d = dbView();
+    const d = dbConn();
     d.sortDir = d.sortDir === "asc" ? "desc" : "asc";
     dbPaintSort();
     d.tablesPage = 0;
@@ -304,9 +308,9 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
     ]);
     return true;
   }
-  if (t.closest("#dbSqlFav")) { dbFavPush(dbView().sqlText); return true; }
+  if (t.closest("#dbSqlFav")) { dbFavPush(dbConn().sqlText); return true; }
   if (t.closest("#dbSqlFormat")) {
-    const d = dbView();
+    const d = dbConn();
     if (!d.sqlText || !d.sqlText.trim()) return true;
     d.sqlText = dbFormatSql(d.sqlText);
     const ta = $<HTMLTextAreaElement>("dbSql");
@@ -314,7 +318,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
     return true;
   }
   if (t.closest("#dbNewTable")) {
-    const d = dbView();
+    const d = dbConn();
     if (!d.conn || dbIsRedis()) return true;
     openDbDdlSheet("table", {
       dialect: dbDialectOf(),
@@ -328,7 +332,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
   if (moreBtn) {
     // stopPropagation: the document click closes popup menus — the opening click must not.
     ev.stopPropagation();
-    const d = dbView();
+    const d = dbConn();
     popupMenu(moreBtn.getBoundingClientRect(), [
       { label: d.activity ? tr("dataView.closeActivity") : tr("dataView.activity"), fn: dbActivityToggle },
     ]);
@@ -337,17 +341,17 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
   // The redis key list: the row carries the key; the live selection decides the guard.
   const keyRow = t.closest<HTMLElement>("[data-rkey]");
   if (keyRow) {
-    const d = dbView();
+    const kt = dbTab();
     const key = keyRow.dataset.rkey!;
     // Switching keys drops the typed-value buffer (docs/22 W3.3): a different key cannot
     // adopt another key's fields, so the same guard the table switch uses asks first.
-    if (key !== d.redisKey && dbOkToDrop()) void dbLoadRedisValue(key);
+    if (kt.kind === "key" && key !== kt.redisKey && dbOkToDrop()) void dbLoadRedisValue(key);
     return true;
   }
   // A table row: re-find the row in the live list by name+schema and open it.
   const tblRow = t.closest<HTMLElement>("[data-tname]");
   if (tblRow) {
-    const d = dbView();
+    const d = dbConn();
     const name = tblRow.dataset.tname!;
     const schema = tblRow.dataset.tschema || null;
     const row = d.tables.find((x: ApiDbTableRow): boolean => { return x.name === name && (x.schema || null) === schema; });
@@ -357,7 +361,7 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
   if (t.closest("[data-keysmore]")) { void dbLoadKeys(false); return true; }
   const tpg = t.closest<HTMLElement>("[data-tpg]");
   if (tpg) {
-    const d = dbView();
+    const d = dbConn();
     if (tpg.dataset.tpg === "prev") d.tablesPage--;
     else d.tablesPage++;
     void dbLoadTables();
@@ -375,7 +379,7 @@ function dbChromeInput(t: Element): boolean {
       // A debounce pending across an unmount once threw here. The view is gone — the filter
       // belongs to no one, and writing it into the fresh record would be a lie either way.
       if (!dbIsMounted()) return;
-      const d = dbView();
+      const d = dbConn();
       d.grep = v; d.tablesPage = 0;
       if (dbIsRedis()) void dbLoadKeys(true);
       else void dbLoadTables();
@@ -384,7 +388,7 @@ function dbChromeInput(t: Element): boolean {
   }
   const ta = t.closest<HTMLTextAreaElement>("#dbSql");
   if (ta) {
-    dbView().sqlText = ta.value;
+    dbConn().sqlText = ta.value;
     dbSqlPaint();
     dbSuggestOnInput.call(ta);
     return true;
@@ -395,20 +399,20 @@ function dbChromeInput(t: Element): boolean {
 function dbChromeChange(t: Element): boolean {
   const connSel = t.closest<HTMLSelectElement>("#dbConn");
   if (connSel) {
-    const db_ = dbView();
+    const db_ = dbConn();
     if (connSel.value === db_.conn) return true;
     if (!dbOkToDrop()) { connSel.value = db_.conn || ""; return true; }
     // The Activity page belongs to ONE connection's server; the switch leaves it behind —
     // restore the normal pane (and stop its poll) before the state it reads changes.
     if (db_.activity) dbActivityClose();
-    const d = dbView();
-    d.conn = connSel.value; d.table = null; d.schema = null; d.data = null;
-    d.tables = []; d.tablesPage = 0; d.order = null; d.sqlResult = null;
-    d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: no stale tabs across a connection switch
+    const d = dbConn();
+    d.conn = connSel.value;
+    d.tables = []; d.tablesPage = 0; d.sqlResult = null;
+    d.sqlResults = null; d.resultTab = 0; // docs/22 W4.3: no stale tabs across a connection switch
     d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
-    d.redis = null; d.redisKey = null; d.redisValue = null;
-    d.redisEdits = null;
-    d.filters = [];
+    d.redis = null;
+    // The open object belongs to the connection being left: order/filters/table state and
+    // any redis key all reset with the fresh tab (docs/42 T1's dbResetTabForConn).
     d.sort = "name"; d.sortDir = "asc"; // the new connection's kind may not have the chosen key
     // A sidebar search is table-list-scoped: carrying "tsys_" from one connection into the next
     // silently filters the new list down to nothing. Reset it and the box that shows it.
@@ -416,7 +420,7 @@ function dbChromeChange(t: Element): boolean {
     d.redisType = ""; // same reasoning: a type filter is chosen against a key list, not inherited
     const gb = $<HTMLInputElement>("dbGrep");
     if (gb) gb.value = "";
-    dbDropEdits();
+    dbResetTabForConn();
     dbSyncKind();
     renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
     // The page-bar count chip names the connection (views/data.js countText) and is otherwise
@@ -433,7 +437,7 @@ function dbChromeChange(t: Element): boolean {
   // per-creation wiring, which is why dbWireSchemaSelect is gone (docs/37 R5).
   const schemaSel = t.closest<HTMLSelectElement>("#dbSchema");
   if (schemaSel) {
-    const d = dbView();
+    const d = dbConn();
     if (schemaSel.value === d.schemaFilter) return true;
     d.schemaFilter = schemaSel.value;
     d.tablesPage = 0;
@@ -442,7 +446,7 @@ function dbChromeChange(t: Element): boolean {
   }
   const sortSel = t.closest<HTMLSelectElement>("#dbSort");
   if (sortSel) {
-    const d = dbView();
+    const d = dbConn();
     d.sort = sortSel.value;
     d.tablesPage = 0;
     if (dbIsRedis()) renderDbTables(); // keys sort in place over what has been scanned
@@ -454,7 +458,7 @@ function dbChromeChange(t: Element): boolean {
     if (hist.value === "") return true;
     // docs/22 W5.4: "f"+i is a favorite, a plain index history — both land in the console.
     const fav = hist.value.charAt(0) === "f";
-    const db_ = dbView();
+    const db_ = dbConn();
     const sql = fav ? db_.favorites?.[Number(hist.value.slice(1))]
       : db_.history?.[Number(hist.value)];
     hist.value = ""; // back to the label, so the same entry can be picked again
@@ -479,7 +483,7 @@ function dbChromeKeydown(t: Element, ev: KeyboardEvent): boolean {
 /* The Activity monitor (docs/22 W3.2): one flag drives it. Opening rebuilds the pane with the
    section in place; closing rebuilds it back — the same renderDbView that drew it. */
 function dbActivityToggle(): void {
-  const d = dbView();
+  const d = dbConn();
   if (d.activity) { dbActivityClose(); return; }
   if (!d.conn || dbIsRedis()) return;
   d.activity = true;
@@ -487,7 +491,7 @@ function dbActivityToggle(): void {
 }
 
 function dbActivityClose(): void {
-  const d = dbView();
+  const d = dbConn();
   d.activity = false;
   d.activityRows = null;
   dbActivityPollStop();
@@ -504,7 +508,7 @@ function dbSortOptions(): { v: string; t: string }[] {
 }
 
 function dbPaintSort(): void {
-  const d = dbView();
+  const d = dbConn();
   const sel = $<HTMLSelectElement>("dbSort"), dir = $("dbSortDir");
   if (!sel || !dir) return;
   const opts = dbSortOptions();
@@ -528,7 +532,7 @@ function dbPaintSort(): void {
  *  raw byte order is exactly the ASCII sort nobody asked for. TTL puts expiring keys first; no
  *  expiry (-1) reads as forever. */
 function dbRedisCompare(a: ApiDbRedisKeyRow, b: ApiDbRedisKeyRow): number {
-  const d = dbView();
+  const d = dbConn();
   if (d.sort === "ttl") {
     const ta: number = a.ttl! < 0 ? Infinity : a.ttl!;
     const tb: number = b.ttl! < 0 ? Infinity : b.ttl!;
@@ -571,7 +575,7 @@ function dbSyncKind(): void {
   // list band rides the same condition — redis keys are not tables, and there is nothing to
   // create without a connection.
   const more = $("dbMore");
-  const d = dbView();
+  const d = dbConn();
   if (more) more.hidden = !d.conn || dbIsRedis();
   const listHead = $("dbListHead");
   if (listHead) listHead.hidden = !d.conn || dbIsRedis();
@@ -586,7 +590,7 @@ function dbConnLabel(c: ApiDbConnectionRow): string {
 }
 
 function renderDbSide(): void {
-  const d = dbView();
+  const d = dbConn();
   const sel = $<HTMLSelectElement>("dbConn");
   if (!sel) return;
   sel.textContent = "";
@@ -635,7 +639,7 @@ function renderDbSide(): void {
 const dbTablesReq = dbReqGuard();
 
 async function dbLoadTables(): Promise<void> {
-  const d = dbView();
+  const d = dbConn();
   if (!d.conn) return;
   const box = $("dbTables");
   if (box) { box.textContent = ""; box.appendChild(el("div", "db-hint", tr("dataView.loading"))); }
@@ -657,7 +661,7 @@ async function dbLoadTables(): Promise<void> {
 /** A Postgres connection (many schemas) vs everything else. The schema grouping and the
  *  schema picker exist only for it; MySQL is one database and redis has no schemas at all. */
 function dbIsPg(): boolean {
-  const d = dbView();
+  const d = dbConn();
   const c = d.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === d.conn; });
   return !!c && c.dialect === "pg";
 }
@@ -685,7 +689,7 @@ function dbFilterMatches(tokens: string, name: unknown): boolean {
 }
 
 function renderDbTables(): void {
-  const d = dbView();
+  const d = dbConn();
   const box = $("dbTables");
   if (!box) return;
   box.textContent = "";
@@ -703,9 +707,13 @@ function renderDbTables(): void {
         ? tr("dataView.scanFailedToastCarries")
         : d.grep ? tr("dataView.keysMatchQ", { q: d.grep }) : tr("dataView.keysScanReturnedNone")));
     }
+    // The live key tab holds the selection: a redis connection's single tab is kind
+    // "key" (docs/42 T1), and a fresh one with no key opened selects nothing.
+    const kt = dbTab();
+    const selKey = kt.kind === "key" ? kt.redisKey : null;
     const sortedKeys = (rr ? rr.keys : []).slice().sort(dbRedisCompare);
     sortedKeys.forEach((k: ApiDbRedisKeyRow): void => {
-      const b = el("button", "db-table" + (k.key === d.redisKey ? " sel" : ""));
+      const b = el("button", "db-table" + (k.key === selKey ? " sel" : ""));
       b.title = k.key; // the row truncates with an ellipsis; the full key is one hover away
       // docs/37 R5: the key itself is the address — the delegated click (dbChromeClick)
       // re-reads the live selection and the drop guard at event time.
@@ -768,7 +776,7 @@ function renderDbTables(): void {
     from: from.toLocaleString(locale()), to: to.toLocaleString(locale()), total: d.tablesTotal.toLocaleString(locale()),
   })));
   // docs/37 R5: the pager rides the delegated click (dbChromeClick's [data-tpg]) — the
-  // page counter it moves is read from dbView() at event time, not from this render.
+  // page counter it moves is read from dbConn() at event time, not from this render.
   const prev = el("button", "btn icon") as HTMLButtonElement;
   prev.appendChild(iconNode("chevron-left"));
   prev.title = tr("dataView.prevTablesPage");
@@ -788,8 +796,9 @@ function renderDbTables(): void {
  *  row in the live list and runs dbOpenTable, whose same-table short-circuit and drop guard
  *  still hold at event time. */
 function dbTableRow(t: ApiDbTableRow): HTMLElement {
-  const d = dbView();
-  const b = el("button", "db-table" + (t.name === d.table && t.schema === d.schema ? " sel" : ""));
+  const ct = dbTab();
+  const sel = ct.kind === "table" && t.name === ct.table && t.schema === ct.schema;
+  const b = el("button", "db-table" + (sel ? " sel" : ""));
   b.title = t.name;
   b.dataset.tname = t.name;
   b.dataset.tschema = t.schema || "";
@@ -808,7 +817,7 @@ function dbTableRow(t: ApiDbTableRow): HTMLElement {
  *  trees as a live "Schema" button holding the previous pg connection's pick, which read as a
  *  redis page offering a schema dropdown; hidden options are state residue even unseen. */
 function dbPaintSchemaOptions(): void {
-  const d = dbView();
+  const d = dbConn();
   let sel = $<HTMLSelectElement>("dbSchema");
   if (!d.conn || !dbIsPg()) {
     if (sel) sel.remove();
@@ -849,7 +858,7 @@ function dbPaintSchemaOptions(): void {
 /** The selected connection's dialect word ("mysql" | "pg") — the DDL sheets build their
  *  type suggestions and titles on it (docs/22 W4.6). */
 function dbDialectOf(): string {
-  const d = dbView();
+  const d = dbConn();
   const c = d.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === d.conn; });
   return (c && c.dialect) || "mysql";
 }
@@ -857,7 +866,7 @@ function dbDialectOf(): string {
 /** Every schema the loaded pages have shown, "public" always among them — the New table
  *  sheet's where-it-goes select (docs/22 W4.6; swiss-ui-design rule 6). */
 function dbKnownSchemas(): string[] {
-  const d = dbView();
+  const d = dbConn();
   const out: string[] = [];
   d.tables.forEach((t: ApiDbTableRow): void => {
     if (t.schema && !out.includes(t.schema)) out.push(t.schema);
@@ -867,17 +876,35 @@ function dbKnownSchemas(): string[] {
   return out;
 }
 
+/* docs/42 T1: the strip holds ONE tab and its kind follows the connection's family — a
+   redis connection browses keys, everything else browses tables. A connection switch (or a
+   first connect) replaces the tab with a fresh one of the new family: the fresh literal
+   resets exactly what the single record's switch ritual reset (table/schema/data/order/
+   filters, redisKey/Value/Edits), plus the stale leftovers that ritual used to leak across
+   a switch (the old connection's detail pane, a focus ring addressing rows that are gone).
+   pageSize is carried over within the SQL family: it is the console-level preference the
+   old record never reset either, and the pagesize select would otherwise snap back to 50
+   on every connection hop. */
+function dbResetTabForConn(): void {
+  const next = freshTab(dbIsRedis() ? "key" : "table");
+  const prev = dbTab();
+  if (prev.kind === "table" && next.kind === "table") next.pageSize = prev.pageSize;
+  dbTabs()[0] = next;
+}
+
 /* The open-target the table list, the DDL sheet and the FK jump all hand in: a name plus
    its schema (null when the caller has none - the FK jump's same-schema case). */
 function dbOpenTable(t: { name: string; schema: string | null }): void {
-  const d = dbView();
-  if (t.name === d.table && t.schema === d.schema) return;
+  const ct = dbTab();
+  if (ct.kind !== "table") return; // a redis connection's tab is kind "key" — no table to open
+  if (t.name === ct.table && t.schema === ct.schema) return;
   if (!dbOkToDrop()) return;
-  d.table = t.name; d.schema = t.schema;
-  d.offset = 0; d.order = null; d.dir = "asc"; d.filters = [];
-  d.tab = "data"; d.detail = null;
-  d.sqlResult = null;
-  d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: opening a table closes every result tab
+  const c = dbConn();
+  ct.table = t.name; ct.schema = t.schema;
+  ct.offset = 0; ct.order = null; ct.dir = "asc"; ct.filters = [];
+  ct.pane = "data"; ct.detail = null;
+  c.sqlResult = null;
+  c.sqlResults = null; c.resultTab = 0; // docs/22 W4.3: opening a table closes every result tab
   dbDropEdits();
   renderDbTables();
   void dbLoadData();
@@ -902,12 +929,12 @@ function dbFkJump(fk: ApiDbFkRow, value: unknown): { schema: string | null; tabl
 /** The focused row's value of one column — the header arrow's "current value". Buffered
  *  inserts sit in front of the page's rows exactly as the grid draws them. undefined means
  *  nothing is focused; null IS a value (a NULL cell) — the caller tells them apart. Pure. */
-function dbFocusedColumnValue(d: DbState, column: string): unknown {
-  if (!d.focus || !d.data) return undefined;
-  /* Straight-line flow after the guard: d, d.focus and d.data are all narrowed here, so
+function dbFocusedColumnValue(ct: DbTableTab, column: string): unknown {
+  if (!ct.focus || !ct.data) return undefined;
+  /* Straight-line flow after the guard: ct, ct.focus and ct.data are all narrowed here, so
    * the reads below need no assertions at all (docs/37 R2). */
-  if (d.focus.r < d.inserts.length) return d.inserts[d.focus.r].values[column];
-  const row = d.data.rows[d.focus.r - d.inserts.length];
+  if (ct.focus.r < ct.inserts.length) return ct.inserts[ct.focus.r].values[column];
+  const row = ct.data.rows[ct.focus.r - ct.inserts.length];
   return row ? row[column] : undefined;
 }
 
@@ -916,11 +943,13 @@ function dbFocusedColumnValue(d: DbState, column: string): unknown {
 function dbFkOpen(fk: ApiDbFkRow, value: unknown): void {
   const j = dbFkJump(fk, value);
   if (!j || !dbOkToDrop()) return;
-  const d = dbView();
-  d.table = j.table; d.schema = j.schema;
-  d.offset = 0; d.order = null; d.dir = "asc"; d.filters = j.filters;
-  d.tab = "data"; d.detail = null;
-  d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0;
+  const ct = dbTab();
+  if (ct.kind !== "table") return; // a redis connection's tab is kind "key" — no FK jumps there
+  const c = dbConn();
+  ct.table = j.table; ct.schema = j.schema;
+  ct.offset = 0; ct.order = null; ct.dir = "asc"; ct.filters = j.filters;
+  ct.pane = "data"; ct.detail = null;
+  c.sqlResult = null; c.sqlResults = null; c.resultTab = 0;
   dbDropEdits();
   renderDbTables();
   void dbLoadData();

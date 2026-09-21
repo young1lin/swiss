@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView } from "../src/db-state.js";
+import { dbConn as dbConnState } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
 
 /* docs/22 closeout B7: the schema picker belongs to ONE connection kind. A redis or mysql
@@ -88,17 +88,17 @@ const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
 /** Mount-like sidebar: a #dbConn select and the skeleton's #dbSchema select, whose remove()
  *  does what the real DOM does — the element is GONE from the document afterwards. */
 function sidebar(): void {
-  const d = dbView();
+  const d = dbConnState();
   d.conns = [
     dbConn("pgc", "pg"),
     dbConn("myc", "mysql"),
     dbConn("rc", "redis"),
   ];
-  d.conn = "pgc"; d.table = null; d.schema = null; d.data = null;
+  d.conn = "pgc";
   d.tables = []; d.tablesPage = 0; d.tablesTotal = 0; d.more = false; d.grep = "";
   d.schemaFilter = ""; d.sort = "name"; d.sortDir = "asc";
-  d.redis = null; d.redisKey = null; d.filters = [];
-  d.gridCfg = { widths: {}, hidden: [] }; d.sel = {};
+  d.redis = null;
+  d.gridCfg = { widths: {}, hidden: [] };
   byId.dbConn = el("select");
   // The sidebar container: a re-created #dbSchema is inserted after the connection picker,
   // and an id'd child landing here becomes visible to getElementById — the real DOM contract.
@@ -114,21 +114,21 @@ function sidebar(): void {
 describe("the schema picker follows the connection kind (docs/22 closeout B7)", () => {
   it("a redis connection carries no schema select at all — hidden-with-options reads as a dropdown", () => {
     sidebar();
-    dbView().conn = "rc";
+    dbConnState().conn = "rc";
     view.renderDbTables();
     expect(byId.dbSchema, "the select leaves the DOM on redis").toBeUndefined();
   });
 
   it("a mysql connection carries none either — one database, no picker (docs/22 W1.1)", () => {
     sidebar();
-    dbView().conn = "myc";
+    dbConnState().conn = "myc";
     view.renderDbTables();
     expect(byId.dbSchema, "the select leaves the DOM on mysql").toBeUndefined();
   });
 
   it("a pg connection keeps the picker, unhidden, with its options filled", () => {
     sidebar();
-    const d = dbView();
+    const d = dbConnState();
     d.tables = [{ schema: "public", name: "t1" }, { schema: "app", name: "t2" }];
     view.renderDbTables();
     const sel = byId.dbSchema;
@@ -139,7 +139,7 @@ describe("the schema picker follows the connection kind (docs/22 closeout B7)", 
 
   it("pg -> redis -> pg round-trip: the picker comes back legal and wired, with no other connection's pick", () => {
     sidebar();
-    const d = dbView();
+    const d = dbConnState();
     d.tables = [{ schema: "public", name: "t1" }];
     view.renderDbTables();
     d.schemaFilter = "public"; // a pick made against the pg catalog

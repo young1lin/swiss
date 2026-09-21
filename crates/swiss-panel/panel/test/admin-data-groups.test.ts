@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn, mountDbView, unmountDbView } from "../src/db-state.js";
 
 /* The Data sidebar dropdown's grouping (docs/20 G5): every /api/db row carries the group
    its connection lists under, and the dropdown folds its options into one optgroup per
@@ -78,7 +78,7 @@ function render(conns: unknown[]): FakeNode {
   // assigning over the whole object used to buy — and then names what it cares about.
   unmountDbView();
   mountDbView();
-  Object.assign(dbView(), { conns, conn: "", tables: [], redis: null });
+  Object.assign(dbConn(), { conns, conn: "", tables: [], redis: null });
   dataView.renderDbSide();
   return sel;
 }

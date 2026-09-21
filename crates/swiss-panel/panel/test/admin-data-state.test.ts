@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { dbIsMounted, dbView } from "../src/db-state.js";
+import { dbActiveIndex, dbConn as dbConnState, dbIsMounted, dbTab, dbTabs, freshTab } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
 
 /* The Data view's lifecycle contract this suite pins: mount, unmount, mount again, and the
@@ -135,16 +135,18 @@ describe("the Data view survives unmount and remount", () => {
   it("mounts, and the record starts from the fresh literal", async () => {
     await view.mount();
     expect(dbIsMounted()).toBe(true);
-    expect(dbView().grep).toBe("");
-    expect(dbView().conn).toBeNull();
+    expect(dbConnState().grep).toBe("");
+    expect(dbConnState().conn).toBeNull();
   });
 
   it("unmount resets the record — an unmounted view reports no pending changes", async () => {
-    dbView().inserts = [{ values: { a: 1 } }];
+    const t = dbTab();
+    if (t.kind === "table") t.inserts = [{ values: { a: 1 } }];
     view.unmount();
     expect(dbIsMounted()).toBe(false);
     // What nulling it used to buy: the rows, the buffered edits and the results are gone.
-    expect(dbView().inserts).toEqual([]);
+    const t2 = dbTab();
+    if (t2.kind === "table") expect(t2.inserts).toEqual([]);
     // hasPendingChanges runs from the reload guard, on a view that is no longer there.
     expect(dataView.dbPending()).toBe(0);
     expect(view.hasPendingChanges()).toBe(false);
@@ -159,7 +161,7 @@ describe("the Data view survives unmount and remount", () => {
     // path, because what the user is owed is a working second entry, not a mechanism.
     await expect(view.mount()).resolves.toBeUndefined();
     expect(dbIsMounted()).toBe(true);
-    expect(dbView().grep).toBe("");
+    expect(dbConnState().grep).toBe("");
   });
 
   it("re-entering a third time still works (the reset is not once-only)", async () => {
@@ -196,22 +198,81 @@ describe("the workspace framing class is taken back off on unmount", () => {
 describe("countText names the connection, not the page (docs/18 follow-up)", () => {
   it("mirrors the connection dropdown's label for the selected connection", async () => {
     await view.mount();
-    dbView().conns = [
+    dbConnState().conns = [
       dbConn("shop-redis", "redis"),
       dbConn("pg-app", "postgres"),
     ];
-    dbView().conn = "shop-redis";
+    dbConnState().conn = "shop-redis";
     expect(view.countText()).toBe("shop-redis · redis");
-    dbView().conn = "pg-app";
+    dbConnState().conn = "pg-app";
     // No read-only suffix anymore: there is no readonly flag anywhere in the picker.
     expect(view.countText()).toBe("pg-app · postgres");
   });
 
   it("is empty with no connection selected — and after unmount reset the record", async () => {
-    dbView().conn = null;
+    dbConnState().conn = null;
     expect(view.countText()).toBe("");
     view.unmount();
     expect(dbIsMounted()).toBe(false);
     expect(view.countText()).toBe("");
+  });
+});
+
+/* docs/42 T1 — the split record's own contract. The old 49-field DbState mixed the
+   connection's half with the open object's; these pins hold the seam the split cut:
+   one tab on the strip (the length-1 transitional shape), the four kinds carrying only
+   their own fields, and unmount resetting BOTH records. */
+describe("the split record (docs/42 T1)", () => {
+  it("a fresh mount holds exactly one table tab — the strip's transitional shape", async () => {
+    await view.mount();
+    expect(dbTabs().length, "the tab strip holds one tab in T1").toBe(1);
+    expect(dbActiveIndex()).toBe(0);
+    expect(dbTab().kind).toBe("table");
+  });
+
+  it("each tab kind carries only its own fields — the union stays honest from the builder", () => {
+    const table = freshTab("table");
+    expect("table" in table && table.table).toBeNull();
+    expect("sqlText" in table).toBe(false);
+    expect("redisKey" in table).toBe(false);
+    expect("activityRows" in table).toBe(false);
+
+    const sql = freshTab("sql");
+    expect(sql.sqlText).toBe("");
+    expect("table" in sql).toBe(false);
+    expect("redisKey" in sql).toBe(false);
+
+    const key = freshTab("key");
+    expect(key.redisKey).toBeNull();
+    expect("table" in key).toBe(false);
+    expect("sqlText" in key).toBe(false);
+
+    const activity = freshTab("activity");
+    expect(activity.activityRows).toBeNull();
+    expect("table" in activity).toBe(false);
+    expect("redisKey" in activity).toBe(false);
+  });
+
+  it("every kind shares the base: loading, sel, selAnchor, focus, sqlPreview", () => {
+    for (const t of [freshTab("table"), freshTab("sql"), freshTab("key"), freshTab("activity")]) {
+      expect(t.loading).toBe(false);
+      expect(t.sel).toEqual({});
+      expect(t.selAnchor).toBe(-1);
+      expect(t.focus).toBeNull();
+      expect(t.sqlPreview).toBe(false);
+    }
+  });
+
+  it("unmount resets both halves — the connection record and the tab", async () => {
+    await view.mount();
+    dbConnState().grep = "stale";
+    dbConnState().conn = "x";
+    const t = dbTabs()[0] = freshTab("sql");
+    t.sqlText = "select 1";
+    view.unmount();
+    expect(dbConnState().grep).toBe("");
+    expect(dbConnState().conn).toBeNull();
+    expect(dbTab().kind, "the tab is a fresh table tab again").toBe("table");
+    expect(dbTabs().length).toBe(1);
   });
 });
