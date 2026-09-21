@@ -18,7 +18,7 @@ import { $ } from "./util.js";
 import { fill, h } from "./h.js";
                                      
 import { closeSheet } from "./add-sheet.js";
-import { tr } from "./i18n.js";
+import { locale, tr } from "./i18n.js";
 
 /* --- value viewer sheet (docs/22 W5.3) ----------------------------------------------------------- */
 /* A cell is a 30px row; its content is not. "View value\u2026" opens the full value in a
@@ -118,8 +118,8 @@ function dbOpenValueSheet(column        , value         , where                 
     body = h("div", null,
       h("div", { class: "db-val-meta" },
         p.truncated
-          ? tr("dataValue.nBytesTruncated", { n: p.bytes.toLocaleString() })
-          : tr("dataValue.nBytes", { n: p.bytes.toLocaleString() })),
+          ? tr("dataValue.nBytesTruncated", { n: p.bytes.toLocaleString(locale()) })
+          : tr("dataValue.nBytes", { n: p.bytes.toLocaleString(locale()) })),
       h("pre", { class: "db-val-pre" }, p.text));
   } else if (kind === "url") {
     const s = value          ;

@@ -38,7 +38,7 @@ import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
 import { dbIsMounted, dbView, mountDbView } from "./db-state.js";
-import { tr, trn } from "./i18n.js";
+import { locale, tr, trn } from "./i18n.js";
 
 /* ================================================================================================
    Data view — a DBeaver-style browser over the mysql/pg MCPs.
@@ -722,8 +722,8 @@ function renderDbTables(): void {
       const shown = rr ? rr.keys.length : 0;
       foot2.appendChild(el("span", "",
         rr && rr.total != null
-          ? tr("dataView.keysShownOfTotal", { shown: shown.toLocaleString(), total: Number(rr.total).toLocaleString() })
-          : trn(shown, "dataView.nKeys.one", "dataView.nKeys.other", { n: shown.toLocaleString() })));
+          ? tr("dataView.keysShownOfTotal", { shown: shown.toLocaleString(locale()), total: Number(rr.total).toLocaleString(locale()) })
+          : trn(shown, "dataView.nKeys.one", "dataView.nKeys.other", { n: shown.toLocaleString(locale()) })));
       if (rr && !rr.done) {
         const more = el("button", "btn", tr("dataView.more"));
         more.title = tr("dataView.continueScan");
@@ -765,7 +765,7 @@ function renderDbTables(): void {
   const from = d.tablesTotal ? d.tablesPage * d.tablesLimit + 1 : 0;
   const to = d.tablesPage * d.tablesLimit + d.tables.length;
   foot.appendChild(el("span", "", tr("dataView.tablesRangeOfTotal", {
-    from: from.toLocaleString(), to: to.toLocaleString(), total: d.tablesTotal.toLocaleString(),
+    from: from.toLocaleString(locale()), to: to.toLocaleString(locale()), total: d.tablesTotal.toLocaleString(locale()),
   })));
   // docs/37 R5: the pager rides the delegated click (dbChromeClick's [data-tpg]) — the
   // page counter it moves is read from dbView() at event time, not from this render.
@@ -795,7 +795,7 @@ function dbTableRow(t: ApiDbTableRow): HTMLElement {
   b.dataset.tschema = t.schema || "";
   b.appendChild(el("div", "db-table-name", t.name));
   b.appendChild(el("div", "db-table-meta",
-    t.type + (t.approxRows != null ? " · " + tr("dataView.approxRows", { n: Number(t.approxRows).toLocaleString() }) : "") +
+    t.type + (t.approxRows != null ? " · " + tr("dataView.approxRows", { n: Number(t.approxRows).toLocaleString(locale()) }) : "") +
     (t.size ? " · " + t.size : "")));
   return b;
 }

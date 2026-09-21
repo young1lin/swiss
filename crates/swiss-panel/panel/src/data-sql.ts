@@ -481,7 +481,7 @@ function dbTemplateSql(kind: string, dialect: string, schema: string | undefined
   const t = (schema ? q(schema) + "." : "") + q(table!);
   const cols = columns.map(q);
   const key = pk.map(q);
-  const hint = "-- replace each ? with a value before running";
+  const hint = "-- " + tr("dataSql.replaceEachQ");
   if (kind === "select") {
     return hint + "\nSELECT " + cols.join(", ") + "\nFROM " + t +
       (key.length ? "\nWHERE " + key.map((c) => { return c + " = ?"; }).join(" AND ") : "") + ";";
@@ -495,12 +495,12 @@ function dbTemplateSql(kind: string, dialect: string, schema: string | undefined
     pk.forEach((p: string): void => { keyNames[p] = true; });
     const set = columns.filter((n: string): boolean => { return !keyNames[n]; }).map(q);
     if (!set.length || !key.length) {
-      throw new Error("an UPDATE template needs a non-key column and a primary key");
+      throw new Error(tr("dataSql.updateTemplateNeeds"));
     }
     return hint + "\nUPDATE " + t + "\nSET " + set.map((c: string): string => { return c + " = ?"; }).join(", ") +
       "\nWHERE " + key.map((c: string): string => { return c + " = ?"; }).join(" AND ") + ";";
   }
-  if (!key.length) throw new Error("a DELETE template needs a primary key");
+  if (!key.length) throw new Error(tr("dataSql.deleteTemplateNeeds"));
   return hint + "\nDELETE FROM " + t + "\nWHERE " + key.map((c: string): string => { return c + " = ?"; }).join(" AND ") + ";";
 }
 

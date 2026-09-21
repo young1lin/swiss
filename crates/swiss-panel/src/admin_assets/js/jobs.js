@@ -740,7 +740,7 @@ async function openV2Sheet(job                  )                {
         editing ? null : groupFieldNode(rowGroups, picked),
         two(
           fld("title", h("input", { id: "jv-title", value: form.title, autocomplete: "off" })),
-          fld("labels (comma-separated)", h("input", { id: "jv-labels", value: form.labels, placeholder: tr("jobs.opsNightly"), autocomplete: "off" }))),
+          fld(tr("jobs.labelsCommaSeparated"), h("input", { id: "jv-labels", value: form.labels, placeholder: tr("jobs.opsNightly"), autocomplete: "off" }))),
         two(
           fld("trigger", sel("jv-kind", JOB_TRIGGER_KINDS.map((k) => opt(k, form.kind === k)))),
           fld(tr("jobs.firstFiring"), h("span", { class: "hint" }, tr("jobs.oneScheduleDefinition")))),
@@ -772,7 +772,7 @@ async function openV2Sheet(job                  )                {
           fld("output.maxBytes", h("input", { id: "jv-maxbytes", value: form.maxBytes, placeholder: "16384", autocomplete: "off" }))),
         fld("action", sel("jv-action", actionOptNodes)),
         h("div", { id: "jv-inputs" }, inputFields),
-        fld("definition JSON \u2014 the exact object that will be saved", h("textarea", { id: "jv-json", rows: 12, spellcheck: false })),
+        fld(tr("jobs.definitionJsonExact"), h("textarea", { id: "jv-json", rows: 12, spellcheck: false })),
         h("div", { class: "hint" }, tr("jobs.formWritesOnlyFields"))),
       h("div", { class: "sheet-foot" },
         h("button", { class: "btn", id: "jv-form-to-json" }, tr("jobs.formJson")),

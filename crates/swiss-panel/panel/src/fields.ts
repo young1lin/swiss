@@ -46,7 +46,7 @@ const TYPE_FIELDS: Record<string, FieldSpec[]> = {
   proc: [
     DESC_FIELD,
     { k: "command", label: tk("fields.command"), ph: "npx -y @modelcontextprotocol/server-git   ·   uvx mcp-server-git" },
-    { k: "cwd", label: tk("fields.workingDirectory"), ph: "optional" },
+    { k: "cwd", label: tk("fields.workingDirectory"), ph: tk("fields.optional") },
     { k: "env", label: tk("fields.environmentKeyValueLine"), area: true, kv: true, ph: "GIT_REPO=D:\\dev\\project" },
     { k: "exposeResources", label: tk("fields.exposeResources"), bool: true, def: true, hint: tk("fields.turnOffChildPublishes") },
     { k: "exposePrompts", label: tk("fields.exposePrompts"), bool: true, def: true },

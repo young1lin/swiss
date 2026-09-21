@@ -52,14 +52,14 @@ function triggerSummary(j: ApiJobRow): string {
   const t = j.trigger;
   if (!t || !t.kind) {
     // v1 spelling: everySec | cron directly on the row.
-    return j.cron ? "cron " + j.cron : j.everySec ? "every " + j.everySec + " s" : "no schedule";
+    return j.cron ? tr("jobsV2.cronExpr", { expr: j.cron }) : j.everySec ? tr("jobsV2.everyNs", { n: j.everySec }) : tr("jobsV2.noSchedule");
   }
-  if (t.kind === "cron") return "cron " + (t.expression || "");
+  if (t.kind === "cron") return tr("jobsV2.cronExpr", { expr: t.expression || "" });
   if (t.kind === "interval") {
     const secs = t.everyMs != null && t.everyMs % 1000 === 0 ? t.everyMs / 1000 : t.everyMs + " ms";
-    return "every " + secs + " s" + (t.firstRun === "immediate" ? " \u00b7 immediate" : "");
+    return tr("jobsV2.everyNs", { n: secs }) + (t.firstRun === "immediate" ? " \u00b7 " + tr("jobsV2.immediate") : "");
   }
-  return "manual";
+  return tr("jobsV2.manual");
 }
 
 /** The history meta line for one run record (docs/11 §7.3): what happened, in one glance.
@@ -71,11 +71,11 @@ function historyMeta(r: ApiJobRunRecord & { reason?: string; missedCount?: numbe
     if (r.missedCount != null) parts.push(tr("jobsV2.nMoreMissed", { n: r.missedCount }));
   } else {
     if (r.attempt != null && r.attempts != null && r.attempts > 1) parts.push(tr("jobsV2.attemptB", { a: r.attempt, b: r.attempts }));
-    parts.push((r.ms == null ? "?" : String(r.ms)) + " ms");
-    if (r.exitCode != null) parts.push("exit " + r.exitCode);
+    parts.push(tr("runHistory.durationMs", { ms: r.ms == null ? "?" : String(r.ms) }));
+    if (r.exitCode != null) parts.push(tr("jobsV2.exitN", { n: r.exitCode }));
   }
-  if (r.timedOut) parts.push("timed out");
-  if (r.canceled) parts.push("canceled");
+  if (r.timedOut) parts.push(tr("jobsV2.timedOut"));
+  if (r.canceled) parts.push(tr("jobsV2.canceled"));
   if (r.error) parts.push(String(r.error).slice(0, 120));
   return parts.join(" \u00b7 ");
 }

@@ -60,20 +60,20 @@ function dbTableMenu(anchorEl             )       {
   // carries (the describe_table shape). Identifiers pass the whitelist, values are ?
   // placeholders, and the template lands in the console — fill the ?s, run, and it is history.
   ["select", "insert", "update", "delete"].forEach((kind        )       => {
-    item("Generate " + kind.toUpperCase(), () => { dbGenerateSql(kind); });
+    item(tr("dataEdit.generateKind", { kind: kind.toUpperCase() }), () => { dbGenerateSql(kind); });
   });
   menu.appendChild(document.createElement("hr"));
-  item("Rename table\u2026", () => {
+  item(tr("dataEdit.renameTable"), () => {
     const to = prompt(tr("dataEdit.renameTo", { name: (d.schema ? d.schema + "." : "") + d.table }), d.table );
     if (!to || to === d.table) return;
     if (!/^[A-Za-z0-9_$]{1,64}$/.test(to)) { toast(tr("dataEdit.validTableName"), true); return;}
     void dbRunDdl("rename", to);
   });
-  item("Truncate table\u2026", () => {
-    dbTypedConfirm({ what: "TRUNCATE (delete every row)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, ()       => { void dbRunDdl("truncate"); });
+  item(tr("dataEdit.truncateTable"), () => {
+    dbTypedConfirm({ what: tr("dataEdit.whatTruncate"), name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, ()       => { void dbRunDdl("truncate"); });
   });
-  item("Drop table\u2026", () => {
-    dbTypedConfirm({ what: "DROP (permanently delete)", name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, ()       => { void dbRunDdl("drop"); });
+  item(tr("dataEdit.dropTable"), () => {
+    dbTypedConfirm({ what: tr("dataEdit.whatDrop"), name: (d.schema ? d.schema + "." : "") + d.table, kind: "table", typed: d.table }, ()       => { void dbRunDdl("drop"); });
   });
   document.body.appendChild(menu);
   // docs/22 closeout audit: the Table menu now clamps to the viewport like popupMenu — a

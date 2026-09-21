@@ -647,7 +647,7 @@ function dbRedisRenameSheet(key               )       {
 function dbRedisDeleteKey()       {
   const d = dbView();
   const key = d.redisKey ;
-  dbTypedConfirm({ what: "DELETE (permanently)", name: key, kind: "key" }, ()       => {
+  dbTypedConfirm({ what: tr("dataEdit.whatDelete"), name: key, kind: "key" }, ()       => {
     void dbRedisCommand("DEL " + key).then(async (j         )                => {
       if (!j) return;
       toast(tr("dataBrowsers.deletedKey", { key }));

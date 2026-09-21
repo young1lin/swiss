@@ -139,9 +139,9 @@ const DDL_IN = { table: tk("dataDdl.newTableT"), column: tk("dataDdl.addColumnT"
 /* tk()-marked header words (docs/38 L7): painted through tr(hd) below. */
 const DDL_HEAD = [tk("dataDdl.name"), tk("dataDdl.type"), tk("dataDdl.null"), tk("dataDdl.default"), tk("dataDdl.comment"), ""];
 const DDL_QUIET = {
-  table: "Name the table and at least one column to see the SQL.",
-  column: "Add a column row below to see the SQL.",
-  index: "Name the index and pick at least one column to see the SQL.",
+  table: tk("dataDdl.quietTable"),
+  column: tk("dataDdl.quietColumn"),
+  index: tk("dataDdl.quietIndex"),
 };
 
 /** One sheet's whole mutable context; rebuilt per open, nulled on close. */
@@ -354,7 +354,7 @@ function renderDbDdlRows()       {
     const tdx = el("td");
     const rm = el("button", "btn icon")                     ;
     rm.type = "button";
-    rm.appendChild(iconNode("x", "Remove column"));
+    rm.appendChild(iconNode("x", tr("dataDdl.removeColumn")));
     rm.dataset.i = String(i);
     if (!r.isNew) { rm.disabled = true; rm.title = tr("dataDdl.onlyNewColumnsCan"); }
     rm.onclick = ()       => {
@@ -409,7 +409,7 @@ function paintDbDdlPreviewQuiet()       {
   const pre = $("ddl-pre");
   if (!pre) return;
   const S_ = S ;
-  pre.textContent = DDL_QUIET[S_.kind];
+  pre.textContent = tr(DDL_QUIET[S_.kind]);
   pre.classList.add("db-ddl-quiet");
   $                   ("ddl-commit").disabled = true;
   S_.lastSql = null;
@@ -461,7 +461,7 @@ async function refreshDbDdlPreview()                {
       body: JSON.stringify({ op: DDL_OP[S.kind], payload: payload }),
     });
   } catch (e) {
-    if (S && seq === S.seq) paintDbDdlPreviewError("request failed — is the gateway running?");
+    if (S && seq === S.seq) paintDbDdlPreviewError(tr("dataDdl.previewGatewayDown"));
     return;
   }
   if (!S || seq !== S.seq) return; // a newer keystroke already superseded this answer
