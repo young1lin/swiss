@@ -103,12 +103,9 @@ const dbValueReq = dbReqGuard();
 async function dbLoadRedisValue(key        )                {
   const c = dbConn();
   const d = dbTab();
-  if (d.kind !== "key") return; // a redis connection's tab is kind "key" (docs/42 T1)
-  // A fresh key selection is a navigation: drop the command result that owned the pane,
-  // or the grid guard would keep rendering it and the value would never show.
-  c.sqlResult = null;
-  c.sqlResults = null; c.resultTab = 0; // docs/22 W4.3: key navigation closes every result tab
-  c.sqlBusy = false;
+  if (d.kind !== "key") return; // the value view belongs to a key tab (docs/42 T2)
+  // No result to clear any more: a command reply lives on the console's own tab, so opening a
+  // key can no longer be standing on top of one (docs/42 T2 retired the shared overlay).
   d.redisKey = key;
   d.redisValue = null; // drop the previous key's value — never flash stale data
   d.redisEdits = null; // and its buffered edits — a different key cannot adopt them

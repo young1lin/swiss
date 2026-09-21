@@ -19,7 +19,8 @@ import type { DbDetailSpec } from "./types/state.js";
 import { apiJson, dbReqGuard, el } from "./util.js";
 import { fill, h } from "./h.js";
 import { dbIsRedis } from "./data-browsers.js";
-import { dbDialectOf, dbOkToDrop, dbOpenTable } from "./data-view.js";
+import { dbDialectOf, dbOkToDrop } from "./data-view.js";
+import { dbOpenTab } from "./data-tabs.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbTableMenu } from "./data-edit.js";
 import { dbHighlightNodes, renderDbFilters } from "./data-filters.js";
@@ -308,8 +309,8 @@ function dbStructureClick(t: Element, ev: MouseEvent): boolean {
   if (ref) {
     if (!dbOkToDrop()) return true;
     // The header writes data-ref-schema only for a cross-schema reference, so a same-schema
-    // jump opens with schema null - exactly what dbOpenTable's target type carries.
-    dbOpenTable({ name: ref.dataset.refTable || "", schema: ref.dataset.refSchema || null });
+    // jump opens with schema null - exactly what the spec's schema field carries.
+    dbOpenTab({ kind: "table", table: ref.dataset.refTable || "", schema: ref.dataset.refSchema || null });
     return true;
   }
   return false;

@@ -18,7 +18,7 @@
 import { $, apiJson, el } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbSqlPaint } from "./data-filters.js";
-import { dbConn } from "./db-state.js";
+import { dbConn, dbSqlTab } from "./db-state.js";
 
 /* --- SQL completion (docs/22 W3.1) ------------------------------------------------------------------ */
 /* The console's suggestion list. The SERVER builds the candidate set (dialect keywords + table
@@ -153,7 +153,8 @@ function dbSuggestAccept(i        )       {
   const caret = ta.selectionStart ;
   const start = caret - dbSuggestPrefix.length;
   ta.setRangeText(label, start, caret, "end");
-  dbConn().sqlText = ta.value;
+  const st = dbSqlTab();
+  if (st) st.sqlText = ta.value;
   dbSqlPaint();
   dbSuggestHide();
   ta.focus();

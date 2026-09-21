@@ -19,16 +19,14 @@
 import { $, apiJson, dbReqGuard, el, iconNode, targetEl } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
-import { dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisClick, dbRedisKeydown, dbRedisPendingCount } from "./data-browsers.js";
+import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown } from "./data-browsers.js";
 import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbBarClick, dbFavLoad, dbFavPush, dbFormatSql, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
-import { dbActivityClick, dbActivityPane, dbActivityPollStop } from "./data-activity.js";
-// dbLoadDetail (the Structure tabs' loader) is needed at the table-open path now: the FK
-// jump (docs/22 W5.2) reads the detail's foreignKeys. The cycle data-view <-> data-structure
-// is the same accepted shape as data-grid <-> data-cell — both sides only call across it
-// inside functions, never at module scope.
-import { dbLoadDetail, dbStructureClick } from "./data-structure.js";
+import { dbActivityClick } from "./data-activity.js";
+// The cycle data-view <-> data-structure is the same accepted shape as data-grid <->
+// data-cell — both sides only call across it inside functions, never at module scope.
+import { dbStructureClick } from "./data-structure.js";
 // The pane's delegated listeners chain the form view's dispatchers too. data-form already
 // reaches back into data-view for dbPkKey — the same accepted cycle shape as the
 // data-structure edge above: both sides only call across it inside functions.
@@ -36,7 +34,11 @@ import { dbFormChange, dbFormClick, dbFormKeydown } from "./data-form.js";
 import { openDbDdlSheet } from "./data-ddl.js";
 import { dbSuggestHide, dbSuggestKeys, dbSuggestOnInput } from "./data-suggest.js";
 import { popupMenu } from "./menu.js";
-import { dbConn, dbIsMounted, dbTab, dbTabs, freshTab, mountDbView } from "./db-state.js";
+import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-state.js";
+// The strip's policy module. The cycle is the same accepted shape as the data-structure edge
+// below: data-tabs reaches back for renderDbTables, and both sides only call across it inside
+// functions, never at module scope.
+import { dbOpenTab, dbResetTabsForConn, dbTabsClick, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
 
 /* ================================================================================================
@@ -53,17 +55,32 @@ const DB_HISTORY_KEY = "mcp_gateway_db_sql_history";
 const DB_HISTORY_MAX = 50;
 
 
+/** What the ACTIVE tab is holding back — the number every in-page guard quotes, and the one
+ *  the edit bar counts. The row grid's buffer and a key tab's typed-value buffer (docs/22 W3.3)
+ *  are the same question asked of two kinds, so one counter answers both. */
 function dbPending()         {
-  const t = dbTab();
-  if (t.kind !== "table") return 0; // buffered row edits live on the open table tab
-  return Object.keys(t.updates).length + Object.keys(t.deletes).length + t.inserts.length;
+  return dbTabPending(dbTab());
 }
 
-/** Ask before an action would drop buffered edits; false when the user said no. The redis
- *  value buffer counts too (docs/22 W3.3) — a key switch that ate buffered fields silently
- *  would break the same rule the row grid's guard exists for. */
+/** The WHOLE strip's buffered writes (docs/42 D5). The page-leave guard asks this one, not
+ *  dbPending(): before the tabs, a buffer could only exist on the object in front of the
+ *  operator, and after them a background tab's edits would have walked out unmentioned. */
+function dbPendingAll()         {
+  return dbTabsPending(dbTabs());
+}
+
+/** Ask before an action would drop the ACTIVE tab's buffered edits; false when the user said no. */
 function dbOkToDrop()          {
-  const n = dbPending() + dbRedisPendingCount();
+  return dbAskDrop(dbPending());
+}
+
+/** Ask before LEAVING the page would drop any tab's buffered edits (docs/42 D5) — once, with
+ *  the total, so eight dirty tabs are eight confirms fewer than one guard per tab. */
+function dbOkToLeave()          {
+  return dbAskDrop(dbPendingAll());
+}
+
+function dbAskDrop(n        )          {
   return !n || confirm(tr("dataView.discardNothingWritten",
     { n: trn(n, "dataView.nUncommittedChanges.one", "dataView.nUncommittedChanges.other") }));
 }
@@ -118,13 +135,10 @@ async function loadDbView()                {
     d.conn = d.conns.length ? d.conns[0].name : null;
     d.tables = [];
     d.redis = null;
-    // The open object dies with the connection it belonged to: a fresh tab of the new
-    // connection's kind (docs/42 T1) resets table/schema/data and redisKey/Value/Edits
-    // exactly the way the single record's switch ritual did.
-    dbResetTabForConn();
-    d.sqlResult = null;
-    d.sqlResults = null; // docs/22 W4.3: the tab strip goes with the result it named
-    d.resultTab = 0;
+    // Every open object dies with the connection it belonged to (docs/42 T2): the strip is
+    // replaced by one fresh placeholder of the new connection's family, which resets
+    // table/schema/data, redisKey/Value/Edits and any standing query reply in one move.
+    dbResetTabsForConn();
   }
   renderDbSide();
   // The skeleton above was drawn before /api/db answered, i.e. with no connection: its hint said
@@ -132,6 +146,9 @@ async function loadDbView()                {
   // known, dress everything that depends on its KIND (redis / SQL) — a redis connection
   // entered first used to keep the SQL console and that hint until something else redrew them.
   dbSyncKind();
+  // ...and the strip, for the same reason: the skeleton painted it with no connection known,
+  // which is the one state it hides in. Without this it stayed hidden for the whole visit.
+  renderDbTabs();
   renderDbToolbar(); renderDbFilters(); renderDbGrid();
   // A refresh re-fetches what is MISSING, not what is already on screen — reloading keys would
   // throw away the pages the user paged in with "More".
@@ -170,12 +187,18 @@ function renderDbView()       {
       h("div", { class: "db-tables", id: "dbTables" }, h("div", { class: "db-hint" }, tr("dataView.loading"))),
       h("div", { class: "db-side-foot", id: "dbTablesPager" })),
     h("div", { class: "db-main" },
+      // The object tabs (docs/42 T2). L3 resource navigation, page-body owned: the strip is
+      // the top EDGE of the grid below it (swiss-ui-design §1.3), which is why it sits above
+      // the head row rather than beside the seg pills.
+      h("div", { class: "db-tabstrip", id: "dbTabStrip", role: "tablist" }),
       h("div", { class: "db-headrow" },
         h("div", { class: "db-head", id: "dbHead" }),
         // Pane-level actions live behind one ⋯ next to the head (docs/22 W3.2); the Activity
         // monitor is the first. Hidden until a SQL connection exists — redis has no sessions.
         h("button", { class: "btn icon", id: "dbMore", type: "button", title: tr("dataView.morePaneActions"), hidden: true }, iconNode("ellipsis"))),
       h("div", { class: "db-filters", id: "dbFilters" }),
+      // The console is the sql tab's BODY now (docs/42 T2), not a block toggled over the
+      // pane: renderDbGrid unhides it for a sql tab and hides it for every other kind.
       h("div", { class: "db-console", id: "dbConsole", hidden: true },
         h("div", { class: "db-sql-wrap" },
           h("pre", { class: "db-sql-hl db-sql-face", id: "dbSqlHl", aria: { hidden: "true" } }),
@@ -201,7 +224,8 @@ function renderDbView()       {
   // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
   const db_ = dbConn();
   $                  ("dbGrep").value = db_.grep || "";
-  $                     ("dbSql").value = db_.sqlText;
+  const st = dbSqlTab();
+  $                     ("dbSql").value = st ? st.sqlText : "";
   // The console keeps two direct hooks that delegation cannot express: onscroll never
   // bubbles (the highlight layer must mirror the textarea's scroll), and the suggest keydown
   // must run at the TARGET so it can consume the keys the open list owns before anything
@@ -220,10 +244,8 @@ function renderDbView()       {
   dbHistoryLoad();
   dbFavLoad();
   dbHistoryRender();
+  renderDbTabs();
   renderDbToolbar(); renderDbGrid(); renderDbBar();
-  // The section page replaces the pane's content when (re)entered with it open — closing is
-  // just another rebuild with the flag down, so nothing here needs a special restore path.
-  if (db_.activity && db_.conn && !dbIsRedis()) dbActivityPane(dbActivityClose);
 }
 
 /* --- #pane's four delegated listeners (docs/37 R5) ------------------------------------------------
@@ -246,6 +268,7 @@ function dbPaneClick(ev            )       {
   // checkbox acts on change and the grip on mousedown, so stopping here is the whole click
   // behavior — no dispatcher follows, exactly as master's node handlers did nothing on click.
   if (t.closest(".db-selbox, .db-col-grip")) { ev.stopPropagation(); return; }
+  if (dbTabsClick(t)) return;
   if (dbChromeClick(t, ev)) return;
   if (dbToolbarClick(t, ev)) return;
   if (dbGridClick(t)) return;
@@ -308,13 +331,17 @@ function dbChromeClick(t         , ev            )          {
     ]);
     return true;
   }
-  if (t.closest("#dbSqlFav")) { dbFavPush(dbConn().sqlText); return true; }
+  if (t.closest("#dbSqlFav")) {
+    const st = dbSqlTab();
+    if (st) dbFavPush(st.sqlText);
+    return true;
+  }
   if (t.closest("#dbSqlFormat")) {
-    const d = dbConn();
-    if (!d.sqlText || !d.sqlText.trim()) return true;
-    d.sqlText = dbFormatSql(d.sqlText);
+    const st = dbSqlTab();
+    if (!st || !st.sqlText.trim()) return true;
+    st.sqlText = dbFormatSql(st.sqlText);
     const ta = $                     ("dbSql");
-    if (ta) { ta.value = d.sqlText; dbSqlPaint(); ta.focus(); }
+    if (ta) { ta.value = st.sqlText; dbSqlPaint(); ta.focus(); }
     return true;
   }
   if (t.closest("#dbNewTable")) {
@@ -332,20 +359,19 @@ function dbChromeClick(t         , ev            )          {
   if (moreBtn) {
     // stopPropagation: the document click closes popup menus — the opening click must not.
     ev.stopPropagation();
-    const d = dbConn();
+    // The monitor is an open object (docs/42 T2): the entry opens its tab, and the tab's own
+    // × closes it — which is why there is no "Close activity" twin here any more.
     popupMenu(moreBtn.getBoundingClientRect(), [
-      { label: d.activity ? tr("dataView.closeActivity") : tr("dataView.activity"), fn: dbActivityToggle },
+      { label: tr("dataView.activity"), fn: ()       => { dbOpenTab({ kind: "activity" }); } },
     ]);
     return true;
   }
   // The redis key list: the row carries the key; the live selection decides the guard.
   const keyRow = t.closest             ("[data-rkey]");
   if (keyRow) {
-    const kt = dbTab();
-    const key = keyRow.dataset.rkey ;
-    // Switching keys drops the typed-value buffer (docs/22 W3.3): a different key cannot
-    // adopt another key's fields, so the same guard the table switch uses asks first.
-    if (kt.kind === "key" && key !== kt.redisKey && dbOkToDrop()) void dbLoadRedisValue(key);
+    // A key is an object: it opens its own tab (docs/42 T2), so a second key no longer eats
+    // the first one's typed-value buffer and no guard has to ask about it.
+    dbOpenTab({ kind: "key", key: keyRow.dataset.rkey || "" });
     return true;
   }
   // A table row: re-find the row in the live list by name+schema and open it.
@@ -355,7 +381,7 @@ function dbChromeClick(t         , ev            )          {
     const name = tblRow.dataset.tname ;
     const schema = tblRow.dataset.tschema || null;
     const row = d.tables.find((x               )          => { return x.name === name && (x.schema || null) === schema; });
-    if (row) dbOpenTable(row);
+    if (row) dbOpenTab({ kind: "table", table: row.name, schema: schema });
     return true;
   }
   if (t.closest("[data-keysmore]")) { void dbLoadKeys(false); return true; }
@@ -388,7 +414,8 @@ function dbChromeInput(t         )          {
   }
   const ta = t.closest                     ("#dbSql");
   if (ta) {
-    dbConn().sqlText = ta.value;
+    const st = dbSqlTab();
+    if (st) st.sqlText = ta.value;
     dbSqlPaint();
     dbSuggestOnInput.call(ta);
     return true;
@@ -401,18 +428,14 @@ function dbChromeChange(t         )          {
   if (connSel) {
     const db_ = dbConn();
     if (connSel.value === db_.conn) return true;
-    if (!dbOkToDrop()) { connSel.value = db_.conn || ""; return true; }
-    // The Activity page belongs to ONE connection's server; the switch leaves it behind —
-    // restore the normal pane (and stop its poll) before the state it reads changes.
-    if (db_.activity) dbActivityClose();
+    // Every open object, not just the one in front: the switch is a page-wide drop, so it
+    // asks with the whole strip's total (docs/42 D5).
+    if (!dbOkToLeave()) { connSel.value = db_.conn || ""; return true; }
     const d = dbConn();
     d.conn = connSel.value;
-    d.tables = []; d.tablesPage = 0; d.sqlResult = null;
-    d.sqlResults = null; d.resultTab = 0; // docs/22 W4.3: no stale tabs across a connection switch
+    d.tables = []; d.tablesPage = 0;
     d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
     d.redis = null;
-    // The open object belongs to the connection being left: order/filters/table state and
-    // any redis key all reset with the fresh tab (docs/42 T1's dbResetTabForConn).
     d.sort = "name"; d.sortDir = "asc"; // the new connection's kind may not have the chosen key
     // A sidebar search is table-list-scoped: carrying "tsys_" from one connection into the next
     // silently filters the new list down to nothing. Reset it and the box that shows it.
@@ -420,8 +443,14 @@ function dbChromeChange(t         )          {
     d.redisType = ""; // same reasoning: a type filter is chosen against a key list, not inherited
     const gb = $                  ("dbGrep");
     if (gb) gb.value = "";
-    dbResetTabForConn();
+    // The strip belongs to the connection being left — every open object closes with it, the
+    // activity poll included (docs/42 T2).
+    dbResetTabsForConn();
+    const ta0 = $                     ("dbSql");
+    if (ta0) ta0.value = "";
+    dbSqlPaint();
     dbSyncKind();
+    renderDbTabs();
     renderDbTables(); renderDbToolbar(); renderDbFilters(); renderDbGrid(); renderDbBar();
     // The page-bar count chip names the connection (views/data.js countText) and is otherwise
     // written only on navigation — the switch has to rewrite it here or the bar keeps naming
@@ -463,7 +492,9 @@ function dbChromeChange(t         )          {
       : db_.history?.[Number(hist.value)];
     hist.value = ""; // back to the label, so the same entry can be picked again
     if (sql == null) return true;
-    db_.sqlText = sql;
+    const st = dbSqlTab();
+    if (!st) return true;
+    st.sqlText = sql;
     const ta = $                     ("dbSql");
     if (ta) { ta.value = sql; dbSqlPaint(); ta.focus(); }
     return true;
@@ -478,24 +509,6 @@ function dbChromeKeydown(t         , ev               )          {
     void dbRunSql();
   }
   return true;
-}
-
-/* The Activity monitor (docs/22 W3.2): one flag drives it. Opening rebuilds the pane with the
-   section in place; closing rebuilds it back — the same renderDbView that drew it. */
-function dbActivityToggle()       {
-  const d = dbConn();
-  if (d.activity) { dbActivityClose(); return; }
-  if (!d.conn || dbIsRedis()) return;
-  d.activity = true;
-  renderDbView();
-}
-
-function dbActivityClose()       {
-  const d = dbConn();
-  d.activity = false;
-  d.activityRows = null;
-  dbActivityPollStop();
-  renderDbView();
 }
 
 /* The list's sort row. SQL connections sort server-side (name/rows/size against the catalog);
@@ -793,8 +806,8 @@ function renderDbTables()       {
 
 /** One table row, shared by the flat list and every schema group. docs/37 R5: the name and
  *  schema are the address — the delegated click (dbChromeClick's [data-tname]) re-finds the
- *  row in the live list and runs dbOpenTable, whose same-table short-circuit and drop guard
- *  still hold at event time. */
+ *  row in the live list and hands it to dbOpenTab, whose dedupe and cap are re-read at event
+ *  time. */
 function dbTableRow(t               )              {
   const ct = dbTab();
   const sel = ct.kind === "table" && t.name === ct.table && t.schema === ct.schema;
@@ -876,43 +889,6 @@ function dbKnownSchemas()           {
   return out;
 }
 
-/* docs/42 T1: the strip holds ONE tab and its kind follows the connection's family — a
-   redis connection browses keys, everything else browses tables. A connection switch (or a
-   first connect) replaces the tab with a fresh one of the new family: the fresh literal
-   resets exactly what the single record's switch ritual reset (table/schema/data/order/
-   filters, redisKey/Value/Edits), plus the stale leftovers that ritual used to leak across
-   a switch (the old connection's detail pane, a focus ring addressing rows that are gone).
-   pageSize is carried over within the SQL family: it is the console-level preference the
-   old record never reset either, and the pagesize select would otherwise snap back to 50
-   on every connection hop. */
-function dbResetTabForConn()       {
-  const next = freshTab(dbIsRedis() ? "key" : "table");
-  const prev = dbTab();
-  if (prev.kind === "table" && next.kind === "table") next.pageSize = prev.pageSize;
-  dbTabs()[0] = next;
-}
-
-/* The open-target the table list, the DDL sheet and the FK jump all hand in: a name plus
-   its schema (null when the caller has none - the FK jump's same-schema case). */
-function dbOpenTable(t                                         )       {
-  const ct = dbTab();
-  if (ct.kind !== "table") return; // a redis connection's tab is kind "key" — no table to open
-  if (t.name === ct.table && t.schema === ct.schema) return;
-  if (!dbOkToDrop()) return;
-  const c = dbConn();
-  ct.table = t.name; ct.schema = t.schema;
-  ct.offset = 0; ct.order = null; ct.dir = "asc"; ct.filters = [];
-  ct.pane = "data"; ct.detail = null;
-  c.sqlResult = null;
-  c.sqlResults = null; c.resultTab = 0; // docs/22 W4.3: opening a table closes every result tab
-  dbDropEdits();
-  renderDbTables();
-  void dbLoadData();
-  // docs/22 W5.2: the detail rides along with every open — the FK columns' header arrows
-  // read it, and the Structure tabs were going to ask for it on their first click anyway.
-  void dbLoadDetail();
-}
-
 /** docs/22 W5.2: the FK jump's payload — one describe_table FK row plus the focused row's
  *  value become exactly the open-table state a typed filter would have built (the W1.5
  *  channel's shape), or nothing at all: col = NULL matches nothing, so a NULL has no jump.
@@ -939,21 +915,16 @@ function dbFocusedColumnValue(ct            , column        )          {
 }
 
 /** Open the referenced table with the filter preset (adminer's select-link, dbgate's
- *  openReferenceForm — both land on the target table already filtered to one row). */
+ *  openReferenceForm — both land on the target table already filtered to one row).
+ *
+ *  docs/22 W5.2, finally right: the jump opens a NEW tab. It used to overwrite the tab the
+ *  operator was reading — its filters, its page, its buffered edits all dropped to show them
+ *  the one referenced row — which made the feature something people learned not to click. The
+ *  source tab is untouched now and one click on the strip is the way back. */
 function dbFkOpen(fk            , value         )       {
   const j = dbFkJump(fk, value);
-  if (!j || !dbOkToDrop()) return;
-  const ct = dbTab();
-  if (ct.kind !== "table") return; // a redis connection's tab is kind "key" — no FK jumps there
-  const c = dbConn();
-  ct.table = j.table; ct.schema = j.schema;
-  ct.offset = 0; ct.order = null; ct.dir = "asc"; ct.filters = j.filters;
-  ct.pane = "data"; ct.detail = null;
-  c.sqlResult = null; c.sqlResults = null; c.resultTab = 0;
-  dbDropEdits();
-  renderDbTables();
-  void dbLoadData();
-  void dbLoadDetail(); // the target table's own FK arrows arrive with its detail
+  if (!j) return;
+  dbOpenTab({ kind: "table", table: j.table, schema: j.schema, filters: j.filters });
 }
 
-export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOpenTable, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };
+export { DB_HISTORY_KEY, DB_HISTORY_MAX, DB_PAGE_SIZES, dbClearSel, dbConnLabel, dbDialectOf, dbDropEdits, dbFilterMatches, dbFocusedColumnValue, dbFkJump, dbFkOpen, dbIsPg, dbKnownSchemas, dbLoadTables, dbOkToDrop, dbOkToLeave, dbPaneChange, dbPaneClick, dbPaneInput, dbPaneKeydown, dbPending, dbPendingAll, dbPkKey, dbPkVals, dbResultKey, loadDbView, renderDbSide, renderDbTables, renderDbView };

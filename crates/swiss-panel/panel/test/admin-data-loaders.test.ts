@@ -17,8 +17,8 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbConn as dbConnState, dbTabs, freshTab } from "../src/db-state.js";
-import { dbCol, dbConn } from "./db-fixtures.js";
+import { dbConn as dbConnState, dbResetTabs, dbTab, dbTabs, freshTab } from "../src/db-state.js";
+import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), plus a fetch stub
    whose responses the TEST resolves by hand — that is the only way to make a slow response
@@ -93,7 +93,8 @@ Object.assign(globalThis, {
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const grid = await import(pathToFileURL(join(here, "data-grid.js")).href) as {
-  dbLoadData: (keepOffset?: boolean) => Promise<void>;
+  dbLoadData: (keepOffset?: boolean, keepEdits?: boolean) => Promise<void>;
+  dbRestoreData: () => Promise<void>;
 };
 const browsers = await import(pathToFileURL(join(here, "data-browsers.js")).href) as {
   dbLoadRedisValue: (key: string) => Promise<void>;
@@ -128,16 +129,17 @@ const fail = async (body: any, index = 0) => {
 function freshDb(): { c: Record<string, any>; t: Record<string, any>; k: Record<string, any>; installKey(): void } {
   const c = dbConnState() as unknown as Record<string, any>;
   c.conns = [dbConn("c", "mysql"), dbConn("r", "redis")];
-  c.conn = "c"; c.sqlResult = null; c.sqlResults = null; c.resultTab = 0; c.sqlBusy = false;
-  c.redis = null; c.gridCfg = { widths: {}, hidden: [] };
+  c.conn = "c"; c.redis = null; c.gridCfg = { widths: {}, hidden: [] };
   const tt = freshTab("table");
   const kk = freshTab("key");
-  dbTabs()[0] = tt;
+  // The whole strip, not dbTabs()[0]: a test that opened a second tab must not leak it into
+  // the next one (docs/42 T2).
+  dbResetTabs([tt], 0);
   return {
     c: c,
     t: tt as unknown as Record<string, any>,
     k: kk as unknown as Record<string, any>,
-    installKey: () => { dbTabs()[0] = kk; },
+    installKey: () => { dbResetTabs([kk], 0); },
   };
 }
 
@@ -199,6 +201,47 @@ describe("the grid's pager after the set shrinks under it (docs/22 closeout audi
   });
 });
 
+describe("who may drop a tab's buffered writes (docs/42 D4)", () => {
+  it("an explicit reload is a fresh baseline: the buffer goes", async () => {
+    const { t } = freshDb();
+    t.table = "t";
+    t.updates = { "1": { pk: { id: 1 }, changes: { a: "x" } } };
+    const p = grid.dbLoadData(true);
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true });
+    await p;
+    expect(Object.keys(t.updates).length, "Refresh says so in its own tooltip (docs/22)").toBe(0);
+  });
+
+  it("the return fetch of a backgrounded tab is NOT a reload: the buffer stays", async () => {
+    // Found live on 19998 during the docs/42 T2 walk: switching to another tab and back ran the
+    // same loader, so the writes the strip was still counting on that card vanished without a
+    // word. D4 re-reads the page the tab dropped; it does not re-baseline the tab.
+    const { t } = freshDb();
+    t.table = "t";
+    t.updates = { "1": { pk: { id: 1 }, changes: { a: "x" } } };
+    const p = grid.dbRestoreData();
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true });
+    await p;
+    expect(Object.keys(t.updates).length, "what the user typed is still buffered").toBe(1);
+    expect(t.data.rows.length, "and the page it dropped is back").toBe(1);
+  });
+
+  it("a short page under a restore backs off WITHOUT taking the buffer with it", async () => {
+    // The back-off is a second dbLoadData call: it must carry the restore's promise, or the
+    // fix above would hold only for tabs that happen to land on a full page.
+    const { t } = freshDb();
+    t.table = "t";
+    t.offset = 50;
+    t.updates = { "1": { pk: { id: 1 }, changes: { a: "x" } } };
+    const p = grid.dbRestoreData();
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [], total: 1, primaryKey: ["id"], editable: true });
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true });
+    await p;
+    expect(t.offset, "it backed off one page").toBe(0);
+    expect(Object.keys(t.updates).length, "and kept the writes").toBe(1);
+  });
+});
+
 describe("a redis commit that deletes the key's last field (docs/22 closeout audit)", () => {
   it("re-reads the key and refreshes the key list — the sidebar must not offer a key that is gone", async () => {
     // Deleting a hash's last field deletes the KEY itself. The commit path never awaited
@@ -240,41 +283,73 @@ describe("the redis key list's More button (docs/22 closeout audit)", () => {
 });
 
 describe("DROP leaves no trace of the table on the right pane (docs/22 closeout audit)", () => {
-  it("clears the schema, the result tabs and the pane itself — the dropped table cannot linger", async () => {
-    // The drop branch nulled table/data/detail but left d.schema, the open result tabs and
-    // the right pane's DOM untouched — renderDbTables refreshes only the LEFT list, so the
-    // dropped table's page stayed on screen with no live table behind it.
-    const { c, t } = freshDb();
-    t.table = "t"; t.schema = "s";
-    t.data = { table: "t", schema: "s", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false };
-    c.sqlResult = { columns: ["reply"], rows: [{ reply: "x" }], rowCount: 1 };
-    // A wrap that keeps what it is given: the no-table empty state is a fill()/emptyNode
-    // APPEND now (docs/37 R5), so the assertion walks the collected text of the tree.
+  /* A wrap that keeps what it is given: the no-table empty state is a fill()/emptyNode APPEND
+     (docs/37 R5), so the assertions walk the collected text of the tree. */
+  function gridWrap(): Stub {
     const wrap: any = {
-      style: {}, children: [],
-      textContent: "",
+      style: {}, children: [], textContent: "",
       appendChild(c: any) { wrap.children.push(c); return c; }, removeChild: (c: any) => c, remove: () => {},
       addEventListener: () => {}, removeEventListener: () => {},
       querySelector: () => null, querySelectorAll: () => [], contains: () => false,
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }),
     };
     byId.dbGridWrap = wrap;
+    return wrap as Stub;
+  }
+  const textOf = (n: any, out: string[] = []): string[] => {
+    if (!n) return out;
+    if (typeof n.textContent === "string" && n.textContent) out.push(n.textContent);
+    for (const c of n.children || []) textOf(c, out);
+    return out;
+  };
+  const page = (table: string) => {
+    return dbPage({ table: table, schema: "s", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"] });
+  };
+
+  it("closes the dropped table's own tab — the pane falls back to the empty state", async () => {
+    // The drop branch used to null table/data/detail but leave d.schema and the view state
+    // behind, and the pane itself unpainted — renderDbTables refreshes only the LEFT list.
+    // Under docs/42 T2 the whole tab goes instead: an object that no longer exists has no
+    // business holding a card on the strip.
+    const { t } = freshDb();
+    t.table = "t"; t.schema = "s"; t.data = page("t");
+    const wrap = gridWrap();
     const p = edit.dbRunDdl("drop");
     await tick();
-    await answer({ ran: "DROP TABLE s.t" }); // the ddl ran
+    await answer({ ran: "DROP TABLE s.t" });   // the ddl ran
     await answer({ tables: [], total: 0, more: false }); // dbLoadTables refreshes the list
     await p;
-    expect(t.table).toBeNull();
-    expect(t.schema, "the dropped table's schema is gone").toBeNull();
-    expect(c.sqlResult, "no result tab survives the drop").toBeNull();
-    const text: string[] = [];
-    const walk = (n: any) => {
-      if (!n) return;
-      if (typeof n.textContent === "string" && n.textContent) text.push(n.textContent);
-      for (const c of n.children || []) walk(c);
-    };
-    walk(wrap);
-    expect(text.some((s) => s.includes("Select a table")), "the right pane shows its empty state").toBe(true);
+    expect(dbTabs().length, "the strip keeps its placeholder, never zero tabs").toBe(1);
+    const left = dbTab();
+    expect(left.kind).toBe("table");
+    expect(left === (t as unknown as object), "the dropped table's tab is not the one left").toBe(false);
+    expect(left.kind === "table" && left.table, "the placeholder names no table").toBeNull();
+    expect(left.kind === "table" && left.schema, "the dropped table's schema is gone").toBeNull();
+    expect(textOf(wrap).some((x) => x.includes("Select a table")), "the right pane shows its empty state").toBe(true);
+  });
+
+  it("a background tab on the same table goes with it; the console's own tab stays", async () => {
+    // Two tabs can hold one table — an FK jump opens the target under its own filter beside
+    // the plain tab (docs/22 W5.2). The DROP must take both, and must take nothing else: a
+    // console reply belongs to the console object, not to the table that was dropped.
+    const { t } = freshDb();
+    t.table = "t"; t.schema = "s"; t.data = page("t");
+    const jumped = freshTab("table");
+    jumped.table = "t"; jumped.schema = "s"; jumped.data = page("t");
+    jumped.filters = [{ column: "id", op: "=", value: "1" }];
+    const console_ = freshTab("sql");
+    console_.sqlText = "select 1";
+    console_.sqlResult = { columns: ["reply"], rows: [{ reply: "x" }], rowCount: 1 };
+    dbResetTabs([t as any, jumped, console_], 0);
+    gridWrap();
+    const p = edit.dbRunDdl("drop");
+    await tick();
+    await answer({ ran: "DROP TABLE s.t" });
+    await answer({ tables: [], total: 0, more: false });
+    await p;
+    expect(dbTabs().some((x) => x.kind === "table"), "no tab is still open on the dropped table").toBe(false);
+    expect(dbTabs(), "the console object is untouched").toEqual([console_]);
+    expect(console_.sqlResult, "its reply is not the dropped table's").not.toBeNull();
   });
 });
 

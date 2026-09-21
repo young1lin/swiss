@@ -105,7 +105,7 @@ function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] 
 function renderFilterRow(): { d: Record<string, any>; selects: Stub[] } {
   const c = dbConnState();
   c.conns = [dbConn("c", "mysql")];
-  c.conn = "c"; c.sqlResult = null; c.gridCfg = { widths: {}, hidden: [] };
+  c.conn = "c"; c.gridCfg = { widths: {}, hidden: [] };
   // The filter rows are the open table tab's (docs/42 T1); the callers read only tab
   // fields through d, so d IS the narrowed tab.
   const tab = dbTab();

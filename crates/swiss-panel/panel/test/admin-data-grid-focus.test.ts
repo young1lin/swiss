@@ -128,8 +128,7 @@ const grid = await import(pathToFileURL(join(here, "data-grid.js")).href) as {
 function renderTwoRowGrid(): { d: Record<string, any>; wrap: Stub } {
   const c = dbConnState();
   c.conns = [dbConn("c", "mysql")];
-  c.conn = "c"; c.sqlResult = null; c.sqlBusy = false;
-  c.gridCfg = { widths: {}, hidden: [] };
+  c.conn = "c"; c.gridCfg = { widths: {}, hidden: [] };
   // The grid and its focus ring are the open table tab's (docs/42 T1); the callers read
   // only tab fields through d, so d IS the narrowed tab.
   const tab = dbTab();

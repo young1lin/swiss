@@ -18,6 +18,8 @@ import type { ApiDbColumn, ApiDbConnectionRow, ApiDbDataPage, ApiDbFkRow, DbQuer
 import type { DbCellMeta, DbFilterTerm, DbGridConfig, DbInsert, DbTableTab } from "./types/state.js";
 import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
 import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
+import { dbActivityRender } from "./data-activity.js";
+import { dbOpenTab } from "./data-tabs.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
 import { dbEditCellEnter } from "./data-edit.js";
@@ -26,7 +28,7 @@ import { dbFillConsole, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js"
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { renderDbFormView } from "./data-form.js";
 import { h } from "./h.js";
-import { DB_PAGE_SIZES, dbClearSel, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
+import { DB_PAGE_SIZES, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
 import { popupMenu } from "./menu.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
@@ -382,7 +384,7 @@ function dbCopyChecked(): void {
 // closeout audit).
 const dbDataReq = dbReqGuard();
 
-async function dbLoadData(keepOffset?: boolean): Promise<void> {
+async function dbLoadData(keepOffset?: boolean, keepEdits?: boolean): Promise<void> {
   const c = dbConn();
   const d = dbTab();
   if (d.kind !== "table") return; // a key tab has no row page to load
@@ -406,7 +408,7 @@ async function dbLoadData(keepOffset?: boolean): Promise<void> {
   // 50" (docs/22 closeout audit).
   if (!j.rows.length && d.offset > 0) {
     d.offset = Math.max(0, d.offset - d.pageSize);
-    void dbLoadData(true);
+    void dbLoadData(true, keepEdits);
     return;
   }
   d.data = j;
@@ -416,12 +418,24 @@ async function dbLoadData(keepOffset?: boolean): Promise<void> {
   // (one geometry per conn+table), so the write lands on the connection record.
   const c2 = dbConn();
   c2.gridCfg = dbGridConfigLoad(dbGridKeyNow()!);
-  dbDropEdits(); // a fresh page is a fresh baseline — buffered edits never survive a reload
+  // A fresh page is a fresh baseline — buffered edits never survive a RELOAD (docs/22). The
+  // background tab's return fetch is not one: see dbRestoreData.
+  if (!keepEdits) dbDropEdits();
   // A filter naming a column that no longer exists would 400 on every reload — drop it instead.
   const names = d.data?.columns.map((c: ApiDbColumn): string => { return c.name; });
   d.filters = d.filters.filter((f: DbFilterTerm): boolean => { return names.includes(f.column); });
   renderDbToolbar(); renderDbGrid(); renderDbBar(); renderDbFilters();
 }
+
+/** docs/42 D4's return fetch: the page a tab dropped when it went to the background, re-read at
+ *  the same coordinates. What it must NOT do is apply the fresh-baseline rule above — going to
+ *  the background is not a reload the user asked for, and the strip counts that tab's buffered
+ *  writes the whole time it waits there (the card's dot, the page-leave guard, the close
+ *  confirm). Dropping them on return would make switching tabs a silent discard of typed-in
+ *  changes — found live on 19998 during the docs/42 T2 walk. The writes are keyed by primary
+ *  key, so they land back on the same rows; a row that moved under them still answers at Commit,
+ *  which is where a conflict belongs. */
+async function dbRestoreData(): Promise<void> { await dbLoadData(true, true); }
 
 /* Whole-table export in the chosen format (CSV, NDJSON, or SQL dump). The toolbar button carries the
    busy state: the format menu is gone by the time the download starts, so the button is the
@@ -470,22 +484,29 @@ function renderDbToolbar(): void {
   if (!head) return;
   head.textContent = "";
   const left = el("div", "db-head-left");
-  if (d.sqlResult) {
-    left.appendChild(el("h2", "db-title pane-title", d.sqlResult.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
-    left.appendChild(el("div", "db-meta", trn(d.sqlResult.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
-      (d.sqlResult.note ? tr("dataGrid.note", { note: d.sqlResult.note }) : "") +
-      (d.sqlResult.elapsedMs != null ? tr("dataGrid.msMs", { ms: d.sqlResult.elapsedMs }) : "")));
+  // docs/42 T2: the console is an open object, so its head is the sql TAB's — the reply it is
+  // showing, not a result the connection record carried over every other view.
+  if (t.kind === "activity") {
+    const conn0 = d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; });
+    left.appendChild(el("h2", "db-title pane-title", tr("dataActivity.title")));
+    left.appendChild(el("div", "db-meta", (conn0 ? conn0.label : d.conn || "") + " · " + tr("dataActivity.refreshesWhileOpen")));
+  } else if (t.kind === "sql" && t.sqlResult) {
+    const res = t.sqlResult;
+    left.appendChild(el("h2", "db-title pane-title", res.explained ? tr("dataGrid.executionPlan") : (dbIsRedis() ? tr("dataGrid.commandReply") : tr("dataGrid.sqlResults"))));
+    left.appendChild(el("div", "db-meta", trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
+      (res.note ? tr("dataGrid.note", { note: res.note }) : "") +
+      (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
     // docs/22 W4.3: one tab per statement reply, in the pane's segmented-control vocabulary
     // (.db-tabs — the same strip the Structure tabs use). Eight fit the pane; past that the
     // strip scrolls sideways instead of wrapping. Switching only repoints the active result;
     // every tab keeps its own checked-row keys (dbResultKey namespaces the tab's sel by
     // result tab), so a Shift-range or a copy never crosses tabs.
-    if ((d.sqlResults || []).length > 1) {
+    if ((t.sqlResults || []).length > 1) {
       // One tab per statement reply — clicks answer through #pane's delegated listener via
       // the data-rtab address (docs/37 R5); the active result is resolved from live state.
       left.appendChild(h("div", { class: "db-tabs", role: "tablist" },
-        d.sqlResults?.map((r: DbQueryReply, ti: number) => {
-          return h("button", { role: "tab", data: { rtab: String(ti) }, aria: { selected: ti === d.resultTab ? "true" : "false" } },
+        t.sqlResults?.map((r: DbQueryReply, ti: number) => {
+          return h("button", { role: "tab", data: { rtab: String(ti) }, aria: { selected: ti === t.resultTab ? "true" : "false" } },
             r.tabLabel || tr("dataGrid.resultN", { n: ti + 1 }));
         })));
     }
@@ -500,6 +521,11 @@ function renderDbToolbar(): void {
       ? (pkCols0.length ? tr("dataGrid.editableChangesBufferUntil") : tr("dataGrid.editableNote", { note: t.data.editNote || tr("dataGrid.rowsAddressedAllColumns") }))
       : (t.data.editNote || tr("dataGrid.browsingOnly")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
+  } else if (t.kind === "sql") {
+    // A console with nothing run yet still names itself: the head must not fall through to
+    // "Data / select a table on the left" while the operator is typing a query.
+    left.appendChild(el("h2", "db-title pane-title", dbIsRedis() ? tr("dataGrid.command") : tr("dataSql.sql")));
+    left.appendChild(el("div", "db-meta", dbIsRedis() ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle")));
   } else if (dbIsRedis()) {
     const kt = t.kind === "key" ? t : null;
     left.appendChild(el("h2", "db-title pane-title", kt && kt.redisKey ? kt.redisKey : tr("dataGrid.keys")));
@@ -518,10 +544,8 @@ function renderDbToolbar(): void {
   const ctl = el("div", "db-head-ctl");
   const nosql = dbIsRedis();
   const tt = t.kind === "table" ? t : null;
-  if (tt && tt.data && !d.sqlResult && !nosql) dbRenderTabs(ctl);
-  if (d.sqlResult) {
-    ctl.appendChild(h("button", { class: "btn", data: { tb: "back" } }, dbIsRedis() ? tr("dataGrid.backKeys") : tr("dataGrid.backTable")));
-  } else if (tt && tt.data) {
+  if (tt && tt.data && !nosql) dbRenderTabs(ctl);
+  if (tt && tt.data) {
     // Row-grid controls: page size, pager, refresh, insert, CSV. Rendered on EVERY tab but hidden
     // with visibility (keeps the width) off the Data tab, so the tab segment never shifts.
     const dataCtl = el("div", "db-data-ctl");
@@ -568,10 +592,13 @@ function renderDbToolbar(): void {
     }
     ctl.appendChild(dataCtl);
   }
+  // The console opener stays on the toolbar beside the strip's own + SQL — it is the gesture
+  // every operator already has in their fingers. It no longer TOGGLES anything (docs/42 T2):
+  // it opens the console's tab, or activates the one already open.
   ctl.appendChild(h("button", {
     class: "btn", title: nosql ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle"),
     data: { tb: "sql" },
-  }, d.sqlOpen ? (nosql ? tr("dataGrid.hideCommand") : tr("dataSql.hideSql")) : (nosql ? tr("dataGrid.command") : tr("dataSql.sql"))));
+  }, nosql ? tr("dataGrid.command") : tr("dataSql.sql")));
   head.appendChild(ctl);
 }
 
@@ -649,8 +676,10 @@ function renderDbGrid(): void {
   const t = dbTab();
   const wrap = $("dbGridWrap");
   if (!wrap) return;
+  // docs/42 T2: the console is the sql tab's BODY, so it is on screen exactly when that tab
+  // is the open object — no flag, no toggle, nothing to get out of sync with the strip.
   const con = $("dbConsole");
-  if (con) con.hidden = !c.sqlOpen;
+  if (con) con.hidden = t.kind !== "sql";
   // Full rebuild inside a scrolled pane. The wrap carries overflow-anchor:none (views.css):
   // Chrome's scroll anchoring otherwise re-picks its anchor when this wipe destroys the old
   // one and compensates by scrolling, which snaps the row the user just clicked to the top.
@@ -668,11 +697,11 @@ function renderDbGrid(): void {
     if (!live) t.conflict = null;
   }
 
-  // The console's standing result overlays whatever tab is open (transitional docs/42 T1:
-  // sqlResult is still connection-scoped; T2 moves it into the sql tab).
-  if (c.sqlResult || c.sqlBusy) { renderDbResultGrid(wrap); return; }
-  if (dbIsRedis()) { dbRenderRedisValue(wrap); return; }
-  if (t.kind !== "table") return; // only a table tab paints a row grid below here
+  // One open object, one body (docs/42 T2): the kind picks the painter instead of a chain of
+  // flags deciding which view is standing on top of which.
+  if (t.kind === "sql") { renderDbResultGrid(wrap); return; }
+  if (t.kind === "activity") { dbActivityRender(); return; }
+  if (t.kind === "key") { dbRenderRedisValue(wrap); return; }
   const d = t;
   // docs/22 W5.1: the Form tab paints the same rows as the grid, one record at a time.
   if (d.pane === "form") { renderDbFormView(wrap); return; }
@@ -942,12 +971,12 @@ function renderDbGrid(): void {
 }
 
 function renderDbResultGrid(wrap: HTMLElement): void {
-  const c = dbConn();
   const d = dbTab();
-  if (c.sqlBusy) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.running"))); return; }
-  const res = c.sqlResult;
+  if (d.kind !== "sql") return; // the reply grid is the console tab's body (docs/42 T2)
+  if (d.sqlBusy) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.running"))); return; }
+  const res = d.sqlResult;
   if (!res) { wrap.appendChild(el("div", "db-hint", tr("dataGrid.runQuerySeeRows"))); return; }
-  const tab = c.resultTab || 0; // docs/22 W4.3: this grid is one tab of the strip — its selection keys are that tab's
+  const tab = d.resultTab || 0; // docs/22 W4.3: this grid is one tab of the strip — its selection keys are that tab's
   const tbl = el("table", "db-grid");
   const thead = el("thead");
   const hr = el("tr");
@@ -1017,18 +1046,12 @@ function dbRowKeyAt(rowIdx: number): string | null {
 }
 
 function dbToolbarClick(t: Element, ev: MouseEvent): boolean {
-  const c = dbConn();
   const d = dbTab();
   const tb = t.closest<HTMLElement>("[data-tb]");
   if (tb) {
     const which = tb.dataset.tb;
-    if (which === "back") {
-      c.sqlResult = null;
-      c.sqlResults = null; c.resultTab = 0; // docs/22 W4.3: leaving the results closes every tab
-      dbClearSel(); // "q"-prefixed query keys must not leak into the table grid
-      renderDbToolbar(); renderDbGrid();
-      return true;
-    }
+    // No "back" button any more (docs/42 T2): the reply lives in the console's own tab, so
+    // the way back to the table is the table's tab — already on the strip, one click away.
     if (which === "refresh") {
       if (!dbOkToDrop()) return true;
       dbDropEdits();
@@ -1036,9 +1059,8 @@ function dbToolbarClick(t: Element, ev: MouseEvent): boolean {
       return true;
     }
     if (d.kind !== "table") {
-      // The console toggle and the row-buffer actions below belong to a table tab; the
-      // rest are console-scoped and handled above.
-      if (which === "sql") return dbToolbarSqlToggle(tb);
+      // The row-buffer actions below belong to a table tab; the console opener does not.
+      if (which === "sql") { dbOpenTab({ kind: "sql" }); return true; }
       return false;
     }
     if (which === "addrow") {
@@ -1059,14 +1081,16 @@ function dbToolbarClick(t: Element, ev: MouseEvent): boolean {
       return true;
     }
     if (which === "import") { dbOpenImport(); return true; }
-    if (which === "sql") return dbToolbarSqlToggle(tb);
+    if (which === "sql") { dbOpenTab({ kind: "sql" }); return true; }
   }
   const rtab = t.closest<HTMLElement>("[data-rtab]");
-  if (rtab) {
+  if (rtab && d.kind === "sql") {
     const ti = Number(rtab.dataset.rtab);
-    if (c.resultTab === ti) return true;
-    c.resultTab = ti;
-    c.sqlResult = c.sqlResults![ti];
+    if (d.resultTab === ti) return true;
+    const all = d.sqlResults || [];
+    if (!all[ti]) return true; // a stale strip's address — the run that named it is gone
+    d.resultTab = ti;
+    d.sqlResult = all[ti];
     d.selAnchor = -1; // a Shift-range never spans tabs
     renderDbToolbar();
     renderDbGrid();
@@ -1103,20 +1127,6 @@ function dbToolbarClick(t: Element, ev: MouseEvent): boolean {
     return true;
   }
   return false;
-}
-
-/* The console toggle (docs/22 W5.3): one button on the toolbar flips sqlOpen for whichever
-   connection kind is active — SQL or the redis command console. Transitional docs/42 T1:
-   sqlOpen still lives on the connection record; T2 replaces the toggle with an open tab. */
-function dbToolbarSqlToggle(tb: HTMLElement): boolean {
-  const c = dbConn();
-  const nosql = dbIsRedis();
-  c.sqlOpen = !c.sqlOpen;
-  const con = $("dbConsole");
-  if (con) con.hidden = !c.sqlOpen;
-  tb.textContent = c.sqlOpen ? (nosql ? tr("dataGrid.hideCommand") : tr("dataSql.hideSql")) : (nosql ? tr("dataGrid.command") : tr("dataSql.sql"));
-  if (c.sqlOpen && $("dbSql")) $("dbSql").focus();
-  return true;
 }
 
 function dbGridClick(t: Element): boolean {
@@ -1159,7 +1169,6 @@ function dbGridClick(t: Element): boolean {
 }
 
 function dbGridChange(t: Element, ev: Event): boolean {
-  const c = dbConn();
   const d = dbTab();
   if (t.closest("[data-selall]")) {
     dbSelAll((t as HTMLInputElement).checked);
@@ -1184,8 +1193,8 @@ function dbGridChange(t: Element, ev: Event): boolean {
     return true;
   }
   const qrow = t.closest<HTMLInputElement>("[data-qrow]");
-  if (qrow) {
-    const tab = c.resultTab || 0; // docs/22 W4.3: selection keys are the ACTIVE tab's
+  if (qrow && d.kind === "sql") {
+    const tab = d.resultTab || 0; // docs/22 W4.3: selection keys are the ACTIVE tab's
     const i = Number(qrow.dataset.qrow);
     const mse = ev as Event & { shiftKey?: boolean };
     if (mse.shiftKey && d.selAnchor >= 0 && d.selAnchor !== i) {
@@ -1268,4 +1277,4 @@ function dbGridKeydown(t: Element, ev: KeyboardEvent): boolean {
   return true;
 }
 
-export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridChange, dbGridClick, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridKeydown, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, dbRowAddr, dbToolbarClick, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns, dbTsvRows };
+export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridChange, dbGridClick, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridKeydown, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, dbRestoreData, dbRowAddr, dbToolbarClick, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns, dbTsvRows };
