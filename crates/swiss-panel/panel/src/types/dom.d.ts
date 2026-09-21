@@ -33,6 +33,11 @@ export interface MenuItemAction {
   pick?: boolean;
   on?: boolean;
   title?: string;
+  /* docs/43 M1: a row may lead with an icon (the tab overflow list marks consoles with the
+   *  console glyph) and trail with a dirty-dot (an unsaved tab says so inside the menu,
+   *  where no card is visible to carry it). */
+  icon?: string;
+  dot?: boolean;
   sep?: never;
 }
 

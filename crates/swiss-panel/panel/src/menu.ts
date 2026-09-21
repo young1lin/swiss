@@ -16,7 +16,7 @@
 
 import type { ApiMcpRow } from "./types/api.js";
 import type { MenuItem } from "./types/dom.js";
-import { $, dotTitle, typeTagNode } from "./util.js";
+import { $, dotTitle, iconNode, typeTagNode } from "./util.js";
 import { fill } from "./h.js";
 import { closeMenu } from "./pane.js";
 import { groupedMcps, sideCfg, visibleMcps } from "./sidebar.js";
@@ -44,6 +44,14 @@ function popupMenu(anchor: { left: number; top: number; bottom: number }, items:
     b.className = cls.trim();
     b.textContent = it.label;
     if (it.title && b.title !== undefined) b.title = it.title;
+    // docs/43 M1: the same type glyph and dirty dot the object's card carries, on the menu
+    // row that stands in for it. Order is the card's order: glyph first, dot last.
+    if (it.icon) b.insertBefore(iconNode(it.icon), b.firstChild);
+    if (it.dot) {
+      const d = document.createElement("span");
+      d.className = "db-tab-dot";
+      b.appendChild(d);
+    }
     b.onclick = (ev) => { ev.stopPropagation(); closeMenu(); it.fn(); };
     node.appendChild(b);
   });

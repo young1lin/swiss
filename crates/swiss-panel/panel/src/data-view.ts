@@ -38,7 +38,7 @@ import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-
 // The strip's policy module. The cycle is the same accepted shape as the data-structure edge
 // below: data-tabs reaches back for renderDbTables, and both sides only call across it inside
 // functions, never at module scope.
-import { dbOpenTab, dbResetTabsForConn, dbTabsClick, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
+import { dbOpenTab, dbResetTabsForConn, dbTabsAuxClick, dbTabsClick, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
 
 /* ================================================================================================
@@ -220,6 +220,10 @@ function renderDbView(): void {
   pane.oninput = dbPaneInput;
   pane.onchange = dbPaneChange;
   pane.onkeydown = dbPaneKeydown;
+  // docs/43 M1: the strip's cards close on middle-click (auxclick, button 1) - a browser
+  // native affordance every tab strip owes its user. Property-assigned like its siblings
+  // (a second listener would stack, not replace).
+  pane.onauxclick = dbPaneAuxClick;
   // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
   // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
   const db_ = dbConn();
@@ -258,6 +262,16 @@ function renderDbView(): void {
 // The sidebar grep's debounce: one module-level timer, restarted per keystroke.
 let dbGrepTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** The strip's middle-click close (docs/43 M1): button 1 only - the plain click already
+ *  went through dbPaneClick, and button 2 (right) is contextmenu, not ours. The handler
+ *  re-reads the live tab state at event time, like every dispatcher here. */
+function dbPaneAuxClick(ev: MouseEvent): void {
+  if (ev.button !== 1) return;
+  const t = targetEl(ev);
+  if (!t) return;
+  dbTabsAuxClick(t);
+}
+
 function dbPaneClick(ev: MouseEvent): void {
   const t = targetEl(ev);
   if (!t) return;
@@ -268,7 +282,7 @@ function dbPaneClick(ev: MouseEvent): void {
   // checkbox acts on change and the grip on mousedown, so stopping here is the whole click
   // behavior — no dispatcher follows, exactly as master's node handlers did nothing on click.
   if (t.closest(".db-selbox, .db-col-grip")) { ev.stopPropagation(); return; }
-  if (dbTabsClick(t)) return;
+  if (dbTabsClick(t, ev)) return;
   if (dbChromeClick(t, ev)) return;
   if (dbToolbarClick(t, ev)) return;
   if (dbGridClick(t)) return;
