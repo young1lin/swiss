@@ -32,13 +32,13 @@ import { readRunArgs } from "./run.js";
 import { ago } from "./traffic.js";
 import { menuIsOpen } from "./ui-state.js";
 import { mcpDetail, selectedMcp } from "./mcp-state.js";
-import { tr, trn } from "./i18n.js";
+import { locale, tr, trn } from "./i18n.js";
 
 /* --- Run history: the refill control in the actions row ------------------------------------------ */
 /** When an entry ran. Reuses ago() inside a day; past that, ago's time-of-day would be ambiguous,
  *  so the date comes back too. */
 function histWhen(iso: string): string {
-  return Date.now() - new Date(iso).getTime() < 86400000 ? ago(iso) : new Date(iso).toLocaleString();
+  return Date.now() - new Date(iso).getTime() < 86400000 ? ago(iso) : new Date(iso).toLocaleString(locale());
 }
 
 /** The control's closed label. "↺ Past runs (12)" says what it opens and how much is in it, so the
@@ -537,7 +537,7 @@ function configBodyNode(d: McpDetail): HChild {
   // Parked definition snapshots stay available without making an empty shelf a permanent section.
   const revRows: HChild = revs.length
     ? revs.map((r, i) => {
-        const when = r.at ? new Date(r.at).toLocaleString() : "";
+        const when = r.at ? new Date(r.at).toLocaleString(locale()) : "";
         return h("div", { class: "row" },
           h("span", { class: "k" }, tr(TYPE_LABELS[r.type] || r.type || "?")),
           h("span", { class: "v wrap" },

@@ -25,7 +25,7 @@ import { dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
 import { dbView } from "./db-state.js";
-import { tr, trn } from "./i18n.js";
+import { locale, tr, trn } from "./i18n.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
 /* Paste or upload CSV, map its columns to table columns, preview the first rows, then commit.
@@ -138,7 +138,7 @@ function dbOpenImport()       {
       return o;
     });
     box.appendChild(el("div", "hint", trn(lines.length, "dataCsv.previewSummary.one", "dataCsv.previewSummary.other",
-      { n: lines.length.toLocaleString(), m: mapped, k: header.length })));
+      { n: lines.length.toLocaleString(locale()), m: mapped, k: header.length })));
     const pre = el("pre", "db-ddl");
     pre.style.position = "static";
     pre.style.margin = "var(--s1) 0 0";
@@ -176,7 +176,7 @@ function dbOpenImport()       {
     if (!mapping.some(Boolean)) { toast(tr("dataCsv.mapLeastOneColumn"), true); return; }
     const upsert = mode === "upsert";
     if (!confirm(tr(upsert ? "dataCsv.upsertConfirm" : "dataCsv.insertConfirm",
-        { n: lines.length.toLocaleString(), t: (d.schema ? d.schema + "." : "") + d.table  }))) return;
+        { n: lines.length.toLocaleString(locale()), t: (d.schema ? d.schema + "." : "") + d.table  }))) return;
     const t = e.currentTarget                     ;
     t.disabled = true;
     t.textContent = tr("dataCsv.importing");
