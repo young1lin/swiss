@@ -16,21 +16,22 @@
 
                                                                                                                
                                                                                                      
+                                               
 import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from "./util.js";
-import { dbIsRedis, dbRenderRedisValue } from "./data-browsers.js";
-import { dbActivityRender } from "./data-activity.js";
-import { dbOpenTab } from "./data-tabs.js";
+import { DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbRedisKeyMenu, dbRenderRedisValue } from "./data-browsers.js";
+import { dbActivityLoad, dbActivityRender } from "./data-activity.js";
+import { dbCloseAllTabs, dbOpenTab } from "./data-tabs.js";
 import { dbCellMenu, dbCopyCsvCell, dbCopyText, dbExportCsv, dbOpenImport, dbResultCellMenu, dbRowForCopy, dbSelAll, dbSelectedForCopy } from "./data-csv.js";
 import { dbOpenCellEditor, dbCellText, dbCellView } from "./data-cell.js";
-import { dbEditCellEnter } from "./data-edit.js";
-import { renderDbFilters } from "./data-filters.js";
-import { dbFillConsole, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
+import { dbEditCellEnter, dbTableMenu } from "./data-edit.js";
+import { renderDbFilters, dbSqlPaint } from "./data-filters.js";
+import { dbFavPush, dbFillConsole, dbFormatSql, dbRunSql, dbStatsSql, renderDbBar } from "./data-sql.js";
 import { dbRenderTabs, renderDbDetailGrid } from "./data-structure.js";
 import { renderDbFormView } from "./data-form.js";
 import { h } from "./h.js";
 import { DB_PAGE_SIZES, dbDropEdits, dbFkOpen, dbFocusedColumnValue, dbOkToDrop, dbPkKey, dbResultKey } from "./data-view.js";
 import { popupMenu } from "./menu.js";
-import { dbConn, dbTab } from "./db-state.js";
+import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
 
 /* --- one page of rows --------------------------------------------------------------------------- */
@@ -477,6 +478,164 @@ async function dbExportTable(btn                   , fmt        )               
   }
 }
 
+/* --- docs/43 M4: the toolbar draws ONLY the active tab's controls ----------------------------
+   One primary action + one overflow menu per tab kind; the pager and page-size moved to
+   the status bar (renderDbStatus). The non-icon .btn budget is ONE per toolbar — the
+   machine gate in test/db-toolbar.test.ts counts exactly that. */
+
+/** The overflow items for a TABLE tab: page + whole-table actions, then the Table menu's
+ *  guarded DDL ops (they sat beside the segment before the fold). */
+function dbMoreItemsForTable(more             , tt            )             {
+  const items             = [
+    {
+      label: tr("dataGrid.refresh"), title: tr("dataGrid.reloadPageDropsBuffered"),
+      fn: ()       => { if (dbOkToDrop()) { dbDropEdits(); void dbLoadData(true); } },
+    },
+    { label: tr("dataGrid.csv"), title: tr("dataGrid.downloadCurrentPageCsv"), fn: ()       => { dbExportCsv(); } },
+  ];
+  if (tt.data) {
+    items.push({ sep: true });
+    items.push({ heading: true, label: tr("dataGrid.exportWholeTableCsv"), fn: ()       => {} });
+    items.push({ label: tr("dataGrid.exportCsv"), fn: ()       => { void dbExportTable(more                     , "csv"); } });
+    items.push({ label: tr("dataGrid.exportNdjson"), fn: ()       => { void dbExportTable(more                     , "json"); } });
+    items.push({ label: tr("dataGrid.exportSqlDump"), fn: ()       => { void dbExportTable(more                     , "sql"); } });
+    if (tt.data.editable) {
+      items.push({ sep: true });
+      items.push({ label: tr("dataGrid.import"), title: tr("dataGrid.insertCsvRowsOne"), fn: ()       => { dbOpenImport(); } });
+    }
+  }
+  if (!dbIsRedis()) {
+    items.push({ sep: true });
+    items.push({ label: tr("dataStructure.table"), title: tr("dataStructure.renameTruncateDropTable"), fn: ()       => { dbTableMenu(more); } });
+  }
+  return items;
+}
+
+/** The overflow items for a SQL tab: the secondary run modes, the formatter, favorites and
+ *  history — everything the console's old flat row carried, one hover deep. */
+function dbMoreItemsForSql()             {
+  const st = dbSqlTab();
+  const d = dbConn();
+  const items             = [
+    { label: tr("dataView.explain"), fn: ()       => { void dbRunSql("plan"); } },
+    { label: tr("dataView.explainAnalyze"), fn: ()       => { void dbRunSql("analyze"); } },
+    { label: tr("dataView.format"), fn: ()       => { dbSqlFormatNow(); } },
+    { label: tr("dataView.saveFavorites"), title: tr("dataView.saveConsoleTextFavorites"), fn: ()       => { if (st) dbFavPush(st.sqlText); } },
+  ];
+  const loadSql = (q        )       => {
+    const s2 = dbSqlTab();
+    if (!s2) return;
+    s2.sqlText = q;
+    const ta = $                     ("dbSql");
+    if (ta) { ta.value = q; dbSqlPaint(); }
+  };
+  if (d.favorites && d.favorites.length) {
+    items.push({ sep: true });
+    items.push({ heading: true, label: tr("dataView.saveFavorites"), fn: ()       => {} });
+    d.favorites.slice(0, 8).forEach((q        )       => {
+      items.push({ label: q.slice(0, 60), title: q, fn: ()       => { loadSql(q); } });
+    });
+  }
+  if (d.history && d.history.length) {
+    items.push({ sep: true });
+    items.push({ heading: true, label: tr("dataView.history"), fn: ()       => {} });
+    d.history.slice(0, 8).forEach((q        )       => {
+      items.push({ label: q.slice(0, 60), title: q, fn: ()       => { loadSql(q); } });
+    });
+  }
+  return items;
+}
+
+/** The overflow items for a redis KEY tab: the key's own guarded menu plus the console. */
+function dbMoreItemsForKey(more             )             {
+  return [
+    { label: tr("dataBrowsers.renameDeleteKey"), fn: ()       => { dbRedisKeyMenu(more); } },
+    { label: dbIsRedis() ? tr("dataGrid.command") : tr("dataSql.sql"), fn: ()       => { dbOpenTab({ kind: "sql" }); } },
+  ];
+}
+
+/** The overflow items for an ACTIVITY tab — the generic object actions; its Refresh IS the
+ *  primary action, so it is not repeated here. */
+function dbMoreItemsForActivity()             {
+  return [
+    { label: tr("dataGrid.refresh"), fn: ()       => { void dbActivityLoad(); } },
+    { label: tr("dataTabs.closeAll"), fn: ()       => { dbCloseAllTabs(); } },
+  ];
+}
+
+/** One ellipsis button whose menu is built at CLICK time from live state. */
+function dbMoreButton(build                                   )              {
+  const b = h("button", {
+    class: "btn icon", type: "button",
+    title: tr("dataView.moreActions"), aria: { haspopup: "menu" },
+  }, iconNode("ellipsis"));
+  b.onclick = (ev            )       => {
+    ev.stopPropagation();
+    popupMenu(b.getBoundingClientRect(), build(b));
+  };
+  return b;
+}
+
+/** docs/43 M4: format the console's text in place — the old #dbSqlFormat button's body. */
+function dbSqlFormatNow()       {
+  const st = dbSqlTab();
+  if (!st || !st.sqlText.trim()) return;
+  st.sqlText = dbFormatSql(st.sqlText);
+  const ta = $                     ("dbSql");
+  if (ta) { ta.value = st.sqlText; dbSqlPaint(); ta.focus(); }
+}
+
+/* --- docs/43 M4: the status bar ---------------------------------------------------------------
+   One line under the pane body: pager + page-size for table tabs, row/timing facts for
+   the others, editability in the table's own words (editNote verbatim — a read-only
+   foreign database says WHY), and the connection always named at the right edge. The
+   commit bar (.db-bar) is a different line with a different job. */
+
+function renderDbStatus()       {
+  const bar = $("dbStatus");
+  if (!bar) return;
+  bar.textContent = "";
+  const c = dbConn();
+  const t = dbTab();
+  if (t.kind === "table" && t.data) {
+    // The page-size select keeps its data-tb address — #pane's delegated change listener
+    // answers it, and the refused-discard restore reads live state (docs/37 R5).
+    bar.appendChild(h("select", { class: "db-pagesize", title: tr("dataGrid.rowsPage"), data: { tb: "pagesize" } },
+      DB_PAGE_SIZES.map((n        ) => {
+        return h("option", { value: String(n), selected: n === t.pageSize }, String(n));
+      })));
+    const first = t.offset + 1;
+    const to = t.offset + t.data.rows.length;
+    bar.appendChild(el("span", "db-pageinfo",
+      t.data.total ? tr("dataGrid.bT", { a: first.toLocaleString(locale()), b: to.toLocaleString(locale()), t: t.data.total.toLocaleString(locale()) }) : tr("dataGrid.n0Rows")));
+    bar.appendChild(h("button", {
+      class: "btn icon", title: tr("dataGrid.previousPage"), disabled: t.offset === 0, data: { pg: "prev" },
+    }, iconNode("chevron-left")));
+    bar.appendChild(h("button", {
+      class: "btn icon", title: tr("dataGrid.nextPage"),
+      disabled: t.data.nextPage != null ? !t.data.nextPage : to >= t.data.total, data: { pg: "next" },
+    }, iconNode("chevron-right")));
+    // docs/43 M3/M4: the editability fact in the server's own words — editable:false carries
+    // editNote verbatim (a foreign database names the configured one), editable:true carries
+    // the buffer promise.
+    const pkCols0 = t.data.primaryKey || [];
+    bar.appendChild(el("span", "db-status-note", t.data.editable
+      ? (pkCols0.length ? tr("dataGrid.editableChangesBufferUntil") : tr("dataGrid.editableNote", { note: t.data.editNote || tr("dataGrid.rowsAddressedAllColumns") }))
+      : (t.data.editNote || tr("dataGrid.browsingOnly"))));
+  } else if (t.kind === "sql" && t.sqlResult) {
+    const res = t.sqlResult;
+    bar.appendChild(el("span", "db-status-note",
+      trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
+      (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
+  } else if (t.kind === "key" && t.redisValue) {
+    bar.appendChild(el("span", "db-status-note",
+      t.redisValue.type + (t.redisValue.ttl != null && t.redisValue.ttl >= 0 ? " · ttl " + t.redisValue.ttl + "s" : "")));
+  }
+  bar.appendChild(el("span", "grow"));
+  const conn0 = c.conns.find((x                    )          => { return x.name === c.conn; });
+  bar.appendChild(el("span", "db-status-conn", (conn0 ? conn0.label : c.conn) || ""));
+}
+
 function renderDbToolbar()       {
   const d = dbConn();
   const t = dbTab();
@@ -484,8 +643,6 @@ function renderDbToolbar()       {
   if (!head) return;
   head.textContent = "";
   const left = el("div", "db-head-left");
-  // docs/42 T2: the console is an open object, so its head is the sql TAB's — the reply it is
-  // showing, not a result the connection record carried over every other view.
   if (t.kind === "activity") {
     const conn0 = d.conns.find((c                    )          => { return c.name === d.conn; });
     left.appendChild(el("h2", "db-title pane-title", tr("dataActivity.title")));
@@ -496,14 +653,7 @@ function renderDbToolbar()       {
     left.appendChild(el("div", "db-meta", trn(res.rowCount, "dataGrid.nRows.one", "dataGrid.nRows.other") +
       (res.note ? tr("dataGrid.note", { note: res.note }) : "") +
       (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
-    // docs/22 W4.3: one tab per statement reply, in the pane's segmented-control vocabulary
-    // (.db-tabs — the same strip the Structure tabs use). Eight fit the pane; past that the
-    // strip scrolls sideways instead of wrapping. Switching only repoints the active result;
-    // every tab keeps its own checked-row keys (dbResultKey namespaces the tab's sel by
-    // result tab), so a Shift-range or a copy never crosses tabs.
     if ((t.sqlResults || []).length > 1) {
-      // One tab per statement reply — clicks answer through #pane's delegated listener via
-      // the data-rtab address (docs/37 R5); the active result is resolved from live state.
       left.appendChild(h("div", { class: "db-tabs", role: "tablist" },
         t.sqlResults?.map((r              , ti        ) => {
           return h("button", { role: "tab", data: { rtab: String(ti) }, aria: { selected: ti === t.resultTab ? "true" : "false" } },
@@ -513,17 +663,12 @@ function renderDbToolbar()       {
   } else if (t.kind === "table" && t.data) {
     left.appendChild(el("h2", "db-title pane-title", (t.data.schema ? t.data.schema + "." : "") + t.data.table));
     const bits = [tr("dataGrid.nRows2", { n: t.data.total.toLocaleString(locale()) })];
-    // docs/22 W4.1: a keyless table edits by every-column addressing — the server's note
-    // says how, and it belongs in the editable branch now (this same line used to explain
-    // why such a table could not be edited at all).
     const pkCols0 = t.data.primaryKey || [];
     bits.push(t.data.editable
       ? (pkCols0.length ? tr("dataGrid.editableChangesBufferUntil") : tr("dataGrid.editableNote", { note: t.data.editNote || tr("dataGrid.rowsAddressedAllColumns") }))
       : (t.data.editNote || tr("dataGrid.browsingOnly")));
     left.appendChild(el("div", "db-meta", bits.join("  ·  ")));
   } else if (t.kind === "sql") {
-    // A console with nothing run yet still names itself: the head must not fall through to
-    // "Data / select a table on the left" while the operator is typing a query.
     left.appendChild(el("h2", "db-title pane-title", dbIsRedis() ? tr("dataGrid.command") : tr("dataSql.sql")));
     left.appendChild(el("div", "db-meta", dbIsRedis() ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle")));
   } else if (dbIsRedis()) {
@@ -541,66 +686,43 @@ function renderDbToolbar()       {
   }
   head.appendChild(left);
 
+  // docs/43 M4: the control side is per-kind — the segment (table tabs), ONE primary
+  // action, and the overflow. The pager and page-size are the status bar's now; the
+  // console opener rides the overflow of every non-sql tab.
   const ctl = el("div", "db-head-ctl");
   const nosql = dbIsRedis();
   const tt = t.kind === "table" ? t : null;
   if (tt && tt.data && !nosql) dbRenderTabs(ctl);
   if (tt && tt.data) {
-    // Row-grid controls: page size, pager, refresh, insert, CSV. Rendered on EVERY tab but hidden
-    // with visibility (keeps the width) off the Data tab, so the tab segment never shifts.
-    const dataCtl = el("div", "db-data-ctl");
-    if (tt.pane !== "data") dataCtl.style.visibility = "hidden";
-    // The page-size select carries a data-tb address — #pane's delegated change listener
-    // answers it (docs/37 R5), and the refused-discard restore reads live state.
-    dataCtl.appendChild(h("select", { class: "db-pagesize", title: tr("dataGrid.rowsPage"), data: { tb: "pagesize" } },
-      DB_PAGE_SIZES.map((n        ) => {
-        return h("option", { value: String(n), selected: n === tt.pageSize }, String(n));
-      })));
-
-    const first = tt.offset + 1;
-    const to = tt.offset + tt.data.rows.length;
-    dataCtl.appendChild(el("span", "db-pageinfo",
-      tt.data.total ? tr("dataGrid.bT", { a: first.toLocaleString(locale()), b: to.toLocaleString(locale()), t: tt.data.total.toLocaleString(locale()) }) : tr("dataGrid.n0Rows")));
-    dataCtl.appendChild(h("button", {
-      class: "btn icon", title: tr("dataGrid.previousPage"), disabled: tt.offset === 0, data: { pg: "prev" },
-    }, iconNode("chevron-left")));
-    // docs/22 W1.9: the limit+1 probe answers "is there another page" from the rows actually
-    // fetched; the old offset-vs-total arithmetic stays as the fallback when the flag is absent.
-    dataCtl.appendChild(h("button", {
-      class: "btn icon", title: tr("dataGrid.nextPage"),
-      disabled: tt.data.nextPage != null ? !tt.data.nextPage : to >= tt.data.total, data: { pg: "next" },
-    }, iconNode("chevron-right")));
-
-    dataCtl.appendChild(h("button", {
-      class: "btn", title: tr("dataGrid.reloadPageDropsBuffered"), data: { tb: "refresh" },
-    }, tr("dataGrid.refresh")));
     if (tt.data.editable) {
-      dataCtl.appendChild(h("button", {
+      ctl.appendChild(h("button", {
         class: "btn", title: tr("dataGrid.bufferNewRowInserted"), data: { tb: "addrow" },
       }, tr("dataGrid.row")));
     }
-    dataCtl.appendChild(h("button", {
-      class: "btn", title: tr("dataGrid.downloadCurrentPageCsv"), data: { tb: "csv" },
-    }, tr("dataGrid.csv")));
-    dataCtl.appendChild(h("button", {
-      class: "btn", title: tr("dataGrid.exportWholeTableCsv"), data: { tb: "export" },
-    }, tr("dataGrid.export")));
-    if (tt.data.editable) {
-      dataCtl.appendChild(h("button", {
-        class: "btn", title: tr("dataGrid.insertCsvRowsOne"), data: { tb: "import" },
-      }, tr("dataGrid.import")));
+    ctl.appendChild(dbMoreButton((more             )             => { return dbMoreItemsForTable(more, tt); }));
+  } else if (t.kind === "sql") {
+    ctl.appendChild(h("button", {
+      class: "btn", id: "dbSqlRun", title: tr("dataView.statementsSplitCtrlEnter"),
+    }, tr("dataView.run")));
+    ctl.appendChild(dbMoreButton(()             => { return dbMoreItemsForSql(); }));
+  } else if (t.kind === "key" && t.redisValue) {
+    const cfg = DB_REDIS_TYPES[t.redisValue.type];
+    if (cfg && cfg.ins.length) {
+      ctl.appendChild(h("button", {
+        class: "btn", type: "button", title: tr("dataBrowsers.bufferNewThingApplied", { thing: tr(REDIS_THING_KEYS[cfg.thing] ?? cfg.thing) }), data: { radd: "" },
+      }, tr(cfg.add)));
     }
-    ctl.appendChild(dataCtl);
+    ctl.appendChild(dbMoreButton((more             )             => { return dbMoreItemsForKey(more); }));
+  } else if (t.kind === "activity") {
+    ctl.appendChild(h("button", {
+      class: "btn", title: tr("dataActivity.title"), data: { actrefresh: "" },
+    }, tr("dataGrid.refresh")));
+    ctl.appendChild(dbMoreButton(()             => { return dbMoreItemsForActivity(); }));
   }
-  // The console opener stays on the toolbar beside the strip's own + SQL — it is the gesture
-  // every operator already has in their fingers. It no longer TOGGLES anything (docs/42 T2):
-  // it opens the console's tab, or activates the one already open.
-  ctl.appendChild(h("button", {
-    class: "btn", title: nosql ? tr("dataGrid.commandConsoleTitle") : tr("dataGrid.sqlConsoleTitle"),
-    data: { tb: "sql" },
-  }, nosql ? tr("dataGrid.command") : tr("dataSql.sql")));
   head.appendChild(ctl);
 }
+
+
 
 /** docs/22 W1.4: fill the console with one generated stats statement and run it, so the SQL
  *  is on screen (and in history) rather than hidden behind a one-off request. */
@@ -685,6 +807,7 @@ function renderDbGrid()       {
   // one and compensates by scrolling, which snaps the row the user just clicked to the top.
   wrap.textContent = "";
   dbTipHide(); // a rebuilt grid invalidates any header card still open
+  renderDbStatus(); // docs/43 M4: the status line follows every body repaint
 
   // docs/22 W4.2: conflict marks live exactly as long as the buffered change they name —
   // reverting the cell, dropping the buffer or reloading the table clears them (a new
@@ -1047,6 +1170,8 @@ function dbRowKeyAt(rowIdx        )                {
 
 function dbToolbarClick(t         , ev            )          {
   const d = dbTab();
+  // docs/43 M4: the activity tab's primary action — one guarded refresh of the live view.
+  if (t.closest("[data-actrefresh]")) { void dbActivityLoad(); return true; }
   const tb = t.closest             ("[data-tb]");
   if (tb) {
     const which = tb.dataset.tb;
@@ -1277,4 +1402,4 @@ function dbGridKeydown(t         , ev               )          {
   return true;
 }
 
-export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridChange, dbGridClick, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridKeydown, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, dbRestoreData, dbRowAddr, dbToolbarClick, renderDbGrid, renderDbResultGrid, renderDbToolbar, dbShowAllColumns, dbTsvRows };
+export { DB_COL_MAX, DB_COL_MIN, dbColResizeStart, dbCopyChecked, dbFocusCell, dbGridChange, dbGridClick, dbGridConfigKey, dbGridConfigLoad, dbGridConfigParse, dbGridConfigSave, dbGridKeydown, dbGridVisibleColumns, dbHideColumn, dbKbdMove, dbLoadData, dbNextSort, dbPaintCell, dbPasteApply, dbRestoreData, dbRowAddr, dbToolbarClick, renderDbGrid, renderDbResultGrid, renderDbStatus, renderDbToolbar, dbShowAllColumns, dbTsvRows };

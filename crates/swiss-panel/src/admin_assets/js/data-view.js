@@ -205,6 +205,8 @@ function renderDbView()       {
       h("div", { class: "db-filters", id: "dbFilters" }),
       // The console is the sql tab's BODY now (docs/42 T2), not a block toggled over the
       // pane: renderDbGrid unhides it for a sql tab and hides it for every other kind.
+      // docs/43 M4: the flat action row is gone — Run is the toolbar's primary action,
+      // Explain/Format/favorites/history ride the toolbar's overflow menu.
       h("div", { class: "db-console", id: "dbConsole", hidden: true },
         h("div", { class: "db-sql-wrap" },
           h("pre", { class: "db-sql-hl db-sql-face", id: "dbSqlHl", aria: { hidden: "true" } }),
@@ -213,13 +215,12 @@ function renderDbView()       {
             placeholder: tr("dataView.selectUpdateDeleteStatements"),
           })),
         h("div", { class: "db-console-row" },
-          h("button", { class: "btn", id: "dbSqlRun" }, tr("dataView.run")),
-          h("button", { class: "btn", id: "dbSqlExplain" }, tr("dataView.explain")),
-          h("button", { class: "btn", id: "dbSqlFormat" }, tr("dataView.format")),
-          h("select", { id: "dbSqlHistory", title: tr("dataView.queryHistory") }, h("option", { value: "" }, tr("dataView.history"))),
-          h("button", { class: "btn icon", id: "dbSqlFav", type: "button", aria: { label: tr("dataView.saveFavorites") }, title: tr("dataView.saveConsoleTextFavorites") }, iconNode("star")),
           h("span", { class: "hint", id: "dbSqlHint" }, tr("dataView.statementsSplitCtrlEnter")))),
       h("div", { class: "db-grid-wrap", id: "dbGridWrap" }),
+      // docs/43 M4: the STATUS bar — pager, page size, elapsed, editability, connection —
+      // a second line under the pane body, separate from .db-bar (the commit bar, whose
+      // job is unchanged). Rendered by renderDbStatus on every grid repaint.
+      h("div", { class: "db-status", id: "dbStatus" }),
       h("div", { class: "db-bar", id: "dbBar", hidden: true })));
   pane.appendChild(root);
   pane.onclick = dbPaneClick;
@@ -327,24 +328,9 @@ function dbPaneKeydown(ev               )       {
 /** The sidebar + console half of the delegated click. */
 function dbChromeClick(t         , ev            )          {
   // wrapped: dbRunSql's first parameter is 'explain' — an event object is truthy, so a
-  // plain Run click used to quietly run EXPLAIN (docs/22 W5.4 audit).
+  // plain Run click used to quietly run EXPLAIN (docs/22 W5.4 audit). docs/43 M4 moved
+  // Run to the toolbar; the delegated id branch stays — the toolbar button carries it.
   if (t.closest("#dbSqlRun")) { void dbRunSql(false); return true; }
-  const explainBtn = t.closest             ("#dbSqlExplain");
-  if (explainBtn) {
-    // stopPropagation: connect.js closes any open menu on clicks that reach document, and
-    // without it the click that opens the menu also tears it down (same as the Export menu).
-    ev.stopPropagation();
-    popupMenu(explainBtn.getBoundingClientRect(), [
-      { label: tr("dataView.explain"), fn: ()       => { void dbRunSql("plan"); } },
-      { label: tr("dataView.explainAnalyze"), fn: ()       => { void dbRunSql("analyze"); } },
-    ]);
-    return true;
-  }
-  if (t.closest("#dbSqlFav")) {
-    const st = dbSqlTab();
-    if (st) dbFavPush(st.sqlText);
-    return true;
-  }
   // docs/43 M3: the connection row opens the connection menu — the docs/20 G5 groups as
   // heading rows, one separator between groups, the selected connection marked on.
   const connRow = t.closest             ("#dbConnRow");
@@ -385,14 +371,6 @@ function dbChromeClick(t         , ev            )          {
     ev.stopPropagation();
     popupMenu(dbRowBtn.getBoundingClientRect(),
       dbDatabaseMenuItems(d.databases, dbCurrentDatabase(d), dbSwitchDatabase));
-    return true;
-  }
-  if (t.closest("#dbSqlFormat")) {
-    const st = dbSqlTab();
-    if (!st || !st.sqlText.trim()) return true;
-    st.sqlText = dbFormatSql(st.sqlText);
-    const ta = $                     ("dbSql");
-    if (ta) { ta.value = st.sqlText; dbSqlPaint(); ta.focus(); }
     return true;
   }
   const moreBtn = t.closest             ("#dbMore");
@@ -464,23 +442,9 @@ function dbChromeInput(t         )          {
 }
 
 function dbChromeChange(t         )          {
-  const hist = t.closest                   ("#dbSqlHistory");
-  if (hist) {
-    if (hist.value === "") return true;
-    // docs/22 W5.4: "f"+i is a favorite, a plain index history — both land in the console.
-    const fav = hist.value.charAt(0) === "f";
-    const db_ = dbConn();
-    const sql = fav ? db_.favorites?.[Number(hist.value.slice(1))]
-      : db_.history?.[Number(hist.value)];
-    hist.value = ""; // back to the label, so the same entry can be picked again
-    if (sql == null) return true;
-    const st = dbSqlTab();
-    if (!st) return true;
-    st.sqlText = sql;
-    const ta = $                     ("dbSql");
-    if (ta) { ta.value = sql; dbSqlPaint(); ta.focus(); }
-    return true;
-  }
+  // docs/43 M4: the history select left the console row — its entries ride the toolbar's
+  // overflow menu now, resolved from live state at click time. The page-size select moved
+  // to the status bar and answers through its own data-tb address (dbGridChange's family).
   return false;
 }
 

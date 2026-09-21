@@ -523,6 +523,17 @@
     .db-row-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-row-chev, .db-row-ic { flex: none; color: var(--text-3); }
     .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s1); }
+    /* docs/43 M4: the STATUS bar — one line under the pane body (pager, page size,
+       editability, connection), a sibling of the commit bar (.db-bar), not part of it.
+       Caption ink and the same row height as the console's hint row; the connection name
+       rides the right edge in --text-3, the note keeps body ink. */
+    .db-status { display: flex; align-items: center; gap: var(--s2); padding: 3px var(--s2) 6px; min-height: 26px; }
+    .db-status .db-pageinfo { color: var(--text-3); font-size: var(--f-caption); }
+    .db-status-note { font-size: var(--f-caption); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-status-conn { flex: none; font-size: var(--f-caption); color: var(--text-3); }
+    /* docs/43 M4: the Structure tab's sub-segment (Columns/Indexes/Foreign Keys) — same
+       vocabulary as the main strip, one size down, seated above the catalog tables. */
+    .db-struct-sub { margin: var(--s1) var(--s2); }
     /* docs/43 M2: the list is a TREE of bands (mountGroup at side density), so its rows are
        ONE line now — the name left, the count/type right in --text-3 tnum caption. The two-line
        row's whole meta line (type · rows · size) moved into the title, one hover away, where

@@ -191,4 +191,4 @@ function dbActivityPollStop() {
   if (dbActivityTimer) { clearInterval(dbActivityTimer); dbActivityTimer = null; }
 }
 
-export { dbActivityClick, dbActivityDuration, dbActivityPollStart, dbActivityPollStop, dbActivityRender, dbActivityStart };
+export { dbActivityClick, dbActivityDuration, dbActivityLoad, dbActivityPollStart, dbActivityPollStop, dbActivityRender, dbActivityStart };
