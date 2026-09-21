@@ -1,6 +1,9 @@
 # 43 — Data：页签溢出、多库目录，与 mockup B 的最后一段路
 
-> 状态：**草案，待 owner 复核**。基线 `4b08c43`（master，2026-09-21）。实施分支 `data-full-access`
+> 状态：**已实施**（M1–M5 一阶段一提交：页签溢出、侧栏成树、多库目录、工具条收敛+状态条、文档与 ADR）。
+> 终态数字：`npm run check` 84 个文件 / 781 个用例全绿（typecheck ×2 + eslint + 发射新鲜度 + vitest）；
+> `base.css` 36,533 B + `views.css` 90,864 B；发射 JS 917,490 B / 51 个文件；`swiss.exe` 10,294,784 B。
+> 截图在 `docs/assets/43/`（页签溢出、成树侧栏、多库目录、工具条，明暗各一）。基线 `4b08c43`（master，2026-09-21）。实施分支 `data-full-access`
 > （worktree `.agents/worktrees/data`）。本文承接 `docs/42-data-object-tabs-spec.md`：42 的 T1（状态切分）
 > 与 T2（页签条）已经做完，**T3（侧栏成树）与 T4（工具条收敛 + 状态条）一行没动**——本文把它们原样收编，
 > 再加上 owner 在 T2 走查后提的两条新需求。视觉参考仍是 `docs/assets/42/data-layout-mockup.html`
