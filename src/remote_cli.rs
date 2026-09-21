@@ -759,8 +759,41 @@ async fn submit_and_stream(
     stream_run(gw, run_id, true).await
 }
 
+/// The whole recorded stream of a finished remote run, from the record
+/// (logs/remote/out/<id>.txt) rather than the live window. Answers false without
+/// printing anything when there is no record to read (not a remote run, the plugin
+/// off), so the caller falls back to the live window.
+async fn print_recorded_output(gw: &Gateway, run_id: u64) -> bool {
+    use std::io::Write as _;
+    let mut cursor: u64 = 0;
+    loop {
+        let Ok(chunk) = gw
+            .get(&format!(
+                "/api/remote/runs/{run_id}/output?after={cursor}&max=131072"
+            ))
+            .await
+        else {
+            return cursor > 0;
+        };
+        print!("{}", chunk["output"].as_str().unwrap_or(""));
+        let _ = std::io::stdout().flush();
+        let next = chunk["nextCursor"].as_u64().unwrap_or(cursor);
+        let total = chunk["total"].as_u64().unwrap_or(0);
+        if next <= cursor || next >= total {
+            return true;
+        }
+        cursor = next;
+    }
+}
+
 /// The shared follow loop: poll the output cursor, print what arrived, and when
 /// the run is terminal fetch the row and translate its outcome into an exit code.
+///
+/// A run that finished before the first poll has already been compacted to its last
+/// 64 KiB (KEEP_FINISHED_OUTPUT_BYTES): the first read comes back `truncated`, and
+/// printing it as if it were the stream would drop the head of a `cat` or a fast
+/// build silently (found live 2026-09-21 with a 121 KB file). The record is written
+/// before the run turns terminal, so the follower prints from there instead.
 async fn stream_run(gw: &Gateway, run_id: u64, print_from_start: bool) -> i32 {
     use std::io::Write as _;
     let mut cursor: u64 = 0;
@@ -777,13 +810,18 @@ async fn stream_run(gw: &Gateway, run_id: u64, print_from_start: bool) -> i32 {
                 return 1;
             }
         };
+        let terminal = chunk["terminal"].as_bool().unwrap_or(false);
         if print_from_start {
+            let evicted_head = cursor == 0 && chunk["truncated"].as_bool().unwrap_or(false);
+            if evicted_head && terminal && print_recorded_output(gw, run_id).await {
+                break;
+            }
             let text = chunk["output"].as_str().unwrap_or("");
             print!("{text}");
             let _ = std::io::stdout().flush();
         }
         cursor = chunk["nextCursor"].as_u64().unwrap_or(cursor);
-        if chunk["terminal"].as_bool().unwrap_or(false) {
+        if terminal {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
