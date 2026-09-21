@@ -667,9 +667,14 @@ function renderDbTables()       {
     if (!rr || !rr.keys.length) {
       // docs/22 closeout B1: a failed scan is a FAILURE, not an empty keyspace — the toast
       // carries the server's own text; this row keeps the list from pretending otherwise.
+      // docs/43 M2 walk: SCAN MATCH may return a hits-empty page while the keyspace walk
+      // continues (done=false) — that is not "no keys match", it is "not there YET"; the
+      // footer's More keeps scanning.
       box.appendChild(el("div", "db-hint", d.redisError
         ? tr("dataView.scanFailedToastCarries")
-        : d.grep ? tr("dataView.keysMatchQ", { q: d.grep }) : tr("dataView.keysScanReturnedNone")));
+        : rr && !rr.done
+          ? tr("dataView.scanNoHitsYet")
+          : d.grep ? tr("dataView.keysMatchQ", { q: d.grep }) : tr("dataView.keysScanReturnedNone")));
     }
     // The live key tab holds the selection: a redis connection's single tab is kind
     // "key" (docs/42 T1), and a fresh one with no key opened selects nothing.

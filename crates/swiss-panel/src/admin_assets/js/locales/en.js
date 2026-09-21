@@ -496,6 +496,7 @@ const en                         = {
   "dataView.scanFailedToastCarries": "Scan failed — the toast carries the server's error; this list is the last good page.",
   "dataView.keysMatchQ": "No keys match \"{q}\"",
   "dataView.keysScanReturnedNone": "No keys yet — scan returned none.",
+  "dataView.scanNoHitsYet": "No hits on this scan page yet — More keeps scanning.",
   /* --- detail --- */
   "dataView.tablesRangeOfTotal": "{from}–{to} of {total}",
   "detail.disable": "disable",
