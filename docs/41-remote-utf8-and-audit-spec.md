@@ -1,0 +1,113 @@
+# 41 — swiss remote：UTF-8 到底、七天可溯源、SKILL.md 讲清楚
+
+> 状态：**实施中**（2026-09-21，master）。owner 的三句话："强制输入和输出都是 UTF-8，避免乱码"、
+> "可审计，可以溯源最近七天的内容"、"SKILL.md 关于 swiss 的介绍你自己看看怎么做"。本文先把
+> 代码里的现状说清（§0），再定契约（§1），再列工作项（§2）和验收（§3）。docs/34 是 remote 的
+> 总契约，本文只改它没说的和说错的地方。
+
+## 0. 现状（读代码得出，逐条给 file:line）
+
+**UTF-8 —— 四处会把一个多字节字符切成两半：**
+
+- `crates/swiss-host/src/services/runs.rs:159` `RunOutputBuffer::read_from`：live 输出按**任意
+  字节偏移**切窗口，`from_utf8_lossy` 后一个 3 字节的汉字跨在 `max` 边界上就变成两个 U+FFFD
+  （CLI 每 128 KiB 轮询一次；面板同一条路）。被驱逐（`start` 前移）后的起点也可能落在字符中间。
+- `crates/swiss-remote/src/actions.rs:852` `remote.cat`：**逐 chunk** `from_utf8_lossy`，SSH
+  读块边界上的汉字必坏。`actions.rs:92` outcome 的 tail 环：按字节截头，尾部半个字符变 U+FFFD。
+- `crates/swiss-remote/src/history.rs:165、:317`：记录的 64 KiB tail 环和文件窗口读，同样的
+  字节边界问题。
+- 远端 locale：`exec_command_string`（`swiss-tunnels/src/tunnel/remote.rs:88`）只 export 调用者
+  给的 env；远端登录用户若 `LANG` 为空或非 UTF-8，`ls`/`git`/`python` 输出转义或问号，
+  argv 里的中文路径按远端 locale 解释。没有任何一处声明"这条链路是 UTF-8"。
+- 本机侧：CLI argv 由 Rust 从 UTF-16 转 UTF-8，`write` 的 stdin 按字节透传，stdout 直写
+  控制台用 WriteConsoleW——本身没问题；**PowerShell 5 / 旧 pwsh 用 OEM 代码页解码原生
+  程序输出**才是 Windows 上"乱码"的常见来源，这条只能文档化。
+
+**审计 —— 记录有了，但缺三样：**
+
+- 已有：`logs/remote/runs.jsonl` 一行一个已结束的 remote.* run（target、argv、cwd、env **键**、
+  exit、时长、字节数），输出全文在 `logs/remote/out/<id>.txt`；30 天 / 500 MiB / 5000 条三个预算
+  （history.rs:38-46）。`GET /api/remote/runs` 从末尾分页，可按 target 过滤。
+- 缺 1 **actor**：记录里没有"谁"。`/api` 无凭据（loopback 即边界，auth.rs:19），CLI 和面板提交
+  的 run 只有 `owner = manual`；MCP 工具提交的只有 `label = mcp:<action>`——而 `calls.rs:381`
+  `current_source()` 明明知道是哪个 token（client label）。
+- 缺 2 **窗口保证**：预算驱逐一律最老先删（history.rs:428），输出文件大就会把七天内的记录连
+  索引行一起删掉。"七天可溯源"现在不是承诺。
+- 缺 3 **查询面**：没有按时间窗过滤（`since`/`until`），没有按 actor 过滤，CLI 只有
+  `swiss run status|logs|cancel <id>`，没有"最近七天都干了什么"的一条命令。
+
+**SKILL.md**（`src/skill_assets/SKILL.md`，随二进制发布，`swiss skill install` 装给 agent）：只讲
+remote 的命令，对 swiss 是什么、边界在哪、UTF-8 与审计的契约一个字没有；"Everything else
+the gateway does … ask the user" 让 agent 面对 MCP/数据库/任务时两眼一抹黑。
+
+## 1. 契约
+
+### 1.1 UTF-8（U）
+
+1. **字节边界永远落在字符边界上。** 任何把字节窗口变成文本的地方——live 窗口、历史窗口、
+   tail 环、cat——起点跳过续字节，终点退到最后一个完整字符；跨窗口的字符在下一次读到，
+   不产生 U+FFFD。只有真正非法的字节才 lossy。窗口不会因此停摆：退无可退时（`max` 小于
+   一个字符）照旧 lossy 返回，游标仍前进。
+2. **远端命令在 UTF-8 locale 下运行。** `remote.exec` 默认 export `LANG=C.UTF-8`、
+   `LC_ALL=C.UTF-8`（`export` 发生在登录 shell 之后、`exec` 之前，所以 shell 自身不会因不存在
+   的 locale 打警告；程序拿不到该 locale 时静默回落 C，输出仍是 argv 里的原始 UTF-8 字节）。
+   调用者 env 里显式给的 `LANG`/`LC_ALL`/`LC_*` **优先**，一个字都不覆盖。这是 docs/34 §13
+   "`exec_command_string` 是唯一的 argv→string 步骤"之内的一次追加，不是第二条路。
+3. **本机侧不改代码，改文档**：SKILL.md 写明 Windows PowerShell 要
+   `[Console]::OutputEncoding = [Text.Encoding]::UTF8`（或 pwsh 7.4+ 默认即可），`swiss remote
+   write` 的 stdin 按字节透传所以文件本身必须是 UTF-8。
+
+### 1.2 审计（A）
+
+1. **每个 run 带 actor。** `SubmitRequest.actor: String`，序列化为 `actor`，进 `runs.jsonl`。
+   来源：CLI 自报 `cli:<os user>@<hostname>`（loopback 上自报即可信，文档说明）；MCP 工具
+   用 `current_source()`：`mcp:<token label>`（这个是认证过的）；面板 `panel`；其它 API 调用者
+   缺省 `api`。
+2. **七天保护窗。** `AUDIT_WINDOW_MS = 7 天`：驱逐永远不删七天内的**索引行**。字节预算压过来
+   时先删最老 run 的**输出文件**（索引行改写为 `outputEvicted: true`，tail 仍在），只有更老的
+   记录才整条删除；条数预算对窗内记录同样让路（索引行 ~1 KB，窗内涨不到哪里去）。30 天总
+   保留期不变。
+3. **查询面。** `GET /api/remote/runs` 加 `since`、`until`（ms 或 ISO）、`actor`；CLI 加
+   `swiss run audit [--since 7d|<ISO>] [--until …] [--target t] [--actor a] [--json]`：一行一个
+   run（时间、actor、target、动作、argv 引号原样、exit、时长、字节、id），默认最近七天；
+   `--export <dir>` 把窗内索引行和输出文件复制出去（溯源材料交给人）。
+4. **面板**：Remote › Runs 每行的 meta 加 actor（不翻译，它是标识符）。
+
+### 1.3 SKILL.md（S）
+
+一份 agent 第一次见 swiss 就够用的介绍：swiss 是什么（一个 loopback 进程；MCP / 数据 / 隧道 /
+任务 / 终端 / 远程六件事）、边界（永远 loopback、密文只进不出、workspaceRoot 是护栏不是沙箱）、
+remote 的命令参考（保留现有）、**UTF-8 契约**（§1.1 三条的 agent 版）、**审计契约**（每次
+remote 动作都留痕、`swiss run audit`、七天）、面板和 `swiss --help` 在哪。frontmatter 的
+`disable-model-invocation: true` 是 owner 的选择，不动。
+
+## 2. 工作项（每项一个 commit）
+
+- **U1** `swiss-core::util::utf8`：`char_boundary_end(bytes) -> usize`（去掉尾部不完整序列后的
+  长度）、`char_boundary_start(bytes) -> usize`（跳过开头续字节后的偏移）、`window(bytes) ->
+  &[u8]`。纯函数，2/3/4 字节和非法序列各有用例。
+- **U2** `RunOutputBuffer::read_from` 用 U1 收窗；`truncated` 起点跳续字节；空窗保护。测试：
+  一个汉字跨 `max` 边界的两次读拼起来无 U+FFFD。
+- **U3** remote：cat 收齐再解码一次；outcome tail、history tail 环、history 文件窗口用 U1。
+- **U4** locale 默认值：`actions.rs` 组 env 时在**前面**插入 `LANG`/`LC_ALL` 缺省，调用者的同名
+  键优先（Vec 顺序：缺省在前，后者 export 覆盖前者）；MCP 工具描述和 CLI usage 提一句。
+- **A1** actor：`SubmitRequest.actor`、`RunView.actor`、`to_json`；`submit_run` 读 body.actor
+  缺省 `api`；CLI 发 `cli:<user>@<host>`；MCP `run_plan` 发 `mcp:<client>`；面板 `panel`；
+  history 行自然带上。
+- **A2** 七天窗：`evict` 两阶段；`LineFacts` 学会 `outputEvicted`；`usage()` 口径不变。
+- **A3** 查询：`history.page` 加 since/until/actor 谓词（仍从末尾走，遇到早于 since 的行即停）；
+  API 参数；`swiss run audit` + `--export`。
+- **A4** 面板 meta 加 actor + vitest + 真浏览器走查（proof-of-life 规则）。
+- **S1** SKILL.md 重写；`skill_install.rs` 的测试若断言内容要跟上。
+- **D1** docs/34 状态头加一段指向本文；AGENTS.md 若提 remote 记录口径则同步。
+
+## 3. 验收
+
+1. `cargo test --workspace`、`clippy -D warnings`、`npm run check` 绿；新增用例：U1 边界、U2
+   跨窗、U3 cat 拼接、U4 缺省与覆盖、A1 三种 actor 落盘、A2 窗内行在字节压力下存活且输出被
+   驱逐、A3 since/until/actor 过滤。
+2. 19998 真机：`swiss remote exec <t> -- printf '中文\n'` 与 `-- python3 -c "print('中文')"`
+   原样回显；`swiss remote cat` 一个含中文、大于一个 SSH 读块的文件无 U+FFFD；`swiss run audit`
+   列出这些 run 且 actor 为 `cli:…`；面板 Runs 行显示 actor（英/中各看一次）。**前提是有一台
+   可用的 SSH 目标**；没有则用 fake transport 的集成测试代替真机，并如实记为"真机未验"。
+3. `swiss skill install` 装出来的 SKILL.md 与源一致。
