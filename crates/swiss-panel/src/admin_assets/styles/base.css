@@ -257,8 +257,13 @@
        caption, never a row of pills; the plugin's full name is the context bar's title
        once landed. Seats are borderless until pointed at (the macOS toolbar
        vocabulary); readouts stay plain text. */
+    /* 56px: the captioned rail. 48px was docs/39's icon-only width; with the seats' names
+       back (S1 reversed by the owner) the longest stock name, "Terminal", is 37px at 10px,
+       and a 48px rail left it 2px of air inside its seat - the caption read as pressed
+       against the edge. 56 - 2 x --s1 gives a 48px seat whose caption box is 40px, so every
+       stock name sits at 10px with 5px or more of air on each side. */
     .rail {
-      width: 48px; flex: none;
+      width: 56px; flex: none;
       display: flex; flex-direction: column;
       background: var(--sidebar); border-right: 1px solid var(--sep);
       padding: var(--s2) 0;
@@ -273,12 +278,14 @@
       display: flex; flex-direction: column; gap: 2px;
       padding: 0 var(--s1); min-height: 0; overflow-y: auto;
     }
-    /* One seat per plugin: an 18px glyph over its caption (docs/39 S1 shipped glyph-alone
-       after the 9px caption proved illegible; the owner reversed that 2026-10-30 - the
-       caption is back. First take used --f-caption (11px), which the owner judged too
-       heavy under an 18px glyph: 10px it is - deliberately one step below the scale, the
-       classic sidebar caption size, still legible where 9px was not. The rail is the only
-       place this size exists.)
+    /* One seat per plugin: an 18px glyph over its caption. docs/39 S1 shipped the rail
+       icon-only after a 9px caption proved illegible; the owner reversed that (2026-10-30)
+       and the caption is back - at 10px, ONE size for the whole rail, fitted by
+       page-registry's fitRailLabels: the rail steps down as one (to a 9px floor) only when
+       a gateway-served name is longer than the caption box, and a name that fits nowhere
+       is clipped by the ellipsis rule below and keeps its full text in the seat's title.
+       The seat's own padding (--s1 a side) is the caption's air, so a caption can never
+       touch the seat's edge whatever its length. The rail is the only place this size exists.
        The active seat is the only place the accent appears in the chrome — a 2px notch on
        the seat's left edge, in the rail's own hairline idiom. An unavailable plugin keeps
        its seat (the panel must stay one click from a plugin it can no longer reach) and
@@ -286,10 +293,18 @@
     .rail-btn {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       gap: 2px; height: 42px; border-radius: var(--r-btn);
+      /* The seat's padding IS the caption's air: the UA gives a <button> 6px of its own,
+         which the 100% below would silently subtract. One explicit value, read back by
+         fitRailLabels as the seat's content width - CSS and JS measure the same box. */
+      padding: 0 var(--s1);
       color: var(--text-2);
     }
     .rail-btn .ic { width: 18px; height: 18px; }
-    .rail-btn .rail-label { font-size: 10px; line-height: 1.1; }
+    /* 10px is the ceiling fitRailLabels starts from (it writes the fitted size inline);
+       100% is the seat's content box - the padding above is the air - and the ellipsis is
+       the guard of last resort. */
+    .rail-btn .rail-label { font-size: 10px; line-height: 1.15; letter-spacing: 0.01em;
+      max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .rail-btn:hover { background: var(--hover); color: var(--text); }
     .rail-btn[aria-current="true"] { background: var(--hover); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
     .grow { flex: 1; }
