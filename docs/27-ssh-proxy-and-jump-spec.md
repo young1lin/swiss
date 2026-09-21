@@ -1,7 +1,8 @@
 # 27 — SSH 隧道:代理拨号(HTTP CONNECT / SOCKS5)与跳板引用
 
-> 状态:**待实施**(spec 定稿 2026-09-15;基线 `a366b94`;实施从
-> [27-ssh-proxy-and-jump-prompt.md](27-ssh-proxy-and-jump-prompt.md) 起步,走 swiss-add-plugin →
+> 状态:**已实施**(spec 定稿 2026-09-15;基线 `a366b94`;C1 7bb7a0d、C2 708354a、C3 7d0ec88、
+> C4 2996ec3,连接行字段的补录 239c3d4;实施从
+> [27-ssh-proxy-and-jump-prompt.md](27-ssh-proxy-and-jump-prompt.md) 起步,走了 swiss-add-plugin →
 > swiss-verify → swiss-live-verify → swiss-review 流程)。
 > 前置阅读:`AGENTS.md`(载重规则高于本文)、[docs/05](05-wire-compatibility.md)(本文不动密封格式)、
 > [docs/07](07-decisions.md) ADR-007/ADR-019、[docs/19](19-secret-vault-spec.md) D4(连接边界的严格凭证合同)、
