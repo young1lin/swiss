@@ -686,6 +686,44 @@ mod recorded {
         assert_eq!(row["outputBytes"], 24);
         assert_eq!(page["usage"]["runs"], 1);
         assert_eq!(page["active"], json!([]), "a finished run is not active");
+        // docs/41 A1: a submission that names no actor is recorded as `api`.
+        assert_eq!(row["actor"], "api");
+
+        // The CLI's self-declared actor lands on its line, verbatim; blank or oversized
+        // ones fall back to `api` rather than record noise.
+        for (sent, want) in [
+            (json!("cli:jdoe@box"), "cli:jdoe@box"),
+            (json!("   "), "api"),
+            (json!("x".repeat(129)), "api"),
+        ] {
+            let (status, submitted) = call(
+                &app,
+                "POST",
+                "/api/runs",
+                json!({
+                    "action": "remote.exec",
+                    "input": { "target": "dev", "argv": ["make"] },
+                    "timeoutMs": 30000,
+                    "actor": sent,
+                }),
+            )
+            .await;
+            assert_eq!(status, StatusCode::ACCEPTED);
+            let id = submitted["runId"].as_u64().unwrap();
+            assert_eq!(submitted["run"]["actor"], want, "the live view carries it");
+            for _ in 0..500 {
+                let (_, run) = call(&app, "GET", &format!("/api/runs/{id}?output=0"), Value::Null).await;
+                if run["state"] != "queued" && run["state"] != "running" {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            }
+            let (_, one) = call(&app, "GET", &format!("/api/remote/runs/{id}"), Value::Null).await;
+            assert_eq!(one["actor"], want, "the record carries it: {one}");
+        }
+        let raw = std::fs::read_to_string(system.history().dir().join("runs.jsonl")).unwrap();
+        assert!(raw.contains("\"actor\":\"cli:jdoe@box\""), "{raw}");
+        assert_eq!(raw.lines().count(), 4);
 
         let (status, one) = call(&app, "GET", &format!("/api/remote/runs/{run_id}"), Value::Null).await;
         assert_eq!(status, StatusCode::OK);

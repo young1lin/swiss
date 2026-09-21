@@ -787,6 +787,7 @@ impl JobSystem {
                 input: def.action.input.clone(),
                 timeout_ms: def.timeout_ms,
                 queue_if_busy: false,
+                actor: JOBS_OWNER.to_string(),
             })
         };
         match submitted {
@@ -913,6 +914,7 @@ impl JobSystem {
                     // queue-one: a busy pool queues this occurrence (docs/11 §6.2);
                     // the queue's own bound turns into a visible capacity skip below.
                     queue_if_busy: queue,
+                    actor: JOBS_OWNER.to_string(),
                 })
             };
             let (run_id, out) = match submitted {
@@ -1824,6 +1826,7 @@ mod tests {
                 input: json!({ "command": long_command() }),
                 timeout_ms: 30_000,
                 queue_if_busy: false,
+                actor: JOBS_OWNER.to_string(),
             })
             .expect("the label is free");
         match sys.clone().execute("busy-job", "manual").await {
@@ -1907,6 +1910,7 @@ mod tests {
                 input: json!({ "command": long_command() }),
                 timeout_ms: 30_000,
                 queue_if_busy: false,
+                actor: JOBS_OWNER.to_string(),
             })
             .expect("the only slot");
 
@@ -2359,6 +2363,7 @@ mod tests {
                 input: json!({ "command": long_command() }),
                 timeout_ms: 30_000,
                 queue_if_busy: false,
+                actor: JOBS_OWNER.to_string(),
             })
             .expect("the label is free");
 
@@ -2412,6 +2417,7 @@ mod tests {
                 input: json!({ "command": long_command() }),
                 timeout_ms: 30_000,
                 queue_if_busy: true,
+                actor: JOBS_OWNER.to_string(),
             })
             .expect("the slot");
         let second = busy
@@ -2423,6 +2429,7 @@ mod tests {
                 input: json!({ "command": long_command() }),
                 timeout_ms: 30_000,
                 queue_if_busy: true,
+                actor: JOBS_OWNER.to_string(),
             })
             .expect("the queue slot");
 
@@ -2452,6 +2459,7 @@ mod tests {
                 input: json!({ "command": "cmd /c echo hog" }),
                 timeout_ms: 30_000,
                 queue_if_busy: false,
+                actor: JOBS_OWNER.to_string(),
             })
             .expect("the slot again");
         fake.set(sys.anchor_ms + 2 * 3_600_000 + 100);

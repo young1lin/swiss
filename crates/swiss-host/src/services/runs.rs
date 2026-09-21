@@ -253,6 +253,10 @@ pub struct SubmitRequest {
     pub timeout_ms: u64,
     /// overlap=queue-one: when the pool is busy, hold ONE successor instead of refusing.
     pub queue_if_busy: bool,
+    /// Who asked (docs/41 A1): `cli:<user>@<host>` (self-declared over loopback),
+    /// `mcp:<token label>` (the authenticating token), `panel`, `jobs`, or `api` for any
+    /// other /api/runs caller. Recorded with the run; the audit trail's "who" column.
+    pub actor: String,
 }
 
 /// Why a submission did not start. A capacity refusal is data the caller must show the
@@ -312,6 +316,7 @@ pub struct RunView {
     pub run_id: u64,
     pub owner: String,
     pub label: String,
+    pub actor: String,
     pub action_type: String,
     pub state: RunState,
     pub queued_at_ms: u64,
@@ -339,6 +344,7 @@ impl RunView {
         m.insert("runId".into(), json!(self.run_id));
         m.insert("owner".into(), json!(self.owner));
         m.insert("label".into(), json!(self.label));
+        m.insert("actor".into(), json!(self.actor));
         m.insert("action".into(), json!(self.action_type));
         m.insert("state".into(), json!(self.state.as_str()));
         m.insert("queuedAt".into(), json!(iso_of_ms(self.queued_at_ms)));
@@ -403,6 +409,7 @@ pub struct SubmittedRun {
 struct ActiveRun {
     owner: String,
     label: String,
+    actor: String,
     action_type: String,
     queued_at_ms: u64,
     started_at_ms: u64,
@@ -607,6 +614,7 @@ impl RunCoordinator {
         let started_at = now_ms();
         let owner = request.owner.clone();
         let label = request.label.clone();
+        let actor = request.actor.clone();
         let action_type = request.action_type.clone();
         let join = {
             let coordinator = self.clone();
@@ -632,6 +640,7 @@ impl RunCoordinator {
             ActiveRun {
                 owner,
                 label,
+                actor,
                 action_type,
                 queued_at_ms,
                 started_at_ms: started_at,
@@ -666,6 +675,7 @@ impl RunCoordinator {
             run_id,
             owner: request.owner.clone(),
             label: request.label.clone(),
+            actor: request.actor.clone(),
             action_type: request.action_type.clone(),
             state: RunState::Failed,
             queued_at_ms,
@@ -918,6 +928,7 @@ impl RunCoordinator {
                 run_id: q.run_id,
                 owner: q.request.owner.clone(),
                 label: q.request.label.clone(),
+                actor: q.request.actor.clone(),
                 action_type: q.request.action_type.clone(),
                 state: RunState::Queued,
                 queued_at_ms: q.queued_at_ms,
@@ -940,6 +951,7 @@ impl RunCoordinator {
                 run_id: *run_id,
                 owner: a.owner.clone(),
                 label: a.label.clone(),
+                actor: a.actor.clone(),
                 action_type: a.action_type.clone(),
                 state: RunState::Running,
                 queued_at_ms: a.queued_at_ms,
@@ -969,6 +981,7 @@ impl RunCoordinator {
                 run_id,
                 owner: q.request.owner.clone(),
                 label: q.request.label.clone(),
+                actor: q.request.actor.clone(),
                 action_type: q.request.action_type.clone(),
                 state: RunState::Queued,
                 queued_at_ms: q.queued_at_ms,
@@ -991,6 +1004,7 @@ impl RunCoordinator {
                 run_id,
                 owner: a.owner.clone(),
                 label: a.label.clone(),
+                actor: a.actor.clone(),
                 action_type: a.action_type.clone(),
                 state: RunState::Running,
                 queued_at_ms: a.queued_at_ms,
@@ -1080,6 +1094,7 @@ fn queued_canceled_view(run_id: u64, request: &SubmitRequest, queued_at_ms: u64)
         run_id,
         owner: request.owner.clone(),
         label: request.label.clone(),
+        actor: request.actor.clone(),
         action_type: request.action_type.clone(),
         state: RunState::Canceled,
         queued_at_ms,
@@ -1212,6 +1227,7 @@ mod tests {
             input: json!({ "ms": ms }),
             timeout_ms: 30_000,
             queue_if_busy: false,
+            actor: "test".to_string(),
         }
     }
 
