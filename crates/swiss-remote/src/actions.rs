@@ -89,7 +89,8 @@ impl<'a> Tap<'a> {
     }
 
     fn text(&self) -> String {
-        String::from_utf8_lossy(&self.tail).into_owned()
+        // The head kept by byte count may end inside a character (docs/41 U3).
+        String::from_utf8_lossy(swiss_core::utf8::window(&self.tail)).into_owned()
     }
 }
 
@@ -131,7 +132,7 @@ fn opt_text_field(obj: &Map<String, Value>, key: &str) -> Result<Option<String>,
 fn env_map(obj: &Map<String, Value>) -> Result<Vec<(String, String)>, ActionError> {
     let mut pairs = Vec::new();
     match obj.get("env") {
-        None | Some(Value::Null) => return Ok(pairs),
+        None | Some(Value::Null) => return Ok(with_utf8_locale(pairs)),
         Some(Value::Object(map)) => {
             for (name, value) in map {
                 if name.is_empty()
@@ -152,7 +153,33 @@ fn env_map(obj: &Map<String, Value>) -> Result<Vec<(String, String)>, ActionErro
     }
     // Deterministic order: the command string must not depend on map iteration.
     pairs.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(pairs)
+    Ok(with_utf8_locale(pairs))
+}
+
+/// The locale every remote command runs under unless the caller says otherwise
+/// (docs/41 U4): `LANG` and `LC_ALL` set to `C.UTF-8`, so a remote login user whose
+/// shell profile leaves `LANG` empty (or on a GB18030 box) still gets UTF-8 from `ls`,
+/// `git`, `python` and friends, and argv bytes are read as the UTF-8 they are.
+pub const UTF8_LOCALE: &str = "C.UTF-8";
+
+/// Prepend the UTF-8 locale defaults to a caller's env. The caller's own `LANG`,
+/// `LC_ALL` or any `LC_*` wins: a default is added only when the name is absent, and
+/// it goes FIRST so `exec_command_string` exports it before anything the caller set
+/// (a later `export` of the same name overrides an earlier one). The `export` happens
+/// after the login shell started and before `exec`, so a shell whose box lacks the
+/// locale never prints a setlocale warning of its own; a program that cannot load it
+/// falls back to C silently and still passes UTF-8 bytes through unchanged.
+fn with_utf8_locale(mut pairs: Vec<(String, String)>) -> Vec<(String, String)> {
+    let has = |name: &str| pairs.iter().any(|(n, _)| n == name);
+    let mut defaults: Vec<(String, String)> = Vec::new();
+    if !has("LANG") {
+        defaults.push(("LANG".to_string(), UTF8_LOCALE.to_string()));
+    }
+    if !has("LC_ALL") && !pairs.iter().any(|(n, _)| n.starts_with("LC_")) {
+        defaults.push(("LC_ALL".to_string(), UTF8_LOCALE.to_string()));
+    }
+    defaults.append(&mut pairs);
+    defaults
 }
 
 fn refuse_unknown(obj: &Map<String, Value>, known: &[&str], path: &str) -> Result<(), ActionError> {
@@ -835,7 +862,10 @@ impl RemoteCatAction {
             .open_read(&target.endpoint, &holder, &remote_path)
             .await
             .map_err(transport_error)?;
-        let mut text = String::new();
+        // Bytes first, text once: a chunk boundary is an SSH read boundary, never a
+        // character boundary, so decoding per chunk turned a 汉字 split across two reads
+        // into two U+FFFD (docs/41 U3). The cap is 128 KiB, so holding the bytes is free.
+        let mut bytes: Vec<u8> = Vec::new();
         let mut total: u64 = 0;
         loop {
             if cancel.is_cancelled() {
@@ -849,12 +879,12 @@ impl RemoteCatAction {
                     "{remote} is larger than the 128 KiB cat limit; use remote.pull instead"
                 )));
             }
-            let part = String::from_utf8_lossy(&chunk).into_owned();
             if let Some(sink) = sink {
                 sink.append_bytes(chunk.as_slice());
             }
-            text.push_str(&part);
+            bytes.extend_from_slice(&chunk);
         }
+        let text = String::from_utf8_lossy(&bytes).into_owned();
         let mut meta = Map::new();
         meta.insert("target".into(), json!(target.id));
         meta.insert("remote".into(), json!(remote));
@@ -1160,6 +1190,35 @@ mod tests {
     }
 
     #[test]
+    fn every_exec_carries_the_utf8_locale_unless_the_caller_set_one() {
+        // docs/41 U4. No env at all: both defaults, in a fixed order.
+        let none = env_map(&Map::new()).unwrap();
+        assert_eq!(
+            none,
+            vec![
+                ("LANG".to_string(), UTF8_LOCALE.to_string()),
+                ("LC_ALL".to_string(), UTF8_LOCALE.to_string())
+            ]
+        );
+        // A caller env: the defaults go FIRST so a later export of the same name wins.
+        let mut obj = Map::new();
+        obj.insert("env".into(), json!({ "Z": "1", "A": "2" }));
+        let names: Vec<String> = env_map(&obj).unwrap().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["LANG", "LC_ALL", "A", "Z"]);
+        // The caller's own LANG is not touched and LC_ALL is still defaulted.
+        obj.insert("env".into(), json!({ "LANG": "zh_CN.GB18030" }));
+        let pairs = env_map(&obj).unwrap();
+        assert_eq!(pairs.iter().filter(|(n, _)| n == "LANG").count(), 1);
+        assert_eq!(pairs[0], ("LC_ALL".to_string(), UTF8_LOCALE.to_string()));
+        assert_eq!(pairs[1], ("LANG".to_string(), "zh_CN.GB18030".to_string()));
+        // Any LC_* from the caller means they are managing categories: no LC_ALL default,
+        // which would override every category they set.
+        obj.insert("env".into(), json!({ "LC_CTYPE": "en_US.UTF-8" }));
+        let names: Vec<String> = env_map(&obj).unwrap().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["LANG", "LC_CTYPE"]);
+    }
+
+    #[test]
     fn cwd_must_stay_inside_the_workspace() {
         let (system, _fake) = system_with_fake();
         let action = RemoteExecAction::new(system);
@@ -1235,7 +1294,15 @@ mod tests {
             .expect("runs");
         let calls = fake.exec_calls.lock().unwrap();
         assert_eq!(calls[0].cwd.as_deref(), Some("/data/ws/proj/build/arm"));
-        assert_eq!(calls[0].env, vec![("BOARD".to_string(), "rpi".to_string())]);
+        // The UTF-8 locale defaults ride first (docs/41 U4), the caller's env after.
+        assert_eq!(
+            calls[0].env,
+            vec![
+                ("LANG".to_string(), UTF8_LOCALE.to_string()),
+                ("LC_ALL".to_string(), UTF8_LOCALE.to_string()),
+                ("BOARD".to_string(), "rpi".to_string())
+            ]
+        );
     }
 
     #[tokio::test]
@@ -1605,6 +1672,32 @@ mod tests {
             .expect("cat runs");
         assert!(out.ok);
         assert_eq!(out.output, "hi from write");
+    }
+
+    #[tokio::test]
+    async fn cat_decodes_once_so_a_character_split_across_read_chunks_survives() {
+        // docs/41 U3: the fake reads in 64 KiB chunks; a file whose 65 535th byte begins
+        // a 汉字 puts that character's bytes in two chunks. Decoding per chunk made it
+        // two U+FFFD; decoding the whole once keeps it.
+        let (system, fake) = system_with_fake();
+        let mut bytes = vec![b'x'; 64 * 1024 - 1];
+        bytes.extend_from_slice("中文 ok\n".as_bytes());
+        fake.files
+            .lock()
+            .unwrap()
+            .insert("/data/ws/proj/big.txt".to_string(), bytes.clone());
+        let cat = RemoteCatAction::new(system);
+        let out = cat
+            .execute(
+                &json!({ "target": "dev", "remote": "big.txt" }),
+                CancelSource::new().handle(),
+            )
+            .await
+            .expect("cat runs");
+        assert!(out.ok);
+        assert!(!out.output.contains('\u{FFFD}'));
+        assert!(out.output.ends_with("中文 ok\n"));
+        assert_eq!(out.output.len(), bytes.len());
     }
 
     #[test]

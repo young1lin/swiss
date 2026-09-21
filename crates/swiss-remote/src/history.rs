@@ -159,10 +159,12 @@ impl OutputFile {
         if let Some(mut file) = inner.file.take() {
             let _ = file.flush();
         }
-        let tail = inner
-            .overflow
-            .take()
-            .map(|ring| String::from_utf8_lossy(&ring.into_iter().collect::<Vec<u8>>()).into_owned());
+        // The ring kept the LAST tail bytes by count, so it may start inside a character
+        // (docs/41 U3): decode from the first boundary, not from byte zero.
+        let tail = inner.overflow.take().map(|ring| {
+            let bytes = ring.into_iter().collect::<Vec<u8>>();
+            String::from_utf8_lossy(swiss_core::utf8::window(&bytes)).into_owned()
+        });
         (inner.written, tail)
     }
 }
@@ -311,6 +313,15 @@ impl RunHistory {
                 }
             }
             buf.truncate(got);
+        }
+        // Character boundaries (docs/41 U1): a window that would end inside a
+        // character stops before it - unless that would leave nothing, or the bytes are
+        // the file's last (a capped file can end mid-character; the record's `tail`
+        // carries the rest) - so the follower reads the character whole next time.
+        let at_end = from + buf.len() as u64 >= total;
+        let keep = swiss_core::utf8::char_boundary_end(&buf);
+        if keep < buf.len() && keep > 0 && !at_end {
+            buf.truncate(keep);
         }
         let next = from + buf.len() as u64;
         Some(OutputChunk {
