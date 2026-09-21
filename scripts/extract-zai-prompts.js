@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 The swiss authors
+ * Copyright 2026 young1lin
  * 
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,8 +16,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const SRC = '<vendor>/zai-mcp-server/build/prompts';
-const OUT = '<repo>/.agents/worktrees/mcp/crates/swiss-mcp/src/adapters/zai_prompts.rs';
+// SRC: the unpacked npm package's build/prompts directory - first argument, else
+// $ZAI_MCP_SERVER_DIR/build/prompts. Get one with `npm pack @z_ai/mcp-server@0.1.5` + untar.
+// OUT: this repo's zai_prompts.rs, located relative to the script itself.
+const srcRoot = process.argv[2] || (process.env.ZAI_MCP_SERVER_DIR && path.join(process.env.ZAI_MCP_SERVER_DIR, 'build', 'prompts'));
+if (!srcRoot) { console.error('usage: node scripts/extract-zai-prompts.js <zai-mcp-server>/build/prompts'); process.exit(2); }
+const SRC = srcRoot;
+const OUT = path.join(__dirname, '..', 'crates', 'swiss-mcp', 'src', 'adapters', 'zai_prompts.rs');
 // Unescape a JS template literal body: \` -> `, \${ -> ${, \\ -> \
 function unescapeTpl(s) {
   let out = '';

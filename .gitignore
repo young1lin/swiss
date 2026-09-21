@@ -38,3 +38,9 @@ master.key
 /conpty_ref.rs
 /term-*.png
 /job-*.png
+
+# Panel screenshots taken against the operator's real 19999 instance (docs/20 §9 items 3 and
+# 6): they show internal hosts, tunnel layouts and live Redis keys. They stay on this machine;
+# the docs/20 record lists them as not shipped.
+/docs/assets/20/03-tunnels-groups-*.png
+/docs/assets/20/06-data-dropdown-*.png
