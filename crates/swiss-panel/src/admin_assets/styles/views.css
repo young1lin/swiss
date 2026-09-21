@@ -504,20 +504,19 @@
     .db-root { display: flex; height: 100%; min-height: 420px; }
     .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
     .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s1); }
-    /* Sort controls for whatever the list holds (tables or keys): the key picker takes the
-       remaining width, the direction toggle is a fixed square beside it. Named db-sortROW —
-       .db-sort is the grid header's little arrowhead below and would crush this row to 7px. */
-    .db-sortrow { display: flex; gap: var(--s1); align-items: center; }
-    .db-sortrow select { flex: 1; min-width: 0; padding-top: 2px; padding-bottom: 2px; }
-    .db-sortrow .btn.icon { flex: none; width: 26px; height: 26px; }
-    .db-table { display: block; width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
+    /* docs/43 M2: the list is a TREE of bands (mountGroup at side density), so its rows are
+       ONE line now — the name left, the count/type right in --text-3 tnum caption. The two-line
+       row's whole meta line (type · rows · size) moved into the title, one hover away, where
+       it cannot truncate the name to show itself. Rows sit INSIDE band bodies, so the flex
+       metrics match .side-row's geometry (base.css) rather than inventing a second one. */
+    .db-table { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-table:hover { background: var(--hover); }
     .db-table.sel { background: color-mix(in srgb, var(--accent) 11%, transparent); }
     .db-table.sel .db-table-name { color: var(--accent); font-weight: 600; }
     /* A long key ("wsproxy:console:token:session:…") or table name is cut with an ellipsis, not
        sliced at the card's edge; the full name is the row's title, one hover away. */
-    .db-table-name { font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .db-table-meta { font-size: var(--f-caption); color: var(--text-3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-table-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-table-meta { flex: none; max-width: 45%; font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
     .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; padding: var(--s3) var(--s4) 0; }
     /* The object tab strip (docs/42 T2). L3 resource navigation owned by the page body, drawn
@@ -593,12 +592,6 @@
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
     .db-keytype { font-size: var(--f-caption); padding: 1px 6px; border-radius: 980px; background: var(--sep-soft); color: var(--text-2); margin-left: var(--s2); }
-    /* docs/22 W4.6 — the table list's own header band: the list gains a create action, so it
-       names itself and holds one persistent dimmed + the way every container header does
-       (docs/20 §4 sidebar density — the same 28px band on --sep-soft; the glyph reuses the
-       groups' grp-add styling, so every "+" in the panel reads as one glyph). */
-    .db-list-head { display: flex; align-items: center; gap: var(--s1); height: 28px; padding: 0 var(--s1); background: var(--sep-soft); border-radius: var(--r-row); }
-    .db-list-title { flex: 1; min-width: 0; font-size: var(--f-body); font-weight: 600; color: var(--text-2); }
     /* docs/22 W4.6 — the DDL sheet's column mini-grid: caption header row, one line per
        column on the field surface. Existing columns render disabled (only ADD is in the
        minimal set), so the sheet reads as the table's shape with new rows at its end; fixed

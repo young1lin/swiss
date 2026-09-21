@@ -33,9 +33,8 @@ export interface MenuItemAction {
   pick?: boolean;
   on?: boolean;
   title?: string;
-  /* docs/43 M1: a row may lead with an icon (the tab overflow list marks consoles with the
-   *  console glyph) and trail with a dirty-dot (an unsaved tab says so inside the menu,
-   *  where no card is visible to carry it). */
+  /* docs/43 M1: a row can carry the type glyph and the dirty dot its card does — the tab
+   *  strip's overflow lists open objects, and the menu is the whole set's one read. */
   icon?: string;
   dot?: boolean;
   sep?: never;
@@ -141,7 +140,20 @@ export interface GroupCfg<Row> {
   collapsed: Record<string, boolean>;
   noun: string;
   addTitle?: (group: string) => string;
-  onAdd: (group: string) => void;
+  onAdd?: (group: string) => void;
+  /* docs/43 M2 (the Data tree): optional gates and overrides for scopes whose bands are
+   *  DERIVED from data rather than named by the operator. label renames a band for display
+   *  without touching the collapse key; canAdd gates the header + per band; moreItems
+   *  replaces the stock Move/Rename/Delete list (null = this band gets no ellipsis at all,
+   *  moreTitle its button's title); emptyText replaces the drop-target line a read-only
+   *  tree cannot honor; countOf answers what the band's count badge numbers (a nested band
+   *  counts its ROWS, not its inner bands). */
+  label?: (group: string) => string;
+  canAdd?: (group: string) => boolean;
+  moreItems?: (group: string) => MenuItem[] | null;
+  moreTitle?: (group: string) => string;
+  emptyText?: (group: string) => string;
+  countOf?: (slice: { name: string; rows: unknown[] }) => number;
   reload: () => void | Promise<void>;
   render?: () => void;
   afterDrag?: () => void;

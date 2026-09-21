@@ -400,7 +400,9 @@ describe("the I8a data machinery in Chinese", () => {
 
   it("names the ddl sheet's parts", async () => {
     await loadLocale();
-    expect(tr("dataView.newTable")).toBe("新建表");
+    // dataView.newTable retired with the old list header's + (docs/43 M2): the Tables
+    // band's button carries newTable2, which this section keeps asserting below.
+    expect(tr("dataView.newTable2")).toBe("新建表…");
     expect(tr("dataDdl.newTableT2", { t: "public" })).toBe("在 public 中新建表");
     expect(tr("dataDdl.addColumnT", { t: "events" })).toBe("在 events 中添加列");
     expect(tr("dataDdl.sqlPreviewCommitRuns")).toBe("SQL 预览——提交将原样运行这些语句。");

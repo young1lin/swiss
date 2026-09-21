@@ -271,14 +271,16 @@ describe("the redis key list's More button (docs/22 closeout audit)", () => {
     // answers concatenated their page onto the key list, duplicating every key in it.
     const { c } = freshDb();
     c.conn = "r";
-    c.redis = { keys: ["a"], cursor: "42", done: false, total: 10 };
+    // docs/43 M2: the tree renderer folds d.redis.keys by .key, so the fixture carries the
+    // wire shape (ApiDbRedisKeyRow), not bare strings.
+    c.redis = { keys: [{ key: "a", type: "string", ttl: -1 }], cursor: "42", done: false, total: 10 };
     const before = requests.length;
     const p1 = browsers.dbLoadKeys(false);
     const p2 = browsers.dbLoadKeys(false); // the double click
     expect(requests.length - before, "only one SCAN page is requested").toBe(1);
-    await answer({ keys: ["b"], cursor: "0", done: true, total: 10 });
+    await answer({ keys: [{ key: "b", type: "string", ttl: -1 }], cursor: "0", done: true, total: 10 });
     await Promise.all([p1, p2]);
-    expect(c.redis.keys, "the page arrives once").toEqual(["a", "b"]);
+    expect(c.redis.keys, "the page arrives once").toEqual([{ key: "a", type: "string", ttl: -1 }, { key: "b", type: "string", ttl: -1 }]);
   });
 });
 
