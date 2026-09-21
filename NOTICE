@@ -1,0 +1,13 @@
+swiss
+Copyright 2026 young1lin
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+This product includes software developed by third parties. Their notices and
+license terms are collected in THIRD_PARTY_NOTICES.md at the repository root;
+the vendored panel libraries also carry their license text next to the copies
+(crates/swiss-panel/src/admin_assets/js/vendor/*/LICENSE), which the binary
+embeds together with them.
+
+The zai-vision adapter reproduces prompt texts from @z_ai/mcp-server 0.1.5,
+Copyright Z.AI, licensed under the Apache License, Version 2.0.

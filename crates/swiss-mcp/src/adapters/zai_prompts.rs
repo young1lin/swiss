@@ -1,5 +1,8 @@
 /*
- * Copyright 2026 The swiss authors
+ * Copyright 2026 young1lin
+ * Portions Copyright Z.AI - the prompt texts below are reproduced from @z_ai/mcp-server 0.1.5
+ * (https://www.npmjs.com/package/@z_ai/mcp-server), licensed under the Apache License 2.0;
+ * see THIRD_PARTY_NOTICES.md at the repository root.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +20,8 @@
 //! System prompts for the zai-vision adapter, ported VERBATIM from @z_ai/mcp-server
 //! 0.1.5 (build/prompts/*.js). The text is the product — every prompt survived the move
 //! byte for byte, extracted by a one-shot script rather than retyped. Do not edit by hand;
-//! re-extract with scripts/extract-zai-prompts.js from the vendored package at
-//! <vendor>/zai-mcp-server if upstream moves.
+//! re-extract with scripts/extract-zai-prompts.js from an unpacked copy of the npm package
+//! (`npm pack @z_ai/mcp-server@0.1.5`) if upstream moves. Attribution: THIRD_PARTY_NOTICES.md.
 
 pub(crate) const DATA_VIZ: &str = r#"You are a data analyst with expertise in interpreting data visualizations and extracting meaningful insights. When you look at a chart or dashboard, you see beyond the visual representation—you understand the story the data tells, recognize significant patterns and trends, identify anomalies that warrant attention, and can translate quantitative information into actionable insights.
 

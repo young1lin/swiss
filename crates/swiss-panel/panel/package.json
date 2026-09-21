@@ -1,6 +1,8 @@
 {
   "name": "swiss-panel",
   "private": true,
+  "license": "Apache-2.0",
+  "author": "young1lin",
   "type": "module",
   "description": "The admin panel's one npm home: TypeScript sources in src/, the vitest acceptance suite in test/, and build.mjs which emits the served tree (types blanked in place, line-for-line) into ../src/admin_assets/js. The emitted JS is committed, so cargo build never needs node; node is a dev-only dependency here.",
   "scripts": {
