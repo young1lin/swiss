@@ -331,6 +331,10 @@
     .menu button.pick { display: flex; align-items: center; gap: var(--s2); }
     .menu button.pick::before { content: "\2713"; width: 10px; flex: none; color: var(--accent); visibility: hidden; }
     .menu button.pick.on::before { visibility: visible; }
+    /* docs/43 M1: the tab strip's overflow lists open objects, so its rows carry the same
+       type glyph and dirty dot the cards do — the menu is the whole set's one read. */
+    .menu button .ic { width: 14px; height: 14px; flex: none; color: var(--text-3); }
+    .menu button .db-tab-dot { flex: none; margin-left: auto; }
     .menu hr { border: 0; border-top: 1px solid var(--sep-soft); margin: var(--s1) 0; }
     /* A caption for the first group: "Copy Codex command" needs to say what it is for. */
     .menu-cap {
@@ -525,8 +529,15 @@
        is lifted to --bg with the strip's hairline cancelled under it, so card and grid read as
        one surface (rule 16). The accent is a 2px inset on the card's TOP edge — the bottom edge
        belongs to the L2 underline and must not be echoed here. */
-    .db-tabstrip { display: flex; align-items: stretch; flex: none; margin: calc(var(--s3) * -1) calc(var(--s4) * -1) 0; padding-left: var(--s2); background: var(--sidebar); border-bottom: 1px solid var(--sep); overflow-x: auto; scrollbar-width: none; }
-    .db-tabstrip::-webkit-scrollbar { display: none; }
+    .db-tabstrip { display: flex; align-items: stretch; flex: none; margin: calc(var(--s3) * -1) calc(var(--s4) * -1) 0; background: var(--sidebar); border-bottom: 1px solid var(--sep); }
+    /* docs/43 M1 D1: the cards scroll, the exits stay. The "+" and the overflow button used
+       to sit INSIDE the scroll run, so a full strip scrolled its own way out offscreen (the
+       owner's screenshot). Two zones now: the run overflows and hides its scrollbar (the
+       wheel still scrolls it — wired in data-tabs.ts), the end cap is pinned and separated
+       from the run by the strip's own hairline colour. */
+    .db-tabstrip-scroll { display: flex; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; padding-left: var(--s2); }
+    .db-tabstrip-scroll::-webkit-scrollbar { display: none; }
+    .db-tabstrip-end { flex: none; display: flex; align-items: stretch; border-left: 1px solid var(--sep); }
     .db-tab { display: inline-flex; align-items: center; gap: var(--s1); flex: none; max-width: 210px; height: 32px; padding: 0 var(--s2); border-right: 1px solid var(--sep-soft); font-size: var(--f-label); color: var(--text-2); cursor: pointer; }
     .db-tab:hover { background: var(--hover); }
     .db-tab.sel { background: var(--bg); color: var(--text); font-weight: 600; box-shadow: inset 0 2px 0 var(--accent); margin-bottom: -1px; padding-bottom: 1px; }
@@ -549,6 +560,11 @@
     .db-tab-add { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 var(--s2); border: none; background: none; color: var(--text-3); font-size: var(--f-label); cursor: pointer; }
     .db-tab-add .ic { width: 14px; height: 14px; }
     .db-tab-add:hover { background: var(--hover); color: var(--text); }
+    /* The overflow seat (docs/43 M1 D4): one glyph, one job — "the whole set, listed". Same
+       height and hover as the "+" it sits beside, icon-only because its title says the rest. */
+    .db-tab-more { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; }
+    .db-tab-more .ic { width: 14px; height: 14px; }
+    .db-tab-more:hover { background: var(--hover); color: var(--text); }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
     .db-head-left { min-width: 0; }
     .db-title { margin: 0; font-size: var(--f-head); }

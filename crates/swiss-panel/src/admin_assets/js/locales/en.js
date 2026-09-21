@@ -417,9 +417,14 @@ const en                         = {
   "dataStructure.loading": "Loading…",
   /* --- dataTabs --- */
   "dataTabs.activity": "Activity",
+  "dataTabs.closeAll": "Close all",
   "dataTabs.closeDiscards": "Close {name}? {n} would be discarded — nothing has been written.",
+  "dataTabs.closeDiscardsBatch": "Close anyway? {n} would be discarded — nothing has been written.",
+  "dataTabs.closeOthers": "Close others",
+  "dataTabs.closeRight": "Close to the right",
   "dataTabs.closeTab": "Close tab",
   "dataTabs.command": "Command",
+  "dataTabs.evictedForRoom": "Closed \"{name}\" to make room — it had no unsaved changes.",
   "dataTabs.fullCloseOne": "{n} tabs open and every one is holding work — close one first.",
   "dataTabs.nBufferedChanges.one": "{n} buffered change",
   "dataTabs.nBufferedChanges.other": "{n} buffered changes",
@@ -427,6 +432,7 @@ const en                         = {
   "dataTabs.nFilters.other": "{n} filters",
   "dataTabs.newCommandConsoleTitle": "New command console",
   "dataTabs.newConsoleTitle": "New SQL console",
+  "dataTabs.openObjects": "Open objects",
   "dataTabs.sql": "SQL",
   "dataTabs.untitled": "Untitled",
   /* --- dataValue --- */

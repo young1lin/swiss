@@ -14,17 +14,19 @@
  * limitations under the License.
  */
 
-import type { DbFilterTerm, DbTab, DbTableTab, DbTabSpec } from "./types/state.js";
+import type { DbConnState, DbFilterTerm, DbTab, DbTableTab, DbTabSpec } from "./types/state.js";
+import type { MenuItem } from "./types/dom.js";
 import { $, iconNode, toast } from "./util.js";
 import { fill, h } from "./h.js";
 import { dbActiveIndex, dbConn, dbIsMounted, dbResetTabs, dbSetActive, dbTab, dbTabs, freshTab } from "./db-state.js";
 import { dbIsRedis, dbLoadRedisValue } from "./data-browsers.js";
+import { popupMenu } from "./menu.js";
 import { dbActivityPollStop, dbActivityStart } from "./data-activity.js";
 import { dbRestoreData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbLoadDetail } from "./data-structure.js";
-import { renderDbTables } from "./data-view.js";
+import { dbIsPg, renderDbTables } from "./data-view.js";
 import { tr, trn } from "./i18n.js";
 
 /* ================================================================================================
@@ -33,9 +35,9 @@ import { tr, trn } from "./i18n.js";
    The Data page used to hold exactly one object: opening a table, jumping through a foreign key
    or running a query all overwrote whatever was in front of the operator, filters and buffered
    edits included. This module is the strip that lets it hold several — a table, a second table,
-   a console, the activity monitor — and the policy that keeps the set small: a cap of eight, a
-   least-recently-used eviction that never touches a tab holding work, and a close that asks
-   before it drops buffered writes.
+   a console, the activity monitor — and the policy that keeps the set small: a small
+   cap, a least-recently-used eviction that never touches a tab holding work, and a close
+   that asks before it drops buffered writes.
 
    Where the pieces live: db-state.ts owns the array and the active index (and nothing else about
    them), this file owns open/close/activate/evict and the strip's markup, and every renderer
@@ -49,14 +51,18 @@ import { tr, trn } from "./i18n.js";
      strip and dbOpenTab() drops it as soon as a real object arrives, so it costs the operator
      nothing and the empty state (renderDbGrid's emptyNode) is what they actually see.
    - The LRU stamp. `touched` is bumped on birth and on every activation, and eviction reads
-     only that. It is the whole memory story of D3/D4: eight tabs, each holding at most one page
+     only that. It is the whole memory story of D3/D4: a capped set of tabs, each holding at most one page
      of rows, and a background tab drops even that.
    ================================================================================================ */
 
-/** docs/42 D3: how many objects the page holds at once. Eight is what fits the strip at a
- *  normal window width without scrolling, and eight pages of rows is the memory budget the
- *  cap exists to defend. */
-const DB_TAB_MAX = 8;
+/** docs/42 D3: how many objects the page holds at once. The protection is not the number —
+ *  it is that eviction only takes CLEAN background tabs and a strip where everything holds
+ *  work refuses the open outright. Eight was the value set when the strip could not scroll
+ *  and had no overflow menu; docs/43 M1 D6 pins both exits, so the cap can follow the
+ *  operator's workload instead: twelve cards at floor width fit a 1440px window, and
+ *  twelve pages of rows is the memory budget the cap exists to defend. */
+
+const DB_TAB_MAX = 12;
 
 /* --- pure: what a tab is, and what it is worth ---------------------------------------------------- */
 
@@ -166,6 +172,30 @@ function dbTabGlyph(t: DbTab): string {
   return "clock";
 }
 
+/** The scope a card's schema qualifier is redundant against (docs/43 M1 D3). A MySQL
+ *  connection browses exactly one database — every row the list carries reports it, so the
+ *  shared schema IS the scope, and a tab whose schema differs (an FK jump across databases)
+ *  keeps its qualifier. A pg connection spans schemas: the scope is the schema the operator
+ *  picked, public by default, so only cross-schema cards carry theirs. Null when there is no
+ *  list to read the scope from — then every qualifier stays. Pure. */
+function dbTabScope(c: DbConnState, pg: boolean): string | null {
+  if (pg) return c.schemaFilter || "public";
+  return c.tables.length ? c.tables[0].schema : null;
+}
+
+/** The name the card SHOWS: the object's own name inside the current scope, qualified only
+ *  when the qualifier tells two cards apart (docs/43 M1 D3). On MySQL the old title spent
+ *  13 of a card's 210px on an `acme_app_dev.` prefix that carried nothing, and the table
+ *  name — the part that actually distinguishes cards — was the part being truncated. The
+ *  full name stays one hover away (the card's title) and in every confirm, which must name
+ *  the object precisely. Pure. */
+function dbTabCardTitle(t: DbTab, scope: string | null): string {
+  const full = dbTabTitle(t);
+  if (t.kind !== "table" || !t.schema || !scope) return full;
+  if (t.schema === scope) return t.table || tr("dataTabs.untitled");
+  return full;
+}
+
 /* --- the strip ------------------------------------------------------------------------------------ */
 
 /** Paint the strip. Card tabs (swiss-ui-design §1.3): a leading type glyph, the name, a trailing
@@ -187,6 +217,9 @@ function renderDbTabs(): void {
   const hadFocus = strip.contains(document.activeElement);
   const tabs = dbTabs();
   const active = dbActiveIndex();
+  // The qualifier a card can drop (docs/43 M1 D3): read once per paint, shared by the cards
+  // and the overflow menu so the two never disagree about an object's name.
+  const scope = dbTabScope(dbConn(), dbIsPg());
   const kids = tabs.map((t: DbTab, i: number) => {
     if (!dbTabVisible(t)) return null;
     const n = dbTabPending(t);
@@ -201,7 +234,7 @@ function renderDbTabs(): void {
       title: dbTabTitle(t), data: { dbtab: String(i) },
     },
     iconNode(dbTabGlyph(t)),
-    h("span", { class: "db-tab-name" }, dbTabTitle(t)),
+    h("span", { class: "db-tab-name" }, dbTabCardTitle(t, scope)),
     filters ? h("span", {
       class: "db-tab-n tnum",
       title: trn(filters, "dataTabs.nFilters.one", "dataTabs.nFilters.other"),
@@ -216,27 +249,167 @@ function renderDbTabs(): void {
       data: { dbtabx: String(i) },
     }, iconNode("x")));
   });
-  fill(strip, kids,
-    // The console opens from the strip's own end: it is an object like the rest, and the one
-    // gesture that ADDS to the strip belongs on it (swiss-ui-design rule 19).
-    h("button", {
-      class: "db-tab-add", type: "button",
-      title: tr(dbIsRedis() ? "dataTabs.newCommandConsoleTitle" : "dataTabs.newConsoleTitle"),
-      data: { dbtabadd: "sql" },
-    }, iconNode("plus"), h("span", null, tr(dbIsRedis() ? "dataTabs.command" : "dataTabs.sql"))));
+  // docs/43 M1 D1: the strip is two zones — a scrolling run of cards and a PINNED end.
+  // The exits used to sit inside the scroll, so a full strip scrolled its own "+" out of
+  // reach (the owner's screenshot): opening a console became a hunt for an offscreen button.
+  // The cards scroll; the overflow button and the "+" never do.
+  const scroller = h("div", { class: "db-tabstrip-scroll" }, kids);
+  // A vertical wheel over a horizontal strip is the first gesture every trackpad user tries;
+  // take it as the horizontal scroll it means, but only when there is somewhere to scroll to
+  // (otherwise the page's own scroll answers, as it should). Property-assigned on a node this
+  // repaint just built — the next rebuild replaces the node, so nothing stacks.
+  scroller.onwheel = (ev: WheelEvent): void => {
+    if (!ev.deltaY || scroller.scrollWidth <= scroller.clientWidth) return;
+    ev.preventDefault();
+    scroller.scrollLeft += ev.deltaY;
+  };
+  const shown = tabs.filter(dbTabVisible).length;
+  fill(strip, scroller,
+    h("div", { class: "db-tabstrip-end" },
+      // The overflow menu is the one place the whole set stays visible once the strip scrolls
+      // (docs/43 M1 D4): every open object, then the browser's bulk-close idioms. Nothing is
+      // open yet → nothing to list → the button is not offered.
+      h("button", {
+        class: "db-tab-more", type: "button", hidden: !shown,
+        title: tr("dataTabs.openObjects"), aria: { haspopup: "menu" }, data: { dbtabmenu: "" },
+      }, iconNode("chevron-down")),
+      // The console opens from the strip's own end: it is an object like the rest, and the one
+      // gesture that ADDS to the strip belongs on it (swiss-ui-design rule 19).
+      h("button", {
+        class: "db-tab-add", type: "button",
+        title: tr(dbIsRedis() ? "dataTabs.newCommandConsoleTitle" : "dataTabs.newConsoleTitle"),
+        data: { dbtabadd: "sql" },
+      }, iconNode("plus"), h("span", null, tr(dbIsRedis() ? "dataTabs.command" : "dataTabs.sql")))));
   if (hadFocus) dbFocusActiveTab();
+  dbScrollActiveTab();
+}
+
+/** Bring the active card into the visible run after every paint (docs/43 M1 D2): the
+ *  keyboard walk, Ctrl+Tab and the overflow menu can all land on a card the strip has
+ *  scrolled out of sight, and a "current" tab nobody can see is not current. Guarded — the
+ *  vitest DOM has no layout and may not implement scrollIntoView at all (house rule 5);
+ *  "nearest" never moves a card that is already on screen. */
+function dbScrollActiveTab(): void {
+  const strip = $("dbTabStrip");
+  const card = strip ? strip.querySelector<HTMLElement>(".db-tab.sel") : null;
+  if (card && typeof card.scrollIntoView === "function") {
+    card.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
 }
 
 /** #pane's delegated click for the strip (docs/37 R5). The × is checked before the card so a
- *  close never reads as an activate. */
-function dbTabsClick(t: Element): boolean {
+ *  close never reads as an activate. ev is the live event when the caller has it: opening
+ *  the overflow menu must stop the document click that would close it again. */
+function dbTabsClick(t: Element, ev?: MouseEvent): boolean {
   const x = t.closest<HTMLElement>("[data-dbtabx]");
   if (x) { dbCloseTab(Number(x.dataset.dbtabx)); return true; }
+  const menuBtn = t.closest<HTMLElement>("[data-dbtabmenu]");
+  if (menuBtn) {
+    if (ev) ev.stopPropagation();
+    popupMenu(menuBtn.getBoundingClientRect(), dbTabsMenuItems());
+    return true;
+  }
   const add = t.closest<HTMLElement>("[data-dbtabadd]");
   if (add) { dbOpenTab({ kind: "sql" }); return true; }
   const card = t.closest<HTMLElement>("[data-dbtab]");
   if (card) { dbActivateTab(Number(card.dataset.dbtab)); return true; }
   return false;
+}
+
+/** The middle-button close (docs/43 M1 D8): the browser-tab idiom, on the ×'s exact path —
+ *  the dirty-tab confirm included. #pane answers auxclick (a middle press fires BOTH click
+ *  and auxclick, so only auxclick may act) and hands the target here. */
+function dbTabsAuxClick(t: Element): boolean {
+  const x = t.closest<HTMLElement>("[data-dbtabx]");
+  if (x) { dbCloseTab(Number(x.dataset.dbtabx)); return true; }
+  const card = t.closest<HTMLElement>("[data-dbtab]");
+  if (card) { dbCloseTab(Number(card.dataset.dbtab)); return true; }
+  return false;
+}
+
+/** The overflow menu's rows (docs/43 M1 D4): one per open object, in strip order, the
+ *  current one ticked — the strip's whole set in one place that never scrolls away. The type
+ *  glyph and the dirty dot ride the row so the menu also answers "which of these is holding
+ *  my work" without opening anything. Behind a separator sit the bulk closes; the
+ *  destructive one is last and red (swiss-ui-design rule 4). */
+function dbTabsMenuItems(): MenuItem[] {
+  const tabs = dbTabs();
+  const active = dbActiveIndex();
+  const scope = dbTabScope(dbConn(), dbIsPg());
+  const items: MenuItem[] = [];
+  tabs.forEach((t: DbTab, i: number): void => {
+    if (!dbTabVisible(t)) return;
+    items.push({
+      label: dbTabCardTitle(t, scope),
+      title: dbTabTitle(t),
+      pick: true, on: i === active,
+      icon: dbTabGlyph(t), dot: !!dbTabPending(t),
+      fn: (): void => { dbActivateTab(i); },
+    });
+  });
+  if (!items.length) return items;
+  items.push({ sep: true });
+  if (tabs.filter(dbTabVisible).length > 1) {
+    items.push({ label: tr("dataTabs.closeOthers"), fn: dbCloseOthers });
+  }
+  if (tabs.slice(active + 1).some(dbTabVisible)) {
+    items.push({ label: tr("dataTabs.closeRight"), fn: dbCloseToRight });
+  }
+  items.push({ label: tr("dataTabs.closeAll"), danger: true, fn: dbCloseAllTabs });
+  return items;
+}
+
+/** Close a set of tabs by index, asking ONCE when any of them holds work (docs/43 M1 D4).
+ *  A single × names the one object it drops; a bulk close asks the one question the operator
+ *  can actually answer — "N buffered changes would go" — and a refusal keeps every tab
+ *  exactly where it was. */
+function dbCloseBatch(ix: number[]): void {
+  const tabs = dbTabs();
+  const targets = ix.filter((i: number): boolean => { return i >= 0 && i < tabs.length; });
+  if (!targets.length) return;
+  const pending = targets.reduce((n: number, i: number): number => { return n + dbTabPending(tabs[i]); }, 0);
+  if (pending && !confirm(tr("dataTabs.closeDiscardsBatch", {
+    n: trn(pending, "dataTabs.nBufferedChanges.one", "dataTabs.nBufferedChanges.other"),
+  }))) return;
+  targets.forEach((i: number): void => {
+    if (tabs[i].kind === "activity") dbActivityPollStop();
+  });
+  const gone = new Set(targets);
+  const live = dbTab();
+  const next = tabs.filter((_: DbTab, j: number): boolean => { return !gone.has(j); });
+  if (!next.length) next.push(freshTab(dbIsRedis() ? "key" : "table"));
+  const at = next.indexOf(live);
+  dbResetTabs(next, at >= 0 ? at : 0);
+  dbAfterTabSwitch();
+}
+
+/** "Close others" — everything but the active tab. */
+function dbCloseOthers(): void {
+  const active = dbActiveIndex();
+  const ix: number[] = [];
+  dbTabs().forEach((t: DbTab, i: number): void => {
+    if (i !== active && dbTabVisible(t)) ix.push(i);
+  });
+  dbCloseBatch(ix);
+}
+
+/** "Close to the right" — the tabs the strip shows after the active one. */
+function dbCloseToRight(): void {
+  const active = dbActiveIndex();
+  const ix: number[] = [];
+  dbTabs().forEach((t: DbTab, i: number): void => {
+    if (i > active && dbTabVisible(t)) ix.push(i);
+  });
+  dbCloseBatch(ix);
+}
+
+/** "Close all" — back to the placeholder, i.e. the pane's empty state. */
+function dbCloseAllTabs(): void {
+  const ix: number[] = [];
+  dbTabs().forEach((t: DbTab, i: number): void => {
+    if (dbTabVisible(t)) ix.push(i);
+  });
+  dbCloseBatch(ix);
 }
 
 /* Ctrl+Tab / Ctrl+Shift+Tab cycle the strip (swiss-ui-design rule 19: the frequent gesture must
@@ -327,6 +500,9 @@ function dbOpenTab(spec: DbTabSpec): void {
       toast(tr("dataTabs.fullCloseOne", { n: DB_TAB_MAX }), true);
       return;
     }
+    // Not silent (docs/43 M1 D5): a clean card vanishing without a word reads as "the page
+    // ate my tab". Say which one made room — and that it held nothing unsaved.
+    toast(tr("dataTabs.evictedForRoom", { name: dbTabTitle(next[victim]) }));
     next.splice(victim, 1);
   }
   dbLeaveTab(live);
@@ -447,9 +623,9 @@ function dbAfterTabSwitch(byKeyboard?: boolean): void {
 }
 
 export {
-  DB_TAB_MAX, dbActivateTab, dbAfterTabSwitch, dbCloseTab, dbCycleTab, dbDropTableTabs, dbEvictTarget,
-  dbFiltersSame,
-  dbLastTableTab, dbOpenTab, dbResetTabsForConn, dbTabGlyph, dbTabMatches, dbTabPending,
-  dbTabPlaceholder, dbTabsClick, dbTabsPending, dbTabTitle, dbTabVisible, dbTabEvictable,
-  renderDbTabs,
+  DB_TAB_MAX, dbActivateTab, dbAfterTabSwitch, dbCloseAllTabs, dbCloseBatch, dbCloseOthers, dbCloseTab,
+  dbCloseToRight, dbCycleTab, dbDropTableTabs, dbEvictTarget, dbFiltersSame, dbLastTableTab,
+  dbOpenTab, dbResetTabsForConn, dbTabCardTitle, dbTabGlyph, dbTabMatches, dbTabPending,
+  dbTabPlaceholder, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsMenuItems, dbTabsPending,
+  dbTabTitle, dbTabVisible, dbTabEvictable, renderDbTabs,
 };

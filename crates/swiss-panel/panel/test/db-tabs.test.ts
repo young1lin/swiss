@@ -205,25 +205,26 @@ describe("opening an object (docs/42 D3, D6)", () => {
     expect(liveTable().table).toBe("t1");
   });
 
-  it("a ninth table evicts the least recently used one — and never a dirty one", () => {
-    for (let i = 1; i <= 8; i++) tabs.dbOpenTab({ kind: "table", table: "t" + i, schema: null });
-    expect(dbTabs().length).toBe(8);
+  it("a thirteenth table evicts the least recently used one — and never a dirty one", () => {
+    for (let i = 1; i <= 12; i++) tabs.dbOpenTab({ kind: "table", table: "t" + i, schema: null });
+    expect(dbTabs().length).toBe(12);
     // t1 is the oldest, so it would be the victim — unless it is holding work, which is what
     // D3 promises: the cap defends memory, never at the price of an edit.
     dirty(tableAt(0));
-    tabs.dbOpenTab({ kind: "table", table: "t9", schema: null });
+    tabs.dbOpenTab({ kind: "table", table: "t13", schema: null });
     const names = dbTabs().map((t: DbTab): string | null => { return t.kind === "table" ? t.table : t.kind; });
-    expect(dbTabs().length, "the cap holds").toBe(8);
-    expect(names, "t2 went, t1 stayed with its edit").toEqual(["t1", "t3", "t4", "t5", "t6", "t7", "t8", "t9"]);
+    expect(dbTabs().length, "the cap holds").toBe(12);
+    expect(names, "t2 went, t1 stayed with its edit").toEqual(
+      ["t1", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12", "t13"]);
   });
 
-  it("eight tabs all holding work: the open is refused and says so", () => {
-    for (let i = 1; i <= 8; i++) {
+  it("twelve tabs all holding work: the open is refused and says so", () => {
+    for (let i = 1; i <= 12; i++) {
       tabs.dbOpenTab({ kind: "table", table: "t" + i, schema: null });
       dirty(liveTable());
     }
     const before = dbTabs().slice();
-    tabs.dbOpenTab({ kind: "table", table: "t9", schema: null });
+    tabs.dbOpenTab({ kind: "table", table: "t13", schema: null });
     expect(dbTabs(), "nothing was dropped to make room").toEqual(before);
     expect(document.body.textContent, "the refusal is on screen").toContain("close one first");
   });
@@ -501,6 +502,127 @@ describe("switching connection empties the strip (docs/42 T2)", () => {
     Object.assign(dbConnState(), { conns: [dbConn("r", "redis")], conn: "r" });
     tabs.dbResetTabsForConn();
     expect(dbTab().kind).toBe("key");
+  });
+});
+
+/* --- the strip's exits (docs/43 M1) --------------------------------------------------------- */
+
+describe("a full strip still has exits (docs/43 M1)", () => {
+  it("the cap is twelve — the exits, not the number, are the protection", () => {
+    expect(tabs.DB_TAB_MAX).toBe(12);
+  });
+
+  it("eviction says which tab it closed — a card that vanishes silently reads as a bug", () => {
+    for (let i = 1; i <= 12; i++) tabs.dbOpenTab({ kind: "table", table: "t" + i, schema: null });
+    // t2 is the oldest clean background tab (t1 is dirtied below), so it is the victim.
+    dirty(tableAt(0));
+    tabs.dbOpenTab({ kind: "table", table: "t13", schema: null });
+    const toastEl = document.getElementById("toast");
+    expect(toastEl!.textContent, "the toast names the victim").toContain("t2");
+    expect(toastEl!.textContent, "and says it had nothing unsaved").toContain("no unsaved changes");
+  });
+
+  it("the card's name drops the redundant qualifier; the title keeps the full name (D3)", () => {
+    // MySQL: the list browses one database, so that database is the scope and a same-database
+    // card spends its 210px on the table name alone.
+    const mysqlScope = tabs.dbTabScope({ ...dbConnState(), tables: [
+      { schema: "acme_app_dev", name: "a" }, { schema: "acme_app_dev", name: "b" },
+    ] }, false);
+    expect(mysqlScope).toBe("acme_app_dev");
+    expect(tabs.dbTabCardTitle(tableTab("orders", "acme_app_dev"), mysqlScope)).toBe("orders");
+    // A schema outside the scope (an FK jump across databases) keeps its qualifier.
+    expect(tabs.dbTabCardTitle(tableTab("orders", "other_db"), mysqlScope)).toBe("other_db.orders");
+    // pg: the picked schema is the scope, public by default.
+    expect(tabs.dbTabScope({ ...dbConnState(), schemaFilter: "sales" }, true)).toBe("sales");
+    expect(tabs.dbTabScope({ ...dbConnState(), schemaFilter: "" }, true)).toBe("public");
+    // No list to read a scope from: every qualifier stays.
+    expect(tabs.dbTabScope({ ...dbConnState(), tables: [] }, false)).toBeNull();
+    // The strip paints the short name and titles the full one.
+    Object.assign(dbConnState(), { tables: [{ schema: "acme_app_dev", name: "orders" }] });
+    tabs.dbOpenTab({ kind: "table", table: "orders", schema: "acme_app_dev" });
+    tabs.renderDbTabs();
+    const card = document.querySelector<HTMLElement>("#dbTabStrip .db-tab")!;
+    expect(card.querySelector(".db-tab-name")!.textContent).toBe("orders");
+    expect(card.title).toBe("acme_app_dev.orders");
+  });
+
+  it("the overflow menu lists the whole set, ticks the current, offers the bulk closes (D4)", () => {
+    for (const t of ["t1", "t2", "t3"]) tabs.dbOpenTab({ kind: "table", table: t, schema: null });
+    tabs.dbActivateTab(1); // t2 in front
+    dirty(tableAt(2));
+    const items = tabs.dbTabsMenuItems();
+    // Three object rows in strip order, then sep, then the bulk closes (Close all last: danger).
+    type ActionItem = Extract<typeof items[number], { label: string }>;
+    const ofLabel = (i: typeof items[number]): i is ActionItem => { return "label" in i; };
+    const objects = items.filter((i) => { return ofLabel(i) && !!i.pick; }) as ActionItem[];
+    expect(objects.map((i) => { return i.label; })).toEqual(["t1", "t2", "t3"]);
+    expect(objects[1].on, "the current object is the ticked one").toBe(true);
+    expect(objects[0].on).toBeFalsy();
+    expect(objects[2].dot, "the dirty tab carries its dot").toBe(true);
+    const labels = items.filter(ofLabel).map((i) => { return i.label; });
+    expect(labels).toContain("Close others");
+    expect(labels).toContain("Close to the right");
+    expect(labels.at(-1)).toBe("Close all");
+    // Nothing open: no rows, and no bulk closes either — the menu is not offered at all.
+    // (t3 above is dirty, so this close goes through the batch confirm.)
+    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    tabs.dbCloseAllTabs();
+    expect(tabs.dbTabsMenuItems()).toEqual([]);
+  });
+
+  it("Close others leaves only the current tab; Close to the right cuts only what follows (D4)", () => {
+    const ask = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    for (const t of ["t1", "t2", "t3", "t4"]) tabs.dbOpenTab({ kind: "table", table: t, schema: null });
+    tabs.dbActivateTab(1); // t2
+    tabs.dbCloseToRight();
+    expect(ask).not.toHaveBeenCalled(); // everything to the right was clean
+    expect(dbTabs().map((t) => { return t.kind === "table" ? t.table : t.kind; })).toEqual(["t1", "t2"]);
+    tabs.dbCloseOthers();
+    expect(dbTabs().map((t) => { return t.kind === "table" ? t.table : t.kind; })).toEqual(["t2"]);
+    expect(liveTable().table).toBe("t2");
+  });
+
+  it("a bulk close that would drop buffered writes asks once — and a refusal keeps every tab", () => {
+    for (const t of ["t1", "t2", "t3"]) tabs.dbOpenTab({ kind: "table", table: t, schema: null });
+    tabs.dbActivateTab(0);
+    dirty(tableAt(1));
+    dirty(tableAt(2));
+    const ask = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+    tabs.dbCloseAllTabs();
+    expect(ask, "one question for the whole batch").toHaveBeenCalledTimes(1);
+    expect(String(ask.mock.calls[0][0]), "naming the total across the batch").toContain("2");
+    expect(dbTabs().length, "no was an answer for every tab at once").toBe(3);
+  });
+
+  it("the middle button closes through the ×'s path — dirty asks first (D8)", () => {
+    const ask = vi.spyOn(globalThis, "confirm").mockReturnValue(false);
+    for (const t of ["t1", "t2"]) tabs.dbOpenTab({ kind: "table", table: t, schema: null });
+    tabs.renderDbTabs();
+    const cards = Array.from(document.querySelectorAll("#dbTabStrip .db-tab"));
+    dirty(tableAt(0));
+    expect(tabs.dbTabsAuxClick(cards[0])).toBe(true);
+    expect(ask, "a dirty card asks before a middle close takes it").toHaveBeenCalled();
+    expect(dbTabs().length).toBe(2);
+    ask.mockReturnValue(true);
+    tabs.dbTabsAuxClick(cards[0]);
+    expect(dbTabs().length, "answered, the middle close is the ×").toBe(1);
+    expect(tabs.dbTabsAuxClick(document.body)).toBe(false);
+  });
+
+  it("the markup: cards scroll, the exits are pinned outside the run (D1)", () => {
+    tabs.renderDbTabs();
+    const strip = document.getElementById("dbTabStrip")!;
+    expect(strip.querySelector(".db-tabstrip-scroll"), "the card run has its own scroller").not.toBeNull();
+    const end = strip.querySelector(".db-tabstrip-end")!;
+    expect(end).not.toBeNull();
+    // Nothing is open: no overflow seat — there is nothing to list.
+    expect((end.querySelector("[data-dbtabmenu]") as HTMLElement).hidden).toBe(true);
+    tabs.dbOpenTab({ kind: "table", table: "t1", schema: null });
+    tabs.renderDbTabs();
+    const end2 = document.querySelector("#dbTabStrip .db-tabstrip-end")!;
+    expect((end2.querySelector("[data-dbtabmenu]") as HTMLElement).hidden).toBe(false);
+    expect(strip.querySelector(".db-tabstrip-scroll .db-tab"), "the cards live inside the run").not.toBeNull();
+    expect(end2.querySelector("[data-dbtabadd]"), "the + lives in the pinned end").not.toBeNull();
   });
 });
 
