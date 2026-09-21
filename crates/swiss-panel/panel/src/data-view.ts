@@ -22,7 +22,7 @@ import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown } from "./data-browsers.js";
 import { dbFiltersChange, dbFiltersClick, dbFiltersInput, dbFiltersKeydown, dbSqlPaint, renderDbFilters } from "./data-filters.js";
 import { dbGridChange, dbGridClick, dbGridKeydown, dbLoadData, dbToolbarClick, renderDbGrid, renderDbToolbar } from "./data-grid.js";
-import { dbBarClick, dbFavLoad, dbFavPush, dbFormatSql, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
+import { dbBarClick, dbFavLoad, dbHistoryLoad, dbHistoryRender, dbRunSql, renderDbBar } from "./data-sql.js";
 import { dbActivityClick } from "./data-activity.js";
 // The cycle data-view <-> data-structure is the same accepted shape as data-grid <->
 // data-cell — both sides only call across it inside functions, never at module scope.
@@ -64,6 +64,37 @@ const DB_HISTORY_MAX = 50;
  *  are the same question asked of two kinds, so one counter answers both. */
 function dbPending(): number {
   return dbTabPending(dbTab());
+}
+
+/** The connection menu's rows (docs/20 G5 as docs/43 M3 restated it): every connection
+ *  under its group, a heading row where the optgroups were, first-appearance order over
+ *  the flat list, one separator between groups. A single group stays flat (a heading
+ *  around everything says nothing); a gateway that answers no group reads as one list.
+ *  Pure — the row's fn hands the picked name back to the caller's pick. */
+export function dbConnMenuItems(
+  conns: ApiDbConnectionRow[], current: string, pick: (name: string) => void,
+): MenuItem[] {
+  const items: MenuItem[] = [];
+  const order: string[] = [];
+  const buckets: Record<string, ApiDbConnectionRow[]> = {};
+  conns.forEach((c: ApiDbConnectionRow): void => {
+    const g = c.group || "default";
+    if (!buckets[g]) { buckets[g] = []; order.push(g); }
+    buckets[g].push(c);
+  });
+  order.forEach((g: string, gi: number): void => {
+    if (gi > 0 || order.length === 1) items.push({ sep: true });
+    if (order.length > 1) items.push({ heading: true, label: g, fn: (): void => {} });
+    buckets[g].forEach((c: ApiDbConnectionRow): void => {
+      items.push({
+        label: dbConnLabel(c),
+        title: dbConnLabel(c),
+        on: c.name === current,
+        fn: (): void => { pick(c.name); },
+      });
+    });
+  });
+  return items;
 }
 
 /** The WHOLE strip's buffered writes (docs/42 D5). The page-leave guard asks this one, not
@@ -309,7 +340,8 @@ function dbPaneInput(ev: Event): void {
 function dbPaneChange(ev: Event): void {
   const t = targetEl(ev);
   if (!t) return;
-  if (dbChromeChange(t)) return;
+  // docs/43 M4: the console's flat row is gone, so the pane has no chrome-owned selects any
+  // more — every change belongs to the grid (the status bar's page-size included) or a form.
   if (dbGridChange(t, ev)) return;
   if (dbFiltersChange(t)) return;
   if (dbFormChange(t)) return;
@@ -338,27 +370,8 @@ function dbChromeClick(t: Element, ev: MouseEvent): boolean {
     const d = dbConn();
     if (!d.conns.length) return true;
     ev.stopPropagation();
-    const items: MenuItem[] = [];
-    const order: string[] = [];
-    const buckets: Record<string, ApiDbConnectionRow[]> = {};
-    d.conns.forEach((c: ApiDbConnectionRow): void => {
-      const g = c.group || "default";
-      if (!buckets[g]) { buckets[g] = []; order.push(g); }
-      buckets[g].push(c);
-    });
-    order.forEach((g: string, gi: number): void => {
-      if (gi > 0 || order.length === 1) items.push({ sep: true });
-      if (order.length > 1) items.push({ heading: true, label: g, fn: (): void => {} });
-      buckets[g].forEach((c: ApiDbConnectionRow): void => {
-        items.push({
-          label: dbConnLabel(c),
-          title: dbConnLabel(c),
-          on: c.name === d.conn,
-          fn: (): void => { void dbSwitchConn(c.name); },
-        });
-      });
-    });
-    popupMenu(connRow.getBoundingClientRect(), items);
+    popupMenu(connRow.getBoundingClientRect(),
+      dbConnMenuItems(d.conns, d.conn || "", (name: string): void => { void dbSwitchConn(name); }));
     return true;
   }
   // docs/43 M3: the database row opens the selector — primary first with its group heading,
@@ -438,13 +451,6 @@ function dbChromeInput(t: Element): boolean {
     dbSuggestOnInput.call(ta);
     return true;
   }
-  return false;
-}
-
-function dbChromeChange(t: Element): boolean {
-  // docs/43 M4: the history select left the console row — its entries ride the toolbar's
-  // overflow menu now, resolved from live state at click time. The page-size select moved
-  // to the status bar and answers through its own data-tb address (dbGridChange's family).
   return false;
 }
 

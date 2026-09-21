@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
@@ -52,6 +52,15 @@ const el = (tag = "div"): Stub => {
   return n;
 };
 const byId: Record<string, Stub> = {};
+// The globals this suite stubs are process-wide under vitest's default pool: a later file
+// in the same worker would otherwise inherit this DOM (i18n-load-fail's flip test was the
+// one that paid). Snapshot every descriptor now, restore them when the file closes.
+const SAVED = (["document", "window", "localStorage", "location", "matchMedia",
+  "confirm", "alert", "prompt", "setInterval", "clearInterval", "addEventListener",
+  "removeEventListener", "Node"] as const).map((k: string) => ({
+    k,
+    d: Object.getOwnPropertyDescriptor(globalThis, k),
+  }));
 Object.assign(globalThis, {
   document: {
     documentElement: el(), body: el(), head: el(), hidden: false, visibilityState: "visible",
@@ -82,6 +91,14 @@ const structure = await import(pathToFileURL(join(here, "data-structure.js")).hr
   dbPaneToTab: (p: string) => string;
   dbTabToPane: (t: string) => string;
 };
+
+afterAll(() => {
+  // Put the process back the way this file found it — see SAVED above.
+  for (const { k, d } of SAVED) {
+    if (d) Object.defineProperty(globalThis, k, d);
+    else delete (globalThis as unknown as Record<string, unknown>)[k];
+  }
+});
 
 function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] {
   if (pred(node)) out.push(node);

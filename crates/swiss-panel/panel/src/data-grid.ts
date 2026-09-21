@@ -531,7 +531,7 @@ function dbMoreItemsForSql(): MenuItem[] {
   };
   if (d.favorites && d.favorites.length) {
     items.push({ sep: true });
-    items.push({ heading: true, label: tr("dataView.saveFavorites"), fn: (): void => {} });
+    items.push({ heading: true, label: tr("dataView.favoritesTitle"), fn: (): void => {} });
     d.favorites.slice(0, 8).forEach((q: string): void => {
       items.push({ label: q.slice(0, 60), title: q, fn: (): void => { loadSql(q); } });
     });
@@ -629,7 +629,7 @@ function renderDbStatus(): void {
       (res.elapsedMs != null ? tr("dataGrid.msMs", { ms: res.elapsedMs }) : "")));
   } else if (t.kind === "key" && t.redisValue) {
     bar.appendChild(el("span", "db-status-note",
-      t.redisValue.type + (t.redisValue.ttl != null && t.redisValue.ttl >= 0 ? " · ttl " + t.redisValue.ttl + "s" : "")));
+      t.redisValue.type + (t.redisValue.ttl != null && t.redisValue.ttl >= 0 ? tr("dataGrid.ttlSecs", { n: t.redisValue.ttl }) : "")));
   }
   bar.appendChild(el("span", "grow"));
   const conn0 = c.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === c.conn; });

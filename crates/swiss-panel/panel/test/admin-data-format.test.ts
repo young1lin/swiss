@@ -196,10 +196,19 @@ describe("the sprite carries the favorites star", () => {
    docs/37 R5: the skeleton is a node tree now — the ids live as h() props and the aria-label
    as an aria bag entry, which is what the emitted source carries. */
 describe("the console skeleton carries what its wiring queries", () => {
-  it("dbSqlFormat and dbSqlFav exist in the skeleton tree", () => {
+  it("dbSqlRun exists in the skeleton; the flat row's buttons left with docs/43 M4", () => {
     const src = readFileSync(join(admin, "js", "data-view.js"), "utf8");
-    expect(src).toContain('id: "dbSqlFormat"');
-    expect(src).toContain('id: "dbSqlFav"');
-    expect(src).toContain('label: tr("dataView.saveFavorites")'); // docs/38: the label went through tr()
+    // The console's flat action row folded into the toolbar (docs/43 M4): Run is the
+    // toolbar's primary action (data-grid's emit carries it), the rest ride the overflow.
+    // What still must agree here is the textarea the paint fills — and that the flat row's
+    // ids really left the skeleton.
+    expect(src).toContain('id: "dbSql"');
+    expect(src).not.toContain('id: "dbSqlRun"');
+    expect(src).not.toContain('id: "dbSqlFormat"');
+    expect(src).not.toContain('id: "dbSqlFav"');
+    expect(src).not.toContain('id: "dbSqlExplain"');
+    // The toolbar's Run lives in data-grid's emit and answers the same delegated id.
+    const grid = readFileSync(join(admin, "js", "data-grid.js"), "utf8");
+    expect(grid).toContain('id: "dbSqlRun"');
   });
 });

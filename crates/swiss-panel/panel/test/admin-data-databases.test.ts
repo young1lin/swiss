@@ -110,14 +110,14 @@ function mountMysql(): void {
 describe("the database selector's order (docs/43 M3 4.3.2)", () => {
   it("primary first, the rest by name, system last - whatever the server sent", () => {
     const out = mod.dbSortDatabases(CATALOG).map((x) => x.name);
-    expect(out).toEqual(["acme_app_dev", "acme_app_uat", "zdata", "sys", "information_schema"]);
+    expect(out).toEqual(["acme_app_dev", "acme_app_uat", "zdata", "information_schema", "sys"]);
   });
 });
 
 describe("the selector's menu rows (docs/43 M3 4.3.2)", () => {
   it("a not-browsable row is disabled and carries the server's reason as its title", () => {
     const rows = mod.dbDatabaseMenuItems(CATALOG, "acme_app_dev", () => {});
-    const info = rows.find((r) => r.label.startsWith("information_schema"));
+    const info = rows.find((r) => r.label && r.label.startsWith("information_schema"));
     expect(info, "the row is listed, not hidden").toBeTruthy();
     expect(info.disabled, "it cannot be picked").toBe(true);
     expect(info.title, "the title is the server's reason, verbatim").toBe(
@@ -125,10 +125,10 @@ describe("the selector's menu rows (docs/43 M3 4.3.2)", () => {
   });
   it("the selected database marks on and cannot re-pick; a browsable row is enabled", () => {
     const rows = mod.dbDatabaseMenuItems(CATALOG, "acme_app_dev", () => {});
-    const primary = rows.find((r) => r.label.startsWith("acme_app_dev "));
+    const primary = rows.find((r) => r.label && r.label.startsWith("acme_app_dev "));
     expect(primary.on).toBe(true);
     expect(primary.disabled, "the row already in effect does not re-fire the switch").toBe(true);
-    const uat = rows.find((r) => r.label.startsWith("acme_app_uat"));
+    const uat = rows.find((r) => r.label && r.label.startsWith("acme_app_uat"));
     expect(uat.on).toBe(false);
     expect(uat.disabled).toBe(false);
   });
