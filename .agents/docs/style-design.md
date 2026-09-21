@@ -1,6 +1,6 @@
 # Overall Style Design (the swiss unified style spec)
 
-> One-liner: **a Swiss Army knife on a loopback port** — one exe, eight crates, one panel, where pixels are as accountable as bytes for "ruthlessly small, plugin-shaped, hot-pluggable, three ways to bring a tool in"; the loopback is the security boundary, so the UI has no login, credentials never touch disk, and in the monochrome hairline admin interface only status gets color.
+> One-liner: **a pocket multitool on a loopback port** — one exe, eight crates, one panel, where pixels are as accountable as bytes for "ruthlessly small, plugin-shaped, hot-pluggable, three ways to bring a tool in"; the loopback is the security boundary, so the UI has no login, credentials never touch disk, and in the monochrome hairline admin interface only status gets color.
 
 ## Design Principles (four properties + loopback security)
 

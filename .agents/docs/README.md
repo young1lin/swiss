@@ -7,7 +7,7 @@
 
 ## Project One-Liner
 
-**swiss** — the developer's Swiss Army knife: one very-low-memory Rust process (a single static exe) that hangs every
+**swiss** — the developer's pocket multitool: one very-low-memory Rust process (a single static exe) that hangs every
 small tool AI programming needs (MCP gateway, database browsing, SSH tunnels, scheduled jobs, web terminal, process
 management) behind one loopback port, `127.0.0.1:19999`, and one admin panel. It is the port and plugin-shaped
 refactor of the Node project local-mcp-gateway: the same on-disk formats (sealed state files, gateway.config.json,
