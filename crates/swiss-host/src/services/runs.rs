@@ -157,6 +157,14 @@ impl RunOutputBuffer {
 
     /// Read from `after` (a previous next-cursor). Returns the text, the cursor to poll
     /// with next, and whether the requested range had already been partially evicted.
+    ///
+    /// The window ends on a character boundary (docs/41 U1): a multi-byte character the
+    /// `max` cut would split is held back and the next cursor points at its first byte,
+    /// so the follower sees it whole on its next poll instead of two U+FFFD. A window
+    /// that starts inside a character (an evicted ring, a cursor that was never ours)
+    /// skips to the next boundary. Neither trim can stall a follower: when the run is
+    /// terminal and the held-back bytes are the stream's last, or when `max` is smaller
+    /// than one character, the bytes go out as they are and the decoder marks them.
     pub fn read_from(&self, after: u64, max_bytes: usize) -> RunOutputChunk {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let max = max_bytes.clamp(1, MAX_OUTPUT_READ_BYTES);
@@ -166,7 +174,24 @@ impl RunOutputBuffer {
         let begin = from.max(inner.start) as usize;
         let begin = begin.saturating_sub(inner.start as usize);
         let end = (begin + max).min(inner.data.len());
-        let bytes = inner.data.range(begin..end).copied().collect::<Vec<u8>>();
+        let mut bytes = inner.data.range(begin..end).copied().collect::<Vec<u8>>();
+        let mut begin = begin;
+        if truncated {
+            let skip = swiss_core::utf8::char_boundary_start(&bytes);
+            bytes.drain(..skip);
+            begin += skip;
+        }
+        let mut end = begin + bytes.len();
+        let at_stream_end = end == inner.data.len();
+        let keep = swiss_core::utf8::char_boundary_end(&bytes);
+        // Hold the partial character back only when more bytes can still arrive (or
+        // already sit past `max`) and the window keeps something: a terminal stream's
+        // last bytes and a sub-character `max` both go out as they are.
+        let more_coming = !at_stream_end || !self.terminal.load(Ordering::SeqCst);
+        if keep < bytes.len() && more_coming && keep > 0 {
+            bytes.truncate(keep);
+            end = begin + keep;
+        }
         let next = inner.start + end as u64;
         RunOutputChunk {
             text: String::from_utf8_lossy(&bytes).into_owned(),
@@ -1559,6 +1584,54 @@ mod tests {
         assert!(compact.truncated);
         assert_eq!(compact.text.len(), KEEP_FINISHED_OUTPUT_BYTES);
         assert!(buffer.is_terminal());
+    }
+
+    #[test]
+    fn a_window_never_cuts_a_character_in_half_while_the_run_is_live() {
+        // docs/41 U2: "日志" is 6 bytes; a 4-byte max would cut 志 after its first byte.
+        let buffer = RunOutputBuffer::new();
+        buffer.append("日志\n".as_bytes());
+        let first = buffer.read_from(0, 4);
+        assert_eq!(first.text, "日", "the partial 志 is held back");
+        assert_eq!(first.next_cursor, 3, "the next poll starts at 志's first byte");
+        let second = buffer.read_from(first.next_cursor, 64);
+        assert_eq!(second.text, "志\n");
+        assert!(!first.text.contains('\u{FFFD}') && !second.text.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn a_max_smaller_than_one_character_still_makes_progress() {
+        let buffer = RunOutputBuffer::new();
+        buffer.append("中".as_bytes());
+        // Two bytes of a three-byte character: nothing complete fits, so the bytes go
+        // out lossy rather than the follower polling forever at cursor 0.
+        let read = buffer.read_from(0, 2);
+        assert_eq!(read.next_cursor, 2);
+        assert!(read.text.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn a_terminal_streams_last_partial_bytes_are_not_held_back() {
+        let buffer = RunOutputBuffer::new();
+        buffer.append(b"ok \xe4\xb8"); // a truncated 中 - the process died mid-write
+        buffer.finish();
+        let read = buffer.read_from(0, 64);
+        assert_eq!(read.next_cursor, 5, "everything is consumed");
+        assert!(read.text.starts_with("ok "));
+    }
+
+    #[test]
+    fn an_evicted_window_skips_the_continuation_bytes_it_starts_in() {
+        let buffer = RunOutputBuffer::new();
+        // Fill so that eviction lands one byte into a 汉字: 'x' * (cap - 1) then 中文.
+        let mut big = "x".repeat(MAX_LIVE_OUTPUT_BYTES - 1).into_bytes();
+        big.extend_from_slice("中文".as_bytes());
+        buffer.append(&big);
+        // The ring dropped 5 bytes: it now starts at 中's second byte, which is skipped.
+        let read = buffer.read_from(0, usize::MAX);
+        assert!(read.truncated);
+        assert!(!read.text.contains('\u{FFFD}'));
+        assert!(read.text.ends_with("文") || read.text.ends_with('x'));
     }
 
     #[test]
