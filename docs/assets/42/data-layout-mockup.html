@@ -1,0 +1,1461 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data page — layout studies</title>
+<style>
+/* ==================================================================================================
+   Data page layout studies.
+
+   Four competing answers to one question: the Data workspace has ~12 controls competing in a
+   single toolbar row, and nothing on screen says which of them switch the view and which of them
+   act on it. Every study below keeps the Swiss App Shell (rail -> context bar -> page body) and
+   the Swiss token set untouched; only the page body's own layout differs.
+
+   This file is a design artefact, not shipping code: it hard-codes fixtures so every state can be
+   inspected side by side. Tokens are copied verbatim from styles/base.css so the studies can be
+   judged on structure rather than on colour drift.
+   ================================================================================================== */
+
+/* --- tokens (verbatim from crates/swiss-panel/src/admin_assets/styles/base.css) ----------------- */
+:root {
+  color-scheme: light;
+  --f-title: 22px; --f-head: 15px; --f-body: 13px; --f-label: 12px; --f-caption: 11px;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s8: 32px;
+  --r-card: 8px; --r-row: 6px; --r-btn: 6px; --r-pill: 980px;
+  --sans: "Inter", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --bg: #fafafa; --sidebar: #f4f4f5; --bar: #ffffff; --card: #ffffff; --field: #ffffff;
+  --text: #111114; --text-2: #6b7280; --text-3: #9ca3af;
+  --sep: rgba(0,0,0,.08); --sep-soft: rgba(0,0,0,.05); --hover: rgba(0,0,0,.04);
+  --accent: #2563eb; --accent-text: #fff;
+  --green: #16a34a; --red: #dc2626; --amber: #d97706;
+  --shadow-card: 0 0 0 1px var(--sep);
+  --shadow-sheet: 0 24px 60px rgba(20,24,36,.24), 0 0 0 1px var(--sep);
+  --shadow-pop: 0 8px 24px rgba(20,24,36,.14), 0 0 0 1px var(--sep);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1012; --sidebar: #141518; --bar: #141518; --card: #191a1e; --field: #0f1012;
+  --text: #ededef; --text-2: #9a9ca3; --text-3: #66686f;
+  --sep: rgba(255,255,255,.08); --sep-soft: rgba(255,255,255,.05); --hover: rgba(255,255,255,.05);
+  --accent: #3b82f6; --green: #4ade80; --red: #f87171; --amber: #fbbf24;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: #1b1c20; color: var(--text);
+  font: var(--f-body)/1.5 var(--sans); -webkit-font-smoothing: antialiased;
+}
+
+/* --- studio chrome: deliberately outside the design language ----------------------------------- */
+.mock {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+  padding: 10px 16px; background: #131418; color: #d9dae0;
+  border-bottom: 1px solid rgba(255,255,255,.1); font-size: 12px;
+}
+.mock b { color: #fff; font-weight: 600; font-size: 12px; letter-spacing: .01em; }
+.mock .g { display: flex; align-items: center; gap: 6px; }
+.mock .g > span:first-child { color: #797c88; text-transform: uppercase; letter-spacing: .06em; font-size: 10px; }
+.mock button {
+  font: inherit; cursor: pointer; padding: 4px 10px; border-radius: 5px;
+  border: 1px solid rgba(255,255,255,.14); background: transparent; color: #d9dae0;
+}
+.mock button:hover { background: rgba(255,255,255,.08); }
+.mock button[aria-pressed="true"] { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+.mock select {
+  font: inherit; padding: 4px 8px; border-radius: 5px; background: #1e2026; color: #d9dae0;
+  border: 1px solid rgba(255,255,255,.14); max-width: 260px;
+}
+.mock .note { flex: 1 1 100%; margin: 0; color: #8b8e9a; line-height: 1.5; padding-top: 2px;
+  max-height: 3em; overflow: hidden; }
+.mock .note em { color: #cdd0d8; font-style: normal; }
+
+.stage { padding: 14px 20px 20px; display: flex; justify-content: center; }
+.frame {
+  width: 1440px; max-width: 100%; background: var(--bg); color: var(--text);
+  /* Fit the whole app frame on screen whatever the window is: the bottom-anchored parts of a
+     study (study D's dock, study C's status strip) are the point of the comparison. */
+  height: clamp(520px, calc(100vh - 150px), 900px);
+  border-radius: 10px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.45);
+  display: flex; flex-direction: column; position: relative;
+}
+body[data-width="900"] .frame { width: 900px; }
+
+/* --- the App Shell (invariant across every study) ---------------------------------------------- */
+.app { flex: 1; display: flex; min-height: 0; }
+.rail {
+  width: 48px; flex: 0 0 48px; background: var(--sidebar); border-right: 1px solid var(--sep);
+  display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 2px;
+}
+.seat {
+  width: 36px; height: 36px; border-radius: var(--r-row); display: grid; place-items: center;
+  color: var(--text-2); position: relative;
+}
+.seat.on { color: var(--text); background: var(--hover); }
+.seat.on::before {
+  content: ""; position: absolute; left: 2px; top: 8px; bottom: 8px; width: 2px;
+  border-radius: 2px; background: var(--accent);
+}
+.railcol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.ctxbar {
+  height: 44px; flex: 0 0 44px; background: var(--bar); border-bottom: 1px solid var(--sep);
+  display: flex; align-items: center; gap: var(--s3); padding: 0 var(--s4);
+}
+.ctxbar .title { display: flex; align-items: center; gap: var(--s2); font-weight: 600; }
+.ctxbar .spacer { flex: 1; }
+.ctxbar .status { color: var(--text-2); font-size: var(--f-label); }
+.pane { flex: 1; min-height: 0; display: flex; }
+
+/* --- shared primitives ------------------------------------------------------------------------- */
+.ic { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5;
+      stroke-linecap: round; stroke-linejoin: round; flex: 0 0 auto; }
+.ic.s18 { width: 18px; height: 18px; }
+.btn {
+  font: var(--f-label)/1 var(--sans); height: 28px; padding: 0 10px; border-radius: var(--r-btn);
+  border: 1px solid var(--sep); background: var(--card); color: var(--text);
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.icon { width: 28px; padding: 0; justify-content: center; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+.btn.ghost:hover { background: var(--hover); color: var(--text); }
+.btn[disabled] { opacity: .4; cursor: default; }
+.field {
+  font: var(--f-label)/1 var(--sans); height: 28px; padding: 0 8px; border-radius: var(--r-btn);
+  border: 1px solid var(--sep); background: var(--field); color: var(--text); min-width: 0;
+}
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex: 0 0 auto; }
+.dot.idle { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.dot.down { background: var(--red); }
+.chip {
+  font: var(--f-caption)/1 var(--mono); color: var(--text-2); border: 1px solid var(--sep);
+  border-radius: var(--r-pill); padding: 3px 7px; white-space: nowrap;
+}
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.tnum { font-variant-numeric: tabular-nums; }
+.muted { color: var(--text-2); }
+.dim { color: var(--text-3); }
+.seg { display: inline-flex; background: var(--hover); border-radius: var(--r-btn); padding: 2px; }
+.seg button {
+  font: var(--f-label)/1 var(--sans); height: 24px; padding: 0 10px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--text-2); cursor: pointer; white-space: nowrap;
+}
+.seg button[aria-selected="true"] { background: var(--card); color: var(--text); box-shadow: var(--shadow-card); }
+.utabs { display: flex; gap: var(--s4); align-items: stretch; height: 100%; }
+.utabs a {
+  display: flex; align-items: center; font-size: var(--f-label); color: var(--text-2);
+  text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer;
+}
+.utabs a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+
+/* --- explorer frame ---------------------------------------------------------------------------- */
+.db-root { display: flex; flex: 1; min-height: 0; width: 100%; }
+.db-side {
+  width: 248px; flex: 0 0 248px; background: var(--sidebar); border-right: 1px solid var(--sep);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.db-sidetop { padding: var(--s2); display: flex; flex-direction: column; gap: 6px; }
+.db-sidetop .field { width: 100%; }
+.db-listhead {
+  display: flex; align-items: center; gap: var(--s2); height: 28px; padding: 0 var(--s2) 0 var(--s3);
+  color: var(--text-2); font-size: var(--f-caption); text-transform: uppercase; letter-spacing: .06em;
+}
+.db-listhead .n { margin-left: auto; }
+.db-list { flex: 1; overflow: auto; padding: 0 var(--s1) var(--s2); }
+.db-sidefoot {
+  height: 34px; flex: 0 0 34px; border-top: 1px solid var(--sep); display: flex; align-items: center;
+  gap: var(--s1); padding: 0 var(--s2); color: var(--text-3); font-size: var(--f-caption);
+}
+.db-sidefoot .sp { flex: 1; }
+.trow {
+  width: 100%; text-align: left; border: 0; background: transparent; color: var(--text);
+  border-radius: var(--r-row); padding: 5px var(--s2); cursor: pointer; display: block; position: relative;
+}
+.trow:hover { background: var(--hover); }
+.trow.sel { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.trow.sel::before {
+  content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px;
+  background: var(--accent); border-radius: 2px;
+}
+.trow .nm { font-size: var(--f-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow.sel .nm { font-weight: 600; }
+.trow .mt { font-size: var(--f-caption); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow.one { display: flex; align-items: center; gap: var(--s2); }
+.trow.one .nm { flex: 1; }
+.trow.one .mt { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.band {
+  display: flex; align-items: center; gap: var(--s2); height: 28px; padding: 0 var(--s2);
+  background: var(--sep-soft); border-radius: var(--r-row); cursor: pointer;
+  font-size: var(--f-body); font-weight: 600; margin-top: var(--s2);
+}
+.band .n { margin-left: auto; color: var(--text-3); font-variant-numeric: tabular-nums; font-weight: 400; }
+.band + .bandbody { padding-left: var(--s4); padding-top: var(--s1); }
+
+/* --- toolbars ---------------------------------------------------------------------------------- */
+.idrow {
+  display: flex; align-items: center; gap: var(--s3); padding: var(--s3) var(--s4) var(--s2);
+  min-height: 0;
+}
+.idrow .txt { min-width: 0; }
+.idrow h2 { margin: 0; font-size: var(--f-head); font-weight: 600; letter-spacing: -.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idrow .meta { font-size: var(--f-label); color: var(--text-2); margin-top: 2px; }
+.idrow .sp { flex: 1; }
+.viewrow {
+  display: flex; align-items: center; gap: var(--s2); padding: 0 var(--s4) var(--s2);
+  border-bottom: 1px solid var(--sep);
+}
+.viewrow .sp { flex: 1; }
+.pager { display: inline-flex; align-items: center; gap: var(--s1); color: var(--text-2); font-size: var(--f-label); }
+.pager .rng { font-variant-numeric: tabular-nums; white-space: nowrap; padding: 0 var(--s1); }
+
+/* --- grid -------------------------------------------------------------------------------------- */
+.gridwrap { flex: 1; min-height: 0; overflow: auto; }
+table.grid { border-collapse: separate; border-spacing: 0; font-size: var(--f-label); width: max-content; min-width: 100%; }
+table.grid th {
+  position: sticky; top: 0; z-index: 2; background: var(--bar); text-align: left; font-weight: 500;
+  border-bottom: 1px solid var(--sep); border-right: 1px solid var(--sep-soft);
+  padding: 6px var(--s2); white-space: nowrap; vertical-align: top;
+}
+table.grid th .cn { color: var(--text); }
+table.grid th .ct { color: var(--text-3); font-family: var(--mono); font-size: var(--f-caption); margin-left: 6px; }
+table.grid th .cc { display: block; color: var(--text-3); font-size: var(--f-caption); font-weight: 400;
+  max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+table.grid td {
+  border-bottom: 1px solid var(--sep-soft); border-right: 1px solid var(--sep-soft);
+  padding: 5px var(--s2); white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text);
+}
+table.grid td.num { text-align: right; }
+table.grid td.null { color: var(--text-3); font-style: italic; }
+table.grid tr:hover td { background: var(--hover); }
+table.grid td.k { position: sticky; left: 0; background: var(--bg); z-index: 1;
+  border-right: 1px solid var(--sep); color: var(--text-3); text-align: center; width: 54px; }
+table.grid tr:hover td.k { background: var(--hover); }
+table.grid th.k { left: 0; z-index: 3; width: 54px; }
+td.edited { box-shadow: inset 0 0 0 1px var(--amber); background: color-mix(in srgb, var(--amber) 9%, transparent) !important; }
+tr.inserted td { background: color-mix(in srgb, var(--green) 8%, transparent); }
+tr.deleted td { opacity: .45; text-decoration: line-through; }
+td.focus { box-shadow: inset 0 0 0 2px var(--accent); }
+.mono-cell { font-family: var(--mono); }
+
+/* --- commit bar, filters, console, dock -------------------------------------------------------- */
+.commitbar {
+  display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4);
+  border-top: 1px solid var(--sep); background: color-mix(in srgb, var(--amber) 10%, var(--bar));
+  font-size: var(--f-label);
+}
+.commitbar .sp { flex: 1; }
+.commitbar b { color: var(--amber); }
+.filters {
+  display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+  padding: var(--s2) var(--s4); border-bottom: 1px solid var(--sep); background: var(--bar);
+}
+.fchip {
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 var(--s2);
+  border: 1px solid var(--sep); border-radius: var(--r-pill); background: var(--card);
+  font-size: var(--f-caption); font-family: var(--mono);
+}
+.fchip .x { color: var(--text-3); cursor: pointer; }
+.console { border-bottom: 1px solid var(--sep); background: var(--bar); }
+.console .editor {
+  margin: var(--s2) var(--s4) 0; border: 1px solid var(--sep); border-radius: var(--r-row);
+  background: var(--field); padding: var(--s2); font: var(--f-label)/1.6 var(--mono);
+  min-height: 74px; white-space: pre-wrap; color: var(--text);
+}
+.console .kw { color: var(--accent); }
+.console .str { color: var(--green); }
+.console .row { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4); }
+.console .row .sp { flex: 1; }
+.console .hint { font-size: var(--f-caption); color: var(--text-3); }
+.dock { border-top: 1px solid var(--sep); background: var(--bar); display: flex; flex-direction: column; }
+.dock .grip { height: 5px; cursor: row-resize; background: transparent; border-bottom: 1px solid var(--sep-soft); }
+.dock .tabs { display: flex; align-items: center; gap: var(--s4); height: 32px; padding: 0 var(--s4);
+  border-bottom: 1px solid var(--sep-soft); }
+.dock .body { flex: 1; min-height: 0; overflow: auto; }
+
+/* --- object tabs (study B) --------------------------------------------------------------------- */
+.otabs {
+  display: flex; align-items: stretch; height: 34px; background: var(--sidebar);
+  border-bottom: 1px solid var(--sep); overflow-x: auto;
+}
+.otab {
+  display: flex; align-items: center; gap: 6px; padding: 0 var(--s3); cursor: pointer;
+  border-right: 1px solid var(--sep); color: var(--text-2); font-size: var(--f-label);
+  white-space: nowrap; background: transparent; border-top: 2px solid transparent;
+}
+.otab[aria-selected="true"] { background: var(--bar); color: var(--text); border-top-color: var(--accent); }
+.otab .x { color: var(--text-3); width: 14px; height: 14px; }
+.otab.add { color: var(--text-3); }
+
+/* --- study-specific layout --------------------------------------------------------------------- */
+/* A — two rows: identity above, view switch + scoped actions below. */
+[data-study="a"] .viewrow { padding-top: 0; }
+
+/* B — object tabs: one scoped toolbar, sidebar is a tree. */
+[data-study="b"] .db-side { flex-basis: 264px; width: 264px; }
+[data-study="b"] .idrow { display: none; }
+[data-study="b"] .viewrow { padding: var(--s2) var(--s4); }
+[data-study="b"] .btitle { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+[data-study="b"] .btitle .nm { font-weight: 600; font-size: var(--f-body); }
+
+/* C — quiet: one 36px bar, pager in a bottom status strip. */
+[data-study="c"] .db-side { flex-basis: 232px; width: 232px; }
+[data-study="c"] .idrow { padding: 0 var(--s4); height: 36px; align-items: center; }
+[data-study="c"] .idrow h2 { font-size: var(--f-body); font-weight: 500; }
+[data-study="c"] .idrow .meta { display: none; }
+[data-study="c"] .viewrow { padding: 0 var(--s4); border-bottom: 1px solid var(--sep); height: 30px; }
+.statusbar {
+  height: 28px; flex: 0 0 28px; border-top: 1px solid var(--sep); background: var(--bar);
+  display: flex; align-items: center; gap: var(--s3); padding: 0 var(--s4);
+  font-size: var(--f-caption); color: var(--text-2);
+}
+.statusbar .sp { flex: 1; }
+.crumb { display: flex; align-items: center; gap: 6px; font-size: var(--f-body); min-width: 0; }
+.crumb .sepx { color: var(--text-3); }
+.crumb .last { font-weight: 600; }
+.qbar {
+  display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4);
+  border-bottom: 1px solid var(--sep); background: var(--bar);
+}
+.qbar .box {
+  flex: 1; height: 28px; border: 1px solid var(--sep); border-radius: var(--r-btn);
+  background: var(--field); padding: 0 var(--s2); display: flex; align-items: center; gap: 6px;
+  font: var(--f-label)/1 var(--mono); color: var(--text);
+}
+.qbar .box .lead { color: var(--text-3); }
+
+/* D — docked workspace. */
+[data-study="d"] .idrow { padding-bottom: var(--s2); }
+[data-study="d"] .viewrow { border-bottom: 1px solid var(--sep); }
+
+/* --- structure / form / activity / redis ------------------------------------------------------- */
+.pad { padding: var(--s4); overflow: auto; flex: 1; min-height: 0; }
+.card { background: var(--card); border-radius: var(--r-card); box-shadow: var(--shadow-card); overflow: hidden; }
+.card + .card { margin-top: var(--s4); }
+.cardhead { display: flex; align-items: center; gap: var(--s2); height: 36px; padding: 0 var(--s3);
+  background: var(--sep-soft); font-weight: 600; font-size: var(--f-body); }
+.cardhead .sp { flex: 1; }
+table.plain { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--f-label); }
+table.plain th { text-align: left; font-weight: 500; color: var(--text-2); padding: 6px var(--s3);
+  border-bottom: 1px solid var(--sep); white-space: nowrap; }
+table.plain td { padding: 6px var(--s3); border-bottom: 1px solid var(--sep-soft); }
+table.plain tr:last-child td { border-bottom: 0; }
+pre.ddl { margin: 0; padding: var(--s3); font: var(--f-label)/1.65 var(--mono); color: var(--text);
+  white-space: pre; overflow: auto; }
+.formgrid { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 1px; background: var(--sep-soft); }
+.formgrid .fl { background: var(--card); padding: 7px var(--s3); color: var(--text-2); font-size: var(--f-label); }
+.formgrid .fv { background: var(--card); padding: 7px var(--s3); font-size: var(--f-label); }
+.formgrid .fv.mono { font-family: var(--mono); }
+.empty { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--s2); flex: 1; padding: var(--s8); text-align: center; }
+.empty .eic { color: var(--text-3); }
+.empty h3 { margin: 0; font-size: var(--f-head); font-weight: 600; }
+.empty p { margin: 0; max-width: 44ch; color: var(--text-2); font-size: var(--f-label); }
+.banner { display: flex; gap: var(--s2); align-items: flex-start; margin: var(--s4); padding: var(--s3);
+  border-radius: var(--r-card); background: color-mix(in srgb, var(--red) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 30%, transparent); font-size: var(--f-label); }
+.banner .t { font-weight: 600; color: var(--red); }
+.banner code { font-family: var(--mono); }
+
+/* --- overlays: sheet + popup menu -------------------------------------------------------------- */
+.scrim { position: absolute; inset: 0; background: rgba(15,16,18,.42); display: grid; place-items: center; z-index: 30; }
+.sheet { width: 560px; max-width: calc(100% - 48px); max-height: 80%; background: var(--card);
+  border-radius: var(--r-card); box-shadow: var(--shadow-sheet); display: flex; flex-direction: column; }
+.sheet .sh { padding: var(--s4) var(--s4) var(--s2); font-size: var(--f-head); font-weight: 600; }
+.sheet .sb { padding: 0 var(--s4) var(--s4); overflow: auto; display: flex; flex-direction: column; gap: var(--s3); }
+.sheet .sf { display: flex; gap: var(--s2); justify-content: flex-end; padding: var(--s3) var(--s4);
+  border-top: 1px solid var(--sep); }
+.lbl { font-size: var(--f-label); color: var(--text-2); display: block; margin-bottom: var(--s1); }
+.popup { position: absolute; z-index: 40; min-width: 200px; background: var(--card); border-radius: var(--r-row);
+  box-shadow: var(--shadow-pop); padding: var(--s1); }
+.popup .mi { display: flex; align-items: center; gap: var(--s2); height: 30px; padding: 0 var(--s2);
+  border-radius: 4px; font-size: var(--f-label); cursor: pointer; }
+.popup .mi:hover { background: var(--hover); }
+.popup .mi.danger { color: var(--red); }
+.popup hr { border: 0; border-top: 1px solid var(--sep); margin: var(--s1) 0; }
+</style>
+</head>
+<body data-width="1440">
+
+<header class="mock">
+  <b>Data page — layout studies</b>
+  <span class="g"><span>Study</span><span id="studyBtns"></span></span>
+  <span class="g"><span>Engine</span><span id="engBtns"></span></span>
+  <span class="g"><span>State</span><select id="scSel"></select></span>
+  <span class="g"><span>Theme</span><button id="themeBtn" type="button">Light</button></span>
+  <span class="g"><span>Width</span><button id="wBtn" type="button">1440</button></span>
+  <p class="note" id="note"></p>
+</header>
+
+<div class="stage">
+  <div class="frame" id="frame"></div>
+</div>
+
+<script>
+"use strict";
+/* ==================================================================================================
+   The studies are rendered from one data model so that every engine x state combination exists for
+   all four layouts. What a study changes is the page body's chrome: where identity lives, where the
+   view switch lives, where the actions live, and where the pager lives. The content blocks (grid,
+   form, structure, redis value, activity) are shared on purpose — a layout study that also changed
+   the content would not be comparing layouts.
+   ================================================================================================== */
+
+/* --- tiny builder ------------------------------------------------------------------------------ */
+function h(tag, attrs) {
+  var n = document.createElement(tag), k;
+  attrs = attrs || {};
+  for (k in attrs) {
+    if (!Object.prototype.hasOwnProperty.call(attrs, k)) continue;
+    var v = attrs[k];
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k === "html") n.innerHTML = v;
+    else if (k === "style") n.setAttribute("style", v);
+    else n.setAttribute(k, v === true ? "" : String(v));
+  }
+  for (var i = 2; i < arguments.length; i++) add(n, arguments[i]);
+  return n;
+}
+function add(parent, kid) {
+  if (kid === null || kid === undefined || kid === false) return;
+  if (Array.isArray(kid)) { kid.forEach(function (x) { add(parent, x); }); return; }
+  parent.appendChild(typeof kid === "string" ? document.createTextNode(kid) : kid);
+}
+/* Lucide-shaped inline icons; the shipping panel uses a sprite, which a single file cannot. */
+var PATHS = {
+  database: "M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3",
+  plug: "M9 2v6M15 2v6M6 8h12v3a6 6 0 0 1-12 0V8zM12 17v5",
+  terminal: "M4 17l6-5-6-5M12 19h8",
+  clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2",
+  settings: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7.9 19l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 4 13.6H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 5 8.1L4.9 8a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H10a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V10a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z",
+  ellipsis: "M6 12h.01M12 12h.01M18 12h.01",
+  plus: "M12 5v14M5 12h14",
+  left: "M15 18l-6-6 6-6",
+  right: "M9 18l6-6-6-6",
+  refresh: "M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6",
+  filter: "M3 4h18l-7 8v6l-4 2v-8z",
+  down: "M6 9l6 6 6-6",
+  search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4",
+  x: "M18 6 6 18M6 6l12 12",
+  table: "M3 5h18v14H3zM3 10h18M9 10v9",
+  key: "M15 3a6 6 0 1 1-5.7 7.9L3 17.2V21h3.8l1.4-1.4V18h1.6l1.4-1.4V15h1.6l.7-.7A6 6 0 0 1 15 3z",
+  code: "M8 6l-5 6 5 6M16 6l5 6-5 6",
+  box: "M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8",
+  activity: "M3 12h4l3 8 4-16 3 8h4",
+  warn: "M12 3 2 20h20zM12 9v5M12 17h.01",
+  file: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5",
+  star: "m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z",
+  play: "M6 4l14 8-14 8z",
+  cols: "M4 4h6v16H4zM14 4h6v16h-6z",
+  link: "M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1-1",
+  hash: "M4 9h16M4 15h16M10 3 8 21M16 3l-2 18",
+  list: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+  layers: "M12 2 2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+};
+function icon(name, cls) {
+  var s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("viewBox", "0 0 24 24");
+  s.setAttribute("class", "ic" + (cls ? " " + cls : ""));
+  s.setAttribute("aria-hidden", "true");
+  var p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p.setAttribute("d", PATHS[name] || PATHS.box);
+  s.appendChild(p);
+  return s;
+}
+function n(x) { return Number(x).toLocaleString("en-US"); }
+
+/* --- fixtures ---------------------------------------------------------------------------------- */
+var MYSQL_TABLES = [
+  { name: "shop_order",            rows: 9309,     size: "7.0 MB" },
+  { name: "shop_order_detail",     rows: 459064,   size: "140 MB" },
+  { name: "shop_order_history",    rows: 455587,   size: "450 MB" },
+  { name: "shop_order_history_bk", rows: 262,      size: "272 KB" },
+  { name: "shop_order_update_log", rows: 137,      size: "528 KB" },
+  { name: "shop_stock",         rows: 3343,     size: "7.7 MB" },
+  { name: "shop_stock_fee",     rows: 23402148, size: "3.1 GB" },
+  { name: "shop_stock_history", rows: 296638,   size: "355 MB" },
+  { name: "shop_stock_history_1", rows: 0,      size: "16.0 KB" },
+  { name: "shop_stock_history_bk", rows: 163,   size: "544 KB" },
+  { name: "shop_price_snapshot",     rows: 1204993,  size: "1.2 GB" },
+  { name: "shop_payment",              rows: 884120,   size: "620 MB" }
+];
+var PG_TABLES = [
+  { schema: "public",  name: "events",        rows: 4820113, size: "2.4 GB" },
+  { schema: "public",  name: "users",         rows: 92841,   size: "64 MB" },
+  { schema: "public",  name: "sessions",      rows: 310922,  size: "180 MB" },
+  { schema: "public",  name: "orders",        rows: 128004,  size: "96 MB" },
+  { schema: "public",  name: "order_items",   rows: 512773,  size: "310 MB" },
+  { schema: "staging", name: "events_raw",    rows: 902441,  size: "1.1 GB" },
+  { schema: "staging", name: "users_import",  rows: 4021,    size: "2.8 MB" },
+  { schema: "audit",   name: "change_log",    rows: 2211904, size: "890 MB" },
+  { schema: "audit",   name: "login_attempt", rows: 88213,   size: "41 MB" }
+];
+var REDIS_KEYS = [
+  { key: "cart:9f2a41",            type: "hash",   ttl: 1800 },
+  { key: "cart:a0b7cc",            type: "hash",   ttl: 1740 },
+  { key: "config:flags",           type: "string", ttl: -1 },
+  { key: "feed:global",            type: "list",   ttl: -1 },
+  { key: "leaderboard:weekly",     type: "zset",   ttl: 432000 },
+  { key: "lock:import",            type: "string", ttl: 42 },
+  { key: "stream:orders",          type: "stream", ttl: -1 },
+  { key: "user:1001:profile",      type: "hash",   ttl: -1 },
+  { key: "user:1001:sessions",     type: "set",    ttl: 86400 },
+  { key: "user:1002:profile",      type: "hash",   ttl: -1 }
+];
+
+var MYSQL_COLS = [
+  { name: "id",               type: "bigint",  pk: true,  cm: "编号" },
+  { name: "code",             type: "varchar", cm: "编号" },
+  { name: "category",         type: "tinyint", cm: "分类 1=实物 3=虚拟" },
+  { name: "sku_code",    type: "varchar", cm: "商品编号" },
+  { name: "warehouse", type: "varchar", cm: "发货仓库 (0=本地 1=华东 2=华南)" },
+  { name: "order_code",       type: "varchar", cm: "订单编号", fk: true },
+  { name: "direction",        type: "tinyint", cm: "出入库方向" },
+  { name: "payment_id",  type: "bigint",  cm: "支付编号", fk: true },
+  { name: "user_type",        type: "tinyint", cm: "用户类型 0=普通" }
+];
+var MYSQL_ROWS = [
+  [1,  "ORD3855292104719", 3, "10", "0", "ORD3855292079684", 1, null, null],
+  [3,  "ORD3855310058081", 3, "1",  "0", "ORD3855310054439", 0, null, null],
+  [4,  "ORD3855314420043", 3, "1",  "0", "ORD3855314413079", 0, null, null],
+  [9,  "ORD3855341065472", 3, "11", "0", "ORD3855341061692", 0, null, null],
+  [10, "ORD3855353745754", 3, "11", "0", "ORD3855353736960", 0, null, null],
+  [11, "ORD3855645546845", 3, "1",  "0", "ORD3855645538313", 0, null, null],
+  [12, "ORD3855674039061", 3, "1",  "0", "ORD3855674028614", 0, null, null],
+  [13, "ORD3858482939234", 3, "3",  "0", "ORD3858482909962", 1, null, null],
+  [14, "ORD3858530110225", 3, "10", "0", "ORD3858530101784", 1, null, null],
+  [15, "ORD3858641055784", 3, "9",  "0", "ORD3858641051188", 1, null, null],
+  [16, "ORD3858676657217", 3, "10", "0", "ORD3858676652364", 1, null, null],
+  [17, "ORD3860478108722", 3, "3",  "0", "ORD3860478063417", 1, null, null],
+  [18, "ORD3860760676411", 3, "13", "0", "ORD3860760666661", 1, null, null],
+  [19, "ORD3862475186970", 3, "14", "0", "ORD3862475183106", 0, null, null]
+];
+var PG_COLS = [
+  { name: "id",         type: "bigint",      pk: true, cm: "surrogate key" },
+  { name: "user_id",    type: "bigint",      cm: "references users(id)", fk: true },
+  { name: "kind",       type: "text",        cm: "event name" },
+  { name: "payload",    type: "jsonb",       cm: "free-form event body" },
+  { name: "amount",     type: "numeric",     cm: "minor units" },
+  { name: "is_test",    type: "boolean",     cm: "" },
+  { name: "created_at", type: "timestamptz", cm: "insert time, UTC" }
+];
+var PG_ROWS = [
+  [880101, 1001, "checkout.completed", '{"sku":"A-19","qty":2,"channel":"web"}', 4990,  false, "2026-09-18 08:14:02+00"],
+  [880102, 1001, "cart.updated",       '{"sku":"A-19","qty":3}',                 null,  false, "2026-09-18 08:15:44+00"],
+  [880103, 1044, "login.succeeded",    '{"ip":"10.0.0.8","ua":"Firefox/141"}',   null,  false, "2026-09-18 08:16:01+00"],
+  [880104, 1044, "checkout.started",   '{"cart":"9f2a41"}',                      null,  true,  "2026-09-18 08:16:30+00"],
+  [880105, 2087, "refund.issued",      '{"order":55021,"reason":"damaged"}',     -1990, false, "2026-09-18 08:19:12+00"],
+  [880106, 2087, "ticket.opened",      '{"queue":"support","priority":"high"}',  null,  false, "2026-09-18 08:21:55+00"],
+  [880107, 1001, "checkout.completed", '{"sku":"B-02","qty":1,"channel":"ios"}', 12900, false, "2026-09-18 08:24:07+00"]
+];
+var REDIS_VALUES = {
+  hash:   { rows: [["display_name", "Ada Lovelace"], ["email", "ada@example.com"], ["locale", "en-GB"], ["tier", "gold"], ["created_at", "1699920000"]], cols: ["field", "value"] },
+  list:   { rows: [[0, "post:8812"], [1, "post:8809"], [2, "post:8807"], [3, "post:8801"], [4, "post:8794"]], cols: ["index", "value"] },
+  set:    { rows: [["s:7ac1"], ["s:91bd"], ["s:c40e"]], cols: ["member"] },
+  zset:   { rows: [["ada", 9840], ["grace", 9120], ["alan", 8755], ["edsger", 8410]], cols: ["member", "score"] },
+  string: { text: '{"checkout_v2":true,"dark_mode":"auto","max_cart_items":40}' },
+  stream: { rows: [["1726646042-0", '{"order":55021,"state":"paid"}'], ["1726646101-0", '{"order":55022,"state":"pending"}'], ["1726646190-0", '{"order":55023,"state":"paid"}']], cols: ["id", "fields"] }
+};
+
+/* --- engines ----------------------------------------------------------------------------------- */
+var ENGINES = {
+  mysql: {
+    label: "mysql · mysql", dialect: "mysql", db: "acme_app_dev", kind: "sql",
+    table: "shop_order_detail", qualified: "acme_app_dev.shop_order_detail",
+    total: 550968, cols: MYSQL_COLS, rows: MYSQL_ROWS, tables: MYSQL_TABLES, tablesTotal: 1712,
+    sizeChip: "12.3 MB"
+  },
+  pg: {
+    label: "analytics · pg", dialect: "pg", db: "analytics", kind: "sql",
+    table: "events", qualified: "public.events",
+    total: 4820113, cols: PG_COLS, rows: PG_ROWS, tables: PG_TABLES, tablesTotal: 214,
+    sizeChip: "14.1 MB"
+  },
+  redis: {
+    label: "shop-redis · redis", dialect: "redis", db: "db0", kind: "redis",
+    table: "user:1001:profile", qualified: "user:1001:profile",
+    total: 450, cols: [], rows: [], tables: [], tablesTotal: 450,
+    sizeChip: "9.8 MB"
+  }
+};
+
+/* --- states ------------------------------------------------------------------------------------ */
+var SQL_STATES = [
+  ["browse",    "Rows — the everyday view"],
+  ["filters",   "Rows with two filters applied"],
+  ["edits",     "Buffered edits — dirty cell, new row, deleted row"],
+  ["readonly",  "Read-only connection"],
+  ["nopk",      "Table without a primary key"],
+  ["empty",     "Table with zero rows"],
+  ["error",     "Driver error passed through verbatim"],
+  ["form",      "Form view — one record"],
+  ["structure", "Structure — columns, indexes, foreign keys"],
+  ["ddl",       "DDL"],
+  ["sql",       "SQL console — two result tabs"],
+  ["explain",   "SQL console — execution plan"],
+  ["activity",  "Activity monitor — sessions and kill"],
+  ["noconn",    "No database MCP registered"],
+  ["import",    "CSV import wizard (sheet)"],
+  ["value",     "Value viewer (sheet)"],
+  ["newtable",  "New table (sheet)"],
+  ["menu",      "Overflow menu open"]
+];
+var REDIS_STATES = [
+  ["keys",      "Key list — nothing opened"],
+  ["hash",      "hash key"],
+  ["string",    "string key"],
+  ["list",      "list key"],
+  ["set",       "set key"],
+  ["zset",      "zset key"],
+  ["stream",    "stream key"],
+  ["edits",     "Buffered field edits + command preview"],
+  ["command",   "Command console with reply"],
+  ["empty",     "SCAN returned no keys"],
+  ["ttl",       "TTL / rename / delete menu"],
+  ["noconn",    "No database MCP registered"]
+];
+
+var STUDIES = {
+  a: {
+    name: "A · Two rows",
+    note: "<em>Smallest move.</em> The row that is overloaded today is split in two: identity and its overflow on top, the view switch plus only the controls that belong to the active view underneath. Six structure tabs collapse into four (Data · Form · Structure · DDL), and Refresh / CSV / Export / Import move behind one ⋯ so the row holds a single primary button. Keeps today's DOM and today's single-object model — cheapest to ship, and it already removes the ambiguity the arrow in the screenshot points at."
+  },
+  b: {
+    name: "B · Object tabs",
+    note: "<em>What a mature web client actually is.</em> Open objects become tabs — two tables and a SQL editor at once, each with its own filters, page and edit buffer. The sidebar becomes a real tree (connection header, then Tables / Views / Routines; Redis groups keys by <code>:</code> namespace). Only one toolbar row is left, and it is scoped to the active tab. Costs a per-tab state refactor of DbState; everything else is reuse."
+  },
+  c: {
+    name: "C · Quiet",
+    note: "<em>Maximum grid, minimum chrome.</em> One 36px breadcrumb bar, underline tabs beneath it, and the pager, timing and editability move into a spreadsheet-style status strip at the bottom. The filter builder becomes one monospace query bar you can type a WHERE clause into. Every rare action lives in ⋯ or the command palette. Densest and calmest; discovery leans on the palette, which is a real trade."
+  },
+  d: {
+    name: "D · Docked workspace",
+    note: "<em>Query while you browse.</em> The body splits: grid on top, a resizable dock underneath with its own tabs — SQL, Value, Row, Messages, Activity. The console stops shoving the grid down, the value viewer stops being a modal, and the row form becomes a panel instead of a separate view. One toolbar row is enough because the dock absorbs everything else. Most powerful, most vertical space spent."
+  }
+};
+
+/* --- state ------------------------------------------------------------------------------------- */
+var ui = { study: "a", eng: "mysql", sc: "browse" };
+
+/* --- sidebar ----------------------------------------------------------------------------------- */
+function connRow(e) {
+  return h("div", { class: "trow one sel", style: "margin-bottom:2px" },
+    h("span", { class: "dot" }),
+    h("span", { class: "nm", style: "font-weight:600" }, e.label.split(" · ")[0]),
+    h("span", { class: "chip" }, e.dialect),
+    icon("down", "dim"));
+}
+function searchBox(ph) {
+  return h("label", { class: "field", style: "display:flex;align-items:center;gap:6px" },
+    icon("search", "dim"),
+    h("span", { class: "dim", style: "font-size:var(--f-label)" }, ph));
+}
+function sortRow(e) {
+  return h("div", { style: "display:flex;gap:6px" },
+    h("span", { class: "field", style: "flex:1;display:flex;align-items:center;justify-content:space-between" },
+      h("span", {}, e.kind === "redis" ? "Key" : "Name"), icon("down", "dim")),
+    h("button", { class: "btn icon", title: "Sort ascending", type: "button" }, "↑"));
+}
+function typeFilter() {
+  return h("span", { class: "field", style: "display:flex;align-items:center;justify-content:space-between" },
+    h("span", {}, "All types"), icon("down", "dim"));
+}
+
+function tableRow(t, sel, oneLine) {
+  var meta = t.rows === 0 ? "empty" : "~" + n(t.rows) + " rows · " + t.size;
+  if (oneLine) {
+    return h("button", { class: "trow one" + (sel ? " sel" : ""), type: "button" },
+      icon("table", "dim"),
+      h("span", { class: "nm" }, t.name),
+      h("span", { class: "mt" }, t.rows === 0 ? "0" : n(t.rows)));
+  }
+  return h("button", { class: "trow" + (sel ? " sel" : ""), type: "button" },
+    h("div", { class: "nm" }, t.name),
+    h("div", { class: "mt" }, "table · " + meta));
+}
+function keyRow(k, sel, oneLine, stripPrefix) {
+  var name = stripPrefix && k.key.indexOf(stripPrefix) === 0 ? k.key.slice(stripPrefix.length) : k.key;
+  if (oneLine) {
+    return h("button", { class: "trow one" + (sel ? " sel" : ""), type: "button" },
+      icon("key", "dim"),
+      h("span", { class: "nm mono" }, name),
+      h("span", { class: "chip" }, k.type));
+  }
+  return h("button", { class: "trow" + (sel ? " sel" : ""), type: "button" },
+    h("div", { class: "nm mono" }, k.key),
+    h("div", { class: "mt" }, k.type + (k.ttl >= 0 ? " · ttl " + k.ttl + "s" : "")));
+}
+
+/* Study A and D keep today's sidebar: stacked controls over a flat (or schema-grouped) list.
+   Study B turns it into a tree with one search box. Study C keeps it minimal and one-line. */
+function renderSide(e, sc) {
+  var study = ui.study, redis = e.kind === "redis", side = h("div", { class: "db-side" });
+  if (sc === "noconn") {
+    add(side, h("div", { class: "db-sidetop" }, h("span", { class: "field", style: "display:flex;align-items:center;color:var(--text-3)" }, "No database MCPs")));
+    add(side, h("div", { class: "db-list" }));
+    return side;
+  }
+
+  if (study === "b") {
+    add(side, h("div", { class: "db-sidetop" }, connRow(e), searchBox(redis ? "Match pattern" : "a*, b|c")));
+    var tree = h("div", { class: "db-list" });
+    if (redis) {
+      // A 450-key flat list is unreadable; grouping on the ":" namespace is what every Redis
+      // client does and it is a pure client-side fold over what SCAN already returned.
+      var groups = {}, order = [];
+      REDIS_KEYS.forEach(function (k) {
+        var g = k.key.indexOf(":") > 0 ? k.key.slice(0, k.key.indexOf(":") + 1) : "(root)";
+        if (!groups[g]) { groups[g] = []; order.push(g); }
+        groups[g].push(k);
+      });
+      order.forEach(function (g) {
+        add(tree, h("div", { class: "band" }, icon("down"), h("span", {}, g), h("span", { class: "n" }, String(groups[g].length))));
+        add(tree, h("div", { class: "bandbody" }, groups[g].map(function (k) {
+          return keyRow(k, k.key === e.qualified && sc !== "keys" && sc !== "empty", true, g);
+        })));
+      });
+    } else if (e.dialect === "pg") {
+      var schemas = {}, so = [];
+      PG_TABLES.forEach(function (t) { if (!schemas[t.schema]) { schemas[t.schema] = []; so.push(t.schema); } schemas[t.schema].push(t); });
+      so.forEach(function (s) {
+        add(tree, h("div", { class: "band" }, icon("down"), h("span", {}, s), h("span", { class: "n" }, String(schemas[s].length))));
+        add(tree, h("div", { class: "bandbody" }, schemas[s].map(function (t) { return tableRow(t, t.name === e.table && s === "public", true); })));
+      });
+      add(tree, h("div", { class: "band" }, icon("right"), h("span", {}, "Views"), h("span", { class: "n" }, "6")));
+      add(tree, h("div", { class: "band" }, icon("right"), h("span", {}, "Routines"), h("span", { class: "n" }, "11")));
+    } else {
+      add(tree, h("div", { class: "band" }, icon("down"), h("span", {}, "Tables"), h("span", { class: "n" }, n(e.tablesTotal))));
+      add(tree, h("div", { class: "bandbody" }, MYSQL_TABLES.map(function (t) { return tableRow(t, t.name === e.table, true); })));
+      add(tree, h("div", { class: "band" }, icon("right"), h("span", {}, "Views"), h("span", { class: "n" }, "3")));
+    }
+    add(side, tree);
+    add(side, h("div", { class: "db-sidefoot" },
+      h("span", {}, redis ? "10 of " + n(e.total) + " keys" : "1–200 of " + n(e.tablesTotal)),
+      h("span", { class: "sp" }),
+      h("button", { class: "btn icon ghost", type: "button", title: "Previous page" }, icon("left")),
+      h("button", { class: "btn icon ghost", type: "button", title: "Next page" }, icon("right"))));
+    return side;
+  }
+
+  // A / C / D: the control stack, tightened. C drops the sort row into the list head.
+  var top = h("div", { class: "db-sidetop" });
+  add(top, h("span", { class: "field", style: "display:flex;align-items:center;justify-content:space-between" },
+    h("span", {}, e.label), icon("down", "dim")));
+  if (e.dialect === "pg" && ui.study !== "c") {
+    add(top, h("span", { class: "field", style: "display:flex;align-items:center;justify-content:space-between" },
+      h("span", {}, "All schemas"), icon("down", "dim")));
+  }
+  add(top, searchBox(redis ? "Match pattern" : "a*, b|c"));
+  if (redis && ui.study !== "c") add(top, typeFilter());
+  if (ui.study !== "c") add(top, sortRow(e));
+  add(side, top);
+
+  add(side, h("div", { class: "db-listhead" },
+    h("span", {}, redis ? "Keys" : "Tables"),
+    h("span", { class: "n tnum" }, ui.study === "c" ? n(e.tablesTotal) : ""),
+    !redis && h("button", { class: "btn icon ghost", type: "button", title: "New table…" }, icon("plus"))));
+
+  var list = h("div", { class: "db-list" });
+  if (redis) {
+    if (sc === "empty") add(list, h("div", { style: "padding:var(--s3);color:var(--text-3);font-size:var(--f-label)" }, "No keys match cart:*"));
+    else REDIS_KEYS.forEach(function (k) { add(list, keyRow(k, k.key === e.qualified && sc !== "keys", ui.study === "c")); });
+  } else if (e.dialect === "pg") {
+    var sm = {}, ord = [];
+    PG_TABLES.forEach(function (t) { if (!sm[t.schema]) { sm[t.schema] = []; ord.push(t.schema); } sm[t.schema].push(t); });
+    ord.forEach(function (s) {
+      add(list, h("div", { class: "band" }, icon("down"), h("span", {}, s), h("span", { class: "n" }, String(sm[s].length))));
+      add(list, h("div", { class: "bandbody" }, sm[s].map(function (t) { return tableRow(t, t.name === e.table && s === "public", ui.study === "c"); })));
+    });
+  } else {
+    MYSQL_TABLES.forEach(function (t) { add(list, tableRow(t, t.name === e.table, ui.study === "c")); });
+  }
+  add(side, list);
+  add(side, h("div", { class: "db-sidefoot" },
+    h("span", {}, redis ? "10 of " + n(e.total) + " keys" : "1–200 of " + n(e.tablesTotal)),
+    h("span", { class: "sp" }),
+    h("button", { class: "btn icon ghost", type: "button", title: "Previous page" }, icon("left")),
+    h("button", { class: "btn icon ghost", type: "button", title: "Next page" }, icon("right"))));
+  return side;
+}
+
+/* --- content blocks (shared by every study) ---------------------------------------------------- */
+function cellText(v) { return v === null || v === undefined ? "NULL" : String(v); }
+
+function gridBlock(e, sc) {
+  var wrap = h("div", { class: "gridwrap" });
+  if (sc === "empty") {
+    add(wrap, h("div", { class: "empty" }, icon("table", "eic ic s18"),
+      h("h3", {}, "No rows"), h("p", {}, "The table exists and is empty. Use + Row to buffer the first insert, or Import… to load a CSV.")));
+    return wrap;
+  }
+  var t = h("table", { class: "grid" }), thead = h("thead"), tr = h("tr");
+  add(tr, h("th", { class: "k" }, ""));
+  var oneLineHead = ui.study === "b" || ui.study === "c";
+  e.cols.forEach(function (c) {
+    add(tr, h("th", { title: c.cm || c.name },
+      h("span", { class: "cn" }, c.name),
+      c.pk ? h("span", { class: "chip", style: "margin-left:6px" }, "PK") : null,
+      c.fk ? icon("link", "dim") : null,
+      h("span", { class: "ct" }, c.type),
+      !oneLineHead && c.cm ? h("span", { class: "cc" }, c.cm) : null));
+  });
+  add(thead, tr); add(t, thead);
+  var tbody = h("tbody");
+  if (sc === "edits") {
+    add(tbody, h("tr", { class: "inserted" },
+      h("td", { class: "k" }, "+"),
+      e.cols.map(function (c, i) { return h("td", { class: i === 0 ? "dim" : "" }, i === 0 ? "auto" : (i === 1 ? "ORD3899000000001" : (i === 2 ? "3" : ""))); })));
+  }
+  var rows = sc === "filters" ? e.rows.filter(function (r) { return r[6] === 1; }) : e.rows;
+  rows.forEach(function (r, ri) {
+    var cls = "";
+    if (sc === "edits" && ri === 2) cls = "deleted";
+    add(tbody, h("tr", { class: cls },
+      h("td", { class: "k" }, cls === "deleted" ? icon("refresh") : icon("x", "dim")),
+      r.map(function (v, ci) {
+        var isNull = v === null || v === undefined;
+        var numeric = typeof v === "number";
+        var klass = (isNull ? "null " : "") + (numeric ? "num " : "");
+        if (typeof v === "string" && v.charAt(0) === "{") klass += "mono-cell ";
+        if (sc === "edits" && ri === 0 && ci === 2) return h("td", { class: klass + "edited" }, "9");
+        if (sc === "browse" && ri === 1 && ci === 1) return h("td", { class: klass + "focus" }, cellText(v));
+        return h("td", { class: klass.trim() }, cellText(v));
+      })));
+  });
+  add(t, tbody);
+  add(wrap, t);
+  return wrap;
+}
+
+function filterBar(sc) {
+  if (sc !== "filters") {
+    return h("div", { class: "filters" },
+      h("button", { class: "btn ghost", type: "button" }, icon("plus"), "Filter"));
+  }
+  return h("div", { class: "filters" },
+    h("span", { class: "fchip" }, "direction = 1", h("span", { class: "x" }, "✕")),
+    h("span", { class: "fchip" }, "code like ORD38%", h("span", { class: "x" }, "✕")),
+    h("button", { class: "btn ghost", type: "button" }, icon("plus"), "Filter"),
+    h("span", { class: "sp", style: "flex:1" }),
+    h("span", { class: "dim", style: "font-size:var(--f-caption)" }, "2 filters · 118,402 rows match"));
+}
+
+function formBlock(e) {
+  var g = h("div", { class: "formgrid" });
+  e.cols.forEach(function (c, i) {
+    add(g, h("div", { class: "fl" }, c.name, c.pk ? h("span", { class: "chip", style: "margin-left:6px" }, "PK") : null));
+    var v = e.rows[0][i];
+    add(g, h("div", { class: "fv" + (typeof v === "string" ? " mono" : "") },
+      v === null ? h("span", { class: "dim", style: "font-style:italic" }, "NULL") : String(v)));
+  });
+  return h("div", { class: "pad" },
+    h("div", { class: "card" },
+      h("div", { class: "cardhead" },
+        h("span", {}, "Record 1 of " + n(e.total)),
+        h("span", { class: "sp" }),
+        h("button", { class: "btn icon ghost", type: "button", title: "Previous record" }, icon("left")),
+        h("button", { class: "btn icon ghost", type: "button", title: "Next record" }, icon("right"))),
+      g));
+}
+
+function structureBlock(e) {
+  var cols = h("table", { class: "plain" },
+    h("thead", {}, h("tr", {}, ["Column", "Type", "Null", "Default", "Comment"].map(function (x) { return h("th", {}, x); }))),
+    h("tbody", {}, e.cols.map(function (c) {
+      return h("tr", {},
+        h("td", {}, h("span", { class: "mono" }, c.name), c.pk ? h("span", { class: "chip", style: "margin-left:6px" }, "PK") : null),
+        h("td", { class: "mono muted" }, c.type),
+        h("td", { class: "muted" }, c.pk ? "NO" : "YES"),
+        h("td", { class: "mono dim" }, c.pk ? (e.dialect === "pg" ? "nextval('events_id_seq')" : "auto_increment") : "NULL"),
+        h("td", { class: "muted" }, c.cm || ""));
+    })));
+  var idxRows = e.dialect === "pg"
+    ? [["events_pkey", "id", "YES"], ["events_kind_idx", "kind", "NO"], ["events_created_idx", "created_at DESC", "NO"]]
+    : [["PRIMARY", "id", "YES"], ["idx_order_code", "order_code", "NO"], ["idx_cat_dir", "category, direction", "NO"]];
+  var idx = h("table", { class: "plain" },
+    h("thead", {}, h("tr", {}, ["Index", "Columns", "Unique", "Type"].map(function (x) { return h("th", {}, x); }))),
+    h("tbody", {}, idxRows.map(function (r) {
+      return h("tr", {}, h("td", { class: "mono" }, r[0]), h("td", { class: "mono" }, r[1]),
+        h("td", {}, r[2]), h("td", { class: "muted" }, "BTREE"));
+    })));
+  var fkRows = e.dialect === "pg"
+    ? [["fk_events_user", "user_id", "public.users.id", "RESTRICT"]]
+    : [["fk_order", "order_code", "shop_order.code", "RESTRICT"],
+       ["fk_payment", "payment_id", "shop_payment.id", "SET NULL"]];
+  var fk = h("table", { class: "plain" },
+    h("thead", {}, h("tr", {}, ["Constraint", "Column", "References", "On delete"].map(function (x) { return h("th", {}, x); }))),
+    h("tbody", {}, fkRows.map(function (r) {
+      return h("tr", {}, h("td", { class: "mono" }, r[0]), h("td", { class: "mono" }, r[1]),
+        h("td", {}, h("a", { class: "mono", style: "color:var(--accent);cursor:pointer" }, r[2]), icon("link", "dim")),
+        h("td", { class: "muted" }, r[3]));
+    })));
+  return h("div", { class: "pad" },
+    h("div", { class: "card" }, h("div", { class: "cardhead" }, "Columns",
+      h("span", { class: "sp" }), h("span", { class: "dim tnum" }, String(e.cols.length)),
+      h("button", { class: "btn icon ghost", type: "button", title: "Add column…" }, icon("plus"))), cols),
+    h("div", { class: "card" }, h("div", { class: "cardhead" }, "Indexes",
+      h("span", { class: "sp" }), h("span", { class: "dim tnum" }, String(idxRows.length)),
+      h("button", { class: "btn icon ghost", type: "button", title: "Create index…" }, icon("plus"))), idx),
+    h("div", { class: "card" }, h("div", { class: "cardhead" }, "Foreign keys",
+      h("span", { class: "sp" }), h("span", { class: "dim tnum" }, String(fkRows.length))), fk));
+}
+
+function ddlBlock(e) {
+  var sql = e.dialect === "pg"
+    ? "CREATE TABLE public.events (\n  id          bigint       NOT NULL DEFAULT nextval('events_id_seq'),\n  user_id     bigint       NOT NULL,\n  kind        text         NOT NULL,\n  payload     jsonb,\n  amount      numeric(12,2),\n  is_test     boolean      NOT NULL DEFAULT false,\n  created_at  timestamptz  NOT NULL DEFAULT now(),\n  CONSTRAINT events_pkey PRIMARY KEY (id),\n  CONSTRAINT fk_events_user FOREIGN KEY (user_id) REFERENCES public.users(id)\n);\n\nCREATE INDEX events_kind_idx    ON public.events USING btree (kind);\nCREATE INDEX events_created_idx ON public.events USING btree (created_at DESC);"
+    : "CREATE TABLE `shop_order_detail` (\n  `id`               bigint       NOT NULL AUTO_INCREMENT COMMENT '编号',\n  `code`             varchar(64)  NOT NULL             COMMENT '编号',\n  `category`         tinyint      NOT NULL DEFAULT '1' COMMENT '分类 1=实物 3=虚拟',\n  `sku_code`    varchar(32)  DEFAULT NULL         COMMENT '商品编号',\n  `warehouse` varchar(8)   DEFAULT '0'          COMMENT '发货仓库',\n  `order_code`       varchar(64)  NOT NULL             COMMENT '订单编号',\n  `direction`        tinyint      NOT NULL             COMMENT '出入库方向',\n  `payment_id`  bigint       DEFAULT NULL         COMMENT '支付编号',\n  PRIMARY KEY (`id`),\n  KEY `idx_order_code` (`order_code`),\n  KEY `idx_cat_dir` (`category`,`direction`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+  return h("div", { class: "pad" },
+    h("div", { class: "card" },
+      h("div", { class: "cardhead" }, "DDL", h("span", { class: "sp" }),
+        h("button", { class: "btn", type: "button" }, "Copy")),
+      h("pre", { class: "ddl" }, sql)));
+}
+
+function sqlConsole(e, sc, inDock) {
+  var redis = e.kind === "redis";
+  var body = redis
+    ? h("div", { class: "editor" }, "HGETALL user:1001:profile")
+    : h("div", { class: "editor" },
+        h("span", { class: "kw" }, "SELECT"), " direction, ", h("span", { class: "kw" }, "COUNT"), "(*) AS n\n",
+        h("span", { class: "kw" }, "FROM"), " shop_order_detail\n",
+        h("span", { class: "kw" }, "WHERE"), " code ", h("span", { class: "kw" }, "LIKE"), " ", h("span", { class: "str" }, "'ORD38%'"), "\n",
+        h("span", { class: "kw" }, "GROUP BY"), " 1;");
+  return h("div", { class: "console" + (inDock ? " indock" : "") },
+    body,
+    h("div", { class: "row" },
+      h("button", { class: "btn primary", type: "button" }, icon("play"), redis ? "Send" : "Run"),
+      !redis && h("button", { class: "btn", type: "button" }, "Explain", icon("down")),
+      !redis && h("button", { class: "btn", type: "button" }, "Format"),
+      h("span", { class: "field", style: "display:flex;align-items:center;gap:6px" }, "History", icon("down")),
+      h("button", { class: "btn icon ghost", type: "button", title: "Save to favorites" }, icon("star")),
+      h("span", { class: "sp" }),
+      h("span", { class: "hint" }, redis ? "One command per send · Ctrl+Enter" : "A blank line starts a new block · Ctrl+Enter runs the block at the caret")));
+}
+
+function resultBlock(e, sc) {
+  if (sc === "explain") {
+    var plan = e.dialect === "pg"
+      ? [["Gather  (cost=1000.00..184203.10 rows=118402 width=96)", ""],
+         ["  Workers Planned: 2", ""],
+         ["  ->  Parallel Seq Scan on events  (cost=0.00..171362.90 rows=49334 width=96)", ""],
+         ["        Filter: (kind ~~ 'checkout%'::text)", ""]]
+      : [["1", "SIMPLE", "shop_order_detail", "range", "idx_cat_dir", "118402", "Using where; Using index"]];
+    var t = h("table", { class: "grid" });
+    add(t, h("thead", {}, h("tr", {}, (e.dialect === "pg" ? ["QUERY PLAN", ""] : ["id", "select_type", "table", "type", "key", "rows", "Extra"]).map(function (x) { return h("th", {}, x); }))));
+    add(t, h("tbody", {}, plan.map(function (r) { return h("tr", {}, r.map(function (v) { return h("td", { class: "mono-cell" }, v); })); })));
+    return h("div", { class: "gridwrap" }, t);
+  }
+  var t2 = h("table", { class: "grid" });
+  add(t2, h("thead", {}, h("tr", {}, ["direction", "n"].map(function (x) { return h("th", {}, h("span", { class: "cn" }, x), h("span", { class: "ct" }, x === "n" ? "bigint" : "tinyint")); }))));
+  add(t2, h("tbody", {},
+    h("tr", {}, h("td", { class: "num" }, "0"), h("td", { class: "num" }, "271,504")),
+    h("tr", {}, h("td", { class: "num" }, "1"), h("td", { class: "num" }, "279,464"))));
+  return h("div", { class: "gridwrap" }, t2);
+}
+
+function activityBlock(e) {
+  var rows = e.dialect === "pg"
+    ? [["1841", "analytics", "active", "—", "00:00:12", "SELECT count(*) FROM public.events WHERE kind LIKE 'checkout%'", true],
+       ["1902", "analytics", "idle in transaction", "—", "00:04:41", "UPDATE public.orders SET state = $1 WHERE id = $2", false],
+       ["1955", "reporting", "active", "Lock:transactionid", "00:01:07", "REFRESH MATERIALIZED VIEW daily_revenue", false]]
+    : [["4417", "app", "Query", "—", "12", "SELECT count(*) FROM shop_order_detail WHERE code LIKE 'ORD38%'", true],
+       ["4418", "app", "Sleep", "—", "281", "", false],
+       ["4501", "etl", "Query", "Waiting for table metadata lock", "67", "ALTER TABLE shop_payment ADD COLUMN note varchar(64)", false]];
+  var t = h("table", { class: "plain" },
+    h("thead", {}, h("tr", {}, ["PID", "User", "State", "Wait", "Duration", "Statement", ""].map(function (x) { return h("th", {}, x); }))),
+    h("tbody", {}, rows.map(function (r) {
+      return h("tr", {},
+        h("td", { class: "mono" }, r[0], r[6] ? h("span", { class: "chip", style: "margin-left:6px" }, "this") : null),
+        h("td", {}, r[1]),
+        h("td", {}, h("span", { class: "dot" + (r[2].indexOf("idle") === 0 ? " idle" : "") }), " ", r[2]),
+        h("td", { class: "muted" }, r[3]),
+        h("td", { class: "mono" }, r[4]),
+        h("td", { class: "mono", style: "max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, r[5] || "—"),
+        h("td", { style: "text-align:right" }, h("button", { class: "btn icon ghost", type: "button", title: "More" }, icon("ellipsis"))));
+    })));
+  return h("div", { class: "pad" },
+    h("div", { class: "card" },
+      h("div", { class: "cardhead" }, "Server activity", h("span", { class: "sp" }),
+        h("span", { class: "dim", style: "font-size:var(--f-caption)" }, "refreshes every 5s while open"),
+        h("button", { class: "btn icon ghost", type: "button", title: "Close" }, icon("x"))),
+      t));
+}
+
+/* --- redis value ------------------------------------------------------------------------------- */
+/** The type of the key a redis state opened — the value pane, the chip and the primary action
+ *  all read it, so none of them can disagree with the key in the title. */
+function redisTypeOf(e) {
+  var k = REDIS_KEYS.filter(function (x) { return x.key === e.qualified; })[0];
+  return k ? k.type : "hash";
+}
+function redisValueBlock(e, sc) {
+  var type = redisTypeOf(e);
+  if (sc === "keys") {
+    return h("div", { class: "empty" }, icon("key", "eic ic s18"),
+      h("h3", {}, "Pick a key"), h("p", {}, "The list on the left is one SCAN window. Filter by pattern or type, then choose a key to read it."));
+  }
+  if (sc === "empty") {
+    return h("div", { class: "empty" }, icon("search", "eic ic s18"),
+      h("h3", {}, "No keys match"), h("p", {}, "SCAN returned nothing for cart:* in this window. Try a wider pattern or continue the scan."));
+  }
+  if (type === "string") {
+    return h("div", { class: "pad" },
+      h("div", { class: "card" },
+        h("div", { class: "cardhead" }, "Value", h("span", { class: "chip" }, "string · 62 B"), h("span", { class: "sp" }),
+          h("button", { class: "btn", type: "button" }, "Edit")),
+        h("pre", { class: "ddl" }, REDIS_VALUES.string.text)));
+  }
+  var v = REDIS_VALUES[type] || REDIS_VALUES.hash;
+  var t = h("table", { class: "grid" });
+  add(t, h("thead", {}, h("tr", {}, [h("th", { class: "k" }, "")].concat(v.cols.map(function (c) { return h("th", {}, h("span", { class: "cn" }, c)); })))));
+  var tb = h("tbody");
+  if (sc === "edits") {
+    add(tb, h("tr", { class: "inserted" }, h("td", { class: "k" }, "+"), h("td", { class: "mono-cell" }, "last_seen"), h("td", { class: "mono-cell" }, "1758412800")));
+  }
+  v.rows.forEach(function (r, ri) {
+    add(tb, h("tr", { class: sc === "edits" && ri === 2 ? "deleted" : "" },
+      h("td", { class: "k" }, icon("x", "dim")),
+      r.map(function (c, ci) {
+        var cls = "mono-cell" + (typeof c === "number" ? " num" : "");
+        if (sc === "edits" && ri === 3 && ci === 1) cls += " edited";
+        return h("td", { class: cls }, String(c));
+      })));
+  });
+  add(t, tb);
+  return h("div", { class: "gridwrap" }, t);
+}
+
+function redisCommandPreview() {
+  return h("div", { class: "pad", style: "flex:0 0 auto;padding-top:0" },
+    h("div", { class: "card" },
+      h("div", { class: "cardhead" }, "Commands this Commit will send", h("span", { class: "sp" }),
+        h("span", { class: "chip" }, "1 pipeline")),
+      h("pre", { class: "ddl" },
+        "HSET user:1001:profile last_seen 1758412800\nHSET user:1001:profile tier platinum\nHDEL user:1001:profile locale")));
+}
+
+/* --- study chrome ------------------------------------------------------------------------------ */
+var SQL_VIEWS = ["Data", "Form", "Structure", "DDL"];
+function viewOf(sc) {
+  if (sc === "form") return "Form";
+  if (sc === "structure") return "Structure";
+  if (sc === "ddl") return "DDL";
+  return "Data";
+}
+function segControl(active, items) {
+  return h("div", { class: "seg", role: "tablist" }, items.map(function (x) {
+    return h("button", { role: "tab", "aria-selected": x === active ? "true" : "false", type: "button" }, x);
+  }));
+}
+function underline(active, items) {
+  return h("nav", { class: "utabs" }, items.map(function (x) {
+    return h("a", { "aria-current": x === active ? "page" : null }, x);
+  }));
+}
+function pagerBits(e, sc) {
+  var to = Math.min(50, e.rows.length);
+  return [
+    h("span", { class: "field", style: "display:flex;align-items:center;gap:4px" }, "50", icon("down", "dim")),
+    h("span", { class: "pager" },
+      h("button", { class: "btn icon ghost", type: "button", title: "Previous page", disabled: true }, icon("left")),
+      h("span", { class: "rng" }, sc === "filters" ? "1–" + to + " of 118,402" : "1–50 of " + n(e.total)),
+      h("button", { class: "btn icon ghost", type: "button", title: "Next page" }, icon("right")))
+  ];
+}
+function metaLine(e, sc) {
+  // A result pane describes the result, never the table the console happens to sit over.
+  if (sc === "sql") return "2 rows · 12 ms · statement 1 of 2";
+  if (sc === "explain") return (e.dialect === "pg" ? "EXPLAIN ANALYZE" : "EXPLAIN") + " · 4 ms · not executed against the table";
+  if (sc === "activity") return "server sessions · refreshes every 5s while open";
+  if (e.kind === "redis") {
+    var k = REDIS_KEYS.filter(function (x) { return x.key === e.qualified; })[0] || REDIS_KEYS[7];
+    var type = sc === "keys" || sc === "empty" ? "" : k.type;
+    return (type ? type + " · " : "") + (k.ttl >= 0 ? "ttl " + k.ttl + "s" : "no expiry") + " · " + e.label;
+  }
+  if (sc === "readonly") return n(e.total) + " rows · read-only connection — browsing only";
+  if (sc === "nopk") return n(e.total) + " rows · editable — rows addressed by all columns; ambiguous rows are refused";
+  if (sc === "filters") return "118,402 of " + n(e.total) + " rows · editable — changes buffer until Commit";
+  return n(e.total) + " rows · editable — changes buffer until Commit";
+}
+
+/* The one place a study genuinely differs: how the page body's chrome is arranged. */
+function renderChrome(e, sc, main) {
+  var study = ui.study, redis = e.kind === "redis";
+  var showViews = !redis && ["browse", "filters", "edits", "readonly", "nopk", "empty", "form", "structure", "ddl", "value", "import", "menu", "error"].indexOf(sc) >= 0;
+  var isResult = sc === "sql" || sc === "explain";
+  var editable = sc !== "readonly";
+  var title = redis ? (sc === "keys" || sc === "empty" ? "Keys" : e.qualified) : (isResult ? (sc === "explain" ? "Execution plan" : "SQL results") : e.qualified);
+
+  if (study === "b") {
+    var tabs = h("div", { class: "otabs" },
+      h("button", { class: "otab", type: "button" }, icon("table", "dim"), "shop_order", h("span", { class: "x" }, "✕")),
+      h("button", { class: "otab", "aria-selected": !isResult ? "true" : "false", type: "button" },
+        icon(redis ? "key" : "table", "dim"), redis ? e.qualified : e.table, h("span", { class: "x" }, "✕")),
+      h("button", { class: "otab", "aria-selected": isResult ? "true" : "false", type: "button" },
+        icon("code", "dim"), redis ? "Command 1" : "SQL 1", h("span", { class: "x" }, "✕")),
+      h("button", { class: "otab add", type: "button", title: "New editor" }, icon("plus")));
+    add(main, tabs);
+    add(main, h("div", { class: "viewrow" },
+      h("span", { class: "btitle" },
+        h("span", { class: "nm" }, title),
+        h("span", { class: "chip" }, redis ? (sc === "keys" || sc === "empty" ? "—" : redisTypeOf(e)) : (sc === "readonly" ? "read-only" : "editable")),
+        // The chip already names the type on a redis key, so the line beside it shows the NEXT
+        // fact (its expiry) rather than saying "hash hash".
+        h("span", { class: "dim", style: "font-size:var(--f-label)" }, metaLine(e, sc).split(" · ")[redis ? 1 : 0])),
+      h("span", { class: "sp" }),
+      showViews ? segControl(viewOf(sc), SQL_VIEWS) : null,
+      !redis && !isResult && showViews && viewOf(sc) === "Data" ? pagerBits(e, sc) : null,
+      editable && !isResult && !redis ? h("button", { class: "btn primary", type: "button" }, icon("plus"), "Row") : null,
+      redis && !isResult && sc !== "keys" && sc !== "empty" && sc !== "command"
+        && ["hash", "list", "set", "zset"].indexOf(redisTypeOf(e)) >= 0
+        ? h("button", { class: "btn primary", type: "button" }, icon("plus"),
+            redisTypeOf(e) === "list" ? "Item" : redisTypeOf(e) === "hash" ? "Field" : "Member") : null,
+      h("button", { class: "btn icon ghost", type: "button", title: "More actions" }, icon("ellipsis"))));
+    return;
+  }
+
+  if (study === "c") {
+    add(main, h("div", { class: "idrow" },
+      h("span", { class: "crumb" },
+        h("span", { class: "muted" }, e.label.split(" · ")[0]),
+        h("span", { class: "sepx" }, "›"),
+        h("span", { class: "muted" }, e.db),
+        h("span", { class: "sepx" }, "›"),
+        h("span", { class: "last" }, redis ? e.qualified : (isResult ? title : e.table))),
+      h("span", { class: "sp" }),
+      h("span", { class: "chip" }, "⌘K"),
+      h("button", { class: "btn icon ghost", type: "button", title: "Refresh" }, icon("refresh")),
+      h("button", { class: "btn icon ghost", type: "button", title: "More actions" }, icon("ellipsis"))));
+    if (showViews) add(main, h("div", { class: "viewrow" }, underline(viewOf(sc), SQL_VIEWS)));
+    return;
+  }
+
+  // A and D share the identity row; D keeps only one action row because its dock absorbs the rest.
+  add(main, h("div", { class: "idrow" },
+    h("span", { class: "txt" },
+      h("h2", {}, title),
+      h("div", { class: "meta" }, metaLine(e, sc))),
+    h("span", { class: "sp" }),
+    study === "a" && !redis ? h("button", { class: "btn", type: "button" }, icon("code"), "SQL") : null,
+    h("button", { class: "btn icon ghost", type: "button", title: "More actions" }, icon("ellipsis"))));
+
+  var row = h("div", { class: "viewrow" });
+  if (showViews) add(row, segControl(viewOf(sc), SQL_VIEWS));
+  if (redis && !isResult) add(row, segControl(sc === "command" ? "Command" : "Value", ["Value", "Command"]));
+  add(row, h("span", { class: "sp" }));
+  if (isResult) {
+    add(row, segControl("SELECT · 2", ["SELECT · 2", "SELECT · 118,402"]));
+    add(row, h("span", { class: "dim", style: "font-size:var(--f-caption)" }, "12 ms"));
+    add(row, h("button", { class: "btn", type: "button" }, "Back to table"));
+  } else if (!redis && viewOf(sc) === "Data") {
+    add(row, pagerBits(e, sc));
+    add(row, h("button", { class: "btn icon ghost", type: "button", title: "Reload page" }, icon("refresh")));
+    if (editable) add(row, h("button", { class: "btn primary", type: "button" }, icon("plus"), "Row"));
+    add(row, h("button", { class: "btn icon ghost", type: "button", title: "Export, import, generate SQL…" }, icon("ellipsis")));
+  } else if (redis && sc !== "command") {
+    add(row, h("button", { class: "btn icon ghost", type: "button", title: "Reload key" }, icon("refresh")));
+    // Only a collection key can take a new member; a string key edits in place.
+    var rt = redisTypeOf(e);
+    if (sc !== "keys" && sc !== "empty" && ["hash", "list", "set", "zset"].indexOf(rt) >= 0) {
+      add(row, h("button", { class: "btn primary", type: "button" }, icon("plus"),
+        rt === "zset" || rt === "set" ? "Member" : rt === "list" ? "Item" : "Field"));
+    }
+    add(row, h("button", { class: "btn icon ghost", type: "button", title: "Rename, TTL, delete…" }, icon("ellipsis")));
+  } else if (redis) {
+    add(row, h("button", { class: "btn icon ghost", type: "button", title: "Command reference" }, icon("ellipsis")));
+  }
+  add(main, row);
+}
+
+/* --- body -------------------------------------------------------------------------------------- */
+function renderMain(e, sc) {
+  var main = h("div", { class: "db-main" }), study = ui.study, redis = e.kind === "redis";
+
+  if (sc === "noconn") {
+    add(main, h("div", { class: "empty" },
+      icon("database", "eic ic s18"),
+      h("h3", {}, "No database connections"),
+      h("p", {}, "Data browses the connections the MCP plugin owns. Register a mysql, postgres or redis MCP and it appears here."),
+      h("button", { class: "btn", type: "button" }, "Open MCP servers")));
+    return main;
+  }
+
+  renderChrome(e, sc, main);
+
+  var isResult = sc === "sql" || sc === "explain";
+  var consoleOpen = isResult || sc === "command";
+  var dock = study === "d";
+
+  if (!redis && sc === "error") {
+    add(main, h("div", { class: "banner" }, icon("warn"),
+      h("span", {},
+        h("span", { class: "t" }, "The database refused the request"), h("br"),
+        h("code", {}, "Data too long for column 'code' at row 1"), h("br"),
+        h("span", { class: "muted" }, "The driver's own message, passed through unchanged. The buffer is intact — fix the value and Commit again."))));
+  }
+
+  // Console placement is a study decision: A/B push it above the grid, C opens it as the body of
+  // a SQL tab, D parks it in the dock.
+  if (consoleOpen && !dock) add(main, sqlConsole(e, sc, false));
+
+  if (redis) {
+    if (sc === "command") {
+      add(main, resultBlockRedis());
+    } else {
+      add(main, redisValueBlock(e, sc));
+      if (sc === "edits") add(main, redisCommandPreview());
+    }
+  } else if (isResult) {
+    add(main, resultBlock(e, sc));
+  } else if (sc === "activity") {
+    add(main, activityBlock(e));
+  } else if (viewOf(sc) === "Form") {
+    add(main, formBlock(e));
+  } else if (viewOf(sc) === "Structure") {
+    add(main, structureBlock(e));
+  } else if (viewOf(sc) === "DDL") {
+    add(main, ddlBlock(e));
+  } else {
+    if (study === "c") {
+      add(main, h("div", { class: "qbar" },
+        h("span", { class: "box" }, h("span", { class: "lead" }, "WHERE"),
+          h("span", {}, sc === "filters" ? "direction = 1 AND code LIKE 'ORD38%'" : ""),
+          !sc || sc !== "filters" ? h("span", { class: "dim" }, "column = value …") : null),
+        h("button", { class: "btn", type: "button" }, "Apply")));
+    } else {
+      add(main, filterBar(sc));
+    }
+    add(main, gridBlock(e, sc));
+  }
+
+  if (sc === "edits" && !redis) {
+    add(main, h("div", { class: "commitbar" },
+      h("b", {}, "3 uncommitted changes"),
+      h("span", { class: "muted" }, "1 update · 1 insert · 1 delete — LOCAL ONLY, nothing has been written"),
+      h("span", { class: "sp" }),
+      h("button", { class: "btn", type: "button" }, "SQL"),
+      h("button", { class: "btn", type: "button" }, "Discard"),
+      h("button", { class: "btn primary", type: "button" }, "Commit (1 transaction)")));
+  }
+  if (sc === "edits" && redis) {
+    add(main, h("div", { class: "commitbar" },
+      h("b", {}, "3 uncommitted changes"),
+      h("span", { class: "muted" }, "1 set · 1 add · 1 delete — sent as one pipeline"),
+      h("span", { class: "sp" }),
+      h("button", { class: "btn", type: "button" }, "Discard"),
+      h("button", { class: "btn primary", type: "button" }, "Commit (1 pipeline)")));
+  }
+
+  if (dock) {
+    var dockTab = consoleOpen ? (redis ? "Command" : "SQL") : (sc === "value" ? "Value" : (sc === "activity" ? "Activity" : (redis ? "Command" : "SQL")));
+    var tabs = redis ? ["Command", "Value", "Messages"] : ["SQL", "Value", "Row", "Messages", "Activity"];
+    var d = h("div", { class: "dock", style: "flex:0 0 " + (consoleOpen ? "226px" : "180px") },
+      h("div", { class: "grip" }),
+      h("div", { class: "tabs" }, underline(dockTab, tabs),
+        h("span", { class: "sp", style: "flex:1" }),
+        h("span", { class: "dim", style: "font-size:var(--f-caption)" }, "12 ms · 2 rows"),
+        h("button", { class: "btn icon ghost", type: "button", title: "Collapse dock" }, icon("down"))),
+      h("div", { class: "body" }, dockTab === "SQL" || dockTab === "Command"
+        ? sqlConsole(e, sc, true)
+        : dockTab === "Value"
+          ? h("pre", { class: "ddl" }, '{\n  "sku": "A-19",\n  "qty": 2,\n  "channel": "web"\n}')
+          : dockTab === "Activity" ? activityBlock(e) : h("div", { class: "pad muted" }, "Query OK, 2 rows affected (0.012 sec)")));
+    add(main, d);
+  }
+
+  if (study === "c") {
+    add(main, h("div", { class: "statusbar" },
+      h("span", {}, redis ? (sc === "keys" ? "450 keys" : "hash · 5 fields") : (sc === "filters" ? "1–14 of 118,402" : "1–50 of " + n(e.total))),
+      !redis && h("button", { class: "btn icon ghost", type: "button", title: "Previous page", disabled: true }, icon("left")),
+      !redis && h("button", { class: "btn icon ghost", type: "button", title: "Next page" }, icon("right")),
+      !redis && h("span", { class: "chip" }, "50 / page"),
+      h("span", { class: "sp" }),
+      h("span", {}, "12 ms"),
+      h("span", {}, sc === "readonly" ? "read-only" : "editable"),
+      h("span", {}, e.label)));
+  }
+  return main;
+}
+
+function resultBlockRedis() {
+  var t = h("table", { class: "grid" });
+  add(t, h("thead", {}, h("tr", {}, h("th", {}, h("span", { class: "cn" }, "reply")))));
+  add(t, h("tbody", {}, ["display_name", "Ada Lovelace", "email", "ada@example.com", "locale", "en-GB", "tier", "gold"].map(function (x) {
+    return h("tr", {}, h("td", { class: "mono-cell" }, x));
+  })));
+  return h("div", { class: "gridwrap" }, t);
+}
+
+/* --- overlays ---------------------------------------------------------------------------------- */
+function overlayFor(e, sc) {
+  if (sc === "import") {
+    return h("div", { class: "scrim" }, h("div", { class: "sheet" },
+      h("div", { class: "sh" }, "Import CSV into " + e.qualified),
+      h("div", { class: "sb" },
+        h("div", {}, h("span", { class: "lbl" }, "Mode"), segControl("Insert", ["Insert", "Upsert"]),
+          h("div", { class: "dim", style: "margin-top:6px;font-size:var(--f-caption)" }, "Upsert needs a primary key; matching rows are updated in place.")),
+        h("div", {}, h("span", { class: "lbl" }, "Source"),
+          h("div", { style: "display:flex;gap:8px" },
+            h("button", { class: "btn", type: "button" }, icon("file"), "Choose file…"),
+            h("span", { class: "muted", style: "align-self:center;font-size:var(--f-label)" }, "orders-2026-09.csv · 412 rows"))),
+        h("div", {}, h("span", { class: "lbl" }, "Column mapping"),
+          h("div", { class: "card" }, h("table", { class: "plain" },
+            h("thead", {}, h("tr", {}, h("th", {}, "CSV header"), h("th", {}, "Column"), h("th", {}, "First value"))),
+            h("tbody", {},
+              h("tr", {}, h("td", { class: "mono" }, "code"), h("td", {}, h("span", { class: "field", style: "display:inline-flex;align-items:center;gap:4px" }, "code", icon("down", "dim"))), h("td", { class: "mono dim" }, "ORD3899…")),
+              h("tr", {}, h("td", { class: "mono" }, "cat"), h("td", {}, h("span", { class: "field", style: "display:inline-flex;align-items:center;gap:4px" }, "category", icon("down", "dim"))), h("td", { class: "mono dim" }, "3")),
+              h("tr", {}, h("td", { class: "mono" }, "note"), h("td", {}, h("span", { class: "field", style: "display:inline-flex;align-items:center;gap:4px" }, "Skip", icon("down", "dim"))), h("td", { class: "mono dim" }, "—")))))),
+        h("div", { class: "muted", style: "font-size:var(--f-label)" }, "412 rows insert in one transaction. Nothing is written until you confirm; the first error rolls the whole batch back.")),
+      h("div", { class: "sf" },
+        h("button", { class: "btn", type: "button" }, "Cancel"),
+        h("button", { class: "btn primary", type: "button" }, "Import 412 rows"))));
+  }
+  if (sc === "value") {
+    return h("div", { class: "scrim" }, h("div", { class: "sheet" },
+      h("div", { class: "sh" }, "payload"),
+      h("div", { class: "sb" },
+        h("div", { style: "display:flex;gap:8px;align-items:center" },
+          h("span", { class: "chip" }, "jsonb"), h("span", { class: "chip" }, "42 B"), h("span", { class: "sp", style: "flex:1" }),
+          segControl("JSON", ["JSON", "Text", "Hex"])),
+        h("div", { class: "card" }, h("pre", { class: "ddl" }, '{\n  "sku": "A-19",\n  "qty": 2,\n  "channel": "web"\n}')),
+        h("div", { style: "display:flex;gap:8px" },
+          h("button", { class: "btn", type: "button" }, "Set NULL"),
+          h("button", { class: "btn", type: "button" }, "Format"),
+          h("button", { class: "btn", type: "button" }, "Copy"))),
+      h("div", { class: "sf" },
+        h("button", { class: "btn", type: "button" }, "Cancel"),
+        h("button", { class: "btn primary", type: "button" }, "Buffer change"))));
+  }
+  if (sc === "newtable") {
+    return h("div", { class: "scrim" }, h("div", { class: "sheet", style: "width:640px" },
+      h("div", { class: "sh" }, "New table in " + (e.dialect === "pg" ? "public" : e.db)),
+      h("div", { class: "sb" },
+        h("div", { style: "display:flex;gap:8px" },
+          h("label", { style: "flex:1" }, h("span", { class: "lbl" }, "Name"), h("span", { class: "field", style: "display:block;line-height:28px" }, "shipment")),
+          e.dialect === "pg" ? h("label", { style: "width:160px" }, h("span", { class: "lbl" }, "Schema"),
+            h("span", { class: "field", style: "display:flex;align-items:center;justify-content:space-between" }, "public", icon("down", "dim"))) : null),
+        h("div", {}, h("span", { class: "lbl" }, "Columns"),
+          h("div", { class: "card" }, h("table", { class: "plain" },
+            h("thead", {}, h("tr", {}, ["Name", "Type", "Null", "Default", ""].map(function (x) { return h("th", {}, x); }))),
+            h("tbody", {},
+              h("tr", {}, h("td", { class: "mono" }, "id"), h("td", { class: "mono" }, e.dialect === "pg" ? "bigserial" : "bigint"), h("td", {}, "NO"), h("td", { class: "dim" }, "—"), h("td", {}, icon("x", "dim"))),
+              h("tr", {}, h("td", { class: "mono" }, "order_code"), h("td", { class: "mono" }, "varchar(64)"), h("td", {}, "NO"), h("td", { class: "dim" }, "—"), h("td", {}, icon("x", "dim"))),
+              h("tr", {}, h("td", { class: "mono" }, "shipped_at"), h("td", { class: "mono" }, e.dialect === "pg" ? "timestamptz" : "datetime"), h("td", {}, "YES"), h("td", { class: "dim" }, "NULL"), h("td", {}, icon("x", "dim"))))),
+            h("div", { style: "padding:8px" }, h("button", { class: "btn ghost", type: "button" }, icon("plus"), "Add column")))),
+        h("div", {}, h("span", { class: "lbl" }, "SQL this will run"),
+          h("div", { class: "card" }, h("pre", { class: "ddl" }, e.dialect === "pg"
+            ? 'CREATE TABLE "public"."shipment" (\n  "id"         bigserial   NOT NULL,\n  "order_code" varchar(64) NOT NULL,\n  "shipped_at" timestamptz NULL,\n  PRIMARY KEY ("id")\n);'
+            : "CREATE TABLE `shipment` (\n  `id`         bigint      NOT NULL AUTO_INCREMENT,\n  `order_code` varchar(64) NOT NULL,\n  `shipped_at` datetime    NULL,\n  PRIMARY KEY (`id`)\n);")))),
+      h("div", { class: "sf" },
+        h("button", { class: "btn", type: "button" }, "Cancel"),
+        h("button", { class: "btn primary", type: "button" }, "Create table"))));
+  }
+  if (sc === "menu" || sc === "ttl") {
+    var items = e.kind === "redis"
+      ? [["Copy key", 0], ["Rename…", 0], ["Set TTL…", 0], ["Persist (remove TTL)", 0], ["-", 0], ["Delete key…", 1]]
+      : [["Refresh", 0], ["Export CSV…", 0], ["Export NDJSON…", 0], ["Export SQL dump…", 0], ["Import CSV…", 0], ["-", 0],
+         ["Generate SELECT", 0], ["Value distribution…", 0], ["Activity…", 0], ["-", 0], ["Rename table…", 0], ["Truncate table…", 1], ["Drop table…", 1]];
+    return h("div", { class: "popup", style: "right:24px;top:" + (ui.study === "b" ? "88px" : "104px") },
+      items.map(function (it) {
+        return it[0] === "-" ? h("hr") : h("div", { class: "mi" + (it[1] ? " danger" : "") }, it[0]);
+      }));
+  }
+  return null;
+}
+
+/* --- shell ------------------------------------------------------------------------------------- */
+/* Which key the redis states open. The state names a TYPE, so the key it opens has to be one of
+   that type or the header says "zset" over a hash key's name. */
+var REDIS_KEY_FOR = {
+  hash: "user:1001:profile", edits: "user:1001:profile", string: "config:flags",
+  list: "feed:global", set: "user:1001:sessions", zset: "leaderboard:weekly",
+  stream: "stream:orders", ttl: "lock:import", command: "config:flags"
+};
+function render() {
+  var e = ENGINES[ui.eng], sc = ui.sc;
+  if (e.kind === "redis") e.qualified = REDIS_KEY_FOR[sc] || "user:1001:profile";
+  var frame = document.getElementById("frame");
+  frame.textContent = "";
+  frame.setAttribute("data-study", ui.study);
+
+  var rail = h("nav", { class: "rail" },
+    h("span", { class: "seat", title: "MCP" }, icon("plug", "s18")),
+    h("span", { class: "seat", title: "Tunnels" }, icon("link", "s18")),
+    h("span", { class: "seat on", title: "Data" }, icon("database", "s18")),
+    h("span", { class: "seat", title: "Jobs" }, icon("clock", "s18")),
+    h("span", { class: "seat", title: "Terminal" }, icon("terminal", "s18")),
+    h("span", { class: "seat", title: "Settings" }, icon("settings", "s18")),
+    h("span", { class: "seat", title: "More plugins" }, icon("ellipsis", "s18")));
+
+  var ctx = h("div", { class: "ctxbar" },
+    h("span", { class: "title" }, icon("database", "s18"), "Data"),
+    h("span", { class: "spacer" }),
+    h("span", { class: "status" }, sc === "noconn" ? "no connections" : e.label + " · " + e.sizeChip),
+    h("button", { class: "btn icon ghost", type: "button", title: "Focus mode" }, icon("box")));
+
+  var pane = h("div", { class: "pane" },
+    h("div", { class: "db-root" }, renderSide(e, sc), renderMain(e, sc)));
+
+  add(frame, h("div", { class: "app" }, rail, h("div", { class: "railcol" }, ctx, pane)));
+  var ov = overlayFor(e, sc);
+  if (ov) add(frame, ov);
+  document.getElementById("note").innerHTML = "<b>" + STUDIES[ui.study].name + "</b> — " + STUDIES[ui.study].note;
+}
+
+/* --- studio wiring ----------------------------------------------------------------------------- */
+function paintButtons() {
+  var sb = document.getElementById("studyBtns");
+  sb.textContent = "";
+  Object.keys(STUDIES).forEach(function (k) {
+    var b = h("button", { type: "button", "aria-pressed": ui.study === k ? "true" : "false" }, STUDIES[k].name);
+    b.onclick = function () { ui.study = k; paintButtons(); render(); };
+    sb.appendChild(b);
+  });
+  var eb = document.getElementById("engBtns");
+  eb.textContent = "";
+  [["mysql", "MySQL"], ["pg", "PostgreSQL"], ["redis", "Redis"]].forEach(function (p) {
+    var b = h("button", { type: "button", "aria-pressed": ui.eng === p[0] ? "true" : "false" }, p[1]);
+    b.onclick = function () { ui.eng = p[0]; paintButtons(); paintStates(); render(); };
+    eb.appendChild(b);
+  });
+}
+function paintStates() {
+  var sel = document.getElementById("scSel");
+  var list = ENGINES[ui.eng].kind === "redis" ? REDIS_STATES : SQL_STATES;
+  var keep = list.some(function (p) { return p[0] === ui.sc; });
+  if (!keep) ui.sc = list[0][0];
+  sel.textContent = "";
+  list.forEach(function (p) {
+    var o = h("option", { value: p[0] }, p[1]);
+    if (p[0] === ui.sc) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.onchange = function () { ui.sc = sel.value; render(); };
+}
+document.getElementById("themeBtn").onclick = function () {
+  var dark = document.documentElement.getAttribute("data-theme") === "dark";
+  document.documentElement.setAttribute("data-theme", dark ? "light" : "dark");
+  this.textContent = dark ? "Light" : "Dark";
+};
+document.getElementById("wBtn").onclick = function () {
+  var narrow = document.body.getAttribute("data-width") === "900";
+  document.body.setAttribute("data-width", narrow ? "1440" : "900");
+  this.textContent = narrow ? "1440" : "900";
+};
+document.addEventListener("keydown", function (ev) {
+  if (ev.target && /input|select|textarea/i.test(ev.target.tagName)) return;
+  var keys = { "1": "a", "2": "b", "3": "c", "4": "d" };
+  if (keys[ev.key]) { ui.study = keys[ev.key]; paintButtons(); render(); }
+});
+paintButtons(); paintStates(); render();
+</script>
+</body>
+</html>
