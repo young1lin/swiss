@@ -220,6 +220,12 @@ pub async fn run_gateway() -> Result<(), String> {
     // plugin — the /api/actions and /api/runs surface reads them even while every provider
     // is disabled.
     let services = swiss_host::services::RuntimeServices::new();
+    // Run numbering continues across restarts (docs/41 postscript): the remote record is
+    // keyed by run id, and a counter that restarted at 0 every boot filed two runs under
+    // one number.
+    services
+        .runs
+        .persist_sequence(swiss_core::paths::data_path(&["runs.seq"]));
 
     // Scheduled command jobs (a Rust-side subsystem; see src/jobs/mod.rs). One task ticking
     // once a second, no per-job tasks, and an empty jobs.json is a no-op - the feature costs

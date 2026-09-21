@@ -40,6 +40,7 @@
 //! are joined. Dropping a JoinHandle and hoping is not cancellation here.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -89,6 +90,13 @@ pub trait RunHistorySink: Send + Sync {
     /// The terminal view of a run `begin` accepted — called before the view enters the
     /// finished ring, so a client that sees the run terminal can already read the record.
     fn finish(&self, view: &RunView, request: &SubmitRequest);
+    /// The highest run id this record holds, so a coordinator whose numbering started
+    /// afresh (a first boot after the sequence file existed, a lost one) never hands out
+    /// an id the record already keys on. None when the record is empty or keys on
+    /// something else.
+    fn last_run_id(&self) -> Option<u64> {
+        None
+    }
 }
 
 /// One run's bounded live output: a monotonic byte cursor over everything ever appended,
@@ -428,6 +436,9 @@ struct QueuedRun {
 struct Inner {
     capacity: RunCapacity,
     next_id: u64,
+    /// Where `next_id` is kept across restarts (see [RunCoordinator::persist_sequence]);
+    /// None in the bare services and in tests, where numbering starts at 0 each process.
+    sequence: Option<PathBuf>,
     active: HashMap<u64, ActiveRun>,
     queued: VecDeque<QueuedRun>,
     finished: VecDeque<RunView>,
@@ -470,10 +481,42 @@ impl RunCoordinator {
     /// Attach a history sink (a plugin's start). Runs already executing are not
     /// announced to it — a record begins with the next run to start.
     pub fn add_history_sink(&self, sink: Arc<dyn RunHistorySink>) {
+        // The record's highest id is a floor under the numbering: whatever this process
+        // started counting from, the next run gets a number the record has never seen.
+        if let Some(last) = sink.last_run_id() {
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if inner.next_id <= last {
+                inner.next_id = last + 1;
+                if let Some(path) = inner.sequence.clone() {
+                    write_sequence(&path, inner.next_id);
+                }
+            }
+        }
         let mut sinks = self.history.lock().unwrap_or_else(|e| e.into_inner());
         if !sinks.iter().any(|s| Arc::ptr_eq(s, &sink)) {
             sinks.push(sink);
         }
+    }
+
+    /// Continue the run numbering from `path` across restarts: the file holds the next
+    /// id, every allocation rewrites it (tmp + rename, so a crash mid-write leaves the
+    /// previous value, never a torn one). Without it a run id is a per-process counter
+    /// and a record keyed by run id - the remote log - carried two runs under one number
+    /// after every restart (seen on 19998, 2026-09-21). A missing or unreadable file
+    /// starts from wherever the counter is; the history sinks' floor covers the rest.
+    pub fn persist_sequence(&self, path: PathBuf) {
+        let stored = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0);
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.next_id = inner.next_id.max(stored);
+        inner.sequence = Some(path);
+    }
+
+    /// The next id this coordinator will hand out (tests and the sequence's evidence).
+    pub fn next_run_id(&self) -> u64 {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).next_id
     }
 
     /// Detach a sink (a plugin's stop). A run it already accepted still gets its
@@ -558,6 +601,9 @@ impl RunCoordinator {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let run_id = inner.next_id;
         inner.next_id += 1;
+        if let Some(path) = inner.sequence.clone() {
+            write_sequence(&path, inner.next_id);
+        }
         // The output buffer exists from the moment the run id is committed, so the
         // output route can follow a QUEUED run too (it simply has nothing yet).
         let output = RunOutputBuffer::new();
@@ -1080,6 +1126,16 @@ async fn drive_action(
 /// terminal (which also compacts it to the finished-keep cap), then park it next to
 /// the finished views. Called under the coordinator lock by every path that puts a
 /// view into the ring, so a buffer can never outlive its run's history slot.
+/// The sequence file's one write: the next id, tmp + rename. A failure is silent - the
+/// worst case is the pre-restart numbering this exists to replace, and the sinks' floor
+/// still holds.
+fn write_sequence(path: &std::path::Path, next: u64) {
+    let tmp = path.with_extension("seq.tmp");
+    if std::fs::write(&tmp, next.to_string()).is_ok() && std::fs::rename(&tmp, path).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
 fn retire_output_locked(inner: &mut Inner, run_id: u64) {
     let Some(buffer) = inner.outputs.remove(&run_id) else {
         return;
@@ -1727,5 +1783,69 @@ mod tests {
             .expect("buffer retired, not dropped");
         assert!(state.is_terminal());
         assert_eq!(chunk.text, "partial\n");
+    }
+
+    /// A sink that keys on run ids and already holds some (a record from an earlier
+    /// process).
+    struct RecordWithIds(u64);
+
+    impl RunHistorySink for RecordWithIds {
+        fn begin(&self, _run_id: u64, _request: &SubmitRequest) -> Option<Arc<dyn RunOutputTee>> {
+            None
+        }
+        fn finish(&self, _view: &RunView, _request: &SubmitRequest) {}
+        fn last_run_id(&self) -> Option<u64> {
+            Some(self.0)
+        }
+    }
+
+    #[tokio::test]
+    async fn run_numbering_continues_across_restarts_and_never_below_the_record() {
+        let dir = std::env::temp_dir().join(format!(
+            "swiss-runseq-{}",
+            swiss_core::util::random_hex(8)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let seq = dir.join("runs.seq");
+
+        // Process one: no file yet, numbering starts at 0 and the file follows it.
+        let (runs, _) = coordinator(RunCapacity::default());
+        runs.persist_sequence(seq.clone());
+        assert_eq!(runs.next_run_id(), 0);
+        let a = runs.submit(request("manual", "a", 1)).unwrap().run_id;
+        let b = runs.submit(request("manual", "b", 1)).unwrap().run_id;
+        assert_eq!((a, b), (0, 1));
+        assert_eq!(std::fs::read_to_string(&seq).unwrap().trim(), "2");
+        assert!(!dir.join("runs.seq.tmp").exists(), "the rename left no tmp behind");
+
+        // Process two over the same home: the count goes on where it stopped.
+        let (runs, _) = coordinator(RunCapacity::default());
+        runs.persist_sequence(seq.clone());
+        assert_eq!(runs.next_run_id(), 2);
+        assert_eq!(runs.submit(request("manual", "c", 1)).unwrap().run_id, 2);
+
+        // A record that already holds a higher id (a home whose sequence file was lost
+        // or never existed) is a floor: the next run is above it, and the file says so.
+        let sink: Arc<dyn RunHistorySink> = Arc::new(RecordWithIds(40));
+        runs.add_history_sink(sink);
+        assert_eq!(runs.next_run_id(), 41);
+        assert_eq!(std::fs::read_to_string(&seq).unwrap().trim(), "41");
+        assert_eq!(runs.submit(request("manual", "d", 1)).unwrap().run_id, 41);
+        // A lower floor changes nothing.
+        let sink: Arc<dyn RunHistorySink> = Arc::new(RecordWithIds(3));
+        runs.add_history_sink(sink);
+        assert_eq!(runs.next_run_id(), 42);
+
+        // A torn or foreign file is ignored, not fatal.
+        std::fs::write(&seq, "not a number").unwrap();
+        let (runs, _) = coordinator(RunCapacity::default());
+        runs.persist_sequence(seq.clone());
+        assert_eq!(runs.next_run_id(), 0);
+        // Without persist_sequence nothing is written: the bare services and the tests
+        // above this one keep their per-process numbering.
+        let (bare, _) = coordinator(RunCapacity::default());
+        bare.submit(request("manual", "e", 1)).unwrap();
+        assert_eq!(std::fs::read_to_string(&seq).unwrap(), "not a number");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

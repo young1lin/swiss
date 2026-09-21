@@ -704,6 +704,16 @@ impl RunHistorySink for RunHistory {
         };
         self.record(view, request, &tee);
     }
+
+    /// The highest id on file - the floor the coordinator numbers from once this record
+    /// is attached, so a restart never files two runs under one number. The maximum,
+    /// not the last line: a record written by two numberings has its highest id
+    /// anywhere. One streaming walk, once per plugin start.
+    fn last_run_id(&self) -> Option<u64> {
+        let mut last = None;
+        self.scan(|f| last = Some(last.map_or(f.run_id, |l: u64| l.max(f.run_id))));
+        last
+    }
 }
 
 /// The facts the budget pass needs from one line, without keeping the line.
@@ -1342,6 +1352,21 @@ mod tests {
             ..q
         });
         assert!(page.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_record_reports_its_highest_run_id_as_the_numbering_floor() {
+        let dir = scratch();
+        let history = RunHistory::open(dir.clone());
+        assert_eq!(history.last_run_id(), None, "an empty record has no floor");
+        // Two numberings interleaved on file: 0..3 from one process, 0..1 from the next
+        // (the pre-sequence world) - the floor is the maximum, wherever it sits.
+        let base = now_ms();
+        for (id, at) in [(0u64, 1u64), (1, 2), (2, 3), (3, 4), (0, 5), (1, 6)] {
+            run(&history, id, b"x", base + at);
+        }
+        assert_eq!(history.last_run_id(), Some(3));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
