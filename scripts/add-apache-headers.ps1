@@ -1,4 +1,4 @@
-# Copyright 2026 The swiss authors
+# Copyright 2026 young1lin
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 
 $notice = @(
-  "Copyright 2026 The swiss authors"
+  "Copyright 2026 young1lin"
   ""
   "Licensed under the Apache License, Version 2.0 (the `"License`");"
   "you may not use this file except in compliance with the License."
@@ -42,12 +42,12 @@ $hash = ($notice | ForEach-Object { if ($_ -eq "") { "#" } else { "# $_" } }) -j
 $xml = "<!--" + $lf + $starred + $lf + "-->"
 
 $blockExt = ".rs", ".js", ".mjs", ".ts", ".mts", ".css"
-$hashExt = ".ps1", ".yml", ".yaml"
+$hashExt = ".ps1", ".yml", ".yaml", ".sh"
 $xmlExt = ".html"
 
 # Code trees only. docs/ (prose), vendored third-party JS, dev node_modules and any nested
 # docs directory stay out — their files carry their own terms or none at all.
-$scan = @((Join-Path $root "src"), (Join-Path $root "crates"), (Join-Path $root "tests"), (Join-Path $root "scripts"), (Join-Path $root ".github"))
+$scan = @((Join-Path $root "src"), (Join-Path $root "crates"), (Join-Path $root "tests"), (Join-Path $root "scripts"), (Join-Path $root ".github"), (Join-Path $root ".agents/skills"))
 $scan += @(Join-Path $root "build.rs" | Where-Object { Test-Path $_ })
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)

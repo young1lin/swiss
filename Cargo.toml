@@ -12,13 +12,23 @@ members = [
 ]
 resolver = "2"
 
+# Shared by every member crate (`<field>.workspace = true`): one author, one license, one
+# MSRV. rust-version is the toolchain the suite is green on; CI builds on stable.
+[workspace.package]
+authors = ["young1lin"]
+license = "Apache-2.0"
+repository = "https://github.com/young1lin/swiss"
+rust-version = "1.98"
+
 [package]
 name = "swiss"
 version = "0.1.0"
 edition = "2021"
-description = "A developer's Swiss Army knife: one tiny local process, every tool behind one loopback port."
-license = "Apache-2.0"
-repository = "https://github.com/young1lin/swiss"
+description = "A developer's pocket multitool: one tiny local process, every tool behind one loopback port."
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "swiss"
