@@ -265,6 +265,30 @@ describe("a redis commit that deletes the key's last field (docs/22 closeout aud
   });
 });
 
+describe("the sidebar grep reaches redis as a substring (docs/43 M2 walk)", () => {
+  it("a bare word wraps in wildcards; a grep that already shapes its own wildcard rides through", async () => {
+    // SCAN MATCH is exact-shape while the SQL side greps substrings - a bare "i18n"
+    // used to answer "no keys" on a keyspace that plainly holds i18n_strings.
+    const { c } = freshDb();
+    c.conn = "r";
+    c.grep = "i18n";
+    const before = requests.length;
+    const p = browsers.dbLoadKeys(true);
+    await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p;
+    expect(requests.slice(before).find((r) => r.url.includes("/keys"))!.url)
+      .toContain("pattern=*i18n*");
+
+    c.grep = "K_*";
+    const before2 = requests.length;
+    const p2 = browsers.dbLoadKeys(true);
+    await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p2;
+    expect(requests.slice(before2).find((r) => r.url.includes("/keys"))!.url)
+      .toContain("pattern=K_*");
+  });
+});
+
 describe("the redis key list's More button (docs/22 closeout audit)", () => {
   it("a second More while a SCAN page is in flight is a no-op — the same cursor must not append its page twice", async () => {
     // A double click on More fired two dbLoadKeys with the SAME c.redis.cursor; both

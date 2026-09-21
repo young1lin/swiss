@@ -476,6 +476,7 @@ const zh                         = {
   "dataView.scanFailedToastCarries": "扫描失败——提示中带有服务器的错误;此列表是最后一个正常的页面。",
   "dataView.keysMatchQ": "没有匹配 \"{q}\" 的键",
   "dataView.keysScanReturnedNone": "还没有键——扫描未返回任何结果。",
+  "dataView.scanNoHitsYet": "这一页还没有命中——点「更多」继续扫。",
   /* --- detail --- */
   "dataView.tablesRangeOfTotal": "{from}–{to}，共 {total} 项",
   "detail.disable": "停用",

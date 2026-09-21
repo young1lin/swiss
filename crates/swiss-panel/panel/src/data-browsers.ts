@@ -67,7 +67,13 @@ async function dbLoadKeys(reset: boolean | undefined): Promise<void> {
     if (t0.kind === "key") t0.redisKey = null; // a reset walk deselects the open key
   }
   let q = "/api/db/" + encodeURIComponent(d.conn) + "/keys?count=200";
-  if (d.grep) q += "&pattern=" + encodeURIComponent(d.grep);
+  // The redis SCAN MATCH is exact-shape, while the SQL side greps as a substring - a bare
+  // word finding every table but no key read as "the key does not exist". Wrap the grep as
+  // a substring unless the user typed their own wildcard; docs/43 M2 walk caught this live.
+  if (d.grep) {
+    const pat = d.grep.includes("*") ? d.grep : "*" + d.grep + "*";
+    q += "&pattern=" + encodeURIComponent(pat);
+  }
   if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
   if (d.redis && d.redis.cursor && d.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d.redis.cursor);
   const token = dbKeysReq.issue();
@@ -368,7 +374,7 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
       const editable = cfg.ins.includes(c);
       const filled = editable && ins[c] != null && String(ins[c]) !== "";
       const td = el("td", "db-cell db-cell-edit" + (filled ? " db-dirty" : ""));
-      td.textContent = ins[c] == null ? "" : String(ins[c]);
+      td.textContent = ins[c] == null ? "" : dbRedisDisplayText(String(ins[c]));
       if (editable) {
         td.title = tr("dataBrowsers.doubleClickEdit");
         td.ondblclick = (): void => {
@@ -389,7 +395,7 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
     cfg.cols.forEach((c: string): void => {
       const editable = cfg.edit.includes(c) && !entry.deleted;
       const td = el("td", "db-cell" + (entry.updated && cfg.edit.includes(c) ? " db-dirty" : "") + (editable ? " db-cell-edit" : ""));
-      td.textContent = entry.cells[c] == null ? "" : String(entry.cells[c]);
+      td.textContent = entry.cells[c] == null ? "" : dbRedisDisplayText(String(entry.cells[c]));
       td.title = td.textContent || ""; // long values truncate in the cell; the full text is one hover away
       if (editable) {
         td.ondblclick = (): void => {
@@ -408,6 +414,33 @@ function dbRedisTypedTable(wrap: HTMLElement, v: ApiDbRedisValue, cfg: DbRedisTy
 
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+}
+
+/** Decode a redis value for DISPLAY (docs/43 M2 fixup): upstream Java services persist
+ *  their strings JSON-encoded, and their serializers escape astral characters as literal
+ *  surrogate-pair text — a title arrives from the wire as
+ *  "\"\uD83D\uDCC8\u23EB\uD83D\uDC46{0} rose {2} within {1} hr\"" and the panel used to
+ *  show those twelve backslash-u characters instead of the chart emoji. Two layers, both
+ *  display-only: a whole JSON string literal unwraps (JSON.parse handles its own escapes),
+ *  then stray well-formed surrogate PAIRS fold to the character they name. A lone surrogate
+ *  escape and any \u that is not a pair are left untouched — a Windows path like c:\users
+ *  must survive byte-identical. Editing still seeds the ORIGINAL bytes, so a saved value
+ *  changes only when the user actually edits it. Pure. */
+function dbRedisDisplayText(raw: string): string {
+  let s = raw;
+  if (s.length >= 2 && s.startsWith(String.fromCharCode(34)) && s.endsWith(String.fromCharCode(34))) {
+    try {
+      const parsed: unknown = JSON.parse(s);
+      if (typeof parsed === "string") s = parsed;
+    } catch { /* not a JSON literal — show it as stored */ }
+  }
+  const pair = /\\u([dD][89abAB][0-9a-fA-F]{2})\\u([dD][cdefCDEF][0-9a-fA-F]{2})/g;
+  if (pair.test(s)) {
+    s = s.replace(pair, (_m: string, hi: string, lo: string): string => {
+      return String.fromCharCode(parseInt(hi, 16), parseInt(lo, 16));
+    });
+  }
+  return s;
 }
 
 /** The typed table's right-click — the docs/22 W5.3 cell-menu vocabulary on the redis
@@ -554,7 +587,10 @@ function dbRedisStringEditor(wrap: HTMLElement, v: ApiDbRedisValue): void {
   const ta = el("textarea", "db-redis-str") as HTMLTextAreaElement;
   ta.rows = 3;
   ta.spellcheck = false;
-  ta.value = typeof v.value === "string" ? v.value : "";
+  // Display-decoded (dbRedisDisplayText): the editor opens showing the characters the
+  // value names, and the unchanged-check compares against the same decoded text, so merely
+  // opening and saving a JSON-encoded title is a no-op, not a rewrite.
+  ta.value = typeof v.value === "string" ? dbRedisDisplayText(v.value) : "";
   ta.dataset.orig = ta.value;
   ta.setAttribute("data-rstr", "");
   row.appendChild(ta);
@@ -803,5 +839,5 @@ function dbRedisKeydown(t: Element, ev: KeyboardEvent): boolean {
 export {
   DB_REDIS_TYPES, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore,
   dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
-  dbRedisEntries, dbRedisKeydown, dbRedisPendingCount, dbRenderRedisValue,
+  dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisPendingCount, dbRenderRedisValue,
 };
