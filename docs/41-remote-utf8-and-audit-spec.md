@@ -1,6 +1,7 @@
 # 41 — swiss remote：UTF-8 到底、七天可溯源、SKILL.md 讲清楚
 
-> 状态：**实施中**（2026-09-21，master）。owner 的三句话："强制输入和输出都是 UTF-8，避免乱码"、
+> 状态：**已实施，待真机**（2026-09-21，master：U1 699b305、U2 8306993、U3+U4 835c7c7、A1 d67db29、
+> A2 755eb9e、A3 21cfc8d、S1+D1 c4d764e；A4 的走查见 §4）。owner 的三句话："强制输入和输出都是 UTF-8，避免乱码"、
 > "可审计，可以溯源最近七天的内容"、"SKILL.md 关于 swiss 的介绍你自己看看怎么做"。本文先把
 > 代码里的现状说清（§0），再定契约（§1），再列工作项（§2）和验收（§3）。docs/34 是 remote 的
 > 总契约，本文只改它没说的和说错的地方。
@@ -81,7 +82,7 @@ remote 的命令参考（保留现有）、**UTF-8 契约**（§1.1 三条的 ag
 remote 动作都留痕、`swiss run audit`、七天）、面板和 `swiss --help` 在哪。frontmatter 的
 `disable-model-invocation: true` 是 owner 的选择，不动。
 
-## 2. 工作项（每项一个 commit）
+## 2. 工作项（每项一个 commit，均已落地；与 §1 的差异记在这里）
 
 - **U1** `swiss-core::util::utf8`：`char_boundary_end(bytes) -> usize`（去掉尾部不完整序列后的
   长度）、`char_boundary_start(bytes) -> usize`（跳过开头续字节后的偏移）、`window(bytes) ->
@@ -92,14 +93,28 @@ remote 动作都留痕、`swiss run audit`、七天）、面板和 `swiss --help
 - **U4** locale 默认值：`actions.rs` 组 env 时在**前面**插入 `LANG`/`LC_ALL` 缺省，调用者的同名
   键优先（Vec 顺序：缺省在前，后者 export 覆盖前者）；MCP 工具描述和 CLI usage 提一句。
 - **A1** actor：`SubmitRequest.actor`、`RunView.actor`、`to_json`；`submit_run` 读 body.actor
-  缺省 `api`；CLI 发 `cli:<user>@<host>`；MCP `run_plan` 发 `mcp:<client>`；面板 `panel`；
-  history 行自然带上。
-- **A2** 七天窗：`evict` 两阶段；`LineFacts` 学会 `outputEvicted`；`usage()` 口径不变。
-- **A3** 查询：`history.page` 加 since/until/actor 谓词（仍从末尾走，遇到早于 since 的行即停）；
-  API 参数；`swiss run audit` + `--export`。
+  缺省 `api`（空白或超过 128 字节同样回落）；CLI 发 `cli:<user>@<host>`；MCP 从 server 在
+  factory 时捕获的 `CallSource` 取 `mcp:<client>` / `panel`——**不能**在 `run_plan` 里调
+  `current_source()`，rmcp 从自己的 task 驱动 call_tool，task-local 在那里是空的（实施时踩到，
+  测试 `the_run_is_booked_to_the_token_that_made_the_call` 钉住）；jobs 发 `jobs`。
+- **A2** 七天窗：`evict` 两阶段；`LineFacts` 学会 `outputEvicted`（驱逐后按盘上 0 字节计）；
+  `usage()` 口径不变。§1.2.2 没说的一条：预算在窗内仍超时（例如七天内 5000+ 条），一次
+  什么也删不掉的 pass 会在 ledger 记 `hold_until_ms`（最老受保护行离开窗口的时刻），此前
+  的读写不再重扫索引；字节超预算时新落盘的输出文件解除 hold（它本身可驱逐）。API 的
+  `limits` 多了 `auditWindowMs`；面板预算行写"最近 7 天必可溯源"，被驱逐的行展开时说明
+  输出已清出、记录仍在（不再显示"没有产生任何输出"）。
+- **A3** 查询：`history.query(PageQuery)`（`page` 保留旧签名）加 since/until/actor 谓词（仍从
+  末尾走，遇到早于 since 的行即停；since 含、until 不含，都对 `endedAt`）；API 三个参数，
+  时间格式错给 400 而不是悄悄放宽窗口；活动行也按 actor/until 过滤；`swiss run audit` 一行
+  一个 run（时间到秒、actor、target、动作、argv 按 POSIX 单引号规则、结果、时长、字节——
+  输出被驱逐的带 `*`——、`#id`），`--since` 另收 `7d/36h/90m/30s`，`--export DIR` 写
+  `runs.jsonl` + `out/<id>.txt`。
 - **A4** 面板 meta 加 actor + vitest + 真浏览器走查（proof-of-life 规则）。
-- **S1** SKILL.md 重写；`skill_install.rs` 的测试若断言内容要跟上。
-- **D1** docs/34 状态头加一段指向本文；AGENTS.md 若提 remote 记录口径则同步。
+- **S1** SKILL.md 重写（六件事、三条边界、命令参考原样、`/mcp/remote` 五个工具、UTF-8 契约、
+  记录契约与 `swiss run audit`）；`skill_install.rs` 的两条断言仍成立。
+- **D1** docs/34 状态头加一段指向本文；`swiss --help` 终于列出 `remote` 和 `run`；
+  `swiss remote help` 与 `remote_exec` 的 MCP 描述各加一句 locale 与记录。AGENTS.md 未提
+  remote 记录口径，不动。
 
 ## 3. 验收
 
@@ -111,3 +126,33 @@ remote 动作都留痕、`swiss run audit`、七天）、面板和 `swiss --help
    列出这些 run 且 actor 为 `cli:…`；面板 Runs 行显示 actor（英/中各看一次）。**前提是有一台
    可用的 SSH 目标**；没有则用 fake transport 的集成测试代替真机，并如实记为"真机未验"。
 3. `swiss skill install` 装出来的 SKILL.md 与源一致。
+
+## 4. 验收记录（2026-09-21）
+
+1. 门禁：`cargo test --workspace --locked`（32 个 test 二进制全绿，含 A1 三种 actor 落盘、A2 窗内
+   行在字节压力下存活且输出被驱逐、A3 since/until/actor）、`clippy -D warnings`、`npm run check`
+   （77 文件 690 用例）。
+2. 19998 真机（release 构建，`target-test`）——**记录是种进去的，远端未跑**：owner 快照里的三个
+   SSH 连接是真实机器，未经许可不在上面执行命令；改为在测试 home 的 `logs/remote/runs.jsonl`
+   种 9 条与 `history.rs` 落盘形状一致的行（actor 覆盖 cli/mcp/panel/jobs/api，含中文 argv 与
+   中文输出、一条 `outputEvicted`、一条 131107 字节且第 131071–131073 字节是一个"："的输出）。
+   在此之上：
+   - `swiss run audit` 默认七天九行、`--since 36h` 五行、`--actor mcp:claude-code` 三行、
+     `--since ISO --until ISO` 两行、`--since yesterday` 退出 1 并说明格式、`--json` 九个对象；
+     `--export` 写出 `runs.jsonl` + 7 个输出文件，`out/17.txt`、`out/12.txt` 与记录中的原文件
+     SHA-256 相同——131072 字节读窗在"："前停下（`nextCursor` 131071），第二窗从它开始，
+     两窗都无 U+FFFD。
+   - 面板 Remote › Runs（agent-browser，真实点击，新开页面）：每行 meta 在 id 与结果之间显示
+     actor；预算行"kept 30 days · the last 7 days always traceable"；#14 展开显示"The output
+     (24 B) was evicted…"而不是"No output was produced"；#12 展开中文输出无 U+FFFD；#17 第一页
+     到"日志"为止，Load more 后拼成"日志：编译完成"。文/A 切到 zh-CN 后同样一遍：
+     "最近 7 天必可溯源"、"输出(24 B)已被容量预算清出;记录本身保留 30 天。"、"#13 · panel · 成功"
+     （走查发现无退出码的 sync/cat 行 state 原样英文，顺手补了 stateSucceeded/Failed/Running/
+     Queued 四个键）。480px：页面不横向滚动，行可点开；meta 在行内被裁掉是 `.call` 行与
+     Traffic 共用的既有布局，未动。
+3. **真机未验**：`swiss remote exec <t> -- printf '中文
+'`、`python3 -c "print('中文')"`、大于一个
+   SSH 读块的 `remote cat`。fake transport 的用例（`every_exec_carries_the_utf8_locale_unless_the_caller_set_one`、
+   `cat_decodes_once_so_a_character_split_across_read_chunks_survives`）与上面的 API/CLI 边界证据
+   是现有证据；要补真机，owner 指一台可用目标即可。
+4. `swiss skill install` 装出的 SKILL.md 与源一致（`skill_install.rs` 两条断言）。
