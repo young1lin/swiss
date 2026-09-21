@@ -673,6 +673,25 @@ export interface ApiDbTableRow {
   size?: string;
 }
 
+/** GET /api/db/{name}/databases - dbbrowser_api.rs databases (docs/43 M3). The configured
+ *  database, the one the pool sits on, and every other database the instance will name.
+ *  reason is a SERVER-GIVEN English sentence shown verbatim on the disabled row — the same
+ *  rule as ApiDbDataPage.editNote. tables is optional (pg cannot count cross-database). */
+export interface ApiDbDatabasesResponse {
+  primary: string | null;
+  current: string | null;
+  databases: ApiDbDatabase[];
+}
+
+export interface ApiDbDatabase {
+  name: string;
+  primary: boolean;
+  browsable: boolean;
+  system: boolean;
+  tables?: number;
+  reason?: string;
+}
+
 /** GET /api/db/{name}/data - dbbrowser_api.rs read_table route (the stub at :1196 spells it). */
 export interface ApiDbDataPage {
   schema: string;
