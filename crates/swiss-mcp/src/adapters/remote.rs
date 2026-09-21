@@ -117,7 +117,7 @@ fn tool_def(name: &str, known: &[String]) -> Tool {
     let (description, schema): (String, Value) = match name {
         "remote_exec" => (
             format!(
-                "Run one non-interactive command on a remote target (action remote.exec). stdout/stderr come back as this tool's text, a trailing line reports the exit code, and a nonzero exit is returned as an error. There is no PTY: nothing can answer a prompt - sudo is allowed but needs NOPASSWD or -n. {note}"
+                "Run one non-interactive command on a remote target (action remote.exec). stdout/stderr come back as this tool's text, a trailing line reports the exit code, and a nonzero exit is returned as an error. There is no PTY: nothing can answer a prompt - sudo is allowed but needs NOPASSWD or -n. The command runs under LANG=C.UTF-8 / LC_ALL=C.UTF-8 unless env sets them, and argv and output are UTF-8 end to end. Every call is recorded (who, what, where, exit, output) for seven days at least: `swiss run audit`. {note}"
             ),
             json!({
                 "type": "object",
@@ -132,7 +132,7 @@ fn tool_def(name: &str, known: &[String]) -> Tool {
                     "env": {
                         "type": "object",
                         "additionalProperties": { "type": "string" },
-                        "description": "Extra environment variables as name to value."
+                        "description": "Extra environment variables as name to value. LANG / LC_ALL given here override the UTF-8 default."
                     },
                     "timeoutMs": { "type": "integer", "description": "Deadline in milliseconds (default two hours)." }
                 },
