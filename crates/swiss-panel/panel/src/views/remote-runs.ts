@@ -177,7 +177,12 @@ function bodyNode(r: ApiRemoteRunRow, isLive: boolean): HChild {
   // output read so far - "gone" in b is the discriminant.
   if ("gone" in b) return frag(head, h("div", { class: "note" }, tr("remoteRuns.runRolledRecord")));
   head.push(h("div", { class: "call-lbl" }, tr("remoteRuns.output2"), b.total ? [" \u00b7 ", fmtBytes(b.total)] : ""));
-  if (!b.total) {
+  if (r.outputEvicted) {
+    // The size budget took the file (docs/41 A2); the line - and its tail, below, when
+    // the run was capped - is what is left.
+    head.push(h("div", { class: "note" },
+      tr("remoteRuns.outputEvicted", { size: fmtBytes(r.outputBytes || 0), d: Math.round((limits ? limits.maxAgeMs : 0) / 86400000) })));
+  } else if (!b.total) {
     head.push(h("pre", { class: "logs" }, h("span", { style: "color:var(--text-3)" }, tr("remoteRuns.outputProduced"))));
   } else {
     head.push(h("pre", { class: "logs" }, b.text));
@@ -282,7 +287,8 @@ async function clearAll(): Promise<void> {
 function render(): void {
   painted = signature();
   const kept = trn(usage.runs, "remoteRuns.nRunsRecordedBytes.one", "remoteRuns.nRunsRecordedBytes.other", { bytes: fmtBytes(usage.bytes) }) +
-    (limits ? tr("remoteRuns.capKeptDDays", { cap: fmtBytes(limits.maxTotalBytes), d: Math.round(limits.maxAgeMs / 86400000) }) : "");
+    (limits ? tr("remoteRuns.capKeptDDays", { cap: fmtBytes(limits.maxTotalBytes), d: Math.round(limits.maxAgeMs / 86400000) }) : "") +
+    (limits && limits.auditWindowMs ? tr("remoteRuns.traceableWDays", { w: Math.round(limits.auditWindowMs / 86400000) }) : "");
   const options = [h("option", { value: "" }, tr("remoteRuns.allTargets"))].concat(targetIds.map((id) => {
     return h("option", { value: id, selected: id === target }, id);
   }));

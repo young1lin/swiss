@@ -136,7 +136,11 @@ export type RemoteRunMeta = {
  *  response's active half; the page passes both halves through one row type. */
 export interface ApiRemoteRunRow extends ApiRunRow {
   input?: RemoteRunInput;
+  /** What the run produced (the record's count, whether or not the file is still there). */
+  outputBytes?: number;
   outputCapped?: boolean;
+  /** docs/41 A2: the size budget took this run's output file; the line stays. */
+  outputEvicted?: boolean;
   tail?: string;
   meta?: RemoteRunMeta;
 }

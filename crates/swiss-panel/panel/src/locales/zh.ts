@@ -1253,6 +1253,8 @@ const zh: Record<string, string> = {
   "remoteRuns.runRecordCleared": "运行记录已清除",
   "remoteRuns.nRunsRecordedBytes.other": "已记录 {n} 次运行 · {bytes}",
   "remoteRuns.capKeptDDays": " 上限 {cap} · 保留 {d} 天",
+  "remoteRuns.traceableWDays": " · 最近 {w} 天必可溯源",
+  "remoteRuns.outputEvicted": "输出({size})已被容量预算清出;记录本身保留 {d} 天。",
   "remoteRuns.allTargets": "所有目标",
   "remoteRuns.everyCommandSyncPull": "在远端目标上运行的每条命令、每次同步与拉取,连同其输出——与 CLI(swiss remote …)和远端 MCP 工具运行时一致。",
   "remoteRuns.clear": "清除",

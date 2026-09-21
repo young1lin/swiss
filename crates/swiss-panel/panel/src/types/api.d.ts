@@ -833,7 +833,8 @@ export interface ApiRemoteEndpointsResponse {
 export interface ApiRemoteRunsResponse {
   runs: ApiRunRow[];
   active: (ApiRunRow & { input?: Record<string, unknown> })[];
-  limits: { maxAgeMs: number; maxTotalBytes: number; maxRuns: number; maxOutputBytes: number };
+  /** auditWindowMs (docs/41 A2): lines this young are never dropped by a budget. */
+  limits: { maxAgeMs: number; maxTotalBytes: number; maxRuns: number; maxOutputBytes: number; auditWindowMs?: number };
   usage: { bytes: number; runs: number };
   nextBefore?: number;
 }

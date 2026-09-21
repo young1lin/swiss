@@ -30,6 +30,12 @@
 //! run count so the index itself stays small. Checked in O(1) on every finish and every
 //! page read from three tracked numbers; the full pass (two streaming walks of the index
 //! and a tmp+rename rewrite, never the whole file in memory) runs only when one is over.
+//! One promise sits above the budgets (docs/41 A2): a line younger than
+//! [AUDIT_WINDOW_MS] is never dropped by a budget. Under byte pressure the window's
+//! OUTPUT FILES go, oldest first, and the line says so (`outputEvicted: true`; its
+//! `tail`, when it has one, stays); under count pressure the window simply runs over,
+//! and a pass that could satisfy nothing holds off until the oldest protected line
+//! leaves the window rather than rewriting the index on every read.
 //! Reading a page walks the index from its END in blocks — the calls.rs / runlog.rs
 //! idiom — so a page costs a page, however long the history behind it.
 //!
@@ -50,6 +56,10 @@ use swiss_host::services::runs::{RunHistorySink, RunView, SubmitRequest};
 
 /// Records older than this age out (the user's retention: 30 days).
 pub const MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+/// Records younger than this are never dropped by a budget (docs/41 A2): the seven days
+/// the owner can always trace back. Their output files may go under byte pressure; the
+/// line — what ran, who, exit, tail — stays until the age limit.
+pub const AUDIT_WINDOW_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 /// The whole log — index plus every output file — stays under this (500 MiB).
 pub const MAX_TOTAL_BYTES: u64 = 500 * 1024 * 1024;
 /// A count cap so a flood of tiny runs cannot grow the index past a few megabytes.
@@ -72,6 +82,8 @@ pub struct Limits {
     pub max_total_bytes: u64,
     pub max_runs: usize,
     pub max_output_bytes: u64,
+    /// The protected window ([AUDIT_WINDOW_MS]): lines this young survive every budget.
+    pub audit_window_ms: u64,
 }
 
 impl Default for Limits {
@@ -81,6 +93,7 @@ impl Default for Limits {
             max_total_bytes: MAX_TOTAL_BYTES,
             max_runs: MAX_RUNS,
             max_output_bytes: MAX_OUTPUT_BYTES,
+            audit_window_ms: AUDIT_WINDOW_MS,
         }
     }
 }
@@ -89,11 +102,15 @@ impl Default for Limits {
 /// every rewrite. Rebuilt from the index at open.
 #[derive(Debug, Default, Clone, Copy)]
 struct Ledger {
-    /// Index bytes plus the recorded size of every output file.
+    /// Index bytes plus the on-disk size of every output file.
     total_bytes: u64,
     runs: usize,
     /// `endedAt` of the first (oldest) line, epoch ms.
     oldest_ended_ms: Option<u64>,
+    /// Set by a pass that left a budget over because everything left is protected: no
+    /// pass before this instant can do better, so none runs (a new output file under
+    /// byte pressure clears it - that file is fair game).
+    hold_until_ms: Option<u64>,
 }
 
 pub struct RunHistory {
@@ -405,26 +422,36 @@ impl RunHistory {
         }
     }
 
-    /// The O(1) check; the full pass only when a budget is over.
+    /// The O(1) check; the full pass only when a budget is over — and not while a hold
+    /// says the pass could change nothing (age-out ignores the hold: an expired line is
+    /// always droppable).
     fn enforce_budget(&self) {
         let ledger = *self.ledger.lock().unwrap_or_else(|e| e.into_inner());
         let now = now_ms();
         let aged = ledger
             .oldest_ended_ms
             .is_some_and(|oldest| now.saturating_sub(oldest) > self.limits.max_age_ms);
-        if ledger.total_bytes <= self.limits.max_total_bytes
-            && ledger.runs <= self.limits.max_runs
-            && !aged
-        {
+        let over = ledger.total_bytes > self.limits.max_total_bytes
+            || ledger.runs > self.limits.max_runs;
+        if !aged && !over {
+            return;
+        }
+        if !aged && ledger.hold_until_ms.is_some_and(|until| now < until) {
             return;
         }
         self.evict(now);
     }
 
-    /// Drop the oldest records until every budget holds: their output files go, the
-    /// index is rewritten without them (tmp + rename — the read handle is closed first,
-    /// Windows refuses to replace an open file), and the ledger is rebuilt from what
-    /// survived. Two streaming walks; never the whole index in memory.
+    /// Bring the budgets back under, oldest first, without touching a protected line
+    /// (docs/41 A2). Two phases: whole records outside the window (their output files
+    /// go with them; an expired one goes whatever the budgets say), then — for the
+    /// byte budget only — the output files of the window's oldest runs, whose lines
+    /// stay and are rewritten with `outputEvicted: true`. What is still over after that
+    /// is protected, and the ledger holds the next pass until the oldest protected
+    /// line leaves the window. The index is rewritten tmp + rename (the read handle is
+    /// closed first, Windows refuses to replace an open file) only when something
+    /// changed, and the ledger is rebuilt from what survived. Two streaming walks;
+    /// never the whole index in memory.
     fn evict(&self, now: u64) {
         let _guard = self.ledger.lock().unwrap_or_else(|e| e.into_inner());
         let mut lines: Vec<LineFacts> = Vec::new();
@@ -443,31 +470,74 @@ impl RunHistory {
                 }
             }
         }
-        let mut cut = 0usize;
+        let window_from = now.saturating_sub(self.limits.audit_window_ms);
+        let protected = |f: &LineFacts| f.ended_ms >= window_from;
         let mut runs = lines.len();
-        while cut < lines.len() {
-            let f = &lines[cut];
+        let mut dropped: HashSet<u64> = HashSet::new();
+        // Phase 1: whole records, oldest first, never a protected one.
+        for f in &lines {
             let aged = now.saturating_sub(f.ended_ms) > self.limits.max_age_ms;
-            if !aged && total <= self.limits.max_total_bytes && runs <= self.limits.max_runs {
+            let over = total > self.limits.max_total_bytes || runs > self.limits.max_runs;
+            if !aged && !over {
                 break;
+            }
+            if !aged && protected(f) {
+                continue;
             }
             total -= f.line_bytes + f.output_bytes;
             runs -= 1;
-            cut += 1;
+            dropped.insert(f.run_id);
         }
-        let dropped: HashSet<u64> = lines[..cut].iter().map(|f| f.run_id).collect();
-        // Rewrite: keep every well-formed line not in the dropped set.
+        // Phase 2: the byte budget against the window - output files only, oldest first.
+        let mut stripped: HashSet<u64> = HashSet::new();
+        for f in lines.iter().filter(|f| !dropped.contains(&f.run_id)) {
+            if total <= self.limits.max_total_bytes {
+                break;
+            }
+            if f.output_bytes == 0 {
+                continue;
+            }
+            total -= f.output_bytes;
+            stripped.insert(f.run_id);
+        }
+        // Still over: everything left is protected. Hold until the oldest of it ages
+        // out of the window; nothing before then can change the answer.
+        let still_over = total > self.limits.max_total_bytes || runs > self.limits.max_runs;
+        let hold_until = still_over.then(|| {
+            lines
+                .iter()
+                .filter(|f| !dropped.contains(&f.run_id))
+                .map(|f| f.ended_ms.saturating_add(self.limits.audit_window_ms))
+                .min()
+                .unwrap_or(now + 60_000)
+                .max(now + 1_000)
+        });
+        if dropped.is_empty() && stripped.is_empty() {
+            drop(_guard);
+            self.ledger.lock().unwrap_or_else(|e| e.into_inner()).hold_until_ms = hold_until;
+            return;
+        }
+        // Rewrite: keep every well-formed line not in the dropped set; a stripped line is
+        // re-serialised with the eviction on it.
         let tmp = self.dir.join(format!("{INDEX_FILE}.tmp"));
         let rewrite = (|| -> std::io::Result<()> {
             let src = File::open(self.index_path())?;
             let mut out = BufWriter::new(File::create(&tmp)?);
             for line in BufReader::new(src).split(b'\n').map_while(Result::ok) {
                 match LineFacts::parse(&line) {
-                    Some(f) if !dropped.contains(&f.run_id) => {
+                    Some(f) if dropped.contains(&f.run_id) => {}
+                    Some(f) if stripped.contains(&f.run_id) => {
+                        if let Some(Value::Object(mut m)) = parse_line(&line) {
+                            m.insert("outputEvicted".into(), json!(true));
+                            out.write_all(serde_json::to_string(&Value::Object(m))?.as_bytes())?;
+                            out.write_all(b"\n")?;
+                        }
+                    }
+                    Some(_) => {
                         out.write_all(&line)?;
                         out.write_all(b"\n")?;
                     }
-                    _ => {}
+                    None => {}
                 }
             }
             out.flush()?;
@@ -479,12 +549,13 @@ impl RunHistory {
             return;
         }
         chmod_private(&self.index_path(), private_file_mode());
-        for id in &dropped {
+        for id in dropped.iter().chain(stripped.iter()) {
             let _ = std::fs::remove_file(self.output_path(*id));
         }
         // Rebuild rather than trust the arithmetic: the rewrite is the truth now.
         drop(_guard);
-        let ledger = self.scan(|_| {});
+        let mut ledger = self.scan(|_| {});
+        ledger.hold_until_ms = hold_until;
         *self.ledger.lock().unwrap_or_else(|e| e.into_inner()) = ledger;
     }
 
@@ -523,6 +594,10 @@ impl RunHistory {
         ledger.runs += 1;
         if ledger.oldest_ended_ms.is_none() {
             ledger.oldest_ended_ms = view.ended_at_ms;
+        }
+        if output_bytes > 0 && ledger.total_bytes > self.limits.max_total_bytes {
+            // The file just written is something a pass can evict: let it look.
+            ledger.hold_until_ms = None;
         }
         drop(ledger);
         self.enforce_budget();
@@ -576,6 +651,8 @@ impl RunHistorySink for RunHistory {
 struct LineFacts {
     run_id: u64,
     ended_ms: u64,
+    /// What the output file holds on disk: zero once a pass evicted it, whatever the
+    /// line's `outputBytes` (the size the run produced) still says.
     output_bytes: u64,
     line_bytes: u64,
 }
@@ -590,7 +667,12 @@ impl LineFacts {
             .and_then(parse_iso_ms)
             .and_then(|ms| u64::try_from(ms).ok())
             .unwrap_or(0);
-        let output_bytes = v.get("outputBytes").and_then(Value::as_u64).unwrap_or(0);
+        let evicted = v.get("outputEvicted").and_then(Value::as_bool).unwrap_or(false);
+        let output_bytes = if evicted {
+            0
+        } else {
+            v.get("outputBytes").and_then(Value::as_u64).unwrap_or(0)
+        };
         Some(LineFacts {
             run_id,
             ended_ms,
@@ -794,8 +876,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    const DAY: u64 = 24 * 60 * 60 * 1000;
+
+    /// The index file's bytes - what a pass rewrote, or did not.
+    fn index_bytes(dir: &std::path::Path) -> Vec<u8> {
+        std::fs::read(dir.join(INDEX_FILE)).unwrap_or_default()
+    }
+
     #[test]
     fn the_byte_budget_evicts_the_oldest_with_its_output_file() {
+        // Outside the seven-day window (docs/41 A2) the budgets work as they always
+        // did: whole records go, oldest first.
         let dir = scratch();
         let history = RunHistory::open_with(
             dir.clone(),
@@ -805,7 +896,7 @@ mod tests {
             },
         );
         let body = vec![b'x'; 500];
-        let base = now_ms();
+        let base = now_ms() - 8 * DAY;
         for id in 1..=6 {
             run(&history, id, &body, base + id);
         }
@@ -835,7 +926,7 @@ mod tests {
                 ..Limits::default()
             },
         );
-        let base = now_ms();
+        let base = now_ms() - 8 * DAY;
         for id in 1..=5 {
             run(&history, id, b"hi\n", base + id);
         }
@@ -843,6 +934,167 @@ mod tests {
         let ids: Vec<u64> = page.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
         assert_eq!(ids, vec![5, 4, 3]);
         assert!(next.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_window_keeps_every_line_under_byte_pressure_and_gives_up_output_files_oldest_first() {
+        // docs/41 A2: six runs today, 500 bytes each (a line is ~300 more), a 3.5 KB
+        // budget. Before: half of them gone. Now: all six lines stay; the oldest
+        // output files go, the lines say so, and the budget holds on what is on disk.
+        let dir = scratch();
+        let history = RunHistory::open_with(
+            dir.clone(),
+            Limits {
+                max_total_bytes: 3_500,
+                ..Limits::default()
+            },
+        );
+        let body = vec![b'x'; 500];
+        let base = now_ms();
+        for id in 1..=6 {
+            run(&history, id, &body, base + id);
+        }
+        let (page, _) = history.page(None, 20, None);
+        let ids: Vec<u64> = page.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
+        assert_eq!(ids, vec![6, 5, 4, 3, 2, 1], "no line inside the window is dropped");
+        let evicted: Vec<u64> = page
+            .iter()
+            .filter(|v| v["outputEvicted"] == true)
+            .map(|v| v["runId"].as_u64().unwrap())
+            .collect();
+        assert!(!evicted.is_empty(), "the byte budget had to take something");
+        assert!(evicted.contains(&1), "the oldest output goes first: {evicted:?}");
+        assert!(!evicted.contains(&6), "the newest keeps its file: {evicted:?}");
+        // The oldest evicted, the newest kept: no gap in the middle.
+        let newest_evicted = *evicted.iter().max().unwrap();
+        for id in 1..=6u64 {
+            let on_disk = dir.join(OUT_DIR).join(format!("{id}.txt")).exists();
+            assert_eq!(on_disk, id > newest_evicted, "run {id}");
+        }
+        // The line still says what the run produced; the file is what is gone.
+        let one = history.get(1).unwrap();
+        assert_eq!(one["outputBytes"], 500);
+        assert_eq!(one["outputEvicted"], true);
+        assert!(history.output(1, 0, 10).is_none());
+        assert!(history.output(6, 0, 10).is_some());
+        let (bytes, runs) = history.usage();
+        assert!(bytes <= 3_500, "{bytes}");
+        assert_eq!(runs, 6);
+        // A fresh open counts an evicted output as the zero bytes it is on disk.
+        let reopened = RunHistory::open(dir.clone());
+        assert_eq!(reopened.usage(), (bytes, runs));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn records_outside_the_window_go_whole_before_any_output_inside_it() {
+        // Three runs eight days ago, three today, 500 bytes each (~800 with the line),
+        // a 3 KB budget the six overshoot and the window's three fit: the old ones are
+        // dropped (files and lines), the window keeps every file.
+        let dir = scratch();
+        let history = RunHistory::open_with(
+            dir.clone(),
+            Limits {
+                max_total_bytes: 3_000,
+                ..Limits::default()
+            },
+        );
+        let body = vec![b'x'; 500];
+        let old = now_ms() - 8 * DAY;
+        let today = now_ms();
+        for id in 1..=3 {
+            run(&history, id, &body, old + id);
+        }
+        for id in 4..=6 {
+            run(&history, id, &body, today + id);
+        }
+        let (page, _) = history.page(None, 20, None);
+        let ids: Vec<u64> = page.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
+        assert!(!ids.contains(&1), "{ids:?}");
+        assert!(ids.contains(&6) && ids.contains(&5) && ids.contains(&4), "{ids:?}");
+        for id in 4..=6u64 {
+            assert!(dir.join(OUT_DIR).join(format!("{id}.txt")).exists(), "run {id}");
+            assert!(history.get(id).unwrap().get("outputEvicted").is_none());
+        }
+        assert!(history.usage().0 <= 3_000);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_count_cap_yields_to_the_window_and_the_pass_then_holds() {
+        // Five runs today against a cap of three: all five stay (the cap is for the
+        // index's size, and five lines are no size), and the next reads do not rewrite
+        // the index over and over - the pass holds until a line leaves the window.
+        let dir = scratch();
+        let history = RunHistory::open_with(
+            dir.clone(),
+            Limits {
+                max_runs: 3,
+                ..Limits::default()
+            },
+        );
+        let base = now_ms();
+        for id in 1..=5 {
+            run(&history, id, b"hi\n", base + id);
+        }
+        let (page, _) = history.page(None, 20, None);
+        let ids: Vec<u64> = page.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
+        assert_eq!(ids, vec![5, 4, 3, 2, 1]);
+        assert_eq!(history.usage().1, 5);
+        let hold = history.ledger.lock().unwrap().hold_until_ms;
+        assert!(hold.is_some_and(|until| until > now_ms()), "{hold:?}");
+        let before = index_bytes(&dir);
+        let mtime = std::fs::metadata(dir.join(INDEX_FILE)).unwrap().modified().unwrap();
+        for _ in 0..3 {
+            history.page(None, 20, None);
+        }
+        assert_eq!(index_bytes(&dir), before);
+        assert_eq!(
+            std::fs::metadata(dir.join(INDEX_FILE)).unwrap().modified().unwrap(),
+            mtime,
+            "no rewrite while the hold stands"
+        );
+        // Two old runs behind them: those go, the five stay, the cap is still over.
+        run(&history, 6, b"old\n", base - 8 * DAY);
+        run(&history, 7, b"old\n", base - 8 * DAY + 1);
+        assert_eq!(history.usage().1, 7, "the hold stands: the appends did not rewrite");
+        history.ledger.lock().unwrap().hold_until_ms = None; // the window moved on
+        let (page, _) = history.page(None, 20, None);
+        let ids: Vec<u64> = page.iter().map(|v| v["runId"].as_u64().unwrap()).collect();
+        assert_eq!(ids, vec![5, 4, 3, 2, 1], "the old two went, the window stayed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_new_output_file_under_byte_pressure_lifts_the_hold() {
+        // A budget the index alone overshoots: every output file in the window is
+        // already gone and the pass holds. The next run's file is still evictable, so
+        // its record lifts the hold and the pass takes that file too - the promise is
+        // the line, never the bytes.
+        let dir = scratch();
+        let history = RunHistory::open_with(
+            dir.clone(),
+            Limits {
+                max_total_bytes: 100,
+                ..Limits::default()
+            },
+        );
+        let base = now_ms();
+        run(&history, 1, b"one\n", base + 1);
+        run(&history, 2, b"two\n", base + 2);
+        assert!(history.ledger.lock().unwrap().hold_until_ms.is_some());
+        assert!(!dir.join(OUT_DIR).join("1.txt").exists());
+        assert!(!dir.join(OUT_DIR).join("2.txt").exists());
+        run(&history, 3, b"three\n", base + 3);
+        assert!(!dir.join(OUT_DIR).join("3.txt").exists(), "the new file went too");
+        assert_eq!(history.get(3).unwrap()["outputEvicted"], true);
+        assert_eq!(history.usage().1, 3, "and every line is still there");
+        // A silent run adds nothing a pass could take: the hold stands, no rewrite.
+        let before = index_bytes(&dir);
+        run(&history, 4, b"", base + 4);
+        let after = index_bytes(&dir);
+        assert!(after.starts_with(&before), "append only: {}", String::from_utf8_lossy(&after));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
