@@ -152,6 +152,14 @@ swiss remote 功能"。
 - PATH 由 owner 自己设：脚本只在 `bin\` 不在 PATH 上时打印一行怎么加（改用户的 PATH 不是部署
   脚本该做的事）。加上之后任何程序都能 `swiss remote exec <target> -- ...`（CLI 从 home 读 token，
   与 19999 同一用户即可）。
+- 证据（2026-09-21，commit 010b7d1）：
+  - 迁移那次：pid 文件 `entry` 是 `target\release\swiss.exe`，脚本在构建前停了它（阶段行
+    "stopping the daemon first: it runs out of target\release\swiss.exe, which the build must
+    overwrite"），装到 `bin\swiss.exe` 后 `/health` 与 `bin\swiss.exe --version` 同为 `010b7d1`，
+    pid 文件 `entry` 变为 `bin\swiss.exe`。
+  - 再部署一次（同一提交，全部门禁）：阶段顺序 build → stop → install → start，构建期间老进程
+    一直在服务；两个 200 ms 一次的 `/health` 探针都量到 **3.1 s** 停机（09:45:56.1 → 09:45:59.2 UTC）。
+  - 从 `C:\Users\<user>` 直接跑 `bin\swiss.exe status`、`bin\swiss.exe remote targets` 都能到 19999。
 
 ## 4. H4 — Rust 仓库的 CI
 
