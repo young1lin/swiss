@@ -95,10 +95,10 @@ function railSeat(g: PageGroup): HTMLElement {
     ? tr("pageRegistry.labelError", { label: tr(wireLabel(g.label)), error: offPlugin.lastError || tr("pageRegistry.pluginDisabled") })
     : tr(wireLabel(g.label));
   /* docs/39 S1 shipped the rail icon-only; reversed by owner decision (2026-10-30) for
-   * clarity - the seat wears its glyph AND the plugin's translated name at --f-caption
-   * (the caption the 9px era lacked: in the type scale, so it stays legible). The tooltip
-   * still carries the richer error text when the plugin is down; the label stays the
-   * plain name. The More seat keeps its glyph alone - it is an affordance, not a domain. */
+   * clarity - the seat wears its glyph AND the plugin's translated name, sized for the
+   * whole rail by fitRailLabels after each paint. The tooltip still carries the richer
+   * error text when the plugin is down; the label stays the plain name. The More seat
+   * keeps its glyph alone - it is an affordance, not a domain. */
   return h("button", { class: "rail-btn", data: { group: g.id, view: g.pages[0].id },
       // The two aria flags render only when true, exactly as the string builder spelled them.
       aria: Object.assign({}, active ? { current: "true" } : {}, allOff ? { disabled: "true" } : {}), title },
@@ -111,9 +111,59 @@ function moreSeat(): HTMLElement {
     iconNode("ellipsis"));
 }
 
+/** One caption size for the whole rail, fitted to the longest name. The rail carries its
+ * seats' names again (docs/39 S1 reversed by the owner) and a gateway-served plugin name
+ * is unknowable at build time, so the size cannot be a constant - but it is ONE size: a
+ * column of captions in mixed sizes reads as a mistake, so the rail steps down as one.
+ * Captions start at RAIL_CAPTION_CEIL and the rail takes the largest half-pixel step at
+ * which the longest name fits its seat's content box - the seat's padding is the air, and
+ * the label's max-width (base.css) clips to that same box when nothing fits - floored at
+ * RAIL_CAPTION_FLOOR - the size docs/39 recorded as the legibility floor. A name that does
+ * not fit even there is clipped by the ellipsis rule and keeps its full text in the seat's
+ * title. Measured once at the ceiling and written once: two reflows, never a loop. A rail
+ * with no width (focus mode hides it) is left at the ceiling; the resize event that
+ * leaving focus mode dispatches refits it, as does a real window resize. jsdom has no
+ * layout (every width is 0), so the acceptance suite sees the ceiling. */
+const RAIL_CAPTION_CEIL = 10;
+const RAIL_CAPTION_FLOOR = 9;
+
+/** The arithmetic of the fit, pure: each seat's `room` (the caption box, px) and `need`
+ * (the caption's width at the ceiling, px). One size for all of them - the largest
+ * half-pixel step at or below the ceiling at which every caption fits, floored. `null`
+ * when nothing can be measured (a seat with no room is a hidden rail, not a tight one). */
+function railCaptionSize(seats: { room: number; need: number }[]): number | null {
+  if (seats.length === 0 || seats.some((s) => s.room <= 0)) return null;
+  const ratio = seats.reduce((r, s) => (s.need > s.room ? Math.min(r, s.room / s.need) : r), 1);
+  return Math.max(RAIL_CAPTION_FLOOR, Math.floor(RAIL_CAPTION_CEIL * ratio * 2) / 2);
+}
+
+function fitRailLabels(): void {
+  const labels = Array.from(document.querySelectorAll<HTMLElement>(".rail-btn .rail-label"));
+  if (labels.length === 0) return;
+  labels.forEach((el) => { el.style.fontSize = RAIL_CAPTION_CEIL + "px"; });
+  // The seat's content box: its padding is the air (base.css .rail-btn), and the label's
+  // max-width is 100% of this same box, so CSS and JS agree on what "fits" means.
+  const size = railCaptionSize(labels.map((el) => {
+    const seat = el.parentElement;
+    if (!seat) return { room: 0, need: el.scrollWidth };
+    const cs = getComputedStyle(seat);
+    return { room: seat.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), need: el.scrollWidth };
+  }));
+  if (size === null) return;
+  labels.forEach((el) => { el.style.fontSize = size + "px"; });
+}
+
+let railRefitPending = false;
+function scheduleRailRefit(): void {
+  if (railRefitPending) return;
+  railRefitPending = true;
+  requestAnimationFrame(() => { railRefitPending = false; fitRailLabels(); });
+}
+
 function paintPluginRail(): void {
   const nav = $("railNav");
   fill(nav, ...pinnedGroups(currentGroups()).map(railSeat), moreSeat());
+  fitRailLabels();
   nav.onclick = (event) => {
     const target = event.target as HTMLElement;
     const more = target.closest<HTMLElement>(".rail-more");
@@ -359,6 +409,8 @@ function initPages(): Promise<void> {
       const id = location.hash.replace(/^#\/?/, "");
       if (registry.get(id)) void navigatePage(id);
     });
+    // Leaving focus mode dispatches a resize (immersive.ts) - the rail has width again.
+    window.addEventListener("resize", scheduleRailRefit);
   })();
   return boot;
 }
@@ -418,4 +470,4 @@ async function refreshPage(): Promise<void> {
   catch (error) { toast(errText(error), true); }
 }
 
-export { currentPageCount, fitTabs, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, refreshPage, reloadPluginInventory };
+export { currentPageCount, fitRailLabels, fitTabs, initPages, layoutOf, navigatePage, pageHasPendingChanges, pageMenuItems, pageUsesSidebar, pluginInventory, pollPage, railCaptionSize, RAIL_CAPTION_CEIL, RAIL_CAPTION_FLOOR, refreshPage, reloadPluginInventory };

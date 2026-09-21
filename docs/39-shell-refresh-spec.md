@@ -10,6 +10,13 @@
 > 类型小方块 9 → 0、bar 换页器框 1 → 0、rail 9px 标签 7 → 0,机械枚举的着色/描边元素 17 个
 > （其中状态点 9、结构面 3,用户读作"框"的控件 4 个:搜索框 + 3 条组 band,另加选中座的悬停
 > 底),≤ §0.1 基线 20、达到 ≤9 的目标。合并 master、部署是 owner 的决定。
+>
+> **S1 后记（2026-09-21）**：owner 反转了图标-only，座位重新带名字。名字回来后 48px 装不下
+> 英文长名（`Terminal` 在 10px 下 37px，座位里每边只剩 2px），rail 改为 **56px**，座位的
+> `--s1` padding 即标题的空气；字号由 `page-registry.fitRailLabels` 对**整条 rail 取一个值**
+> （10px 起、9px 下限、再长走省略号），focus 模式退出时随 resize 重量。纯算数在
+> `railCaptionSize`，套件 `test/rail-caption-fit.test.ts`；真浏览器走查（19998，1280/480、
+> 英/中、focus 进出、注入 13 字名）见 commit 记录。
 > 前置阅读：`.claude/skills/swiss-ui-design/SKILL.md` §1–§8（四层与归属——本文一层都不挪）、§16
 > 规则 1 / 2 / 9 / 15 / 18；`.agents/rules/panel-proof-of-life.md`；`docs/36-panel-typescript-spec.md`
 > §1.2（D2 发射、D3 产物提交）；`docs/37-panel-modern-typescript-spec.md` §7（`h()` 与重画）。

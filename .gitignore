@@ -1,7 +1,10 @@
-/target
+# Cargo build trees, wherever a `cargo build` was run from: the root ones, and any nested
+# copy a misplaced CARGO_TARGET_DIR produces (a whole build tree reached a commit twice
+# through a root-anchored pattern - docs/40 §0 and 2026-09-21).
+target/
 # The 19998 iteration build dir (AGENTS.md live-testing rule) — a whole second cargo
 # target tree, thousands of files the Git GUI would otherwise list as pending.
-/target-test/
+target-test/
 **/*.rs.bk
 *.pdb
 
