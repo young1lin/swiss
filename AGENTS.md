@@ -116,7 +116,8 @@ correctness boundary.
 ## Commands
 
 ```bash
-cargo build --release             # the shipping exe (target/release/swiss.exe) - ADR-012
+cargo build --release             # the shipping exe (target/release/swiss.exe) - ADR-012;
+                                  # 19999 runs a COPY of it, bin/swiss.exe (scripts/deploy.ps1)
 cargo test --workspace            # the one feature combination there is
 cargo clippy --workspace --all-targets -- -D warnings                  # must be clean
 cargo tree -d                  # a duplicated TLS stack or runtime must fail review

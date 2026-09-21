@@ -12,13 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# One-step deploy to production 19999 (docs/16 H3).
+# One-step deploy to production 19999 (docs/16 H3, bin\ since 2026-09-21).
 #
 # The deploy used to be a three-step ritual (stop, build, start) where doing it out of order
 # failed with "Access is denied (os error 5)" - the linker cannot overwrite the exe a running
 # daemon holds - and nothing anywhere said WHICH build was running afterwards. This script
 # fixes the order, then proves the result: /health must report the hash this build stamped
 # into swiss.exe --version, or the script fails loudly with both values.
+#
+# Production runs from bin\swiss.exe, a copy of the build output, never from target\ itself
+# (docs/16 §3.3): the linker and the daemon no longer share a file, so the build happens
+# while the old daemon is still serving and the outage is stop + copy + start - seconds, not
+# the four minutes a release build takes. bin\ is a stable path for PATH and for
+# `swiss autostart on`, and git ignores it. A daemon still running out of target\ (the
+# pre-bin layout) is stopped BEFORE the build, once, so the linker can write.
 #
 # Run it from the repo root; a deploy is the operator's decision, from whichever shell they
 # choose (H1 scrubs the daemon's environment, so an agent or CI shell is safe too). Until
@@ -39,7 +46,9 @@ param(
     [switch]$SkipGates
 )
 $ErrorActionPreference = 'Stop'
-$Exe = 'target\release\swiss.exe'
+$Built = 'target\release\swiss.exe'     # what cargo writes
+$BinDir = 'bin'
+$Exe = Join-Path $BinDir 'swiss.exe'     # what 19999 runs
 . "$PSScriptRoot\deploy-lock.ps1"
 function Fail($message) {
     Write-Host $message -ForegroundColor Red
@@ -91,14 +100,41 @@ if (-not $SkipGates) {
 } else {
     Phase "gates SKIPPED (-SkipGates)"
 }
-# Stop BEFORE building: the linker cannot overwrite the exe the running daemon holds
-# (os error 5). Exit 3 = nothing was running, which is fine to deploy over.
-Phase 'stopping the daemon'
-& $Exe stop
-if ($LASTEXITCODE -eq 1) { Fail "stop was refused - resolve it by hand (see above), then re-run" }
+# The daemon that is up right now, from its pid file: only a daemon running out of target\
+# (the pre-bin layout) has to stop before the build, because the linker must overwrite the
+# very file it holds. One running from bin\ keeps serving through the build.
+$stopper = if (Test-Path $Exe) { $Exe } else { $Built }
+$entry = $null
+try {
+    $pidFile = Join-Path (Get-SwissProdHome) 'gateway-19999.pid'
+    if (Test-Path $pidFile) { $entry = (Get-Content $pidFile -Raw | ConvertFrom-Json).entry }
+} catch { }
+$holdsBuildOutput = $entry -and ((Resolve-Path $Built -ErrorAction SilentlyContinue).Path -eq $entry)
+if ($holdsBuildOutput) {
+    Phase "stopping the daemon first: it runs out of $Built, which the build must overwrite"
+    & $stopper stop
+    if ($LASTEXITCODE -eq 1) { Fail "stop was refused - resolve it by hand (see above), then re-run" }
+}
 Phase 'cargo build --release'
 cargo build --release
-if ($LASTEXITCODE -ne 0) { Fail "build failed - start the old daemon again by hand: & $Exe start --no-open" }
+if ($LASTEXITCODE -ne 0) {
+    if ($holdsBuildOutput) { Fail "build failed - start the old daemon again by hand: & $stopper start --no-open" }
+    Fail "build failed - production left untouched"
+}
+# From here the outage clock runs: stop, copy, start.
+if (-not $holdsBuildOutput) {
+    Phase 'stopping the daemon'
+    & $stopper stop
+    if ($LASTEXITCODE -eq 1) { Fail "stop was refused - resolve it by hand (see above), then re-run" }
+}
+Phase "installing $Exe"
+if (-not (Test-Path $BinDir)) { [void](New-Item -ItemType Directory -Path $BinDir) }
+# The stopped process can take a moment to let go of its exe; the copy retries, not fails.
+$copied = $false
+foreach ($attempt in 1..20) {
+    try { Copy-Item -Path $Built -Destination $Exe -Force; $copied = $true; break } catch { Start-Sleep -Milliseconds 250 }
+}
+if (-not $copied) { Fail "could not overwrite $Exe - something still holds it (the old daemon?): start it again by hand: & $Exe start --no-open" }
 Phase 'starting the new daemon'
 & $Exe start --no-open
 if ($LASTEXITCODE -ne 0) { Fail "start failed - log tail above" }
@@ -115,7 +151,14 @@ $running = ($health.Content | ConvertFrom-Json).build.hash
 if ($running -ne $built) {
     Fail "deploy did not take: running daemon is $running, freshly built is $built"
 }
-Phase "deployed: $running is serving on 19999"
+Phase "deployed: $running is serving on 19999 from $Exe"
+# Other programs reach `swiss remote ...` through PATH; the script only says when bin\ is
+# missing from it - changing a user's PATH is their call.
+$binAbs = (Resolve-Path $BinDir).Path
+$onPath = ($env:PATH -split ';') | Where-Object { $_ -and ((Resolve-Path $_ -ErrorAction SilentlyContinue).Path -eq $binAbs) }
+if (-not $onPath) {
+    Write-Host "note: $binAbs is not on PATH; to call swiss from anywhere add it (User scope): [Environment]::SetEnvironmentVariable('Path', ([Environment]::GetEnvironmentVariable('Path','User') + ';$binAbs'), 'User')"
+}
 } finally {
     # The lock MUST go even on failure - a failed deploy that keeps the lock blocks the
     # retry that fixes it. Stale takeover inside the run is Release's problem, not ours.

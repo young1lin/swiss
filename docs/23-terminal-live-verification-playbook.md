@@ -27,7 +27,7 @@ port into config; never pass `--port`):
 $TestHome = Join-Path $env:LOCALAPPDATA 'swiss-test-home-wt'
 $env:SWISS_HOME  = $TestHome        # sealed-state snapshot incl. the DPAPI-copied master.key
 $env:SWISS_PORT  = '19996'
-$env:CARGO_TARGET_DIR = 'target-test'   # the production daemon holds target/release/swiss.exe
+$env:CARGO_TARGET_DIR = 'target-test'   # target/release is the next deploy's input; 19999 runs bin/swiss.exe
 ```
 
 Lifecycle rules, each learned the hard way:

@@ -133,7 +133,10 @@ Two instances, two ports: **19999 is the operator's production instance**, and *
 every change is verified** — `scripts/test-instance.ps1` snapshots state into an isolated test
 home and serves the fresh build there; panel changes additionally walk the page in a real
 browser. Deploying to 19999 is the last step, done once, through `scripts/deploy.ps1` (gates
-→ stop → build → start → prove the served build hash equals the freshly built binary).
+→ build → stop → copy to `bin\swiss.exe` → start → prove the served build hash equals the
+freshly built binary). Production runs from `bin\`, never from `target\`: the build never
+fights the daemon for its file, and `bin\` is a stable path to put on PATH so other programs
+can call `swiss remote ...`.
 
 ## Non-goals
 

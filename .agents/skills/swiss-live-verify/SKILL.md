@@ -38,9 +38,9 @@ with `SWISS_TEST_HOME`); stopping finds its victim only through the port's ownin
 
 Manually, the pieces:
 
-1. **Build the test exe into its own target tree** (the 19999 daemon holds `target/release/swiss.exe`
-   — iteration must not fight it for the file): `$env:CARGO_TARGET_DIR = "target-test"; cargo
-   build --release`.
+1. **Build the test exe into its own target tree** (a release build in `target/` is what the
+   next `scripts/deploy.ps1` copies to `bin/` for 19999 — iteration must not overwrite it
+   with a test build): `$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`.
 2. **Pin the token before starting.** The snapshotted production config carries the legacy
    `tokenEnv: MCP_GATEWAY_TOKEN`, and the named variable resolves first — so pin that name and
    the whole live session has a known bearer: `$env:MCP_GATEWAY_TOKEN = "acceptance-token-for-1998"`
