@@ -1,6 +1,6 @@
 # 14 — 终端插件实施规范（网页终端 / SSH / 本地 Shell）
 
-> 状态：**已实施**。T1–T4 `310ffe2`→`378d8fd`，T5 `3877c17`，T6（Node 仓库）`873a238`，T7 `616b530`，
+> 状态：**已实施**。T1–T4 `c405cb8`→`dd76034`，T5 `14a9fd2`，T6（Node 仓库）`873a238`，T7 `3361429`，
 > T8 为本文所在提交。全部实施偏差见 §8.1。
 > 前置阅读：`AGENTS.md`（它的规则高于本文任何便利）、`docs/09-toolbox-plugin-architecture.md`
 > §3/§4/§9（插件契约、共享能力、加一个插件要做什么）、`docs/12-remaining-work-spec.md` W3
@@ -335,7 +335,7 @@ PluginDescriptor {
 
 实施与本文的每一处出入，按阶段收录；这里的每一条在对应提交信息里有完整的推理。
 
-**T2（§4，`1fc2d12`）**
+**T2（§4，`bb26ea6`）**
 
 - `open_shell` 的返回不是 `-> ShellSessionGuard`：guard 随泵任务**走进去**而不是返回给调用方 ——
   只有泵知道会话何时真正结束，返回给 provider 的 guard 没有地方存活。
@@ -345,7 +345,7 @@ PluginDescriptor {
   每次远程 open 都死于 "answered unexpectedly"（真机首次连接抓到，诊断靠把枚举变体
   打进错误文本后重放）。
 
-**T3（§5，`eb01733`）**
+**T3（§5，`cc28708`）**
 
 - windows features 三个不是两个：`Win32_System_Pipes` 新增，`Win32_Security` 显式点名
   （原本只经 DPAPI 传递依赖；删 DPAPI 的人不该顺手带走 pty 和作业守卫）。
@@ -354,13 +354,13 @@ PluginDescriptor {
 - `KillOnCloseJob` 从 swiss-host 下沉到 `swiss_core::platform`：pty 缝隙在 swiss-host 之下，
   需要同一份子树保证。
 
-**T4（§8，`378d8fd`）**
+**T4（§8，`dd76034`）**
 
 - `ticket(id)` 成为 `open()` 之外的第二个入口 → §8 路由表因此多一条补铸路由（见 T5）。
 - 录像只写 `"o"` 事件，不写 `"r"`。
 - `TerminalError` 手写 `From<ShellError>`，不用 `#[from]`：消费者不该反过来规定契约的形状。
 
-**T5（§8，`3877c17`）**
+**T5（§8，`14a9fd2`）**
 
 - 描述符草案里 `page(…, 70, true)` 的第 5 参是**错的**：`sidebar:true` 的含义是"本页渲染进
   MCP 侧栏布局"（壳层 `page-registry.js` 对没有该标志的每个页面隐藏 `.sidebar`），只有
@@ -381,7 +381,7 @@ PluginDescriptor {
 - WebGL addon 先核验为纯 JS（无 WebAssembly、无 .wasm fetch、无 base64 载荷）后随包发布；
   上下文丢失即 dispose，回落 DOM 渲染 —— 三条资源约束里 "不改 mime_of" 因此原样成立。
 
-**T7（`616b530`）**：无偏差；`the_tree_is_byte_for_byte_the_node_builds` 真跑真过。
+**T7（`3361429`）**：无偏差；`the_tree_is_byte_for_byte_the_node_builds` 真跑真过。
 
 **docs/15（本文 §5/§6.1 的补丁，2026-09-12）**
 
@@ -399,13 +399,13 @@ vendored 资源与 content-type、targets 诚实空态、真 ConPTY 本地会话
 attached/bytesOut、asciicast v2 落盘可读、DELETE 后清表 —— 11/11 通过；强杀网关后
 cmd 子进程 0 残留（§10 第 8 条）。
 
-**真主机补测**（2026-09-11，release `3c3fd7f`，开发机/构建机）：§10 第 3 条三项机器验证
+**真主机补测**（2026-09-11，release `3b4934f`，开发机/构建机）：§10 第 3 条三项机器验证
 通过——中文+`✓` 回显字节完整、`vim` 打开（~ 波浪线行）后 `:q!` 干净退出、`htop` 运行后 `q` 退出；
 另经 Chrome（CDP 键盘注入）在面板里开真实远端会话，输入 `echo 面板-中文-直通OK` 回显字形正确。
 每远端会话 RSS 边际成本 (4−1)/3 = 250.7 KB（ADR-011），在 ≤ 256 KB 预算行内。
 
 **§10 逐条机器复验**（2026-09-11，release 活网关，除注明外均按条目原文验证）：第 1、2 条随
-`e6fc64c` 门禁通过；第 4 条 tunnels 停用后 targets 为 `absent` 且文案点名 "the tunnels plugin
+`d953687` 门禁通过；第 4 条 tunnels 停用后 targets 为 `absent` 且文案点名 "the tunnels plugin
 is not running"，恢复后两台主机重新 `connected`；第 5 条 terminal 停用后 `/api/terminal/*`
 答 503 JSON（含可操作的 re-enable 提示），清单行 `state:disabled`；第 6 条断开 8 秒重连，追赶
 缓冲从断开点 L8 连续补到 L60 无缺无重，断开超过宽限的会话从列表消失；第 7 条 `yes` 洪水
@@ -417,8 +417,8 @@ is not running"，恢复后两台主机重新 `connected`；第 5 条 terminal �
 
 对标 WT / VS Code / Tabby / sshx / Wave 的差距分析(docs/22)落地了 P0 全部与 P1 的滚动
 搜索。面板侧实现全部在 Node 仓库(`e3d7d9a`→`a750b20`,七笔——末笔修复五项实机审核抓到的
-三个回归),经 T7 的整树复制进入本仓(worktree `terminal-parity`:`15f94c1`/`122c55d`/
-`f029f02`/`e628d4b`/`6fda158`)。功能默认开启。
+三个回归),经 T7 的整树复制进入本仓(worktree `terminal-parity`:`ef92a60`/`76c6264`/
+`8a15b79`/`a958f13`/`c1ab9e7`)。功能默认开启。
 
 | 功能点 | 触发 | 语义 |
 | --- | --- | --- |

@@ -3,7 +3,7 @@
 The steps that verified the P0/P1 terminal work (docs/22) on a real gateway and a real
 browser. Every rule here was paid for once: most entries record a trap that produced a
 wrong conclusion or a silently broken verification during the 2026-09-12/13 sessions
-(Node commits e3d7d9a..a750b20, worktree b4c1900..6fda158).
+(Node commits e3d7d9a..a750b20, worktree 9eefbfd..6fda158).
 
 Scope: the terminal page specifically. The generic loop (state snapshot, test home,
 health probe) lives in the `swiss-live-verify` skill and AGENTS.md "Live testing ports";

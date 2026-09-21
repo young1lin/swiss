@@ -1,6 +1,6 @@
 # 27 — SSH 隧道:代理拨号(HTTP CONNECT / SOCKS5)与跳板引用
 
-> 状态:**待实施**(spec 定稿 2026-09-15;基线 `a0fed265`;实施从
+> 状态:**待实施**(spec 定稿 2026-09-15;基线 `a366b94`;实施从
 > [27-ssh-proxy-and-jump-prompt.md](27-ssh-proxy-and-jump-prompt.md) 起步,走 swiss-add-plugin →
 > swiss-verify → swiss-live-verify → swiss-review 流程)。
 > 前置阅读:`AGENTS.md`(载重规则高于本文)、[docs/05](05-wire-compatibility.md)(本文不动密封格式)、
@@ -20,7 +20,7 @@
 
 ## 0. 现状与缺口(为什么是它、为什么是现在)
 
-> 本节坐标是基线 `a0fed265` 的函数名;实施后按函数名找,不按行号找。
+> 本节坐标是基线 `a366b94` 的函数名;实施后按函数名找,不按行号找。
 
 ### 0.1 现状
 

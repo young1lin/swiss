@@ -1,6 +1,6 @@
 # 24 — MCP 路径领地：/mcp/<name>
 
-> 状态：**已实施**（2026-10）。P1 路由迁移 `7defb84`、P2 保留字退役 `e0f6ab5`、P3 面板 URL `f7eae76`、P4 迁移提示 `57bc760`、P5 文档台账收尾。基线 `edb6018`。配套交接提示词：[24-mcp-path-domain-prompt.md](24-mcp-path-domain-prompt.md)。
+> 状态：**已实施**（2026-10）。P1 路由迁移 `4c9acc2`、P2 保留字退役 `1425dd6`、P3 面板 URL `c5d9ad8`、P4 迁移提示 `cb3d23d`、P5 文档台账收尾。基线 `83bc83c`。配套交接提示词：[24-mcp-path-domain-prompt.md](24-mcp-path-domain-prompt.md)。
 > 决策记录：[ADR-018](07-decisions.md)（路径空间划分 + 硬切 + 领地内无保留字）。
 > 前置阅读：`AGENTS.md`（规则高于本文）、[docs/09](09-toolbox-plugin-architecture.md)（插件契约——本文是它的路径面推论）、
 > [docs/05](05-wire-compatibility.md)（本文不动密封格式；客户端 URL 是另一类契约，见 §0）、
@@ -15,7 +15,7 @@
 
 ## 0. 现状与缺口（为什么是它、为什么是现在）
 
-> 本节的行号是基线 `edb6018` 时的证据坐标，实施后按函数名找，不按行号找。
+> 本节的行号是基线 `83bc83c` 时的证据坐标，实施后按函数名找，不按行号找。
 
 - **MCP 端点是根级单段 catch-all**：`src/app.rs` 的 `build_app` 挂 `route("/{path}", post(mcp_post).delete(mcp_delete).get(fallback_404))`。
   根路径因此被 MCP 家族占住：未来任何想认领根路径的插件（一个终端网页、一个 webhook 入口）都要跟 MCP

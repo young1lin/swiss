@@ -14,7 +14,7 @@ MCP 端点从根级 `/{name}` 迁到 `/mcp/{name}`(P1),主机保留字两份退�
 ## 先读(顺序)
 
 1. `AGENTS.md` —— 规则高于一切;注意 19999 是生产、测试实例走 19998/19997、`--workspace` 不可省。
-2. `docs/24-mcp-path-domain-spec.md` —— 全文;§0 的行号坐标是基线 `edb6018` 的,按函数名找。
+2. `docs/24-mcp-path-domain-spec.md` —— 全文;§0 的行号坐标是基线 `83bc83c` 的,按函数名找。
 3. `docs/07-decisions.md` 的 ADR-018 —— 决策已定:硬切、无别名、领地内无保留字。
 4. `src/app.rs` 的 `build_app` / `mcp_post` / `mcp_delete` / `fallback_404`。
 5. `src/adminapi.rs` 的 `RESERVED` 与名字校验;`crates/swiss-mcp/src/mcp_import.rs` 的 `RESERVED` /
@@ -25,7 +25,7 @@ MCP 端点从根级 `/{name}` 迁到 `/mcp/{name}`(P1),主机保留字两份退�
 ## 交付顺序(一 commit 一条,每条先写红测试)
 
 P1 路由迁移 → P2 保留字退役(P2 依赖 P1 的可达性断言)→ P3 面板(可与 P2 并行)→ P4 迁移提示 →
-P5 文档。每个 commit 的信息写清前因后果(参考 9cb9b8a 的样式)。
+P5 文档。每个 commit 的信息写清前因后果(参考 8832fa6 的样式)。
 
 ## 门禁(每条 commit 前,不省略)
 

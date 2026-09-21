@@ -1,7 +1,7 @@
 # 25 — 密钥引用换信封语法：${secret://name}（docs/19 D1 修订）
 
-> 状态：**已实施**（2026-09-15，已合并 master）：Item 1 文法 `7b49a82`、Item 2 host 迁移 `dc70477`、
-> Item 3 tunnels+jobs `4bf2566`、Item 4 面板 `44a49a5`、Item 5 文档收尾（本提交）。基线 `05e21e5`。
+> 状态：**已实施**（2026-09-15，已合并 master）：Item 1 文法 `716b509`、Item 2 host 迁移 `4c7f9ed`、
+> Item 3 tunnels+jobs `a9f41ba`、Item 4 面板 `e2e2665`、Item 5 文档收尾（本提交）。基线 `a4373ff`。
 > 配套交接提示词：[25-vault-ref-envelope-prompt.md](25-vault-ref-envelope-prompt.md)。
 > 决策记录：ADR-019（supersede ADR-014 的语法条款；ADR-014 的存储/rev/write-only/隔离条款不动）。
 > 前置阅读：`AGENTS.md`（规则高于本文）、[docs/19](19-secret-vault-spec.md)（父 spec——仅 D1 语法条款被本文取代，D2-D9 全部有效）、
@@ -16,7 +16,7 @@
 
 ## 0. 现状与缺口（为什么是它、为什么是现在）
 
-> 本节行号是基线 `05e21e5` 的证据坐标，实施后按函数名找，不按行号找。
+> 本节行号是基线 `a4373ff` 的证据坐标，实施后按函数名找，不按行号找。
 
 docs/19 D1 把 vault 引用定为裸 URI scheme 型 `secret://name`，已随 ADR-014 全量落地。缺口两个，都在语法层，
 都不动 vault 的存储、API、隔离与失败语义：

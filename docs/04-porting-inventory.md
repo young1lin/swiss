@@ -6,7 +6,7 @@ size of this job — the other 7,193 lines of that tree are the panel, which is 
 
 > **The port is complete; the destinations below are pre-workspace paths.** Every `src/…`
 > destination in this table names the single-crate layout the port was planned in. The code has
-> since been split into eight crates (`4147e8a`) — `src/adapters/x.rs` is now
+> since been split into eight crates (`2937034`) — `src/adapters/x.rs` is now
 > `crates/swiss-mcp/src/adapters/x.rs`, `src/secure/` is `crates/swiss-core/src/secure/`, and so on.
 > The current map is in `docs/02-architecture.md`; this table is kept for what it actually
 > records — which Node module became which Rust module, and what each one cost.

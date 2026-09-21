@@ -12,7 +12,7 @@ worktree **已经建好**，直接进：
 <repo>\.agents\worktrees\refactor-ui
 ```
 
-分支 `refactor-ui`，基线 `f959b12`（master，2026-09-20）。规范 `docs/39-shell-refresh-spec.md` 与视觉
+分支 `refactor-ui`，基线 `f6dd448`（master，2026-09-20）。规范 `docs/39-shell-refresh-spec.md` 与视觉
 参考 `docs/assets/39/shell-mockup.html` 都在这个 worktree 里。面板的 npm 家在 `crates/swiss-panel/panel`，
 `node_modules` 不进 git——第一件事在那里 `npm ci`，否则 `npm run check` 报 `'tsc' is not recognized`。
 

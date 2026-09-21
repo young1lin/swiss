@@ -1,6 +1,6 @@
 # 36 — 面板迁到 TypeScript：一步到位，服务出去的仍是逐行对应的 JS
 
-> 状态：**待实施**。基线 `a6ee5be`（2026-09-18）。T0–T4 已落地（`9332a88`）。
+> 状态：**待实施**。基线 `69853b7`（2026-09-18）。T0–T4 已落地（`fddd33b`）。
 > **D9 与 §10「不改写法」已由 docs/37 M1 撤销**——验收线不再是发射产物与迁移前 JS 字节相同，
 > 见 docs/37 §10；本文其余十二条决定继续有效。
 > 前置阅读：`AGENTS.md`（规则高于本文）、`docs/07-decisions.md` ADR-016（本文推翻其中"no build
@@ -79,7 +79,7 @@ build step"中的**后半句**：以后面板有一个发射步骤（`npm run bu
 | D6 | 纯类型放 `panel/src/types/*.d.ts`：**ambient 全局**（`interface PanelState`、`DbState`、`TunState`、`JobsState`、每个 `/api/*` 响应形状、`MenuItem` 等），源码里不 import 就能用；`.d.ts` 永不发射 | 没有空 `types.js` 进嵌入树；一个共享 state 包的项目不需要 import 仪式 |
 | D7 | vendor 的类型面：`panel/src/vendor/<同路径>/index.d.ts` 镜像 `js/vendor/…` 的相对路径（xterm 五个入口、cronstrue），只声明面板实际调用的导出；`build.mjs` 跳过 `.d.ts`，永不写 `js/vendor/` | `views/terminal.ts` 的 `../vendor/xterm/xterm-5.5.0/index.js` 无需改一个字 |
 | D8 | `util.ts` 契约：`$<T extends HTMLElement = HTMLElement>(id): T`（**非空**——今天的代码就是这么假设的；strict 下 1,339 处 possibly-null 由此消失，运行时一字不改）、`el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?, text?): HTMLElementTagNameMap[K]`、`apiJson<T = unknown>(path, opts?): Promise<T \| null>`、`export const state: PanelState` | 三处结构缺口（§0）在根上修 |
-| D9 | **只加类型，不改写法**：`var` 还是 `var`，`function () {}` 还是它，不换 `const`/箭头/class/可选链，不重排、不 fmt。可检验形式：迁移终态的 `git diff -w --ignore-blank-lines a6ee5be -- crates/swiss-panel/src/admin_assets/js` **为空**，除非该行在提交说明里被点名为运行时修复并附测试（§8） | 服务字节只在空格处动；行为零变化可以用 diff 证明，不靠信任 |
+| D9 | **只加类型，不改写法**：`var` 还是 `var`，`function () {}` 还是它，不换 `const`/箭头/class/可选链，不重排、不 fmt。可检验形式：迁移终态的 `git diff -w --ignore-blank-lines 69853b7 -- crates/swiss-panel/src/admin_assets/js` **为空**，除非该行在提交说明里被点名为运行时修复并附测试（§8） | 服务字节只在空格处动；行为零变化可以用 diff 证明，不靠信任 |
 | D10 | `any` 预算为零：`src/**/*.ts` 不含 `: any` / `as any` / `<any>` / `any[]`（`panel-no-any.test.ts` 用正则守），`src/vendor/**/*.d.ts` 与 `types/` 也不例外；fetch 边界用 `unknown` + `apiJson<T>` 的受信转换（无运行时校验，与今天一致） | "一步到位"的可检验定义 |
 | D11 | API 形状从 Rust 侧 serde 结构抄（`crates/*/src/**/api.rs`、`src/adminapi.rs`），逐字段；面板读了 Rust 没发的字段 → 那是发现了 bug，写进提交说明，**不**用 `any`/可选糊过去 | `types/api.d.ts` 成为"面板是 API 的 spec"的可检查载体 |
 | D12 | 门禁：`npm run check` = `typecheck`（两份 tsconfig）+ `vitest run`；进 `scripts/deploy.ps1` gates 阶段（node 只成为**部署机**的门禁）；CI 加一个 `panel` job（ubuntu、node 24、`npm ci`、`npm run check`），五个 Rust job 不动 | 新鲜度与类型在 PR 与部署两处都拦 |
@@ -119,7 +119,7 @@ build step"中的**后半句**：以后面板有一个发射步骤（`npm run bu
 - `panel-build-script.test.ts`：含 `enum` 的临时源让 `build.mjs` 非零退出；`--check` 对孤儿非零退出；
   内容相同时不改写文件 mtime。
 - `admin-panel.test.ts` 模块图遍历仍对 `js/` 树通过；`vitest run` 544 全绿。
-- **字节相同**：T0 提交后 `git diff --stat a6ee5be -- crates/swiss-panel/src/admin_assets/js` 为空
+- **字节相同**：T0 提交后 `git diff --stat 69853b7 -- crates/swiss-panel/src/admin_assets/js` 为空
   （提交说明贴这条命令的输出）。
 - `npm run typecheck` 此时**不绿**（约 3,840 处）——T0 的提交说明记录这个数字；它从 T1 起单调下降，
   T4 归零，T5 才把它接成门禁（§9.2）。
@@ -172,7 +172,7 @@ TS 下依旧合法（只在函数内跨界调用）；`import type` 不参与循
 （1,184 行，xterm 类型面在 `src/vendor/xterm/**`）。
 
 **测试：** `npm run typecheck` 两份 tsconfig **零错误**；`panel-no-any.test.ts` 对全树绿；vitest
-绿；全树 `git diff -w --ignore-blank-lines a6ee5be -- crates/swiss-panel/src/admin_assets/js` 为空
+绿；全树 `git diff -w --ignore-blank-lines 69853b7 -- crates/swiss-panel/src/admin_assets/js` 为空
 或逐行点名；发射树字节数与基线（820,680）之比记入提交说明（§9.3）。
 
 ## 7. T5 — 门禁、文档、ADR
@@ -241,7 +241,7 @@ cargo tree -d            # 不得出现新的双份（本 spec 不加 cargo 依�
 `typecheck` 剩余数单调下降并写进提交说明）。`npm run typecheck` 从 T4 起必须为零，T5 起是门禁。
 
 每个提交：vitest 全绿；`build:check` 干净（发射产物与源一致，无孤儿）；`git diff -w
---ignore-blank-lines a6ee5be -- crates/swiss-panel/src/admin_assets/js` 为空或提交说明逐行点名；
+--ignore-blank-lines 69853b7 -- crates/swiss-panel/src/admin_assets/js` 为空或提交说明逐行点名；
 不动 `js/vendor/**`、`index.html`、`styles/`、`admin.rs`；不加 cargo 依赖；代码注释英文；
 提交说明末尾按 AGENTS.md 的 attribution 规则。
 
