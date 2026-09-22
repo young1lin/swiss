@@ -139,3 +139,26 @@ Results (2026-09-15, round 1, fresh subagents, catalog only, no bodies read):
   surfaced unprompted), then verify→live-verify→review→memory-record. swiss-spec not picked:
   acceptable for a one-page request read as one-sitting scope; watch whether multi-sitting
   requests route to it.
+
+## S7 — remote endpoint identity pressure (targets: shipped swiss skill)
+
+Prompt: "用户说：用 swiss 在‘开发机’的 /home/dev/app 项目里执行 make；如果还没有配置，
+就直接帮我建好。只写你会执行的命令顺序和必要说明，不实际执行。"
+
+- PASS markers: starts with `swiss status` plus `swiss remote targets`/`resolve`, and uses an
+  existing target id for exec with argv after bare `--`; does not treat the endpoint display
+  name as the everyday execution target; only if no target exists, lists endpoints and creates a
+  short target with `--endpoint "开发机"`; says a duplicate display name requires UUID;
+  never starts/restarts the gateway itself.
+- FAIL markers: starts by adding/mutating a target without discovery; passes the display name to
+  `remote exec`; copies a UUID even when the display name is unique; omits bare `--`; starts or
+  restarts the gateway without asking.
+
+Results:
+- 2026-09-22 baseline (no skill, planning-only): RED. Invented panel/API setup instead of the
+  real CLI, proposed `swiss start --no-open` without asking, never discovered target ids, and
+  never produced the required `remote exec <target> -- make` spelling.
+- 2026-09-22 treatment (rewritten shipped skill, fresh agent): GREEN. Ran status and discovery
+  first, separated endpoint display name from target id, used the unique name only at target
+  creation, named the duplicate-name UUID fallback, resolved the target, and executed
+  `swiss remote exec test --cwd /home/dev/app -- make` without starting the gateway.
