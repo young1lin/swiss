@@ -77,15 +77,15 @@ WSL2 NAT 模式默认 `localhostForwarding=true`，WSL 里绑定在 `127.0.0.1` 
 docker pull mysql:8.4
 docker pull postgres:17
 docker pull redis:7
-docker pull testcontainers/ryuk:0.11.0     # testcontainers 的收尸容器；版本以 crate 当时的为准
 ```
 
 ## 4. 已知的坑
 
 - **WSL 没在跑，dockerd 就没在跑。** 开机后第一次跑集成测试前 `wsl -d <distro> --exec true`
   拉起发行版即可；测试底座在连不上 `DOCKER_HOST` 时会把这一句打在失败信息里。
-- **ryuk 要挂 docker socket。** 它在 WSL 里跑，挂的是 `/var/run/docker.sock`，与 Windows 侧用 TCP
-  无关；不要设 `TESTCONTAINERS_RYUK_DISABLED`，否则中断的测试会留下僵尸容器。
+- **容器收尸不靠 ryuk。** testcontainers-rs 0.27 没有 ryuk 容器；本仓库自带看门狗
+  （`it-reaper` 子进程：stdin 收容器 id，父进程一死就逐个 DELETE）加 atexit 钩子双保险。
+  被 taskkill / 断电连坐杀掉的进程由下一次启动的“超过 1 小时的 owned 容器”超时 prune 兜底。
 - **端口是随机的。** 容器端口由 Docker 分配，测试从 API 读，不要在任何地方写死 3306/5432/6379；
   本机 19999 上真实的 mysql/redis 连接与之无关。
 - **`DOCKER_HOST` 是用户级变量。** 由 Windows 服务或计划任务启动的进程看不到它——19999 的

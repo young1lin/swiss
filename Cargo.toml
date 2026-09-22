@@ -9,6 +9,10 @@ members = [
     "crates/swiss-terminal",
     "crates/swiss-panel",
     "crates/swiss-remote",
+    # The dev-only integration harness (docs/44): nothing depends on it, and every
+    # dependency hides behind its `it` feature, so gate 1 builds it as three empty
+    # targets and a machine without Docker sees no difference at all.
+    "crates/swiss-it",
 ]
 resolver = "2"
 

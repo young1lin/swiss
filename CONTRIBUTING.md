@@ -20,12 +20,18 @@ Every change passes all three before it is proposed:
 
 ```
 cargo test --workspace
+cargo test -p swiss-it --features it   # real-database changes; needs Docker (docs/44)
 cargo clippy --workspace --all-targets -- -D warnings
 cd crates/swiss-panel/panel && npm ci && npm run check   # panel changes
 ```
 
 `--workspace` is load-bearing: without it cargo builds the root package alone, runs a small
 minority of the suite and still reports ok.
+
+The second `cargo test` is gate 2 (docs/44): it starts real MySQL, PostgreSQL and Redis
+through Docker (`DOCKER_HOST`) or the `SWISS_IT_*_URL` overrides, and a diff touching the
+database adapters, browsers or `crates/swiss-it` itself is not done without it. A machine
+without Docker runs the other gates and says so in the PR.
 
 ## Rules that are not negotiable
 

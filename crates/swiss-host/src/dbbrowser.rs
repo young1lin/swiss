@@ -1380,7 +1380,17 @@ pub fn finite_f64(v: f64) -> Value {
 fn typed_ph(dialect: DbDialect, params: &[Value], data_type: Option<&str>) -> String {
     let base = ph(dialect, params);
     if dialect != DbDialect::Pg {
-        return base;
+        // MySQL coerces string binds against the column itself - except JSON: a string
+        // bound next to a JSON column compares as TEXT (server-verified on 8.4: zero
+        // matches), so filters and keyless row addresses over a JSON column never hit.
+        // CASTing the placeholder restores the comparison. Found live by the docs/44
+        // L1 suite; only the comparison placeholder changes, never the SET clause.
+        let json_compare = data_type.is_some_and(|t| t.eq_ignore_ascii_case("json"));
+        return if json_compare {
+            format!("CAST({base} AS JSON)")
+        } else {
+            base
+        };
     }
     match castable_data_type(data_type) {
         Some(t) => format!("CAST({base} AS {t})"),
