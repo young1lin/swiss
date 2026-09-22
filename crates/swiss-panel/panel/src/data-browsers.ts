@@ -330,6 +330,8 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   if (v.type === "string") { dbRedisStringEditor(wrap, v); return; }
   if (v.type === "stream") { dbRenderStream(wrap, v); return; } // docs/45 S2: the stream window view
   // Module types stay read-only — their commands have no field grid (docs/22 W3.3).
+  // A stream key never reaches this line: it dispatches above into its own window view
+  // (docs/45), which is read-only too — browsing a stream never mutates it.
   const pre = el("pre", "db-ddl");
   pre.style.position = "static";
   pre.style.margin = "var(--s2)";

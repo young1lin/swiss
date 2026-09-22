@@ -162,7 +162,9 @@ docs/21 用五个成熟参照逐条核对了 swiss Data 模块,35 条差距定�
 
 ### W3.3 Redis 结构化编辑
 
-> stream 键的完整浏览（最新优先窗口、Follow、消费组只读）不在本文范围——由 docs/45 实现并验收。
+> 增补（2026-09-22，docs/45）：stream 键不再落到本节的兜底只读 `<pre>`——它有自己的窗口视图
+> （最新优先 100 条、游标翻页、Follow 环形缓冲、消费组只读表），由 docs/45 实现并验收，**仍然只读**；
+> 本节类型化编辑的范围维持 hash / zset / list / set。
 参照:dbgate `packages/datalib/src/ChangeSetRedis.ts:67-202` + `packages/web/src/tabs/RedisKeyDetailTab.svelte:372-413`。
 改动:值视图升级为类型化表格(hash:field/value;zset:member/score;list:index/value;set:member),缓冲编辑(插入/改值/删除)→ 命令列表预览(HSET/HDEL/ZADD/ZREM/LSET/RPUSH/SADD/SREM;复用待提交 SQL 预览的展示词汇)→ Commit 走新增 `POST /api/db/{name}/redis-pipeline`(数组命令一次往返,逐条仍过守卫);string 直接编辑(SET);TTL 行内改(EXPIRE)。hash per-field TTL(HEXPIRE,Redis 7.4+)明确不做。
 验收:Rust:pipeline 端点守卫单测(拒绝名单照拦);19998:hash 加字段→预览 HSET→Commit 重读生效;zset 改分;string 改值;预览与实际执行逐字一致。

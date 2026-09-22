@@ -69,8 +69,11 @@ export function streamMerge(rows                    , page                    ) 
 const STREAM_ROW_CAP = 500;
 
 /** The rate readout's number: entries per second over the sample window, one decimal.
- *  Pure; junk (no elapsed time) reads as "" so a reset baseline paints nothing rather
- *  than a fabricated spike or a negative rate. */
+ *  Pure; junk (no elapsed time, a clock that went backwards, a length that never arrived)
+ *  reads as "" so a reset baseline paints nothing rather than a fabricated spike.
+ *  A REAL shrink, though, reads as a real negative number (docs/45 §2.3): XTRIM or XDEL
+ *  between two ticks is exactly the event an operator watching a feed wants to see, and
+ *  clamping it to 0 would hide "where did my entries go" behind a calm zero. */
 export function streamRateText(dLen        , dtMs        )         {
   if (!(dtMs > 0) || !isFinite(dtMs) || !isFinite(dLen)) return "";
   return String(Math.round((dLen / (dtMs / 1000)) * 10) / 10);
