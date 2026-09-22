@@ -4324,10 +4324,14 @@ dependencies = [
 name = "swiss-it"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "futures-util",
  "redis",
+ "reqwest",
+ "rmcp",
  "serde_json",
  "sqlx",
+ "swiss",
  "swiss-host",
  "swiss-mcp",
  "testcontainers",

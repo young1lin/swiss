@@ -263,7 +263,7 @@ async fn fresh_postgres(tag: &str) -> Fresh {
         kind: Kind::Postgres,
         name: name.clone(),
         def: json!({
-            "type": "postgres",
+            "type": "pg",
             "url": format!(
                 "postgres://{DEF_USER}:{DEF_PASSWORD}@{}:{}/{}",
                 e.host, e.port, name

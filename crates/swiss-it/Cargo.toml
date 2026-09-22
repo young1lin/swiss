@@ -25,6 +25,10 @@ it = [
     "dep:serde_json",
     "dep:swiss-host",
     "dep:swiss-mcp",
+    "dep:swiss",
+    "dep:rmcp",
+    "dep:axum",
+    "dep:reqwest",
 ]
 
 [dependencies]
@@ -73,6 +77,29 @@ swiss-host = { path = "../swiss-host", version = "0.1.0", optional = true }
 # through the root package - same versions, no new code units.
 swiss-mcp = { path = "../swiss-mcp", version = "0.1.0", features = [
     "test-utils",
+], optional = true }
+# The gateway itself (L2, docs/44 SS2.6): build_app + AppContext for Gateway::boot,
+# which serves a REAL listener on 127.0.0.1:0 - an rmcp client needs a URL, so
+# tower oneshot cannot stand in. The root package never depends on this crate, so
+# the shipping graph is untouched; this edge lives in the dev graph only.
+swiss = { path = "../..", version = "0.1.0", optional = true }
+# The real client the L2 suites speak: rmcp over streamable HTTP, the same protocol
+# version and the same reqwest 0.13 the gateway's own adapters carry - the feature
+# union keeps one copy of each crate in the dev graph.
+rmcp = { version = "3.2", default-features = false, features = [
+    "client",
+    "transport-streamable-http-client-reqwest",
+], optional = true }
+# Gateway::boot serves the built router (axum::serve) and the tests drive the admin
+# API over real HTTP (reqwest) - the same versions swiss-mcp already pulls.
+axum = { version = "0.8", default-features = false, features = [
+    "http1",
+    "json",
+    "query",
+    "tokio",
+], optional = true }
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
 ], optional = true }
 
 # The cleanup watchdog (docs/44 SS2.2): stdin = docker endpoint + container ids, EOF
