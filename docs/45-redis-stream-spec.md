@@ -215,8 +215,8 @@ JSON 墙的问题不是大小而是没有列。**为什么不虚拟滚动**：D1
   `data-activity.ts:181-186` 的自守规则）。回到 tab 时若 Follow 仍开着，先补一次追新再恢复定时器。
 - **速率**：头部显示 `entries/s`——`streamRateText(dLen, dtMs)`（纯函数，vitest 4 例），来自两次 tick 的
   `length` 差值，不是从 id 时间戳算（XTRIM 会让 id 时间戳失真，`length` 差值不会）。**负差如实显示负数**
-  （S4 决定）：两次 tick 之间 XTRIM/XDEL 让流变短是真信号——夹成 0 会把“我的条目去哪了”藏起来；
-  初稿 §2.5 那格写的“负差 → 0”以实现为准改掉，函数注释里也写了同一句。
+  （S4 决定）：两次 tick 之间 XTRIM/XDEL 让流变短是真信号——夹成 0 会把"我的条目去哪了"藏起来；
+  初稿 §2.5 那格写的"负差 → 0"以实现为准改掉，函数注释里也写了同一句。
 - **错误**：一次 tick 失败（连接断、键被删、类型变了）→ 停 Follow、头部显示原因、开关复位；不重试风暴。
 - **内存**：Follow 开着 60 s、每秒 50 条推送后，DOM 行数 ≤ 500、JS 堆增量 < 10 MB（§2.5 真浏览器走查里
   用 CDP `Performance.getMetrics` 的 `JSHeapUsedSize` 采两点）。
@@ -224,9 +224,16 @@ JSON 墙的问题不是大小而是没有列。**为什么不虚拟滚动**：D1
 ### 2.4 消费组（只读）
 
 头部"消费组"折叠开时，`GET /stream/groups?key=K`，表格：`group | consumers | pending | lag | last-delivered-id`。
-Follow 开着时每第 5 个 tick 顺带刷新一次（消费组变化慢，不值每秒一次）。`lag` 为 null（6.2 服务器）显示
+**折叠一打开就自己发这一条命令**（`dbStreamGroupsLoad`），关了再开再读一次；Follow 开着时另外
+每第 5 个 tick 顺带刷新一次（消费组变化慢，不值每秒一次），折叠关着则一条不发。`lag` 为 null（6.2 服务器）显示
 "—"。**为什么只读**（D4）：XACK / XCLAIM 改变的是别人的消费进度，是运维动作不是浏览动作，误点的代价
 （消息丢失）与本页"看"的定位不对等；要做也是另一张有确认对话的页。
+
+> 订正（2026-09-23，19997 现场走查）：初版只在 Follow 的第 5 拍取数，所以 Follow 没开时折叠永远是空的
+> ——对一个确实有 `feed` 组、pending 7 的流，面板说"没有消费者组"；空态在断言一件没有任何请求查过的事。
+> 修正：折叠自己发一条，并且区分两种空——`null`（答案还没回来）显示"正在读取消费者组…"，
+> `[]`（服务器说没有）才显示空态。之前每一条折叠的 vitest 用例都先手动填了 `redisStreamGroups`，
+> 这正是 837 条绿测试没能拦住它的原因；现在有三例从空状态出发。
 
 ### 2.5 测试矩阵（D7：每个功能点四层都有）
 
@@ -243,7 +250,7 @@ Follow 开着时每第 5 个 tick 顺带刷新一次（消费组变化慢，不�
 | 列并集 | `stream_columns_union_in_first_seen_order` | `read_stream_ragged_fields_union_columns_in_first_seen_order`（`stream:ragged`） | 新字段到达表头重画、旧单元格不动 | — |
 | 空 / 单条 | — | `read_stream_empty_and_single_entry_streams`（`stream:empty`、`stream:one`） | 空态渲染 | 打开 `stream:empty` |
 | 错误 | `stream_count_clamps_and_refuses`（非法 count）；`stream_opts_pick_one_direction`（before+after → Err）；`stream_trait_defaults_refuse_honestly`（trait 默认实现拒绝） | `read_stream_refuses_non_stream_keys_and_both_cursors`：hash 键 → 含 "is a hash"；不存在 → `none`；两个游标 → Err | tick 失败 → Follow 复位 + 原因 | 删掉键再看 |
-| 消费组 | `parse_xinfo_groups_tolerates_62_and_proxies`（RESP2 扁平 + RESP3 映射两种形状） | `stream_groups_reports_pending_and_lag`：`feed` pending 7、consumers 1、lag == 10000-7 | 折叠开/关、"—" 显示 | 打开看数字 |
+| 消费组 | `parse_xinfo_groups_tolerates_62_and_proxies`（RESP2 扁平 + RESP3 映射两种形状） | `stream_groups_reports_pending_and_lag`：`feed` pending 7、consumers 1、lag == 10000-7 | 折叠开/关、"—" 显示、标签带计数、第 5 拍才轮询；**打开即取数**三例（Follow 关着也有数、空答案才说空、重开再读） | 打开看数字，与手敲 XINFO GROUPS 逐字对（2026-09-23） |
 | 路由 | `stream_routes_validate_forward_and_stay_redis_only`（swiss-data `dbbrowser_api.rs`，StubRedis 上的参数校验与只走 redis）；host `dbbrowser.rs` 三例（上行）；审计不记 | L2：`gateway::stream_route_round_trips` 经 `/api/db/{name}/stream` 走真 redis（三种方向各一次） | — | — |
 | 内存 | — | — | — | Follow 60 s @ 50/s：DOM ≤ 500 行、`JSHeapUsedSize` 增量 < 10 MB（CDP 两点采样） |
 | 中文 | — | — | 新文案全部经 `tr()`，i18n 守卫过 | 第二遍走查切 `zh-CN`（docs/38） |
