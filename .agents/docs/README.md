@@ -1,9 +1,10 @@
 # swiss Project Functionality and Style Overview (multi-agent audit)
 
-> Delivery method: 6 parallel audit agents (A MCP / B Data / C Tunnels+Jobs / D Terminal+Process / E host core / F panel & style) + a main coordinating agent consolidating the draft, 10 documents in total.
+> Delivery method: 6 parallel audit agents (A MCP / B Data / C Tunnels+Jobs / D Terminal+Process / E host core / F panel & style) + a main coordinating agent consolidating the draft, 11 documents in total (remote.md joined later when the remote plugin shipped — agent slot R).
 > Audit target: the current workspace source code, a read-only audit; where source and this document conflict, the source wins. Every functionality point carries a source-code path (down to line numbers) as evidence in its sub-document.
 > Re-audited through commit `6b84f26` (2026-09-12) by three fresh agents: groups become ordinary (default renameable/deletable, first-slot sink, `groupsV2` marker — mcp.md/host.md/tests), Data table-list sorting + the `/api/db` picker following the sidebar visual order (data.md/tests), and panel group drag handles / menu moves / Data list sorting (panel.md/style-design.md).
 > Post-docs/20 refresh (2026-09-13, G1–G8): ONE group family `/api/groups/{scope}` (mcps/conns/rules/jobs/secrets/tokens; ADR-015) replaced every per-scope grouping route — the retired `PUT /api/order`, `PUT /api/groups`, `POST /api/groups/{name}/rename`, `PUT /api/mcps/{name}/group`, the `/api/tunnels/groups/*` set and `PUT /api/tunnels/order` are gone. Jobs/Secrets/Tokens gained groups (jobs ride the config row; secrets/tokens refuse the order verb); `/api/db` rows carry `group` and the Data dropdown folds optgroups; the panel renders every list through `js/groups.js` (fold state under `swiss.groups.<scope>`). mcp/tunnels/panel/host/data/jobs updated in place.
+> Refresh against the current tree (post docs/24–45): MCP clients moved under the `/mcp/` prefix (docs/24); Tunnels gained the SSH proxy/jump fields (docs/27) and the connection rows now carry `keyPath`; MCP def revisions landed (docs/28, `/api/mcpdefs/*` + the `/api/mcps/{name}/revisions` family); the **swiss-remote** plugin shipped (docs/34 + docs/41 — target table, exec/sync/pull, `swiss remote`/`swiss run`, five MCP tools under `/mcp/remote`, run output + audit); the Data console became single-statement-writable and gained `/api/db` streams (docs/22, docs/45); the Gateway group is three host-owned pages (plugins/secrets/system); all counts below recounted against the code.
 
 ## Project One-Liner
 
@@ -29,33 +30,36 @@ tunnels.json); for the workload where the Node build measured 113.8 MB RSS, the 
 ## Architecture (crate dependency edges are the architecture)
 
 ```
-swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-panel }  ←  swiss (assembly + CLI)
+swiss-core  ←  swiss-host  ←  { swiss-mcp, swiss-data, swiss-tunnels, swiss-jobs, swiss-terminal, swiss-remote, swiss-panel }  ←  swiss (assembly + CLI)
 ```
 
 - **swiss-core**: platform primitives (paths, logging, sealed envelopes, process tree/job objects/DPAPI/PTY), knows nothing about "gateways"; the only layer in the project allowed unsafe.
 - **swiss-host**: the mechanism every subsystem shares — the plugin host (descriptor/state machine/hot-plug), the Action/Run services, the process supervisor, the connection catalog, the shell capability bits, the secret vault, the config store, the loopback security boundary. Contains no business logic.
-- **The six subsystem crates** do not depend on each other (the former data→mcp edge was removed along with the connection catalog); the root `src/` is assembly only: `src/builtin.rs` is the composition table — "add a plugin = one factory + one register line", the host gains no match arm.
+- **The seven subsystem crates** do not depend on each other (the former data→mcp edge was removed along with the connection catalog); the root `src/` is assembly only: `src/builtin.rs` + `src/plugins/` are the composition table — "add a plugin = one factory + one register line", the host gains no match arm.
 - Registration order is the reverse of startup order: Process registers last, so it starts first (capabilities ahead of consumers); Tunnels ahead of MCP, which may ride on tunnels.
 - swiss-terminal deliberately ships zero axum and zero SSH: HTTP/WS live in the root crate (the axum layer only covers routes that already exist at mount time), SSH goes through the tunnels ShellRegistry capability bit.
+- swiss-remote links no SSH client either (docs/34): it holds the agent-facing vocabulary (targets, exec, sync, pull) and leases every network touch through the host's RemoteTransportRegistry, which the tunnels plugin serves — the same capability-seat shape as the shell.
 
 ## Plugin Inventory
 
 | Plugin id | Name | One-liner | Contributed pages (order) | Main code | Sub-document |
 | --- | --- | --- | --- | --- | --- |
-| mcp | MCP gateway | every MCP server hangs under /:name: echo / proc (lazy start + idle reaping) / http / rest (deliberately no ping) / direct / proxy adapters + in-process mysql/pg/redis drivers; call log, traffic ring, token management | Servers(10) Traffic(20) Token(30) | crates/swiss-mcp | [mcp.md](mcp.md) |
-| tunnels | Tunnels | SSH tunnels: 21 /api/tunnels* endpoints, forwarding rules, auto-reconnect, the 409+dependents destructive-action funnel, routing connections for MCP | Tunnels(30) | crates/swiss-tunnels | [tunnels.md](tunnels.md) |
-| data | Data | database browsing/queries (12 /api/db/* endpoints), leasing MCP's shared connection pools from the host connection catalog with request-scoped leases; zero config, zero disk writes, zero background tasks | Data(40) | crates/swiss-data | [data.md](data.md) |
+| mcp | MCP gateway | every MCP server hangs under /mcp/{name} (docs/24 — the prefix is the MCP plugin's domain): echo / proc (lazy start + idle reaping) / http / rest (deliberately no ping) / direct / proxy adapters + in-process mysql/pg/redis drivers + the builtin `remote` MCP (five tools, docs/34 R7); call log, traffic ring, token management, def revisions (docs/28) | Servers(10) Traffic(20) Token(30) | crates/swiss-mcp | [mcp.md](mcp.md) |
+| tunnels | Tunnels | SSH tunnels: 16 /api/tunnels* route paths (18 method+path entries), forwarding rules, auto-reconnect, HTTP/SOCKS5 proxy dialing and jump references (docs/27), the 409+dependents destructive-action funnel, routing connections for MCP; also the host's shell AND remote-transport provider | SSH Connections(30) Port Forwards(35) | crates/swiss-tunnels | [tunnels.md](tunnels.md) |
+| data | Data | database browsing/queries (20 /api/db/* routes, docs/22 + docs/43 + docs/45: databases catalog, streams, activity, completion, redis pipeline, DDL preview), leasing MCP's shared connection pools from the host connection catalog with request-scoped leases; zero config, zero disk writes, zero background tasks | Data(40) | crates/swiss-data | [data.md](data.md) |
 | jobs | Jobs | config-driven scheduled jobs (v2 schema), execution fully handed to the shared RunCoordinator (producer="jobs"), can target any registered Action | Jobs(50) | crates/swiss-jobs | [jobs.md](jobs.md) |
 | terminal | Terminal | web terminal: remote SSH + local PTY, xterm.js; tickets are single-use and burn within 10 s; recordings capture output only; the local shell is off by default | Terminal(70) | crates/swiss-terminal + src/plugins/terminal*.rs | [terminal.md](terminal.md) |
+| remote | Remote | agent-friendly remote execution (docs/34): a sealed target table (remote.json), exec/sync/pull/cat/write actions through the shared RunCoordinator, the /api/remote routes, the `swiss remote`/`swiss run` CLI, five MCP tools under /mcp/remote, and a durable run record with UTF-8 discipline and a seven-day audit window (docs/41) | Targets(75) Runs(76) | crates/swiss-remote + src/plugins/remote.rs + src/remote_cli.rs | [remote.md](remote.md) |
 | process | Process | a page-less capability plugin: process.exec / legacy-command actions through the shared process supervisor; registers last, so starts first | —(no pages) | swiss-host services + src/builtin.rs | [process.md](process.md) |
-| (host) | Host & CLI | the plugin-host state machine, loopback boundary, config/vault, CLI, daemon — the mechanism all plugins share | Plugins(1000), Secrets(1001) (a Gateway group synthesized by the frontend) | swiss-host / swiss-core / root src/ | [host.md](host.md) |
-| panel | Panel | the embedded admin panel itself: 45 own ES modules, two-level navigation, nine pages | —(it is the panel) | crates/swiss-panel | [panel.md](panel.md) |
+| (host) | Host & CLI | the plugin-host state machine, loopback boundary, config/vault, CLI, daemon — the mechanism all plugins share | Plugins(1000), Secrets(1001), System(1002) (host-owned pages synthesized by the panel, page-registry.ts:37-41) | swiss-host / swiss-core / root src/ | [host.md](host.md) |
+| panel | Panel | the embedded admin panel itself: 66 own ES modules (52 in panel/src + 14 view modules), rail + context-bar navigation, thirteen pages (ten plugin-contributed plus the host-owned trio) | —(it is the panel) | crates/swiss-panel | [panel.md](panel.md) |
 
-> Navigation detail: level 1 = plugin groups (the grouping pure function lives in page-core.js, group order = the smallest
-> page order in the group); a level-2 bar appears only in the MCP group (Servers | Traffic | Token). The Token page belongs
-> to the MCP group, but the /api/tokens route is owned by the host — credentials do not stop working when a plugin is
-> disabled. The docs/13 in-text snapshot is stale (it still says mcp contributes two pages and level 1 has seven tiles);
-> /api/plugins and builtin.rs are authoritative.
+> Navigation detail: level 1 = plugin groups (the grouping pure function lives in page-core.ts, group order = the smallest
+> page order in the group); a multi-page plugin lays its pages as underline tabs in the context bar — MCP (Servers | Traffic
+> | Token), Tunnels (SSH Connections | Port Forwards), Remote (Targets | Runs); single-page plugins draw only the title. The
+> Token page belongs to the MCP group, but the /api/tokens route is owned by the host — credentials do not stop working when
+> a plugin is disabled. The docs/13 in-text snapshot is stale (it still says mcp contributes two pages and level 1 has seven
+> tiles); /api/plugins, builtin.rs and src/plugins/ are authoritative.
 
 ## Unified Patterns (ten of them, isomorphic across the whole project)
 
@@ -122,11 +126,12 @@ The second batch's 7 agents deliver two executable things:
 | Document | Coverage | Audit agent |
 | --- | --- | --- |
 | [mcp.md](mcp.md) | MCP plugin: 27 functionality points, ~30 endpoints, 8 adapter classes | A |
-| [data.md](data.md) | Data plugin: 12 /api/db/* routes, the lease contract | B |
-| [tunnels.md](tunnels.md) / [jobs.md](jobs.md) | Tunnels (21 endpoints) / Jobs (v2 schema, the producer contract) | C |
+| [data.md](data.md) | Data plugin: 20 /api/db/* routes, the lease contract, the docs/45 stream view | B |
+| [tunnels.md](tunnels.md) / [jobs.md](jobs.md) | Tunnels (16 route paths; proxy/jump per docs/27) / Jobs (v2 schema, the producer contract) | C |
 | [terminal.md](terminal.md) / [process.md](process.md) | Terminal (tickets / four timers / recording) / Process (supervisor / RunCoordinator) | D |
+| [remote.md](remote.md) | Remote plugin (docs/34 + docs/41): targets, exec/sync/pull actions, CLI, run record, five MCP tools | R |
 | [host.md](host.md) | host mechanisms, core primitives, CLI, security boundary, secret vault | E |
-| [panel.md](panel.md) / [style-design.md](style-design.md) | the panel's 59-file inventory and exhaustive nine-page walkthrough / the overall style-design spec | F |
+| [panel.md](panel.md) / [style-design.md](style-design.md) | the panel's module inventory and page walkthrough / the overall style-design spec | F |
 | [fix-plan.md](fix-plan.md) | fix plan: 24 exceptions triaged (17 fixes + 10 won't-fixes, three batches) | FIX |
 | [tests/README.md](tests/README.md) | integration-test master plan: patterns / helpers / iron rules / boundaries | G |
 | [tests/mcp.md](tests/mcp.md) | MCP test matrix: 27 rows, 22 new tests (11 copyable code blocks) | H1 |
@@ -138,4 +143,6 @@ The second batch's 7 agents deliver two executable things:
 The original spec documents (design intent and decision records) live in the repo's `docs/` directory: 01 memory
 budget, 02 architecture, 03 dependency map, 04 porting checklist, 05 wire-format compatibility, 06 roadmap,
 07 decisions, 08 testing, 09 plugin architecture, 10–11 Jobs, 12 remaining work, 13 panel navigation, 14–15 terminal,
-16 operational hardening, 17–18 panel canvas and visual refresh, 19 secret vault.
+16 operational hardening, 17–18 panel canvas and visual refresh, 19 secret vault — and since this audit was written,
+among others: 20 groups, 22 data parity, 24 the /mcp/ prefix, 25 the ${...} envelope, 27 SSH proxy/jump, 28 def
+revisions, 34 agent remote execution, 38 panel i18n, 39 shell refresh, 42–43 Data tabs/catalog, 45 Redis streams.

@@ -50,10 +50,11 @@
 
 | Endpoint | Owner | Role in Jobs |
 | --- | --- | --- |
-| GET `/api/actions` | Host (services/api.rs:45) | Source of the advanced form's action dropdown and input schema (run.js's argFieldsHtml) |
-| POST `/api/runs` | Host (services/api.rs:46, 94-147) | The manual submit gate (owner="manual", a producer on equal footing with jobs); 202+runId returns immediately |
-| GET `/api/runs/{id}` (`?output=0`) | Host (services/api.rs:155-168) | Run now polls for a terminal state; the run view is flat (`{runId,state,ms,…}`) |
-| POST `/api/runs/{id}/cancel` | Host (services/api.rs:172-183) | Cancels and **waits** (returns only after the subtree is reaped and the read ends joined) |
+| GET `/api/actions` | Host (services/api.rs:46) | Source of the advanced form's action dropdown and input schema (run.js's argFieldsHtml) |
+| POST `/api/runs` | Host (services/api.rs:46, 111-176) | The manual submit gate (owner="manual", a producer on equal footing with jobs); 202+runId returns immediately |
+| GET `/api/runs/{id}` (`?output=0`) | Host (services/api.rs:184-197) | Run now polls for a terminal state; the run view is flat (`{runId,state,ms,…}`) |
+| GET `/api/runs/{id}/output` (`?after=&max=`) | Host (services/api.rs:230-258) | Live output cursor read (docs/34 §17): one bounded slice with `nextCursor`/`truncated`/`terminal`, followed by the Remote Runs page's live rows — Jobs' own history reads the runlog instead |
+| POST `/api/runs/{id}/cancel` | Host (services/api.rs:201-212) | Cancels and **waits** (returns only after the subtree is reaped and the read ends joined) |
 | GET/PUT `/api/plugins/jobs/config` | Host (host/api.rs:52) | The only CRUD surface for v2 definitions (no second endpoint set, docs/11 §7.2); PUT passes through `validate_jobs_config` (builtin.rs:433-440) |
 | POST `/api/plugins/jobs/enable\|disable` | Host (host/api.rs:50-51) | Lifecycle switches |
 | GET `/api/plugins` | Host | Page inventory/navigation/dependency decisions (docs/13) |

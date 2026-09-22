@@ -1,10 +1,10 @@
 # Fix Plan (disposition of audit exceptions)
 
-> Principle: deliberate asymmetries are not fixed (to prevent mistaken fixes); the panel side always detours through
-> the Node repo (`../local-mcp-gateway/src/admin`) — fix there, run vitest, then recopy the whole tree (this repo's
-> current recopy-the-panel command is the one in docs/13 §0:
-> `Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\swiss-panel\src\admin_assets`);
-> this repo does not touch a single byte of `crates/swiss-panel/src/admin_assets`; every fix must carry an acceptance criterion.
+> Principle: deliberate asymmetries are not fixed (to prevent mistaken fixes); the panel side is edited IN THIS REPO —
+> ADR-024 (docs/07, docs/36) moved the panel's source of truth to `crates/swiss-panel/panel/src/*.ts` (TypeScript,
+> ts-blank-space-erased line-for-line, the emit committed under `crates/swiss-panel/src/admin_assets/js`): fix there,
+> run `npm run check` in `crates/swiss-panel/panel/` (typecheck ×2 + eslint + emit-freshness + vitest), then `npm run build`
+> to emit the committed JS; `crates/swiss-panel/src/admin_assets` is never hand-edited; every fix must carry an acceptance criterion.
 >
 > **Three audit facts corrected by this item-by-item re-verification** (see the corresponding entries):
 > 1. mcp.md's claim that "the make_adapter main path still uses lenient resolve_def" is stale — the `make_adapter` at
@@ -17,11 +17,10 @@
 >    browser directory/file icons), folded into #14's V2 cleanup; body-text status characters (✓/✗/→/·) are typography,
 >    not icons, and are explicitly excluded.
 >
-> **Prior fact**: `../local-mcp-gateway` does **not exist** on this machine (glob verification came back empty). Every
-> Batch 3 item has this as a hard precondition: Batch 3 cannot run until the Node checkout is in place; the byte-guard
-> test `the_tree_is_byte_for_byte_the_node_builds` (crates/swiss-panel/src/admin.rs) likewise only takes effect when the
-> sibling is present, silently skipping when it is missing — that does not relax discipline, it only means the guard is
-> not currently running.
+> **Superseded precondition**: the Node checkout is no longer needed or consulted for panel work — ADR-024 moved the
+> panel's source into this repo (`crates/swiss-panel/panel/src`), and the byte-guard test
+> `the_tree_is_byte_for_byte_the_node_builds` no longer exists at all (ADR-025 retired byte-equality in favor of the
+> `npm run check` suite as the panel's gate). Batch 3 is no longer blocked on anything external.
 
 ## Overview Table
 
@@ -32,26 +31,26 @@
 | 3 | the pg_browser.rs module header says edit/CSV/DDL are "not available in this build"; the implementation is all there | crates/swiss-mcp/src/adapters/pg_browser.rs:1-5 (implementation 338-531) | this-repo comment | 1 |
 | 4 | the server-side `with_explain` copy has no production caller; its comment does not say "test anchoring + panel mirror only" | crates/swiss-host/src/dbbrowser.rs:1235-1256 (mirror data-sql.js:141-146; tests 2065-2070) | this-repo comment | 1 |
 | 5 | the docs/17 status line still says "to do" | docs/17-panel-design-canvas-spec.md:3 | docs document | 1 |
-| 6 | the docs/18 status line still says "to do" (V1-V7 have landed) | docs/18-panel-visual-refresh-spec.md:3 (43 "(docs/18 Vx)" markers inside the assets) | docs document | 1 |
+| 6 | the docs/18 status line still says "to do" (V1-V7 have landed) | docs/18-panel-visual-refresh-spec.md:3 | docs document | 1 — **done** (docs/18:3 now reads "已实施（V1–V7）") |
 | 7 | the docs/13 §1 current-state snapshot is stale (mcp two pages, seven level-1 tiles) | docs/13-panel-navigation-spec.md:31-52 | docs document | 1 |
 | 8 | the docs/09 state machine still draws WaitingDependency (the implementation is a requires/requiresMet projection) | docs/09-toolbox-plugin-architecture.md:111-126 (implementation descriptor.rs:78-95, engine.rs:478-485) | docs document | 1 |
 | 9 | the traffic.rs ring state is still a process-level OnceLock singleton (CallLog is already instantiated) | crates/swiss-mcp/src/traffic.rs:63-113 (cross-check calls.rs:98-117, app.rs:61-64) | this-repo code | 2 |
 | 10 | resolve_def lenient/strict coexist: the lenient chain is now dead code; comments and docs/19 lag | crates/swiss-host/src/config.rs:76-126 (production already goes all through checked) | this-repo code | 2 |
 | 11 | the terminal.rs comment references the unimplemented waitingDependency state | src/plugins/terminal.rs:137-139 | this-repo comment | 2 (pending #8's verdict) |
-| 12 | the data-view.js header says "default 500"; the code says pageSize 50, the server BROWSE_DEFAULT_PAGE=50 | Node: src/admin/js/data-view.js:11,36 (cross-check dbbrowser.rs:92-96) | Node panel side | 3 |
-| 13 | the util.js state.view comment lists only five views | Node: src/admin/js/util.js:35 | Node panel side | 3 |
-| 14 | V2 Unicode glyph leftovers: ⚙/⚿/✕/↩/↺/↑↓/▾/↑Up/📁/📄 | Node: views/terminal.js:531;data-grid.js:289,320,372;data-filters.js:147;run-history.js:18-23;data-view.js:261;data-structure.js:58;tunnel-sheets.js:94,100-101 | Node panel side | 3 |
-| 15 | V5 red-button-into-menu not covered: Tokens Revoke, Secrets Delete | Node: views/tokens.js:62;views/secrets.js:37 | Node panel side | 3 |
-| 16 | three renames, three interactions (prompt ×2, sheet ×1) | Node: detail.js:39-47;data-edit.js:23-28;add-sheet.js:52-69 | Node panel side | 3 |
-| 17 | two generations of localStorage key names coexist (mcp_gateway_* and swiss_*) | Node: util.js:1-4;data-view.js:18;views/terminal.js:44 | Node panel side | 3 (low priority) |
+| 12 | the data-view header comment says "default 500"; the code serves 50, the server BROWSE_DEFAULT_PAGE=50 | crates/swiss-panel/panel/src/data-view.ts:51,57 (cross-check dbbrowser.rs:218) | panel side (this repo) | 3 |
+| 13 | the util.js state.view comment lists only five views | superseded: the TS rewrite removed that comment (panel/src/util.ts has no state.view enumeration) | panel side (this repo) | 3 — **done by the rewrite** |
+| 14 | V2 Unicode glyph leftovers: ⚙/⚿/✕/↩/↺/↑↓/▾/↑Up/📁/📄 | crates/swiss-panel/panel/src: data-grid.ts:880,974,1019,1029;data-filters.ts:170;data-browsers.ts:359,469-480;run-history.ts:44;tunnel-sheets.ts:193,196 (+ the ↑↓/▾↑Up copies in locales/en.ts+zh.ts — copy, not icons) | panel side (this repo) | 3 |
+| 15 | V5 red-button-into-menu not covered: Tokens Revoke, Secrets Delete | crates/swiss-panel/panel/src/views/tokens.ts:346-349;views/secrets.ts:280-281 | panel side (this repo) | 3 — **done** (both already ride the ⋯ popupMenu with danger items) |
+| 16 | three renames, three interactions (prompt ×2, sheet ×1) | crates/swiss-panel/panel/src: detail.ts:68-72;data-edit.ts:74-77 (prompt);add-sheet.ts openGroupSheet (the sheet) | panel side (this repo) | 3 |
+| 17 | two generations of localStorage key names coexist (mcp_gateway_* and swiss_*) | crates/swiss-panel/panel/src: util.ts:24;data-view.ts:58;data-grid.ts:45;data-sql.ts:405 | panel side (this repo) | 3 (low priority) |
 | 18 | /api/tokens/{id}/secret can be read back in plaintext | src/adminapi.rs:428-444 | won't fix | — |
 | 19 | CLI open uses `cmd /c start` | src/cli.rs:687-711 | won't fix | — |
 | 20 | local terminal sessions have no cap | crates/swiss-terminal/src/terminal/session.rs:606-614 | won't fix | — |
 | 21 | process.legacy-command lenient refs coexist with process.exec strict | crates/swiss-host/src/services/actions.rs:9-16,193,269 | won't fix | — |
 | 22 | tunnels replicates JS Number() lenient coercion (+ the declared expect in new_id) | crates/swiss-tunnels/src/tunnel/types.rs:14-61,66-77 | won't fix | — |
-| 23 | with_explain keeps both copies (only #4's comment clarification) | dbbrowser.rs:1242 + data-sql.js:143-146 | won't fix | — |
+| 23 | with_explain keeps both copies (only #4's comment clarification) | dbbrowser.rs:2785 + panel/src/data-sql.ts:334 (dbWithExplain) | won't fix | — |
 | 24 | retention.maxHistoryBytes parsed/stored but not enforced across files | crates/swiss-jobs/src/jobs/runlog.rs:59-63 | won't fix | — |
-| 25 | jobs.js boot probe (a 404 hides the tab) | Node: views/jobs.js:14-17;js/jobs.js:31-32 | won't fix | — |
+| 25 | jobs.js boot probe (a 404 hides the tab) | Node-era paths; the panel source is now panel/src/views/jobs.ts | won't fix | — |
 | 26 | the sidebar mechanism is coupled to the MCP-list content | docs/13:347-352; js/sidebar.js | won't fix | — |
 | 27 | the other declared small exceptions (merged: wide routes / unsafe / copy / caching / ordering, 16 items) | see the item-by-item list at the end of the Won't-Fix List | won't fix | — |
 
@@ -77,8 +76,8 @@
 
 ### 1.4 Clarifying the server-side with_explain comment (#4, paired with won't-fix #23)
 
-- **Status**: the `with_explain` at `dbbrowser.rs:1242` is referenced on the Rust side only by its own tests (2065-2070); the EXPLAIN prefix is actually added by the panel client (data-sql.js:143-146 `dbWithExplain`, whose comment says "Mirrored here because the server helper is TypeScript" — in the swiss context the server is Rust, so that sentence too is a Node-era leftover). The two implementations agree semantically (idempotent, stripping a single trailing terminator), but the server copy never spells out "why it exists, who uses it".
-- **Fix**: change only the doc comment at dbbrowser.rs:1235-1241: state that this function is not on any production path — the console's plan view gets its prefix added by the panel; this function is the semantic spec and the test anchor, pinning the idempotency / terminator-stripping rules and keeping the two sides from drifting. No code change, no deletion (see #23's argument in the Won't-Fix List).
+- **Status**: the `with_explain` at `dbbrowser.rs:2785` is referenced on the Rust side only by its own tests (5263-5268); the EXPLAIN prefix is actually added by the panel client (data-sql.js:143-146 `dbWithExplain`, whose comment says "Mirrored here because the server helper is TypeScript" — in the swiss context the server is Rust, so that sentence too is a Node-era leftover). The two implementations agree semantically (idempotent, stripping a single trailing terminator), but the server copy never spells out "why it exists, who uses it".
+- **Fix**: change only the doc comment at dbbrowser.rs (above `with_explain`, now around :2770): state that this function is not on any production path — the console's plan view gets its prefix added by the panel; this function is the semantic spec and the test anchor, pinning the idempotency / terminator-stripping rules and keeping the two sides from drifting. No code change, no deletion (see #23's argument in the Won't-Fix List).
 - **Acceptance**: the comment contains "not on any production path" and a pointer to the data-sql.js mirror; the `with_explain_prefixes_once_and_strips_the_terminator` test keeps passing.
 
 ### 1.5 The docs/17 status line (#5)
@@ -87,11 +86,12 @@
 - **Fix**: change the status line to the truth: "the design canvas was not produced separately; the visual refresh was implemented directly per docs/18 §2 (V1-V7 landing evidence and leftovers: see the docs/18 status line and .agents/docs/fix-plan.md)". Do not fabricate canvas history.
 - **Acceptance**: docs/17 no longer carries a "to do" status line; the rest of the body is untouched.
 
-### 1.6 The docs/18 status line (#6)
+### 1.6 The docs/18 status line (#6) — DONE
 
-- **Status**: `docs/18:3` has status "to do"; meanwhile the asset tree carries 43 "(docs/18 Vx)" markers (index.html:2, base.css:10, views.css:9, views/plugins.js:4, polling.js:3, util.js:3, jobs.js:2, menu.js:2, tunnels.js:2, one each elsewhere), covering V1-V7 (sprite, token, left-stick, one primary + one ⋯, monochrome tags, dot-title, emptyHtml).
-- **Fix**: change the status line to "implemented" (with the completion-baseline commit, filled in by the executor); append one line of known-leftover pointers: the uncovered V2 glyph and V5 red-button points are governed by this file's Batch 3.
-- **Acceptance**: the docs/18 status line no longer says "to do"; the status-line description spot-checks against asset markers in 3 places (e.g. index.html:25 sprite, util.js emptyHtml, views.css line height).
+- **Evidence**: `docs/18:3` now reads "已实施（V1–V7，`b7131aa` 起）" — the status line no longer says "to do"; the original count of "(docs/18 Vx)" markers belongs to the retired hand-written-JS asset tree and is not re-verifiable after the TS rewrite.
+- ~~**Status**: `docs/18:3` has status "to do"; meanwhile the asset tree carries 43 "(docs/18 Vx)" markers (index.html:2, base.css:10, views.css:9, views/plugins.js:4, polling.js:3, util.js:3, jobs.js:2, menu.js:2, tunnels.js:2, one each elsewhere), covering V1-V7 (sprite, token, left-stick, one primary + one ⋯, monochrome tags, dot-title, emptyHtml).
+- ~~**Fix**: change the status line to "implemented" (with the completion-baseline commit, filled in by the executor); append one line of known-leftover pointers: the uncovered V2 glyph and V5 red-button points are governed by this file's Batch 3.
+- ~~**Acceptance**: the docs/18 status line no longer says "to do"~~ (met; the asset-marker spot-check targets belong to the retired JS tree — the TS rewrite's equivalents live under panel/src).
 
 ### 1.7 The docs/13 §1 current-state snapshot (#7)
 
@@ -136,59 +136,51 @@
 - **Acceptance tests**: `grep -n "waitingDependency" src/ crates/` zero hits (case-sensitive; page-registry.js's legacy string is panel-side, outside this repo's grep scope); `cargo test --workspace` green; the existing terminal factory test (the descriptor assertions inside builtin.rs) untouched.
 - **Risk and rollback**: a zero-risk comment change; single commit, revertible.
 
-## Batch 3: Panel side (Node repository)
+## Batch 3: Panel side (this repo, crates/swiss-panel/panel/src — ADR-024)
 
-> The uniform action for every entry: edit files under `../local-mcp-gateway/src/admin` → `npx vitest run` (the full suite, not just the changed files; the docs/13 §0 gate) → `Copy-Item -Recurse ..\local-mcp-gateway\src\admin crates\swiss-panel\src\admin_assets` full-tree copy → this repo's `cargo test --workspace` (the byte guard `the_tree_is_byte_for_byte_the_node_builds` compares automatically when the sibling is present) → live check on 19998 (scripts/test-instance.ps1; 19999 is production, do not touch). No Node checkout exists on this machine, so this whole batch is suspended until the checkout is in place. Editing admin_assets directly in this repo as a stopgap is forbidden.
+> The uniform action for every entry: edit the `.ts` files under `crates/swiss-panel/panel/src` → `npm run check` in `crates/swiss-panel/panel/` (typecheck ×2 + eslint + emit-freshness + the full vitest suite, not just the changed files) → `npm run build` there so the emit under `crates/swiss-panel/src/admin_assets/js` is committed fresh → this repo's `cargo test --workspace` + clippy (and `touch crates/swiss-panel/src/lib.rs` before a release rebuild — the rust_embed fingerprint trap) → live check on 19998 (scripts/test-instance.ps1; 19999 is production, do not touch). `admin_assets/js` is never hand-edited.
 
-### 3.1 The data-view.js header comment "default 500" (#12)
+### 3.1 The data-view header comment "default 500" (#12)
 
-- **Node file**: src/admin/js/data-view.js:11.
-- **What to change**: "(10/20/50/100/200/500, default 500)" → "default 50", consistent with the same file's :36 `pageSize: 50` and the server's `BROWSE_DEFAULT_PAGE = 50` (dbbrowser.rs:96). One comment line.
+- **File**: crates/swiss-panel/panel/src/data-view.ts:51 (module header; `DB_PAGE_SIZES` sits at :57).
+- **What to change**: "(10/20/50/100/200/500, default 500)" → "default 50", consistent with the served page default and the server's `BROWSE_DEFAULT_PAGE = 50` (dbbrowser.rs:218). One comment line.
 - **vitest cases**: no new case needed (pure comment); still run the full suite against accidents.
-- **Copy and byte guard**: after the full-tree copy, this repo's `grep -n "default 500" crates/swiss-panel/src/admin_assets/js/data-view.js` returning zero hits is the acceptance.
+- **Acceptance**: `grep -n "default 500" crates/swiss-panel/panel/src/data-view.ts` returns zero hits and the emitted js no longer carries it.
 
-### 3.2 The util.js state.view comment (#13)
+### 3.2 The util state.view comment (#13) — DONE BY THE TS REWRITE
 
-- **Node file**: src/admin/js/util.js:35.
-- **What to change**: the comment currently lists five views ("mcps" | "tunnels" | "traffic" | "data" | "jobs" — the toolbar switcher). Change it to a non-enumerating phrasing ("the active page id — see page-registry") — enumerations are doomed to go stale again; or list all nine pages (mcps/traffic/tokens/tunnels/data/jobs/terminal/plugins/secrets). The former is recommended.
-- **vitest cases**: none (pure comment).
-- **Acceptance**: after the copy, this repo's util.js:35 is no longer the five-view enumeration; adding pages later never needs this line touched again.
+- **Evidence**: `crates/swiss-panel/panel/src/util.ts` carries no `state.view` view enumeration at all — the rewrite (ADR-024) did not port the stale five-view comment, so the list no longer exists anywhere. Nothing left to fix.
 
 ### 3.3 V2 Unicode glyph cleanup (#14)
 
-- **Node files and point-by-point changes** (the sprite already has a 24x24 Lucide-style symbol mechanism, index.html:25-32, with `icon(id)` in util.js):
-  - views/terminal.js:531 `⚙` → `icon("i-gear")` (new symbol);
-  - data-grid.js:289 `⚿` (the PK column marker) → `icon("i-key")` (new), title keeps "primary key";
-  - data-grid.js:320 and data-filters.js:147 `✕` (remove filter / buffered row) → `icon("i-x")` (new);
-  - data-grid.js:372 `↩/✕` (undo delete / delete) → `icon("i-undo")`/`icon("i-x")`;
-  - run-history.js:18,21,23 `↺` (the Past runs control label) → `icon("i-history")` + the text "Past runs (n)"; the closed label's semantic comment updated in sync;
-  - data-view.js:261 `\u2191/\u2193` (table-list sort direction) → a CSS triangle like the header's `.db-sort`, or a flipped `icon("i-arrow-up")` (rotate, reusing one symbol);
-  - data-structure.js:58 `Table \u25be` → "Table" + `icon("i-chevron-down")`;
-  - tunnel-sheets.js:94 `↑ Up` → `icon("i-arrow-up")` + "Up"; :100-101 `📁/📄` → `icon("i-folder")`/`icon("i-file")` (new; found during verification, not named by the audit, same class folded in);
+- **Files and point-by-point changes** (all under `crates/swiss-panel/panel/src`; the sprite already has a 24x24 Lucide-style symbol mechanism with `iconNode(name)` from util.ts; the former terminal.js `⚙` is already gone):
+  - data-grid.ts:880 `⚿` (the PK column marker) → `iconNode("i-key")` (new), title keeps "primary key";
+  - `✕` at data-grid.ts:974,1019,1029, data-filters.ts:170, data-browsers.ts:359,469,480 (remove filter / buffered row / cell menus) → `iconNode("i-x")` (new);
+  - `↩` at data-grid.ts:1019,1029 and data-browsers.ts:359,469-480 (undo delete / undo) → `iconNode("i-undo")`;
+  - run-history.ts:44 `↺` (the Past runs control label) → `iconNode("i-history")` + the text "Past runs (n)";
+  - tunnel-sheets.ts:193,196 `↑ Up`/`📁`/`📄` → `iconNode("i-arrow-up")`+"Up", `iconNode("i-folder")`, `iconNode("i-file")`;
+  - the ↑/↓/▾ copies now live in the locale dictionaries (en.ts and zh.ts: `dataStream.pendingNew`, `dataStructure.table` "Table ▾", `terminal.nNewDown`, `tunnelSheets.text` "↑ Up") — they are visible copy, so any swap ships in BOTH locales in one change (docs/38);
   - **explicitly untouched**: the body-text typographic characters (…, —, ·, →, the ✓/✗ status letters, the ≠/≥/≤ filter-operator labels) are text, not icons; the header `.db-sort` is already CSS. To prevent over-fixing.
-- **vitest cases**: add assertions to the admin-panel/admin-pages suites: the rendered HTML of the buttons/labels above contains `<svg` (or `icon(` output) and none of the original glyph characters; plus one counter-case pinning "the filter-operator dropdown still outputs ≠/≥ text" (so that nobody "fixes" the typographic characters in passing).
-- **Acceptance**: after the copy, this repo's `grep -rn "⚙|⚿|✕|↩|↺|\u2191|\u2193|\u25be|📁|📄" crates/swiss-panel/src/admin_assets/js` (vendor excluded) returns zero hits; the byte guard passes; manual check of the Data grid and the terminal settings button on 19998.
+- **vitest cases**: add assertions to the admin-panel/admin-pages/admin-data-grid suites: the rendered HTML of the buttons/labels above contains `<svg` (or icon output) and none of the original glyph characters; plus one counter-case pinning "the filter-operator dropdown still outputs ≠/≥ text" (so that nobody "fixes" the typographic characters in passing).
+- **Acceptance**: `grep -rn "⚙|⚿|✕|↩|↺|📁|📄" crates/swiss-panel/panel/src` returns zero hits outside the locale dictionaries (those judged separately above); `npm run check` green; manual check of the Data grid on 19998.
 
-### 3.4 V5 red buttons into the ⋯ menu (#15)
+### 3.4 V5 red buttons into the ⋯ menu (#15) — DONE
 
-- **Node files**: views/tokens.js:62 (Revoke, an inline `btn danger` row), views/secrets.js:37 (Delete, same).
-- **What to change**: follow the existing pattern of the Jobs/Tunnels/MCP rows: keep Use/Rotate and Copy ref inline, move Revoke/Delete into the row-end ⋯ menu, keeping the red style and the confirm semantics (Tokens Revoke keeps its existing named-consequence confirmation; Secrets Delete keeps its own). Use the existing popupMenu component (menu.js); build nothing new.
-- **vitest cases**: the tokens row-render assertions no longer contain a direct `danger` button and do contain a Revoke item after opening ⋯; secrets likewise; the existing confirm-flow cases keep passing.
-- **Acceptance**: after the copy, the rowsHtml of the two views files in this repo has no inline `btn danger`; on 19998, manually clicking Revoke and going through the confirmation invalidates the token (the behavior where the traffic attribution switches at the same time is unchanged).
+- **Evidence**: crates/swiss-panel/panel/src/views/tokens.ts:346-349 opens `popupMenu(...)` with `{ label: tr("tokens.revoke"), danger: true, fn: revokeToken }`, and views/secrets.ts:280-281 does the same for `{ label: tr("secrets.delete"), danger: true, fn: removeSecret }` — both destructive verbs already ride the row-end ⋯ menu in the red style, using the shared menu.js component; the row menu is covered by panel/test/admin-row-menu.test.ts.
 
 ### 3.5 Unifying the rename interactions (#16)
 
-- **Node files**: detail.js:39-47 (renameMcp uses `prompt`), data-edit.js:23-28 (table Rename uses `prompt`), add-sheet.js:52-69 (openGroupSheet is already the sheet pattern).
+- **Files** (crates/swiss-panel/panel/src): detail.ts:68-72 (renameMcp uses `prompt`), data-edit.ts:74-77 (table Rename uses `prompt`), add-sheet.ts (openGroupSheet is already the sheet pattern — the sheet idiom to generalize).
 - **What to change**: generalize openGroupSheet into a general single-field sheet (title, default value, submit callback, inline error on validation failure — the table-name regex `/^[A-Za-z0-9_$]{1,64}$/ ` and the MCP-name validation stay inside submit); renameMcp and table Rename call it; the group-name path's behavior is unchanged. The browser prompt's ESC/empty-string early-exit semantics are carried by the sheet's Cancel.
 - **vitest cases**: three — after an MCP rename the sheet-submitted POST /rename payload is right; an illegal table name errors inside the sheet and sends nothing; the group-name rename path is regression-unchanged.
-- **Acceptance**: after the copy, this repo's `grep -n "prompt(" crates/swiss-panel/src/admin_assets/js` returns zero hits; the three renames share one surface; on 19998, manually test one MCP rename + one table rename.
+- **Acceptance**: `grep -n "prompt(" crates/swiss-panel/panel/src` returns zero CALL sites (the word appears in doc comments at add-sheet.ts:87/connect.ts:51 — comments don't count); the three renames share one surface; on 19998, manually test one MCP rename + one table rename.
 
 ### 3.6 localStorage key unification and migration (#17, low priority)
 
-- **Node files**: util.js:1-4 (`mcp_gateway_collapsed`/`mcp_gateway_tun_collapsed`/`mcp_gateway_token_id`/`swiss_theme`), data-view.js:18 (`mcp_gateway_db_sql_history`), views/terminal.js:44 (`swiss.terminal.fontSize`).
+- **Files** (crates/swiss-panel/panel/src): util.ts:24 (`mcp_gateway_token_id`; `swiss_theme` beside it is already new-style, and the old collapsed keys are gone), data-view.ts:58 (`mcp_gateway_db_sql_history`), data-grid.ts:45 (`mcp_gateway_db_grid_*` prefix), data-sql.ts:405 (`mcp_gateway_db_favorites`).
 - **What to change**: unify into the `swiss.*` namespace (e.g. `swiss.collapsed`, `swiss.tunCollapsed`, `swiss.tokenId`, `swiss.dbSqlHistory`); one-shot migration at the read sites: new key missing, old key present → read the old value, write the new key, delete the old one. Current values are confirmed to be small JSON/short strings, so the migration has no blast surface. If judged not worth it (purely panel-local preferences, near-zero loss), it can be downgraded to won't-fix — the executor decides at run time; the default is to do it.
 - **vitest cases**: a migration case — seed the old key, after the first read assert the new key has the value and the old key is deleted; the fresh-install path asserts only the new key is written.
-- **Acceptance**: after the copy, this repo's `grep -rn "mcp_gateway_" crates/swiss-panel/src/admin_assets/js` returns zero hits (unless an old-key constant is kept solely for migration reads); after one refresh on 19998, the old keys are gone in DevTools.
+- **Acceptance**: `grep -rn "mcp_gateway_" crates/swiss-panel/panel/src` returns zero hits (unless an old-key constant is kept solely for migration reads); after one refresh on 19998, the old keys are gone in DevTools.
 
 ## Won't-Fix List (item by item: why deliberate + provenance)
 
@@ -221,6 +213,6 @@
 
 1. **Batch 1 (#1-#8) → one or more small commits**. Gates: `cargo test --workspace` (comments live inside compilation units too, guarding against doc-comment breakage) + `cargo clippy --workspace --all-targets -- -D warnings`; docs changes self-checked with the grep acceptance items. No deployment action.
 2. **Batch 2 (#9→#10→#11, in order)**. #9 adds the isolation test first (red), then the struct, then pulls the statics; may be two commits; #10 and #11 one commit each (#11 after #8). Every commit runs: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`. `--workspace` is not optional (AGENTS.md: without it cargo selects the root package alone, the eight member crates are not even built, and the run still reports ok). When the change touches the runtime (#9), verify live on 19998 (scripts/test-instance.ps1 -Start; 19999 is the user's production — never stop, restart, or redeploy it); if memory numbers are to be claimed, measure live and record in docs/01 per the swiss-memory-record convention.
-3. **Batch 3 (#12-#17) → precondition: the ../local-mcp-gateway checkout in place** (currently missing, verified). Gates per docs/13 §0: Node-side `npx vitest run` in full; the full-tree copy (`Copy-Item -Recurse`); this repo's `cargo test --workspace` (including the byte guard) + clippy; live browser verification on 19998 of each item's manual check points. The copy commit and the Node-side commit are separate, the commit messages referencing each other's hashes.
+3. **Batch 3 (#12-#17) → in this repo, no external precondition** (ADR-024; the Node checkout is retired as the panel reference, docs/07). Gates: `npm run check` in full + `npm run build` in crates/swiss-panel/panel (emit committed fresh); this repo's `cargo test --workspace` + clippy; live browser verification on 19998 of each item's manual check points. One commit carries both the .ts change and the emitted js.
 4. **Every fix carries a test or a grep-able acceptance**; nothing moves on to the next item until acceptance passes; while Batch 3 is not in place, Batch 1/2's results stand on their own and merge independently, blocking each other in no way.
-5. **Discipline restated**: this repo does not edit `crates/swiss-panel/src/admin_assets`; no new agent presets; the new-features-on-by-default principle does not apply to this plan (it is all closure and alignment, no new switches); all new comments in English, stating the why.
+5. **Discipline restated**: `crates/swiss-panel/src/admin_assets` is never hand-edited (edit `crates/swiss-panel/panel/src` and emit — ADR-024); no new agent presets; the new-features-on-by-default principle does not apply to this plan (it is all closure and alignment, no new switches); all new comments in English, stating the why.
