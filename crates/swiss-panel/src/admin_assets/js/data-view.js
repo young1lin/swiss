@@ -16,7 +16,7 @@
 
                                                                                                                                                                   
                                                                               
-import { $, apiJson, dbReqGuard, el, iconNode, targetEl } from "./util.js";
+import { $, apiJson, dbReqGuard, el, iconNode, targetEl, typeTagNode } from "./util.js";
 import { fill, h } from "./h.js";
 import { currentPageCount } from "./page-registry.js";
 import { dbIsRedis, dbLoadKeys, dbRedisClick, dbRedisKeydown } from "./data-browsers.js";
@@ -599,7 +599,15 @@ function renderDbSide()       {
   const dot = el("span", "db-dot" + (cur && cur.state === "stopped" ? " off" : ""));
   row.appendChild(dot);
   row.appendChild(el("span", "db-row-name", cur ? cur.name : tr("dataView.pickConnection")));
-  if (cur) row.appendChild(el("span", "db-chip", cur.dialect));
+  // The dialect chip follows the MCP sidebar's launch-tag vocabulary (docs/29): a mapped
+  // dialect paints its brand glyph (the word rides the aria-label), anything outside the
+  // whitelist keeps the mono word chip - a mark and a word are different things, and the
+  // same tag should never be a mark in one sidebar and a word in the other.
+  if (cur) {
+    const chip = el("span", "db-chip");
+    fill(chip, typeTagNode(cur.dialect));
+    row.appendChild(chip);
+  }
   const chev = iconNode("chevron-down");
   chev.setAttribute("class", "ic db-row-chev");
   row.appendChild(chev);

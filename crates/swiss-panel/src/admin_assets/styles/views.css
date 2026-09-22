@@ -520,6 +520,13 @@
     .db-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
     .db-dot.off { background: var(--text-3); }
     .db-chip { flex: none; font-size: var(--f-caption); color: var(--text-3); border: 1px solid var(--sep); border-radius: var(--r-pill); padding: 0 5px; }
+    /* A dialect GLYPH carries no pill - the MCP sidebar's side-type vocabulary (docs/29):
+       a mark is quiet grey and brightens with the row; only a word (a dialect outside the
+       icon whitelist, e.g. sqlite) keeps the bordered chip above. Same tag, same shape in
+       both sidebars. */
+    .db-chip:has(.ic) { border: none; padding: 0; }
+    .db-conn-row:hover .db-chip:has(.ic) { color: var(--text-2); }
+    .db-chip .ic { display: block; width: 14px; height: 14px; }
     .db-row-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-row-chev, .db-row-ic { flex: none; color: var(--text-3); }
     .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s1); }
