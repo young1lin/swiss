@@ -14,21 +14,33 @@
  * limitations under the License.
  */
 
-//! The exit story for the containers engine.rs starts (docs/44 §2.2, adapted to what
-//! testcontainers-rs 0.28 actually ships - it has NO ryuk reaper, unlike its Java
-//! sibling; cleanup there is `ContainerAsync`'s Drop, which needs a live tokio runtime
-//! and therefore never runs for a value held in a static).
+//! The exit story for the containers engine.rs starts (docs/44 SS2.2). The locked
+//! testcontainers 0.27.3 has no ryuk reaper; cleanup there is `ContainerAsync`'s
+//! Drop, which needs a live tokio runtime and therefore never runs for a value held
+//! in a static.
 //!
-//! This module owns that hole: every started container id is registered together with
-//! the docker endpoint it lives behind, and an atexit hook force-removes them all with a
-//! raw, blocking HTTP DELETE over the endpoint's own transport - TCP, unix socket or
-//! Windows named pipe; no runtime exists at exit, so nothing async may be used here.
-//! Best-effort by design: a hard-killed process still leaks, which is what the startup
-//! prune in engine.rs is for.
+//! Two cleaners cover the exit paths, cheapest first:
+//!
+//! - **The atexit hook** removes every registered id with a raw blocking DELETE
+//!   (docker_raw). It fires on a normal green run - but a FAILED libtest run exits
+//!   through `std::process::exit(101)`, which on Windows is `ExitProcess` and skips
+//!   the CRT's atexit list entirely, so the hook alone leaks on exactly the runs a
+//!   developer repeats most.
+//! - **The it-reaper watchdog** covers every exit path, because it does not depend on
+//!   the parent running any code: a child process whose stdin is the parent's pipe,
+//!   spawned once on the first container. The OS closes the pipe on every exit -
+//!   normal, ExitProcess, killed, crashed - and the reaper then force-removes every
+//!   id it was fed. The duplicate DELETE from the atexit hook reads 404 and is fine.
+//!
+//! What neither survives is the reaper dying WITH the parent before EOF matters (a
+//! power cut, a tree kill that takes the breakaway child too); engine.rs's startup
+//! prune of hour-old leftovers owns that tail.
 
-use std::io::{Read, Write};
+use std::io::Write;
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{Mutex, Once};
-use std::time::Duration;
+
+use crate::docker_raw;
 
 /// One registered container: the docker endpoint to talk to and the id to remove.
 struct Lease {
@@ -38,9 +50,12 @@ struct Lease {
 
 static LEASES: Mutex<Vec<Lease>> = Mutex::new(Vec::new());
 static HOOK: Once = Once::new();
+/// The reaper's stdin, held for the life of the process: never dropped means the
+/// child never sees EOF while this process still runs, and sees it the moment it stops.
+static REAPER: Mutex<Option<ChildStdin>> = Mutex::new(None);
 
-/// Record a started container and arm the exit hook. The first caller arms it; later
-/// callers only append. Idempotent per process by construction.
+/// Record a started container, arm both cleaners, and feed the id to the reaper.
+/// Idempotent per process by construction.
 pub(crate) fn arm(endpoint: &str, id: &str) {
     LEASES
         .lock()
@@ -49,13 +64,25 @@ pub(crate) fn arm(endpoint: &str, id: &str) {
             endpoint: endpoint.to_string(),
             id: id.to_string(),
         });
-    HOOK.call_once(|| unsafe {
+    HOOK.call_once(|| {
+        // The watchdog first: its spawn must succeed BEFORE any container can be
+        // forgotten by a failed run. A missing binary degrades to atexit-only,
+        // loudly - never a panic in a harness.
+        *REAPER.lock().expect("the swiss-it reaper slot") = spawn_reaper(endpoint);
         // The CRT's atexit on both platforms this suite runs on; the hook must be a
         // plain extern "C" function and nothing may unwind across it.
-        if atexit(fire) != 0 {
+        if unsafe { atexit(fire) } != 0 {
             eprintln!("swiss-it: could not arm the container exit hook");
         }
     });
+    // Every arm feeds the live reaper (the first arm's spawn already consumed the
+    // endpoint line); a reaper-less process simply has nothing to feed.
+    let mut slot = REAPER.lock().expect("the swiss-it reaper slot");
+    if let Some(stdin) = slot.as_mut() {
+        if let Err(e) = writeln!(stdin, "{id}").and_then(|()| stdin.flush()) {
+            eprintln!("swiss-it: could not tell the reaper about container {id}: {e}");
+        }
+    }
 }
 
 extern "C" {
@@ -68,18 +95,19 @@ extern "C" fn fire() {
     let _ = std::panic::catch_unwind(remove_all);
 }
 
-/// Force-remove every registered container, one blocking call each.
+/// Force-remove every registered container, one blocking call each. The fast green
+/// path; the reaper repeats the same DELETEs moments later and reads 404s.
 fn remove_all() {
     let leases = std::mem::take(&mut *LEASES.lock().expect("the swiss-it lease list"));
     for lease in leases {
-        match raw_delete(&lease.endpoint, &lease.id) {
+        match docker_raw::raw_delete(&lease.endpoint, &lease.id) {
             Ok(()) => eprintln!(
                 "swiss-it: removed container {} at exit",
                 &lease.id[..lease.id.len().min(12)]
             ),
             Err(e) => eprintln!(
                 "swiss-it: could not remove container {} at exit: {e} (endpoint {}); \
-                 remove it by id once, the next run prunes it anyway",
+                 the reaper repeats the delete, and the next run prunes it anyway",
                 &lease.id[..lease.id.len().min(12)],
                 lease.endpoint
             ),
@@ -87,123 +115,87 @@ fn remove_all() {
     }
 }
 
-/// The exact bytes sent for one removal. Pure, so the wire format has a test.
-///
-/// Deliberately UNVERSIONED: a versioned /v1.xx path pins an API era, and daemons keep
-/// raising their minimum (docker 28 refuses v1.41 with a bare 400). Without a prefix
-/// dockerd serves its own current version - exactly what a best-effort exit hook wants.
-fn delete_request(id: &str) -> String {
-    format!(
-        "DELETE /containers/{id}?force=1&v=1 HTTP/1.1\r\nHost: docker\r\n\
-         Connection: close\r\nContent-Length: 0\r\n\r\n"
-    )
-}
-
-/// Accept 2xx, and 404 (already gone - a crashed run may have half-cleaned).
-fn status_is_fine(head: &[u8]) -> Result<(), String> {
-    let first = head.split(|&b| b == b'\n').next().unwrap_or(&[]);
-    let text = String::from_utf8_lossy(first).trim().to_string();
-    let code = text
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or("")
-        .parse::<u16>()
-        .unwrap_or(0);
-    if (200..300).contains(&code) || code == 404 {
-        Ok(())
+/// Where cargo puts a sibling binary from the same profile: the test harness runs as
+/// `target/<profile>/deps/it-<hash>[.exe]`, the bins build next to that profile's
+/// root. `CARGO_BIN_EXE_*` cannot be used here - it only exists in test targets, and
+/// this spawn lives in the lib.
+fn reaper_binary() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let profile_dir = exe.parent()?.parent()?;
+    let name = if cfg!(windows) {
+        "it-reaper.exe"
     } else {
-        Err(text)
-    }
+        "it-reaper"
+    };
+    let path = profile_dir.join(name);
+    path.is_file().then_some(path)
 }
 
-/// Read and Write over one transport, so the same speak() serves TCP, unix and pipe.
-trait ReadWrite: Read + Write {}
-impl<T: Read + Write> ReadWrite for T {}
-
-/// One blocking `DELETE /containers/{id}?force=1&v=1`, hand-rolled over whatever
-/// transport the endpoint names. Loopback docker endpoints speak plain HTTP/1.1; an
-/// https:// endpoint would need a TLS stack at exit and is refused with the id in the
-/// error so the leftover is findable.
-fn raw_delete(endpoint: &str, id: &str) -> Result<(), String> {
-    let request = delete_request(id);
-    let speak = |io: &mut dyn ReadWrite| -> Result<(), String> {
-        io.write_all(request.as_bytes()).map_err(|e| e.to_string())?;
-        // Reading to EOF: Connection: close makes dockerd hang up after the reply.
-        let mut all = Vec::new();
-        io.read_to_end(&mut all).map_err(|e| e.to_string())?;
-        status_is_fine(&all)
+/// Spawn the watchdog once. Best-effort at every step, each failure named: a missing
+/// binary (a harness built without the bin target), a refused spawn, a broken pipe -
+/// the atexit hook still owns the green path in all of those cases.
+fn spawn_reaper(endpoint: &str) -> Option<ChildStdin> {
+    let path = match reaper_binary() {
+        Some(p) => p,
+        None => {
+            eprintln!(
+                "swiss-it: no it-reaper binary beside the test binary; \
+                 cleanup falls back to the atexit hook, and a red run on Windows leaks \
+                 (docs/44-wsl-docker-setup.md SS4)"
+            );
+            return None;
+        }
     };
-    let Some((scheme, rest)) = endpoint.split_once("://") else {
-        return Err(format!("unparsable docker endpoint: {endpoint}"));
+    let mut cmd = Command::new(&path);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let spawned = {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const NEW_GROUP: u32 = 0x0000_0200;
+            const BREAKAWAY: u32 = 0x0100_0000;
+            // A new process group keeps Ctrl+C off the reaper. Breakaway goes further:
+            // a job that kills children on close (CI runners use them) must not take
+            // the reaper with the parent. A job that forbids breakaway refuses the
+            // flag at spawn, and the retry without it keeps the group - a tree kill
+            // then takes the reaper too, which the hour-old prune in engine.rs owns.
+            cmd.creation_flags(NEW_GROUP | BREAKAWAY);
+            match cmd.spawn() {
+                Ok(child) => Ok(child),
+                // Breakaway refused (a job without JOB_OBJECT_LIMIT_BREAKAWAY_OK):
+                // fall back to the group alone; a tree kill then takes the reaper
+                // with the parent, which the hour-old prune in engine.rs owns.
+                Err(_) => {
+                    cmd.creation_flags(NEW_GROUP);
+                    cmd.spawn()
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            cmd.spawn()
+        }
     };
-    match scheme {
-        "tcp" | "http" => {
-            let mut s =
-                std::net::TcpStream::connect(rest).map_err(|e| format!("connect {rest}: {e}"))?;
-            // Never wedge the exit of an already-green suite on a hung dockerd.
-            let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
-            let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
-            speak(&mut s)
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("swiss-it: could not spawn the it-reaper watchdog: {e}");
+            return None;
         }
-        "unix" => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::net::UnixStream;
-                let mut s = UnixStream::connect(rest).map_err(|e| e.to_string())?;
-                let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
-                let _ = s.set_write_timeout(Some(Duration::from_secs(5)));
-                speak(&mut s)
-            }
-            #[cfg(not(unix))]
-            {
-                Err(format!("unix-socket endpoint on a non-unix host: {endpoint}"))
-            }
-        }
-        "npipe" => {
-            #[cfg(windows)]
-            {
-                // npipe:////./pipe/docker_engine -> \\.\pipe\docker_engine
-                let path = rest.replace('/', "\\");
-                let mut f = std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(&path)
-                    .map_err(|e| format!("open {path}: {e}"))?;
-                speak(&mut f)
-            }
-            #[cfg(not(windows))]
-            {
-                Err(format!("named-pipe endpoint on a non-Windows host: {endpoint}"))
-            }
-        }
-        other => Err(format!(
-            "cannot clean up over {other}:// at exit (no TLS here); container {id} \
-             must be removed by id",
-        )),
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        eprintln!("swiss-it: the it-reaper has no stdin to inherit");
+        return None;
+    };
+    // Line one is the docker endpoint; the ids follow one per line.
+    if writeln!(stdin, "{endpoint}").and_then(|()| stdin.flush()).is_err() {
+        eprintln!("swiss-it: could not hand the endpoint to the it-reaper");
+        return None;
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_delete_request_is_well_formed_http() {
-        let r = delete_request("abc123");
-        assert!(
-            r.starts_with("DELETE /containers/abc123?force=1&v=1 HTTP/1.1\r\n"),
-            "{r}"
-        );
-        assert!(r.contains("Host: docker\r\n"), "{r}");
-        assert!(r.contains("Connection: close"), "{r}");
-        assert!(r.ends_with("\r\n\r\n"), "{r}");
-    }
-
-    #[test]
-    fn removal_accepts_success_and_already_gone() {
-        assert!(status_is_fine(b"HTTP/1.1 204 No Content\r\n").is_ok());
-        assert!(status_is_fine(b"HTTP/1.1 404 Not Found\r\n").is_ok());
-        assert!(status_is_fine(b"HTTP/1.1 500 boom\r\n").is_err());
-        assert!(status_is_fine(b"not http at all").is_err());
-    }
+    // The Child itself is dropped on purpose: its stdin lives on in REAPER, and EOF -
+    // not the handle - is the signal.
+    drop(child);
+    Some(stdin)
 }

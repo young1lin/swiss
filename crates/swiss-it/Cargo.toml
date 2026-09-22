@@ -74,3 +74,11 @@ swiss-host = { path = "../swiss-host", version = "0.1.0", optional = true }
 swiss-mcp = { path = "../swiss-mcp", version = "0.1.0", features = [
     "test-utils",
 ], optional = true }
+
+# The cleanup watchdog (docs/44 SS2.2): stdin = docker endpoint + container ids, EOF
+# = parent died, then one force-DELETE per id. Behind the same `it` feature as the
+# lib it links - a machine without Docker never builds it.
+[[bin]]
+name = "it-reaper"
+path = "src/bin/it-reaper.rs"
+required-features = ["it"]

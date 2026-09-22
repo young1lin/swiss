@@ -91,7 +91,7 @@ docs/05：密封格式一字不动；集成测试用 `sandbox()` 那套隔离 ho
 | D3 | "还原最新的数据库内容" = **仓库里提交一份 seed（schema + 数据）**，每条测试从它还原；不是真实库的 dump。seed 按踩过坑的形状设计 | §2.4 |
 | D4 | 三层：L1 三个 browser + resources + sql 打真库；L2 三个 MCP adapter 经真 rmcp client 走 `/mcp/<name>`；L3 proc 用仓库自带的 Rust MCP server。L4（整机 + `/api/*` golden capture）留下一期 | §2.5–2.7 |
 | D5 | 新 dev-only 成员 **`crates/swiss-it`**，测试挂 feature **`it`**（默认关）。两条门：`cargo test --workspace`（单元，任何机器）+ `cargo test -p swiss-it --features it`（集成，需要 Docker）。改到 §2.8 列出的文件必过第二条。CI 加 ubuntu `integration` job | §2.8、§3 I0/I7 |
-| D6 | 隔离模型：每个测试进程每引擎一个容器（懒起、ryuk 收尸）；**每条测试自己的数据库**（mysql `CREATE DATABASE it_<tag>_<hex8>` 灌 seed；pg 从 template 库 `CREATE DATABASE … TEMPLATE it_seed`；redis 独立 db 索引 + `FLUSHDB`），并行无共享 | §2.3 |
+| D6 | 隔离模型：每个测试进程每引擎一个容器（懒起、it-reaper 看门狗 + atexit 收尸）；**每条测试自己的数据库**（mysql `CREATE DATABASE it_<tag>_<hex8>` 灌 seed；pg 从 template 库 `CREATE DATABASE … TEMPLATE it_seed`；redis 独立 db 索引 + `FLUSHDB`），并行无共享 | §2.3 |
 | D7 | MariaDB 第一版不进矩阵，留 TODO | §5 |
 | D8 | 编号 docs/44，落在 **master**（基础设施，不绑 Data 页的合并） | 本文 |
 | D9 | 进 docs/07 一条 **ADR-028** | §6 |
@@ -130,8 +130,9 @@ dev-only，但仍要写清 feature 最小集与 `cargo tree -d` 的结果（§2.
 ```rust
 pub enum Kind { Mysql, Postgres, Redis }
 
-/// One engine per test process. The first test that needs it starts it; ryuk tears the
-/// container down when the process exits. Resolution order is fixed and printed on failure.
+/// One engine per test process. The first test that needs it starts it; the it-reaper
+/// watchdog child (plus the atexit hook on green) tears the container down when the
+/// process exits - on every exit path. Resolution order is fixed and printed on failure.
 pub async fn engine(kind: Kind) -> &'static Engine;
 
 pub struct Engine {
@@ -183,7 +184,8 @@ pub async fn fresh(kind: Kind, tag: &str) -> Fresh;     // tag = the test's own 
   归还时再 `FLUSHDB`。
 - 用户 `it`/`it`：mysql、pg 各建一个**非超级用户**给 def 用——L1/L2 打库时的权限面和真实部署一样；
   超级账号只有底座自己用（建库、数连接）。
-- `Drop`：best-effort `DROP DATABASE`；进程退出容器随 ryuk 消失，所以漏删不是泄漏。测试名进库名
+- `Drop`：best-effort `DROP DATABASE`；进程退出容器随 it-reaper 看门狗消失（被连坐杀掉的进程由
+  下次启动的超时 prune 兜底），所以漏删不是泄漏。测试名进库名
   是为了失败时 `docker exec` 进去看时能对上号。
 
 ### 2.4 seed：按踩过坑的形状设计（D3）

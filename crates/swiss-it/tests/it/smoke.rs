@@ -62,4 +62,13 @@ async fn redis_answers_ping() {
         .await
         .expect("PING answers");
     assert_eq!(pong, "PONG");
+
+    // The reaper acceptance test (reaper.rs) runs this one test in a child process
+    // with SWISS_IT_FORCE_RED=1 to prove a RED run still removes its containers:
+    // libtest's failure path is std::process::exit(101), which on Windows is
+    // ExitProcess and skips the CRT atexit hook entirely. Nothing else sets this
+    // variable and nothing else may - it exists for exactly that one test.
+    if std::env::var_os("SWISS_IT_FORCE_RED").is_some() {
+        panic!("SWISS_IT_FORCE_RED is set: the deliberate red for the reaper test");
+    }
 }
