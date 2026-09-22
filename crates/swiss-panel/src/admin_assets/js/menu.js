@@ -31,7 +31,7 @@ import { tr } from "./i18n.js";
    { label, fn, danger, sep, pick, on }. Keyboard (docs/13 D5): the menu is a real menu —
    first item focused on open, arrows walk the items, Escape closes — so a page switcher
    built on it needs no second menu idiom. */
-function popupMenu(anchor                                               , items            )       {
+function popupMenu(anchor                                                               , items            )       {
   closeMenu();
   const node = document.createElement("div");
   node.className = "menu float";
@@ -68,6 +68,12 @@ function popupMenu(anchor                                               , items 
     node.appendChild(b);
   });
   document.body.appendChild(node);
+  // A menu dropped from a row never sits narrower than the row itself (found live on
+  // 19998: the connection menu measured 160px against its 233px sidebar row - the CSS
+  // content floor won and the dropdown floated 73px short of the thing that opened it).
+  // The anchor's width joins the CSS floor through max(), so a small anchor (a toolbar
+  // overflow button) keeps the stylesheet's 160px unchanged.
+  if (anchor.width) node.style.minWidth = "max(160px, " + Math.ceil(anchor.width) + "px)";
   // Aligned to the button's LEFT edge and growing right, over the detail pane. Right-aligning it
   // instead pushed a sidebar menu back across the list it was opened from, hiding those rows.
   // The clamp itself is clampMenuPos — shared with the ctx menus (docs/22 closeout audit).
