@@ -942,6 +942,57 @@ async fn key(
     rb.read_key(&key).await.map_err(Fail::bad)
 }
 
+/// GET /api/db/{name}/stream — one newest-first window of one stream key (docs/45
+/// §2.1): the opening page by default, `before` pages strictly older (“load
+/// earlier”), `after` catches up strictly newer (the Follow tick). Query params
+/// become the option object and are validated by the host helper BEFORE the lease
+/// — a caller's mistake is reported as such and costs no socket, the house rule
+/// every browser route follows.
+async fn stream(
+    catalog: &CatalogRegistry,
+    name: &str,
+    q: &HashMap<String, String>,
+) -> Result<Value, Fail> {
+    let key = q_or_empty(q, "key");
+    if key.is_empty() {
+        return Err(Fail::bad("key is required"));
+    }
+    let o = stream_opts_of(q);
+    swiss_host::dbbrowser::redis_stream_opts(&o).map_err(Fail::bad)?;
+    let (_lease, rb) = lease_redis(catalog, name)?;
+    rb.read_stream(&key, &o).await.map_err(Fail::bad)
+}
+
+/// GET /api/db/{name}/stream/groups — the read-only consumer-group table of one
+/// stream key (docs/45 §2.4): name / consumers / pending / lag / last-delivered-id,
+/// nothing writable.
+async fn stream_groups(
+    catalog: &CatalogRegistry,
+    name: &str,
+    q: &HashMap<String, String>,
+) -> Result<Value, Fail> {
+    let key = q_or_empty(q, "key");
+    if key.is_empty() {
+        return Err(Fail::bad("key is required"));
+    }
+    let (_lease, rb) = lease_redis(catalog, name)?;
+    rb.stream_groups(&key).await.map_err(Fail::bad)
+}
+
+/// The query params that become read_stream's option object, shaped as the Value
+/// the trait consumes. Only non-empty values ride — an empty `after=` is the
+/// opening page, same as no param at all (the panel's URL builders leave blanks
+/// in).
+fn stream_opts_of(q: &HashMap<String, String>) -> Value {
+    let mut o = serde_json::Map::new();
+    for p in ["before", "after", "count"] {
+        if let Some(v) = q.get(p).map(|s| s.trim()).filter(|v| !v.is_empty()) {
+            o.insert(p.into(), json!(v));
+        }
+    }
+    Value::Object(o)
+}
+
 // --- the axum handlers ----------------------------------------------------------------------------
 
 async fn connections(
@@ -1058,6 +1109,22 @@ async fn redis_pipeline_route(
     reply(redis_pipeline(&catalog, &name, &body.0).await)
 }
 
+async fn stream_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    reply(stream(&catalog, &name, &q).await)
+}
+
+async fn stream_groups_route(
+    Extension(catalog): Extension<Arc<CatalogRegistry>>,
+    Path(name): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    reply(stream_groups(&catalog, &name, &q).await)
+}
+
 async fn key_route(
     Extension(catalog): Extension<Arc<CatalogRegistry>>,
     Path(name): Path<String>,
@@ -1134,6 +1201,10 @@ where
         // The console's completion (docs/22 W3.1) — server-side, on the leased connection.
         .route("/api/db/{name}/completion", post(completion_route))
         .route("/api/db/{name}/key", get(key_route))
+        // docs/45: the stream window (newest-first, cursor paging) and its read-only
+        // consumer groups — both GET, neither audited, like every other read here.
+        .route("/api/db/{name}/stream", get(stream_route))
+        .route("/api/db/{name}/stream/groups", get(stream_groups_route))
         .route("/api/db/{name}/ddl", post(ddl_route))
         // The W4.6 sheets' live preview: the statements /ddl would run for this (op, payload).
         .route("/api/db/{name}/ddl-preview", post(ddl_preview_route))
@@ -1182,6 +1253,10 @@ mod tests {
         activity_kill: Option<(i64, bool)>,
         /// The (sql, caret) the completion route forwarded (docs/22 W3.1).
         completion: Option<(String, usize)>,
+        /// The option object the stream route forwarded (docs/45 §2.5).
+        stream_opts: Option<Value>,
+        /// The key the stream groups route forwarded (docs/45 §2.5).
+        stream_groups_key: Option<String>,
     }
 
     type SeenRef = Arc<Mutex<Seen>>;
@@ -1553,6 +1628,33 @@ mod tests {
             }
             let replies: Vec<Value> = commands.iter().map(|c| json!(c.len())).collect();
             Ok(json!({ "replies": replies }))
+        }
+        async fn read_stream(&self, key: &str, o: &Value) -> Result<Value, String> {
+            // The same host helper the real browser runs: the stub validates exactly
+            // what the real one validates, so the route's 400s are pinned here
+            // without a redis (docs/45 §2.5).
+            swiss_host::dbbrowser::redis_stream_opts(o)?;
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.stream_opts = Some(o.clone());
+            }
+            Ok(json!({
+                "key": key, "type": "stream", "length": 3,
+                "firstId": "1-1", "lastId": "3-3",
+                "entries": [
+                    { "id": "3-3", "ts": "2023-11-14T22:13:20.300Z", "fields": { "f": "c" } },
+                    { "id": "2-2", "ts": "2023-11-14T22:13:20.200Z", "fields": { "f": "b" } },
+                    { "id": "1-1", "ts": "2023-11-14T22:13:20.100Z", "fields": { "f": "a" } },
+                ],
+                "columns": ["f"], "more": false,
+            }))
+        }
+        async fn stream_groups(&self, key: &str) -> Result<Value, String> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.stream_groups_key = Some(key.to_string());
+            }
+            Ok(json!({ "key": key, "groups": [
+                { "name": "feed", "consumers": 1, "pending": 7, "lag": 2, "last-delivered-id": "1-1" },
+            ] }))
         }
         async fn list_databases(&self) -> Result<Value, String> {
             match &self.databases {
@@ -3009,6 +3111,96 @@ mod tests {
         assert_eq!(
             body.expect("json")["error"],
             "MCP 'cache' (redis) has no database to browse"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_routes_validate_forward_and_stay_redis_only() {
+        // docs/45 §2.5 route row: the five parameter cases, forwarding recorded, groups
+        // served, and the routes staying redis-only — a db connection 404s them with
+        // the same wording as every other redis route. Reads are never audited, so
+        // there is no log line to assert, only this route's silence in the code.
+        let app = router_of(vec![redis_entry("rdb")]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/rdb/stream", None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body.expect("json")["error"], "key is required");
+
+        let app = router_of(vec![redis_entry("rdb")]);
+        let (status, _, body, _) = call(
+            app,
+            "GET",
+            "/api/db/rdb/stream?key=s&before=1-0&after=2-0",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let err = body.expect("json")["error"].as_str().expect("text").to_string();
+        assert!(err.contains("opposite directions"), "{err}");
+
+        for bad in ["abc", "0"] {
+            let app = router_of(vec![redis_entry("rdb")]);
+            let (status, _, _, _) = call(
+                app,
+                "GET",
+                &format!("/api/db/rdb/stream?key=s&count={bad}"),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "count={bad}");
+        }
+
+        let seen = SeenRef::default();
+        let app = router_of(vec![redis_entry_with("rdb", seen.clone())]);
+        let (status, _, body, _) = call(
+            app,
+            "GET",
+            "/api/db/rdb/stream?key=stream:ticks&after=1700000999900-0&count=40",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let body = body.expect("json");
+        assert_eq!(body["type"], "stream");
+        assert_eq!(body["entries"].as_array().map(Vec::len), Some(3));
+        assert_eq!(body["columns"], json!(["f"]));
+        assert_eq!(body["more"], json!(false));
+        assert_eq!(
+            seen.lock().expect("seen").stream_opts.clone().expect("forwarded"),
+            json!({ "after": "1700000999900-0", "count": "40" })
+        );
+
+        let seen = SeenRef::default();
+        let app = router_of(vec![redis_entry_with("rdb", seen.clone())]);
+        let (status, _, body, _) = call(
+            app,
+            "GET",
+            "/api/db/rdb/stream/groups?key=stream:ticks",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let groups = body.expect("json")["groups"].clone();
+        assert_eq!(groups[0]["name"], json!("feed"));
+        assert_eq!(groups[0]["pending"], json!(7));
+        assert_eq!(
+            seen.lock().expect("seen").stream_groups_key.clone().expect("forwarded"),
+            "stream:ticks"
+        );
+
+        // SQL-only symmetry: a db connection 404s the stream routes rather than
+        // half-working.
+        let app = router_of(vec![db_entry(
+            "db",
+            Arc::new(StubDb {
+                seen: SeenRef::default(),
+                databases: None,
+            }),
+        )]);
+        let (status, _, body, _) = call(app, "GET", "/api/db/db/stream?key=s", None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body.expect("json")["error"],
+            "MCP 'db' (mysql) is not a redis connection"
         );
     }
 

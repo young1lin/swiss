@@ -26,6 +26,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
 use swiss_host::config::ServerDef;
+use swiss_host::dbbrowser::StreamBound;
 
 use super::direct::{def_bool, BoxFut, Lazy};
 use super::redis_resources::RedisResources;
@@ -346,6 +347,259 @@ fn stream_entries(reply: &[Value]) -> Vec<Value> {
             json!({ "id": id, "fields": Value::Object(fields) })
         })
         .collect()
+}
+
+// --- stream windows (docs/45) ----------------------------------------------------------------------
+
+/// A stream entry id is "<ms>-<seq>", and the ms half IS the entry's timestamp
+/// (docs/45 §2.1) — redis guarantees it at XADD time. None for anything that is not
+/// a plain id: the special ids ("$", "+", "-"), malformed strings, and a ms half
+/// that overflows i64 all mean “derive nothing”, because a wrong timestamp is worse
+/// than a blank one.
+pub fn stream_id_ms(id: &str) -> Option<i64> {
+    let (ms, _seq) = id.split_once('-')?;
+    ms.parse::<i64>().ok()
+}
+
+/// The id's ms half as ISO 8601 with millisecond precision and a Z (docs/45 §2.1),
+/// derived ONCE on the server because every consumer — panel now, agent later —
+/// would otherwise re-implement id parsing, and the panel never should: ids are
+/// redis's wire vocabulary, the timestamp is our display vocabulary, and the
+/// translation belongs where the data enters the process.
+pub fn stream_id_to_ts(id: &str) -> Option<String> {
+    let ms = stream_id_ms(id)?;
+    chrono::DateTime::from_timestamp_millis(ms)
+        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+}
+
+/// The XREVRANGE argument list for one window (docs/45 §2.1). Why XREVRANGE for
+/// BOTH directions (D6): XREAD would answer “newer” natively, but it is a
+/// blocking command and this adapter's one shared connection must never be held
+/// (docs/22), so the follow tick is a poll — and a poll wants the NEWEST n
+/// entries, which XRANGE (+ after-cursor) would answer with the OLDEST of the
+/// backlog instead. The exclusive “(” bounds keep the cursor row itself out:
+/// it is already on screen, and an inclusive bound would duplicate it on every
+/// page. Newest-first is XREVRANGE's native order, so nothing between redis and
+/// the DOM ever reverses a page.
+pub fn stream_window_args(key: &str, bound: &StreamBound, count: i64) -> Vec<String> {
+    let (start, end) = match bound {
+        StreamBound::Newest => ("+".to_string(), "-".to_string()),
+        StreamBound::Before(id) => (format!("({id}"), "-".to_string()),
+        StreamBound::After(id) => ("+".to_string(), format!("({id}")),
+    };
+    vec![
+        key.to_string(),
+        start,
+        end,
+        "COUNT".into(),
+        count.to_string(),
+    ]
+}
+
+/// The union of field names across a window, in first-seen order scanning
+/// newest-first (docs/45 D3). A feed's field set is stable, so the union is
+/// usually the one set; when entries interleave (seed `stream:ragged`),
+/// first-seen keeps the column order STABLE as pages and ticks merge into one
+/// table — an alphabetized union would reshuffle the header on every arrival,
+/// and a last-writer order would depend on fetch timing.
+pub fn stream_columns(entries: &[Value]) -> Vec<String> {
+    let mut order: Vec<String> = Vec::new();
+    let mut have = BTreeSet::new();
+    for entry in entries {
+        let Some(fields) = entry.get("fields").and_then(Value::as_object) else {
+            continue;
+        };
+        for k in fields.keys() {
+            if have.insert(k.clone()) {
+                order.push(k.clone());
+            }
+        }
+    }
+    order
+}
+
+/// XINFO STREAM's RESP2 reply is one flat [key, value, ...] array; the window
+/// needs only first-entry / last-entry (each an [id, [fields]] pair, or nil on
+/// an empty stream). Returned as the raw JSON value — string id or null — so
+/// the caller inserts without branching, and a mangled reply degrades to nulls
+/// rather than an error: the ends are header decoration, not window data.
+pub fn stream_ends(info_reply: &Value) -> (Value, Value) {
+    let flat = info_reply.as_array();
+    let end = |name: &str| -> Value {
+        let mut out = Value::Null;
+        if let Some(items) = flat {
+            let mut i = 0;
+            while i + 1 < items.len() {
+                if value_string(&items[i]) == name {
+                    out = items[i + 1]
+                        .as_array()
+                        .and_then(|pair| pair.first().cloned())
+                        .unwrap_or(Value::Null);
+                    break;
+                }
+                i += 2;
+            }
+        }
+        out
+    };
+    (end("first-entry"), end("last-entry"))
+}
+
+/// XINFO GROUPS' RESP2 reply: one flat [key, value, ...] array per group,
+/// parsed into the panel's table rows (docs/45 §2.4). `lag` exists from redis
+/// 7; a 6.2 server omits the key and the row carries null — null is “unknown
+/// here”, not zero, because zero would claim the group is caught up. `pending`
+/// absent reads as 0: a reply without it comes from proxies, and “no pending
+/// reported” is the honest reading of a missing counter.
+pub fn parse_xinfo_groups(reply: &[Value]) -> Vec<Value> {
+    reply
+        .iter()
+        .map(|row| {
+            let flat = row.as_array().cloned().unwrap_or_default();
+            let mut group = Map::new();
+            group.insert("name".into(), Value::Null);
+            group.insert("consumers".into(), json!(0));
+            group.insert("pending".into(), json!(0));
+            group.insert("lag".into(), Value::Null);
+            group.insert("last-delivered-id".into(), Value::Null);
+            let mut i = 0;
+            while i + 1 < flat.len() {
+                let k = value_string(&flat[i]);
+                let v = &flat[i + 1];
+                match k.as_str() {
+                    "name" => {
+                        group.insert("name".into(), v.clone());
+                    }
+                    "consumers" | "pending" => {
+                        group.insert(k.clone(), json!(value_i64(v)));
+                    }
+                    "lag" => {
+                        group.insert("lag".into(), json!(value_i64(v)));
+                    }
+                    "last-delivered-id" => {
+                        group.insert("last-delivered-id".into(), v.clone());
+                    }
+                    _ => {}
+                }
+                i += 2;
+            }
+            Value::Object(group)
+        })
+        .collect()
+}
+
+/// Assemble the window reply the panel codes against (docs/45 §2.1) from the
+/// three pipelined answers. Pure so the SHAPE — the contract — is pinned by
+/// unit tests without a server; the async wrapper only pipelines and maps
+/// errors. `more` is “the page was full”, deliberately not a count: the exact
+/// answer would cost a fourth command on every tick, and the Load-earlier
+/// button's worst case is one empty page it renders honestly.
+pub fn stream_window_shape(
+    key: &str,
+    entries_reply: &Value,
+    len_reply: &Value,
+    info_reply: &Value,
+    count: i64,
+) -> Value {
+    let raw = entries_reply.as_array().cloned().unwrap_or_default();
+    let entries: Vec<Value> = stream_entries(&raw)
+        .into_iter()
+        .map(|e| {
+            let id = e.get("id").map(value_string).unwrap_or_default();
+            let ts = stream_id_to_ts(&id).map(Value::String).unwrap_or(Value::Null);
+            let mut obj = e.as_object().cloned().unwrap_or_default();
+            obj.insert("ts".into(), ts);
+            Value::Object(obj)
+        })
+        .collect();
+    let more = (entries.len() as i64) == count;
+    let (first, last) = stream_ends(info_reply);
+    json!({
+        "key": key,
+        "type": "stream",
+        "length": value_i64(len_reply),
+        "firstId": first,
+        "lastId": last,
+        "entries": entries,
+        "columns": stream_columns(&entries),
+        "more": more,
+    })
+}
+
+/// The stream window over the shared handle (docs/45 §2.1): XREVRANGE (the
+/// window) + XLEN (the length the panel's rate readout differences between
+/// ticks) + XINFO STREAM (first/last ids for the header), ONE pipeline — one
+/// round trip, exactly three commands. Exactly three is a budget every open
+/// panel pays per second, pinned by follow_polling_costs_three_commands_per_tick;
+/// a fourth command needs a better reason than convenience. Error mapping:
+/// WRONGTYPE is answered with one follow-up TYPE that names the real type (the
+/// error path only — the healthy tick never pays it), and “no such key” becomes
+/// the same { type: "none" } fact the /key route already reports for a missing
+/// key, because XREVRANGE alone cannot tell “gone” from “quiet”.
+pub async fn read_stream_window(
+    handle: &RedisHandle,
+    key: &str,
+    bound: &StreamBound,
+    count: i64,
+) -> Result<Value, String> {
+    let args = stream_window_args(key, bound, count);
+    let commands = vec![
+        ("XREVRANGE".to_string(), args),
+        ("XLEN".to_string(), vec![key.to_string()]),
+        (
+            "XINFO".to_string(),
+            vec!["STREAM".to_string(), key.to_string()],
+        ),
+    ];
+    let replies = match handle.pipeline(&commands).await {
+        Ok(r) => r,
+        Err(e) => {
+            if e.contains("WRONGTYPE") {
+                let type_ = handle
+                    .call("TYPE", &[key])
+                    .await
+                    .map(|v| value_string(&v))
+                    .unwrap_or_else(|_| "non-stream".into());
+                return Err(format!("{key} is a {type_}, not a stream"));
+            }
+            if e.to_lowercase().contains("no such key") {
+                return Ok(json!({ "key": key, "type": "none", "ttl": -2, "value": null }));
+            }
+            return Err(e);
+        }
+    };
+    Ok(stream_window_shape(
+        key,
+        replies.first().unwrap_or(&Value::Null),
+        replies.get(1).unwrap_or(&Value::Null),
+        replies.get(2).unwrap_or(&Value::Null),
+        count,
+    ))
+}
+
+/// XINFO GROUPS, read-only (docs/45 §2.4): the consumer-group table behind the
+/// groups fold. A key that vanished mid-view answers an empty table rather than
+/// an error — the stream view above it owns that story — while a non-stream
+/// key is refused with its real type, same wording as the window.
+pub async fn read_stream_groups(handle: &RedisHandle, key: &str) -> Result<Value, String> {
+    match handle.call("XINFO", &["GROUPS", key]).await {
+        Ok(Value::Array(rows)) => Ok(json!({ "key": key, "groups": parse_xinfo_groups(&rows) })),
+        Ok(_) => Ok(json!({ "key": key, "groups": [] })),
+        Err(e) => {
+            if e.to_lowercase().contains("no such key") {
+                return Ok(json!({ "key": key, "groups": [] }));
+            }
+            if e.contains("WRONGTYPE") {
+                let type_ = handle
+                    .call("TYPE", &[key])
+                    .await
+                    .map(|v| value_string(&v))
+                    .unwrap_or_else(|_| "non-stream".into());
+                return Err(format!("{key} is a {type_}, not a stream"));
+            }
+            Err(e)
+        }
+    }
 }
 
 /// Clamp the paging args every ordered read shares; absent or nonsensical values fall back to
@@ -1084,6 +1338,157 @@ mod tests {
 
         assert_eq!(to_score(&json!("12.5")), json!(12.5));
         assert_eq!(to_score(&json!("inf")), json!("inf"));
+    }
+
+    #[test]
+    fn stream_ids_split_and_derive() {
+        // docs/45 §2.1: the ms half is the timestamp; everything that is not a
+        // plain id derives nothing rather than a wrong time.
+        assert_eq!(stream_id_ms("1700000999900-0"), Some(1_700_000_999_900));
+        assert_eq!(stream_id_ms("0-0"), Some(0));
+        assert_eq!(stream_id_ms("5-18446744073709551615"), Some(5));
+        assert_eq!(stream_id_ms("99999999999999999999-0"), None, "ms overflows i64");
+        assert_eq!(stream_id_ms("1700000000000"), None, "no seq half");
+        assert_eq!(stream_id_ms(""), None);
+        for special in ["$", "+", "-"] {
+            assert_eq!(stream_id_ms(special), None, "special id {special}");
+        }
+        assert_eq!(
+            stream_id_to_ts("1700000999900-0").as_deref(),
+            Some("2023-11-14T22:29:59.900Z")
+        );
+        assert_eq!(
+            stream_id_to_ts("1700000000000-0").as_deref(),
+            Some("2023-11-14T22:13:20.000Z")
+        );
+        assert_eq!(stream_id_to_ts("not-an-id"), None);
+    }
+
+    #[test]
+    fn stream_window_args_spell_the_three_bounds() {
+        // docs/45 §2.1/D6: both directions are XREVRANGE with exclusive “(” bounds,
+        // so the cursor row never repeats and every page arrives newest-first.
+        assert_eq!(
+            stream_window_args("s", &StreamBound::Newest, 100),
+            vec!["s", "+", "-", "COUNT", "100"]
+        );
+        assert_eq!(
+            stream_window_args("s", &StreamBound::Before("7-1".into()), 5),
+            vec!["s", "(7-1", "-", "COUNT", "5"]
+        );
+        assert_eq!(
+            stream_window_args("s", &StreamBound::After("7-1".into()), 100),
+            vec!["s", "+", "(7-1", "COUNT", "100"]
+        );
+    }
+
+    #[test]
+    fn stream_columns_union_in_first_seen_order() {
+        // docs/45 D3: newest-first scan, first-seen order — the ragged seed's five
+        // entries (a / a,b / b,c / c / a,c,d newest-first) union to a,c,d,b, and a
+        // repeated field name never appears twice.
+        let entries = vec![
+            json!({ "fields": { "a": "5", "c": "5", "d": "5" } }),
+            json!({ "fields": { "c": "4" } }),
+            json!({ "fields": { "b": "3", "c": "3" } }),
+            json!({ "fields": { "a": "2", "b": "2" } }),
+            json!({ "fields": { "a": "1" } }),
+        ];
+        assert_eq!(stream_columns(&entries), vec!["a", "c", "d", "b"]);
+        assert_eq!(stream_columns(&[]), Vec::<String>::new());
+        let one = vec![json!({ "fields": { "sym": "AAA", "px": "1.00" } })];
+        assert_eq!(stream_columns(&one), vec!["sym", "px"]);
+        assert_eq!(stream_columns(&[json!({ "id": "1-0" })]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn stream_entries_survives_odd_shapes() {
+        // The XRANGE/XREVRANGE pair shape: [id, [f, v, ...]] rows; a ragged row, an
+        // odd-length field array (the tail has no pair), a non-array reply and
+        // non-string scalars all degrade instead of panicking.
+        let reply = vec![
+            json!(["1-0", ["f", "v"]]),
+            json!(["2-0", ["odd"]]),
+            json!("3-0"),
+        ];
+        let out = stream_entries(&reply);
+        assert_eq!(out[0]["fields"]["f"], json!("v"));
+        assert_eq!(out[1]["fields"].as_object().map(|m| m.len()), Some(0), "tail dropped");
+        assert_eq!(out[2]["fields"].as_object().map(|m| m.len()), Some(0));
+        assert_eq!(stream_entries(&[]), Vec::<Value>::new());
+        let scalars = stream_entries(&[json!(["4-0", ["n", 42]])]);
+        assert_eq!(scalars[0]["fields"]["n"], json!("42"), "scalars stringify");
+    }
+
+    #[test]
+    fn parse_xinfo_groups_tolerates_62_and_proxies() {
+        // docs/45 §2.4: lag exists from redis 7 (6.2 omits it -> null, never 0:
+        // zero would claim “caught up”); pending missing reads 0; an empty reply is
+        // an empty table.
+        let with_lag = vec![json!([
+            "name", "feed", "consumers", 1, "pending", 7, "lag", 9993,
+            "last-delivered-id", "1700000000600-0",
+        ])];
+        let groups = parse_xinfo_groups(&with_lag);
+        assert_eq!(groups[0]["name"], json!("feed"));
+        assert_eq!(groups[0]["pending"], json!(7));
+        assert_eq!(groups[0]["lag"], json!(9993));
+        assert_eq!(groups[0]["last-delivered-id"], json!("1700000000600-0"));
+        let no_lag = vec![json!(["name", "old", "consumers", 2, "pending", 0,
+            "last-delivered-id", "0-0"])];
+        assert_eq!(parse_xinfo_groups(&no_lag)[0]["lag"], Value::Null);
+        let no_pending = vec![json!(["name", "px", "consumers", 0,
+            "last-delivered-id", "0-0"])];
+        assert_eq!(parse_xinfo_groups(&no_pending)[0]["pending"], json!(0));
+        assert_eq!(parse_xinfo_groups(&[]), Vec::<Value>::new());
+    }
+
+    #[test]
+    fn stream_ends_read_first_and_last() {
+        let info = json!([
+            "length", 2, "radix-tree-keys", 2, "radix-tree-nodes", 4,
+            "last-generated-id", "2-0",
+            "first-entry", ["1-0", ["a", "1"]],
+            "last-entry", ["2-0", ["a", "2"]],
+        ]);
+        let (first, last) = stream_ends(&info);
+        assert_eq!(first, json!("1-0"));
+        assert_eq!(last, json!("2-0"));
+        let empty = json!(["length", 0, "first-entry", null, "last-entry", null]);
+        let (first, last) = stream_ends(&empty);
+        assert_eq!(first, Value::Null);
+        assert_eq!(last, Value::Null);
+        let (first, last) = stream_ends(&json!("mangled"));
+        assert_eq!((first, last), (Value::Null, Value::Null));
+    }
+
+    #[test]
+    fn stream_window_shape_is_the_contract() {
+        // docs/45 §2.1: the reply the panel codes against — newest-first entries,
+        // server-derived ts, the column union, the length, and `more` as
+        // "the page was full", never a count.
+        let entries = json!([
+            ["1700000999900-0", ["sym", "AAA", "px", "9.99", "qty", "50", "side", "s"]],
+            ["1700000999800-0", ["sym", "BBB", "px", "9.98", "qty", "49", "side", "b"]],
+        ]);
+        let info = json!([
+            "length", 10000,
+            "first-entry", ["1700000000000-0", ["sym", "AAA"]],
+            "last-entry", ["1700000999900-0", ["sym", "AAA"]],
+        ]);
+        let v = stream_window_shape("stream:ticks", &entries, &json!(10_000), &info, 100);
+        assert_eq!(v["type"], "stream");
+        assert_eq!(v["length"], json!(10_000));
+        assert_eq!(v["firstId"], json!("1700000000000-0"));
+        assert_eq!(v["lastId"], json!("1700000999900-0"));
+        assert_eq!(v["more"], json!(false), "a partial page is not more");
+        assert_eq!(v["columns"], json!(["sym", "px", "qty", "side"]));
+        assert_eq!(v["entries"][0]["id"], json!("1700000999900-0"));
+        assert_eq!(v["entries"][0]["ts"], json!("2023-11-14T22:29:59.900Z"));
+        assert_eq!(v["entries"][1]["ts"], json!("2023-11-14T22:29:59.800Z"));
+        let full = json!([["1-0", ["a", "1"]]]);
+        let v = stream_window_shape("k", &full, &json!(1), &info, 1);
+        assert_eq!(v["more"], json!(true), "a full page probably has more");
     }
 
     #[test]

@@ -774,6 +774,101 @@ pub trait RedisBrowser: Send + Sync {
     async fn list_databases(&self) -> Result<Value, String> {
         Ok(json!({ "primary": null, "current": null, "databases": [] }))
     }
+    /// docs/45 §2.1: a newest-first window of one stream key — the opening page,
+    /// the page strictly older than a cursor (“load earlier”), or the page strictly
+    /// newer than one (the Follow tick). `o` is { before?: id, after?: id, count?: n },
+    /// validated by [`redis_stream_opts`]. Defaulted exactly like list_databases above
+    /// (docs/43 M3): the capability is redis-only, and a defaulted method means every
+    /// stub and any future flavor keeps compiling and answering an honest “not
+    /// supported” instead of the host growing a match arm per capability.
+    async fn read_stream(&self, key: &str, o: &Value) -> Result<Value, String> {
+        let _ = (key, o);
+        Err("stream windows are not supported by this connection".into())
+    }
+    /// docs/45 §2.4: XINFO GROUPS for one stream key, read-only — name /
+    /// consumers / pending / lag / last-delivered-id. Same defaulting rationale:
+    /// the only implementation is redis, and no other flavor should be forced to
+    /// say so.
+    async fn stream_groups(&self, key: &str) -> Result<Value, String> {
+        let _ = key;
+        Err("stream groups are not supported by this connection".into())
+    }
+}
+
+/// The three window shapes one XREVRANGE serves (docs/45 §2.1). `Newest` is the
+/// opening page; `Before` pages strictly older than a cursor (“load earlier”);
+/// `After` catches up strictly newer than one (the Follow tick). The exclusive
+/// bounds need redis >= 6.2 — older servers answer “ERR syntax”, which passes
+/// through with the key named; the seed engines are 7.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamBound {
+    Newest,
+    Before(String),
+    After(String),
+}
+
+/// Default and ceiling of a stream window's `count` (docs/45 D1): 100 is a
+/// screenful, and 1000 matches `type_aware_read`'s existing cap — 1,000 entries
+/// × ~20 fields is roughly 200 KB of JSON, the line where one fetch stops being
+/// instant in a browser.
+pub const STREAM_WINDOW_DEFAULT: i64 = 100;
+pub const STREAM_WINDOW_MAX: i64 = 1000;
+
+/// docs/45 §2.1: clamp of the `count` option. Absent means the default (100);
+/// anything above the ceiling clamps DOWN; but zero, negatives and non-numeric
+/// values are the caller's mistake and refuse — a silent default would page
+/// somewhere the caller never asked. Numeric strings count (the panel sends
+/// every query param as a string, exactly like SCAN's count).
+pub fn clamp_count(v: Option<&Value>) -> Result<i64, String> {
+    let bad = |what: &str| format!("count must be a positive number — got {what}");
+    let Some(v) = v else { return Ok(STREAM_WINDOW_DEFAULT) };
+    let n = match v {
+        Value::Number(n) => n.as_i64().ok_or_else(|| bad(&n.to_string()))?,
+        Value::String(s) => s
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| bad(s.trim()))?,
+        other => return Err(bad(&other.to_string())),
+    };
+    if n <= 0 {
+        return Err(bad(&n.to_string()));
+    }
+    Ok(n.min(STREAM_WINDOW_MAX))
+}
+
+/// docs/45 §2.1: one option object into one bound + count. This is the single
+/// validation both the route (whose stub tests pin the 400s without a redis) and
+/// the real browser impl run — trait callers cannot bypass it and the rule
+/// cannot drift between transport and model. `before` and `after` together are
+/// refused outright: the two cursors page in OPPOSITE directions, and silently
+/// picking one would answer a question the caller did not ask.
+pub fn redis_stream_opts(o: &Value) -> Result<(StreamBound, i64), String> {
+    let cursor = |name: &str| -> Result<Option<String>, String> {
+        match o.get(name) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(s)) => {
+                let t = s.trim();
+                if t.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(t.to_string()))
+                }
+            }
+            Some(other) => Err(format!("{name} must be a stream entry id — got {other}")),
+        }
+    };
+    let before = cursor("before")?;
+    let after = cursor("after")?;
+    if before.is_some() && after.is_some() {
+        return Err("pass only one of before / after — they page in opposite directions".into());
+    }
+    let count = clamp_count(o.get("count"))?;
+    let bound = match (before, after) {
+        (Some(id), _) => StreamBound::Before(id),
+        (None, Some(id)) => StreamBound::After(id),
+        (None, None) => StreamBound::Newest,
+    };
+    Ok((bound, count))
 }
 
 /// Cap on one buffered redis commit (docs/22 W3.3): one pipeline is one bounded round trip,
@@ -3739,6 +3834,72 @@ mod tests {
         browse_filters_of(Some(&json))
     }
 
+    #[test]
+    fn stream_count_clamps_and_refuses() {
+        // docs/45 §2.1: absent -> the 100-entry screenful; over the ceiling clamps
+        // down; zero / negative / non-numeric are the caller's mistake, not a default.
+        assert_eq!(clamp_count(None).unwrap(), 100);
+        assert_eq!(clamp_count(Some(&json!(1000))).unwrap(), 1000);
+        assert_eq!(clamp_count(Some(&json!(1001))).unwrap(), 1000);
+        assert_eq!(clamp_count(Some(&json!("500"))).unwrap(), 500);
+        assert!(clamp_count(Some(&json!(0))).unwrap_err().contains("positive number"));
+        assert!(clamp_count(Some(&json!(-3))).unwrap_err().contains("positive number"));
+        assert!(clamp_count(Some(&json!("abc"))).unwrap_err().contains("positive number"));
+        assert!(clamp_count(Some(&json!(1.5))).unwrap_err().contains("positive number"));
+    }
+
+    #[test]
+    fn stream_opts_pick_one_direction() {
+        // docs/45 §2.1: before and after page in opposite directions — both at
+        // once is refused rather than silently resolved; neither is the opening page.
+        assert_eq!(redis_stream_opts(&json!({})).unwrap(), (StreamBound::Newest, 100));
+        assert_eq!(
+            redis_stream_opts(&json!({ "after": "5-0", "count": "40" })).unwrap(),
+            (StreamBound::After("5-0".into()), 40)
+        );
+        assert_eq!(
+            redis_stream_opts(&json!({ "before": "5-0" })).unwrap(),
+            (StreamBound::Before("5-0".into()), 100)
+        );
+        let both = redis_stream_opts(&json!({ "before": "1-0", "after": "2-0" })).unwrap_err();
+        assert!(both.contains("opposite directions"), "{both}");
+        assert!(redis_stream_opts(&json!({ "before": 7 })).unwrap_err().contains("entry id"));
+    }
+
+    #[tokio::test]
+    async fn stream_trait_defaults_refuse_honestly() {
+        // docs/43 M3's list_databases precedent, held for docs/45: a flavor that
+        // never heard of streams must keep compiling and answer “not supported”,
+        // never a panic and never a silent empty window.
+        struct Bare;
+        #[async_trait::async_trait]
+        impl RedisBrowser for Bare {
+            fn label(&self) -> String {
+                "bare".into()
+            }
+            async fn list_keys(&self, _o: &Value) -> Result<Value, String> {
+                Ok(json!(null))
+            }
+            async fn read_key(&self, _key: &str) -> Result<Value, String> {
+                Ok(json!(null))
+            }
+            async fn run_command(&self, _line: &str) -> Result<Value, String> {
+                Ok(json!(null))
+            }
+            async fn run_pipeline(&self, _commands: &[Vec<String>]) -> Result<Value, String> {
+                Ok(json!(null))
+            }
+        }
+        let b = Bare;
+        assert_eq!(
+            b.read_stream("k", &json!({})).await.unwrap_err(),
+            "stream windows are not supported by this connection"
+        );
+        assert_eq!(
+            b.stream_groups("k").await.unwrap_err(),
+            "stream groups are not supported by this connection"
+        );
+    }
     #[test]
     fn browse_paging_clamps() {
         assert_eq!(browse_page_size(None, BROWSE_DEFAULT_PAGE), 50);

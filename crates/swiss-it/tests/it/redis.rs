@@ -15,9 +15,10 @@
  */
 
 //! L1, the redis group (docs/44 SS2.5): RedisDataBrowser against a real redis 7,
-//! over a leased db index reloaded from keys.txt (3,016 keys: five types, a
+//! over a leased db index reloaded from keys.txt (3,020 keys: five types, a
 //! three-level tree namespace, one expiring and one persisted TTL key, UTF-8
-//! values, and 3,000 bulk keys to make SCAN paging earn its keep). The browser
+//! values, 3,000 bulk keys to make SCAN paging earn its keep, and the four
+//! generated stream keys of docs/45 §2.7). The browser
 //! is built exactly the way the adapter builds it: ServerDef -> RedisEngine ->
 //! Engine::browser(), carrying the def's own policy flags.
 
@@ -27,7 +28,7 @@ use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{BrowserFlavor, RedisBrowser};
 use swiss_it::engine::Kind;
-use swiss_it::seed::{fresh, fresh_redis_with_neighbor, Fresh};
+use swiss_it::seed::{fresh, fresh_redis_exclusive, fresh_redis_with_neighbor, Fresh, REDIS_SEED_KEYS};
 use swiss_mcp::adapters::redis::RedisEngine;
 use swiss_mcp::adapters::tool_server::Engine;
 
@@ -66,7 +67,7 @@ async fn walk_all(b: &dyn RedisBrowser) -> BTreeSet<String> {
         for k in page["keys"].as_array().expect("keys") {
             seen.insert(k["key"].as_str().expect("key text").to_string());
         }
-        assert_eq!(page["total"], 3016, "DBSIZE rides every first page");
+        assert_eq!(page["total"], REDIS_SEED_KEYS, "DBSIZE rides every first page");
         if page["done"] == json!(true) {
             break;
         }
@@ -80,8 +81,8 @@ async fn walk_all(b: &dyn RedisBrowser) -> BTreeSet<String> {
 async fn scan_walks_the_whole_keyspace_without_loss_or_duplication() {
     let (_f, b) = browser("r1_walk").await;
     let seen = walk_all(b.as_ref()).await;
-    // 3,016 distinct keys, no duplication across pages, no loss at the seams.
-    assert_eq!(seen.len(), 3016, "the BTreeSet dedups; len == distinct keys");
+    // 3,020 distinct keys, no duplication across pages, no loss at the seams.
+    assert_eq!(seen.len(), REDIS_SEED_KEYS as usize, "the BTreeSet dedups; len == distinct keys");
     for expected in [
         "users:1",
         "ns:h:profile",
@@ -111,9 +112,9 @@ async fn scan_pages_carry_type_ttl_and_total() {
     // back MORE than COUNT keys in one page (the per-container hash seed decides, so
     // this flips with a restart). What stays true: 500 examined buckets cannot drain
     // 3,016 keys, so the page is partial.
-    assert!(keys.len() < 3016, "a 500-hint page is partial: {} keys", keys.len());
-    assert_eq!(page["total"], 3016);
-    assert_eq!(page["done"], false, "3,016 keys cannot finish one 500 page");
+    assert!(keys.len() < REDIS_SEED_KEYS as usize, "a 500-hint page is partial: {} keys", keys.len());
+    assert_eq!(page["total"], REDIS_SEED_KEYS);
+    assert_eq!(page["done"], false, "3,020 keys cannot finish one 500 page");
     for k in keys {
         assert!(k["type"].is_string(), "each key carries its TYPE: {k}");
         assert!(k["ttl"].is_number(), "each key carries its TTL: {k}");
@@ -339,7 +340,7 @@ async fn list_databases_names_each_keyspace_with_the_foreign_reason() {
     assert_eq!(ours["primary"], true);
     assert_eq!(ours["browsable"], true);
     assert_eq!(ours["reason"], Value::Null);
-    assert_eq!(ours["tables"], 3016, "the key count is the redis table count");
+    assert_eq!(ours["tables"], REDIS_SEED_KEYS, "the key count is the redis table count");
 
     // The neighbor db exists in the keyspace but is not browsable from this
     // connection: SELECT would re-mode the shared handle.
@@ -353,3 +354,334 @@ async fn list_databases_names_each_keyspace_with_the_foreign_reason() {
     let reason = other["reason"].as_str().expect("the reason text");
     assert!(reason.contains("its own connection"), "{reason}");
 }
+// --- docs/45: stream windows ----------------------------------------------------------------------
+
+/// A raw connection straight to a Fresh def's index — the commandstats reader in
+/// the tick test. Its commands (INFO, CONFIG RESETSTAT) never pass through the
+/// adapter's guard and never need to: the guard protects the gateway's SHARED
+/// connection, not a test's private one.
+async fn raw_conn(def: &Value) -> redis::aio::MultiplexedConnection {
+    let url = format!(
+        "redis://{}:{}/{}",
+        def["host"].as_str().expect("host"),
+        def["port"].as_u64().expect("port"),
+        def["db"].as_u64().expect("db"),
+    );
+    let client = redis::Client::open(url.as_str()).expect("open the def");
+    client
+        .get_multiplexed_async_connection()
+        .await
+        .expect("connect the def")
+}
+
+/// The ms half of a stream id, for ordering assertions.
+fn id_ms(id: &str) -> i64 {
+    id.split('-')
+        .next()
+        .and_then(|ms| ms.parse().ok())
+        .unwrap_or(i64::MIN)
+}
+
+#[tokio::test]
+async fn read_key_on_a_stream_returns_the_newest_window_first() {
+    // docs/45 §2.1: opening a stream key must land on the NEWEST 100 entries with
+    // the shape the stream view codes against — not type_aware_read's oldest-first
+    // page (the panel opens keys without knowing their type).
+    let (_f, b) = browser("r45_latest").await;
+    let v = b.read_key("stream:ticks").await.expect("read_key");
+    assert_eq!(v["key"], "stream:ticks");
+    assert_eq!(v["type"], "stream");
+    assert_eq!(v["ttl"], json!(-1), "the /key facts still ride along");
+    assert_eq!(v["length"], json!(10_000));
+    assert_eq!(v["firstId"], json!("1700000000000-0"));
+    assert_eq!(v["lastId"], json!("1700000999900-0"));
+    let entries = v["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), 100, "D1's default window");
+    assert_eq!(entries[0]["id"], json!("1700000999900-0"), "newest first");
+    assert_eq!(entries[99]["id"], json!("1700000990000-0"), "100 entries back");
+    for pair in entries.windows(2) {
+        assert!(
+            id_ms(pair[0]["id"].as_str().expect("id")) > id_ms(pair[1]["id"].as_str().expect("id")),
+            "the window is strictly newest-first"
+        );
+    }
+    assert_eq!(v["columns"], json!(["sym", "px", "qty", "side"]));
+    assert_eq!(v["more"], json!(true), "10,000 entries cannot fit one window");
+}
+
+#[tokio::test]
+async fn read_stream_pages_older_by_cursor_without_loss_or_duplication() {
+    // docs/45 §2.1: the exclusive `before` cursor walks the whole stream, oldest
+    // page last, with no row repeated at a seam and none dropped.
+    let (_f, b) = browser("r45_before").await;
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+    loop {
+        let o = match &cursor {
+            Some(id) => json!({ "before": id, "count": 1000 }),
+            None => json!({ "count": 1000 }),
+        };
+        let v = b.read_stream("stream:ticks", &o).await.expect("page");
+        let entries = v["entries"].as_array().expect("entries");
+        for e in entries {
+            assert!(
+                seen.insert(e["id"].as_str().expect("id").to_string()),
+                "an id repeated at a page seam"
+            );
+        }
+        pages += 1;
+        let more = v["more"].as_bool().expect("more");
+        cursor = entries.last().map(|e| e["id"].as_str().expect("id").to_string());
+        if !more {
+            break;
+        }
+        assert!(pages <= 12, "10,000 entries at count=1000 is ten pages");
+    }
+    // Eleven pages, not ten: `more` means “the page was full”, so the tenth page
+    // (exactly 10,000th entry) still flags more and the walk ends on one empty
+    // page — the documented cost of a `more` that never spends a fourth command
+    // (docs/45 §2.1); the panel's Load-earlier renders that page as the end.
+    assert_eq!(pages, 11);
+    assert_eq!(seen.len(), 10_000, "no loss, no duplication");
+    assert_eq!(seen.first().map(String::as_str), Some("1700000000000-0"));
+    assert_eq!(seen.last().map(String::as_str), Some("1700000999900-0"));
+}
+
+#[tokio::test]
+async fn read_stream_after_returns_only_newer_entries_newest_first() {
+    // docs/45 §2.1/D6: the Follow tick's catch-up — strictly newer than the
+    // cursor, newest first, and quiet when caught up.
+    let (_f, b) = browser("r45_after").await;
+    let cmds: Vec<Vec<String>> = (0..3)
+        .map(|i| {
+            vec![
+                "XADD".into(),
+                "stream:ticks".into(),
+                format!("{}-0", 1_700_000_000_000_i64 + 1_000_000 + i * 100),
+                "sym".into(),
+                "AAA".into(),
+                "px".into(),
+                "1.00".into(),
+            ]
+        })
+        .collect();
+    b.run_pipeline(&cmds).await.expect("three arrivals");
+    let v = b
+        .read_stream("stream:ticks", &json!({ "after": "1700000999900-0" }))
+        .await
+        .expect("the catch-up page");
+    let ids: Vec<&str> = v["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|e| e["id"].as_str().expect("id"))
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["1700001000200-0", "1700001000100-0", "1700001000000-0"],
+        "newer than the cursor, newest first"
+    );
+    assert_eq!(v["more"], json!(false));
+    assert_eq!(v["length"], json!(10_003), "XLEN sees the arrivals");
+    let quiet = b
+        .read_stream("stream:ticks", &json!({ "after": "1700001000200-0" }))
+        .await
+        .expect("the caught-up page");
+    assert_eq!(quiet["entries"].as_array().expect("entries").len(), 0);
+    assert_eq!(quiet["more"], json!(false));
+}
+
+#[tokio::test]
+async fn read_stream_after_caps_and_flags_more() {
+    // docs/45 §2.1: a backlog larger than the window must show the NEWEST end of
+    // it (catching up means seeing now, docs/45's own words) and flag `more` —
+    // never silently fill the window with the oldest of the gap.
+    let (_f, b) = browser("r45_backlog").await;
+    let cmds: Vec<Vec<String>> = (0..150)
+        .map(|i| {
+            vec![
+                "XADD".into(),
+                "stream:ticks".into(),
+                format!("{}-0", 1_700_000_000_000_i64 + 2_000_000 + i * 100),
+                "sym".into(),
+                "AAA".into(),
+            ]
+        })
+        .collect();
+    b.run_pipeline(&cmds).await.expect("a 150-entry backlog");
+    let v = b
+        .read_stream("stream:ticks", &json!({ "after": "1700000999900-0" }))
+        .await
+        .expect("the after page");
+    let entries = v["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), 100, "the window caps at the default 100");
+    assert_eq!(
+        entries[0]["id"],
+        json!("1700002014900-0"),
+        "the newest of the backlog leads"
+    );
+    assert!(
+        entries
+            .iter()
+            .all(|e| e["id"].as_str().expect("id") > "1700000999900-0"),
+        "every entry is strictly newer than the cursor"
+    );
+    assert_eq!(v["more"], json!(true), "a capped window says so");
+}
+
+#[tokio::test]
+async fn follow_polling_costs_three_commands_per_tick() {
+    // docs/45 §2.1: one tick = XREVRANGE + XLEN + XINFO STREAM, exactly. INFO
+    // commandstats is SERVER-wide, so the measurement needs the whole redis to itself:
+    // fresh_redis_exclusive leases all sixteen indexes in ONE atomic acquire (holding
+    // nothing while it waits), seeds only the one this browser reads, and holds the
+    // other fifteen as unseeded placeholders - every other redis test parks at its
+    // next lease, and nobody's commands land in these counters but this test's own.
+    let (f, _exclusive) = fresh_redis_exclusive("r45_tick").await;
+    let mut def = f.def.clone();
+    def["allowDestructive"] = json!(true);
+    let server_def: ServerDef =
+        serde_json::from_value(def).expect("the redis def parses as a ServerDef");
+    let engine = RedisEngine::new(&server_def, "it-redis");
+    let b = match engine.browser() {
+        Some(BrowserFlavor::Redis(b)) => b,
+        _ => panic!("the redis engine must expose a redis browser"),
+    };
+    let mut conn = raw_conn(&f.def).await;
+    redis::cmd("CONFIG")
+        .arg("RESETSTAT")
+        .query_async::<()>(&mut conn)
+        .await
+        .expect("reset the counters");
+    for tick in 1..=10 {
+        let v = b
+            .read_stream("stream:ticks", &json!({ "after": "1700000999900-0" }))
+            .await
+            .expect("tick");
+        assert!(
+            v["entries"].as_array().expect("entries").is_empty(),
+            "a quiet stream is a quiet tick"
+        );
+        if tick % 5 == 0 {
+            b.stream_groups("stream:ticks").await.expect("the groups fold rides every fifth tick");
+        }
+    }
+    let stats: String = redis::cmd("INFO")
+        .arg("commandstats")
+        .query_async(&mut conn)
+        .await
+        .expect("the counters");
+    let calls = |name: &str| -> i64 {
+        stats
+            .lines()
+            .find(|l| l.starts_with(&format!("{name}:calls=")) || l.starts_with(name))
+            .and_then(|l| l.split("calls=").nth(1))
+            .and_then(|rest| rest.split(',').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0)
+    };
+    assert_eq!(calls("cmdstat_xrevrange"), 10, "one window per tick");
+    assert_eq!(calls("cmdstat_xlen"), 10, "one length per tick");
+    // redis 7 accounts subcommands as their own counters: the window's XINFO STREAM
+    // and the fold's XINFO GROUPS land in two buckets — which pins the budget even
+    // tighter than one shared xinfo counter would.
+    assert_eq!(calls("cmdstat_xinfo|stream"), 10, "one stream info per tick");
+    assert_eq!(calls("cmdstat_xinfo|groups"), 2, "the groups fold rides every fifth tick");
+    assert_eq!(calls("cmdstat_xread"), 0, "D6: XREAD stays off the shared connection");
+    assert_eq!(calls("cmdstat_type"), 0, "the healthy tick never pays for TYPE");
+}
+
+#[tokio::test]
+async fn read_stream_ts_derives_from_the_id() {
+    // docs/45 §2.1: the ms half of the id, as ISO 8601 with milliseconds,
+    // derived on the server — the panel never parses an id.
+    let (_f, b) = browser("r45_ts").await;
+    let one = b.read_stream("stream:one", &json!({})).await.expect("one");
+    let e = &one["entries"][0];
+    assert_eq!(e["id"], json!("1700000000000-0"));
+    assert_eq!(e["ts"], json!("2023-11-14T22:13:20.000Z"));
+    let ticks = b.read_stream("stream:ticks", &json!({})).await.expect("ticks");
+    assert_eq!(ticks["entries"][0]["ts"], json!("2023-11-14T22:29:59.900Z"));
+}
+
+#[tokio::test]
+async fn read_stream_ragged_fields_union_columns_in_first_seen_order() {
+    // docs/45 D3: the seed's five interleaved entries (a / a,b / b,c / c / a,c,d,
+    // oldest to newest) union into first-seen-scanning-newest-first order — a,c,d,b
+    // — and each row shows exactly its own fields.
+    let (_f, b) = browser("r45_ragged").await;
+    let v = b.read_stream("stream:ragged", &json!({})).await.expect("ragged");
+    let entries = v["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), 5);
+    assert_eq!(
+        v["columns"],
+        json!(["a", "c", "d", "b"]),
+        "first-seen scanning newest-first, never alphabetized"
+    );
+    assert_eq!(entries[0]["id"], json!("1700000000400-0"));
+    assert_eq!(entries[0]["fields"].as_object().expect("fields").len(), 3);
+    assert_eq!(entries[4]["fields"]["a"], json!("1"));
+    assert_eq!(entries[4]["fields"].as_object().expect("fields").len(), 1);
+}
+
+#[tokio::test]
+async fn read_stream_empty_and_single_entry_streams() {
+    // docs/45 §2.5: the empty stream is a key with a type and no entries — a
+    // real window, not an error; the single-entry stream is a complete first page.
+    let (_f, b) = browser("r45_edges").await;
+    let empty = b.read_stream("stream:empty", &json!({})).await.expect("empty");
+    assert_eq!(empty["type"], "stream");
+    assert_eq!(empty["length"], json!(0));
+    assert_eq!(empty["entries"], json!([]));
+    assert_eq!(empty["firstId"], Value::Null);
+    assert_eq!(empty["lastId"], Value::Null);
+    assert_eq!(empty["columns"], json!([]));
+    assert_eq!(empty["more"], json!(false));
+    let one = b.read_stream("stream:one", &json!({})).await.expect("one");
+    assert_eq!(one["length"], json!(1));
+    assert_eq!(one["entries"].as_array().expect("entries").len(), 1);
+    assert_eq!(one["more"], json!(false), "1 < 100: the stream is fully shown");
+}
+
+#[tokio::test]
+async fn read_stream_refuses_non_stream_keys_and_both_cursors() {
+    // docs/45 §2.1: the refusal names the real type (one follow-up TYPE on the
+    // error path only), a missing key is the /key route's { type: none } fact, and
+    // the two cursors never run together.
+    let (_f, b) = browser("r45_refuse").await;
+    let hash = b.read_stream("ns:h:profile", &json!({})).await;
+    let err = hash.expect_err("a hash is not a stream");
+    assert!(err.contains("is a hash, not a stream"), "{err}");
+    let missing = b.read_stream("no:such:key", &json!({})).await.expect("missing");
+    assert_eq!(missing["type"], "none");
+    assert_eq!(missing["ttl"], json!(-2));
+    assert_eq!(missing["value"], Value::Null);
+    let both = b
+        .read_stream("stream:ticks", &json!({ "before": "1-0", "after": "2-0" }))
+        .await;
+    assert!(both.expect_err("opposite directions").contains("opposite directions"));
+    for bad in [json!({ "count": 0 }), json!({ "count": "abc" })] {
+        let refused = b.read_stream("stream:ticks", &bad).await;
+        assert!(refused.expect_err("a bad count").contains("positive number"), "{bad:?}");
+    }
+}
+
+#[tokio::test]
+async fn stream_groups_reports_pending_and_lag() {
+    // docs/45 §2.4: the read-only consumer table over the seed's feed group —
+    // seven read-never-ACKed entries, one consumer, and the lag that follows; a
+    // vanished key is an empty table, not an error.
+    let (_f, b) = browser("r45_groups").await;
+    let v = b.stream_groups("stream:ticks").await.expect("groups");
+    let groups = v["groups"].as_array().expect("groups");
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["name"], json!("feed"));
+    assert_eq!(groups[0]["consumers"], json!(1));
+    assert_eq!(groups[0]["pending"], json!(7));
+    assert_eq!(groups[0]["lag"], json!(9_993), "10,000 minus the seven delivered");
+    assert_eq!(groups[0]["last-delivered-id"], json!("1700000000600-0"));
+    let gone = b.stream_groups("no:such:key").await.expect("gone");
+    assert_eq!(gone["groups"], json!([]));
+}
+

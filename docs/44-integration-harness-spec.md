@@ -267,7 +267,9 @@ pub async fn fresh(kind: Kind, tag: &str) -> Fresh;     // tag = the test's own 
 （一条 HSET）、list 100 元素（一条 RPUSH）、set 10 成员、zset 10 成员（分数含 `85.5` 与 `-100`）；TTL
 一对——`SETEX` 3600 的与 `PERSIST` 掉的孪生；`tree:l1:l2:*` 等三层命名空间给树；
 `bulk:key00001..03000` 共 **3,000** 键给 `SCAN` 分页。另一个 db 索引的 2 个键**不在 seed 里**——keyspace
-目录测试用 `fresh_redis_with_neighbor` 现场领第二个索引、现场 SET（§2.3）。
+目录测试用 `fresh_redis_with_neighbor` 现场领第二个索引、现场 SET（§2.3）；docs/45 §2.7 补的
+**stream ×4**（`stream:ticks` 1 万条 + `feed` 组 pending 7、`stream:empty`、`stream:one`、
+`stream:ragged` 交错字段）由 `seed.rs` 生成，不进 keys.txt（seed v3，§2.7）。
 
 seed 自己也有测试（I1，`tests/it/seed.rs` 7 条）：灌完后逐表数行、逐列验类型、验值（u64::MAX、
 PNG 魔数、`1990-06-15 08:30:00.123456`、重复行计数），外加三条隔离证明（mysql/pg 两个 fresh 库互不可见、
