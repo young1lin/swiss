@@ -434,9 +434,14 @@ export interface DbKeyTab extends DbTabBase {
   /* docs/45 §2.3: the not-pinned holdback. redisStreamPending pools the pages a tick
    *  fetched while the operator reads history — nothing inserts, the table holds still,
    *  the pill counts. redisStreamGap is the more=true flag on a live-edge page (a
-   *  middle chunk was skipped); redisStreamErr is why Follow stopped, if it stopped. */
+   *  middle chunk was skipped); redisStreamErr is why Follow stopped, if it stopped.
+   *  redisStreamPendingDropped (S3 follow-up): the pool hit STREAM_ROW_CAP and kept
+   *  the newest half — the pill reads "500+" instead of a count that stopped moving.
+   *  It lives exactly as long as the pool it describes: every consumer of the pool
+   *  (the pinned merge, the pill flush, jump-to-latest) resets it. */
   redisStreamPending?: ApiDbStreamEntry[] | null;
   redisStreamGap?: boolean;
+  redisStreamPendingDropped?: boolean;
   redisStreamErr?: string | null;
 }
 

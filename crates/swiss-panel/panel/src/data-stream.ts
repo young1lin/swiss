@@ -88,6 +88,22 @@ export function streamCap(
   return keep === "newest" ? rows.slice(0, cap) : rows.slice(rows.length - cap);
 }
 
+/** The holdback pool's trim (docs/45 S3 follow-up): the pool behind the pill is
+ *  bounded by the same STREAM_ROW_CAP as the table itself — a reader deep in history
+ *  while the stream runs hot would otherwise park every tick's page in state without
+ *  end (50 entries/s read for ten minutes is 30,000 rows). Overflow keeps the NEWEST
+ *  cap rows (the pool is a held live edge, so streamCap's keep "newest" is its rule
+ *  too), and the drop reports itself: what fell out is a hole in the middle of what
+ *  the pill would splice, exactly like a truncated page, so the gap bar lights and
+ *  "jump to latest" stays the honest exit. Pure. */
+export function streamPool(
+  pending: ApiDbStreamEntry[], page: ApiDbStreamEntry[], cap: number,
+): { pending: ApiDbStreamEntry[]; dropped: boolean } {
+  const merged = streamMerge(pending, page);
+  if (!(cap > 0) || merged.length <= cap) return { pending: merged, dropped: false };
+  return { pending: merged.slice(0, cap), dropped: true };
+}
+
 /** True when the stream table sits at its live edge (docs/45 §2.3): scrollTop no
  *  deeper than one row below the top. Junk counts as pinned — an unreadable row
  *  height or a negative offset is a view we cannot prove is reading history, and
@@ -294,8 +310,17 @@ export async function dbStreamTick(): Promise<void> {
         STREAM_ROW_CAP, "newest",
       );
       t.redisStreamPending = []; // the pooled page rode the edge with this one
+      t.redisStreamPendingDropped = false; // the pool is consumed; a refill starts honest
     } else {
-      t.redisStreamPending = streamMerge(t.redisStreamPending || [], j.entries);
+      const pooled = streamPool(t.redisStreamPending || [], j.entries, STREAM_ROW_CAP);
+      t.redisStreamPending = pooled.pending;
+      if (pooled.dropped) {
+        // The pool overflowed (docs/45 S3 follow-up): the rows that fell out are a
+        // hole in the middle no later tick can heal — the same gap flag a truncated
+        // page sets, and the pill switches to the "500+" copy for the same reason.
+        t.redisStreamGap = true;
+        t.redisStreamPendingDropped = true;
+      }
     }
   }
   const now = Date.now();
@@ -327,7 +352,11 @@ function dbStreamBarDyn(t: DbKeyTab): void {
   const n = (t.redisStreamPending || []).length;
   if (dbStreamPill) {
     dbStreamPill.hidden = n === 0;
-    if (n) dbStreamPill.textContent = trn(n, "dataStream.pendingNew.one", "dataStream.pendingNew.other");
+    if (n) {
+      dbStreamPill.textContent = t.redisStreamPendingDropped
+        ? tr("dataStream.pendingNewOver", { n: STREAM_ROW_CAP })
+        : trn(n, "dataStream.pendingNew.one", "dataStream.pendingNew.other");
+    }
   }
   if (dbStreamRateEl) {
     dbStreamRateEl.hidden = !t.redisStreamRate;
@@ -347,6 +376,7 @@ async function dbStreamJumpLatest(): Promise<void> {
   if (dbTab() !== t) return; // the tab moved on mid-flight; the answer belongs to nobody
   t.redisStreamRows = streamCap((j.entries || []).slice(), STREAM_ROW_CAP, "newest");
   t.redisStreamPending = [];
+  t.redisStreamPendingDropped = false; // the pool it described is gone
   t.redisStreamGap = false;
   t.redisStreamMore = !!j.more;
   renderDbGrid();
@@ -393,7 +423,11 @@ function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
   const pendN = (t.redisStreamPending || []).length;
   const pill = h("button", { class: "btn db-stream-pill", type: "button" }, "");
   pill.hidden = pendN === 0;
-  if (pendN) pill.textContent = trn(pendN, "dataStream.pendingNew.one", "dataStream.pendingNew.other");
+  if (pendN) {
+    pill.textContent = t.redisStreamPendingDropped
+      ? tr("dataStream.pendingNewOver", { n: STREAM_ROW_CAP })
+      : trn(pendN, "dataStream.pendingNew.one", "dataStream.pendingNew.other");
+  }
   pill.onclick = (): void => {
     const cur = dbTab();
     if (cur.kind !== "key") return;
@@ -401,6 +435,7 @@ function dbStreamFollowBar(wrap: HTMLElement, t: DbKeyTab): void {
     if (pool.length) {
       cur.redisStreamRows = streamCap(streamMerge(cur.redisStreamRows || [], pool), STREAM_ROW_CAP, "newest");
       cur.redisStreamPending = [];
+      cur.redisStreamPendingDropped = false; // flushed at the edge; a new pool starts honest
     }
     renderDbGrid();
     const wrap2 = $("dbGridWrap");
