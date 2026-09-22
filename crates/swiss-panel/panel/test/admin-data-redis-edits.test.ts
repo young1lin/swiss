@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView } from "../src/db-state.js";
+import { dbTabs, freshTab } from "../src/db-state.js";
 
 // Same DOM-stub technique as admin-data-grep.test.ts: the panel ships browser ES modules, so
 // the module graph needs the globals stubbed before it will evaluate under Node.
@@ -171,8 +171,12 @@ describe("dbRedisPendingCount", () => {
       pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "util.ts")).href
     ) as { state: { db: Record<string, unknown> } };
     expect(edits.dbRedisPendingCount()).toBe(0);
-    dbView().redisEdits = { key: "k", type: "set", updates: {}, deletes: { a: 1 }, inserts: [{ member: "x" }, { member: "y" }] };
+    // The buffer lives on the open key tab (docs/42 T1), not on the connection record.
+    const k = freshTab("key");
+    dbTabs()[0] = k;
+    k.redisEdits = { key: "k", type: "set", updates: {}, deletes: { a: 1 }, inserts: [{ member: "x" }, { member: "y" }] };
     expect(edits.dbRedisPendingCount()).toBe(3);
-    dbView().redisEdits = null;
+    k.redisEdits = null;
+    expect(edits.dbRedisPendingCount()).toBe(0);
   });
 });

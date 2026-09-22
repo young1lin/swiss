@@ -170,7 +170,9 @@ impl DbBrowser for PgBrowser {
             .map(f64::floor)
             .unwrap_or(0.0)
             .max(0.0) as i64;
-        let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
+        // Same ceiling raise as mysql_browser: the sidebar tree fetches whole catalogs
+        // (panel sends limit=2000), so this bounds hand-written queries only.
+        let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 5000);
         let grep = o.get("grep").and_then(Value::as_str);
         // docs/22 W1.1: the panel's schema picker narrows the catalog walk server-side; MySQL
         // has no such parameter (one database per connection) and ignores it.
@@ -925,6 +927,48 @@ impl DbBrowser for PgBrowser {
         let columns = columns.as_ref().map(|(t, c)| (t.as_str(), c.as_slice()));
         let items = completion_items(DbDialect::Pg, prefix, &tables, columns);
         Ok(json!({ "items": items }))
+    }
+    /// docs/43 M3 (ADR-027 option b): a PgPool is BOUND to one database — switching costs a
+    /// whole new pool, so every database except the one this connection sits on is listed
+    /// but not browsable, with the reason served here for the panel to show. current (and
+    /// primary) come from the server itself: SELECT current_database() IS the database the
+    /// URL named at config time. The postgres database is flagged system (template siblings
+    /// are filtered by datallowconn / datistemplate server-side).
+    async fn list_databases(&self) -> Result<Value, String> {
+        let (rows, current_row) = tokio::join!(
+            self.query(
+                "SELECT datname AS name FROM pg_database \
+                 WHERE datallowconn AND NOT datistemplate ORDER BY datname",
+                &[],
+            ),
+            self.query("SELECT current_database() AS name", &[])
+        );
+        let current = current_row?
+            .first()
+            .and_then(|r| r.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        const REASON: &str = "A Postgres connection is bound to one database; browsing this one needs its own connection.";
+        let databases: Vec<Value> = rows?
+            .iter()
+            .map(|r| {
+                let name = r.get("name").and_then(Value::as_str).unwrap_or("");
+                json!({
+                    "name": name,
+                    "primary": name == current,
+                    "browsable": name == current,
+                    "system": name == "postgres",
+                    // Cross-database catalogs need a second connection: no table counts.
+                    "reason": if name == current { Value::Null } else { json!(REASON) },
+                })
+            })
+            .collect();
+        Ok(json!({
+            "primary": current,
+            "current": current,
+            "databases": databases,
+        }))
     }
 }
 

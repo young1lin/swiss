@@ -1,4 +1,3 @@
-                                             
 /*
  * Copyright 2026 young1lin
  * 
@@ -16,7 +15,7 @@
  */
 
                                                   
-                                                                                  
+                                                                                              
 import { el, iconNode } from "./util.js";
 import { h } from "./h.js";
 import { DB_INLINE_MAX } from "./data-edit.js";
@@ -24,7 +23,7 @@ import { dbCellText, dbOpenCellEditor } from "./data-cell.js";
 import { dbRowAddr, renderDbGrid } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 import { dbPkKey } from "./data-view.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
 
 /* --- single-record form view (docs/22 W5.1) ------------------------------------------------------ */
@@ -58,7 +57,7 @@ function dbFormRowFields(columns               , row                            
  *  change and drops the emptied entry; a NULL collapses only against a NULL original. An
  *  insert's empty text is the dialog's "back to the column default". Mutates the given
  *  state object only. */
-function dbFormWrite(d         , kind        , key        , i        , column        , meta            , v         )       {
+function dbFormWrite(d            , kind        , key        , i        , column        , meta            , v         )       {
   if (kind === "insert") {
     const ins = d.inserts[i];
     if (!ins) return;
@@ -86,7 +85,7 @@ function dbFormWrite(d         , kind        , key        , i        , column   
  *  delegated click/change/keydown (dbFormClick and friends) resolve the field's ctx from
  *  LIVE state at event time, so a toggle writes what the record says now, not what the
  *  button was painted with. */
-function dbFormField(d         , val             , f             , ctx                                                                                                                  )       {
+function dbFormField(val             , f             , ctx                                                                                                                  )       {
   if (!ctx.editable) {
     if (f.value === undefined) { val.appendChild(el("span", "db-fold", tr("dataForm.phDefault"))); return; }
     if (f.value === null) { val.appendChild(el("span", "db-null", tr("dataGrid.null"))); return; }
@@ -126,8 +125,10 @@ function dbFormField(d         , val             , f             , ctx          
 /** The Form tab's body. Same entry guards and row order as the grid (buffered inserts in
  *  front of the page's rows); the chevron stepper in the head walks between them. */
 function renderDbFormView(wrap             )       {
-  const d = dbView();
-  if (!d.conn) {
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return;
+  if (!c.conn) {
     wrap.appendChild(el("div", "db-hint", tr("dataGrid.databaseMcpRegisteredAdd")));
     return;
   }
@@ -190,7 +191,7 @@ function renderDbFormView(wrap             )       {
     lab.appendChild(el("div", "db-form-name", f.name));
     if (f.type) lab.appendChild(el("div", "db-col-type", f.type));
     const val = el("div", "db-form-val");
-    dbFormField(d , val, f, {
+    dbFormField(val, f, {
       kind: isIns ? "insert" : "update",
       key: key,
       i: isIns ? idx : -1,
@@ -207,19 +208,19 @@ function renderDbFormView(wrap             )       {
 /* --- #pane's delegated listeners for the form (docs/37 R5) ----------------------------------------
    Behavior notes (docs/37 §10.1): every control resolves its record and field from LIVE
    state at event time — the boolean toggle's on/off, the NULL button's back-to-original
-   value and the stepper's bounds all re-read dbView(), so a buffered write that lands
+   value and the stepper's bounds all re-read dbTab(), so a buffered write that lands
    between render and click is what the next click acts on. The old per-render closures
    captured the painted values instead. */
 
 /** The live record context: the same clamp renderDbFormView applies, then the insert/row
  *  split, key, delete state and pk address — recomputed per event. */
 function dbFormCtx()   
-                                                                                           
+                                                                                              
                                                                                         
                                                                                                
          {
-  const d = dbView();
-  if (!d.data) return null;
+  const d = dbTab();
+  if (d.kind !== "table" || !d.data) return null;
   const nIns = d.inserts.length;
   const total = nIns + d.data.rows.length;
   if (!total) return null;

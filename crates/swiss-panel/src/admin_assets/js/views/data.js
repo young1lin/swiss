@@ -15,12 +15,15 @@
  */
 
 import { $ } from "../util.js";
-import { dbConnLabel, dbOkToDrop, dbPending, loadDbView } from "../data-view.js";
-import { dbView, unmountDbView } from "../db-state.js";
+import { dbConnLabel, dbOkToLeave, dbPendingAll, loadDbView } from "../data-view.js";
+import { dbConn, unmountDbView } from "../db-state.js";
 export function mount() { return loadDbView(); }
 export function refresh() { return loadDbView(); }
-export function hasPendingChanges() { return dbPending() > 0; }
-export function canLeave() { return !dbPending() || dbOkToDrop(); }
+/* docs/42 D5: the page-leave guards ask the WHOLE strip, not the object in front. A buffer
+   parked on a background tab is exactly the edit a single-record guard used to let walk out
+   of the page unmentioned, and canLeave() asks once with the total rather than once per tab. */
+export function hasPendingChanges() { return dbPendingAll() > 0; }
+export function canLeave() { return !dbPendingAll() || dbOkToLeave(); }
 export function unmount() {
   unmountDbView();
   // Take the workspace framing back off (data-view.js's renderDbView adds it) so the next
@@ -33,7 +36,7 @@ export function unmount() {
    in the dropdown's own words (dbConnLabel, one builder for both), and renders nothing when
    no connection is selected rather than repeating the page name. */
 export function countText() {
-  const d = dbView();
+  const d = dbConn();
   if (!d.conn) return "";
   const c = d.conns.find((x) => { return x.name === d.conn; });
   return c ? dbConnLabel(c) : "";

@@ -722,3 +722,56 @@ Options considered — A) keep D9 (rejected: the §0.2 bills only grow with ever
 B) revoke with no replacement gate (rejected: house style forks per-author);
 C) revoke and gate on the ratchet (chosen); D) tsc/esbuild emit + source maps (rejected:
 loses line-for-line emit, adds a debugging indirection, and does not stop the types lying).
+## ADR-026 — Data's resource navigation is object tabs, half of L3, not a new layer (docs/42)
+
+**Status: Accepted (2026-09-22).** The Data page used to hold one object at a time:
+opening another table dropped the first one's filters, paging and buffered edits, and an
+FK jump replaced the source table. Mature web database clients grow tabs of their own
+because the browser's own tab is useless for a database session — a new tab is a cold
+panel with no connection and no lease; the tab strip is the window's replacement on the web.
+
+The options were weighed in docs/42 §10: keep the single object and only split the
+toolbar (smallest change, did not address the lost work, ruled out by the owner); a
+bottom dock (grid + console visible together, but still one object held and it eats
+vertical space permanently); a command palette (densest, but a desktop idiom with poor
+discoverability that changes nothing about how many objects are held). The decision is
+object tabs: the strip is L3 "resource navigation" made visible, **not a new layer** —
+the precedent is MCP/Servers' "sidebar picks the resource, segment picks the section";
+Data differs only in that it can hold several. Tabs use a third shape (card + glyph +
+closable ×) so they are distinguishable at a glance from L2's underlined tabs and L3's
+pill segments.
+
+The costs, stated plainly: each tab holds up to one page of 500 rows → the strip is
+capped at eight, a background tab's data is dropped and re-fetched on activation, and a
+dirty tab is never evicted; the navigation guard went from asking about one record to
+asking about every tab (docs/42 D5) — missing one would silently drop the user's edits;
+and when all eight are dirty, opening a ninth is REFUSED rather than dropping anything
+silently. That last refusal is the direct concession to "ruthlessly small" — bounded by
+a cap instead of unbounded memory. Rollback is real too: T1 (the state split) is an
+invisible refactor; tabs T2-T4 sit on top of it, and a true retreat removes those three
+commits while T1's split stays (a one-tab array is exactly the old single record).
+
+## ADR-027 — Data's many databases: the primary is writable, the rest are read-only, no per-database pools (docs/43)
+
+**Status: Accepted (2026-09-22).** A database MCP configuration names one database, but
+the same instance usually hosts others. The panel answers whether — and how — those are
+reachable.
+
+Options: (a) keep one connection = one database; (b) open same-instance cross-database
+BROWSING for MySQL only, every other dialect lists-but-disables; (c) give every database
+its own pooled connection, uniform across dialects. The decision is (b). The reasoning:
+MySQL's cross-database qualification is free — the statements already carry the database
+prefix — while pg and Redis would pay a whole "pool per database + lease + credentials"
+machinery for nothing but browsing convenience, and (c) contradicts docs/42 §1.5's
+"connection leasing does not move".
+
+The costs: the dialects' capabilities are asymmetric, and the panel says so in the
+server's own words instead of greying a button with no explanation — a Postgres row is
+disabled with "A Postgres connection is bound to one database; browsing this one needs
+its own connection", and a foreign MySQL database flips the page read-only with the
+configured database named in the status line. The write boundary: secondary databases
+are read-only, period — the write path stays pinned to the CONFIGURED database, because
+"the database written in the config" is this connection's permission boundary; being
+able to browse another database is not authorization to write in it. The Redis catalog
+reads the proxy's keyspace from INFO (db0..N); a proxy that refuses CLIENT INFO (the
+K_LINE one does) falls back to db0 rather than failing the catalog.

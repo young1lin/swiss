@@ -43,6 +43,8 @@ function chromeSkeleton(): string {
     '<div id="sideCap">MCPs</div>',
     '<span id="memChip" title="swiss resident set">mem …</span>',
     '<nav id="list" aria-label="Hosted MCPs"></nav>',
+    // The refused flip speaks through the toast, so the skeleton carries the shell's own.
+    '<div id="toast" class="toast" hidden></div>',
   ].join("");
 }
 
@@ -75,10 +77,14 @@ describe("paintChrome and the language flip (docs/38 §2.5)", () => {
     expect(document.documentElement.lang).toBe("zh-CN");
   });
 
-  it("a canLeave veto stops the flip before the preference is written", async () => {
+  it("a canLeave veto stops the flip before the preference is written, and says so", async () => {
     await toggleLang();
     expect(localStorage.getItem(LANG_KEY)).toBe(null);
     expect(document.documentElement.lang).toBe("en");
+    // A button that answers a click with nothing reads as broken (found live, docs/42 T2).
+    const t = document.getElementById("toast")!;
+    expect(t.hidden).toBe(false);
+    expect(t.textContent).toContain("Unsaved changes");
   });
 
   it("a blocked localStorage still flips for the page load (L4's in-memory choice)", async () => {

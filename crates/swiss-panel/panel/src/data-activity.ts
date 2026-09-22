@@ -18,21 +18,19 @@ import type { ApiDbActivityReply, ApiDbActivityRow } from "./types/api.js";
 import { $, apiJson, el, iconNode, toast } from "./util.js";
 import { h } from "./h.js";
 import { popupMenu } from "./menu.js";
-import { dbIsMounted, dbView } from "./db-state.js";
+import { dbConn, dbIsMounted, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
 
 /* --- activity monitor (docs/22 W3.2) -------------------------------------------------------------- */
-/* A section page over the right pane: live sessions on the connection's server, one shared
-   table for both dialects (pid / user / state / wait / duration / query), the panel's own
-   session chipped, and Cancel / Terminate per row. It polls every 5s WHILE OPEN and stops
-   the moment it closes — an unwatched monitor is a timer nobody is reading. Redis has no
-   sessions page: the entry point is hidden for it. */
+/* One open object among the others (docs/42 T2): live sessions on the connection's server, one
+   shared table for both dialects (pid / user / state / wait / duration / query), the panel's own
+   session chipped, and Cancel / Terminate per row. It paints into the pane's grid slot like a
+   row page does, and it polls every 5s WHILE ITS TAB IS ACTIVE — a backgrounded or closed
+   monitor is a timer nobody is reading. Redis has no sessions page: the entry point is hidden
+   for it. */
 
 const DB_ACTIVITY_POLL_MS = 5000;
 let dbActivityTimer: ReturnType<typeof setInterval> | null = null;
-// The view's own close action, registered when the section opens — #pane's delegated click
-// reaches it without data-view threading the callback through every dispatcher.
-let dbActivityCloseFn: (() => void) | null = null;
 
 /** Seconds as the compact duration the table shows — "42s", "1m 12s", "2h 05m", "3d 04h".
  *  Pure so the column's formatting can be pinned without a DOM. */
@@ -46,50 +44,39 @@ function dbActivityDuration(secs: number | null | undefined): string {
   return Math.floor(h / 24) + "d " + String(h % 24).padStart(2, "0") + "h";
 }
 
-/** Draw the section into the (fresh) right pane and start the poll. "close" is the view's own
- *  close action — passed in so this module never imports data-view back. */
-function dbActivityPane(close: () => void): void {
-  dbActivityCloseFn = close;
-  const d = dbView();
-  const main = document.querySelector<HTMLElement>(".db-main");
-  if (!main) return;
-  main.textContent = "";
-  const conn = d.conns.find((c) => { return c.name === d.conn; });
-  const head = el("div", "db-head");
-  const left = el("div", "db-head-left");
-  left.appendChild(el("h2", "db-title pane-title", tr("dataActivity.title")));
-  left.appendChild(el("div", "db-meta",
-    (conn ? conn.label : d.conn) + " · " + tr("dataActivity.refreshesWhileOpen")));
-  head.appendChild(left);
-  // The Close button answers through #pane's delegated click via data-actclose (docs/37 R5).
-  head.appendChild(h("div", { class: "db-head-ctl" },
-    h("button", { class: "btn", type: "button", data: { actclose: "" } }, tr("dataActivity.close"))));
-  main.appendChild(head);
-  const wrap = el("div", "db-grid-wrap");
-  wrap.id = "dbActivityWrap";
-  wrap.appendChild(el("div", "db-hint", tr("dataActivity.loadingSessions")));
-  main.appendChild(wrap);
+/** Start the monitor: first answer now, then the poll. The tab itself is the open/close state
+ *  (docs/42 T2) — there is no flag left to set and no pane to take over. */
+function dbActivityStart(): void {
   void dbActivityLoad();
   dbActivityPollStart();
 }
 
 async function dbActivityLoad() {
-  const d = dbView();
-  const wrap = $("dbActivityWrap");
-  if (!d.conn || !wrap) return;
+  const d = dbConn();
+  const t = dbTab();
+  if (!d.conn || t.kind !== "activity") return;
   const j = await apiJson<ApiDbActivityReply>("/api/db/" + encodeURIComponent(d.conn!) + "/activity");
-  // A view that closed mid-flight leaves the timer to self-clear and the DOM alone.
-  if (!j || !$("dbActivityWrap")) return;
-  d!.activityRows = j.rows || [];
+  // A tab switched away from (or a view unmounted) mid-flight leaves the timer to self-clear and
+  // the DOM alone — the answer belongs to the tab that asked, and it is no longer in front.
+  const after = dbTab();
+  if (!j || after !== t) return;
+  t.activityRows = j.rows || [];
   dbActivityRender();
 }
 
 function dbActivityRender() {
-  const d = dbView();
-  const wrap = $("dbActivityWrap");
-  if (!wrap) return;
-  const rows = d.activityRows || [];
+  const t = dbTab();
+  const wrap = $("dbGridWrap");
+  if (!wrap || t.kind !== "activity") return;
+  const rows = t.activityRows;
   wrap.textContent = "";
+  // null is "the first fetch has not answered yet", [] is "the server has no sessions". The
+  // tab opens empty and paints immediately, so collapsing the two would greet every open with
+  // a "no sessions" that is not yet true.
+  if (!rows) {
+    wrap.appendChild(el("div", "db-hint", tr("dataActivity.loadingSessions")));
+    return;
+  }
   if (!rows.length) {
     wrap.appendChild(el("div", "db-hint", tr("dataActivity.noSessions")));
     return;
@@ -151,17 +138,14 @@ function dbActivityRender() {
  *  the per-row menu re-finds its row from live d.activityRows by pid at event time — a poll
  *  that repainted the table between render and click can never kill the wrong session. */
 function dbActivityClick(t: Element, ev: MouseEvent): boolean {
-  if (t.closest("[data-actclose]")) {
-    if (dbActivityCloseFn) dbActivityCloseFn();
-    return true;
-  }
   const more = t.closest<HTMLElement>("[data-apid]");
   if (more) {
     // stopPropagation: connect.js closes any open menu on clicks that reach document, and
     // without this the very click that opens the menu also tears it down.
     ev.stopPropagation();
     const pid = Number(more.dataset.apid);
-    const row = (dbView().activityRows || []).find((r: ApiDbActivityRow): boolean => { return r.pid === pid; });
+    const at = dbTab();
+    const row = (at.kind === "activity" ? at.activityRows || [] : []).find((r: ApiDbActivityRow): boolean => { return r.pid === pid; });
     if (row) dbActivityMenu(more, row);
     return true;
   }
@@ -178,7 +162,7 @@ function dbActivityMenu(anchorEl: HTMLElement, row: ApiDbActivityRow): void {
 }
 
 async function dbActivityKill(row: ApiDbActivityRow, mode: string): Promise<void> {
-  const d = dbView();
+  const d = dbConn();
   const j = await apiJson<{ result?: boolean }>("/api/db/" + encodeURIComponent(d.conn!) + "/activity-kill", {
     method: "POST",
     body: JSON.stringify({ pid: row.pid, mode: mode }),
@@ -197,7 +181,7 @@ function dbActivityPollStart() {
   dbActivityTimer = setInterval(() => {
     // Self-guarding: the page closed or the view unmounted — stop instead of polling into a
     // DOM nobody sees. A hidden tab skips its tick but keeps the timer.
-    if (!dbIsMounted() || !dbView().activity || !$("dbActivityWrap")) { dbActivityPollStop(); return; }
+    if (!dbIsMounted() || dbTab().kind !== "activity") { dbActivityPollStop(); return; }
     if (document.hidden) return;
     void dbActivityLoad();
   }, DB_ACTIVITY_POLL_MS);
@@ -207,4 +191,4 @@ function dbActivityPollStop() {
   if (dbActivityTimer) { clearInterval(dbActivityTimer); dbActivityTimer = null; }
 }
 
-export { dbActivityClick, dbActivityDuration, dbActivityPane, dbActivityPollStop, dbActivityRender };
+export { dbActivityClick, dbActivityDuration, dbActivityLoad, dbActivityPollStart, dbActivityPollStop, dbActivityRender, dbActivityStart };

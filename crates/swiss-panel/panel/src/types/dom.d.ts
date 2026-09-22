@@ -33,6 +33,23 @@ export interface MenuItemAction {
   pick?: boolean;
   on?: boolean;
   title?: string;
+  /* docs/43 M1: a row can carry the type glyph and the dirty dot its card does — the tab
+   *  strip's overflow lists open objects, and the menu is the whole set's one read. */
+  icon?: string;
+  dot?: boolean;
+  /* The drawer follow-up: a row can carry a MARK (the dialect word, painted by
+   * typeTagNode - glyph for whitelisted dialects, mono word otherwise) and a META (a dim
+   * trailing value like a table count). popupMenu ignores both; the sidebar drawers read
+   * them, because a drawer row has room a one-line menu label does not. */
+  mark?: string;
+  meta?: string;
+  /* docs/43 M3: a row the menu shows but refuses to run — the database selector lists
+   *  every database the instance names, browsable or not, so the reason (title) is one
+   *  hover away instead of the row simply being missing. */
+  disabled?: boolean;
+  /* docs/43 M3: a non-interactive heading row (a connection GROUP name, "system" bands) —
+   *  styled like the menu's own chrome, never focused, never clicked. */
+  heading?: boolean;
   sep?: never;
 }
 
@@ -136,7 +153,26 @@ export interface GroupCfg<Row> {
   collapsed: Record<string, boolean>;
   noun: string;
   addTitle?: (group: string) => string;
-  onAdd: (group: string) => void;
+  onAdd?: (group: string) => void;
+  /* docs/43 M2 (the Data tree): optional gates and overrides for scopes whose bands are
+   *  DERIVED from data rather than named by the operator. label renames a band for display
+   *  without touching the collapse key; canAdd gates the header + per band; moreItems
+   *  replaces the stock Move/Rename/Delete list (null = this band gets no ellipsis at all,
+   *  moreTitle its button's title); emptyText replaces the drop-target line a read-only
+   *  tree cannot honor; countOf answers what the band's count badge numbers (a nested band
+   *  counts its ROWS, not its inner bands). */
+  label?: (group: string) => string;
+  canAdd?: (group: string) => boolean;
+  moreItems?: (group: string) => MenuItem[] | null;
+  moreTitle?: (group: string) => string;
+  emptyText?: (group: string) => string;
+  countOf?: (slice: { name: string; rows: unknown[] }) => number;
+  /* docs/43 addendum (the 200-row wall): optional render cap for bands whose rows run into
+   *  the thousands. Given the band's FULL row list, answer how many to paint and the note
+   *  row to append under them (null = paint everything, no note). The band's count badge
+   *  still numbers the full list - the cap is a DOM budget, not a redefinition of what the
+   *  band holds. */
+  capRows?: (rows: Row[]) => { keep: number; note: HTMLElement | null };
   reload: () => void | Promise<void>;
   render?: () => void;
   afterDrag?: () => void;

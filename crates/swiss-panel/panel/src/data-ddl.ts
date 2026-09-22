@@ -21,7 +21,8 @@ import { fill, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { dbHighlightNodes } from "./data-filters.js";
 import { dbLoadData } from "./data-grid.js";
-import { dbLoadTables, dbOpenTable } from "./data-view.js";
+import { dbLoadTables } from "./data-view.js";
+import { dbOpenTab } from "./data-tabs.js";
 import { dbLoadDetail } from "./data-structure.js";
 import { tk, tr } from "./i18n.js";
 
@@ -497,7 +498,7 @@ async function commitDbDdl(): Promise<void> {
   if (kind === "table") {
     toast(tr("dataDdl.tableCreated", { table: table }));
     await dbLoadTables();
-    dbOpenTable({ name: table, schema: schema });
+    dbOpenTab({ kind: "table", table: table, schema: schema });
   } else if (kind === "column") {
     toast(tr("dataDdl.columnAdded", { table: table }));
     void dbLoadDetail();

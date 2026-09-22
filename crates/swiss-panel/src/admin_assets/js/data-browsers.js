@@ -20,14 +20,16 @@ import { $, apiJson, dbReqGuard, el, emptyNode, errText, iconNode, toast } from 
 import { fill, h } from "./h.js";
 import { closeSheet } from "./add-sheet.js";
 import { renderDbFilters } from "./data-filters.js";
-import { renderDbGrid } from "./data-grid.js";
+import { renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbBar } from "./data-sql.js";
 // Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
 // runtime-only use — the same shape as the data-sql import above.
 import { dbTypedConfirm } from "./data-edit.js";
+import { dbCopyText } from "./data-csv.js";
+import { dbOpenValueSheet } from "./data-value.js";
 import { renderDbTables } from "./data-view.js";
 import { popupMenu } from "./menu.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
 
 /* --- redis key browser -------------------------------------------------------------------------- */
@@ -39,7 +41,7 @@ import { tk, tr, trn } from "./i18n.js";
    refused or failed command stops the run and the operator re-commits the rest. */
 
 function dbIsRedis()          {
-  const d = dbView();
+  const d = dbConn();
   const c = d.conns.find((x                    )          => { return x.name === d.conn; });
   return !!c && c.dialect === "redis";
 }
@@ -56,12 +58,22 @@ let dbKeysLoading = false;
 const dbKeysReq = dbReqGuard();
 
 async function dbLoadKeys(reset                     )                {
-  const d = dbView();
+  const d = dbConn();
   if (!d.conn) return;
   if (!reset && dbKeysLoading) return; // the More double-click: the page is already on its way
-  if (reset) { d.redis = null; d.redisKey = null; }
+  if (reset) {
+    d.redis = null;
+    const t0 = dbTab();
+    if (t0.kind === "key") t0.redisKey = null; // a reset walk deselects the open key
+  }
   let q = "/api/db/" + encodeURIComponent(d.conn) + "/keys?count=200";
-  if (d.grep) q += "&pattern=" + encodeURIComponent(d.grep);
+  // The redis SCAN MATCH is exact-shape, while the SQL side greps as a substring - a bare
+  // word finding every table but no key read as "the key does not exist". Wrap the grep as
+  // a substring unless the user typed their own wildcard; docs/43 M2 walk caught this live.
+  if (d.grep) {
+    const pat = d.grep.includes("*") ? d.grep : "*" + d.grep + "*";
+    q += "&pattern=" + encodeURIComponent(pat);
+  }
   if (d.redisType) q += "&type=" + encodeURIComponent(d.redisType);
   if (d.redis && d.redis.cursor && d.redis.cursor !== "0") q += "&cursor=" + encodeURIComponent(d.redis.cursor);
   const token = dbKeysReq.issue();
@@ -97,21 +109,23 @@ async function dbLoadKeys(reset                     )                {
 const dbValueReq = dbReqGuard();
 
 async function dbLoadRedisValue(key        )                {
-  const d = dbView();
-  // A fresh key selection is a navigation: drop the command result that owned the pane,
-  // or the grid guard would keep rendering it and the value would never show.
-  d.sqlResult = null;
-  d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: key navigation closes every result tab
-  d.sqlBusy = false;
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "key") return; // the value view belongs to a key tab (docs/42 T2)
+  // No result to clear any more: a command reply lives on the console's own tab, so opening a
+  // key can no longer be standing on top of one (docs/42 T2 retired the shared overlay).
   d.redisKey = key;
   d.redisValue = null; // drop the previous key's value — never flash stale data
   d.redisEdits = null; // and its buffered edits — a different key cannot adopt them
   renderDbGrid();
   const token = dbValueReq.issue();
-  const j = await apiJson                 ("/api/db/" + encodeURIComponent(d.conn ) + "/key?key=" + encodeURIComponent(key));
+  const j = await apiJson                 ("/api/db/" + encodeURIComponent(c.conn ) + "/key?key=" + encodeURIComponent(key));
   if (!dbValueReq.accepts(token)) return; // superseded: a newer key owns the pane
   if (!j) { d.redisKey = null; renderDbGrid(); return; }
   d.redisValue = j;
+  // docs/43 M4: the toolbar's primary action follows the value's TYPE — it paints only when
+  // the value is here, so the toolbar repainted with the grid (the status line rides along).
+  renderDbToolbar();
   renderDbGrid();
 }
 
@@ -154,7 +168,8 @@ function dbRedisValidScore(s        )          {
 /** The buffer for the key in view, rebuilt when the key or its type changed. Null when the
  *  view holds no editable container. */
 function dbRedisEdits()                      {
-  const d = dbView();
+  const d = dbTab();
+  if (d.kind !== "key") return null;
   const v = d.redisValue;
   if (!d.redisKey || !v || !DB_REDIS_TYPES[v.type]) return null;
   if (!d.redisEdits || d.redisEdits.key !== d.redisKey || d.redisEdits.type !== v.type) {
@@ -165,7 +180,8 @@ function dbRedisEdits()                      {
 
 /** How many changes the bar counts. Pure over the buffer. */
 function dbRedisPendingCount()         {
-  const b = dbView().redisEdits;
+  const t = dbTab();
+  const b = t.kind === "key" ? t.redisEdits : null;
   if (!b) return 0;
   return Object.keys(b.updates).length + Object.keys(b.deletes).length + b.inserts.length;
 }
@@ -262,7 +278,13 @@ function dbRedisEntries(v                 , buf              )                  
 }
 
 function dbRenderRedisValue(wrap             )       {
-  const d = dbView();
+  const d = dbTab();
+  if (d.kind !== "key") {
+    // The shared empty state (docs/18 V7) — a non-key tab on a redis connection is the
+    // "no key opened yet" state.
+    wrap.appendChild(emptyNode({ icon: "database", title: tr("dataBrowsers.selectKey"), hint: tr("dataBrowsers.pickKeyLeftView") }));
+    return;
+  }
   if (!d.redisKey) {
     // The shared empty state (docs/18 V7).
     wrap.appendChild(emptyNode({ icon: "database", title: tr("dataBrowsers.selectKey"), hint: tr("dataBrowsers.pickKeyLeftView") }));
@@ -308,6 +330,9 @@ function dbRenderRedisValue(wrap             )       {
   // i18n gate's ternary scan counts the comparison literal in the condition as bare copy.
   const valueText = typeof v.value === "string" ? v.value : JSON.stringify(v.value, null, 2);
   pre.textContent = valueText;
+  pre.oncontextmenu = (ev            )       => {
+    dbRedisCellMenu(ev, v.type, valueText, v.key);
+  };
   wrap.appendChild(pre);
 }
 
@@ -352,13 +377,16 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
       const editable = cfg.ins.includes(c);
       const filled = editable && ins[c] != null && String(ins[c]) !== "";
       const td = el("td", "db-cell db-cell-edit" + (filled ? " db-dirty" : ""));
-      td.textContent = ins[c] == null ? "" : String(ins[c]);
+      td.textContent = ins[c] == null ? "" : dbRedisDisplayText(String(ins[c]));
       if (editable) {
         td.title = tr("dataBrowsers.doubleClickEdit");
         td.ondblclick = ()       => {
           dbRedisCellEdit(td, i, "insert", c, ins[c] == null ? "" : String(ins[c]));
         };
       }
+      td.oncontextmenu = (ev            )       => {
+        dbRedisCellMenu(ev, tr(REDIS_COL_KEYS[c] ?? c), td.textContent || "", v.key + " · " + v.type);
+      };
       tri.appendChild(td);
     });
     tbody.appendChild(tri);
@@ -370,7 +398,7 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
     cfg.cols.forEach((c        )       => {
       const editable = cfg.edit.includes(c) && !entry.deleted;
       const td = el("td", "db-cell" + (entry.updated && cfg.edit.includes(c) ? " db-dirty" : "") + (editable ? " db-cell-edit" : ""));
-      td.textContent = entry.cells[c] == null ? "" : String(entry.cells[c]);
+      td.textContent = entry.cells[c] == null ? "" : dbRedisDisplayText(String(entry.cells[c]));
       td.title = td.textContent || ""; // long values truncate in the cell; the full text is one hover away
       if (editable) {
         td.ondblclick = ()       => {
@@ -379,6 +407,9 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
         dbRedisCellEdit(td, -1, entry.addr, c, String(entry.cells[c]));
         };
       }
+      td.oncontextmenu = (ev            )       => {
+        dbRedisCellMenu(ev, tr(REDIS_COL_KEYS[c] ?? c), td.textContent || "", v.key + " · " + v.type);
+      };
       tri.appendChild(td);
     });
     tbody.appendChild(tri);
@@ -386,6 +417,46 @@ function dbRedisTypedTable(wrap             , v                 , cfg           
 
   tbl.appendChild(tbody);
   wrap.appendChild(tbl);
+}
+
+/** Decode a redis value for DISPLAY (docs/43 M2 fixup): upstream Java services persist
+ *  their strings JSON-encoded, and their serializers escape astral characters as literal
+ *  surrogate-pair text — a title arrives from the wire as
+ *  "\"\uD83D\uDCC8\u23EB\uD83D\uDC46{0} rose {2} within {1} hr\"" and the panel used to
+ *  show those twelve backslash-u characters instead of the chart emoji. Two layers, both
+ *  display-only: a whole JSON string literal unwraps (JSON.parse handles its own escapes),
+ *  then stray well-formed surrogate PAIRS fold to the character they name. A lone surrogate
+ *  escape and any \u that is not a pair are left untouched — a Windows path like c:\users
+ *  must survive byte-identical. Editing still seeds the ORIGINAL bytes, so a saved value
+ *  changes only when the user actually edits it. Pure. */
+function dbRedisDisplayText(raw        )         {
+  let s = raw;
+  if (s.length >= 2 && s.startsWith(String.fromCharCode(34)) && s.endsWith(String.fromCharCode(34))) {
+    try {
+      const parsed          = JSON.parse(s);
+      if (typeof parsed === "string") s = parsed;
+    } catch { /* not a JSON literal — show it as stored */ }
+  }
+  const pair = /\\u([dD][89abAB][0-9a-fA-F]{2})\\u([dD][cdefCDEF][0-9a-fA-F]{2})/g;
+  if (pair.test(s)) {
+    s = s.replace(pair, (_m        , hi        , lo        )         => {
+      return String.fromCharCode(parseInt(hi, 16), parseInt(lo, 16));
+    });
+  }
+  return s;
+}
+
+/** The typed table's right-click — the docs/22 W5.3 cell-menu vocabulary on the redis
+ *  side. A zset member is regularly a long JSON blob the cell truncates to ellipsis; before
+ *  this menu the only way to see one whole was the title hover, and stream values (a plain
+ *  read-only pre) had nothing at all. Copy and View use the same words the SQL grid's cell
+ *  menu uses, and the viewer is the same sheet (text / JSON tree / hex). */
+function dbRedisCellMenu(e            , colLabel        , text        , where        )       {
+  e.preventDefault();
+  popupMenu({ left: e.clientX, top: e.clientY, bottom: e.clientY }, [
+    { label: tr("logs.copyValue"), fn: ()       => { dbCopyText(text); } },
+    { label: tr("dataCsv.viewValue"), fn: ()       => { dbOpenValueSheet(colLabel, text, where); } },
+  ]);
 }
 
 /** The narrow ✕/↩ column the row grid uses, in the value view's words: ✕ buffers a delete
@@ -496,16 +567,18 @@ function dbRedisEditorClose()       {
 /** The Set action, shared by the button and the textarea's Ctrl+Enter — state at event
  *  time (docs/37 R5): the value read is whatever the textarea holds when the click lands. */
 async function dbRedisSetString(ta                     )                {
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "key" || !d.redisKey) return;
   const value = ta.value;
   if (value === ta.dataset.orig) { toast(tr("dataBrowsers.unchanged")); return; }
-  const j = await apiJson("/api/db/" + encodeURIComponent(d.conn ) + "/redis-pipeline", {
+  const j = await apiJson("/api/db/" + encodeURIComponent(c.conn ) + "/redis-pipeline", {
     method: "POST",
-    body: JSON.stringify({ commands: [["SET", d.redisKey , value]] }),
+    body: JSON.stringify({ commands: [["SET", d.redisKey, value]] }),
   });
   if (!j) return;
   toast(tr("dataBrowsers.setKey", { key: d.redisKey ?? "" }));
-  void dbLoadRedisValue(d.redisKey );
+  void dbLoadRedisValue(d.redisKey);
 }
 
 /** docs/22 W3.3: a string edits in place — one textarea, one Set, one SET through the
@@ -517,7 +590,10 @@ function dbRedisStringEditor(wrap             , v                 )       {
   const ta = el("textarea", "db-redis-str")                       ;
   ta.rows = 3;
   ta.spellcheck = false;
-  ta.value = typeof v.value === "string" ? v.value : "";
+  // Display-decoded (dbRedisDisplayText): the editor opens showing the characters the
+  // value names, and the unchanged-check compares against the same decoded text, so merely
+  // opening and saving a JSON-encoded title is a no-op, not a rewrite.
+  ta.value = typeof v.value === "string" ? dbRedisDisplayText(v.value) : "";
   ta.dataset.orig = ta.value;
   ta.setAttribute("data-rstr", "");
   row.appendChild(ta);
@@ -529,7 +605,9 @@ function dbRedisStringEditor(wrap             , v                 )       {
  *  preview printed (dbRedisCommands), so the two cannot drift. A refusal keeps the buffer —
  *  the toast already said which command and why. */
 async function dbRedisCommit()                {
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "key") return;
   const b = dbRedisEdits();
   if (!b) return;
   let cmds                                     ;
@@ -541,9 +619,9 @@ async function dbRedisCommit()                {
   }
   if (!cmds.length) return;
   if (!confirm(tr("dataBrowsers.commitNKOne", { n: trn(cmds.length, "dataBrowsers.nCommands.one", "dataBrowsers.nCommands.other"), k: d.redisKey ?? "" }))) return;
-  const j = await apiJson("/api/db/" + encodeURIComponent(d.conn ) + "/redis-pipeline", {
+  const j = await apiJson("/api/db/" + encodeURIComponent(c.conn ) + "/redis-pipeline", {
     method: "POST",
-    body: JSON.stringify({ commands: cmds.map((c                                   )            => { return [c.verb           ].concat(c.args); }) }),
+    body: JSON.stringify({ commands: cmds.map((x                                   )            => { return [x.verb           ].concat(x.args); }) }),
   });
   if (!j) return;
   toast(tr("dataBrowsers.committedN", { n: trn(cmds.length, "dataBrowsers.nCommands.one", "dataBrowsers.nCommands.other") }));
@@ -555,12 +633,14 @@ async function dbRedisCommit()                {
   // the list refresh never ran, so the sidebar kept offering a key that is gone (docs/22
   // closeout audit).
   await dbLoadRedisValue(key );
-  if (d.redisKey === key && d.redisValue && d.redisValue.type === "none") void dbLoadKeys(true);
+  const t2 = dbTab();
+  if (t2.kind === "key" && t2.redisKey === key && t2.redisValue && t2.redisValue.type === "none") void dbLoadKeys(true);
 }
 
 /** Drop the buffer without a single command — the twin of the row grid's Discard. */
 function dbRedisDiscard()       {
-  const d = dbView();
+  const d = dbTab();
+  if (d.kind !== "key") return;
   const n = dbRedisPendingCount();
   if (!n) return;
   if (!confirm(tr("dataBrowsers.discardNNothingBeen", { n: trn(n, "dataBrowsers.nBufferedChanges.one", "dataBrowsers.nBufferedChanges.other") }))) return;
@@ -571,8 +651,10 @@ function dbRedisDiscard()       {
 }
 
 function dbRedisKeyMenu(anchorEl             )       {
+  const t = dbTab();
+  const key = t.kind === "key" ? t.redisKey : null;
   popupMenu(anchorEl.getBoundingClientRect(), [
-    { label: tr("dataBrowsers.rename"), fn: ()       => { dbRedisRenameSheet(dbView().redisKey); } },
+    { label: tr("dataBrowsers.rename"), fn: ()       => { dbRedisRenameSheet(key); } },
     { sep: true },
     { label: tr("dataBrowsers.delete"), danger: true, fn: dbRedisDeleteKey },
   ]);
@@ -583,7 +665,7 @@ async function dbRedisCommand(line        )                   {
   // No connection is not an error worth a toast — it is the console being asked to run
   // against nothing, which the null return already says (docs/37 R4: the assertion this
   // replaced claimed a selection the record's type never promised).
-  const conn = dbView().conn;
+  const conn = dbConn().conn;
   if (!conn) return null;
   return apiJson("/api/db/" + encodeURIComponent(conn) + "/command", {
     method: "POST",
@@ -630,12 +712,12 @@ function dbRedisRenameSheet(key               )       {
     value: key,
     primary: tr("dataBrowsers.rename2"),
     submit: async (to        )                => {
-      const d = dbView();
       if (!to || to === key) return;
       const j = await dbRedisCommand("RENAME " + key + " " + to);
       if (!j) return;
       toast(tr("dataBrowsers.renamed", { to }));
-      d .redisKey = to;
+      const t = dbTab();
+      if (t.kind === "key") t.redisKey = to;
       await dbLoadKeys(true);
       void dbLoadRedisValue(to);
     },
@@ -645,15 +727,19 @@ function dbRedisRenameSheet(key               )       {
 /* Deleting a key is the one destructive act the redis side has — the same typed-name confirm
    the table DROP/TRUNCATE use (a W1 audit follow-up), with the key's own words. */
 function dbRedisDeleteKey()       {
-  const d = dbView();
+  const d = dbTab();
+  if (d.kind !== "key") return;
   const key = d.redisKey ;
   dbTypedConfirm({ what: tr("dataEdit.whatDelete"), name: key, kind: "key" }, ()       => {
     void dbRedisCommand("DEL " + key).then(async (j         )                => {
       if (!j) return;
       toast(tr("dataBrowsers.deletedKey", { key }));
-      d.redisKey = null;
-      d.redisValue = null;
-      d.redisEdits = null;
+      const t = dbTab();
+      if (t.kind === "key") {
+        t.redisKey = null;
+        t.redisValue = null;
+        t.redisEdits = null;
+      }
       await dbLoadKeys(true);
       renderDbGrid();
     });
@@ -663,11 +749,12 @@ function dbRedisDeleteKey()       {
 /* --- #pane's delegated listeners for the redis value view (docs/37 R5) ----------------------------
    Behavior notes (docs/37 §10.1): every action resolves its key, buffer and type config
    from LIVE state at event time — the add-row shape, the TTL editor's seed value and the
-   row-control addresses all re-read dbView(), so a re-read or a key switch between render
+   row-control addresses all re-read dbTab(), so a re-read or a key switch between render
    and click acts on what is on screen now, never on the painted snapshot. */
 
 function dbRedisClick(t         , ev            )          {
-  const d = dbView();
+  const d = dbTab();
+  if (d.kind !== "key") return false; // the value view's affordances belong to the key tab
   if (t.closest("[data-radd]")) {
     const v = d.redisValue;
     const cfg = v ? DB_REDIS_TYPES[v.type] : null;
@@ -753,7 +840,7 @@ function dbRedisKeydown(t         , ev               )          {
 }
 
 export {
-  DB_REDIS_TYPES, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore,
+  DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore,
   dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
-  dbRedisEntries, dbRedisKeydown, dbRedisPendingCount, dbRenderRedisValue,
+  dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisKeyMenu, dbRedisPendingCount, dbRenderRedisValue,
 };

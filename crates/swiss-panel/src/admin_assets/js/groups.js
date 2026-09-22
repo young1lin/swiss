@@ -166,6 +166,8 @@ function groupFieldHtml(names          , sel                )         {
  *    rowId(row)     the id a drag carries (name for MCPs, id for tunnels)
  *    rowsById()     live rows, for drop-into's "slot after the last member" step
  *    groupOfRow(row) the rendering group of a row (a groupOf(names) closure)
+ *    capRows(rows) optional render budget: how many rows to paint + the note row (docs/43
+ *                   addendum - thousand-row catalogs); absent = paint everything
  *    onMoveRow(id, targetId, before) flat reorder + order PUT + render (caller-owned list)
  *    onAssign(id, group)             member PUT, applied locally first (caller-owned rows)
  *    filtered       a search is on: groups with no match hide, matches force expansion
@@ -192,10 +194,12 @@ function mountGroup     (cfg               , g                 )              {
   const chev = el("span", "grp-chev");
   chev.appendChild(iconNode("chevron-right"));
   toggle.appendChild(chev);
-  toggle.appendChild(el("span", "grp-name", g.name));
+  toggle.appendChild(el("span", "grp-name", cfg.label ? cfg.label(g.name) : g.name));
   // The count stays visible when folded - 0 versus 3 is exactly how a folded empty group
-  // tells itself apart from a folded full one.
-  toggle.appendChild(el("span", "grp-n", String(g.rows.length)));
+  // tells itself apart from a folded full one. countOf lets a nested band number its ROWS
+  // when its direct members are inner bands (the Data tree's schema bands, docs/43 M2).
+  const n = cfg.countOf ? cfg.countOf(g) : g.rows.length;
+  toggle.appendChild(el("span", "grp-n", String(n)));
   toggle.onclick = () => {
     if (cfg.collapsed[g.name]) delete cfg.collapsed[g.name];
     else cfg.collapsed[g.name] = true;
@@ -208,43 +212,66 @@ function mountGroup     (cfg               , g                 )              {
   // a group, and doing it from here means it lands where you meant it to instead of appearing
   // in the first group to be dragged over afterwards. + stays visible (dimmed) because
   // adding is frequent; one persistent glyph per header is a hierarchy, two would be a toolbar.
-  const add = el("button", "grp-add");
-  add.appendChild(iconNode("plus"));
-  add.type = "button";
-  add.title = cfg.addTitle ? cfg.addTitle(g.name) : tr("groups.addGroup", { group: g.name });
-  add.setAttribute("aria-label", add.title);
-  add.onclick = (ev) => { ev.stopPropagation(); cfg.onAdd(g.name); };
-  head.appendChild(add);
+  // docs/43 M2: onAdd is optional now - a scope whose groups cannot gain members from
+  // their band (the Data tree's Views / Routines sections) simply offers no +, and canAdd
+  // gates it per band for the scope that offers it in one place only.
+  if (cfg.onAdd && (!cfg.canAdd || cfg.canAdd(g.name))) {
+    const add = el("button", "grp-add");
+    add.appendChild(iconNode("plus"));
+    add.type = "button";
+    add.title = cfg.addTitle ? cfg.addTitle(g.name) : tr("groups.addGroup", { group: g.name });
+    add.setAttribute("aria-label", add.title);
+    add.onclick = (ev) => { ev.stopPropagation(); cfg.onAdd (g.name); };
+    head.appendChild(add);
+  }
 
   // The ellipsis is rare, so it appears on hover/focus only. Move up/down are the
   // keyboard-and-precision path to what dragging the head does: present exactly when the move
-  // exists, absent at the list's edges.
-  const more = el("button", "grp-more");
-  more.appendChild(iconNode("ellipsis"));
-  more.type = "button";
-  more.title = tr("groups.moveRenameDeleteGroup");
-  more.setAttribute("aria-label", tr("groups.groupActions"));
-  more.onclick = (ev) => {
-    ev.stopPropagation();
-    const i = cfg.names.indexOf(g.name);
-    const items             = [];
-    if (i > 0) items.push({ label: tr("groups.move"), fn: () => { moveGroupBy(cfg, g.name, -1); } });
-    if (i >= 0 && i < cfg.names.length - 1) {
-      items.push({ label: tr("groups.moveDown"), fn: () => { moveGroupBy(cfg, g.name, 1); } });
-    }
-    if (items.length) items.push({ sep: true });
-    items.push(
-      { label: tr("groups.rename"), fn: () => { renameFlow(cfg, g.name); } },
-      { sep: true },
-      { label: tr("groups.deleteGroup"), danger: true, fn: () => { deleteFlow(cfg, g.name); } },
-    );
-    popupMenu(more.getBoundingClientRect(), items);
-  };
-  head.appendChild(more);
+  // exists, absent at the list's edges. A scope with its own row set (the Data tree,
+  // docs/43 M2) supplies the items itself - its bands are derived, there is nothing to move,
+  // rename or delete - and answers null for a band that has no actions at all.
+  const ownItems = cfg.moreItems ? cfg.moreItems(g.name) : undefined;
+  // null and an empty list both mean "this band gets no ellipsis"; only a scope with no
+  // moreItems hook at all falls back to the stock Move/Rename/Delete list.
+  const useOwn = ownItems != null && ownItems.length > 0;
+  if (ownItems === undefined || useOwn) {
+    const more = el("button", "grp-more");
+    more.appendChild(iconNode("ellipsis"));
+    more.type = "button";
+    more.title = cfg.moreTitle ? cfg.moreTitle(g.name) : tr("groups.moveRenameDeleteGroup");
+    more.setAttribute("aria-label", more.title);
+    more.onclick = (ev) => {
+      ev.stopPropagation();
+      let items            ;
+      if (useOwn && ownItems) {
+        items = ownItems;
+      } else {
+        const i = cfg.names.indexOf(g.name);
+        items = [];
+        if (i > 0) items.push({ label: tr("groups.move"), fn: () => { moveGroupBy(cfg, g.name, -1); } });
+        if (i >= 0 && i < cfg.names.length - 1) {
+          items.push({ label: tr("groups.moveDown"), fn: () => { moveGroupBy(cfg, g.name, 1); } });
+        }
+        if (items.length) items.push({ sep: true });
+        items.push(
+          { label: tr("groups.rename"), fn: () => { renameFlow(cfg, g.name); } },
+          { sep: true },
+          { label: tr("groups.deleteGroup"), danger: true, fn: () => { deleteFlow(cfg, g.name); } },
+        );
+      }
+      popupMenu(more.getBoundingClientRect(), items);
+    };
+    head.appendChild(more);
+  }
 
-  wireHeadDrag(cfg, wrap, head, g.name);
-  wireIntoDrop(cfg, head, g.name);
-  wireGroupDrop(cfg, wrap, g.name);
+  // docs/43 M2: a scope with draggable: false gets no drag or drop wiring at all - the
+  // Data tree's bands are derived from the catalog, not named by the operator, so picking
+  // one up or dropping onto it would be a gesture that lies.
+  if (cfg.draggable !== false) {
+    wireHeadDrag(cfg, wrap, head, g.name);
+    wireIntoDrop(cfg, head, g.name);
+    wireGroupDrop(cfg, wrap, g.name);
+  }
   wrap.appendChild(head);
 
   const body = el("div", "grp-body");
@@ -253,21 +280,28 @@ function mountGroup     (cfg               , g                 )              {
   // scope supplies a builder now, so the node it returns IS the node to wire — the string
   // path and the querySelector retired with the last rowsHtml caller.
   if (cfg.rowNode) {
-    g.rows.forEach((row) => {
+    // docs/43 addendum: capRows may hold the band to a DOM budget (a 1,700-table catalog
+    // paints its first cap-1 rows plus a note row, not 1,700 nodes). The slice is render-only
+    // - the badge and every cfg callback keep seeing the whole list.
+    const cap = cfg.capRows ? cfg.capRows(g.rows) : null;
+    (cap ? g.rows.slice(0, cap.keep) : g.rows).forEach((row) => {
       const node = cfg.rowNode (row);
       wireRowDrag(cfg, node, row);
       if (page && cfg.wireRow) cfg.wireRow(node, row); // the caller's own actions on the row
       body.appendChild(node);
     });
+    if (cap && cap.note) body.appendChild(cap.note);
   }
   // An empty group is not an empty state - it is a place. One SHORT quiet line keeps the
   // container visible as a drop target (the only way in); the head's + explains itself on
   // hover, so the line does not have to repeat the instructions. A scope whose rows cannot
   // drag (tokens) says the honest half only.
   if (!g.rows.length && !cfg.filtered) {
-    const empty = el("div", "grp-empty", emptyLineText(cfg.draggable !== false));
+    // emptyText (docs/43 M2): a read-only tree says what the section is missing, not
+    // "drop here" - nothing can be dropped into a band the catalog owns.
+    const empty = el("div", "grp-empty", cfg.emptyText ? cfg.emptyText(g.name) : emptyLineText(cfg.draggable !== false));
     // "drop here" has to be true of the line that says it, not only of the head above it.
-    wireIntoDrop(cfg, empty, g.name);
+    if (cfg.draggable !== false) wireIntoDrop(cfg, empty, g.name);
     body.appendChild(empty);
   }
   wrap.appendChild(body);

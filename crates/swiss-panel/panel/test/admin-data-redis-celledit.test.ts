@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn, dbTab, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts): browser ES modules
    need the globals stubbed before they will evaluate under Node. getElementById keeps ONE
@@ -88,7 +88,13 @@ describe("the typed hash table's inline editor (docs/22 W3.3)", () => {
     byId.dbGridWrap = wrap;
     unmountDbView();
     mountDbView();
-    Object.assign(dbView(), { conn: "r", conns: [{ name: "r", dialect: "redis" }], redisKey: "h", redisValue: { key: "h", type: "hash", value: { f1: "one" }, length: 1 }, redisEdits: null });
+    Object.assign(dbConn(), { conn: "r", conns: [{ name: "r", dialect: "redis" }] });
+    // The redis value view reads its fields off the OPEN KEY TAB (docs/42 T1): install one,
+    // the way selecting a redis connection swaps the tab kind in the view.
+    const k = freshTab("key");
+    dbTabs()[0] = k;
+    k.redisKey = "h";
+    k.redisValue = { key: "h", type: "hash", value: { f1: "one" }, length: 1, ttl: -1 };
     mod.dbRenderRedisValue(wrap);
     const valueTd = find(wrap, (n) => typeof n.ondblclick === "function" && n.textContent === "one")[0];
     expect(valueTd, "the value cell carries a dblclick").toBeTruthy();
@@ -99,7 +105,8 @@ describe("the typed hash table's inline editor (docs/22 W3.3)", () => {
     editor.onkeydown({ key: "Enter", preventDefault: () => {}, stopPropagation: () => {} });
     // The buffer is created lazily by dbRedisEdits(), so prove it exists before reading
     // through it — an optional chain alone would let a missing buffer pass as an empty one.
-    const edits = dbView().redisEdits;
+    const t = dbTab();
+    const edits = t.kind === "key" ? t.redisEdits : undefined;
     expect(edits, "the edit created the typed-value buffer").toBeTruthy();
     expect(edits?.updates, "the edit landed in updates").toEqual({ f1: "ONE" });
     expect(edits?.inserts, "no phantom insert row").toEqual([]);

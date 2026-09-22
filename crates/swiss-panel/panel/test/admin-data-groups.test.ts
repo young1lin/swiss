@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 young1lin
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,105 +14,195 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { describe, it, expect, afterAll } from "vitest";
+import { join, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbConn, mountDbView, unmountDbView } from "../src/db-state.js";
+import type { ApiDbConnectionRow } from "../src/types/api.js";
+import type { MenuItemAction } from "../src/types/dom.js";
 
-/* The Data sidebar dropdown's grouping (docs/20 G5): every /api/db row carries the group
-   its connection lists under, and the dropdown folds its options into one optgroup per
-   group when — and only when — there is more than one. A single group stays a flat list
-   (an optgroup around everything is noise that says nothing), and an older gateway that
-   answers no group at all renders exactly the flat list it always drew. This suite drives
-   the real renderDbSide under a hand-rolled DOM (the admin-data-state trick). */
+/* The connection menu's grouping (docs/20 G5, restated by docs/43 M3): the dropdown became
+   a row that opens a menu, so the optgroups became heading rows and the flat list became
+   rows without one. The three facts the old optgroup suite pinned are the same three this
+   one pins — a single group stays flat (a heading around everything is noise that says
+   nothing), several groups fold one heading per group in first-appearance order, and an
+   older gateway that answers no group at all reads as one flat list.
+   The suite only calls the pure builder, but importing data-view pulls connect.ts, whose
+   module top level reaches for document — so the stub is installed (and later restored,
+   process-wide under the default pool) before the dynamic import, the admin-data-state
+   trick. */
 
-interface FakeNode {
-  tag: string;
-  label: string;
-  value: string;
-  textContent: string;
-  selected: boolean;
-  children: FakeNode[];
-  appendChild(n: FakeNode): FakeNode;
-}
+class NodeStub {}
+(globalThis as unknown as { Node: unknown }).Node = NodeStub;
 
-function node(tag: string): FakeNode {
-  const n = { tag, label: "", value: "", textContent: "", selected: false, children: [] as FakeNode[] } as FakeNode;
-  n.appendChild = (c: FakeNode) => { n.children.push(c); return c; };
-  return n;
-}
+const byId: Record<string, Record<string, any>> = {};
 
-let sel: FakeNode | null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let dataView: any;
-
-beforeAll(async () => {
-  const prevDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-  Object.assign(globalThis, {
-    document: {
-      getElementById: (id: string) => (id === "dbConn" ? sel : node("div")),
-      createElement: (tag: string) => node(tag),
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      addEventListener() {},
-      removeEventListener() {},
-      documentElement: node("html"),
-      body: node("body"),
-      head: node("head"),
-      visibilityState: "visible",
+const el = (tag = "div"): Record<string, any> => {
+  const n: any = {
+    tag, children: [], style: {}, dataset: {}, hidden: false, textContent: "",
+    classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
+    appendChild(c: Record<string, any>) {
+      // h.ts fill() appends a DocumentFragment; the real DOM flattens it, so the stub
+      // does too - a rendered child must BE children[i], not children[i].children[0].
+      if (c.tag === "#document-fragment") { c.children.forEach((k: Record<string, any>) => { n.children.push(k); }); c.children = []; return c; }
+      n.children.push(c); return c;
     },
-    window: { addEventListener() {}, localStorage: { getItem: () => null, setItem() {}, removeItem() {} } },
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    location: { origin: "http://127.0.0.1:19998" },
-  });
-  afterAll(() => {
-    if (prevDocument) Object.defineProperty(globalThis, "document", prevDocument);
-    else delete (globalThis as Record<string, unknown>).document;
-  });
-  dataView = await import("../src/data-view.js");
+    removeChild(c: Record<string, any>) { n.children = n.children.filter((x: Record<string, any>) => x !== c); return c; },
+    remove() {}, contains: () => false, closest: () => null,
+    setAttribute() {}, getAttribute: () => "", removeAttribute() {},
+    addEventListener() {}, removeEventListener() {}, dispatchEvent: () => true,
+    querySelector: () => null, querySelectorAll: () => [],
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 }),
+  };
+  Object.defineProperty(n, "innerHTML", { get: () => "", set: () => {} });
+  Object.setPrototypeOf(n, NodeStub.prototype);
+  return n;
+};
+
+const SAVED = (["document", "window", "localStorage", "location", "matchMedia",
+  "confirm", "alert", "prompt", "setInterval", "clearInterval", "addEventListener",
+  "removeEventListener", "Node"] as const).map((k: string) => ({
+    k,
+    d: Object.getOwnPropertyDescriptor(globalThis, k),
+  }));
+Object.assign(globalThis, {
+  document: {
+    documentElement: el(), body: el(), head: el(), hidden: false, visibilityState: "visible",
+    activeElement: null,
+    createElement: () => el(), createElementNS: () => el(),
+    createDocumentFragment: () => el("#document-fragment"),
+    createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
+    getElementById: (id: string) => (byId[id] || (byId[id] = el())) as never, querySelector: () => null, querySelectorAll: () => [],
+    addEventListener: () => {}, removeEventListener() {},
+  },
+  window: globalThis,
+  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  location: { origin: "http://127.0.0.1:19998", reload: () => {} },
+  matchMedia: () => ({ matches: false, addEventListener: () => {}, addListener: () => {} }),
+  confirm: () => true, alert: () => {}, prompt: () => "",
+  setInterval: (): number => 0, clearInterval: () => {},
+  addEventListener: () => {}, removeEventListener: () => {},
 });
 
-/** Render the given connection rows through the real renderDbSide and hand back the select. */
-function render(conns: unknown[]): FakeNode {
-  sel = node("select");
-  // The record is the view's own now (docs/37 R4). Replacing it wholesale is no longer a
-  // seam a test can reach, so each render starts from the fresh literal — which is what
-  // assigning over the whole object used to buy — and then names what it cares about.
-  unmountDbView();
-  mountDbView();
-  Object.assign(dbView(), { conns, conn: "", tables: [], redis: null });
-  dataView.renderDbSide();
-  return sel;
+const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
+const dataView = await import(pathToFileURL(join(here, "data-view.js")).href) as {
+  dbConnMenuItems: (
+    conns: ApiDbConnectionRow[], current: string, pick: (name: string) => void,
+  ) => MenuItemAction[];
+  renderDbSide: () => void;
+};
+
+afterAll(() => {
+  // Put the process back the way this file found it.
+  for (const { k, d } of SAVED) {
+    if (d) Object.defineProperty(globalThis, k, d);
+    else delete (globalThis as unknown as Record<string, unknown>)[k];
+  }
+});
+
+interface Row {
+  name: string;
+  dialect: string;
+  group?: string;
 }
 
-describe("the Data dropdown's groups (docs/20 G5)", () => {
-  it("a single group stays a flat list — no optgroup around everything", () => {
-    const s = render([
+function rows(conns: Row[]): MenuItemAction[] {
+  return dataView.dbConnMenuItems(conns as ApiDbConnectionRow[], "", (): void => {})
+    .filter((r): r is MenuItemAction => "label" in r);
+}
+
+function labels(items: MenuItemAction[]): string[] {
+  // Separators carry no label; the walker only names rows that can be read. A row's label
+  // is dbConnLabel's "name · dialect" - the name is what the fixtures vary.
+  return items.map((r) => r.label.split(" · ")[0]);
+}
+
+describe("the connection menu's groups (docs/20 G5, docs/43 M3)", () => {
+  it("a single group stays a flat list — no heading around everything", () => {
+    const items = rows([
       { name: "shop-mysql", dialect: "mysql", group: "default" },
       { name: "shop-pg", dialect: "pg", group: "default" },
     ]);
-    expect(s.children.every((c) => c.tag === "option")).toBe(true);
-    expect(s.children.map((c) => c.value)).toEqual(["shop-mysql", "shop-pg"]);
+    expect(items.some((r) => r.heading)).toBe(false);
+    expect(labels(items)).toEqual(["shop-mysql", "shop-pg"]);
   });
 
-  it("several groups fold into one optgroup per group, in first-appearance order", () => {
-    const s = render([
+  it("several groups fold into one heading per group, in first-appearance order", () => {
+    const all = dataView.dbConnMenuItems([
       { name: "shop-pg", dialect: "pg", group: "Ops" },
       { name: "shop-mysql", dialect: "mysql" }, // no group: the default bucket
       { name: "shop-redis", dialect: "redis", group: "Ops" },
       { name: "shop-sqlite", dialect: "sqlite", group: "Lab" },
-    ]);
-    expect(s.children.map((c) => c.tag)).toEqual(["optgroup", "optgroup", "optgroup"]);
-    expect(s.children.map((c) => c.label)).toEqual(["Ops", "default", "Lab"]);
-    expect(s.children[0].children.map((c) => c.value)).toEqual(["shop-pg", "shop-redis"]);
-    expect(s.children[1].children.map((c) => c.value)).toEqual(["shop-mysql"]);
-    expect(s.children[2].children.map((c) => c.value)).toEqual(["shop-sqlite"]);
+    ] as ApiDbConnectionRow[], "", (): void => {});
+    const named = all.filter((r): r is MenuItemAction => "label" in r);
+    const heads = named.filter((r) => r.heading).map((r) => r.label);
+    expect(heads).toEqual(["Ops", "default", "Lab"]);
+    // One separator between groups; the first group opens cold (no leading separator
+    // when there is more than one - the single-group flat list is what carries one).
+    expect(all.filter((r) => "sep" in r).length).toBe(2);
+    // The rows read in first-appearance order: Ops' two, then default's, then Lab's.
+    expect(named.filter((r) => !r.heading).map((r) => r.label.split(" · ")[0]))
+      .toEqual(["shop-pg", "shop-redis", "shop-mysql", "shop-sqlite"]);
   });
 
   it("an older gateway answers no group at all — the same flat list it always drew", () => {
-    const s = render([
+    const items = rows([
       { name: "shop-mysql", dialect: "mysql" },
       { name: "shop-pg", dialect: "pg" },
     ]);
-    expect(s.children.every((c) => c.tag === "option")).toBe(true);
-    expect(s.children.length).toBe(2);
+    expect(items.some((r) => r.heading)).toBe(false);
+    expect(labels(items).length).toBe(2);
+  });
+
+  it("picking a row hands the connection's name to the caller and marks the current one", () => {
+    const picked: string[] = [];
+    const items = dataView.dbConnMenuItems([
+      { name: "shop-mysql", dialect: "mysql", group: "default" },
+      { name: "shop-pg", dialect: "pg", group: "default" },
+    ] as ApiDbConnectionRow[], "shop-pg", (n: string): void => { picked.push(n); })
+      .filter((r): r is MenuItemAction => "label" in r);
+    const mysql = items.find((r) => r.label.startsWith("shop-mysql"));
+    mysql?.fn();
+    expect(picked).toEqual(["shop-mysql"]);
+    expect(items.find((r) => r.label.startsWith("shop-pg"))?.on).toBe(true);
+    expect(mysql?.on).toBe(false);
+    // The drawer reshape: label is the bare name, the dialect rides in mark (the drawer
+    // paints it as a mark; the full "name · dialect" survives as the row's title).
+    expect(mysql?.mark).toBe("mysql");
+    expect(mysql?.title).toBe("shop-mysql · mysql");
+  });
+
+  it("the connection row's dialect chip follows the MCP tag vocabulary: a mark, not a word", () => {
+    unmountDbView();
+    mountDbView();
+    const d = dbConn();
+    const conns: ApiDbConnectionRow[] = [
+      { name: "redis", dialect: "redis", state: "running", group: "" } as ApiDbConnectionRow,
+    ];
+    Object.assign(d, { conn: "redis", conns, databases: [] });
+    const chipOf = (): Record<string, any> => {
+      // renderDbSide wipes by assigning textContent - a plain property on this stub - so
+      // the row is handed back fresh for each render the way the real DOM would be.
+      byId.dbConnRow = el();
+      byId.dbDatabaseRow = el();
+      dataView.renderDbSide();
+      const chip = (byId.dbConnRow.children as Record<string, any>[])
+        .find((c) => String(c.className).includes("db-chip")) as Record<string, any>;
+      expect(chip, "the chip exists").toBeTruthy();
+      return chip;
+    };
+    // A whitelisted dialect paints its glyph: typeTagNode hands back a node whose word
+    // rides the aria-label, so the chip carries a node child, not a text node - the word
+    // chip it replaced is the string case below (textContent does not aggregate on the
+    // stub, so the child is read directly).
+    const mark = chipOf();
+    expect(mark.textContent).toBe("");
+    expect(mark.children.length, "a glyph node, not a string").toBe(1);
+    expect(mark.children[0].textContent, "the glyph node carries no word").toBe("");
+    // A dialect outside the icon whitelist keeps the word chip - sqlite is not a mark.
+    (conns[0] as { dialect: string }).dialect = "sqlite";
+    const word = chipOf();
+    expect(word.children[0].textContent).toBe("sqlite");
+    unmountDbView();
   });
 });

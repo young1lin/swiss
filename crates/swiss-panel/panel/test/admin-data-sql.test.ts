@@ -17,13 +17,18 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn, dbTab, mountDbView, unmountDbView } from "../src/db-state.js";
 
 // The panel ships browser ES modules; under Node they evaluate only with DOM globals stubbed —
 // the same technique (and stub surface) as the boot check in admin-panel.test.ts and the sort
 // cycle in admin-data-grid.test.ts.
+/* h.ts tells a props bag from a child with `instanceof Node` (h.ts:96, :129), so a stub
+   element has to BE a Node: a plain literal makes h() read an element in the props slot as
+   a props bag, and frag() text-ifies every child - a divergence no assertion here would
+   catch until the browser ran it. */
+class StubNode {}
 const el = (): Record<string, unknown> => {
-  const node: Record<string, unknown> = {
+  const node: Record<string, unknown> = Object.assign(Object.create(StubNode.prototype) as Record<string, unknown>, {
     style: {}, dataset: {}, hidden: false, disabled: false, checked: false, value: "",
     textContent: "", innerHTML: "",
     classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
@@ -34,20 +39,24 @@ const el = (): Record<string, unknown> => {
     focus: () => {}, blur: () => {}, click: () => {},
     getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
     contains: () => false, closest: () => null, insertAdjacentHTML: () => {},
-  };
+  });
   node.cloneNode = () => el();
   return node;
 };
 const doc = {
   documentElement: el(), body: el(), head: el(),
   hidden: false, visibilityState: "visible", activeElement: null,
-  getElementById: () => el(), createElement: () => el(), createTextNode: () => el(),
+  getElementById: (_id?: string) => el(), createElement: () => el(), createTextNode: () => el(),
+  // The sprite factory: renderDbBar repaints the object strip beside it (docs/42 T2), and
+  // every card carries an iconNode, which builds through the SVG namespace.
+  createElementNS: () => el(),
+  createDocumentFragment: () => el(),
   querySelector: () => null, querySelectorAll: () => [],
   addEventListener: () => {}, removeEventListener: () => {},
 };
 const prevWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 Object.assign(globalThis, {
-  document: doc, window: globalThis,
+  document: doc, window: globalThis, Node: StubNode,
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   location: { reload: () => {} },
   matchMedia: () => ({ matches: false, addEventListener: () => {}, addListener: () => {} }),
@@ -66,6 +75,7 @@ const sql = await import(
   dbResultTabLabel: (stmt: string, rowCount?: number) => string;
   dbPendingSql: () => string[];
   dbCommit: () => Promise<void>;
+  renderDbBar: () => void;
 };
 
 /* The pending-SQL preview and the Commit gate read the Data view's record, which db-state.ts
@@ -76,17 +86,22 @@ const sql = await import(
 const setTable = (over: Record<string, unknown> = {}) => {
   unmountDbView();
   mountDbView();
-  Object.assign(dbView(), {
+  Object.assign(dbConn(), {
     conn: "mysql",
     conns: [{ name: "mysql", dialect: "mysql" }],
-    schema: "",
-    table: "t",
-    data: { primaryKey: ["id"], columns: [{ name: "id" }, { name: "a" }, { name: "b" }] },
-    deletes: {},
-    updates: {},
-    inserts: [],
-    ...over,
   });
+  const t = dbTab();
+  if (t.kind === "table") {
+    Object.assign(t, {
+      schema: "",
+      table: "t",
+      data: { primaryKey: ["id"], columns: [{ name: "id" }, { name: "a" }, { name: "b" }] },
+      deletes: {},
+      updates: {},
+      inserts: [],
+      ...over,
+    });
+  }
 };
 
 // docs/22 W0.5: the Explain button offers plain EXPLAIN and EXPLAIN ANALYZE; the prefix is
@@ -181,6 +196,26 @@ describe("dbResultTabLabel", () => {
     expect(sql.dbResultTabLabel("UPDATE t SET a = 1", undefined)).toBe("UPDATE");
     expect(sql.dbResultTabLabel("\n  -- leading comment\n  SELECT 1", 3)).toBe("SELECT · 3");
     expect(sql.dbResultTabLabel("", 5)).toBe("? · 5");
+  });
+});
+
+/* docs/42 T1 regression pin: the bar's gate reads the ACTIVE TAB's buffers, and the
+   rewrite once dropped master's unhide — a buffered edit left the bar hidden and every
+   re-render APPENDED another button set (no fill). The visibility half is what a stub can
+   see; the append-reset half is the real-browser walkthrough's. */
+describe("the edit bar's visibility (docs/42 T1)", () => {
+  it("hides with nothing buffered, unhides the moment an edit is buffered", () => {
+    const bar = el();
+    doc.getElementById = (id?: string) => (id === "dbBar" ? bar : el());
+    setTable();
+    sql.renderDbBar();
+    expect(bar.hidden, "nothing buffered hides the bar").toBe(true);
+    setTable({ updates: { k1: { pk: { id: 1 }, changes: { a: "x" } } } });
+    sql.renderDbBar();
+    expect(bar.hidden, "a buffered update shows the bar").toBe(false);
+    setTable();
+    sql.renderDbBar();
+    expect(bar.hidden, "dropping the buffer hides it again").toBe(true);
   });
 });
 

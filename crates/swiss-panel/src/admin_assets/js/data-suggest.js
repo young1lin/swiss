@@ -18,7 +18,7 @@
 import { $, apiJson, el } from "./util.js";
 import { dbIsRedis } from "./data-browsers.js";
 import { dbSqlPaint } from "./data-filters.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbSqlTab } from "./db-state.js";
 
 /* --- SQL completion (docs/22 W3.1) ------------------------------------------------------------------ */
 /* The console's suggestion list. The SERVER builds the candidate set (dialect keywords + table
@@ -60,7 +60,7 @@ function dbSuggestHide()       {
  *  kept a dead list on screen would be a lie about what is being completed. */
 function dbSuggestOnInput(                         )       {
   clearTimeout(dbSuggestTimer );
-  const d = dbView();
+  const d = dbConn();
   if (!d.conn || dbIsRedis()) { dbSuggestHide(); return; }
   if (!dbSuggestPrefixAt(this.value, this.selectionStart)) { dbSuggestHide(); return; }
   const ta = this;
@@ -68,7 +68,7 @@ function dbSuggestOnInput(                         )       {
 }
 
 async function dbSuggestFetch(ta                     )                {
-  const d = dbView();
+  const d = dbConn();
   if (!d.conn || dbIsRedis() || !ta.closest(".db-sql-wrap")) { dbSuggestHide(); return; }
   const caret = ta.selectionStart ;
   const text = ta.value;
@@ -153,7 +153,8 @@ function dbSuggestAccept(i        )       {
   const caret = ta.selectionStart ;
   const start = caret - dbSuggestPrefix.length;
   ta.setRangeText(label, start, caret, "end");
-  dbView().sqlText = ta.value;
+  const st = dbSqlTab();
+  if (st) st.sqlText = ta.value;
   dbSqlPaint();
   dbSuggestHide();
   ta.focus();
