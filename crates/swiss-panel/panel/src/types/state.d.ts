@@ -364,6 +364,11 @@ export interface DbTabBase {
      tab is created and every time it is activated. Eviction reads it and nothing else — a
      wall clock would tie the cap to how fast the operator works. */
   touched: number;
+  /* The operator's own name for this tab (the card right-click's Rename): shown on the
+     card, in the overflow menu and in every confirm INSTEAD of the derived title. Empty
+     or absent falls back to the derived title. It is a label, never identity — closes,
+     dedupe and switches still address the object underneath. */
+  custom?: string;
 }
 
 /** A table (or view) opened in the row grid: its page, its filters, its buffered edits,

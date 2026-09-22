@@ -603,6 +603,11 @@
     .db-tab .ic { width: 14px; height: 14px; color: var(--text-3); }
     .db-tab.sel .ic { color: var(--text-2); }
     .db-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The rename input (the card right-click): sized to the card's own name slot so the
+       card does not change shape while it is being edited. */
+    .db-tab-rename { flex: 1; min-width: 0; width: 9em; height: 18px; padding: 0 3px;
+      font: inherit; font-size: var(--f-caption); color: var(--text); background: var(--bg);
+      border: 1px solid var(--accent); border-radius: 4px; outline: none; }
     /* The filter count rides the card so a tab that is showing a SUBSET says so before it is
        opened — the number is descriptive, so it stays monochrome (rule 2). */
     .db-tab-n { flex: none; font-size: var(--f-caption); color: var(--text-3); background: var(--sep-soft); border-radius: var(--r-pill); padding: 0 5px; }

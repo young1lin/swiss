@@ -153,8 +153,12 @@ function dbTabMatches(t: DbTab, spec: DbTabSpec): boolean {
   return true;
 }
 
-/** The name on the tab: the qualified table, the key, or the word for the kind. Pure. */
+/** The name on the tab: the operator's own rename first, then the qualified table, the
+ * key, or the word for the kind. Pure. */
 function dbTabTitle(t: DbTab): string {
+  // A rename is a label the operator chose; it wins everywhere the derived title shows
+  // (card, overflow, confirms) but addresses nothing — identity lives on the fields below.
+  if (t.custom) return t.custom;
   if (t.kind === "table") return (t.schema ? t.schema + "." : "") + (t.table || tr("dataTabs.untitled"));
   if (t.kind === "key") return t.redisKey || tr("dataTabs.untitled");
   // A console opened on a redis connection runs redis commands, not SQL — the box's own
@@ -194,12 +198,38 @@ export function dbTabScope(c: DbConnState, pg: boolean): string | null {
  *  the object precisely. Pure. */
 function dbTabCardTitle(t: DbTab, scope: string | null): string {
   const full = dbTabTitle(t);
+  // A rename is already the operator's shortest name for the card — no scope trimming.
+  if (t.custom) return full;
   if (t.kind !== "table" || !t.schema || !scope) return full;
   if (t.schema === scope) return t.table || tr("dataTabs.untitled");
   return full;
 }
 
 /* --- the strip ------------------------------------------------------------------------------------ */
+
+/** The rename input a card's name span becomes while dbTabRenaming points at it. Handlers
+ *  are property-assigned after h() builds the node (h strips function-valued props): the
+ *  input is rebuilt with every strip paint, so direct wiring costs nothing, and its keys
+ *  must stop before the strip's own handlers — Enter commits, Escape cancels, blur
+ *  commits (the click that stole focus was a decision to move on). */
+function dbTabRenameInput(t: DbTab, scope: string | null): HTMLInputElement {
+  const inp = h("input", {
+    class: "db-tab-rename", type: "text", value: dbTabCardTitle(t, scope),
+    aria: { label: tr("dataTabs.rename") },
+  });
+  inp.onclick = (ev: MouseEvent): void => { ev.stopPropagation(); };
+  inp.onkeydown = (ev: KeyboardEvent): void => {
+    if (ev.key === "Enter") {
+      ev.preventDefault(); ev.stopPropagation();
+      dbTabRenameCommit((ev.currentTarget as HTMLInputElement).value);
+    } else if (ev.key === "Escape") {
+      ev.preventDefault(); ev.stopPropagation();
+      dbTabRenaming = null; renderDbTabs();
+    }
+  };
+  inp.onblur = (ev: Event): void => { dbTabRenameCommit((ev.currentTarget as HTMLInputElement).value); };
+  return inp;
+}
 
 /** Paint the strip. Card tabs (swiss-ui-design §1.3): a leading type glyph, the name, a trailing
  *  ×, the whole row sitting on --sidebar with the active card lifted to --bg and joined to the
@@ -237,7 +267,10 @@ function renderDbTabs(): void {
       title: dbTabTitle(t), data: { dbtab: String(i) },
     },
     iconNode(dbTabGlyph(t)),
-    h("span", { class: "db-tab-name" }, dbTabCardTitle(t, scope)),
+    // The rename (right-click): the name becomes an input for as long as dbTabRenaming
+    // points here (built by dbTabRenameInput — handlers are property-assigned there,
+    // h() strips function-valued props by design).
+    i === dbTabRenaming ? dbTabRenameInput(t, scope) : h("span", { class: "db-tab-name" }, dbTabCardTitle(t, scope)),
     filters ? h("span", {
       class: "db-tab-n tnum",
       title: trn(filters, "dataTabs.nFilters.one", "dataTabs.nFilters.other"),
@@ -313,7 +346,7 @@ function dbTabsClick(t: Element, ev?: MouseEvent): boolean {
     return true;
   }
   const add = t.closest<HTMLElement>("[data-dbtabadd]");
-  if (add) { dbOpenTab({ kind: "sql" }); return true; }
+  if (add) { dbOpenTabForce({ kind: "sql" }); return true; }
   const card = t.closest<HTMLElement>("[data-dbtab]");
   if (card) { dbActivateTab(Number(card.dataset.dbtab)); return true; }
   return false;
@@ -328,6 +361,55 @@ function dbTabsAuxClick(t: Element): boolean {
   const card = t.closest<HTMLElement>("[data-dbtab]");
   if (card) { dbCloseTab(Number(card.dataset.dbtab)); return true; }
   return false;
+}
+
+/* The card being renamed, or null (the right-click's Rename): while set, that card's name
+ * span is an input instead. Not state that survives a connection switch — a repaint from
+ * dbResetTabs clears it, which is the right collapse for "the strip under me changed". */
+let dbTabRenaming: number | null = null;
+
+/** Begin the rename: repaint the strip with the card's name as a focused, selected input. */
+function dbTabRenameStart(i: number): void {
+  dbTabRenaming = i;
+  renderDbTabs();
+  const strip = $("dbTabStrip");
+  const input = strip ? strip.querySelector<HTMLInputElement>(".db-tab-rename") : null;
+  if (input && typeof input.focus === "function") { input.focus(); input.select(); }
+}
+
+/** Commit the rename onto the tab (empty cancels — a blank card says nothing). */
+function dbTabRenameCommit(value: string): void {
+  const i = dbTabRenaming;
+  dbTabRenaming = null;
+  const v = value.trim();
+  if (i == null) return;
+  const t = dbTabs()[i];
+  if (t) t.custom = v || undefined;
+  renderDbTabs();
+}
+
+/** #pane's delegated contextmenu for the strip: the card's own menu (the owner's ask —
+ *  rename, close to the left, close to the right; the browser-tab trio). Left and right
+ * are read from the CLICKED card, not the active one — a right-click does not activate,
+ * and "the tabs left of the one I pointed at" is what the operator means by it. */
+function dbTabsContext(t: Element, ev: MouseEvent): boolean {
+  const card = t.closest<HTMLElement>("[data-dbtab]");
+  if (!card) return false;
+  // While the card is a rename input, the browser's own text menu is the right one.
+  if (t.closest(".db-tab-rename")) return false;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const i = Number(card.dataset.dbtab);
+  const tabs = dbTabs();
+  const hasLeft = tabs.slice(0, i).some(dbTabVisible);
+  const hasRight = tabs.slice(i + 1).some(dbTabVisible);
+  popupMenu(card.getBoundingClientRect(), [
+    { label: tr("dataTabs.rename"), fn: (): void => { dbTabRenameStart(i); } },
+    { sep: true },
+    { label: tr("dataTabs.closeLeft"), disabled: !hasLeft, fn: (): void => { dbCloseToLeft(i); } },
+    { label: tr("dataTabs.closeRight"), disabled: !hasRight, fn: (): void => { dbCloseToRight(i); } },
+  ]);
+  return true;
 }
 
 /** The overflow menu's rows (docs/43 M1 D4): one per open object, in strip order, the
@@ -356,7 +438,7 @@ function dbTabsMenuItems(): MenuItem[] {
     items.push({ label: tr("dataTabs.closeOthers"), fn: dbCloseOthers });
   }
   if (tabs.slice(active + 1).some(dbTabVisible)) {
-    items.push({ label: tr("dataTabs.closeRight"), fn: dbCloseToRight });
+    items.push({ label: tr("dataTabs.closeRight"), fn: (): void => { dbCloseToRight(active); } });
   }
   items.push({ label: tr("dataTabs.closeAll"), danger: true, fn: dbCloseAllTabs });
   return items;
@@ -396,12 +478,21 @@ function dbCloseOthers(): void {
   dbCloseBatch(ix);
 }
 
-/** "Close to the right" — the tabs the strip shows after the active one. */
-function dbCloseToRight(): void {
-  const active = dbActiveIndex();
+/** "Close to the left" of the PIVOT card (the right-clicked one; the overflow menu
+ *  passes the active one) — the browser-tab trio's missing third. */
+function dbCloseToLeft(pivot: number): void {
   const ix: number[] = [];
   dbTabs().forEach((t: DbTab, i: number): void => {
-    if (i > active && dbTabVisible(t)) ix.push(i);
+    if (i < pivot && dbTabVisible(t)) ix.push(i);
+  });
+  dbCloseBatch(ix);
+}
+
+/** "Close to the right" of the pivot card — the tabs the strip shows after it. */
+function dbCloseToRight(pivot: number): void {
+  const ix: number[] = [];
+  dbTabs().forEach((t: DbTab, i: number): void => {
+    if (i > pivot && dbTabVisible(t)) ix.push(i);
   });
   dbCloseBatch(ix);
 }
@@ -507,6 +598,30 @@ function dbOpenTab(spec: DbTabSpec): void {
     // ate my tab". Say which one made room — and that it held nothing unsaved.
     toast(tr("dataTabs.evictedForRoom", { name: dbTabTitle(next[victim]) }));
     next.splice(victim, 1);
+  }
+  dbLeaveTab(live);
+  next.push(dbBuildTab(spec));
+  dbResetTabs(next, next.length - 1);
+  dbAfterTabSwitch();
+}
+
+/** The strip's own "+" (the owner's rule): one press, one NEW console — no dedupe, no
+ *  refusal. The dedupe above is right for objects ("show me orders" lands on orders), but
+ *  a console has no address, so for the + it read as "the button is broken": pressing it
+ *  with a console open just activated the old one. The cap still helps when it can (a
+ *  clean tab is evicted with the usual toast), but when every tab holds work the + goes
+ *  OVER instead of refusing — the operator explicitly asked for this tab, and DB_TAB_MAX
+ *  defends a memory budget, not the right to say no to a direct request. */
+function dbOpenTabForce(spec: DbTabSpec): void {
+  const tabs = dbTabs();
+  const live = dbTab();
+  const next = tabs.filter(dbTabVisible);
+  if (next.length >= DB_TAB_MAX) {
+    const victim = dbEvictTarget(next, next.indexOf(live));
+    if (victim !== null) {
+      toast(tr("dataTabs.evictedForRoom", { name: dbTabTitle(next[victim]) }));
+      next.splice(victim, 1);
+    }
   }
   dbLeaveTab(live);
   next.push(dbBuildTab(spec));
@@ -626,9 +741,9 @@ function dbAfterTabSwitch(byKeyboard?: boolean): void {
 }
 
 export {
-  DB_TAB_MAX, dbActivateTab, dbAfterTabSwitch, dbCloseAllTabs, dbCloseBatch, dbCloseOthers, dbCloseTab,
-  dbCloseToRight, dbCycleTab, dbDropTableTabs, dbEvictTarget, dbFiltersSame, dbLastTableTab,
-  dbOpenTab, dbResetTabsForConn, dbTabCardTitle, dbTabGlyph, dbTabMatches, dbTabPending,
-  dbTabPlaceholder, dbTabsAuxClick, dbTabsClick, dbTabsMenuItems, dbTabsPending,
+  DB_TAB_MAX, dbActivateTab, dbAfterTabSwitch, dbCloseAllTabs, dbCloseBatch, dbCloseToLeft, dbCloseOthers,
+  dbCloseTab, dbCloseToRight, dbCycleTab, dbDropTableTabs, dbEvictTarget, dbFiltersSame, dbLastTableTab,
+  dbOpenTab, dbOpenTabForce, dbResetTabsForConn, dbTabCardTitle, dbTabGlyph, dbTabMatches, dbTabPending,
+  dbTabPlaceholder, dbTabsAuxClick, dbTabsClick, dbTabsContext, dbTabsMenuItems, dbTabsPending,
   dbTabTitle, dbTabVisible, dbTabEvictable, renderDbTabs,
 };
