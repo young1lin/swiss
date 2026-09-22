@@ -2868,6 +2868,34 @@ async fn the_rest_connection_test_fails_honestly_on_a_missing_vault_reference() 
 }
 
 #[tokio::test]
+async fn the_connection_test_accepts_mariadb_like_mysql() {
+    // The panel's Test button offers mariadb (fields.ts TESTABLE_TYPES) while the gate
+    // here refused it with a 400 — the adapter itself was always able to answer. A dead
+    // port proves the pass-through: ok:false with the driver's error, in-band, never
+    // "no connection test for type".
+    let h = setup();
+    let (status, body) = h
+        .post(
+            "/api/mcpdefs/test",
+            json!({
+                "type": "mariadb",
+                "host": "127.0.0.1",
+                "port": 1,
+                "user": "root",
+                "password": "nonsense"
+            }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "mariadb passes the gate: {status}");
+    assert_eq!(body["ok"], false, "the dead port answers in-band: {body}");
+    let err = body["error"].as_str().unwrap_or_default();
+    assert!(
+        !err.contains("no connection test"),
+        "the gate must not refuse mariadb: {err}"
+    );
+}
+
+#[tokio::test]
 async fn a_vault_reference_masks_like_an_env_ref() {
     // is_env_ref is what the whole masking stack keys off; a vault reference must read as a
     // reference so the panel edit forms show it as authored, never hold the value. Both the
