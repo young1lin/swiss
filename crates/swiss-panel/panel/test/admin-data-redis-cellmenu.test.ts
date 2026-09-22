@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
+import type { ApiDbRedisValue, ApiDbStreamWindow } from "../src/types/api.js";
 
 /* docs/43 M2 fixup: the typed value table had NO right-click at all — a zset member that is
  *  a long JSON blob could only be glimpsed through the title hover, and stream values (a
@@ -104,7 +105,7 @@ function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] 
 function text(node: Stub): string {
   return (node.textContent || "") + (node.children || []).map(text).join("");
 }
-function mountZset(value: unknown, type: string): Stub {
+function mountValue(v: ApiDbRedisValue | ApiDbStreamWindow): Stub {
   const wrap = el();
   byId.dbGridWrap = wrap;
   byId.sheet = el();
@@ -114,9 +115,12 @@ function mountZset(value: unknown, type: string): Stub {
   const k = freshTab("key");
   dbTabs()[0] = k;
   k.redisKey = "z";
-  k.redisValue = { key: "z", type: type, value: value, length: 1, ttl: -1 };
+  k.redisValue = v;
   mod.dbRenderRedisValue(wrap);
   return wrap;
+}
+function mountZset(value: unknown, type: string): Stub {
+  return mountValue({ key: "z", type: type, value: value, length: 1, ttl: -1 });
 }
 
 describe("the typed value table's right-click (docs/43 M2 fixup)", () => {
@@ -159,13 +163,20 @@ describe("the typed value table's right-click (docs/43 M2 fixup)", () => {
     expect(text(byId.sheet)).toContain("z · zset");
   });
 
-  it("a stream value's read-only pre carries the same right-click", () => {
-    const wrap = mountZset([["1690000000000-0", ["a", "1"]]], "stream");
-    const pre = find(wrap, (n) => n.tag === "pre" && typeof n.oncontextmenu === "function")[0];
-    expect(pre, "the stream pre carries a contextmenu").toBeTruthy();
-    pre.oncontextmenu({ preventDefault: () => {}, clientX: 10, clientY: 10 });
+  it("a stream value's window cells carry the same right-click (docs/45 S2)", () => {
+    // The stream view moved off the read-only pre onto its own window table; the docs/22
+    // W5.3 cell menu travels with the cells that actually show data now.
+    const wrap = mountValue({
+      key: "z", type: "stream", ttl: -1, length: 1,
+      entries: [{ id: "1690000000000-0", ts: "2023-07-22T04:00:00.000Z", fields: { a: "1" } }],
+      columns: ["a"], more: false, firstId: "1690000000000-0", lastId: "1690000000000-0",
+    });
+    const cell = find(wrap, (n) => n.tag === "td" && n.textContent === "1")[0];
+    expect(cell, "the stream field cell exists").toBeTruthy();
+    expect(typeof cell.oncontextmenu, "the cell carries a contextmenu").toBe("function");
+    cell.oncontextmenu({ preventDefault: () => {}, clientX: 10, clientY: 10 });
     const menu = (globalThis.document as any).body.children.find((c: Stub) => c.id === "menu");
-    expect(menu, "the menu opened on the pre too").toBeTruthy();
+    expect(menu, "the menu opened on the stream cell too").toBeTruthy();
     const labels = menu.children.filter((c: Stub) => c.tag === "button").map((b: Stub) => b.textContent);
     expect(labels).toContain("Copy value");
     expect(labels).toContain("View value…");

@@ -766,6 +766,29 @@ export interface ApiDbRedisValue {
   note?: string;
 }
 
+/** One XREVRANGE entry (docs/45 §2.1): the id verbatim, the server-derived ISO 8601
+ *  timestamp with milliseconds (the id's ms half — the panel never parses an id), and the
+ *  entry's own fields, ragged as stored. */
+export interface ApiDbStreamEntry {
+  id: string;
+  ts: string | null;
+  fields: Record<string, string>;
+}
+
+/** GET /api/db/{name}/key on a stream key, and GET /api/db/{name}/stream — one
+ *  newest-first window of a stream (docs/45 §2.1): entries strictly newest-first, columns
+ *  the field union in first-seen-scanning-newest-first order, more = “the page was full”
+ *  (a capped page says so; a full final page still flags it), firstId/lastId the XINFO
+ *  STREAM ends, null on an empty stream. ttl rides only the /key fact read; the /stream
+ *  answers carry no ttl of their own. */
+export interface ApiDbStreamWindow extends ApiDbRedisValue {
+  entries: ApiDbStreamEntry[];
+  columns: string[];
+  more: boolean;
+  firstId: string | null;
+  lastId: string | null;
+}
+
 /** GET /api/db/{name}/keys - the redis SCAN page (one page of the key grid). */
 export interface ApiDbRedisKeysResponse {
   keys: ApiDbRedisKeyRow[];

@@ -114,6 +114,13 @@ const zh: Record<string, string> = {
   "dataBrowsers.renamed": "已重命名为 {to}",
   "dataBrowsers.deletedKey": "已删除 {key}",
   "dataBrowsers.ttlMustWholeNumber": "TTL 必须是整秒数",
+  /* --- dataStream（docs/45 S2） --- */
+  "dataStream.colId": "id",
+  "dataStream.colTime": "时间",
+  "dataStream.loadEarlier": "加载更早的条目",
+  "dataStream.empty": "这个流是空的——还没有追加过任何条目。",
+  "dataStream.start": "已到流的起点",
+
   /* --- dataCell --- */
   "dataBrowsers.undoBufferedDelete": "撤销此缓冲的删除",
   "dataCell.binaryNBytes": "二进制，{n} 字节",
