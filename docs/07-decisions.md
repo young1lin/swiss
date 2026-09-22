@@ -775,3 +775,46 @@ are read-only, period — the write path stays pinned to the CONFIGURED database
 able to browse another database is not authorization to write in it. The Redis catalog
 reads the proxy's keyspace from INFO (db0..N); a proxy that refuses CLIENT INFO (the
 K_LINE one does) falls back to db0 rather than failing the catalog.
+
+## ADR-028 — The integration harness: real engines in a dev-only crate, never in the shipping graph (docs/44)
+
+**Status: Accepted (2026-09-22).** Seven thousand lines of database code shipped with zero
+tests against a real engine: every DB path was "orchestration only" (see docs/08's exception
+table) and the self-skipping adapter tests proved the self-skip, not the SQL. docs/44 decided
+how that debt gets paid without the binary paying for it.
+
+Options: (a) keep mocking at the sqlx layer and accept that quoting, typing and wire
+quirks stay untested; (b) run the workspace suite against a developer-installed local
+MySQL/PG/Redis, environment-gated; (c) a separate dev-only crate (`crates/swiss-it`, feature
+`it` default-off) whose testcontainers-run engines restore per-test databases from the repo's
+own seeds, with L1 browser tests, L2 adapter tests through a real rmcp client on a real
+listener, and an L3 proc group over the repo's own stdio MCP server. The decision is (c).
+The reasoning: (a) is the status quo the spec opens by rejecting — the exact-string BIGINT,
+the completion upper-casing and the DESCRIBE udt_name gap were all invisible to mocks;
+(b) makes "the suite passed" mean "passed on Jdoe's machine, this week", and a missing engine
+would have to skip, which is a silent green — the one thing the harness may never produce.
+
+The costs, paid and accepted: the dev graph grows testcontainers/bollard (MIT/Apache-2.0)
+with its own hyper copy — never shipped, and the CI duplicate check now gates
+`cargo tree -d -e normal,build` so dev edges cannot fail it; every swiss-it dependency is
+optional behind the one feature, so `cargo test --workspace` on a Docker-less machine
+compiles the same three empty targets it did before the crate existed; and gate 2
+(`cargo test -p swiss-it --features it`, ~20 s warm on this machine) is now mandatory on
+diffs that touch the DB paths, the secure store or swiss-it itself — enforced in AGENTS.md,
+CONTRIBUTING.md, the swiss-verify skill, deploy.ps1 and a dedicated ubuntu CI job that the
+release job needs.
+
+What shipped (branch `integration-harness`, commits per item): engine lifecycle and the
+failure-path copy (I0 `062928a`), seeds with guard tests (I1 `4740a9b`), the three L1
+browser suites (I2 `0349c41` MySQL, I3 `239895e` Postgres, I4 `f707247` Redis), the owned
+cleanup story — an it-reaper watchdog child and age-based prune (78cd561) — the L2 gateway
+group over a real listener, connection-zero proof included (I5 `3cf62a8`), the L3 proc group
+over `it-mcp-server` (I6 `2145a44`), and the CI/docs wiring (I7). Each item carried a
+mutation check (spec §2.9): one product line changed, exactly one named test red, reverted.
+(I5/I6 were redone the same day so each carries its Cargo.lock row — the first cuts left
+the lock in the working tree, and a `--locked` checkout of them refused to build.)
+
+The cost that stays: a red machine without Docker still cannot run gate 2 — the answer is the
+harness's own failure copy pointing at docs/44-wsl-docker-setup.md, not a skip; and the seeds
+are a maintained surface (a schema change in a test's expectation is a seed change, reviewed
+as such).

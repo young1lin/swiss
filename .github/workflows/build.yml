@@ -174,9 +174,30 @@ jobs:
           command: check
           arguments: --locked
 
+  # Gate 2 (docs/44 §2.8): the real-database suite - testcontainers raises MySQL/PG/
+  # Redis through the runner's own dockerd, so the adapters, the browsers and the L2/L3
+  # gateway/proc paths are proven on real engines before any tag ships. Ubuntu only:
+  # docker is preinstalled there and the SQL wire is not platform-shaped; mac and
+  # Windows runners skip it (the local Windows machine runs the same gate on deploys).
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: integration
+      - run: sudo apt-get update && sudo apt-get install -y cmake clang
+      - run: cargo test -p swiss-it --features it --locked
+      # A red suite is half-diagnosed already when the container state and the engine
+      # log travel with the failure: leftover containers name the leak, the mysql log
+      # tail names the startup that never finished.
+      - if: failure()
+        run: docker ps -a && docker logs $(docker ps -aq --filter ancestor=mysql:8.4) 2>&1 | tail -50
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, panel, deny]
+    needs: [build, panel, deny, integration]
     runs-on: ubuntu-latest
     permissions:
       contents: write
