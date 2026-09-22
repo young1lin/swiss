@@ -17,6 +17,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { dbConn, mountDbView, unmountDbView } from "../src/db-state.js";
 import type { ApiDbConnectionRow } from "../src/types/api.js";
 import type { MenuItemAction } from "../src/types/dom.js";
 
@@ -34,11 +35,18 @@ import type { MenuItemAction } from "../src/types/dom.js";
 class NodeStub {}
 (globalThis as unknown as { Node: unknown }).Node = NodeStub;
 
-const el = (): Record<string, any> => {
+const byId: Record<string, Record<string, any>> = {};
+
+const el = (tag = "div"): Record<string, any> => {
   const n: any = {
-    children: [], style: {}, dataset: {}, hidden: false, textContent: "",
+    tag, children: [], style: {}, dataset: {}, hidden: false, textContent: "",
     classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
-    appendChild(c: Record<string, any>) { n.children.push(c); return c; },
+    appendChild(c: Record<string, any>) {
+      // h.ts fill() appends a DocumentFragment; the real DOM flattens it, so the stub
+      // does too - a rendered child must BE children[i], not children[i].children[0].
+      if (c.tag === "#document-fragment") { c.children.forEach((k: Record<string, any>) => { n.children.push(k); }); c.children = []; return c; }
+      n.children.push(c); return c;
+    },
     removeChild(c: Record<string, any>) { n.children = n.children.filter((x: Record<string, any>) => x !== c); return c; },
     remove() {}, contains: () => false, closest: () => null,
     setAttribute() {}, getAttribute: () => "", removeAttribute() {},
@@ -62,9 +70,9 @@ Object.assign(globalThis, {
     documentElement: el(), body: el(), head: el(), hidden: false, visibilityState: "visible",
     activeElement: null,
     createElement: () => el(), createElementNS: () => el(),
-    createDocumentFragment: () => el(),
-    createTextNode: (s: string) => { const n = el(); n.textContent = s; return n; },
-    getElementById: () => el(), querySelector: () => null, querySelectorAll: () => [],
+    createDocumentFragment: () => el("#document-fragment"),
+    createTextNode: (s: string) => { const n = el("#text"); n.textContent = s; return n; },
+    getElementById: (id: string) => (byId[id] || (byId[id] = el())) as never, querySelector: () => null, querySelectorAll: () => [],
     addEventListener: () => {}, removeEventListener() {},
   },
   window: globalThis,
@@ -81,6 +89,7 @@ const dataView = await import(pathToFileURL(join(here, "data-view.js")).href) as
   dbConnMenuItems: (
     conns: ApiDbConnectionRow[], current: string, pick: (name: string) => void,
   ) => MenuItemAction[];
+  renderDbSide: () => void;
 };
 
 afterAll(() => {
@@ -157,5 +166,39 @@ describe("the connection menu's groups (docs/20 G5, docs/43 M3)", () => {
     expect(picked).toEqual(["shop-mysql"]);
     expect(items.find((r) => r.label.startsWith("shop-pg"))?.on).toBe(true);
     expect(mysql?.on).toBe(false);
+  });
+
+  it("the connection row's dialect chip follows the MCP tag vocabulary: a mark, not a word", () => {
+    unmountDbView();
+    mountDbView();
+    const d = dbConn();
+    const conns: ApiDbConnectionRow[] = [
+      { name: "redis", dialect: "redis", state: "running", group: "" } as ApiDbConnectionRow,
+    ];
+    Object.assign(d, { conn: "redis", conns, databases: [] });
+    const chipOf = (): Record<string, any> => {
+      // renderDbSide wipes by assigning textContent - a plain property on this stub - so
+      // the row is handed back fresh for each render the way the real DOM would be.
+      byId.dbConnRow = el();
+      byId.dbDatabaseRow = el();
+      dataView.renderDbSide();
+      const chip = (byId.dbConnRow.children as Record<string, any>[])
+        .find((c) => String(c.className).includes("db-chip")) as Record<string, any>;
+      expect(chip, "the chip exists").toBeTruthy();
+      return chip;
+    };
+    // A whitelisted dialect paints its glyph: typeTagNode hands back a node whose word
+    // rides the aria-label, so the chip carries a node child, not a text node - the word
+    // chip it replaced is the string case below (textContent does not aggregate on the
+    // stub, so the child is read directly).
+    const mark = chipOf();
+    expect(mark.textContent).toBe("");
+    expect(mark.children.length, "a glyph node, not a string").toBe(1);
+    expect(mark.children[0].textContent, "the glyph node carries no word").toBe("");
+    // A dialect outside the icon whitelist keeps the word chip - sqlite is not a mark.
+    (conns[0] as { dialect: string }).dialect = "sqlite";
+    const word = chipOf();
+    expect(word.children[0].textContent).toBe("sqlite");
+    unmountDbView();
   });
 });
