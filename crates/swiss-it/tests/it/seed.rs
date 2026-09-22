@@ -23,8 +23,11 @@
 
 use serde_json::Value;
 use sqlx::Connection;
-use swiss_it::engine::Kind;
-use swiss_it::seed::{fresh, REDIS_SEED_KEYS};
+use swiss_it::engine::{engine, Kind};
+use swiss_it::seed::{
+    fresh, fresh_redis_exclusive, fresh_redis_many, fresh_redis_with_neighbor,
+    hold_redis_indices, REDIS_SEED_KEYS,
+};
 
 fn mysql_url(def: &Value) -> String {
     format!(
@@ -409,8 +412,12 @@ async fn postgres_two_fresh_databases_are_invisible_to_each_other() {
 
 #[tokio::test]
 async fn redis_two_leased_indexes_are_invisible_to_each_other() {
-    let a = fresh(Kind::Redis, "isoa").await;
-    let b = fresh(Kind::Redis, "isob").await;
+    // Both indexes out of ONE lease (docs/45 S1 fix): two separate fresh_redis()
+    // calls would park this test between acquisitions still holding the first
+    // - the wait-while-holding shape the one-lease rule exists to kill.
+    let mut leased = fresh_redis_many(2).await;
+    let b = leased.pop().expect("the second index of the lease");
+    let a = leased.pop().expect("the first index of the lease");
     let mut ca = redis_conn(&a.def).await;
     let mut cb = redis_conn(&b.def).await;
 
@@ -432,4 +439,50 @@ async fn a_hundred_redis_freshes_do_not_drain_the_index_pool() {
         // state leaking through would show up here as a wrong count.
         assert_eq!(size, REDIS_SEED_KEYS, "iteration {i}");
     }
+}
+
+/// docs/45 S1 fix: multi-index leasing must be one atomic acquire, and this is
+/// the deterministic proof. The order below is chosen so the one-at-a-time
+/// shape cannot pass by scheduling luck:
+///
+/// - `a` holds 15 of 16 permits; exactly one is free.
+/// - `c` (the exclusive sixteen) queues first. One-at-a-time, it takes that
+///   last free permit immediately, then parks waiting for its 15 missing ones.
+/// - `b` (a neighbor pair) queues behind it and parks waiting for its first.
+/// - `drop(a)` returns 15 permits. The FIFO queue holds b's waiter; c's NEXT
+///   acquire only enqueues after c is resumed, so b is ahead of it. b takes
+///   one of its two and parks again; c drains the remaining 14, holds 15, and
+///   waits for one more. Each now holds exactly what the other needs: mutual
+///   wait, hang.
+///
+/// Atomic leasing makes the same steps safe: c's `acquire_many(16)` is ONE
+/// all-or-nothing waiter ahead of b's, so b receives no permit before c
+/// completes - a waiter only ever waits on holders that are running, never on
+/// another waiter, and FIFO cannot order that into a cycle.
+///
+/// The tasks are spawned (not merely joined) so the semaphore sees them as
+/// independent waiters, exactly like parallel #[tokio::test]s sharing the pool.
+/// The yield rounds park each at its acquire deterministically on the
+/// single-threaded test runtime; the engine is warmed FIRST because
+/// `fresh_redis_exclusive` leases before it resolves the engine, and the
+/// ordering argument wants c parked at the semaphore, not inside a boot.
+#[tokio::test]
+async fn exclusive_and_neighbor_leases_never_deadlock() {
+    let _ = engine(Kind::Redis).await;
+    let a = hold_redis_indices(15).await; // fifteen of sixteen held; one free
+    let c = tokio::spawn(fresh_redis_exclusive("dlx")); // queues for all 16
+    for _ in 0..3 {
+        tokio::task::yield_now().await; // park c on its acquire
+    }
+    let b = tokio::spawn(fresh_redis_with_neighbor("dln")); // queues behind c
+    for _ in 0..3 {
+        tokio::task::yield_now().await; // park b on its acquire
+    }
+    drop(a); // the 15 come back; queue order decides who gets them
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        c.await.expect("the exclusive lease returns");
+        b.await.expect("the neighbor pair returns");
+    })
+    .await
+    .expect("the queued leases complete - a timeout here is the one-at-a-time deadlock come back");
 }
