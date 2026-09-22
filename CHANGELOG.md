@@ -22,5 +22,9 @@ All notable changes to swiss are recorded here. The format follows
 ### Fixed
 - `/api/tunnels` connection rows now carry `keyPath`: the panel's edit sheet prefills from the
   row, and a custom private-key path is no longer silently rewritten to the default on save.
+- Jumping a Redis stream view back to the latest window now voids the follow tick already in
+  flight, so a late poll can no longer pool stale rows behind the jump (docs/45 S3).
+- The connection-test gate accepts `mariadb` like the panel's Test button always offered it:
+  a mariadb Test click answered 400 "no connection test" before.
 
 [Unreleased]: https://github.com/young1lin/swiss/commits/master
