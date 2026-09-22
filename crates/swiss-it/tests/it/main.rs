@@ -24,6 +24,7 @@
 
 #![cfg(feature = "it")]
 
+mod gateway;
 mod mysql;
 mod pg;
 mod reaper;

@@ -107,7 +107,11 @@ async fn scan_pages_carry_type_ttl_and_total() {
         .expect("first page");
     let keys = page["keys"].as_array().expect("keys");
     assert!(!keys.is_empty());
-    assert!(keys.len() <= 500, "COUNT is a hint, never a contract: {keys:?}");
+    // COUNT is a bucket-examination hint, never a row cap: a dense hash tail can hand
+    // back MORE than COUNT keys in one page (the per-container hash seed decides, so
+    // this flips with a restart). What stays true: 500 examined buckets cannot drain
+    // 3,016 keys, so the page is partial.
+    assert!(keys.len() < 3016, "a 500-hint page is partial: {} keys", keys.len());
     assert_eq!(page["total"], 3016);
     assert_eq!(page["done"], false, "3,016 keys cannot finish one 500 page");
     for k in keys {
