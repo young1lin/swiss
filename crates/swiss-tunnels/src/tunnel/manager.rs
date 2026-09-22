@@ -1666,7 +1666,9 @@ impl TunnelManager {
                 // jump id to a name from this same list. proxyPassword rides as the MASK
                 // sentinel, the same rule mask_conn applies to the POST/PUT echo: the row
                 // never carries a secret, and an edit that leaves the field untouched sends
-                // the sentinel back through unmask_conn, keeping the stored value.
+                // the sentinel back through unmask_conn, keeping the stored value. The
+                // connection's key path joins this read surface too: plaintext, absent
+                // when unset — the edit sheet prefills it from the row.
                 if let Some(url) = &c.proxy {
                     row.insert("proxy".into(), json!(url));
                 }
@@ -1682,6 +1684,13 @@ impl TunnelManager {
                 }
                 if let Some(jump) = &c.jump {
                     row.insert("jump".into(), json!(jump));
+                }
+                // The key path rides the same read surface: the edit sheet prefills from
+                // this row, so a custom path must arrive here or a save would rewrite it
+                // to the default. Plaintext (a path, not a secret), absent when unset,
+                // appended after the frozen prefix — the docs/27 §4 addendum rule.
+                if let Some(kp) = &c.key_path {
+                    row.insert("keyPath".into(), json!(kp));
                 }
                 Value::Object(row)
             })
@@ -2627,12 +2636,14 @@ mod tests {
     /// proxyPassword — an env ref passes, the reference is not the secret — so an
     /// untouched edit echoes the sentinel back through unmask_conn and keeps the stored
     /// secret. The new keys append after the existing ones; the historical prefix is
-    /// frozen.
+    /// frozen. The connection's key path follows the same rule — the edit sheet prefills
+    /// from this row, so a custom path must ride along or a save would rewrite it to the
+    /// default.
     #[test]
-    fn connection_rows_carry_the_proxy_jump_fields_for_the_panel() {
+    fn connection_rows_carry_the_proxy_jump_and_key_path_fields_for_the_panel() {
         let (_dir, store) = scratch();
         let (m, _built) = manager(&store);
-        let plain = add_conn(&store);
+        let _plain = add_conn(&store);
         let _clash = store
             .lock()
             .unwrap()
@@ -2691,6 +2702,19 @@ mod tests {
                 ..Default::default()
             })
             .expect("the env-ref connection");
+        let _keyed = store
+            .lock()
+            .unwrap()
+            .add_connection(&ConnInput {
+                name: "keyed".into(),
+                host: "10.0.0.5".into(),
+                port: 22.0,
+                username: "u".into(),
+                auth_type: AuthType::Key,
+                key_path: Some("~/.ssh/alt_ed25519".into()),
+                ..Default::default()
+            })
+            .expect("the keyed connection");
 
         let rows = m.rows();
         let by_name = |n: &str| {
@@ -2704,8 +2728,10 @@ mod tests {
         };
         let keys = |c: &Value| c.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
 
-        // A plain row keeps the exact historical shape: nothing new appears.
-        let plain_row = by_name("srv");
+        // A plain row keeps the exact historical shape: nothing new appears. bastion is
+        // the plain case here — password auth, no proxy, no jump, no key path; the shared
+        // add_conn helper happens to carry a key path, so it no longer qualifies.
+        let plain_row = by_name("bastion");
         assert_eq!(
             keys(&plain_row),
             vec![
@@ -2720,7 +2746,7 @@ mod tests {
                 "activeRules",
             ]
         );
-        assert_eq!(plain_row["id"], json!(plain.id));
+        assert_eq!(plain_row["id"], json!(bastion.id));
 
         // The proxy trio: plaintext URL and username, the sentinel — never the secret.
         let clash_row = by_name("clash");
@@ -2745,6 +2771,16 @@ mod tests {
         // An env-ref proxy password is a reference, not a secret: it rides as itself.
         let ref_row = by_name("refproxy");
         assert_eq!(ref_row["proxyPassword"], json!("${secret://proxy-pass}"));
+
+        // The key path: absent-when-unset on a plain row, present and plaintext on a keyed
+        // one, appended after the frozen prefix — the edit sheet prefills from this row, so
+        // a save must never rewrite a custom path to the default.
+        let keyed_row = by_name("keyed");
+        assert_eq!(keyed_row["keyPath"], json!("~/.ssh/alt_ed25519"));
+        assert!(plain_row.get("keyPath").is_none());
+        let keyed_keys = keys(&keyed_row);
+        assert_eq!(keyed_keys[..9], keys(&plain_row)[..]);
+        assert_eq!(keyed_keys[9..], vec!["keyPath"]);
     }
 
     #[tokio::test]

@@ -517,9 +517,10 @@ export interface ApiTunnelsResponse {
   mcps: string[];
 }
 
-/** One connection row - tunnel/manager.rs rows(): live fields layered on types.rs
- *  SshConnDef::to_json(). Secrets ride masked (proxyPassword) or absent (passphrase,
- *  password); group/reason/hostKey and the proxy/jump fields are absent when unset. */
+/** One connection row - tunnel/manager.rs rows() builds it key by key (not from
+ *  types.rs SshConnDef::to_json()): the frozen id..activeRules prefix, then the
+ *  docs/27 §4 addendum fields and keyPath, each absent when unset. Secrets ride
+ *  masked (proxyPassword) or absent (passphrase, password). */
 export interface ApiTunnelConnectionRow {
   id: string;
   name: string;
