@@ -23,9 +23,13 @@ import { dbLoadData, renderDbGrid, renderDbToolbar } from "./data-grid.js";
 import { renderDbFilters } from "./data-filters.js";
 import { dbFillConsole, dbTemplateSql, renderDbBar } from "./data-sql.js";
 import { dbDropEdits, dbLoadTables, renderDbTables } from "./data-view.js";
+// The strip's policy module: DROP closes the tabs the dropped table owned. Same accepted cycle
+// shape as the rest of the data-* edges — the call crosses inside a function, never at module
+// scope.
+import { dbDropTableTabs } from "./data-tabs.js";
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbTab } from "./db-state.js";
 import { tr } from "./i18n.js";
 
 /* --- structure operations (rename / truncate / drop) ---------------------------------------------- */
@@ -33,23 +37,27 @@ import { tr } from "./i18n.js";
    retypes the table name — because both destroy data with no transaction to roll back to. */
 /** docs/22 W1.10: build one template for the open table and drop it into the console. */
 function dbGenerateSql(kind: string): void {
-  const d = dbView();
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return;
   if (!d.data || !d.data.columns || !d.data.columns.length) {
     toast(tr("dataEdit.openTableFirstTemplate"), true);
     return;
   }
-  const dialect = (d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; }) || {} as { dialect?: string }).dialect || "mysql";
+  const dialect = (c.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === c.conn; }) || {} as { dialect?: string }).dialect || "mysql";
   let sql;
   try {
     sql = dbTemplateSql(kind, dialect, d.schema!, d.table!,
-      d.data?.columns.map((c: ApiDbColumn): string => { return c.name; }), d.data?.primaryKey || []);
+      d.data?.columns.map((col: ApiDbColumn): string => { return col.name; }), d.data?.primaryKey || []);
   } catch (err) { toast(errText(err), true); return; }
   dbFillConsole(sql);
 }
 
 function dbTableMenu(anchorEl: HTMLElement): void {
-  const d = dbView();
-  if (!d.conn || !d.table) return;
+  const c = dbConn();
+  const d = dbTab();
+  if (d.kind !== "table") return;
+  if (!c.conn || !d.table) return;
   const menu = el("div", "ctx-menu");
   function item(label: string, fn: () => void): void {
     const b = el("button", "", label) as HTMLButtonElement;
@@ -108,26 +116,28 @@ function dbTypedConfirm(o: { what: string; name: string; kind: string; typed?: s
 }
 
 async function dbRunDdl(op: string, to?: string): Promise<void> {
-  const d = dbView();
-  const j = await apiJson<{ ran: string }>("/api/db/" + encodeURIComponent(d.conn!) + "/ddl", {
+  const c = dbConn();
+  const d0 = dbTab();
+  if (d0.kind !== "table") return;
+  const d = d0;
+  const j = await apiJson<{ ran: string }>("/api/db/" + encodeURIComponent(c.conn!) + "/ddl", {
     method: "POST",
     body: JSON.stringify({ op: op, table: d.table, schema: d.schema, to: to }),
   });
   if (!j) return;
   toast(tr("dataEdit.ran", { sql: j.ran }));
   if (op === "drop") {
-    // The table is gone: nothing of it may linger on the right pane. d.schema, the open
-    // result tabs and the view state (order, filters, focus) belong to the dropped table
-    // as much as d.data does, and the pane itself needs a repaint — renderDbTables
-    // refreshes only the LEFT list (docs/22 closeout audit).
-    d.table = null; d.schema = null; d.data = null; d.detail = null;
-    d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; // docs/22 W4.3: every result tab closes
-    d.tab = "data"; d.order = null; d.dir = "asc"; d.filters = []; d.focus = null;
-    dbDropEdits();
+    // The table is gone, so every tab open on it goes with it — this one and any background
+    // tab holding the same table under a different filter. What is left is whatever else was
+    // open, or the strip's placeholder, whose empty state IS the repaint the right pane needs:
+    // renderDbTables refreshes only the LEFT list (docs/22 closeout audit, under docs/42 T2).
+    dbDropTableTabs(d.table, d.schema);
+    if (dbIsRedis()) void dbLoadKeys(true);
+    else void dbLoadTables();
+    return;
   }
   if (op === "rename" && to) { d.table = to; d.data = null; }
   if (op === "truncate") { dbDropEdits(); }
-  d.tablesPage = 0;
   if (dbIsRedis()) void dbLoadKeys(true);
   else void dbLoadTables();
   if (d.table) void dbLoadData(true);
@@ -209,7 +219,9 @@ function dbSaveInlineEdit(): void {
   if (!e) return;
   const raw = e.ta.value;
   dbCloseInlineEdit();
-  const d = dbView();
+  const t = dbTab();
+  if (t.kind !== "table") return;
+  const d = t;
   if (e.kind === "insert") {
     const ins = d.inserts[e.i]!;   // an insert edit only fires for a row that still exists
     if (raw === "") delete ins.values[e.column];

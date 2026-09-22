@@ -311,6 +311,12 @@
       background: var(--card); border: 0; border-radius: 10px;
       box-shadow: var(--shadow-pop); padding: var(--s1); display: grid;
     }
+    /* docs/43 M3: a heading row inside a menu — the connection groups and the database
+       selector's Primary/Databases/System bands. Chrome, not a choice: caption-sized,
+       text-3, and never a button. A disabled row keeps its ink but sits inert, its reason
+       one hover away (title). */
+    .menu .menu-head { padding: 3px 10px 1px; font-size: var(--f-caption); color: var(--text-3); }
+    .menu button:disabled { color: var(--text-3); cursor: default; background: none; }
     /* The pane's overflow menu anchors to .pane-actions; a menu opened from the sidebar has no such
        anchor, so it is placed at the pointer instead. A floating menu also paints ABOVE a sheet:
        dropdown.js appends its dropdowns to <body> as .menu.float.dd-menu, and a select inside a
@@ -331,6 +337,10 @@
     .menu button.pick { display: flex; align-items: center; gap: var(--s2); }
     .menu button.pick::before { content: "\2713"; width: 10px; flex: none; color: var(--accent); visibility: hidden; }
     .menu button.pick.on::before { visibility: visible; }
+    /* docs/43 M1: the tab strip's overflow lists open objects, so its rows carry the same
+       type glyph and dirty dot the cards do — the menu is the whole set's one read. */
+    .menu button .ic { width: 14px; height: 14px; flex: none; color: var(--text-3); }
+    .menu button .db-tab-dot { flex: none; margin-left: auto; }
     .menu hr { border: 0; border-top: 1px solid var(--sep-soft); margin: var(--s1) 0; }
     /* A caption for the first group: "Copy Codex command" needs to say what it is for. */
     .menu-cap {
@@ -499,23 +509,131 @@
     .pane.db-host > .db-root { flex: 1; min-height: 0; }
     .db-root { display: flex; height: 100%; min-height: 420px; }
     .db-side { width: 250px; flex: none; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; background: var(--sidebar); border-right: 1px solid var(--sep); padding: var(--s2) var(--s2) 0; }
+    /* docs/43 M3: the sidebar's top is two band-shaped rows. The CONNECTION row carries the
+       status dot, the name, a dialect chip and the menu chevron; the DATABASE row (present
+       only when the connection has a database axis) carries the database glyph and the
+       current name. Both open popup menus — the band geometry matches .side-row's flex
+       metrics (base.css) the same way .db-table's does. */
+    .db-conn-row, .db-db-row { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
+    .db-conn-row:hover, .db-db-row:hover { background: var(--hover); }
+    .db-conn-row.off { cursor: default; color: var(--text-3); }
+    /* The open picker's row stays engaged: the hover wash holds while its drawer is open,
+       so the row and what slid out of it read as one control. */
+    .db-conn-row.engaged, .db-db-row.engaged { background: var(--hover); }
+    .db-conn-row.engaged .db-row-chev, .db-db-row.engaged .db-row-chev { transform: rotate(180deg); }
+    .db-row-chev { transition: transform .16s ease; }
+    /* The drawers (the owner's ask): grid-rows 0fr-to-1fr is the whole animation - no
+       max-height guess, no JS measuring. The inner pane owns overflow so a long list
+       scrolls INSIDE the drawer while the collapse still animates. */
+    .db-drawer { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .18s ease; }
+    .db-drawer.open { grid-template-rows: 1fr; }
+    .db-drawer-in { min-height: 0; overflow: hidden auto; max-height: 40vh; overscroll-behavior: contain; }
+    .db-drawer-head { padding: 5px 10px 2px; font-size: var(--f-caption); color: var(--text-3); white-space: nowrap; }
+    .db-drawer hr { border: 0; border-top: 1px solid var(--sep); margin: 3px 6px; }
+    .db-drow { display: flex; align-items: center; gap: 7px; margin: 0 4px; width: calc(100% - 8px);
+      padding: 4px 6px; border-radius: 6px; text-align: left; font-size: var(--f-body); color: var(--text-2); }
+    .db-drow:hover { background: var(--hover); }
+    .db-drow.on { color: var(--accent); font-weight: 550; }
+    .db-drow:disabled { color: var(--text-3); cursor: default; background: none; }
+    .db-drow .ic { flex: none; width: 14px; height: 14px; color: var(--text-3); }
+    .db-drow.on .ic { color: var(--accent); }
+    .db-drow-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-drow-meta { flex: none; color: var(--text-3); font-size: var(--f-caption); font-variant-numeric: tabular-nums; }
+    .db-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+    .db-dot.off { background: var(--text-3); }
+    .db-chip { flex: none; font-size: var(--f-caption); color: var(--text-3); border: 1px solid var(--sep); border-radius: var(--r-pill); padding: 0 5px; }
+    /* A dialect GLYPH carries no pill - the MCP sidebar's side-type vocabulary (docs/29):
+       a mark is quiet grey and brightens with the row; only a word (a dialect outside the
+       icon whitelist, e.g. sqlite) keeps the bordered chip above. Same tag, same shape in
+       both sidebars. */
+    .db-chip:has(.ic) { border: none; padding: 0; }
+    .db-conn-row:hover .db-chip:has(.ic) { color: var(--text-2); }
+    .db-chip .ic { display: block; width: 14px; height: 14px; }
+    .db-row-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-row-chev, .db-row-ic { flex: none; color: var(--text-3); }
     .db-tables { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s1); }
-    /* Sort controls for whatever the list holds (tables or keys): the key picker takes the
-       remaining width, the direction toggle is a fixed square beside it. Named db-sortROW —
-       .db-sort is the grid header's little arrowhead below and would crush this row to 7px. */
-    .db-sortrow { display: flex; gap: var(--s1); align-items: center; }
-    .db-sortrow select { flex: 1; min-width: 0; padding-top: 2px; padding-bottom: 2px; }
-    .db-sortrow .btn.icon { flex: none; width: 26px; height: 26px; }
-    .db-table { display: block; width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
+    /* docs/43 M4: the STATUS bar — one line under the pane body (pager, page size,
+       editability, connection), a sibling of the commit bar (.db-bar), not part of it.
+       Caption ink and the same row height as the console's hint row; the connection name
+       rides the right edge in --text-3, the note keeps body ink. */
+    .db-status { display: flex; align-items: center; gap: var(--s2); padding: 3px var(--s2) 6px; min-height: 26px; }
+    .db-status .db-pageinfo { color: var(--text-3); font-size: var(--f-caption); }
+    .db-status-note { font-size: var(--f-caption); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-status-conn { flex: none; font-size: var(--f-caption); color: var(--text-3); }
+    /* docs/43 M4: the Structure tab's sub-segment (Columns/Indexes/Foreign Keys) — same
+       vocabulary as the main strip, one size down, seated above the catalog tables. */
+    .db-struct-sub { margin: var(--s1) var(--s2); }
+    /* docs/43 M2: the list is a TREE of bands (mountGroup at side density), so its rows are
+       ONE line now — the name left, the count/type right in --text-3 tnum caption. The two-line
+       row's whole meta line (type · rows · size) moved into the title, one hover away, where
+       it cannot truncate the name to show itself. Rows sit INSIDE band bodies, so the flex
+       metrics match .side-row's geometry (base.css) rather than inventing a second one. */
+    .db-table { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-table:hover { background: var(--hover); }
     .db-table.sel { background: color-mix(in srgb, var(--accent) 11%, transparent); }
     .db-table.sel .db-table-name { color: var(--accent); font-weight: 600; }
     /* A long key ("wsproxy:console:token:session:…") or table name is cut with an ellipsis, not
        sliced at the card's edge; the full name is the row's title, one hover away. */
-    .db-table-name { font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .db-table-meta { font-size: var(--f-caption); color: var(--text-3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-table-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-table-meta { flex: none; max-width: 45%; font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* docs/43 addendum: a section's expander/collapse note row — same geometry as a .db-table
+       (it sits inside the band body under the last row), but quiet: caption color, accent on
+       hover, no meta slot. It is an affordance, not an object. */
+    .db-tree-cap { display: flex; align-items: center; width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; cursor: pointer; }
+    .db-tree-cap .db-table-name { flex: 1; font-size: var(--f-caption); color: var(--text-3); }
+    .db-tree-cap:hover .db-table-name { color: var(--accent); }
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
     .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; padding: var(--s3) var(--s4) 0; }
+    /* The object tab strip (docs/42 T2). L3 resource navigation owned by the page body, drawn
+       as CARD tabs — the shape swiss-ui-design §1.3 reserves for "one open resource". It is
+       deliberately neither of the other two tab shapes on screen: the context bar's underline
+       tabs are L2 pages, and the seg pills below (.db-tabs) name a SECTION of the open object.
+       Full-bleed by negative margins because the strip is the pane's top EDGE, not a control
+       floating inside its padding; it sits on the recessed --sidebar plane and the active card
+       is lifted to --bg with the strip's hairline cancelled under it, so card and grid read as
+       one surface (rule 16). The accent is a 2px inset on the card's TOP edge — the bottom edge
+       belongs to the L2 underline and must not be echoed here. */
+    .db-tabstrip { display: flex; align-items: stretch; flex: none; margin: calc(var(--s3) * -1) calc(var(--s4) * -1) 0; background: var(--sidebar); border-bottom: 1px solid var(--sep); }
+    /* docs/43 M1 D1: the cards scroll, the exits stay. The "+" and the overflow button used
+       to sit INSIDE the scroll run, so a full strip scrolled its own way out offscreen (the
+       owner's screenshot). Two zones now: the run overflows and hides its scrollbar (the
+       wheel still scrolls it — wired in data-tabs.ts), the end cap is pinned and separated
+       from the run by the strip's own hairline colour. */
+    .db-tabstrip-scroll { display: flex; align-items: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; padding-left: var(--s2); }
+    .db-tabstrip-scroll::-webkit-scrollbar { display: none; }
+    .db-tabstrip-end { flex: none; display: flex; align-items: stretch; border-left: 1px solid var(--sep); }
+    .db-tab { display: inline-flex; align-items: center; gap: var(--s1); flex: none; max-width: 210px; height: 32px; padding: 0 var(--s2); border-right: 1px solid var(--sep-soft); font-size: var(--f-label); color: var(--text-2); cursor: pointer; }
+    .db-tab:hover { background: var(--hover); }
+    .db-tab.sel { background: var(--bg); color: var(--text); font-weight: 600; box-shadow: inset 0 2px 0 var(--accent); margin-bottom: -1px; padding-bottom: 1px; }
+    .db-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .db-tab .ic { width: 14px; height: 14px; color: var(--text-3); }
+    .db-tab.sel .ic { color: var(--text-2); }
+    .db-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The rename input (the card right-click): sized to the card's own name slot so the
+       card does not change shape while it is being edited. */
+    .db-tab-rename { flex: 1; min-width: 0; width: 9em; height: 18px; padding: 0 3px;
+      font: inherit; font-size: var(--f-caption); color: var(--text); background: var(--bg);
+      border: 1px solid var(--accent); border-radius: 4px; outline: none; }
+    /* The filter count rides the card so a tab that is showing a SUBSET says so before it is
+       opened — the number is descriptive, so it stays monochrome (rule 2). */
+    .db-tab-n { flex: none; font-size: var(--f-caption); color: var(--text-3); background: var(--sep-soft); border-radius: var(--r-pill); padding: 0 5px; }
+    /* Buffered writes are a STATE, so they get the dot (rule 10) — 6px, amber for "held, not
+       written", with the count in its title. */
+    .db-tab-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+    /* The × is the browser-tab idiom: always there on the active card, on hover for the rest,
+       and reachable by keyboard on either. */
+    .db-tab-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: none; background: none; border-radius: var(--r-btn); color: var(--text-3); cursor: pointer; opacity: 0; }
+    .db-tab-close .ic { width: 12px; height: 12px; }
+    .db-tab:hover .db-tab-close, .db-tab.sel .db-tab-close, .db-tab-close:focus-visible { opacity: 1; }
+    .db-tab-close:hover { background: var(--hover); color: var(--text); }
+    .db-tab-add { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 32px; padding: 0 var(--s2); border: none; background: none; color: var(--text-3); font-size: var(--f-label); cursor: pointer; }
+    .db-tab-add .ic { width: 14px; height: 14px; }
+    .db-tab-add:hover { background: var(--hover); color: var(--text); }
+    /* The overflow seat (docs/43 M1 D4): one glyph, one job — "the whole set, listed". Same
+       height and hover as the "+" it sits beside, icon-only because its title says the rest. */
+    .db-tab-more { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 32px; border: none; background: none; color: var(--text-3); cursor: pointer; }
+    .db-tab-more .ic { width: 14px; height: 14px; }
+    .db-tab-more:hover { background: var(--hover); color: var(--text); }
     .db-head { display: flex; align-items: flex-end; gap: var(--s3); flex-wrap: wrap; }
     .db-head-left { min-width: 0; }
     .db-title { margin: 0; font-size: var(--f-head); }
@@ -544,12 +662,6 @@
     .db-detail-meta { font-size: var(--f-label); color: var(--text-2); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
     .db-ddl { margin: var(--s2); padding: var(--s3); background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-label); white-space: pre-wrap; word-break: break-word; }
     .db-keytype { font-size: var(--f-caption); padding: 1px 6px; border-radius: 980px; background: var(--sep-soft); color: var(--text-2); margin-left: var(--s2); }
-    /* docs/22 W4.6 — the table list's own header band: the list gains a create action, so it
-       names itself and holds one persistent dimmed + the way every container header does
-       (docs/20 §4 sidebar density — the same 28px band on --sep-soft; the glyph reuses the
-       groups' grp-add styling, so every "+" in the panel reads as one glyph). */
-    .db-list-head { display: flex; align-items: center; gap: var(--s1); height: 28px; padding: 0 var(--s1); background: var(--sep-soft); border-radius: var(--r-row); }
-    .db-list-title { flex: 1; min-width: 0; font-size: var(--f-body); font-weight: 600; color: var(--text-2); }
     /* docs/22 W4.6 — the DDL sheet's column mini-grid: caption header row, one line per
        column on the field surface. Existing columns render disabled (only ADD is in the
        minimal set), so the sheet reads as the table's shape with new rows at its end; fixed

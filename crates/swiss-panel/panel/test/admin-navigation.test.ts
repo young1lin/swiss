@@ -294,7 +294,8 @@ describe("the plugin rail (global navigation)", () => {
     expect(currentView()).toBe("data");
     // One buffered Data edit is what makes the real view veto the leave (dbPending() > 0).
     const dbState = await import("../src/db-state.js");
-    dbState.dbView().inserts = [{ values: { a: 1 } }];
+    const dbTabRec = dbState.dbTab();
+    if (dbTabRec.kind === "table") dbTabRec.inserts = [{ values: { a: 1 } }];
     const before = memoryStore.get("swiss.lastPage");
 
     const seat = { dataset: { group: "mcp" } };

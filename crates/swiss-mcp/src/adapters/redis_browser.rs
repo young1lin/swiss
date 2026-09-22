@@ -311,6 +311,68 @@ impl RedisBrowser for RedisDataBrowser {
         let replies = handle.pipeline(&owned).await?;
         Ok(json!({ "replies": replies }))
     }
+
+    /// docs/43 M3 (ADR-027 option b): INFO keyspace names every dbN with its key count and
+    /// CLIENT INFO says which one this connection SELECTed at connect time — that number is
+    /// both primary and current. Every OTHER database is listed but not browsable: SELECT is
+    /// a connection-breaking command on the shared handle (it would permanently re-mode the
+    /// pooled connection), so opening one needs its own connection, and the reason here is
+    /// the sentence the panel shows on the disabled entry.
+    ///
+    /// CLIENT INFO is refused by proxy-fronted redis (Codis and friends answer "unknown
+    /// subcommand ... Try CLIENT HELP"), and a catalog must not 500 on that: the fallback is
+    /// db0 — the connect-time SELECT's own default — and the keyspace rows still list.
+    async fn list_databases(&self) -> Result<Value, String> {
+        let handle = self.conn.get().await?;
+        let (ks, client) = tokio::join!(
+            handle.call("INFO", &["keyspace"]),
+            handle.call("CLIENT", &["INFO"])
+        );
+        let ks = value_string(&ks?);
+        // "db=3 " inside the CLIENT INFO id-addr-db-... line; missing field or refused
+        // command both fall back to "0" (the db an unconfigured connection sits on).
+        let current = match client {
+            Ok(v) => value_string(&v)
+                .split_whitespace()
+                .find(|f| f.starts_with("db="))
+                .and_then(|f| f.trim_start_matches("db=").parse::<i64>().ok())
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "0".to_string()),
+            Err(_) => "0".to_string(),
+        };
+        // Keyspace lines look like "db2:keys=170,expires=4,avg_ttl=1200" — name is the
+        // number after db, tables carries the key count (the redis twin of a table count).
+        let mut databases: Vec<Value> = Vec::new();
+        for line in ks.lines() {
+            let line = line.trim();
+            let Some((db, rest)) = line.split_once(':') else {
+                continue;
+            };
+            let Some(name) = db.strip_prefix("db") else {
+                continue;
+            };
+            let keys = rest
+                .split(',')
+                .find_map(|f| f.strip_prefix("keys=").and_then(|n| n.parse::<i64>().ok()))
+                .unwrap_or(0);
+            let is_current = name == current;
+            databases.push(json!({
+                "name": name,
+                "primary": is_current,
+                "browsable": is_current,
+                "system": false,
+                "tables": keys,
+                "reason": if is_current { Value::Null } else {
+                    json!("SELECT would break the shared connection; opening another database needs its own connection.")
+                },
+            }));
+        }
+        Ok(json!({
+            "primary": current,
+            "current": current,
+            "databases": databases,
+        }))
+    }
 }
 
 #[cfg(test)]

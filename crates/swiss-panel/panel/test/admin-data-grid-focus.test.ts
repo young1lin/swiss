@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView } from "../src/db-state.js";
+import { dbConn as dbConnState, dbTab } from "../src/db-state.js";
 import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), sharpened where the
@@ -126,16 +126,22 @@ const grid = await import(pathToFileURL(join(here, "data-grid.js")).href) as {
 
 /** A two-row editable grid, rendered once into a wrap the test holds. */
 function renderTwoRowGrid(): { d: Record<string, any>; wrap: Stub } {
-  const d = dbView();
-  d.conns = [dbConn("c", "mysql")];
-  d.conn = "c"; d.table = "t"; d.schema = null;
+  const c = dbConnState();
+  c.conns = [dbConn("c", "mysql")];
+  c.conn = "c"; c.gridCfg = { widths: {}, hidden: [] };
+  // The grid and its focus ring are the open table tab's (docs/42 T1); the callers read
+  // only tab fields through d, so d IS the narrowed tab.
+  const tab = dbTab();
+  if (tab.kind !== "table") throw new Error("fresh state must hold a table tab");
+  const d = tab as unknown as Record<string, any>;
+  d.table = "t"; d.schema = null;
   d.data = dbPage({
     table: "t", columns: [dbCol("id"), dbCol("name")],
     rows: [{ id: 1, name: "a" }, { id: 2, name: "b" }],
     total: 2, primaryKey: ["id"], editable: true,
   });
-  d.tab = "data"; d.sqlResult = null; d.sqlBusy = false; d.loading = false;
-  d.gridCfg = { widths: {}, hidden: [] }; d.focus = null; d.conflict = null; d.detail = null;
+  d.pane = "data"; d.loading = false;
+  d.focus = null; d.conflict = null; d.detail = null;
   d.updates = {}; d.deletes = {}; d.inserts = []; d.sel = {};
   byId.dbGridWrap = el();
   grid.renderDbGrid();

@@ -24,7 +24,7 @@ import { dbOpenValueSheet } from "./data-value.js";
 import { dbDropEdits, dbOkToDrop, dbPending, dbPkKey, dbResultKey } from "./data-view.js";
 import { clampMenuPos } from "./menu.js";
 import { setMenuOpen } from "./ui-state.js";
-import { dbView } from "./db-state.js";
+import { dbConn, dbSqlTab, dbTab } from "./db-state.js";
 import { locale, tr, trn } from "./i18n.js";
 
 /* --- CSV import wizard -------------------------------------------------------------------------- */
@@ -57,8 +57,11 @@ const CSV_MAP_LABEL = "CSV ";
 const CSV_MAP_ARROW = " \u2192 ";
 
 function dbOpenImport(): void {
-  const d = dbView();
-  if (!d.conn || !d.table || !d.data) { toast(tr("dataCsv.openTableFirst"), true); return; }
+  const c = dbConn();
+  const t0 = dbTab();
+  if (t0.kind !== "table") { toast(tr("dataCsv.openTableFirst"), true); return; }
+  const d = t0;
+  if (!c.conn || !d.table || !d.data) { toast(tr("dataCsv.openTableFirst"), true); return; }
   if (!d.data.editable) { toast(tr("dataCsv.tableNotEditable", { reason: d.data.editNote || tr("dataCsv.noPrimaryKey") }), true); return; }
   if (dbPending() && !dbOkToDrop()) return;
   let header: string[] = [], lines: string[] = [], mapping: (string | null)[] = [];
@@ -66,16 +69,20 @@ function dbOpenImport(): void {
   // docs/37 R5: node sheet, painted AFTER the host is unhidden; the per-open wiring below
   // stays (the sheet idiom — parse/paint/setMode close over the mapping state).
   $("sheet").hidden = false;
+  // docs/43 M2 fixup: sheet-head/body/foot are SIBLINGS here. A missing paren on the h2
+  // line used to nest body and foot INSIDE the head band, so the whole dialog was laid out
+  // by .sheet-head's rules on every dialect (mysql and pg alike) — the "broken import
+  // styling" report. The sheet idiom (add-sheet.ts) is the reference shape.
   fill($("sheet"),
     h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("dataCsv.importCsv") } },
       h("div", { class: "sheet-head" },
-        h("h2", null, tr("dataCsv.importCsvIntoT", { t: (d.schema ? d.schema + "." : "") + d.table! })),
+        h("h2", null, tr("dataCsv.importCsvIntoT", { t: (d.schema ? d.schema + "." : "") + d.table! }))),
       h("div", { class: "sheet-body" },
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           h("div", { class: "seg", role: "tablist", id: "dbImpMode", style: "margin-bottom:0" },
             h("button", { type: "button", role: "tab", data: { mode: "insert" }, aria: { selected: "true" } }, tr("dataCsv.insert")),
             h("button", { type: "button", role: "tab", data: { mode: "upsert" }, aria: { selected: "false" } }, tr("dataCsv.upsert"))),
-          h("span", { class: "hint", id: "dbImpModeSay" }, tr("dataCsv.everyRowInsertsDuplicate")),)),
+          h("span", { class: "hint", id: "dbImpModeSay" }, tr("dataCsv.everyRowInsertsDuplicate"))),
         h("div", { class: "db-console-row", style: "margin-bottom:var(--s2)" },
           h("input", { type: "file", id: "dbImpFile", accept: ".csv,text/csv", style: "width:auto" }),
           h("span", { class: "hint" }, tr("dataCsv.pasteBelowFirstRow"))),
@@ -180,7 +187,7 @@ function dbOpenImport(): void {
     const t = e.currentTarget as HTMLButtonElement;
     t.disabled = true;
     t.textContent = tr("dataCsv.importing");
-    const j = await apiJson<{ inserted: number; note?: string }>("/api/db/" + encodeURIComponent(d.conn!) + "/import", {
+    const j = await apiJson<{ inserted: number; note?: string }>("/api/db/" + encodeURIComponent(c.conn!) + "/import", {
       method: "POST",
       // mode rides the payload only when upsert — a default import stays byte-identical to
       // what a pre-W4.5 panel sent (docs/22 W4.5).
@@ -222,7 +229,8 @@ function dbCopyFallback(text: string): void {
 }
 
 function dbRowForCopy(row: Record<string, unknown>, key: string): Record<string, unknown> {
-  const d = dbView();
+  const d = dbTab();
+  if (d.kind !== "table") return {};
   const upd = d.updates[key];
   const out: Record<string, unknown> = {};
   d.data?.columns.forEach((c: ApiDbColumn): void => {
@@ -241,7 +249,8 @@ function dbCopyCsvCell(v: unknown): string {
  * docs/22 closeout B6: a REFUSED discard takes the pushed row back — a filter the user just
  * said no to must not stay on screen as if it had been accepted. */
 function dbPushCellFilter(column: string, op: string, value: unknown): void {
-  const d = dbView();
+  const d = dbTab();
+  if (d.kind !== "table") return;
   d.filters.push({ column: column, op: op, value: value as string | number | boolean | null });
   renderDbFilters();
   if (!dbApplyFilters()) { d.filters.pop(); renderDbFilters(); }
@@ -249,7 +258,10 @@ function dbPushCellFilter(column: string, op: string, value: unknown): void {
 
 function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: string | null, column: string, editInDialog: null | (() => void)): void {
   e.preventDefault();
-  const d = dbView();
+  const c = dbConn();
+  const t0 = dbTab();
+  if (t0.kind !== "table") return;
+  const d = t0;
   if (!d.data) return;
   // An insert row's menu carries no row key; a data row's key and row always arrive together.
   const upd = key == null ? null : d.updates[key];
@@ -257,7 +269,7 @@ function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: str
   const value = pending ? upd.changes[column] : row ? row[column] : undefined;
   const full = row && key != null ? dbRowForCopy(row, key) : null;
   const names = d.data?.columns.map((c: ApiDbColumn): string => { return c.name; });
-  const dialect = (d.conns.find((c: ApiDbConnectionRow): boolean => { return c.name === d.conn; }) || {} as { dialect?: string }).dialect || "mysql";
+  const dialect = (c.conns.find((x: ApiDbConnectionRow): boolean => { return x.name === c.conn; }) || {} as { dialect?: string }).dialect || "mysql";
 
   const menu = el("div", "ctx-menu");
   function item(label: string, fn: () => void): void {
@@ -278,18 +290,18 @@ function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: str
   }
   // docs/22 W1.5: filter-by-value straight off a cell. NULL cells show none of these (there is
   // no value to equal); the pushed filter lands in the standing filter row like a typed one.
-  if (!d.sqlResult && row && value !== null && value !== undefined) {
+  if (row && value !== null && value !== undefined) {
     item(tr("dataCsv.filterEqValue"), (): void => { dbPushCellFilter(column, "eq", value); });
     item(tr("dataCsv.filterNeValue"), (): void => { dbPushCellFilter(column, "ne", value); });
     item(tr("dataCsv.filterContains"), (): void => { dbPushCellFilter(column, "like", value); });
   }
-  // Checked-row copies live in the SAME menu — one right-click reaches every format.
-  if (!d.sqlResult) {
-    const hint = dbAppendSelItems(item, dbSelectedForCopy());
-    if (hint) menu.appendChild(hint);
-    item(tr("dataCsv.selectAllOnPage"), (): void => { dbSelAll(true); });
-    if (Object.keys(d.sel).length) item(tr("dataCsv.clearSelection"), (): void => { dbSelAll(false); });
-  }
+  // Checked-row copies live in the SAME menu — one right-click reaches every format. No
+  // sqlResult guard left (docs/42 T2): this is the TABLE grid's cell menu, and a query reply
+  // now paints in its own tab with dbResultCellMenu below — the two can no longer overlap.
+  const hint = dbAppendSelItems(item, dbSelectedForCopy());
+  if (hint) menu.appendChild(hint);
+  item(tr("dataCsv.selectAllOnPage"), (): void => { dbSelAll(true); });
+  if (Object.keys(d.sel).length) item(tr("dataCsv.clearSelection"), (): void => { dbSelAll(false); });
   if (full) {
     item(tr("dataCsv.copyRowAsJson"), (): void => { dbCopyText(JSON.stringify(full, null, 2)); });
     item(tr("dataCsv.copyRowAsCsv"), (): void => { dbCopyText(names.map((n: string): string => { return dbCopyCsvCell(full?.[n]); }).join(",")); });
@@ -332,13 +344,17 @@ function dbCellMenu(e: MouseEvent, row: Record<string, unknown> | null, key: str
    rows keep their original values. For a query-result grid the keys are dbResultKey(tab, index) —
    the ACTIVE tab's namespace (docs/22 W4.3), so a copy never crosses tabs. */
 function dbSelectedForCopy(): { cols: string[]; rows: Record<string, unknown>[] } {
-  const d = dbView();
-  if (d.sqlResult) {
-    const tab = d.sqlTab || 0;
+  const t = dbTab();
+  const st = dbSqlTab();
+  if (st && st.sqlResult) {
+    const res = st.sqlResult;
+    const tab = st.resultTab || 0;
     const qrows: Record<string, unknown>[] = [];
-    d.sqlResult.rows.forEach((r: Record<string, unknown>, i: number): void => { if (d.sel[dbResultKey(tab, i)]) qrows.push(r); });
-    return { cols: d.sqlResult.columns, rows: qrows };
+    res.rows.forEach((r: Record<string, unknown>, i: number): void => { if (t.sel[dbResultKey(tab, i)]) qrows.push(r); });
+    return { cols: res.columns, rows: qrows };
   }
+  if (t.kind !== "table") return { cols: [], rows: [] };
+  const d = t;
   if (!d.data) return { cols: [], rows: [] };
   const pkCols = d.data.primaryKey || [];
   const cols = d.data.columns.map((c: ApiDbColumn): string => { return c.name; });
@@ -386,21 +402,24 @@ function dbRowsJson(sel: { cols: string[]; rows: Record<string, unknown>[] }): s
 
 /** Tick or clear every row on screen (the header checkbox). Keys match dbSelectedForCopy. */
 function dbSelAll(on: boolean): void {
-  const d = dbView();
-  if (d.sqlResult) {
-    const tab = d.sqlTab || 0;
-    d.sqlResult.rows.forEach((r: Record<string, unknown>, i: number): void => {
+  const t = dbTab();
+  const st = dbSqlTab();
+  if (st && st.sqlResult) {
+    const tab = st.resultTab || 0;
+    st.sqlResult.rows.forEach((r: Record<string, unknown>, i: number): void => {
       const k = dbResultKey(tab, i);
-      if (on) d.sel[k] = true; else delete d.sel[k];
+      if (on) t.sel[k] = true; else delete t.sel[k];
     });
-  } else if (d.data) {
+  } else if (t.kind === "table") {
+    const d = t;
+    if (!d.data) { renderDbToolbar(); renderDbGrid(); return; }
     const pkCols = d.data?.primaryKey || [];
     d.data?.rows.forEach((row: Record<string, unknown>, i: number): void => {
       const key = pkCols.length ? dbPkKey(pkCols, row) : String(i);
       if (on) d.sel[key] = true; else delete d.sel[key];
     });
   }
-  d.selAnchor = -1;
+  t.selAnchor = -1;
   renderDbToolbar(); renderDbGrid();
 }
 
@@ -426,8 +445,9 @@ function dbAppendSelItems(item: (label: string, fn: () => void) => void, sel: { 
    The row's checkbox can also be toggled from here — right-click needs no mouse travel. */
 function dbResultCellMenu(e: MouseEvent, row: Record<string, unknown> | null, column: string): void {
   e.preventDefault();
-  const d = dbView();
-  const i = d.sqlResult ? d.sqlResult.rows.indexOf(row!) : -1;
+  const d = dbTab();
+  const st = dbSqlTab();
+  const i = st && st.sqlResult ? st.sqlResult.rows.indexOf(row!) : -1;
   const menu = el("div", "ctx-menu");
   function item(label: string, fn: () => void): void {
     const b = el("button", "", label) as HTMLButtonElement;
@@ -442,7 +462,7 @@ function dbResultCellMenu(e: MouseEvent, row: Record<string, unknown> | null, co
     item(tr("dataCsv.viewValue"), (): void => { dbOpenValueSheet(column, v, tr("dataCsv.sqlResult")); });
   }
   if (i >= 0) {
-    const rk = dbResultKey(d.sqlTab || 0, i);
+    const rk = dbResultKey(st ? st.resultTab || 0 : 0, i);
     const on = !!d.sel[rk];
     item(on ? tr("dataCsv.uncheckThisRow") : tr("dataCsv.checkThisRow"), (): void => {
       if (on) delete d.sel[rk]; else d.sel[rk] = true;
@@ -472,13 +492,16 @@ function dbResultCellMenu(e: MouseEvent, row: Record<string, unknown> | null, co
 /* --- CSV export of whatever the grid is showing --------------------------------------------------- */
 
 function dbExportCsv(): void {
-  const d = dbView();
+  const t = dbTab();
+  const st = dbSqlTab();
   let cols: string[], rows: Record<string, unknown>[], name: string;
-  if (d.sqlResult) {
-    cols = d.sqlResult.columns;
-    rows = d.sqlResult.rows;
+  if (st && st.sqlResult) {
+    cols = st.sqlResult.columns;
+    rows = st.sqlResult.rows;
     name = "query.csv";
-  } else if (d.data) {
+  } else if (t.kind === "table") {
+    const d = t;
+    if (!d.data) return;
     cols = d.data.columns.map((c: ApiDbColumn): string => { return c.name; });
     rows = d.data.rows;
     name = d.data.table + ".csv";

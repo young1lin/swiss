@@ -211,6 +211,13 @@ Actions follow a stable hierarchy:
 
 Do not move equivalent actions to different corners on different pages.
 
+One page's navigation is a special case worth naming (docs/42, docs/43): Data's resource
+navigation is OBJECT TABS — each open table/key/console is a tab on the strip, and the
+per-object header carries exactly one primary action plus an overflow (rule 4 as a machine
+gate: at most one non-icon .btn per toolbar). The tab strip is the L3 half made visible,
+not a new layer: same pill vocabulary as a section segment, card-shaped, closable, capped
+(eight; all-dirty refuses new tabs rather than dropping edits silently).
+
 ## 8. Focus Mode
 
 Swiss has one shell-owned Focus Mode. It is not browser F11.

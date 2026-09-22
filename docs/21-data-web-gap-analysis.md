@@ -20,7 +20,7 @@
 
 | # | 差距 | 定级 | 端 | 最佳参照 | 我方现状锚点 |
 |---|---|---|---|---|---|
-| 1 | 导出格式写死 CSV(后端已支持 NDJSON) | 0 | 面板 | dbgate `fileformats.ts:3-80` | `data-grid.js` `var fmt = "csv"` |
+| 1 | 导出格式写死 CSV(后端已支持 NDJSON) | 0 | 面板 | dbgate `fileformats.ts:3-80` | `data-grid.js` `var fmt = "csv"`  → **已交付 → docs/43 M4**(⋯ 里 CSV/NDJSON/SQL dump 三格式) |
 | 2 | 导出不携带当前 filters | 0 | 两端 | pgAdmin \\copy 烘进 query(`cmd.sql:1`);CB 导出=同一 resultsId | `dbbrowser_api.rs` export 无 filter 参数 |
 | 3 | Redis type 过滤(后端已支持 TYPE) | 0 | 面板 | dbgate `driver.js:56-71` | `redis_browser.rs:56,71` 已备;`data-browsers.js:20` 未传 |
 | 4 | 查询耗时显示 | 0 | 两端 | pgweb `result.go:51-58`(服务端计时进响应) | `data-sql.js` 无耗时 |
@@ -42,13 +42,13 @@
 | 20 | Redis 结构化编辑(hash/zset/list 表格化→命令预览→pipeline) | 3 | 两端 | dbgate `ChangeSetRedis.ts:67-202` | 值视图只读 |
 | 21 | 无 PK 表可编辑(全列寻址 + LIMIT 1 + MD5 长值) | 3 | 两端 | Adminer unique_idf(`select.inc.php:440-472`) | 无 PK 即只读 |
 | 22 | 乐观并发(source 原行 + diff 变化列,affected=0→409) | 3 | 两端 | CB `ResultSetEditAction.ts:112-127` | 仅 PK 寻址,静默覆盖 |
-| 23 | 多结果 tab | 3 | 两端 | dbgate `ResultTabs.svelte`;CB resultTabs state | 一次运行覆盖上次 |
+| 23 | 多结果 tab | 3 | 两端 | dbgate `ResultTabs.svelte`;CB resultTabs state | 一次运行覆盖上次  → **已交付 → docs/42 T2**(一次运行多结果,结果页签条) |
 | 24 | nextPage 探测(limit+1,免强求 COUNT) | 1 | 后端 | pgAdmin fetch_window 思路(`sqleditor/__init__.py:1330`) | 每页 COUNT total |
 | 25 | 流式 SQL dump 导出格式 | 3 | 后端 | Adminer 1MB 攒批(`adminer.inc.php:980-1078`)→ `Body::from_stream` | 10 万行封顶 CSV/NDJSON(已流式) |
 | 26 | CSV 导入 upsert | 3 | 两端 | Adminer insertUpdate(`driver.inc.php:206-223`;MySQL ON DUPLICATE / PG ON CONFLICT) | 仅 INSERT |
 | 27 | DDL 最小集(建表/加列/建索引,表单→SQL→预览) | 3 | 两端 | pgAdmin msql 双端点(`utils.py:1517-1549`:预览=保存同函数)+ 集合 diff 分类器(`utils.py:1562-1571`) | 仅 rename/truncate/drop |
 | 28 | 右键生成 SQL(SELECT/INSERT/UPDATE/DELETE 模板) | 1 | 面板 | CB `sqlGenerateResultSetQuery` + GenerateSQL Actions | 无 |
-| 29 | 单记录表单视图 | ✗/远期 | 面板 | dbgate formview;CB singleEntity | 无(宽表痛点,优先级让位于上表) |
+| 29 | 单记录表单视图 | ✗/远期 | 面板 | dbgate formview;CB singleEntity | 无(宽表痛点,优先级让位于上表)  → **已交付 → docs/43 M4**(表单页签,同一页数据的单记录视图) |
 | 30 | FK 跳转 / 值查看器(hex/图片) / 收藏 / 格式化器 | ✗/远期 | — | dbgate openReferenceForm;CB MIME 注册表 | 无 |
 | 31 | 可视化表 designer 全家桶 | ✗ | — | (CB CE 也没有;pgAdmin 的可取处已并入 #27) | — |
 | 32 | pgcli 式全量缓存补全 / Ace/CM6 编辑器 | ✗ | — | 内存红线 + 无构建约束 | — |

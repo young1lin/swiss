@@ -72,7 +72,7 @@ const sql = await import(pathToFileURL(join(admin, "js", "data-sql.js")).href) a
    a static import of ../src/db-state.js would be a second, unrelated instance and dbFavPush
    would look like it did nothing. */
 const dbState = await import(pathToFileURL(join(admin, "js", "db-state.js")).href) as {
-  dbView: () => { favorites: string[] };
+  dbConn: () => { favorites: string[] };
 };
 
 // The whitespace-only equivalent the round-trip pins against: the console's own lexer, every
@@ -168,17 +168,17 @@ describe("favorites — localStorage mcp_gateway_db_favorites (docs/22 W5.4)", (
   });
 
   it("saves newest-first, never duplicates, caps at 50", () => {
-    dbState.dbView().favorites = [];
+    dbState.dbConn().favorites = [];
     sql.dbFavPush("select 1");
     sql.dbFavPush("select 2");
-    expect(dbState.dbView().favorites).toEqual(["select 2", "select 1"]);
+    expect(dbState.dbConn().favorites).toEqual(["select 2", "select 1"]);
     sql.dbFavPush("select 1"); // a repeat save moves to the top, never duplicates
-    expect(dbState.dbView().favorites).toEqual(["select 1", "select 2"]);
+    expect(dbState.dbConn().favorites).toEqual(["select 1", "select 2"]);
     for (var i = 0; i < 60; i++) sql.dbFavPush("select " + (100 + i));
-    expect(dbState.dbView().favorites.length).toBe(50);
-    expect(dbState.dbView().favorites[0]).toBe("select 159");
+    expect(dbState.dbConn().favorites.length).toBe(50);
+    expect(dbState.dbConn().favorites[0]).toBe("select 159");
     // and it round-trips through storage under the panel's key
-    expect(store.get("mcp_gateway_db_favorites")).toBe(JSON.stringify(dbState.dbView().favorites));
+    expect(store.get("mcp_gateway_db_favorites")).toBe(JSON.stringify(dbState.dbConn().favorites));
   });
 });
 
@@ -196,10 +196,19 @@ describe("the sprite carries the favorites star", () => {
    docs/37 R5: the skeleton is a node tree now — the ids live as h() props and the aria-label
    as an aria bag entry, which is what the emitted source carries. */
 describe("the console skeleton carries what its wiring queries", () => {
-  it("dbSqlFormat and dbSqlFav exist in the skeleton tree", () => {
+  it("dbSqlRun exists in the skeleton; the flat row's buttons left with docs/43 M4", () => {
     const src = readFileSync(join(admin, "js", "data-view.js"), "utf8");
-    expect(src).toContain('id: "dbSqlFormat"');
-    expect(src).toContain('id: "dbSqlFav"');
-    expect(src).toContain('label: tr("dataView.saveFavorites")'); // docs/38: the label went through tr()
+    // The console's flat action row folded into the toolbar (docs/43 M4): Run is the
+    // toolbar's primary action (data-grid's emit carries it), the rest ride the overflow.
+    // What still must agree here is the textarea the paint fills — and that the flat row's
+    // ids really left the skeleton.
+    expect(src).toContain('id: "dbSql"');
+    expect(src).not.toContain('id: "dbSqlRun"');
+    expect(src).not.toContain('id: "dbSqlFormat"');
+    expect(src).not.toContain('id: "dbSqlFav"');
+    expect(src).not.toContain('id: "dbSqlExplain"');
+    // The toolbar's Run lives in data-grid's emit and answers the same delegated id.
+    const grid = readFileSync(join(admin, "js", "data-grid.js"), "utf8");
+    expect(grid).toContain('id: "dbSqlRun"');
   });
 });

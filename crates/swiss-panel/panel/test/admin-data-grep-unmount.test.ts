@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbIsMounted, dbView, mountDbView, unmountDbView } from "../src/db-state.js";
+import { dbConn as dbConnState, dbIsMounted, mountDbView, unmountDbView } from "../src/db-state.js";
 import { dbConn } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), with RECORDING
@@ -104,8 +104,8 @@ describe("the table-list grep debounce vs an unmounted view (docs/22 closeout au
     mountDbView();
     view.renderDbView();
     expect(dbIsMounted(), "the view is mounted").toBe(true);
-    dbView().conns = [dbConn("c", "mysql")];
-    dbView().conn = "c";
+    dbConnState().conns = [dbConn("c", "mysql")];
+    dbConnState().conn = "c";
     const pane = resolveId("pane");
     const grep = resolveId("dbGrep");
     expect(pane.oninput, "the pane carries the delegated input listener").toBeTruthy();
@@ -118,20 +118,20 @@ describe("the table-list grep debounce vs an unmounted view (docs/22 closeout au
     // survive that without throwing AND without writing a filter nobody can see.
     unmountDbView();
     expect(() => cb(), "the late callback is a no-op").not.toThrow();
-    expect(dbView().grep, "and it wrote nothing into the reset record").toBe("");
+    expect(dbConnState().grep, "and it wrote nothing into the reset record").toBe("");
   });
 
   it("with the view still mounted the same callback still applies the grep", () => {
     mountDbView();
     view.renderDbView();
-    dbView().conns = [dbConn("c", "mysql")];
-    dbView().conn = "c";
+    dbConnState().conns = [dbConn("c", "mysql")];
+    dbConnState().conn = "c";
     const pane = resolveId("pane");
     const grep = resolveId("dbGrep");
     grep.value = "xyz";
     pane.oninput({ target: grep });
     const cb = timers[timers.length - 1].fn;
     expect(() => cb()).not.toThrow();
-    expect(dbView().grep, "the debounce still applies the grep while mounted").toBe("xyz");
+    expect(dbConnState().grep, "the debounce still applies the grep while mounted").toBe("xyz");
   });
 });

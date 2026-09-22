@@ -17,8 +17,8 @@
 import { describe, it, expect } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dbView } from "../src/db-state.js";
-import { dbCol, dbConn } from "./db-fixtures.js";
+import { dbConn as dbConnState, dbResetTabs, dbTab, dbTabs, freshTab } from "../src/db-state.js";
+import { dbCol, dbConn, dbPage } from "./db-fixtures.js";
 
 /* The DOM-stub technique the panel suites use (admin-data-grep.test.ts), plus a fetch stub
    whose responses the TEST resolves by hand — that is the only way to make a slow response
@@ -93,7 +93,8 @@ Object.assign(globalThis, {
 
 const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const grid = await import(pathToFileURL(join(here, "data-grid.js")).href) as {
-  dbLoadData: (keepOffset?: boolean) => Promise<void>;
+  dbLoadData: (keepOffset?: boolean, keepEdits?: boolean) => Promise<void>;
+  dbRestoreData: () => Promise<void>;
 };
 const browsers = await import(pathToFileURL(join(here, "data-browsers.js")).href) as {
   dbLoadRedisValue: (key: string) => Promise<void>;
@@ -120,72 +121,124 @@ const fail = async (body: any, index = 0) => {
   await tick();
 };
 
-function freshDb(): Record<string, any> {
-  const d = dbView();
-  d.conns = [dbConn("c", "mysql"), dbConn("r", "redis")];
-  d.conn = "c"; d.table = null; d.schema = null; d.data = null; d.detail = null;
-  d.filters = []; d.offset = 0; d.pageSize = 50; d.order = null; d.dir = "asc";
-  d.tab = "data"; d.sqlResult = null; d.sqlResults = null; d.sqlTab = 0; d.sqlBusy = false;
-  d.redis = null; d.redisKey = null; d.redisValue = null; d.redisEdits = null;
-  d.loading = false; d.detailBusy = false; d.conflict = null; d.focus = null;
-  d.updates = {}; d.deletes = {}; d.inserts = []; d.sel = {}; d.gridCfg = { widths: {}, hidden: [] };
-  return d;
+/* docs/42 T1: the one record is two halves — the connection's and the open object's.
+   freshTab() supplies each tab's defaults, so only the connection fields and the fixture's
+   own base line (two conns, mysql selected) are named. t is the ACTIVE tab (as a fresh
+   mount leaves it); k is the key tab the redis tests install, the way selecting a redis
+   connection swaps the tab kind in the view. */
+function freshDb(): { c: Record<string, any>; t: Record<string, any>; k: Record<string, any>; installKey(): void } {
+  const c = dbConnState() as unknown as Record<string, any>;
+  c.conns = [dbConn("c", "mysql"), dbConn("r", "redis")];
+  c.conn = "c"; c.redis = null; c.gridCfg = { widths: {}, hidden: [] };
+  const tt = freshTab("table");
+  const kk = freshTab("key");
+  // The whole strip, not dbTabs()[0]: a test that opened a second tab must not leak it into
+  // the next one (docs/42 T2).
+  dbResetTabs([tt], 0);
+  return {
+    c: c,
+    t: tt as unknown as Record<string, any>,
+    k: kk as unknown as Record<string, any>,
+    installKey: () => { dbResetTabs([kk], 0); },
+  };
 }
 
 describe("db loader response races (docs/22 closeout audit)", () => {
   it("a slow /data answer for the previous table never overwrites the newer table's page", async () => {
-    const d = freshDb();
-    d.table = "t1"; d.schema = "s1";
+    const { t } = freshDb();
+    t.table = "t1"; t.schema = "s1";
     const p1 = grid.dbLoadData(true);
-    d.table = "t2"; // the user opens another table while t1's page is still in flight
+    t.table = "t2"; // the user opens another table while t1's page is still in flight
     const p2 = grid.dbLoadData(true);
     await answer({ table: "t2", schema: "s2", columns: [dbCol("id")], rows: [{ id: 2 }], total: 1, primaryKey: ["id"], editable: false }, 1); // the newer request answers first
     await answer({ table: "t1", schema: "s1", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false }); // the stale one lands last
     await Promise.all([p1, p2]);
-    expect(d.data.table, "the newer table's page stays").toBe("t2");
-    expect(d.schema, "the old table never rewrites d.schema").toBe("s2");
+    expect(t.data.table, "the newer table's page stays").toBe("t2");
+    expect(t.schema, "the old table never rewrites the tab's schema").toBe("s2");
   });
 
   it("a slow /key answer for the previous key never overwrites the newer key's value", async () => {
-    const d = freshDb();
-    d.conn = "r";
+    const { c, k, installKey } = freshDb();
+    c.conn = "r";
+    installKey(); // a redis connection browses keys, not tables
     const p1 = browsers.dbLoadRedisValue("a");
     const p2 = browsers.dbLoadRedisValue("b"); // the user clicks another key mid-flight
     await answer({ key: "b", type: "string", value: "B" }, 1); // the newer key answers first
     await answer({ key: "a", type: "hash", value: { x: "1" }, length: 1 }); // the stale one lands last
     await Promise.all([p1, p2]);
-    expect(d.redisKey).toBe("b");
-    expect(d.redisValue.key, "the newer key's value stays").toBe("b");
+    expect(k.redisKey).toBe("b");
+    expect(k.redisValue.key, "the newer key's value stays").toBe("b");
   });
 });
 
 describe("the grid's pager after the set shrinks under it (docs/22 closeout audit)", () => {
   it("a reload that lands past the end backs off one page and re-fetches — no empty page reading 51-50 of 50", async () => {
     // A Commit that deletes the last page's rows (or a filter that shrinks the set) leaves
-    // d.offset past the end: the reload returns zero rows and the footer used to paint an
+    // t.offset past the end: the reload returns zero rows and the footer used to paint an
     // empty page with "51–50 of 50". The honest answer is the previous page, re-fetched.
-    const d = freshDb();
-    d.table = "t";
-    d.offset = 50; // page 2 of a 50-row set that has since shrunk to 1 row
+    const { t } = freshDb();
+    t.table = "t";
+    t.offset = 50; // page 2 of a 50-row set that has since shrunk to 1 row
     const before = requests.length;
     const p = grid.dbLoadData(true);
     await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [], total: 1, primaryKey: ["id"], editable: false });
     await p;
     expect(requests.length - before, "the loader re-fetched the previous page").toBe(2);
-    expect(d.offset).toBe(0);
+    expect(t.offset).toBe(0);
     await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false });
-    expect(d.data.rows.length, "the backed-off page shows its row").toBe(1);
+    expect(t.data.rows.length, "the backed-off page shows its row").toBe(1);
   });
 
-  it("an empty page at offset 0 stays — an empty (or fully filtered) table is the truth", async () => {    const d = freshDb();
-    d.table = "t";
-    d.offset = 0;
+  it("an empty page at offset 0 stays — an empty (or fully filtered) table is the truth", async () => {    const { t } = freshDb();
+    t.table = "t";
+    t.offset = 0;
     const before = requests.length;
     const p = grid.dbLoadData(true);
     await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [], total: 0, primaryKey: ["id"], editable: false });
     await p;
     expect(requests.length - before, "no second fetch for a genuinely empty first page").toBe(1);
-    expect(d.data.rows).toEqual([]);
+    expect(t.data.rows).toEqual([]);
+  });
+});
+
+describe("who may drop a tab's buffered writes (docs/42 D4)", () => {
+  it("an explicit reload is a fresh baseline: the buffer goes", async () => {
+    const { t } = freshDb();
+    t.table = "t";
+    t.updates = { "1": { pk: { id: 1 }, changes: { a: "x" } } };
+    const p = grid.dbLoadData(true);
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true });
+    await p;
+    expect(Object.keys(t.updates).length, "Refresh says so in its own tooltip (docs/22)").toBe(0);
+  });
+
+  it("the return fetch of a backgrounded tab is NOT a reload: the buffer stays", async () => {
+    // Found live on 19998 during the docs/42 T2 walk: switching to another tab and back ran the
+    // same loader, so the writes the strip was still counting on that card vanished without a
+    // word. D4 re-reads the page the tab dropped; it does not re-baseline the tab.
+    const { t } = freshDb();
+    t.table = "t";
+    t.updates = { "1": { pk: { id: 1 }, changes: { a: "x" } } };
+    const p = grid.dbRestoreData();
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true });
+    await p;
+    expect(Object.keys(t.updates).length, "what the user typed is still buffered").toBe(1);
+    expect(t.data.rows.length, "and the page it dropped is back").toBe(1);
+  });
+
+  it("a short page under a restore backs off WITHOUT taking the buffer with it", async () => {
+    // The back-off is a second dbLoadData call: it must carry the restore's promise, or the
+    // fix above would hold only for tabs that happen to land on a full page.
+    const { t } = freshDb();
+    t.table = "t";
+    t.offset = 50;
+    t.updates = { "1": { pk: { id: 1 }, changes: { a: "x" } } };
+    const p = grid.dbRestoreData();
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [], total: 1, primaryKey: ["id"], editable: true });
+    await answer({ table: "t", schema: null, columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true });
+    await p;
+    expect(t.offset, "it backed off one page").toBe(0);
+    expect(Object.keys(t.updates).length, "and kept the writes").toBe(1);
   });
 });
 
@@ -194,11 +247,12 @@ describe("a redis commit that deletes the key's last field (docs/22 closeout aud
     // Deleting a hash's last field deletes the KEY itself. The commit path never awaited
     // the value re-read, so it checked a null redisValue, the "type none" branch never
     // ran, and the sidebar kept listing a key that no longer exists.
-    const d = freshDb();
-    d.conn = "r";
-    d.redisKey = "h";
-    d.redisValue = { key: "h", type: "hash", value: { only: "field" }, length: 1 };
-    d.redisEdits = { key: "h", type: "hash", updates: {}, deletes: { only: 1 }, inserts: [] };
+    const { c, k, installKey } = freshDb();
+    c.conn = "r";
+    installKey(); // the redis value view and its buffer live on the key tab
+    k.redisKey = "h";
+    k.redisValue = { key: "h", type: "hash", value: { only: "field" }, length: 1 };
+    k.redisEdits = { key: "h", type: "hash", updates: {}, deletes: { only: 1 }, inserts: [] };
     const before = requests.length;
     const p = browsers.dbRedisCommit();
     await tick();
@@ -211,59 +265,117 @@ describe("a redis commit that deletes the key's last field (docs/22 closeout aud
   });
 });
 
+describe("the sidebar grep reaches redis as a substring (docs/43 M2 walk)", () => {
+  it("a bare word wraps in wildcards; a grep that already shapes its own wildcard rides through", async () => {
+    // SCAN MATCH is exact-shape while the SQL side greps substrings - a bare "i18n"
+    // used to answer "no keys" on a keyspace that plainly holds i18n_strings.
+    const { c } = freshDb();
+    c.conn = "r";
+    c.grep = "i18n";
+    const before = requests.length;
+    const p = browsers.dbLoadKeys(true);
+    await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p;
+    expect(requests.slice(before).find((r) => r.url.includes("/keys"))!.url)
+      .toContain("pattern=*i18n*");
+
+    c.grep = "K_*";
+    const before2 = requests.length;
+    const p2 = browsers.dbLoadKeys(true);
+    await answer({ keys: [], cursor: "0", done: true, total: 0 });
+    await p2;
+    expect(requests.slice(before2).find((r) => r.url.includes("/keys"))!.url)
+      .toContain("pattern=K_*");
+  });
+});
+
 describe("the redis key list's More button (docs/22 closeout audit)", () => {
   it("a second More while a SCAN page is in flight is a no-op — the same cursor must not append its page twice", async () => {
-    // A double click on More fired two dbLoadKeys with the SAME d.redis.cursor; both
+    // A double click on More fired two dbLoadKeys with the SAME c.redis.cursor; both
     // answers concatenated their page onto the key list, duplicating every key in it.
-    const d = freshDb();
-    d.conn = "r";
-    d.redis = { keys: ["a"], cursor: "42", done: false, total: 10 };
+    const { c } = freshDb();
+    c.conn = "r";
+    // docs/43 M2: the tree renderer folds d.redis.keys by .key, so the fixture carries the
+    // wire shape (ApiDbRedisKeyRow), not bare strings.
+    c.redis = { keys: [{ key: "a", type: "string", ttl: -1 }], cursor: "42", done: false, total: 10 };
     const before = requests.length;
     const p1 = browsers.dbLoadKeys(false);
     const p2 = browsers.dbLoadKeys(false); // the double click
     expect(requests.length - before, "only one SCAN page is requested").toBe(1);
-    await answer({ keys: ["b"], cursor: "0", done: true, total: 10 });
+    await answer({ keys: [{ key: "b", type: "string", ttl: -1 }], cursor: "0", done: true, total: 10 });
     await Promise.all([p1, p2]);
-    expect(d.redis.keys, "the page arrives once").toEqual(["a", "b"]);
+    expect(c.redis.keys, "the page arrives once").toEqual([{ key: "a", type: "string", ttl: -1 }, { key: "b", type: "string", ttl: -1 }]);
   });
 });
 
 describe("DROP leaves no trace of the table on the right pane (docs/22 closeout audit)", () => {
-  it("clears the schema, the result tabs and the pane itself — the dropped table cannot linger", async () => {
-    // The drop branch nulled table/data/detail but left d.schema, the open result tabs and
-    // the right pane's DOM untouched — renderDbTables refreshes only the LEFT list, so the
-    // dropped table's page stayed on screen with no live table behind it.
-    const d = freshDb();
-    d.table = "t"; d.schema = "s";
-    d.data = { table: "t", schema: "s", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: false };
-    d.sqlResult = { columns: ["reply"], rows: [{ reply: "x" }], rowCount: 1 };
-    // A wrap that keeps what it is given: the no-table empty state is a fill()/emptyNode
-    // APPEND now (docs/37 R5), so the assertion walks the collected text of the tree.
+  /* A wrap that keeps what it is given: the no-table empty state is a fill()/emptyNode APPEND
+     (docs/37 R5), so the assertions walk the collected text of the tree. */
+  function gridWrap(): Stub {
     const wrap: any = {
-      style: {}, children: [],
-      textContent: "",
+      style: {}, children: [], textContent: "",
       appendChild(c: any) { wrap.children.push(c); return c; }, removeChild: (c: any) => c, remove: () => {},
       addEventListener: () => {}, removeEventListener: () => {},
       querySelector: () => null, querySelectorAll: () => [], contains: () => false,
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }),
     };
     byId.dbGridWrap = wrap;
+    return wrap as Stub;
+  }
+  const textOf = (n: any, out: string[] = []): string[] => {
+    if (!n) return out;
+    if (typeof n.textContent === "string" && n.textContent) out.push(n.textContent);
+    for (const c of n.children || []) textOf(c, out);
+    return out;
+  };
+  const page = (table: string) => {
+    return dbPage({ table: table, schema: "s", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"] });
+  };
+
+  it("closes the dropped table's own tab — the pane falls back to the empty state", async () => {
+    // The drop branch used to null table/data/detail but leave d.schema and the view state
+    // behind, and the pane itself unpainted — renderDbTables refreshes only the LEFT list.
+    // Under docs/42 T2 the whole tab goes instead: an object that no longer exists has no
+    // business holding a card on the strip.
+    const { t } = freshDb();
+    t.table = "t"; t.schema = "s"; t.data = page("t");
+    const wrap = gridWrap();
     const p = edit.dbRunDdl("drop");
     await tick();
-    await answer({ ran: "DROP TABLE s.t" }); // the ddl ran
+    await answer({ ran: "DROP TABLE s.t" });   // the ddl ran
     await answer({ tables: [], total: 0, more: false }); // dbLoadTables refreshes the list
     await p;
-    expect(d.table).toBeNull();
-    expect(d.schema, "the dropped table's schema is gone").toBeNull();
-    expect(d.sqlResult, "no result tab survives the drop").toBeNull();
-    const text: string[] = [];
-    const walk = (n: any) => {
-      if (!n) return;
-      if (typeof n.textContent === "string" && n.textContent) text.push(n.textContent);
-      for (const c of n.children || []) walk(c);
-    };
-    walk(wrap);
-    expect(text.some((s) => s.includes("Select a table")), "the right pane shows its empty state").toBe(true);
+    expect(dbTabs().length, "the strip keeps its placeholder, never zero tabs").toBe(1);
+    const left = dbTab();
+    expect(left.kind).toBe("table");
+    expect(left === (t as unknown as object), "the dropped table's tab is not the one left").toBe(false);
+    expect(left.kind === "table" && left.table, "the placeholder names no table").toBeNull();
+    expect(left.kind === "table" && left.schema, "the dropped table's schema is gone").toBeNull();
+    expect(textOf(wrap).some((x) => x.includes("Select a table")), "the right pane shows its empty state").toBe(true);
+  });
+
+  it("a background tab on the same table goes with it; the console's own tab stays", async () => {
+    // Two tabs can hold one table — an FK jump opens the target under its own filter beside
+    // the plain tab (docs/22 W5.2). The DROP must take both, and must take nothing else: a
+    // console reply belongs to the console object, not to the table that was dropped.
+    const { t } = freshDb();
+    t.table = "t"; t.schema = "s"; t.data = page("t");
+    const jumped = freshTab("table");
+    jumped.table = "t"; jumped.schema = "s"; jumped.data = page("t");
+    jumped.filters = [{ column: "id", op: "=", value: "1" }];
+    const console_ = freshTab("sql");
+    console_.sqlText = "select 1";
+    console_.sqlResult = { columns: ["reply"], rows: [{ reply: "x" }], rowCount: 1 };
+    dbResetTabs([t as any, jumped, console_], 0);
+    gridWrap();
+    const p = edit.dbRunDdl("drop");
+    await tick();
+    await answer({ ran: "DROP TABLE s.t" });
+    await answer({ tables: [], total: 0, more: false });
+    await p;
+    expect(dbTabs().some((x) => x.kind === "table"), "no tab is still open on the dropped table").toBe(false);
+    expect(dbTabs(), "the console object is untouched").toEqual([console_]);
+    expect(console_.sqlResult, "its reply is not the dropped table's").not.toBeNull();
   });
 });
 
@@ -271,10 +383,10 @@ describe("Commit keeps the grid where the user was looking (docs/22 closeout B4)
   it("a successful commit reloads the page but restores scrollTop — the edited row stays in view", async () => {
     // The reload after Commit rebuilds the grid; overflow-anchor is OFF (docs/22 W2.2), so the
     // pane snaps to the top and the row the user just committed scrolls out of sight.
-    const d = freshDb();
-    d.table = "t";
-    d.data = { table: "t", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true };
-    d.updates = { "[1]": { pk: { id: 1 }, changes: { id: 2 } } };
+    const { t } = freshDb();
+    t.table = "t";
+    t.data = { table: "t", columns: [dbCol("id")], rows: [{ id: 1 }], total: 1, primaryKey: ["id"], editable: true };
+    t.updates = { "[1]": { pk: { id: 1 }, changes: { id: 2 } } };
     // A wrap that behaves like the real one: a repaint (the textContent wipe that opens
     // fill(), docs/37 R5) RESETS scroll to the top.
     let paintedText = "";
@@ -302,9 +414,9 @@ describe("a failed scan does not leave the key list pretending (docs/22 closeout
   it("paints the failure in the list — not 'no keys' as if the keyspace were empty", async () => {
     // The redis 5.0.5 case: the server refuses the scan and the toast scrolls away, but the
     // list must not say "No keys match" — that reads as an empty keyspace, not a failure.
-    const d = freshDb();
-    d.conn = "r";
-    d.grep = "zz";
+    const { c } = freshDb();
+    c.conn = "r";
+    c.grep = "zz";
     byId.dbTables = el();
     const p = browsers.dbLoadKeys(true);
     await tick();
@@ -326,9 +438,9 @@ describe("a failed scan does not leave the key list pretending (docs/22 closeout
     // The suspected page-loss window: a slow More answer arriving after a grep/type reset
     // concatenated its page onto the FRESH walk and dragged the cursor BACKWARD, so the
     // walk re-scanned old ground and later pages shifted under the user.
-    const d = freshDb();
-    d.conn = "r";
-    d.redis = { keys: [{ key: "a", type: "string", ttl: -1 }], cursor: "42", done: false, total: 10 };
+    const { c } = freshDb();
+    c.conn = "r";
+    c.redis = { keys: [{ key: "a", type: "string", ttl: -1 }], cursor: "42", done: false, total: 10 };
     const more = browsers.dbLoadKeys(false); // the More page, parked at index 0
     await tick();
     const reset = browsers.dbLoadKeys(true); // a grep/type reset walks from cursor 0, index 1
@@ -337,17 +449,17 @@ describe("a failed scan does not leave the key list pretending (docs/22 closeout
     await answer({ keys: [{ key: "fresh", type: "string", ttl: -1 }], cursor: "7", done: false, total: 10 }, 1);
     await answer({ keys: [{ key: "stale", type: "string", ttl: -1 }], cursor: "99", done: false, total: 10 }, 0);
     await Promise.all([more, reset]);
-    expect(d.redis.cursor, "the fresh walk keeps its cursor").toBe("7");
-    expect(d.redis.keys.map(function (k: any) { return k.key; }), "the stale page never spliced in").toEqual(["fresh"]);
+    expect(c.redis.cursor, "the fresh walk keeps its cursor").toBe("7");
+    expect(c.redis.keys.map(function (row: any) { return row.key; }), "the stale page never spliced in").toEqual(["fresh"]);
   });
 
   it("a redis key scan never carries a schema param — even one left over from a pg connection (docs/22 closeout B7)", async () => {
-    // Defense-in-depth: redis has no schema concept, and a residual d.schemaFilter (a pick
+    // Defense-in-depth: redis has no schema concept, and a residual c.schemaFilter (a pick
     // made against a pg catalog) must not ride the /keys request even if a future refactor
     // of the switch path forgets to clear it.
-    const d = freshDb();
-    d.conn = "r";
-    d.schemaFilter = "public"; // residue by hypothesis
+    const { c } = freshDb();
+    c.conn = "r";
+    c.schemaFilter = "public"; // residue by hypothesis
     const p = browsers.dbLoadKeys(true);
     await tick();
     await answer({ keys: [], cursor: "0", done: true, total: 0 });

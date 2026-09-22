@@ -743,6 +743,14 @@ pub trait DbBrowser: Send + Sync {
     /// caret — dialect keywords + table names + the FROM-nearest table's columns. `caret` is
     /// a byte offset into `sql`.
     async fn completion(&self, sql: &str, caret: usize) -> Result<Value, String>;
+    /// The database axis of this connection (docs/43 M3): the configured primary, the
+    /// database the pool actually sits on, and every other database the instance will name,
+    /// each entry honestly marking whether it is browsable on THIS connection and why not.
+    /// The DEFAULT is the empty catalog — a dialect with no database axis (and every test
+    /// stub) returns it unchanged, so adding the route forced no edits anywhere else.
+    async fn list_databases(&self) -> Result<Value, String> {
+        Ok(json!({ "primary": null, "current": null, "databases": [] }))
+    }
 }
 
 /// The redis flavour of the Data view: page keys by SCAN, read one key type-aware.
@@ -760,6 +768,12 @@ pub trait RedisBrowser: Send + Sync {
     /// buffered edit never half-applies. No MULTI: the panel's edits are field-addressed and
     /// safe to re-run, and a plain pipeline keeps every reply individual and honest.
     async fn run_pipeline(&self, commands: &[Vec<String>]) -> Result<Value, String>;
+    /// The redis twin of DbBrowser::list_databases (docs/43 M3): INFO keyspace names every
+    /// dbN with its key count, CLIENT INFO says which one this connection sits on. The
+    /// default (empty catalog) serves every stub and any future flavor that has no axis.
+    async fn list_databases(&self) -> Result<Value, String> {
+        Ok(json!({ "primary": null, "current": null, "databases": [] }))
+    }
 }
 
 /// Cap on one buffered redis commit (docs/22 W3.3): one pipeline is one bounded round trip,
