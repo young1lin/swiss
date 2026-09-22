@@ -156,7 +156,7 @@ describe("switching databases (docs/43 M3 4.3.3)", () => {
     expect(d.sort).toBe("name");
     expect(d.sortDir).toBe("asc");
     expect(d.tables, "the old database's page does not survive the switch").toEqual([]);
-    expect(d.tablesPage).toBe(0);
+    expect(d.treeShowAll, "section expand memory does not survive the switch").toEqual({});
     const tabs = dbTabs();
     expect(tabs.length, "the strip closes with the connection - placeholder only").toBe(1);
     expect(tabs[0].kind).toBe("table");

@@ -45,8 +45,8 @@ function freshConnState()              {
   return {
     conns: [],            // rows from /api/db
     conn: null,           // selected connection (MCP name)
-    tables: [],           // ONE page of the table list
-    tablesTotal: 0, tablesPage: 0, tablesLimit: 200, more: false, grep: "",
+    tables: [],           // the WHOLE catalog (one fetch, capped at DB_TREE_FETCH_LIMIT)
+    tablesTotal: 0, more: false, grep: "", treeShowAll: {},
     schemaFilter: "",     // pg only: "" = every schema; the /tables schema param (docs/22 W1.1)
     sort: "name", sortDir: "asc", // the list's sort key/dir — SQL sorts server-side, redis client-side
     gridCfg: { widths: {}, hidden: [] }, // per-connection column widths/hides (docs/22 W2.1), reloaded per page

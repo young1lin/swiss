@@ -167,6 +167,12 @@ export interface GroupCfg<Row> {
   moreTitle?: (group: string) => string;
   emptyText?: (group: string) => string;
   countOf?: (slice: { name: string; rows: unknown[] }) => number;
+  /* docs/43 addendum (the 200-row wall): optional render cap for bands whose rows run into
+   *  the thousands. Given the band's FULL row list, answer how many to paint and the note
+   *  row to append under them (null = paint everything, no note). The band's count badge
+   *  still numbers the full list - the cap is a DOM budget, not a redefinition of what the
+   *  band holds. */
+  capRows?: (rows: Row[]) => { keep: number; note: HTMLElement | null };
   reload: () => void | Promise<void>;
   render?: () => void;
   afterDrag?: () => void;

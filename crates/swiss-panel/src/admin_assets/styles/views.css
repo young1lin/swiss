@@ -576,6 +576,12 @@
        sliced at the card's edge; the full name is the row's title, one hover away. */
     .db-table-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .db-table-meta { flex: none; max-width: 45%; font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* docs/43 addendum: a section's expander/collapse note row — same geometry as a .db-table
+       (it sits inside the band body under the last row), but quiet: caption color, accent on
+       hover, no meta slot. It is an affordance, not an object. */
+    .db-tree-cap { display: flex; align-items: center; width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; cursor: pointer; }
+    .db-tree-cap .db-table-name { flex: 1; font-size: var(--f-caption); color: var(--text-3); }
+    .db-tree-cap:hover .db-table-name { color: var(--accent); }
     .db-side-foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-label); color: var(--text-2); justify-content: space-between; }
     .db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); min-height: 0; padding: var(--s3) var(--s4) 0; }
     /* The object tab strip (docs/42 T2). L3 resource navigation owned by the page body, drawn

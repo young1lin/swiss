@@ -166,6 +166,8 @@ function groupFieldHtml(names: string[], sel?: string | null): string {
  *    rowId(row)     the id a drag carries (name for MCPs, id for tunnels)
  *    rowsById()     live rows, for drop-into's "slot after the last member" step
  *    groupOfRow(row) the rendering group of a row (a groupOf(names) closure)
+ *    capRows(rows) optional render budget: how many rows to paint + the note row (docs/43
+ *                   addendum - thousand-row catalogs); absent = paint everything
  *    onMoveRow(id, targetId, before) flat reorder + order PUT + render (caller-owned list)
  *    onAssign(id, group)             member PUT, applied locally first (caller-owned rows)
  *    filtered       a search is on: groups with no match hide, matches force expansion
@@ -278,12 +280,17 @@ function mountGroup<Row>(cfg: GroupCfg<Row>, g: GroupSlice<Row>): HTMLElement {
   // scope supplies a builder now, so the node it returns IS the node to wire — the string
   // path and the querySelector retired with the last rowsHtml caller.
   if (cfg.rowNode) {
-    g.rows.forEach((row) => {
+    // docs/43 addendum: capRows may hold the band to a DOM budget (a 1,700-table catalog
+    // paints its first cap-1 rows plus a note row, not 1,700 nodes). The slice is render-only
+    // - the badge and every cfg callback keep seeing the whole list.
+    const cap = cfg.capRows ? cfg.capRows(g.rows) : null;
+    (cap ? g.rows.slice(0, cap.keep) : g.rows).forEach((row) => {
       const node = cfg.rowNode!(row);
       wireRowDrag(cfg, node, row);
       if (page && cfg.wireRow) cfg.wireRow(node, row); // the caller's own actions on the row
       body.appendChild(node);
     });
+    if (cap && cap.note) body.appendChild(cap.note);
   }
   // An empty group is not an empty state - it is a place. One SHORT quiet line keeps the
   // container visible as a drop target (the only way in); the head's + explains itself on

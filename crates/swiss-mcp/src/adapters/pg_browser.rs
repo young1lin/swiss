@@ -170,7 +170,9 @@ impl DbBrowser for PgBrowser {
             .map(f64::floor)
             .unwrap_or(0.0)
             .max(0.0) as i64;
-        let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
+        // Same ceiling raise as mysql_browser: the sidebar tree fetches whole catalogs
+        // (panel sends limit=2000), so this bounds hand-written queries only.
+        let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 5000);
         let grep = o.get("grep").and_then(Value::as_str);
         // docs/22 W1.1: the panel's schema picker narrows the catalog walk server-side; MySQL
         // has no such parameter (one database per connection) and ignores it.

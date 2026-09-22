@@ -441,12 +441,20 @@ function dbChromeClick(t         , ev            )          {
     return true;
   }
   if (t.closest("[data-keysmore]")) { void dbLoadKeys(false); return true; }
-  const tpg = t.closest             ("[data-tpg]");
-  if (tpg) {
+  // docs/43 addendum: a section's expander/collapse note row. The key carries schema +
+  // section so a pg catalog expands one schema's Tables band, not every schema's.
+  const tm = t.closest             ("[data-treemore]");
+  if (tm && tm.dataset.treemore) {
     const d = dbConn();
-    if (tpg.dataset.tpg === "prev") d.tablesPage--;
-    else d.tablesPage++;
-    void dbLoadTables();
+    d.treeShowAll[tm.dataset.treemore] = true;
+    renderDbTables();
+    return true;
+  }
+  const tl = t.closest             ("[data-treeless]");
+  if (tl && tl.dataset.treeless) {
+    const d = dbConn();
+    d.treeShowAll[tl.dataset.treeless] = false;
+    renderDbTables();
     return true;
   }
   return false;
@@ -462,7 +470,7 @@ function dbChromeInput(t         )          {
       // belongs to no one, and writing it into the fresh record would be a lie either way.
       if (!dbIsMounted()) return;
       const d = dbConn();
-      d.grep = v; d.tablesPage = 0;
+      d.grep = v;
       if (dbIsRedis()) void dbLoadKeys(true);
       else void dbLoadTables();
     }, 300);
@@ -580,7 +588,7 @@ async function dbSwitchConn(name        )                {
   // asks with the whole strip's total.
   if (!dbOkToLeave()) return;
   d.conn = name;
-  d.tables = []; d.tablesPage = 0;
+  d.tables = []; d.treeShowAll = {};
   d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
   d.redis = null;
   d.database = "";  // docs/43 M3: the new connection starts on its CONFIGURED database
@@ -769,7 +777,7 @@ function dbSwitchDatabase(name        )       {
   if (name === dbCurrentDatabase(d)) return;
   if (!dbOkToLeave()) return;
   d.database = name;
-  d.tables = []; d.tablesPage = 0;
+  d.tables = []; d.treeShowAll = {};
   d.grep = "";
   d.sort = "name"; d.sortDir = "asc";
   const gb = $                  ("dbGrep");
@@ -810,7 +818,7 @@ async function dbLoadTables()                {
   if (!d.conn) return;
   const box = $("dbTables");
   if (box) { box.textContent = ""; box.appendChild(el("div", "db-hint", tr("dataView.loading"))); }
-  let q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?page=" + d.tablesPage;
+  let q = "/api/db/" + encodeURIComponent(d.conn) + "/tables?limit=" + DB_TREE_FETCH_LIMIT;
   if (d.grep) q += "&grep=" + encodeURIComponent(d.grep);
   // docs/43 M3: on MySQL the schema parameter NAMES THE DATABASE — absent keeps the
   // configured one byte-identical; a chosen database rides here (the server whitelists it
@@ -824,7 +832,6 @@ async function dbLoadTables()                {
   if (!j) { if ($("dbTables")) $("dbTables").textContent = ""; return; }
   d.tables = j.tables || [];
   d.tablesTotal = j.total || 0;
-  d.tablesLimit = j.limit || 200;
   d.more = !!j.more;
   renderDbTables();
 }
@@ -946,7 +953,9 @@ function renderDbTables()       {
       reload: renderDbTables, render: renderDbTables,
       rowsById: () => { return []; },
       groupOfRow: (s                           )         => { return s.rows.length ? s.rows[0].schema : ""; },
-      rowNode: (s                           )              => { return dbSectionBand(s, secCollapsed); },
+      rowNode: (s                           )              => {
+        return dbSectionBand(s                                                  , secCollapsed);
+      },
       countOf: (s                     )         => {
         return s.rows.reduce((n        , sec         )         => {
           const sl = sec                             ;
@@ -971,25 +980,20 @@ function renderDbTables()       {
   const foot = $("dbTablesPager");
   if (!foot) return;
   foot.textContent = "";
-  const from = d.tablesTotal ? d.tablesPage * d.tablesLimit + 1 : 0;
-  const to = d.tablesPage * d.tablesLimit + d.tables.length;
-  foot.appendChild(el("span", "", tr("dataView.tablesRangeOfTotal", {
-    from: from.toLocaleString(locale()), to: to.toLocaleString(locale()), total: d.tablesTotal.toLocaleString(locale()),
-  })));
-  // docs/37 R5: the pager rides the delegated click (dbChromeClick's [data-tpg]) — the
-  // page counter it moves is read from dbConn() at event time, not from this render.
-  const prev = el("button", "btn icon")                     ;
-  prev.appendChild(iconNode("chevron-left"));
-  prev.title = tr("dataView.prevTablesPage");
-  prev.disabled = d.tablesPage === 0;
-  prev.dataset.tpg = "prev";
-  const next = el("button", "btn icon")                     ;
-  next.appendChild(iconNode("chevron-right"));
-  next.title = tr("dataView.nextTablesPage");
-  next.disabled = !d.more;
-  next.dataset.tpg = "next";
-  foot.appendChild(prev);
-  foot.appendChild(next);
+  // docs/43 addendum: the pager died with whole-catalog fetches. The footer now states the
+  // one fact that can still be true - the tree holds everything, or the fetch cap clipped it
+  // and grep (server-side, same grammar) is the way past. Browsing is not paging anymore.
+  if (d.tablesTotal) {
+    if (d.more) {
+      foot.appendChild(el("span", "", tr("dataView.treeTruncated", {
+        n: d.tables.length.toLocaleString(locale()),
+      })));
+    } else {
+      foot.appendChild(el("span", "", tr("dataView.treeTotal", {
+        n: d.tablesTotal.toLocaleString(locale()),
+      })));
+    }
+  }
 }
 
 /** One table row, one LINE (docs/43 M2): the name left, the approximate row count right in
@@ -1034,10 +1038,45 @@ function dbKeyRow(k                  , label        , selKey               )    
   return b;
 }
 
+/** The one-shot catalog fetch asks for this many rows (docs/43 addendum). 2,000 covers a
+ *  thousand-table database with margin to spare; the server clamps hand-written queries at
+ *  5,000, and anything bigger is grep territory - the footer says so when it happens. */
+const DB_TREE_FETCH_LIMIT = 2000;
+/** Rows painted per section band before the expander row takes over (docs/43 addendum). The
+ *  cap is a DOM budget, not a data limit: the band's badge still numbers the full list and
+ *  the expander paints the rest on demand. */
+const DB_TREE_ROW_CAP = 200;
+
+/** One band's render budget (docs/43 addendum). A search renders every MATCH - the server
+ *  already filtered, and a match the operator typed must not hide behind an expander. The
+ *  show-all memory is keyed "schema/section" so a pg catalog expands one schema's Tables
+ *  band without dragging every other schema's along. */
+function dbTreeCap(sec                                                ) 
+                                             {
+  const d = dbConn();
+  const total = sec.rows.length;
+  if (!total || d.grep || total <= DB_TREE_ROW_CAP) return { keep: total, note: null };
+  const key = (sec.rows[0].schema || "") + "/" + sec.name;
+  if (d.treeShowAll[key]) {
+    const less = el("button", "db-tree-cap")                     ;
+    less.type = "button";
+    less.dataset.treeless = key;
+    less.appendChild(el("span", "db-table-name", tr("dataView.treeShowFewer")));
+    return { keep: total, note: less };
+  }
+  const more = el("button", "db-tree-cap")                     ;
+  more.type = "button";
+  more.dataset.treemore = key;
+  more.appendChild(el("span", "db-table-name", tr("dataView.treeShowAll", {
+    n: (total - DB_TREE_ROW_CAP).toLocaleString(locale()),
+  })));
+  return { keep: DB_TREE_ROW_CAP, note: more };
+}
+
 /** One Tables / Views / Routines band (docs/43 M2) — the tree's leaf container, shared by
  *  MySQL (at the root) and pg (nested inside its schema band). The band owns the list's sort
  *  (its ellipsis, mockup B) and — on the Tables section only — the New table +. */
-function dbSectionBand(sec                                         ,
+function dbSectionBand(sec                                                ,
   secCollapsed                         )              {
   const d = dbConn();
   const cfg                          = {
@@ -1051,6 +1090,9 @@ function dbSectionBand(sec                                         ,
     moreTitle: ()         => { return tr("dataView.sort"); },
     emptyText: dbSectionEmpty,
     reload: renderDbTables, render: renderDbTables,
+    capRows: (rows                 )                                             => {
+      return dbTreeCap({ name: sec.name, rows });
+    },
     rowsById: ()                  => { return d.tables; },
     groupOfRow: (t               )                => { return dbSectionOf(t); },
     rowNode: (t               )              => dbTableRow(t, dbTabScope(d, dbIsPg())),
@@ -1109,7 +1151,6 @@ function dbSetSort(key               , dir               )       {
   const d = dbConn();
   if (dir) d.sortDir = dir;
   if (key) d.sort = key;
-  d.tablesPage = 0;
   if (dbIsRedis()) renderDbTables();
   else void dbLoadTables();
 }
