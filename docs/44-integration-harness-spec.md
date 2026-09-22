@@ -5,6 +5,11 @@
 > 按 age 的 prune）`78cd561`、I5 `3cf62a8`、I6 `2145a44`、I7 见本提交（I5/I6 于同日重做以各自携带
 > Cargo.lock——原 `64a8ab4`/`86fa047` 的树检出即 `--locked` 失败）。实施走了 swiss-dependency-review →
 > swiss-verify → swiss-review 流程。Docker 的安装在 [44-wsl-docker-setup.md](44-wsl-docker-setup.md)）。
+> 增补（2026-09-22，合并 `f3b6899` 后按树反向校对；上文「I7 见本提交」即 `929af06`）：§2 各节由计划语态
+> 改为已交付语态并补实施落定的细节——目录树与依赖表（§2.1）、容器标签/端口/超时与收尸三层（§2.2，
+> `exit.rs`/`docker_raw.rs`/`it-reaper`，`78cd561`）、Fresh 的实际 SQL 与 pg 模板版本标记（§2.3）、seed
+> 的实际形状与计数（§2.4，redis 3,016 键）、三层的实际测试清单与 66 条的分账（§2.5–2.7）、CI job 与
+> deploy.ps1 门禁的落地形状（§2.8）。§0 是实施前的记录，按惯例不动。
 > 前置阅读：`AGENTS.md`（四条产品属性，载重规则高于本文）、[docs/08](08-testing.md)（测试账本——本文
 > 填的是它第 36 行那句承诺的空）、[docs/05](05-wire-compatibility.md)（本文不动密封格式）、
 > [docs/40](40-open-source-release-spec.md) D2（真实数据不入库——seed 的红线）、
@@ -103,28 +108,37 @@ docs/05：密封格式一字不动；集成测试用 `sandbox()` 那套隔离 ho
 
 ```
 crates/swiss-it/
-  Cargo.toml            # [package] swiss-it, publish = false；feature it = []
-  src/lib.rs            # 底座：Engine（三引擎）、Fresh（每测试隔离）、Gateway（进程内网关）、seed 装载
-  src/engine.rs         # DOCKER_HOST / SWISS_IT_*_URL 解析，容器懒起，就绪等待，失败信息
-  src/seed.rs           # 把 seed/ 里的文件灌进一个 fresh 库；pg 的 template 建立
-  src/gateway.rs        # tests/adminapi.rs 的 sandbox()+setup() 抽成可复用的 boot(defs) -> Gateway
-  src/bin/it-mcp-server.rs   # L3 的 stdio MCP server（rmcp server + transport-io）
+  Cargo.toml            # [package] swiss-it, publish = false；feature it（默认关）点亮全部 optional 依赖
+  src/lib.rs            # #![cfg(feature = "it")] 下四个模块：engine / seed / exit / docker_raw
+  src/engine.rs         # DOCKER_HOST / SWISS_IT_*_URL 解析，容器懒起，就绪等待，失败三段，启动 prune
+  src/seed.rs           # Fresh（mysql 建库灌 seed、pg template、redis 索引池）与 seed 装载
+  src/exit.rs           # 容器收尸的登记处：atexit 钩子 + it-reaper 看门狗的 spawn（78cd561）
+  src/docker_raw.rs     # 一条裸阻塞 DELETE /containers/{id}?force=1&v=1（tcp/unix/npipe，5 s 超时）
+  src/bin/it-reaper.rs  # 看门狗二进制：stdin 第一行 endpoint、其后每行一个容器 id，EOF=父死，逐个 DELETE
+  src/bin/it-mcp-server.rs   # L3 的 stdio MCP server（手写 rmcp ServerHandler + AsyncRwTransport）
   seed/mysql/schema.sql  seed/mysql/data.sql
   seed/postgres/schema.sql  seed/postgres/data.sql
-  seed/redis/keys.txt   # 一行一条命令，UTF-8
-  tests/it.rs           # 唯一的测试二进制：#![cfg(feature = "it")]，mod mysql; mod postgres; mod redis; mod adapters; mod proc;
+  seed/redis/keys.txt   # 一行一条命令（TAB 分隔，# 注释），UTF-8；3,037 行 = 3,017 条命令，落库 3,016 键
+  tests/it/main.rs      # 唯一的测试二进制：#![cfg(feature = "it")]，八个 mod：smoke/seed/mysql/pg/redis/gateway/proc/reaper
+  tests/it/gateway.rs   # L2 的 boot() 副本（adminapi 的 sandbox()+setup() 抽出来，放测试侧，不进 src/）
 ```
 
 **一个测试二进制**是有意的：容器的 `OnceCell` 活在进程里，一个 `tests/*.rs` 一个进程——拆成五个文件
 就是五次 MySQL 冷启动。`tests/it.rs` 顶上 `#![cfg(feature = "it")]`：不带 feature 时它是空二进制，
 `cargo test --workspace` 在没有 Docker 的机器上照旧绿，编译时间几乎不变。
 
-`swiss-it` 只在 `[workspace] members` 里，**没有任何 crate 依赖它**；它自己的 `[dependencies]` 是
-`swiss`（根，path `../..`）、`swiss-core`/`swiss-mcp`（带 `test-utils`）、`testcontainers`、
-`testcontainers-modules`（features `mysql`、`postgres`、`redis`）、`sqlx`（与 swiss-mcp 同版同 feature，
-用来在容器里数连接与验 seed）、`redis`（同上）、`rmcp`（`client`、`transport-streamable-http-client-reqwest`、
-`server`、`transport-io`）、`tokio`、`serde_json`。**全部走 swiss-dependency-review**：每个都是
-dev-only，但仍要写清 feature 最小集与 `cargo tree -d` 的结果（§2.8）。
+`swiss-it` 只在 `[workspace] members` 里，**没有任何 crate 依赖它**（实施后复核：全仓只有根 manifest 的
+members 一行与它自己的 Cargo.toml 提到它）。它自己的 `[dependencies]` **全部 optional、只经 feature
+`it` 点亮**（没有 feature 的机器编译的正是 crate 出现前的那三个空目标）：`swiss`（根，L2 的
+`build_app`/`AppContext`）、`swiss-core`（L3 重放守护进程的环境清洗 `scrub_process_env`）、`swiss-host`
+（`DbBrowser`/`RedisBrowser` trait 与 `ServerDef`）、`swiss-mcp`（带 `test-utils`；browser 与连接参数
+构造）、`testcontainers`（`default-features = false`，不要它的 `ring`）、`testcontainers-modules`
+（features `mysql`、`postgres`、`redis`）、`sqlx`（0.8，`mysql`+`postgres`，与 swiss-mcp 同版——在容器里
+数连接与验 seed）、`redis`（0.27，`tokio-comp`）、`rmcp`（`client`、`server`、
+`transport-streamable-http-client-reqwest`）、`tokio`、`futures-util`（docker worker 上的
+`catch_unwind`）、`serde_json`、`axum` + `reqwest`（L2 的真监听与 admin API 调用），Windows 侧再一枚
+`windows-sys`（Toolhelp32，L3 按进程名数子进程——不开 tasklist 子进程）。**全部走了
+swiss-dependency-review**：feature 最小集与 `cargo tree -d` 的结果记在 I0 的提交说明（§2.8）。
 
 ### 2.2 引擎解析与生命周期（`engine.rs`）
 
@@ -141,7 +155,7 @@ pub struct Engine {
     pub host: String,          // "127.0.0.1"
     pub port: u16,             // whatever Docker published — never 3306/5432/6379 literal
     pub root_url: String,      // superuser URL, for CREATE DATABASE / FLUSHDB / counting connections
-    _container: Option<ContainerAsync<…>>,   // None when SWISS_IT_*_URL supplied it
+    _held: Option<Held>,        // one enum variant per module image; None when SWISS_IT_*_URL supplied it
 }
 ```
 
@@ -157,10 +171,44 @@ pub struct Engine {
    失败信息固定三段：解析顺序里每一步为什么没成、`DOCKER_HOST` 当前值、指向
    `docs/44-wsl-docker-setup.md` §4 的那句 `wsl -d <distro> --exec true`。
 
-镜像与版本写在 `engine.rs` 顶部的一张常量表里，**只此一处**：`mysql:8.4`、`postgres:17`、`redis:7`。
-mysql 容器起时给 `--character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci`，
-pg 给 `POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C.UTF-8`——UTF-8 是 docs/41 定下的合同，seed
-里的中文和 emoji 要在两边都原样回来。
+镜像与版本写在 `engine.rs` 顶部的一张常量表里，**只此一处**：`mysql:8.4`、`postgres:17`、`redis:7`
+（容器内端口 3306/5432/6379 也在同一张表里，只是用来向 Docker 要**随机发布端口**——测试从 API 读回，
+任何地方都不写死）。mysql 容器起时给 `--character-set-server=utf8mb4 --collation-server=
+utf8mb4_0900_ai_ci`（8.4 默认已是它，写明是防未来默认翻转悄悄改掉 seed 的世界），pg 给
+`POSTGRES_INITDB_ARGS=--encoding=UTF8 --locale=C.UTF-8`——UTF-8 是 docs/41 定下的合同，seed 里的中文
+和 emoji 要在两边都原样回来。启动超时给 **180 s**（默认 60 s——冷起首跑的时间花在拉镜像上，CI 正是
+这条路）；日志就绪之后再做真实握手，握手窗口 **40 × 250 ms（10 s 上限）**。
+
+容器**不带固定名字**（名字由 Docker 随机分配），带两个标签：`org.swiss-it.owned=1`——启动 prune 与运行中
+`docker ps` 过滤的唯一范围，别的一概不碰；`org.swiss-it.pid=<启动进程 pid>`——仅供验收测试过滤与运维
+对账，**刻意不做 prune 依据**：按 pid 判"进程已死"曾删掉并行运行（两个 worktree / 两条 CI）的活引擎，
+78cd561 改为只看 age。所有 bollard 流量走**一条专职线程**上的 current_thread runtime（`on_worker`）：
+libtest 给每个 `#[tokio::test]` 独立的 reactor，而 hyper 连接只能被注册它的那个 reactor 轮询——两个测试
+runtime 各自发 docker 请求会直接 panic。调用方只拿成品值；worker 上的任务 panic 被 `catch_unwind`
+接住，worker 不死，下一个引擎还用它。
+
+**收尸三层**（`exit.rs` / `docker_raw.rs` / `it-reaper`，78cd561 定稿。testcontainers-rs 0.27.3 没有
+ryuk，`ContainerAsync` 的 Drop 需要活的 tokio runtime，对住在 static 里的值永远不触发——所以收尸必须
+自己拥有）：
+
+1. **it-reaper 看门狗**管所有退出路径：第一个容器起来时 spawn 的子进程（stdout/stderr 拉去 null，
+   二进制按 `current_exe()` 的 profile 目录找，缺失则响亮地退化为仅 atexit）。协议：stdin 第一行 docker
+   endpoint，其后每行一个容器 id。父进程无论怎么死——正常退出、`std::process::exit(101)`、被杀、
+   崩溃——stdin 管道都收到 EOF，reaper 对每个 id 做一次阻塞 force-DELETE。libtest 的失败路径正是
+   `exit(101)`，Windows 上即 `ExitProcess`，**跳过 CRT 的 atexit 表**：绿路径的钩子恰恰在最常重跑的红跑
+   上不触发，看门狗就是为它存在的。Windows 上 spawn 先要 `CREATE_NEW_PROCESS_GROUP |
+   CREATE_BREAKAWAY_FROM_JOB`（Ctrl+C 与"job 关闭杀子"都够不着 reaper），job 拒绝 breakaway 则退回仅
+   新进程组——连坐杀树时 reaper 一起死，交给第 3 层。
+2. **atexit 钩子**是绿路径的快清洁工：对每个登记 id 做一次裸 DELETE；reaper 随后的重复 DELETE 读
+   404、按已删处理。裸 DELETE 的线码在 `docker_raw.rs`：tcp/unix/npipe 直写 HTTP/1.1，5 s 读写超时
+   （清洁工绝不能吊死在 hung 住的 dockerd 上），路径刻意**不带 `/v1.xx` 版本前缀**——dockerd 自己在升
+   最低版本，无前缀则永远用它当前那个。钩子与 reaper 二进制共享同一份线码，不会漂移。
+3. **启动 prune** 兜底连坐死亡（断电、把 breakaway 子进程一起带走的杀树）：每次起容器前，删掉**超过
+   1 小时**的 `org.swiss-it.owned` 容器（force + 卷）。门槛选 age 而不是身份：整个第二条门热跑 ~20 s，
+   一小时的门槛不可能把别人的活引擎误判成残骸，也不需要任何 pid-liveness FFI。验收在
+   `tests/it/reaper.rs` 两条，都驱动真实的第二个测试进程：绿子进程跑完全程、父进程的引擎安然无恙
+   （旧 pid-prune 就死在这）；`SWISS_IT_FORCE_RED=1` 的子进程（smoke 里该变量的唯一用途）exit 101 后
+   ≤10 s 容器清空——收尸的不是它自己的代码。
 
 ### 2.3 每条测试自己的库（`Fresh`，D6）
 
@@ -172,22 +220,30 @@ pub struct Fresh { pub kind: Kind, pub name: String, pub def: serde_json::Value 
 pub async fn fresh(kind: Kind, tag: &str) -> Fresh;     // tag = the test's own name
 ```
 
-- **mysql**：`CREATE DATABASE it_<tag>_<hex8> CHARACTER SET utf8mb4`，然后把 `seed/mysql/schema.sql`
-  + `data.sql` 灌进去（seed 控制在 <200 ms；没有 template 机制）。`def` =
+- **mysql**：`CREATE DATABASE it_<tag>_<hex8> CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`，
+  root 灌 `seed/mysql/schema.sql` + `data.sql`（没有 template 机制），再 `GRANT ALL PRIVILEGES ON
+  it_….* TO 'it'@'%'`（登录账号 `it`/`it` 由 `CREATE USER IF NOT EXISTS` 每引擎建一次）。`def` =
   `{"type":"mysql","host":…,"port":…,"user":"it","password":"it","database":"it_<tag>_<hex8>"}`——
   与 `adapters/mysql.rs:265` `mysql_connect_options` 读的字段一一对应。
-- **postgres**：引擎首次就绪时建一次 `it_seed`（灌 schema + data），之后每条测试
-  `CREATE DATABASE it_<tag>_<hex8> TEMPLATE it_seed`（毫秒级）。`def` = `{"type":"postgres","url":
-  "postgres://it:it@127.0.0.1:<port>/it_<tag>_<hex8>"}`（`adapters/pg.rs:765` 读 `url`）。
-- **redis**：从 16 个 db 索引里领一个（`tokio::sync::Semaphore(16)` + 空闲位图），`SELECT n` 后
-  `FLUSHDB`，灌 `seed/redis/keys.txt`；`def` = `{"type":"redis","host":…,"port":…,"db":n}`
-  （`adapters/redis.rs:766` 读 `db`）。需要第二个库的测试（docs/43 M3 的 keyspace 目录）再领一个。
-  归还时再 `FLUSHDB`。
+- **postgres**：引擎首次就绪时建一次 `it_seed` 模板（`CREATE DATABASE it_seed OWNER it` + `ALTER
+  DATABASE it_seed WITH IS_TEMPLATE TRUE`），之后每条测试 `CREATE DATABASE it_<tag>_<hex8> TEMPLATE
+  it_seed OWNER it`（毫秒级，1,000 行的代价是一次文件拷贝）。模板以 `it` 账号灌 schema + data——克隆连
+  所有权一起复制，admin 建的对象克隆后 `it` 反而读不了。模板带版本标记 `it_meta.seed_meta.version`
+  （`SEED_VERSION`，现值 2，放在独立 schema 里、public 只留被测对象）：seed 文件一变即重建，指向复用
+  服务器的 `SWISS_IT_POSTGRES_URL` 也永远不会端出旧 seed。`def` =
+  `{"type":"pg","url":"postgres://it:it@127.0.0.1:<port>/it_<tag>_<hex8>"}`（`adapters/pg.rs:767` 读
+  `url`）。
+- **redis**：从 16 个 db 索引里领一个（`tokio::sync::Semaphore(16)` + 空闲栈，从 15 往下发），连接
+  URL 带 `/n` 后 `FLUSHDB`，灌 `seed/redis/keys.txt`（500 条一批走 pipeline，3,000 键只需几个来回）；
+  `def` = `{"type":"redis","host":…,"port":…,"db":n}`（`adapters/redis.rs:766` 读 `db`）。需要第二个
+  库的测试（docs/43 M3 的 keyspace 目录）用 `fresh_redis_with_neighbor`：再领一个索引、SET 两个键
+  （`neighbor:one`/`neighbor:two`）。归还时先 `FLUSHDB` 再还索引——后来的租约不可能继承上一个测试
+  写过的键。
 - 用户 `it`/`it`：mysql、pg 各建一个**非超级用户**给 def 用——L1/L2 打库时的权限面和真实部署一样；
   超级账号只有底座自己用（建库、数连接）。
-- `Drop`：best-effort `DROP DATABASE`；进程退出容器随 it-reaper 看门狗消失（被连坐杀掉的进程由
-  下次启动的超时 prune 兜底），所以漏删不是泄漏。测试名进库名
-  是为了失败时 `docker exec` 进去看时能对上号。
+- `Drop`：best-effort `DROP DATABASE`（pg 带 `WITH (FORCE)`，先踢掉 adapter 池里可能还开着的会话）；
+  进程退出容器随 it-reaper 看门狗消失（被连坐杀掉的进程由下次启动的超时 prune 兜底），所以漏删不是
+  泄漏。测试名进库名是为了失败时 `docker exec` 进去看时能对上号。
 
 ### 2.4 seed：按踩过坑的形状设计（D3）
 
@@ -198,89 +254,129 @@ pub async fn fresh(kind: Kind, tag: &str) -> Fresh;     // tag = the test's own 
 
 | 表 | 为了证明什么 |
 | --- | --- |
-| `users`（`id BIGINT AUTO_INCREMENT` / `bigint generated always as identity`，`name` 含中文与 emoji，`email`，`created_at DATETIME(6)` / `timestamptz`，`balance DECIMAL(20,4)` / `numeric(20,4)`，`flags JSON` / `jsonb`，`status ENUM` / pg enum type，`avatar BLOB` / `bytea`，`is_active`，`big BIGINT UNSIGNED` 存 `18446744073709551615` / `bigint` 存 `9223372036854775807`） | 类型矩阵：BIGINT 越过 JS 安全整数后仍是原文（panel-ts D11 的坑），DECIMAL 不丢位，JSON 原样，二进制列的展示与导出，UTF-8 往返 |
-| `orders`（复合主键 `(user_id, seq)`，FK → `users`，`note TEXT NULL`） | 复合主键寻址的编辑、外键结构页、NULL 的编辑与导出 |
-| `events`（**无主键**，含两行完全相同） | docs/22 的"rows are addressed by all columns; ambiguous rows are refused" |
-| `wide`（60 列） | 网格横向、列裁剪、结构页分页 |
-| `big_rows`（1,000 行） | 分页 `offset/limit/total/nextPage`、排序、过滤各算子、导出流式 |
-| 视图 `active_users` | 表列表里的 `type`，视图不可编辑 |
-| pg 独有：schema `app` 与 `audit`，跨 schema 的 FK，`text[]`、`uuid`、partial index | `?schema=` 过滤、多 schema 的补全与结构 |
+| `users` 8 行（`id BIGINT UNSIGNED AUTO_INCREMENT` / `bigint generated by default as identity`，`name` 含中文、emoji、变音符号与阿文，`email`（一行 NULL），`born_at DATETIME(6)` / `timestamptz`（µs 钉到 `.123456`），`balance DECIMAL(20,4)` / `numeric(20,4)`（含 `-0.0001` 与 `99999999.9999`），`flags JSON` / `jsonb`，`status ENUM('active','idle','banned')` / pg enum type `user_status`，`avatar BLOB` / `bytea`（PNG 魔数字节），`is_active`，`big BIGINT UNSIGNED` 存 `18446744073709551615` / `bigint` 存 `9223372036854775807`，另一行存 `9007199254740993`（2^53+1）） | 类型矩阵：BIGINT 越过 JS 安全整数后仍是原文（panel-ts D11 的坑），DECIMAL 不丢位，JSON 原样，NULL，二进制列的展示与导出，UTF-8 往返 |
+| `orders` 6 行（复合主键 `(user_id, seq)`，FK → `users`，`note TEXT NULL`，含 NULL note 与带逗号的 note） | 复合主键寻址的编辑、外键结构页、NULL 的编辑与导出 |
+| `events` 4 行（**无主键**，其中两行字节级相同——JSON 列也逐字节一样） | docs/22 的"rows are addressed by all columns; ambiguous rows are refused" |
+| `wide`（60 列 `c01`–`c60`，3 行，稀疏 NULL） | 网格横向、列裁剪、结构页分页 |
+| `big_rows`（1,000 行，递归 CTE 生成） | 分页 `offset/limit/total/nextPage`、排序、过滤各算子、导出流式 |
+| 视图 `active_users`（`status='active'` 的 4 行） | 表列表里的 `type`，视图不可编辑 |
+| pg 独有：schema `app`（`documents` 4 行——uuid 主键、`text[]`、跨 schema FK → `public.users`）与 `audit`（`log_entries` 5 行，partial index `… WHERE note IS NOT NULL`） | `?schema=` 过滤、多 schema 的补全与结构、索引谓词原样展示 |
 
-**redis**（`keys.txt`，一行一条命令）：五种类型各若干（string 含中文与二进制安全字节、hash 50 字段、
-list 100 元素、set、zset）；一个带 TTL 的键、一个 `PERSIST` 的；`ns:sub:leaf` 三层命名空间给树；
-一个命名空间下 **3,000** 个键给 `SCAN` 分页；另一个 db 索引里放 2 个键给 `INFO keyspace` 目录。
+**redis**（`keys.txt`，一行一条命令、TAB 分隔、`#` 注释；全文件 3,037 行 = 3,017 条命令，落库
+**3,016** 个键，守卫测试钉死 DBSIZE）：string 5 个（中文 emoji、引号分号、zalgo、空串）、hash 50 字段
+（一条 HSET）、list 100 元素（一条 RPUSH）、set 10 成员、zset 10 成员（分数含 `85.5` 与 `-100`）；TTL
+一对——`SETEX` 3600 的与 `PERSIST` 掉的孪生；`tree:l1:l2:*` 等三层命名空间给树；
+`bulk:key00001..03000` 共 **3,000** 键给 `SCAN` 分页。另一个 db 索引的 2 个键**不在 seed 里**——keyspace
+目录测试用 `fresh_redis_with_neighbor` 现场领第二个索引、现场 SET（§2.3）。
 
-seed 自己也有测试（I1）：灌完后逐表数行、逐列验类型，是"seed 还在"的守卫——改 seed 的人先改它。
+seed 自己也有测试（I1，`tests/it/seed.rs` 7 条）：灌完后逐表数行、逐列验类型、验值（u64::MAX、
+PNG 魔数、`1990-06-15 08:30:00.123456`、重复行计数），外加三条隔离证明（mysql/pg 两个 fresh 库互不可见、
+redis 两个租约互不可见、100 次 `fresh(Redis)` 串行不耗尽索引池）——改 seed 的人先改它。
 
 ### 2.5 L1：三个 browser 打真库
 
-每条测试的形状：`let db = fresh(Kind::Mysql, "grid_pages").await; let b = MysqlBrowser::new(&def(db.def), "m")?;`
-直接调 `DbBrowser` / `RedisBrowser` trait 方法（`crates/swiss-host/src/dbbrowser.rs:743-`），断言 JSON。
+每条测试的形状（`tests/it/{mysql,pg,redis}.rs` 的 `browser()` 帮手）：`fresh` 拿到 def 后按 adapter
+自己的配方造 browser——def 先解析成 `ServerDef`，经 `mysql_connect_options` / `pg_connect_options` 造
+`Lazy` 池（max 4 连接、acquire 5 s，与 adapter 同配方，所以池形行为也是产品的），
+`MysqlBrowser::new(database, label, conn)` / `PgBrowser::new(label, conn)`；redis 走
+`RedisEngine::new(&def, …).browser()`，def 上的策略位（`allowDestructive` 等）原样随行。直接调
+`DbBrowser` / `RedisBrowser` trait 方法（`crates/swiss-host/src/dbbrowser.rs:708` 与 `:758`），断言 JSON。
 不经 HTTP——路由层的合同 `dbbrowser_api.rs` 已经用 stub 守着，这里守的是 SQL 到真库的那一段。
 
-每个 browser 一组，每组按 trait 方法各至少一条，命名点明 docs/22 的批次：
+每个 browser 一组（交付计数：mysql 16 条、pg 16 条、redis 9 条），命名点明 docs/22 的批次：
 
-- **mysql / pg 各**：`list_tables`（分页、`grep`、pg 的 `schema`）；`fetch` 页（排序、每个过滤算子、
-  `total`、`nextPage`；BIGINT/DECIMAL/JSON/二进制/NULL 的单元格原文）；`structure`（列、主键、索引、
-  外键、DDL 与 `SHOW CREATE` / `pg_get_*` 一致）；`export`（csv 与 sql 两种，流式，与 `fetch` 行数一致）；
-  `completion`（表名、FROM 最近表的列）；`activity`（自己的连接出现在监控里）；编辑（主键更新、
-  复合主键更新、无主键歧义拒绝、插入、删除，每步回读）；DDL 最小集（建表、改名、删表，每步 `list_tables`
-  回读）；docs/43 的 `list_databases`——**如果 `data-full-access` 已并入**：主库 `primary`、其余
-  `browsable` 与 `reason`、外库只读；否则只断言 trait 默认的空目录，并在提交说明里写明。
-- **redis**：`scan` 分页跨 3,000 键不重不漏；树的三层；五种类型各一条 `read`；TTL 的两种；
-  `run_pipeline` 的结构化编辑（hash 字段增删改、list 推入、zset 分数）每步回读；UTF-8 键与值原样；
-  两个 db 索引下的 keyspace 目录（同上，视 docs/43 是否并入）。
+- **mysql / pg 各**：`list_tables`（分页、`grep`、pg 的 `schema` 过滤，对象带 Node 式 `type`
+  table/view）；`read_table`（排序、每个过滤算子、`total`、`nextPage`；BIGINT/DECIMAL/JSON/二进制/NULL
+  的单元格原文；无主键重复行与 60 列 wide 表各一条）；`describe_table`（列、主键、索引、外键、DDL 与
+  `SHOW CREATE` / `pg_get_*` 一致，pg 含 partial index）；`export_table`（csv 与 json 两种，与 fetch 行数
+  一致）+ `export_sql_dump`（流式 channel，头 `-- swiss SQL dump`、脚恢复 `SET FOREIGN_KEY_CHECKS=1`）；
+  `import_table`（映射列的 insert 回读）；`apply_edits`（主键更新、复合主键更新、无主键歧义拒绝、插入、
+  删除，每步回读；mysql 无主键删除按全列寻址 + LIMIT 1 剪一刀）；`run_query`（控制台读 + 写放行回读，
+  无 LIMIT 的 SELECT 封顶 50 行并如实报 `limitApplied`）；`ddl_op`（建表、改名、删表，每步
+  `list_tables` 回读）；`activity`（自己的连接出现在监控里 + kill 一条睡着的查询）；`completion`
+  （表名、FROM 最近表的列）；docs/43 的 `list_databases`（**已并入并交付**）：主库 `primary`，mysql 侧
+  `information_schema` 标 `system` 仍可浏览、账号读不到的库（`mysql`）干脆不列出，pg 侧 `postgres` 标
+  `system`、其余库列出但 `browsable` 为假并给 `reason`（"bound to one database"），`template0/1` 服务端
+  过滤；未知库名在拼 SQL 前拒绝。
+- **redis**：`scan` 全键域 **3,016** 键不重不漏（DBSIZE 随第一页走）；每页每键带 `type` 与 `ttl`；
+  `pattern` + `type` 服务端收窄（树的三层）；五种类型各一条 `read` + 两种 TTL（`SETEX` 窗口内、
+  `PERSIST` 后 -1）；`run_command`（UTF-8 键值、`KEYS` 恒拒、def 未开 `allowEval` 时 `EVAL` 拒）；
+  `run_pipeline` 的结构化编辑（hash 字段增删改、list 推入、DEL）每步回读；一条被拒的命令否决整批
+  且不留半截；严格 def（无 `allowDestructive`）拒 `FLUSHDB`；两个 db 索引下的 keyspace 目录（neighbor
+  索引列出但不可浏览，带 reason）。
+
+增补（2026-09-22，`0349c41`）：L1 mysql 组在真服务器上冲出两处产品 bug 并当场随该提交修复——
+`swiss-host` `dbbrowser.rs` 的 `typed_ph` 对 JSON 列的比较占位符原是字符串绑定（MySQL 8.4 实测按文本
+比较、恒零行，过滤与无主键行寻址全死），改为 `CAST(? AS JSON)`（SET 子句不变）；`swiss-mcp`
+`mysql_browser.rs` 补全的列查询读 `information_schema.column_name` 未加别名（MySQL 8
+prepared-statement 元数据把无别名结果名大写，行键恒不匹配，FROM 表列补全线上恒空），已加别名。两处
+单元 stub 都照不见；合同侧的对应记录在 docs/22 W0.2 处的增补行。
 
 ### 2.6 L2：三个 adapter 经真 rmcp client 走 `/mcp/<name>`
 
-`gateway.rs` 把 `tests/adminapi.rs:50-112` 的 `sandbox()`+`setup()` 抽成
-`Gateway::boot(defs: Vec<Value>) -> Gateway`，在 `127.0.0.1:0` 上真监听（不是 `tower::oneshot`——
-rmcp client 要一个 URL），返回 `base_url`、`token`、`registry`、`store`。**根 crate 的 `tests/adminapi.rs`
-不动**：抽出来的是副本，放在 swiss-it 里；两处漂移由 I5 的一条对照测试守（同一个 def 两边 `/api/mcps`
-的回显相等）。
+副本落在 `tests/it/gateway.rs`（不在 src/——它只服务测试二进制）：`boot(defs: Vec<(&str, Value)>) ->
+Gateway`，在 `127.0.0.1:0` 上真监听（不是 `tower::oneshot`——rmcp client 要一个 URL），返回 `port`/
+`base_url`、`token`、`registry`、`store`。副本沿用 adminapi 的两行隔离（`MCP_GATEWAY_HOME` 指临时目录 +
+`MCP_GATEWAY_MASTER_KEY` 钉成固定 32 字节，token 固定），外加两条 daemon 启动才有的行为：
+`Registry::new(60_000, calls)` 的健康探测，与 `registry.start_timer()` 的 **1 s idle-reap sweeper**——
+第一版 boot 漏了它，懒 proc 的子进程永远不会被收回，这个坑是 L3 组自己抓住的。**根 crate 的
+`tests/adminapi.rs` 不动**；两处漂移由 I5 的一条对照测试守（`gateway_rows_match_the_adminapi_contract`：
+同一个 def，`/api/mcps` 行形状逐字段相等，`startedAt` 这类时钟字段豁免）。
 
 每个引擎一组：
 
-- 注册 def → `list_tools` 恰好是 `mysql_list_tables`/`mysql_query`（pg 三个、redis 三个，与
-  `adapters/{mysql,pg,redis}.rs` 的 `name:` 常量对照）；每个工具各打一次真库、断言结果里 seed 的行；
-  `list_resources` / `read_resource` 与 `{mysql,pg,redis}_resources.rs` 的形状一致。
-- **凭证是引用**：一条 def 的 `password`（redis）/ `url`（pg）写成 `${secret://it-pass}`，先经
-  `/api/secrets` 存进 vault，再经工具打库成功，且 `/api/mcps` 的回显与 `/api/db` 的任何答复里**不出现**
-  明文——docs/19/25 第一次在真库上闭环。
-- **Hot-pluggable 的证明**：连接建立后，经 `/api/mcps/<name>/disable`（现有路由名以代码为准）停掉，
-  然后用底座的超级账号到容器里数：mysql `SELECT COUNT(*) FROM information_schema.processlist WHERE
-  user='it'`、pg `SELECT count(*) FROM pg_stat_activity WHERE usename='it'`、redis `CLIENT LIST` 里
-  `db=<n>` 的条目——**必须为 0**（给一个短的轮询窗口，≤2 s）。再 enable，工具再次可用。这条如果红，
-  红的是产品，不是测试。
-- `sql.rs` 的只读守卫在真库上：`mysql_query` 一条 `UPDATE` 被拒（或按当前合同放行——以代码为准，
-  测试写下现状），`pg_query` 同。
+- 注册 def → `list_tools` 恰好是 `mysql_list_tables`/`mysql_query`（pg 三个：`pg_describe_table`/
+  `pg_list_tables`/`pg_query`；redis 三个：`redis_command`/`redis_read`/`redis_scan`，与
+  `adapters/{mysql,pg,redis}.rs` 的 `name:` 常量对照，不多不少）；每个工具各打一次真库、断言结果里 seed
+  的行（BIGINT 以精确字符串走完整条链路，`张三 🙂` 原样）；`list_resources` / `read_resource` 与
+  `{mysql,pg,redis}_resources.rs` 的形状一致——`mysql://<db>/<table>`（视图也在列）、
+  `pg://<db>/public.users`、redis 的 keyspace overview 各读一条。
+- **凭证是引用**（`credential_refs_close_the_loop_over_a_real_database`）：mysql def 的 `password` 与
+  pg def `url` 里的密码段写成 `${secret://it-pass}`（redis 引擎无 ACL，无凭证可藏），secret 先经面板自己
+  的 API 入库（`GET /api/secrets` 拿 rev → `PUT /api/secrets/it-pass`，且必须在 def 注册**之前**——
+  adapter 在构建时解析引用），再注册 def、经工具打库成功；`/api/secrets` 只回名字与 rev，
+  `/api/mcps/<name>/details` 的回显里是引用不是明文——docs/19/25 第一次在真库上闭环。
+- **Hot-pluggable 的证明**（`stopping_an_mcp_releases_its_server_connections`，一个网关三引擎）：各打
+  一枪让池里握着活的 `it` 连接并**先证基线非零**，经 `POST /api/mcps/<name>/stop`（现有路由是
+  stop/start，不是 disable/enable）停掉，然后用底座的超级账号数——计数按本测试自己的库划界，免得并行
+  组的连接背锅：mysql `…processlist WHERE user='it' AND db=?`、pg `pg_stat_activity WHERE usename='it'
+  AND datname=$1`、redis 从 neighbor 索引的连接上 `CLIENT LIST` 数 `db=<n>` 条目——**必须为 0**
+  （100 ms 间隔轮询，≤2 s）。再 `start`，工具复活。这条如果红，红的是产品，不是测试。
+- 写入合同按现状钉住：`mysql_query` / `pg_query` **不是只读**——一条 `UPDATE` 放行并落库，mysql 报
+  `affectedRows`、pg 报命令 tag 的 `rowCount`，各自忠于自己的线协议；测试回读验证。
 
 ### 2.7 L3：proc 用仓库自带的 MCP server
 
-`src/bin/it-mcp-server.rs`：rmcp `ServerHandler` + `transport-io`（stdio），工具五个，全部为了测 adapter
-而不是为了好看：
+`src/bin/it-mcp-server.rs`：手写 rmcp `ServerHandler` + `AsyncRwTransport`（tokio 的 stdin/stdout），
+`#[tokio::main(flavor = "current_thread")]`；启动即往 stderr 写一行中文，让"噪声不进协议流"从此有
+载体。工具五个，全部为了测 adapter 而不是为了好看：
 
 | 工具 | 为了证明什么 |
 | --- | --- |
 | `echo {text}` | 往返；UTF-8（中文、emoji）原样 |
-| `blob {kb}` | 返回 kb KB 的 JSON——`proc` 转发路径是 `&RawValue`，断言网关吐出的字节与 server 写出的字节**相同**（不是相等的 JSON，是相同的字节） |
+| `blob {kb}` | 返回恰好 kb×1024 字节的确定性 JSON（钳在 1–512 KB；测试打 64 KB 并在本地按同一构造器重建全文，要**相同的字节**不是相等的 JSON）——`proc` 转发路径是 `&RawValue` |
 | `sleep {ms}` | 超时与取消 |
 | `fail {code}` | 错误映射到 MCP error，不把进程打死 |
-| `env` | 返回子进程看到的环境变量名列表——docs/16 H1 的清洗（`CLAUDECODE`、`NO_COLOR`、`CI` 等）在 proc 子进程上**成立**；今天这条只在 daemon 启动路径上有测试 |
+| `env` | 返回子进程看到的环境变量名列表——docs/16 H1 的清洗（`CLAUDECODE`、`NO_COLOR`、`CI` 等）在 proc 子进程上**成立**；实施前这条只在 daemon 启动路径上有测试，现在 L3 直接钉住 |
 
 测试用 `env!("CARGO_BIN_EXE_it-mcp-server")` 拿路径（同 package 的 bin，cargo 保证），def =
-`{"type":"proc","command":"<path>","args":[]}`。一组：
+`{"type":"proc","command":"<path>","args":[],"idleMs":…}`（`idleMs: 0` = 不收回，只有 stop 能带走
+子进程——杀树那条正是这么设的）。一组 7 条，整组用一把锁串行：子进程按 exe 名数**整个进程表**，两个
+L3 并行会数到对方的（Windows 用 Toolhelp32 快照、unix 读 `/proc`，直调 API，不开 tasklist 子进程；读
+不出按"巨多"算，绝不让"数不了"伪装成"没了"）：
 
-- **懒**：网关起来、def 注册后，`sysinfo`/进程表里没有 `it-mcp-server`；第一次 `list_tools` 之后有；
-  idle 超时（def 上把 idle 设成 1 s）后又没有。
-- disable → 子进程树被杀（Windows 上 Job Object，unix 上进程组——两边各跑各的，`cfg` 分开断言）。
-- 上表五个工具各一条。
-- stderr 噪声不进 stdout 协议流：server 往 stderr 写一行中文，工具照常返回。
+- **懒**：网关起来、def 注册后，进程表里没有 `it-mcp-server`；第一次 `list_tools` 之后有；无流量
+  `idleMs: 1500` 后 8 s 窗口内被收回；下一次调用再唤醒一个新子进程。
+- stop → 子进程树被杀（Windows 上 Job Object，unix 上进程组——两边各跑各的，`cfg` 分开实现）。
+- 上表五个工具各一条：echo 顺带钉 stderr 噪声不进 stdout 协议流（启动那行中文 + 工具照常返回）；fail
+  之后进程活着且下一个调用照常答；env 那条先种入 `NO_COLOR`/`CI`/`CLAUDECODE`/`CLAUDE_CODE_IT_L3` 与
+  存活标记 `SWISS_IT_L3_MARKER`，重放 `swiss_core::env::scrub_process_env()`——四个噪声名不出现在子
+  进程的环境名里，标记还在（继承本身没断）。
 
 ### 2.8 门禁、CI、依赖重量（D5）
 
-**门禁**（AGENTS.md 的块加一行，`.agents/skills/swiss-verify/SKILL.md` 加一条选择规则，
-`CONTRIBUTING.md` 的"The gates"加一行）：
+**门禁**（已交付，I0：AGENTS.md 的命令块、`.agents/skills/swiss-verify/SKILL.md` 的选择规则、
+`CONTRIBUTING.md` 的"The gates"各一条）：
 
 ```
 cargo test --workspace                          # 单元与进程内集成；任何机器
@@ -291,9 +387,12 @@ cargo test -p swiss-it --features it            # 真库、真子进程；需要
 `crates/swiss-mcp/src/adapters/{mysql,pg,redis}*.rs`、`sql.rs`、`resources.rs`、`proc.rs`、
 `crates/swiss-host/src/dbbrowser.rs`、`crates/swiss-data/src/dbbrowser_api.rs`、`crates/swiss-core/src/secure/`、
 `src/app.rs`、`src/mcp_link.rs`，或 `crates/swiss-it/**` 自身。其余改动可不跑，但**提交说明要说明没跑**。
-`scripts/deploy.ps1` 的门禁段加同一条（部署机就是这台，Docker 在 WSL 里）。
+`scripts/deploy.ps1` 也已落地同一条（I7 `929af06`）：在单元门与 clippy 之间跑 gate 2，为这一次运行
+显式设 `$env:DOCKER_HOST = 'tcp://127.0.0.1:2375'`、跑完即删——部署机就是这台、Docker 在 WSL 里，这一步
+因此不依赖用户级变量对部署 shell 可见；非零退出即 `integration gate failed - production left untouched`；
+`-SkipGates` 连同其它门一并跳过。
 
-**CI**（`.github/workflows/build.yml`）加一个 job：
+**CI**（`.github/workflows/build.yml`）的 `integration` job——已交付，形状就是：
 
 ```yaml
   integration:
@@ -309,17 +408,20 @@ cargo test -p swiss-it --features it            # 真库、真子进程；需要
         run: docker ps -a && docker logs $(docker ps -aq --filter ancestor=mysql:8.4) 2>&1 | tail -50
 ```
 
-`release` job 的 `needs` 加上 `integration`——没有真库证据的 tag 不发。预算：整 job < 4 min
-（三镜像拉取 ~40 s，冷启动 ~20 s，套件 < 1 min）。
+job 与 workflow 其余部分同源触发（push 到 `master`/`main`、PR、`v*` tag），`release` 的
+`needs: [build, panel, deny, integration]` 已交付——没有真库证据的 tag 不发。预算：整 job < 4 min
+（三镜像拉取 ~40 s，冷启动 ~20 s，套件 < 1 min；实际记录：本机热跑整门 ~20 s、66 条，见 `929af06`
+的门禁记录与 ADR-028）。
 
 **依赖重量**：`testcontainers`（MIT）+ `testcontainers-modules`（MIT）经 `bollard`（Apache-2.0）拉进
 hyper/tokio 的一份——dev-only。必须同时成立：
 
 1. `cargo tree -e normal,build -p swiss` **与实施前逐字相同**（把这条 diff 贴进 I0 的提交说明）——
    二进制的依赖图一根毛都不能动。
-2. CI 的"linked twice"检查今天跑的是裸 `cargo tree -d`，**含 dev-deps**。它守的是二进制体积，所以
-   改成 `cargo tree -d -e normal,build`（I0 一并改，理由写进 workflow 注释）。否则 bollard 若带来第二个
-   hyper，会为一个不发货的图红掉 CI。
+2. CI 的"linked twice"检查 I0 已改为 `cargo tree -d -e normal,build --locked`（理由写在该 step 注释
+   里，引本文 §2.8）——bollard 带进 dev 图的第二个 hyper 不再能红掉一个不发货的图。该 step 本就不靠
+   退出码：裸 `cargo tree -d` 恒 exit 0，且实施前树上已有 RustCrypto 版本散布，所以先打全量，再只在
+   tokio/rustls/native-tls/openssl(-sys)/hyper/aws-lc-rs 出现在重复列**首列**时才红。
 3. `cargo deny check` 绿——`[graph] all-features = false`，`it` 默认关，deny 看到的是发货图；但 license
    表仍会列出 dev-deps，`THIRD_PARTY_NOTICES.md §3` 的表按其自己的规则（"dev-only dependencies are
    excluded"）**不加**这些 crate。
@@ -378,11 +480,12 @@ cargo deny check
 - **在 WSL 里跑 cargo**：`/mnt/c` 上的 target 目录慢一个数量级；测试进程留在 Windows，只有容器在 WSL。
 - 不动 `tests/adminapi.rs`、`tests/http_adapter.rs`——它们是单元门禁的一部分，本文只抽副本。
 
-## 6. ADR-028（草案，I7 落到 docs/07，"what shipped / cost" 两栏那时填）
+## 6. ADR-028（定稿已随 I7 `929af06` 落到 docs/07-decisions.md：Accepted 2026-09-22，含 options /
+decision / costs / what shipped 与逐项 hash；以下为 spec 定稿时的草案，留作底稿）
 
 **ADR-028 — 两条测试门：单元的一条任何机器都绿，集成的一条要 Docker（docs/44）**
 
-Status: Proposed (2026-09-22)。
+Status: Proposed (2026-09-22)；docs/07 定稿为 Accepted。
 
 Context：7,739 行数据库 adapter/browser 代码没有一条真库测试；每次重构的证据是 19998 上对着不能入库
 的真实库手工走一遍。四个选项：

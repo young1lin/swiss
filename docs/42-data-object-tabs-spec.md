@@ -1,7 +1,12 @@
 # 42 — Data 的对象页签：一次握住多个对象
 
 > 状态：**已实施**（T1 状态切分、T2 页签条先行落地；T3 侧栏成树与 T4 工具条收敛由 docs/43 M2/M4 收编交付，
-> ADR-026 落进 docs/07）。终态数字见 docs/43 状态头（84 文件 / 781 用例、CSS 与发射 JS 与 exe 字节）。
+> ADR-026 落进 docs/07）。终态数字以 docs/43 状态头为准（增补五/六后在 `13ec65c` 复测：85 文件 /
+> 795 用例；CSS / 发射 JS / exe 字节见彼）。
+> 增补（2026-09-22，代码→spec 反向同步）：§2.2 切分表的字段形状此后被 docs/43 推移——增补四 `e1f052c`
+> 退役 `tablesPage`/`tablesLimit`，增补五 `f63f15c` 把记忆字段定为 `treeShown: Record<string, number>`，
+> M3 `733f26c` 加入 `database`/`databases`；条尾 `+` 的开页签规则另被增补 `bfb48f8` 修订。就地增补见
+> §1.4/§2.2；现行形状以 docs/43 状态头与 `panel/src/types/state.d.ts` 为准。
 > 基线 `801c834`（master，2026-09-21）。实施分支 `data-full-access`
 > （worktree `.agents/worktrees/data`，建于 `755eb9e`，**落地前先 rebase 到 master**，中间三个提交是
 > docs/41 的 remote 工作，与本文无关）。视觉参考 `docs/assets/42/data-layout-mockup.html`（双击打开，
@@ -163,6 +168,10 @@ Tools/Resources/Prompts/Run/Config/Logs（分节）」。Data 的页签与 MCP �
 | D12 | 页签条与状态条**不进 focus 模式的隐藏表** | 它们是页体，不是壳 |
 | D13 | 只恢复"活动页签"，不持久化整个工作区 | 深链与 `last-page.ts` 的契约不扩大 |
 
+> 增补（2026-09-22，`bfb48f8`，记于 docs/43 状态头增补）：D3 的「上限 8」对**对象打开**（`dbOpenTab`）
+> 不变——全忙仍拒开并提示；条尾 `+` 改为每次必新开一个 SQL 页签（绕过去重），全忙时**越限放行**
+> （`dbOpenTabForce`），上限只在有可驱逐页时收缩。
+
 ### 1.5 一个都不动
 
 App Shell（rail L1 / context bar L2 / focus 模式）、`/api/db` 的 12 条路由与任何响应形状、连接租借
@@ -193,6 +202,13 @@ App Shell（rail L1 / context bar L2 / focus 模式）、`/api/db` 的 12 条路
 | `redis` | `{ keys, cursor, done, total }`——Redis 侧栏的键列表，即 `tables` 的对位 |
 | `redisType` | SCAN TYPE 过滤（侧栏） |
 | `redisError` | 上次 SCAN 失败标记（侧栏） |
+
+> 增补（2026-09-22）：上表是 T1 时点的形状，此后被 docs/43 推移——`tablesPage`/`tablesLimit` 随侧栏
+> 分页器退役，`tables` 一次拉全目录（增补四 `e1f052c`）；记忆字段现为 `treeShown:
+> Record<string, number>`（增补五 `f63f15c`，出生名 `treeShowAll: Record<string, boolean>`）；多库轴
+> `database`/`databases` 加入（M3 `733f26c`）——连接域现为 **18** 个字段。对象域公共 base 另有
+> `touched`（LRU 时钟，T2 `9cdeb3e`）与 `custom`（卡片右键重命名，`bfb48f8`）；`sqlPreview` 自 T1 起
+> 就放在公共 base（四种 kind 都带，不只 `table`）。现行形状以 `panel/src/types/state.d.ts` 为准。
 
 **对象域 `DbTab`（30 个）**——每个页签一份：
 

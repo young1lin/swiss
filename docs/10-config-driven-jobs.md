@@ -32,7 +32,7 @@ RH 参考的是 `rh-jobs` 的运行登记、容量控制、取消和 first-wins 
 
 `process.exec` 是通用进程执行插件提供的 Action；MCP 插件提供 `mcp.call`。这些名字是本提议的稳定能力 ID，不是当前已存在的 API。
 
-轻量的 `RunRegistry / RunCoordinator` 是共享运行服务，统一登记定时和手动运行；Jobs Scheduler 只是其中一个 producer。停用 Jobs 不会让其他插件失去手动 Action 执行能力，也不能取消其他 producer 的运行。每次运行登记 producer、provider 和可选 jobId，按所有权取消；不要求引入一套常驻消息队列。通用进程监督器供 proc MCP 与 Jobs 共用，但两者的“常驻 MCP 子进程”和“一次性命令”生命周期仍不同。
+轻量的 `RunRegistry / RunCoordinator` 是共享运行服务，统一登记定时和手动运行；Jobs Scheduler 只是其中一个 producer。停用 Jobs 不会让其他插件失去手动 Action 执行能力，也不能取消其他 producer 的运行。每次运行登记 producer、provider 和可选 jobId，按所有权取消；不要求引入一套常驻消息队列。增补（2026-09-21，`d67db29`，docs/41 A1）：每次运行现在还登记 **actor**——谁发起了这次运行；Jobs 的运行记 `jobs`，`POST /api/runs` 接受调用方自报的可选 `actor`（CLI `cli:<user>@<host>`、面板 `panel`），缺省或乱写记 `api`，运行记录（`RunView`，即 `/api/runs` 响应的 `actor` 字段）与面板 Runs 页都显示它。通用进程监督器供 proc MCP 与 Jobs 共用，但两者的“常驻 MCP 子进程”和“一次性命令”生命周期仍不同。
 
 ## 3. 建议配置示例
 

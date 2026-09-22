@@ -1,5 +1,10 @@
 # 03 — Dependency map
 
+> 2026-09-22 amendment (`062928a`, cleanup ownership in `78cd561`, merged at `f3b6899`): the
+> workspace gained a dev-only tenth member, `crates/swiss-it`, whose dependency set is recorded
+> in the new section below. It maps to nothing in the npm table — the Node build had no such
+> harness — and none of it ships: the rows above are unchanged.
+
 ## npm → crate
 
 | npm | crate | Notes |
@@ -25,6 +30,33 @@
 | `tokio` `rt-multi-thread` | See ADR-003 |
 | `openssl` / `native-tls` | One TLS stack only, and it is `rustls`. A second one is a bug — check `cargo tree -d` in CI |
 | `chrono` | `time` with `default-features = false` is smaller and RFC3339 is all that is needed |
+
+## Test-harness deps (`crates/swiss-it`, dev-only)
+
+The docs/44 integration harness behind gate 2 is a leaf nothing depends on, so it has no npm
+ancestor to map from. Every dependency below is optional and enters only through the crate's
+`it` feature — without it, `cargo test --workspace` builds three empty targets and a machine
+without Docker sees no difference at all.
+
+| crate | why it is there |
+| --- | --- |
+| `testcontainers` 0.27 | starts the real engines for gate 2. `default-features = false`: the defaults pull testcontainers' `ring` TLS for bollard, and the harness speaks plain `tcp://`, `unix://` and `npipe://` docker endpoints only — an `https://` `DOCKER_HOST` is a clean resolution failure, not a second TLS stack |
+| `testcontainers-modules` 0.15 | just the three module images (mysql, postgres, redis), again without the default `ring`. Tags live in one table in `src/engine.rs`: mysql:8.4, postgres:17, redis:7 |
+| `sqlx` 0.8, `redis` 0.27, `rmcp` 3.2, `reqwest` 0.13, `axum` 0.8, `tokio`, `futures-util`, `serde_json` | the same versions the shipping crates already carry, so the dev graph holds ONE copy of each (`cargo tree -d` stays quiet): L1 seeds databases and drives the product's own browsers, L2 boots the real gateway and speaks rmcp over streamable HTTP |
+| `windows-sys` 0.61 (Windows) | Toolhelp32 to count live children by exe name in the L3 proc suite — a direct API call, not a `tasklist` subprocess (the repo rule) |
+| `swiss-core`, `swiss-host`, `swiss-mcp` (test-utils), `swiss` | path deps into the product itself: the browsers under test, the launcher-noise scrub the L3 env test replays (docs/16 H1), and `build_app`/`Gateway::boot` for the L2 real listener — the one edge that can never ship, since nothing depends on this crate |
+
+No Docker client crate, deliberately. The two cleaners that may run without a tokio runtime —
+the atexit hook and the `it-reaper` watchdog (`src/bin/it-reaper.rs`, this repo's ryuk minus
+the container, `78cd561`) — share one hand-rolled blocking `DELETE /containers/{id}?force=1&v=1`
+over TCP, unix socket or Windows named pipe in `src/docker_raw.rs`, deliberately unversioned so
+dockerd serves its own current API version. hyper and reqwest both need an async runtime the
+dead-parent path cannot assume.
+
+Dev graph versus shipping graph, as AGENTS.md states the rule: nothing depends on `swiss-it`, so
+`cargo tree -e normal,build` — the graph the duplicate check owns — never sees any of the above,
+while the dev graph (testcontainers included) never ships and may carry its own copies. That is
+why the hygiene command below is scoped to normal+build edges.
 
 ## Draft `Cargo.toml`
 
@@ -94,7 +126,9 @@ strip = "symbols"
 ## Hygiene to wire into CI from day one
 
 ```bash
-cargo tree -d                 # a duplicated TLS stack or runtime must fail the build
+cargo tree -d -e normal,build # the SHIPPING graph — a duplicated TLS stack or runtime must
+                               # fail the build; dev edges (swiss-it's harness among them)
+                               # never ship and may carry their own copies (AGENTS.md, docs/44)
 cargo tree -e features        # what actually got pulled in
 cargo bloat --release --crates    # which crate owns the binary
 cargo clippy --workspace --all-targets -- -D warnings

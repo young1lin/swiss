@@ -187,6 +187,12 @@ TS 下依旧合法（只在函数内跨界调用）；`import type` 不参与循
   `node --check` + vitest → `npm run check`（`node --check` 的功能被 `tsc` 覆盖）；第 3 步加"`npm run
   build` 后再 `touch lib.rs`"。
 
+> 增补（2026-09-22）：本节 T5 由 docs/37 R6 接管落地（`66f065e`）——panel phase 的位置是
+> clippy 之后、停机之前，而非本节的 cargo test 之前（理由见 docs/37 §8.1）；部署门后来在单元门
+> 与 clippy 之间又插入真库门 `cargo test -p swiss-it --features it`（`929af06`），CI 侧新增 `deny`
+> （docs/40 O5）与 `integration` 两个 job，`release` 的 `needs` 扩为 `[build, panel, deny,
+> integration]`。权威记录 docs/44 §2.8。
+
 ### 7.2 文档
 
 - `docs/07-decisions.md` **ADR-024**：选项表——A) 留 JS + `checkJs`/JSDoc（无构建步骤；owner 否决：
@@ -232,8 +238,12 @@ npm run check            # typecheck (two tsconfigs) + build:check + vitest run
 # Rust（仓库根；--workspace 不可省）
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo tree -d            # 不得出现新的双份（本 spec 不加 cargo 依赖，输出应与基线相同）
+cargo tree -d -e normal,build  # 不得出现新的双份（本 spec 不加 cargo 依赖，输出应与基线相同）
 ```
+
+> 增补（2026-09-22，`062928a`）：dup-check 原为裸 `cargo tree -d`。swiss-it 的 dev 依赖
+> （testcontainers→bollard）给 dev 图带进第二份 hyper 后，这条门收窄为 `-e normal,build`——dev 图
+> 不随二进制发货，不算数；AGENTS.md 命令块与 CI 的 dup-check step 同步收窄。权威记录 docs/44 §2.8。
 
 ### 9.2 交付顺序与每提交硬性要求
 

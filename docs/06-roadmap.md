@@ -6,19 +6,29 @@ if the numbers do not appear.
 
 ## Current implementation status
 
+> 2026-09-22 amendment (`062928a`…`929af06`, merged at `f3b6899`): verification is now TWO gates.
+> Gate 1 is `cargo test --workspace`, below. Gate 2 is `cargo test -p swiss-it --features it`
+> (docs/44) — the real MySQL/PostgreSQL/Redis integration suite, which needs a Docker endpoint
+> (`DOCKER_HOST`) or one of the three `SWISS_IT_*_URL` escapes and treats their absence as a
+> failure, never a skip. It runs in CI on ubuntu (`929af06`) and is mandatory when a diff touches
+> the DB adapters/browsers or swiss-it itself.
+
 The Rust implementation now contains all 70 planned backend modules and wires every adapter
 family through the factory. The MongoDB adapter was deleted outright (ADR-012), as was the
-HTTP Tools touchstone plugin once it had served its proof; neither is feature-gated. The
-current verification gate is green: 941 workspace tests, strict Clippy, and the release
-build all pass.
+HTTP Tools touchstone plugin once it had served its proof; neither is feature-gated. Gate 1
+is green and has grown since it was last quoted here: 941 workspace tests at `54da925`
+(2026-09-11), 1,406 at `13ec65c` (2026-09-22, counted with `cargo test --workspace -- --list`),
+with strict Clippy and the release build passing alongside. Exact counts rot; only a green
+`--workspace` run means the suite passed.
 
 Since then the build has become the toolbox docs/09 and docs/10 describe, and both documents are
 now fully implemented (`2937034`). A plugin host owns the subsystems; Actions, Runs and the process
 supervisor are shared services rather than each subsystem's own; Jobs are defined in configuration
 with occurrence keys, misfire, DST and retry semantics; Data reaches its connections through a
-catalog contract instead of reaching into MCP; and the source is eight crates whose dependency
-edges the compiler enforces, still linking into one `swiss.exe`. `docs/11` and `docs/12` record the
-stages and their acceptance criteria.
+catalog contract instead of reaching into MCP; and the source is nine shipping member crates
+whose dependency edges the compiler enforces, still linking into one `swiss.exe` — plus the
+dev-only `swiss-it` harness member (docs/44), which ships nothing. `docs/11` and `docs/12` record
+the stages and their acceptance criteria.
 
 **One acceptance task remains, and it is not code.** docs/01's rows are all filled now — the
 realistic adapter workload measured 22.4 MB against a fresh Node run's 113.8 MB on the same

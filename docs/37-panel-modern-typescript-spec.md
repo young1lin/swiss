@@ -240,6 +240,13 @@ handler 的总数逐阶段记账（§11）；对 `innerHTML` 写入的 lint 禁�
 - `.agents/rules/panel-proof-of-life.md`：第 3 步加"`npm run build` 之后再 `touch
   crates/swiss-panel/src/lib.rs`"——rust_embed 的指纹陷阱不变。
 
+> 增补（2026-09-22）：R6 落地（`66f065e`）时 deploy 门是单元门 → clippy → panel；`929af06` 随后
+> 在单元门与 clippy 之间插入 gate 2——真库门 `cargo test -p swiss-it --features it`，为该次运行显式
+> 设 `$env:DOCKER_HOST='tcp://127.0.0.1:2375'`、跑完即删，失败即 integration gate failed -
+> production left untouched，`-SkipGates` 连同各门一并跳过；panel phase 位置未动。CI 侧 `deny` 已先期
+> 加入（docs/40 O5），`integration` 同批落地，`release` 的 `needs` 扩为 `[build, panel, deny,
+> integration]`——没有真库证据的 tag 不发。权威记录 docs/44 §2.8。
+
 ### 8.2 文档
 
 - `docs/07-decisions.md`：补 **ADR-024**（docs/36 的选择）与 **ADR-025**（本文撤销 D9，选项表见 §1.1）。
@@ -278,11 +285,15 @@ npm run check          # typecheck ×2 + lint + build:check + vitest 553
 # Rust（仓库根；--workspace 不可省）
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-cargo tree -d          # 不许新增重复依赖；本文不加 cargo 依赖，这条是回归守卫
+cargo tree -d -e normal,build  # 不许新增重复依赖；本文不加 cargo 依赖，这条是回归守卫
 ```
 
 实机（proof-of-life，19998）：R2 三个大视图、R4 每片对应的视图、R5 每个视图——按
 `.agents/rules/panel-proof-of-life.md` 的完整清单，**真实指针事件**，不是 `element.click()`。
+
+> 增补（2026-09-22，`062928a`）：dup-check 原为裸 `cargo tree -d`；swiss-it 的 dev 依赖
+> （testcontainers→bollard）给 dev 图带进第二份 hyper 后，这条回归守卫连同 CI 的 linked-twice step
+> 一并收窄为 `-e normal,build`——dev 图不随二进制发货。权威记录 docs/44 §2.8。
 
 ### 10.1 交付顺序与每提交硬性要求
 

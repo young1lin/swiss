@@ -6,6 +6,15 @@
 > (§1.2); `GET /api/remote/runs` takes `since` / `until` / `actor` and `swiss run audit`
 > prints the window. Where this file and docs/41 disagree, docs/41 wins.
 
+> 2026-09-22 amendment (`fdea8e4`): the MCP `remote_exec` tool's `env` is an OBJECT of
+> name to string and reaches `remote.exec` in exactly that shape. The adapter used to
+> serialize env into `K=V` strings, which the action's object-only door refused - every
+> env-bearing MCP exec failed validation before the wire. The adapter validates the shape
+> (object, string values) and passes it through verbatim; identifier validation and
+> deterministic ordering stay in the action. Catch-up in the same pass: the actions table
+> below gains the `remote.cat` / `remote.write` rows that shipped 2026-09-17 (`c00e771`)
+> without one.
+
 Phase R1-R5, implemented 2026-10. The goal: let an AI agent (or a human at a terminal) run
 commands, upload source trees, and pull artifacts back on the machines the Tunnels plugin
 already reaches - through the SAME run accounting everything else uses, with output an agent
@@ -14,9 +23,10 @@ can actually read.
 ## What ships (R1-R5)
 
 - **`swiss-remote`** (new peer crate, deps: `swiss-core` + `swiss-host` only): the target
-  table, the three actions, the `/api/remote` routes, the `.swiss/remote.json` project
-  binding, and the sync/pull tree walkers. It never imports `swiss-tunnels` - it talks to
-  the host `RemoteTransportRegistry` seat, and only the tunnels plugin sits in it.
+  table, the five actions (exec, sync, pull, cat, write), the `/api/remote` routes, the
+  `.swiss/remote.json` project binding, and the sync/pull tree walkers. It never
+  imports `swiss-tunnels` - it talks to the host `RemoteTransportRegistry` seat, and
+  only the tunnels plugin sits in it.
 - **Host transport contract** (`swiss-host/src/services/remote.rs`): `RemoteTransportProvider`
   (list / exec / stat / open_read / create / mkdir_p), `RemoteRead`/`RemoteWrite` streaming
   file halves, `RemoteError` (Unknown/Unavailable/Withdrawing/Unsupported/Canceled/Failed),
@@ -32,13 +42,13 @@ can actually read.
   `/api/remote`, deliberately NO capability requirement - the target table stays editable
   while tunnels is off, and exec says honestly what is missing.
 - **CLI** (`swiss remote ...`, `swiss run ...` in `src/remote_cli.rs`): endpoints/targets/
-  target add|set|remove, resolve, exec/sync/pull, run status/logs/cancel. Everything after
-  a bare `--` is ARGV for the far side, untouched. For exec the same cut happens at the
-  first command word - the second positional after the subcommand, or the first when
-  `--target` already named the target - so `exec t ls -a` needs no `--`, local flags end
-  there, and a word before a bare `--` is no longer dropped (`exec t make -- -k` sends
-  `["make","-k"]`). Flag-shaped tokens BEFORE the command word are still local errors.
-  The exec command streams live output and exits with the REMOTE exit code.
+  target add|set|remove, resolve, exec/sync/push/pull/cat/write, run status/logs/cancel/audit.
+  Everything after a bare `--` is ARGV for the far side, untouched. For exec the same cut
+  happens at the first command word - the second positional after the subcommand, or the
+  first when `--target` already named the target - so `exec t ls -a` needs no `--`, local
+  flags end there, and a word before a bare `--` is no longer dropped (`exec t make -- -k`
+  sends `["make","-k"]`). Flag-shaped tokens BEFORE the command word are still local
+  errors. The exec command streams live output and exits with the REMOTE exit code.
 
 ## The target model
 
@@ -59,18 +69,24 @@ password, key or passphrase - those live in tunnels.json sealed storage and neve
 this boundary. While a provider is serving, target CRUD refuses an unknown endpoint with
 the known list; while none is, any non-empty id is accepted so config works with tunnels
 disabled. The CLI's `--endpoint` accepts either that stable id or one exact, unique endpoint
-display name, resolving the latter to the id before it writes the row. Duplicate names are
-refused and require an id; display-name convenience never becomes persisted identity. The
-human-readable `endpoints` listing puts names before ids, and `targets` shows endpoint names
-instead of UUIDs where possible; `--json` keeps the canonical ids.
+display name - the `label` `GET /api/remote/endpoints` serves, shown as the NAME column of
+the `endpoints` listing - resolving the latter to the id before it writes the row (an exact
+id always beats a colliding label). Duplicate names are refused listing both ids and require
+an id; display-name convenience never becomes persisted identity, and while no transport is
+serving there is no inventory to resolve against, so the selector is stored verbatim. The
+human-readable `endpoints` listing puts names before ids, and `targets` shows endpoint labels
+instead of UUIDs, falling back to the id on an empty label or unknown id; `--json` keeps the
+canonical ids.
 
 ## Actions (a run, not a job system)
 
 | action | input | notes |
 |---|---|---|
-| `remote.exec` | `{target, argv[], env?, cwd?, timeoutMs?}` | argv is an ARRAY. cwd is workspace-relative. Streams stdout+stderr live; outcome carries exitCode, canceled flag, target/endpoint meta. |
+| `remote.exec` | `{target, argv[], env?, cwd?, timeoutMs?}` | argv is an ARRAY; env is an OBJECT of name to string - the only shape the action accepts, and the shape the MCP tool passes through verbatim (`fdea8e4` above). cwd is workspace-relative. Streams stdout+stderr live; outcome carries exitCode, canceled flag, target/endpoint meta. |
 | `remote.sync` | `{target, source?, to?, exclude[], verbose?}` | Upload, NEVER deletes. A directory source walks the tree (skips `.git/ .swiss/ target/ node_modules/` plus caller excludes, uploads only changed sizes); a FILE source uploads just that file, renamed by `to` when given. One summary line. |
 | `remote.pull` | `{target, remote, to?, verbose?}` | A workspace-relative FILE streams to a local path; a workspace-relative DIRECTORY recurses (list_dir over the transport, depth/count capped) into a local tree. |
+| `remote.cat` | `{target, remote}` | The model-facing read primitive (`c00e771`): one workspace-relative FILE as the run output, buffered whole and decoded once - larger than 128 KiB is refused with "use remote.pull". Same path rule as pull; needs the `files` (or `sync`) capability. |
+| `remote.write` | `{target, remote, content}` | The mirror write primitive: a content string becomes the remote file (create/overwrite, chunked upload). Same path rule; needs the `files` (or `sync`) capability. |
 
 Every action runs through the shared RunCoordinator: Run ID is the job ID, cancel is the
 run cancel chain (`POST /api/runs/{id}/cancel` reaches the SSH channel close through the
@@ -139,6 +155,8 @@ swiss remote sync build --source . --exclude vendor/
 swiss remote push build app.exe            # one file, to the workspace root
 swiss remote pull build out/app.bin --to artifacts/app.bin
 swiss remote pull build out/dists          # a directory recurses into artifacts/out/dists
+swiss remote cat build logs/build.log      # one remote file to stdout (128 KiB limit)
+swiss remote write build notes.md < notes.md   # stdin becomes the whole remote file
 swiss run logs 17 -f; swiss run cancel 17
 ```
 
@@ -146,8 +164,12 @@ swiss run logs 17 -f; swiss run cancel 17
 
 - **The panel page (R6) shipped after the first cut**: #remote lists targets with an Add/Edit sheet over the same /api/remote routes (crates/swiss-panel/src/admin_assets/js/views/remote.js).
 - **R7: the MCP adapter shipped**: five thin tools over /mcp/remote (swiss-mcp's
-  adapters/remote.rs), dispatching these actions by name through the same run
-  coordinator - a model can drive a target with no shell.
+  adapters/remote.rs) - `remote_exec`/`remote_sync`/`remote_pull`/`remote_cat`/
+  `remote_write`, one per action - dispatching by name through the same run coordinator,
+  so a model can drive a target with no shell. `remote_exec` takes `target, argv[],
+  cwd?, env?, timeoutMs?`; env is an OBJECT of name to string, the action's own shape,
+  passed through verbatim (`fdea8e4`) - the adapter checks the shape, the action checks
+  identifiers and sorts; unknown arguments are refused at the tool door.
 - **R8: the targets group family shipped** (see below).
 - No second SSH client, no separate daemon, no sync delete, no shell pseudo-terminal, no
   multi-crate dependency edges between peers (the host seat is the only path).
@@ -237,4 +259,5 @@ the error; a target filter and Clear. `views/remote-runs.js`; vitest
   store family semantics (pin/rename/reorder/legacy shape), the scope unit test, and the
   root integration test `the_family_serves_the_targets_scope` (tests/adminapi.rs).
 - Root: plugin lifecycle (start registers/stop withdraws and unregisters), CLI parsing
-  (the `--` contract, durations, env pairs).
+  (the `--` and first-command-word contract, endpoint name resolution, durations,
+  env pairs).
