@@ -110,6 +110,19 @@ pub(crate) async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
         "MCP_GATEWAY_TOKEN",
         port,
     );
+    // The connection catalog the daemon's MCP plugin registers on start (docs/12
+    // W3): without it every /api/db route answers the honest 503, and docs/45's L2
+    // needs the stream routes over the real gateway. Registered exactly the way the
+    // plugin does, so the harness cannot drift from the product's wiring.
+    let catalog = swiss_host::services::catalog::CatalogRegistry::new();
+    let provider = swiss_mcp::registry::RegistryCatalog::new(
+        registry.clone(),
+        swiss_host::services::catalog::LeaseTracker::new(),
+    );
+    catalog
+        .register(std::sync::Arc::new(provider), "swiss-it-boot")
+        .expect("register the catalog provider");
+    let _ = ctx.catalog.set(std::sync::Arc::new(catalog));
     let app = build_app(ctx, None);
     tokio::spawn(async move {
         // Serves until the runtime drops; a bind-level failure here is a bug worth
@@ -422,6 +435,91 @@ async fn redis_group_round_trips_through_the_real_gateway() {
         .expect("resources/read");
     assert!(!read.contents.is_empty());
 }
+#[tokio::test]
+async fn stream_route_round_trips_three_directions_and_groups() {
+    // docs/45 §2.5 L2: the admin route over the real gateway — newest window,
+    // before-page, after-page, the groups table, and the two 400s, exactly the
+    // calls the panel's stream view makes.
+    let f = fresh(Kind::Redis, "l2_stream").await;
+    let g = boot(vec![("str", f.def.clone())]).await;
+
+    let (status, latest) = g
+        .api(reqwest::Method::GET, "/api/db/str/stream?key=stream:ticks", None)
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(latest["type"], "stream");
+    assert_eq!(latest["length"], json!(10_000));
+    let entries = latest["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), 100);
+    assert_eq!(entries[0]["id"], json!("1700000999900-0"), "newest first");
+    assert_eq!(latest["more"], json!(true));
+
+    let (status, older) = g
+        .api(
+            reqwest::Method::GET,
+            "/api/db/str/stream?key=stream:ticks&before=1700000990000-0&count=100",
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    let older = older["entries"].as_array().expect("entries").clone();
+    assert_eq!(
+        older[0]["id"],
+        json!("1700000989900-0"),
+        "strictly older than the cursor, still newest-first"
+    );
+
+    let (status, after) = g
+        .api(
+            reqwest::Method::GET,
+            "/api/db/str/stream?key=stream:ticks&after=1700000000000-0&count=5",
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    let after: Vec<&str> = after["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|e| e["id"].as_str().expect("id"))
+        .collect();
+    assert_eq!(
+        after,
+        vec![
+            "1700000999900-0",
+            "1700000999800-0",
+            "1700000999700-0",
+            "1700000999600-0",
+            "1700000999500-0"
+        ],
+        "the newest five above the cursor"
+    );
+
+    let (status, groups) = g
+        .api(
+            reqwest::Method::GET,
+            "/api/db/str/stream/groups?key=stream:ticks",
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(groups["groups"][0]["pending"], json!(7));
+    assert_eq!(groups["groups"][0]["lag"], json!(9_993));
+
+    let (status, body) = g.api(reqwest::Method::GET, "/api/db/str/stream", None).await;
+    assert_eq!(status, 400);
+    assert_eq!(body["error"], "key is required");
+    let (status, body) = g
+        .api(
+            reqwest::Method::GET,
+            "/api/db/str/stream?key=s&before=1-0&after=2-0",
+            None,
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(body["error"], "pass only one of before / after — they page in opposite directions");
+}
+
 
 /// The database name out of a pg def's URL, for resource URIs.
 fn url_db(def: &Value) -> String {

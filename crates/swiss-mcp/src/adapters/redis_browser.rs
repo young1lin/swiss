@@ -19,12 +19,13 @@
 
 use super::direct::Lazy;
 use super::redis::{
-    assert_command_allowed, type_aware_read, value_i64, value_string, RedisHandle, SCAN_TYPES,
+    assert_command_allowed, read_stream_groups, read_stream_window, type_aware_read, value_i64,
+    value_string, RedisHandle, RedisReadClient, SCAN_TYPES,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
-use swiss_host::dbbrowser::RedisBrowser;
+use swiss_host::dbbrowser::{redis_stream_opts, RedisBrowser};
 
 pub struct RedisDataBrowser {
     label: String,
@@ -265,7 +266,45 @@ impl RedisBrowser for RedisDataBrowser {
 
     async fn read_key(&self, key: &str) -> Result<Value, String> {
         let handle = self.conn.get().await?;
+        // docs/45 §2.1: a stream key's /key answer is the newest-first window, not
+        // type_aware_read's oldest-first page — the panel opens a key without knowing
+        // its type, so the first response already carries the right shape. TYPE (and
+        // TTL, the one fact every other type's /key answer carries) ride ahead;
+        // type_aware_read itself is untouched: the MCP redis_read tool keeps its
+        // published oldest-first contract (docs/45 D8). The extra TYPE round trip is a
+        // one-click cost, never a per-tick one.
+        let type_ = handle.as_ref().type_of(key).await?;
+        if type_ == "stream" {
+            let ttl = handle.as_ref().ttl(key).await?;
+            let mut window = self.read_stream(key, &json!({})).await?;
+            if let Some(map) = window.as_object_mut() {
+                map.insert("ttl".into(), json!(ttl));
+            }
+            return Ok(window);
+        }
         type_aware_read(handle.as_ref(), key, 0, 1000).await
+    }
+
+    async fn read_stream(&self, key: &str, o: &Value) -> Result<Value, String> {
+        // docs/45 §2.1: the window over the leased shared handle. Options go through
+        // the same host helper the route validates with — one rule, no drift between
+        // transport and model.
+        if key.is_empty() {
+            return Err("key is required".into());
+        }
+        let (bound, count) = redis_stream_opts(o)?;
+        let handle = self.conn.get().await?;
+        read_stream_window(handle.as_ref(), key, &bound, count).await
+    }
+
+    async fn stream_groups(&self, key: &str) -> Result<Value, String> {
+        // docs/45 §2.4: the read-only consumer-group fold — XINFO GROUPS is the
+        // whole story; no XACK/XCLAIM/XTRIM ever leaves this surface.
+        if key.is_empty() {
+            return Err("key is required".into());
+        }
+        let handle = self.conn.get().await?;
+        read_stream_groups(handle.as_ref(), key).await
     }
 
     async fn run_command(&self, line: &str) -> Result<Value, String> {
