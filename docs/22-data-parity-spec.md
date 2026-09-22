@@ -50,6 +50,8 @@ docs/21 用五个成熟参照逐条核对了 swiss Data 模块,35 条差距定�
 改动:面板把行网格同款 filters JSON 附到 /export;后端 `export()` 解析 filters(复用 `parse_filters`)并传给适配器;适配器侧把 filter→WHERE 组装抽成 `browse_where()`,rows 与 export 共用同一函数(COUNT 同源)。行帽与 `x-export-capped` 不变。
 验收:Rust 单测(带 filter 的导出 SQL 含 WHERE 且值走绑定参数);19998:过滤后导出仅含命中行,`x-export-rows` = 过滤总数。
 
+增补(2026-09-22,`0349c41`,由 docs/44 L1 真库套件在真 MySQL 8.4 上现场冲出):本节的 filter→WHERE 与 W4.1 的全列寻址共用的比较占位符,对 MySQL JSON 列原是字符串绑定——服务端按文本比较、恒零行,JSON 列上的过滤和无 PK 行寻址线上从未生效过;`swiss-host` `dbbrowser.rs` 的 `typed_ph` 已把 json 比较占位符改为 `CAST(? AS JSON)`(SET 子句不变)。同批同源一例落在 W3.1 补全:`swiss-mcp` `mysql_browser.rs` 的列查询读 `information_schema.column_name` 未加别名,MySQL 8 prepared-statement 元数据把无别名结果名大写,行键恒不匹配、FROM 表列补全线上恒空,已加别名。两处单元 stub 都照不见,只有真服务器咬得动。
+
 ### W0.3 Redis type 过滤
 参照:dbgate `plugins/dbgate-plugin-redis? no — packages 侧 driver.js:56-71`。
 改动:键列表 pattern 输入旁加 select(All types / string / hash / list / set / zset / stream),请求附 `&type=`。后端已支持(`redis_browser.rs:56,71`)。

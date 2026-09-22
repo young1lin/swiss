@@ -1,5 +1,10 @@
 # 08 — Testing
 
+> 2026-09-22 amendment (post-`f3b6899` re-check): gate-2 facts verified against the code —
+> endpoint resolution and fail-not-skip added to the successor paragraph, the `--workspace`
+> warning now counts nine shipping member crates plus dev-only `swiss-it`, the CI tree gate is
+> scoped `-e normal,build`, and the CI section records the `integration` job (`929af06`).
+
 ## The premise
 
 The Node build ships **10,859 lines of vitest across 54 files**, and its `AGENTS.md` requires that
@@ -38,9 +43,11 @@ Two environment rules carry over exactly:
 
 That second rule now has a successor: the real-DB half lives behind a second gate,
 `cargo test -p swiss-it --features it` (docs/44). testcontainers starts MySQL 8.4,
-PostgreSQL 17 and Redis 7 wherever Docker is, every test restores its own database from
-the committed seeds, and the first gate above stays green on a machine with no Docker at
-all - `swiss-it` compiles to empty files without the feature.
+PostgreSQL 17 and Redis 7 wherever Docker is (`DOCKER_HOST`), or one of the three
+`SWISS_IT_*_URL` escapes supplies an existing engine — and asking for the feature while
+having neither is a FAILURE, never a skip. Every test restores its own database from the
+committed seeds, and the first gate above stays green on a machine with no Docker at all -
+`swiss-it` compiles to three empty targets without the feature.
 
 ## Test inventory, by phase
 
@@ -168,8 +175,10 @@ cargo test --workspace
 ```
 
 **Drop `--workspace` and this shrinks to a fraction.** Cargo then selects the root package
-alone — its unit tests plus the integration suite — and the eight member crates, which hold
-the large majority of the tests and most of the code, are never built. The run still says ok.
+alone — its unit tests plus the integration suite — and the nine shipping member crates, which
+hold the large majority of the tests and most of the code, are never even built (the tenth
+member, `swiss-it`, is dev-only and compiles to empty targets without its `it` feature,
+docs/44). The run still says ok.
 Every gate command in this repository therefore carries `--workspace`; a green run that
 omitted it means nothing. (Counts are deliberately not quoted here — they rot; the shape
 does not.)
@@ -227,7 +236,9 @@ Node-sealed fixtures is `tests/envelope_compat.rs`, and the RSS guard is `tests/
   whatever it finds, so it gates nothing on its own, and the tree already carries a spread of
   RustCrypto versions because russh is a generation ahead of our aes-gcm. The step prints the full
   picture and fails only on a second tokio, TLS stack or hyper — which is what the megabytes
-  actually ride on.
+  actually ride on. Since docs/44 the check is also scoped to `-e normal,build`: the swiss-it
+  dev graph pulls its own copies (testcontainers' bollard/hyper among them) that never reach
+  the binary, and dev edges must not be able to fail a shipping-graph gate.
 - **Envelope round-trip against Node-sealed fixtures.** Check in a fixture sealed by the Node build
   and assert Rust opens it. This catches HKDF argument-order and base64 mistakes at the exact moment
   they are introduced rather than on a user's machine.
@@ -259,12 +270,19 @@ green AND the proof-of-life walk on 19998 answered (`.agents/rules/panel-proof-o
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo tree -d
+cargo tree -d -e normal,build   # the SHIPPING graph: dev edges (swiss-it's harness)
+                                # may carry their own copies and must not fail it
 cargo build --release   # the shipping binary (ADR-012); record its size
 ```
 
 Plus the panel's own job (docs/37 R6): `npm ci && npm run check` in `crates/swiss-panel/panel/`
-on ubuntu with node 24 — independent of the five Rust build jobs, and none of them depends on it.
+on ubuntu with node 24 — independent of the five Rust build-matrix jobs, and none of them
+depends on it.
+
+And since `929af06` (docs/44 §2.8), a standalone `integration` job runs gate 2 on ubuntu —
+`cargo test -p swiss-it --features it --locked` against the runner's own dockerd, with a
+failure step that dumps the leftover containers and the mysql log tail. A tag's release job
+waits on it.
 
 Mirror the Node build's rule: **`cargo clippy` and `cargo test` must both be green before a change
 is considered done.**

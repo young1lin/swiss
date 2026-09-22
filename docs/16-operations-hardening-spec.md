@@ -161,6 +161,12 @@ swiss remote 功能"。
     一直在服务；两个 200 ms 一次的 `/health` 探针都量到 **3.1 s** 停机（09:45:56.1 → 09:45:59.2 UTC）。
   - 从 `C:\Users\<user>` 直接跑 `bin\swiss.exe status`、`bin\swiss.exe remote targets` 都能到 19999。
 
+增补（2026-09-22，`929af06`）：上面顺序里的「门禁」块自此在单元门与 clippy 之间多了一条门
+`cargo test -p swiss-it --features it`（真库集成，docs/44；脚本为这一次运行显式设
+`$env:DOCKER_HOST = 'tcp://127.0.0.1:2375'`、跑完即删，非零退出同样 production left untouched，
+`-SkipGates` 连同其它门一并跳过）。形状见 docs/44 §2.8；同提交还给
+`.github/workflows/build.yml` 加了 ubuntu 的 `integration` job，`release` 需要它。
+
 ## 4. H4 — Rust 仓库的 CI
 
 ### 4.1 目标行为

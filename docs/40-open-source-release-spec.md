@@ -91,6 +91,10 @@
 `.github/PULL_REQUEST_TEMPLATE.md`、`.github/dependabot.yml`（cargo / npm / actions，每周）、
 `deny.toml`（license allowlist = §0 实测集合；advisories deny）。
 
+> 增补（2026-09-22，`062928a`）：CONTRIBUTING 的 The gates 段后来加入第四条——真库门
+> `cargo test -p swiss-it --features it`（需要 Docker 或 `SWISS_IT_*_URL`）；上文的三道 gate 是
+> 2026-09-21 创建时的记录。权威记录 docs/44 §2.8。
+
 ### O4 品牌（D7）
 
 - 新 mark：红色圆角方块（`#DA291C` 保留——颜色不是商标）+ 白色"展开的三把工具"扇形

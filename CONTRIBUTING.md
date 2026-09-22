@@ -16,7 +16,7 @@ version.
 
 ## The gates
 
-Every change passes all three before it is proposed:
+Every change passes all four before it is proposed:
 
 ```
 cargo test --workspace

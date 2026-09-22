@@ -1,16 +1,33 @@
 # 43 — Data：页签溢出、多库目录，与 mockup B 的最后一段路
 
 > 状态：**已实施**（M1–M5 一阶段一提交：页签溢出、侧栏成树、多库目录、工具条收敛+状态条、文档与 ADR）。
-> 增补（实施后 owner 三条）：侧栏连接/数据库选择器由浮层菜单改为**抽屉**（行内展开推移树，grid-rows 动画）；
+> 增补（实施后 owner 三条，`1c8b4a9`+`bfb48f8`）：侧栏连接/数据库选择器由浮层菜单改为**抽屉**（行内展开
+> 推移树，`grid-template-rows 0fr→1fr` 过渡，`.db-drawer`/`.db-drawer-in`，条目行 `.db-drow`；一次只开
+> 一个，Esc/外点关闭，闭合时 `inert`）；
 > 页签条 "+" **每次必新开一个 SQL 页签**（绕过去重；上限只在有可驱逐页时收缩，全忙时越限而不拒开）；
 > 卡片**右键三件套**：重命名（custom 覆盖派生标题，Enter 提交/Esc 取消/失焦提交）、关闭左侧、关闭右侧
 > （以被右键的卡片为轴，复用批量关闭的一次性脏确认）。
-> 增补四（200 行之墙倒下）：侧栏树**一次拉全目录**（limit=2000，服务端目录上限 1000→5000）；分页器退役，
+> 增补四（`e1f052c`，200 行之墙倒下）：侧栏树**一次拉全目录**（limit=2000，服务端目录上限 1000→5000）；分页器退役，
 > 各节带渲染上限 200 行 + 「再显示 N 项 / 收起」行（记忆键 schema/节，换库即清）；搜索结果不受上限；
 > 脚注改为「共 N 项」，拉断时提示用搜索过滤。
-> 终态数字：`npm run check` 84 个文件 / 781 个用例全绿（typecheck ×2 + eslint + 发射新鲜度 + vitest）；
-> `base.css` 36,533 B + `views.css` 90,864 B；发射 JS 917,490 B / 51 个文件；`swiss.exe` 10,294,784 B。
-> 截图在 `docs/assets/43/`（页签溢出、成树侧栏、多库目录、工具条，明暗各一）。基线 `4b08c43`（master，2026-09-21）。实施分支 `data-full-access`
+> 增补五（`f63f15c`，「再显示」分批下行，「收起」只在尽头）：一次点击只放开一批——
+> `DB_TREE_ROW_STEP = 500`，末端取余（1,712 张表：200→700→1,200→1,700→1,712）；提示行是
+> `button.db-tree-cap`，携 `data-treemore`（记忆键）与 `data-next`（本次点击将画到的精确行数，
+> 处理函数照单信任、不从状态重算）；**窗口抵达节末才翻成「收起」**（`data-treeless`，词条 `dataView.treeShowFewer`），
+> 点它删除记忆、窗口弹回 200。记忆字段由 `treeShowAll: Record<string, boolean>` 改为
+> **`treeShown: Record<string, number>`**（各节已画出的窗口数），键仍 `schema/节`，换连接/换库即清；
+> 搜索结果仍整段不受上限。阶梯、末尾翻面与弹回由 `db-tree.test.ts` 钉住。
+> 增补六（`742727a`，菜单锚宽下限——早于增补四实施，当时漏记）：浮层菜单**永不窄于打开它的那一行**
+> （真机量到连接菜单 160px 对 233px 的侧栏行）：锚带 `width` 时在量矩形**之前**写内联
+> `min-width: max(160px, <锚宽>)`（`menu.ts:76`），`clampMenuPos` 因此看到真实宽度；小锚（条尾 28px 溢出
+> 按钮）仍保样式表 `.menu.float` 的 160px 地板（`views.css:332`），指针定位（无宽度）的 ctx 菜单不受
+> 影响。`menu-anchor-width.test.ts` 三例钉住。动机案例（连接/库行）同日上午已被增补改成抽屉，该规则
+> 仍约束其余所有传 `DOMRect` 的 `popupMenu`（卡片右键、页签溢出、band 的 ⋯）。
+> 终态数字（增补五/六合入后在 HEAD `13ec65c` 复测，`npm run check` 全绿）：85 个文件 / 795 个用例
+> （typecheck ×2 + eslint + 发射新鲜度 + vitest）；`base.css` 36,533 B + `views.css` 94,245 B；
+> 发射 JS 931,856 B / 51 个文件；`swiss.exe` 10,294,784 B（`4b08c43` 时的记录，未重建）。
+> 截图在 `docs/assets/43/`（多库目录、工具条，明暗各一，另有一张 Redis UTF-8 解码对照；页签溢出与
+> 成树侧栏两张始终未拍——目录里从来没有）。基线 `4b08c43`（master，2026-09-21）。实施分支 `data-full-access`
 > （worktree `.agents/worktrees/data`）。本文承接 `docs/42-data-object-tabs-spec.md`：42 的 T1（状态切分）
 > 与 T2（页签条）已经做完，**T3（侧栏成树）与 T4（工具条收敛 + 状态条）一行没动**——本文把它们原样收编，
 > 再加上 owner 在 T2 走查后提的两条新需求。视觉参考仍是 `docs/assets/42/data-layout-mockup.html`
@@ -220,6 +237,12 @@ crates/swiss-mcp/src/adapters/         mysql_browser.rs / pg_browser.rs / redis_
 | D8 | 中键关闭（`auxclick`，`button === 1`），与 `×` 复用同一条关闭路径（同样的脏页签确认） | 浏览器页签习语；实现成本是一个分支 |
 | D9 | **不做**：页签拖拽重排、页签分屏、把页签持久化到下次开面板 | docs/42 §9 已经定过，本文不翻案 |
 
+**增补（`742727a`，实施后）**：`popupMenu` 后来有了**锚宽下限**——浮层菜单永不窄于打开它的那一行
+（真机量到连接菜单 160px 对 233px 的侧栏行）：锚带 `width` 时在量矩形**之前**写内联
+`min-width: max(160px, <锚宽>)`（`menu.ts:76`），`clampMenuPos` 因此看到真实宽度；小锚（28px 的条尾
+溢出按钮）仍保样式表 `.menu.float` 的 160px 地板（`views.css:332`），指针定位（无宽度）的 ctx 菜单
+不受影响。`menu-anchor-width.test.ts` 三例钉住：行宽即地板、CSS 地板保底、无宽锚不动。
+
 ### 2.3 验收
 
 **vitest**（扩 `test/db-tabs.test.ts`，纯函数优先）：
@@ -366,8 +389,14 @@ pg 的 schema × 类型双层不塌，`#dbSchema` 下拉已消失而 schema 过�
      `browsable: false` 的条目**禁用**，`title` 就是服务端给的 `reason`。
    - 两行都是 band 形状，和 M2 的树是同一套视觉（swiss-ui-design 规则 5）。**不要做成面包屑**——
      chevron 必须让它一眼看出是下拉（§13 清单第 6 条）。
+   （增补 `1c8b4a9`：上面写的浮层菜单后来改成**抽屉**——行下方同级展开 `.db-drawer`，
+   `grid-template-rows 0fr→1fr` 过渡，内层 `.db-drawer-in` 自滚（上限 40vh），**推移**树而非覆盖；
+   条目行 `.db-drow`，`label` 只剩名字、`mark` 画方言、`meta` 画表数；状态 `dbDrawer`（`""`/`"conn"`/`"db"`）
+   一次只开一个，Esc 与外点关闭，行带 `aria-expanded`，闭合时抽屉 `inert`。菜单时代的分组标题/
+   分隔线/禁用/`title` 语义原样搬进抽屉。）
 3. **切库 = 切连接的轻量版**：走**既有的** `dbOkToLeave()` 确认（`data-view.ts:433` 那条，按整条页签条的
-   缓冲改动总数发问），然后清 `tables` / `tablesPage` / `grep` / `sort`，`dbResetTabsForConn()` 关掉全部
+   缓冲改动总数发问），然后清 `tables` / `grep` / `sort`（增补四起 `tablesPage` 退役，改为清
+   `treeShown`——各节展开窗口，见增补五），`dbResetTabsForConn()` 关掉全部
    对象页签（它们属于旧库），重新拉表列表。**理由**：一张 `orders` 页签在换库之后指向的是另一张表，
    留着它比关掉危险得多。
 4. **表名前缀跟着走**：M1 的 D3 规则在这里兑现——浏览辅库时卡片名与侧栏行显示 `db.table`，浏览主库时

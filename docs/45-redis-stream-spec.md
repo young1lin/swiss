@@ -12,6 +12,10 @@
 > 追加（同日）：「所有的功能点，都要有测试的哦，都要保证有集成测试，单元测试，才能通过的。以及设计思路，不仅
 > 要写在 spec 中，还要在相关代码汇总有注释，为什么这么设计之类的」「要求有有丰富的测试」
 > 五个决定按推荐通过（「可以」，见 §1）。
+>
+> 增补（2026-09-22，HEAD `13ec65c` 复核）：§0 的 file:line 逐条核对，全部仍指所说内容；唯一错处
+> 是工具名——代码里没有 `redis_get`（全仓零匹配），该 MCP 工具实名 `redis_read`（`redis.rs:77`），
+> §0.1、D8、§4 第 7 条、§5 四处已改正；行号引用未动。
 
 ## 0. 现状与缺口（读代码得出，逐条给 file:line）
 
@@ -24,7 +28,7 @@
   `type_aware_read(.., 0, 1000)`——面板打开一个 stream 键，拿到的永远是**最早的 1000 条**，`truncated: true`
   以外没有任何继续读的手段（`RedisBrowser` trait 没有第二个读法，
   `crates/swiss-host/src/dbbrowser.rs:758-777`）。
-- MCP 工具 `redis_get`（`redis.rs:82-93`）有 `offset/limit`（上限 1000），也是按"最老起的排名"分页。
+- MCP 工具 `redis_read`（`redis.rs:82-93`）有 `offset/limit`（上限 1000），也是按"最老起的排名"分页。
 - `redis.rs:146-147`：`XREAD` / `XREADGROUP` 在阻塞命令黑名单里——**这是对的**（docs/22：一条共享连接，
   阻塞命令会把整个浏览器挂住），本文不动它；后果是"追新"只能轮询，见 D6。
 - `redis.rs:331-350` 的 `stream_entries`（把 `[id, [f, v, …]]` 变成 `{ id, fields }`）**没有单元测试**。
@@ -79,7 +83,7 @@ docs/05：磁盘与线上格式不动；两条新 HTTP 路由是**新增**，旧
 | D5 | 排期：`integration-harness` 合并 + master 的 filter-repo 之后再开 | 状态头 |
 | D6 | （事实推出，owner 知悉）`XREAD` / `XREADGROUP` 保持禁用，追新用 `XREVRANGE` 轮询——共享连接不能被阻塞命令占住（docs/22） | §2.1 |
 | D7 | （owner 规则）**每个功能点单测 + 集成测试都要有才算过**；设计理由 spec 里一段、代码旁边再一段 | §2.5、§3 每项 |
-| D8 | MCP 工具 `redis_get` 的 stream 语义**不动**（offset/limit 从最老起）；新能力只走浏览器 API。原因：工具合同已发布给 agent，改方向是破坏性变更，另开 spec | §5 |
+| D8 | MCP 工具 `redis_read` 的 stream 语义**不动**（offset/limit 从最老起）；新能力只走浏览器 API。原因：工具合同已发布给 agent，改方向是破坏性变更，另开 spec | §5 |
 
 ## 2. 设计
 
@@ -292,7 +296,7 @@ S2/S3 另加 `.agents/rules/panel-proof-of-life.md` 的真浏览器走查（真�
 4. 每 tick 恰好 3 条命令（第 5 tick 4 条）——集成测试钉住。
 5. 消费组表显示 pending / lag，与 `XINFO GROUPS` 手敲一致。
 6. `cargo test --workspace` 在无 Docker 的 shell 仍绿；gate 2 新增 ≥ 11 条全绿；vitest 新增 ≥ 20 条全绿。
-7. `redis_get` 工具对 stream 的行为与基线逐字相同（`tests/` 既有用例不动即证）。
+7. `redis_read` 工具对 stream 的行为与基线逐字相同（`tests/` 既有用例不动即证）。
 8. 新代码里每个纯函数、两个 trait 方法、`data-stream.ts` 文件头都有"为什么这么设计"的注释（review 时逐个点名）。
 
 ## 5. 不做什么
@@ -300,7 +304,7 @@ S2/S3 另加 `.agents/rules/panel-proof-of-life.md` 的真浏览器走查（真�
 - `XREAD` / `XREADGROUP` / 服务端推送（SSE / WebSocket）：共享连接不能阻塞（docs/22），网关不持有订阅（宪法）。
 - XACK / XCLAIM / XTRIM / XDEL / XGROUP 的 UI（D4）；`redis_command` 控制台照旧能敲，走既有的 destructive 门。
 - 虚拟滚动、图表、字段级过滤 / 搜索、导出（先看得见，再谈筛）。
-- `redis_get` 工具的 stream 方向（D8）——如果 agent 侧也要最新优先，另开一条 spec 改工具合同。
+- `redis_read` 工具的 stream 方向（D8）——如果 agent 侧也要最新优先，另开一条 spec 改工具合同。
 - Redis < 6.2（排他区间语法）；哨兵 / 集群（既有连接模型之外）。
 
 ## 6. ADR

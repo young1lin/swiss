@@ -84,13 +84,15 @@ docker pull redis:7
 - **WSL 没在跑，dockerd 就没在跑。** 开机后第一次跑集成测试前 `wsl -d <distro> --exec true`
   拉起发行版即可；测试底座在连不上 `DOCKER_HOST` 时会把这一句打在失败信息里。
 - **容器收尸不靠 ryuk。** testcontainers-rs 0.27 没有 ryuk 容器；本仓库自带看门狗
-  （`it-reaper` 子进程：stdin 收容器 id，父进程一死就逐个 DELETE）加 atexit 钩子双保险。
-  被 taskkill / 断电连坐杀掉的进程由下一次启动的“超过 1 小时的 owned 容器”超时 prune 兜底。
+  （`it-reaper` 子进程：stdin 第一行收 docker endpoint、其后每行一个容器 id，父进程一死——stdin EOF——
+  就逐个 force-DELETE）加 atexit 钩子双保险，重复的 DELETE 读 404 视为成功。被 taskkill / 断电连坐杀掉
+  的进程由下一次启动的“超过 1 小时的 owned 容器（标签 `org.swiss-it.owned`）”超时 prune 兜底。
 - **端口是随机的。** 容器端口由 Docker 分配，测试从 API 读，不要在任何地方写死 3306/5432/6379；
   本机 19999 上真实的 mysql/redis 连接与之无关。
-- **`DOCKER_HOST` 是用户级变量。** 由 Windows 服务或计划任务启动的进程看不到它——19999 的
-  部署脚本在 agent shell 里跑，能看到；如果某天集成测试进了 `scripts/deploy.ps1` 的门禁而
-  部署改成了服务启动，那一步要显式传。
+- **`DOCKER_HOST` 是用户级变量。** 由 Windows 服务或计划任务启动的进程看不到它。集成测试已经进了
+  `scripts/deploy.ps1` 的门禁（`929af06`）：脚本为该次运行显式设
+  `$env:DOCKER_HOST = 'tcp://127.0.0.1:2375'`、跑完即删，所以这一步不依赖用户级变量可见；若部署整体
+  改成服务启动，其余继承环境的步骤仍要显式传。
 - **代理。** WSL 启动时那句 "localhost proxy configuration was detected but not mirrored" 只是提醒
   NAT 模式不转发 Windows 的本地代理；`docker pull` 走 WSL 自己的网络，与之无关。拉不动镜像时在
   `/etc/systemd/system/docker.service.d/override.conf` 里加 `Environment="HTTPS_PROXY=..."`。

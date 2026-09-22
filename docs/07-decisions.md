@@ -751,6 +751,14 @@ a cap instead of unbounded memory. Rollback is real too: T1 (the state split) is
 invisible refactor; tabs T2-T4 sit on top of it, and a true retreat removes those three
 commits while T1's split stays (a one-tab array is exactly the old single record).
 
+> **Amendment (2026-09-22, `bfb48f8`, recorded in docs/43 增补).** The ninth-tab refusal no
+> longer applies to the strip's `+`: it force-opens a new SQL tab even when all eight are
+> dirty — the cap shrinks the strip only when a clean tab can be evicted, and going
+> over-cap is preferred to refusing an explicit open. Opening an object (a table, key or
+> console card) still refuses when every tab is dirty. The bounded-memory concession
+> itself stands — eviction on open still bounds what a session holds; refusing the
+> user's explicit "+" was the wrong side of the trade.
+
 ## ADR-027 — Data's many databases: the primary is writable, the rest are read-only, no per-database pools (docs/43)
 
 **Status: Accepted (2026-09-22).** A database MCP configuration names one database, but

@@ -181,8 +181,10 @@ export function tk(key: string): string;                    // identity; marks a
 `#addBtn` 与 `#themeBtn` / `#expandBtn` 的 title / aria-label、`#langBtn` 的 aria-label（title 见下）、
 `#sideCap`、`#memChip` 的 title、rail 的 `aria-label`。`paintThemeBtn()` 的两句 title 也走 `tr`。
 
-`#langBtn` 点击：`if (!pageCanLeave()) return;`（page-registry 导出一个查询，`canLeave` 拦住就什么
-都不做）→ `setLang(nextLang())` → `await loadLocale()`（切到中文时才真的下载字典）→ `paintChrome()`
+`#langBtn` 点击：`if (!pageCanLeave()) return;`（page-registry 导出一个查询，现名
+`pageHasPendingChanges()`；`canLeave` 拦住就拒绝切换——增补 `9cdeb3e`（2026-09-21，docs/42 T2
+中文走查时发现，记于 docs/43 §0.2 第 4 条）：拒绝不再沉默，改 toast `i18n.pendingBlocksSwitch`）
+→ `setLang(nextLang())` → `await loadLocale()`（切到中文时才真的下载字典）→ `paintChrome()`
 → `await navigatePage(currentView(), true)` → `paintLangBtn()`。切回英文时 `install("en", null)`。
 
 `paintLangBtn()` 的 title 是全面板**唯一一句写在目标语言里的文案**：英文界面上是 `切换到中文`，中文界面上
