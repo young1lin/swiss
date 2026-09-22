@@ -450,9 +450,13 @@ export interface DbConnState {
   conn: string | null;
   tables: ApiDbTableRow[];
   tablesTotal: number;
-  tablesPage: number;
-  tablesLimit: number;
+  /* docs/43 addendum: the tree fetches the WHOLE catalog (no pager), so "more" is the one
+   * honest truncation flag left - the fetch cap clipped the list and grep is the way past.
+   * treeShowAll remembers which section bands were expanded past the render cap, keyed by
+   * "schema/section" (empty schema for MySQL's root bands); it is display memory, reset on
+   * connection/database switches, never identity. */
   more: boolean;
+  treeShowAll: Record<string, boolean>;
   grep: string;
   schemaFilter: string;
   sort: string;

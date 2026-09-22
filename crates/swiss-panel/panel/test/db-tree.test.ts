@@ -79,6 +79,7 @@ Object.assign(globalThis, {
 const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const view = await import(pathToFileURL(join(here, "data-view.js")).href) as {
   renderDbTables: () => void;
+  dbLoadTables: () => Promise<void>;
   dbSectionLabel: (sec: string) => string;
   dbSortMenu: () => Array<{ label?: string; pick?: boolean; on?: boolean; sep?: boolean }>;
 };
@@ -103,7 +104,7 @@ function mount(kind: "mysql" | "pg" | "redis"): void {
   const d = dbConnState();
   d.conns = [dbConn("c1", kind)];
   d.conn = "c1";
-  d.tables = []; d.tablesPage = 0; d.tablesTotal = 0; d.more = false; d.grep = "";
+  d.tables = []; d.treeShowAll = {}; d.tablesTotal = 0; d.more = false; d.grep = "";
   d.schemaFilter = ""; d.sort = "name"; d.sortDir = "asc";
   d.redis = null; d.redisError = false;
   d.gridCfg = { widths: {}, hidden: [] };
@@ -323,5 +324,122 @@ describe("the rendered tree (docs/43 M2, DOM stubs)", () => {
     const band = byId.dbTables.children[0];
     // With filtered: true, mountGroup paints the body open regardless of stored collapse.
     expect(band.children[1].children).toHaveLength(1);
+  });
+});
+
+/* docs/43 addendum — the 200-row wall falls. The tree fetches the WHOLE catalog in one
+ * shot; each section paints a render-capped window with a note row that expands it, and a
+ * search paints every match. The pager is gone: browsing is not paging. */
+describe("the thousand-table catalog (docs/43 addendum)", () => {
+  /** .db-table rows under the box, excluding the note row (which also says db-tree-cap). */
+  const rows = (): Stub[] => {
+    const out: Stub[] = [];
+    const walk = (x: Stub): void => {
+      if (x.tag === "button" && String(x.className).includes("db-table")
+        && !String(x.className).includes("db-tree-cap")) out.push(x);
+      (x.children || []).forEach(walk);
+    };
+    walk(byId.dbTables);
+    return out;
+  };
+  const note = (): Stub | undefined => {
+    const out: Stub[] = [];
+    const walk = (x: Stub): void => {
+      if (x.tag === "button" && String(x.className).includes("db-tree-cap")) out.push(x);
+      (x.children || []).forEach(walk);
+    };
+    walk(byId.dbTables);
+    return out[0];
+  };
+  const tables = (n: number, schema: string): Array<{ schema: string; name: string; type: string }> =>
+    Array.from({ length: n }, (_: unknown, i: number) => ({ schema, name: "t" + i, type: "table" }));
+
+  it("205 tables paint 200 rows plus a note offering the remaining 5; the badge still says 205", () => {
+    mount("mysql");
+    const d = dbConnState();
+    d.tables = tables(205, "iq");
+    d.tablesTotal = 205;
+    view.renderDbTables();
+    expect(rows(), "the render cap is a DOM budget").toHaveLength(200);
+    const n = note();
+    expect(n, "the note row sits under the last row").toBeTruthy();
+    expect(n!.dataset.treemore).toBe("iq/tables");
+    expect(text(n!)).toContain("5");
+    expect(text(byId.dbTables.children[0].children[0]), "the band's count numbers the full list").toContain("205");
+  });
+
+  it("expanding paints everything and swaps the note for Show fewer; collapsing restores the window", () => {
+    mount("mysql");
+    const d = dbConnState();
+    d.tables = tables(205, "iq");
+    d.tablesTotal = 205;
+    view.renderDbTables();
+    d.treeShowAll["iq/tables"] = true;
+    view.renderDbTables();
+    expect(rows()).toHaveLength(205);
+    const n = note();
+    expect(n!.dataset.treeless).toBe("iq/tables");
+    d.treeShowAll["iq/tables"] = false;
+    view.renderDbTables();
+    expect(rows()).toHaveLength(200);
+    expect(note()!.dataset.treemore).toBe("iq/tables");
+  });
+
+  it("a search paints every match - nothing an operator typed hides behind the expander", () => {
+    mount("mysql");
+    const d = dbConnState();
+    d.tables = tables(205, "iq");
+    d.tablesTotal = 205;
+    d.grep = "t";
+    view.renderDbTables();
+    expect(rows(), "grep overrides the cap").toHaveLength(205);
+    expect(note()).toBeUndefined();
+  });
+
+  it("pg: the show-all memory is per schema - expanding public's Tables leaves app's alone", () => {
+    mount("pg");
+    const d = dbConnState();
+    d.tables = [...tables(205, "public"), ...tables(205, "app")];
+    d.tablesTotal = 410;
+    view.renderDbTables();
+    d.treeShowAll["public/tables"] = true;
+    view.renderDbTables();
+    const notes: Stub[] = [];
+    const walk = (x: Stub): void => {
+      if (x.tag === "button" && String(x.className).includes("db-tree-cap")) notes.push(x);
+      (x.children || []).forEach(walk);
+    };
+    walk(byId.dbTables);
+    expect(notes, "one note per schema band, keys distinct").toHaveLength(2);
+    expect(notes.some((x: Stub) => x.dataset.treeless === "public/tables"), "public is expanded").toBe(true);
+    expect(notes.some((x: Stub) => x.dataset.treemore === "app/tables"), "app is still capped").toBe(true);
+    expect(rows()).toHaveLength(405); // 205 + 200
+  });
+
+  it("the footer states the total — and says when the one-shot fetch clipped the catalog", () => {
+    mount("mysql");
+    const d = dbConnState();
+    d.tables = tables(3, "iq");
+    d.tablesTotal = 3; d.more = false;
+    view.renderDbTables();
+    expect(text(byId.dbTablesPager)).toContain("3");
+    expect(text(byId.dbTablesPager)).not.toContain("first");
+    d.more = true;
+    view.renderDbTables();
+    expect(text(byId.dbTablesPager)).toContain("first");
+  });
+
+  it("the list is ONE fetch for the whole catalog: limit=2000 rides the query, no page param", async () => {
+    mount("mysql");
+    const urls: string[] = [];
+    (globalThis as unknown as { fetch: unknown }).fetch = (u: unknown):
+      Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }> => {
+      urls.push(String(u));
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ tables: [], total: 0, more: false }) });
+    };
+    await view.dbLoadTables();
+    (globalThis as unknown as { fetch: unknown }).fetch = () => new Promise(() => {});
+    expect(urls[0]).toContain("/tables?limit=2000");
+    expect(urls[0], "browsing is not paging anymore").not.toContain("page=");
   });
 });

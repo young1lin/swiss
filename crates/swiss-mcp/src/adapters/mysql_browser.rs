@@ -211,7 +211,10 @@ impl DbBrowser for MysqlBrowser {
             .map(f64::floor)
             .unwrap_or(0.0)
             .max(0.0) as i64;
-        let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 1000);
+        // The sidebar tree fetches WHOLE catalogs (panel sends limit=2000, docs/43 addendum),
+        // so the ceiling here bounds a hand-written query, not the panel: 5000 names + row
+        // estimates is still one cheap metadata page, and anything larger belongs to grep.
+        let limit = swiss_host::dbbrowser::clamp_browse_limit(o.get("limit"), 200, 5000);
         let grep = o.get("grep").and_then(Value::as_str);
         let sort = swiss_host::dbbrowser::browse_table_sort(
             o.get("sort").and_then(Value::as_str),

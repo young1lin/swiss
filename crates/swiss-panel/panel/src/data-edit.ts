@@ -132,14 +132,12 @@ async function dbRunDdl(op: string, to?: string): Promise<void> {
     // open, or the strip's placeholder, whose empty state IS the repaint the right pane needs:
     // renderDbTables refreshes only the LEFT list (docs/22 closeout audit, under docs/42 T2).
     dbDropTableTabs(d.table, d.schema);
-    c.tablesPage = 0;
     if (dbIsRedis()) void dbLoadKeys(true);
     else void dbLoadTables();
     return;
   }
   if (op === "rename" && to) { d.table = to; d.data = null; }
   if (op === "truncate") { dbDropEdits(); }
-  c.tablesPage = 0;
   if (dbIsRedis()) void dbLoadKeys(true);
   else void dbLoadTables();
   if (d.table) void dbLoadData(true);

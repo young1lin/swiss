@@ -1932,7 +1932,7 @@ mod tests {
         let (status, _, _, _) = call(
             app,
             "GET",
-            "/api/db/db/tables?page=0&sort=rows&dir=desc",
+            "/api/db/db/tables?page=0&limit=2000&sort=rows&dir=desc",
             None,
         )
         .await;
@@ -1940,7 +1940,7 @@ mod tests {
         let opts = seen.lock().expect("seen").tables_opts.take();
         assert_eq!(
             opts,
-            Some(json!({ "page": "0", "sort": "rows", "dir": "desc" }))
+            Some(json!({ "page": "0", "limit": "2000", "sort": "rows", "dir": "desc" }))
         );
 
         // A nonsense key or direction is the caller's whole mistake — 400, not a silent default.
