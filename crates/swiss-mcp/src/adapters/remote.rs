@@ -252,10 +252,10 @@ fn req_strings(args: &Map<String, Value>, key: &str) -> Result<Vec<String>, Stri
     Ok(out)
 }
 
-/// The env object (name to value) as the action's K=V pair list - the ONE shape
-/// translation this adapter does, because models write objects and the action
-/// contract takes pairs.
-fn env_pairs(args: &Map<String, Value>) -> Result<Option<Vec<String>>, String> {
+/// Validate and preserve the env object the remote.exec action accepts. The adapter and
+/// action share the same JSON shape; argv-to-shell translation belongs to the transport,
+/// and env must not acquire a second private representation on the way there.
+fn env_object(args: &Map<String, Value>) -> Result<Option<Value>, String> {
     let Some(raw) = args.get("env") else {
         return Ok(None);
     };
@@ -265,14 +265,12 @@ fn env_pairs(args: &Map<String, Value>) -> Result<Option<Vec<String>>, String> {
     let Some(obj) = raw.as_object() else {
         return Err("env must be an object of name to value".into());
     };
-    let mut pairs = Vec::with_capacity(obj.len());
     for (name, value) in obj {
-        let Some(value) = value.as_str() else {
+        if !value.is_string() {
             return Err(format!("env.{name} must be a string, got {value}"));
-        };
-        pairs.push(format!("{name}={value}"));
+        }
     }
-    Ok(Some(pairs))
+    Ok(Some(Value::Object(obj.clone())))
 }
 
 /// One optional positive deadline, refused past the submit ceiling.
@@ -321,8 +319,8 @@ fn plan(tool: &str, args: &Map<String, Value>) -> Result<Plan, String> {
             if let Some(cwd) = opt_text(args, "cwd")? {
                 input.insert("cwd".into(), json!(cwd));
             }
-            if let Some(pairs) = env_pairs(args)? {
-                input.insert("env".into(), json!(pairs));
+            if let Some(env) = env_object(args)? {
+                input.insert("env".into(), env);
             }
             let timeout = opt_timeout(args)?;
             if let Some(ms) = timeout {
@@ -1008,7 +1006,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exec_translates_the_env_object_into_pairs() {
+    async fn exec_preserves_the_env_object_for_the_action() {
         let (services, stubs) = server_with_actions();
         let out = call(
             &services,
@@ -1030,7 +1028,7 @@ mod tests {
                 "target": "dev",
                 "argv": ["make"],
                 "cwd": "build",
-                "env": ["BOARD=rpi", "JOBS=8"],
+                "env": { "BOARD": "rpi", "JOBS": "8" },
                 "timeoutMs": 120000
             })
         );
