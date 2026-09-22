@@ -10,7 +10,7 @@
 > `exit.rs`/`docker_raw.rs`/`it-reaper`，`78cd561`）、Fresh 的实际 SQL 与 pg 模板版本标记（§2.3）、seed
 > 的实际形状与计数（§2.4，redis 3,016 键）、三层的实际测试清单与 66 条的分账（§2.5–2.7）、CI job 与
 > deploy.ps1 门禁的落地形状（§2.8）。§0 是实施前的记录，按惯例不动。
-> 增补（2026-09-22，`redis-streams` 合并 `7e4acdd`/`3c7537a` 后的二次反向校对）：L1 redis 组现 19 条
+> 增补（2026-09-22，`redis-streams` 合并 `7e4accd`/`3c7537a` 后的二次反向校对）：L1 redis 组现 19 条
 > （docs/45 增 stream ×10）、L2 组 7 条（+stream 路由往返）、seed.rs 8 条，gate 2 总数 66 → **78**；
 > §2.5–2.7 的逐条清单停在 f3b6899 时点，stream 各条见 docs/45 §2.5，本文不重抄。
 > 前置阅读：`AGENTS.md`（四条产品属性，载重规则高于本文）、[docs/08](08-testing.md)（测试账本——本文
