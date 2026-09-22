@@ -42,7 +42,7 @@ import { dbConn, dbIsMounted, dbSqlTab, dbTab, dbTabs, mountDbView } from "./db-
 // The strip's policy module. The cycle is the same accepted shape as the data-structure edge
 // below: data-tabs reaches back for renderDbTables, and both sides only call across it inside
 // functions, never at module scope.
-import { dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
+import { dbOpenTab, dbResetTabsForConn, dbTabScope, dbTabsAuxClick, dbTabsClick, dbTabsContext, dbTabsPending, dbTabPending, renderDbTabs } from "./data-tabs.js";
 import { locale, tr, trn } from "./i18n.js";
 
 /* ================================================================================================
@@ -266,6 +266,8 @@ function renderDbView(): void {
   pane.onkeydown = dbPaneKeydown;
   // auxclick is its own event type, property-assigned like its four siblings (docs/37 R5).
   pane.onauxclick = dbPaneAuxClick;
+  // So is contextmenu — the strip's card menu (rename / close left / close right) rides it.
+  pane.oncontextmenu = dbPaneContext;
   // The view is REBUILT on every entry, but d.grep persists for the same table — seed the box
   // from state, or the list stays filtered by a term the (fresh, empty) input no longer shows.
   const db_ = dbConn();
@@ -334,6 +336,15 @@ function dbPaneAuxClick(ev: MouseEvent): void {
   const t = targetEl(ev);
   if (!t) return;
   dbTabsAuxClick(t);
+}
+
+/** The pane's right-click: the strip answers first (the card menu — rename, close left,
+ *  close right); everything else keeps the browser's own menu, the grid's cell menus
+ *  included (those are per-node handlers that run before delegation). */
+function dbPaneContext(ev: MouseEvent): void {
+  const t = targetEl(ev);
+  if (!t) return;
+  dbTabsContext(t, ev);
 }
 
 function dbPaneInput(ev: Event): void {

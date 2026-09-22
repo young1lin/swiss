@@ -229,6 +229,66 @@ describe("opening an object (docs/42 D3, D6)", () => {
     expect(document.body.textContent, "the refusal is on screen").toContain("close one first");
   });
 
+  it("the strip's + always adds: force open neither dedupes nor refuses (the owner's rule)", () => {
+    tabs.dbOpenTab({ kind: "sql" });
+    tabs.dbOpenTabForce({ kind: "sql" });
+    expect(dbTabs().length, "one + press, one NEW console — no dedupe on kind").toBe(2);
+    expect(dbActiveIndex()).toBe(1);
+    for (let i = 1; i <= 10; i++) tabs.dbOpenTabForce({ kind: "sql" });
+    expect(dbTabs().length, "twelve now, none holding work").toBe(12);
+    // Every console holding unrun text: nothing is evictable, and the + still opens — over
+    // the cap, because the operator asked for THIS tab (the owner: "one +, one tab, always").
+    dbTabs().forEach((t: DbTab): void => { if (t.kind === "sql") t.sqlText = "select 1"; });
+    tabs.dbOpenTabForce({ kind: "sql" });
+    expect(dbTabs().length, "over the cap rather than refused").toBe(13);
+  });
+
+  it("a rename is the card's name everywhere, and empty cancels back to the derived title", () => {
+    tabs.dbOpenTab({ kind: "sql" });
+    const con = dbTab();
+    con.custom = "nightly totals";
+    expect(tabs.dbTabTitle(con)).toBe("nightly totals");
+    tabs.dbOpenTab({ kind: "table", table: "orders", schema: "acme_app_dev" });
+    const tt = dbTabs()[dbTabs().length - 1];
+    tt.custom = "my orders";
+    expect(tabs.dbTabCardTitle(tt, "acme_app_dev"), "scope trimming never touches a custom name").toBe("my orders");
+    tt.custom = "";
+    expect(tabs.dbTabCardTitle(tt, "acme_app_dev"), "empty falls back to the derived title").toBe("orders");
+  });
+
+  it("close to the left and right of the CLICKED card (the right-click trio)", () => {
+    for (let i = 1; i <= 4; i++) tabs.dbOpenTab({ kind: "table", table: "t" + i, schema: null });
+    const names = (): (string | null)[] => dbTabs().map((t: DbTab): string | null => {
+      return t.kind === "table" ? t.table : t.kind;
+    });
+    tabs.dbCloseToRight(1);
+    expect(names(), "t3 and t4 went, t1 stayed").toEqual(["t1", "t2"]);
+    tabs.dbCloseToLeft(1);
+    expect(names(), "now t1 goes too").toEqual(["t2"]);
+  });
+
+  it("the card's right-click menu: rename, close left, close right — with the clicked card as pivot", () => {
+    for (let i = 1; i <= 3; i++) tabs.dbOpenTab({ kind: "table", table: "t" + i, schema: null });
+    // This suite mounts state, not the view (loadDbView is what property-assigns
+    // pane.oncontextmenu), so the dispatcher dbTabsContext is driven the way the pane
+    // hands it a target — the pane wiring itself is walked live on 19998.
+    const card = document.querySelector('[data-dbtab="1"]');
+    expect(card, "the strip painted the cards").toBeTruthy();
+    tabs.dbTabsContext(card as Element, new MouseEvent("contextmenu", { cancelable: true }));
+    const menu = document.getElementById("menu");
+    expect(menu, "the card menu opened").toBeTruthy();
+    const labels = [...(menu as HTMLElement).querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toContain("Rename");
+    expect(labels).toContain("Close to the left");
+    expect(labels).toContain("Close to the right");
+    // The first card has nothing to its left: that row is disabled, not missing.
+    const first = document.querySelector('[data-dbtab="0"]');
+    expect(first, "the first card is on the strip").toBeTruthy();
+    tabs.dbTabsContext(first as Element, new MouseEvent("contextmenu", { cancelable: true }));
+    const left = [...document.querySelectorAll("#menu button")].find((b) => b.textContent === "Close to the left");
+    expect((left as HTMLButtonElement).disabled, "no left neighbors: the row refuses").toBe(true);
+  });
+
   it("a jump opens a NEW tab and leaves the source exactly as it was (docs/22 W5.2)", () => {
     tabs.dbOpenTab({ kind: "table", table: "orders", schema: null });
     const src = tableAt(0);
@@ -574,7 +634,7 @@ describe("a full strip still has exits (docs/43 M1)", () => {
     const ask = vi.spyOn(globalThis, "confirm").mockReturnValue(true);
     for (const t of ["t1", "t2", "t3", "t4"]) tabs.dbOpenTab({ kind: "table", table: t, schema: null });
     tabs.dbActivateTab(1); // t2
-    tabs.dbCloseToRight();
+    tabs.dbCloseToRight(1); // the pivot is the card the menu was opened on
     expect(ask).not.toHaveBeenCalled(); // everything to the right was clean
     expect(dbTabs().map((t) => { return t.kind === "table" ? t.table : t.kind; })).toEqual(["t1", "t2"]);
     tabs.dbCloseOthers();
