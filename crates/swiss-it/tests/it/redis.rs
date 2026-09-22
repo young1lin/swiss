@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{BrowserFlavor, RedisBrowser};
 use swiss_it::engine::Kind;
-use swiss_it::seed::{fresh, fresh_redis_with_neighbor, Fresh, REDIS_SEED_KEYS};
+use swiss_it::seed::{fresh, fresh_redis_exclusive, fresh_redis_with_neighbor, Fresh, REDIS_SEED_KEYS};
 use swiss_mcp::adapters::redis::RedisEngine;
 use swiss_mcp::adapters::tool_server::Engine;
 
@@ -533,16 +533,21 @@ async fn read_stream_after_caps_and_flags_more() {
 #[tokio::test]
 async fn follow_polling_costs_three_commands_per_tick() {
     // docs/45 §2.1: one tick = XREVRANGE + XLEN + XINFO STREAM, exactly. INFO
-    // commandstats is SERVER-wide, so the measurement needs the whole redis to
-    // itself: this test leases every index the pool has (the browser's own lease
-    // plus fifteen more), which parks every other redis test at its next fresh().
-    // The cost is fifteen redundant seed loads; the alternative is a counter that
-    // counts somebody else's commands.
-    let (f, b) = fresh_with("r45_tick", json!({ "allowDestructive": true })).await;
-    let mut holds = Vec::new();
-    for _ in 0..15 {
-        holds.push(fresh(Kind::Redis, "r45_tick").await);
-    }
+    // commandstats is SERVER-wide, so the measurement needs the whole redis to itself:
+    // fresh_redis_exclusive leases all sixteen indexes in ONE atomic acquire (holding
+    // nothing while it waits), seeds only the one this browser reads, and holds the
+    // other fifteen as unseeded placeholders - every other redis test parks at its
+    // next lease, and nobody's commands land in these counters but this test's own.
+    let (f, _exclusive) = fresh_redis_exclusive("r45_tick").await;
+    let mut def = f.def.clone();
+    def["allowDestructive"] = json!(true);
+    let server_def: ServerDef =
+        serde_json::from_value(def).expect("the redis def parses as a ServerDef");
+    let engine = RedisEngine::new(&server_def, "it-redis");
+    let b = match engine.browser() {
+        Some(BrowserFlavor::Redis(b)) => b,
+        _ => panic!("the redis engine must expose a redis browser"),
+    };
     let mut conn = raw_conn(&f.def).await;
     redis::cmd("CONFIG")
         .arg("RESETSTAT")
