@@ -99,10 +99,14 @@ jobs:
         if: matrix.cross != true
         shell: bash
         run: |
-          cargo tree -d --locked || true
+          # -e normal,build: this gate owns the SHIPPING graph. Dev-dependencies - the
+          # swiss-it testcontainers harness among them - pull their own copies of hyper
+          # and friends into the dev graph; that never reaches the binary, so dev edges
+          # must not be able to fail this step (docs/44 §2.8).
+          cargo tree -d -e normal,build --locked || true
           # Only the column-0 lines are the duplicated crates themselves; everything indented
           # under them is a parent that merely depends on one, and must not count.
-          heavy=$(cargo tree -d --locked             | grep -E '^(tokio|rustls|native-tls|openssl|openssl-sys|hyper|aws-lc-rs) v'             | sort -u)
+          heavy=$(cargo tree -d -e normal,build --locked             | grep -E '^(tokio|rustls|native-tls|openssl|openssl-sys|hyper|aws-lc-rs) v'             | sort -u)
           if [ -n "$heavy" ]; then
             echo "::error::a runtime or TLS stack is linked twice:"
             echo "$heavy"

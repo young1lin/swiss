@@ -1,0 +1,61 @@
+[package]
+name = "swiss-it"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+# The integration gate (docs/44 D5): one flag turns the lib, the test binary and (from
+# I6) the stdio server from empty files into the real-database harness. Every dependency
+# is optional and only enters through this feature, so `cargo test --workspace` on a
+# machine without Docker compiles exactly the three empty targets it compiled before this
+# crate existed - and the shipping graph never sees any of it (nothing depends on us).
+it = [
+    "dep:testcontainers",
+    "dep:testcontainers-modules",
+    "dep:sqlx",
+    "dep:redis",
+    "dep:tokio",
+    "dep:futures-util",
+]
+
+[dependencies]
+# The harness's whole dependency set is dev-only weight: versions and features are pinned
+# to what swiss-mcp already carries so the dev graph holds ONE copy of each crate
+# (cargo tree -d stays quiet). testcontainers' default features pull its `ring` TLS
+# provider for bollard; we speak plain tcp://, unix:// and npipe:// endpoints only, so
+# defaults are off and an https:// DOCKER_HOST is a clean resolution failure instead.
+testcontainers = { version = "0.27", default-features = false, optional = true }
+# Just the three module images - mysql, postgres, redis - and again no default `ring`.
+testcontainers-modules = { version = "0.15", default-features = false, features = [
+    "mysql",
+    "postgres",
+    "redis",
+], optional = true }
+# Same 0.8 / same drivers swiss-mcp builds; the harness seeds databases and counts
+# connections with the very code shapes the adapters use.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "mysql",
+    "postgres",
+], optional = true }
+redis = { version = "0.27", default-features = false, features = [
+    "tokio-comp",
+], optional = true }
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "macros",
+    "net",
+    "sync",
+    "time",
+], optional = true }
+# catch_unwind on the docker worker's tasks, so one panicking future cannot take the
+# worker thread (and every later engine) down with it.
+futures-util = { version = "0.3", default-features = false, features = [
+    "std",
+], optional = true }
