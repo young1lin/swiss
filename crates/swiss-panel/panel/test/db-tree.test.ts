@@ -104,7 +104,7 @@ function mount(kind: "mysql" | "pg" | "redis"): void {
   const d = dbConnState();
   d.conns = [dbConn("c1", kind)];
   d.conn = "c1";
-  d.tables = []; d.treeShowAll = {}; d.tablesTotal = 0; d.more = false; d.grep = "";
+  d.tables = []; d.treeShown = {}; d.tablesTotal = 0; d.more = false; d.grep = "";
   d.schemaFilter = ""; d.sort = "name"; d.sortDir = "asc";
   d.redis = null; d.redisError = false;
   d.gridCfg = { widths: {}, hidden: [] };
@@ -368,18 +368,33 @@ describe("the thousand-table catalog (docs/43 addendum)", () => {
     expect(text(byId.dbTables.children[0].children[0]), "the band's count numbers the full list").toContain("205");
   });
 
-  it("expanding paints everything and swaps the note for Show fewer; collapsing restores the window", () => {
+  it("show more pages DOWN in batches and only says Show fewer at the end (the owner's ask)", () => {
     mount("mysql");
     const d = dbConnState();
-    d.tables = tables(205, "iq");
-    d.tablesTotal = 205;
+    d.tables = tables(1200, "iq");
+    d.tablesTotal = 1200;
     view.renderDbTables();
-    d.treeShowAll["iq/tables"] = true;
+    // Window one: the cap, offering one batch (500) - not the whole remaining list.
+    expect(rows()).toHaveLength(200);
+    let n = note()!;
+    expect(n.dataset.treemore).toBe("iq/tables");
+    expect(n.dataset.next).toBe("700");
+    expect(text(n)).toContain("500");
+    // The handler's move: trust the batch the note advertised. Window two: another batch.
+    d.treeShown["iq/tables"] = Number(n.dataset.next);
     view.renderDbTables();
-    expect(rows()).toHaveLength(205);
-    const n = note();
-    expect(n!.dataset.treeless).toBe("iq/tables");
-    d.treeShowAll["iq/tables"] = false;
+    expect(rows()).toHaveLength(700);
+    n = note()!;
+    expect(n.dataset.next).toBe("1200");
+    // Still "show more" while anything remains - the end has not been reached.
+    expect(n.dataset.treemore).toBe("iq/tables");
+    // The last batch lands exactly on the end; only now does the note offer Show fewer.
+    d.treeShown["iq/tables"] = Number(n.dataset.next);
+    view.renderDbTables();
+    expect(rows()).toHaveLength(1200);
+    expect(note()!.dataset.treeless).toBe("iq/tables");
+    // Collapsing drops the memory entirely - the window snaps back to the initial cap.
+    delete d.treeShown["iq/tables"];
     view.renderDbTables();
     expect(rows()).toHaveLength(200);
     expect(note()!.dataset.treemore).toBe("iq/tables");
@@ -402,7 +417,7 @@ describe("the thousand-table catalog (docs/43 addendum)", () => {
     d.tables = [...tables(205, "public"), ...tables(205, "app")];
     d.tablesTotal = 410;
     view.renderDbTables();
-    d.treeShowAll["public/tables"] = true;
+    d.treeShown["public/tables"] = 205;
     view.renderDbTables();
     const notes: Stub[] = [];
     const walk = (x: Stub): void => {

@@ -452,11 +452,12 @@ export interface DbConnState {
   tablesTotal: number;
   /* docs/43 addendum: the tree fetches the WHOLE catalog (no pager), so "more" is the one
    * honest truncation flag left - the fetch cap clipped the list and grep is the way past.
-   * treeShowAll remembers which section bands were expanded past the render cap, keyed by
-   * "schema/section" (empty schema for MySQL's root bands); it is display memory, reset on
-   * connection/database switches, never identity. */
+   * treeShown remembers how many rows each section band has painted past the render cap,
+   * keyed by "schema/section" (empty schema for MySQL's root bands); the note row grows it
+   * by one batch per click and only offers "show fewer" at the end. It is display memory,
+   * reset on connection/database switches, never identity. */
   more: boolean;
-  treeShowAll: Record<string, boolean>;
+  treeShown: Record<string, number>;
   grep: string;
   schemaFilter: string;
   sort: string;
