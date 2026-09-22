@@ -126,6 +126,7 @@ const zh                         = {
   "dataStream.nSeconds.other": "{n} 秒",
   "dataStream.groups": "消费者组",
   "dataStream.groupsNone": "这个流上没有消费者组。",
+  "dataStream.groupsLoading": "正在读取消费者组…",
   "dataStream.colGroup": "组",
   "dataStream.colConsumers": "消费者",
   "dataStream.colPending": "待确认",
