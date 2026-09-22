@@ -132,6 +132,7 @@ const zh: Record<string, string> = {
   "dataStream.colLag": "积压",
   "dataStream.colLastDelivered": "最后投递",
 "dataStream.pendingNew.other": "↑ {n} 条新",
+"dataStream.pendingNewOver": "↑ {n}+ 条新",
 "dataStream.gapSkipped": "有更多，已跳过中间部分",
 "dataStream.jumpLatest": "跳到最新",
 "dataStream.followStopped": "已停止跟随——上次轮询失败",

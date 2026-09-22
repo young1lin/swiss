@@ -135,6 +135,7 @@ const en: Record<string, string> = {
   "dataStream.colLastDelivered": "last delivered",
 "dataStream.pendingNew.one": "↑ {n} new entry",
 "dataStream.pendingNew.other": "↑ {n} new entries",
+"dataStream.pendingNewOver": "↑ {n}+ new entries",
 "dataStream.gapSkipped": "more arrived than one page — a middle chunk was skipped",
 "dataStream.jumpLatest": "Jump to latest",
 "dataStream.followStopped": "Follow stopped — the last poll failed",
