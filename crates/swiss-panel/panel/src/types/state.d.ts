@@ -25,7 +25,7 @@
    Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
    and would bury the state split in import churn. */
 
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, DbQueryReply } from "./api.js";
+import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -413,6 +413,12 @@ export interface DbKeyTab extends DbTabBase {
   redisKey: string | null;
   redisValue: ApiDbRedisValue | null;
   redisEdits: DbRedisEdits | null;
+  /* docs/45 S2: the stream view's grown row cache — the newest window plus every Load-
+   * earlier page prepended, newest-first throughout. Null until the first window paints
+   * (the value view's own loading state covers that); reset whenever the key re-reads,
+   * because a fresh newest window is the truth and history re-walks from it. */
+  redisStreamRows?: ApiDbStreamEntry[] | null;
+  redisStreamMore?: boolean | null;
 }
 
 /** The activity monitor as an open object (docs/22 W3.2, docs/42 T2): the last

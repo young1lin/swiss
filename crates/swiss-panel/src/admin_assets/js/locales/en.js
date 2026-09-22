@@ -115,6 +115,13 @@ const en                         = {
   "dataBrowsers.renamed": "Renamed to {to}",
   "dataBrowsers.deletedKey": "Deleted {key}",
   "dataBrowsers.ttlMustWholeNumber": "TTL must be a whole number of seconds",
+  /* --- dataStream (docs/45 S2) --- */
+  "dataStream.colId": "id",
+  "dataStream.colTime": "time",
+  "dataStream.loadEarlier": "Load earlier entries",
+  "dataStream.empty": "This stream is empty — nothing has been appended yet.",
+  "dataStream.start": "Beginning of the stream",
+
   /* --- dataCell --- */
   "dataBrowsers.undoBufferedDelete": "Undo this buffered delete",
   "dataCell.binaryNBytes": "binary, {n} bytes",

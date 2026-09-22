@@ -25,9 +25,13 @@ import { renderDbBar } from "./data-sql.js";
 // Cycle with data-edit.js (it reads dbIsRedis/dbLoadKeys from here): function declarations,
 // runtime-only use — the same shape as the data-sql import above.
 import { dbTypedConfirm } from "./data-edit.js";
+import { dbRenderStream } from "./data-stream.js";
 import { dbCopyText } from "./data-csv.js";
 import { dbOpenValueSheet } from "./data-value.js";
 import { renderDbTables } from "./data-view.js";
+// Cycle with data-stream.js (it renders this module's stream branch and needs the display
+// decode + cell menu): function declarations, runtime-only use — the same shape as the
+// data-edit.js import above.
 import { popupMenu } from "./menu.js";
 import { dbConn, dbTab } from "./db-state.js";
 import { tk, tr, trn } from "./i18n.js";
@@ -117,6 +121,8 @@ async function dbLoadRedisValue(key: string): Promise<void> {
   d.redisKey = key;
   d.redisValue = null; // drop the previous key's value — never flash stale data
   d.redisEdits = null; // and its buffered edits — a different key cannot adopt them
+  d.redisStreamRows = null; // docs/45 S2: the grown stream cache belongs to ONE window — a
+  d.redisStreamMore = null; // fresh newest window is the truth; history re-walks from it
   renderDbGrid();
   const token = dbValueReq.issue();
   const j = await apiJson<ApiDbRedisValue>("/api/db/" + encodeURIComponent(c.conn!) + "/key?key=" + encodeURIComponent(key));
@@ -322,7 +328,8 @@ function dbRenderRedisValue(wrap: HTMLElement): void {
   if (v.note) wrap.appendChild(el("div", "db-hint", v.note));
   if (cfg) { dbRedisTypedTable(wrap, v, cfg); return; }
   if (v.type === "string") { dbRedisStringEditor(wrap, v); return; }
-  // Stream and module types stay read-only — their commands have no field grid (docs/22 W3.3).
+  if (v.type === "stream") { dbRenderStream(wrap, v); return; } // docs/45 S2: the stream window view
+  // Module types stay read-only — their commands have no field grid (docs/22 W3.3).
   const pre = el("pre", "db-ddl");
   pre.style.position = "static";
   pre.style.margin = "var(--s2)";
@@ -843,4 +850,5 @@ export {
   DB_REDIS_TYPES, REDIS_THING_KEYS, dbIsRedis, dbLoadKeys, dbLoadRedisValue, dbRedisValidScore,
   dbRedisClick, dbRedisCommandText, dbRedisCommands, dbRedisCommit, dbRedisDiscard,
   dbRedisDisplayText, dbRedisEntries, dbRedisKeydown, dbRedisKeyMenu, dbRedisPendingCount, dbRenderRedisValue,
+  dbRedisCellMenu, // docs/45 S2: the stream view reuses the docs/22 W5.3 cell menu
 };
