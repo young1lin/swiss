@@ -118,11 +118,22 @@ correctness boundary.
 ```bash
 cargo build --release             # the shipping exe (target/release/swiss.exe) - ADR-012;
                                   # 19999 runs a COPY of it, bin/swiss.exe (scripts/deploy.ps1)
-cargo test --workspace            # the one feature combination there is
+cargo test --workspace            # gate 1: the one feature combination there is; any machine
+cargo test -p swiss-it --features it  # gate 2: real MySQL/PG/Redis (docs/44) - needs Docker
+                                  # (DOCKER_HOST) or SWISS_IT_*_URL; mandatory when the diff
+                                  # touches the DB adapters/browsers or swiss-it itself
 cargo clippy --workspace --all-targets -- -D warnings                  # must be clean
-cargo tree -d                  # a duplicated TLS stack or runtime must fail review
+cargo tree -d -e normal,build  # a duplicated TLS stack or runtime must fail review
+                                  # (normal+build edges only: the dev graph - testcontainers
+                                  # included - never ships and may carry its own copies)
 cargo run -- start --no-open   # the gateway itself, on 127.0.0.1:19999
 ```
+
+A commit that edits any `Cargo.toml` carries the regenerated `Cargo.lock` in the same
+commit: glance at `git status --short` before committing (a dirty `Cargo.lock` left behind
+is how two commits on this branch shipped unbuildable under `--locked`), and self-check the
+result with `cargo tree --locked --offline --workspace --depth 0` — every CI command is
+`--locked`, and a stale lock fails the checkout itself, not just the build.
 
 The build links with `rust-lld` (`.cargo/config.toml`) - measured ~28% off a
 cold `cargo test --workspace` on this machine; drop it only with new numbers in hand.

@@ -85,6 +85,16 @@ if (-not $SkipGates) {
     Phase 'cargo test --workspace'
     cargo test --workspace
     if ($LASTEXITCODE -ne 0) { Fail "tests failed - production left untouched" }
+    # Gate 2 (docs/44): the real-database suite. The deploy machine is this one and
+    # Docker lives in WSL at tcp://127.0.0.1:2375 - set DOCKER_HOST for the run the
+    # same way every dev shell does. A diff that never touched a database path can
+    # still afford the ~20 s: a deploy is the last place to learn the engines broke.
+    Phase 'cargo test -p swiss-it --features it'
+    $env:DOCKER_HOST = 'tcp://127.0.0.1:2375'
+    cargo test -p swiss-it --features it
+    $gate2 = $LASTEXITCODE
+    Remove-Item Env:\DOCKER_HOST -ErrorAction SilentlyContinue
+    if ($gate2 -ne 0) { Fail "integration gate failed - production left untouched" }
     Phase 'cargo clippy --workspace --all-targets -- -D warnings'
     cargo clippy --workspace --all-targets -- -D warnings
     if ($LASTEXITCODE -ne 0) { Fail "clippy failed - production left untouched" }

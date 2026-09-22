@@ -1,0 +1,136 @@
+[package]
+name = "swiss-it"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+# The integration gate (docs/44 D5): one flag turns the lib, the test binary and (from
+# I6) the stdio server from empty files into the real-database harness. Every dependency
+# is optional and only enters through this feature, so `cargo test --workspace` on a
+# machine without Docker compiles exactly the three empty targets it compiled before this
+# crate existed - and the shipping graph never sees any of it (nothing depends on us).
+it = [
+    "dep:testcontainers",
+    "dep:testcontainers-modules",
+    "dep:sqlx",
+    "dep:redis",
+    "dep:tokio",
+    "dep:futures-util",
+    "dep:serde_json",
+    "dep:swiss-core",
+    "dep:swiss-host",
+    "dep:swiss-mcp",
+    "dep:swiss",
+    "dep:rmcp",
+    "dep:axum",
+    "dep:reqwest",
+    "dep:windows-sys",
+]
+
+[dependencies]
+# The harness's whole dependency set is dev-only weight: versions and features are pinned
+# to what swiss-mcp already carries so the dev graph holds ONE copy of each crate
+# (cargo tree -d stays quiet). testcontainers' default features pull its `ring` TLS
+# provider for bollard; we speak plain tcp://, unix:// and npipe:// endpoints only, so
+# defaults are off and an https:// DOCKER_HOST is a clean resolution failure instead.
+testcontainers = { version = "0.27", default-features = false, optional = true }
+# Just the three module images - mysql, postgres, redis - and again no default `ring`.
+testcontainers-modules = { version = "0.15", default-features = false, features = [
+    "mysql",
+    "postgres",
+    "redis",
+], optional = true }
+# Same 0.8 / same drivers swiss-mcp builds; the harness seeds databases and counts
+# connections with the very code shapes the adapters use.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "mysql",
+    "postgres",
+], optional = true }
+redis = { version = "0.27", default-features = false, features = [
+    "tokio-comp",
+], optional = true }
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "macros",
+    "net",
+    "sync",
+    "time",
+    "io-std",
+    "io-util",
+], optional = true }
+# catch_unwind on the docker worker's tasks, so one panicking future cannot take the
+# worker thread (and every later engine) down with it.
+futures-util = { version = "0.3", default-features = false, features = [
+    "std",
+], optional = true }
+# The defs `Fresh` hands out are json! values - the same shapes the panel posts to
+# /api/mcps, built with the field names the adapters actually read.
+serde_json = { version = "1", default-features = false, optional = true }
+# The DbBrowser traits plus the shared browse SQL builders the browsers sit on.
+swiss-host = { path = "../swiss-host", version = "0.1.0", optional = true }
+# The launcher-noise scrub the daemon's main() applies (docs/16 H1): the L3 env
+# test replays the daemon's startup scrub before a proc child inherits. Already in
+# the dev graph through swiss-mcp - same path crate, one copy.
+swiss-core = { path = "../swiss-core", version = "0.1.0", optional = true }
+# The browsers themselves: L1 constructs the product's own MysqlBrowser/PgBrowser/
+# RedisDataBrowser straight from a def, exactly the way the adapters do, so what the
+# suite exercises is what the panel drives. Both crates are already in the dev graph
+# through the root package - same versions, no new code units.
+swiss-mcp = { path = "../swiss-mcp", version = "0.1.0", features = [
+    "test-utils",
+], optional = true }
+# The gateway itself (L2, docs/44 SS2.6): build_app + AppContext for Gateway::boot,
+# which serves a REAL listener on 127.0.0.1:0 - an rmcp client needs a URL, so
+# tower oneshot cannot stand in. The root package never depends on this crate, so
+# the shipping graph is untouched; this edge lives in the dev graph only.
+swiss = { path = "../..", version = "0.1.0", optional = true }
+# The real client the L2 suites speak: rmcp over streamable HTTP, the same protocol
+# version and the same reqwest 0.13 the gateway's own adapters carry - the feature
+# union keeps one copy of each crate in the dev graph.
+rmcp = { version = "3.2", default-features = false, features = [
+    "client",
+    "server",
+    "transport-streamable-http-client-reqwest",
+], optional = true }
+# Gateway::boot serves the built router (axum::serve) and the tests drive the admin
+# API over real HTTP (reqwest) - the same versions swiss-mcp already pulls.
+axum = { version = "0.8", default-features = false, features = [
+    "http1",
+    "json",
+    "query",
+    "tokio",
+], optional = true }
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+], optional = true }
+
+# The L3 suite counts live children by exe name: Toolhelp32 is a direct API call,
+# not a tasklist subprocess (the repo rule). Same version the shipping graph
+# already carries through swiss-core, so the dev graph holds one copy.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+], optional = true }
+
+# The cleanup watchdog (docs/44 SS2.2): stdin = docker endpoint + container ids, EOF
+# = parent died, then one force-DELETE per id. Behind the same `it` feature as the
+# lib it links - a machine without Docker never builds it.
+[[bin]]
+name = "it-reaper"
+path = "src/bin/it-reaper.rs"
+required-features = ["it"]
+
+# The L3 stdio server (docs/44 SS2.7): the proc adapter's far side. Same gate as
+# everything else here; the test binary reaches it through CARGO_BIN_EXE.
+[[bin]]
+name = "it-mcp-server"
+path = "src/bin/it-mcp-server.rs"
+required-features = ["it"]
