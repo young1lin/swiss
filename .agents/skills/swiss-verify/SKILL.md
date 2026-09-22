@@ -55,8 +55,9 @@ Do not reflexively run the full suite. Pick the smallest command that can go red
   any test that boots the real key path pins the env override instead — `SWISS_MASTER_KEY` (new
   name, checked first) or `MCP_GATEWAY_MASTER_KEY` — which bypasses every OS key source
   (`crates/swiss-core/src/secure/key.rs`).
-- **DB tests self-skip without credentials** (`direct-adapters`, `dbbrowser`, `sql`,
-  `db-resources`). A skip is not a pass: name what was skipped and why when reporting.
+- **Real-engine DB tests live behind gate 2** (`swiss-it`, feature `it`): they fail — never
+  self-skip — when no engine is reachable (docs/44). The Node-era self-skipping suites were never
+  ported; the unit tests those names used to cover are plain `#[cfg(test)]` code now.
 - **Windows traps that look like test bugs but are not** (full list in AGENTS.md):
   `os error 4551` (Smart App Control blocked the binary — it never ran; re-running usually gets
   past it) and `os error 1455` (paging file exhausted by link debuginfo — a build-environment

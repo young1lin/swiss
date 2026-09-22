@@ -14,5 +14,13 @@ All notable changes to swiss are recorded here. The format follows
   agent-friendly remote execution, groups everywhere, and the `swiss` CLI
   (`start` / `stop` / `token` / `creds` / `skill install` / `autostart` / `update` /
   `export` / `import` / `remote` / `run`).
+- Redis Streams on the Data page: newest-first windows with entry-id cursor paging, a Follow
+  toggle polling `XREVRANGE` into a 500-row ring, and read-only consumer groups (docs/45).
+- The `swiss-it` integration harness behind feature `it`: real MySQL/PostgreSQL/Redis engines
+  through testcontainers, a CI integration job, and gate 2 in `scripts/deploy.ps1` (docs/44).
+
+### Fixed
+- `/api/tunnels` connection rows now carry `keyPath`: the panel's edit sheet prefills from the
+  row, and a custom private-key path is no longer silently rewritten to the default on save.
 
 [Unreleased]: https://github.com/young1lin/swiss/commits/master
