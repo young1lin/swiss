@@ -1,7 +1,10 @@
 # 45 — Data 页的 Redis Stream：最新优先、游标翻页、Follow 环形缓冲、消费组只读
 
-> 状态：**待实施**（spec 定稿 2026-09-22；基线 master `f3b6899`，即 `integration-harness` 合并进 master 的那次
-> merge——seed 与 gate 2 都在里面，docs/44）。**实施前提**：docs/40 二次清理的 filter-repo 已在 master 上做完——
+> 状态：**已实施**（branch `redis-streams` 合并 `7e4acdd`、pool-cap 后续 `3c7537a`，2026-09-22；spec 定稿同日；
+> 基线 master `f3b6899`——seed 与 gate 2 都在里面，docs/44）。逐项：S0 `18bb574`、S1 `56bf5fb`、S2 `64a14e1`、
+> S3 `7868594`，cap 修复 `230ad66` / `2298075`；S3 的 jump-竞态守卫与 S4 记录项随 2026-09-22 的合并后校对提交
+> 落地（docs/40 的 filter-repo 前提在实施时成立，D5）。实施从
+> [45-redis-stream-prompt.md](45-redis-stream-prompt.md) 起步，走了 swiss-add-plugin → swiss-verify →
 > 否则又是一条分支叠在待清理的历史上（D5）；filter-repo 之后这个短 hash 会变，按 subject 找。实施从
 > [45-redis-stream-prompt.md](45-redis-stream-prompt.md) 起步，走 swiss-add-plugin → swiss-verify →
 > swiss-live-verify → swiss-review 流程。
@@ -142,7 +145,7 @@ pub trait RedisBrowser: Send + Sync {
 （最新 100 条）——面板打开键时不知道类型，第一次请求仍走 `/key`，拿到 `type: "stream"` 就切到 stream 视图。
 `type_aware_read` 的 stream 分支保留给 MCP 工具（D8）。
 
-**纯函数**（都在 `redis.rs`，各自单测）：
+**纯函数**（各自单测；除注明外都在 `redis.rs`）：
 
 | 函数 | 做什么 | 单测覆盖 |
 | --- | --- | --- |
@@ -152,7 +155,7 @@ pub trait RedisBrowser: Send + Sync {
 | `stream_columns(entries) -> Vec<String>` | 并集、首见顺序 | 空、单条、交错字段、重复字段名不重复出现 |
 | `stream_entries(reply)`（已有） | RESP → `{ id, fields }` | 正常、奇数长度字段数组（丢尾）、非数组回复 → 空、字段值含非 UTF-8（走 `value_string`） |
 | `parse_xinfo_groups(reply) -> Vec<Group>` | RESP2 平铺 map → 结构 | 有 `lag`（7.x）、无 `lag`（6.2）→ null、`pending` 缺失 → 0、空数组 |
-| `clamp_count(v: Option<&Value>) -> Result<i64, String>` | 默认/上限/非法 | None→100、1000→1000、1001→1000、0→Err、`"abc"`→Err、负数→Err |
+| `clamp_count(v: Option<&Value>) -> Result<i64, String>`（实施落在 `swiss-host/src/dbbrowser.rs:822`，路由层与 browser 共用；同文件的 `redis_stream_opts` 一并单测） | 默认/上限/非法 | None→100、1000→1000、1001→1000、0→Err、`"abc"`→Err、负数→Err |
 
 每个纯函数上方一段注释写**为什么**（D7）——例如 `stream_window_args` 上写"为什么两个方向都是 XREVRANGE"，
 `clamp_count` 上写"为什么上限是 1000（与 `type_aware_read` 的既有上限一致，一页 1000 条 × 20 字段约 200 KB
@@ -198,7 +201,9 @@ JSON 墙的问题不是大小而是没有列。**为什么不虚拟滚动**：D1
 
 - 开关打开：`setInterval`（`intervalMs`）每 tick `GET /stream?after=<顶行 id>&count=100`。追新的 `count`
   **固定 100**（D1 的窗口），一 tick 超过 100 条就 `more: true`，面板在顶部显示一条 "有更多，已跳过中间部分 ·
-  跳到最新" 横条（点击 = 重开最新窗口）。**为什么固定 100**：追新的目的是"看见现在"，不是"补齐历史"；
+  跳到最新" 横条（点击 = 重开最新窗口）。跳转用与 tick 同一个请求 token（`dbFollowReq.issue()`）：跳转重开
+窗口即作废一切仍在途的 tick，迟到的应答不会 pooling 到已不存在的拼接目标；反之，跳转之后发出的 tick 照常
+作废跳转（S3 后续，2026-09-22，`dbStreamJumpLatest`）。**为什么固定 100**：追新的目的是"看见现在"，不是"补齐历史"；
   行情每秒几百条时补齐等于永远追不上。
 - 收到新条目：`streamMerge(rows, incoming, 500)`（纯函数，vitest）——按 id 去重、最新在前、超过 500 从**底部**丢。
 - **顶部钉住**：`isTopPinned(scrollTop)`（纯函数：`scrollTop <= 一行高度`），钉住时新行直接插到顶、滚动位置

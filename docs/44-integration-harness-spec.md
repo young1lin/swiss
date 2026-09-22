@@ -10,6 +10,9 @@
 > `exit.rs`/`docker_raw.rs`/`it-reaper`，`78cd561`）、Fresh 的实际 SQL 与 pg 模板版本标记（§2.3）、seed
 > 的实际形状与计数（§2.4，redis 3,016 键）、三层的实际测试清单与 66 条的分账（§2.5–2.7）、CI job 与
 > deploy.ps1 门禁的落地形状（§2.8）。§0 是实施前的记录，按惯例不动。
+> 增补（2026-09-22，`redis-streams` 合并 `7e4acdd`/`3c7537a` 后的二次反向校对）：L1 redis 组现 19 条
+> （docs/45 增 stream ×10）、L2 组 7 条（+stream 路由往返）、seed.rs 8 条，gate 2 总数 66 → **78**；
+> §2.5–2.7 的逐条清单停在 f3b6899 时点，stream 各条见 docs/45 §2.5，本文不重抄。
 > 前置阅读：`AGENTS.md`（四条产品属性，载重规则高于本文）、[docs/08](08-testing.md)（测试账本——本文
 > 填的是它第 36 行那句承诺的空）、[docs/05](05-wire-compatibility.md)（本文不动密封格式）、
 > [docs/40](40-open-source-release-spec.md) D2（真实数据不入库——seed 的红线）、
@@ -271,7 +274,7 @@ pub async fn fresh(kind: Kind, tag: &str) -> Fresh;     // tag = the test's own 
 **stream ×4**（`stream:ticks` 1 万条 + `feed` 组 pending 7、`stream:empty`、`stream:one`、
 `stream:ragged` 交错字段）由 `seed.rs` 生成，不进 keys.txt（seed v3，§2.7）。
 
-seed 自己也有测试（I1，`tests/it/seed.rs` 7 条）：灌完后逐表数行、逐列验类型、验值（u64::MAX、
+seed 自己也有测试（I1，`tests/it/seed.rs` 8 条——第 8 条是 redis 索引租约的原子性死锁守卫，`ab7ffb8`）：灌完后逐表数行、逐列验类型、验值（u64::MAX、
 PNG 魔数、`1990-06-15 08:30:00.123456`、重复行计数），外加三条隔离证明（mysql/pg 两个 fresh 库互不可见、
 redis 两个租约互不可见、100 次 `fresh(Redis)` 串行不耗尽索引池）——改 seed 的人先改它。
 
@@ -412,7 +415,7 @@ cargo test -p swiss-it --features it            # 真库、真子进程；需要
 
 job 与 workflow 其余部分同源触发（push 到 `master`/`main`、PR、`v*` tag），`release` 的
 `needs: [build, panel, deny, integration]` 已交付——没有真库证据的 tag 不发。预算：整 job < 4 min
-（三镜像拉取 ~40 s，冷启动 ~20 s，套件 < 1 min；实际记录：本机热跑整门 ~20 s、66 条，见 `929af06`
+（三镜像拉取 ~40 s，冷启动 ~20 s，套件 < 1 min；实际记录：本机热跑整门 ~20 s、66 条（redis-streams 后 78 条），见 `929af06`
 的门禁记录与 ADR-028）。
 
 **依赖重量**：`testcontainers`（MIT）+ `testcontainers-modules`（MIT）经 `bollard`（Apache-2.0）拉进

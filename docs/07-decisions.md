@@ -160,6 +160,11 @@ Two things this leaves open, recorded rather than resolved:
   identical CLI that is probably right, but it deserves a deliberate yes — and it is only a
   question once option A is actually built.
 
+*Update (2026-09-22): two present-tense claims above have drifted with the tree — the repository
+now carries a `.cargo/config.toml` (the rust-lld linker config) and a `crates/swiss-panel/panel/
+package.json` (ADR-024's dev-only toolchain; never a build step of the exe). Neither changes this
+ADR's decision: GitHub Releases remains how the binary ships, and crt-static is still open.*
+
 ---
 
 ## ADR-007 — No `tracing`, no `regex`
@@ -224,6 +229,10 @@ The source is a cargo workspace: `swiss-core`, `swiss-host`, the five subsystem 
 `swiss-data`, `swiss-tunnels`, `swiss-jobs`, `swiss-panel`) and the `swiss` composition crate. The product is
 unchanged — one static `swiss.exe`, measured at +1.1% (9,861,632 → 9,972,224 bytes, release+mongo)
 for the crate-boundary codegen, with the idle footprint flat at ~14 MB.
+
+*Update (2026-09-22): `swiss-terminal` (docs/14) and `swiss-remote` (docs/34) have since joined the
+eight — ten crates now link into the one binary, plus the dev-only `swiss-it` (docs/44) which
+ships nothing. Still one `swiss.exe`, still the same argument.
 
 **The split buys nothing at runtime, and saying otherwise is forbidden.** What it buys is that the
 architecture stops being a claim. "MCP is a plugin, not the trunk" and "no subsystem depends on
