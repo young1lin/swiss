@@ -25,7 +25,7 @@
    Renaming the file to types/domain.ts is R6's, not a slice's — it touches every importer
    and would bury the state split in import churn. */
 
-import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, DbQueryReply } from "./api.js";
+import type { ApiDbActivityRow, ApiDbColumn, ApiDbConnectionRow, ApiDbDatabase, ApiDbDataPage, ApiDbFkRow, ApiDbRedisKeyRow, ApiDbRedisValue, ApiDbStreamEntry, ApiDbStreamGroupRow, ApiDbTableRow, ApiDbTableDetail, ApiMcpCallRow, ApiMcpItem, ApiMcpRevisionRow, ApiMcpTunnelDep, DbQueryReply } from "./api.js";
 /** One recorded action result on a row: what happened, whether it failed, when (time-of-day). */
 export interface LastAction {
   msg: string;
@@ -419,6 +419,25 @@ export interface DbKeyTab extends DbTabBase {
    * because a fresh newest window is the truth and history re-walks from it. */
   redisStreamRows?: ApiDbStreamEntry[] | null;
   redisStreamMore?: boolean | null;
+  /* docs/45 S3: Follow — the live-edge poller. redisStreamFollow is the switch,
+   *  redisStreamEvery the tick interval in ms (1 s default, 2 s / 5 s options),
+   *  redisStreamGroups/redisStreamGroupsOpen the consumer-group fold and its toggle.
+   *  redisStreamLen/redisStreamLenAt sample the rate readout (dXLEN/dt); a tick error
+   *  nulls them so the next sample never reads a stale baseline. */
+  redisStreamFollow?: boolean;
+  redisStreamEvery?: number;
+  redisStreamGroups?: ApiDbStreamGroupRow[] | null;
+  redisStreamGroupsOpen?: boolean;
+  redisStreamLen?: number | null;
+  redisStreamLenAt?: number | null;
+  redisStreamRate?: string | null;
+  /* docs/45 §2.3: the not-pinned holdback. redisStreamPending pools the pages a tick
+   *  fetched while the operator reads history — nothing inserts, the table holds still,
+   *  the pill counts. redisStreamGap is the more=true flag on a live-edge page (a
+   *  middle chunk was skipped); redisStreamErr is why Follow stopped, if it stopped. */
+  redisStreamPending?: ApiDbStreamEntry[] | null;
+  redisStreamGap?: boolean;
+  redisStreamErr?: string | null;
 }
 
 /** The activity monitor as an open object (docs/22 W3.2, docs/42 T2): the last

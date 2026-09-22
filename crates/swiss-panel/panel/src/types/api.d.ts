@@ -789,6 +789,17 @@ export interface ApiDbStreamWindow extends ApiDbRedisValue {
   lastId: string | null;
 }
 
+/** One row of the read-only consumer-group fold (docs/45 §2.4): pending is the group's
+ *  PEL size, lag the entries-append gap (null on a redis older than 7.0, where XINFO
+ *  GROUPS does not report it), last-delivered-id the group's own cursor. */
+export interface ApiDbStreamGroupRow {
+  name: string;
+  consumers: number;
+  pending: number;
+  lag: number | null;
+  "last-delivered-id": string | null;
+}
+
 /** GET /api/db/{name}/keys - the redis SCAN page (one page of the key grid). */
 export interface ApiDbRedisKeysResponse {
   keys: ApiDbRedisKeyRow[];

@@ -104,6 +104,8 @@ const stream = await import(pathToFileURL(join(here, "data-stream.ts")).href) as
   streamMerge: (rows: StreamEntry[], page: StreamEntry[]) => StreamEntry[];
   streamCap: (rows: StreamEntry[], cap: number, keep: "newest" | "oldest") => StreamEntry[];
   streamColumns: (rows: StreamEntry[]) => string[];
+  isTopPinned: (scrollTop: number, rowHeight: number) => boolean;
+  dbStreamTick: () => Promise<void>;
 };
 const browsers = await import(pathToFileURL(join(here, "data-browsers.ts")).href) as {
   dbRenderRedisValue: (wrap: Stub) => void;
@@ -221,6 +223,25 @@ describe("streamColumns", () => {
   });
 });
 
+// docs/45 §2.3: the edge rule. Junk counts as pinned — the edge must never be missed
+// on a technicality; only a provably-scrolled view counts as history.
+describe("isTopPinned", () => {
+  it("scrollTop 0 is the edge", () => {
+    expect(stream.isTopPinned(0, 24)).toBe(true);
+  });
+  it("within one row of the top still rides the edge", () => {
+    expect(stream.isTopPinned(24, 24)).toBe(true); // the first row is still under the eye
+  });
+  it("past one row is history", () => {
+    expect(stream.isTopPinned(25, 24)).toBe(false);
+    expect(stream.isTopPinned(240, 24)).toBe(false);
+  });
+  it("junk counts as pinned: negative offset, unreadable row height", () => {
+    expect(stream.isTopPinned(-5, 24)).toBe(true); // rubber-band overscroll is not reading
+    expect(stream.isTopPinned(500, 0)).toBe(true); // a row that cannot be measured
+  });
+});
+
 /* --- the DOM walk (docs/45 S2 fix) ------------------------------------------------------------- */
 
 function find(node: Stub, pred: (n: Stub) => boolean, out: Stub[] = []): Stub[] {
@@ -252,9 +273,10 @@ function mountStream(win: Partial<ApiDbStreamWindow>): Stub {
   return wrap;
 }
 /** The value body's row ids, newest first - the first cell of every tbody row. */
-const rowIds = (): string[] =>
-  find(byId.dbGridWrap, (n) => n.tag === "tbody")[0].children
-    .map((r: Stub) => (r.children[0] as Stub).textContent);
+const rowIds = (): string[] => {
+  const tb = find(byId.dbGridWrap, (n) => n.tag === "tbody")[0]; // no table: the empty view
+  return (tb ? tb.children : []).map((r: Stub) => (r.children[0] as Stub).textContent);
+};
 const loadEarlierBtn = (): Stub =>
   find(byId.dbGridWrap, (n) => n.tag === "button" && text(n).indexOf("Load earlier") >= 0)[0];
 const pageOf = (ms: number): StreamEntry[] =>
@@ -311,6 +333,147 @@ describe("the stream value view's Load-earlier walk (docs/45 S2 fix)", () => {
     expect(rowIds()).toEqual(["5-0", "4-0", "3-0"]);
     expect(loadEarlierBtn(), "the walk's end takes the button with it").toBeUndefined();
     expect(text(byId.dbGridWrap)).toContain("Beginning of the stream");
+  });
+});
+
+/* --- the Follow edge (docs/45 S3) ------------------------------------------------------------- */
+
+const followBtn = (): Stub =>
+  find(byId.dbGridWrap, (n) => n.tag === "button" && (text(n) === "Follow" || text(n) === "Pause"))[0];
+const pill = (): Stub => find(byId.dbGridWrap, (n) => String(n.className).indexOf("db-stream-pill") >= 0)[0];
+const gapBar = (): Stub => find(byId.dbGridWrap, (n) => String(n.className).indexOf("db-stream-gap") >= 0)[0];
+const barText = (): string => {
+  const bars = find(byId.dbGridWrap, (n) => (n.className || "").toString().split(" ").indexOf("db-detail-meta") >= 0);
+  return bars.map(text).join("");
+};
+/* Point the scroller stub at a scroll position and a measurable row height; the tick
+   reads both off #dbGridWrap the way the real DOM would answer. */
+const setScroll = (top: number, rowH: number): void => {
+  const w = byId.dbGridWrap as any;
+  w.scrollTop = top;
+  w.querySelector = rowH > 0 ? () => ({ offsetHeight: rowH }) : () => null;
+};
+const answerErr = async (): Promise<void> => {
+  parked.splice(0, 1)[0].fail({});
+  await tick();
+};
+const followOn = (): void => { followBtn().onclick(); }; // renderDbGrid repainted; state is on
+
+describe("the stream Follow edge (docs/45 S3)", () => {
+  it("an empty stream mounts the Follow bar too, and its tick polls after=0-0", async () => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 0,
+      entries: [], columns: [], more: false, firstId: null, lastId: null,
+    });
+    expect(rowIds()).toEqual([]); // no table - but the bar is there (empty hint too)
+    expect(text(byId.dbGridWrap)).toContain("This stream is empty");
+    expect(followBtn(), "an empty stream is still a followable one").toBeDefined();
+    followOn();
+    const p = stream.dbStreamTick();
+    await answer({ entries: [entry("1-0", { a: "1" })], columns: ["a"], more: false, firstId: null, lastId: null, length: 1 });
+    await p;
+    expect(requests[requests.length - 1].url).toContain("after=0-0"); // the stream's very beginning
+    expect(rowIds()).toEqual(["1-0"]); // the first append ever lands, no re-key needed
+  });
+
+  it("a tick error stops Follow: the toggle resets and the bar says why", async () => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 2,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
+    });
+    followOn();
+    expect(text(followBtn())).toBe("Pause");
+    const n0 = requests.length;
+    const p = stream.dbStreamTick();
+    await answerErr();
+    await p;
+    expect(text(followBtn())).toBe("Follow"); // the toggle reset - no zombie polling
+    expect(barText()).toContain("Follow stopped");
+    expect(requests.length).toBe(n0 + 1); // its one poll, nothing retried after the stop
+  });
+
+  it("pinned: a live-edge page inserts at the top, the pill never appears", async () => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 3,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
+    });
+    setScroll(0, 24);
+    followOn();
+    const p = stream.dbStreamTick();
+    expect(requests[requests.length - 1].url).toContain("after=9-0");
+    await answer({ entries: [entry("10-0", { a: "0" })], columns: ["a"], more: false, firstId: null, lastId: null, length: 3 });
+    await p;
+    expect(rowIds()).toEqual(["10-0", "9-0", "8-0"]); // the edge moved with the stream
+    expect(pill().hidden).toBe(true); // pinned readers need no pill
+  });
+
+  it("not pinned: the table never moves - the pill counts, the click flushes at the top", async () => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 4,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
+    });
+    setScroll(500, 24); // deep in history, one measured row
+    followOn();
+    const p = stream.dbStreamTick();
+    await answer({ entries: [entry("10-0", { a: "0" }), entry("11-0", { a: "x" })], columns: ["a"], more: false, firstId: null, lastId: null, length: 4 });
+    await p;
+    expect(rowIds()).toEqual(["9-0", "8-0"]); // NOTHING inserted under the reader
+    expect(pill().hidden).toBe(false);
+    expect(text(pill())).toBe("↑ 2 new entries");
+    expect(gapBar().hidden).toBe(true); // an untruncated page is no gap
+    setScroll(500, 24); // still reading; the flush itself returns to the top
+    pill().onclick();
+    expect(rowIds()).toEqual(["11-0", "10-0", "9-0", "8-0"]); // the pool rode the edge
+    expect(pill().hidden).toBe(true);
+    expect((byId.dbGridWrap as any).scrollTop).toBe(0);
+  });
+
+  it("a truncated page (more=true) paints the skipped-middle bar; jump-latest reopens with no cursor", async () => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 402,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
+    });
+    setScroll(0, 24);
+    followOn();
+    const p = stream.dbStreamTick();
+    await answer({ entries: [entry("10-0", { a: "0" })], columns: ["a"], more: true, firstId: null, lastId: null, length: 402 });
+    await p;
+    const gap = gapBar();
+    expect(gap.hidden).toBe(false);
+    expect(text(gap)).toContain("skipped");
+    expect(text(gap)).toContain("Jump to latest");
+    // The hole does not heal by itself: a later untruncated tick fetched nothing new,
+    // and the missing middle is still missing - the bar stays until the operator jumps.
+    const p2 = stream.dbStreamTick();
+    await answer({ entries: [], columns: ["a"], more: false, firstId: null, lastId: null, length: 402 });
+    await p2;
+    expect(gapBar().hidden).toBe(false);
+    gap.onclick();
+    await answer({ entries: [entry("12-0", { a: "z" }), entry("11-0", { a: "y" })], columns: ["a"], more: false, firstId: "11-0", lastId: "12-0", length: 402 });
+    await tick();
+    const jumpUrl = requests[requests.length - 1].url;
+    expect(jumpUrl).not.toContain("after="); // the latest window: no cursor at all
+    expect(jumpUrl).not.toContain("before=");
+    expect(rowIds()).toEqual(["12-0", "11-0"]); // the rows were REPLACED, not spliced
+    expect(gapBar().hidden).toBe(true); // the lie about contiguity is gone
+  });
+
+  it("hidden: the tick fetches nothing; the next visible tick catches up", async () => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 2,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
+    });
+    setScroll(0, 24);
+    followOn();
+    const n0 = requests.length;
+    docStub.hidden = true;
+    await stream.dbStreamTick(); // returns before the fetch - zero requests while hidden
+    expect(requests.length).toBe(n0);
+    docStub.hidden = false;
+    const p = stream.dbStreamTick();
+    await answer({ entries: [entry("10-0", { a: "0" })], columns: ["a"], more: false, firstId: null, lastId: null, length: 3 });
+    await p;
+    expect(rowIds()).toEqual(["10-0", "9-0", "8-0"]); // caught up in one tick
   });
 });
 /* Newest-first compare for assertions - the same tuple math the view runs, kept
