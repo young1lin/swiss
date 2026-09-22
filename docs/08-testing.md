@@ -180,7 +180,7 @@ Every module in the workspace carries an inline `#[cfg(test)] mod tests` **excep
 
 | Module | Lines | Why not, and what it would take |
 | --- | --- | --- |
-| `swiss-mcp` `adapters/mysql_browser.rs` | 401 | Orchestration only — every path is `async fn` over a live connection, and the SQL it builds is quoted by `dbbrowser::quote_ident`, which is tested there. It belongs with the self-skipping DB tests. |
+| `swiss-mcp` `adapters/mysql_browser.rs` | 401 | Orchestration only — every path is `async fn` over a live connection, and the SQL it builds is quoted by `dbbrowser::quote_ident`, which is tested there. Since docs/44 it no longer "belongs with the self-skipping DB tests": the same paths run against real MySQL/PG/Redis in `crates/swiss-it` (gate 2, `cargo test -p swiss-it --features it`). |
 | `swiss-core` `platform/windows.rs` | 378 | Win32 FFI: DPAPI, Toolhelp, registry. Its process walk is covered — the BFS both platforms share now lives un-`cfg`'d in `swiss-core`'s `platform/mod.rs` and is tested on whatever host runs the suite. What is left is the FFI itself, which needs the OS to answer. |
 | `swiss` `adminapi.rs`, `app.rs` | 2,028 | No *inline* tests by design — covered end-to-end from `tests/adminapi.rs` (68) and `tests/app.rs` (12), which is where a route contract belongs. |
 | `swiss` `lib.rs`/`main.rs`, `swiss-core` `secure/mod.rs`, `swiss-tunnels` `tunnel/mod.rs` | 109 | Re-export shells with no behaviour of their own. |

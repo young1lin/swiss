@@ -1,9 +1,10 @@
 # 44 — 集成测试底座：真库、自建 MCP、任何机器一条命令
 
-> 状态：**待实施**（spec 定稿 2026-09-22；基线 `946b921`（master）；实施从
-> [44-integration-harness-prompt.md](44-integration-harness-prompt.md) 起步，走 swiss-dependency-review →
-> swiss-verify → swiss-review 流程。Docker 的安装是 owner 的事，手册在
-> [44-wsl-docker-setup.md](44-wsl-docker-setup.md)，与本文平行、不互相等待）。
+> 状态：**已实施**（branch `integration-harness`，2026-09-22 实施完毕；spec 定稿 2026-09-22；基线 `946b921`
+> （master）。逐项：I0 `062928a`、I1 `4740a9b`、I2 `0349c41`、I3 `239895e`、I4 `f707247`、清理补丁（it-reaper +
+> 按 age 的 prune）`78cd561`、I5 `3cf62a8`、I6 `2145a44`、I7 见本提交（I5/I6 于同日重做以各自携带
+> Cargo.lock——原 `64a8ab4`/`86fa047` 的树检出即 `--locked` 失败）。实施走了 swiss-dependency-review →
+> swiss-verify → swiss-review 流程。Docker 的安装在 [44-wsl-docker-setup.md](44-wsl-docker-setup.md)）。
 > 前置阅读：`AGENTS.md`（四条产品属性，载重规则高于本文）、[docs/08](08-testing.md)（测试账本——本文
 > 填的是它第 36 行那句承诺的空）、[docs/05](05-wire-compatibility.md)（本文不动密封格式）、
 > [docs/40](40-open-source-release-spec.md) D2（真实数据不入库——seed 的红线）、

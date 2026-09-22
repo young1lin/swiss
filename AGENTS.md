@@ -129,6 +129,12 @@ cargo tree -d -e normal,build  # a duplicated TLS stack or runtime must fail rev
 cargo run -- start --no-open   # the gateway itself, on 127.0.0.1:19999
 ```
 
+A commit that edits any `Cargo.toml` carries the regenerated `Cargo.lock` in the same
+commit: glance at `git status --short` before committing (a dirty `Cargo.lock` left behind
+is how two commits on this branch shipped unbuildable under `--locked`), and self-check the
+result with `cargo tree --locked --offline --workspace --depth 0` — every CI command is
+`--locked`, and a stale lock fails the checkout itself, not just the build.
+
 The build links with `rust-lld` (`.cargo/config.toml`) - measured ~28% off a
 cold `cargo test --workspace` on this machine; drop it only with new numbers in hand.
 
