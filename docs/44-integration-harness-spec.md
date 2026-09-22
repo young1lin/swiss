@@ -208,7 +208,9 @@ pub async fn fresh(kind: Kind, tag: &str) -> Fresh;     // tag = the test's own 
 
 **redis**（`keys.txt`，一行一条命令）：五种类型各若干（string 含中文与二进制安全字节、hash 50 字段、
 list 100 元素、set、zset）；一个带 TTL 的键、一个 `PERSIST` 的；`ns:sub:leaf` 三层命名空间给树；
-一个命名空间下 **3,000** 个键给 `SCAN` 分页；另一个 db 索引里放 2 个键给 `INFO keyspace` 目录。
+一个命名空间下 **3,000** 个键给 `SCAN` 分页；另一个 db 索引里放 2 个键给 `INFO keyspace` 目录；
+docs/45 §2.7 补的 **stream ×4**（`stream:ticks` 1 万条 + 消费组 pending 7、`stream:empty`、`stream:one`、
+`stream:ragged` 交错字段）在 `seed.rs` 里生成，不进 keys.txt。
 
 seed 自己也有测试（I1）：灌完后逐表数行、逐列验类型，是"seed 还在"的守卫——改 seed 的人先改它。
 

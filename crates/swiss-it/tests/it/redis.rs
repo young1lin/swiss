@@ -15,9 +15,10 @@
  */
 
 //! L1, the redis group (docs/44 SS2.5): RedisDataBrowser against a real redis 7,
-//! over a leased db index reloaded from keys.txt (3,016 keys: five types, a
+//! over a leased db index reloaded from keys.txt (3,020 keys: five types, a
 //! three-level tree namespace, one expiring and one persisted TTL key, UTF-8
-//! values, and 3,000 bulk keys to make SCAN paging earn its keep). The browser
+//! values, 3,000 bulk keys to make SCAN paging earn its keep, and the four
+//! generated stream keys of docs/45 §2.7). The browser
 //! is built exactly the way the adapter builds it: ServerDef -> RedisEngine ->
 //! Engine::browser(), carrying the def's own policy flags.
 
@@ -27,7 +28,7 @@ use serde_json::{json, Value};
 use swiss_host::config::ServerDef;
 use swiss_host::dbbrowser::{BrowserFlavor, RedisBrowser};
 use swiss_it::engine::Kind;
-use swiss_it::seed::{fresh, fresh_redis_with_neighbor, Fresh};
+use swiss_it::seed::{fresh, fresh_redis_with_neighbor, Fresh, REDIS_SEED_KEYS};
 use swiss_mcp::adapters::redis::RedisEngine;
 use swiss_mcp::adapters::tool_server::Engine;
 
@@ -66,7 +67,7 @@ async fn walk_all(b: &dyn RedisBrowser) -> BTreeSet<String> {
         for k in page["keys"].as_array().expect("keys") {
             seen.insert(k["key"].as_str().expect("key text").to_string());
         }
-        assert_eq!(page["total"], 3016, "DBSIZE rides every first page");
+        assert_eq!(page["total"], REDIS_SEED_KEYS, "DBSIZE rides every first page");
         if page["done"] == json!(true) {
             break;
         }
@@ -80,8 +81,8 @@ async fn walk_all(b: &dyn RedisBrowser) -> BTreeSet<String> {
 async fn scan_walks_the_whole_keyspace_without_loss_or_duplication() {
     let (_f, b) = browser("r1_walk").await;
     let seen = walk_all(b.as_ref()).await;
-    // 3,016 distinct keys, no duplication across pages, no loss at the seams.
-    assert_eq!(seen.len(), 3016, "the BTreeSet dedups; len == distinct keys");
+    // 3,020 distinct keys, no duplication across pages, no loss at the seams.
+    assert_eq!(seen.len(), REDIS_SEED_KEYS as usize, "the BTreeSet dedups; len == distinct keys");
     for expected in [
         "users:1",
         "ns:h:profile",
@@ -111,9 +112,9 @@ async fn scan_pages_carry_type_ttl_and_total() {
     // back MORE than COUNT keys in one page (the per-container hash seed decides, so
     // this flips with a restart). What stays true: 500 examined buckets cannot drain
     // 3,016 keys, so the page is partial.
-    assert!(keys.len() < 3016, "a 500-hint page is partial: {} keys", keys.len());
-    assert_eq!(page["total"], 3016);
-    assert_eq!(page["done"], false, "3,016 keys cannot finish one 500 page");
+    assert!(keys.len() < REDIS_SEED_KEYS as usize, "a 500-hint page is partial: {} keys", keys.len());
+    assert_eq!(page["total"], REDIS_SEED_KEYS);
+    assert_eq!(page["done"], false, "3,020 keys cannot finish one 500 page");
     for k in keys {
         assert!(k["type"].is_string(), "each key carries its TYPE: {k}");
         assert!(k["ttl"].is_number(), "each key carries its TTL: {k}");
@@ -339,7 +340,7 @@ async fn list_databases_names_each_keyspace_with_the_foreign_reason() {
     assert_eq!(ours["primary"], true);
     assert_eq!(ours["browsable"], true);
     assert_eq!(ours["reason"], Value::Null);
-    assert_eq!(ours["tables"], 3016, "the key count is the redis table count");
+    assert_eq!(ours["tables"], REDIS_SEED_KEYS, "the key count is the redis table count");
 
     // The neighbor db exists in the keyspace but is not browsable from this
     // connection: SELECT would re-mode the shared handle.

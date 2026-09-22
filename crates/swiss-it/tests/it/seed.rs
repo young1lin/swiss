@@ -24,7 +24,7 @@
 use serde_json::Value;
 use sqlx::Connection;
 use swiss_it::engine::Kind;
-use swiss_it::seed::fresh;
+use swiss_it::seed::{fresh, REDIS_SEED_KEYS};
 
 fn mysql_url(def: &Value) -> String {
     format!(
@@ -264,9 +264,11 @@ async fn redis_seed_keys_types_and_ttls() {
     let f = fresh(Kind::Redis, "guard").await;
     let mut c = redis_conn(&f.def).await;
 
-    // 3,010 SET/SETEX lines + one key each for hash, list, set and zset.
+    // 3,010 SET/SETEXT lines + one key each for hash, list, set and zset, plus
+    // the four generated stream keys (docs/45 §2.7) - one number, held by the
+    // seed crate so a seed change moves it once.
     let size: i64 = redis::cmd("DBSIZE").query_async(&mut c).await.expect("DBSIZE");
-    assert_eq!(size, 3016);
+    assert_eq!(size, REDIS_SEED_KEYS);
 
     for (key, expected) in [
         ("users:1", "string"),
@@ -301,6 +303,60 @@ async fn redis_seed_keys_types_and_ttls() {
 
     let bulk: String = redis::cmd("GET").arg("bulk:key01500").query_async(&mut c).await.expect("GET bulk");
     assert_eq!(bulk, "bulk value 01500");
+
+    // docs/45 §2.7: the four generated stream keys. TYPE pins that they exist and
+    // really are streams (an empty stream is a key with a type and no entries),
+    // XLEN pins the bulk volume the window tests page through, and XINFO GROUPS
+    // pins the `feed` group's read-but-not-ACKed seven - the pending count the
+    // consumer-group surface reports. RESP2 hands each group back as a flat
+    // [key, value, ...] array, so the walk is pair-wise.
+    for key in ["stream:ticks", "stream:empty", "stream:one", "stream:ragged"] {
+        let got: String = redis::cmd("TYPE").arg(key).query_async(&mut c).await.unwrap_or_else(|e| panic!("TYPE {key}: {e}"));
+        assert_eq!(got, "stream", "key {key}");
+    }
+    let xlen: i64 = redis::cmd("XLEN").arg("stream:ticks").query_async(&mut c).await.expect("XLEN stream:ticks");
+    assert_eq!(xlen, 10_000, "stream:ticks carries its ten thousand seeded entries");
+    let groups = redis::cmd("XINFO")
+        .arg("GROUPS")
+        .arg("stream:ticks")
+        .query_async::<redis::Value>(&mut c)
+        .await
+        .expect("XINFO GROUPS stream:ticks");
+    let mut feed_pending: Option<i64> = None;
+    let mut feed_consumers: Option<i64> = None;
+    if let redis::Value::Array(rows) = groups {
+        for row in rows {
+            let redis::Value::Array(flat) = row else { continue };
+            let mut name: Option<String> = None;
+            let mut pending: Option<i64> = None;
+            let mut consumers: Option<i64> = None;
+            let mut key: Option<String> = None;
+            for item in flat {
+                match item {
+                    redis::Value::BulkString(b) => {
+                        let s = String::from_utf8_lossy(&b).into_owned();
+                        match key.take() {
+                            Some(k) if k == "name" => name = Some(s),
+                            Some(_) => {}
+                            None => key = Some(s),
+                        }
+                    }
+                    redis::Value::Int(n) => match key.take().as_deref() {
+                        Some("pending") => pending = Some(n),
+                        Some("consumers") => consumers = Some(n),
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            if name.as_deref() == Some("feed") {
+                feed_pending = pending;
+                feed_consumers = consumers;
+            }
+        }
+    }
+    assert_eq!(feed_pending, Some(7), "the feed group read seven entries it never ACKed");
+    assert_eq!(feed_consumers, Some(1), "one consumer (c1) read them");
 }
 
 #[tokio::test]
@@ -374,6 +430,6 @@ async fn a_hundred_redis_freshes_do_not_drain_the_index_pool() {
         let size: i64 = redis::cmd("DBSIZE").query_async(&mut c).await.expect("DBSIZE");
         // Every lease starts from FLUSHDB + a full reload: a previous iteration's
         // state leaking through would show up here as a wrong count.
-        assert_eq!(size, 3016, "iteration {i}");
+        assert_eq!(size, REDIS_SEED_KEYS, "iteration {i}");
     }
 }

@@ -34,7 +34,8 @@
 //!   stale seed.
 //! - Redis: redis has no per-test databases beyond the 16 numbered indexes, so
 //!   they are leased from a pool (a semaphore plus a free list); a lease starts
-//!   with `FLUSHDB` and reloads `seed/redis/keys.txt`; releasing flushes again
+//!   with `FLUSHDB`, reloads `seed/redis/keys.txt` and generates the four stream
+//!   keys (docs/45 §2.7); releasing flushes again
 //!   and returns the index. The keyspace-catalog test leases a second index and
 //!   puts two keys in it - see [`fresh_redis_with_neighbor`].
 //!
@@ -54,7 +55,14 @@ use crate::engine::{engine, on_worker, Engine, Kind};
 
 /// Bump when any file under `seed/` changes: an existing `it_seed` template (or
 /// `it` role) built from an older seed is rebuilt instead of reused.
-const SEED_VERSION: i64 = 2;
+/// Version 3: the redis seed grew four generated stream keys (docs/45 §2.7).
+const SEED_VERSION: i64 = 3;
+
+/// How many keys a freshly leased redis db holds (docs/45 §2.7): 3,016 replayed
+/// from keys.txt plus the four generated stream keys. A pub const because the
+/// seed guards and the L1 scan tests ask this same question in three files — a
+/// seed change must move ONE number, not send the next change literal-hunting.
+pub const REDIS_SEED_KEYS: i64 = 3_020;
 
 /// The account every def authenticates as. Not a superuser - the browsers must
 /// work through the same non-privileged path the panel's defs use.
@@ -414,6 +422,7 @@ async fn fresh_redis() -> Fresh {
         .await
         .expect("flush the leased redis db");
     load_redis_seed(&mut conn).await;
+    load_redis_streams(&mut conn).await;
     Fresh {
         kind: Kind::Redis,
         name: format!("db{index}"),
@@ -455,6 +464,108 @@ async fn load_redis_seed(conn: &mut redis::aio::MultiplexedConnection) {
         pipe.query_async::<()>(conn)
             .await
             .expect("load a chunk of the redis seed");
+    }
+}
+
+/// The four stream keys the seed GENERATES on top of keys.txt (docs/45 §2.7).
+///
+/// Why generated, not keys.txt lines: `stream:ticks` is 10,000 XADDs — the mysql
+/// seed uses a recursive CTE and the pg seed generate_series for the same reason,
+/// bulk rows do not belong in a replayed text file. And why explicit entry ids
+/// (`1700000000000 + i*100`): a stream id's millisecond half IS its timestamp, so
+/// pinned ids make every derived `ts` a fixed string a test can assert against,
+/// and the 100 ms spacing keeps `stream_id_ms` honest at every rank. The `feed`
+/// group has read seven entries it never ACKed, so the consumer-group surface
+/// has a pending count that is not zero; the other three keys are the edge
+/// shapes the window code must survive — an empty-but-existing stream (only
+/// XGROUP MKSTREAM can make one), a single entry, and five entries whose field
+/// sets interleave, which is how the column-union rule earns its keep.
+async fn load_redis_streams(conn: &mut redis::aio::MultiplexedConnection) {
+    const TICKS: i64 = 10_000;
+    const SYMS: [&str; 5] = ["AAA", "BBB", "CCC", "DDD", "EEE"];
+    // Chunked like load_redis_seed: one pipeline is one bounded round trip, so the
+    // whole stream is twenty pipelines, not ten thousand serialized waits.
+    for start in (0..TICKS).step_by(500) {
+        let mut pipe = redis::pipe();
+        for i in start..(start + 500).min(TICKS) {
+            pipe.cmd("XADD")
+                .arg("stream:ticks")
+                .arg(format!("{}-0", 1_700_000_000_000_i64 + i * 100))
+                .arg("sym")
+                .arg(SYMS[(i % 5) as usize])
+                .arg("px")
+                .arg(format!("{:.2}", (i % 1000) as f64 / 100.0))
+                .arg("qty")
+                .arg(1 + i % 50)
+                .arg("side")
+                .arg(if i % 2 == 0 { "b" } else { "s" })
+                .ignore();
+        }
+        pipe.query_async::<()>(conn)
+            .await
+            .expect("load a chunk of stream:ticks");
+    }
+    // The group starts at 0 (not $), so its lag is every entry minus the seven
+    // delivered here; XREADGROUP through this raw connection is fine — the
+    // CONNECTION_BREAKING blacklist guards the gateway's shared adapter handle,
+    // not a seed loader that owns its connection.
+    redis::cmd("XGROUP")
+        .arg("CREATE")
+        .arg("stream:ticks")
+        .arg("feed")
+        .arg("0")
+        .query_async::<()>(conn)
+        .await
+        .expect("create the feed group");
+    redis::cmd("XREADGROUP")
+        .arg("GROUP")
+        .arg("feed")
+        .arg("c1")
+        .arg("COUNT")
+        .arg(7)
+        .arg("STREAMS")
+        .arg("stream:ticks")
+        .arg(">")
+        .query_async::<redis::Value>(conn)
+        .await
+        .expect("read seven entries into the feed group's pending list");
+
+    // An empty stream can only be born by XGROUP ... MKSTREAM — no XADD leaves
+    // zero entries — which is exactly the shape the empty-state UI needs on
+    // disk (docs/45 §2.5 “empty / single” row).
+    redis::cmd("XGROUP")
+        .arg("CREATE")
+        .arg("stream:empty")
+        .arg("watchers")
+        .arg("$")
+        .arg("MKSTREAM")
+        .query_async::<()>(conn)
+        .await
+        .expect("create the empty stream");
+    redis::cmd("XADD")
+        .arg("stream:one")
+        .arg("1700000000000-0")
+        .arg("a")
+        .arg("1")
+        .query_async::<String>(conn)
+        .await
+        .expect("create the single-entry stream");
+    let ragged: [(&str, &[(&str, &str)]); 5] = [
+        ("1700000000000-0", &[("a", "1")]),
+        ("1700000000100-0", &[("a", "2"), ("b", "2")]),
+        ("1700000000200-0", &[("b", "3"), ("c", "3")]),
+        ("1700000000300-0", &[("c", "4")]),
+        ("1700000000400-0", &[("a", "5"), ("c", "5"), ("d", "5")]),
+    ];
+    for (id, fields) in ragged {
+        let mut cmd = redis::cmd("XADD");
+        cmd.arg("stream:ragged").arg(id);
+        for (k, v) in fields {
+            cmd.arg(k).arg(v);
+        }
+        cmd.query_async::<String>(conn)
+            .await
+            .expect("create a ragged stream entry");
     }
 }
 
