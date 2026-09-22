@@ -118,6 +118,15 @@ Name resolution order: `--target` > a target id > a project action > the binding
 Deadline order: `--timeout` > action > target row > 2 h, capped at 24 h (the submit route
 ceiling).
 
+## Per-target notes (`~/.swiss/remote-notes/`)
+
+The shipped skill's memory layer: free-form, agent-written, one `<alias>.md` per target under
+the state home - never the skill directory, which `swiss skill install` replaces wholesale on
+every upgrade. Machine-checkable facts stay in project bindings (above); notes carry only what
+prose can (command lines, log and service locations, ports, the project-to-path map) and never
+credentials. The skill teaches read-before-discovery, dated entries, and cheap re-verification
+(`resolve`, `exec <t> -- pwd`) over trust: the gateway's own answer outranks the note.
+
 ## CLI examples
 
 ```

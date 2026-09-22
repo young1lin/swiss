@@ -146,6 +146,22 @@ The builtin `/mcp/remote` server exposes five tools while the Remote plugin is o
 `remote_exec`, `remote_sync`, `remote_pull`, `remote_cat`, and `remote_write`. `push` is
 the CLI's one-file form of sync, not a sixth MCP tool.
 
+## Memory: per-target notes
+
+Facts you re-derive every session belong in one file per target, shared by every AI client on
+this machine: `~/.swiss/remote-notes/<alias>.md` (under `$SWISS_HOME` when the home is
+overridden). Read it before discovery when it exists. Notes live in the gateway home, never in
+the skill directory - `swiss skill install` replaces that wholesale on every upgrade.
+
+- Belongs: command lines that worked (build/test/deploy), service and log locations, ports,
+  the remote `$HOME`, a project-to-path map ("proj X deploys to /srv/x").
+- Never belongs: passwords, keys, tokens, or any credential - the sealed store owns those.
+- Machine-checkable facts (target, workspace, timeout) belong in `.swiss/remote.json` actions,
+  not prose; `resolve` beats reading.
+- Discipline: one section per project, entries dated (`2026-09-22:`); re-verify a stale path
+  with one cheap call (`resolve`, `exec <t> -- pwd`) before trusting it; delete what died.
+  Notes are hints to check, not truth to obey - the gateway's own answer wins.
+
 ## UTF-8 and records
 
 Remote exec defaults `LANG=C.UTF-8` and `LC_ALL=C.UTF-8`; CLI `--env` and the MCP exec tool's
