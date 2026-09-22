@@ -850,9 +850,14 @@ impl DbBrowser for MysqlBrowser {
             if let Some(cols) = cached {
                 columns = Some((word, cols));
             } else {
+                // The alias is load-bearing: MySQL 8's prepared-statement metadata
+                // UPPERCASES unaliased information_schema result names (COLUMN_NAME),
+                // so the row key would not match - the FROM-table column completion
+                // silently served nothing on a real server. Found live by the docs/44
+                // L1 suite; an alias keeps its written case.
                 let rows = self
                     .query(
-                        "SELECT column_name FROM information_schema.columns \
+                        "SELECT column_name AS col_name FROM information_schema.columns \
                          WHERE table_schema = ? AND table_name = ? \
                          ORDER BY ordinal_position",
                         &[json!(self.database), json!(word)],
@@ -861,7 +866,7 @@ impl DbBrowser for MysqlBrowser {
                 let cols: Vec<String> = rows
                     .iter()
                     .filter_map(|r| {
-                        r.get("column_name")
+                        r.get("col_name")
                             .and_then(Value::as_str)
                             .map(str::to_string)
                     })
