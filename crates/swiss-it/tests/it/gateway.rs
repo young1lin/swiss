@@ -64,7 +64,7 @@ fn sandbox() {
 /// One gateway on a real ephemeral port: registry + managed store + router, served
 /// by a spawned axum task on the test's own runtime. The task dies with the runtime
 /// when the test ends - no shutdown path needed.
-struct Gateway {
+pub(crate) struct Gateway {
     port: u16,
     token: String,
     #[allow(dead_code)]
@@ -73,7 +73,7 @@ struct Gateway {
     store: Arc<ManagedStore>,
 }
 
-async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
+pub(crate) async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
     sandbox();
     let scratch = std::env::temp_dir().join(format!("swiss-it-gw-{}", scratch_id()));
     std::fs::create_dir_all(&scratch).expect("create the scratch dir");
@@ -83,14 +83,21 @@ async fn boot(defs: Vec<(&str, Value)>) -> Gateway {
     let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
     for (name, d) in defs {
         let d = ServerDef(d.as_object().cloned().expect("a def is an object"));
+        // What the daemon does at boot: start the non-lazy MCPs (an idle proc child
+        // is money nobody asked to spend - its first request wakes it).
+        let lazy = swiss_mcp::registry::is_lazy(&d);
         let adapter = make_adapter(&d, name, &calls).expect("adapter");
         registry
             .register(name, Source::Config, d, adapter)
             .expect("register");
-        // What the daemon does for a config MCP at boot: build the server so the
-        // endpoint answers. (Proc defs stay lazy by design; these DB ones are not.)
-        registry.start(name).await.expect("start");
+        if !lazy {
+            registry.start(name).await.expect("start");
+        }
     }
+    // The daemon's boot starts the health-probe interval AND the 1 s idle-reap
+    // sweeper - without this line a lazy proc's child would never be reaped, and
+    // the L3 suite caught exactly that gap in the first cut of this boot.
+    registry.start_timer();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("an ephemeral port on loopback");
@@ -127,7 +134,12 @@ impl Gateway {
     /// One admin-API call over real HTTP. The loopback boundary is the auth here
     /// (the panel has no login); the Host header reqwest sends is the loopback one
     /// the guard requires.
-    async fn api(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> (u16, Value) {
+    pub(crate) async fn api(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
         let mut req = reqwest::Client::new().request(method, format!("{}{}", self.base(), path));
         if let Some(b) = body {
             req = req.json(&b);
@@ -141,12 +153,15 @@ impl Gateway {
 }
 
 /// A no-op client handler: the tests drive the session; the client side needs none.
-struct NoopClient;
+pub(crate) struct NoopClient;
 impl rmcp::ClientHandler for NoopClient {}
 
 /// One rmcp client session against the gateway's /mcp/<name>, token-authenticated
 /// the way a hosted client is. serve_client completes the initialize handshake.
-async fn mcp(g: &Gateway, name: &str) -> rmcp::service::RunningService<rmcp::RoleClient, NoopClient> {
+pub(crate) async fn mcp(
+    g: &Gateway,
+    name: &str,
+) -> rmcp::service::RunningService<rmcp::RoleClient, NoopClient> {
     let mut config =
         rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::default();
     config.uri = format!("{}/mcp/{name}", g.base()).into();
@@ -158,7 +173,7 @@ async fn mcp(g: &Gateway, name: &str) -> rmcp::service::RunningService<rmcp::Rol
 }
 
 /// The sorted tool names a session lists - the exact-set assertions read better.
-async fn tool_names(
+pub(crate) async fn tool_names(
     client: &rmcp::service::RunningService<rmcp::RoleClient, NoopClient>,
 ) -> Vec<String> {
     let mut names: Vec<String> = client
@@ -173,24 +188,33 @@ async fn tool_names(
     names
 }
 
-/// One tool call through the session, answer parsed back from its text content.
-async fn call(
+/// One tool call through the session, the RAW text of the first content block -
+/// byte-identity assertions (the L3 blob) need the wire bytes, not a re-parse.
+pub(crate) async fn call_text(
     client: &rmcp::service::RunningService<rmcp::RoleClient, NoopClient>,
     tool: &str,
     args: Value,
-) -> Value {
+) -> String {
     let mut params = rmcp::model::CallToolRequestParams::default();
     params.name = tool.to_string().into();
     params.arguments = args.as_object().cloned();
     let res = client.call_tool(params).await.expect("the tool answers");
-    let text = res
-        .content
+    res.content
         .first()
         .and_then(|c| match c {
             rmcp::model::ContentBlock::Text(t) => Some(t.text.clone()),
             _ => None,
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// One tool call through the session, answer parsed back from its text content.
+pub(crate) async fn call(
+    client: &rmcp::service::RunningService<rmcp::RoleClient, NoopClient>,
+    tool: &str,
+    args: Value,
+) -> Value {
+    let text = call_text(client, tool, args).await;
     serde_json::from_str(&text).unwrap_or(Value::String(text))
 }
 
