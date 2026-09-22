@@ -91,7 +91,7 @@ function sidebar(): void {
     dbConn("rc", "redis"),
   ];
   d.conn = "pgc";
-  d.tables = []; d.treeShowAll = {}; d.tablesTotal = 0; d.more = false; d.grep = "";
+  d.tables = []; d.treeShown = {}; d.tablesTotal = 0; d.more = false; d.grep = "";
   d.schemaFilter = ""; d.sort = "name"; d.sortDir = "asc";
   d.redis = null;
   d.gridCfg = { widths: {}, hidden: [] };

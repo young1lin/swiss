@@ -441,19 +441,21 @@ function dbChromeClick(t         , ev            )          {
     return true;
   }
   if (t.closest("[data-keysmore]")) { void dbLoadKeys(false); return true; }
-  // docs/43 addendum: a section's expander/collapse note row. The key carries schema +
-  // section so a pg catalog expands one schema's Tables band, not every schema's.
+  // docs/43 addendum: a section's note row. treemore widens the window by the batch the
+  // note itself advertised (dataset.next); treeless drops the memory and the window snaps
+  // back to the initial cap. The key carries schema + section so a pg catalog widens one
+  // schema's Tables band, not every schema's.
   const tm = t.closest             ("[data-treemore]");
   if (tm && tm.dataset.treemore) {
     const d = dbConn();
-    d.treeShowAll[tm.dataset.treemore] = true;
+    d.treeShown[tm.dataset.treemore] = Number(tm.dataset.next || 0);
     renderDbTables();
     return true;
   }
   const tl = t.closest             ("[data-treeless]");
   if (tl && tl.dataset.treeless) {
     const d = dbConn();
-    d.treeShowAll[tl.dataset.treeless] = false;
+    delete d.treeShown[tl.dataset.treeless];
     renderDbTables();
     return true;
   }
@@ -588,7 +590,7 @@ async function dbSwitchConn(name        )                {
   // asks with the whole strip's total.
   if (!dbOkToLeave()) return;
   d.conn = name;
-  d.tables = []; d.treeShowAll = {};
+  d.tables = []; d.treeShown = {};
   d.schemaFilter = ""; // a schema pick was made against the other connection's catalog
   d.redis = null;
   d.database = "";  // docs/43 M3: the new connection starts on its CONFIGURED database
@@ -777,7 +779,7 @@ function dbSwitchDatabase(name        )       {
   if (name === dbCurrentDatabase(d)) return;
   if (!dbOkToLeave()) return;
   d.database = name;
-  d.tables = []; d.treeShowAll = {};
+  d.tables = []; d.treeShown = {};
   d.grep = "";
   d.sort = "name"; d.sortDir = "asc";
   const gb = $                  ("dbGrep");
@@ -1042,35 +1044,43 @@ function dbKeyRow(k                  , label        , selKey               )    
  *  thousand-table database with margin to spare; the server clamps hand-written queries at
  *  5,000, and anything bigger is grep territory - the footer says so when it happens. */
 const DB_TREE_FETCH_LIMIT = 2000;
-/** Rows painted per section band before the expander row takes over (docs/43 addendum). The
- *  cap is a DOM budget, not a data limit: the band's badge still numbers the full list and
- *  the expander paints the rest on demand. */
+/** Rows painted per section band before the note row takes over (docs/43 addendum). The
+ *  cap is a DOM budget, not a data limit: the band's badge still numbers the full list. */
 const DB_TREE_ROW_CAP = 200;
+/** Rows one "show more" click appends (docs/43 addendum). Incremental on purpose: the note
+ *  stays "show N more" until the END of the list, and only then offers "show fewer" - the
+ *  owner's ask, verbatim: page your way down, and say fewer when there is nothing left. */
+const DB_TREE_ROW_STEP = 500;
 
 /** One band's render budget (docs/43 addendum). A search renders every MATCH - the server
  *  already filtered, and a match the operator typed must not hide behind an expander. The
- *  show-all memory is keyed "schema/section" so a pg catalog expands one schema's Tables
- *  band without dragging every other schema's along. */
+ *  window memory is keyed "schema/section" so a pg catalog widens one schema's Tables band
+ *  without dragging every other schema's along. */
 function dbTreeCap(sec                                                ) 
                                              {
   const d = dbConn();
   const total = sec.rows.length;
   if (!total || d.grep || total <= DB_TREE_ROW_CAP) return { keep: total, note: null };
   const key = (sec.rows[0].schema || "") + "/" + sec.name;
-  if (d.treeShowAll[key]) {
+  const shown = Math.min(d.treeShown[key] || DB_TREE_ROW_CAP, total);
+  if (shown >= total) {
     const less = el("button", "db-tree-cap")                     ;
     less.type = "button";
     less.dataset.treeless = key;
     less.appendChild(el("span", "db-table-name", tr("dataView.treeShowFewer")));
     return { keep: total, note: less };
   }
+  const next = Math.min(shown + DB_TREE_ROW_STEP, total);
   const more = el("button", "db-tree-cap")                     ;
   more.type = "button";
   more.dataset.treemore = key;
+  // The handler trusts this instead of recomputing from state: the note is rebuilt by every
+  // render, so the count it carries is always the one the operator was shown.
+  more.dataset.next = String(next);
   more.appendChild(el("span", "db-table-name", tr("dataView.treeShowAll", {
-    n: (total - DB_TREE_ROW_CAP).toLocaleString(locale()),
+    n: (next - shown).toLocaleString(locale()),
   })));
-  return { keep: DB_TREE_ROW_CAP, note: more };
+  return { keep: shown, note: more };
 }
 
 /** One Tables / Views / Routines band (docs/43 M2) — the tree's leaf container, shared by
