@@ -24,4 +24,5 @@
 
 #![cfg(feature = "it")]
 
+mod seed;
 mod smoke;
