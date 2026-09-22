@@ -166,6 +166,10 @@ describe("the connection menu's groups (docs/20 G5, docs/43 M3)", () => {
     expect(picked).toEqual(["shop-mysql"]);
     expect(items.find((r) => r.label.startsWith("shop-pg"))?.on).toBe(true);
     expect(mysql?.on).toBe(false);
+    // The drawer reshape: label is the bare name, the dialect rides in mark (the drawer
+    // paints it as a mark; the full "name · dialect" survives as the row's title).
+    expect(mysql?.mark).toBe("mysql");
+    expect(mysql?.title).toBe("shop-mysql · mysql");
   });
 
   it("the connection row's dialect chip follows the MCP tag vocabulary: a mark, not a word", () => {

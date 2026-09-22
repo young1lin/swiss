@@ -125,10 +125,13 @@ describe("the selector's menu rows (docs/43 M3 4.3.2)", () => {
   });
   it("the selected database marks on and cannot re-pick; a browsable row is enabled", () => {
     const rows = mod.dbDatabaseMenuItems(CATALOG, "acme_app_dev", () => {});
-    const primary = rows.find((r) => r.label && r.label.startsWith("acme_app_dev "));
+    // The drawer reshape: label is the bare NAME, the table count rides in meta (painted
+    // dim at the row's end) instead of being interleaved into the label.
+    const primary = rows.find((r) => r.label === "acme_app_dev");
     expect(primary.on).toBe(true);
     expect(primary.disabled, "the row already in effect does not re-fire the switch").toBe(true);
-    const uat = rows.find((r) => r.label && r.label.startsWith("acme_app_uat"));
+    expect(primary.meta, "the count is meta now, not part of the name").toBe("1,712");
+    const uat = rows.find((r) => r.label === "acme_app_uat");
     expect(uat.on).toBe(false);
     expect(uat.disabled).toBe(false);
   });

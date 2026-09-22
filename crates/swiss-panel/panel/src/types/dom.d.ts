@@ -37,6 +37,12 @@ export interface MenuItemAction {
    *  strip's overflow lists open objects, and the menu is the whole set's one read. */
   icon?: string;
   dot?: boolean;
+  /* The drawer follow-up: a row can carry a MARK (the dialect word, painted by
+   * typeTagNode - glyph for whitelisted dialects, mono word otherwise) and a META (a dim
+   * trailing value like a table count). popupMenu ignores both; the sidebar drawers read
+   * them, because a drawer row has room a one-line menu label does not. */
+  mark?: string;
+  meta?: string;
   /* docs/43 M3: a row the menu shows but refuses to run — the database selector lists
    *  every database the instance names, browsable or not, so the reason (title) is one
    *  hover away instead of the row simply being missing. */
