@@ -1,12 +1,13 @@
 # 45 — Data 页的 Redis Stream：最新优先、游标翻页、Follow 环形缓冲、消费组只读
 
-> 状态：**已实施**（branch `redis-streams` 合并 `7e4accd`、pool-cap 后续 `3c7537a`，2026-09-22；spec 定稿同日；
-> 基线 master `f3b6899`——seed 与 gate 2 都在里面，docs/44）。逐项：S0 `18bb574`、S1 `56bf5fb`、S2 `64a14e1`、
-> S3 `7868594`，cap 修复 `230ad66` / `2298075`；S3 的 jump-竞态守卫与 S4 记录项随 2026-09-22 的合并后校对提交
-> 落地（docs/40 的 filter-repo 前提在实施时成立，D5）。实施从
-> [45-redis-stream-prompt.md](45-redis-stream-prompt.md) 起步，走了 swiss-add-plugin → swiss-verify →
-> 否则又是一条分支叠在待清理的历史上（D5）；filter-repo 之后这个短 hash 会变，按 subject 找。实施从
-> [45-redis-stream-prompt.md](45-redis-stream-prompt.md) 起步，走 swiss-add-plugin → swiss-verify →
+> 状态：**已实施**（spec 定稿 2026-09-22；基线 master `f3b6899`，即 `integration-harness` 合并进 master 的那次
+> merge——seed 与 gate 2 都在里面，docs/44）。逐项落点：S0 `18bb574`；S1 `56bf5fb`；S2 `64a14e1` + 修复
+> `230ad66`；S3 `7868594` + 池上限 `2298075`；分支 `redis-streams` 由 owner 两次合入 master：`7e4accd`
+> （S0–S3）与 `3c7537a`（池上限）；跳转竞态守卫与消费组 §2.4 验收 `cfabb57`；合并后校对 `51645ba`；
+> S4 记录、速率单测与本轮 Docker 回归本提交。
+> **filter-repo 尚未做**（docs/40 二次清理）：D5 当初把它列为实施前提，实施没有等它——上面这些提交
+> 都已经在 master 上，owner 在 master 上做历史重写时短 hash 会全部变，届时按 subject 找。实施起步于
+> [45-redis-stream-prompt.md](45-redis-stream-prompt.md)，走了 swiss-add-plugin → swiss-verify →
 > swiss-live-verify → swiss-review 流程。
 >
 > 需求原文（owner，2026-09-22）：
@@ -212,8 +213,10 @@ JSON 墙的问题不是大小而是没有列。**为什么不虚拟滚动**：D1
   多滚一下，错误地不钉会把用户正在看的行拽走。
 - **只在看得见的时候跑**：tab 不活跃、`document.hidden`、tab 关闭、连接 stop → `clearInterval`（同
   `data-activity.ts:181-186` 的自守规则）。回到 tab 时若 Follow 仍开着，先补一次追新再恢复定时器。
-- **速率**：头部显示 `entries/s`——`streamRate(prevLength, prevAt, length, now)`（纯函数），来自两次 tick 的
-  `length` 差值，不是从 id 时间戳算（XTRIM 会让 id 时间戳失真，`length` 差值不会）。
+- **速率**：头部显示 `entries/s`——`streamRateText(dLen, dtMs)`（纯函数，vitest 4 例），来自两次 tick 的
+  `length` 差值，不是从 id 时间戳算（XTRIM 会让 id 时间戳失真，`length` 差值不会）。**负差如实显示负数**
+  （S4 决定）：两次 tick 之间 XTRIM/XDEL 让流变短是真信号——夹成 0 会把“我的条目去哪了”藏起来；
+  初稿 §2.5 那格写的“负差 → 0”以实现为准改掉，函数注释里也写了同一句。
 - **错误**：一次 tick 失败（连接断、键被删、类型变了）→ 停 Follow、头部显示原因、开关复位；不重试风暴。
 - **内存**：Follow 开着 60 s、每秒 50 条推送后，DOM 行数 ≤ 500、JS 堆增量 < 10 MB（§2.5 真浏览器走查里
   用 CDP `Performance.getMetrics` 的 `JSHeapUsedSize` 采两点）。
@@ -229,19 +232,19 @@ Follow 开着时每第 5 个 tick 顺带刷新一次（消费组变化慢，不�
 
 | 功能点 | 单测（Rust `#[test]` / vitest 纯函数） | 集成（swiss-it gate 2，真 redis 7） | 面板 DOM（vitest jsdom） | 真浏览器走查 |
 | --- | --- | --- | --- | --- |
-| 最新窗口 | `stream_window_args` Newest；`clamp_count` | `read_key_on_a_stream_returns_the_newest_window_first`：100 条、id 严格递减、首条 == `lastId`、`columns == [sym,px,qty,side]`、`more`、`length == 10000` | 打开 stream 键渲染表格，首行 id == `lastId`，列头顺序 | 19998 打开 `stream:ticks`，看首行、列 |
-| 往老翻页 | `stream_window_args` Before | `read_stream_pages_older_by_cursor_without_loss_or_duplication`：100 页走完 10,000 条，不重不漏，最后一页 `more == false` | 点"加载更早"追加、>500 从顶丢、到头显示"已到最早" | 连点到头 |
-| 追新 | `stream_window_args` After | `read_stream_after_returns_only_newer_entries_newest_first`：XADD 3 → 恰好 3，递减；`after == lastId` → 0 | `streamMerge` 去重/上限/顺序（vitest 纯函数 6 例） | 生成器 50 条/s，看顶部滚动 |
+| 最新窗口 | `stream_window_args_spell_the_three_bounds`（Newest/Before/After 一并，redis.rs mod tests）；`stream_count_clamps_and_refuses`（host dbbrowser.rs mod tests） | `read_key_on_a_stream_returns_the_newest_window_first`：100 条、id 严格递减、首条 == `lastId`、`columns == [sym,px,qty,side]`、`more`、`length == 10000` | 打开 stream 键渲染表格，首行 id == `lastId`，列头顺序 | 19998 打开 `stream:ticks`，看首行、列 |
+| 往老翻页 | —（并入上行的三方向单测） | `read_stream_pages_older_by_cursor_without_loss_or_duplication`：100 页走完 10,000 条，不重不漏，最后一页 `more == false` | 点"加载更早"追加、>500 从顶丢、到头显示"已到最早" | 连点到头 |
+| 追新 | —（并入三方向单测；`stream_opts_pick_one_direction` 守 before+after 拒绝） | `read_stream_after_returns_only_newer_entries_newest_first`：XADD 3 → 恰好 3，递减；`after == lastId` → 0 | `streamMerge` 去重/上限/顺序（vitest 纯函数 6 例） | 生成器 50 条/s，看顶部滚动 |
 | 追新积压 | — | `read_stream_after_caps_and_flags_more`：XADD 1,500 → 100 条 + `more` | 横条出现、点击重开最新 | 生成器 500 条/s 一次 |
 | 顶部钉住 | `isTopPinned` 4 例 | — | 滚下去后新条目进 `pending`、药丸计数、点击合并回顶 | 真滚轮 |
 | 只在可见时跑 | — | `follow_polling_costs_three_commands_per_tick`：`INFO commandstats` 在邻居索引上前后对比，10 tick → `xrevrange +10 / xlen +10 / xinfo +10`（第 5、10 tick 各多一次 GROUPS） | 切 tab / `document.hidden` 后定时器为 null；回来补一次 | 切到别的 tab 30 s，`docker`/`CLIENT LIST` 看无请求 |
-| 速率 | `streamRate` 4 例（首次、零差、负差（XTRIM）→ 0、正常） | — | 头部数字 | 与生成器速率对得上 |
-| `ts` | `stream_id_ms` 7 例、`stream_id_to_ts` 2 例 | `read_stream_ts_derives_from_the_id`：seed 的固定 id → 固定 ISO | `time` 列本地化格式 | — |
-| 列并集 | `stream_columns` 4 例 | `read_stream_ragged_fields_union_columns_in_first_seen_order`（`stream:ragged`） | 新字段到达表头重画、旧单元格不动 | — |
+| 速率 | `streamRateText` 4 例（vitest：空样本→""、零差→"0"、一位小数、**负差如实为负**） | — | 头部数字（S3 走查记录） | 与生成器速率对得上（S3 走查） |
+| `ts` | `stream_ids_split_and_derive`（ms 拆分 + ISO 派生一并）；`stream_ends_read_first_and_last`（XINFO STREAM 两端） | `read_stream_ts_derives_from_the_id`：seed 的固定 id → 固定 ISO | `time` 列本地化格式 | — |
+| 列并集 | `stream_columns_union_in_first_seen_order` | `read_stream_ragged_fields_union_columns_in_first_seen_order`（`stream:ragged`） | 新字段到达表头重画、旧单元格不动 | — |
 | 空 / 单条 | — | `read_stream_empty_and_single_entry_streams`（`stream:empty`、`stream:one`） | 空态渲染 | 打开 `stream:empty` |
-| 错误 | `clamp_count` 非法；before+after → Err | `read_stream_refuses_non_stream_keys_and_both_cursors`：hash 键 → 含 "is a hash"；不存在 → `none`；两个游标 → Err | tick 失败 → Follow 复位 + 原因 | 删掉键再看 |
-| 消费组 | `parse_xinfo_groups` 4 例 | `stream_groups_reports_pending_and_lag`：`feed` pending 7、consumers 1、lag == 10000-7 | 折叠开/关、"—" 显示 | 打开看数字 |
-| 路由 | `dbbrowser_api.rs` StubRedis 加 `stream`/`groups` 字段：参数校验 5 例、审计不记 | L2：`gateway::stream_route_round_trips` 经 `/api/db/{name}/stream` 走真 redis（三种方向各一次） | — | — |
+| 错误 | `stream_count_clamps_and_refuses`（非法 count）；`stream_opts_pick_one_direction`（before+after → Err）；`stream_trait_defaults_refuse_honestly`（trait 默认实现拒绝） | `read_stream_refuses_non_stream_keys_and_both_cursors`：hash 键 → 含 "is a hash"；不存在 → `none`；两个游标 → Err | tick 失败 → Follow 复位 + 原因 | 删掉键再看 |
+| 消费组 | `parse_xinfo_groups_tolerates_62_and_proxies`（RESP2 扁平 + RESP3 映射两种形状） | `stream_groups_reports_pending_and_lag`：`feed` pending 7、consumers 1、lag == 10000-7 | 折叠开/关、"—" 显示 | 打开看数字 |
+| 路由 | `stream_routes_validate_forward_and_stay_redis_only`（swiss-data `dbbrowser_api.rs`，StubRedis 上的参数校验与只走 redis）；host `dbbrowser.rs` 三例（上行）；审计不记 | L2：`gateway::stream_route_round_trips` 经 `/api/db/{name}/stream` 走真 redis（三种方向各一次） | — | — |
 | 内存 | — | — | — | Follow 60 s @ 50/s：DOM ≤ 500 行、`JSHeapUsedSize` 增量 < 10 MB（CDP 两点采样） |
 | 中文 | — | — | 新文案全部经 `tr()`，i18n 守卫过 | 第二遍走查切 `zh-CN`（docs/38） |
 

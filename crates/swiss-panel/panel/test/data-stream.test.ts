@@ -105,6 +105,7 @@ const stream = await import(pathToFileURL(join(here, "data-stream.ts")).href) as
   streamCap: (rows: StreamEntry[], cap: number, keep: "newest" | "oldest") => StreamEntry[];
   streamPool: (pending: StreamEntry[], page: StreamEntry[], cap: number) => { pending: StreamEntry[]; dropped: boolean };
   streamColumns: (rows: StreamEntry[]) => string[];
+  streamRateText: (dLen: number, dtMs: number) => string;
   isTopPinned: (scrollTop: number, rowHeight: number) => boolean;
   dbStreamTick: () => Promise<void>;
 };
@@ -116,6 +117,7 @@ const streamMerge = stream.streamMerge;
 const streamCap = stream.streamCap;
 const streamPool = stream.streamPool;
 const streamColumns = stream.streamColumns;
+const streamRateText = stream.streamRateText;
 
 const entry = (id: string, fields: Record<string, string>): StreamEntry => {
   return { id: id, ts: null, fields: fields };
@@ -234,6 +236,38 @@ describe("streamPool", () => {
 // docs/45 S2/D3: the columns derivation — the field union in first-seen-scanning-
 // newest-first order, the same algorithm the server runs per window, re-run over the
 // merged rows so an older page's new field lands at the tail.
+// docs/45 §2.3: the rate readout is a pure function over two samples of XLEN, and the
+// decision it carries is the negative one - a stream that SHRANK between ticks (XTRIM,
+// XDEL) reads as a real negative number. Clamping to 0 would hide exactly the signal an
+// operator watching a feed is looking for ("where did my entries go"), so the sign stays.
+describe("streamRateText (docs/45 §2.3)", () => {
+  it("no elapsed time is no sample: junk reads as empty, never a fabricated spike", () => {
+    expect(streamRateText(120, 0)).toBe("");        // the first tick: no baseline yet
+    expect(streamRateText(120, -1000)).toBe("");    // a clock that went backwards
+    expect(streamRateText(120, NaN)).toBe("");
+    expect(streamRateText(120, Infinity)).toBe("");
+    expect(streamRateText(NaN, 1000)).toBe("");     // a length that never arrived
+  });
+
+  it("a flat stream reads zero - a real sample of nothing happening", () => {
+    expect(streamRateText(0, 1000)).toBe("0");
+    expect(streamRateText(0, 250)).toBe("0");
+  });
+
+  it("entries per second, one decimal", () => {
+    expect(streamRateText(50, 1000)).toBe("50");    // the seed generator's own rate
+    expect(streamRateText(5, 2000)).toBe("2.5");    // a longer window divides down
+    expect(streamRateText(1, 300)).toBe("3.3");     // 3.333... rounds to one decimal
+    expect(streamRateText(1, 60000)).toBe("0");     // a minute for one entry rounds to 0
+  });
+
+  it("a shrinking stream reads NEGATIVE, not zero (the S4 decision)", () => {
+    // XTRIM MAXLEN cut 120 entries between two one-second ticks: the readout says so.
+    expect(streamRateText(-120, 1000)).toBe("-120");
+    expect(streamRateText(-1, 2000)).toBe("-0.5");
+  });
+});
+
 describe("streamColumns", () => {
   it("unions ragged fields newest-first, never alphabetized", () => {
     // The ragged seed's five entries, newest first: {a,c,d} / {c} / {b,c} / {a,b} / {a}.
