@@ -1,6 +1,6 @@
 # 45 — Data 页的 Redis Stream：最新优先、游标翻页、Follow 环形缓冲、消费组只读
 
-> 状态：**已实施**（branch `redis-streams` 合并 `7e4acdd`、pool-cap 后续 `3c7537a`，2026-09-22；spec 定稿同日；
+> 状态：**已实施**（branch `redis-streams` 合并 `7e4accd`、pool-cap 后续 `3c7537a`，2026-09-22；spec 定稿同日；
 > 基线 master `f3b6899`——seed 与 gate 2 都在里面，docs/44）。逐项：S0 `18bb574`、S1 `56bf5fb`、S2 `64a14e1`、
 > S3 `7868594`，cap 修复 `230ad66` / `2298075`；S3 的 jump-竞态守卫与 S4 记录项随 2026-09-22 的合并后校对提交
 > 落地（docs/40 的 filter-repo 前提在实施时成立，D5）。实施从
