@@ -31,13 +31,16 @@
 //!    asking for real databases (docs/44 D5), and the panic carries the fixed
 //!    three-part report of `failure_report`.
 //!
-//! Two properties of testcontainers-rs 0.28 shape this module and are load-bearing:
+//! Two properties of testcontainers-rs 0.27.3 shape this module and are load-bearing:
 //!
-//! - **No ryuk.** The Java ecosystem's reaper does not exist here (grep the crate: zero
-//!   matches); removal is `ContainerAsync`'s Drop, which needs a live tokio runtime and
-//!   so never fires for a value held in a static. `exit` owns the story instead: an
-//!   atexit hook force-removes every started id over a raw blocking socket, and each
-//!   start first prunes the labelled leftovers of runs that died harder than that.
+//! - **No ryuk.** The Java ecosystem's reaper container does not exist here (grep the
+//!   crate: zero matches); removal is `ContainerAsync`'s Drop, which needs a live
+//!   tokio runtime and so never fires for a value held in a static. `exit` owns the
+//!   story instead: an it-reaper watchdog child (our own ryuk, minus the container)
+//!   removes every started id when the parent's stdin pipe closes on ANY exit path,
+//!   an atexit hook repeats the deletes on the green path, and each start first
+//!   prunes owned leftovers that are an hour old - the residue of runs whose
+//!   watchdog died with them (power cut, tree kill).
 //! - **One runtime for docker traffic.** libtest gives every `#[tokio::test]` its own
 //!   current-thread reactor, and a hyper connection may only be polled by the reactor
 //!   that registered it. All bollard traffic therefore runs on the single dedicated
@@ -64,8 +67,11 @@ use crate::exit;
 /// Containers this harness owns carry this label; the startup prune and the honesty of
 /// `docker ps` during a run depend on it. Namespaced so nothing else is ever touched.
 const OWNED_LABEL: &str = "org.swiss-it.owned";
-/// The pid that started the container, as the label's value - a prune only removes
-/// containers some OTHER process recorded, so parallel invocations keep their engines.
+/// The pid that started the container, as the label's value. Informational: it lets
+/// the acceptance tests filter a child run's containers and an operator match a
+/// leaked container to a process. It is deliberately NOT a prune guard - a recorded
+/// pid says whose container it was, never whether that process still lives, and a
+/// pid-based prune deleted parallel runs' live engines (see prune_stale's doc).
 const PID_LABEL: &str = "org.swiss-it.pid";
 
 /// The three engines docs/44 D1 fixed the matrix to. MariaDB is deliberately absent
@@ -410,12 +416,20 @@ fn docker_endpoint() -> String {
     }
 }
 
-/// Best-effort removal of owned containers whose recorded pid is not this process -
-/// the residue of runs that died before the exit hook could fire (a killed process, a
-/// power cut). Never touches an unlabelled container, and never one recorded under
-/// this pid, so two suites running in parallel keep each other's engines.
+/// Best-effort removal of OWNED containers older than one hour - the tail of the
+/// cleanup story the it-reaper watchdog and the atexit hook own for everything that
+/// can still run code (see `exit`). This prune only catches the residue of runs
+/// whose watchdog died WITH them (a power cut, a tree kill that swallowed the
+/// breakaway child) and therefore may outlive the process that could delete it.
+///
+/// The guard is AGE, not identity: this repo once judged staleness by the pid label,
+/// which deleted the live engines of any parallel gate-2 run (two worktrees, two CI
+/// jobs) as readily as a real orphan's. A living suite never comes close to the
+/// hour (the whole second gate runs in ~20 s), so time cannot mistake "someone
+/// else's live engine" for residue, and no pid-liveness FFI is needed. Never
+/// touches an unlabelled container.
 async fn prune_stale() {
-    let pid = std::process::id().to_string();
+    let hour_ago = unix_now() - 3600;
     let work = async {
         let docker = testcontainers::core::client::docker_client_instance()
             .await
@@ -433,12 +447,11 @@ async fn prune_stale() {
             .await
             .map_err(|e| format!("list: {e}"))?;
         for c in seen {
-            let stale = c
-                .labels
-                .as_ref()
-                .and_then(|l| l.get(PID_LABEL))
-                .is_none_or(|p| p != &pid);
-            if !stale {
+            // Only age decides (see the doc above): an hour beats every live run,
+            // and no pid check exists - a recorded pid says whose container it was,
+            // never whether that process still lives anywhere this host can ask.
+            let ancient = c.created.is_some_and(|created| created <= hour_ago);
+            if !ancient {
                 continue;
             }
             let Some(id) = c.id else { continue };
@@ -459,6 +472,15 @@ async fn prune_stale() {
     if let Err(e) = work.await {
         eprintln!("swiss-it: stale-container prune skipped: {e}");
     }
+}
+
+/// Seconds since the unix epoch, the same clock docker's `Created` label uses -
+/// std only, no clock crate for one subtraction.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(i64::MAX)
 }
 
 /// A real round trip before anything is declared ready. The port being published does
@@ -580,7 +602,7 @@ fn failure_report(kind: Kind, docker_host: Option<&str>, steps: &[String]) -> St
            still be down; bring it up first:
 \twsl -d <distro> --exec true
 \
-           and run the suite again. The other known traps - dockerd not started, ryuk, \
+           and run the suite again. The other known traps - dockerd not started, \
            random published ports, user-level env vars a service cannot see, proxies - \
            are docs/44-wsl-docker-setup.md §4.
 ",

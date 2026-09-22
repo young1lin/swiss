@@ -26,6 +26,7 @@
 
 mod mysql;
 mod pg;
+mod reaper;
 mod redis;
 mod seed;
 mod smoke;

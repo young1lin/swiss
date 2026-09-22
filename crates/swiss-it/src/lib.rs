@@ -33,6 +33,7 @@
 
 #![cfg(feature = "it")]
 
+pub mod docker_raw;
 pub mod engine;
 mod exit;
 pub mod seed;
