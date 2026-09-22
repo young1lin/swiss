@@ -4332,11 +4332,13 @@ dependencies = [
  "serde_json",
  "sqlx",
  "swiss",
+ "swiss-core",
  "swiss-host",
  "swiss-mcp",
  "testcontainers",
  "testcontainers-modules",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

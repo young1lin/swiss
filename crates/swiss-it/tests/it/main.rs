@@ -27,6 +27,7 @@
 mod gateway;
 mod mysql;
 mod pg;
+mod proc;
 mod reaper;
 mod redis;
 mod seed;
