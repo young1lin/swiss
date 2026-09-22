@@ -128,6 +128,7 @@ const en                         = {
   "dataStream.nSeconds.other": "{n} s",
   "dataStream.groups": "Consumer groups",
   "dataStream.groupsNone": "No consumer groups on this stream.",
+  "dataStream.groupsLoading": "Reading consumer groups…",
   "dataStream.colGroup": "group",
   "dataStream.colConsumers": "consumers",
   "dataStream.colPending": "pending",

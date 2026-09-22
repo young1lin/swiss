@@ -710,6 +710,49 @@ describe("the consumer-group fold (docs/45 §2.4)", () => {
     expect(groupsTable()).toBeUndefined();
   });
 
+  it("opening the fold reads the groups itself - Follow off, nothing pre-loaded", async () => {
+    // The 2026-09-23 walk found this on 19997: with Follow off the fold only ever showed
+    // its empty state, because the groups answer arrived on Follow's fifth tick and
+    // nowhere else. A reader who opened the fold on a stream WITH a group was told it had
+    // none - the empty state asserting a fact no request had checked.
+    mountTwo();
+    expect(requests.length, "mounting a stream asks for no groups").toBe(0);
+    groupsBtn().onclick(); // open
+    expect(requests.length, "opening the fold pays its own one command").toBe(1);
+    expect(requests[0].url).toContain("/stream/groups");
+    expect(text(byId.dbGridWrap), "before the answer it says reading, not none")
+      .toContain("Reading consumer groups");
+    parked.splice(0, 1)[0].resolve({ groups: [groupRow({})] });
+    await tick();
+    expect(groupsRows(groupsTable() as Stub)).toEqual([["feed", "1", "7", "9993", "1700000000600-0"]]);
+    expect(text(groupsBtn())).toBe("Consumer groups (1)");
+  });
+
+  it("a server that answers with no groups still reads as none, not as loading", async () => {
+    mountTwo();
+    groupsBtn().onclick();
+    parked.splice(0, 1)[0].resolve({ groups: [] });
+    await tick();
+    expect(text(byId.dbGridWrap)).toContain("No consumer groups on this stream.");
+    expect(groupsRows(groupsTable() as Stub)).toEqual([]);
+  });
+
+  it("closing and reopening the fold refreshes it; a closed fold costs nothing", async () => {
+    mountTwo();
+    groupsBtn().onclick();
+    parked.splice(0, 1)[0].resolve({ groups: [groupRow({})] });
+    await tick();
+    groupsBtn().onclick(); // close
+    expect(groupsTable(), "closed").toBeUndefined();
+    const closed = requests.length;
+    expect(closed, "closing asks for nothing").toBe(1);
+    groupsBtn().onclick(); // reopen
+    expect(requests.length - closed, "reopening re-reads - pending moves while you are away").toBe(1);
+    parked.splice(0, 1)[0].resolve({ groups: [groupRow({ pending: 3 })] });
+    await tick();
+    expect(groupsRows(groupsTable() as Stub)[0][2], "the fold shows the fresher pending").toBe("3");
+  });
+
   it("lag null renders as an em dash — the honest pre-7.0 answer, not a zero", () => {
     mountTwo();
     const tab = theTab();

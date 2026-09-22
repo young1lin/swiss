@@ -472,15 +472,34 @@ function dbStreamFollowBar(wrap             , t          )       {
   const groupsBtn = h("button", { class: "btn", type: "button" }, groupsLabel);
   groupsBtn.onclick = ()       => {
     t.redisStreamGroupsOpen = !t.redisStreamGroupsOpen;
+    // Opening the fold FETCHES (found on the 2026-09-23 walk): the groups answer used to
+    // arrive only on Follow's fifth tick, so a reader who opened the fold with Follow off
+    // read "no consumer groups" about a stream that has one - an empty state stating a
+    // fact nobody had checked. The fold pays its own one command when it opens; Follow's
+    // fifth-tick refresh keeps it current from there, and a closed fold still costs zero.
+    if (t.redisStreamGroupsOpen) void dbStreamGroupsLoad(t);
     renderDbGrid();
   };
   bar.appendChild(groupsBtn);
   wrap.appendChild(bar);
 }
 
-/** The consumer-group fold (docs/45 §2.4): a read-only table under the stream, fed by
- *  every fifth Follow tick — pending, lag (null is the honest pre-7.0 answer), and the
- *  group's own delivered cursor. */
+/** The fold's own read: one XINFO GROUPS, behind the same tab guard every other stream
+ *  request uses, so an answer that lands after the reader moved on repaints nothing. Its
+ *  failure is deliberately quiet — apiJson already toasted, and a fold that keeps its last
+ *  good rows beats one that blanks because a single poll missed. */
+async function dbStreamGroupsLoad(t          )                {
+  if (!t.redisKey) return;
+  const g = await apiJson                                   (dbStreamUrl("/stream/groups", t.redisKey, ""));
+  if (!g) return;
+  if (dbTab() !== t) return; // the tab moved on mid-flight; the answer belongs to nobody
+  t.redisStreamGroups = g.groups || [];
+  renderDbGrid();
+}
+
+/** The consumer-group fold (docs/45 §2.4): a read-only table under the stream, fed by the
+ *  fold's own open and then by every fifth Follow tick — pending, lag (null is the honest
+ *  pre-7.0 answer), and the group's own delivered cursor. */
 function dbStreamGroupsTable(wrap             , t          )       {
   const tbl = el("table", "db-grid");
   const thead = el("thead");
@@ -496,7 +515,10 @@ function dbStreamGroupsTable(wrap             , t          )       {
   if (!groups.length) {
     tbl.appendChild(tbody);
     wrap.appendChild(tbl);
-    wrap.appendChild(el("div", "db-hint", tr("dataStream.groupsNone")));
+    // null is "the answer has not landed yet", [] is "the server says there are none":
+    // saying "none" for the first is how the fold lied before the fetch existed.
+    wrap.appendChild(el("div", "db-hint",
+      t.redisStreamGroups == null ? tr("dataStream.groupsLoading") : tr("dataStream.groupsNone")));
     return;
   }
   groups.forEach((g                     )       => {
