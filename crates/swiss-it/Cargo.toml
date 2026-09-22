@@ -22,6 +22,7 @@ it = [
     "dep:redis",
     "dep:tokio",
     "dep:futures-util",
+    "dep:serde_json",
 ]
 
 [dependencies]
@@ -59,3 +60,6 @@ tokio = { version = "1", default-features = false, features = [
 futures-util = { version = "0.3", default-features = false, features = [
     "std",
 ], optional = true }
+# The defs `Fresh` hands out are json! values - the same shapes the panel posts to
+# /api/mcps, built with the field names the adapters actually read.
+serde_json = { version = "1", default-features = false, optional = true }

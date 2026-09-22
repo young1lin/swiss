@@ -240,7 +240,7 @@ async fn try_build(
 /// dedicated thread, one runtime, every docker call; the caller only ever sees a
 /// finished value. A panicking task is caught so the worker outlives it; its result
 /// channel then errors, which fails the engine with a clear message.
-fn on_worker<T, F>(fut: F) -> T
+pub(crate) fn on_worker<T, F>(fut: F) -> T
 where
     T: Send + 'static,
     F: Future<Output = T> + Send + 'static,
