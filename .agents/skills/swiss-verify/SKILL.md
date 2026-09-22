@@ -13,9 +13,10 @@ what its output actually said.
 
 ```powershell
 cargo build --release                                  # the shipping exe
-cargo test --workspace                                 # the one feature combination there is
+cargo test --workspace                                 # gate 1: the one feature combination there is
+cargo test -p swiss-it --features it                   # gate 2: real DBs (docs/44); needs Docker
 cargo clippy --workspace --all-targets -- -D warnings  # must be clean
-cargo tree -d                                          # duplicated TLS/runtime must fail review
+cargo tree -d -e normal,build                          # duplicated TLS/runtime fails review (shipping graph)
 ```
 
 **`--workspace` is not optional.** Without it cargo selects the root package alone — about a
@@ -39,6 +40,14 @@ Do not reflexively run the full suite. Pick the smallest command that can go red
   evidence.
 - **Cross-cutting changes** (host contract, config, secure store, panel wiring, workspace
   manifests): that is what the full `cargo test --workspace` rehearsal is for.
+- **A diff that touches a database path owes gate 2** (docs/44):
+  `crates/swiss-mcp/src/adapters/{mysql,pg,redis}*.rs`, `sql.rs`, `resources.rs`,
+  `proc.rs`, `crates/swiss-host/src/dbbrowser.rs`, `crates/swiss-data/src/dbbrowser_api.rs`,
+  `crates/swiss-core/src/secure/`, `src/app.rs`, `src/mcp_link.rs`, or anything under
+  `crates/swiss-it/` — run `cargo test -p swiss-it --features it` (Docker via
+  `DOCKER_HOST`, or a `SWISS_IT_*_URL` override). No Docker reachable? The commit
+  message says so explicitly — silence is not a verdict. Other diffs may skip it, and say
+  the same.
 
 ## Know the environment rules
 

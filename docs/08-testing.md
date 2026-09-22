@@ -36,6 +36,12 @@ Two environment rules carry over exactly:
 - **DB tests self-skip without credentials.** `direct-adapters`, `dbbrowser`, `sql` and
   `db-resources` must skip cleanly, not fail, on a machine with no database.
 
+That second rule now has a successor: the real-DB half lives behind a second gate,
+`cargo test -p swiss-it --features it` (docs/44). testcontainers starts MySQL 8.4,
+PostgreSQL 17 and Redis 7 wherever Docker is, every test restores its own database from
+the committed seeds, and the first gate above stays green on a machine with no Docker at
+all - `swiss-it` compiles to empty files without the feature.
+
 ## Test inventory, by phase
 
 ### Phase 1 — port these first, then make them pass
