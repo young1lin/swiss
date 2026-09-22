@@ -36,14 +36,47 @@ import { tr } from "./i18n.js";
 // shape as the data-edit.js import over there.
 import { dbRedisCellMenu, dbRedisDisplayText } from "./data-browsers.js";
 
-/** Merge one Load-earlier page into the grown row cache. Pure. The page is strictly
- *  older than everything cached, so its rows prepend — but the seam is deduped by id
- *  anyway: a cursor overlap must never repeat a row, and an empty page (the walk's
- *  honest last step, see `more` in docs/45 §2.1) merges as a no-op. */
+/* One stream id's compare: the ms half first, then the seq half, each BigInt. A plain
+   string compare breaks the day an id's ms length changes; fusing the halves into one
+   number (ms*65536 + seq, the first cut) collides the moment seq reaches 65536 - the
+   fused key of "X-65536" equals the fused key of "X+1-0". Tuple-compare instead. */
+function streamIdCompare(a: string, b: string): number {
+  const pa = a.split("-");
+  const pb = b.split("-");
+  const ma = BigInt(pa[0] || "0"), mb = BigInt(pb[0] || "0");
+  if (ma !== mb) return ma < mb ? -1 : 1;
+  const sa = BigInt(pa[1] || "0"), sb = BigInt(pb[1] || "0");
+  return sa < sb ? -1 : sa > sb ? 1 : 0;
+}
+
+/** Merge one page — Load-earlier (older) or a live-edge poll (newer) — into the grown
+ *  row cache. Pure. The seam is deduped by id, then the whole cache sorts newest-first
+ *  by id: both directions land in display order without the caller saying which it
+ *  meant. (The first cut prepended the page unconditionally, which stood a Before
+ *  page on its head — the docs/45 walk on 19998 caught it live, and the sort makes
+ *  the order structural instead of load-bearing on where the page came from.) */
 export function streamMerge(rows: ApiDbStreamEntry[], page: ApiDbStreamEntry[]): ApiDbStreamEntry[] {
   const have = new Set(rows.map((e: ApiDbStreamEntry): string => e.id));
   const fresh = page.filter((e: ApiDbStreamEntry): boolean => !have.has(e.id));
-  return fresh.concat(rows);
+  return rows.concat(fresh).sort(
+    (a: ApiDbStreamEntry, b: ApiDbStreamEntry): number => streamIdCompare(b.id, a.id),
+  );
+}
+
+/* The DOM row budget: the table never holds more than this, and WHICH end falls out
+   is the walk's whole problem — see streamCap. */
+const STREAM_ROW_CAP = 500;
+
+/** The row cache's trim, one cap and two directions (docs/45 §2.2): a walk of older
+ *  pages keeps the OLDEST cap rows — the trim drops from the TOP, so the page that
+ *  just landed survives and the Before cursor keeps moving; a live-edge Follow keeps
+ *  the NEWEST cap rows — the live edge is what Follow exists for, and history can
+ *  always be walked again. Pure. */
+export function streamCap(
+  rows: ApiDbStreamEntry[], cap: number, keep: "newest" | "oldest",
+): ApiDbStreamEntry[] {
+  if (!(cap > 0) || rows.length <= cap) return rows;
+  return keep === "newest" ? rows.slice(0, cap) : rows.slice(rows.length - cap);
 }
 
 /** The field columns of the merged view: first-seen scanning newest-first — the same
@@ -140,8 +173,11 @@ let dbStreamLoading = false;
    must not splice rows into a view that no longer owns them. */
 const dbStreamReq = dbReqGuard();
 
-/** Fetch the next-older page and prepend it. The Before cursor is the OLDEST id in the
- *  grown cache, exclusive on the server; `more` from the answer ends the walk. */
+/** Fetch the next-older page and grow the cache. The Before cursor is the OLDEST id
+ *  in the grown cache, exclusive on the server; `more` from the answer ends the walk.
+ *  The cap keeps the OLDEST rows here (docs/45 §2.2): a walk that trimmed the top of
+ *  the table would drop the page it just fetched, the oldest id would never move, and
+ *  every further click would re-request the same page - a walk stuck in place. */
 export async function dbStreamLoadEarlier(): Promise<void> {
   const c = dbConn();
   const t = dbTab();
@@ -163,7 +199,9 @@ export async function dbStreamLoadEarlier(): Promise<void> {
   if (!dbStreamReq.accepts(token) || !j) return; // superseded, or apiJson toasted it
   const after = dbTab();
   if (after !== t) return; // the tab moved on; the answer belongs to nobody
-  t.redisStreamRows = streamMerge(t.redisStreamRows || [], j.entries || []);
+  t.redisStreamRows = streamCap(
+    streamMerge(t.redisStreamRows || [], j.entries || []), STREAM_ROW_CAP, "oldest",
+  );
   t.redisStreamMore = !!j.more;
   renderDbGrid();
 }
