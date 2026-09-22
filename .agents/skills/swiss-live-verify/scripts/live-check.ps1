@@ -71,9 +71,10 @@ Write-Host '== booting the isolated 19998 instance'
 if ($Fresh) { & $TestInstance -Fresh } else { & $TestInstance }
 if ($LASTEXITCODE -ne 0) { Write-Error 'test instance failed to come up'; exit 1 }
 
-# The proof: what is serving is THIS build.
+# The proof: what is serving is THIS build. The hash may carry a suffix (-dirty on an
+# uncommitted tree, which is exactly when live verification runs); compare it whole.
 $version = (& $Exe --version) | Select-Object -First 1
-if (-not ($version -match '\((?<hash>[0-9a-f]{7,})')) { Write-Error "no build hash in version line: $version"; exit 1 }
+if (-not ($version -match '\((?<hash>[0-9a-f]{7,}(?:-[0-9a-z]+)?)')) { Write-Error "no build hash in version line: $version"; exit 1 }
 $built = $Matches.hash
 $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 5
 $hdr = @{ Authorization = "Bearer $Token" }
