@@ -33,8 +33,12 @@ can actually read.
   while tunnels is off, and exec says honestly what is missing.
 - **CLI** (`swiss remote ...`, `swiss run ...` in `src/remote_cli.rs`): endpoints/targets/
   target add|set|remove, resolve, exec/sync/pull, run status/logs/cancel. Everything after
-  a bare `--` is ARGV for the far side, untouched. The exec command streams live output and
-  exits with the REMOTE exit code.
+  a bare `--` is ARGV for the far side, untouched. For exec the same cut happens at the
+  first command word - the second positional after the subcommand, or the first when
+  `--target` already named the target - so `exec t ls -a` needs no `--`, local flags end
+  there, and a word before a bare `--` is no longer dropped (`exec t make -- -k` sends
+  `["make","-k"]`). Flag-shaped tokens BEFORE the command word are still local errors.
+  The exec command streams live output and exits with the REMOTE exit code.
 
 ## The target model
 
@@ -54,7 +58,11 @@ The endpoint names a connection the TRANSPORT serves; the row never carries a ho
 password, key or passphrase - those live in tunnels.json sealed storage and never cross
 this boundary. While a provider is serving, target CRUD refuses an unknown endpoint with
 the known list; while none is, any non-empty id is accepted so config works with tunnels
-disabled.
+disabled. The CLI's `--endpoint` accepts either that stable id or one exact, unique endpoint
+display name, resolving the latter to the id before it writes the row. Duplicate names are
+refused and require an id; display-name convenience never becomes persisted identity. The
+human-readable `endpoints` listing puts names before ids, and `targets` shows endpoint names
+instead of UUIDs where possible; `--json` keeps the canonical ids.
 
 ## Actions (a run, not a job system)
 
@@ -114,7 +122,7 @@ ceiling).
 
 ```
 swiss remote endpoints
-swiss remote target add build --endpoint conn-1 --root /data/ws/proj --caps exec,sync
+swiss remote target add build --endpoint "Build server" --root /data/ws/proj --caps exec,sync
 swiss remote exec build -- make -j8            # streams, exits with make exit code
 swiss remote exec build --timeout 30m -- ./test.sh --filter "weird \"quoted\" name"
 swiss remote exec --target build --detach -- make check   # 202 + run id
