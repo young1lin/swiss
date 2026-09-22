@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dbConn, dbTabs, freshTab, mountDbView, unmountDbView } from "../src/db-state.js";
-import type { ApiDbRedisValue, ApiDbStreamWindow } from "../src/types/api.js";
+import type { ApiDbRedisValue, ApiDbStreamGroupRow, ApiDbStreamWindow } from "../src/types/api.js";
 
 /* The stream view's tests: the pure merge/cap/columns folds (docs/45 S2), plus the DOM
  * walk - Load-earlier against a parked fetch, the docs/43 M3 cellmenu technique. */
@@ -292,6 +292,20 @@ const answer = async (body: any): Promise<void> => {
   parked.splice(0, 1)[0].resolve(body);
   await tick();
 };
+/* requests/parked are MODULE-level arrays and the Follow timer is module state: a
+   test that parks a request it never answers - or leaves Follow on - would hand the
+   next test a queue that already has a ghost in it, and its first answer() would
+   resolve the wrong promise. Every test starts from empty queues and a stopped
+   Follow: the previous test's view may still be mounted, so pausing is a click on
+   ITS button, only when the label says it is running. */
+beforeEach(() => {
+  requests.length = 0;
+  parked.length = 0;
+  const w = byId.dbGridWrap;
+  if (!w) return; // nothing mounted yet - nothing to stop
+  const running = find(w, (n: Stub) => n.tag === "button" && text(n) === "Pause")[0];
+  if (running) running.onclick(); // a Follow left on stops HERE, not in the next test
+});
 
 function mountStream(win: Partial<ApiDbStreamWindow>): Stub {
   const wrap = el();
@@ -533,6 +547,45 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     expect(gapBar().hidden).toBe(true); // the lie about contiguity is gone
   });
 
+  it("a jump voids the tick in flight: the late answer pools nothing, pending stays empty", async () => {
+    // docs/45 S3 follow-up: the jump reopens the window, so a tick still in flight
+    // speaks for rows that no longer exist. Its answer must be dropped on arrival —
+    // not pooled behind a pill whose splice target the jump just replaced.
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 402,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
+    });
+    setScroll(500, 24); // deep in history: a late tick would pool behind the pill
+    followOn();
+    const tab = dbTabs()[0];
+    if (tab.kind !== "key") throw new Error("expected the key tab");
+    // Light the gap bar first (a truncated page), so the jump has its button.
+    const warm = stream.dbStreamTick();
+    await answer({ entries: [entry("10-0", { a: "0" })], columns: ["a"], more: true, firstId: null, lastId: null, length: 402 });
+    await warm;
+    expect(gapBar().hidden).toBe(false);
+    expect((tab.redisStreamPending || []).length).toBe(1); // the pooled warm-up page
+    // Now race: a tick parks unanswered, the jump issues past it and lands first.
+    // Requests are taken BY ARRIVAL as named handles, so "the tick was issued first"
+    // is something the sequence proves, not an index guess.
+    const p = stream.dbStreamTick();
+    const tickReq = parked.splice(0, 1)[0]; // the tick's page, hanging by name
+    gapBar().onclick();
+    const jumpReq = parked.splice(0, 1)[0]; // the jump's window, arrived after it
+    expect(parked.length).toBe(0); // both spoken for; no third request exists
+    jumpReq.resolve({ entries: [entry("13-0", { a: "z" }), entry("12-0", { a: "y" })], columns: ["a"], more: false, firstId: "12-0", lastId: "13-0", length: 402 });
+    await tick();
+    expect(rowIds()).toEqual(["13-0", "12-0"]); // the jump's window won
+    tickReq.resolve({ entries: [entry("11-0", { a: "x" })], columns: ["a"], more: false, firstId: null, lastId: null, length: 402 });
+    await p;
+    // The tick was superseded: its page pooled NOTHING — pending is the empty pool
+    // the jump left, not [11-0] spliced onto it.
+    expect((tab.redisStreamPending || []).length).toBe(0);
+    expect(rowIds()).toEqual(["13-0", "12-0"]); // and the table never heard of it
+    expect(gapBar().hidden).toBe(true);
+    expect(text(followBtn())).toBe("Pause"); // the voided tick stopped nothing
+  });
+
   it("hidden: the tick fetches nothing; the next visible tick catches up", async () => {
     mountStream({
       key: "s", type: "stream", ttl: -1, length: 2,
@@ -549,6 +602,125 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     await answer({ entries: [entry("10-0", { a: "0" })], columns: ["a"], more: false, firstId: null, lastId: null, length: 3 });
     await p;
     expect(rowIds()).toEqual(["10-0", "9-0", "8-0"]); // caught up in one tick
+  });
+
+  /* Two tests in a row, each turning Follow on: the first LEAVES it on and drains
+     its queue itself; the second must start from nothing. This is the proof the
+     beforeEach isolation (empty queues, Follow stopped) actually holds. */
+  it("isolation, first of a pair: a Follow left ON still drains every request it parked", async () => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 2,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: false, firstId: "8-0", lastId: "9-0",
+    });
+    followOn();
+    const p = stream.dbStreamTick();
+    await answer({ entries: [], columns: ["a"], more: false, firstId: null, lastId: null, length: 2 });
+    await p;
+    expect(parked.length).toBe(0); // this test consumed what it issued
+    // Follow is deliberately LEFT ON for the next test.
+  });
+
+  it("isolation, second of the pair: starts with empty queues even after a Follow was left on", async () => {
+    expect(requests.length, "beforeEach emptied the shared request queue").toBe(0);
+    expect(parked.length, "beforeEach emptied the shared parked queue").toBe(0);
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 2,
+      entries: [entry("7-0", { a: "1" }), entry("6-0", { a: "2" })], columns: ["a"], more: false, firstId: "6-0", lastId: "7-0",
+    });
+    followOn();
+    expect(requests.length, "turning Follow on issues nothing by itself").toBe(0);
+    expect(text(followBtn())).toBe("Pause");
+  });
+});
+
+/* --- the consumer-group fold (docs/45 §2.4) ------------------------------------------------------ */
+
+const groupsBtn = (): Stub =>
+  find(byId.dbGridWrap, (n) => n.tag === "button" && text(n).indexOf("Consumer groups") === 0)[0];
+/* The fold's table is the one whose first header cell is "group" - the stream table's
+   own headers are id/time/fields, so this tells the two tables apart. */
+const groupsTable = (): Stub | undefined =>
+  find(byId.dbGridWrap, (n) => n.tag === "table")
+    .find((tb: Stub) => tb.children[0] && tb.children[0].children[0]
+      && text(tb.children[0].children[0].children[0]) === "group");
+const groupsRows = (tb: Stub): string[][] =>
+  (tb.children[1] ? tb.children[1].children : []).map((r: Stub) => r.children.map((c: Stub) => c.textContent));
+
+describe("the consumer-group fold (docs/45 §2.4)", () => {
+  const groupRow = (over: Partial<ApiDbStreamGroupRow>): ApiDbStreamGroupRow =>
+    Object.assign({ name: "feed", consumers: 1, pending: 7, lag: 9993, "last-delivered-id": "1700000000600-0" }, over);
+  const mountTwo = (): void => {
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 2,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: false, firstId: "8-0", lastId: "9-0",
+    });
+  };
+  const theTab = (): Stub & Record<string, unknown> => {
+    const tab = dbTabs()[0];
+    if (tab.kind !== "key") throw new Error("expected the key tab");
+    return tab as unknown as Stub & Record<string, unknown>;
+  };
+
+  it("closed by default; the button opens the fold, and closes it again", () => {
+    mountTwo();
+    const tab = theTab();
+    expect(groupsTable(), "closed by default").toBeUndefined();
+    expect(text(groupsBtn())).toBe("Consumer groups"); // no groups loaded yet: no count
+    (tab.redisStreamGroups as unknown) = [groupRow({})];
+    groupsBtn().onclick(); // open — the click repaints, label included
+    const tb = groupsTable();
+    expect(tb, "the fold's table appeared").toBeDefined();
+    expect(groupsRows(tb as Stub)).toEqual([["feed", "1", "7", "9993", "1700000000600-0"]]);
+    expect(text(groupsBtn())).toBe("Consumer groups (1)"); // the label carries the count
+    groupsBtn().onclick(); // close
+    expect(groupsTable()).toBeUndefined();
+  });
+
+  it("lag null renders as an em dash — the honest pre-7.0 answer, not a zero", () => {
+    mountTwo();
+    const tab = theTab();
+    (tab.redisStreamGroups as unknown) = [groupRow({ lag: null, "last-delivered-id": null })];
+    groupsBtn().onclick();
+    expect(groupsRows(groupsTable() as Stub)).toEqual([["feed", "1", "7", "—", ""]]);
+  });
+
+  it("an empty groups list keeps the fold but shows its empty state", () => {
+    mountTwo();
+    const tab = theTab();
+    (tab.redisStreamGroups as unknown) = [];
+    groupsBtn().onclick();
+    const tb = groupsTable();
+    expect(tb, "the header row survives an empty list").toBeDefined();
+    expect(groupsRows(tb as Stub)).toEqual([]);
+    expect(text(byId.dbGridWrap)).toContain("No consumer groups on this stream.");
+    expect(text(groupsBtn())).toBe("Consumer groups (0)");
+  });
+
+  it("the fifth tick polls /stream/groups; the first four do not", async () => {
+    mountTwo();
+    setScroll(0, 24); // pinned: every tick's repaint also repaints the fold's label
+    followOn();
+    for (let i = 1; i <= 5; i++) {
+      const before = requests.length;
+      const p = stream.dbStreamTick();
+      parked.splice(0, 1)[0].resolve({ entries: [], columns: ["a"], more: false, firstId: null, lastId: null, length: 2 });
+      await tick();
+      if (i === 5) {
+        expect(requests.length - before, "the fifth tick adds the groups poll on top of its page").toBe(2);
+        expect(requests[requests.length - 1].url).toContain("/stream/groups");
+        parked.splice(0, 1)[0].resolve({ groups: [groupRow({})] });
+        await tick();
+      } else {
+        expect(requests.length - before, "an ordinary tick is its page alone").toBe(1);
+        expect(requests[requests.length - 1].url).not.toContain("/stream/groups");
+      }
+      await p;
+    }
+    const tab = theTab();
+    expect((tab.redisStreamGroups as { length: number } | null)?.length).toBe(1);
+    expect(text(groupsBtn())).toBe("Consumer groups (1)"); // the pinned repaint carried the count
+    groupsBtn().onclick();
+    expect(groupsRows(groupsTable() as Stub)).toEqual([["feed", "1", "7", "9993", "1700000000600-0"]]);
   });
 });
 /* Newest-first compare for assertions - the same tuple math the view runs, kept

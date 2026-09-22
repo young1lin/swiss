@@ -371,7 +371,15 @@ function dbStreamBarDyn(t          )       {
 async function dbStreamJumpLatest()                {
   const t = dbTab();
   if (t.kind !== "key" || !t.redisKey) return;
+  // Jumping reopens the follow window itself: any tick still in flight speaks for
+  // the window this jump is about to replace — letting its answer land would pool a
+  // page behind a pill whose splice target no longer exists (docs/45 S3 follow-up).
+  // Issuing on the same guard voids those ticks, exactly as a newer tick voids an
+  // older one; the converse is accepted — a tick issued AFTER the jump supersedes
+  // it, and dedup-plus-sort makes a late live-edge page a no-op at worst.
+  const token = dbFollowReq.issue();
   const j = await apiJson                   (dbStreamUrl("/stream", t.redisKey, ""));
+  if (!dbFollowReq.accepts(token)) return; // a newer tick or jump won the race
   if (!j) return; // apiJson toasted it; the gap bar stays and says the same thing
   if (dbTab() !== t) return; // the tab moved on mid-flight; the answer belongs to nobody
   t.redisStreamRows = streamCap((j.entries || []).slice(), STREAM_ROW_CAP, "newest");
