@@ -25,5 +25,6 @@
 #![cfg(feature = "it")]
 
 mod mysql;
+mod pg;
 mod seed;
 mod smoke;

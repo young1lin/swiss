@@ -217,7 +217,9 @@ pub fn pg_list_tables_grammar_sql(
     (with_pg_list_order(list, sort), count)
 }
 pub const DESCRIBE_SQL: &str = "
-  SELECT column_name, data_type, is_nullable, column_default,
+  SELECT column_name,
+         CASE WHEN data_type = 'USER-DEFINED' THEN udt_name ELSE data_type END AS data_type,
+         is_nullable, column_default,
          character_maximum_length, numeric_precision, numeric_scale,
          col_description(format('%I.%I', table_schema, table_name)::regclass, ordinal_position) AS column_comment
     FROM information_schema.columns

@@ -54,7 +54,7 @@ use crate::engine::{engine, on_worker, Engine, Kind};
 
 /// Bump when any file under `seed/` changes: an existing `it_seed` template (or
 /// `it` role) built from an older seed is rebuilt instead of reused.
-const SEED_VERSION: i64 = 1;
+const SEED_VERSION: i64 = 2;
 
 /// The account every def authenticates as. Not a superuser - the browsers must
 /// work through the same non-privileged path the panel's defs use.
@@ -339,11 +339,18 @@ async fn ensure_pg_template(e: &'static Engine) {
                     .execute(&mut t)
                     .await
                     .expect("load the postgres data seed");
-                sqlx::query("CREATE TABLE seed_meta (version BIGINT NOT NULL)")
+                // The version marker lives in its own schema: public must contain
+                // exactly the seeded application objects, so a browser walking the
+                // default schema sees only the catalog it is being tested against.
+                sqlx::query("CREATE SCHEMA it_meta")
+                    .execute(&mut t)
+                    .await
+                    .expect("create the seed marker schema");
+                sqlx::query("CREATE TABLE it_meta.seed_meta (version BIGINT NOT NULL)")
                     .execute(&mut t)
                     .await
                     .expect("create the seed version marker");
-                sqlx::query("INSERT INTO seed_meta (version) VALUES ($1)")
+                sqlx::query("INSERT INTO it_meta.seed_meta (version) VALUES ($1)")
                     .bind(SEED_VERSION)
                     .execute(&mut t)
                     .await
@@ -359,7 +366,7 @@ async fn template_version(e: &Engine) -> Option<i64> {
     let mut t = sqlx::PgConnection::connect(&pg_db_url(e, "it_seed"))
         .await
         .ok()?;
-    sqlx::query_scalar("SELECT version FROM seed_meta LIMIT 1")
+    sqlx::query_scalar("SELECT version FROM it_meta.seed_meta LIMIT 1")
         .fetch_one(&mut t)
         .await
         .ok()
