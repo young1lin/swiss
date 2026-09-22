@@ -103,6 +103,7 @@ const here = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 const stream = await import(pathToFileURL(join(here, "data-stream.ts")).href) as {
   streamMerge: (rows: StreamEntry[], page: StreamEntry[]) => StreamEntry[];
   streamCap: (rows: StreamEntry[], cap: number, keep: "newest" | "oldest") => StreamEntry[];
+  streamPool: (pending: StreamEntry[], page: StreamEntry[], cap: number) => { pending: StreamEntry[]; dropped: boolean };
   streamColumns: (rows: StreamEntry[]) => string[];
   isTopPinned: (scrollTop: number, rowHeight: number) => boolean;
   dbStreamTick: () => Promise<void>;
@@ -113,6 +114,7 @@ const browsers = await import(pathToFileURL(join(here, "data-browsers.ts")).href
 interface StreamEntry { id: string; ts: string | null; fields: Record<string, string> }
 const streamMerge = stream.streamMerge;
 const streamCap = stream.streamCap;
+const streamPool = stream.streamPool;
 const streamColumns = stream.streamColumns;
 
 const entry = (id: string, fields: Record<string, string>): StreamEntry => {
@@ -193,6 +195,39 @@ describe("streamCap", () => {
     expect(merged.length).toBe(500);
     expect(merged[0].id).toBe("999-499"); // the page's newest row is now the table's top
     expect(merged[499].id).toBe("999-0"); // the page's oldest SURVIVED: the cursor moved
+  });
+});
+
+// docs/45 S3 follow-up: the holdback pool behind the pill is bounded by the same cap
+// as the table — overflow keeps the newest half and reports the drop (a hole in the
+// middle is the gap bar's own semantic, whoever made the hole).
+describe("streamPool", () => {
+  it("under the cap: the page merges in and nothing drops", () => {
+    const r = streamPool([entry("3-0", {}), entry("2-0", {})], [entry("4-0", {})], 500);
+    expect(r.pending.map((e: StreamEntry) => e.id)).toEqual(["4-0", "3-0", "2-0"]);
+    expect(r.dropped).toBe(false);
+  });
+
+  it("exactly at the cap: nothing drops", () => {
+    const r = streamPool([entry("2-0", {}), entry("1-0", {})], [entry("3-0", {})], 3);
+    expect(r.pending.map((e: StreamEntry) => e.id)).toEqual(["3-0", "2-0", "1-0"]);
+    expect(r.dropped).toBe(false);
+  });
+
+  it("over the cap: the OLDEST falls out, the drop reports itself", () => {
+    const r = streamPool(
+      [entry("5-0", {}), entry("4-0", {}), entry("3-0", {})],
+      [entry("7-0", {}), entry("6-0", {})],
+      4,
+    );
+    expect(r.pending.map((e: StreamEntry) => e.id)).toEqual(["7-0", "6-0", "5-0", "4-0"]);
+    expect(r.dropped).toBe(true);
+  });
+
+  it("an empty page is a no-op on content and flag", () => {
+    const r = streamPool([entry("2-0", {})], [], 500);
+    expect(r.pending.map((e: StreamEntry) => e.id)).toEqual(["2-0"]);
+    expect(r.dropped).toBe(false);
   });
 });
 
@@ -426,6 +461,46 @@ describe("the stream Follow edge (docs/45 S3)", () => {
     expect(rowIds()).toEqual(["11-0", "10-0", "9-0", "8-0"]); // the pool rode the edge
     expect(pill().hidden).toBe(true);
     expect((byId.dbGridWrap as any).scrollTop).toBe(0);
+  });
+
+  it("not pinned, stream running hot: the pool holds at the cap, the pill says 500+, the flush lands at most 500", async () => {
+    // docs/45 S3 follow-up: 7 ticks x 100 entries while the operator reads history —
+    // the pool must never grow past the row cap, and what falls out is a hole in the
+    // middle (the gap bar's own semantic), not a silent loss.
+    mountStream({
+      key: "s", type: "stream", ttl: -1, length: 702,
+      entries: [entry("9-0", { a: "1" }), entry("8-0", { a: "2" })], columns: ["a"], more: true, firstId: "8-0", lastId: "9-0",
+    });
+    setScroll(500, 24); // deep in history: every tick pools behind the pill
+    followOn();
+    const tab = dbTabs()[0];
+    if (tab.kind !== "key") throw new Error("expected the key tab");
+    const hundred = (ms: number): StreamEntry[] =>
+      Array.from({ length: 100 }, (_v: unknown, i: number) => entry(ms + "-" + (99 - i), { a: String(i) }));
+    for (let ms = 10; ms <= 16; ms++) {
+      const p = stream.dbStreamTick();
+      parked.splice(0, 1)[0].resolve({ entries: hundred(ms), columns: ["a"], more: false, firstId: null, lastId: null, length: 702 });
+      await tick();
+      if (parked.length) {
+        // seven consecutive ticks must cross an every-fifth one: its consumer-group
+        // follow-up parks behind the page and the tick cannot finish without it.
+        parked.splice(0, 1)[0].resolve({ groups: [] });
+        await tick();
+      }
+      await p;
+      expect((tab.redisStreamPending || []).length, "tick " + ms).toBeLessThanOrEqual(500);
+    }
+    expect((tab.redisStreamPending || []).length, "700 arrived, 500 held, 200 dropped").toBe(500);
+    expect(tab.redisStreamPendingDropped).toBe(true);
+    expect(tab.redisStreamGap, "the drop is a hole in the middle — same flag as a truncated page").toBe(true);
+    expect(gapBar().hidden).toBe(false);
+    expect(text(pill())).toBe("↑ 500+ new entries"); // the count stopped moving, the copy says so
+    pill().onclick();
+    const ids = rowIds();
+    expect(ids.length, "pool 500 + 2 held rows, capped newest-first").toBe(500);
+    expect(ids[0]).toBe("16-99");
+    expect(ids[499]).toBe("12-0"); // the newest 500 of the 700 that arrived: 16/15/14/13 whole, 12 to its floor
+    expect(pill().hidden).toBe(true);
   });
 
   it("a truncated page (more=true) paints the skipped-middle bar; jump-latest reopens with no cursor", async () => {
