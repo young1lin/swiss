@@ -4328,6 +4328,8 @@ dependencies = [
  "redis",
  "serde_json",
  "sqlx",
+ "swiss-host",
+ "swiss-mcp",
  "testcontainers",
  "testcontainers-modules",
  "tokio",

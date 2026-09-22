@@ -23,6 +23,8 @@ it = [
     "dep:tokio",
     "dep:futures-util",
     "dep:serde_json",
+    "dep:swiss-host",
+    "dep:swiss-mcp",
 ]
 
 [dependencies]
@@ -63,3 +65,12 @@ futures-util = { version = "0.3", default-features = false, features = [
 # The defs `Fresh` hands out are json! values - the same shapes the panel posts to
 # /api/mcps, built with the field names the adapters actually read.
 serde_json = { version = "1", default-features = false, optional = true }
+# The DbBrowser traits plus the shared browse SQL builders the browsers sit on.
+swiss-host = { path = "../swiss-host", version = "0.1.0", optional = true }
+# The browsers themselves: L1 constructs the product's own MysqlBrowser/PgBrowser/
+# RedisDataBrowser straight from a def, exactly the way the adapters do, so what the
+# suite exercises is what the panel drives. Both crates are already in the dev graph
+# through the root package - same versions, no new code units.
+swiss-mcp = { path = "../swiss-mcp", version = "0.1.0", features = [
+    "test-utils",
+], optional = true }
