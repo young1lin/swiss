@@ -24,7 +24,8 @@
 //!
 //! THE HARD RULE (docs/34 SS26): everything after a bare `--` is ARGV for the far
 //! side, never parsed as a flag. `swiss remote exec build -- make -j8 -- -k` must
-//! send `["make","-j8","--","-k"]` untouched.
+//! send `["make","-j8","--","-k"]` untouched. The same cut happens at exec's first
+//! command word: `exec t ls -a` needs no `--`, and local flags end there.
 
 use serde_json::{json, Value};
 
@@ -44,6 +45,10 @@ pub struct RemoteArgs {
     pub words: Vec<String>,
     /// Everything after the bare `--`: ARGV, passed through UNTOUCHED.
     pub passthrough: Vec<String>,
+    /// Exec only: the tokens from the first command word on, cut verbatim before
+    /// flag parsing could eat them (docs/34 SS26). [parse_command] splices this
+    /// ahead of the post-`--` tail so `passthrough` is the whole remote ARGV.
+    pub operand: Vec<String>,
     pub port: Option<u16>,
     pub target: Option<String>,
     pub endpoint: Option<String>,
@@ -88,6 +93,18 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
         let arg = &argv[i];
         if !arg.starts_with('-') {
             words.push(arg.clone());
+            // Exec's ARGV begins at the first command word (docs/34 SS26): the
+            // second positional after the subcommand, or the first when --target
+            // already named the target. From that word on nothing is a local
+            // flag; the synopsis's bare "--" is the explicit spelling of the
+            // same cut, so "exec t ls -a" and "exec t -- ls -a" agree.
+            if !words.is_empty() && words[0] == "exec"
+                && words.len() == if a.target.is_some() { 2 } else { 3 }
+            {
+                words.pop();
+                a.operand = argv[i..].to_vec();
+                break;
+            }
             i += 1;
             continue;
         }
@@ -141,6 +158,19 @@ pub fn parse(argv: &[String]) -> RemoteArgs {
     }
     a.sub = words.first().cloned().unwrap_or_default();
     a.words = words.into_iter().skip(1).collect();
+    a
+}
+
+/// Split, parse, and splice in one step: the returned `passthrough` is exactly
+/// the remote ARGV whatever spelling produced it - after a bare `--`, at exec's
+/// first command word, or both at once (the command word leads, the post-`--`
+/// tail follows).
+pub fn parse_command(argv: &[String]) -> RemoteArgs {
+    let (head, tail) = split_passthrough(argv);
+    let mut a = parse(head);
+    let mut passthrough = std::mem::take(&mut a.operand);
+    passthrough.extend_from_slice(tail);
+    a.passthrough = passthrough;
     a
 }
 
@@ -270,9 +300,7 @@ pub async fn main(argv: Vec<String>) -> i32 {
 }
 
 async fn run(argv: &[String]) -> i32 {
-    let (head, passthrough) = split_passthrough(argv);
-    let mut a = parse(head);
-    a.passthrough = passthrough.to_vec();
+    let a = parse_command(argv);
     if a.bad_port {
         eprintln!("--port takes a number between 1 and 65535");
         return 1;
@@ -312,11 +340,11 @@ pub fn usage_text() -> String {
         ("endpoints", "list the endpoints the transport can serve"),
         ("targets", "list configured targets"),
         (
-            "target add <id> --endpoint <id> --root <path> [--caps exec,sync]",
+            "target add <id> --endpoint <id|unique-name> --root <path> [--caps exec,sync,files]",
             "add a target",
         ),
         (
-            "target set <id> [--endpoint] [--root] [--caps] [--label]",
+            "target set <id> [--endpoint <id|unique-name>] [--root <path>] [--caps <list>] [--label <text>]",
             "edit a target",
         ),
         ("target remove <id>", "remove a target"),
@@ -361,6 +389,9 @@ pub fn usage_text() -> String {
         "\nEverything after a bare -- is ARGV for the far side, passed through untouched.\n",
     );
     s.push_str(
+        "For exec, ARGV also begins at the first command word: exec t ls -a == exec t -- ls -a.\n",
+    );
+    s.push_str(
         "Remote commands run under LANG=C.UTF-8 / LC_ALL=C.UTF-8 unless --env sets them; argv and output are UTF-8\n",
     );
     s.push_str(
@@ -387,12 +418,13 @@ async fn cmd_endpoints(gw: Gateway, a: &RemoteArgs) -> i32 {
             } else {
                 let presence = value["presence"].as_str().unwrap_or("?");
                 println!("transport: {presence}");
+                println!("  {:<24} {:<12} ID", "NAME", "STATE");
                 for e in value["endpoints"].as_array().unwrap_or(&Vec::new()) {
                     println!(
                         "  {:<24} {:<12} {}",
-                        e["id"].as_str().unwrap_or("?"),
-                        e["state"].as_str().unwrap_or("?"),
                         e["label"].as_str().unwrap_or(""),
+                        e["state"].as_str().unwrap_or("?"),
+                        e["id"].as_str().unwrap_or("?"),
                     );
                 }
             }
@@ -414,6 +446,11 @@ async fn cmd_targets(gw: Gateway, a: &RemoteArgs) -> i32 {
                     serde_json::to_string_pretty(&value).unwrap_or_default()
                 );
             } else {
+                let endpoint_inventory = gw.get("/api/remote/endpoints").await.ok();
+                println!(
+                    "  {:<16} {:<24} {:<16} ROOT",
+                    "TARGET", "ENDPOINT", "CAPABILITIES"
+                );
                 for t in value["targets"].as_array().unwrap_or(&Vec::new()) {
                     let caps = t["capabilities"]
                         .as_array()
@@ -424,10 +461,15 @@ async fn cmd_targets(gw: Gateway, a: &RemoteArgs) -> i32 {
                                 .join(",")
                         })
                         .unwrap_or_default();
+                    let endpoint_id = t["endpoint"].as_str().unwrap_or("?");
+                    let endpoint = endpoint_inventory
+                        .as_ref()
+                        .map(|inventory| endpoint_display_name(inventory, endpoint_id))
+                        .unwrap_or_else(|| endpoint_id.to_string());
                     println!(
-                        "  {:<16} {:<16} {:<10} {}",
+                        "  {:<16} {:<24} {:<16} {}",
                         t["id"].as_str().unwrap_or("?"),
-                        t["endpoint"].as_str().unwrap_or("?"),
+                        endpoint,
                         caps,
                         t["workspaceRoot"].as_str().unwrap_or("?"),
                     );
@@ -443,6 +485,65 @@ async fn cmd_targets(gw: Gateway, a: &RemoteArgs) -> i32 {
 }
 
 // --- target CRUD --------------------------------------------------------------------------
+
+fn endpoint_display_name(response: &Value, id: &str) -> String {
+    response["endpoints"]
+        .as_array()
+        .and_then(|endpoints| endpoints.iter().find(|e| e["id"].as_str() == Some(id)))
+        .and_then(|endpoint| endpoint["label"].as_str())
+        .filter(|label| !label.is_empty())
+        .unwrap_or(id)
+        .to_string()
+}
+
+/// Resolve the operator's endpoint selector to the provider-owned stable id. An exact id
+/// always wins; otherwise one exact display-label match is accepted. Labels are not identity
+/// and need not be unique, so an ambiguous label is refused instead of choosing silently.
+fn canonical_endpoint_id(response: &Value, selector: &str) -> Result<String, String> {
+    let endpoints = response["endpoints"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    if endpoints.is_empty() {
+        // The API deliberately permits offline target configuration while no transport is
+        // serving. With no inventory there is nothing to resolve, so preserve the id-shaped
+        // value exactly as the caller supplied it.
+        return Ok(selector.to_string());
+    }
+    if endpoints.iter().any(|e| e["id"].as_str() == Some(selector)) {
+        return Ok(selector.to_string());
+    }
+    let matches: Vec<&Value> = endpoints
+        .iter()
+        .filter(|e| e["label"].as_str() == Some(selector))
+        .collect();
+    if matches.len() == 1 {
+        return Ok(matches[0]["id"].as_str().unwrap_or(selector).to_string());
+    }
+    if matches.len() > 1 {
+        let ids = matches
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(format!(
+            "endpoint name {selector:?} is ambiguous; use one of these ids: {ids}"
+        ));
+    }
+    let known = endpoints
+        .iter()
+        .filter_map(|e| Some(format!("{} ({})", e["label"].as_str()?, e["id"].as_str()?)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "unknown endpoint {selector:?}; use an endpoint id or one unique name (known: {known})"
+    ))
+}
+
+async fn resolve_endpoint_selector(gw: &Gateway, selector: &str) -> Result<String, String> {
+    let response = gw.get("/api/remote/endpoints").await?;
+    canonical_endpoint_id(&response, selector)
+}
 
 fn caps_value(raw: Option<&str>) -> Vec<String> {
     let raw = raw.unwrap_or("exec");
@@ -465,8 +566,15 @@ async fn cmd_target(gw: Gateway, a: &RemoteArgs) -> i32 {
     match verb.as_str() {
         "add" => {
             let (Some(endpoint), Some(root)) = (&a.endpoint, &a.root) else {
-                eprintln!("target add needs --endpoint <tunnels connection id> and --root <absolute POSIX path>");
+                eprintln!("target add needs --endpoint <connection id or unique name> and --root <absolute POSIX path>");
                 return 1;
+            };
+            let endpoint = match resolve_endpoint_selector(&gw, endpoint).await {
+                Ok(endpoint) => endpoint,
+                Err(err) => {
+                    eprintln!("{err}");
+                    return 1;
+                }
             };
             let body = json!({
                 "id": id,
@@ -493,6 +601,13 @@ async fn cmd_target(gw: Gateway, a: &RemoteArgs) -> i32 {
             };
             let mut body = current.clone();
             if let Some(endpoint) = &a.endpoint {
+                let endpoint = match resolve_endpoint_selector(&gw, endpoint).await {
+                    Ok(endpoint) => endpoint,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return 1;
+                    }
+                };
                 body["endpoint"] = json!(endpoint);
             }
             if let Some(root) = &a.root {
@@ -1535,5 +1650,114 @@ mod tests {
             vec![("BOARD".into(), "rpi".into()), ("JOB".into(), "1".into())]
         );
         assert_eq!(a.unknown, vec!["--env \"BAD\" needs NAME=VALUE"]);
+    }
+
+    #[test]
+    fn exec_argv_also_begins_at_the_first_command_word() {
+        // docs/34 SS26: "exec test ls -a" and "exec test -- ls -a" are the same
+        // call; the local-flag zone ends at the first command word after the name.
+        let a = parse_command(&argv(&["exec", "test", "ls", "-a"]));
+        assert_eq!(a.sub, "exec");
+        assert_eq!(a.words, vec!["test"]);
+        assert_eq!(a.passthrough, vec!["ls", "-a"]);
+        assert!(a.unknown.is_empty());
+
+        // With --target naming the target, the first word IS the command.
+        let a = parse_command(&argv(&["exec", "--target", "t", "ls", "-a"]));
+        assert_eq!(a.passthrough, vec!["ls", "-a"]);
+
+        // Flags between the name and the command word stay local.
+        let a = parse_command(&argv(&[
+            "exec",
+            "test",
+            "--env",
+            "A=B",
+            "--timeout",
+            "30m",
+            "make",
+            "-j8",
+        ]));
+        assert_eq!(a.env, vec![("A".into(), "B".into())]);
+        assert_eq!(a.timeout.as_deref(), Some("30m"));
+        assert_eq!(a.passthrough, vec!["make", "-j8"]);
+    }
+
+    #[test]
+    fn an_exec_operand_rejoins_what_follows_the_bare_dash_dash() {
+        // "exec test make -- -k" used to drop the words before -- and send only
+        // ["-k"]; with the operand rule the command word leads the argv.
+        let a = parse_command(&argv(&["exec", "test", "make", "--", "-k"]));
+        assert_eq!(a.passthrough, vec!["make", "-k"]);
+
+        // The bare -- itself still vanishes into the split, as always.
+        let a = parse_command(&argv(&["exec", "test", "ls", "--", "-a"]));
+        assert_eq!(a.passthrough, vec!["ls", "-a"]);
+    }
+
+    #[test]
+    fn unknown_flags_before_the_exec_command_word_still_refuse() {
+        // Typo protection: a flag-shaped token before the command word is a
+        // local error (the whole argv, not usage, decides); non-exec
+        // subcommands keep the strict parse.
+        let a = parse_command(&argv(&["exec", "--timeuot", "5m", "make"]));
+        assert_eq!(a.unknown, vec!["--timeuot"]);
+        let a = parse_command(&argv(&["pull", "test", "out/x", "-a"]));
+        assert_eq!(a.unknown, vec!["-a"]);
+    }
+
+    #[test]
+    fn endpoint_selector_accepts_an_id_or_one_unique_display_name() {
+        let response = json!({
+            "endpoints": [
+                { "id": "id-one", "label": "开发机", "state": "connected" },
+                { "id": "id-two", "label": "构建机", "state": "idle" }
+            ]
+        });
+        assert_eq!(
+            canonical_endpoint_id(&response, "id-one").as_deref(),
+            Ok("id-one")
+        );
+        assert_eq!(
+            canonical_endpoint_id(&response, "开发机").as_deref(),
+            Ok("id-one")
+        );
+        assert_eq!(endpoint_display_name(&response, "id-one"), "开发机");
+        assert_eq!(endpoint_display_name(&response, "missing"), "missing");
+        assert_eq!(
+            canonical_endpoint_id(&json!({ "endpoints": [] }), "offline-id").as_deref(),
+            Ok("offline-id"),
+            "offline configuration preserves the provider-owned id"
+        );
+        let id_beats_label = json!({
+            "endpoints": [
+                { "id": "build", "label": "primary", "state": "connected" },
+                { "id": "id-two", "label": "build", "state": "connected" }
+            ]
+        });
+        assert_eq!(
+            canonical_endpoint_id(&id_beats_label, "build").as_deref(),
+            Ok("build"),
+            "stable identity wins over a colliding display name"
+        );
+    }
+
+    #[test]
+    fn endpoint_selector_refuses_ambiguous_or_unknown_display_names() {
+        let response = json!({
+            "endpoints": [
+                { "id": "id-one", "label": "build", "state": "connected" },
+                { "id": "id-two", "label": "build", "state": "idle" }
+            ]
+        });
+        let duplicate = canonical_endpoint_id(&response, "build").expect_err("ambiguous");
+        assert!(duplicate.contains("ambiguous"), "{duplicate}");
+        assert!(
+            duplicate.contains("id-one") && duplicate.contains("id-two"),
+            "{duplicate}"
+        );
+
+        let unknown = canonical_endpoint_id(&response, "missing").expect_err("unknown");
+        assert!(unknown.contains("unknown endpoint"), "{unknown}");
+        assert!(unknown.contains("build (id-one)"), "{unknown}");
     }
 }
