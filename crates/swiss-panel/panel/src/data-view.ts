@@ -87,7 +87,12 @@ export function dbConnMenuItems(
     if (order.length > 1) items.push({ heading: true, label: g, fn: (): void => {} });
     buckets[g].forEach((c: ApiDbConnectionRow): void => {
       items.push({
-        label: dbConnLabel(c),
+        // label is the NAME alone now - the drawer (this builder's only reader since the
+        // menus became drawers) paints the dialect as a MARK beside it, and a menu label
+        // that spelled both was a text-only menu's habit. title keeps the full "name ·
+        // dialect" for the tooltip, which is where the host belongs anyway.
+        label: c.name,
+        mark: c.dialect,
         title: dbConnLabel(c),
         on: c.name === current,
         fn: (): void => { pick(c.name); },
@@ -209,13 +214,14 @@ function renderDbView(): void {
   fill(root,
     h("div", { class: "db-side" },
       // docs/43 M3: the sidebar's top is TWO band-shaped rows — the connection row (status
-      // dot, name, dialect chip, chevron; popupMenu keeps the docs/20 G5 groups as heading
-      // rows) and, when the connection has a database axis, the database row (current name,
-      // chevron; primary first with the rest behind a separator, system last, not-browsable
-      // disabled with the server's reason one hover away). A select cannot carry any of
-      // that; these two buttons replaced it.
-      h("button", { class: "db-conn-row", id: "dbConnRow", type: "button", aria: { haspopup: "menu", label: tr("dataView.connection") } }),
-      h("button", { class: "db-db-row", id: "dbDatabaseRow", type: "button", hidden: true, aria: { haspopup: "menu", label: tr("dataView.databaseRow") } }),
+      // dot, name, dialect mark, chevron) and, when the connection has a database axis, the
+      // database row (current name, chevron). Each opens a DRAWER under itself (the owner's
+      // ask: the picker slides down inside the sidebar instead of floating over it) — the
+      // rows and their drawers are siblings so the drawer pushes the tree, it never covers it.
+      h("button", { class: "db-conn-row", id: "dbConnRow", type: "button", aria: { expanded: "false", controls: "dbConnDrawer", label: tr("dataView.connection") } }),
+      h("div", { class: "db-drawer", id: "dbConnDrawer" }, h("div", { class: "db-drawer-in" })),
+      h("button", { class: "db-db-row", id: "dbDatabaseRow", type: "button", hidden: true, aria: { expanded: "false", controls: "dbDbDrawer", label: tr("dataView.databaseRow") } }),
+      h("div", { class: "db-drawer", id: "dbDbDrawer" }, h("div", { class: "db-drawer-in" })),
       // docs/43 M2: the sidebar's top is the connection row and ONE search box. The sort
       // select and its direction button moved into the Tables band's ellipsis (where they
       // act), and pg's schema dropdown died - a schema is a VISIBLE band in the tree now,
@@ -350,6 +356,9 @@ function dbPaneChange(ev: Event): void {
 function dbPaneKeydown(ev: KeyboardEvent): void {
   const t = targetEl(ev);
   if (!t) return;
+  // Escape closes the open drawer first — it is the lightest thing on the screen (the
+  // sheet's own Esc handling sits behind this return).
+  if (ev.key === "Escape" && dbDrawer) { dbDrawer = ""; renderDbSide(); return; }
   if (dbGridKeydown(t, ev)) return;
   if (dbChromeKeydown(t, ev)) return;
   if (dbFiltersKeydown(ev, t)) return;
@@ -359,31 +368,36 @@ function dbPaneKeydown(ev: KeyboardEvent): void {
 
 /** The sidebar + console half of the delegated click. */
 function dbChromeClick(t: Element, ev: MouseEvent): boolean {
+  // A drawer closes on any click that is neither inside it nor on its own row — the rows
+  // below toggle. Deliberately NOT returning true: the same click still does its own work
+  // (opening a table also dismisses the picker).
+  if (dbDrawer && !t.closest(".db-drawer") && !t.closest("#dbConnRow") && !t.closest("#dbDatabaseRow")) {
+    dbDrawer = "";
+    renderDbSide();
+  }
   // wrapped: dbRunSql's first parameter is 'explain' — an event object is truthy, so a
   // plain Run click used to quietly run EXPLAIN (docs/22 W5.4 audit). docs/43 M4 moved
   // Run to the toolbar; the delegated id branch stays — the toolbar button carries it.
   if (t.closest("#dbSqlRun")) { void dbRunSql(false); return true; }
-  // docs/43 M3: the connection row opens the connection menu — the docs/20 G5 groups as
-  // heading rows, one separator between groups, the selected connection marked on.
+  // The connection row toggles its drawer (the owner's ask: the picker slides down inside
+  // the sidebar, pushing the tree, instead of floating over it).
   const connRow = t.closest<HTMLElement>("#dbConnRow");
   if (connRow) {
     const d = dbConn();
     if (!d.conns.length) return true;
     ev.stopPropagation();
-    popupMenu(connRow.getBoundingClientRect(),
-      dbConnMenuItems(d.conns, d.conn || "", (name: string): void => { void dbSwitchConn(name); }));
+    dbDrawer = dbDrawer === "conn" ? "" : "conn";
+    renderDbSide();
     return true;
   }
-  // docs/43 M3: the database row opens the selector — primary first with its group heading,
-  // the rest behind a separator, system last, not-browsable rows disabled with the server's
-  // reason one hover away.
+  // The database row toggles its own drawer the same way.
   const dbRowBtn = t.closest<HTMLElement>("#dbDatabaseRow");
   if (dbRowBtn) {
     const d = dbConn();
     if (!d.databases || !d.databases.length) return true;
     ev.stopPropagation();
-    popupMenu(dbRowBtn.getBoundingClientRect(),
-      dbDatabaseMenuItems(d.databases, dbCurrentDatabase(d), dbSwitchDatabase));
+    dbDrawer = dbDrawer === "db" ? "" : "db";
+    renderDbSide();
     return true;
   }
   const moreBtn = t.closest<HTMLElement>("#dbMore");
@@ -579,6 +593,41 @@ async function dbSwitchConn(name: string): Promise<void> {
   else { void dbLoadTables(); void dbLoadDatabases(); }
 }
 
+/* The owner's drawer ask (post-M5): the connection and database pickers slide open under
+ * their rows instead of floating over the sidebar as popup menus. One drawer at a time —
+ * two stacked pickers in a ~240px sidebar say nothing either one couldn't say alone. */
+let dbDrawer: "" | "conn" | "db" = "";
+
+/** Paint one drawer from the same items a menu would have shown (headings stay headings,
+ * seps stay hairlines, on marks the current pick). Closed is COLLAPSED, not hidden: the
+ * collapse is a grid-rows transition, and hidden would snap it. inert takes the closed
+ * drawer out of the tab order and the a11y tree while its rows still exist to animate. */
+function dbDrawerFill(host: HTMLElement | null, items: MenuItem[], open: boolean): void {
+  if (!host) return;
+  host.classList.toggle("open", open);
+  if (open) host.removeAttribute("inert");
+  else host.setAttribute("inert", "");
+  const inner = host.firstElementChild as HTMLElement | null;
+  if (!inner) return;
+  inner.textContent = "";
+  items.forEach((it: MenuItem): void => {
+    if (it.sep) { inner.appendChild(h("hr")); return; }
+    if (it.heading) { inner.appendChild(h("div", { class: "db-drawer-head" }, it.label)); return; }
+    const b = h("button", {
+      class: "db-drow" + (it.on ? " on" : ""), type: "button",
+      disabled: !!it.disabled, title: it.title || undefined,
+    },
+    it.mark ? typeTagNode(it.mark) : null,
+    h("span", { class: "db-drow-name" }, it.label),
+    it.meta != null ? h("span", { class: "db-drow-meta" }, it.meta) : null);
+    // Direct onclick, not a data address: the row IS rebuilt by every renderDbSide, so a
+    // delegated address would save nothing. The pick closes the drawer first — the
+    // switch's own repaint then draws the new connection's sidebar with no drawer open.
+    b.onclick = (ev: MouseEvent): void => { ev.stopPropagation(); dbDrawer = ""; it.fn(); };
+    inner.appendChild(b);
+  });
+}
+
 function renderDbSide(): void {
   const d = dbConn();
   const row = $("dbConnRow");
@@ -587,8 +636,9 @@ function renderDbSide(): void {
   row.textContent = "";
   if (!d.conns.length) {
     row.classList.add("off");
+    row.setAttribute("aria-expanded", "false");
     row.appendChild(el("span", "db-row-name", tr("dataView.noDatabaseMcps")));
-    if (dbRow) dbRow.hidden = true;
+    if (dbRow) { dbRow.hidden = true; dbRow.setAttribute("aria-expanded", "false"); }
     return;
   }
   row.classList.remove("off");
@@ -611,6 +661,12 @@ function renderDbSide(): void {
   const chev = iconNode("chevron-down");
   chev.setAttribute("class", "ic db-row-chev");
   row.appendChild(chev);
+  row.setAttribute("aria-expanded", dbDrawer === "conn" ? "true" : "false");
+  row.classList.toggle("engaged", dbDrawer === "conn");
+  // The connection drawer: same items the old menu showed (docs/20 G5 groups), rendered
+  // as rows that push the tree below instead of floating over it.
+  dbDrawerFill($("dbConnDrawer"), dbConnMenuItems(d.conns, d.conn || "",
+    (name: string): void => { dbDrawer = ""; void dbSwitchConn(name); }), dbDrawer === "conn");
   // docs/20 G5: the connection menu keeps the groups — heading rows where the optgroups
   // were, first-appearance order over the flat list, one separator between groups. A single
   // group stays flat (a heading around everything says nothing); no group reads as one list.
@@ -630,6 +686,14 @@ function renderDbSide(): void {
       const chev2 = iconNode("chevron-down");
       chev2.setAttribute("class", "ic db-row-chev");
       dbRow.appendChild(chev2);
+      dbRow.setAttribute("aria-expanded", dbDrawer === "db" ? "true" : "false");
+      dbRow.classList.toggle("engaged", dbDrawer === "db");
+      // The database drawer: primary first with its heading, system last, not-browsable
+      // rows disabled with the server's reason one hover away.
+      dbDrawerFill($("dbDbDrawer"), dbDatabaseMenuItems(d.databases || [], dbCurrentDatabase(d),
+        (name: string): void => { dbDrawer = ""; dbSwitchDatabase(name); }), dbDrawer === "db");
+    } else {
+      dbRow.setAttribute("aria-expanded", "false");
     }
   }
   // docs/43 M3: the catalog is fetched once per connection — null means not asked yet, and
@@ -669,7 +733,10 @@ function dbDatabaseMenuItems(
       items.push({ heading: true, label: tr("dataView.dbSystemGroup"), fn: (): void => {} });
     }
     items.push({
-      label: x.name + (x.tables != null ? " - " + Number(x.tables).toLocaleString(locale()) : ""),
+      // The table count rides in meta - the drawer paints it dim at the row's end, where
+      // a scan compares names without numbers interleaved.
+      label: x.name,
+      meta: x.tables != null ? Number(x.tables).toLocaleString(locale()) : undefined,
       title: x.browsable ? "" : (x.reason || ""),
       disabled: !x.browsable || x.name === selected,
       on: x.name === selected,

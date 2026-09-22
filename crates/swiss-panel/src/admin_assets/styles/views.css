@@ -517,6 +517,28 @@
     .db-conn-row, .db-db-row { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 5px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-conn-row:hover, .db-db-row:hover { background: var(--hover); }
     .db-conn-row.off { cursor: default; color: var(--text-3); }
+    /* The open picker's row stays engaged: the hover wash holds while its drawer is open,
+       so the row and what slid out of it read as one control. */
+    .db-conn-row.engaged, .db-db-row.engaged { background: var(--hover); }
+    .db-conn-row.engaged .db-row-chev, .db-db-row.engaged .db-row-chev { transform: rotate(180deg); }
+    .db-row-chev { transition: transform .16s ease; }
+    /* The drawers (the owner's ask): grid-rows 0fr-to-1fr is the whole animation - no
+       max-height guess, no JS measuring. The inner pane owns overflow so a long list
+       scrolls INSIDE the drawer while the collapse still animates. */
+    .db-drawer { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .18s ease; }
+    .db-drawer.open { grid-template-rows: 1fr; }
+    .db-drawer-in { min-height: 0; overflow: hidden auto; max-height: 40vh; overscroll-behavior: contain; }
+    .db-drawer-head { padding: 5px 10px 2px; font-size: var(--f-caption); color: var(--text-3); white-space: nowrap; }
+    .db-drawer hr { border: 0; border-top: 1px solid var(--sep); margin: 3px 6px; }
+    .db-drow { display: flex; align-items: center; gap: 7px; margin: 0 4px; width: calc(100% - 8px);
+      padding: 4px 6px; border-radius: 6px; text-align: left; font-size: var(--f-body); color: var(--text-2); }
+    .db-drow:hover { background: var(--hover); }
+    .db-drow.on { color: var(--accent); font-weight: 550; }
+    .db-drow:disabled { color: var(--text-3); cursor: default; background: none; }
+    .db-drow .ic { flex: none; width: 14px; height: 14px; color: var(--text-3); }
+    .db-drow.on .ic { color: var(--accent); }
+    .db-drow-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .db-drow-meta { flex: none; color: var(--text-3); font-size: var(--f-caption); font-variant-numeric: tabular-nums; }
     .db-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
     .db-dot.off { background: var(--text-3); }
     .db-chip { flex: none; font-size: var(--f-caption); color: var(--text-3); border: 1px solid var(--sep); border-radius: var(--r-pill); padding: 0 5px; }
