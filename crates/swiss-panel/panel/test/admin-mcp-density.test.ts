@@ -130,7 +130,9 @@ describe("MCP detail progressive disclosure", () => {
       tunnels: [],
     })].flat().filter((n): n is Node => n != null));
 
-    expect(host.querySelector(".group.config-summary")).not.toBeNull();
+    expect(host.querySelector(".group > .config-summary")).not.toBeNull();
+    // docs/46 P2-3c: every setting is a library label / value row, the value mono.
+    expect(host.querySelector(".config-rows > .kv .kv-v.mono")).not.toBeNull();
     expect(host.querySelector(".config-target")!.textContent).toContain("127.0.0.1:3306 / acme_app_dev");
     expect(host.querySelector(".config-badges")).not.toBeNull();
     expect(host.querySelector(".config-badges")!.textContent).toContain("Starts at boot");

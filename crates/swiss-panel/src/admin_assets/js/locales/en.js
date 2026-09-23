@@ -1105,7 +1105,6 @@ const en                         = {
   "runHistory.savedRevisionsN": "Saved revisions ({n})",
   "runHistory.swapAdapterDefinitionWhile": "Swap the adapter definition while keeping the current one available for restore.",
   "runHistory.replaceDefinition2": "Replace definition…",
-  "runHistory.tunnel": "tunnel",
   "runHistory.reconnectedAfterMcpStarted": "reconnected after this MCP started — its connection pool may hold dead sockets. ",
   "runHistory.useRestartAbove": "Use Restart above.",
   "runHistory.depends": "Depends on",

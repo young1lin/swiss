@@ -19,6 +19,7 @@ import { $ } from "./util.js";
 import { tk, tr } from "./i18n.js";
 import { h } from "./h.js";
 import type { HChild } from "./h.js";
+import { checkField, field, pair } from "./ui/index.js";
 
 /* --- field schemas ---------------------------------------------------------------------------- */
 /* `description` leads every type: it is what the MCP client is told this endpoint is for, and with
@@ -214,14 +215,10 @@ function envToObj(text: string | null | undefined): Record<string, string> {
  *  properties now - the esc() discipline this file carried is structural instead. */
 function fieldNode(spec: FieldSpec, val: unknown, p: string): HTMLElement {
   const id = p + spec.k;
-  const hint = spec.hint ? h("div", { class: "hint" }, tr(spec.hint)) : null;
+  const help = spec.hint ? tr(spec.hint) : null;
   if (spec.bool) {
     const on = val === undefined ? !!spec.def : !!val && val !== "false";
-    return h("div", { class: "fld" },
-      h("label", { class: "check" },
-        h("input", { type: "checkbox", id: id, checked: on }),
-        tr(spec.label)),
-      hint);
+    return checkField({ label: tr(spec.label), hint: help, control: h("input", { type: "checkbox", id: id, checked: on }) as HTMLInputElement });
   }
   /* `json` fields hold an authored structure (a rest MCP's tool declarations) rather than a value or a
      KEY=VALUE map, so they round-trip as pretty-printed JSON. */
@@ -239,9 +236,7 @@ function fieldNode(spec: FieldSpec, val: unknown, p: string): HTMLElement {
   const body = spec.area
     ? h("textarea", areaProps, v)
     : h("input", Object.assign({ type: "text" as const, value: v }, areaProps));
-  return h("div", { class: "fld" },
-    h("label", { class: "field" }, h("span", null, tr(spec.label)), body),
-    hint);
+  return field({ label: tr(spec.label), control: body, hint: help });
 }
 
 /** Lay a type's fields out as nodes, pairing the ones marked `half` into two columns. */
@@ -251,7 +246,7 @@ function fieldsNode(type: string, vals: Record<string, unknown> | null | undefin
   let i = 0;
   while (i < specs.length) {
     if (specs[i].half && specs[i + 1] && specs[i + 1].half) {
-      out.push(h("div", { class: "two" },
+      out.push(pair(
         fieldNode(specs[i], vals && vals[specs[i].k], p),
         fieldNode(specs[i + 1], vals && vals[specs[i + 1].k], p)));
       i += 2;

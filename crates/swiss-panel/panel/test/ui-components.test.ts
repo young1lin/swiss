@@ -239,6 +239,22 @@ describe("ui/page", () => {
     expect(refusal.getAttribute("aria-live")).toBe("polite");
   });
 
+  it("a pair's two fields sit level: the stacking margin never applies inside .two (ui.css)", () => {
+    // Found on the P2-3c walk: in a sheet (not a .form) the second half of a pair sat 12px low.
+    const rules = parseCss(sheet("ui.css"));
+    const rule = rules.find((r) => !r.at && r.selectors.includes(".two > .fld + .fld"));
+    expect(rule?.decls.find((d) => d.prop === "margin-top")?.value).toBe("0");
+    // ...and a pair is two columns wherever it sits, not only under .form or .sheet-body > (the
+    // Add sheet's generated pairs are one div deeper and stacked).
+    const grid = rules.find((r) => !r.at && r.selectors.length === 1 && r.selectors[0] === ".two");
+    expect(grid?.decls.find((d) => d.prop === "display")?.value).toBe("grid");
+    expect(grid?.decls.find((d) => d.prop === "grid-template-columns")?.value).toBe("1fr 1fr");
+    // Stacked in a plain container, fields and pairs are a grid step apart; in a grid the gap does it.
+    const css = sheet("ui.css");
+    expect(css).toMatch(/:is\(\.fld, \.two\) \+ :is\(\.fld, \.two\) \{ margin-top: var\(--s3\); \}/);
+    expect(css).toMatch(/:is\(\.form, \.sheet-body, \.fold-body\) > :is\(\.fld, \.two\) \+ :is\(\.fld, \.two\) \{ margin-top: 0; \}/);
+  });
+
   it("pager: newer, a live status, older - a navigation landmark the view patches by id", () => {
     const p = pager({ id: "pg", label: "Pages", statusId: "st", status: "Page 2", prev: btn("Newer"), next: btn("Older", { disabled: true }) });
     expect(p.getAttribute("role")).toBe("navigation");

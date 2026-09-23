@@ -23,6 +23,7 @@ import { loadList } from "./polling.js";
 import { addTitle, groupFieldNode, lastGroup, rememberGroup, resolveDefaultGroup } from "./groups.js";
 import { tr } from "./i18n.js";
 import { closeSheet, openFieldSheet, sheet, showSheet } from "./ui/sheet.js";
+import { btn, checkField, field, hint, pair } from "./ui/index.js";
 import { newGroup } from "./sidebar.js";
 import { addGroupTarget, setAddGroupTarget } from "./ui-state.js";
 import { mcpGroups, selectedMcp, setSelectedMcp } from "./mcp-state.js";
@@ -43,26 +44,26 @@ function openSheet(group: string | null): void {
     titleId: "a-title",
     label: tr("addSheet.addMcp"),
     body: [
-      h("div", { class: "two" },
-        h("label", { class: "field" },
-          h("span", null, tr("addSheet.name")),
-          h("input", { id: "a-name", placeholder: tr("addSheet.gitMcp"), autocomplete: "off" })),
-        h("label", { class: "field" },
-          h("span", null, tr("addSheet.type")),
-          h("select", { id: "a-type" }, types.map((t) => {
+      pair(
+        field({ label: tr("addSheet.name"), control: h("input", { id: "a-name", placeholder: tr("addSheet.gitMcp"), autocomplete: "off" }) }),
+        field({
+          label: tr("addSheet.type"),
+          control: h("select", { id: "a-type" }, types.map((t) => {
             return h("option", { value: t }, tr(TYPE_LABELS[t] || t));
-          })))),
+          })),
+        })),
       groupFieldNode(names, initial),
       h("div", { id: "a-fields" }),
-      h("label", { class: "check" }, h("input", { type: "checkbox", id: "a-start", checked: true }), tr("addSheet.startNow")),
-      h("div", { class: "hint", id: "a-test-out", hidden: true })],
+      checkField({ label: tr("addSheet.startNow"), control: h("input", { type: "checkbox", id: "a-start", checked: true }) as HTMLInputElement }),
+      hint(null, { id: "a-test-out", hidden: true })],
+    // Import is the sheet's other way in, so it leads the foot; the verbs close it on the right
+    // (views.css pushes them there - no spacer element).
     foot: [
-      h("button", { class: "btn", id: "a-import" }, tr("addSheet.importMcpJson")),
+      btn(tr("addSheet.importMcpJson"), { id: "a-import" }),
       h("input", { id: "a-file", type: "file", accept: ".json,application/json", hidden: true }),
-      h("span", { class: "grow" }),
-      h("button", { class: "btn", id: "a-cancel" }, tr("addSheet.cancel")),
-      h("button", { class: "btn", id: "a-test", hidden: true }, tr("addSheet.testConnection")),
-      h("button", { class: "btn primary", id: "a-save" }, tr("addSheet.add"))],
+      btn(tr("addSheet.cancel"), { id: "a-cancel" }),
+      btn(tr("addSheet.testConnection"), { id: "a-test", hidden: true }),
+      btn(tr("addSheet.add"), { kind: "primary", id: "a-save" })],
   }));
   const paint = (): void => {
     fill($("a-fields"), fieldsNode($<HTMLSelectElement>("a-type").value, {}, "a-"));
