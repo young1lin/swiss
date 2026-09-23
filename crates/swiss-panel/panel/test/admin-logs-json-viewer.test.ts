@@ -1,12 +1,12 @@
 /*
  * Copyright 2026 young1lin
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *     https://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-import type { JtBox } from "../src/types/dom.js";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
 // @vitest-environment happy-dom
 
-/* docs/33 — the Logs JSON viewer. Compact wire text is parsed into the restrained tree;
-   non-JSON stays plain text. Copy is tested both per block and per node. */
+/* docs/33 C3 — the Logs JSON view. A call's arguments and reply are one formatted code block,
+   the same for every MCP: standard indented JSON, a string that holds JSON shown as that JSON
+   (behind a "decoded" marker), JSON followed by prose split into code + text, anything else as
+   it arrived. Copy hands over valid JSON of what is shown; Copy raw the stored text. */
 
 vi.mock("../src/util.js", () => {
   const toasts: string[] = [];
@@ -36,10 +37,12 @@ vi.mock("../src/util.js", () => {
 vi.mock("../src/sidebar.js", () => ({ rowOf: () => null }));
 
 let logs: typeof import("../src/logs.js");
+let jv: typeof import("../src/json-view.js");
 let util: typeof import("../src/util.js") & { __toasts: string[] };
 
 beforeAll(async () => {
   logs = await import("../src/logs.js");
+  jv = await import("../src/json-view.js");
   util = (await import("../src/util.js")) as never;
 });
 
@@ -49,97 +52,221 @@ function call(over: Record<string, unknown> = {}) {
 function stub(over: Record<string, unknown> = {}) {
   return {
     name: "redis", calls: [], callsPage: 0, callsMore: false,
-    callsFull: {}, callsOpen: {}, stderr: "", callsQ: "",
+    callsFull: {}, callsOpen: {}, callsGone: {}, callsAll: {}, stderr: "", callsQ: "",
     ...over,
   } as never;
 }
 
-/* docs/37 R5: logsBodyNode paints a real tree — the assertions read the painted DOM (node
-   text, attributes) instead of substring-matching a markup string nobody parsed. */
+/* docs/37 R5: logsBodyNode paints a real tree — the assertions read the painted DOM. */
 function paint(over: Record<string, unknown> = {}): HTMLElement {
   const host = document.createElement("div");
   host.append(...[logs.logsBodyNode(stub(over) as never)].flat().filter((n): n is Node => n != null));
   return host;
 }
+function block(host: HTMLElement, key: string): HTMLElement {
+  return host.querySelector<HTMLElement>('[data-blk="' + key + '"]')!;
+}
 
-describe("docs/33 C1+C2: the block body division — tree when it parses, pre when it does not", () => {
-  it("a parseable arguments/result block renders a tree slot, not a pre", () => {
-    const host = paint({ calls: [call()], callsOpen: { 7: true } });
-    expect(host.querySelector('[data-jtree="args:7"]')).not.toBeNull();
-    expect(host.querySelector('[data-jtree="out:7"]')).not.toBeNull();
-    expect(host.querySelector("pre.logs")).toBeNull();
+/* The shapes the operator's MCPs actually return, written as synthetic samples. */
+const ZHIPU = JSON.stringify(JSON.stringify([{ title: "Rust 1.90", link: "https://example.test/a", content: "line one\nline two" }]));
+const REDIS_HASH = JSON.stringify({ profile: JSON.stringify(JSON.stringify({ id: 1, tags: ["a"] })), n: "50", flag: "true" });
+const FIGMA = '[{"type":"image","mime":"image/png"}]\n\nThe screenshot above is the selected frame.';
+
+describe("docs/33 C3: splitJsonBlock — what counts as JSON", () => {
+  it("a whole JSON value is one block with no tail", () => {
+    expect(jv.splitJsonBlock('{"a":1}')).toEqual({ value: { a: 1 }, tail: "" });
+    expect(jv.splitJsonBlock('  [1,2]\n')).toEqual({ value: [1, 2], tail: "" });
+    expect(jv.splitJsonBlock("50"), "a reply that is a bare number is still JSON").toEqual({ value: 50, tail: "" });
   });
 
-  it("a non-JSON result keeps a plain escaped pre, an error keeps the red one", () => {
-    const host = paint({
-      calls: [call({ args: "GET k", output: "upstream said <no>", ok: false })],
-      callsOpen: { 7: true },
-    });
-    expect(host.querySelector("pre.logs")!.textContent).toBe("GET k");
-    const errPre = host.querySelector("pre.logs.err")!;
-    expect(errPre.getAttribute("data-out")).toBe("7");
-    expect(errPre.textContent).toContain("upstream said <no>"); // a text node, not entities
+  it("JSON followed by prose keeps the JSON and hands back the prose", () => {
+    expect(jv.splitJsonBlock(FIGMA)).toEqual({ value: [{ type: "image", mime: "image/png" }], tail: "The screenshot above is the selected frame." });
+    const noted = jv.splitJsonBlock('{"rows":[{"id":1}]}\n\n[showing the first 1 of 4 items. Narrow the request.]');
+    expect(noted!.tail).toBe("[showing the first 1 of 4 items. Narrow the request.]");
+  });
+
+  it("a brace inside a string closes nothing", () => {
+    expect(jv.splitJsonBlock('{"q":"a } b"} tail')).toEqual({ value: { q: "a } b" }, tail: "tail" });
+  });
+
+  it("text, markdown, a clipped preview and empty text are not JSON", () => {
+    expect(jv.splitJsonBlock("upstream failed")).toBeNull();
+    expect(jv.splitJsonBlock("# Title\n\nbody")).toBeNull();
+    expect(jv.splitJsonBlock('{"rows":[')).toBeNull();
+    expect(jv.splitJsonBlock("  ")).toBeNull();
   });
 });
 
-/* docs/33 C2 — the tree builder is a pure DOM function; the discovery glue (querySelectorAll
-   over the painted tabbody) is one line and is proven live on 19998 per the panel rules. */
-/* The fake node's declared shape doubles as the literal methods' this-type (noImplicitThis
-   came back with docs/37 M3 - a bare Record literal leaves this unknown). */
-interface FakeElNode extends Record<string, unknown> {
-  children: unknown[];
-  className: string;
-  attrs: Record<string, string>;
-  removed: boolean;
-  _text: string;
-  textContent: string;
-}
-function el(tag: string): Record<string, unknown> {
-  const node: FakeElNode = {
-    tag, children: [], className: "", title: "", innerHTML: "",
-    dataset: {} as Record<string, string>, style: {} as Record<string, string>,
-    attrs: {}, removed: false, _text: "",
-    set textContent(v: string) { this._text = String(v); },
-    get textContent() {
-      return this._text + (this.children as { textContent: string }[]).map((c) => c.textContent).join("");
-    },
-    setAttribute(k: string, v: string) { this.attrs[k] = v; },
-    getAttribute(k: string) { return this.attrs[k] ?? null; },
-    appendChild(n: Record<string, unknown>) { this.children.push(n); return n; },
-    removeChild(n: Record<string, unknown>) { this.children = (this.children as unknown[]).filter((c) => c !== n); return n; },
-    get firstChild() { return (this.children as unknown[])[0] || null; },
-    remove() { this.removed = true; },
-  };
-  return node;
-}
-function rowsOf(node: Record<string, unknown>): Record<string, unknown>[] {
-  return (node.children as Record<string, unknown>[]).filter((c) => c.tag === "div");
-}
-function findRow(node: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
-  const all: Record<string, unknown>[] = [];
-  (function walk(n: Record<string, unknown>) {
-    (n.children as Record<string, unknown>[] || []).forEach((c) => {
-      if (String(c.className || "").includes("jt-row") && String(c.textContent).includes(key)) all.push(c);
-      walk(c);
-    });
-  })(node);
-  return all[0];
-}
-function keyOf(row: Record<string, unknown>): string {
-  const k = (row.children as Record<string, unknown>[]).find((c) => String(c.className).includes("jt-key"));
-  return k ? String(k.textContent) : "";
-}
-/** The exact row whose key span is `raw`, regardless of what other rows contain. */
-function rowByKey(node: Record<string, unknown>, raw: string): Record<string, unknown> | undefined {
-  let hit: Record<string, unknown> | undefined;
-  (function walk(n: Record<string, unknown>) {
-    (n.children as Record<string, unknown>[] || []).forEach((c) => {
-      if (!hit && String(c.className || "").includes("jt-row") && keyOf(c) === raw) hit = c;
-      walk(c);
-    });
-  })(node);
-  return hit;
-}
+describe("docs/33 C3: decodeStrings — a string that holds JSON is shown as JSON", () => {
+  it("a search reply that is one JSON string is decoded once", () => {
+    const v = jv.decodeStrings(jv.splitJsonBlock(ZHIPU)!.value);
+    expect(v).toBeInstanceOf(jv.DecodedString);
+    expect((v as InstanceType<typeof jv.DecodedString>).layers).toBe(1);
+    expect(jv.plainValue(v)).toEqual([{ title: "Rust 1.90", link: "https://example.test/a", content: "line one\nline two" }]);
+  });
+
+  it("a redis value encoded twice is peeled twice; \"50\" and \"true\" stay strings", () => {
+    const v = jv.decodeStrings(JSON.parse(REDIS_HASH)) as Record<string, unknown>;
+    expect((v.profile as InstanceType<typeof jv.DecodedString>).layers).toBe(2);
+    expect(jv.plainValue(v.profile)).toEqual({ id: 1, tags: ["a"] });
+    expect(v.n).toBe("50");
+    expect(v.flag).toBe("true");
+  });
+
+  it("hasDecoded answers whether anything was decoded", () => {
+    expect(jv.hasDecoded(jv.decodeStrings({ a: "x", b: [1, "{bad"] }))).toBe(false);
+    expect(jv.hasDecoded(jv.decodeStrings({ a: ['{"b":1}'] }))).toBe(true);
+  });
+});
+
+describe("docs/33 C3: Copy is valid JSON of what is shown", () => {
+  it("a decoded reply copies as the structure it holds", () => {
+    const text = jv.formattedCopyText(ZHIPU);
+    expect(JSON.parse(text)).toEqual([{ title: "Rust 1.90", link: "https://example.test/a", content: "line one\nline two" }]);
+    expect(text).toContain('\n  {\n    "title": "Rust 1.90"');
+  });
+
+  it("the prose after the JSON rides along below it; text that is not JSON is unchanged", () => {
+    const text = jv.formattedCopyText(FIGMA);
+    const [head, tail] = text.split("\n\n");
+    expect(JSON.parse(head)).toEqual([{ type: "image", mime: "image/png" }]);
+    expect(tail).toBe("The screenshot above is the selected frame.");
+    expect(jv.formattedCopyText("upstream failed")).toBe("upstream failed");
+  });
+});
+
+describe("docs/33 C3: jsonCodeNode — one formatted code block", () => {
+  it("prints exactly JSON.stringify(v, null, 2) for a plain value", () => {
+    const v = { s: "a \"q\" \\ b", n: -1.5e3, t: true, f: false, z: null, e: {}, a: [], nest: [{ k: [1, { deep: "ü" }] }] };
+    const code = jv.jsonCodeNode(v, false);
+    expect(code.node.tagName).toBe("PRE");
+    expect(code.node.className).toBe("jv");
+    expect(code.node.textContent).toBe(JSON.stringify(v, null, 2));
+    expect(code.lines).toBe(JSON.stringify(v, null, 2).split("\n").length);
+  });
+
+  it("colours by token: key, string, number, literal", () => {
+    const pre = jv.jsonCodeNode({ k: "v", n: 2, b: true }, false).node;
+    expect(pre.querySelector(".jv-k")!.textContent).toBe('"k"');
+    expect(pre.querySelector(".jv-s")!.textContent).toBe('"v"');
+    expect(pre.querySelector(".jv-n")!.textContent).toBe("2");
+    expect(pre.querySelector(".jv-l")!.textContent).toBe("true");
+  });
+
+  it("a string's line breaks are real breaks; everything else stays escaped", () => {
+    const pre = jv.jsonCodeNode({ sql: "SELECT 1\r\nFROM t", path: "C:\\new", tab: "a\tb" }, false).node;
+    const text = pre.textContent!;
+    expect(text).toContain('"SELECT 1\nFROM t"');
+    expect(text, "no escape and no stray CR where the break was").not.toMatch(/SELECT 1(\\r|\\n|\r)/);
+    expect(text).toContain('"C:\\\\new"');
+    expect(text).toContain('"a\\tb"');
+  });
+
+  it("a decoded string carries a marker whose words are not selectable text", () => {
+    const one = jv.jsonCodeNode(jv.decodeStrings(JSON.parse(ZHIPU)), false).node;
+    const mark = one.querySelector(".jv-dec")!;
+    expect(mark.getAttribute("data-label")).toBe("decoded");
+    expect(mark.textContent, "the label lives in ::before, so a drag-copy never picks it up").toBe("");
+    expect(one.textContent!.startsWith('[\n  {\n    "title": "Rust 1.90"'), "a selection starts at the JSON, not at the marker").toBe(true);
+    const two = jv.jsonCodeNode(jv.decodeStrings(JSON.parse(REDIS_HASH)), false).node;
+    expect(two.querySelector(".jv-dec")!.getAttribute("data-label")).toBe("decoded ×2");
+  });
+
+  it("past 200 lines it stops building nodes but still counts every line; all shows everything", () => {
+    const v = Array.from({ length: 300 }, (_, i) => i);
+    const capped = jv.jsonCodeNode(v, false);
+    expect(capped.lines).toBe(302);
+    expect(capped.node.textContent!.split("\n").length).toBeLessThanOrEqual(jv.JV_LINES + 1);
+    const whole = jv.jsonCodeNode(v, true);
+    expect(whole.lines).toBe(302);
+    expect(whole.node.textContent).toBe(JSON.stringify(v, null, 2));
+  });
+});
+
+describe("docs/33 C3: a call paints its blocks as code, with Copy, Copy raw and Show all", () => {
+  it("both blocks are formatted code blocks, each with its own two copies", () => {
+    const host = paint({ calls: [call()], callsOpen: { 7: true } });
+    expect(block(host, "args:7").querySelector("pre.jv")!.textContent).toBe('{\n  "command": "GET",\n  "args": [\n    "k"\n  ]\n}');
+    expect(block(host, "out:7").querySelector("pre.jv")!.textContent).toBe('{\n  "v": 1\n}');
+    expect(host.querySelector('[data-copy="args:7"]')!.getAttribute("aria-label")).toBe("Copy arguments");
+    expect(host.querySelector('[data-copy="out:7"]')!.getAttribute("aria-label")).toBe("Copy result");
+    expect(host.querySelector('[data-copyraw="args:7"]')!.textContent).toBe("Copy raw");
+    expect(host.querySelector('[data-copyraw="out:7"]')).not.toBeNull();
+    expect(host.querySelector(".jtree, [data-jtree]"), "the folding tree is gone").toBeNull();
+  });
+
+  it("a string-wrapped reply says it was decoded; JSON plus prose says so and keeps the prose", () => {
+    const zhipu = paint({ calls: [call({ output: ZHIPU })] });
+    expect(block(zhipu, "out:7").querySelector(".call-note")!.textContent).toBe("JSON decoded from a string");
+    expect(block(zhipu, "out:7").querySelector(".jv-dec")).not.toBeNull();
+    const figma = paint({ calls: [call({ output: FIGMA })] });
+    expect(block(figma, "out:7").querySelector(".call-note")!.textContent).toBe("JSON + text");
+    expect(block(figma, "out:7").querySelector("pre.jv-tail")!.textContent).toBe("The screenshot above is the selected frame.");
+  });
+
+  it("text stays as it arrived; an error stays red text even when it is JSON", () => {
+    const host = paint({ calls: [call({ args: "GET k", output: '{"error":"no <such> key"}', ok: false })] });
+    expect(block(host, "args:7").querySelector("pre.logs")!.textContent).toBe("GET k");
+    expect(block(host, "args:7").querySelector("pre.jv")).toBeNull();
+    expect(block(host, "out:7").querySelector("pre.logs.err")!.textContent).toBe('{"error":"no <such> key"}');
+    const empty = paint({ calls: [call({ args: "", output: "" })] });
+    expect(block(empty, "args:7").querySelector("pre.logs")!.textContent).toBe("(none)");
+    expect(block(empty, "out:7").querySelector("pre.logs")!.textContent).toBe("(empty)");
+  });
+
+  it("the bodies are painted on a closed row too — opening is only a class flip", () => {
+    const host = paint({ calls: [call()] });
+    expect(host.querySelector(".call.open")).toBeNull();
+    expect(host.querySelectorAll("pre.jv").length).toBe(2);
+  });
+
+  it("a long block ends in Show all N lines; once shown, the button is gone", () => {
+    const big = JSON.stringify(Array.from({ length: 300 }, (_, i) => i));
+    const capped = paint({ calls: [call({ output: big })] });
+    const btn = capped.querySelector('[data-showall="out:7"]')!;
+    expect(btn.textContent).toBe("Show all 302 lines");
+    expect(capped.querySelector('[data-showall="args:7"]'), "a short block has no button").toBeNull();
+    const whole = paint({ calls: [call({ output: big })], callsAll: { "out:7": true } });
+    expect(whole.querySelector("[data-showall]")).toBeNull();
+    expect(block(whole, "out:7").querySelector("pre.jv")!.textContent).toBe(JSON.stringify(JSON.parse(big), null, 2));
+  });
+
+  it("a clipped reply offers the fetch; a pruned one says so instead", () => {
+    const clipped = call({ preview: true, chars: 5000, output: '{"rows":[' });
+    const offered = paint({ calls: [clipped], callsOpen: { 7: true } });
+    expect(offered.querySelector('[data-full="7"]'), "the button is there until the fetch lands").not.toBeNull();
+    expect(block(offered, "out:7").querySelector("pre.logs")!.textContent, "a preview cut mid-value shows as text").toBe('{"rows":[');
+    const pruned = paint({ calls: [clipped], callsOpen: { 7: true }, callsGone: { 7: true } });
+    expect(pruned.querySelector('[data-full="7"]'), "nothing left to fetch — no button").toBeNull();
+    expect(pruned.querySelector('[data-gone="7"]')!.textContent).toContain("no longer stored");
+  });
+});
+
+describe("docs/33 C3: copy text and in-place repaint read the call row", () => {
+  it("Copy gives formatted JSON of the decoded reply, Copy raw the stored text; the full reply wins", () => {
+    const d = stub({ calls: [call({ output: ZHIPU, preview: true })] });
+    expect(logs.callBlockCopyText(d, "out:7", true)).toBe(ZHIPU);
+    expect(JSON.parse(logs.callBlockCopyText(d, "out:7", false)!)).toEqual(JSON.parse(JSON.parse(ZHIPU)));
+    (d as { callsFull: Record<number, string> }).callsFull[7] = '{"whole":true}';
+    expect(logs.callBlockCopyText(d, "out:7", true)).toBe('{"whole":true}');
+    expect(logs.callBlockCopyText(d, "args:7", true)).toBe('{"command":"GET","args":["k"]}');
+    expect(logs.callBlockCopyText(d, "out:8", false), "a row no longer on the page copies nothing").toBeNull();
+  });
+
+  it("repaintCallBlock swaps one block and leaves its sibling alone", () => {
+    const d = stub({ calls: [call({ output: '{"rows":[', preview: true })] });
+    const tb = document.createElement("div");
+    tb.id = "tabbody";
+    tb.append(logs.callNode(d, (d as { calls: never[] }).calls[0]));
+    document.body.append(tb);
+    const argsBefore = block(tb, "args:7");
+    (d as { callsFull: Record<number, string> }).callsFull[7] = '{"rows":[1,2]}';
+    logs.repaintCallBlock(d, "out:7");
+    expect(block(tb, "out:7").querySelector("pre.jv")!.textContent).toBe('{\n  "rows": [\n    1,\n    2\n  ]\n}');
+    expect(block(tb, "args:7"), "the arguments block is the same node").toBe(argsBefore);
+    tb.remove();
+  });
+});
 
 describe("docs/33: compact wire text is formatted only for display", () => {
   it("pretty-prints compact JSON while preserving the gateway truncation note", () => {
@@ -156,164 +283,7 @@ describe("docs/33: compact wire text is formatted only for display", () => {
   });
 });
 
-describe("docs/33 C2: parseJsonBlock only accepts objects and arrays", () => {
-  it("parses an object or an array, rejects everything else", () => {
-    expect(logs.parseJsonBlock('{"a":1}')).toEqual({ a: 1 });
-    expect(logs.parseJsonBlock("[1,2]")).toEqual([1, 2]);
-    expect(logs.parseJsonBlock("plain text")).toBeNull();
-    expect(logs.parseJsonBlock("42")).toBeNull();
-    expect(logs.parseJsonBlock("{broken")).toBeNull();
-    expect(logs.parseJsonBlock("")).toBeNull();
-  });
-});
-
-describe("docs/33 C2: buildJsonTree", () => {
-  const VALUE = { command: "GET", args: ["k1", "k2"], nested: { deep: { x: 1 } } };
-
-  it("shows the useful top level directly and keeps nested containers folded", () => {
-    vi.stubGlobal("document", { createElement: el } as never);
-    const host = el("div");
-    const open: Record<string, boolean> = {};
-    logs.buildJsonTree(host as unknown as HTMLElement, VALUE, open);
-    expect(rowByKey(host, "command"), "a top-level leaf row exists").toBeTruthy();
-    const argsRow = rowByKey(host, "args");
-    expect(argsRow, "the top-level array row exists").toBeTruthy();
-    expect(String(argsRow!.textContent)).toContain("[2]");
-    expect(rowByKey(host, "nested"), "the top-level object row exists").toBeTruthy();
-    expect(rowByKey(host, "deep"), "nested content starts folded").toBeUndefined();
-    expect(open["/args/"], "top-level containers record their folded default").toBe(false);
-    const hasSyntheticRoot = (host.children as Record<string, unknown>[]).some((c) => {
-      const first = (c.children as Record<string, unknown>[] || [])[0];
-      return String(c.className || "").includes("jt-node") && first && keyOf(first) === "";
-    });
-    expect(hasSyntheticRoot, "there is no redundant synthetic root row").toBe(false);
-    vi.unstubAllGlobals();
-  });
-
-  it("renders empty object and array roots honestly", () => {
-    vi.stubGlobal("document", { createElement: el } as never);
-    const objectHost = el("div");
-    const arrayHost = el("div");
-    logs.buildJsonTree(objectHost as unknown as HTMLElement, {}, {});
-    logs.buildJsonTree(arrayHost as unknown as HTMLElement, [] as unknown as JtBox, {});
-    expect(String(objectHost.textContent)).toBe("{}");
-    expect(String(arrayHost.textContent)).toBe("[]");
-    vi.unstubAllGlobals();
-  });
-
-  it("children are lazy: a folded top-level container builds nothing until opened", () => {
-    vi.stubGlobal("document", { createElement: el } as never);
-    const host = el("div");
-    const open: Record<string, boolean> = {};
-    logs.buildJsonTree(host as unknown as HTMLElement, { rows: [{ id: 1 }] }, open);
-    const rows = rowByKey(host, "rows")!;
-    const wrap = (host.children as Record<string, unknown>[]).find((c) =>
-      String(c.className || "").includes("jt-node") && (c.children as Record<string, unknown>[])[0] === rows)!;
-    const kids = (wrap.children as Record<string, unknown>[])[1];
-    expect(String(rows.textContent)).toContain("[1]");
-    expect((kids.children as unknown[]).length, "nothing is built under the folded result array").toBe(0);
-    vi.unstubAllGlobals();
-  });
-
-  it("a chevron opens a top-level node, records its path, and a rebuild restores it", () => {
-    vi.stubGlobal("document", { createElement: el } as never);
-    const open: Record<string, boolean> = {};
-    const host1 = el("div");
-    logs.buildJsonTree(host1 as unknown as HTMLElement, { a: { b: 1 } }, open);
-    const aRow = rowByKey(host1, "a")!;
-    expect(String(aRow.textContent)).toContain("{1}");
-    const chev = (aRow.children as Record<string, unknown>[]).find((c) => c.tag === "button" && !((c as { dataset: Record<string, string> }).dataset.copy));
-    ((chev as { onclick: () => void }).onclick)();
-    expect(open["/a/"], "the expansion is recorded under a stable path").toBe(true);
-    expect((chev as { attrs: Record<string, string> }).attrs["aria-expanded"]).toBe("true");
-    const host2 = el("div");
-    logs.buildJsonTree(host2 as unknown as HTMLElement, { a: { b: 1 } }, open);
-    expect(rowByKey(host2, "b"), "a rebuild with the same open state restores its children").toBeTruthy();
-    vi.unstubAllGlobals();
-  });
-
-  it("per-node copy: containers copy pretty JSON, leaf strings copy raw text", async () => {
-    const wrote: string[] = [];
-    vi.stubGlobal("navigator", { clipboard: { writeText: (t: string) => { wrote.push(t); return Promise.resolve(); } } });
-    vi.stubGlobal("document", { createElement: el } as never);
-    const host = el("div");
-    logs.buildJsonTree(host as unknown as HTMLElement, { nested: { a: 1 }, s: "long value" }, {});
-    const copyBtns = (row: Record<string, unknown>) =>
-      (row.children as Record<string, unknown>[]).filter((c) => c.tag === "button" && String((c as { dataset: Record<string, string> }).dataset.copy) === "1");
-    const nestedRow = rowByKey(host, "nested")!;
-    const sRow = rowByKey(host, "s")!;
-    await ((copyBtns(nestedRow)[0] as { onclick: () => Promise<void> }).onclick)();
-    await ((copyBtns(sRow)[0] as { onclick: () => Promise<void> }).onclick)();
-    expect(wrote[0]).toBe('{\n  "a": 1\n}');
-    expect(wrote[1]).toBe("long value");
-    vi.unstubAllGlobals();
-  });
-
-  it("a dataset-string seq (\"4\" from data-callseq) still mounts — found live on 19998", () => {
-    const rows: Record<string, unknown>[] = [];
-    const rowEl = {
-      getAttribute: (k: string) => (k === "data-seq" ? "4" : null),
-      querySelector: () => null, // no slot, no pre — nothing to mount, but the row must not be skipped
-      children: [], className: "call open", dataset: {}, style: {},
-    } as never;
-    vi.stubGlobal("document", {
-      querySelectorAll: () => [rowEl],
-      createElement: el,
-    } as never);
-    const d = { calls: [{ seq: 4, args: "plain", output: "plain" }], callsFull: {} } as never;
-    logs.mountJsonTrees(d, "4"); // a string, exactly as wireTabBody delivers it
-    // "not skipped" is observable only when a mountable value exists: use a parseable one.
-    const rowEl2 = {
-      getAttribute: (k: string) => (k === "data-seq" ? "4" : null),
-      querySelector: (sel: string) => (String(sel).includes("args:4") ? host4 : null),
-      children: [], className: "call open", dataset: {}, style: {},
-    } as never;
-    const host4 = el("div");
-    (rowEl2 as { querySelector: (s: string) => unknown }).querySelector = (sel: string) =>
-      String(sel).includes("args:4") ? host4 : null;
-    vi.stubGlobal("document", {
-      querySelectorAll: () => [rowEl2],
-      createElement: el,
-    } as never);
-    const d2 = { calls: [{ seq: 4, args: '{"k":1}', output: "plain" }], callsFull: {} } as never;
-    logs.mountJsonTrees(d2, "4");
-    expect(String(host4.className)).toContain("jtree-in");
-    expect((host4.children as unknown[]).length, "the tree built for the string-addressed row").toBeGreaterThan(0);
-    vi.unstubAllGlobals();
-    void rows;
-  });
-
-  it("docs/33 readability: every key carries a JSON colon span", () => {
-    vi.stubGlobal("document", { createElement: el } as never);
-    const host = el("div");
-    logs.buildJsonTree(host as unknown as HTMLElement, { cursor: "5088", keys: [], done: false }, {});
-    const cursorRow = rowByKey(host, "cursor")!;
-    const cols = (cursorRow.children as Record<string, unknown>[]).filter((c) => String(c.className).includes("jt-col"));
-    expect(cols.length, "one colon span after the key").toBe(1);
-    expect(String((cols[0] as { textContent: string }).textContent)).toBe(":");
-    vi.unstubAllGlobals();
-  });
-
-  it("a long leaf string truncates for display at 200 characters", () => {
-    vi.stubGlobal("document", { createElement: el } as never);
-    const host = el("div");
-    const long = new Array(240).join("x"); // 239 chars — over the 200 display cap
-    logs.buildJsonTree(host as unknown as HTMLElement, { s: long }, {});
-    const row = findRow(host, "s")!;
-    const text = String(row.textContent);
-    expect(text.length).toBeLessThan(220);
-    expect(text).toContain("…");
-    vi.unstubAllGlobals();
-  });
-});
-
-describe("docs/33 C1: every block offers copy", () => {
-  it("both label rows carry an icon copy button addressing its block", () => {
-    const host = paint({ calls: [call()], callsOpen: { 7: true } });
-    expect(host.querySelector('[data-copy="args:7"]')!.getAttribute("aria-label")).toBe("Copy arguments");
-    expect(host.querySelector('[data-copy="out:7"]')!.getAttribute("aria-label")).toBe("Copy result");
-  });
-
+describe("docs/33 C1: the clipboard path", () => {
   it("copyLogText uses the async clipboard and says Copied", async () => {
     const wrote: string[] = [];
     vi.stubGlobal("navigator", {
@@ -322,6 +292,7 @@ describe("docs/33 C1: every block offers copy", () => {
     await logs.copyLogText("{\"a\":1}");
     expect(wrote).toEqual(['{"a":1}']);
     expect(util.__toasts).toContain("Copied");
+    vi.unstubAllGlobals();
   });
 
   it("falls back to the legacy path when the clipboard API withholds", async () => {

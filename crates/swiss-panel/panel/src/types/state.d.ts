@@ -114,7 +114,11 @@ export interface McpDetail {
   callsSwitch: { dir: string | null; fromKey?: boolean; pagerTop?: number } | null;
   callsRequest: number;
   callsActive: number;
-  callsTree: Record<string, Record<string, boolean>>;
+  /* docs/33 C3: seqs whose full reply the server has pruned (bodyGone), so the row stops offering
+   * a fetch it cannot serve; and blocks ("out:<seq>") lifted past the 200-line cap by Show all.
+   * Both are state, not DOM, so a poll repaint keeps them. */
+  callsGone: Record<string, boolean>;
+  callsAll: Record<string, boolean>;
   tools: KindPageState;
   resources: KindPageState;
   prompts: KindPageState;

@@ -92,6 +92,13 @@
       --green: #16a34a;
       --red: #dc2626;
       --amber: #d97706;
+      /* JSON syntax (docs/33 C3) - the one sanctioned exception to rule 2: in a code block the
+         hue says which token a character belongs to, which is information. Muted, not neon. */
+      --syn-key: #0550ae;
+      --syn-str: #116329;
+      --syn-num: #953800;
+      --syn-lit: #8250df;
+      --syn-punct: #6e7781;
       --shadow-card: 0 0 0 1px var(--sep); /* the hairline ring is the card's whole edge */
       --shadow-btn: none;
       --shadow-sheet: 0 24px 60px rgba(20, 24, 36, 0.24), 0 0 0 1px var(--sep);
@@ -118,6 +125,11 @@
       --green: #4ade80;
       --red: #f87171;
       --amber: #fbbf24;
+      --syn-key: #79c0ff;
+      --syn-str: #a5d6ff;
+      --syn-num: #ffa657;
+      --syn-lit: #d2a8ff;
+      --syn-punct: #8b949e;
       --shadow-card: 0 0 0 1px var(--sep), inset 0 1px 0 rgba(255, 255, 255, 0.04);
       --shadow-btn: none;
       --shadow-sheet: 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--sep);

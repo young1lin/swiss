@@ -198,12 +198,6 @@ export interface GroupCfg<Row> {
   filtered?: boolean;
 }
 
-/* A JSON-tree node (logs.ts buildJsonTree/jtNode): an arbitrary JSON object whose every
- *  value is more tree material - arrays arrive the same way, narrowed by Array.isArray at
- *  the branch. Record<string, unknown> is the honest type of "any JSON object": the tree
- *  indexes val[k] over Object.keys, it never names a key. */
-export type JtBox = Record<string, unknown>;
-
 /** One form field's schema (fields.ts TYPE_FIELDS rows): k is the def key, bool/num/area/
  *  kv/json pick the input kind, half pairs it into two columns, def is the checkbox default. */
 export interface FieldSpec {

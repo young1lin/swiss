@@ -15,7 +15,7 @@
  */
 
                                                                            
-                                                           
+                                                    
                                                            
 import { iconNode, toast } from "./util.js";
 import { frag, h } from "./h.js";
@@ -23,6 +23,7 @@ import { frag, h } from "./h.js";
 import { rowOf } from "./sidebar.js";
 import { mcpDetail } from "./mcp-state.js";
 import { locale, tr } from "./i18n.js";
+import { JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, splitJsonBlock, textNode } from "./json-view.js";
 
 /* --- Logs: what was called, with what, and what came back ------------------------------------- */
 function fmtChars(n        )         {
@@ -76,177 +77,86 @@ async function copyLogText(text        )                {
   catch (e) { toast(tr("logs.copyFailed"), true); }
 }
 
-/** docs/33 C2: a block is tree material only when it is a JSON object or array. Plain strings,
- *  error text and a truncated payload that no longer parses keep the C1 pre. */
-function parseJsonBlock(text        )          {
-  if (!text) return null;
-  const trimmed = text.trim();
-  if (trimmed.charAt(0) !== "{" && trimmed.charAt(0) !== "[") return null;
-  try { return JSON.parse(trimmed); } catch (e) { return null; }
+/* --- docs/33 C3: one block of a call — the formatted JSON view -------------------------------
+   json-view.ts owns parsing, decoding and the code block; this is the Logs chrome around it: the
+   label row (caption, what the body turned out to be, Copy and Copy raw) and the Show all tail.
+   The wrapper carries data-blk="<kind>:<seq>" so a full reply landing, or Show all, repaints this
+   one block in place (repaintCallBlock) instead of the whole list. */
+;                               
+
+/** The text a block shows: the arguments as stored, or the reply — whole once fetched, else the
+ *  page's preview. Copy and Copy raw read the same text, so they always match the screen. */
+function blockText(d           , c               , kind           )         {
+  if (kind === "args") return c.args || "";
+  const full = d.callsFull[c.seq];
+  return (full != null ? full : c.output) || "";
 }
 
-/* --- docs/33 C2: the collapsible tree ----------------------------------------------------------
-   A pure DOM builder: children render lazily on first expand, so the built DOM stays proportional
-   to what the operator actually opened. Expansion lives in the caller's `open` map (path -> bool)
-   — the 6-second repaint rebuilds the tree from it and the open nodes survive. Containers shallower
-   than depth 2 record an initial `true` once, so defaults and explicit toggles share one truth. */
-function jtDiv(cls        )                 { const n = document.createElement("div"); n.className = cls; return n; }
-function jtSpan(cls        , text        )                  { const n = document.createElement("span"); n.className = cls; n.textContent = text; return n; }
-function jtBtn(cls        , title        )                    {
-  const b = document.createElement("button");
-  b.type = "button"; b.className = "btn icon " + cls; b.title = title;
-  b.setAttribute("aria-label", title);
-  return b;
-}
-function jtSummary(v         )         {
-  if (Array.isArray(v)) return v.length ? "[" + v.length + "]" : "[]";
-  const n = Object.keys(v                           ).length;
-  return n ? "{" + n + "}" : "{}";
-}
-function jtCopyText(v         )         {
-  if (v !== null && typeof v === "object") return JSON.stringify(v, null, 2);
-  if (typeof v === "string") return v; // the scalar text, unquoted
-  return String(v);
-}
-
-function jtNode(parentEl             , key                 , val       , path        , open                         )       {
-  const isObj = val !== null && typeof val === "object";
-  if (isObj && open[path] === undefined) open[path] = false; // top-level shape first; details on demand
-  const row = jtDiv("jt-row" + (isObj && open[path] ? " open" : ""));
-  // Keys identify fields, so they use the text face and omit JSON's punctuation-heavy quotes.
-  // The block copy action still returns exact, valid JSON.
-  const keySpan = jtSpan("jt-key", String(key));
-  const colSpan = jtSpan("jt-col", ":");
-  const cp = jtBtn("jt-copy", tr("logs.copyValue"));
-  cp.dataset.copy = "1";
-  cp.appendChild(iconNode("copy"));
-  cp.onclick = () => { void copyLogText(jtCopyText(val)); };
-  if (isObj) {
-    const chev = jtBtn("jt-chev", tr("logs.toggle"));
-    chev.appendChild(iconNode("chevron-right"));
-    const kids = jtDiv("jt-kids");
-    const renderKids = () => {
-      while (kids.firstChild) kids.removeChild(kids.firstChild);
-      if (!open[path]) return;
-      const entries                               = Array.isArray(val)
-        ? val.map((v       , i        )                    => { return [i, v]; })
-        : Object.keys(val).map((k        )                    => { return [k, val[k]]; });
-      entries.forEach((e) => { jtNode(kids, e[0], e[1]         , path + e[0] + "/", open); });
-    };
-    const setChevronLabel = () => {
-      const label = open[path] ? tr("logs.collapseKey", { key: String(key) }) : tr("logs.expandKey", { key: String(key) });
-      chev.title = label;
-      chev.setAttribute("aria-label", label);
-      chev.setAttribute("aria-expanded", open[path] ? "true" : "false");
-    };
-    setChevronLabel();
-    chev.onclick = () => {
-      open[path] = !open[path];
-      row.className = "jt-row" + (open[path] ? " open" : "");
-      setChevronLabel();
-      renderKids();
-    };
-    row.appendChild(chev);
-    row.appendChild(keySpan);
-    row.appendChild(colSpan);
-    row.appendChild(jtSpan("jt-sum", jtSummary(val)));
-    row.appendChild(cp);
-    if (open[path]) renderKids();
-    const wrap = jtDiv("jt-node");
-    wrap.appendChild(row);
-    wrap.appendChild(kids);
-    parentEl.appendChild(wrap);
+function callBlockNode(d           , c               , kind           )              {
+  const key = kind + ":" + c.seq;
+  const raw = blockText(d, c, kind);
+  const error = kind === "out" && !c.ok;
+  const all = !!(d.callsAll || {})[key];
+  const notes           = [];
+  let body          ;
+  let lines        ;
+  // An error keeps its red text as it came: it is read as a message, not inspected as data.
+  const parsed = error ? null : splitJsonBlock(raw);
+  if (parsed) {
+    const value = decodeStrings(parsed.value);
+    const code = jsonCodeNode(value, all);
+    if (hasDecoded(value)) notes.push(tr("logs.kindDecoded"));
+    if (parsed.tail) notes.push(tr("logs.kindTail"));
+    body = [code.node, parsed.tail ? h("pre", { class: "logs jv-tail" }, parsed.tail) : null];
+    lines = code.lines;
   } else {
-    row.appendChild(jtDiv("jt-spc"));
-    row.appendChild(keySpan);
-    row.appendChild(colSpan);
-    const text = typeof val === "string" ? JSON.stringify(val) : String(val);
-    // Strings use the neutral base style; numbers and literals keep semantic hooks for alignment.
-    const cls = typeof val === "number" ? " n" : typeof val === "string" ? "" : " b";
-    row.appendChild(jtSpan("jt-val" + cls, text.length > 200 ? text.slice(0, 200) + "…" : text));
-    row.appendChild(cp);
-    parentEl.appendChild(row);
+    const text = textNode(raw || (kind === "args" ? tr("logs.none") : tr("logs.empty")), all, "logs" + (error ? " err" : ""));
+    body = [text.node];
+    lines = text.lines;
   }
+  const label = kind === "args" ? tr("logs.arguments2") : c.ok ? tr("logs.result") : tr("logs.error");
+  const copyName = kind === "args" ? tr("logs.copyArguments") : tr("logs.copyResult");
+  const rawName = kind === "args" ? tr("logs.copyArgumentsRaw") : tr("logs.copyResultRaw");
+  return h("div", { class: "call-blk", data: { blk: key } },
+    h("div", { class: "call-lbl" },
+      h("span", null, label),
+      notes.map((n) => { return h("span", { class: "call-note" }, n); }),
+      h("span", { class: "call-acts" },
+        // The visible word is just "Copy"; the name says which block, so the two in one call differ.
+        h("button", { class: "btn ghost", data: { copy: key }, aria: { label: copyName }, title: copyName },
+          iconNode("copy"), tr("logs.copy")),
+        h("button", { class: "btn ghost", data: { copyraw: key }, title: rawName },
+          tr("logs.copyRaw")))),
+    body,
+    !all && lines > JV_LINES
+      ? h("div", { class: "form-actions" }, h("button", { class: "btn", data: { showall: key } }, tr("logs.showAllLines", { n: lines })))
+      : null);
 }
 
-/** docs/33 C2: one block's body — a tree slot when the value is an object/array, a plain
- *  escaped pre for everything else (plain strings, error text, a payload truncated mid-JSON).
- *  C1's pre highlighter is gone with the tree here: a pre that reached hlJson could never have
- *  parsed, so hlJson could only ever return its input — dead code, deleted, not kept.
- *
- *  A NODE since docs/37 R5: the pre's payload is a text node, and the tree slot is the empty
- *  div buildJsonTree fills — mountBlock finds it by its data-jtree attribute either way. */
-function blockNode(raw                           , kind        , seq        , ok         )              {
-  const pretty = fmtJson(raw);
-  if (parseJsonBlock(pretty) != null) return h("div", { class: "jtree", data: { jtree: kind + ":" + seq } });
-  return h("pre", { class: "logs" + (ok ? "" : " err"), data: kind === "out" ? { out: seq } : {} },
-    pretty || (kind === "args" ? tr("logs.none") : tr("logs.empty")));
+/** Repaint one block of one call in place — after its full reply lands or its Show all is pressed.
+ *  A key whose row is not on the page (a poll moved the list) is simply nothing to do. */
+function repaintCallBlock(d           , key        )       {
+  if (typeof document === "undefined") return;
+  const [kind, seqText] = key.split(":");
+  const c = (d.calls || []).find((r) => { return r.seq === Number(seqText); });
+  const node = document.querySelector('#tabbody [data-blk="' + key + '"]');
+  if (!c || !node || (kind !== "args" && kind !== "out")) return;
+  node.replaceWith(callBlockNode(d, c, kind));
 }
 
-/** Build the tree into `host` (a .jtree slot). Rebuildable any number of times.
- *  The root is the block itself, so painting a second synthetic root row only wastes a line. Show
- *  its immediate fields and keep every nested container folded until the operator asks for it. */
-function buildJsonTree(host             , value       , open                          )       {
-  open = open || {};
-  // Keep BOTH classes: jtree is the container chrome (ground, radius, max-height), jtree-in marks
-  // the built state. Assigning only one would strip the other (found live on 19998).
-  host.className = "jtree jtree-in";
-  while (host.firstChild) host.removeChild(host.firstChild);
-  const entries                               = Array.isArray(value)
-    ? value.map((v       , i        )                    => { return [i, v]; })
-    : Object.keys(value).map((k        )                    => { return [k, value[k]]; });
-  if (!entries.length) {
-    host.appendChild(jtSpan("jt-empty", Array.isArray(value) ? "[]" : "{}"));
-    return;
-  }
-  entries.forEach((e) => { jtNode(host, e[0], e[1]         , "/" + e[0] + "/", open); });
+/** What the block's Copy (formatted) or Copy raw puts on the clipboard, by its data key. */
+function callBlockCopyText(d           , key        , raw         )                {
+  const [kind, seqText] = key.split(":");
+  const c = (d.calls || []).find((r) => { return r.seq === Number(seqText); });
+  if (!c || (kind !== "args" && kind !== "out")) return null;
+  const text = blockText(d, c, kind);
+  return raw ? text : formattedCopyText(text);
 }
 
-/** docs/33 C2: mount every open row's tree blocks. Called after a repaint (the poll rebuilds
- *  the DOM every 6s on page 0), when a row first opens, and when a full reply lands. Expansion
- *  comes back from d.callsTree, so the operator's open nodes survive all three. */
-function mountJsonTrees(d           , onlySeq                         )       {
-  if (typeof document === "undefined" || !document.querySelectorAll) return;
-  // Callers hand a DATASET value in ("4" from data-callseq / data-full), the log stores numbers —
-  // normalize once here or `seq !== onlySeq` silently skips every row (found live on 19998).
-  if (onlySeq != null) onlySeq = Number(onlySeq);
-  document.querySelectorAll("#tabbody .call.open").forEach((rowEl) => {
-    const seq = Number(rowEl.getAttribute("data-seq"));
-    if (!seq || (onlySeq != null && seq !== onlySeq)) return;
-    const c = (d.calls || []).find((r) => { return r.seq === seq; });
-    if (!c) return;
-    mountBlock(rowEl, d, c, "args", c.args);
-    mountBlock(rowEl, d, c, "out", d.callsFull[seq] != null ? d.callsFull[seq] : c.output);
-  });
-}
-
-/** One block: build the tree when the value parses. A preview that was truncated mid-JSON painted
- *  a pre; once the full reply parses, the out block's pre is upgraded to a tree in place. */
-function mountBlock(rowEl         , d           , c               , kind        , raw               )       {
-  const value = parseJsonBlock(fmtJson(raw || ""));
-  if (value == null) return;
-  let slot = rowEl.querySelector             ('[data-jtree="' + kind + ":" + c.seq + '"]');
-  if (!slot) {
-    if (kind !== "out") return; // args are never truncated — no pre to upgrade
-    const pre = rowEl.querySelector("pre[data-out]");
-    if (!pre) return;
-    slot = document.createElement("div");
-    slot.className = "jtree";
-    slot.setAttribute("data-jtree", "out:" + c.seq);
-    pre.replaceWith(slot);
-  }
-  if (!d.callsTree) d.callsTree = {};
-  if (!d.callsTree[c.seq]) d.callsTree[c.seq] = {};
-  buildJsonTree(slot, value         , d.callsTree[c.seq]);
-}
-
-/** docs/33 C1: a block label row — the caption plus the copy affordance for that block. */
-function lblNode(text        , kind        , seq        )              {
-  const label = kind === "args" ? tr("logs.copyArguments") : tr("logs.copyResult");
-  return h("div", { class: "call-lbl" },
-    text,
-    h("button", { class: "btn icon", data: { copy: kind + ":" + seq }, aria: { label: label }, title: label },
-      iconNode("copy")));
+/** docs/33 C3: the line under a preview whose full reply was pruned. One builder for the painted
+ *  row and for showFullResult's in-place swap, so the two cannot drift. */
+function goneNode(seq        )              {
+  return h("div", { class: "hint call-gone", data: { gone: seq } }, tr("detail.fullReplyLongerStored"));
 }
 
 function callNode(d           , c               )              {
@@ -254,13 +164,16 @@ function callNode(d           , c               )              {
   const meta = c.client
     ? tr("logs.whenClientMsMs", { when, via: c.via, client: c.client, ms: c.ms, chars: fmtChars(c.chars) })
     : tr("logs.whenMsMsChars", { when, via: c.via, ms: c.ms, chars: fmtChars(c.chars) });
-  // A page ships only the head of each reply. Offer the rest instead of leaving a dangling tail.
+  // A page ships only the head of each reply; opening the row fetches the rest (docs/33 C3). The
+  // button stays for the moment before that lands and as the retry when it failed. A reply whose
+  // body was pruned says so in place — the preview above it is all that is left.
   const full = d.callsFull[c.seq];
-  const body = full != null ? full : c.output;
-  const more = c.preview && full == null
-    ? h("div", { class: "form-actions" },
-        h("button", { class: "btn", data: { full: c.seq } }, tr("logs.showFullResultChars", { chars: fmtChars(c.chars) })))
-    : null;
+  const more = !c.preview || full != null
+    ? null
+    : (d.callsGone || {})[c.seq]
+      ? goneNode(c.seq)
+      : h("div", { class: "form-actions" },
+          h("button", { class: "btn", data: { full: c.seq } }, tr("logs.showFullResultChars", { chars: fmtChars(c.chars) })));
   return h("div", { class: "call" + (d.callsOpen[c.seq] ? " open" : ""), data: { seq: c.seq } },
     h("div", { class: "call-sum", data: { callseq: c.seq }, role: "button", tabIndex: 0 },
       h("span", { class: "chev", aria: { hidden: "true" } }, iconNode("chevron-right")),
@@ -269,10 +182,8 @@ function callNode(d           , c               )              {
       h("span", { class: "call-arg" }, c.args || tr("logs.arguments")),
       h("span", { class: "call-meta" }, meta)),
     h("div", { class: "call-body" },
-      lblNode(tr("logs.arguments2"), "args", c.seq),
-      blockNode(c.args, "args", c.seq, true),
-      lblNode(c.ok ? tr("logs.result") : tr("logs.error"), "out", c.seq),
-      blockNode(body, "out", c.seq, c.ok),
+      callBlockNode(d, c, "args"),
+      callBlockNode(d, c, "out"),
       more));
 }
 
@@ -359,14 +270,15 @@ function logsBodyNode(d           )         {
   return frag(head, region, err);
 }
 
-/** Expand/collapse one call without re-rendering: a poll must not close what you just opened. */
-function toggleCall(seq        )       {
+/** Expand/collapse one call without re-rendering: a poll must not close what you just opened.
+ *  Answers whether the row is now open, so the caller can fetch a clipped reply in full. */
+function toggleCall(seq        )          {
   const d = mcpDetail();
-  if (!d) return;
+  if (!d) return false;
   d.callsOpen[seq] = !d.callsOpen[seq];
   const node = document.querySelector('#tabbody .call[data-seq="' + seq + '"]');
   if (node) node.className = "call" + (d.callsOpen[seq] ? " open" : "");
-  if (d.callsOpen[seq]) mountJsonTrees(d, seq); // docs/33 C2: trees build when the row opens
+  return !!d.callsOpen[seq];
 }
 
 /** One truncated line of argument names, required ones in bold. `args` is [{ name, req }].
@@ -526,4 +438,4 @@ function kindBodyNode(d           , kind         , m                           )
     pager);
 }
 
-export { argLineNode, blockNode, buildJsonTree, callNode, callsErrNode, callsStatusNode, copyLogText, fmtChars, fmtJson, kindBodyNode, lblNode, logsBodyNode, mountJsonTrees, parseJsonBlock, toggleCall, toolDetailNode };
+export { argLineNode, callBlockCopyText, callBlockNode, callNode, callsErrNode, callsStatusNode, copyLogText, fmtChars, fmtJson, goneNode, kindBodyNode, logsBodyNode, repaintCallBlock, toggleCall, toolDetailNode };

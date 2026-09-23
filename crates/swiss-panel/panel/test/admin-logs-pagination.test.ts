@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { menuIsOpen, setMenuOpen } from "../src/ui-state.js";
 import { setMcpDetail, setMcpGroups, setMcpRows, setSelectedMcp } from "../src/mcp-state.js";
 
@@ -737,5 +737,113 @@ describe("docs/32 review fixes: the clear transaction and the error strip's edge
     expect(menuIsOpen(), "a second click dismisses, not reopens").toBe(false);
     fireTab("clMenu");
     expect(menuIsOpen(), "a third click opens again").toBe(true);
+  });
+});
+
+/* docs/33 C3 — the operator opens a call to read its result. A reply the page clipped to its
+   2 KB preview is fetched whole on the open itself, through the same REAL dispatcher a pointer
+   click and Enter/Space reach; the Show full result button is only the retry. */
+describe("docs/33 C3: opening a clipped call fetches its full reply", () => {
+  function clipped(seq: number) {
+    return { ...callRow(seq), chars: 5000, output: '{"rows":[', preview: true };
+  }
+  /** A target inside one call's summary row — the dispatcher climbs to [data-callseq]. */
+  function summaryOf(seq: number) {
+    return { id: "", closest: (sel: string) => (sel === "[data-callseq]" ? { dataset: { callseq: String(seq) } } : null) };
+  }
+  function openRow(seq: number): void {
+    rh.paneTabClick({ target: summaryOf(seq), stopPropagation() {}, detail: 1 } as unknown as MouseEvent);
+  }
+  const fetchesOf = (seq: number) => requests.filter((r) => r.url.endsWith("/api/mcps/redis/calls/" + seq)).length;
+
+  it("a click that opens a clipped row asks for the whole reply, once", async () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: [clipped(300), callRow(299)], more: false });
+    openRow(300);
+    expect(d.callsOpen[300]).toBe(true);
+    expect(fetchesOf(300), "the open itself fetches — no Show full result click").toBe(1);
+    openRow(300); // close
+    openRow(300); // reopen while the first fetch is still out
+    expect(fetchesOf(300), "an open/close/open does not stack a second request").toBe(1);
+    await ok({ call: { seq: 300, output: '{"rows":[1,2,3]}' } }, 0);
+    expect(d.callsFull[300]).toBe('{"rows":[1,2,3]}');
+    openRow(300);
+    openRow(300);
+    expect(fetchesOf(300), "a reply already here is never fetched again").toBe(1);
+  });
+
+  it("a reply the page carried whole is never fetched", () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: [clipped(310), callRow(309)], more: false });
+    openRow(309);
+    expect(d.callsOpen[309]).toBe(true);
+    expect(requests.some((r) => r.url.includes("/calls/")), "no per-call request for an unclipped row").toBe(false);
+  });
+
+  it("Enter on a focused clipped row fetches the same way", async () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: [clipped(320)], more: false });
+    rh.paneTabKeydown({ target: summaryOf(320), key: "Enter", preventDefault() {} } as unknown as KeyboardEvent);
+    expect(d.callsOpen[320]).toBe(true);
+    expect(fetchesOf(320)).toBe(1);
+    await ok({ call: { seq: 320, output: "{}" } }, 0);
+  });
+
+  it("closing a row fetches nothing", () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: [clipped(330)], more: false });
+    d.callsOpen[330] = true;
+    openRow(330); // this click closes it
+    expect(d.callsOpen[330]).toBe(false);
+    expect(fetchesOf(330)).toBe(0);
+  });
+
+  it("a pruned body is recorded, so the row stops offering a fetch it cannot serve", async () => {
+    const d = fakeDetail();
+    d.callsGone = {};
+    mountLogs(d, { rows: [clipped(340)], more: false });
+    openRow(340);
+    await ok({ call: { seq: 340, bodyGone: true, output: '{"rows":[' } }, 0);
+    expect(d.callsGone[340]).toBe(true);
+    expect(d.callsFull[340], "the preview is not passed off as the whole reply").toBeUndefined();
+    openRow(340);
+    openRow(340);
+    expect(fetchesOf(340), "a known-pruned body is not asked for again").toBe(1);
+  });
+});
+
+/* docs/33 C3 — a block's Copy, Copy raw and Show all, through the REAL delegated dispatcher.
+   Both copies read the call row, not the painted DOM, so a block cut at its line cap still
+   copies everything; Show all is state, so a poll repaint keeps the block whole. */
+describe("docs/33 C3: the block buttons dispatch", () => {
+  /** A target inside one button — the dispatcher climbs to its data attribute. */
+  function btn(attr: string, key: string) {
+    const dataKey = attr.replace(/^data-/, "");
+    return { id: "", closest: (sel: string) => (sel === "[" + attr + "]" ? { dataset: { [dataKey]: key } } : null) };
+  }
+  const click = (target: unknown) => { rh.paneTabClick({ target, stopPropagation() {}, detail: 1 } as unknown as MouseEvent); };
+  const WIRE = JSON.stringify(JSON.stringify({ hits: [{ title: "a" }] }));
+
+  it("Copy writes the decoded reply as formatted JSON; Copy raw writes the stored text", async () => {
+    const wrote: string[] = [];
+    vi.stubGlobal("navigator", { clipboard: { writeText: (t: string) => { wrote.push(t); return Promise.resolve(); } } });
+    const d = fakeDetail();
+    mountLogs(d, { rows: [{ ...callRow(400), output: WIRE }], more: false });
+    click(btn("data-copy", "out:400"));
+    await tick();
+    click(btn("data-copyraw", "out:400"));
+    await tick();
+    expect(wrote[0]).toBe('{\n  "hits": [\n    {\n      "title": "a"\n    }\n  ]\n}');
+    expect(wrote[1]).toBe(WIRE);
+    expect(d.callsOpen[400], "a copy never toggles the row").toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
+  it("Show all records the block, so a repaint keeps it whole", () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: [callRow(410)], more: false });
+    click(btn("data-showall", "out:410"));
+    expect(d.callsAll["out:410"]).toBe(true);
+    expect(d.callsOpen[410], "Show all never toggles the row").toBeUndefined();
   });
 });
