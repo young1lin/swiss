@@ -1355,6 +1355,7 @@ const en                         = {
   "remoteRuns.loadMore": "Load more",
   "remoteRuns.b": "{a} of {b}",
   "remoteRuns.outputCappedCapLast": "Output capped at {cap} — the last {tail}:",
+  "remoteRuns.liveCappedTail": "… earlier output trimmed — the live view keeps the last 256 KB",
   "remoteRuns.cancelRequestedRunId": "Cancel requested for run #{id}",
   "remoteRuns.forgetEveryRecordedRemote": "Forget every recorded remote run and its output? Runs still in flight are not affected.",
   "remoteRuns.runRecordCleared": "Run record cleared",

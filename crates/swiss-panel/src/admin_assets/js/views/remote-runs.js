@@ -38,6 +38,10 @@ import { tr, trn } from "../i18n.js";
 
 const PAGE = 20;
 const LIVE_EVERY_MS = 1500; // how often an OPEN live row pulls its output; the 6 s poll moves the list
+/** What one open live row may hold, in characters — the same 256 KB the gateway itself keeps
+ *  live (runs.rs MAX_LIVE_OUTPUT_BYTES): a runaway stream must not grow the tab's memory while
+ *  someone watches, and the finished record repaints the row from its durable tail. */
+const LIVE_TAIL_MAX = 256 * 1024;
 
 let runs = []                     ; // the recorded page, newest first
 let active = []                     ; // remote runs the coordinator still holds (queued / running)
@@ -239,10 +243,16 @@ async function pullLive(id        )                {
   const l = live[id] || (live[id] = { text: "", cursor: 0 });
   const j = await apiJson                   ("/api/runs/" + id + "/output?after=" + l.cursor + "&max=131072");
   if (!j) return;
-  if (j.output) l.text += j.output;
+  if (j.output) {
+    l.text += j.output;
+    if (l.text.length > LIVE_TAIL_MAX) {
+      l.text = l.text.slice(l.text.length - LIVE_TAIL_MAX);
+      l.capped = true;
+    }
+  }
   l.cursor = j.nextCursor || l.cursor;
   const pre = document.querySelector('#pane pre[data-rlivepre="' + id + '"]');
-  if (pre) pre.textContent = l.text;
+  if (pre) pre.textContent = (l.capped ? tr("remoteRuns.liveCappedTail") + "\n" : "") + l.text;
   if (j.terminal) void refresh(); // the run moved into the record: repaint from it
 }
 
