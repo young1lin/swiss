@@ -22,8 +22,13 @@ import { frag, h } from "./h.js";
                                      
 import { rowOf } from "./sidebar.js";
 import { mcpDetail } from "./mcp-state.js";
-import { locale, tr } from "./i18n.js";
-import { JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, splitJsonBlock, textNode } from "./ui/json-view.js";
+import { tr } from "./i18n.js";
+import { JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, splitJsonBlock, textNode, valueBlock } from "./ui/json-view.js";
+import {
+  btn, card, collapseRuns, emptyNode, failNote, filterInput, fmtMs, iconBtn, moreBtn, note, pager, section, spinner,
+  timeLabel, timeline, timelineMeta, timelineToggle,
+} from "./ui/index.js";
+                                                  
 
 /* --- Logs: what was called, with what, and what came back ------------------------------------- */
 function fmtChars(n        )         {
@@ -78,10 +83,11 @@ async function copyLogText(text        )                {
 }
 
 /* --- docs/33 C3: one block of a call — the formatted JSON view -------------------------------
-   ui/json-view.ts owns parsing, decoding and the code block; this is the Logs chrome around it: the
-   label row (caption, what the body turned out to be, Copy and Copy raw) and the Show all tail.
-   The wrapper carries data-blk="<kind>:<seq>" so a full reply landing, or Show all, repaints this
-   one block in place (repaintCallBlock) instead of the whole list. */
+   ui/json-view.ts owns parsing, decoding, the code block and the labelled block around it; this is
+   what Logs puts in it: the caption, what the body turned out to be, one visible Copy with Copy raw
+   behind the block's ⋯ (docs/46 §3.2, revising C3's two standing buttons), the Show all tail. The
+   block carries data-blk="<kind>:<seq>" so a full reply landing, or Show all, repaints this one
+   block in place (repaintCallBlock) instead of the whole list. */
 ;                               
 
 /** The text a block shows: the arguments as stored, or the reply — whole once fetched, else the
@@ -104,10 +110,12 @@ function callBlockNode(d           , c               , kind           )         
   const parsed = error ? null : splitJsonBlock(raw);
   if (parsed) {
     const value = decodeStrings(parsed.value);
-    const code = jsonCodeNode(value, all);
+    // A short value sits on one line (docs/46 §3.2) - unless prose follows it, which reads as a
+    // paragraph under a block, not after a one-liner.
+    const code = jsonCodeNode(value, all, { oneLine: !parsed.tail });
     if (hasDecoded(value)) notes.push(tr("logs.kindDecoded"));
     if (parsed.tail) notes.push(tr("logs.kindTail"));
-    body = [code.node, parsed.tail ? h("pre", { class: "logs jv-tail" }, parsed.tail) : null];
+    body = [code.node, parsed.tail ? textNode(parsed.tail, true, "logs jv-tail").node : null];
     lines = code.lines;
   } else {
     const text = textNode(raw || (kind === "args" ? tr("logs.none") : tr("logs.empty")), all, "logs" + (error ? " err" : ""));
@@ -115,26 +123,22 @@ function callBlockNode(d           , c               , kind           )         
     lines = text.lines;
   }
   const label = kind === "args" ? tr("logs.arguments2") : c.ok ? tr("logs.result") : tr("logs.error");
+  // The glyph is the whole visible button; its name says which block, so the two in one call differ.
   const copyName = kind === "args" ? tr("logs.copyArguments") : tr("logs.copyResult");
-  const rawName = kind === "args" ? tr("logs.copyArgumentsRaw") : tr("logs.copyResultRaw");
-  return h("div", { class: "call-blk", data: { blk: key } },
-    h("div", { class: "call-lbl" },
-      h("span", null, label),
-      notes.map((n) => { return h("span", { class: "call-note" }, n); }),
-      h("span", { class: "call-acts" },
-        // The visible word is just "Copy"; the name says which block, so the two in one call differ.
-        h("button", { class: "btn ghost", data: { copy: key }, aria: { label: copyName }, title: copyName },
-          iconNode("copy"), tr("logs.copy")),
-        h("button", { class: "btn ghost", data: { copyraw: key }, title: rawName },
-          tr("logs.copyRaw")))),
-    body,
-    !all && lines > JV_LINES
-      ? h("div", { class: "form-actions" }, h("button", { class: "btn", data: { showall: key } }, tr("logs.showAllLines", { n: lines })))
-      : null);
+  const moreName = kind === "args" ? tr("logs.moreArguments") : tr("logs.moreResult");
+  return valueBlock({
+    label, notes, data: { blk: key },
+    tools: [
+      iconBtn("copy", copyName, { ghost: true, data: { copy: key } }),
+      moreBtn(moreName, { data: { blkmore: key } }),
+    ],
+  }, ...body,
+  !all && lines > JV_LINES ? btn(tr("logs.showAllLines", { n: lines }), { data: { showall: key } }) : null);
 }
 
 /** Repaint one block of one call in place — after its full reply lands or its Show all is pressed.
- *  A key whose row is not on the page (a poll moved the list) is simply nothing to do. */
+ *  A key whose row is not on the page (a poll moved the list, the row is closed) is simply
+ *  nothing to do. */
 function repaintCallBlock(d           , key        )       {
   if (typeof document === "undefined") return;
   const [kind, seqText] = key.split(":");
@@ -154,37 +158,92 @@ function callBlockCopyText(d           , key        , raw         )             
 }
 
 /** docs/33 C3: the line under a preview whose full reply was pruned. One builder for the painted
- *  row and for showFullResult's in-place swap, so the two cannot drift. */
+ *  body and for showFullResult's in-place swap, so the two cannot drift. */
 function goneNode(seq        )              {
-  return h("div", { class: "hint call-gone", data: { gone: seq } }, tr("detail.fullReplyLongerStored"));
+  return note(tr("detail.fullReplyLongerStored"), { data: { gone: seq } });
 }
 
-function callNode(d           , c               )              {
-  const when = new Date(c.at).toLocaleString(locale());
-  const meta = c.client
-    ? tr("logs.whenClientMsMs", { when, via: c.via, client: c.client, ms: c.ms, chars: fmtChars(c.chars) })
-    : tr("logs.whenMsMsChars", { when, via: c.via, ms: c.ms, chars: fmtChars(c.chars) });
+/* --- docs/46 §3.2: the log is an event list ----------------------------------------------------
+   One call is one timeline row: the time (the date is the day heading above it), the tool, its
+   arguments, a failure as a red tag, the duration. What every row said the same - the transport,
+   the client, the size - moved into the expanded body, and consecutive identical calls (same tool,
+   same arguments, same outcome, same reply: a client's poll loop) fold into one row with ×N. */
+
+/** A stored call as a timeline item. `callseq` addresses the row for the delegated listener. */
+function callItem(c               )               {
+  return {
+    id: String(c.seq),
+    at: Date.parse(c.at),
+    title: c.tool,
+    arg: c.args || tr("logs.arguments"),
+    who: c.client || undefined,
+    ms: c.ms,
+    status: c.ok ? undefined : { text: tr("logs.failed"), tone: "bad" },
+    same: [c.tool, c.args, c.ok ? "ok" : "failed", c.chars, c.output].join("\u0000"),
+    data: { callseq: c.seq },
+  };
+}
+
+/** The calls a row stands for, newest first: the row's own call and, for ×N, every identical
+ *  one folded under it. Null when no row on this page starts at `seq`. */
+function callRunOf(d           , seq        )                         {
+  const calls = d.calls || [];
+  const bySeq = new Map(calls.map((c) => { return [String(c.seq), c]         ; }));
+  for (const run of collapseRuns(calls.map(callItem))) {
+    if (run.some((it) => { return it.id === String(seq); })) {
+      return run.map((it) => { return bySeq.get(it.id)                 ; });
+    }
+  }
+  return null;
+}
+
+/** The expanded body: the meta the row left out, then the arguments and the reply of the row's
+ *  own (newest) call. A ×N row adds the run's span and every call in it, so a folded run hides
+ *  nothing the unfolded rows said. */
+function callBodyNode(d           , run                 )           {
+  const c = run[0];
+  const lines           = [timelineMeta([
+    tr("logs.metaVia", { via: c.via }),
+    c.client ? tr("logs.metaClient", { client: c.client }) : null,
+    tr("logs.metaChars", { chars: fmtChars(c.chars) }),
+  ])];
+  if (run.length > 1) {
+    const ms = run.map((r) => { return r.ms; }).sort((a, b) => { return a - b; });
+    lines.push(timelineMeta([
+      tr("logs.runSame", { n: run.length }),
+      tr("logs.runSpan", { from: timeLabel(Date.parse(run[run.length - 1].at)), to: timeLabel(Date.parse(c.at)) }),
+      tr("logs.runMs", { min: fmtMs(ms[0]), max: fmtMs(ms[ms.length - 1]) }),
+    ]));
+    lines.push(timelineMeta(run.map((r) => {
+      return tr(r.client && r.client !== c.client ? "logs.runEachClient" : "logs.runEach",
+        { time: timeLabel(Date.parse(r.at)), ms: fmtMs(r.ms), client: r.client || "" });
+    })));
+  }
   // A page ships only the head of each reply; opening the row fetches the rest (docs/33 C3). The
   // button stays for the moment before that lands and as the retry when it failed. A reply whose
   // body was pruned says so in place — the preview above it is all that is left.
-  const full = d.callsFull[c.seq];
-  const more = !c.preview || full != null
+  const more = !c.preview || d.callsFull[c.seq] != null
     ? null
     : (d.callsGone || {})[c.seq]
       ? goneNode(c.seq)
-      : h("div", { class: "form-actions" },
-          h("button", { class: "btn", data: { full: c.seq } }, tr("logs.showFullResultChars", { chars: fmtChars(c.chars) })));
-  return h("div", { class: "call" + (d.callsOpen[c.seq] ? " open" : ""), data: { seq: c.seq } },
-    h("div", { class: "call-sum", data: { callseq: c.seq }, role: "button", tabIndex: 0 },
-      h("span", { class: "chev", aria: { hidden: "true" } }, iconNode("chevron-right")),
-      h("span", { class: "dot " + (c.ok ? "up" : "down") }),
-      h("span", { class: "call-tool" }, c.tool),
-      h("span", { class: "call-arg" }, c.args || tr("logs.arguments")),
-      h("span", { class: "call-meta" }, meta)),
-    h("div", { class: "call-body" },
-      callBlockNode(d, c, "args"),
-      callBlockNode(d, c, "out"),
-      more));
+      : btn(tr("logs.showFullResultChars", { chars: fmtChars(c.chars) }), { data: { full: c.seq } });
+  return [...lines, callBlockNode(d, c, "args"), callBlockNode(d, c, "out"), more];
+}
+
+/** The log as an event list. A folded row is open when any call in it was opened, so a new
+ *  identical call arriving at the top of a run does not close the row being read. */
+function callsTimeline(d           )              {
+  const calls = d.calls || [];
+  const bySeq = new Map(calls.map((c) => { return [String(c.seq), c]         ; }));
+  const items = calls.map(callItem);
+  const open = new Set        ();
+  for (const run of collapseRuns(items)) {
+    if (run.some((it) => { return !!d.callsOpen[it.id]; })) open.add(run[0].id);
+  }
+  return timeline(items, {
+    open,
+    body: (_it, run) => { return callBodyNode(d, run.map((it) => { return bySeq.get(it.id)                 ; })); },
+  });
 }
 
 /** The pager's status cell: the committed page number, with the pending suffix while a switch
@@ -193,7 +252,7 @@ function callNode(d           , c               )              {
 function callsStatusNode(d           )         {
   const page = d.callsPage + 1;
   return d.callsPendingPage != null
-    ? [tr("logs.pageN", { n: page }), h("span", { class: "spin" }), tr("logs.loading")]
+    ? [tr("logs.pageN", { n: page }), spinner(), tr("logs.loading")]
     : tr("logs.pageN2", { n: page });
 }
 
@@ -202,58 +261,58 @@ function callsStatusNode(d           )         {
 function callsErrNode(d           )              {
   // The sentence is set once, in the state field (detail.js callsLoadFailed) — the node renders
   // the field, so the copy cannot drift between the two.
-  return h("div", { class: "calls-err", id: "clErr", role: "status" },
-    h("span", d.callsError || tr("logs.couldLoadCalls")),
-    d.callsErrStatus ? h("span", { class: "calls-err-why" }, d.callsErrStatus) : null,
-    h("button", { class: "btn", id: "clRetry" }, tr("logs.retry")));
+  return failNote({
+    id: "clErr",
+    text: d.callsError || tr("logs.couldLoadCalls"),
+    why: d.callsErrStatus || null,
+    action: btn(tr("logs.retry"), { id: "clRetry" }),
+  });
+}
+
+/** What an empty page says: a page past the end, a needle that matched nothing, or a log that
+ *  has never recorded a call - only the last is the empty state; the others are one line. */
+function callsEmptyNode(d           , q        )              {
+  if (d.callsPage) return note(tr("logs.nothingPage"));
+  if (q) return note(tr("logs.callsMatchingQ", { q }));
+  return emptyNode({ icon: "history", title: tr("logs.noCallsYet"), hint: tr("logs.noCallsHint") });
 }
 
 function logsBodyNode(d           )         {
   if (d.calls == null && !d.callsError) {
     /* First open, before anything is there to keep in place (docs/32 B1). */
-    return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("logs.loadingCalls"));
+    return note(tr("logs.loadingCalls"), { busy: true });
   }
   /* docs/31: server-side search over the stored calls. The input re-renders with the page, but
-   * renderCallsOnly swaps the LIVE node back in, so focus and caret survive a result repaint. */
+   * renderCallsOnly swaps the LIVE node back in, so focus and caret survive a result repaint.
+   * docs/32 B4: Clear lives behind the ⋯, never as a standing button beside the filter. */
   const q = d.callsQ || "";
-  const head = h("div", { class: "sec-head" },
-    h("span", { class: "sec-cap" }, tr("logs.toolCallsNewestFirst")),
-    h("input", { id: "callsQ", type: "search", placeholder: tr("logs.searchCalls"), aria: { label: tr("logs.searchToolCalls") }, value: q }),
-    h("button", { class: "btn icon", id: "clMenu", aria: { label: tr("logs.moreLogActions") }, title: tr("logs.moreLogActions") }, iconNode("ellipsis")));
+  const tools = [
+    filterInput({ id: "callsQ", placeholder: tr("logs.searchCalls"), label: tr("logs.searchToolCalls"), value: q }),
+    moreBtn(tr("logs.moreLogActions"), { id: "clMenu" }),
+  ];
   const busy = d.callsPendingPage != null;
   let body        ;
-  let pager         = null;
+  let pages         = null;
   if (d.calls == null) {
     body = callsErrNode(d); // the very first load failed — the error replaces the shell, not the rows
   } else {
-    body = d.calls.length
-      ? h("div", { class: "group" }, d.calls.map((c) => { return callNode(d, c); }))
-      : h("div", { class: "group" },
-          h("div", { class: "row" },
-            h("span", { class: "rowmsg" },
-              d.callsPage
-                ? tr("logs.nothingPage")
-                : q
-                  ? tr("logs.callsMatchingQ", { q })
-                  : tr("logs.callsEveryToolInvocation"))));
+    body = d.calls.length ? callsTimeline(d) : callsEmptyNode(d, q);
     /* Both directions go quiet while a switch is pending; the number stays the committed page. */
-    pager = (d.callsPage > 0 || d.callsMore)
-      ? h("div", { class: "pager", id: "clPager", role: "navigation", aria: { label: tr("logs.callLogPages") } },
-          h("button", { class: "btn", id: "clPrev", disabled: busy || d.callsPage <= 0 }, tr("logs.newer")),
-          h("span", { class: "calls-status", id: "clStatus", aria: { live: "polite" } }, callsStatusNode(d)),
-          h("button", { class: "btn", id: "clNext", disabled: busy || !d.callsMore }, tr("logs.older")))
+    pages = (d.callsPage > 0 || d.callsMore)
+      ? pager({
+          id: "clPager", label: tr("logs.callLogPages"), statusId: "clStatus", status: callsStatusNode(d),
+          prev: btn(tr("logs.newer"), { id: "clPrev", disabled: busy || d.callsPage <= 0 }),
+          next: btn(tr("logs.older"), { id: "clNext", disabled: busy || !d.callsMore }),
+        })
       : null;
   }
   const errAgain = d.callsError && d.calls != null ? callsErrNode(d) : null;
   /* One region for rows/pager/error lets a pending switch mark itself busy in place, without
    * touching the search box above it or the stderr section below it (docs/32 B1). */
-  const region = h("div", { class: "calls", id: "callsRegion", aria: { busy: busy ? "true" : "false" } },
-    body, pager, errAgain);
+  const region = h("div", { id: "callsRegion", aria: { busy: busy ? "true" : "false" } }, body, pages, errAgain);
   let err         = null;
   if (d.stderr) {
-    err = frag(
-      h("div", { class: "sec-head", style: "padding-top:var(--s5)" }, h("span", { class: "sec-cap" }, tr("logs.childProcessStderr"))),
-      h("div", { class: "group" }, h("pre", { class: "logs" }, d.stderr)));
+    err = section({ cap: tr("logs.childProcessStderr") }, card(textNode(d.stderr, true, "logs").node));
   } else if ((d.config && d.config.type) === "proc") {
     /* An empty stderr on a proc answers a different question depending on whether a child exists
        yet. Blank space here reads as "logs went missing" — say which of the three blanks it is. */
@@ -263,22 +322,27 @@ function logsBodyNode(d           )         {
       : st === "error"
         ? tr("logs.childPrintedNothingBefore")
         : tr("logs.childRunningButPrinted");
-    err = frag(
-      h("div", { class: "sec-head", style: "padding-top:var(--s5)" }, h("span", { class: "sec-cap" }, tr("logs.childProcessStderr"))),
-      h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg" }, why))));
+    err = section({ cap: tr("logs.childProcessStderr") }, note(why));
   }
-  return frag(head, region, err);
+  return frag(section({ cap: tr("logs.toolCallsNewestFirst"), tools }, region), err);
 }
 
 /** Expand/collapse one call without re-rendering: a poll must not close what you just opened.
- *  Answers whether the row is now open, so the caller can fetch a clipped reply in full. */
+ *  The state is per call; closing a folded row forgets every call in it. The body is painted on
+ *  open only (docs/46 §2.4) - a closed row costs no code block. Answers whether the row is now
+ *  open, so the caller can fetch a clipped reply in full. */
 function toggleCall(seq        )          {
   const d = mcpDetail();
   if (!d) return false;
-  d.callsOpen[seq] = !d.callsOpen[seq];
-  const node = document.querySelector('#tabbody .call[data-seq="' + seq + '"]');
-  if (node) node.className = "call" + (d.callsOpen[seq] ? " open" : "");
-  return !!d.callsOpen[seq];
+  const run = callRunOf(d, seq) || [];
+  const open = !run.some((c) => { return !!d.callsOpen[c.seq]; }) && !d.callsOpen[seq];
+  run.forEach((c) => { d.callsOpen[c.seq] = false; });
+  d.callsOpen[seq] = open;
+  const root = typeof document === "undefined" ? null : document.querySelector             ("#tabbody .tl");
+  if (root && typeof root.querySelectorAll === "function") {
+    timelineToggle(root, String(seq), open && run.length ? callBodyNode(d, run) : undefined);
+  }
+  return open;
 }
 
 /** One truncated line of argument names, required ones in bold. `args` is [{ name, req }].
@@ -438,4 +502,4 @@ function kindBodyNode(d           , kind         , m                           )
     pager);
 }
 
-export { argLineNode, callBlockCopyText, callBlockNode, callNode, callsErrNode, callsStatusNode, copyLogText, fmtChars, fmtJson, goneNode, kindBodyNode, logsBodyNode, repaintCallBlock, toggleCall, toolDetailNode };
+export { argLineNode, callBlockCopyText, callBlockNode, callBodyNode, callItem, callRunOf, callsErrNode, callsStatusNode, copyLogText, fmtChars, fmtJson, goneNode, kindBodyNode, logsBodyNode, repaintCallBlock, toggleCall, toolDetailNode };

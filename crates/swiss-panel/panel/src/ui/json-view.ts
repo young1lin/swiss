@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import type { AttrMap, HChild } from "../h.js";
 import { h } from "../h.js";
 import { tr } from "../i18n.js";
 
@@ -55,6 +56,11 @@ class DecodedString {
 /** Lines a block shows before "Show all". Enough for any ordinary reply, and a bound on the DOM a
  *  1 MB stored body (calls.rs BODY_MAX) would otherwise build the moment its call opens. */
 const JV_LINES = 200;
+
+/** Compact JSON at or under this many characters prints on ONE line when the caller asks for it
+ *  (docs/46 §3.2, revising docs/33 C3's "always indented"): {"sql": "SELECT 1"} spread over three
+ *  lines is two lines of braces around the one line that says anything. */
+const JV_INLINE = 80;
 
 /** Parse text as JSON only when it can be an object, an array or a JSON string literal — never a
  *  bare number or word, so a value "50" stays the string it is and "true" stays text. */
@@ -160,10 +166,28 @@ function stringLiteral(s: string): string {
 /** A painted body and the number of lines its FULL text has (the Show all count). */
 interface Painted { node: HTMLElement; lines: number }
 
+/** True when some string in the value breaks lines: printed with its real breaks, it cannot sit
+ *  on one line whatever its length. */
+function breaksLines(v: unknown): boolean {
+  if (v instanceof DecodedString) return breaksLines(v.value);
+  if (typeof v === "string") return v.indexOf("\n") >= 0;
+  if (Array.isArray(v)) return v.some(breaksLines);
+  if (v !== null && typeof v === "object") return Object.keys(v).some((k) => { return breaksLines((v as Record<string, unknown>)[k]); });
+  return false;
+}
+
+/** Whether a value fits JV_INLINE in its compact form (the measure is JSON.stringify's, spaces
+ *  and markers aside) with no string that breaks lines. */
+function fitsOneLine(v: unknown): boolean {
+  return !breaksLines(v) && JSON.stringify(plainValue(v)).length <= JV_INLINE;
+}
+
 /** The formatted code block for a (decoded) JSON value. Past JV_LINES the text is still walked —
- *  the Show all button needs the total — but no more nodes are built unless `all`. */
-function jsonCodeNode(value: unknown, all: boolean): Painted {
-  const pre = h("pre", { class: "jv" });
+ *  the Show all button needs the total — but no more nodes are built unless `all`. `oneLine`:
+ *  a value that fitsOneLine prints as {"k": 1, "v": [2, 3]} instead of indented. */
+function jsonCodeNode(value: unknown, all: boolean, o: { oneLine?: boolean } = {}): Painted {
+  const flat = !!o.oneLine && fitsOneLine(value);
+  const pre = h("pre", { class: flat ? "jv one" : "jv" });
   let line = 1;
   const shown = (): boolean => { return all || line <= JV_LINES; };
   const put = (cls: string, text: string): void => {
@@ -175,6 +199,10 @@ function jsonCodeNode(value: unknown, all: boolean): Painted {
     const label = layers > 1 ? tr("logs.decodedN", { n: layers }) : tr("logs.decoded");
     pre.appendChild(h("span", { class: "jv-dec", title: tr("logs.decodedTitle"), data: { label } }));
   };
+  // The break before a member and before the closing bracket, and the separator after a member:
+  // the indented form and the one-line form differ in these three places only.
+  const brk = (indent: string): void => { if (!flat) put("", "\n" + indent); };
+  const sep = flat ? ", " : ",";
   const emit = (v: unknown, indent: string): void => {
     if (v instanceof DecodedString) { marker(v.layers); emit(v.value, indent); return; }
     if (v === null || typeof v === "boolean") { put("jv-l", String(v)); return; }
@@ -185,11 +213,11 @@ function jsonCodeNode(value: unknown, all: boolean): Painted {
       if (!v.length) { put("jv-p", "[]"); return; }
       put("jv-p", "[");
       v.forEach((item, i) => {
-        put("", "\n" + inner);
+        brk(inner);
         emit(item, inner);
-        if (i < v.length - 1) put("jv-p", ",");
+        if (i < v.length - 1) put("jv-p", sep);
       });
-      put("", "\n" + indent);
+      brk(indent);
       put("jv-p", "]");
       return;
     }
@@ -198,13 +226,13 @@ function jsonCodeNode(value: unknown, all: boolean): Painted {
     if (!keys.length) { put("jv-p", "{}"); return; }
     put("jv-p", "{");
     keys.forEach((k, i) => {
-      put("", "\n" + inner);
+      brk(inner);
       put("jv-k", JSON.stringify(k));
       put("jv-p", ": ");
       emit(obj[k], inner);
-      if (i < keys.length - 1) put("jv-p", ",");
+      if (i < keys.length - 1) put("jv-p", sep);
     });
-    put("", "\n" + indent);
+    brk(indent);
     put("jv-p", "}");
   };
   emit(value, "");
@@ -218,6 +246,18 @@ function textNode(text: string, all: boolean, cls: string): Painted {
   return { node: h("pre", { class: cls }, body), lines: lines.length };
 }
 
+/** A labelled value (docs/46 §3.2): a caption naming it (Arguments, Result), notes on what the
+ *  body turned out to be ("JSON + text"), the block's tools at the end of that line - one visible
+ *  Copy, the rest behind ⋯ - and then the body: a code block and whatever follows it. */
+function valueBlock(o: { label: string; notes?: string[]; tools?: HChild[]; data?: AttrMap }, ...body: HChild[]): HTMLElement {
+  return h("div", { class: "vblock", data: o.data },
+    h("div", { class: "vblock-head" },
+      h("span", { class: "vblock-cap" }, o.label),
+      (o.notes || []).map((n) => { return h("span", { class: "vblock-note" }, n); }),
+      o.tools && o.tools.length ? h("span", { class: "vblock-tools" }, o.tools) : null),
+    ...body);
+}
+
 /** What Copy puts on the clipboard: the decoded structure as valid, indented JSON (with any prose
  *  that followed it), or the text unchanged when it is not JSON. Copy raw is the text itself. */
 function formattedCopyText(text: string): string {
@@ -227,5 +267,5 @@ function formattedCopyText(text: string): string {
   return block.tail ? json + "\n\n" + block.tail : json;
 }
 
-export { DecodedString, JV_LINES, decodeStrings, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode };
+export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formattedCopyText, hasDecoded, jsonCodeNode, plainValue, splitJsonBlock, stringLiteral, textNode, valueBlock };
 export type { Painted };

@@ -485,7 +485,7 @@ describe("docs/32 B1: a page switch is a transaction", () => {
     const tb = mountLogs(d, { q: "GET" });
     expect(tb.paints.length).toBe(1);
     const painted = tb.innerHTML;
-    expect(painted).toContain('data-seq="100"'); // the committed rows are on screen
+    expect(painted).toContain('data-callseq="100"'); // the committed rows are on screen
     clickOlder();
     expect(requests.length).toBe(1);
     expect(requests[0].url).toContain("/api/mcps/redis/calls?page=1&q=GET");
@@ -493,7 +493,7 @@ describe("docs/32 B1: a page switch is a transaction", () => {
     expect(d.callsPendingPage).toBe(1);
     expect(d.calls, "the rows are not cleared to a loading shell").toEqual(PAGE0);
     expect(tb.paints.length, "pending patches in place — the tabbody is not repainted").toBe(1);
-    expect(tb.innerHTML).toContain('data-seq="100"');
+    expect(tb.innerHTML).toContain('data-callseq="100"');
   });
 
   it("pending marks the region busy and disables both directions while the number stays the committed page", () => {
@@ -517,7 +517,7 @@ describe("docs/32 B1: a page switch is a transaction", () => {
     expect(d.calls).toEqual(PAGE1);
     expect(d.callsMore).toBe(false);
     expect(tb.paints.length, "the commit repaints once").toBe(2);
-    expect(tb.innerHTML).toContain('data-seq="80"');
+    expect(tb.innerHTML).toContain('data-callseq="80"');
     expect(tb.innerHTML).toContain(">Page 2<");
     expect(tb.innerHTML).toContain('aria-busy="false"');
     expect(tb.innerHTML).not.toMatch(/id="clPrev"[^>]*disabled/);
@@ -747,8 +747,15 @@ describe("docs/33 C3: opening a clipped call fetches its full reply", () => {
   function clipped(seq: number) {
     return { ...callRow(seq), chars: 5000, output: '{"rows":[', preview: true };
   }
-  /** A target inside one call's summary row — the dispatcher climbs to [data-callseq]. */
+  /** A target inside one call's summary button — the dispatcher climbs to .tl-sum, then to
+   *  the row's [data-callseq] (docs/46 P2-2: only the summary toggles, never the open body). */
   function summaryOf(seq: number) {
+    const item = { dataset: { callseq: String(seq) } };
+    const sum = { closest: (sel: string) => (sel === "[data-callseq]" ? item : null) };
+    return { id: "", closest: (sel: string) => (sel === ".tl-sum" ? sum : null) };
+  }
+  /** A target inside the open body of the same row: it is under [data-callseq] but not .tl-sum. */
+  function bodyOf(seq: number) {
     return { id: "", closest: (sel: string) => (sel === "[data-callseq]" ? { dataset: { callseq: String(seq) } } : null) };
   }
   function openRow(seq: number): void {
@@ -780,13 +787,45 @@ describe("docs/33 C3: opening a clipped call fetches its full reply", () => {
     expect(requests.some((r) => r.url.includes("/calls/")), "no per-call request for an unclipped row").toBe(false);
   });
 
-  it("Enter on a focused clipped row fetches the same way", async () => {
+  it("the summary is a real button, so Enter and Space are its click; the keydown path stays out", async () => {
     const d = fakeDetail();
-    mountLogs(d, { rows: [clipped(320)], more: false });
+    const tb = mountLogs(d, { rows: [clipped(320)], more: false });
+    expect(tb.innerHTML, "the row's summary is a <button>").toMatch(/<button[^>]*class="tl-sum"/);
     rh.paneTabKeydown({ target: summaryOf(320), key: "Enter", preventDefault() {} } as unknown as KeyboardEvent);
+    expect(d.callsOpen[320], "a second, keydown toggle would undo the button's own click").toBeUndefined();
+    rh.paneTabClick({ target: summaryOf(320), stopPropagation() {}, detail: 0 } as unknown as MouseEvent);
     expect(d.callsOpen[320]).toBe(true);
     expect(fetchesOf(320)).toBe(1);
     await ok({ call: { seq: 320, output: "{}" } }, 0);
+  });
+
+  it("a click inside an open body does not close the row", () => {
+    const d = fakeDetail();
+    mountLogs(d, { rows: [callRow(325)], more: false });
+    d.callsOpen[325] = true;
+    rh.paneTabClick({ target: bodyOf(325), stopPropagation() {}, detail: 1 } as unknown as MouseEvent);
+    expect(d.callsOpen[325]).toBe(true);
+  });
+
+  it("identical consecutive calls are one row; opening it and a newer twin keeps it open", () => {
+    const d = fakeDetail();
+    const twin = (seq: number) => ({ ...callRow(seq), tool: "ping", args: "{}", output: "pong" });
+    const tb = mountLogs(d, { rows: [twin(352), twin(351), callRow(350)], more: false });
+    const html = tb.innerHTML;
+    expect(html).toContain('data-callseq="352"');
+    expect(html, "the older twin folds under the newer one").not.toContain('data-callseq="351"');
+    expect(html).toContain("×2");
+    openRow(352);
+    expect(d.callsOpen[352]).toBe(true);
+    const runs = logs.callRunOf(d, 352)!.map((c: { seq: number }) => c.seq);
+    expect(runs).toEqual([352, 351]);
+    // A poll brings a third twin to the top: the run's first seq changes, the row stays open.
+    d.calls = [twin(353), twin(352), twin(351), callRow(350)];
+    const again = new FakeNode("div");
+    again.appendChild(logs.logsBodyNode(d) as unknown as FakeNode);
+    expect(again.innerHTML).toMatch(/class="tl-item open"[^>]*data-tl-id="353"|data-tl-id="353"[^>]*class="tl-item open"/);
+    openRow(353); // closing forgets every call in the run
+    expect([d.callsOpen[353], d.callsOpen[352], d.callsOpen[351]]).toEqual([false, false, false]);
   });
 
   it("closing a row fetches nothing", () => {
@@ -824,14 +863,23 @@ describe("docs/33 C3: the block buttons dispatch", () => {
   const click = (target: unknown) => { rh.paneTabClick({ target, stopPropagation() {}, detail: 1 } as unknown as MouseEvent); };
   const WIRE = JSON.stringify(JSON.stringify({ hits: [{ title: "a" }] }));
 
-  it("Copy writes the decoded reply as formatted JSON; Copy raw writes the stored text", async () => {
+  it("Copy writes the decoded reply as formatted JSON; Copy raw, behind the block's ⋯, the stored text", async () => {
     const wrote: string[] = [];
     vi.stubGlobal("navigator", { clipboard: { writeText: (t: string) => { wrote.push(t); return Promise.resolve(); } } });
     const d = fakeDetail();
     mountLogs(d, { rows: [{ ...callRow(400), output: WIRE }], more: false });
     click(btn("data-copy", "out:400"));
     await tick();
-    click(btn("data-copyraw", "out:400"));
+    const more = { ...btn("data-blkmore", "out:400"), getBoundingClientRect: () => ({ top: 0, left: 0, bottom: 22, right: 24, width: 24, height: 22 }) };
+    const blkMore = more.closest("[data-blkmore]") as unknown as Record<string, unknown>;
+    blkMore.getBoundingClientRect = more.getBoundingClientRect;
+    click({ id: "", closest: (sel: string) => (sel === "[data-blkmore]" ? blkMore : null) });
+    expect(menuOpen(), "the block's ⋯ opens a menu").toBe(true);
+    const body = (globalThis as unknown as { document: { body: FakeNode } }).document.body;
+    const menu = body.children[body.children.length - 1];
+    const item = menu.children[0];
+    expect(item.textContent).toBe("Copy raw");
+    item.onclick!({ stopPropagation() {} });
     await tick();
     expect(wrote[0]).toBe('{\n  "hits": [\n    {\n      "title": "a"\n    }\n  ]\n}');
     expect(wrote[1]).toBe(WIRE);

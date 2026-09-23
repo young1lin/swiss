@@ -33,10 +33,10 @@ import { fill, h } from "./h.js";
 import { install, langPref, tk, tr } from "./i18n.js";
 import { SCENES } from "./ui-scenes.js";
 import {
-  anchoredMenu, btn, card, closeMenu, closeSheet, decodeStrings, dot, emptyNode, groupNode, iconBtn, iconNode,
-  initSelects, initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot, pane,
-  paneHead, popupMenu, resHead, row, section, seg, sheet, sheetOpen, showSheet, sideRow, spinner, sw, tag, timeline,
-  timelineToggle, toTop,
+  anchoredMenu, btn, card, closeMenu, closeSheet, decodeStrings, dot, emptyNode, failNote, filterInput, groupNode,
+  iconBtn, iconNode, initSelects, initSheet, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note,
+  openFieldSheet, pageFoot, pager, pane, paneHead, popupMenu, resHead, row, section, seg, sheet, sheetOpen,
+  showSheet, sideRow, spinner, sw, tag, timeline, timelineMeta, timelineToggle, toTop, valueBlock,
 } from "./ui/index.js";
 import type { DotState, TimelineItem } from "./ui/index.js";
 
@@ -167,9 +167,17 @@ const SAMPLE_JSON = {
   meta: '{"source":"import","batch":7}',
 };
 
+/** An open call, the way Logs draws one: what the row left out, then the arguments. */
 function callBody(it: TimelineItem): HChild {
-  return jsonCodeNode(decodeStrings(JSON.parse(it.arg || "{}")), false).node;
+  return [
+    timelineMeta([tr("gallery.d.via", { host: "mcp" }), tr("gallery.d.replySize", { n: 96 })]),
+    valueBlock({ label: tr("gallery.d.arguments"), tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
+      jsonCodeNode(decodeStrings(JSON.parse(it.arg || "{}")), false, { oneLine: true }).node),
+  ];
 }
+
+/** A status line's words that are the same in every language: an HTTP status is a value. */
+const HTTP_502 = "HTTP 502";
 
 function catalogue(now: number): HTMLElement {
   const sections = [
@@ -203,7 +211,7 @@ function catalogue(now: number): HTMLElement {
       [tr("gallery.st.longList"), h("select", { aria: { label: tr("gallery.d.schedule") } }, MANY.map((c) => h("option", { value: c }, c)))],
       [tr("gallery.st.disabled"), h("select", { disabled: true, aria: { label: tr("gallery.d.group") } }, CHOICES.map((c) => h("option", { value: c }, c)))],
     ]),
-    entry(["paneHead", "resHead", "anchoredMenu", "note", "pageFoot", "inlineForm", "section", "card", "kvRow"], tk("gallery.c.page"), tk("gallery.c.pageNote"), [
+    entry(["paneHead", "resHead", "anchoredMenu", "note", "failNote", "filterInput", "pager", "pageFoot", "inlineForm", "section", "card", "kvRow"], tk("gallery.c.page"), tk("gallery.c.pageNote"), [
       [tr("gallery.st.contentHead"), paneHead({ desc: tr("gallery.d.headDesc"), actions: [iconBtn("folder-plus", tr("gallery.d.newGroup")), btn(tr("gallery.d.newItem"), { kind: "primary", icon: "plus" })] })],
       // Out of a pane the two layers do not pin; the resource scene shows them stuck.
       [tr("gallery.st.resourceHead"), resHead({
@@ -215,6 +223,13 @@ function catalogue(now: number): HTMLElement {
       [tr("gallery.st.note"), note(tr("gallery.d.noteQuiet"))],
       [tr("gallery.st.noteBusy"), note(tr("gallery.d.loading"), { busy: true })],
       [tr("gallery.st.noteErr"), note(tr("gallery.d.noteErr"), { err: true })],
+      [tr("gallery.st.failNote"), failNote({ text: tr("gallery.d.failText"), why: HTTP_502, action: btn(tr("gallery.d.retry")) })],
+      [tr("gallery.st.filter"), filterInput({ placeholder: tr("gallery.d.filter"), label: tr("gallery.d.filter") })],
+      [tr("gallery.st.pager"), pager({ label: tr("gallery.d.pages"), status: tr("gallery.d.pageN", { n: 2 }), prev: btn(tr("gallery.d.newer")), next: btn(tr("gallery.d.older")) })],
+      [tr("gallery.st.pagerBusy"), pager({
+        label: tr("gallery.d.pages"), status: [tr("gallery.d.pageN", { n: 2 }), spinner(), tr("gallery.d.loading")],
+        prev: btn(tr("gallery.d.newer"), { disabled: true }), next: btn(tr("gallery.d.older"), { disabled: true }),
+      })],
       [tr("gallery.st.inlineForm"), inlineForm(h("input", { placeholder: tr("gallery.d.label"), aria: { label: tr("gallery.d.label") } }), btn(tr("gallery.d.create"), { kind: "primary" }))],
       [tr("gallery.st.foot"), pageFoot({ note: tr("gallery.d.footNote"), rev: "rev 14" })],
       [tr("gallery.st.kvSans"), tr("gallery.d.kvSentence")],
@@ -243,8 +258,13 @@ function catalogue(now: number): HTMLElement {
       [tr("gallery.st.counts"), seg([{ id: "tools", label: tr("gallery.d.tools"), n: 4 }, { id: "resources", label: tr("gallery.d.resources"), n: 0 }, { id: "logs", label: tr("gallery.d.logs") }], "tools")],
       [tr("gallery.st.second"), seg([{ id: "all", label: tr("gallery.d.all") }, { id: "errors", label: tr("gallery.d.errors"), n: 1 }], "errors")],
     ]),
-    entry(["timeline"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody })),
-    entry(["jsonCodeNode"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [], jsonCodeNode(decodeStrings(SAMPLE_JSON), false).node),
+    entry(["timeline", "timelineMeta"], tk("gallery.c.timeline"), tk("gallery.c.timelineNote"), [], timeline(sampleCalls(now), { now, open: new Set(["g3"]), body: callBody })),
+    entry(["jsonCodeNode", "valueBlock"], tk("gallery.c.code"), tk("gallery.c.codeNote"), [
+      [tr("gallery.st.codeOneLine"), valueBlock({ label: tr("gallery.d.arguments"), tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
+        jsonCodeNode({ status: "open", limit: 20 }, false, { oneLine: true }).node)],
+      [tr("gallery.st.codeBlock"), valueBlock({ label: tr("gallery.d.result"), notes: [tr("gallery.d.decodedNote")], tools: [iconBtn("copy", tr("gallery.d.copy"), { ghost: true }), moreBtn(tr("gallery.d.more"))] },
+        jsonCodeNode(decodeStrings(SAMPLE_JSON), false, { oneLine: true }).node)],
+    ]),
     entry(["popupMenu", "sheet", "openFieldSheet", "toTop"], tk("gallery.c.floating"), tk("gallery.c.floatingNote"), [
       [tr("gallery.st.menu"), btn(tr("gallery.d.openMenu"), { icon: "ellipsis", data: { demo: "menu" } })],
       [tr("gallery.st.sheet"), btn(tr("gallery.d.openSheet"), { data: { demo: "sheet" } })],

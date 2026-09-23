@@ -30,11 +30,14 @@
  *              A caption the user named is a group band instead (rule 5).
  *   card       the grouped inset surface rows sit on.
  *   note       a quiet line under a body (busy: with the spinner; err: a contained failure).
+ *   failNote   a load that failed, in place: the sentence, the status, the retry.
+ *   pager      newer / where you are / older under a paged list.
+ *   filterInput the search box in a section's tools.
  *   pageFoot   the revision line. Never a count the context bar already shows (rule 25).
  *   inlineForm one row: the fields, a Group select, the one primary (docs/35 §3).
  *   emptyNode  the one "nothing here" shape (docs/18 V7); its action answers
  *              [data-empty-action] in the owning view's delegated listener. */
-                                      
+                                               
 import { h } from "../h.js";
 import { iconNode } from "./icon.js";
 import { spinner } from "./status.js";
@@ -109,9 +112,37 @@ export function section(o                                                   , ..
 /** A quiet line under a body: what just happened, what is loading. `busy` leads it with the
  *  spinner; `err` is a failure from the far side - contained, tinted, scrolled, never the
  *  loudest thing on the screen (ui.css .note.err). */
-export function note(body        , o                                                 = {})              {
-  return h("div", { class: o.err ? "note err" : "note", id: o.id },
+export function note(body        , o                                                                 = {})              {
+  return h("div", { class: o.err ? "note err" : "note", id: o.id, data: o.data },
     o.busy ? [spinner(), " "] : null, body);
+}
+
+/** A load that failed, in place: the sentence, the status code (the only secondary text - a
+ *  response body never lands in the panel, docs/32 B1) and the way out. */
+export function failNote(o                                                                   )              {
+  return h("div", { class: "fail-note", id: o.id, role: "status" },
+    h("span", null, o.text),
+    o.why != null && o.why !== false && o.why !== "" ? h("span", { class: "fail-why" }, o.why) : null,
+    o.action || null);
+}
+
+/** A list's pages: the newer button, where you are, the older button. The status is a live
+ *  region, so a switch is announced; the view patches the buttons and the status in place
+ *  rather than repainting the list (docs/32 B1), which is why it names them by id. */
+export function pager(o                                                                                                         )              {
+  return h("div", { class: "pager", id: o.id, role: "navigation", aria: { label: o.label } },
+    o.prev,
+    h("span", { class: "pager-status", id: o.statusId, aria: { live: "polite" } }, o.status),
+    o.next);
+}
+
+/** A filter box for a section's tools (section({ tools })): a search field that takes the width
+ *  a filter needs, not a form field's full width. */
+export function filterInput(o                                                                     )                   {
+  return h("input", {
+    class: "filter", id: o.id, type: "search", autocomplete: "off",
+    placeholder: o.placeholder, aria: { label: o.label }, value: o.value ?? "",
+  })                    ;
 }
 
 export function card(...rows          )              {

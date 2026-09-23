@@ -147,6 +147,18 @@ export function timeline(items: TimelineItem[], o: TimelineOpts = {}): HTMLEleme
   return h("div", { class: "tl" }, kids);
 }
 
+/** A quiet line at the top of an expanded row: what the row's own columns left out because it
+ *  is the same on every row (the transport, the client, the size) or because only the open row
+ *  needs it (a ×N run's span). Empty parts drop out; the rest join with a middle dot. */
+export function timelineMeta(parts: HChild[]): HTMLElement {
+  const kids: HChild[] = [];
+  parts.filter((p) => p != null && p !== false && p !== "").forEach((p, i) => {
+    if (i) kids.push(" · ");
+    kids.push(p);
+  });
+  return h("div", { class: "tl-meta" }, kids);
+}
+
 /** Open or close one row in place: the class, aria-expanded, and the body the view hands
  *  in (painted only on open). Pure DOM, no listener - the view's delegated click calls it.
  *  Answers the new open state; false when no row has that id. */

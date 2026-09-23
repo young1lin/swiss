@@ -216,18 +216,24 @@ describe("the I4 modules in Chinese (detail, logs, run)", () => {
     expect(tr("detail.nameMsg", { name: "redis", msg: tr("detail.configSavedRestarted") })).toBe("redis: 配置已保存 → 已重启");
   });
 
-  it("formats char counts and the call meta skeleton in Chinese", async () => {
+  it("formats char counts and an open call's meta and blocks in Chinese", async () => {
     await loadLocale();
-    const { fmtChars, callNode } = await import("../src/logs.js");
+    const { fmtChars, callBodyNode, callItem } = await import("../src/logs.js");
     expect(fmtChars(500)).toBe("500 字符");
     expect(fmtChars(1500)).toBe("1.5k 字符");
-    const call = callNode({ callsOpen: {}, callsFull: {} } as never, {
+    const row = {
       seq: 7, at: "2026-02-03T04:05:06Z", via: "redis", client: "cc", ms: 3, chars: 120,
-      tool: "GET", args: "k", ok: true, output: "1", preview: false,
-    } as never) as HTMLElement;
-    expect(call.textContent).toContain("  ·  redis  ·  cc  ·  3 ms  ·  120 字符");
-    expect(call.textContent).toContain("参数");
-    expect(call.textContent).toContain("结果");
+      tool: "GET", args: "k", ok: false, output: "1", preview: false,
+    };
+    const host = document.createElement("div");
+    host.append(...(callBodyNode({ callsOpen: {}, callsFull: {} } as never, [row, { ...row, seq: 6 }] as never) as HTMLElement[]).filter(Boolean));
+    const metas = [...host.querySelectorAll(".tl-meta")].map((n) => n.textContent);
+    expect(metas[0]).toBe("经 redis · 客户端 cc · 回复 120 字符");
+    expect(metas[1]).toContain("2 次相同的调用");
+    expect(host.textContent).toContain("参数");
+    expect(host.textContent).toContain("错误");
+    expect(host.querySelector("[data-blkmore]")!.getAttribute("aria-label")).toBe("参数的更多操作");
+    expect(callItem(row as never).status!.text).toBe("失败");
   });
 
   it("fills the delete confirm and the run-form refusals", async () => {
