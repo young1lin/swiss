@@ -1,6 +1,7 @@
 [package]
 name = "swiss-data"
-version = "0.1.0"
+version.workspace = true
+description = "The swiss Data plugin: database browsing, the SQL console, Redis keys and streams behind /api/db."
 edition = "2021"
 authors.workspace = true
 license.workspace = true
@@ -8,8 +9,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-swiss-core = { path = "../swiss-core", version = "0.1.0" }
-swiss-host = { path = "../swiss-host", version = "0.1.0" }
+swiss-core = { path = "../swiss-core" }
+swiss-host = { path = "../swiss-host" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "sync"] }
 serde = { version = "1", features = ["derive"] }

@@ -5,7 +5,8 @@ test-utils = []
 
 [package]
 name = "swiss-core"
-version = "0.1.0"
+version.workspace = true
+description = "Platform primitives for swiss: paths, logging, sealed envelopes, process trees, PTYs and DPAPI."
 edition = "2021"
 authors.workspace = true
 license.workspace = true

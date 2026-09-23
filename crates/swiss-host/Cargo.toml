@@ -1,6 +1,7 @@
 [package]
 name = "swiss-host"
-version = "0.1.0"
+version.workspace = true
+description = "The swiss plugin host: descriptors, lifecycle, actions, runs, the process supervisor, config and the loopback boundary."
 edition = "2021"
 authors.workspace = true
 license.workspace = true
@@ -8,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-swiss-core = { path = "../swiss-core", version = "0.1.0" }
+swiss-core = { path = "../swiss-core" }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "net", "time", "signal", "sync", "fs", "io-util", "process"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }

@@ -1,6 +1,7 @@
 [package]
 name = "swiss-it"
-version = "0.1.0"
+version.workspace = true
+description = "Dev-only integration harness (docs/44): the real MySQL, PostgreSQL and Redis gates behind the it feature."
 edition = "2021"
 authors.workspace = true
 license.workspace = true
