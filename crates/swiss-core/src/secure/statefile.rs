@@ -27,7 +27,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::envelope::{self, Sealed};
-use super::key::{self, MASTER_KEY_ENV};
+use super::key::{self, MASTER_KEY_ENV_SWISS};
 use crate::atomic_json::{write_json_atomic, write_text_atomic};
 use crate::log;
 
@@ -80,7 +80,7 @@ pub fn read_secure_json(path: &Path) -> Result<Option<Value>, String> {
          Run 'swiss export' on the machine that sealed it and 'swiss import' here, or set {}.",
         path.display(),
         sealed.key_source,
-        MASTER_KEY_ENV
+        MASTER_KEY_ENV_SWISS
     ))
 }
 
@@ -251,7 +251,7 @@ mod tests {
         let err = read_secure_json(&path).expect_err("another machine's key cannot open it");
         assert!(err.contains("cannot decrypt"), "{err}");
         assert!(err.contains("swiss export"), "{err}");
-        assert!(err.contains(MASTER_KEY_ENV), "{err}");
+        assert!(err.contains(MASTER_KEY_ENV_SWISS), "{err}");
         assert!(err.contains("dpapi"), "{err}"); // which source sealed it
         let _ = std::fs::remove_dir_all(&dir);
     }

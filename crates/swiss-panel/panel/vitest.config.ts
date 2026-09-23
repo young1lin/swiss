@@ -18,7 +18,7 @@ import { defineConfig } from "vitest/config";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// No setup file on purpose: the old Node-repo setup pinned MCP_GATEWAY_MASTER_KEY/HOME for the
+// No setup file on purpose: the old Node-repo setup pinned a master key and home for the
 // server suite — panel tests need neither. Anything a DOM-stub test needs, it stubs itself.
 
 /* The sources under panel/src import the vendored runtime ("./vendor/cronstrue/…" from

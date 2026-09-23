@@ -436,7 +436,7 @@ fn test_master_key() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| {
         // Safety: one write, under a OnceLock, of a variable nothing in this binary caches.
-        unsafe { std::env::set_var(swiss_core::secure::key::MASTER_KEY_ENV, "ab".repeat(32)) }
+        unsafe { std::env::set_var(swiss_core::secure::key::MASTER_KEY_ENV_SWISS, "ab".repeat(32)) }
     });
 }
 

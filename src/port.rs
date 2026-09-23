@@ -41,8 +41,8 @@ pub fn as_listen_port_value(v: &serde_json::Value) -> Option<u16> {
     }
 }
 
-/// The port named by `SWISS_PORT` / `MCP_GATEWAY_PORT` (new name first, first
-/// set-and-non-empty wins) when it parses to a usable port. Empty/unset is None, not an error.
+/// The port named by `SWISS_PORT` when it parses to a usable port. Empty/unset is None, not an
+/// error.
 /// The scan itself is swiss-core's so the CLI here and the config loader below can never
 /// disagree about which variable wins.
 pub fn env_listen_port() -> Option<u16> {
@@ -65,32 +65,22 @@ mod tests {
     }
 
     #[test]
-    fn the_env_port_honours_the_new_name_first() {
+    fn the_env_port_reads_swiss_port_only() {
         // Both variables are process-wide and other tests in this binary write them, so this
         // holds the same data-dir lock every other env-planting test takes.
         let _lock = swiss_core::paths::DATA_DIR_LOCK.blocking_lock();
         // SAFETY: planted only under that lock and taken back before it releases.
         unsafe {
             std::env::remove_var("SWISS_PORT");
-            std::env::remove_var("MCP_GATEWAY_PORT");
 
             std::env::set_var("SWISS_PORT", "18095");
             assert_eq!(env_listen_port(), Some(18095));
 
-            // Both set: the new name wins, so an operator pinning both gets one answer.
-            std::env::set_var("MCP_GATEWAY_PORT", "18096");
-            assert_eq!(env_listen_port(), Some(18095));
-
-            // The legacy name alone still steers — pre-rename scripts keep working.
-            std::env::remove_var("SWISS_PORT");
-            assert_eq!(env_listen_port(), Some(18096));
-
-            // An empty new-name value is not a pin: the scan falls through to the legacy one.
+            // An empty value is not a pin.
             std::env::set_var("SWISS_PORT", "");
-            assert_eq!(env_listen_port(), Some(18096));
+            assert_eq!(env_listen_port(), None);
 
-            // A set-but-unusable value is not silently skipped for the other name.
-            std::env::remove_var("MCP_GATEWAY_PORT");
+            // A set-but-unusable value is not silently skipped.
             std::env::set_var("SWISS_PORT", "not-a-port");
             assert_eq!(env_listen_port(), None);
 

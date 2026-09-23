@@ -302,7 +302,7 @@ impl RemoteMcpClient {
         let init_params = small_raw(&json!({
             "protocolVersion": OFFERED_PROTOCOL_VERSION,
             "capabilities": {},
-            "clientInfo": { "name": "mcp-gateway", "version": "1.0" },
+            "clientInfo": { "name": "swiss", "version": "1.0" },
         }))?;
         let result = session.request("initialize", &init_params, None).await?;
         // The negotiated version and capabilities are envelope fields the client routes on,

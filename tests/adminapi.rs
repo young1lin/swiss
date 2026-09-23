@@ -58,8 +58,8 @@ fn sandbox() {
         // Safety: this runs once, before any test has touched the paths or key modules, and both
         // variables are read fresh on every use rather than cached.
         unsafe {
-            std::env::set_var("MCP_GATEWAY_HOME", &home);
-            std::env::set_var("MCP_GATEWAY_MASTER_KEY", "ab".repeat(32));
+            std::env::set_var("SWISS_HOME", &home);
+            std::env::set_var("SWISS_MASTER_KEY", "ab".repeat(32));
         }
     });
 }

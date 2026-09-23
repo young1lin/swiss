@@ -166,7 +166,7 @@ fn token_lookup(token_env: &str) -> Option<String> {
 
 /// A missing port must not reach the listener as "pick any free port" — the gateway would come
 /// up looking healthy on an address no client was ever pointed at. A malformed one is refused
-/// for the same reason. `SWISS_PORT` / `MCP_GATEWAY_PORT` (new name first) wins over the file,
+/// for the same reason. `SWISS_PORT` wins over the file,
 /// so `swiss start --port N` actually changes where this process listens.
 fn resolve_port(raw: Option<&Value>) -> Result<u16, String> {
     if let Some(from_env) = env_listen_port() {

@@ -175,9 +175,8 @@ scripts/test-instance.ps1 -Stop      # kill by the port's owning PID, never by p
 - The script (`scripts/test-instance.ps1`, docs/16 H2) copies the sealed state files into
   `%LOCALAPPDATA%\swiss-test-home` (DPAPI opens a copied `master.key` on the same machine under
   the same user — docs/05) and points `SWISS_HOME` there, so a save on 19998 writes the
-  **test home**, never the user's config — the script sets the new name, and the legacy
-  `MCP_GATEWAY_HOME` still works. No read-only discipline needed any more — the
-  snapshot is the isolation.
+  **test home**, never the user's config — the script sets `SWISS_HOME`. No read-only
+  discipline needed any more — the snapshot is the isolation.
 - It serves from `target-test\release\swiss.exe`: the 19999 daemon holds `target\release\swiss.exe`,
   so iteration builds still go to a separate directory
   (`$env:CARGO_TARGET_DIR = "target-test"; cargo build --release`).

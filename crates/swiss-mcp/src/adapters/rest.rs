@@ -1243,7 +1243,7 @@ mod tests {
     async fn sends_the_rendered_request_with_the_declared_headers_and_the_default_filled_in() {
         let remote = api().await;
         let e = engine(search_def(&remote.base_url));
-        e.call("search", &json!({ "query": "mcp gateway" }))
+        e.call("search", &json!({ "query": "rust lsp" }))
             .await
             .expect("the call succeeds");
 
@@ -1260,7 +1260,7 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Value>(&seen[0].body).expect("a JSON body"),
             json!({
-                "q": "mcp gateway",
+                "q": "rust lsp",
                 "engine": "default",
                 "safe": false,
                 // the declared default, and a number rather than "10"

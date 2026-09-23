@@ -129,7 +129,7 @@ fn pin_home_and_key() {
     let _ = swiss_core::paths::test_home();
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     ONCE.get_or_init(|| unsafe {
-        std::env::set_var(swiss_core::secure::key::MASTER_KEY_ENV, "cd".repeat(32))
+        std::env::set_var(swiss_core::secure::key::MASTER_KEY_ENV_SWISS, "cd".repeat(32))
     });
 }
 
