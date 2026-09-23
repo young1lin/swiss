@@ -101,8 +101,8 @@ The second batch's 7 agents deliver two executable things:
   **17 fixes + 10 won't-fixes** (27 rows in the overview table). Batch 1, eight zero-risk items (stale comments + docs
   status lines); batch 2, three code fixes (traffic.rs OnceLock instantiation following CallLog's S2 pattern, closing out
   the resolve_def dead code — the audit took it for a migration, verification found make_adapter already uses the strict
-  version, plus the terminal.rs comment rewrite); batch 3, six panel-side items (suspended: ../local-mcp-gateway does
-  not exist on this machine, the Node reference repo must be checked out first). All 10 won't-fix groups carry their
+  version, plus the terminal.rs comment rewrite); batch 3, six panel-side items executed in this repo per ADR-024
+  (the Node-checkout precondition was retired with it). All 10 won't-fix groups carry their
   provenance, to prevent mistaken fixes (deliberate asymmetries, compatibility shapes, user-decided items).
 - **[tests/README.md](tests/README.md)** — the integration-test master plan: the shape of the whole repo's ~940 tests, the
   standard test-shape code (build_app → oneshot → asserts, the Host header must be patched to loopback), a shared-helpers

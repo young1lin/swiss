@@ -38,6 +38,15 @@ same machine (that user owns the sealed store's key by construction), and anythi
 only by deliberately widening the bind past loopback — the documentation says not to, and
 the config loader refuses it.
 
+Two honest notes inside that boundary: on Windows the seal key is DPAPI-bound to your user,
+while on Linux the machine-id binds to the machine, not the user — on a shared host a
+different local user can derive the seal key, so treat multi-user machines accordingly. And
+one deliberate exception to the secret read-out scope: the panel can read back a bearer
+token it issued, in plaintext (GET /api/tokens/{id}/secret) — the token is stored
+verbatim for constant-time comparison, the loopback caller is the same user, and the
+separate route makes the read explicit. Vault secrets never come back out.
+
 ## Supported versions
 
-Only the latest release receives fixes. There is no LTS line.
+Only the latest release receives fixes. There is no LTS line. CVE IDs are requested
+through GitHub Security Advisories when a fix ships.

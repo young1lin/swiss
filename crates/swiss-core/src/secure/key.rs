@@ -16,16 +16,18 @@
 
 //! The machine-bound master key — port of `secure/key.ts`.
 //!
-//! Where the key lives, per platform — always the OS credential store first, because that is the
-//! one place the OS itself keeps secrets at rest:
+//! Where the key lives, per platform — as built (the implemented list is `sources_for`
+//! below; anything not there is future work, however the Node build did it):
 //!
 //!   Windows  DPAPI (CurrentUser). A random key is generated once, protected by DPAPI, and the
 //!            protected blob sits in the data dir as 'master.key'. On any other machine or under
 //!            any other user the blob is opaque — which is exactly the anti-copy property.
-//!   macOS    the login Keychain (Phase: the CLI route, as in the Node build).
-//!   Linux    the Secret Service via 'secret-tool' when a session daemon exists (same).
-//!   fallback the machine id (MachineGuid / /etc/machine-id), hashed. World-readable on Linux, so
-//!            it binds to the MACHINE, not the user.
+//!   Linux    /etc/machine-id (or /var/lib/dbus/machine-id), hashed. World-readable, so it
+//!            binds to the MACHINE, not the user; treat shared hosts accordingly. The Node
+//!            build's Secret Service route is future work.
+//!   macOS    NOT yet implemented: macOS has no machine-id file and no Keychain source has
+//!            landed, so today every state save fails with "no master key available" — the
+//!            login-Keychain route is the tracked future work.
 //!
 //! An explicit SWISS_MASTER_KEY / MCP_GATEWAY_MASTER_KEY (64 hex chars, new name first)
 //! overrides every source — for CI, containers and recovery, and what the test suite uses so it
