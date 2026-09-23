@@ -70,7 +70,14 @@
        whole, no inner scroll box. */
     .call-blk pre.logs { max-height: none; overflow: visible; font-size: var(--f-label); line-height: 1.6; }
     .call-blk pre.jv-tail { margin-top: var(--s1); }
-    #runOut:not(:empty) { max-height: 480px; margin-top: var(--s2); background: var(--sep-soft); border-radius: 8px; }
+    /* The Run tab's reply sits under the form's card, a full step down: a labelled value block
+       (ui/json-view.ts valueBlock), the same shape a Logs call opens to. */
+    .run-out:not(:empty) { margin-top: var(--s5); }
+    /* A reply can be thousands of lines (SHOW VARIABLES): it scrolls in its block, as the old
+       output box did, so the form above it stays one scroll away rather than a page of JSON. */
+    .run-out .vblock > pre { max-height: 60vh; overflow: auto; }
+    /* A resource's contents in its sheet: the sheet keeps its head and foot, the body scrolls. */
+    .rd-body { max-height: 60vh; overflow: auto; margin-top: var(--s2); }
     .call-body pre.logs.err { color: var(--red); }
     .call-body > .call-gone { padding-top: var(--s2); }
 
@@ -115,9 +122,9 @@
     /* The same visual language as the Logs tab's expanded row and Run's output: uppercase section
        labels, code on the sep-soft tint with rounded corners. The panes of one panel should not
        invent a third way to show a request/reply pair. */
-    .hist-view pre.logs { margin: 0 0 var(--s3); padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: 8px; max-height: 176px; }
-    .hist-view .call-lbl { padding: 0 0 var(--s1); margin-bottom: 0; }
-    .hist-view .call-lbl + pre.logs { margin-top: 0; }
+    .hist-view .vblock + .vblock { margin-top: var(--s3); }
+    /* The popover is a peek: each block scrolls inside it rather than growing the pane. */
+    .hist-view .vblock > pre { max-height: 176px; overflow: auto; }
     /* The run's identity line: the same status dot every list in the panel uses, then when/how/
        duration in tabular numerals, separated from the content by a hairline. */
     .hist-head {
@@ -128,8 +135,8 @@
       white-space: nowrap; overflow: hidden;
     }
     .hist-head .dot { flex: none; }
-    .hist-head .grow { flex: 1; }
-    .hist-note { font-size: var(--f-caption); color: var(--text-3); padding-top: var(--s1); margin: calc(-1 * var(--s2)) 0 0; }
+    .hist-head .hist-ms { margin-left: auto; }
+    .hist-note { font-size: var(--f-caption); color: var(--text-3); padding-top: var(--s2); }
     .hist-empty {
       display: grid; place-items: center; height: 100%;
       padding: var(--s4); font-size: var(--f-label); color: var(--text-3); text-align: center;

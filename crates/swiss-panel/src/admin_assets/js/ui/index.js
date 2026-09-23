@@ -48,3 +48,4 @@ export { DecodedString, JV_INLINE, JV_LINES, decodeStrings, fitsOneLine, formatt
 export { closeSheet, initSheet, openFieldSheet, sheet, sheetOpen, showSheet } from "./sheet.js";
                                                             
 export { toTop } from "./to-top.js";
+export { checkField, field, form, formActions, hint, pair } from "./form.js";

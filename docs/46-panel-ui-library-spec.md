@@ -365,6 +365,11 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
       参数）用 `row({ detail })` 原地展开：名字与说明成为原生 `<details>`，行的按钮留在外面，点它们不会展开。
       参数名那一行（加粗必填）不再挂在行上，进了展开的记录（原型 B 的行只有名字、说明、开关）。被关掉的工具是
       自己的一节（"已停用"），不再是卡片里的一条小标题。
+- [x] Run 标签页（P2-3b）：表单用库里新加的 `ui/form.ts`（`form`、`field`、`checkField`、`pair`、`formActions`、`hint`，
+      沿用 ui.css 里已有的 `.field` / `.fld` / `.check` / `.two` / `.form-actions` / `.hint`）。参数字段由 schema 生成
+      （与 Jobs 的动作表单共用 `argFieldsNode`），名字后是必填星号与类型（`field({ meta })`，等宽、灰）。运行结果移到
+      卡片下面，是与 Logs 展开区同形的 `valueBlock`：短 JSON 一行、错误是红字、超过 200 行的回复退回纯文本并在块内
+      滚动（60vh，原来的输出框也是有界的）。"过往运行"弹层里的参数与结果也换成同一个块；资源内容用库里的 `sheet()`。
 - [x] P1b 留下的两件：`.seg` 自带的 `margin-bottom` 交给页面的流（组件不带摆放，P2-1 已做）；`sidebar.ts` 的
       `sideRowNode` 换成 `sideRow()`（P2-3a）。（`popupMenu` 改用 `h()` 等到最后一个手写微型 DOM 的套件——Data 的——换成 happy-dom，即 P7。）
 

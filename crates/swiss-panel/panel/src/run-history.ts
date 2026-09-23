@@ -31,6 +31,9 @@ import { mcpDetail, selectedMcp } from "./mcp-state.js";
 import { locale, tr, trn } from "./i18n.js";
 import { closeMenu, menuOpen, popupMenu } from "./ui/menu.js";
 import { closeSheet } from "./ui/sheet.js";
+import {
+  JV_LINES, btn, decodeStrings, dot, jsonCodeNode, note, sheet, showSheet, spinner, splitJsonBlock, textNode, valueBlock,
+} from "./ui/index.js";
 
 /* --- Run history: the refill control in the actions row ------------------------------------------ */
 /** When an entry ran. Reuses ago() inside a day; past that, ago's time-of-day would be ambiguous,
@@ -66,25 +69,36 @@ function histRowsNode(d: McpDetail, tool: string): HChild {
   });
 }
 
+/** A value to read, the way Logs shows one (docs/46 §3.2): JSON as the panel's code block - on
+ *  one line when it is short - and anything else exactly as it arrived; an error stays red text.
+ *  Past JV_LINES the whole reply is plain formatted text instead: neither Run nor a hover has a
+ *  Show all, and a 3,000-line reply painted token by token is DOM nobody reads. */
+function readableBody(text: string, err: boolean): HChild[] {
+  const parsed = err ? null : splitJsonBlock(text);
+  if (parsed) {
+    const code = jsonCodeNode(decodeStrings(parsed.value), false, { oneLine: !parsed.tail });
+    if (code.lines <= JV_LINES) return [code.node, parsed.tail ? textNode(parsed.tail, true, "logs jv-tail").node : null];
+  }
+  return [textNode(err ? text : fmtJson(text), true, "logs" + (err ? " err" : "")).node];
+}
+
 /** One hovered entry rendered in full: the meta line, the COMPLETE arguments (the row label is
  *  clipped at 96 chars — this is the answer to "let me read the whole thing"), and the reply that
  *  run produced (the stored preview, so a 1 MB reply never loads on a hover). */
 function histViewNode(c: ApiMcpCallRow): HChild {
   // The identity line: status dot (the panel's universal up/down mark), when, who, how long —
   // not prose glued with dots, so each fact keeps its own weight and nothing runs together.
+  const outcome = c.ok ? tr("runHistory.result") : tr("runHistory.error");
   const head = h("div", { class: "hist-head" },
-    h("span", { class: "dot " + (c.ok ? "up" : "down") }),
+    dot(c.ok ? "up" : "down", outcome),
     h("span", null, histWhen(c.at)),
     h("span", null, "·"),
     h("span", null, c.via + (c.client ? " (" + c.client + ")" : "")),
-    h("span", { class: "grow" }),
-    c.ms != null ? h("span", null, tr("runHistory.durationMs", { ms: c.ms })) : null);
+    c.ms != null ? h("span", { class: "hist-ms" }, tr("runHistory.durationMs", { ms: c.ms })) : null);
   return frag(
     head,
-    h("div", { class: "call-lbl" }, tr("runHistory.arguments2")),
-    h("pre", { class: "logs" }, fmtJson(c.args) || tr("runHistory.none")),
-    h("div", { class: "call-lbl" }, c.ok ? tr("runHistory.result") : tr("runHistory.error")),
-    h("pre", { class: "logs" + (c.ok ? "" : " err") }, fmtJson(c.output) || tr("runHistory.empty")),
+    valueBlock({ label: tr("runHistory.arguments2") }, ...readableBody(c.args || tr("runHistory.none"), false)),
+    valueBlock({ label: outcome }, ...readableBody(c.output || tr("runHistory.empty"), !c.ok)),
     c.preview
       ? h("div", { class: "hist-note" }, tr("runHistory.replyShownFirst"), fmtChars(c.chars),
           tr("runHistory.fullReplyLivesLogs"))
@@ -203,7 +217,7 @@ async function histPreview(seq: number): Promise<void> {
   d.run.histSelSeq = seq;
   let full = d.run.histFull[seq];
   if (!full) {
-    fill(view, h("div", { class: "hist-empty" }, h("span", { class: "spin" }), " ", tr("runHistory.loading")));
+    fill(view, h("div", { class: "hist-empty" }, spinner(), " ", tr("runHistory.loading")));
     try {
       const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/calls/" + encodeURIComponent(seq));
       if (!r.ok) throw new Error(tr("runHistory.httpN", { n: r.status }));
@@ -346,7 +360,7 @@ async function runTool(): Promise<void> {
   const btn = $<HTMLButtonElement>("runBtn");
   if (btn) { btn.disabled = true; btn.textContent = tr("runHistory.running"); }
   const meta = $("runMeta");
-  if (meta) fill(meta, h("span", { class: "spin" }));
+  if (meta) fill(meta, spinner());
   try {
     const r = await api("/api/mcps/" + encodeURIComponent(d.name) + "/call", {
       method: "POST", body: JSON.stringify({ tool: d.run.tool, arguments: args }),
@@ -378,10 +392,10 @@ function renderRunResult(): void {
   const out = $("runOut"), meta = $("runMeta");
   if (!out || !d) return;
   const res = d.run.result as McpRunResult | null;
-  if (!res) { out.textContent = ""; if (meta) meta.textContent = ""; return; }
-  // Formatted for reading; the size in the meta line is the real (compact) reply.
-  out.textContent = fmtJson(res.text);
-  out.className = "logs" + (res.ok ? "" : " err");
+  if (!res) { fill(out); if (meta) meta.textContent = ""; return; }
+  // The reply as Logs shows one (docs/46 §3.2); the size in the meta line is the real (compact)
+  // reply, not the formatted text.
+  fill(out, valueBlock({ label: res.ok ? tr("runHistory.result") : tr("runHistory.error") }, ...readableBody(res.text, !res.ok)));
   if (meta) {
     const bytes = new TextEncoder().encode(res.text).length;
     // ms reuses runHistory.durationMs; B/KB are unit format strings, not copy (docs/38
@@ -851,33 +865,32 @@ async function toggleTool(name: string, currentlyOn: boolean, btn: HTMLButtonEle
 }
 
 /** Read one resource and show its contents. Read-only, so a sheet with no form is the whole UI. */
-async function readResource(uri: string, btn: HTMLButtonElement | null): Promise<void> {
+async function readResource(uri: string, trigger: HTMLButtonElement | null): Promise<void> {
   const sel = selectedMcp();
   if (!sel) return;
-  const label = btn ? btn.textContent : "";
-  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  const label = trigger ? trigger.textContent : "";
+  if (trigger) { trigger.disabled = true; trigger.textContent = "…"; }
   const j = await apiJson<ApiMcpResourceRead>("/api/mcps/" + encodeURIComponent(sel) + "/resource", {
     method: "POST",
     body: JSON.stringify({ uri: uri }),
   });
-  if (btn) { btn.disabled = false; btn.textContent = label || tr("runHistory.read"); }
+  if (trigger) { trigger.disabled = false; trigger.textContent = label || tr("runHistory.read"); }
   if (!j) return;
   // hidden BEFORE the content (the house sheet idiom, panel-proof-of-life rule 1). The
   // resource text is a text node - a resource body is data, never markup.
-  $("sheet").hidden = false;
-  fill($("sheet"),
-    h("div", { class: "sheet", role: "dialog", aria: { modal: "true", label: tr("runHistory.resourceContents") } },
-      h("div", { class: "sheet-head" }, h("h2", null, uri)),
-      h("div", { class: "sheet-body" },
-        h("div", { class: "note" },
-          j.ok
-            ? tr("runHistory.resourceMeta", { type: j.mimeType || "text/plain", ms: j.ms ?? 0 })
-            : h("span", { style: "color:var(--red)" }, tr("runHistory.readFailed"))),
-        h("pre", { class: "logs", style: "max-height:60vh" }, j.text || "")),
-      h("div", { class: "sheet-foot" },
-        h("button", { class: "btn", id: "rd-close" }, tr("runHistory.close")))));
+  // The library sheet (showSheet unhides the host before it fills it) and the panel's one code
+  // block: a resource is usually JSON (a schema overview, a table's columns) and reads like a reply.
+  showSheet(sheet({
+    title: uri, label: tr("runHistory.resourceContents"),
+    body: [
+      j.ok
+        ? note(tr("runHistory.resourceMeta", { type: j.mimeType || "text/plain", ms: j.ms ?? 0 }))
+        : note(tr("runHistory.readFailed"), { err: true }),
+      h("div", { class: "rd-body" }, readableBody(j.text || "", !j.ok)),
+    ],
+    foot: btn(tr("runHistory.close"), { id: "rd-close" }),
+  }));
   $("rd-close").onclick = closeSheet;
-  $("sheet").onclick = (e) => { if (e.target === $("sheet")) closeSheet(); };
 }
 
 /** Repaint only the Logs tab body, so a poll doesn't rebuild the pane (or the header, or the menu).

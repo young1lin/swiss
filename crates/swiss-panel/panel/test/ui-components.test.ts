@@ -27,6 +27,9 @@ import { h } from "../src/h.js";
 import { install } from "../src/i18n.js";
 import zh from "../src/locales/zh.js";
 import {
+  checkField as checkFieldFn, field as fieldFn, form as formFn, formActions, hint as hintFn, pair,
+} from "../src/ui/index.js";
+import {
   anchoredMenu, btn, card, closeMenu, closeSheet, collapseRuns, dayLabel, decodeStrings, dot, emptyNode, failNote, filterInput,
   fmtMs, groupNode, iconBtn, iconNode, inlineForm, jsonCodeNode, kvRow, menuOpen, moreBtn, note, openFieldSheet, pageFoot,
   pager, paneBody, paneHead, popupMenu, resHead, row, section, seg, sheet as sheetFrame, spinner, styleSelect, sw, tag,
@@ -208,6 +211,32 @@ describe("ui/page", () => {
     expect(disc.contains(acts)).toBe(false);
     expect(acts.querySelectorAll("button").length).toBe(2);
     expect(row({ name: "plain" }).querySelector("details"), "no detail, no disclosure").toBeNull();
+  });
+
+  it("forms: a label over its control with star and meta, a check to the right, a pair, the foot", () => {
+    const input = document.createElement("input");
+    input.id = "r-arg-sql";
+    const f = fieldFn({ label: "sql", required: true, meta: "string", control: input, hint: "The statement." });
+    expect(f.className).toBe("fld");
+    const label = f.querySelector("label.field")!;
+    expect(label.firstElementChild!.textContent).toBe("sql *string");
+    expect(label.querySelector(".req-star")!.textContent).toBe("*");
+    expect(label.querySelector(".field-meta")!.textContent).toBe("string");
+    expect(label.querySelector("#r-arg-sql"), "the control is inside the label, so a click on the words focuses it").not.toBeNull();
+    expect(f.querySelector(":scope > .hint")!.textContent).toBe("The statement.");
+    expect(fieldFn({ label: "x", control: document.createElement("input"), hint: "" }).querySelector(".hint"), "no hint, no empty line").toBeNull();
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    const c = checkFieldFn({ label: "Start", control: box });
+    expect(c.querySelector("label.check")!.firstElementChild).toBe(box);
+    expect(pair(fieldFn({ label: "a", control: document.createElement("input") }), fieldFn({ label: "b", control: document.createElement("input") })).className).toBe("two");
+    const whole = formFn(f, formActions(btn("Run", { kind: "primary" })));
+    expect(whole.className).toBe("form");
+    expect(whole.querySelector(".form-actions > .btn.primary")).not.toBeNull();
+    const refusal = hintFn("taken", { id: "g-err", bad: true, hidden: true, live: true });
+    expect(refusal.className).toBe("hint bad");
+    expect(refusal.hidden).toBe(true);
+    expect(refusal.getAttribute("aria-live")).toBe("polite");
   });
 
   it("pager: newer, a live status, older - a navigation landmark the view patches by id", () => {
@@ -696,6 +725,7 @@ describe("docs/46 - every class the library draws is styled by base.css or ui.cs
       failNote({ text: "t", why: "w", action: btn("r") }), filterInput({ placeholder: "q", label: "q" }),
       valueBlock({ label: "l", notes: ["n"], tools: [iconBtn("copy", "c")] }, jsonCodeNode({ v: 1 }, false, { oneLine: true }).node),
       timelineMeta(["a", "b"]),
+      formFn(pair(fieldFn({ label: "a", required: true, meta: "m", control: document.createElement("input"), hint: "h" }), checkFieldFn({ label: "c", control: document.createElement("input") })), hintFn("x", { bad: true }), formActions(btn("b"))),
       row({ name: "n", sub: "s", detail: valueBlock({ label: "l", text: "t" }), primary: btn("b") }),
       toTop(document.createElement("div")),
       section({ cap: "c", tools: [btn("x")] }, card(row({ name: "n" }))),

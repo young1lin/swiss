@@ -131,6 +131,9 @@
     /* The one place colour marks something other than state: a required argument in Run. Leaving it
        out is the error the form is about to report, so it is the same red that reports it. */
     .req-star { color: var(--red); font-weight: var(--w-emph); }
+    /* ui/form.ts field({ meta }): a quiet word after the name - an argument's JSON type is a value,
+       so mono, a caption's size, a grid step away. */
+    .field-meta { margin-left: var(--s2); font-family: var(--mono); font-size: var(--f-caption); color: var(--text-3); }
     label.check { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-body); }
     label.check input { width: auto; accent-color: var(--accent); }
 

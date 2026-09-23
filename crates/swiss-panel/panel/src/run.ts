@@ -18,10 +18,11 @@ import type { ApiMcpRow, ApiMcpTool, ToolInputSchema, ToolSchemaProp } from "./t
 import type { PhantomMcpRow } from "./types/dom.js";
 import type { McpDetail } from "./types/state.js";
 import { $, iconNode } from "./util.js";
-import { h } from "./h.js";
+import { frag, h } from "./h.js";
 import type { HChild } from "./h.js";
 import { histButtonLabel } from "./run-history.js";
 import { tr } from "./i18n.js";
+import { btn, card, checkField, field, form, formActions, hint, note } from "./ui/index.js";
 
 /** What the argument-form generator needs of a tool: its input schema and nothing else, so
  *  an MCP tool and a jobs action (whose schema field is the same JSON Schema) both fit. */
@@ -77,7 +78,7 @@ function argFieldsNode(tool: SchemaCarrier, idPrefix?: string, values?: Record<s
   const props: Record<string, ToolSchemaProp> = schema.properties || {};
   const required = schema.required || [];
   const keys = Object.keys(props);
-  if (!keys.length) return h("div", { class: "hint" }, tr("run.toolTakesArguments"));
+  if (!keys.length) return hint(tr("run.toolTakesArguments"));
   return keys.map((k) => {
     const p = props[k] || {};
     const id = pfx + k;
@@ -85,28 +86,24 @@ function argFieldsNode(tool: SchemaCarrier, idPrefix?: string, values?: Record<s
       : p.type === "object" ? "object"
       : p.type === "boolean" ? "boolean"
       : (p.type === "number" || p.type === "integer") ? "number" : "string";
-    const star = required.includes(k) ? h("span", { class: "req-star" }, "*") : null;
-    const hint = p.description ? h("div", { class: "hint" }, p.description) : null;
+    const req = required.includes(k);
+    const help = p.description || null;
     const data = { arg: k, kind: kind };
     if (kind === "boolean") {
-      // Name and star in one span: .check is a flex row with an 8px gap, so a bare text node would
-      // leave the star floating a gap away from the name it belongs to.
-      return h("div", null,
-        h("label", { class: "check" },
-          h("input", { type: "checkbox", id: id, data: data, checked: have[k] === true }),
-          h("span", null, k, " ", star)),
-        hint);
+      return checkField({
+        label: k, required: req, hint: help,
+        control: h("input", { type: "checkbox", id: id, data: data, checked: have[k] === true }) as HTMLInputElement,
+      });
     }
     // A constrained field renders as a dropdown rather than a free-text box that shows the allowed
     // values nowhere. The blank first option keeps "leave this argument out" reachable.
     if (Array.isArray(p.enum) && p.enum.length) {
-      return h("div", null,
-        h("label", { class: "field" },
-          h("span", null, k, " ", star, "  ·  ", kind),
-          h("select", { id: id, data: data },
-            h("option", { value: "" }),
-            p.enum.map((v: unknown) => { return h("option", { value: String(v), selected: have[k] === v }, String(v)); }))),
-        hint);
+      return field({
+        label: k, required: req, meta: kind, hint: help,
+        control: h("select", { id: id, data: data },
+          h("option", { value: "" }),
+          p.enum.map((v: unknown) => { return h("option", { value: String(v), selected: have[k] === v }, String(v)); })),
+      });
     }
     const area = kind === "array" || kind === "object" || k === "sql";
     const itemType = kind === "array" && p.items && p.items.type ? String(p.items.type) : "";
@@ -115,42 +112,41 @@ function argFieldsNode(tool: SchemaCarrier, idPrefix?: string, values?: Record<s
       : kind === "array" ? (itemType ? tr("run.oneValueLineType", { type: itemType }) : tr("run.oneValueLine"))
       : kind === "object" ? "{ }" : "";
     const prefilled = have[k] == null ? "" : kind === "object" || kind === "array" ? JSON.stringify(have[k], null, 1) : String(have[k]);
-    const input = area
-      ? h("textarea", { id: id, data: dataAll, placeholder: ph }, prefilled)
-      : h("input", { type: "text", id: id, data: dataAll, placeholder: ph, value: prefilled });
-    return h("div", null,
-      h("label", { class: "field" }, h("span", null, k, " ", star, "  ·  ", kind), input),
-      hint);
+    return field({
+      label: k, required: req, meta: kind, hint: help,
+      control: area
+        ? h("textarea", { id: id, data: dataAll, placeholder: ph }, prefilled)
+        : h("input", { type: "text", id: id, data: dataAll, placeholder: ph, value: prefilled }),
+    });
   });
 }
 
+/** The Run tab: the form in a card - the tool, its arguments generated from its schema, Run
+ *  and the past-runs control - and under the card the reply of the last run (renderRunResult
+ *  fills #runOut, never the form, so the SQL you typed survives a run). */
 function runBodyNode(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): HChild {
-  if (m.lifecycle !== "started") {
-    return h("div", { class: "group" },
-      h("div", { class: "row" }, h("span", { class: "rowmsg" }, tr("run.startedStartRunTool"))));
-  }
+  if (m.lifecycle !== "started") return note(tr("run.startedStartRunTool"));
   const kd = d.tools;
-  if (kd.loading && !kd.loaded) return h("div", { class: "note" }, h("span", { class: "spin" }), " ", tr("run.loadingTools"));
-  if (kd.error) return h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "rowmsg warn" }, kd.error)));
+  if (kd.loading && !kd.loaded) return note(tr("run.loadingTools"), { busy: true });
+  if (kd.error) return note(kd.error, { err: true });
   const tools = kd.items || [];
-  if (!tools.length) return h("div", { class: "group" },
-    h("div", { class: "row" }, h("span", { class: "rowmsg" }, tr("run.mcpExposesTools"))));
+  if (!tools.length) return note(tr("run.mcpExposesTools"));
 
   let current: ApiMcpTool | null = null;
   for (let i = 0; i < tools.length; i++) if (tools[i].name === d.run.tool) current = tools[i] as ApiMcpTool;
   if (!current) current = tools[0] as ApiMcpTool;
   d.run.tool = current.name;
 
-  return h("div", { class: "group" },
-    h("div", { class: "form" },
-      h("label", { class: "field" },
-        h("span", null, tr("run.tool")),
-        h("select", { id: "r-tool" },
-          tools.map((t) => { return h("option", { value: t.name, selected: t.name === current?.name }, t.name); }))),
-      current.description ? h("div", { class: "hint" }, current.description) : null,
+  return frag(
+    card(form(
+      field({
+        label: tr("run.tool"), hint: current.description || null,
+        control: h("select", { id: "r-tool" },
+          tools.map((t) => { return h("option", { value: t.name, selected: t.name === current?.name }, t.name); })),
+      }),
       argFieldsNode(current),
-      h("div", { class: "form-actions" },
-        h("button", { class: "btn primary", id: "runBtn" }, tr("run.run")),
+      formActions(
+        btn(tr("run.run"), { kind: "primary", id: "runBtn" }),
         h("div", { class: "hist-wrap" },
           h("button", {
             type: "button",
@@ -163,8 +159,8 @@ function runBodyNode(d: McpDetail, m: ApiMcpRow | PhantomMcpRow): HChild {
             aria: { haspopup: "true", expanded: d.run.histOpen ? "true" : "false" },
             title: tr("run.fillArgumentsPastRun"),
           }, iconNode("history"), " ", histButtonLabel(d, current.name))),
-        h("span", { class: "run-meta", id: "runMeta" })),
-      h("pre", { class: "logs", id: "runOut" })));
+        h("span", { class: "run-meta", id: "runMeta" })))),
+    h("div", { class: "run-out", id: "runOut" }));
 }
 
 export { argFieldsNode, readRunArgs, runBodyNode };
