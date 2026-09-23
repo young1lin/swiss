@@ -39,7 +39,7 @@
     }
     /* Required ones by weight and contrast, not by hue: red here would compete with the error red on
        a failed call two rows down, and "required" is not a failure. Run's red * is a form marker. */
-    .args b { font-weight: 600; color: var(--text-2); }
+    .args b { font-weight: var(--w-emph); color: var(--text-2); }
 
     /* Tool rows are summaries first: one name, one clipped description, one signature. Native
        details keeps the complete MCP metadata keyboard-reachable without making every row tall. */
@@ -56,7 +56,7 @@
     .item-detail[open] .item-teaser { display: none; }
     .item-detail[open] .args { display: none; }
     .item-full { margin: var(--s2) 0 0 var(--s5); padding-left: var(--s3); border-left: 1px solid var(--sep); }
-    .item-full-label { font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-top: var(--s3); }
+    .item-full-label { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); margin-top: var(--s3); }
     .item-full-label:first-child { margin-top: 0; }
     .item-full-text { font-size: var(--f-label); color: var(--text-2); line-height: 1.5; margin-top: var(--s1); white-space: pre-wrap; }
     .item-schema { margin: var(--s1) 0 0; padding: var(--s2) var(--s3); max-height: 40vh; overflow: auto; background: var(--sep-soft); border-radius: var(--r-row); font-family: var(--mono); font-size: var(--f-caption); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
@@ -71,16 +71,17 @@
     .config-badges { display: flex; flex-wrap: wrap; gap: var(--s1); padding: 0 var(--s4) var(--s3); }
     .config-more, .config-revisions { margin: 0; }
     .config-more { border-top: 1px solid var(--sep-soft); }
-    .config-more > summary, .config-revisions > summary { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); cursor: pointer; list-style: none; color: var(--text-2); font-size: var(--f-label); font-weight: 500; }
+    .config-more > summary, .config-revisions > summary { display: flex; align-items: center; gap: var(--s2); padding: var(--s3) var(--s4); cursor: pointer; list-style: none; color: var(--text-2); font-size: var(--f-label); font-weight: var(--w-emph); }
     .config-more > summary::-webkit-details-marker, .config-revisions > summary::-webkit-details-marker { display: none; }
-    .config-count { margin-left: auto; color: var(--text-3); font-size: var(--f-caption); font-weight: 400; font-variant-numeric: tabular-nums; }
+    .config-count { margin-left: auto; color: var(--text-3); font-size: var(--f-caption); font-weight: var(--w-body); font-variant-numeric: tabular-nums; }
     .config-chev { flex: none; color: var(--text-3); transition: transform .15s ease; }
     .config-revisions > summary > .config-chev { margin-left: auto; }
     .config-chev .ic { width: var(--s3); height: var(--s3); }
     details[open] > summary > .config-chev { transform: rotate(90deg); }
     .config-rows { border-top: 1px solid var(--sep-soft); }
     .config-row { display: flex; gap: var(--s4); padding: var(--s2) var(--s4); }
-    .config-row + .config-row { border-top: 1px solid var(--sep-soft); }
+    .config-row + .config-row { position: relative; }
+    .config-row + .config-row::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
     .config-label { flex: 0 0 32%; min-width: 0; color: var(--text-2); font-size: var(--f-label); }
     .config-value { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--f-label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .config-revisions { margin-top: var(--s5); background: var(--card); box-shadow: var(--shadow-card); border-radius: var(--r-card); overflow: hidden; }
@@ -96,19 +97,19 @@
     .call + .call { border-top: 1px solid var(--sep-soft); }
     .call-sum { display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left; padding: var(--s2) var(--s4); cursor: pointer; }
     .call-sum:hover { background: var(--hover); }
-    .call-tool { font-family: var(--mono); font-weight: 550; font-size: var(--f-label); white-space: nowrap; }
+    .call-tool { font-family: var(--mono); font-weight: var(--w-name); font-size: var(--f-label); white-space: nowrap; }
     /* One line of the arguments in the summary — enough to recognize a query without opening it. */
     .call-arg { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--f-caption); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .call-meta { font-size: var(--f-caption); color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .call-body { display: none; padding: 0 var(--s4) var(--s3); }
     .call.open .call-body { display: block; }
-    .call-lbl { font-size: var(--f-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: var(--s2) 0 var(--s1); display: flex; align-items: center; gap: var(--s2); }
+    .call-lbl { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: var(--s2) 0 var(--s1); display: flex; align-items: center; gap: var(--s2); }
     /* docs/33 C3: a call block's label row says what the body turned out to be (decoded, JSON
        plus text) and carries its two copies. They stay visible: copying a reply is the frequent
        act on this page, not something to discover by hovering. */
-    .call-lbl .call-note { font-weight: 500; text-transform: none; letter-spacing: 0; }
+    .call-lbl .call-note { font-weight: var(--w-emph); text-transform: none; letter-spacing: 0; }
     .call-lbl .call-acts { margin-left: auto; display: inline-flex; gap: var(--s1); }
-    .call-lbl .call-acts .btn { display: inline-flex; align-items: center; gap: var(--s1); padding: 0 var(--s2); font-size: var(--f-caption); font-weight: 500; line-height: var(--s6); text-transform: none; letter-spacing: 0; color: var(--text-3); }
+    .call-lbl .call-acts .btn { display: inline-flex; align-items: center; gap: var(--s1); padding: 0 var(--s2); font-size: var(--f-caption); font-weight: var(--w-emph); line-height: var(--s6); text-transform: none; letter-spacing: 0; color: var(--text-3); }
     .call-lbl .call-acts .btn:hover { color: var(--text); }
     .call-lbl .call-acts .btn .ic { width: var(--s3); height: var(--s3); }
     /* Formatted JSON needs room before it starts scrolling — Traffic reads its bodies here. */
@@ -133,7 +134,7 @@
        of the form it was clipped by the .group card's overflow:hidden — half of it never rendered. */
     .hist-wrap { flex: none; }
     button.hist-sel {
-      font-size: var(--f-label); font-weight: 500; color: var(--text-2);
+      font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-2);
       padding: 4px var(--s3); border: 0; border-radius: var(--r-btn);
       background-color: var(--card); box-shadow: inset 0 0 0 1px var(--sep);
       cursor: pointer; transition: background-color .12s ease; white-space: nowrap;
@@ -194,10 +195,14 @@
     /* 42px rows (docs/18 V4): two lines of text still clear it, and a list of nine stops
        reading as nine cards. */
     .tun-row { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s4); min-height: 42px; }
-    .tun-row + .tun-row { border-top: 1px solid var(--sep-soft); }
+    /* Inset separators (docs/46 U7): from the name column - past the 6px dot and its 12px gap
+       when the row leads with one (the groups x-table: row pad 16 + dot 6 + gap 12 -> 34). */
+    .tun-row + .tun-row { position: relative; }
+    .tun-row + .tun-row::before { content: ""; position: absolute; top: 0; right: 0; left: var(--row-inset, var(--s4)); height: 1px; background: var(--sep-soft); pointer-events: none; }
+    .tun-row:has(> .dot:first-child) { --row-inset: calc(var(--s4) + 6px + var(--s3)); }
     .tun-row:hover { background: var(--hover); }
     .tun-main { flex: 1; min-width: 0; }
-    .tun-name { font-size: var(--f-body); font-weight: 500; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tun-name { font-size: var(--f-body); font-weight: var(--w-name); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tun-sub { font-size: var(--f-label); color: var(--text-2); font-family: var(--mono); line-height: 1.35; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tun-sub .via { font-family: var(--sans); }
     .tun-err { font-size: var(--f-label); color: var(--red); font-family: var(--mono); margin-top: 2px; }
@@ -233,10 +238,11 @@
     }
     .cli-head { font-size: var(--f-caption); color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--sep-soft); }
     .cli-row { cursor: pointer; }
-    .cli-row + .cli-row { border-top: 1px solid var(--sep-soft); }
+    /* No separators (docs/46 U7): one-line rows in a column grid read as a table without them,
+       and the hover band marks the row the pointer is on. */
     .cli-row:hover { background: var(--hover); }
     .cli-row.sel { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-    .cli-name code { font-weight: 550; }
+    .cli-name code { font-weight: var(--w-name); }
     .cli-token, .cli-paths { font-family: var(--mono); font-size: var(--f-label); color: var(--text-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cli-last { font-size: var(--f-label); color: var(--text-3); white-space: nowrap; }
     .cli-n { font-variant-numeric: tabular-nums; text-align: right; font-size: var(--f-label); color: var(--text-2); }
@@ -308,7 +314,7 @@
     .db-drow { display: flex; align-items: center; gap: 7px; margin: 0 4px; width: calc(100% - 8px);
       padding: 4px 6px; border-radius: 6px; text-align: left; font-size: var(--f-body); color: var(--text-2); }
     .db-drow:hover { background: var(--hover); }
-    .db-drow.on { color: var(--accent); font-weight: 550; }
+    .db-drow.on { color: var(--accent); font-weight: var(--w-emph); }
     .db-drow:disabled { color: var(--text-3); cursor: default; background: none; }
     .db-drow .ic { flex: none; width: 14px; height: 14px; color: var(--text-3); }
     .db-drow.on .ic { color: var(--accent); }
@@ -346,7 +352,7 @@
     .db-table { display: flex; align-items: center; gap: var(--s2); width: 100%; min-width: 0; text-align: left; padding: 4px var(--s2); border-radius: var(--r-row); background: none; border: none; font: inherit; color: var(--text); cursor: pointer; }
     .db-table:hover { background: var(--hover); }
     .db-table.sel { background: color-mix(in srgb, var(--accent) 11%, transparent); }
-    .db-table.sel .db-table-name { color: var(--accent); font-weight: 600; }
+    .db-table.sel .db-table-name { color: var(--accent); font-weight: var(--w-emph); }
     /* A long key ("wsproxy:console:token:session:…") or table name is cut with an ellipsis, not
        sliced at the card's edge; the full name is the row's title, one hover away. */
     .db-table-name { flex: 1; min-width: 0; font-size: var(--f-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -379,7 +385,7 @@
     .db-tabstrip-end { flex: none; display: flex; align-items: stretch; border-left: 1px solid var(--sep); }
     .db-tab { display: inline-flex; align-items: center; gap: var(--s1); flex: none; max-width: 210px; height: 32px; padding: 0 var(--s2); border-right: 1px solid var(--sep-soft); font-size: var(--f-label); color: var(--text-2); cursor: pointer; }
     .db-tab:hover { background: var(--hover); }
-    .db-tab.sel { background: var(--bg); color: var(--text); font-weight: 600; box-shadow: inset 0 2px 0 var(--accent); margin-bottom: -1px; padding-bottom: 1px; }
+    .db-tab.sel { background: var(--bg); color: var(--text); font-weight: var(--w-emph); box-shadow: inset 0 2px 0 var(--accent); margin-bottom: -1px; padding-bottom: 1px; }
     .db-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .db-tab .ic { width: 14px; height: 14px; color: var(--text-3); }
     .db-tab.sel .ic { color: var(--text-2); }
@@ -425,8 +431,8 @@
     .db-filter-add { font-size: var(--f-label); }
     .db-filter-hint { font-size: var(--f-caption); color: var(--text-3); margin-left: var(--s2); }
     .db-tabs { display: inline-flex; gap: 2px; padding: 3px; background: var(--sep-soft); border-radius: 8px; }
-    .db-tabs button { font-size: var(--f-body); font-weight: 500; color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; background: none; border: none; cursor: pointer; }
-    .db-tabs button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--sep); }
+    .db-tabs button { font-size: var(--f-body); font-weight: var(--w-body); color: var(--text-2); padding: 3px var(--s3); border-radius: 6px; background: none; border: none; cursor: pointer; }
+    .db-tabs button[aria-selected="true"] { background: var(--card); color: var(--text); font-weight: var(--w-emph); box-shadow: 0 0 0 1px var(--sep); }
     :root[data-theme="dark"] .db-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--card), white 7%); box-shadow: inset 0 0 0 1px var(--sep); }
     /* docs/22 W4.3: the console's result tabs ride in the pane head under the meta line, above
        the grid's own scroll. Eight fit; a longer script's ninth scrolls the strip sideways the
@@ -442,7 +448,7 @@
        minimal set), so the sheet reads as the table's shape with new rows at its end; fixed
        layout keeps the five inputs column-aligned whatever a name carries. */
     .db-ddl-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    .db-ddl-grid th { text-align: left; font-size: var(--f-label); font-weight: 500; color: var(--text-3); padding: 0 0 var(--s1); }
+    .db-ddl-grid th { text-align: left; font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-3); padding: 0 0 var(--s1); }
     .db-ddl-grid td { padding: 0 0 var(--s1); vertical-align: top; }
     .db-ddl-grid .btn.icon { width: 26px; height: 26px; padding: 0; color: var(--text-3); }
     .db-ddl-grid input[type="checkbox"] { width: auto; accent-color: var(--accent); }
@@ -496,8 +502,8 @@
     #dbSql { position: absolute; inset: 0; width: 100%; height: 100%; background: transparent; color: transparent; caret-color: var(--accent); resize: none; outline: none; }
     #dbSql::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
     .db-sql-hl { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--text); }
-    .db-sql-hl .k { color: var(--accent); font-weight: 600; }
-    .db-sql-hl .f { color: var(--accent); font-weight: 400; }
+    .db-sql-hl .k { color: var(--accent); font-weight: var(--w-emph); }
+    .db-sql-hl .f { color: var(--accent); font-weight: var(--w-body); }
     .db-sql-hl .s { color: var(--green); }
     .db-sql-hl .n { color: var(--amber); }
     .db-sql-hl .c { color: var(--text-3); font-style: italic; }
@@ -509,7 +515,7 @@
     .db-grid-wrap { flex: 1; overflow: auto; min-height: 200px; overflow-anchor: none; }
     .db-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: var(--f-label); }
     .db-grid th, .db-grid td { border-bottom: 1px solid var(--sep-soft); border-right: 1px solid var(--sep-soft); padding: 4px var(--s2); white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
-    .db-grid thead th { position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 55%, var(--card)); z-index: 1; font-weight: 600; cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }
+    .db-grid thead th { position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 55%, var(--card)); z-index: 1; font-weight: var(--w-emph); cursor: pointer; text-align: left; border-bottom: 1px solid var(--sep); }
     .db-grid thead th:hover { background: var(--hover); }
     /* The select-all corner is not clickable — the pointer should not promise it is. */
     .db-grid thead th.db-rowctl { cursor: default; }
@@ -521,7 +527,7 @@
        (the muted grey was reported as too quiet). Same --green token in both themes. */
     .db-col-main { display: flex; align-items: center; min-width: 0; }
     .db-col-name { overflow: hidden; text-overflow: ellipsis; }
-    .db-col-comment { font-size: var(--f-caption); font-weight: 450; color: var(--green); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+    .db-col-comment { font-size: var(--f-caption); font-weight: var(--w-body); color: var(--green); margin-top: 2px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
     .db-key { color: var(--amber); margin-left: 4px; }
     .db-key .ic { width: 12px; height: 12px; } /* fix-plan #14: the i-key sprite, sized to the marker it replaced */
     .db-col-type { color: var(--text-3); font-size: var(--f-caption); margin-left: 6px; font-family: var(--mono); }
@@ -564,7 +570,7 @@
       background: var(--card); border: 1px solid var(--sep); border-radius: var(--r-row);
       box-shadow: var(--shadow-pop); font-size: var(--f-label); color: var(--text-2);
       pointer-events: none; }
-    .db-tip .t-name { font-size: var(--f-body); font-weight: 590; color: var(--text); }
+    .db-tip .t-name { font-size: var(--f-body); font-weight: var(--w-title); color: var(--text); }
     .db-tip .t-type { font-family: var(--mono); font-size: var(--f-caption); margin-top: 2px; }
     .db-tip .t-comment { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--sep-soft);
       color: var(--green); line-height: 1.45; white-space: normal; word-break: break-word; }
@@ -629,7 +635,7 @@
     .db-form { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; align-items: start; }
     .db-form-row { display: contents; }
     .db-form-label { padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); }
-    .db-form-name { font-size: var(--f-label); font-weight: 500; color: var(--text-2); }
+    .db-form-name { font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-2); }
     .db-form-val { padding: var(--s2) var(--s3); border-bottom: 1px solid var(--sep-soft); display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; font-family: var(--mono); font-size: var(--f-label); min-width: 0; }
     .db-form-val.db-dirty { background: color-mix(in srgb, var(--amber) 12%, transparent); }
     .db-form-input { flex: 1 1 160px; min-width: 0; font-family: var(--mono); font-size: var(--f-label); padding: 2px 6px; }
@@ -680,6 +686,8 @@
       --t-bg: #2b2b2b; --t-bar: #232323; --t-edge: #3d3d3d;
       --t-fg: #d2d2d2; --t-dim: #8f8f8f; --t-accent: #427ab3;
       --t-ok: #5ea702; --t-warn: #cfae00; --t-bad: #d81e00;
+      /* The global thin scrollbar (base.css), re-pointed at the stage's own ground. */
+      --scroll-thumb: var(--t-edge); --scroll-thumb-hover: var(--t-dim);
     }
     /* The bar: tabs grow on the left, the picker and Open sit on the right. Same dark
        as the stage so the bar and the surface read as one instrument. */
@@ -698,7 +706,7 @@
     .term-tabs button {
       display: inline-flex; align-items: center; gap: 7px;
       max-width: 220px; white-space: nowrap; overflow: hidden;
-      font-size: var(--f-label); font-weight: 500; color: var(--t-dim);
+      font-size: var(--f-label); font-weight: var(--w-body); color: var(--t-dim);
       background: transparent; border: none; box-shadow: none;
       border-radius: 7px 7px 0 0; padding: 6px 8px 7px 12px; cursor: default;
     }
@@ -741,7 +749,7 @@
     }
     .term-pick:focus { outline: none; border-color: var(--t-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--t-accent) 25%, transparent); }
     .term-new {
-      background: var(--t-accent); color: #fff; font-weight: 560; box-shadow: none;
+      background: var(--t-accent); color: #fff; font-weight: var(--w-emph); box-shadow: none;
       border-radius: 7px; padding: 5px 14px;
     }
     .term-new:hover { background: color-mix(in srgb, var(--t-accent) 85%, white); }
@@ -765,7 +773,7 @@
 /* The ? sheet's rows: a two-column list, key column right-aligned mono, description
    in body grey - an inset list without the inset, the sheet already is one. */
 .term-key-body { display: grid; gap: 2px; }
-.term-key-cap { font-size: var(--f-caption); font-weight: 600; color: var(--text-3);
+.term-key-cap { font-size: var(--f-caption); font-weight: var(--w-emph); color: var(--text-3);
   text-transform: uppercase; letter-spacing: 0.4px; margin: 10px 0 4px; }
 .term-key-cap:first-child { margin-top: 0; }
 .term-key-row { display: flex; align-items: baseline; gap: 12px; font-size: var(--f-label); }
@@ -793,13 +801,9 @@
     }
     .term-holder { position: absolute; inset: 0; padding: 8px 10px; }
     .term-holder[hidden] { display: none; }
-    /* The stage's scrollbar belongs to the surface, not the panel chrome. */
-    .term-stage .xterm-viewport::-webkit-scrollbar { width: 10px; }
-    .term-stage .xterm-viewport::-webkit-scrollbar-thumb { background: var(--t-edge); border-radius: 5px; }
-    .term-stage .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
     /* The empty state: a ghost prompt, not an apology box. */
     .term-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--t-dim); }
-    .term-empty h2 { font-size: var(--f-body); font-weight: 550; color: var(--t-fg); margin: 0; }
+    .term-empty h2 { font-size: var(--f-body); font-weight: var(--w-emph); color: var(--t-fg); margin: 0; }
     .term-empty p { margin: 0; font-size: var(--f-label); }
     .term-ghost { font-family: var(--mono); font-size: 28px; color: var(--t-dim); display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
     .term-ghost-dollar { color: var(--t-ok); }
@@ -892,12 +896,12 @@
     .days { display: flex; gap: var(--s1); }
     .days button {
       flex: 1; padding: 5px 0; border: 0; border-radius: var(--r-btn); cursor: pointer;
-      font-size: var(--f-label); font-weight: 500; color: var(--text-2); background: var(--sep-soft);
+      font-size: var(--f-label); font-weight: var(--w-emph); color: var(--text-2); background: var(--sep-soft);
     }
     .days button:hover { color: var(--text); }
     .days button.on {
       background: color-mix(in srgb, var(--accent) 16%, var(--card));
-      color: var(--accent); font-weight: 600;
+      color: var(--accent); font-weight: var(--w-emph);
     }
     /* The one-sentence answer. What reads back wrong is wrong - so an unusable schedule shows
        in the error red, and a usable one in the quiet secondary text, never both. */
@@ -926,7 +930,7 @@
     .palette input { margin: var(--s3); font-size: var(--f-body); flex: none; }
     .palette-list { overflow-y: auto; padding: 0 var(--s2) var(--s3); }
     .pal-section {
-      font-size: var(--f-caption); font-weight: 600; text-transform: uppercase;
+      font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase;
       letter-spacing: .06em; color: var(--text-3); padding: var(--s2) var(--s2) var(--s1);
     }
     .pal-item { display: flex; align-items: center; gap: var(--s1); }

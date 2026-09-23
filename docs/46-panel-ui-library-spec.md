@@ -285,10 +285,15 @@ dayLabel(at: number, now: number): string    // "Today" / "Yesterday" / locale d
 
 ### 3.1 全局（P1a）
 
-- [ ] 字重四级 token，54 处 `font-weight` 全换成 token；暗色 `--text` `#e4e4e7`。
-- [ ] 全局细滚动条（U8）；Data、Terminal 各自的滚动条规则删掉，走全局。
-- [ ] 卡片内行分隔线 inset；rail 右边线去掉。
-- [ ] `paneHead` 吸顶 + `.pane.scrolled` hairline；`#pane` 上一个 scroll 监听（passive），换页时复位。
+- [x] 字重四级 token，54 处 `font-weight` 全换成 token；暗色 `--text` `#e4e4e7`。按角色而不是按旧数字归类（映射表在
+      P1a-2 的 commit 里）；UA 默认的 bold（`b`、`strong`、`h1–h6`、`th`）也收到 `--w-emph`。
+- [x] 全局细滚动条（U8）；Terminal 舞台的滚动条规则删掉，改成在 `.term-page` 上重指 `--scroll-thumb` token。
+      Data 没有自己的滚动条样式——它只有两条"隐藏横向滚动条"的 tab 条规则，那是有意的，保留。
+- [x] 卡片内行分隔线 inset；rail 右边线去掉；Traffic 客户端表（`.cli-row`）按原型去掉行线。
+      过渡期：MCP Tools 行的分隔线从 chevron 列开始（16px），P2 用 `row({lead})` 重建时对齐到名字列。
+- [x] `paneHead` 吸顶 + `.pane.scrolled` hairline；`#pane` 上一个 scroll 监听（passive），换页时复位
+      （`pane-scroll.ts`）。只作用于内容页（`.pane > .wide > .pane-head`）；MCP 资源头在 P2 与 seg 一起固定。
+      `--pane-head-h` 随 timeline（§2.4）在 P2 落地。
 
 ### 3.2 MCP › Servers（P2）
 

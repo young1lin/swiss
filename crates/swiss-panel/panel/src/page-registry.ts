@@ -22,6 +22,7 @@ import { createPageRegistry } from "./page-core.js";
 import { glyphNode, openPluginPalette, pinnedGroups } from "./plugin-palette.js";
 import { loadLastPages, rememberLastPage, targetPageFor } from "./last-page.js";
 import { currentView, setCurrentView } from "./ui-state.js";
+import { resetPaneScroll, trackPaneScroll } from "./pane-scroll.js";
 import { tk, tr, wireLabel } from "./i18n.js";
 
 /* Older gateways use this single manifest; a plugin-aware host supplies the same descriptors. */
@@ -404,6 +405,7 @@ function initPages(): Promise<void> {
     catch (error) { toast(errText(error), true); paintNavigation(); }
     let wanted = (location.hash || "#mcps").replace(/^#\/?/, "");
     if (!registry.get(wanted)) wanted = registry.list()[0] && registry.list()[0].id;
+    trackPaneScroll($("pane"));
     if (wanted) await navigatePage(wanted, true);
     window.addEventListener("hashchange", () => {
       const id = location.hash.replace(/^#\/?/, "");
@@ -447,6 +449,7 @@ async function navigatePage(id: string, force?: boolean): Promise<void> {
   document.querySelector<HTMLElement>(".sidebar")!.hidden = layoutOf(page) !== "resource";
   paintNavigation();
   history.replaceState(null, "", page.path || "#" + id);
+  resetPaneScroll($("pane"));
   fill($("pane"), off
     ? h("div", { class: "empty" }, h("div", null,
         h("h2", null, tr("pageRegistry.pageUnavailable", { page: tr(wireLabel(page.label)) })),
