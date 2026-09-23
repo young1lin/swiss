@@ -56,7 +56,7 @@ struct L3Server;
 async fn main() {
     // The deliberate stderr noise (see the module doc): if this ever leaked into
     // stdout, the JSON-RPC stream would corrupt and no test below would pass.
-    eprintln!("swiss-it: L3 服务器已启动 —— stderr 噪声不得进入 stdout 协议流");
+    eprintln!("swiss-it: L3 server is up; the stderr noise must never reach the stdout protocol stream");
     let transport =
         AsyncRwTransport::<RoleServer, _, _>::new(tokio::io::stdin(), tokio::io::stdout());
     match rmcp::service::serve_server(L3Server, transport).await {

@@ -106,7 +106,8 @@
 
 - `index.html` `<body>` 顶部放一个 `<svg hidden>` sprite，Lucide 风格、`viewBox="0 0 24 24"`、
   `stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"`。
-  每个 `<symbol id="i-<name>">`。**手写 path，不引入 lucide 包**；二十个图标 ≤ 4 KB。
+  每个 `<symbol id="i-<name>">`。以手写 path 为主、不引入 lucide 包；个别字形沿用 Lucide 的
+  ISC 许可 path 数据原文（署名见 THIRD_PARTY_NOTICES §2）。二十个图标 ≤ 4 KB。
   清单：`refresh-cw sun moon key plus ellipsis chevron-right search play history pencil trash power
   terminal database server plug clock check x`。
 - `util.js` 新增 `icon(name, label?)`：返回 `<svg class="ic" aria-hidden="true"><use href="#i-name"/></svg>`

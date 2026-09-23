@@ -355,7 +355,7 @@ impl DbBrowser for MysqlBrowser {
         if swiss_host::dbbrowser::sql_touches_schema(sql) {
             self.completion_cache
                 .lock()
-                .expect("completion cache")
+                .unwrap_or_else(|p| p.into_inner())
                 .invalidate();
         }
         // The console's one rule: a single statement per run. Reads and writes alike go through —
@@ -750,7 +750,7 @@ impl DbBrowser for MysqlBrowser {
             }
             self.completion_cache
                 .lock()
-                .expect("completion cache")
+                .unwrap_or_else(|p| p.into_inner())
                 .invalidate();
             return Ok(json!({ "ran": ddl_script(&stmts) }));
         }
@@ -773,7 +773,7 @@ impl DbBrowser for MysqlBrowser {
         run_query(&pool, &sql, &[]).await?;
         self.completion_cache
             .lock()
-            .expect("completion cache")
+            .unwrap_or_else(|p| p.into_inner())
             .invalidate();
         Ok(json!({ "ran": sql }))
     }
@@ -806,7 +806,7 @@ impl DbBrowser for MysqlBrowser {
         let now = std::time::Instant::now();
         let plan = {
             // Lock only to read the plan — the loads below await.
-            let cache = self.completion_cache.lock().expect("completion cache");
+            let cache = self.completion_cache.lock().unwrap_or_else(|p| p.into_inner());
             (
                 cache.needs_tables(now),
                 completion_from_table(sql, caret).filter(|_| !cache.is_degraded()),
@@ -830,13 +830,13 @@ impl DbBrowser for MysqlBrowser {
                 .collect();
             self.completion_cache
                 .lock()
-                .expect("completion cache")
+                .unwrap_or_else(|p| p.into_inner())
                 .set_tables(names.clone(), now);
             names
         } else {
             self.completion_cache
                 .lock()
-                .expect("completion cache")
+                .unwrap_or_else(|p| p.into_inner())
                 .tables(now)
                 .unwrap_or_default()
         };
@@ -844,7 +844,7 @@ impl DbBrowser for MysqlBrowser {
         let mut columns: Option<(String, Vec<String>)> = None;
         if let Some(word) = from {
             let cached = {
-                let cache = self.completion_cache.lock().expect("completion cache");
+                let cache = self.completion_cache.lock().unwrap_or_else(|p| p.into_inner());
                 cache.columns(&word, now)
             };
             if let Some(cols) = cached {
@@ -873,7 +873,7 @@ impl DbBrowser for MysqlBrowser {
                     .collect();
                 self.completion_cache
                     .lock()
-                    .expect("completion cache")
+                    .unwrap_or_else(|p| p.into_inner())
                     .set_columns(word.clone(), cols.clone(), now);
                 columns = Some((word, cols));
             }
