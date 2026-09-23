@@ -72,6 +72,7 @@ async fn remote_echo() -> Remote {
         tokens,
         store,
         swiss_mcp::calls::test_log(),
+        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
         "MCP_GATEWAY_TOKEN",
         19998,
     );

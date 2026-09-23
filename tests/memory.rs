@@ -106,7 +106,15 @@ async fn app_with_echo() -> axum::Router {
         .expect("register");
     registry.start("echo").await.expect("start");
     let tokens = Arc::new(single_token_manager(TOKEN));
-    let ctx = AppContext::new(registry, tokens, store, calls, "MCP_GATEWAY_TOKEN", 19998);
+    let ctx = AppContext::new(
+        registry,
+        tokens,
+        store,
+        calls,
+        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
+        "MCP_GATEWAY_TOKEN",
+        19998,
+    );
     build_app(ctx, None)
 }
 

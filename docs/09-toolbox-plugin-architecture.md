@@ -139,6 +139,8 @@ Axum 路由不能永久捕获昂贵 `Arc<PluginInstance>` 后只修改一个 ena
 
 当前 `AppContext → Registry → evictor callback → AppContext` 强引用环（`src/app.rs:93`）需要改成 Weak/可注销回调。Traffic/calls/runlog 的全局 OnceLock 状态也需要逐步实例化，不能把它们遗留为进程常驻状态。
 
+> **As-built（2026-09-23）**：三者皆已实例化 —— calls 与 traffic 是 `AppContext` 持有的 `Arc<CallLog>` / `Arc<TrafficLog>`（`src/app.rs`），runlog 是 JobSystem 持有的 `RunLog` 实例（docs/11 §9 S2）；日志类状态不再有进程常驻形态，同进程的两个 app（或两个测试）各读各的。仍保留的进程级静态是有意设计的缓存，与日志状态不同类：如 mem.rs 的进程树工作集缓存 —— 它缓存的正是“本进程”的一次测量，进程级就是它的正确作用域。
+
 ## 5. 配置体系：一个事实来源，不是多个互相覆盖的开关
 
 建议新的逻辑 schema 用 `schemaVersion: 2` 与 `plugins.<id> = {kind?, disabled?, config?}`。这是目标格式，不是本次已修改的生产配置。

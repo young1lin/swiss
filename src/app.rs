@@ -44,7 +44,6 @@ use swiss_host::managed::ManagedStore;
 use swiss_host::token::TokenManager;
 use swiss_mcp::adapters::HttpMcp;
 use swiss_mcp::registry::{EntryInner, Lifecycle, Registry};
-use swiss_mcp::traffic::record_traffic;
 use swiss_panel::admin;
 
 // BODY_LIMIT comes in through the pub use below; a second private use would collide.
@@ -79,6 +78,10 @@ pub struct AppContext {
     /// app, threaded everywhere it is needed (the S2 instantiation: no process-global
     /// log directory, so two apps in one process never see each other's calls).
     pub calls: Arc<swiss_mcp::calls::CallLog>,
+    /// The traffic ring this app's proxy layer writes and its admin API reads - the same
+    /// S2 instantiation as `calls` beside it: no process-global ring, so two apps in one
+    /// process never see each other's traffic.
+    pub traffic: Arc<swiss_mcp::traffic::TrafficLog>,
     /// Name of the env var the token was seeded from. Safe to show in client configs.
     pub token_env: String,
     /// The port this instance listens on — import detection reads it to recognize entries that
@@ -122,6 +125,7 @@ impl AppContext {
         tokens: Arc<TokenManager>,
         store: Arc<ManagedStore>,
         calls: Arc<swiss_mcp::calls::CallLog>,
+        traffic: Arc<swiss_mcp::traffic::TrafficLog>,
         token_env: impl Into<String>,
         port: u16,
     ) -> Arc<Self> {
@@ -131,6 +135,7 @@ impl AppContext {
             tokens,
             store,
             calls,
+            traffic,
             token_env: token_env.into(),
             port,
             tunnel_links: std::sync::RwLock::new(None),
@@ -444,7 +449,7 @@ async fn mcp_post(
     let status = parts.status;
     let response = Response::from_parts(parts, Body::from(response_bytes));
 
-    record_traffic(
+    ctx.traffic.record_traffic(
         &name,
         parsed_body.as_ref(),
         Some(&client.label),

@@ -65,6 +65,7 @@ impl Served {
             tokens,
             store,
             calls,
+            Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
             "MCP_GATEWAY_TOKEN",
             19999,
         );

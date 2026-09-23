@@ -527,6 +527,7 @@ async fn full_app_with_store(
         Arc::new(single_token_manager(TOKEN)),
         managed.clone(),
         calls,
+        Arc::new(swiss_mcp::traffic::TrafficLog::memory()),
         "MCP_GATEWAY_TOKEN",
         19998,
     );

@@ -70,6 +70,10 @@ struct Harness {
     registry: Arc<Registry>,
     store: Arc<ManagedStore>,
     calls: Arc<swiss_mcp::calls::CallLog>,
+    /// This harness's own traffic ring — memory-only, like every test composition here. What
+    /// an MCP endpoint records is what /api/traffic of THIS harness reads, and no other test's
+    /// rows can leak in, so the suite needs no process-level traffic lock any more.
+    traffic: Arc<swiss_mcp::traffic::TrafficLog>,
     path: std::path::PathBuf,
 }
 
@@ -88,6 +92,7 @@ fn setup() -> Harness {
             .expect("the scratch file has a parent")
             .join("calls"),
     ));
+    let traffic = Arc::new(swiss_mcp::traffic::TrafficLog::memory());
     let registry = Registry::new(60_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(path.clone()));
     let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
@@ -98,6 +103,7 @@ fn setup() -> Harness {
         tokens,
         store.clone(),
         calls.clone(),
+        traffic.clone(),
         "MCP_GATEWAY_TOKEN",
         19999,
     );
@@ -106,6 +112,7 @@ fn setup() -> Harness {
         registry,
         store,
         calls,
+        traffic,
         path,
     }
 }
@@ -670,7 +677,6 @@ async fn answers_a_listing_for_an_mcp_that_was_never_started() {
 
 #[tokio::test]
 async fn forwards_mcp_traffic_to_the_added_server() {
-    let _lock = traffic_lock().await;
     let h = setup();
     let (status, _) = h
         .post("/api/mcps", json!({ "name": "e2", "type": "echo" }))
@@ -702,10 +708,6 @@ async fn exposes_the_tokens_env_var_name_never_the_token() {
 
 #[tokio::test]
 async fn lists_creates_revokes_and_rotates_named_tokens() {
-    // The MCP posts below answer through the traffic ring; without the lock a parallel
-    // traffic-counting test can read one of this test's rows (seen once as 11-vs-10 in a
-    // full-parallel gate run). The lock is the file's rule for any MCP-driving test.
-    let _lock = traffic_lock().await;
     let h = setup();
     // The migrated seed is present as the "default" token, and the list carries no secrets.
     let (status, body) = h.get("/api/tokens").await;
@@ -829,20 +831,8 @@ async fn returns_the_new_secret_after_a_rotate_not_the_old_one() {
 }
 
 // --- traffic ---------------------------------------------------------------------------------
-
-/// The traffic ring is one process-wide log, exactly as it is in the running gateway: two tests
-/// writing into it at once would read each other's rows. Every test that reads it — and every
-/// test that drives an MCP endpoint, since answering one records a row — takes this first and
-/// starts from an empty ring. A panicking test must not lock the rest out, so the poison is
-/// stepped over — a tokio mutex has no poison to propagate, and the ring it guards is rebuilt by
-/// the next `clear` anyway. It is a tokio mutex rather than a std one because the guard is held
-/// across the awaits of a whole test.
-async fn traffic_lock() -> tokio::sync::MutexGuard<'static, ()> {
-    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let guard = LOCK.lock().await;
-    swiss_mcp::traffic::clear_traffic(None);
-    guard
-}
+// Each harness carries its own traffic ring (see Harness::traffic), so these tests run free in
+// parallel: what a test's MCP endpoints record is visible only to that test's /api/traffic.
 
 /// The bearer headers a hosted MCP client sends.
 fn init_frame(name: &str, version: &str) -> Value {
@@ -877,7 +867,6 @@ async fn with_echo() -> Harness {
 
 #[tokio::test]
 async fn records_mcp_traffic_attributed_to_the_token_and_the_self_reported_client() {
-    let _lock = traffic_lock().await;
     let h = with_echo().await;
     h.mcp("/mcp/echo", TOKEN, init_frame("claude-code", "1.2.3"))
         .await;
@@ -892,7 +881,6 @@ async fn records_mcp_traffic_attributed_to_the_token_and_the_self_reported_clien
 
 #[tokio::test]
 async fn attributes_a_server_discover_frame_via_its_meta_client_info() {
-    let _lock = traffic_lock().await;
     let h = with_echo().await;
     // server/discover (Claude Code's capability probe) carries clientInfo nested in _meta, not at
     // the top level like initialize — the split must lift it from there too.
@@ -916,7 +904,6 @@ async fn attributes_a_server_discover_frame_via_its_meta_client_info() {
 
 #[tokio::test]
 async fn attributes_a_tokens_later_frames_to_the_name_it_announced_at_initialize() {
-    let _lock = traffic_lock().await;
     let h = with_echo().await;
     // initialize announces the client name once; the tools/list after it carries no clientInfo,
     // but it is the same token — so it inherits "claude-code" rather than appearing as a second,
@@ -939,7 +926,6 @@ async fn attributes_a_tokens_later_frames_to_the_name_it_announced_at_initialize
 
 #[tokio::test]
 async fn stores_the_full_redacted_request_body_for_the_expandable_raw_view() {
-    let _lock = traffic_lock().await;
     let h = with_echo().await;
     h.mcp(
         "/mcp/echo",
@@ -974,12 +960,11 @@ async fn stores_the_full_redacted_request_body_for_the_expandable_raw_view() {
 
 #[tokio::test]
 async fn pages_the_activity_log_newest_first_and_filters_to_actions_server_side() {
-    let _lock = traffic_lock().await;
     let h = setup();
     // 7 protocol frames + 3 actions, interleaved so a naive slice cannot pass by accident.
     for i in 0..10 {
         let action = i % 3 == 2;
-        swiss_mcp::traffic::record_traffic(
+        h.traffic.record_traffic(
             "m",
             Some(&json!({
                 "jsonrpc": "2.0", "id": i,
@@ -1039,10 +1024,9 @@ async fn pages_the_activity_log_newest_first_and_filters_to_actions_server_side(
 
 #[tokio::test]
 async fn folds_clients_over_the_whole_ring_not_over_the_returned_page() {
-    let _lock = traffic_lock().await;
     let h = setup();
     let record = |mcp: &str, body: Value, token: &str| {
-        swiss_mcp::traffic::record_traffic(mcp, Some(&body), Some(token), true, 1, None);
+        h.traffic.record_traffic(mcp, Some(&body), Some(token), true, 1, None);
     };
     record(
         "m1",
@@ -1089,7 +1073,6 @@ async fn folds_clients_over_the_whole_ring_not_over_the_returned_page() {
 
 #[tokio::test]
 async fn answers_404_for_a_traffic_entry_that_has_rolled_out_of_the_ring() {
-    let _lock = traffic_lock().await;
     let h = setup();
     assert_eq!(h.get("/api/traffic/999999").await.0, StatusCode::NOT_FOUND);
     // A seq that is not a number is a bad request, not a miss.
@@ -1098,10 +1081,9 @@ async fn answers_404_for_a_traffic_entry_that_has_rolled_out_of_the_ring() {
 
 #[tokio::test]
 async fn clears_one_clients_traffic_leaving_the_others_intact() {
-    let _lock = traffic_lock().await;
     let h = setup();
     for token in ["clrA", "clrB"] {
-        swiss_mcp::traffic::record_traffic(
+        h.traffic.record_traffic(
             "m",
             Some(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })),
             Some(token),
@@ -1141,11 +1123,6 @@ async fn with_echo_named(name: &str) -> Harness {
 
 #[tokio::test]
 async fn pages_the_call_log_and_serves_one_reply_in_full() {
-    // The panel /call posts below land in the shared traffic ring; without the lock a parallel
-    // traffic test saw one of these rows as a stray "default" client (2026-09-16, full-suite
-    // run after the docs/31 binary shifted thread interleaving) — the same family as the
-    // 11-vs-10 note above. Serialize like every other ring writer.
-    let _lock = traffic_lock().await;
     let h = with_echo_named("pg1").await;
     for i in 0..3 {
         let (status, _) = h
@@ -1177,7 +1154,6 @@ async fn pages_the_call_log_and_serves_one_reply_in_full() {
 
 #[tokio::test]
 async fn records_every_tool_call_with_its_source_and_clears_on_request() {
-    let _lock = traffic_lock().await;
     let h = with_echo_named("cl").await;
 
     let (status, empty) = h.get("/api/mcps/cl/calls").await;
@@ -1233,7 +1209,6 @@ async fn serves_one_tools_recent_runs_for_the_run_tab_dropdown() {
     // The Run tab's refill dropdown: one tool's newest runs, newest first, both sources included.
     // The full arguments of a picked entry come back from the per-seq route — the history itself
     // carries only a one-line preview, so 300 entries stay light.
-    let _lock = traffic_lock().await;
     let h = with_echo_named("hist").await;
     h.post(
         "/api/mcps/hist/call",
@@ -2274,6 +2249,7 @@ fn setup_with_tunnels() -> (
         swiss_tunnels::tunnel::TunnelStore::new(dir.join("tunnels.json"), 19999),
     ));
     let calls = Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls")));
+    let traffic = Arc::new(swiss_mcp::traffic::TrafficLog::memory());
     let registry = Registry::new(60_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
     let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
@@ -2282,6 +2258,7 @@ fn setup_with_tunnels() -> (
         tokens,
         store.clone(),
         calls.clone(),
+        traffic.clone(),
         "MCP_GATEWAY_TOKEN",
         19999,
     );
@@ -2292,6 +2269,7 @@ fn setup_with_tunnels() -> (
             registry,
             store,
             calls,
+            traffic,
             path: dir.join("managed.json"),
         },
         tun,
@@ -2442,6 +2420,7 @@ fn setup_with_remote() -> (Harness, Arc<swiss_remote::RemoteSystem>) {
         })
         .expect("seed");
     let calls = Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls")));
+    let traffic = Arc::new(swiss_mcp::traffic::TrafficLog::memory());
     let registry = Registry::new(60_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
     let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
@@ -2450,6 +2429,7 @@ fn setup_with_remote() -> (Harness, Arc<swiss_remote::RemoteSystem>) {
         tokens,
         store.clone(),
         calls.clone(),
+        traffic.clone(),
         "MCP_GATEWAY_TOKEN",
         19999,
     );
@@ -2460,6 +2440,7 @@ fn setup_with_remote() -> (Harness, Arc<swiss_remote::RemoteSystem>) {
             registry,
             store,
             calls,
+            traffic,
             path: dir,
         },
         system,
@@ -3206,6 +3187,7 @@ fn setup_with_jobs() -> (Harness, Arc<swiss_jobs::jobs::JobSystem>) {
     ));
     std::fs::create_dir_all(&dir).expect("create the scratch directory");
     let calls = Arc::new(swiss_mcp::calls::CallLog::at(dir.join("calls")));
+    let traffic = Arc::new(swiss_mcp::traffic::TrafficLog::memory());
     let registry = Registry::new(60_000, calls.clone());
     let store = Arc::new(ManagedStore::open_at(dir.join("managed.json")));
     let tokens = Arc::new(TokenManager::new(store.clone(), Some(TOKEN)));
@@ -3249,6 +3231,7 @@ fn setup_with_jobs() -> (Harness, Arc<swiss_jobs::jobs::JobSystem>) {
         tokens,
         store.clone(),
         calls.clone(),
+        traffic.clone(),
         "MCP_GATEWAY_TOKEN",
         19999,
     );
@@ -3262,6 +3245,7 @@ fn setup_with_jobs() -> (Harness, Arc<swiss_jobs::jobs::JobSystem>) {
             registry,
             store,
             calls,
+            traffic,
             path: dir.join("managed.json"),
         },
         jobs,
@@ -3930,7 +3914,6 @@ async fn add_echo(h: &Harness, name: &str, enabled: bool) {
 
 #[tokio::test]
 async fn replace_parks_the_old_def_and_serves_the_new_one() {
-    let _lock = traffic_lock().await; // the admin posts below land in the shared traffic ring
     let h = setup();
     add_echo(&h, "m", true).await;
     let (status, body) = h
@@ -3960,7 +3943,6 @@ async fn replace_parks_the_old_def_and_serves_the_new_one() {
 
 #[tokio::test]
 async fn a_failing_replace_changes_nothing() {
-    let _lock = traffic_lock().await;
     let h = setup();
     add_echo(&h, "m", true).await;
     // A rest def with no tools fails build_def — before anything is written.
@@ -3975,7 +3957,6 @@ async fn a_failing_replace_changes_nothing() {
 
 #[tokio::test]
 async fn replace_leaves_a_stopped_mcp_stopped() {
-    let _lock = traffic_lock().await;
     let h = setup();
     add_echo(&h, "m", false).await;
     assert!(!h.has_server("m"), "enabled:false never started it");
@@ -3996,7 +3977,6 @@ async fn replace_leaves_a_stopped_mcp_stopped() {
 
 #[tokio::test]
 async fn restore_swaps_back_and_parks_the_live_def() {
-    let _lock = traffic_lock().await;
     let h = setup();
     add_echo(&h, "m", true).await;
     h.post(
@@ -4023,7 +4003,6 @@ async fn restore_swaps_back_and_parks_the_live_def() {
 
 #[tokio::test]
 async fn six_replaces_keep_only_the_last_five_snapshots() {
-    let _lock = traffic_lock().await;
     let h = setup();
     add_echo(&h, "m", true).await;
     for i in 0..6 {
@@ -4048,7 +4027,6 @@ async fn six_replaces_keep_only_the_last_five_snapshots() {
 
 #[tokio::test]
 async fn rename_carries_revisions_and_delete_clears_them() {
-    let _lock = traffic_lock().await;
     let h = setup();
     add_echo(&h, "m", true).await;
     h.post(
@@ -4073,7 +4051,6 @@ async fn rename_carries_revisions_and_delete_clears_them() {
 
 #[tokio::test]
 async fn one_revision_can_be_dropped_without_touching_the_rest() {
-    let _lock = traffic_lock().await;
     let h = setup();
     add_echo(&h, "m", true).await;
     for note in ["a", "b"] {
@@ -4097,7 +4074,6 @@ async fn one_revision_can_be_dropped_without_touching_the_rest() {
 
 #[tokio::test]
 async fn a_disabled_mcp_refuses_clients_with_the_disabled_wording() {
-    let _lock = traffic_lock().await;
     let h = setup();
     add_echo(&h, "m", false).await;
     // docs/28 D2: disabled means the client sees nothing of it — every method answers the
@@ -4120,7 +4096,6 @@ async fn a_disabled_mcp_refuses_clients_with_the_disabled_wording() {
 
 #[tokio::test]
 async fn a_mariadb_def_builds_and_carries_its_own_tag() {
-    let _lock = traffic_lock().await;
     let h = setup();
     // docs/29: MariaDB is its own type — the def, the tag, the seal — on the mysql engine.
     // Disabled so the test never depends on a server existing anywhere.
