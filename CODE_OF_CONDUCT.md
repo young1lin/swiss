@@ -9,5 +9,5 @@ This is a small project maintained in spare time. The rules are short:
 - Security reports go through [SECURITY.md](SECURITY.md), not public threads.
 
 Anyone who breaks these rules will be asked to stop; if that does not work they will be
-removed from the project's spaces. Concerns can be raised privately with the maintainer at
-young1lin.
+removed from the project's spaces. Concerns can be raised privately with the maintainer
+by mentioning `@young1lin` in a private GitHub security advisory.

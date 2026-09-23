@@ -38,7 +38,7 @@
 
 | # | 决定 | 落地 |
 |---|---|---|
-| D1 | 作者名 `young1lin`，邮箱 `young1lin`（owner 2026-09-21 追加：名字不用 Jdoe） | 历史重写 mailmap；Cargo `authors`、SECURITY/NOTICE 联系方式 |
+| D1 | 作者名 `young1lin`（owner 2026-09-21 追加：名字不用 Jdoe；2026-09-23 追加：**任何文件不写邮箱**，签名一律裸名） | 历史重写 mailmap + replace-text 连邮箱一并剥离；Cargo `authors`、头注、NOTICE 均为裸名；联系方式走 GitHub 私有渠道 |
 | D2 | 真实环境数据 git ignore 掉 | 四张截图退出 tracking + `.gitignore` + 从历史清除；不重拍 |
 | D3 | 全局 Apache-2.0，**作者只能是 owner** | 头注改 `Copyright 2026 young1lin`；`Co-Authored-By` trailer 从历史剥离，新 commit 不再加；第三方归属**保留**（那是 license 义务，不是作者署名，见 D7） |
 | D4 | 绝对路径剔除 | 工作树 + 全历史 `--replace-text` |
