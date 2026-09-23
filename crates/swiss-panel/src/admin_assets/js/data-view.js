@@ -48,7 +48,8 @@ import { locale, tr, trn } from "./i18n.js";
 /* ================================================================================================
    Data view — a DBeaver-style browser over the mysql/pg MCPs.
    Left: a lazy, greppable, paged table list (never the whole instance at once). Right: one
-   bounded page of rows (10/20/50/100/200/500, default 500) with click-to-sort headers.
+   bounded page of rows (10/20/50/100/200/500, default 50 — the server's BROWSE_DEFAULT_PAGE)
+   with click-to-sort headers.
    Edits are buffered client-side — an amber bar counts them — and nothing reaches the database
    until Commit posts the whole buffer as ONE transaction; Discard drops it without a query.
    Same rendering contract as everywhere else: the 6s poll never rebuilds this view.

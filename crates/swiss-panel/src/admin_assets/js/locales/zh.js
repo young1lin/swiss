@@ -242,7 +242,12 @@ const zh                         = {
   "dataEdit.renameTable": "重命名表…",
   "dataEdit.renameTo": "重命名 {name} 为：",
   "dataEdit.truncateTable": "清空表…",
-  "dataEdit.typedConfirm": "{what} {name}\n此操作无法撤销。请输入 {kind} 名称以确认：",
+  /* fix-plan #16: the typed confirm is the one-field sheet now — a short title, the field
+     caption that names what must be typed, and the button word (English comment per the
+     house rule; only the VALUES are Chinese). */
+  "dataEdit.typedConfirmTitle": "{what} {name}——此操作无法撤销",
+  "dataEdit.typedConfirmLabel": "{kind} 名称",
+  "dataEdit.confirm": "确认",
   "dataEdit.validTableName": "不是有效的表名",
   "dataEdit.nameMatchNothingDone": "名称不匹配——未做任何更改",
   /* --- dataFilters --- */
