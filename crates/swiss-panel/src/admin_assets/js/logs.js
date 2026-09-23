@@ -163,6 +163,19 @@ function goneNode(seq        )              {
   return note(tr("detail.fullReplyLongerStored"), { data: { gone: seq } });
 }
 
+/** A value to read, the way Logs shows one (docs/46 §3.2): JSON as the panel's code block - on
+ *  one line when it is short - and anything else exactly as it arrived; an error stays red text.
+ *  Past JV_LINES the whole reply is plain formatted text instead: neither Run nor a hover has a
+ *  Show all, and a 3,000-line reply painted token by token is DOM nobody reads. */
+function readableBody(text        , err         )           {
+  const parsed = err ? null : splitJsonBlock(text);
+  if (parsed) {
+    const code = jsonCodeNode(decodeStrings(parsed.value), false, { oneLine: !parsed.tail });
+    if (code.lines <= JV_LINES) return [code.node, parsed.tail ? textNode(parsed.tail, true, "logs jv-tail").node : null];
+  }
+  return [textNode(err ? text : fmtJson(text), true, "logs" + (err ? " err" : "")).node];
+}
+
 /* --- docs/46 §3.2: the log is an event list ----------------------------------------------------
    One call is one timeline row: the time (the date is the day heading above it), the tool, its
    arguments, a failure as a red tag, the duration. What every row said the same - the transport,
@@ -451,4 +464,5 @@ function kindBodyNode(d           , kind         , m                           )
   return frag(section({}, resToggle, list, kindPager(kd)), hidden);
 }
 
+export { readableBody };
 export { callBlockCopyText, callBlockNode, callBodyNode, callItem, callRunOf, callsErrNode, callsStatusNode, copyLogText, fmtChars, fmtJson, goneNode, itemRecordNode, kindBodyNode, logsBodyNode, repaintCallBlock, toggleCall };

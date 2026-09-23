@@ -51,20 +51,8 @@
     .call-body { display: none; padding: 0 var(--s4) var(--s3); }
     .call.open .call-body { display: block; }
     .call-lbl { font-size: var(--f-caption); font-weight: var(--w-emph); text-transform: uppercase; letter-spacing: .04em; color: var(--text-3); padding: var(--s2) 0 var(--s1); display: flex; align-items: center; gap: var(--s2); }
-    /* docs/33 C3: a call block's label row says what the body turned out to be (decoded, JSON
-       plus text) and carries its two copies. They stay visible: copying a reply is the frequent
-       act on this page, not something to discover by hovering. */
-    .call-lbl .call-note { font-weight: var(--w-emph); text-transform: none; letter-spacing: 0; }
-    .call-lbl .call-acts { margin-left: auto; display: inline-flex; gap: var(--s1); }
-    .call-lbl .call-acts .btn { display: inline-flex; align-items: center; gap: var(--s1); padding: 0 var(--s2); font-size: var(--f-caption); font-weight: var(--w-emph); line-height: var(--s6); text-transform: none; letter-spacing: 0; color: var(--text-3); }
-    .call-lbl .call-acts .btn:hover { color: var(--text); }
-    .call-lbl .call-acts .btn .ic { width: var(--s3); height: var(--s3); }
-    /* Formatted JSON needs room before it starts scrolling — Traffic reads its bodies here. */
+    /* Formatted JSON needs room before it starts scrolling (Remote runs, a job's runs). */
     .call-body pre.logs { padding: var(--s2) var(--s3); background: var(--sep-soft); border-radius: 8px; max-height: 360px; }
-    /* A Logs block that is text, or the prose after a reply's JSON, reads like the JSON beside it:
-       whole, no inner scroll box. */
-    .call-blk pre.logs { max-height: none; overflow: visible; font-size: var(--f-label); line-height: 1.6; }
-    .call-blk pre.jv-tail { margin-top: var(--s1); }
     /* The Run tab's reply sits under the form's card, a full step down: a labelled value block
        (ui/json-view.ts valueBlock), the same shape a Logs call opens to. */
     .run-out:not(:empty) { margin-top: var(--s5); }

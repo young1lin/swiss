@@ -384,10 +384,14 @@ Escape 出去给 main.ts 关 sheet。`showSheet` 先显示宿主再填内容，�
 
 ### 3.3 MCP › Traffic 与 Token（P3）
 
-- [ ] Traffic：去掉页首的 `TRAFFIC` 标题；Actions / Everything 分段挪到 Activity 一节的头上（它筛的是活动）；
-      Clear 进 ⋯；活动列表用 `timeline`（`who` = 客户端 · 服务器）。
-- [ ] Token：说明收一行；New group 变 `folder-plus` 图标按钮（与侧栏同一个图标、同一个意思，规则 7）；
-      token id 用等宽（会被复制的值）；行用 `row()`。
+- [x] Traffic：去掉页首的 `TRAFFIC` 标题；Actions / Everything 分段挪到 Activity 一节的头上（它筛的是活动）；
+      Clear 进 ⋯；活动列表用 `timeline`（`who` = 客户端 · 服务器，只在不同时成列；相同的交互合并 ×N；展开区是 meta 行 +
+      请求 / 回复两个 `valueBlock`，打开时才取）。客户端表格留在 `views.css`（页面自己的五列表格），放进 `card()`。
+      走查时发现：直接冷加载 `#traffic` 时上方栏一直显示"0 MCP"——只有 Servers 页会加载 MCP 列表；现在 Traffic 页
+      挂载和每次轮询都加载它所计数的列表（`views/traffic.ts`，新测试 `admin-traffic-view.test.ts`）。
+- [x] Token：说明收一行；New group 变 `folder-plus` 图标按钮（与侧栏同一个图标、同一个意思，规则 7）；
+      token id 用等宽（会被复制的值）；行用 `row()`（"复制时使用"是名字旁的 `tag`）；一次性密钥框是表单卡片，紧跟在
+      新建表单下面。`tokens.createdWhen` 的译文里不再自带分隔点（分隔符归排版管）。
 
 ### 3.4 Tunnels（P4）
 
